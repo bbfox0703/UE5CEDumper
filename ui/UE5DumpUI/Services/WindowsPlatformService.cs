@@ -34,7 +34,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
 
     public string GetAppDataPath()
     {
-        return Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     }
 
     public string GetLogDirectoryPath()
