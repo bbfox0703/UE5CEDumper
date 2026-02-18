@@ -124,8 +124,10 @@ ue5_shutdown()
 -- Auto-runs when this CT is opened in Cheat Engine.
 -- ============================================================
 
--- *** Configure DLL path here (default: CE_DIR\ue5dumper\UE5Dumper.dll) ***
-DLL_PATH = getCheatEngineDir() .. "ue5dumper\\UE5Dumper.dll"
+-- Auto-detect DLL from the same folder as this CT file
+local _ctPath = getMainForm().SaveDialog1.FileName
+local _ctDir  = (_ctPath ~= "") and extractFilePath(_ctPath) or getCheatEngineDir()
+DLL_PATH = _ctDir .. "UE5Dumper.dll"
 
 -- ============================================================
 -- Logging helpers
