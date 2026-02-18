@@ -342,42 +342,60 @@ if ($Target -in "All", "UI") {
             }
         }
         else {
-            # ===== Debug / Release mode: normal build =====
-            Write-Step "Building UE5DumpUI ($CSharpConfig)..."
-            & dotnet build $UI_PROJ -c $CSharpConfig --nologo
+            # ===== Debug mode: dotnet build (fast, requires .NET runtime) =====
+            # ===== Release mode: dotnet publish --self-contained single-file (no AOT) =====
+            if ($Mode -eq "Debug") {
+                Write-Step "Building UE5DumpUI (Debug, framework-dependent)..."
+                & dotnet build $UI_PROJ -c Debug --nologo
+            }
+            else {
+                Write-Step "Publishing UE5DumpUI (Release, self-contained single-file)..."
+                $releasePublishDir = Join-Path $DIST_DIR "publish"
+                & dotnet publish $UI_PROJ `
+                    -c Release `
+                    -r win-x64 `
+                    --self-contained `
+                    -p:PublishSingleFile=true `
+                    -p:PublishAot=false `
+                    -o $releasePublishDir `
+                    --nologo
+            }
+
             if ($LASTEXITCODE -ne 0) {
                 Write-Fail "UI build failed"
                 $exitCode = 1
             }
             else {
-                # Locate output exe or dll
-                $searchBase = Join-Path $UI_DIR "UE5DumpUI\bin\$CSharpConfig"
-                $exeFile = Get-ChildItem -Path $searchBase -Filter "UE5DumpUI.exe" -Recurse -ErrorAction SilentlyContinue |
-                           Select-Object -First 1
+                # Locate output exe
+                if ($Mode -eq "Debug") {
+                    $searchBase = Join-Path $UI_DIR "UE5DumpUI\bin\Debug"
+                    $exeFile = Get-ChildItem -Path $searchBase -Filter "UE5DumpUI.exe" -Recurse -ErrorAction SilentlyContinue |
+                               Select-Object -First 1
+                }
+                else {
+                    $releasePublishDir = Join-Path $DIST_DIR "publish"
+                    $exeFile = Get-ChildItem -Path $releasePublishDir -Filter "UE5DumpUI.exe" -ErrorAction SilentlyContinue |
+                               Select-Object -First 1
+                }
 
                 if ($exeFile) {
                     Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
 
-                    if ($CSharpConfig -eq "Debug") {
+                    if ($Mode -eq "Debug") {
                         $pdb = Join-Path $exeFile.DirectoryName "UE5DumpUI.pdb"
                         if (Test-Path $pdb) { Copy-Item $pdb -Destination $DIST_DIR -Force }
+                    }
+                    else {
+                        # Clean up publish temp folder
+                        Remove-Item $releasePublishDir -Recurse -Force -ErrorAction SilentlyContinue
                     }
 
                     $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
                     Write-Ok "UE5DumpUI.exe ($exeSize)"
-                    Write-Info "Output: $($exeFile.DirectoryName)"
                 }
                 else {
-                    $dllFile = Get-ChildItem -Path $searchBase -Filter "UE5DumpUI.dll" -Recurse -ErrorAction SilentlyContinue |
-                               Select-Object -First 1
-                    if ($dllFile) {
-                        Write-Ok "UE5DumpUI.dll built"
-                        Write-Info "Run via: dotnet run --project $UI_PROJ -c $CSharpConfig"
-                    }
-                    else {
-                        Write-Fail "No build output found"
-                        $exitCode = 1
-                    }
+                    Write-Fail "No build output found"
+                    $exitCode = 1
                 }
             }
         }
