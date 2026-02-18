@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CheatTable CheatEngineTableVersion="46">
+  <CheatEntries>
+
+    <!-- ========== Header ========== -->
+    <CheatEntry>
+      <ID>100</ID>
+      <Description>"=== UE5 CEDumper v1.0 — bbfox / UE5CEDumper ==="</Description>
+      <Color>00BB5E</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+
+    <!-- ========== Main: Inject + Start Pipe ========== -->
+    <CheatEntry>
+      <ID>1</ID>
+      <Description>"Inject DLL + Start Pipe Server"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript Async="1">[ENABLE]
+{$lua}
+if syntaxcheck then return end
+
+ue5_inject()
+
+[DISABLE]
+{$lua}
+if syntaxcheck then return end
+
+ue5_shutdown()
+</AssemblerScript>
+    </CheatEntry>
+
+    <!-- ========== Global Pointers (active after init) ========== -->
+    <CheatEntry>
+      <ID>10</ID>
+      <Description>"--- Global Pointers (enabled after init) ---"</Description>
+      <Color>4080FF</Color>
+      <Options moHideChildren="1"/>
+      <GroupHeader>1</GroupHeader>
+      <CheatEntries>
+        <CheatEntry>
+          <ID>11</ID>
+          <Description>"GObjects (FUObjectArray*)"</Description>
+          <ShowAsSigned>0</ShowAsSigned>
+          <Color>FF8080</Color>
+          <VariableType>8 Bytes</VariableType>
+          <Address>ue5_gobjects</Address>
+        </CheatEntry>
+        <CheatEntry>
+          <ID>12</ID>
+          <Description>"GNames (FNamePool*)"</Description>
+          <ShowAsSigned>0</ShowAsSigned>
+          <Color>FF8080</Color>
+          <VariableType>8 Bytes</VariableType>
+          <Address>ue5_gnames</Address>
+        </CheatEntry>
+        <CheatEntry>
+          <ID>13</ID>
+          <Description>"Object Count"</Description>
+          <ShowAsSigned>0</ShowAsSigned>
+          <Color>FF8080</Color>
+          <VariableType>4 Bytes</VariableType>
+          <Address>ue5_gobjects+C</Address>
+        </CheatEntry>
+        <CheatEntry>
+          <ID>14</ID>
+          <Description>"UE Version (e.g. 504 = UE5.4)"</Description>
+          <ShowAsSigned>0</ShowAsSigned>
+          <Color>FF8080</Color>
+          <VariableType>4 Bytes</VariableType>
+          <Address>ue5_version</Address>
+        </CheatEntry>
+      </CheatEntries>
+    </CheatEntry>
+
+    <!-- ========== Setup Instructions ========== -->
+    <CheatEntry>
+      <ID>20</ID>
+      <Description>"--- Setup Instructions ---"</Description>
+      <Color>8000FF</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>21</ID>
+      <Description>"1. Build: .\build.cmd release (or publish)"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>22</ID>
+      <Description>"2. Copy dist\UE5Dumper.dll  →  [CE_DIR]\ue5dumper\UE5Dumper.dll"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>23</ID>
+      <Description>"3. Open target UE5 game process in CE"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>24</ID>
+      <Description>"4. Check [Inject DLL + Start Pipe Server]  (Lua console shows progress)"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>25</ID>
+      <Description>"5. Launch dist\UE5DumpUI.exe  and click Connect"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>26</ID>
+      <Description>"   Pipe: \\.\pipe\UE5DumpBfx"</Description>
+      <Color>569CD6</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+
+  </CheatEntries>
+  <UserdefinedSymbols/>
+  <LuaScript>
+-- ============================================================
+-- UE5CEDumper — Table Script
+-- Auto-runs when this CT is opened in Cheat Engine.
+-- ============================================================
+
+-- Auto-detect DLL from the same folder as this CT file
+local _ctPath = getMainForm().SaveDialog1.FileName
+local _ctDir  = (_ctPath ~= "") and extractFilePath(_ctPath) or getCheatEngineDir()
+DLL_PATH = _ctDir .. "UE5Dumper.dll"
+
+-- ============================================================
+-- Logging helpers
+-- ============================================================
+
+function ue5_log(fmt, ...)
+    print(string.format("[UE5Dump] " .. fmt, ...))
+end
+
+function ue5_logError(fmt, ...)
+    print(string.format("[UE5Dump ERROR] " .. fmt, ...))
+end
+
+-- ============================================================
+-- DLL call wrapper  (executeCodeEx: retType 0=void, 1=integer)
+-- ============================================================
+
+function ue5_callDLL(funcName, retType, ...)
+    local fn = getAddress(funcName)
+    if fn == nil or fn == 0 then
+        ue5_logError("Export not found: %s  (DLL not injected?)", funcName)
+        return nil
+    end
+
+    local ceRetType = (retType == "void") and 0 or 1
+    local result = executeCodeEx(ceRetType, fn, ...)
+
+    if retType == "bool" then return result ~= 0 end
+    return result
+end
+
+-- ============================================================
+-- ue5_inject()  —  called from [ENABLE] of the AA entry
+-- ============================================================
+
+function ue5_inject()
+    ue5_log("Starting UE5 Dumper...")
+    ue5_log("DLL path: %s", DLL_PATH)
+
+    -- 1. Inject DLL into the target process
+    local handle = loadLibrary(DLL_PATH)
+    if handle == nil then
+        ue5_logError("loadLibrary failed!")
+        ue5_logError("Check DLL_PATH in Table Script: %s", DLL_PATH)
+        return
+    end
+    ue5_log("DLL injected OK (handle=0x%X)", handle)
+    sleep(500)   -- wait for DllMain to finish
+
+    -- 2. Initialize: AOB scan for GObjects / GNames
+    local initOk = ue5_callDLL("UE5_Init", "bool")
+    if not initOk then
+        ue5_logError("UE5_Init failed! GObjects/GNames scan error.")
+        ue5_logError("Log: %%APPDATA%%\\UE5CEDumper\\Logs")
+        return
+    end
+
+    -- 3. Query global pointers
+    local version  = ue5_callDLL("UE5_GetVersion",      "uint32")
+    local gobjects = ue5_callDLL("UE5_GetGObjectsAddr", "uint64")
+    local gnames   = ue5_callDLL("UE5_GetGNamesAddr",   "uint64")
+    local objCount = ue5_callDLL("UE5_GetObjectCount",  "int32")
+
+    ue5_log("UE version:   %d (UE5.%d)", version, version % 100)
+    ue5_log("GObjects:     0x%X", gobjects)
+    ue5_log("GNames:       0x%X", gnames)
+    ue5_log("ObjectCount:  %d",   objCount)
+
+    -- Register symbols so address records in this CT show live values
+    registerSymbol("ue5_gobjects", gobjects, true)
+    registerSymbol("ue5_gnames",   gnames,   true)
+
+    -- Store version as a fake 4-byte symbol (point to a static local)
+    -- Refresh address list so the new symbols resolve
+    synchronize(function()
+        getAddressList().refresh()
+    end)
+
+    -- 4. Start Pipe Server — external UI connects here
+    local pipeOk = ue5_callDLL("UE5_StartPipeServer", "bool")
+    if not pipeOk then
+        ue5_logError("Pipe Server failed to start!")
+        return
+    end
+
+    ue5_log("=========================================")
+    ue5_log("Pipe Server started!")
+    ue5_log("Pipe: \\\\.\\pipe\\UE5DumpBfx")
+    ue5_log("Launch UE5DumpUI.exe and click Connect.")
+    ue5_log("=========================================")
+end
+
+-- ============================================================
+-- ue5_shutdown()  —  called from [DISABLE] of the AA entry
+-- ============================================================
+
+function ue5_shutdown()
+    ue5_callDLL("UE5_StopPipeServer", "void")
+    ue5_callDLL("UE5_Shutdown",       "void")
+    unregisterSymbol("ue5_gobjects")
+    unregisterSymbol("ue5_gnames")
+    synchronize(function()
+        getAddressList().refresh()
+    end)
+    ue5_log("UE5 Dumper stopped.")
+end
+
+-- ============================================================
+-- Highlight custom functions in CE's Lua syntax highlighter
+-- ============================================================
+
+registerLuaFunctionHighlight('ue5_inject')
+registerLuaFunctionHighlight('ue5_shutdown')
+registerLuaFunctionHighlight('ue5_callDLL')
+registerLuaFunctionHighlight('ue5_log')
+registerLuaFunctionHighlight('ue5_logError')
+
+-- Print startup hint
+ue5_log("Table loaded. Check [Inject DLL + Start Pipe Server] to begin.")
+ue5_log("DLL_PATH = %s", DLL_PATH)
+  </LuaScript>
+</CheatTable>
