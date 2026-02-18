@@ -116,6 +116,7 @@ git submodule add --force https://github.com/Do0ks/GSpots.git vendor/GSpots
 - **Compiler**: MSVC v145 (cl.exe)
 - **Build**: CMake 3.25+ with Ninja generator
 - **依賴**：nlohmann/json（header-only，放 vendor/）
+- **Compile script**: All commands needed should find through vswhere, not fixed path
 
 ### CMakeLists.txt
 
