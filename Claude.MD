@@ -1,5 +1,67 @@
+# CLAUDE.md
 
-# UE5CEDumper — CLAUDE.md
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+-----
+
+## Build & Dev Commands
+
+### C++ DLL (dll/)
+
+The DLL build uses CMake + Ninja + MSVC. Locate Visual Studio toolchain via `vswhere`, not hardcoded paths.
+
+```bash
+# Find VS install path (use in scripts)
+vswhere -latest -property installationPath
+
+# Configure (from repo root)
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+# Build
+cmake --build build --config Release
+
+# Output: build/UE5Dumper.dll
+```
+
+### C# Avalonia UI (ui/)
+
+```bash
+# Restore packages
+dotnet restore ui/UE5DumpUI.csproj
+
+# Build
+dotnet build ui/UE5DumpUI.csproj -c Release
+
+# Run
+dotnet run --project ui/UE5DumpUI.csproj
+
+# Run tests
+dotnet test ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj
+
+# Publish single-file exe
+dotnet publish ui/UE5DumpUI.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+```
+
+### Git Submodules
+
+```bash
+git submodule update --init --recursive
+```
+
+-----
+
+## Rules (MUST follow)
+
+- **Language**: Code comments and UI strings in English
+- **Single Instance**: UI app uses Mutex to ensure only one instance runs
+- **Async everywhere**: All I/O, pipe operations, and alert actions must be async
+- **Platform Abstraction**: Any system/OS-dependent call (P/Invoke, Registry, OS commands) MUST go through an interface in `Core` project. `Core` must NEVER contain direct platform-specific code
+- **Log output**: All logs go to `%APPDATA%\UE5CEDumper\Logs`, 5-version rotation, 5MB max per file. Each app/DLL start triggers a rotate
+- **Magic words management**: All magic strings kept in one file per project with proper comments
+- **I18n**: UI supports dynamic language switch: zh-TW, en, ja — use `DynamicResource` bindings (no restart needed)
+- **UE offsets**: All UObject/UStruct offsets must be dynamically verified via OffsetFinder, never hardcoded
+
+-----
 
 ## 專案目標
 
@@ -124,7 +186,7 @@ git submodule add --force https://github.com/Do0ks/GSpots.git vendor/GSpots
 cmake_minimum_required(VERSION 3.20)
 project(UE5Dumper)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 add_library(UE5Dumper SHARED
     dll/src/dllmain.cpp
@@ -635,21 +697,7 @@ main()
 | LibraryImport (P/Invoke) | ?? | 專為 AOT 設計 |
 | ViewLocator | ?? | 已改為明確型別對應，無 reflection |
 
-## Language
-
-Code comments and UI strings are in English.
-
-## I18n (Internationalization)
-
-- UI 支援動態語言切換：繁體中文 (zh-TW) Taiwan、English (en)、日本語 (ja)
-- 使用 `DynamicResource` 綁定，切換時無需重啟
-
-### 5. Rules
-- **Single Instance**: Use Mutex to ensure only one instance runs
-- **Async everywhere**: All I/O, pipe operations, and alert actions must be async
-- **Platform Abstraction**: Any system/OS-dependent call (P/Invoke, Registry, OS commands) MUST go through an interface in the project with central declaratrion (i.e. `Core`), and with implementations in platform-specific projects. The `Core` project must NEVER contain direct platform-specific code.
-- **Log output**: All project log output folder is %APPDATA\UE5CEDumper\Logs, with 5 versions rotation. Everytime Application/DLL started, it will triggere a rotate. Each log file max size is 5MB.
-- **Magic words management**: All magic words should keep in the same file (seperated by different projects) with proper comments
+(See "Rules" section at top of file for language, i18n, logging, platform abstraction, and other constraints.)
 
 
 ### PipeClient.cs — 連線管理
