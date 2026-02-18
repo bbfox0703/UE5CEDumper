@@ -415,15 +415,13 @@ if ($Target -in "All", "Test") {
 # ============================================================
 
 if ($Target -eq "All") {
-    Write-Step "Copying CE Lua scripts..."
-    $scriptsOut = Join-Path $DIST_DIR "scripts"
-    New-Item -ItemType Directory -Path $scriptsOut -Force | Out-Null
-
-    foreach ($f in @("ue5dump.lua", "utils.lua", "UE5CEDumper.CT")) {
-        $src = Join-Path $ROOT_DIR "scripts\$f"
-        if (Test-Path $src) { Copy-Item $src -Destination $scriptsOut -Force }
+    Write-Step "Copying CT table to dist\..."
+    # CT goes in the same folder as DLL + EXE so it can auto-detect the DLL path
+    $src = Join-Path $ROOT_DIR "scripts\UE5CEDumper.CT"
+    if (Test-Path $src) {
+        Copy-Item $src -Destination $DIST_DIR -Force
+        Write-Ok "UE5CEDumper.CT copied to dist\"
     }
-    Write-Ok "Scripts copied to dist\scripts\"
 }
 
 # ============================================================
@@ -450,14 +448,6 @@ if (Test-Path $DIST_DIR) {
     Get-ChildItem $DIST_DIR -File -ErrorAction SilentlyContinue | ForEach-Object {
         $sz = Get-FileSize $_.FullName
         Write-Host "    $($_.Name)  ($sz)" -ForegroundColor Gray
-    }
-
-    $scriptsOut = Join-Path $DIST_DIR "scripts"
-    if (Test-Path $scriptsOut) {
-        Get-ChildItem $scriptsOut -File -ErrorAction SilentlyContinue | ForEach-Object {
-            $sz = Get-FileSize $_.FullName
-            Write-Host "    scripts\$($_.Name)  ($sz)" -ForegroundColor Gray
-        }
     }
 }
 
