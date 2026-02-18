@@ -179,6 +179,13 @@ bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
     return CopyToBuffer(name, buf, bufLen);
 }
 
+bool UE5_AutoStart() {
+    // Called by CEPlugin's InjectDLL after the DLL is loaded into the game.
+    // Idempotent: UE5_Init checks s_initialized and skips if already done.
+    if (!UE5_Init()) return false;
+    return UE5_StartPipeServer();
+}
+
 bool UE5_StartPipeServer() {
     return s_pipeServer.Start();
 }
