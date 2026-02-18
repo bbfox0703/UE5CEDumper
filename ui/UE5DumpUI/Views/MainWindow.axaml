@@ -1,0 +1,77 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:UE5DumpUI.ViewModels"
+        xmlns:views="using:UE5DumpUI.Views"
+        x:Class="UE5DumpUI.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="UE5 Dump UI" Background="#1E1E1E"
+        Width="1400" Height="900"
+        MinWidth="800" MinHeight="500">
+
+  <DockPanel>
+    <!-- Top Toolbar -->
+    <Border DockPanel.Dock="Top" Background="#2D2D2D" Height="44" Padding="8,0">
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
+        <Button Content="{DynamicResource str.Connect}"
+                Command="{Binding ConnectCommand}"
+                IsVisible="{Binding !IsConnected}"
+                Classes="accent" Padding="12,4"/>
+        <Button Content="{DynamicResource str.Disconnect}"
+                Command="{Binding DisconnectCommand}"
+                IsVisible="{Binding IsConnected}"
+                Padding="12,4"/>
+
+        <TextBlock Text="{Binding StatusText}"
+                   Foreground="#4EC9B0"
+                   VerticalAlignment="Center"
+                   Margin="12,0"/>
+
+        <!-- Language selector -->
+        <Border Margin="20,0,0,0">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <TextBlock Text="{DynamicResource str.Language}"
+                       Foreground="#888" VerticalAlignment="Center"/>
+            <ComboBox ItemsSource="{Binding AvailableLanguages}"
+                      SelectedItem="{Binding SelectedLanguage}"
+                      Width="90" Padding="4,2"/>
+          </StackPanel>
+        </Border>
+
+        <!-- Error display -->
+        <TextBlock Text="{Binding ErrorMessage}"
+                   Foreground="#F44747"
+                   VerticalAlignment="Center"
+                   Margin="12,0"
+                   IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Main Content: Left Tree + Right Tabs -->
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="350" MinWidth="200"/>
+        <ColumnDefinition Width="4"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <!-- Left: Object Tree -->
+      <views:ObjectTreePanel Grid.Column="0" DataContext="{Binding ObjectTree}"/>
+
+      <GridSplitter Grid.Column="1" Background="#3C3C3C"
+                    ResizeDirection="Columns"/>
+
+      <!-- Right: Tab panels -->
+      <TabControl Grid.Column="2" Background="#1E1E1E" Padding="4">
+        <TabItem Header="{DynamicResource str.Tab.ClassStruct}">
+          <views:ClassStructPanel DataContext="{Binding ClassStruct}"/>
+        </TabItem>
+        <TabItem Header="{DynamicResource str.Tab.Pointers}">
+          <views:PointerPanel DataContext="{Binding Pointers}"/>
+        </TabItem>
+        <TabItem Header="{DynamicResource str.Tab.HexView}">
+          <views:HexViewPanel DataContext="{Binding HexView}"/>
+        </TabItem>
+      </TabControl>
+    </Grid>
+  </DockPanel>
+</Window>

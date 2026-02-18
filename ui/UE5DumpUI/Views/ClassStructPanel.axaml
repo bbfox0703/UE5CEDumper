@@ -1,0 +1,70 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UE5DumpUI.ViewModels"
+             xmlns:models="using:UE5DumpUI.Models"
+             x:Class="UE5DumpUI.Views.ClassStructPanel"
+             x:DataType="vm:ClassStructViewModel">
+
+  <DockPanel Margin="8">
+    <!-- Header -->
+    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8" IsVisible="{Binding HasClass}">
+      <TextBlock Text="{Binding ClassName}" FontSize="18" FontWeight="Bold" Foreground="#4EC9B0"/>
+      <TextBlock Text="{Binding ClassPath}" Foreground="#888" FontSize="12" Margin="0,2,0,0"/>
+
+      <StackPanel Orientation="Horizontal" Spacing="16" Margin="0,6,0,0">
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <TextBlock Text="{DynamicResource str.ClassStruct.Super}" Foreground="#888"/>
+          <TextBlock Text="{Binding SuperName}" Foreground="#569CD6"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <TextBlock Text="{DynamicResource str.ClassStruct.PropsSize}" Foreground="#888"/>
+          <TextBlock Text="{Binding PropertiesSize}" Foreground="#B5CEA8"/>
+        </StackPanel>
+      </StackPanel>
+    </StackPanel>
+
+    <!-- No class selected message -->
+    <TextBlock DockPanel.Dock="Top"
+               Text="{DynamicResource str.ClassStruct.NoClass}"
+               Foreground="#666"
+               IsVisible="{Binding !HasClass}"
+               Margin="0,20,0,0"
+               HorizontalAlignment="Center"/>
+
+    <!-- Loading indicator -->
+    <TextBlock DockPanel.Dock="Top"
+               Text="{DynamicResource str.ObjectTree.Loading}"
+               Foreground="#4EC9B0"
+               IsVisible="{Binding IsLoading}"
+               HorizontalAlignment="Center"/>
+
+    <!-- Fields DataGrid -->
+    <DataGrid ItemsSource="{Binding Fields}"
+              IsReadOnly="True"
+              CanUserSortColumns="True"
+              CanUserResizeColumns="True"
+              GridLinesVisibility="Horizontal"
+              Background="Transparent"
+              IsVisible="{Binding HasClass}"
+              FontFamily="Consolas"
+              FontSize="13">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Offset}"
+                            Binding="{Binding Offset, StringFormat=0x{0:X}}"
+                            Width="80"/>
+        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Name}"
+                            Binding="{Binding Name}"
+                            Width="200"/>
+        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Type}"
+                            Binding="{Binding TypeName}"
+                            Width="180"/>
+        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Size}"
+                            Binding="{Binding Size}"
+                            Width="60"/>
+        <DataGridTextColumn Header="Address"
+                            Binding="{Binding Address}"
+                            Width="160"/>
+      </DataGrid.Columns>
+    </DataGrid>
+  </DockPanel>
+</UserControl>
