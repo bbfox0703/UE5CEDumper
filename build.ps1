@@ -330,8 +330,10 @@ if ($Target -in "All", "UI") {
                            Select-Object -First 1
                 if ($exeFile) {
                     Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
+                    # Clean up the temp publish subfolder — keep dist\ tidy
+                    Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
                     $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
-                    Write-Ok "UE5DumpUI.exe  |  Native AOT ($exeSize)"
+                    Write-Ok "UE5DumpUI.exe  |  Native AOT single-file ($exeSize)"
                 }
                 else {
                     Write-Fail "UE5DumpUI.exe not found in publish output"
@@ -417,7 +419,7 @@ if ($Target -eq "All") {
     $scriptsOut = Join-Path $DIST_DIR "scripts"
     New-Item -ItemType Directory -Path $scriptsOut -Force | Out-Null
 
-    foreach ($f in @("ue5dump.lua", "utils.lua")) {
+    foreach ($f in @("ue5dump.lua", "utils.lua", "UE5CEDumper.CT")) {
         $src = Join-Path $ROOT_DIR "scripts\$f"
         if (Test-Path $src) { Copy-Item $src -Destination $scriptsOut -Force }
     }
