@@ -14,6 +14,10 @@ __declspec(dllexport) bool     UE5_Init();
 __declspec(dllexport) void     UE5_Shutdown();
 __declspec(dllexport) uint32_t UE5_GetVersion();
 
+// Combined init + pipe server start — called by CEPlugin's InjectDLL
+// so that a single entry point activates everything in the game process.
+__declspec(dllexport) bool     UE5_AutoStart();
+
 // === Global Pointers ===
 __declspec(dllexport) uintptr_t UE5_GetGObjectsAddr();
 __declspec(dllexport) uintptr_t UE5_GetGNamesAddr();
