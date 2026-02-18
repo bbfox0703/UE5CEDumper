@@ -15,7 +15,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         g_hDllModule = hModule;
         DisableThreadLibraryCalls(hModule);
         Logger::Init();
-        LOG_INFO("UE5Dumper DLL loaded (DLL_PROCESS_ATTACH)");
+        {
+            // Log which process loaded this DLL — distinguishes CE plugin
+            // host (ce.exe) from game process injection in the log file.
+            char procName[MAX_PATH] = {};
+            GetModuleFileNameA(nullptr, procName, MAX_PATH);
+            LOG_INFO("UE5Dumper DLL loaded | process: %s [PID=%lu]",
+                     procName, GetCurrentProcessId());
+        }
         break;
 
     case DLL_PROCESS_DETACH:
