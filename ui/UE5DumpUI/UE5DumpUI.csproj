@@ -13,6 +13,7 @@
     <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <ApplicationIcon>Assets\Mainicon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,5 +35,9 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Resources\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\Mainicon.ico" />
   </ItemGroup>
 </Project>
