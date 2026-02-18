@@ -181,7 +181,7 @@ function ue5_inject()
     local initOk = ue5_callDLL("UE5_Init", "bool")
     if not initOk then
         ue5_logError("UE5_Init failed! GObjects/GNames scan error.")
-        ue5_logError("Log: %%APPDATA%%\\UE5CEDumper\\Logs")
+        ue5_logError("Log: %%LOCALAPPDATA%%\\UE5CEDumper\\Logs")
         return
     end
 

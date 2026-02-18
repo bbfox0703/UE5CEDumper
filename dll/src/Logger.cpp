@@ -27,7 +27,7 @@ static fs::path    s_currentPath;
 
 static fs::path GetLogDirectory() {
     wchar_t* appdata = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata))) {
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &appdata))) {
         fs::path dir = fs::path(appdata) / Constants::LOG_FOLDER_NAME / Constants::LOG_SUBFOLDER;
         CoTaskMemFree(appdata);
         return dir;

@@ -44,6 +44,11 @@ public class App : Application
             _localization = new LocalizationService();
 
             _logging.Info("UE5DumpUI starting...");
+            _logging.Info($"Version:   {System.Reflection.Assembly.GetExecutingAssembly().GetName().Version}");
+            _logging.Info($"OS:        {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+            _logging.Info($"Runtime:   {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+            _logging.Info($"Arch:      {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
+            _logging.Info($"Log dir:   {logDir}");
 
             // Create main window
             var mainVm = new MainWindowViewModel(

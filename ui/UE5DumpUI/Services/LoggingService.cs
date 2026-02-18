@@ -5,7 +5,7 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// Serilog-based logging service implementation.
-/// Logs to %APPDATA%\UE5CEDumper\Logs with 5MB rolling, 5 versions.
+/// Logs to %LOCALAPPDATA%\UE5CEDumper\Logs with 5MB rolling, 5 versions.
 /// </summary>
 public sealed class LoggingService : ILoggingService, IDisposable
 {

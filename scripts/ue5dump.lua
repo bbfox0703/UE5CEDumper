@@ -46,7 +46,7 @@ local function main()
     local initOk = utils.callDLL("UE5_Init", "bool")
     if not initOk then
         utils.logError("Initialization failed! GObjects/GNames scan failed.")
-        utils.logError("Check %APPDATA%\\UE5CEDumper\\Logs for details.")
+        utils.logError("Check %LOCALAPPDATA%\\UE5CEDumper\\Logs for details.")
         return
     end
 
