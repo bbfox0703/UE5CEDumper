@@ -4,6 +4,7 @@
         xmlns:views="using:UE5DumpUI.Views"
         x:Class="UE5DumpUI.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
+		Icon="/Assets/AOBMaker.ico"
         Title="UE5 Dump UI" Background="#1E1E1E"
         Width="1400" Height="900"
         MinWidth="800" MinHeight="500">
