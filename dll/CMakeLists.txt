@@ -47,6 +47,7 @@ target_link_libraries(UE5Dumper PRIVATE
     ws2_32
     Shlwapi
     Psapi
+    Version   # GetFileVersionInfoW / VerQueryValueW for PE VERSIONINFO
 )
 
 # Output name without lib prefix
