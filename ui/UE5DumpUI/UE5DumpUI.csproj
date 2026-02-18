@@ -35,9 +35,6 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Resources\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="Assets\Mainicon.ico" />
+    <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 </Project>
