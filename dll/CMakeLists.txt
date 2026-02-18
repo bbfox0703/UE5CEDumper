@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 add_library(UE5Dumper SHARED
     src/dllmain.cpp
+    src/CEPlugin.cpp
     src/Memory.cpp
     src/Logger.cpp
     src/OffsetFinder.cpp
