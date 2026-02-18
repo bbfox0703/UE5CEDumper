@@ -1,0 +1,69 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UE5DumpUI.ViewModels"
+             x:Class="UE5DumpUI.Views.PointerPanel"
+             x:DataType="vm:PointerPanelViewModel">
+
+  <StackPanel Margin="16" Spacing="16">
+    <!-- Not connected message -->
+    <TextBlock Text="{DynamicResource str.Pointers.NotConnected}"
+               Foreground="#666" FontSize="14"
+               IsVisible="{Binding !HasData}"
+               HorizontalAlignment="Center" Margin="0,40,0,0"/>
+
+    <!-- Pointer info cards -->
+    <StackPanel Spacing="12" IsVisible="{Binding HasData}">
+
+      <!-- UE Version -->
+      <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
+        <StackPanel>
+          <TextBlock Text="{DynamicResource str.Pointers.UEVersion}"
+                     Foreground="#888" FontSize="12"/>
+          <TextBlock Text="{Binding UeVersion}" FontSize="20"
+                     Foreground="#4EC9B0" FontWeight="SemiBold"/>
+        </StackPanel>
+      </Border>
+
+      <!-- GObjects -->
+      <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel>
+            <TextBlock Text="{DynamicResource str.Pointers.GObjects}"
+                       Foreground="#888" FontSize="12"/>
+            <TextBlock Text="{Binding GObjectsAddress}" FontSize="16"
+                       Foreground="#569CD6" FontFamily="Consolas"/>
+          </StackPanel>
+          <Button Grid.Column="1" Content="{DynamicResource str.Pointers.Copy}"
+                  Command="{Binding CopyGObjectsCommand}"
+                  VerticalAlignment="Center" Padding="8,4"/>
+        </Grid>
+      </Border>
+
+      <!-- GNames -->
+      <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel>
+            <TextBlock Text="{DynamicResource str.Pointers.GNames}"
+                       Foreground="#888" FontSize="12"/>
+            <TextBlock Text="{Binding GNamesAddress}" FontSize="16"
+                       Foreground="#569CD6" FontFamily="Consolas"/>
+          </StackPanel>
+          <Button Grid.Column="1" Content="{DynamicResource str.Pointers.Copy}"
+                  Command="{Binding CopyGNamesCommand}"
+                  VerticalAlignment="Center" Padding="8,4"/>
+        </Grid>
+      </Border>
+
+      <!-- Total Objects -->
+      <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
+        <StackPanel>
+          <TextBlock Text="{DynamicResource str.Pointers.TotalObjects}"
+                     Foreground="#888" FontSize="12"/>
+          <TextBlock Text="{Binding TotalObjects}" FontSize="20"
+                     Foreground="#B5CEA8" FontWeight="SemiBold"/>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </StackPanel>
+</UserControl>

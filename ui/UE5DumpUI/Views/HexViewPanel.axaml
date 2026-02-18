@@ -1,0 +1,52 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UE5DumpUI.ViewModels"
+             xmlns:models="using:UE5DumpUI.Models"
+             x:Class="UE5DumpUI.Views.HexViewPanel"
+             x:DataType="vm:HexViewViewModel">
+
+  <DockPanel Margin="8">
+    <!-- Controls bar -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+      <TextBox Watermark="{DynamicResource str.HexView.Address}"
+               Text="{Binding Address}" Width="200"/>
+      <TextBox Watermark="{DynamicResource str.HexView.Size}"
+               Text="{Binding Size}" Width="80"/>
+      <Button Content="{DynamicResource str.HexView.Read}"
+              Command="{Binding ReadCommand}" Padding="12,4"/>
+      <ToggleButton Content="{DynamicResource str.HexView.LiveWatch}"
+                    IsChecked="{Binding IsWatching}"
+                    Command="{Binding ToggleWatchCommand}"
+                    Margin="8,0,0,0" Padding="12,4"/>
+      <TextBox Watermark="{DynamicResource str.HexView.Interval}"
+               Text="{Binding WatchInterval}" Width="80"/>
+    </StackPanel>
+
+    <!-- Error display -->
+    <TextBlock DockPanel.Dock="Top"
+               Text="{Binding ErrorMessage}"
+               Foreground="#F44747" FontSize="12"
+               IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+               Margin="0,0,0,4"/>
+
+    <!-- Hex dump -->
+    <ScrollViewer>
+      <ItemsControl ItemsSource="{Binding HexRows}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="models:HexViewRow">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="{Binding Offset}"
+                         Foreground="#569CD6" FontFamily="Consolas" FontSize="13"
+                         Width="80"/>
+              <TextBlock Text="{Binding HexPart}"
+                         Foreground="#D4D4D4" FontFamily="Consolas" FontSize="13"
+                         Width="380"/>
+              <TextBlock Text="{Binding AsciiPart}"
+                         Foreground="#6A9955" FontFamily="Consolas" FontSize="13"/>
+            </StackPanel>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

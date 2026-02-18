@@ -416,3 +416,9 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Build output
+build/
+
+# Claude Code
+.claude/
