@@ -1,0 +1,57 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <!-- Toolbar -->
+    <sys:String x:Key="str.Connect">Connect</sys:String>
+    <sys:String x:Key="str.Disconnect">Disconnect</sys:String>
+    <sys:String x:Key="str.Language">Language</sys:String>
+
+    <!-- Status -->
+    <sys:String x:Key="str.Status.Connected">Connected</sys:String>
+    <sys:String x:Key="str.Status.Disconnected">Disconnected</sys:String>
+    <sys:String x:Key="str.Status.Connecting">Connecting...</sys:String>
+    <sys:String x:Key="str.Status.Error">Connection Error</sys:String>
+
+    <!-- Tabs -->
+    <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>
+    <sys:String x:Key="str.Tab.Pointers">Global Pointers</sys:String>
+    <sys:String x:Key="str.Tab.HexView">Hex View</sys:String>
+
+    <!-- Object Tree -->
+    <sys:String x:Key="str.ObjectTree.Title">Object Tree</sys:String>
+    <sys:String x:Key="str.ObjectTree.Search">Search objects...</sys:String>
+    <sys:String x:Key="str.ObjectTree.Load">Load</sys:String>
+    <sys:String x:Key="str.ObjectTree.Loading">Loading...</sys:String>
+    <sys:String x:Key="str.ObjectTree.Count">Objects: {0}</sys:String>
+
+    <!-- Class Structure -->
+    <sys:String x:Key="str.ClassStruct.Name">Name</sys:String>
+    <sys:String x:Key="str.ClassStruct.Type">Type</sys:String>
+    <sys:String x:Key="str.ClassStruct.Offset">Offset</sys:String>
+    <sys:String x:Key="str.ClassStruct.Size">Size</sys:String>
+    <sys:String x:Key="str.ClassStruct.Super">Super Class</sys:String>
+    <sys:String x:Key="str.ClassStruct.PropsSize">Properties Size</sys:String>
+    <sys:String x:Key="str.ClassStruct.NoClass">Select an object to view its class structure</sys:String>
+
+    <!-- Pointer Panel -->
+    <sys:String x:Key="str.Pointers.GObjects">GObjects Address</sys:String>
+    <sys:String x:Key="str.Pointers.GNames">GNames Address</sys:String>
+    <sys:String x:Key="str.Pointers.UEVersion">UE Version</sys:String>
+    <sys:String x:Key="str.Pointers.TotalObjects">Total Objects</sys:String>
+    <sys:String x:Key="str.Pointers.Copy">Copy</sys:String>
+    <sys:String x:Key="str.Pointers.NotConnected">Not connected — connect to view pointers</sys:String>
+
+    <!-- Hex View -->
+    <sys:String x:Key="str.HexView.Address">Address (0x...)</sys:String>
+    <sys:String x:Key="str.HexView.Size">Size</sys:String>
+    <sys:String x:Key="str.HexView.Read">Read</sys:String>
+    <sys:String x:Key="str.HexView.LiveWatch">Live Watch</sys:String>
+    <sys:String x:Key="str.HexView.Interval">Interval (ms)</sys:String>
+
+    <!-- Errors -->
+    <sys:String x:Key="str.Error.Connection">Failed to connect to pipe server</sys:String>
+    <sys:String x:Key="str.Error.ReadFailed">Memory read failed</sys:String>
+    <sys:String x:Key="str.Error.AlreadyRunning">Another instance of UE5 Dump UI is already running</sys:String>
+
+</ResourceDictionary>
