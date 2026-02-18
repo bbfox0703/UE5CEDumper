@@ -419,6 +419,7 @@ FodyWeavers.xsd
 
 # Build output
 build/
+dist/
 
 # Claude Code
 .claude/
