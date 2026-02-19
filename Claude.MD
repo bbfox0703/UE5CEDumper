@@ -65,7 +65,7 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-19
+> Last updated: 2026-02-19 (DynOff dynamic offset detection added)
 
 ### Component Status
 
@@ -77,15 +77,16 @@ git submodule update --init --recursive
 | OffsetFinder — GNames | `OffsetFinder.cpp` | ⚠️ Partial | 4 AOB patterns fail on TQ2; `.data` pointer-scan fallback added but untested |
 | OffsetFinder — GWorld | `OffsetFinder.cpp` | ✅ Done | 6 patterns, non-critical |
 | OffsetFinder — Version | `OffsetFinder.cpp` | ✅ Working | PE VERSIONINFO fast path + memory string scan fallback |
+| OffsetFinder — DynOff | `OffsetFinder.cpp`, `Constants.h` | ⚠️ Untested | Dynamic FField/FProperty/UStruct offset detection via known struct probing; commit `8c2f983` |
 | ObjectArray | `ObjectArray.cpp/.h` | ✅ Done | FChunkedFixedUObjectArray, ForEach, GetByIndex |
 | FNamePool | `FNamePool.cpp/.h` | ✅ Done | Multi-format header (A/B), chunk index, GetString |
-| UStructWalker | `UStructWalker.cpp/.h` | ✅ Done | FField chain, SuperStruct inheritance, GetFullName |
-| ExportAPI | `ExportAPI.cpp/.h` | ✅ Done | C ABI exports, UE5_AutoStart, WalkClass Begin/Get/End |
-| PipeServer | `PipeServer.cpp/.h` | ✅ Done | Named pipe, JSON dispatch, watch/unwatch |
+| UStructWalker | `UStructWalker.cpp/.h` | ✅ Done | FField chain, SuperStruct inheritance, GetFullName; uses DynOff for all offsets |
+| ExportAPI | `ExportAPI.cpp/.h` | ✅ Done | C ABI exports, UE5_AutoStart, WalkClass Begin/Get/End; calls ValidateAndFixOffsets |
+| PipeServer | `PipeServer.cpp/.h` | ✅ Done | Named pipe, JSON dispatch, watch/unwatch, get_offsets, walk_world, find_instances, get_ce_pointer_info |
 | CE Cheat Table | `scripts/UE5CEDumper.CT` | ✅ Done | injectDLL-only flow (no executeCodeEx), 15s countdown |
 | CEPlugin interface | `CEPlugin.cpp` | ✅ Done | CE plugin Type 5 main menu; g_isCEPlugin flag |
 | DLL auto-start | `dllmain.cpp` | ✅ Done | AutoStartThreadProc, 1s delay, g_isCEPlugin check |
-| Avalonia UI | `ui/` | 🔲 Not started | Pending GNames fix and end-to-end pipe validation |
+| Avalonia UI | `ui/` | 🔲 Not started | Pending DynOff validation on TQ2 and end-to-end pipe validation |
 
 ### What Is Working (Confirmed in Testing)
 
@@ -96,6 +97,10 @@ git submodule update --init --recursive
 - **Build system** — CMake + Ninja + MSVC via `vswhere`, reproducible Release build
 - **CE plugin mode** — `g_isCEPlugin = true` suppresses auto-start when loaded into CE.exe itself
 - **Logging** — `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5Dumper-0.log` created with full diagnostics
+- **Pipe Server** — Named pipe `\\.\pipe\UE5DumpBfx` accepts connections, JSON dispatch working
+- **Live Data Walker** — `walk_class`, `walk_instance`, `walk_world` commands functional (type names correct on TQ2)
+- **Instance Finder** — `find_instances` command returns matching objects by class name
+- **CE XML Export** — `get_ce_pointer_info` returns Cheat Engine-compatible XML pointer records
 
 ### Known Challenges & Failures
 
@@ -138,6 +143,23 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 
 **Fix**: Try offsets `{0x10, 0x00, 0x08, 0x20, 0x40}` in order; added hex dump of first 128 bytes on failure for diagnosis.
 
+#### 5. FField/FProperty Offset Mismatch on TQ2 (UE5.7) — CasePreservingName
+
+**Symptom**: Live Data Walker on TQ2 showed all field names as "rty" (last 3 chars of "Property"), all field offsets as 0x0, and ArrayProperty showing 262216 elements (garbage). Type names were correct (StructProperty, ArrayProperty, etc.).
+
+**Root cause**: TQ2 (UE5.7) uses **CasePreservingName** — FName is 0x10 bytes instead of 0x8. This shifts FField::Flags from 0x30 to 0x38, and ALL FProperty fields after FField::Flags shift by +0x8. The hardcoded offsets in Constants.h (FField::Name=0x28, FProperty::Offset_Internal=0x4C) were reading wrong memory locations.
+
+**Diagnosis clues**: FField::ClassPrivate at +0x08 was correct (type names worked), but FField::Name at +0x28 was reading into the middle of the FName data (the "rty" from "Property" type name leaking through). Offset_Internal at +0x4C read zeros because it was pointing at padding bytes.
+
+**Fix implemented** (commit `8c2f983`):
+1. Added `DynOff` namespace in `Constants.h` with mutable `inline int` offsets (replacing `constexpr` for FField/FProperty/UStruct)
+2. Implemented `ValidateAndFixOffsets()` in `OffsetFinder.cpp` (~370 lines) — probes known structs (Guid with fields A/B/C/D at offsets 0/4/8/12, or Vector with X/Y/Z at 0/4/8) to dynamically discover correct FField::Name, FField::Next, FProperty::Offset_Internal, and UStruct::ChildProperties offsets
+3. Updated `UStructWalker.cpp` to use `DynOff::*` instead of `Constants::OFF_*`
+4. Added `get_offsets` pipe command for runtime offset diagnostics
+5. Called from `UE5_Init()` after FNamePool + ObjectArray initialization
+
+**Status**: Built successfully (0 errors, 0 warnings), **untested on TQ2** — requires next injection test.
+
 ### Lessons Learned
 
 - `executeCodeEx` internally uses `CreateRemoteThread` — games with thread injection protection will block it silently (returns nil, not an error code)
@@ -145,20 +167,25 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - MSVC C2360: variable declarations inside `case` require wrapping `{}` braces
 - AOB patterns for GNames must be more context-specific for newer UE builds (UE5.5+); consider additional patterns or the pointer-scan fallback as primary for UE5.5+
 - Always add memory hex dumps in validators — invaluable for diagnosis when running blind inside a game process
+- **CasePreservingName (UE5.5+/5.7)**: FName grows from 0x8 to 0x10 bytes (adds DisplayIndex), shifting FField::Flags and all subsequent FProperty offsets by +0x8. Never hardcode FField/FProperty offsets — always detect dynamically using known structs (Guid, Vector)
+- **Dumper-7 reference patterns**: `FindFFieldNameOffset()` brute-force probing, `FixupHardcodedOffsets()`, `InitFNameSettings()` for CasePreservingName detection — these are the gold standard for dynamic offset discovery
+- **"rty" diagnostic pattern**: When field names show truncated type names (e.g., "rty" from "Property"), it means Name offset is wrong and reading into adjacent FFieldClass data. Type names being correct while field names are wrong = FField::ClassPrivate offset is OK but FField::Name offset is shifted
 
 ### Recommended Test Games
 
 | Game | UE Version | Notes |
 |------|-----------|-------|
 | EverSpace 2 | UE5.1–5.3 (est.) | Ships with `.pdb` — ideal for validating scanner against known symbols |
-| Titan Quest II | UE5.7 (PE reports) | GNames scan currently fails; needs pointer-scan fallback test |
+| Titan Quest II | UE5.7 (PE reports) | Primary test target for CasePreservingName + dynamic offset detection |
 
 ### Next Steps
 
-1. **Test pointer-scan fallback** on EverSpace 2 (use `.pdb` to verify GNames address matches)
-2. If EverSpace 2 works → retest TQ2 with same build
-3. Once GNames confirmed working → begin Avalonia UI (`Phase 3` in plan)
-4. Consider adding more GNames AOB patterns specific to UE5.5+ codegen patterns
+1. **Test dynamic offset detection** on TQ2 — inject DLL, check log for detected offsets, verify via `get_offsets` pipe command
+2. Verify Live Walker field names are correct (not "rty") and offsets are non-zero
+3. Verify Instance Finder can locate `bp_tq2_character_stats_component_C` via top-down GWorld navigation
+4. **Test pointer-scan fallback for GNames** on EverSpace 2 (use `.pdb` to verify address)
+5. Once both GNames + DynOff confirmed working → begin Avalonia UI (`Phase 3` in plan)
+6. Consider adding more GNames AOB patterns specific to UE5.5+ codegen patterns
 
 -----
 
@@ -517,23 +544,24 @@ namespace UStructWalker {
 
 **重要 UObject / UStruct offsets（UE5，需 OffsetFinder 動態確認）：**
 
-|欄位             |結構         |典型 Offset|備註             |
-|---------------|-----------|---------|---------------|
-|InternalIndex  |UObjectBase|0x0C     |               |
-|NamePrivate    |UObjectBase|0x18     |FName          |
-|ClassPrivate   |UObjectBase|0x10     |UClass*        |
-|OuterPrivate   |UObjectBase|0x20     |UObject*       |
-|SuperStruct    |UStruct    |0x40     |父類             |
-|ChildProperties|UStruct    |0x50     |FField* chain 頭|
-|PropertiesSize |UStruct    |0x58     |               |
-|Next (FField)  |FField     |0x20     |下一個 FField*    |
-|Name (FField)  |FField     |0x28     |FName          |
-|Class (FField) |FField     |0x08     |FFieldClass*   |
-|Offset_Internal|FProperty  |0x4C     |屬性 offset      |
-|ElementSize    |FProperty  |0x38     |大小             |
+|欄位             |結構         |Default Offset|DynOff Variable|備註             |
+|---------------|-----------|---------|---------------|---------------|
+|InternalIndex  |UObjectBase|0x0C     |constexpr (stable)|               |
+|NamePrivate    |UObjectBase|0x18     |constexpr (stable)|FName          |
+|ClassPrivate   |UObjectBase|0x10     |constexpr (stable)|UClass*        |
+|OuterPrivate   |UObjectBase|0x20     |constexpr (stable)|UObject*       |
+|SuperStruct    |UStruct    |0x40     |`DynOff::USTRUCT_SUPER`|父類             |
+|ChildProperties|UStruct    |0x50     |`DynOff::USTRUCT_CHILDPROPS`|FField* chain 頭|
+|Children       |UStruct    |0x48     |`DynOff::USTRUCT_CHILDREN`|UField* chain (functions)|
+|PropertiesSize |UStruct    |0x58     |`DynOff::USTRUCT_PROPSSIZE`|               |
+|Next (FField)  |FField     |0x20     |`DynOff::FFIELD_NEXT`|下一個 FField*    |
+|Name (FField)  |FField     |0x28     |`DynOff::FFIELD_NAME`|FName; shifts +0x8 with CasePreservingName |
+|Class (FField) |FField     |0x08     |`DynOff::FFIELD_CLASS`|FFieldClass*   |
+|Offset_Internal|FProperty  |0x4C     |`DynOff::FPROPERTY_OFFSET`|屬性 offset; shifts +0x8 with CasePreservingName |
+|ElementSize    |FProperty  |0x38     |`DynOff::FPROPERTY_ELEMSIZE`|大小             |
+|PropertyFlags  |FProperty  |0x40     |`DynOff::FPROPERTY_FLAGS`|               |
 
-
-> **注意**：所有 offset 需透過 OffsetFinder 動態驗證，不可 hardcode。
+> **注意**：UObject offsets are `constexpr` (stable across all UE5 versions). All FField/FProperty/UStruct offsets use `DynOff::*` mutable inline ints — detected at runtime by `ValidateAndFixOffsets()` probing known structs (Guid, Vector). CasePreservingName (UE5.5+) shifts FField/FProperty offsets by +0x8.
 
 ### ExportAPI.h — 對外 C ABI
 
@@ -632,6 +660,18 @@ Pipe 名稱：`\\.\pipe\UE5DumpBfx`
 
 // 取消訂閱
 { "id": 11, "cmd": "unwatch", "addr": "0x7FF123456789" }
+
+// 取得動態偵測的 offset 值（診斷用）
+{ "id": 12, "cmd": "get_offsets" }
+
+// 遍歷 GWorld → PersistentLevel → Actors
+{ "id": 13, "cmd": "walk_world" }
+
+// 搜尋特定 class 的所有 instance
+{ "id": 14, "cmd": "find_instances", "class_name": "BP_Player_C", "limit": 100 }
+
+// 取得 CE pointer info（XML 格式，用於 Cheat Engine 匯入）
+{ "id": 15, "cmd": "get_ce_pointer_info", "addr": "0x7FF123456789", "class_addr": "0x7FF..." }
 ```
 
 **Response（DLL → UI）**
@@ -680,6 +720,18 @@ Pipe 名稱：`\\.\pipe\UE5DumpBfx`
 
 // 錯誤回應
 { "id": 5, "ok": false, "error": "Object not found" }
+
+// get_offsets 回應
+{
+  "id": 12, "ok": true,
+  "offsets": {
+    "ustruct_super": 64, "ustruct_children": 72, "ustruct_childprops": 80,
+    "ustruct_propssize": 88, "ffield_class": 8, "ffield_next": 32,
+    "ffield_name": 40, "fproperty_elemsize": 56, "fproperty_flags": 64,
+    "fproperty_offset": 84, "ffieldclass_name": 0,
+    "case_preserving_name": true, "offsets_validated": true
+  }
+}
 
 // Watch 主動推送 Event（無 id）
 { "event": "watch", "addr": "0x7FF...", "bytes": "0000803F", "timestamp": 1234567890 }
@@ -1017,10 +1069,11 @@ public class ObjectTreeViewModel : ReactiveObject
 
 |版本         |主要差異                                   |
 |-----------|---------------------------------------|
-|UE5.0 ~ 5.1|FNamePool 標準格式                         |
+|UE5.0 ~ 5.1|FNamePool 標準格式；FFieldVariant 0x10 (UE5.0–5.1.0), 0x08 (UE5.1.1+) |
 |UE5.2      |`FChunkedFixedUObjectArray` stride 可能不同|
 |UE5.3+     |部分遊戲啟用 Object Pointer Encryption       |
 |UE5.4+     |`FField` 鏈結構穩定，無大改動                    |
+|UE5.5+/5.7 |**CasePreservingName**: FName 0x10 bytes (adds DisplayIndex), shifts FField::Flags +0x8, all FProperty offsets shift +0x8. Must use `DynOff` dynamic detection |
 
 ### FField vs UProperty
 
