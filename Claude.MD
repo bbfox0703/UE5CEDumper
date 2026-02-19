@@ -63,6 +63,105 @@ git submodule update --init --recursive
 
 -----
 
+## Implementation Status & Challenges Log
+
+> Last updated: 2026-02-19
+
+### Component Status
+
+| Component | File(s) | Status | Notes |
+|-----------|---------|--------|-------|
+| Memory module | `Memory.cpp/.h` | ✅ Done | AOBScan (exec sections only), ResolveRIP, ReadSafe (SEH) |
+| Logger | `Logger.cpp/.h` | ✅ Done | File rotation, 5-version, 5MB cap, thread-safe |
+| OffsetFinder — GObjects | `OffsetFinder.cpp` | ✅ Working | 5 AOB patterns + deref variants; validated in TQ2 (UE5.7) |
+| OffsetFinder — GNames | `OffsetFinder.cpp` | ⚠️ Partial | 4 AOB patterns fail on TQ2; `.data` pointer-scan fallback added but untested |
+| OffsetFinder — GWorld | `OffsetFinder.cpp` | ✅ Done | 6 patterns, non-critical |
+| OffsetFinder — Version | `OffsetFinder.cpp` | ✅ Working | PE VERSIONINFO fast path + memory string scan fallback |
+| ObjectArray | `ObjectArray.cpp/.h` | ✅ Done | FChunkedFixedUObjectArray, ForEach, GetByIndex |
+| FNamePool | `FNamePool.cpp/.h` | ✅ Done | Multi-format header (A/B), chunk index, GetString |
+| UStructWalker | `UStructWalker.cpp/.h` | ✅ Done | FField chain, SuperStruct inheritance, GetFullName |
+| ExportAPI | `ExportAPI.cpp/.h` | ✅ Done | C ABI exports, UE5_AutoStart, WalkClass Begin/Get/End |
+| PipeServer | `PipeServer.cpp/.h` | ✅ Done | Named pipe, JSON dispatch, watch/unwatch |
+| CE Cheat Table | `scripts/UE5CEDumper.CT` | ✅ Done | injectDLL-only flow (no executeCodeEx), 15s countdown |
+| CEPlugin interface | `CEPlugin.cpp` | ✅ Done | CE plugin Type 5 main menu; g_isCEPlugin flag |
+| DLL auto-start | `dllmain.cpp` | ✅ Done | AutoStartThreadProc, 1s delay, g_isCEPlugin check |
+| Avalonia UI | `ui/` | 🔲 Not started | Pending GNames fix and end-to-end pipe validation |
+
+### What Is Working (Confirmed in Testing)
+
+- **DLL injection** via `injectDLL()` in CE Lua — confirmed in TQ2
+- **Auto-start thread** — spawned on `DLL_PROCESS_ATTACH`, waits 1s, detects CE plugin vs game process correctly
+- **GObjects scan** — found at `0x7FF71B7A1820` in TQ2 (UE5.7), 483,670 objects, NumElements validation passed
+- **UE version detection** — PE VERSIONINFO returns UE5.7 for TQ2 correctly
+- **Build system** — CMake + Ninja + MSVC via `vswhere`, reproducible Release build
+- **CE plugin mode** — `g_isCEPlugin = true` suppresses auto-start when loaded into CE.exe itself
+- **Logging** — `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5Dumper-0.log` created with full diagnostics
+
+### Known Challenges & Failures
+
+#### 1. GNames AOB Patterns Fail on TQ2 (UE5.7)
+
+All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool data:
+
+| Pattern | Resolved Address | Actual Content | Reason |
+|---------|-----------------|----------------|--------|
+| `48 8D 35` (lea rsi) | `0x7FF71AA1B5B0` | `F76FEExx` values | Obfuscated/encrypted data block |
+| `48 8D 05` (lea rax) | `0x7FF71AA16A84` | `"free bit..."` ASCII | C string constant in .rdata |
+| `4C 8D 05` (lea r8) | `0x7FF71AA17D70` | Self-referential ptr | SRWLOCK / sync primitive |
+| `48 8D 0D` (lea rcx) | `0x7FF718E1C5C8` | `"Working color space..."` | Wide string struct |
+
+**Root cause**: TQ2 (UE5.7) either uses non-standard GNames referencing instructions, or the patterns appear in an unexpected order and the scanner finds the wrong occurrence.
+
+**Fix implemented** (`FindGNamesByPointerScan`): Scan game module `.data` section for any 8-byte-aligned pointer that dereferences to a `"None"` FNameEntry (`00 01 4E 6F 6E 65` or `08 00 4E 6F 6E 65`). The pointer is `FNamePool.Blocks[0]`; try offsets `{0x10, 0x00, 0x08, 0x18, 0x20}` from it to find pool base. **Untested** — requires next test run.
+
+#### 2. CE executeCodeEx Returns nil for All DLL Calls
+
+**Symptom**: Every `executeCodeEx()` call in Lua returned `nil`, even for functions that exist.
+
+**Root cause**: When DLL is loaded as a CE plugin, `getAddress("UE5_Init")` returns the address in CE's own process space. `executeCodeEx` then tries `CreateRemoteThread` in the game process with that CE-process address → immediate crash → nil.
+
+**Fix**: Removed all `executeCodeEx` calls from CT Lua. DLL now auto-starts via `AutoStartThreadProc` on `DLL_PROCESS_ATTACH`. CE Lua only calls `injectDLL()` and then waits.
+
+#### 3. CT DLL_PATH Resolution
+
+**Symptom**: `DLL_PATH` resolved to CE install folder instead of the CT's own folder.
+
+**Root cause**: `File → Open` in CE updates `OpenDialog1.FileName`, not `SaveDialog1.FileName`. The old CT code only checked `SaveDialog1`.
+
+**Fix**: Try `OpenDialog1.FileName` first, fall back to `SaveDialog1.FileName`, then `getCheatEngineDir()`.
+
+#### 4. ValidateGNames False Failure (FRWLock Misread)
+
+**Symptom**: `ValidateGNames` silently returned false even when passed a real FNamePool address, because it only tried offset `+0x00` to find `Blocks[0]`.
+
+**Root cause**: Standard `FNameEntryAllocator` layout: `[+0x00] FRWLock (8B)`, `[+0x08] CurrentBlock`, `[+0x0C] Cursor`, `[+0x10] Blocks[0]`. Reading the FRWLock value as a chunk pointer gave a non-zero but invalid address, causing `ReadSafe` to fail with SEH.
+
+**Fix**: Try offsets `{0x10, 0x00, 0x08, 0x20, 0x40}` in order; added hex dump of first 128 bytes on failure for diagnosis.
+
+### Lessons Learned
+
+- `executeCodeEx` internally uses `CreateRemoteThread` — games with thread injection protection will block it silently (returns nil, not an error code)
+- CE `File → Open` vs `File → Save` update **different** dialog objects (`OpenDialog1` vs `SaveDialog1`)
+- MSVC C2360: variable declarations inside `case` require wrapping `{}` braces
+- AOB patterns for GNames must be more context-specific for newer UE builds (UE5.5+); consider additional patterns or the pointer-scan fallback as primary for UE5.5+
+- Always add memory hex dumps in validators — invaluable for diagnosis when running blind inside a game process
+
+### Recommended Test Games
+
+| Game | UE Version | Notes |
+|------|-----------|-------|
+| EverSpace 2 | UE5.1–5.3 (est.) | Ships with `.pdb` — ideal for validating scanner against known symbols |
+| Titan Quest II | UE5.7 (PE reports) | GNames scan currently fails; needs pointer-scan fallback test |
+
+### Next Steps
+
+1. **Test pointer-scan fallback** on EverSpace 2 (use `.pdb` to verify GNames address matches)
+2. If EverSpace 2 works → retest TQ2 with same build
+3. Once GNames confirmed working → begin Avalonia UI (`Phase 3` in plan)
+4. Consider adding more GNames AOB patterns specific to UE5.5+ codegen patterns
+
+-----
+
 ## 專案目標
 
 開發一個 **C++ DLL + Cheat Engine Lua Bridge** 的 Unreal Engine 5 Dumper。
