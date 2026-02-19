@@ -1,0 +1,48 @@
+// ============================================================
+// version.rc — PE VERSIONINFO resource for UE5Dumper.dll
+// Git commit hash is embedded via BuildInfo.h (CMake-generated)
+// ============================================================
+
+#include <winresrc.h>
+#include "BuildInfo.h"
+
+// Version numbers: 1.0.0.0 (major.minor.patch.build)
+#define VER_MAJOR 1
+#define VER_MINOR 0
+#define VER_PATCH 0
+#define VER_BUILD 0
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION    VER_MAJOR, VER_MINOR, VER_PATCH, VER_BUILD
+    PRODUCTVERSION VER_MAJOR, VER_MINOR, VER_PATCH, VER_BUILD
+    FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+    FILEFLAGS      VS_FF_DEBUG
+#else
+    FILEFLAGS      0x0L
+#endif
+    FILEOS         VOS_NT_WINDOWS32
+    FILETYPE       VFT_DLL
+    FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"  // English US, Unicode
+        BEGIN
+            VALUE "CompanyName",      "UE5CEDumper"
+            VALUE "FileDescription",  "UE5 Object Dumper DLL"
+            VALUE "FileVersion",      BUILD_VERSION_STRING
+            VALUE "InternalName",     "UE5Dumper"
+            VALUE "OriginalFilename", "UE5Dumper.dll"
+            VALUE "ProductName",      "UE5CEDumper"
+            VALUE "ProductVersion",   BUILD_VERSION_STRING
+            VALUE "GitCommit",        BUILD_GIT_HASH
+            VALUE "GitShort",         BUILD_GIT_SHORT
+            VALUE "BuildTimestamp",   BUILD_TIMESTAMP
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200  // English US, Unicode
+    END
+END

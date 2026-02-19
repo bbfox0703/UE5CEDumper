@@ -11,6 +11,7 @@
 #include "ObjectArray.h"
 #include "FNamePool.h"
 #include "UStructWalker.h"
+#include "BuildInfo.h"
 
 #include <json.hpp>
 #include <chrono>
@@ -176,6 +177,10 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             extern uint32_t g_cachedUEVersion;
             json data;
             data["ue_version"] = g_cachedUEVersion;
+            data["build_git"]  = BUILD_GIT_SHORT;
+            data["build_hash"] = BUILD_GIT_HASH;
+            data["build_time"] = BUILD_TIMESTAMP;
+            data["build_info"] = BUILD_VERSION_STRING;
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
@@ -614,6 +619,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
         // === get_offsets: Return all detected FField/FProperty/UStruct offsets ===
         if (cmd == PipeProtocol::CMD_GET_OFFSETS) {
             json data;
+            data["build_info"]         = BUILD_VERSION_STRING;
             data["validated"]          = DynOff::bOffsetsValidated;
             data["case_preserving"]    = DynOff::bCasePreservingName;
             data["ustruct_super"]      = DynOff::USTRUCT_SUPER;
