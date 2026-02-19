@@ -81,43 +81,55 @@ uintptr_t FindGObjects() {
     return 0;
 }
 
-// Validate GNames by checking that known FName indices resolve to valid strings
+// Validate GNames by checking that FName[0] == "None".
+//
+// The AOB pattern resolves to the FNamePool object address. The Blocks[]
+// chunk pointer array lives INSIDE FNamePool at a variable offset:
+//
+//   Standard UE5 layout (FNameEntryAllocator):
+//     [+0x00] FRWLock (SRWLOCK, 8 bytes)   ← reading this as chunk0 gives bad pointer
+//     [+0x08] CurrentBlock  (uint32)
+//     [+0x0C] CurrentByteCursor (uint32)
+//     [+0x10] Blocks[0]  ← first actual chunk pointer
+//
+// We try multiple offsets so the validator works across engine variants.
 static bool ValidateGNames(uintptr_t addr) {
     if (!addr) return false;
 
-    // Check that chunk[0] pointer is valid
-    uintptr_t chunk0 = 0;
-    if (!Mem::ReadSafe(addr, chunk0) || chunk0 == 0) {
-        LOG_WARN("ValidateGNames: chunk[0] is null at 0x%llX",
-                 static_cast<unsigned long long>(addr));
-        return false;
-    }
+    // Offsets to try for the start of the Blocks[] array within FNamePool.
+    // 0x10 is the standard UE5 offset; 0x00 covers builds where the AOB
+    // resolves directly to the chunk array rather than the pool object.
+    static const int kOffsets[] = { 0x10, 0x00, 0x08, 0x20, 0x40 };
 
-    // FName index 0 should be "None"
-    // Entry at chunk0 + 0 * 2 = chunk0
-    // FNameEntry: uint16 header, then chars
-    uint16_t header = 0;
-    if (!Mem::ReadSafe(chunk0, header)) return false;
+    for (int off : kOffsets) {
+        uintptr_t chunk0 = 0;
+        if (!Mem::ReadSafe(addr + off, chunk0) || chunk0 == 0) continue;
 
-    int len = header >> 6;
-    if (len == 4) {
+        // chunk0 must be a readable address
+        uint16_t header = 0;
+        if (!Mem::ReadSafe(chunk0, header)) continue;
+
+        // FName[0] should be "None" (length 4).
+        // Try both header formats:
+        //   Format A (older): len = header >> 6
+        //   Format B (newer): len = (header >> 1) & 0x7FF
         char name[5] = {};
-        if (Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
-            LOG_INFO("ValidateGNames: Valid at 0x%llX (verified 'None')",
-                     static_cast<unsigned long long>(addr));
+        int lenA = header >> 6;
+        if (lenA == 4 && Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
+            LOG_INFO("ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtA, 'None')",
+                     static_cast<unsigned long long>(addr), off);
             return true;
         }
-    }
-
-    // Try alternate header format: len in bits 1-15, wide flag at bit 0
-    len = (header >> 1) & 0x7FF;
-    if (len == 4) {
-        char name[5] = {};
-        if (Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
-            LOG_INFO("ValidateGNames: Valid at 0x%llX (alt header, verified 'None')",
-                     static_cast<unsigned long long>(addr));
+        int lenB = (header >> 1) & 0x7FF;
+        memset(name, 0, sizeof(name));
+        if (lenB == 4 && Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
+            LOG_INFO("ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtB, 'None')",
+                     static_cast<unsigned long long>(addr), off);
             return true;
         }
+
+        LOG_DEBUG("ValidateGNames: offset +0x%02X chunk0=0x%llX header=0x%04X lenA=%d lenB=%d name='%.4s'",
+                  off, static_cast<unsigned long long>(chunk0), header, lenA, lenB, name);
     }
 
     LOG_WARN("ValidateGNames: Validation failed at 0x%llX", static_cast<unsigned long long>(addr));
