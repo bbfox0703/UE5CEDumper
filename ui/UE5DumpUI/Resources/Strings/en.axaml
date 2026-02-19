@@ -17,6 +17,8 @@
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>
     <sys:String x:Key="str.Tab.Pointers">Global Pointers</sys:String>
     <sys:String x:Key="str.Tab.HexView">Hex View</sys:String>
+    <sys:String x:Key="str.Tab.LiveWalker">Live Walker</sys:String>
+    <sys:String x:Key="str.Tab.InstanceFinder">Instance Finder</sys:String>
 
     <!-- Object Tree -->
     <sys:String x:Key="str.ObjectTree.Title">Object Tree</sys:String>
@@ -34,9 +36,25 @@
     <sys:String x:Key="str.ClassStruct.PropsSize">Properties Size</sys:String>
     <sys:String x:Key="str.ClassStruct.NoClass">Select an object to view its class structure</sys:String>
 
+    <!-- Live Walker -->
+    <sys:String x:Key="str.LiveWalker.StartWorld">Start from GWorld</sys:String>
+    <sys:String x:Key="str.LiveWalker.Back">Back</sys:String>
+    <sys:String x:Key="str.LiveWalker.Refresh">Refresh</sys:String>
+    <sys:String x:Key="str.LiveWalker.AddressHint">Address (0x...)</sys:String>
+    <sys:String x:Key="str.LiveWalker.Go">Go</sys:String>
+    <sys:String x:Key="str.LiveWalker.ExportCE">Export CE XML</sys:String>
+    <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
+
+    <!-- Instance Finder -->
+    <sys:String x:Key="str.InstanceFinder.ClassNameHint">Class name (e.g. PlayerController)</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Search">Search</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Address">Address</sys:String>
+    <sys:String x:Key="str.InstanceFinder.OpenInWalker">Open in Live Walker</sys:String>
+
     <!-- Pointer Panel -->
     <sys:String x:Key="str.Pointers.GObjects">GObjects Address</sys:String>
     <sys:String x:Key="str.Pointers.GNames">GNames Address</sys:String>
+    <sys:String x:Key="str.Pointers.GWorld">GWorld Address</sys:String>
     <sys:String x:Key="str.Pointers.UEVersion">UE Version</sys:String>
     <sys:String x:Key="str.Pointers.TotalObjects">Total Objects</sys:String>
     <sys:String x:Key="str.Pointers.Copy">Copy</sys:String>

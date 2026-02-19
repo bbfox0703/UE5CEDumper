@@ -13,6 +13,7 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     [ObservableProperty] private string _gObjectsAddress = "";
     [ObservableProperty] private string _gNamesAddress = "";
+    [ObservableProperty] private string _gWorldAddress = "";
     [ObservableProperty] private int _ueVersion;
     [ObservableProperty] private int _totalObjects;
     [ObservableProperty] private bool _hasData;
@@ -22,10 +23,11 @@ public partial class PointerPanelViewModel : ViewModelBase
         _platform = platform;
     }
 
-    public void Update(string gobjects, string gnames, int ueVersion, int totalObjects)
+    public void Update(string gobjects, string gnames, string gworld, int ueVersion, int totalObjects)
     {
         GObjectsAddress = gobjects;
         GNamesAddress = gnames;
+        GWorldAddress = gworld;
         UeVersion = ueVersion;
         TotalObjects = totalObjects;
         HasData = true;
@@ -43,5 +45,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         if (!string.IsNullOrEmpty(GNamesAddress))
             await _platform.CopyToClipboardAsync(GNamesAddress);
+    }
+
+    [RelayCommand]
+    private async Task CopyGWorldAsync()
+    {
+        if (!string.IsNullOrEmpty(GWorldAddress))
+            await _platform.CopyToClipboardAsync(GWorldAddress);
     }
 }

@@ -191,4 +191,53 @@ std::vector<SearchResult> SearchByName(const std::string& query, int maxResults)
     return results;
 }
 
+std::vector<SearchResult> FindInstancesByClass(const std::string& className, int maxResults) {
+    std::vector<SearchResult> results;
+
+    // Convert query to lowercase for case-insensitive comparison
+    std::string lowerQuery = className;
+    for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    int32_t count = GetCount();
+    for (int32_t i = 0; i < count && static_cast<int>(results.size()) < maxResults; ++i) {
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+
+        // Read ClassPrivate
+        uintptr_t cls = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        // Read class FName
+        uint32_t clsNameIdx = 0;
+        if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+
+        std::string clsName = FNamePool::GetString(clsNameIdx);
+        if (clsName.empty()) continue;
+
+        // Case-insensitive partial match on class name
+        std::string lowerClsName = clsName;
+        for (auto& c : lowerClsName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        if (lowerClsName.find(lowerQuery) == std::string::npos) continue;
+
+        SearchResult sr;
+        sr.addr = obj;
+        sr.index = i;
+
+        // Read object name
+        uint32_t nameIdx = 0;
+        if (Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx)) {
+            sr.name = FNamePool::GetString(nameIdx);
+        }
+        sr.className = clsName;
+
+        // Read outer
+        Mem::ReadSafe(obj + Constants::OFF_UOBJECT_OUTER, sr.outer);
+
+        results.push_back(std::move(sr));
+    }
+
+    return results;
+}
+
 } // namespace ObjectArray

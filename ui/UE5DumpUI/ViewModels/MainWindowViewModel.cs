@@ -24,6 +24,8 @@ public partial class MainWindowViewModel : ViewModelBase
     public ClassStructViewModel ClassStruct { get; }
     public PointerPanelViewModel Pointers { get; }
     public HexViewViewModel HexView { get; }
+    public LiveWalkerViewModel LiveWalker { get; }
+    public InstanceFinderViewModel InstanceFinder { get; }
 
     public string[] AvailableLanguages { get; } = ["en", "zh-TW", "ja"];
 
@@ -43,6 +45,8 @@ public partial class MainWindowViewModel : ViewModelBase
         ClassStruct = new ClassStructViewModel(dump, log);
         Pointers = new PointerPanelViewModel(platform);
         HexView = new HexViewViewModel(dump, pipeClient, log);
+        LiveWalker = new LiveWalkerViewModel(dump, log);
+        InstanceFinder = new InstanceFinderViewModel(dump, log);
 
         // Wire cross-VM communication
         ObjectTree.SelectionChanged += async (node) =>
@@ -52,6 +56,12 @@ public partial class MainWindowViewModel : ViewModelBase
             {
                 HexView.SetAddress(node.Address);
             }
+        };
+
+        // Wire InstanceFinder -> LiveWalker navigation
+        InstanceFinder.NavigateToLiveWalker += async (addr) =>
+        {
+            await LiveWalker.NavigateToAddressCommand.ExecuteAsync(addr);
         };
 
         _pipeClient.ConnectionStateChanged += (connected) =>
@@ -79,6 +89,7 @@ public partial class MainWindowViewModel : ViewModelBase
             Pointers.Update(
                 state.GObjectsAddr,
                 state.GNamesAddr,
+                state.GWorldAddr,
                 state.UEVersion,
                 state.ObjectCount);
 

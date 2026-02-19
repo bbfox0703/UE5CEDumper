@@ -39,6 +39,7 @@ public sealed class DumpService : IDumpService
             UEVersion = ueVersion,
             GObjectsAddr = ptrs["gobjects"]?.GetValue<string>() ?? "",
             GNamesAddr = ptrs["gnames"]?.GetValue<string>() ?? "",
+            GWorldAddr = ptrs["gworld"]?.GetValue<string>() ?? "",
             ObjectCount = ptrs["object_count"]?.GetValue<int>() ?? 0,
         };
     }
@@ -52,6 +53,7 @@ public sealed class DumpService : IDumpService
         {
             GObjectsAddr = res["gobjects"]?.GetValue<string>() ?? "",
             GNamesAddr = res["gnames"]?.GetValue<string>() ?? "",
+            GWorldAddr = res["gworld"]?.GetValue<string>() ?? "",
             ObjectCount = res["object_count"]?.GetValue<int>() ?? 0,
         };
     }
@@ -239,6 +241,162 @@ public sealed class DumpService : IDumpService
         var req = new JsonObject { ["cmd"] = "unwatch", ["addr"] = addr };
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
+    }
+
+    // --- Live Data Walker ---
+
+    public async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, CancellationToken ct = default)
+    {
+        var req = new JsonObject { ["cmd"] = "walk_instance", ["addr"] = addr };
+        if (!string.IsNullOrEmpty(classAddr)) req["class_addr"] = classAddr;
+
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var result = new InstanceWalkResult
+        {
+            Address = res["addr"]?.GetValue<string>() ?? "",
+            Name = res["name"]?.GetValue<string>() ?? "",
+            ClassName = res["class"]?.GetValue<string>() ?? "",
+            ClassAddr = res["class_addr"]?.GetValue<string>() ?? "",
+        };
+
+        if (res["fields"] is JsonArray fields)
+        {
+            foreach (var f in fields)
+            {
+                if (f is not JsonObject fo) continue;
+                result.Fields.Add(new LiveFieldValue
+                {
+                    Name = fo["name"]?.GetValue<string>() ?? "",
+                    TypeName = fo["type"]?.GetValue<string>() ?? "",
+                    Offset = fo["offset"]?.GetValue<int>() ?? 0,
+                    Size = fo["size"]?.GetValue<int>() ?? 0,
+                    HexValue = fo["hex"]?.GetValue<string>() ?? "",
+                    TypedValue = fo["value"]?.GetValue<string>() ?? "",
+                    PtrAddress = fo["ptr"]?.GetValue<string>() ?? "",
+                    PtrName = fo["ptr_name"]?.GetValue<string>() ?? "",
+                    PtrClassName = fo["ptr_class"]?.GetValue<string>() ?? "",
+                    ArrayCount = fo["count"]?.GetValue<int>() ?? -1,
+                });
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, CancellationToken ct = default)
+    {
+        var req = new JsonObject { ["cmd"] = "walk_world", ["limit"] = actorLimit };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var result = new WorldWalkResult
+        {
+            WorldAddr = res["world_addr"]?.GetValue<string>() ?? "",
+            WorldName = res["world_name"]?.GetValue<string>() ?? "",
+            LevelAddr = res["level_addr"]?.GetValue<string>() ?? "",
+            LevelName = res["level_name"]?.GetValue<string>() ?? "",
+            ActorCount = res["actor_count"]?.GetValue<int>() ?? 0,
+        };
+
+        if (res["actors"] is JsonArray actors)
+        {
+            foreach (var a in actors)
+            {
+                if (a is not JsonObject ao) continue;
+                var actor = new ActorInfo
+                {
+                    Address = ao["addr"]?.GetValue<string>() ?? "",
+                    Name = ao["name"]?.GetValue<string>() ?? "",
+                    ClassName = ao["class"]?.GetValue<string>() ?? "",
+                    Index = ao["index"]?.GetValue<int>() ?? -1,
+                };
+
+                if (ao["components"] is JsonArray comps)
+                {
+                    foreach (var c in comps)
+                    {
+                        if (c is not JsonObject co) continue;
+                        actor.Components.Add(new ComponentInfo
+                        {
+                            Address = co["addr"]?.GetValue<string>() ?? "",
+                            Name = co["name"]?.GetValue<string>() ?? "",
+                            ClassName = co["class"]?.GetValue<string>() ?? "",
+                        });
+                    }
+                }
+
+                result.Actors.Add(actor);
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<List<InstanceResult>> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "find_instances",
+            ["class_name"] = className,
+            ["limit"] = limit
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var results = new List<InstanceResult>();
+        if (res["instances"] is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                if (item is not JsonObject obj) continue;
+                results.Add(new InstanceResult
+                {
+                    Address = obj["addr"]?.GetValue<string>() ?? "",
+                    Index = obj["index"]?.GetValue<int>() ?? -1,
+                    Name = obj["name"]?.GetValue<string>() ?? "",
+                    ClassName = obj["class"]?.GetValue<string>() ?? "",
+                    OuterAddr = obj["outer"]?.GetValue<string>() ?? "",
+                });
+            }
+        }
+
+        return results;
+    }
+
+    public async Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "get_ce_pointer_info",
+            ["addr"] = addr,
+            ["field_offset"] = fieldOffset
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var offsets = new List<int>();
+        if (res["ce_offsets"] is JsonArray ceArr)
+        {
+            foreach (var o in ceArr)
+            {
+                offsets.Add(o?.GetValue<int>() ?? 0);
+            }
+        }
+
+        return new CePointerInfo
+        {
+            Module = res["module"]?.GetValue<string>() ?? "",
+            ModuleBase = res["module_base"]?.GetValue<string>() ?? "",
+            GObjectsRva = res["gobjects_rva"]?.GetValue<string>() ?? "",
+            InternalIndex = res["internal_index"]?.GetValue<int>() ?? 0,
+            ChunkIndex = res["chunk_index"]?.GetValue<int>() ?? 0,
+            WithinChunk = res["within_chunk"]?.GetValue<int>() ?? 0,
+            FieldOffset = fieldOffset,
+            CeOffsets = offsets.ToArray(),
+            CeBase = res["ce_base"]?.GetValue<string>() ?? "",
+        };
     }
 
     private static void CheckResponse(JsonObject res)
