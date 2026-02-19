@@ -4,6 +4,7 @@
 
 #include <Windows.h>
 #include "Logger.h"
+#include "BuildInfo.h"
 
 // Global DLL module handle — used by CEPlugin.cpp to resolve the DLL's
 // own file path when injecting into the game process.
@@ -58,8 +59,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             // host (ce.exe) from game process injection in the log file.
             char procName[MAX_PATH] = {};
             GetModuleFileNameA(nullptr, procName, MAX_PATH);
-            LOG_INFO("UE5Dumper DLL loaded | process: %s [PID=%lu]",
-                     procName, GetCurrentProcessId());
+            LOG_INFO("UE5Dumper DLL loaded | build: %s | process: %s [PID=%lu]",
+                     BUILD_VERSION_STRING, procName, GetCurrentProcessId());
         }
         // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
         // is set true by CEPlugin_InitializePlugin within 1 second.

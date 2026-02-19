@@ -1,5 +1,47 @@
 cmake_minimum_required(VERSION 3.25)
 
+# ============================================================
+# Git commit hash extraction — embedded into DLL at build time
+# ============================================================
+execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_SHORT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+execute_process(
+    COMMAND git diff --quiet HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RESULT_VARIABLE GIT_DIRTY_RESULT
+)
+if(GIT_DIRTY_RESULT EQUAL 0)
+    set(GIT_IS_DIRTY 0)
+else()
+    set(GIT_IS_DIRTY 1)
+    string(APPEND GIT_COMMIT_SHORT "-dirty")
+endif()
+
+# Build timestamp (ISO 8601)
+string(TIMESTAMP BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%S" UTC)
+
+message(STATUS "Git: ${GIT_COMMIT_SHORT} (${GIT_COMMIT_HASH})")
+message(STATUS "Build: ${CMAKE_BUILD_TYPE} @ ${BUILD_TIMESTAMP}")
+
+# Generate BuildInfo.h from template
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/BuildInfo.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/BuildInfo.h
+    @ONLY
+)
+
 add_library(UE5Dumper SHARED
     src/dllmain.cpp
     src/CEPlugin.cpp
@@ -11,10 +53,12 @@ add_library(UE5Dumper SHARED
     src/UStructWalker.cpp
     src/ExportAPI.cpp
     src/PipeServer.cpp
+    src/version.rc
 )
 
 target_include_directories(UE5Dumper PRIVATE
     src
+    ${CMAKE_CURRENT_BINARY_DIR}/generated   # BuildInfo.h
     ${CMAKE_SOURCE_DIR}/vendor/nlohmann
 )
 
