@@ -125,14 +125,26 @@ ue5_shutdown()
 -- ============================================================
 
 -- Auto-detect DLL from the same folder as this CT file.
--- extractFilePath returns "" if the CT has no directory component (e.g. unsaved
--- or opened from CE's recent list with a bare filename), so fall back to the
--- CE installation directory in that case.
-local _ctDir = extractFilePath(getMainForm().SaveDialog1.FileName or "")
+-- CE's File>Open updates OpenDialog1.FileName; File>Save updates SaveDialog1.FileName.
+-- Try both, then fall back to CE install dir.
+local _savePath = getMainForm().SaveDialog1.FileName or ""
+local _openPath = ""
+pcall(function() _openPath = getMainForm().OpenDialog1.FileName or "" end)
+
+-- Pick whichever dialog has a directory component
+local _ctDir = extractFilePath(_openPath)
+if _ctDir == nil or _ctDir == "" then
+    _ctDir = extractFilePath(_savePath)
+end
 if _ctDir == nil or _ctDir == "" then
     _ctDir = getCheatEngineDir() or ""
 end
 DLL_PATH = _ctDir .. "UE5Dumper.dll"
+
+-- Diagnostic: show what paths CE reported (helps catch wrong-folder loads)
+print(string.format("[UE5Dump] OpenDialog1.FileName = '%s'", _openPath))
+print(string.format("[UE5Dump] SaveDialog1.FileName = '%s'", _savePath))
+print(string.format("[UE5Dump] Resolved CT dir      = '%s'", _ctDir))
 
 -- ============================================================
 -- Logging helpers
