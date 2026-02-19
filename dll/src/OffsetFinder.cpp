@@ -81,64 +81,209 @@ uintptr_t FindGObjects() {
     return 0;
 }
 
-// Validate GNames by checking that known FName indices resolve to valid strings
+// Validate GNames by checking that FName[0] == "None".
+//
+// The AOB pattern resolves to the FNamePool object address. The Blocks[]
+// chunk pointer array lives INSIDE FNamePool at a variable offset:
+//
+//   Standard UE5 layout (FNameEntryAllocator):
+//     [+0x00] FRWLock (SRWLOCK, 8 bytes)   ← reading this as chunk0 gives bad pointer
+//     [+0x08] CurrentBlock  (uint32)
+//     [+0x0C] CurrentByteCursor (uint32)
+//     [+0x10] Blocks[0]  ← first actual chunk pointer
+//
+// We try multiple offsets so the validator works across engine variants.
 static bool ValidateGNames(uintptr_t addr) {
     if (!addr) return false;
 
-    // Check that chunk[0] pointer is valid
-    uintptr_t chunk0 = 0;
-    if (!Mem::ReadSafe(addr, chunk0) || chunk0 == 0) {
-        LOG_WARN("ValidateGNames: chunk[0] is null at 0x%llX",
-                 static_cast<unsigned long long>(addr));
-        return false;
-    }
+    // Offsets to try for the start of the Blocks[] array within FNamePool.
+    // 0x10 is the standard UE5 offset; 0x00 covers builds where the AOB
+    // resolves directly to the chunk array rather than the pool object.
+    static const int kOffsets[] = { 0x10, 0x00, 0x08, 0x20, 0x40 };
 
-    // FName index 0 should be "None"
-    // Entry at chunk0 + 0 * 2 = chunk0
-    // FNameEntry: uint16 header, then chars
-    uint16_t header = 0;
-    if (!Mem::ReadSafe(chunk0, header)) return false;
+    for (int off : kOffsets) {
+        uintptr_t chunk0 = 0;
+        if (!Mem::ReadSafe(addr + off, chunk0) || chunk0 == 0) continue;
 
-    int len = header >> 6;
-    if (len == 4) {
+        // chunk0 must be a readable address
+        uint16_t header = 0;
+        if (!Mem::ReadSafe(chunk0, header)) continue;
+
+        // FName[0] should be "None" (length 4).
+        // Try both header formats:
+        //   Format A (older): len = header >> 6
+        //   Format B (newer): len = (header >> 1) & 0x7FF
         char name[5] = {};
-        if (Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
-            LOG_INFO("ValidateGNames: Valid at 0x%llX (verified 'None')",
-                     static_cast<unsigned long long>(addr));
+        int lenA = header >> 6;
+        if (lenA == 4 && Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
+            LOG_INFO("ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtA, 'None')",
+                     static_cast<unsigned long long>(addr), off);
             return true;
         }
-    }
-
-    // Try alternate header format: len in bits 1-15, wide flag at bit 0
-    len = (header >> 1) & 0x7FF;
-    if (len == 4) {
-        char name[5] = {};
-        if (Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
-            LOG_INFO("ValidateGNames: Valid at 0x%llX (alt header, verified 'None')",
-                     static_cast<unsigned long long>(addr));
+        int lenB = (header >> 1) & 0x7FF;
+        memset(name, 0, sizeof(name));
+        if (lenB == 4 && Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
+            LOG_INFO("ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtB, 'None')",
+                     static_cast<unsigned long long>(addr), off);
             return true;
         }
+
+        LOG_DEBUG("ValidateGNames: offset +0x%02X chunk0=0x%llX header=0x%04X lenA=%d lenB=%d name='%.4s'",
+                  off, static_cast<unsigned long long>(chunk0), header, lenA, lenB, name);
     }
 
+    // Dump the first 128 bytes so we can diagnose the layout manually
+    {
+        char hexbuf[256];
+        int pos = 0;
+        for (int i = 0; i < 128 && pos < 200; i += 8) {
+            uintptr_t v = 0;
+            if (Mem::ReadSafe(addr + i, v))
+                pos += snprintf(hexbuf + pos, sizeof(hexbuf) - pos,
+                                " +%02X:%016llX", i, (unsigned long long)v);
+            else
+                pos += snprintf(hexbuf + pos, sizeof(hexbuf) - pos, " +%02X:[??]", i);
+        }
+        LOG_DEBUG("ValidateGNames: dump@0x%llX:%s",
+                  (unsigned long long)addr, hexbuf);
+    }
     LOG_WARN("ValidateGNames: Validation failed at 0x%llX", static_cast<unsigned long long>(addr));
     return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FindGNamesByPointerScan — fallback when all AOB patterns fail
+//
+// Strategy:
+//   The FNamePool object lives in the game's .data / .bss section and contains
+//   an internal Blocks[] array (at a variable offset, typically +0x10).
+//   Blocks[0] is a pointer to a heap-allocated chunk whose very first bytes
+//   are the "None" FNameEntry (the #0 name in FNamePool).
+//
+//   By scanning the game module's writable, non-exec sections for any 8-byte-
+//   aligned pointer that dereferences to a "None" FNameEntry, we can locate
+//   Blocks[0] and work backwards to the FNamePool base address.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Return true if the memory at `addr` starts with a "None" FNameEntry.
+// Supports both header formats used across UE5 versions:
+//   Format A (older): len = header >> 6        → len==4 ⇒ header=0x0100
+//   Format B (newer): len = (header>>1)&0x7FF  → len==4 ⇒ header=0x0008/0x0009
+static bool LooksLikeNoneEntry(uintptr_t addr) {
+    uint8_t buf[6] = {};
+    if (!Mem::ReadBytesSafe(addr, buf, 6)) return false;
+    if (buf[2] != 'N' || buf[3] != 'o' || buf[4] != 'n' || buf[5] != 'e') return false;
+
+    // Format A: header = 0x0100
+    if (buf[0] == 0x00 && buf[1] == 0x01) return true;
+    // Format B: header = 0x0008 or 0x0009 (IsWide flag in bit 0)
+    if ((buf[0] == 0x08 || buf[0] == 0x09) && buf[1] == 0x00) return true;
+
+    return false;
+}
+
+static uintptr_t FindGNamesByPointerScan() {
+    LOG_INFO("FindGNamesByPointerScan: Scanning .data for pointer-to-'None' FNameEntry...");
+
+    uintptr_t base = Mem::GetModuleBase(nullptr);
+    if (!base) return 0;
+
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
+        base + static_cast<DWORD>(dos->e_lfanew));
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
+
+    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        // Target: writable, non-executable sections (.data / .bss).
+        // FNamePool is a static global — its Blocks[] array lives here.
+        constexpr DWORD kWrite = IMAGE_SCN_MEM_WRITE;
+        constexpr DWORD kExec  = IMAGE_SCN_MEM_EXECUTE;
+        if (!(section->Characteristics & kWrite)) continue;
+        if (  section->Characteristics & kExec ) continue;
+        if (!section->Misc.VirtualSize || !section->VirtualAddress) continue;
+
+        uintptr_t secBase = base + section->VirtualAddress;
+        size_t    secSize = section->Misc.VirtualSize;
+
+        char secName[9] = {};
+        memcpy(secName, section->Name, 8);
+        LOG_DEBUG("FindGNamesByPointerScan: Scanning section [%s] at 0x%llX (%zu bytes)",
+                  secName, (unsigned long long)secBase, secSize);
+
+        // Walk every 8-byte-aligned slot and treat it as a potential pointer.
+        for (size_t off = 0; off + 8 <= secSize; off += 8) {
+            uintptr_t ptr = 0;
+            if (!Mem::ReadSafe(secBase + off, ptr)) continue;
+
+            // Plausible user-space 64-bit address (exclude null, low, kernel)
+            if (ptr < 0x10000 || ptr > 0x00007FFFFFFFFFFF) continue;
+
+            // Skip if ptr lives inside the game module itself (not a heap chunk)
+            size_t modSize = Mem::GetModuleSize(nullptr);
+            if (ptr >= base && ptr < base + modSize) continue;
+
+            // Check if ptr dereferences to a "None" FNameEntry
+            if (!LooksLikeNoneEntry(ptr)) continue;
+
+            // Found: ptr = chunk0 = FNamePool.Blocks[0]
+            // pAddr  = secBase + off  = &FNamePool.Blocks[0] (in .data)
+            // FNamePool base = pAddr − (offset of Blocks[0] within FNamePool)
+            uintptr_t pAddr = secBase + off;
+
+            LOG_INFO("FindGNamesByPointerScan: chunk0=0x%llX @ 0x%llX — trying pool offsets...",
+                     (unsigned long long)ptr, (unsigned long long)pAddr);
+
+            // Try common offsets of Blocks[0] within FNamePool:
+            //   0x10 = standard UE5 (FRWLock[8] + CurrentBlock[4] + Cursor[4])
+            //   0x00, 0x08, 0x18, 0x20 = observed variants
+            for (int blkOff : { 0x10, 0x00, 0x08, 0x18, 0x20 }) {
+                if ((size_t)blkOff > pAddr) continue; // underflow guard
+                uintptr_t pool = pAddr - static_cast<uintptr_t>(blkOff);
+                if (ValidateGNames(pool)) {
+                    LOG_INFO("FindGNamesByPointerScan: Valid pool at 0x%llX (Blocks[0]@+0x%02X)",
+                             (unsigned long long)pool, blkOff);
+                    return pool;
+                }
+            }
+        }
+    }
+
+    LOG_WARN("FindGNamesByPointerScan: No valid FNamePool found in .data");
+    return 0;
 }
 
 uintptr_t FindGNames() {
     LOG_INFO("FindGNames: Scanning for GNames (FNamePool)...");
 
-    // LEA instructions are RIP-relative (opcodeLen=3, totalLen=7) and yield
-    // the address directly (no dereference needed for the pool itself).
-    const char* candidates[] = {
-        Constants::AOB_GNAMES_V1,  // lea rsi,[rip+X]; jmp
-        Constants::AOB_GNAMES_V2,  // lea rcx,[rip+X]; call
-        Constants::AOB_GNAMES_V3,  // lea rax,[rip+X]; jmp
-        Constants::AOB_GNAMES_V4,  // lea r8,[rip+X];  jmp (REX.R)
+    // Try each pattern both with and without a pointer dereference:
+    //   deref=false: the LEA resolves directly to the FNamePool object
+    //   deref=true:  the LEA resolves to a FNamePool* pointer we must deref
+    // (Which variant applies depends on how the compiler emitted the reference.)
+    struct { const char* pattern; bool deref; } candidates[] = {
+        { Constants::AOB_GNAMES_V1, false },  // lea rsi; direct
+        { Constants::AOB_GNAMES_V1, true  },  // lea rsi; deref pointer
+        { Constants::AOB_GNAMES_V3, false },  // lea rax; direct
+        { Constants::AOB_GNAMES_V3, true  },  // lea rax; deref pointer
+        { Constants::AOB_GNAMES_V4, false },  // lea r8;  direct
+        { Constants::AOB_GNAMES_V4, true  },  // lea r8;  deref pointer
+        { Constants::AOB_GNAMES_V2, false },  // lea rcx; call; direct
+        { Constants::AOB_GNAMES_V2, true  },  // lea rcx; call; deref pointer
     };
 
-    for (auto* pat : candidates) {
-        uintptr_t result = TryPatternRIP(pat, 3, 7, false);
+    for (auto& c : candidates) {
+        uintptr_t result = TryPatternRIP(c.pattern, 3, 7, c.deref);
         if (result && ValidateGNames(result)) return result;
+    }
+
+    // All AOB patterns failed — fall back to data-pointer scan.
+    LOG_WARN("FindGNames: All patterns failed, trying pointer scan fallback...");
+    {
+        uintptr_t result = FindGNamesByPointerScan();
+        if (result) return result;
     }
 
     LOG_ERROR("FindGNames: All patterns failed");

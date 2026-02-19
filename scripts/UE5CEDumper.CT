@@ -15,7 +15,7 @@
       <ID>1</ID>
       <Description>"Inject DLL + Start Pipe Server"</Description>
       <VariableType>Auto Assembler Script</VariableType>
-      <AssemblerScript Async="1">[ENABLE]
+      <AssemblerScript>[ENABLE]
 {$lua}
 if syntaxcheck then return end
 
@@ -124,21 +124,38 @@ ue5_shutdown()
 -- Auto-runs when this CT is opened in Cheat Engine.
 -- ============================================================
 
--- Auto-detect DLL from the same folder as this CT file
-local _ctPath = getMainForm().SaveDialog1.FileName
-local _ctDir  = (_ctPath ~= "") and extractFilePath(_ctPath) or getCheatEngineDir()
+-- Auto-detect DLL from the same folder as this CT file.
+-- CE's File>Open updates OpenDialog1.FileName; File>Save updates SaveDialog1.FileName.
+-- Try both, then fall back to CE install dir.
+local _savePath = getMainForm().SaveDialog1.FileName or ""
+local _openPath = ""
+pcall(function() _openPath = getMainForm().OpenDialog1.FileName or "" end)
+
+-- Pick whichever dialog has a directory component
+local _ctDir = extractFilePath(_openPath)
+if _ctDir == nil or _ctDir == "" then
+    _ctDir = extractFilePath(_savePath)
+end
+if _ctDir == nil or _ctDir == "" then
+    _ctDir = getCheatEngineDir() or ""
+end
 DLL_PATH = _ctDir .. "UE5Dumper.dll"
+
+-- Diagnostic: show what paths CE reported (helps catch wrong-folder loads)
+print(string.format("[UE5Dump] OpenDialog1.FileName = '%s'", _openPath))
+print(string.format("[UE5Dump] SaveDialog1.FileName = '%s'", _savePath))
+print(string.format("[UE5Dump] Resolved CT dir      = '%s'", _ctDir))
 
 -- ============================================================
 -- Logging helpers
 -- ============================================================
 
 function ue5_log(fmt, ...)
-    print(string.format("[UE5Dump] " .. fmt, ...))
+    print(string.format("[%s] [UE5Dump] " .. fmt, os.date("%H:%M:%S"), ...))
 end
 
 function ue5_logError(fmt, ...)
-    print(string.format("[UE5Dump ERROR] " .. fmt, ...))
+    print(string.format("[%s] [UE5Dump ERROR] " .. fmt, os.date("%H:%M:%S"), ...))
 end
 
 -- ============================================================
@@ -155,6 +172,13 @@ function ue5_callDLL(funcName, retType, ...)
     local ceRetType = (retType == "void") and 0 or 1
     local result = executeCodeEx(ceRetType, fn, ...)
 
+    -- Propagate nil: executeCodeEx returns nil when the remote call fails
+    -- (process gone, crash, timeout). Treat nil as failure for all types.
+    if result == nil then
+        ue5_logError("executeCodeEx returned nil for %s — process alive?", funcName)
+        return nil
+    end
+
     if retType == "bool" then return result ~= 0 end
     return result
 end
@@ -167,56 +191,31 @@ function ue5_inject()
     ue5_log("Starting UE5 Dumper...")
     ue5_log("DLL path: %s", DLL_PATH)
 
-    -- 1. Inject DLL into the target process
-    local handle = loadLibrary(DLL_PATH)
-    if handle == nil then
-        ue5_logError("loadLibrary failed!")
-        ue5_logError("Check DLL_PATH in Table Script: %s", DLL_PATH)
+    -- 1. Inject DLL into the target process.
+    -- The DLL auto-start thread handles UE5_Init (AOBScan) + UE5_StartPipeServer
+    -- internally — no executeCodeEx calls needed or possible (remote threads may
+    -- be blocked by the game; executeCodeEx relies on CreateRemoteThread).
+    if not injectDLL(DLL_PATH) then
+        ue5_logError("injectDLL failed! Check DLL_PATH: %s", DLL_PATH)
         return
     end
-    ue5_log("DLL injected OK (handle=0x%X)", handle)
-    sleep(500)   -- wait for DllMain to finish
+    ue5_log("DLL injected OK")
 
-    -- 2. Initialize: AOB scan for GObjects / GNames
-    local initOk = ue5_callDLL("UE5_Init", "bool")
-    if not initOk then
-        ue5_logError("UE5_Init failed! GObjects/GNames scan error.")
-        ue5_logError("Log: %%LOCALAPPDATA%%\\UE5CEDumper\\Logs")
-        return
-    end
-
-    -- 3. Query global pointers
-    local version  = ue5_callDLL("UE5_GetVersion",      "uint32")
-    local gobjects = ue5_callDLL("UE5_GetGObjectsAddr", "uint64")
-    local gnames   = ue5_callDLL("UE5_GetGNamesAddr",   "uint64")
-    local objCount = ue5_callDLL("UE5_GetObjectCount",  "int32")
-
-    ue5_log("UE version:   %d (UE5.%d)", version, version % 100)
-    ue5_log("GObjects:     0x%X", gobjects)
-    ue5_log("GNames:       0x%X", gnames)
-    ue5_log("ObjectCount:  %d",   objCount)
-
-    -- Register symbols so address records in this CT show live values
-    registerSymbol("ue5_gobjects", gobjects, true)
-    registerSymbol("ue5_gnames",   gnames,   true)
-
-    -- Store version as a fake 4-byte symbol (point to a static local)
-    -- Refresh address list so the new symbols resolve
-    synchronize(function()
-        getAddressList().refresh()
-    end)
-
-    -- 4. Start Pipe Server — external UI connects here
-    local pipeOk = ue5_callDLL("UE5_StartPipeServer", "bool")
-    if not pipeOk then
-        ue5_logError("Pipe Server failed to start!")
-        return
+    -- 2. Wait for auto-start thread to complete.
+    -- Timeline: 1s thread delay + ~2-8s AOB scan + pipe server start.
+    -- Total budget: 15 seconds. We count down to show progress.
+    local WAIT_SEC = 15
+    ue5_log("Waiting %d sec for GObjects/GNames scan + Pipe Server...", WAIT_SEC)
+    for i = WAIT_SEC, 1, -1 do
+        sleep(1000)
+        ue5_log("  ... %d sec remaining", i - 1)
     end
 
     ue5_log("=========================================")
-    ue5_log("Pipe Server started!")
+    ue5_log("DLL auto-start complete (or failed — check DLL log).")
     ue5_log("Pipe: \\\\.\\pipe\\UE5DumpBfx")
     ue5_log("Launch UE5DumpUI.exe and click Connect.")
+    ue5_log("DLL log: %%LOCALAPPDATA%%\\UE5CEDumper\\Logs")
     ue5_log("=========================================")
 end
 

@@ -182,8 +182,14 @@ bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
 bool UE5_AutoStart() {
     // Called by CEPlugin's InjectDLL after the DLL is loaded into the game.
     // Idempotent: UE5_Init checks s_initialized and skips if already done.
-    if (!UE5_Init()) return false;
-    return UE5_StartPipeServer();
+    LOG_INFO("UE5_AutoStart: entry");
+    if (!UE5_Init()) {
+        LOG_ERROR("UE5_AutoStart: UE5_Init failed — aborting pipe server start");
+        return false;
+    }
+    bool ok = UE5_StartPipeServer();
+    LOG_INFO("UE5_AutoStart: pipe server %s", ok ? "started" : "FAILED to start");
+    return ok;
 }
 
 bool UE5_StartPipeServer() {

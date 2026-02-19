@@ -15,10 +15,11 @@
 #include <Windows.h>
 #include <cstddef>   // offsetof
 #include <cstring>
+#include "Logger.h"
 
-// ── External: DLL module handle saved in dllmain.cpp ─────────────────────
-// Used to resolve this DLL's own file path via GetModuleFileNameA().
-extern HMODULE g_hDllModule;
+// ── Externals from dllmain.cpp ────────────────────────────────────────────
+extern HMODULE g_hDllModule;  // DLL module handle
+extern bool    g_isCEPlugin;  // Set true here to suppress game-process auto-start
 
 // ── CE SDK v6 constants ───────────────────────────────────────────────────
 static constexpr unsigned int CESDK_VERSION = 6;
@@ -101,26 +102,38 @@ static char g_AutoStartFn[]  = "UE5_AutoStart";
 // ── Type 5 callback: runs on CE's main thread when the user clicks the menu item
 static void __stdcall OnInjectAndConnect()
 {
+    LOG_INFO("CEPlugin: OnInjectAndConnect triggered");
+
     // 1. Check that CE has a process attached
     if (!g_CE.OpenedProcessID || *g_CE.OpenedProcessID == 0) {
+        LOG_WARN("CEPlugin: No process attached (OpenedProcessID=0)");
         g_CE.ShowMessage(const_cast<char*>(
             "UE5CEDumper: Please attach CE to a UE5 game process first."));
         return;
     }
 
+    ULONG pid = *g_CE.OpenedProcessID;
+
     // 2. Get the full path of this DLL (running in CE's process)
     char dllPath[MAX_PATH] = {};
     if (!GetModuleFileNameA(g_hDllModule, dllPath, MAX_PATH)) {
+        LOG_ERROR("CEPlugin: GetModuleFileNameA failed (error=%lu)", GetLastError());
         g_CE.ShowMessage(const_cast<char*>(
             "UE5CEDumper: Failed to resolve DLL path."));
         return;
     }
 
+    LOG_INFO("CEPlugin: Injecting into PID=%lu | DLL=%s | fn=%s",
+             pid, dllPath, g_AutoStartFn);
+
     // 3. Inject this DLL into the game process and call UE5_AutoStart.
     //    CE's InjectDLL handles: CreateRemoteThread → LoadLibrary(path)
     //    → GetProcAddress("UE5_AutoStart") → call it in the game process.
     //    UE5_AutoStart runs UE5_Init (AOB scan) + UE5_StartPipeServer.
-    if (!g_CE.InjectDLL(dllPath, g_AutoStartFn)) {
+    BOOL ok = g_CE.InjectDLL(dllPath, g_AutoStartFn);
+    LOG_INFO("CEPlugin: InjectDLL returned %s", ok ? "TRUE" : "FALSE");
+
+    if (!ok) {
         g_CE.ShowMessage(const_cast<char*>(
             "UE5CEDumper: Injection failed.\n"
             "Ensure the target is a 64-bit UE5 process and CE has\n"
@@ -158,6 +171,10 @@ BOOL __stdcall CEPlugin_InitializePlugin(ExportedFunctions* ef, int pluginid)
 {
     if (!ef) return FALSE;
 
+    // Mark this instance as the CE plugin host so the DllMain auto-start
+    // thread (which waits 1 second before checking) will skip auto-init.
+    g_isCEPlugin = true;
+
     // Copy only our truncated struct portion from CE's full struct.
     // CE's struct is always larger than ours — safe because we verified offsets.
     g_CE      = *ef;
@@ -174,6 +191,8 @@ BOOL __stdcall CEPlugin_InitializePlugin(ExportedFunctions* ef, int pluginid)
     init.shortcut        = nullptr;
 
     g_MenuItemId = g_CE.RegisterFunction(pluginid, ptMainMenu, &init);
+    LOG_INFO("CEPlugin: InitializePlugin pluginid=%d menuItemId=%d ef_size=%d",
+             pluginid, g_MenuItemId, g_CE.sizeofExportedFunctions);
     return (g_MenuItemId != -1) ? TRUE : FALSE;
 }
 
