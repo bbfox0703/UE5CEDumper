@@ -173,14 +173,14 @@ function ue5_inject()
     ue5_log("DLL path: %s", DLL_PATH)
 
     -- 1. Inject DLL into the target process via CE's Lua injectDLL()
-    local handle = injectDLL(DLL_PATH)
-    if handle == nil or handle == 0 then
+    -- injectDLL returns true on success, nil/false on failure
+    if not injectDLL(DLL_PATH) then
         ue5_logError("injectDLL failed!")
         ue5_logError("Check DLL_PATH: %s", DLL_PATH)
         ue5_logError("Ensure the DLL is accessible by the game process.")
         return
     end
-    ue5_log("DLL injected OK (handle=0x%X)", handle)
+    ue5_log("DLL injected OK")
     sleep(500)   -- wait for DllMain to finish
 
     -- 2. Initialize: AOB scan for GObjects / GNames
