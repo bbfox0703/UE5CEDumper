@@ -179,65 +179,31 @@ function ue5_inject()
     ue5_log("Starting UE5 Dumper...")
     ue5_log("DLL path: %s", DLL_PATH)
 
-    -- 1. Inject DLL into the target process via CE's Lua injectDLL().
-    -- The DLL spawns an auto-start thread that runs UE5_Init + UE5_StartPipeServer
-    -- on its own — no need for executeCodeEx to drive initialization.
+    -- 1. Inject DLL into the target process.
+    -- The DLL auto-start thread handles UE5_Init (AOBScan) + UE5_StartPipeServer
+    -- internally — no executeCodeEx calls needed or possible (remote threads may
+    -- be blocked by the game; executeCodeEx relies on CreateRemoteThread).
     if not injectDLL(DLL_PATH) then
-        ue5_logError("injectDLL failed!")
-        ue5_logError("Check DLL_PATH: %s", DLL_PATH)
-        ue5_logError("Ensure the DLL is accessible by the game process.")
+        ue5_logError("injectDLL failed! Check DLL_PATH: %s", DLL_PATH)
         return
     end
-    ue5_log("DLL injected OK — waiting for auto-start (GObjects/GNames scan)...")
+    ue5_log("DLL injected OK")
 
-    -- 2. Poll UE5_IsPipeConnected() until the auto-start thread finishes.
-    -- Auto-start: 1s delay + UE5_Init (AOB scan, ~1-5s) + UE5_StartPipeServer.
-    -- Give up to 20 seconds total.
-    local MAX_TRIES = 20
-    local pipeReady = false
-    for i = 1, MAX_TRIES do
+    -- 2. Wait for auto-start thread to complete.
+    -- Timeline: 1s thread delay + ~2-8s AOB scan + pipe server start.
+    -- Total budget: 15 seconds. We count down to show progress.
+    local WAIT_SEC = 15
+    ue5_log("Waiting %d sec for GObjects/GNames scan + Pipe Server...", WAIT_SEC)
+    for i = WAIT_SEC, 1, -1 do
         sleep(1000)
-        local connected = ue5_callDLL("UE5_IsPipeConnected", "bool")
-        if connected == true then
-            pipeReady = true
-            ue5_log("Pipe Server ready (after %d sec)", i)
-            break
-        end
-        ue5_log("Waiting for auto-start... (%d/%d)", i, MAX_TRIES)
-    end
-
-    if not pipeReady then
-        ue5_logError("Pipe Server did not start after %d sec.", MAX_TRIES)
-        ue5_logError("Check: %%LOCALAPPDATA%%\\UE5CEDumper\\Logs")
-        return
-    end
-
-    -- 3. Query global pointers (UE5_Init already ran — these return cached values).
-    local version  = ue5_callDLL("UE5_GetVersion",      "uint32")
-    local gobjects = ue5_callDLL("UE5_GetGObjectsAddr", "uint64")
-    local gnames   = ue5_callDLL("UE5_GetGNamesAddr",   "uint64")
-    local objCount = ue5_callDLL("UE5_GetObjectCount",  "int32")
-
-    if version and gobjects and gnames and objCount then
-        ue5_log("UE version:   %d (UE5.%d)", version, version % 100)
-        ue5_log("GObjects:     0x%X", gobjects)
-        ue5_log("GNames:       0x%X", gnames)
-        ue5_log("ObjectCount:  %d",   objCount)
-
-        -- Register symbols so address records in this CT show live values
-        registerSymbol("ue5_gobjects", gobjects, true)
-        registerSymbol("ue5_gnames",   gnames,   true)
-        synchronize(function()
-            getAddressList().refresh()
-        end)
-    else
-        ue5_logError("Pointer query via executeCodeEx failed — UI still functional via pipe.")
+        ue5_log("  ... %d sec remaining", i - 1)
     end
 
     ue5_log("=========================================")
-    ue5_log("Pipe Server ready!")
+    ue5_log("DLL auto-start complete (or failed — check DLL log).")
     ue5_log("Pipe: \\\\.\\pipe\\UE5DumpBfx")
     ue5_log("Launch UE5DumpUI.exe and click Connect.")
+    ue5_log("DLL log: %%LOCALAPPDATA%%\\UE5CEDumper\\Logs")
     ue5_log("=========================================")
 end
 

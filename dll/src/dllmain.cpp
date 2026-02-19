@@ -28,22 +28,28 @@ extern "C" bool UE5_AutoStart();
 // thread timeout.
 static DWORD WINAPI AutoStartThreadProc(LPVOID)
 {
+    // Log immediately (before any sleep) to confirm thread is running.
+    LOG_INFO("DllMain AutoStart: thread started (g_isCEPlugin=%d)", (int)g_isCEPlugin);
+
     // Give CE time to call CEPlugin_InitializePlugin (~200 ms typical).
     Sleep(1000);
+
+    LOG_INFO("DllMain AutoStart: after 1s delay (g_isCEPlugin=%d)", (int)g_isCEPlugin);
 
     if (g_isCEPlugin) {
         LOG_INFO("DllMain AutoStart: CE plugin host — skipping auto-start");
         return 0;
     }
 
-    LOG_INFO("DllMain AutoStart: game process injection — calling UE5_AutoStart");
+    LOG_INFO("DllMain AutoStart: game process — calling UE5_AutoStart");
     UE5_AutoStart();
+    LOG_INFO("DllMain AutoStart: UE5_AutoStart returned");
     return 0;
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     switch (reason) {
-    case DLL_PROCESS_ATTACH:
+    case DLL_PROCESS_ATTACH: {
         g_hDllModule = hModule;
         DisableThreadLibraryCalls(hModule);
         Logger::Init();
@@ -57,8 +63,15 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         }
         // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
         // is set true by CEPlugin_InitializePlugin within 1 second.
-        CloseHandle(CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr));
+        HANDLE hThread = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
+        if (hThread) {
+            LOG_INFO("DllMain: auto-start thread created OK");
+            CloseHandle(hThread);
+        } else {
+            LOG_ERROR("DllMain: CreateThread failed (error=%lu)", GetLastError());
+        }
         break;
+    }
 
     case DLL_PROCESS_DETACH:
         LOG_INFO("UE5Dumper DLL unloading (DLL_PROCESS_DETACH)");
