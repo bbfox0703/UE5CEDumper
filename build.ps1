@@ -377,6 +377,8 @@ if ($Target -in "All", "UI") {
                     --self-contained `
                     -p:PublishSingleFile=true `
                     -p:PublishAot=false `
+                    -p:IncludeNativeLibrariesForSelfExtract=true `
+                    -p:IncludeAllContentForSelfExtract=true `
                     -o $releasePublishDir `
                     --nologo
             }
