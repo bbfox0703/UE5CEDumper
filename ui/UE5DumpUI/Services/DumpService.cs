@@ -27,9 +27,16 @@ public sealed class DumpService : IDumpService
         var ptrs = await _pipe.SendAsync(new JsonObject { ["cmd"] = "get_pointers" }, ct);
         CheckResponse(ptrs);
 
+        // UE version may come from init response or get_pointers response
+        var ueVersion = res["ue_version"]?.GetValue<int>() ?? 0;
+        if (ueVersion == 0)
+        {
+            ueVersion = ptrs["ue_version"]?.GetValue<int>() ?? 0;
+        }
+
         return new EngineState
         {
-            UEVersion = res["ue_version"]?.GetValue<int>() ?? 0,
+            UEVersion = ueVersion,
             GObjectsAddr = ptrs["gobjects"]?.GetValue<string>() ?? "",
             GNamesAddr = ptrs["gnames"]?.GetValue<string>() ?? "",
             ObjectCount = ptrs["object_count"]?.GetValue<int>() ?? 0,
@@ -119,6 +126,40 @@ public sealed class DumpService : IDumpService
             Address = res["addr"]?.GetValue<string>() ?? "",
             Name = res["name"]?.GetValue<string>() ?? "",
         };
+    }
+
+    public async Task<ObjectListResult> SearchObjectsAsync(string query, int limit = 200, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "search_objects",
+            ["query"] = query,
+            ["limit"] = limit
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var result = new ObjectListResult
+        {
+            Total = res["total"]?.GetValue<int>() ?? 0,
+        };
+
+        if (res["objects"] is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                if (item is not JsonObject obj) continue;
+                result.Objects.Add(new UObjectNode
+                {
+                    Address = obj["addr"]?.GetValue<string>() ?? "",
+                    Name = obj["name"]?.GetValue<string>() ?? "",
+                    ClassName = obj["class"]?.GetValue<string>() ?? "",
+                    OuterAddr = obj["outer"]?.GetValue<string>() ?? "",
+                });
+            }
+        }
+
+        return result;
     }
 
     public async Task<ClassInfoModel> WalkClassAsync(string addr, CancellationToken ct = default)

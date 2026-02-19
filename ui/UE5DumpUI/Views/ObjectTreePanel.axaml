@@ -42,15 +42,17 @@
              >
       <ListBox.ItemTemplate>
         <DataTemplate x:DataType="models:UObjectNode">
-          <StackPanel Orientation="Horizontal" Spacing="6" Margin="2">
+          <StackPanel Orientation="Horizontal" Spacing="8" Margin="2,1">
             <TextBlock Text="{Binding ClassName}"
-                       Foreground="#569CD6" FontSize="12"
-                       MinWidth="120"/>
+                       Foreground="#569CD6" FontSize="14"
+                       FontWeight="SemiBold"
+                       MinWidth="140"/>
             <TextBlock Text="{Binding Name}"
-                       Foreground="#D4D4D4" FontSize="12"/>
+                       Foreground="#D4D4D4" FontSize="14"/>
             <TextBlock Text="{Binding Address}"
-                       Foreground="#6A9955" FontSize="11"
-                       Opacity="0.7"/>
+                       Foreground="#6A9955" FontSize="13"
+                       Opacity="0.7"
+                       VerticalAlignment="Center"/>
           </StackPanel>
         </DataTemplate>
       </ListBox.ItemTemplate>

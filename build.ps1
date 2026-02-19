@@ -51,6 +51,7 @@ $ErrorActionPreference = "Stop"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
 $ROOT_DIR   = $PSScriptRoot
+$vsDevShellLoaded = $false
 $DLL_DIR    = Join-Path $ROOT_DIR "dll"
 $UI_DIR     = Join-Path $ROOT_DIR "ui"
 $UI_PROJ    = Join-Path $UI_DIR  "UE5DumpUI\UE5DumpUI.csproj"
@@ -90,38 +91,54 @@ function Write-Info([string]$Text) {
     Write-Host "   $Text" -ForegroundColor Gray
 }
 
+function Enter-VsDevEnvironment() {
+    <#
+    .SYNOPSIS
+        Load MSVC x64 developer environment into the current PowerShell session.
+        Only loads once per session.
+    #>
+    if ($script:vsDevShellLoaded) { return $true }
+
+    $devShellDll = Join-Path $script:vsPath "Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+    if (-not (Test-Path $devShellDll)) {
+        Write-Fail "DevShell.dll not found: $devShellDll"
+        return $false
+    }
+
+    try {
+        Import-Module $devShellDll
+        Enter-VsDevShell -VsInstallPath $script:vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64" | Out-Null
+        $script:vsDevShellLoaded = $true
+        Write-Ok "MSVC x64 environment loaded"
+        return $true
+    }
+    catch {
+        Write-Fail "Failed to load VS DevShell: $_"
+        return $false
+    }
+}
+
 function Invoke-CmdInVsEnv([string]$Commands) {
     <#
     .SYNOPSIS
         Execute commands inside the MSVC x64 developer environment.
+        Uses Enter-VsDevShell (in-process) — works from any shell.
         Returns $true on success.
     #>
 
-    $vcvars = Join-Path $script:vsPath "VC\Auxiliary\Build\vcvars64.bat"
-    if (-not (Test-Path $vcvars)) {
-        Write-Fail "vcvars64.bat not found: $vcvars"
-        return $false
-    }
+    if (-not (Enter-VsDevEnvironment)) { return $false }
 
-    $tmpBat = [System.IO.Path]::GetTempFileName() + ".bat"
-    @"
-@echo off
-call "$vcvars" >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] vcvars64.bat failed
-    exit /b 1
-)
-$Commands
-exit /b %ERRORLEVEL%
-"@ | Set-Content -Path $tmpBat -Encoding ASCII
+    # Split commands by newline and execute each
+    $lines = $Commands -split "`n" | Where-Object { $_.Trim() }
+    foreach ($line in $lines) {
+        $line = $line.Trim()
+        if (-not $line) { continue }
 
-    try {
-        & cmd.exe /c $tmpBat 2>&1 | Write-Host
-        return ($LASTEXITCODE -eq 0)
+        Write-Info "  > $line"
+        Invoke-Expression $line 2>&1 | Write-Host
+        if ($LASTEXITCODE -ne 0) { return $false }
     }
-    finally {
-        Remove-Item $tmpBat -ErrorAction SilentlyContinue
-    }
+    return $true
 }
 
 function Get-FileSize([string]$Path) {
@@ -263,13 +280,11 @@ if ($Target -in "All", "DLL") {
             if ($dllFile) {
                 Copy-Item $dllFile.FullName -Destination $DIST_DIR -Force
 
-                # Copy PDB in Debug mode
-                if ($CppConfig -eq "Debug") {
-                    $pdbFile = Get-ChildItem -Path $BUILD_DIR -Filter "UE5Dumper.pdb" -Recurse |
-                               Select-Object -First 1
-                    if ($pdbFile) {
-                        Copy-Item $pdbFile.FullName -Destination $DIST_DIR -Force
-                    }
+                # Always copy PDB (useful for crash diagnostics even in Release)
+                $pdbFile = Get-ChildItem -Path $BUILD_DIR -Filter "UE5Dumper.pdb" -Recurse |
+                           Select-Object -First 1
+                if ($pdbFile) {
+                    Copy-Item $pdbFile.FullName -Destination $DIST_DIR -Force
                 }
 
                 $dllSize = Get-FileSize (Join-Path $DIST_DIR "UE5Dumper.dll")

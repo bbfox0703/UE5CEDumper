@@ -173,9 +173,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
     try {
         if (cmd == PipeProtocol::CMD_INIT) {
+            extern uint32_t g_cachedUEVersion;
             json data;
-            data["ue_version"] = 0; // Already initialized via ExportAPI
-            // Re-report cached pointers
+            data["ue_version"] = g_cachedUEVersion;
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
@@ -188,6 +188,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             json data;
             data["gobjects"]     = PipeProtocol::AddrToStr(g_cachedGObjects);
             data["gnames"]       = PipeProtocol::AddrToStr(g_cachedGNames);
+            data["ue_version"]   = g_cachedUEVersion;
             data["object_count"] = ObjectArray::GetCount();
             return PipeProtocol::MakeResponse(id, data).dump();
         }
@@ -210,15 +211,18 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 uintptr_t obj = ObjectArray::GetByIndex(i);
                 if (!obj) continue;
 
+                std::string name = UStructWalker::GetName(obj);
+                if (name.empty()) continue; // Skip unnamed objects
+
                 json item;
                 item["addr"]  = PipeProtocol::AddrToStr(obj);
-                item["name"]  = UStructWalker::GetName(obj);
+                item["name"]  = name;
 
                 uintptr_t cls = UStructWalker::GetClass(obj);
                 item["class"] = cls ? UStructWalker::GetName(cls) : "";
 
                 uintptr_t outer = UStructWalker::GetOuter(obj);
-                item["outer"] = PipeProtocol::AddrToStr(outer);
+                item["outer"] = outer ? PipeProtocol::AddrToStr(outer) : "";
 
                 objects.push_back(item);
             }
@@ -260,6 +264,29 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             json data;
             data["addr"] = PipeProtocol::AddrToStr(obj);
             data["name"] = UStructWalker::GetName(obj);
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        if (cmd == PipeProtocol::CMD_SEARCH_OBJECTS) {
+            std::string query = request.value("query", "");
+            int limit = request.value("limit", 200);
+            if (query.empty()) return PipeProtocol::MakeError(id, "Missing query").dump();
+
+            auto results = ObjectArray::SearchByName(query, limit);
+
+            json objects = json::array();
+            for (const auto& sr : results) {
+                json item;
+                item["addr"]  = PipeProtocol::AddrToStr(sr.addr);
+                item["name"]  = sr.name;
+                item["class"] = sr.className;
+                item["outer"] = PipeProtocol::AddrToStr(sr.outer);
+                objects.push_back(item);
+            }
+
+            json data;
+            data["total"]   = static_cast<int>(results.size());
+            data["objects"] = objects;
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 

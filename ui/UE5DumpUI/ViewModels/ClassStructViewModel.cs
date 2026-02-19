@@ -77,9 +77,24 @@ public partial class ClassStructViewModel : ViewModelBase
             return;
         }
 
-        // The node's address is the UObject; we need to get its UClass first
-        // The class addr can be obtained from get_object or we use the object addr directly
-        // For simplicity, send object addr to walk_class and let the DLL resolve
-        await LoadClassCommand.ExecuteAsync(node.Address);
+        try
+        {
+            ClearError();
+            // First get the object's UClass address via get_object
+            var detail = await _dump.GetObjectAsync(node.Address);
+            var classAddr = detail.ClassAddr;
+            if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
+            {
+                // If no class addr, try using the object address directly
+                // (it might already be a UClass)
+                classAddr = node.Address;
+            }
+            await LoadClassCommand.ExecuteAsync(classAddr);
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"Failed to load class for object at {node.Address}", ex);
+        }
     }
 }
