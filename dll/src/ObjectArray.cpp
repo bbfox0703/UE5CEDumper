@@ -8,6 +8,9 @@
 #include "Constants.h"
 #include "FNamePool.h"
 
+#include <cctype>
+#include <vector>
+
 namespace ObjectArray {
 
 // FUObjectArray layout offsets (auto-detected)
@@ -139,6 +142,53 @@ uintptr_t FindByFullName(const std::string& fullName) {
     // This is implemented after UStructWalker is available
     (void)fullName;
     return 0;
+}
+
+std::vector<SearchResult> SearchByName(const std::string& query, int maxResults) {
+    std::vector<SearchResult> results;
+
+    // Convert query to lowercase for case-insensitive comparison
+    std::string lowerQuery = query;
+    for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    int32_t count = GetCount();
+    for (int32_t i = 0; i < count && static_cast<int>(results.size()) < maxResults; ++i) {
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+
+        // Read FName from UObject
+        uint32_t nameIndex = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIndex)) continue;
+
+        std::string objName = FNamePool::GetString(nameIndex);
+        if (objName.empty()) continue;
+
+        // Case-insensitive partial match
+        std::string lowerName = objName;
+        for (auto& c : lowerName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        if (lowerName.find(lowerQuery) == std::string::npos) continue;
+
+        SearchResult sr;
+        sr.addr = obj;
+        sr.name = objName;
+
+        // Get class name
+        uintptr_t cls = 0;
+        if (Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) && cls) {
+            uint32_t clsNameIdx = 0;
+            if (Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) {
+                sr.className = FNamePool::GetString(clsNameIdx);
+            }
+        }
+
+        // Get outer
+        Mem::ReadSafe(obj + Constants::OFF_UOBJECT_OUTER, sr.outer);
+
+        results.push_back(std::move(sr));
+    }
+
+    return results;
 }
 
 } // namespace ObjectArray

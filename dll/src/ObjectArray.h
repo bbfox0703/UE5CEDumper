@@ -47,4 +47,13 @@ uintptr_t FindByName(const std::string& name);
 // Find first object matching full path (linear scan)
 uintptr_t FindByFullName(const std::string& fullName);
 
+// Search objects by partial name (case-insensitive), returns up to maxResults
+struct SearchResult {
+    uintptr_t addr;
+    std::string name;
+    std::string className;
+    uintptr_t outer;
+};
+std::vector<SearchResult> SearchByName(const std::string& query, int maxResults = 200);
+
 } // namespace ObjectArray

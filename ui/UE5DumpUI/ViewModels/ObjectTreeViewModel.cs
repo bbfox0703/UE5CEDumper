@@ -80,39 +80,39 @@ public partial class ObjectTreeViewModel : ViewModelBase
     [RelayCommand]
     private async Task SearchAsync()
     {
-        if (string.IsNullOrWhiteSpace(SearchText)) return;
+        if (string.IsNullOrWhiteSpace(SearchText))
+        {
+            // Empty search: reload the full list
+            await LoadAsync();
+            return;
+        }
 
         try
         {
             ClearError();
             IsLoading = true;
 
-            var result = await _dump.FindObjectAsync(SearchText);
-            if (!string.IsNullOrEmpty(result.Address) && result.Address != "0x0")
-            {
-                // Find and select in tree, or add as search result
-                var node = new UObjectNode
-                {
-                    Address = result.Address,
-                    Name = result.Name,
-                };
-                SelectedNode = node;
-            }
-            else
-            {
-                // Client-side filter
-                var filtered = Nodes.Where(n =>
-                    n.Name.Contains(SearchText, StringComparison.OrdinalIgnoreCase)).ToList();
+            // Server-side case-insensitive partial search across ALL objects
+            var result = await _dump.SearchObjectsAsync(SearchText, 2000);
+            Nodes.Clear();
+            ObjectCount = result.Total;
 
-                if (filtered.Count > 0)
-                {
-                    SelectedNode = filtered[0];
-                }
+            foreach (var obj in result.Objects)
+            {
+                Nodes.Add(obj);
             }
+
+            if (Nodes.Count > 0)
+            {
+                SelectedNode = Nodes[0];
+            }
+
+            _log.Info($"Search '{SearchText}': found {result.Total} results");
         }
         catch (Exception ex)
         {
             SetError(ex);
+            _log.Error($"Search failed for '{SearchText}'", ex);
         }
         finally
         {

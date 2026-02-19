@@ -13,6 +13,7 @@ public interface IDumpService
     Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default);
     Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default);
     Task<ObjectDetail> FindObjectAsync(string path, CancellationToken ct = default);
+    Task<ObjectListResult> SearchObjectsAsync(string query, int limit = 200, CancellationToken ct = default);
     Task<ClassInfoModel> WalkClassAsync(string addr, CancellationToken ct = default);
     Task<byte[]> ReadMemAsync(string addr, int size, CancellationToken ct = default);
     Task WriteMemAsync(string addr, byte[] data, CancellationToken ct = default);

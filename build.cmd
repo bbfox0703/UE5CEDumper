@@ -20,10 +20,12 @@ set "MODE=Release"
 set "TARGET=All"
 set "CLEAN="
 set "EXTRA_ARGS="
+set "HAS_ARGS=0"
 
 :: Parse arguments
 :parse_args
 if "%~1"=="" goto :run
+set "HAS_ARGS=1"
 
 set "ARG=%~1"
 
@@ -49,21 +51,36 @@ shift
 goto :parse_args
 
 :run
+set "LOG=%~dp0build_log.txt"
+
 echo.
 echo  UE5CEDumper Build
 echo  Mode: %MODE%  Target: %TARGET%  Clean: %CLEAN%
+echo  Log:  %LOG%
+
+:: Show hint when no arguments provided (default Release build)
+if "!HAS_ARGS!"=="0" (
+    echo  Hint: No arguments — using defaults. Available options:
+    echo    build debug          Debug build
+    echo    build dll            DLL only
+    echo    build ui             UI only
+    echo    build test           Run tests
+    echo    build publish        Native AOT single-file
+    echo    build clean          Clean first
+    echo    build --help         Full usage
+)
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1" -Mode %MODE% -Target %TARGET% %CLEAN% %EXTRA_ARGS%
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '%~dp0build.ps1' -Mode %MODE% -Target %TARGET% %CLEAN% %EXTRA_ARGS% 2>&1 | Tee-Object -FilePath '%LOG%'"
 set "EC=%ERRORLEVEL%"
 
 if %EC% neq 0 (
     echo.
-    echo  BUILD FAILED [exit code %EC%]
+    echo  BUILD FAILED [exit code %EC%]  — see %LOG%
     echo.
 ) else (
     echo.
-    echo  BUILD SUCCEEDED
+    echo  BUILD SUCCEEDED  — log: %LOG%
     echo.
 )
 
