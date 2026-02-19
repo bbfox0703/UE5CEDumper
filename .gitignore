@@ -423,3 +423,5 @@ dist/
 
 # Claude Code
 .claude/
+build_output.txt
+build_error.txt
