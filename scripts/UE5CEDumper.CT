@@ -15,7 +15,7 @@
       <ID>1</ID>
       <Description>"Inject DLL + Start Pipe Server"</Description>
       <VariableType>Auto Assembler Script</VariableType>
-      <AssemblerScript Async="1">[ENABLE]
+      <AssemblerScript>[ENABLE]
 {$lua}
 if syntaxcheck then return end
 
@@ -168,6 +168,12 @@ function ue5_inject()
     ue5_log("DLL path: %s", DLL_PATH)
 
     -- 1. Inject DLL into the target process
+    -- loadLibrary is only available on CE's main thread (not async context)
+    if loadLibrary == nil then
+        ue5_logError("loadLibrary is nil — ensure this script runs on the main thread.")
+        ue5_logError("Cause: AA entry must NOT use Async=\"1\".")
+        return
+    end
     local handle = loadLibrary(DLL_PATH)
     if handle == nil then
         ue5_logError("loadLibrary failed!")
