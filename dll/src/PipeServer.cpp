@@ -611,6 +611,24 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
+        // === get_offsets: Return all detected FField/FProperty/UStruct offsets ===
+        if (cmd == PipeProtocol::CMD_GET_OFFSETS) {
+            json data;
+            data["validated"]          = DynOff::bOffsetsValidated;
+            data["case_preserving"]    = DynOff::bCasePreservingName;
+            data["ustruct_super"]      = DynOff::USTRUCT_SUPER;
+            data["ustruct_children"]   = DynOff::USTRUCT_CHILDREN;
+            data["ustruct_childprops"] = DynOff::USTRUCT_CHILDPROPS;
+            data["ustruct_propssize"]  = DynOff::USTRUCT_PROPSSIZE;
+            data["ffield_class"]       = DynOff::FFIELD_CLASS;
+            data["ffield_next"]        = DynOff::FFIELD_NEXT;
+            data["ffield_name"]        = DynOff::FFIELD_NAME;
+            data["fproperty_elemsize"] = DynOff::FPROPERTY_ELEMSIZE;
+            data["fproperty_flags"]    = DynOff::FPROPERTY_FLAGS;
+            data["fproperty_offset"]   = DynOff::FPROPERTY_OFFSET;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
         if (cmd == PipeProtocol::CMD_WATCH) {
             std::string addrStr = request.value("addr", "");
             int size = request.value("size", 4);

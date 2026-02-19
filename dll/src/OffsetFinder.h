@@ -31,4 +31,9 @@ uintptr_t FindGWorld();
 // Detect UE version from memory or PE resources
 uint32_t DetectVersion();
 
+// Dynamically detect and fix FField/FProperty/UStruct offsets.
+// Must be called AFTER GObjects + GNames are initialized (ObjectArray::Init + FNamePool::Init).
+// Updates DynOff:: namespace variables.
+bool ValidateAndFixOffsets();
+
 } // namespace OffsetFinder
