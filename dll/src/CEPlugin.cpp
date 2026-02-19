@@ -17,9 +17,9 @@
 #include <cstring>
 #include "Logger.h"
 
-// ── External: DLL module handle saved in dllmain.cpp ─────────────────────
-// Used to resolve this DLL's own file path via GetModuleFileNameA().
-extern HMODULE g_hDllModule;
+// ── Externals from dllmain.cpp ────────────────────────────────────────────
+extern HMODULE g_hDllModule;  // DLL module handle
+extern bool    g_isCEPlugin;  // Set true here to suppress game-process auto-start
 
 // ── CE SDK v6 constants ───────────────────────────────────────────────────
 static constexpr unsigned int CESDK_VERSION = 6;
@@ -170,6 +170,10 @@ __declspec(dllexport)
 BOOL __stdcall CEPlugin_InitializePlugin(ExportedFunctions* ef, int pluginid)
 {
     if (!ef) return FALSE;
+
+    // Mark this instance as the CE plugin host so the DllMain auto-start
+    // thread (which waits 1 second before checking) will skip auto-init.
+    g_isCEPlugin = true;
 
     // Copy only our truncated struct portion from CE's full struct.
     // CE's struct is always larger than ours — safe because we verified offsets.
