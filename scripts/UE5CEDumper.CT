@@ -124,9 +124,14 @@ ue5_shutdown()
 -- Auto-runs when this CT is opened in Cheat Engine.
 -- ============================================================
 
--- Auto-detect DLL from the same folder as this CT file
-local _ctPath = getMainForm().SaveDialog1.FileName
-local _ctDir  = (_ctPath ~= "") and extractFilePath(_ctPath) or getCheatEngineDir()
+-- Auto-detect DLL from the same folder as this CT file.
+-- extractFilePath returns "" if the CT has no directory component (e.g. unsaved
+-- or opened from CE's recent list with a bare filename), so fall back to the
+-- CE installation directory in that case.
+local _ctDir = extractFilePath(getMainForm().SaveDialog1.FileName or "")
+if _ctDir == nil or _ctDir == "" then
+    _ctDir = getCheatEngineDir() or ""
+end
 DLL_PATH = _ctDir .. "UE5Dumper.dll"
 
 -- ============================================================
@@ -170,7 +175,7 @@ function ue5_inject()
     -- 1. Inject DLL into the target process via CE AutoAssemble 'loadlibrary'
     --    command. This is the reliable approach — CE's Lua `loadLibrary`
     --    global is not available in all {$lua} execution contexts.
-    local aaOk = autoAssemble(string.format('loadlibrary("%s")', DLL_PATH))
+    local aaOk = autoAssemble(string.format('loadlibrary(%s)', DLL_PATH))
     if not aaOk then
         ue5_logError("autoAssemble loadlibrary failed!")
         ue5_logError("Check DLL_PATH: %s", DLL_PATH)
