@@ -139,11 +139,11 @@ DLL_PATH = _ctDir .. "UE5Dumper.dll"
 -- ============================================================
 
 function ue5_log(fmt, ...)
-    print(string.format("[UE5Dump] " .. fmt, ...))
+    print(string.format("[%s] [UE5Dump] " .. fmt, os.date("%H:%M:%S"), ...))
 end
 
 function ue5_logError(fmt, ...)
-    print(string.format("[UE5Dump ERROR] " .. fmt, ...))
+    print(string.format("[%s] [UE5Dump ERROR] " .. fmt, os.date("%H:%M:%S"), ...))
 end
 
 -- ============================================================
@@ -159,6 +159,13 @@ function ue5_callDLL(funcName, retType, ...)
 
     local ceRetType = (retType == "void") and 0 or 1
     local result = executeCodeEx(ceRetType, fn, ...)
+
+    -- Propagate nil: executeCodeEx returns nil when the remote call fails
+    -- (process gone, crash, timeout). Treat nil as failure for all types.
+    if result == nil then
+        ue5_logError("executeCodeEx returned nil for %s — process alive?", funcName)
+        return nil
+    end
 
     if retType == "bool" then return result ~= 0 end
     return result
