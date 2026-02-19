@@ -17,6 +17,8 @@
     <sys:String x:Key="str.Tab.ClassStruct">クラス構造</sys:String>
     <sys:String x:Key="str.Tab.Pointers">グローバルポインタ</sys:String>
     <sys:String x:Key="str.Tab.HexView">Hex ビュー</sys:String>
+    <sys:String x:Key="str.Tab.LiveWalker">ライブウォーカー</sys:String>
+    <sys:String x:Key="str.Tab.InstanceFinder">インスタンス検索</sys:String>
 
     <!-- Object Tree -->
     <sys:String x:Key="str.ObjectTree.Title">オブジェクトツリー</sys:String>
@@ -34,9 +36,25 @@
     <sys:String x:Key="str.ClassStruct.PropsSize">プロパティサイズ</sys:String>
     <sys:String x:Key="str.ClassStruct.NoClass">オブジェクトを選択してクラス構造を表示</sys:String>
 
+    <!-- Live Walker -->
+    <sys:String x:Key="str.LiveWalker.StartWorld">GWorld から開始</sys:String>
+    <sys:String x:Key="str.LiveWalker.Back">戻る</sys:String>
+    <sys:String x:Key="str.LiveWalker.Refresh">更新</sys:String>
+    <sys:String x:Key="str.LiveWalker.AddressHint">アドレス (0x...)</sys:String>
+    <sys:String x:Key="str.LiveWalker.Go">移動</sys:String>
+    <sys:String x:Key="str.LiveWalker.ExportCE">CE XML エクスポート</sys:String>
+    <sys:String x:Key="str.LiveWalker.Value">値</sys:String>
+
+    <!-- Instance Finder -->
+    <sys:String x:Key="str.InstanceFinder.ClassNameHint">クラス名 (例: PlayerController)</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Search">検索</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Address">アドレス</sys:String>
+    <sys:String x:Key="str.InstanceFinder.OpenInWalker">ライブウォーカーで開く</sys:String>
+
     <!-- Pointer Panel -->
     <sys:String x:Key="str.Pointers.GObjects">GObjects アドレス</sys:String>
     <sys:String x:Key="str.Pointers.GNames">GNames アドレス</sys:String>
+    <sys:String x:Key="str.Pointers.GWorld">GWorld アドレス</sys:String>
     <sys:String x:Key="str.Pointers.UEVersion">UE バージョン</sys:String>
     <sys:String x:Key="str.Pointers.TotalObjects">オブジェクト総数</sys:String>
     <sys:String x:Key="str.Pointers.Copy">コピー</sys:String>

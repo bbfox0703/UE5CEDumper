@@ -8,5 +8,6 @@ public sealed class EngineState
     public int UEVersion { get; init; }
     public string GObjectsAddr { get; init; } = "";
     public string GNamesAddr { get; init; } = "";
+    public string GWorldAddr { get; init; } = "";
     public int ObjectCount { get; init; }
 }

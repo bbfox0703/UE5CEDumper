@@ -154,10 +154,21 @@ std::string GetString(int32_t nameIndex, int32_t number) {
             result[i] = (wbuf[i] < 128) ? static_cast<char>(wbuf[i]) : '?';
         }
     } else {
-        // ANSI name
+        // ANSI name — sanitize non-ASCII bytes to produce valid UTF-8.
+        // UE FNames should be pure ASCII; non-ASCII means corrupted/encrypted data.
         std::vector<char> buf(len + 1, 0);
         if (!Mem::ReadBytesSafe(entry + 2, buf.data(), len)) return "";
-        result.assign(buf.data(), len);
+        result.reserve(len);
+        for (int i = 0; i < len; ++i) {
+            auto c = static_cast<unsigned char>(buf[i]);
+            if (c >= 0x20 && c < 0x7F) {
+                result += static_cast<char>(c);
+            } else if (c == 0) {
+                break; // Null terminator
+            } else {
+                result += '?';
+            }
+        }
     }
 
     // Append _N suffix if number > 0

@@ -183,11 +183,13 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             // These are filled by ExportAPI's cached EnginePointers
             extern uintptr_t g_cachedGObjects;
             extern uintptr_t g_cachedGNames;
+            extern uintptr_t g_cachedGWorld;
             extern uint32_t  g_cachedUEVersion;
 
             json data;
             data["gobjects"]     = PipeProtocol::AddrToStr(g_cachedGObjects);
             data["gnames"]       = PipeProtocol::AddrToStr(g_cachedGNames);
+            data["gworld"]       = PipeProtocol::AddrToStr(g_cachedGWorld);
             data["ue_version"]   = g_cachedUEVersion;
             data["object_count"] = ObjectArray::GetCount();
             return PipeProtocol::MakeResponse(id, data).dump();
@@ -352,6 +354,261 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             }
 
             return PipeProtocol::MakeResponse(id).dump();
+        }
+
+        // === walk_instance: Read live field values from a UObject instance ===
+        if (cmd == PipeProtocol::CMD_WALK_INSTANCE) {
+            std::string addrStr = request.value("addr", "");
+            if (addrStr.empty()) return PipeProtocol::MakeError(id, "Missing addr").dump();
+
+            uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
+            std::string classAddrStr = request.value("class_addr", "");
+            uintptr_t classAddr = classAddrStr.empty() ? 0 : PipeProtocol::StrToAddr(classAddrStr);
+
+            auto result = UStructWalker::WalkInstance(addr, classAddr);
+
+            json data;
+            data["addr"]       = PipeProtocol::AddrToStr(result.addr);
+            data["name"]       = result.name;
+            data["class"]      = result.className;
+            data["class_addr"] = PipeProtocol::AddrToStr(result.classAddr);
+
+            json fields = json::array();
+            for (const auto& fv : result.fields) {
+                json fj;
+                fj["name"]   = fv.name;
+                fj["type"]   = fv.typeName;
+                fj["offset"] = fv.offset;
+                fj["size"]   = fv.size;
+
+                if (!fv.hexValue.empty())   fj["hex"]   = fv.hexValue;
+                if (!fv.typedValue.empty())  fj["value"] = fv.typedValue;
+
+                // ObjectProperty: pointer info
+                if (fv.ptrValue != 0) {
+                    fj["ptr"]       = PipeProtocol::AddrToStr(fv.ptrValue);
+                    fj["ptr_name"]  = fv.ptrName;
+                    fj["ptr_class"] = fv.ptrClassName;
+                }
+
+                // ArrayProperty: element count
+                if (fv.arrayCount >= 0) {
+                    fj["count"] = fv.arrayCount;
+                }
+
+                fields.push_back(fj);
+            }
+            data["fields"] = fields;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // === walk_world: Browse GWorld → PersistentLevel → Actors hierarchy ===
+        if (cmd == PipeProtocol::CMD_WALK_WORLD) {
+            extern uintptr_t g_cachedGWorld;
+            uintptr_t worldAddr = g_cachedGWorld;
+
+            // Allow overriding with a custom address
+            std::string addrStr = request.value("addr", "");
+            if (!addrStr.empty()) worldAddr = PipeProtocol::StrToAddr(addrStr);
+
+            if (!worldAddr) return PipeProtocol::MakeError(id, "GWorld not found").dump();
+
+            json data;
+            data["world_addr"] = PipeProtocol::AddrToStr(worldAddr);
+            data["world_name"] = UStructWalker::GetName(worldAddr);
+
+            // Walk UWorld class to find PersistentLevel field offset dynamically
+            uintptr_t worldClass = UStructWalker::GetClass(worldAddr);
+            if (!worldClass) return PipeProtocol::MakeError(id, "Cannot read UWorld class").dump();
+
+            ClassInfo worldCI = UStructWalker::WalkClass(worldClass);
+
+            // Find PersistentLevel field (ObjectProperty)
+            uintptr_t levelAddr = 0;
+            for (const auto& f : worldCI.Fields) {
+                if (f.Name == "PersistentLevel" && f.Size >= 8) {
+                    Mem::ReadSafe(worldAddr + f.Offset, levelAddr);
+                    break;
+                }
+            }
+
+            if (!levelAddr) {
+                // Return world info even if we can't find level
+                data["error"] = "PersistentLevel field not found in UWorld";
+                return PipeProtocol::MakeResponse(id, data).dump();
+            }
+
+            data["level_addr"] = PipeProtocol::AddrToStr(levelAddr);
+            data["level_name"] = UStructWalker::GetName(levelAddr);
+
+            // Walk ULevel class to find Actors TArray field
+            uintptr_t levelClass = UStructWalker::GetClass(levelAddr);
+            ClassInfo levelCI = levelClass ? UStructWalker::WalkClass(levelClass) : ClassInfo{};
+
+            // Find Actors field (ArrayProperty) — it's a TArray<AActor*>
+            int actorsOffset = -1;
+            for (const auto& f : levelCI.Fields) {
+                if (f.Name == "Actors" && f.TypeName == "ArrayProperty") {
+                    actorsOffset = f.Offset;
+                    break;
+                }
+            }
+
+            json actors = json::array();
+            int actorLimit = request.value("limit", 200);
+
+            if (actorsOffset >= 0) {
+                Mem::TArrayView actorArr;
+                if (Mem::ReadTArray(levelAddr + actorsOffset, actorArr)) {
+                    int count = (std::min)(actorArr.Count, actorLimit);
+                    for (int i = 0; i < count; ++i) {
+                        uintptr_t actorAddr = Mem::ReadTArrayElement(actorArr, i);
+                        if (!actorAddr) continue;
+
+                        json actorItem;
+                        actorItem["addr"]  = PipeProtocol::AddrToStr(actorAddr);
+                        actorItem["name"]  = UStructWalker::GetName(actorAddr);
+                        actorItem["index"] = UStructWalker::GetIndex(actorAddr);
+
+                        uintptr_t actorCls = UStructWalker::GetClass(actorAddr);
+                        actorItem["class"] = actorCls ? UStructWalker::GetName(actorCls) : "";
+
+                        // Try to find OwnedComponents on this actor
+                        ClassInfo actorCI = actorCls ? UStructWalker::WalkClass(actorCls) : ClassInfo{};
+                        int compsOffset = -1;
+                        for (const auto& f : actorCI.Fields) {
+                            if (f.Name == "OwnedComponents" && f.TypeName == "ArrayProperty") {
+                                compsOffset = f.Offset;
+                                break;
+                            }
+                        }
+
+                        if (compsOffset >= 0) {
+                            Mem::TArrayView compArr;
+                            if (Mem::ReadTArray(actorAddr + compsOffset, compArr)) {
+                                json comps = json::array();
+                                int compCount = (std::min)(compArr.Count, 64); // Limit components
+                                for (int c = 0; c < compCount; ++c) {
+                                    uintptr_t compAddr = Mem::ReadTArrayElement(compArr, c);
+                                    if (!compAddr) continue;
+
+                                    json compItem;
+                                    compItem["addr"] = PipeProtocol::AddrToStr(compAddr);
+                                    compItem["name"] = UStructWalker::GetName(compAddr);
+                                    uintptr_t compCls = UStructWalker::GetClass(compAddr);
+                                    compItem["class"] = compCls ? UStructWalker::GetName(compCls) : "";
+                                    comps.push_back(compItem);
+                                }
+                                actorItem["components"] = comps;
+                            }
+                        }
+
+                        actors.push_back(actorItem);
+                    }
+                }
+            }
+
+            data["actors"]      = actors;
+            data["actor_count"] = static_cast<int>(actors.size());
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // === find_instances: Search GObjects for instances of a given class ===
+        if (cmd == PipeProtocol::CMD_FIND_INSTANCES) {
+            std::string className = request.value("class_name", "");
+            int limit = request.value("limit", 500);
+            if (className.empty()) return PipeProtocol::MakeError(id, "Missing class_name").dump();
+
+            auto results = ObjectArray::FindInstancesByClass(className, limit);
+
+            json instances = json::array();
+            for (const auto& sr : results) {
+                json item;
+                item["addr"]  = PipeProtocol::AddrToStr(sr.addr);
+                item["index"] = sr.index;
+                item["name"]  = sr.name;
+                item["class"] = sr.className;
+                item["outer"] = PipeProtocol::AddrToStr(sr.outer);
+                instances.push_back(item);
+            }
+
+            json data;
+            data["total"]     = static_cast<int>(results.size());
+            data["instances"] = instances;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // === get_ce_pointer_info: CE pointer chain info for a GObjects instance ===
+        if (cmd == PipeProtocol::CMD_GET_CE_PTR_INFO) {
+            std::string addrStr = request.value("addr", "");
+            if (addrStr.empty()) return PipeProtocol::MakeError(id, "Missing addr").dump();
+
+            uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
+            int fieldOffset = request.value("field_offset", 0);
+
+            extern uintptr_t g_cachedGObjects;
+            uintptr_t moduleBase = Mem::GetModuleBase(nullptr);
+
+            // Compute GObjects RVA
+            uintptr_t gobjectsRVA = g_cachedGObjects - moduleBase;
+
+            // Find the InternalIndex of this object by scanning
+            int32_t internalIndex = UStructWalker::GetIndex(addr);
+            if (internalIndex < 0) {
+                return PipeProtocol::MakeError(id, "Cannot read InternalIndex").dump();
+            }
+
+            int32_t chunkIndex  = internalIndex / Constants::OBJECTS_PER_CHUNK;
+            int32_t withinChunk = internalIndex % Constants::OBJECTS_PER_CHUNK;
+
+            // Get module name
+            wchar_t moduleNameW[MAX_PATH] = {};
+            GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
+            // Extract just the filename
+            std::wstring modulePath(moduleNameW);
+            auto lastSlash = modulePath.find_last_of(L"\\/");
+            std::wstring moduleFileName = (lastSlash != std::wstring::npos)
+                ? modulePath.substr(lastSlash + 1) : modulePath;
+            // Remove .exe extension for CE format
+            auto dotPos = moduleFileName.find_last_of(L'.');
+            std::wstring moduleNameNoExt = (dotPos != std::wstring::npos)
+                ? moduleFileName.substr(0, dotPos) : moduleFileName;
+
+            // Convert to narrow string
+            std::string moduleName;
+            for (wchar_t wc : moduleNameNoExt) {
+                moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
+            }
+
+            json data;
+            data["module"]         = moduleName;
+            data["module_base"]    = PipeProtocol::AddrToStr(moduleBase);
+            data["gobjects_rva"]   = PipeProtocol::AddrToStr(gobjectsRVA);
+            data["internal_index"] = internalIndex;
+            data["chunk_index"]    = chunkIndex;
+            data["within_chunk"]   = withinChunk;
+            data["field_offset"]   = fieldOffset;
+
+            // CE offset chain (bottom-to-top):
+            // Level 4 (outermost): deref FUObjectArray* → chunkTable (offset 0)
+            // Level 3: chunkTable + chunkIndex*8 → chunk
+            // Level 2: chunk + withinChunk*16 → FUObjectItem.Object (offset 0)
+            // Level 1 (innermost): Object + fieldOffset → value
+            json offsets = json::array();
+            offsets.push_back(fieldOffset);                              // field offset from UObject*
+            offsets.push_back(withinChunk * static_cast<int>(sizeof(FUObjectItem)));  // item in chunk
+            offsets.push_back(chunkIndex * 8);                           // chunk in table
+            offsets.push_back(0);                                         // deref FUObjectArray.Objects
+
+            data["ce_offsets"] = offsets;
+
+            // CE base address string: "Module.exe+RVA"
+            char ceBase[128];
+            snprintf(ceBase, sizeof(ceBase), "\"%s.exe\"+%llX",
+                     moduleName.c_str(), static_cast<unsigned long long>(gobjectsRVA));
+            data["ce_base"] = ceBase;
+
+            return PipeProtocol::MakeResponse(id, data).dump();
         }
 
         if (cmd == PipeProtocol::CMD_WATCH) {

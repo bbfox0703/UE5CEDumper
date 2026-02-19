@@ -180,4 +180,160 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     return info;
 }
 
+// --- Live Instance Walking ---
+
+std::string InterpretValue(const std::string& typeName, const void* data, int32_t size) {
+    if (!data || size <= 0) return "";
+
+    auto bytes = static_cast<const uint8_t*>(data);
+
+    if (typeName == "FloatProperty" && size >= 4) {
+        float v;
+        memcpy(&v, bytes, 4);
+        // Use snprintf for clean formatting (avoid trailing zeros)
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.4f", v);
+        return buf;
+    }
+    if (typeName == "DoubleProperty" && size >= 8) {
+        double v;
+        memcpy(&v, bytes, 8);
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.6f", v);
+        return buf;
+    }
+    if (typeName == "IntProperty" && size >= 4) {
+        int32_t v;
+        memcpy(&v, bytes, 4);
+        return std::to_string(v);
+    }
+    if (typeName == "UInt32Property" && size >= 4) {
+        uint32_t v;
+        memcpy(&v, bytes, 4);
+        return std::to_string(v);
+    }
+    if (typeName == "Int64Property" && size >= 8) {
+        int64_t v;
+        memcpy(&v, bytes, 8);
+        return std::to_string(v);
+    }
+    if (typeName == "UInt64Property" && size >= 8) {
+        uint64_t v;
+        memcpy(&v, bytes, 8);
+        return std::to_string(v);
+    }
+    if (typeName == "Int16Property" && size >= 2) {
+        int16_t v;
+        memcpy(&v, bytes, 2);
+        return std::to_string(v);
+    }
+    if (typeName == "UInt16Property" && size >= 2) {
+        uint16_t v;
+        memcpy(&v, bytes, 2);
+        return std::to_string(v);
+    }
+    if (typeName == "ByteProperty" && size >= 1) {
+        return std::to_string(bytes[0]);
+    }
+    if (typeName == "BoolProperty") {
+        return bytes[0] ? "true" : "false";
+    }
+    if (typeName == "NameProperty" && size >= 4) {
+        // FName — resolve via FNamePool
+        int32_t nameIdx;
+        memcpy(&nameIdx, bytes, 4);
+        return FNamePool::GetString(nameIdx);
+    }
+
+    return ""; // Unknown type — caller shows hex
+}
+
+InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
+    InstanceWalkResult result;
+    result.addr = instanceAddr;
+
+    if (!instanceAddr) return result;
+
+    if (!classAddr)
+        classAddr = GetClass(instanceAddr);
+
+    result.classAddr = classAddr;
+    result.name      = GetName(instanceAddr);
+    result.className = classAddr ? GetName(classAddr) : "";
+
+    // Walk the class to get field layout
+    ClassInfo ci = WalkClass(classAddr);
+
+    for (const auto& fi : ci.Fields) {
+        LiveFieldValue fv;
+        fv.name     = fi.Name;
+        fv.typeName = fi.TypeName;
+        fv.offset   = fi.Offset;
+        fv.size     = fi.Size;
+
+        // Handle ObjectProperty: read pointer, resolve name/class
+        if (fi.TypeName == "ObjectProperty" || fi.TypeName == "ClassProperty" ||
+            fi.TypeName == "SoftObjectProperty" || fi.TypeName == "WeakObjectProperty" ||
+            fi.TypeName == "LazyObjectProperty") {
+            uintptr_t ptr = 0;
+            if (fi.Size >= 8 && Mem::ReadSafe(instanceAddr + fi.Offset, ptr) && ptr) {
+                fv.ptrValue = ptr;
+                fv.ptrName = GetName(ptr);
+                fv.ptrClassName = "";
+                uintptr_t ptrCls = GetClass(ptr);
+                if (ptrCls) fv.ptrClassName = GetName(ptrCls);
+            }
+            // Hex of the pointer
+            if (fi.Size >= 8) {
+                char buf[20];
+                snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(ptr));
+                fv.hexValue = buf;
+            }
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle ArrayProperty: read TArray header
+        if (fi.TypeName == "ArrayProperty") {
+            Mem::TArrayView arr;
+            if (Mem::ReadTArray(instanceAddr + fi.Offset, arr)) {
+                fv.arrayCount = arr.Count;
+                // Hex of the TArray header (Data ptr + Count + Max)
+                char buf[48];
+                snprintf(buf, sizeof(buf), "%016llX %08X %08X",
+                    static_cast<unsigned long long>(arr.Data), arr.Count, arr.Max);
+                fv.hexValue = buf;
+            } else {
+                fv.arrayCount = 0;
+            }
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Scalar or struct: read raw bytes and interpret
+        if (fi.Size > 0 && fi.Size <= 256) {
+            std::vector<uint8_t> buf(fi.Size, 0);
+            if (Mem::ReadBytesSafe(instanceAddr + fi.Offset, buf.data(), fi.Size)) {
+                // Build hex string
+                std::string hex;
+                hex.reserve(fi.Size * 2);
+                for (auto b : buf) {
+                    char hx[3];
+                    snprintf(hx, sizeof(hx), "%02X", b);
+                    hex += hx;
+                }
+                fv.hexValue = hex;
+                fv.typedValue = InterpretValue(fi.TypeName, buf.data(), fi.Size);
+            }
+        }
+
+        result.fields.push_back(std::move(fv));
+    }
+
+    LOG_DEBUG("WalkInstance: %s (%s) — %zu fields at 0x%llX",
+              result.name.c_str(), result.className.c_str(),
+              result.fields.size(), static_cast<unsigned long long>(instanceAddr));
+    return result;
+}
+
 } // namespace UStructWalker

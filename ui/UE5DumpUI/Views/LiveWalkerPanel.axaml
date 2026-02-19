@@ -1,0 +1,128 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UE5DumpUI.ViewModels"
+             xmlns:m="using:UE5DumpUI.Models"
+             x:Class="UE5DumpUI.Views.LiveWalkerPanel"
+             x:DataType="vm:LiveWalkerViewModel">
+
+  <DockPanel Margin="8">
+    <!-- Top toolbar -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+      <Button Content="{DynamicResource str.LiveWalker.StartWorld}"
+              Command="{Binding StartFromWorldCommand}"
+              Classes="accent" Padding="12,4"/>
+      <Button Content="{DynamicResource str.LiveWalker.Back}"
+              Command="{Binding GoBackCommand}"
+              Padding="8,4"/>
+      <Button Content="{DynamicResource str.LiveWalker.Refresh}"
+              Command="{Binding RefreshCommand}"
+              Padding="8,4"/>
+      <TextBox Watermark="{DynamicResource str.LiveWalker.AddressHint}"
+               x:Name="AddressInput"
+               Width="220" Padding="4,2" Margin="8,0,0,0"/>
+      <Button Content="{DynamicResource str.LiveWalker.Go}"
+              Command="{Binding NavigateToAddressCommand}"
+              CommandParameter="{Binding #AddressInput.Text}"
+              Padding="8,4"/>
+      <Button Content="{DynamicResource str.LiveWalker.ExportCE}"
+              Command="{Binding ExportCeXmlCommand}"
+              IsVisible="{Binding HasData}"
+              Padding="8,4"/>
+    </StackPanel>
+
+    <!-- Breadcrumb -->
+    <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Breadcrumbs}" Margin="0,0,0,4">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <WrapPanel Orientation="Horizontal"/>
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vm:BreadcrumbItem">
+          <StackPanel Orientation="Horizontal">
+            <Button Content="{Binding Label}"
+                    Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToBreadcrumbCommand}"
+                    CommandParameter="{Binding}"
+                    Padding="4,2" Margin="0,0,2,0"
+                    Foreground="#4EC9B0" Background="Transparent" BorderThickness="0"
+                    Cursor="Hand"/>
+            <TextBlock Text=">" Foreground="#666" VerticalAlignment="Center" Margin="2,0"/>
+          </StackPanel>
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <!-- Object info header -->
+    <Border DockPanel.Dock="Top" Background="#252525" Padding="8,4" Margin="0,0,0,4"
+            IsVisible="{Binding HasData}" CornerRadius="4">
+      <StackPanel Orientation="Horizontal" Spacing="16">
+        <TextBlock Foreground="#569CD6" FontWeight="Bold">
+          <Run Text="{Binding CurrentClassName}"/>
+        </TextBlock>
+        <TextBlock Foreground="#D4D4D4">
+          <Run Text="{Binding CurrentObjectName}"/>
+        </TextBlock>
+        <TextBlock Foreground="#666" FontFamily="Consolas" FontSize="12">
+          <Run Text="{Binding CurrentAddress}"/>
+        </TextBlock>
+      </StackPanel>
+    </Border>
+
+    <!-- Loading indicator -->
+    <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
+                 IsVisible="{Binding IsLoading}" Height="2" Margin="0,0,0,4"/>
+
+    <!-- CE XML output (shown when exported) -->
+    <Border DockPanel.Dock="Bottom" IsVisible="{Binding ShowCeXml}"
+            Background="#1A1A2E" Padding="8" CornerRadius="4" MaxHeight="200"
+            Margin="0,4,0,0">
+      <ScrollViewer>
+        <SelectableTextBlock Text="{Binding CeXmlOutput}"
+                             FontFamily="Consolas" FontSize="11"
+                             Foreground="#98C379"/>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Field list -->
+    <DataGrid ItemsSource="{Binding Fields}"
+              IsReadOnly="True"
+              CanUserResizeColumns="True"
+              CanUserSortColumns="True"
+              GridLinesVisibility="Horizontal"
+              BorderThickness="0"
+              Background="#1E1E1E"
+              FontFamily="Consolas" FontSize="12">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Offset}"
+                            Binding="{Binding Offset, StringFormat='0x{0:X}'}"
+                            Width="80"/>
+        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Name}"
+                            Binding="{Binding Name}"
+                            Width="200"/>
+        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Type}"
+                            Binding="{Binding TypeName}"
+                            Width="140"/>
+        <DataGridTextColumn Header="{DynamicResource str.LiveWalker.Value}"
+                            Binding="{Binding DisplayValue}"
+                            Width="200"/>
+        <DataGridTextColumn Header="Hex"
+                            Binding="{Binding HexValue}"
+                            Width="160"/>
+        <DataGridTemplateColumn Header="" Width="80">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:LiveFieldValue">
+              <Button Content=">"
+                      Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToFieldCommand}"
+                      CommandParameter="{Binding}"
+                      IsVisible="{Binding IsNavigable}"
+                      Padding="8,2" Margin="2"
+                      Foreground="#4EC9B0" Background="Transparent"
+                      BorderThickness="1" BorderBrush="#4EC9B0"
+                      Cursor="Hand" FontWeight="Bold"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+    </DataGrid>
+  </DockPanel>
+</UserControl>

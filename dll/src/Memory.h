@@ -57,4 +57,33 @@ uintptr_t AOBScan(const char* pattern, uintptr_t start = 0, size_t size = 0);
 // totalLen:  total instruction length (for RIP base calculation)
 uintptr_t ResolveRIP(uintptr_t instrAddr, int opcodeLen = 3, int totalLen = 7);
 
+// --- TArray<T> reading utilities ---
+// UE5 TArray layout: { T* Data +0x00, int32 Count +0x08, int32 Max +0x0C }
+struct TArrayView {
+    uintptr_t Data  = 0;
+    int32_t   Count = 0;
+    int32_t   Max   = 0;
+};
+
+// Read a TArray header from the given address. Returns true if valid.
+inline bool ReadTArray(uintptr_t addr, TArrayView& out) {
+    out = {};
+    if (!addr) return false;
+    if (!ReadSafe(addr + 0x00, out.Data)) return false;
+    if (!ReadSafe(addr + 0x08, out.Count)) return false;
+    if (!ReadSafe(addr + 0x0C, out.Max)) return false;
+    // Sanity checks
+    if (out.Count < 0 || out.Count > 0x100000) { out = {}; return false; }
+    if (out.Max < out.Count) { out = {}; return false; }
+    return true;
+}
+
+// Read a pointer element at index i from a TArray of pointers
+inline uintptr_t ReadTArrayElement(const TArrayView& arr, int32_t i) {
+    uintptr_t elem = 0;
+    if (i >= 0 && i < arr.Count && arr.Data)
+        ReadSafe(arr.Data + i * sizeof(uintptr_t), elem);
+    return elem;
+}
+
 } // namespace Mem
