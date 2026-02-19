@@ -30,6 +30,14 @@ constexpr const char* AOB_GOBJECTS_V3 = "4C 8B 05 ?? ?? ?? ?? 4D 85 C0";
 constexpr const char* AOB_GOBJECTS_V4 = "48 8B 05 ?? ?? ?? ?? 48 8B 0C C8 48 85 C9";
 // V5: mov r10,[rip+X]; test r10,r10           (4C 8B 15)
 constexpr const char* AOB_GOBJECTS_V5 = "4C 8B 15 ?? ?? ?? ?? 4D 85 D2";
+// V6: mov rcx,[rip+X]; mov [rdx],rax           (48 8B 0D) — alt mov rcx variant
+constexpr const char* AOB_GOBJECTS_V6 = "48 8B 0D ?? ?? ?? ?? 48 89 02";
+// V7: mov r9,[rip+X]; cdq; movzx edx,dx        (4C 8B 0D) — GSpots variant
+constexpr const char* AOB_GOBJECTS_V7 = "4C 8B 0D ?? ?? ?? ?? 99 0F B7 D2";
+// V8: mov r9,[rip+X]; mov edx,eax; shr edx,10h (4C 8B 0D) — bit shift variant
+constexpr const char* AOB_GOBJECTS_V8 = "4C 8B 0D ?? ?? ?? ?? 8B D0 C1 EA 10";
+// V9: mov r9,[rip+X]; cdqe; lea rcx,[rax+rax*2]; (4C 8B 0D) — extended index
+constexpr const char* AOB_GOBJECTS_V9 = "4C 8B 0D ?? ?? ?? ?? 48 98 48 8D 0C 40 49";
 
 // --- AOB Patterns (GNames / FNamePool) ---
 // V1: lea rsi,[rip+X]; jmp
@@ -40,6 +48,10 @@ constexpr const char* AOB_GNAMES_V2 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05
 constexpr const char* AOB_GNAMES_V3 = "48 8D 05 ?? ?? ?? ?? EB";
 // V4: lea r8,[rip+X]; jmp   (REX.R variant)
 constexpr const char* AOB_GNAMES_V4 = "4C 8D 05 ?? ?? ?? ?? EB";
+// V5: lea rcx,[rip+X]; call; mov byte ptr[??],1  — extended context variant
+constexpr const char* AOB_GNAMES_V5 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01";
+// V6: mov rax,[rip+X]; test rax,rax; jnz; mov ecx,0808h — GSpots UE5+ variant
+constexpr const char* AOB_GNAMES_V6 = "48 8B 05 ?? ?? ?? ?? 48 85 C0 75 ?? B9 08 08 00";
 
 // --- AOB Patterns (GWorld) ---
 // V1: mov rax,[rip+X]; cmp rcx,rax; cmovz rax,[rip+Y]
