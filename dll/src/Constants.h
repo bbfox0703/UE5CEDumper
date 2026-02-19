@@ -67,7 +67,7 @@ constexpr const char* AOB_GWORLD_V5 = "48 39 05 ?? ?? ?? ?? 74";
 // V6: mov [rip+X],rbx; call  (GWorld write after UWorld creation)
 constexpr const char* AOB_GWORLD_V6 = "48 89 1D ?? ?? ?? ?? E8";
 
-// --- UObject / UStruct typical offsets (dynamically verified) ---
+// --- UObject offsets (stable across all UE5 versions) ---
 // UObjectBase
 constexpr int OFF_UOBJECT_VTABLE       = 0x00;
 constexpr int OFF_UOBJECT_FLAGS        = 0x08;
@@ -76,24 +76,41 @@ constexpr int OFF_UOBJECT_CLASS        = 0x10;
 constexpr int OFF_UOBJECT_NAME         = 0x18;
 constexpr int OFF_UOBJECT_OUTER        = 0x20;
 
+// --- UStruct / FField / FProperty offsets (runtime-detected) ---
+// These defaults match standard UE5.0–5.4 layout.
+// ValidateAndFixOffsets() will update them for UE5.5+ / CasePreservingName.
+// Legacy constexpr aliases kept for reference only — all code MUST use DynOff::*.
+
+} // namespace Constants
+
+namespace DynOff {
+
 // UStruct
-constexpr int OFF_USTRUCT_SUPER        = 0x40;
-constexpr int OFF_USTRUCT_CHILDREN     = 0x48;  // UField* chain (functions)
-constexpr int OFF_USTRUCT_CHILDPROPS   = 0x50;  // FField* chain (properties)
-constexpr int OFF_USTRUCT_PROPSSIZE    = 0x58;
+inline int USTRUCT_SUPER      = 0x40;
+inline int USTRUCT_CHILDREN   = 0x48;  // UField* chain (functions)
+inline int USTRUCT_CHILDPROPS = 0x50;  // FField* chain (properties)
+inline int USTRUCT_PROPSSIZE  = 0x58;
 
 // FField
-constexpr int OFF_FFIELD_CLASS         = 0x08;
-constexpr int OFF_FFIELD_NEXT          = 0x20;
-constexpr int OFF_FFIELD_NAME          = 0x28;
+inline int FFIELD_CLASS       = 0x08;  // FFieldClass*
+inline int FFIELD_NEXT        = 0x20;  // FField* next in chain
+inline int FFIELD_NAME        = 0x28;  // FName
 
-// FProperty
-constexpr int OFF_FPROPERTY_ELEMSIZE   = 0x38;
-constexpr int OFF_FPROPERTY_FLAGS      = 0x40;
-constexpr int OFF_FPROPERTY_OFFSET     = 0x4C;
+// FProperty (inherits from FField)
+inline int FPROPERTY_ELEMSIZE = 0x38;
+inline int FPROPERTY_FLAGS    = 0x40;  // uint64 PropertyFlags
+inline int FPROPERTY_OFFSET   = 0x4C;  // int32 Offset_Internal
 
 // FFieldClass
-constexpr int OFF_FFIELDCLASS_NAME     = 0x00;
+inline int FFIELDCLASS_NAME   = 0x00;  // FName at start of FFieldClass
+
+// Detection state
+inline bool bCasePreservingName  = false;
+inline bool bOffsetsValidated    = false;
+
+} // namespace DynOff
+
+namespace Constants {
 
 // --- Object Array ---
 constexpr int OBJECTS_PER_CHUNK        = 64 * 1024;

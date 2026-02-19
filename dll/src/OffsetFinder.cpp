@@ -6,6 +6,8 @@
 #include "Memory.h"
 #include "Logger.h"
 #include "Constants.h"
+#include "ObjectArray.h"
+#include "FNamePool.h"
 
 #include <string>
 #include <cstring>
@@ -635,6 +637,380 @@ uint32_t DetectVersion() {
 
     LOG_WARN("DetectVersion: Could not detect UE version, defaulting to 504");
     return 504;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ValidateAndFixOffsets — Runtime FField/FProperty offset detection
+//
+// Strategy:
+//   1. Find well-known UScriptStruct "Guid" (has 4 int32 fields: A,B,C,D
+//      at offsets 0,4,8,12 respectively, all ElementSize=4)
+//   2. Walk from UStruct base to find ChildProperties pointer
+//   3. From first FField, probe for Name offset (where FName resolves to "A"/"D")
+//   4. Probe for Next pointer (leads to another FField with known name)
+//   5. Probe for FProperty::Offset_Internal (should be 0 for field "A", 4 for "B")
+//   6. Probe for FProperty::ElementSize (should be 4 for all Guid fields)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Helper: find a UScriptStruct by name via GObjects scan
+static uintptr_t FindStructByName(const char* structName) {
+    int32_t count = ObjectArray::GetCount();
+    for (int32_t i = 0; i < count; ++i) {
+        uintptr_t obj = ObjectArray::GetByIndex(i);
+        if (!obj) continue;
+
+        // Check class name == "ScriptStruct"
+        uintptr_t cls = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        uint32_t clsNameIdx = 0;
+        if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+        std::string clsName = FNamePool::GetString(clsNameIdx);
+        if (clsName != "ScriptStruct") continue;
+
+        // Check object name matches
+        uint32_t nameIdx = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx)) continue;
+        std::string name = FNamePool::GetString(nameIdx);
+        if (name == structName) {
+            LOG_INFO("FindStructByName: Found '%s' at 0x%llX (index=%d)",
+                     structName, (unsigned long long)obj, i);
+            return obj;
+        }
+    }
+    return 0;
+}
+
+bool ValidateAndFixOffsets() {
+    LOG_INFO("ValidateAndFixOffsets: Starting dynamic offset detection...");
+
+    // Step 1: Detect CasePreservingName by checking FName size in UObject
+    // UObject layout: Name at 0x18, Outer at 0x20 (standard).
+    // If FName is 8 bytes: 0x20 - 0x18 = 8 → standard
+    // If FName is 0x10 bytes: the gap would be larger, meaning Outer shifts.
+    // But actually, UObject offsets are compile-time fixed. The CasePreservingName
+    // flag affects FName *contents* (adds DisplayIndex), not UObject field positions.
+    // The effect is on FField layout — FField::Flags shifts because FName after Name is bigger.
+    //
+    // We detect by probing empirically on known structs.
+
+    // Step 2: Find "Guid" struct
+    uintptr_t guidStruct = FindStructByName("Guid");
+    uintptr_t vectorStruct = FindStructByName("Vector");
+
+    if (!guidStruct && !vectorStruct) {
+        LOG_WARN("ValidateAndFixOffsets: Cannot find Guid or Vector struct, keeping defaults");
+        return false;
+    }
+
+    uintptr_t testStruct = guidStruct ? guidStruct : vectorStruct;
+    const char* testName = guidStruct ? "Guid" : "Vector";
+
+    // Expected field names for each struct
+    // Guid:   A, B, C, D  (offsets: 0, 4, 8, 12)
+    // Vector: X, Y, Z     (offsets: 0, 4, 8) — but may be float (ElementSize=4)
+    const char* expectedFirst  = guidStruct ? "A" : "X";
+    const char* expectedSecond = guidStruct ? "B" : "Y";
+    int expectedElemSize     = 4;
+
+    LOG_INFO("ValidateAndFixOffsets: Using struct '%s' at 0x%llX", testName, (unsigned long long)testStruct);
+
+    // Step 3: Find ChildProperties pointer
+    // Probe offsets 0x38..0x80 in 8-byte steps for a valid FField* pointer
+    uintptr_t childProps = 0;
+    int childPropsOff = -1;
+
+    for (int off = 0x38; off <= 0x80; off += 8) {
+        uintptr_t ptr = 0;
+        if (!Mem::ReadSafe(testStruct + off, ptr) || !ptr) continue;
+
+        // Basic pointer validity: must be in user space, non-module
+        if (ptr < 0x10000 || ptr > 0x00007FFFFFFFFFFF) continue;
+
+        // Check if this pointer has an FFieldClass* at the known offset (0x08)
+        uintptr_t fieldClass = 0;
+        if (!Mem::ReadSafe(ptr + 0x08, fieldClass) || !fieldClass) continue;
+        if (fieldClass < 0x10000 || fieldClass > 0x00007FFFFFFFFFFF) continue;
+
+        // The FFieldClass should have an FName that resolves to a *Property type name
+        uint32_t fcNameIdx = 0;
+        if (!Mem::ReadSafe(fieldClass, fcNameIdx)) continue;
+        std::string fcName = FNamePool::GetString(fcNameIdx);
+        if (fcName.find("Property") != std::string::npos) {
+            childProps = ptr;
+            childPropsOff = off;
+            LOG_INFO("ValidateAndFixOffsets: ChildProperties found at struct+0x%02X → 0x%llX (FFieldClass='%s')",
+                     off, (unsigned long long)ptr, fcName.c_str());
+            break;
+        }
+    }
+
+    if (!childProps) {
+        LOG_WARN("ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
+        return false;
+    }
+
+    // Update ChildProperties offset
+    DynOff::USTRUCT_CHILDPROPS = childPropsOff;
+
+    // Also find SuperStruct: probe 0x30..childPropsOff-8 for a pointer to another UStruct
+    // (Guid's super is probably UStruct itself or none)
+    // We'll keep the default 0x40 unless we find evidence otherwise.
+
+    // Step 4: Find FField::Name offset
+    // Probe 4-byte aligned offsets from 0x18 to 0x48 on the first FField
+    int nameOff = -1;
+    for (int off = 0x18; off <= 0x48; off += 4) {
+        uint32_t nameIdx = 0;
+        if (!Mem::ReadSafe(childProps + off, nameIdx)) continue;
+        if (nameIdx == 0 || nameIdx > 0x00FFFFFF) continue; // Sanity: reasonable FName index
+
+        std::string name = FNamePool::GetString(nameIdx);
+        if (name == expectedFirst || name == expectedSecond) {
+            nameOff = off;
+            LOG_INFO("ValidateAndFixOffsets: FField::Name at FField+0x%02X (resolved='%s')",
+                     off, name.c_str());
+            break;
+        }
+    }
+
+    if (nameOff < 0) {
+        LOG_WARN("ValidateAndFixOffsets: Cannot find FField::Name, keeping default 0x%02X",
+                 DynOff::FFIELD_NAME);
+    } else {
+        DynOff::FFIELD_NAME = nameOff;
+    }
+
+    // Detect CasePreservingName: if Name offset is still 0x28 but there's a DisplayIndex
+    // at 0x2C that equals ComparisonIndex, then CasePreservingName is true.
+    if (nameOff == 0x28) {
+        uint32_t compIdx = 0, dispIdx = 0;
+        Mem::ReadSafe(childProps + 0x28, compIdx);
+        Mem::ReadSafe(childProps + 0x2C, dispIdx);
+        if (compIdx == dispIdx && compIdx != 0) {
+            DynOff::bCasePreservingName = true;
+            LOG_INFO("ValidateAndFixOffsets: CasePreservingName detected (CompIdx==DispIdx=0x%X)", compIdx);
+        }
+    } else if (nameOff > 0x28) {
+        // Name shifted → likely due to larger FFieldVariant or other layout change
+        LOG_INFO("ValidateAndFixOffsets: FField::Name at 0x%02X (shifted from default 0x28)", nameOff);
+    }
+
+    // Step 5: Find FField::Next offset
+    // Probe 8-byte aligned offsets 0x10..0x38 for a pointer to the next FField
+    // The next field should also have an FFieldClass at +0x08 with a "Property" name
+    int nextOff = -1;
+    for (int off = 0x10; off <= 0x38; off += 8) {
+        if (off == DynOff::FFIELD_CLASS) continue; // Skip the Class pointer
+
+        uintptr_t nextPtr = 0;
+        if (!Mem::ReadSafe(childProps + off, nextPtr) || !nextPtr) continue;
+        if (nextPtr < 0x10000 || nextPtr > 0x00007FFFFFFFFFFF) continue;
+
+        // Verify it looks like an FField: check FFieldClass at +0x08
+        uintptr_t nextFieldClass = 0;
+        if (!Mem::ReadSafe(nextPtr + DynOff::FFIELD_CLASS, nextFieldClass) || !nextFieldClass) continue;
+
+        uint32_t fcNameIdx2 = 0;
+        if (!Mem::ReadSafe(nextFieldClass, fcNameIdx2)) continue;
+        std::string fcName2 = FNamePool::GetString(fcNameIdx2);
+        if (fcName2.find("Property") == std::string::npos) continue;
+
+        // Double-check: read FName at the detected Name offset on the next field
+        if (nameOff >= 0) {
+            uint32_t nextNameIdx = 0;
+            if (Mem::ReadSafe(nextPtr + nameOff, nextNameIdx) && nextNameIdx > 0) {
+                std::string nextName = FNamePool::GetString(nextNameIdx);
+                if (!nextName.empty() && nextName.length() <= 64) {
+                    nextOff = off;
+                    LOG_INFO("ValidateAndFixOffsets: FField::Next at FField+0x%02X (next='%s')",
+                             off, nextName.c_str());
+                    break;
+                }
+            }
+        } else {
+            // Can't verify name, just accept it has valid FFieldClass
+            nextOff = off;
+            LOG_INFO("ValidateAndFixOffsets: FField::Next at FField+0x%02X (unverified name)", off);
+            break;
+        }
+    }
+
+    if (nextOff < 0) {
+        LOG_WARN("ValidateAndFixOffsets: Cannot find FField::Next, keeping default 0x%02X",
+                 DynOff::FFIELD_NEXT);
+    } else {
+        DynOff::FFIELD_NEXT = nextOff;
+    }
+
+    // Step 6: Find FProperty::Offset_Internal
+    // Walk the chain to find a field we know the struct offset of.
+    // For Guid: A=0, B=4, C=8, D=12.  For Vector: X=0, Y=4, Z=8.
+    // We use the second field (B or Y) which should have Offset_Internal=4.
+    uintptr_t secondField = 0;
+    if (nextOff >= 0) {
+        Mem::ReadSafe(childProps + nextOff, secondField);
+    }
+
+    // Also try to collect the first and second field names
+    struct { uintptr_t addr; std::string name; int expectedOffset; } fields[4] = {};
+    int fieldCount = 0;
+
+    // Walk the chain
+    uintptr_t curField = childProps;
+    for (int i = 0; i < 4 && curField && fieldCount < 4; ++i) {
+        fields[fieldCount].addr = curField;
+        if (nameOff >= 0) {
+            uint32_t ni = 0;
+            Mem::ReadSafe(curField + nameOff, ni);
+            fields[fieldCount].name = FNamePool::GetString(ni);
+        }
+
+        // Map known names to expected offsets
+        const auto& fn = fields[fieldCount].name;
+        if (fn == "A" || fn == "X") fields[fieldCount].expectedOffset = 0;
+        else if (fn == "B" || fn == "Y") fields[fieldCount].expectedOffset = 4;
+        else if (fn == "C" || fn == "Z") fields[fieldCount].expectedOffset = 8;
+        else if (fn == "D") fields[fieldCount].expectedOffset = 12;
+        else fields[fieldCount].expectedOffset = -1;
+
+        ++fieldCount;
+
+        // Advance to next
+        if (nextOff >= 0) {
+            uintptr_t next = 0;
+            Mem::ReadSafe(curField + nextOff, next);
+            curField = next;
+        } else {
+            break;
+        }
+    }
+
+    LOG_INFO("ValidateAndFixOffsets: Collected %d fields from '%s' chain", fieldCount, testName);
+    for (int i = 0; i < fieldCount; ++i) {
+        LOG_DEBUG("  Field[%d]: '%s' at 0x%llX, expectedOff=%d",
+                  i, fields[i].name.c_str(), (unsigned long long)fields[i].addr, fields[i].expectedOffset);
+    }
+
+    // Probe for Offset_Internal: scan 4-byte aligned offsets from 0x38 to 0x68
+    // For a field with expectedOffset >= 0, find where int32 matches
+    int propOffsetOff = -1;
+    int propElemSizeOff = -1;
+
+    for (int probe = 0x38; probe <= 0x68; probe += 4) {
+        int matches = 0;
+        int sizeMatches = 0;
+
+        for (int i = 0; i < fieldCount; ++i) {
+            if (fields[i].expectedOffset < 0) continue;
+
+            int32_t val = -1;
+            if (Mem::ReadSafe(fields[i].addr + probe, val) && val == fields[i].expectedOffset) {
+                ++matches;
+            }
+
+            // Also check if this could be ElementSize (all should be 4)
+            int32_t sz = -1;
+            if (Mem::ReadSafe(fields[i].addr + probe, sz) && sz == expectedElemSize) {
+                ++sizeMatches;
+            }
+        }
+
+        if (matches >= 2 && propOffsetOff < 0) {
+            propOffsetOff = probe;
+            LOG_INFO("ValidateAndFixOffsets: FProperty::Offset_Internal at FField+0x%02X (%d matches)",
+                     probe, matches);
+        }
+
+        // ElementSize: all fields should have size == 4, but only count if different from Offset probe
+        if (sizeMatches >= 2 && propElemSizeOff < 0 && probe != propOffsetOff) {
+            propElemSizeOff = probe;
+            LOG_INFO("ValidateAndFixOffsets: FProperty::ElementSize at FField+0x%02X (%d matches)",
+                     probe, sizeMatches);
+        }
+    }
+
+    if (propOffsetOff < 0) {
+        LOG_WARN("ValidateAndFixOffsets: Cannot find FProperty::Offset_Internal, keeping default 0x%02X",
+                 DynOff::FPROPERTY_OFFSET);
+    } else {
+        DynOff::FPROPERTY_OFFSET = propOffsetOff;
+    }
+
+    if (propElemSizeOff < 0) {
+        // ElementSize is harder to detect uniquely because it equals the same value as offset
+        // for field "B" (both are 4). Use a heuristic: it's usually 0x14 bytes before Offset_Internal
+        // in the standard layout (0x38 vs 0x4C), so try propOffsetOff - 0x14
+        if (propOffsetOff > 0) {
+            int guess = propOffsetOff - 0x14;
+            if (guess >= 0x30) {
+                int32_t val = 0;
+                if (Mem::ReadSafe(childProps + guess, val) && val == expectedElemSize) {
+                    propElemSizeOff = guess;
+                    LOG_INFO("ValidateAndFixOffsets: FProperty::ElementSize (heuristic) at FField+0x%02X", guess);
+                }
+            }
+        }
+        if (propElemSizeOff < 0) {
+            LOG_WARN("ValidateAndFixOffsets: Cannot find FProperty::ElementSize, keeping default 0x%02X",
+                     DynOff::FPROPERTY_ELEMSIZE);
+        }
+    }
+
+    if (propElemSizeOff >= 0) {
+        DynOff::FPROPERTY_ELEMSIZE = propElemSizeOff;
+    }
+
+    // Step 7: Derive other offsets
+    // FProperty::PropertyFlags is typically right after ElementSize + ArrayDim (int32)
+    // Standard: ElementSize=0x38, ArrayDim=0x3C, PropertyFlags=0x40
+    // The gap ElementSize→PropertyFlags is usually 8 bytes (ArrayDim fills the gap)
+    if (propElemSizeOff >= 0) {
+        DynOff::FPROPERTY_FLAGS = propElemSizeOff + 8;
+        LOG_INFO("ValidateAndFixOffsets: FProperty::PropertyFlags (derived) at FField+0x%02X",
+                 DynOff::FPROPERTY_FLAGS);
+    }
+
+    // UStruct::PropertiesSize: typically ChildProperties + 8
+    DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
+    LOG_INFO("ValidateAndFixOffsets: UStruct::PropertiesSize (derived) at UStruct+0x%02X",
+             DynOff::USTRUCT_PROPSSIZE);
+
+    // UStruct::Children (UField* chain for functions): typically ChildProperties - 8
+    DynOff::USTRUCT_CHILDREN = childPropsOff - 8;
+    LOG_INFO("ValidateAndFixOffsets: UStruct::Children (derived) at UStruct+0x%02X",
+             DynOff::USTRUCT_CHILDREN);
+
+    // UStruct::SuperStruct: typically 0x10 before ChildProperties
+    // But probe to be safe — it should be a pointer to another UStruct (or null for root structs)
+    // For "Guid" struct, SuperStruct is probably null. Let's check the default 0x40.
+    // If ChildProperties moved, SuperStruct likely moved proportionally.
+    int superOff = childPropsOff - 0x10; // Default gap
+    uintptr_t superVal = 0;
+    Mem::ReadSafe(testStruct + superOff, superVal);
+    // Guid's super might be null, which is fine
+    DynOff::USTRUCT_SUPER = superOff;
+    LOG_INFO("ValidateAndFixOffsets: UStruct::SuperStruct (derived) at UStruct+0x%02X (value=0x%llX)",
+             superOff, (unsigned long long)superVal);
+
+    DynOff::bOffsetsValidated = true;
+
+    // Summary log
+    LOG_INFO("=== Dynamic Offset Summary ===");
+    LOG_INFO("  CasePreservingName: %s", DynOff::bCasePreservingName ? "YES" : "no");
+    LOG_INFO("  UStruct::Super      = +0x%02X", DynOff::USTRUCT_SUPER);
+    LOG_INFO("  UStruct::Children   = +0x%02X", DynOff::USTRUCT_CHILDREN);
+    LOG_INFO("  UStruct::ChildProps = +0x%02X", DynOff::USTRUCT_CHILDPROPS);
+    LOG_INFO("  UStruct::PropsSize  = +0x%02X", DynOff::USTRUCT_PROPSSIZE);
+    LOG_INFO("  FField::Class       = +0x%02X", DynOff::FFIELD_CLASS);
+    LOG_INFO("  FField::Next        = +0x%02X", DynOff::FFIELD_NEXT);
+    LOG_INFO("  FField::Name        = +0x%02X", DynOff::FFIELD_NAME);
+    LOG_INFO("  FProperty::ElemSize = +0x%02X", DynOff::FPROPERTY_ELEMSIZE);
+    LOG_INFO("  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
+    LOG_INFO("  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
+    LOG_INFO("==============================");
+
+    return true;
 }
 
 bool FindAll(EnginePointers& out) {

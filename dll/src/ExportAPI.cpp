@@ -59,6 +59,12 @@ bool UE5_Init() {
     FNamePool::Init(ptrs.GNames);
     ObjectArray::Init(ptrs.GObjects);
 
+    // Dynamically detect FField/FProperty/UStruct offsets
+    // Must be called AFTER FNamePool + ObjectArray are initialized
+    if (!OffsetFinder::ValidateAndFixOffsets()) {
+        LOG_WARN("UE5_Init: Offset validation failed — using default offsets (may be wrong for this UE version)");
+    }
+
     s_initialized = true;
     LOG_INFO("UE5_Init: Complete (UE%u, GObjects=0x%llX, GNames=0x%llX, Objects=%d)",
              ptrs.UEVersion,

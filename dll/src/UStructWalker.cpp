@@ -88,12 +88,12 @@ std::string GetFullName(uintptr_t uobjectAddr) {
 static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
     // FField::ClassPrivate at offset 0x08 -> FFieldClass*
     uintptr_t fieldClass = 0;
-    if (!Mem::ReadSafe(ffieldAddr + Constants::OFF_FFIELD_CLASS, fieldClass) || !fieldClass) {
+    if (!Mem::ReadSafe(ffieldAddr + DynOff::FFIELD_CLASS, fieldClass) || !fieldClass) {
         return "Unknown";
     }
 
     // FFieldClass has Name (FName) at offset 0x00
-    return ReadFName(fieldClass + Constants::OFF_FFIELDCLASS_NAME);
+    return ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
 }
 
 // Walk the FField chain starting from the first field
@@ -106,15 +106,15 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
         fi.Address = current;
 
         // Read field name
-        fi.Name = ReadFName(current + Constants::OFF_FFIELD_NAME);
+        fi.Name = ReadFName(current + DynOff::FFIELD_NAME);
 
         // Read type name from FFieldClass
         fi.TypeName = GetFieldTypeName(current);
 
         // Read offset and size (FProperty fields, may not be valid for non-property FFields)
-        Mem::ReadSafe<int32_t>(current + Constants::OFF_FPROPERTY_OFFSET, fi.Offset);
-        Mem::ReadSafe<int32_t>(current + Constants::OFF_FPROPERTY_ELEMSIZE, fi.Size);
-        Mem::ReadSafe<uint64_t>(current + Constants::OFF_FPROPERTY_FLAGS, fi.PropertyFlags);
+        Mem::ReadSafe<int32_t>(current + DynOff::FPROPERTY_OFFSET, fi.Offset);
+        Mem::ReadSafe<int32_t>(current + DynOff::FPROPERTY_ELEMSIZE, fi.Size);
+        Mem::ReadSafe<uint64_t>(current + DynOff::FPROPERTY_FLAGS, fi.PropertyFlags);
 
         if (!fi.Name.empty()) {
             fields.push_back(fi);
@@ -122,7 +122,7 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
 
         // Move to next FField
         uintptr_t next = 0;
-        if (!Mem::ReadSafe(current + Constants::OFF_FFIELD_NEXT, next)) break;
+        if (!Mem::ReadSafe(current + DynOff::FFIELD_NEXT, next)) break;
         current = next;
     }
 }
@@ -136,13 +136,13 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     info.FullPath = GetFullName(uclassAddr);
 
     // Read SuperStruct
-    Mem::ReadSafe(uclassAddr + Constants::OFF_USTRUCT_SUPER, info.SuperClass);
+    Mem::ReadSafe(uclassAddr + DynOff::USTRUCT_SUPER, info.SuperClass);
     if (info.SuperClass) {
         info.SuperName = GetName(info.SuperClass);
     }
 
     // Read PropertiesSize
-    Mem::ReadSafe(uclassAddr + Constants::OFF_USTRUCT_PROPSSIZE, info.PropertiesSize);
+    Mem::ReadSafe(uclassAddr + DynOff::USTRUCT_PROPSSIZE, info.PropertiesSize);
 
     LOG_DEBUG("WalkClass: %s (super=%s, size=%d) at 0x%llX",
               info.Name.c_str(), info.SuperName.c_str(), info.PropertiesSize,
@@ -150,7 +150,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
 
     // Walk the FField chain (ChildProperties)
     uintptr_t childProps = 0;
-    if (Mem::ReadSafe(uclassAddr + Constants::OFF_USTRUCT_CHILDPROPS, childProps) && childProps) {
+    if (Mem::ReadSafe(uclassAddr + DynOff::USTRUCT_CHILDPROPS, childProps) && childProps) {
         WalkFFieldChain(childProps, info.Fields);
     }
 
@@ -159,7 +159,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     int depth = 0;
     while (super != 0 && depth < 32) {
         uintptr_t superChildProps = 0;
-        if (Mem::ReadSafe(super + Constants::OFF_USTRUCT_CHILDPROPS, superChildProps) && superChildProps) {
+        if (Mem::ReadSafe(super + DynOff::USTRUCT_CHILDPROPS, superChildProps) && superChildProps) {
             std::vector<FieldInfo> inherited;
             WalkFFieldChain(superChildProps, inherited);
             // Prepend inherited fields (they come first in memory layout)
@@ -167,7 +167,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         }
 
         uintptr_t nextSuper = 0;
-        Mem::ReadSafe(super + Constants::OFF_USTRUCT_SUPER, nextSuper);
+        Mem::ReadSafe(super + DynOff::USTRUCT_SUPER, nextSuper);
         super = nextSuper;
         ++depth;
     }
