@@ -50,10 +50,15 @@ uintptr_t FindByFullName(const std::string& fullName);
 // Search objects by partial name (case-insensitive), returns up to maxResults
 struct SearchResult {
     uintptr_t addr;
+    int32_t   index;       // InternalIndex in GObjects
     std::string name;
     std::string className;
     uintptr_t outer;
 };
 std::vector<SearchResult> SearchByName(const std::string& query, int maxResults = 200);
+
+// Find all instances whose class name matches (case-insensitive partial match)
+// Returns addr, index, name, className, outer for each instance
+std::vector<SearchResult> FindInstancesByClass(const std::string& className, int maxResults = 500);
 
 } // namespace ObjectArray

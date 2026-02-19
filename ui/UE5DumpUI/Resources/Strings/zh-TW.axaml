@@ -17,6 +17,8 @@
     <sys:String x:Key="str.Tab.ClassStruct">類別結構</sys:String>
     <sys:String x:Key="str.Tab.Pointers">全域指標</sys:String>
     <sys:String x:Key="str.Tab.HexView">Hex 檢視</sys:String>
+    <sys:String x:Key="str.Tab.LiveWalker">即時瀏覽器</sys:String>
+    <sys:String x:Key="str.Tab.InstanceFinder">實例搜尋</sys:String>
 
     <!-- Object Tree -->
     <sys:String x:Key="str.ObjectTree.Title">物件樹</sys:String>
@@ -34,9 +36,25 @@
     <sys:String x:Key="str.ClassStruct.PropsSize">屬性總大小</sys:String>
     <sys:String x:Key="str.ClassStruct.NoClass">選取物件以檢視其類別結構</sys:String>
 
+    <!-- Live Walker -->
+    <sys:String x:Key="str.LiveWalker.StartWorld">從 GWorld 開始</sys:String>
+    <sys:String x:Key="str.LiveWalker.Back">返回</sys:String>
+    <sys:String x:Key="str.LiveWalker.Refresh">重新整理</sys:String>
+    <sys:String x:Key="str.LiveWalker.AddressHint">位址 (0x...)</sys:String>
+    <sys:String x:Key="str.LiveWalker.Go">前往</sys:String>
+    <sys:String x:Key="str.LiveWalker.ExportCE">匯出 CE XML</sys:String>
+    <sys:String x:Key="str.LiveWalker.Value">數值</sys:String>
+
+    <!-- Instance Finder -->
+    <sys:String x:Key="str.InstanceFinder.ClassNameHint">類別名稱 (例: PlayerController)</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Search">搜尋</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Address">位址</sys:String>
+    <sys:String x:Key="str.InstanceFinder.OpenInWalker">在即時瀏覽器中開啟</sys:String>
+
     <!-- Pointer Panel -->
     <sys:String x:Key="str.Pointers.GObjects">GObjects 位址</sys:String>
     <sys:String x:Key="str.Pointers.GNames">GNames 位址</sys:String>
+    <sys:String x:Key="str.Pointers.GWorld">GWorld 位址</sys:String>
     <sys:String x:Key="str.Pointers.UEVersion">UE 版本</sys:String>
     <sys:String x:Key="str.Pointers.TotalObjects">物件總數</sys:String>
     <sys:String x:Key="str.Pointers.Copy">複製</sys:String>

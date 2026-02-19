@@ -7,7 +7,7 @@
     Supports three build modes:
       - Debug    : Unoptimized builds with debug symbols (fast iteration)
       - Release  : Optimized builds (normal development)
-      - Publish  : C++ Release + C# Native AOT single-file exe (distribution)
+      - Publish  : C++ Release + C# Native AOT exe + native DLLs (distribution)
 
 .PARAMETER Mode
     Build mode: Debug, Release, or Publish (default: Release)
@@ -329,35 +329,58 @@ if ($Target -in "All", "UI") {
 
     if ($exitCode -eq 0) {
         if ($Mode -eq "Publish") {
-            # ===== Publish mode: Native AOT single-file =====
-            # Native AOT requires MSVC linker — run inside VS developer environment
-            # (the ILCompiler internally invokes vswhere + link.exe)
+            # ===== Publish mode: Native AOT =====
+            # Native AOT requires MSVC linker — run inside VS developer environment.
+            # Output: exe + native DLLs (SkiaSharp, HarfBuzz, Avalonia GL).
             Write-Step "Publishing with Native AOT (this may take several minutes)..."
 
             $publishDir = Join-Path $DIST_DIR "publish"
 
-            # ILCompiler invokes vswhere.exe internally — ensure it's on PATH
+            # Ensure vswhere is on PATH (ILCompiler invokes it internally)
             $vswhereBin = Split-Path $vswhere -Parent
-            $publishCmd = "set `"PATH=%PATH%;$vswhereBin`"`nset `"Platform=x64`"`ndotnet publish `"$UI_PROJ`" -c Release -r win-x64 --self-contained -p:PublishAot=true -p:PublishSingleFile=true -o `"$publishDir`" --nologo"
-            $publishOk = Invoke-CmdInVsEnv $publishCmd
+            if ($env:PATH -notlike "*$vswhereBin*") {
+                $env:PATH = "$env:PATH;$vswhereBin"
+            }
+            $env:Platform = "x64"
 
-            if (-not $publishOk) {
-                Write-Fail "AOT publish failed"
+            # Enter MSVC environment (needed for native linker)
+            $envOk = Enter-VsDevEnvironment
+            if (-not $envOk) {
+                Write-Fail "Cannot load MSVC environment for AOT publish"
                 $exitCode = 1
             }
             else {
-                $exeFile = Get-ChildItem -Path $publishDir -Filter "UE5DumpUI.exe" |
-                           Select-Object -First 1
-                if ($exeFile) {
-                    Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
-                    # Clean up the temp publish subfolder — keep dist\ tidy
-                    Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
-                    $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
-                    Write-Ok "UE5DumpUI.exe  |  Native AOT single-file ($exeSize)"
+                & dotnet publish $UI_PROJ `
+                    -c Release `
+                    -r win-x64 `
+                    --self-contained `
+                    -p:PublishAot=true `
+                    -o $publishDir `
+                    --nologo
+
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Fail "AOT publish failed"
+                    $exitCode = 1
                 }
                 else {
-                    Write-Fail "UE5DumpUI.exe not found in publish output"
-                    $exitCode = 1
+                    $exeFile = Get-ChildItem -Path $publishDir -Filter "UE5DumpUI.exe" |
+                               Select-Object -First 1
+                    if ($exeFile) {
+                        # Copy exe + any native DLLs (e.g. libSkiaSharp) to dist/
+                        Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
+                        Get-ChildItem $publishDir -Filter "*.dll" | ForEach-Object {
+                            Copy-Item $_.FullName -Destination $DIST_DIR -Force
+                            Write-Info "  + $($_.Name)  ($(Get-FileSize $_.FullName))"
+                        }
+                        # Clean up the temp publish subfolder — keep dist\ tidy
+                        Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+                        $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
+                        Write-Ok "UE5DumpUI.exe  |  Native AOT ($exeSize)"
+                    }
+                    else {
+                        Write-Fail "UE5DumpUI.exe not found in publish output"
+                        $exitCode = 1
+                    }
                 }
             }
         }
@@ -410,6 +433,11 @@ if ($Target -in "All", "UI") {
                     else {
                         # Clean up publish temp folder
                         Remove-Item $releasePublishDir -Recurse -Force -ErrorAction SilentlyContinue
+                        # Remove AOT native DLLs if present (Release bundles them inside the exe)
+                        foreach ($nativeDll in @("av_libglesv2.dll", "libHarfBuzzSharp.dll", "libSkiaSharp.dll")) {
+                            $p = Join-Path $DIST_DIR $nativeDll
+                            if (Test-Path $p) { Remove-Item $p -Force }
+                        }
                     }
 
                     $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")

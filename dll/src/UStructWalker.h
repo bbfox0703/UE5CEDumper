@@ -47,4 +47,44 @@ std::string GetFullName(uintptr_t uobjectAddr);
 // Get the internal index of a UObject
 int32_t GetIndex(uintptr_t uobjectAddr);
 
+// --- Live Instance Walking ---
+
+// A single field value read from a live instance
+struct LiveFieldValue {
+    std::string name;
+    std::string typeName;
+    int32_t     offset   = 0;
+    int32_t     size     = 0;
+
+    // Raw hex value (always populated for readable fields)
+    std::string hexValue;
+
+    // Human-readable typed value (for Float, Int, Bool, etc.)
+    std::string typedValue;
+
+    // For ObjectProperty: pointer to the referenced object
+    uintptr_t   ptrValue  = 0;
+    std::string ptrName;       // Name of the pointed-to object
+    std::string ptrClassName;  // Class name of the pointed-to object
+
+    // For ArrayProperty: TArray header info
+    int32_t     arrayCount = -1;  // -1 = not an array
+};
+
+// Result of walking a live instance
+struct InstanceWalkResult {
+    uintptr_t   addr      = 0;
+    std::string name;
+    std::string className;
+    uintptr_t   classAddr = 0;
+    std::vector<LiveFieldValue> fields;
+};
+
+// Walk a live instance: read class fields + live values from memory.
+// If classAddr == 0, reads ClassPrivate from the instance itself.
+InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr = 0);
+
+// Interpret raw bytes as a typed value string based on the field type name
+std::string InterpretValue(const std::string& typeName, const void* data, int32_t size);
+
 } // namespace UStructWalker

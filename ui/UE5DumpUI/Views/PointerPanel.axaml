@@ -54,6 +54,21 @@
         </Grid>
       </Border>
 
+      <!-- GWorld -->
+      <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel>
+            <TextBlock Text="{DynamicResource str.Pointers.GWorld}"
+                       Foreground="#888" FontSize="12"/>
+            <TextBlock Text="{Binding GWorldAddress}" FontSize="16"
+                       Foreground="#569CD6" FontFamily="Consolas"/>
+          </StackPanel>
+          <Button Grid.Column="1" Content="{DynamicResource str.Pointers.Copy}"
+                  Command="{Binding CopyGWorldCommand}"
+                  VerticalAlignment="Center" Padding="8,4"/>
+        </Grid>
+      </Border>
+
       <!-- Total Objects -->
       <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
         <StackPanel>

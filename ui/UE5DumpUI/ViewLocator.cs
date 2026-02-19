@@ -18,6 +18,8 @@ public sealed class ViewLocator : IDataTemplate
             ClassStructViewModel => new ClassStructPanel(),
             PointerPanelViewModel => new PointerPanel(),
             HexViewViewModel => new HexViewPanel(),
+            LiveWalkerViewModel => new LiveWalkerPanel(),
+            InstanceFinderViewModel => new InstanceFinderPanel(),
             _ => new TextBlock { Text = "View not found: " + param?.GetType().Name }
         };
     }
