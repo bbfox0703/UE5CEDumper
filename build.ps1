@@ -50,6 +50,11 @@ param(
 $ErrorActionPreference = "Stop"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
+# Force UTF-8 for console output and .NET subprocess output (fixes CJK garbling)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+$env:DOTNET_CLI_UI_LANGUAGE = "en"  # dotnet CLI in English to avoid codepage issues
+
 $ROOT_DIR   = $PSScriptRoot
 $vsDevShellLoaded = $false
 $DLL_DIR    = Join-Path $ROOT_DIR "dll"

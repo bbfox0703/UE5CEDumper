@@ -425,3 +425,4 @@ dist/
 .claude/
 build_output.txt
 build_error.txt
+build_log.txt
