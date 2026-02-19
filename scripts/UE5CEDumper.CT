@@ -172,17 +172,15 @@ function ue5_inject()
     ue5_log("Starting UE5 Dumper...")
     ue5_log("DLL path: %s", DLL_PATH)
 
-    -- 1. Inject DLL into the target process via CE AutoAssemble 'loadlibrary'
-    --    command. This is the reliable approach — CE's Lua `loadLibrary`
-    --    global is not available in all {$lua} execution contexts.
-    local aaOk = autoAssemble(string.format('loadlibrary(%s)', DLL_PATH))
-    if not aaOk then
-        ue5_logError("autoAssemble loadlibrary failed!")
+    -- 1. Inject DLL into the target process via CE's Lua injectDLL()
+    local handle = injectDLL(DLL_PATH)
+    if handle == nil or handle == 0 then
+        ue5_logError("injectDLL failed!")
         ue5_logError("Check DLL_PATH: %s", DLL_PATH)
         ue5_logError("Ensure the DLL is accessible by the game process.")
         return
     end
-    ue5_log("DLL injected OK")
+    ue5_log("DLL injected OK (handle=0x%X)", handle)
     sleep(500)   -- wait for DllMain to finish
 
     -- 2. Initialize: AOB scan for GObjects / GNames
