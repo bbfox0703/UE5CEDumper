@@ -8,14 +8,17 @@
 #include <functional>
 #include <string>
 
-// UE5 FUObjectItem structure
+// UE5 FUObjectItem structure (in FChunkedFixedUObjectArray)
+// Standard UE5 layout: 16 bytes per item
+//   +0x00  Object*       (8 bytes, UObject*)
+//   +0x08  Flags         (4 bytes, EInternalObjectFlags)
+//   +0x0C  SerialNumber  (4 bytes)
 struct FUObjectItem {
     uintptr_t Object;           // UObject*
     int32_t   Flags;
-    int32_t   ClusterRootIndex;
     int32_t   SerialNumber;
-    int32_t   _pad;
 };
+static_assert(sizeof(FUObjectItem) == 16, "FUObjectItem must be 16 bytes for correct chunk stride");
 
 namespace ObjectArray {
 
