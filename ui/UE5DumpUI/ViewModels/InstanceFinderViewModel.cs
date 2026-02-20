@@ -130,22 +130,24 @@ public partial class InstanceFinderViewModel : ViewModelBase
     private async Task ExportCeXmlAsync()
     {
         if (SelectedInstance == null) return;
+        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName) || string.IsNullOrEmpty(_engineState.ModuleBase)) return;
 
         try
         {
             ClearError();
-            var ceInfo = await _dump.GetCePointerInfoAsync(SelectedInstance.Address);
-            var instance = new InstanceWalkResult
-            {
-                Address = SelectedInstance.Address,
-                Name = SelectedInstance.Name,
-                ClassName = SelectedInstance.ClassName,
-                Fields = new List<LiveFieldValue>(Fields),
-            };
 
-            CeXmlOutput = CeXmlExportService.GenerateInstanceXml(ceInfo, instance);
-            ShowCeXml = true;
-            _log.Info($"CE XML exported for instance {SelectedInstance.Name}");
+            // Compute root address as "Module.exe"+RVA
+            var addr = Convert.ToUInt64(SelectedInstance.Address.Replace("0x", "").Replace("0X", ""), 16);
+            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
+            var rva = addr - moduleBase;
+            var rootAddress = $"\"{_engineState.ModuleName}\"+{rva:X}";
+
+            var xml = CeXmlExportService.GenerateInstanceXml(
+                rootAddress, SelectedInstance.Name, SelectedInstance.ClassName,
+                new List<LiveFieldValue>(Fields));
+
+            await _platform.CopyToClipboardAsync(xml);
+            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name}");
         }
         catch (Exception ex)
         {
