@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Markup.Xaml.Styling;
 
 namespace UE5DumpUI.Services;
@@ -26,26 +27,38 @@ public sealed class LocalizationService
         var app = Application.Current;
         if (app == null) return;
 
+        // Application.Resources is the ResourceDictionary defined in App.axaml.
+        // MergedDictionaries contains the ResourceInclude items for each language.
         var merged = app.Resources.MergedDictionaries;
 
-        // Find the ResourceInclude whose Source URI contains the target language file
-        var targetSuffix = $"/{lang}.axaml";
-        ResourceInclude? target = null;
+        // Find the ResourceInclude whose Source URI contains the target language file.
+        // At runtime the URI may be avares://UE5DumpUI/Resources/Strings/{lang}.axaml
+        // or /Resources/Strings/{lang}.axaml — use Contains for robust matching.
+        var targetFile = $"/{lang}.axaml";
+        IResourceProvider? target = null;
+        int targetIndex = -1;
 
         for (int i = 0; i < merged.Count; i++)
         {
-            if (merged[i] is ResourceInclude ri &&
-                ri.Source?.ToString().EndsWith(targetSuffix, StringComparison.OrdinalIgnoreCase) == true)
+            var item = merged[i];
+            string? sourceStr = null;
+
+            if (item is ResourceInclude ri)
+                sourceStr = ri.Source?.ToString();
+
+            if (sourceStr != null &&
+                sourceStr.Contains(targetFile, StringComparison.OrdinalIgnoreCase))
             {
-                target = ri;
-                merged.RemoveAt(i);
+                target = item;
+                targetIndex = i;
                 break;
             }
         }
 
-        if (target != null)
+        if (target != null && targetIndex >= 0)
         {
-            // Re-add at end so it takes priority (last merged dictionary wins)
+            // Remove and re-add at end so it takes priority (last merged dictionary wins)
+            merged.RemoveAt(targetIndex);
             merged.Add(target);
             _currentLanguage = lang;
         }

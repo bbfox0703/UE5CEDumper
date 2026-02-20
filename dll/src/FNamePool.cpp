@@ -1,5 +1,6 @@
 // ============================================================
-// FNamePool.cpp — UE5 FNamePool string resolution
+// FNamePool.cpp — UE FNamePool / TNameEntryArray string resolution
+// Supports UE4.25+ (FNamePool) and UE5 (FNamePool with varying chunk bits)
 // ============================================================
 
 #include "FNamePool.h"
@@ -18,14 +19,21 @@ static uintptr_t s_poolAddr = 0;
 static bool       s_initialized = false;
 
 // Header format detection
-// UE5 has changed the FNameEntry header format between versions:
-// Format A (older): bit 0 = wide flag, bits 6..15 = length
-// Format B (newer): bit 0 = wide flag, bits 1..11 = length
+// UE has changed the FNameEntry header format between versions:
+// Format A (older UE4/early UE5): bit 0 = wide flag, bits 6..15 = length
+// Format B (newer UE5):           bit 0 = wide flag, bits 1..11 = length
 static int s_lenShift = 6;     // Default: bits >> 6
 static int s_lenMask  = 0x3FF; // 10 bits of length
 static int s_wideFlag = 0;     // Bit index for wide flag
 
-// The FNamePool in UE5 stores chunk pointers after an initial header
+// FNameBlockOffsetBits: how many bits of the FName index are used for the within-chunk offset.
+// Standard UE5: 16 bits (chunkIndex = nameIndex >> 16, offset = (nameIndex & 0xFFFF) * stride)
+// Some UE4 builds: 14 bits
+// This is auto-detected in DetectBlockOffsetBits().
+static int s_blockOffsetBits = 16;
+static int s_blockOffsetMask = 0xFFFF;
+
+// The FNamePool stores chunk pointers after an initial header
 // Typical layout: lock (8 bytes), CurrentBlock+CurrentByteCursor (8 bytes), then Blocks[] array
 // But the address from AOB often points directly to the chunk array or to pool start
 static int s_chunksOffset = 0; // Offset from pool address to chunk pointer array
@@ -67,37 +75,132 @@ static void DetectHeaderFormat() {
     LOG_WARN("FNamePool: Could not auto-detect header format, using default (shift=6)");
 }
 
-static void DetectChunksOffset() {
-    // The FNamePool address may point to the pool object or directly to chunks
-    // Try offset 0 first (chunks directly)
+// Validate a candidate chunk pointer by checking if entry 0 contains "None".
+// Returns true if the chunk at (poolAddr + chunksOffset)[0] → FNameEntry looks like "None".
+static bool ValidateChunkForNone(uintptr_t poolAddr, int chunksOffset) {
     uintptr_t chunk0 = 0;
-    if (Mem::ReadSafe(s_poolAddr, chunk0) && chunk0 != 0) {
-        // Verify this looks like a chunk pointer (should be in valid memory range)
-        uint16_t testHeader = 0;
-        if (Mem::ReadSafe(chunk0, testHeader)) {
-            s_chunksOffset = 0;
-            LOG_INFO("FNamePool: Chunks at offset 0");
+    if (!Mem::ReadSafe(poolAddr + chunksOffset, chunk0) || !chunk0) return false;
+
+    // Pointer sanity
+    if (chunk0 < 0x10000 || chunk0 > 0x00007FFFFFFFFFFF) return false;
+
+    // Entry 0 is at chunk0 + 0 (nameIndex=0 → chunkIndex=0, offset=0)
+    // Read the FNameEntry header and check both header formats for "None" (length 4)
+    uint16_t header = 0;
+    if (!Mem::ReadSafe(chunk0, header)) return false;
+
+    // Try both header formats
+    auto tryFormat = [&](int shift, int mask) -> bool {
+        int len = (header >> shift) & mask;
+        if (len != 4) return false;
+        char name[5] = {};
+        if (!Mem::ReadBytesSafe(chunk0 + 2, name, 4)) return false;
+        return strcmp(name, "None") == 0;
+    };
+
+    // Format A: len = header >> 6 (10 bits)
+    if (tryFormat(6, 0x3FF)) return true;
+    // Format B: len = (header >> 1) & 0x7FF (11 bits)
+    if (tryFormat(1, 0x7FF)) return true;
+
+    return false;
+}
+
+static void DetectChunksOffset() {
+    // FNamePool layout varies across UE versions:
+    //   Standard: Lock(8) + CurrentBlock(4) + CurrentByteCursor(4) + Blocks[]  → Blocks at +0x10
+    //   Some:     Blocks at +0x00 (address points directly to chunk array)
+    //   Others:   Blocks at +0x08, +0x20, +0x40
+    //
+    // We validate each candidate by checking if Blocks[0] → entry[0] == "None".
+    // This avoids false positives from FRWLock or other non-zero values at offset 0.
+
+    // Prioritize 0x10 (standard layout) first, then try others including 0
+    int offsets[] = { 0x10, 0x00, 0x08, 0x20, 0x40 };
+    for (int off : offsets) {
+        if (ValidateChunkForNone(s_poolAddr, off)) {
+            s_chunksOffset = off;
+            LOG_INFO("FNamePool: Chunks at offset 0x%X (validated with 'None')", off);
             return;
         }
     }
 
-    // Try common offsets for the Blocks[] array within FNamePool
-    // FNamePool typically has: Lock(8) + CurrentBlock(4) + CurrentByteCursor(4) + Blocks[]
-    int offsets[] = { 0x10, 0x08, 0x20, 0x40 };
+    // Fallback: try any offset that has a readable pointer (less reliable)
+    LOG_WARN("FNamePool: 'None' validation failed for all offsets, trying readable-pointer fallback");
     for (int off : offsets) {
-        chunk0 = 0;
-        if (Mem::ReadSafe(s_poolAddr + off, chunk0) && chunk0 != 0) {
+        uintptr_t chunk0 = 0;
+        if (Mem::ReadSafe(s_poolAddr + off, chunk0) && chunk0 != 0 &&
+            chunk0 > 0x10000 && chunk0 < 0x00007FFFFFFFFFFF) {
             uint16_t testHeader = 0;
             if (Mem::ReadSafe(chunk0, testHeader)) {
                 s_chunksOffset = off;
-                LOG_INFO("FNamePool: Chunks at offset 0x%X", off);
+                LOG_WARN("FNamePool: Chunks at offset 0x%X (unvalidated fallback)", off);
                 return;
             }
         }
     }
 
-    LOG_WARN("FNamePool: Could not detect chunks offset, using 0");
-    s_chunksOffset = 0;
+    LOG_ERROR("FNamePool: Could not detect chunks offset at all");
+    s_chunksOffset = 0x10; // Best guess: standard layout
+}
+
+// Auto-detect FNameBlockOffsetBits by trying different bit widths.
+// Standard UE5 uses 16 bits. Some UE4 builds use 14 bits.
+// We test by reading FName entries at known indices and checking if they produce valid strings.
+static void DetectBlockOffsetBits() {
+    // Default: 16 bits (covers most UE5 games)
+    // Try 16 first, then 14 (some UE4 games)
+    int candidates[] = { 16, 14 };
+
+    for (int bits : candidates) {
+        int mask = (1 << bits) - 1;
+
+        // Test: index 1 should produce a non-empty, valid ASCII string
+        int32_t testIdx = 1;
+        int32_t ci = testIdx >> bits;
+        int32_t co = (testIdx & mask) * Constants::FNAME_STRIDE;
+
+        uintptr_t chunkPtr = 0;
+        uintptr_t chunksBase = s_poolAddr + s_chunksOffset;
+        if (!Mem::ReadSafe(chunksBase + ci * sizeof(uintptr_t), chunkPtr) || !chunkPtr) continue;
+
+        uintptr_t entry = chunkPtr + co;
+        uint16_t header = 0;
+        if (!Mem::ReadSafe(entry, header)) continue;
+
+        // Try both header formats
+        auto tryLen = [&](int shift, int lenMask) -> int {
+            return (header >> shift) & lenMask;
+        };
+
+        int lenA = tryLen(6, 0x3FF);
+        int lenB = tryLen(1, 0x7FF);
+
+        // Accept if either format gives a plausible length (1-256)
+        int len = (lenA >= 1 && lenA <= 256) ? lenA : ((lenB >= 1 && lenB <= 256) ? lenB : 0);
+        if (len <= 0) continue;
+
+        // Read the string and check if it's valid ASCII
+        char buf[8] = {};
+        int readLen = len > 7 ? 7 : len;
+        if (!Mem::ReadBytesSafe(entry + 2, buf, readLen)) continue;
+
+        bool valid = true;
+        for (int i = 0; i < readLen; ++i) {
+            auto c = static_cast<unsigned char>(buf[i]);
+            if (c < 0x20 || c >= 0x7F) { valid = false; break; }
+        }
+
+        if (valid) {
+            s_blockOffsetBits = bits;
+            s_blockOffsetMask = mask;
+            LOG_INFO("FNamePool: BlockOffsetBits = %d (FName[1] len=%d, str='%.7s')", bits, len, buf);
+            return;
+        }
+    }
+
+    // Keep default
+    LOG_INFO("FNamePool: BlockOffsetBits = %d (default)", s_blockOffsetBits);
 }
 
 void Init(uintptr_t gnamesAddr) {
@@ -105,6 +208,7 @@ void Init(uintptr_t gnamesAddr) {
     s_initialized = true;
 
     DetectChunksOffset();
+    DetectBlockOffsetBits();
     DetectHeaderFormat();
 
     // Verify by reading a few known names
@@ -116,8 +220,8 @@ void Init(uintptr_t gnamesAddr) {
 uintptr_t GetEntry(int32_t nameIndex) {
     if (!s_initialized || !s_poolAddr) return 0;
 
-    int32_t chunkIndex  = nameIndex >> 16;
-    int32_t chunkOffset = (nameIndex & 0xFFFF) * Constants::FNAME_STRIDE;
+    int32_t chunkIndex  = nameIndex >> s_blockOffsetBits;
+    int32_t chunkOffset = (nameIndex & s_blockOffsetMask) * Constants::FNAME_STRIDE;
 
     // Read chunk pointer
     uintptr_t chunkPtr = 0;

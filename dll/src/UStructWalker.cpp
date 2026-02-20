@@ -35,7 +35,7 @@ uintptr_t GetClass(uintptr_t uobjectAddr) {
 uintptr_t GetOuter(uintptr_t uobjectAddr) {
     if (!uobjectAddr) return 0;
     uintptr_t outer = 0;
-    Mem::ReadSafe(uobjectAddr + Constants::OFF_UOBJECT_OUTER, outer);
+    Mem::ReadSafe(uobjectAddr + DynOff::UOBJECT_OUTER, outer);
     return outer;
 }
 
@@ -85,7 +85,7 @@ std::string GetFullName(uintptr_t uobjectAddr) {
     return result;
 }
 
-// Read the type name from an FFieldClass*
+// Read the type name from an FFieldClass* (FProperty mode)
 static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
     // FField::ClassPrivate at offset 0x08 -> FFieldClass*
     uintptr_t fieldClass = 0;
@@ -97,7 +97,7 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
     return ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
 }
 
-// Walk the FField chain starting from the first field
+// Walk the FField chain starting from the first field (UE4.25+ / UE5)
 static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields) {
     uintptr_t current = firstField;
     int safetyLimit = 4096;
@@ -128,6 +128,42 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
     }
 }
 
+// Walk the UProperty chain (UE4 <4.25) — properties are UObject-derived (UField chain)
+static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fields) {
+    uintptr_t current = firstField;
+    int safetyLimit = 4096;
+
+    while (current != 0 && safetyLimit-- > 0) {
+        FieldInfo fi{};
+        fi.Address = current;
+
+        // UProperty is UObject-derived, so Name is at UObject::Name
+        fi.Name = ReadFName(current + Constants::OFF_UOBJECT_NAME);
+
+        // Type name: UProperty's class name (e.g., "IntProperty", "FloatProperty")
+        uintptr_t cls = 0;
+        if (Mem::ReadSafe(current + Constants::OFF_UOBJECT_CLASS, cls) && cls) {
+            fi.TypeName = ReadFName(cls + Constants::OFF_UOBJECT_NAME);
+        } else {
+            fi.TypeName = "Unknown";
+        }
+
+        // Read UProperty-specific fields
+        Mem::ReadSafe<int32_t>(current + DynOff::UPROPERTY_OFFSET, fi.Offset);
+        Mem::ReadSafe<int32_t>(current + DynOff::UPROPERTY_ELEMSIZE, fi.Size);
+        Mem::ReadSafe<uint64_t>(current + DynOff::UPROPERTY_FLAGS, fi.PropertyFlags);
+
+        if (!fi.Name.empty()) {
+            fields.push_back(fi);
+        }
+
+        // Move to next UField via UField::Next
+        uintptr_t next = 0;
+        if (!Mem::ReadSafe(current + DynOff::UFIELD_NEXT, next)) break;
+        current = next;
+    }
+}
+
 ClassInfo WalkClass(uintptr_t uclassAddr) {
     ClassInfo info{};
     if (!uclassAddr) return info;
@@ -149,22 +185,39 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
               info.Name.c_str(), info.SuperName.c_str(), info.PropertiesSize,
               static_cast<unsigned long long>(uclassAddr));
 
-    // Walk the FField chain (ChildProperties)
-    uintptr_t childProps = 0;
-    if (Mem::ReadSafe(uclassAddr + DynOff::USTRUCT_CHILDPROPS, childProps) && childProps) {
-        WalkFFieldChain(childProps, info.Fields);
+    // Walk the property chain — dispatch based on UProperty vs FProperty mode
+    if (DynOff::bUseFProperty) {
+        // UE4.25+ / UE5: FField chain via ChildProperties
+        uintptr_t childProps = 0;
+        if (Mem::ReadSafe(uclassAddr + DynOff::USTRUCT_CHILDPROPS, childProps) && childProps) {
+            WalkFFieldChain(childProps, info.Fields);
+        }
+    } else {
+        // UE4 <4.25: UProperty chain via Children (UField chain includes properties)
+        uintptr_t children = 0;
+        if (Mem::ReadSafe(uclassAddr + DynOff::USTRUCT_CHILDREN, children) && children) {
+            WalkUPropertyChain(children, info.Fields);
+        }
     }
 
-    // Also walk inherited fields from SuperStruct chain
+    // Walk inherited fields from SuperStruct chain
     uintptr_t super = info.SuperClass;
     int depth = 0;
     while (super != 0 && depth < 32) {
-        uintptr_t superChildProps = 0;
-        if (Mem::ReadSafe(super + DynOff::USTRUCT_CHILDPROPS, superChildProps) && superChildProps) {
-            std::vector<FieldInfo> inherited;
-            WalkFFieldChain(superChildProps, inherited);
-            // Prepend inherited fields (they come first in memory layout)
-            info.Fields.insert(info.Fields.begin(), inherited.begin(), inherited.end());
+        if (DynOff::bUseFProperty) {
+            uintptr_t superChildProps = 0;
+            if (Mem::ReadSafe(super + DynOff::USTRUCT_CHILDPROPS, superChildProps) && superChildProps) {
+                std::vector<FieldInfo> inherited;
+                WalkFFieldChain(superChildProps, inherited);
+                info.Fields.insert(info.Fields.begin(), inherited.begin(), inherited.end());
+            }
+        } else {
+            uintptr_t superChildren = 0;
+            if (Mem::ReadSafe(super + DynOff::USTRUCT_CHILDREN, superChildren) && superChildren) {
+                std::vector<FieldInfo> inherited;
+                WalkUPropertyChain(superChildren, inherited);
+                info.Fields.insert(info.Fields.begin(), inherited.begin(), inherited.end());
+            }
         }
 
         uintptr_t nextSuper = 0;
