@@ -221,9 +221,8 @@ public partial class InstanceFinderViewModel : ViewModelBase
             var xml = CeXmlExportService.GenerateRegisterSymbolXml(
                 symbolName, _engineState.ModuleName, rva);
 
-            CeXmlOutput = xml;
-            ShowCeXml = true;
-            _log.Info($"CE AA script generated for {instance.ClassName} at RVA {rva:X}");
+            await _platform.CopyToClipboardAsync(xml);
+            _log.Info($"CE AA script copied to clipboard for {instance.ClassName} at RVA {rva:X}");
         }
         catch (Exception ex)
         {
