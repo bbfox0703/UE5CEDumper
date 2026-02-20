@@ -5,13 +5,6 @@
     <!-- Toolbar -->
     <sys:String x:Key="str.Connect">Connect</sys:String>
     <sys:String x:Key="str.Disconnect">Disconnect</sys:String>
-    <sys:String x:Key="str.Language">Language</sys:String>
-
-    <!-- Status -->
-    <sys:String x:Key="str.Status.Connected">Connected</sys:String>
-    <sys:String x:Key="str.Status.Disconnected">Disconnected</sys:String>
-    <sys:String x:Key="str.Status.Connecting">Connecting...</sys:String>
-    <sys:String x:Key="str.Status.Error">Connection Error</sys:String>
 
     <!-- Tabs -->
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>
@@ -30,6 +23,7 @@
     <sys:String x:Key="str.ObjectTree.CopyObjectName">Copy Object Name</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyAddress">Copy Address</sys:String>
     <sys:String x:Key="str.ObjectTree.FilterHint">Filter loaded objects...</sys:String>
+    <sys:String x:Key="str.ObjectTree.ClassFilter">Class Type:</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.CopyAddress">Copy Address</sys:String>

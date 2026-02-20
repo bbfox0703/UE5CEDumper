@@ -58,7 +58,7 @@ git submodule update --init --recursive
 - **Platform Abstraction**: Any system/OS-dependent call (P/Invoke, Registry, OS commands) MUST go through an interface in `Core` project. `Core` must NEVER contain direct platform-specific code
 - **Log output**: All logs go to `%APPDATA%\UE5CEDumper\Logs`, 5-version rotation, 5MB max per file. Each app/DLL start triggers a rotate
 - **Magic words management**: All magic strings kept in one file per project with proper comments
-- **I18n**: UI supports dynamic language switch: zh-TW, en, ja — use `DynamicResource` bindings (no restart needed)
+- **UI Strings**: English only. All UI strings in `Resources/Strings/en.axaml`, referenced via `StaticResource` bindings
 - **UE offsets**: All UObject/UStruct offsets must be dynamically verified via OffsetFinder, never hardcoded
 
 -----

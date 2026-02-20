@@ -22,9 +22,25 @@ public partial class ObjectTreeViewModel : ViewModelBase
     [ObservableProperty] private UObjectNode? _selectedNode;
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private string _filterText = "";
+    [ObservableProperty] private int _selectedClassFilterIndex;
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private int _objectCount;
     [ObservableProperty] private string _displayCount = "";
+
+    /// <summary>Class type filter options. Index 0 = show all, others = exact ClassName match.</summary>
+    public string[] ClassFilterOptions { get; } =
+    [
+        "All",
+        "Class",
+        "Package",
+        "Function",
+        "ScriptStruct",
+        "Enum",
+        "BlueprintGeneratedClass",
+        "WidgetBlueprint",
+        "UserDefinedStruct",
+        "Level",
+    ];
 
     /// <summary>Common search suggestions for UE5 class names.</summary>
     public string[] SearchSuggestions { get; } =
@@ -50,6 +66,11 @@ public partial class ObjectTreeViewModel : ViewModelBase
     }
 
     partial void OnFilterTextChanged(string value)
+    {
+        ApplyFilter();
+    }
+
+    partial void OnSelectedClassFilterIndexChanged(int value)
     {
         ApplyFilter();
     }
@@ -91,6 +112,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
             IsLoading = true;
             _allNodes.Clear();
             FilterText = "";
+            SelectedClassFilterIndex = 0;
 
             int offset = 0;
             int total = 0;
@@ -142,6 +164,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
             ClearError();
             IsLoading = true;
             FilterText = "";
+            SelectedClassFilterIndex = 0;
 
             // Server-side case-insensitive partial search across ALL objects
             var result = await _dump.SearchObjectsAsync(SearchText, 2000);
@@ -176,28 +199,30 @@ public partial class ObjectTreeViewModel : ViewModelBase
     private void ApplyFilter()
     {
         FilteredNodes.Clear();
-        var filter = FilterText?.Trim() ?? "";
+        var textFilter = FilterText?.Trim() ?? "";
+        var classFilter = SelectedClassFilterIndex > 0
+            ? ClassFilterOptions[SelectedClassFilterIndex] : null;
 
-        if (string.IsNullOrEmpty(filter))
+        foreach (var node in _allNodes)
         {
-            foreach (var node in _allNodes)
-                FilteredNodes.Add(node);
-        }
-        else
-        {
-            foreach (var node in _allNodes)
-            {
-                if (node.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
-                    node.ClassName.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
-                    node.Address.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                {
-                    FilteredNodes.Add(node);
-                }
-            }
+            // Class type filter (exact match on ClassName)
+            if (classFilter != null &&
+                !node.ClassName.Equals(classFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Text filter (substring match on Name, ClassName, or Address)
+            if (!string.IsNullOrEmpty(textFilter) &&
+                !node.Name.Contains(textFilter, StringComparison.OrdinalIgnoreCase) &&
+                !node.ClassName.Contains(textFilter, StringComparison.OrdinalIgnoreCase) &&
+                !node.Address.Contains(textFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            FilteredNodes.Add(node);
         }
 
-        DisplayCount = string.IsNullOrEmpty(filter)
-            ? $"Objects: {_allNodes.Count} (of {ObjectCount})"
-            : $"Filtered: {FilteredNodes.Count} / {_allNodes.Count}";
+        bool hasAnyFilter = !string.IsNullOrEmpty(textFilter) || classFilter != null;
+        DisplayCount = hasAnyFilter
+            ? $"Filtered: {FilteredNodes.Count} / {_allNodes.Count}"
+            : $"Objects: {_allNodes.Count} (of {ObjectCount})";
     }
 }

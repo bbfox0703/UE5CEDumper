@@ -8,10 +8,10 @@
   <DockPanel Margin="8">
     <!-- Top: Search bar -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-      <TextBox Watermark="{DynamicResource str.InstanceFinder.ClassNameHint}"
+      <TextBox Watermark="{StaticResource str.InstanceFinder.ClassNameHint}"
                Text="{Binding SearchClassName}"
                Width="300" Padding="4,2"/>
-      <Button Content="{DynamicResource str.InstanceFinder.Search}"
+      <Button Content="{StaticResource str.InstanceFinder.Search}"
               Command="{Binding SearchCommand}"
               Classes="accent" Padding="12,4"/>
       <TextBlock Text="{Binding StatusText}"
@@ -41,19 +41,19 @@
                 Background="#1E1E1E"
                 FontFamily="Consolas" FontSize="12">
         <DataGrid.Columns>
-          <DataGridTextColumn Header="{DynamicResource str.InstanceFinder.Address}"
+          <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Address}"
                               Binding="{Binding Address}"
                               Width="160"/>
-          <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Name}"
+          <DataGridTextColumn Header="{StaticResource str.ClassStruct.Name}"
                               Binding="{Binding Name}"
                               Width="200"/>
-          <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Type}"
+          <DataGridTextColumn Header="{StaticResource str.ClassStruct.Type}"
                               Binding="{Binding ClassName}"
                               Width="200"/>
           <DataGridTextColumn Header="Index"
                               Binding="{Binding Index}"
                               Width="80"/>
-          <DataGridTemplateColumn Header="{DynamicResource str.InstanceFinder.CopyAddress}" Width="50">
+          <DataGridTemplateColumn Header="{StaticResource str.InstanceFinder.CopyAddress}" Width="50">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate x:DataType="m:InstanceResult">
                 <Button Content="Addr"
@@ -66,7 +66,7 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTemplateColumn Header="{DynamicResource str.LiveWalker.GenerateCeAA}" Width="60">
+          <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.GenerateCeAA}" Width="60">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate x:DataType="m:InstanceResult">
                 <Button Content="AA"
@@ -89,10 +89,10 @@
         <!-- Action buttons -->
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8"
                     Margin="0,4,0,4" IsVisible="{Binding HasFields}">
-          <Button Content="{DynamicResource str.LiveWalker.ExportCE}"
+          <Button Content="{StaticResource str.LiveWalker.ExportCE}"
                   Command="{Binding ExportCeXmlCommand}"
                   Padding="8,4"/>
-          <Button Content="{DynamicResource str.InstanceFinder.OpenInWalker}"
+          <Button Content="{StaticResource str.InstanceFinder.OpenInWalker}"
                   Command="{Binding OpenInLiveWalkerCommand}"
                   Padding="8,4"/>
         </StackPanel>
@@ -109,22 +109,22 @@
                   Background="#1E1E1E"
                   FontFamily="Consolas" FontSize="12">
           <DataGrid.Columns>
-            <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Offset}"
+            <DataGridTextColumn Header="{StaticResource str.ClassStruct.Offset}"
                                 Binding="{Binding Offset, StringFormat='0x{0:X}'}"
                                 Width="80"/>
-            <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Name}"
+            <DataGridTextColumn Header="{StaticResource str.ClassStruct.Name}"
                                 Binding="{Binding Name}"
                                 Width="200"/>
-            <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Type}"
+            <DataGridTextColumn Header="{StaticResource str.ClassStruct.Type}"
                                 Binding="{Binding TypeName}"
                                 Width="140"/>
-            <DataGridTextColumn Header="{DynamicResource str.LiveWalker.Value}"
+            <DataGridTextColumn Header="{StaticResource str.LiveWalker.Value}"
                                 Binding="{Binding DisplayValue}"
                                 Width="200"/>
             <DataGridTextColumn Header="Hex"
                                 Binding="{Binding HexValue}"
                                 Width="*"/>
-            <DataGridTemplateColumn Header="{DynamicResource str.LiveWalker.CopyAddress}" Width="50">
+            <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.CopyAddress}" Width="50">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="m:LiveFieldValue">
                   <Button Content="Addr"

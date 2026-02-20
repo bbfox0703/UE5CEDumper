@@ -13,11 +13,11 @@
 
       <StackPanel Orientation="Horizontal" Spacing="16" Margin="0,6,0,0">
         <StackPanel Orientation="Horizontal" Spacing="4">
-          <TextBlock Text="{DynamicResource str.ClassStruct.Super}" Foreground="#888"/>
+          <TextBlock Text="{StaticResource str.ClassStruct.Super}" Foreground="#888"/>
           <TextBlock Text="{Binding SuperName}" Foreground="#569CD6"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="4">
-          <TextBlock Text="{DynamicResource str.ClassStruct.PropsSize}" Foreground="#888"/>
+          <TextBlock Text="{StaticResource str.ClassStruct.PropsSize}" Foreground="#888"/>
           <TextBlock Text="{Binding PropertiesSize}" Foreground="#B5CEA8"/>
         </StackPanel>
       </StackPanel>
@@ -25,7 +25,7 @@
 
     <!-- No class selected message -->
     <TextBlock DockPanel.Dock="Top"
-               Text="{DynamicResource str.ClassStruct.NoClass}"
+               Text="{StaticResource str.ClassStruct.NoClass}"
                Foreground="#666"
                IsVisible="{Binding !HasClass}"
                Margin="0,20,0,0"
@@ -33,7 +33,7 @@
 
     <!-- Loading indicator -->
     <TextBlock DockPanel.Dock="Top"
-               Text="{DynamicResource str.ObjectTree.Loading}"
+               Text="{StaticResource str.ObjectTree.Loading}"
                Foreground="#4EC9B0"
                IsVisible="{Binding IsLoading}"
                HorizontalAlignment="Center"/>
@@ -49,16 +49,16 @@
               FontFamily="Consolas"
               FontSize="13">
       <DataGrid.Columns>
-        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Offset}"
+        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Offset}"
                             Binding="{Binding Offset, StringFormat=0x{0:X}}"
                             Width="80"/>
-        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Name}"
+        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Name}"
                             Binding="{Binding Name}"
                             Width="200"/>
-        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Type}"
+        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Type}"
                             Binding="{Binding TypeName}"
                             Width="180"/>
-        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Size}"
+        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Size}"
                             Binding="{Binding Size}"
                             Width="60"/>
         <DataGridTextColumn Header="Address"

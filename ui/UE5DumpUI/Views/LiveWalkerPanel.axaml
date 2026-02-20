@@ -8,27 +8,27 @@
   <DockPanel Margin="8">
     <!-- Top toolbar -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-      <Button Content="{DynamicResource str.LiveWalker.StartWorld}"
+      <Button Content="{StaticResource str.LiveWalker.StartWorld}"
               Command="{Binding StartFromWorldCommand}"
               Classes="accent" Padding="12,4"/>
-      <Button Content="{DynamicResource str.LiveWalker.Back}"
+      <Button Content="{StaticResource str.LiveWalker.Back}"
               Command="{Binding GoBackCommand}"
               Padding="8,4"/>
-      <Button Content="{DynamicResource str.LiveWalker.Refresh}"
+      <Button Content="{StaticResource str.LiveWalker.Refresh}"
               Command="{Binding RefreshCommand}"
               Padding="8,4"/>
-      <TextBox Watermark="{DynamicResource str.LiveWalker.AddressHint}"
+      <TextBox Watermark="{StaticResource str.LiveWalker.AddressHint}"
                x:Name="AddressInput"
                Width="220" Padding="4,2" Margin="8,0,0,0"/>
-      <Button Content="{DynamicResource str.LiveWalker.Go}"
+      <Button Content="{StaticResource str.LiveWalker.Go}"
               Command="{Binding NavigateToAddressCommand}"
               CommandParameter="{Binding #AddressInput.Text}"
               Padding="8,4"/>
-      <Button Content="{DynamicResource str.LiveWalker.ExportCE}"
+      <Button Content="{StaticResource str.LiveWalker.ExportCE}"
               Command="{Binding ExportCeXmlCommand}"
               IsVisible="{Binding HasData}"
               Padding="8,4"/>
-      <Button Content="{DynamicResource str.LiveWalker.GenerateCeAA}"
+      <Button Content="{StaticResource str.LiveWalker.GenerateCeAA}"
               Command="{Binding GenerateCeAAScriptCommand}"
               IsVisible="{Binding HasData}"
               Padding="8,4"/>
@@ -75,7 +75,7 @@
     <!-- Search bar -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
                 IsVisible="{Binding HasData}">
-      <TextBox Watermark="{DynamicResource str.LiveWalker.SearchHint}"
+      <TextBox Watermark="{StaticResource str.LiveWalker.SearchHint}"
                Text="{Binding SearchText, Mode=TwoWay}"
                Width="250" Padding="4,2" FontSize="12"/>
       <TextBlock Text="{Binding SearchMatchCount, StringFormat='{}{0} matches'}"
@@ -99,22 +99,22 @@
               FontFamily="Consolas" FontSize="12"
               LoadingRow="FieldGrid_LoadingRow">
       <DataGrid.Columns>
-        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Offset}"
+        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Offset}"
                             Binding="{Binding Offset, StringFormat='0x{0:X}'}"
                             Width="80"/>
-        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Name}"
+        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Name}"
                             Binding="{Binding Name}"
                             Width="200"/>
-        <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Type}"
+        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Type}"
                             Binding="{Binding TypeName}"
                             Width="140"/>
-        <DataGridTextColumn Header="{DynamicResource str.LiveWalker.Value}"
+        <DataGridTextColumn Header="{StaticResource str.LiveWalker.Value}"
                             Binding="{Binding DisplayValue}"
                             Width="200"/>
         <DataGridTextColumn Header="Hex"
                             Binding="{Binding HexValue}"
                             Width="160"/>
-        <DataGridTextColumn Header="{DynamicResource str.InstanceFinder.Address}"
+        <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Address}"
                             Binding="{Binding FieldAddress}"
                             Width="140"/>
         <DataGridTemplateColumn Header="" Width="80">
@@ -145,7 +145,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="{DynamicResource str.LiveWalker.CopyAddress}" Width="50">
+        <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.CopyAddress}" Width="50">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
               <Button Content="Addr"
@@ -158,7 +158,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="{DynamicResource str.LiveWalker.CopyName}" Width="50">
+        <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.CopyName}" Width="50">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
               <Button Content="Name"

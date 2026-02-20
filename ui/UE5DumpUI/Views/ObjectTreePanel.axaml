@@ -9,7 +9,7 @@
     <!-- Search bar -->
     <StackPanel DockPanel.Dock="Top" Margin="4" Spacing="4">
       <StackPanel Orientation="Horizontal" Spacing="8">
-        <TextBlock Text="{DynamicResource str.ObjectTree.Title}"
+        <TextBlock Text="{StaticResource str.ObjectTree.Title}"
                    FontWeight="SemiBold" FontSize="14" Foreground="#CCC"/>
         <TextBlock Text="{Binding DisplayCount}"
                    Foreground="#888" FontSize="12" VerticalAlignment="Center"/>
@@ -17,7 +17,7 @@
 
       <Grid ColumnDefinitions="*,Auto,Auto">
         <AutoCompleteBox Grid.Column="0"
-                 Watermark="{DynamicResource str.ObjectTree.Search}"
+                 Watermark="{StaticResource str.ObjectTree.Search}"
                  Text="{Binding SearchText}"
                  FilterMode="Contains"
                  ItemsSource="{Binding SearchSuggestions}"
@@ -25,7 +25,7 @@
                  KeyDown="SearchBox_KeyDown"
                  x:Name="SearchBox"/>
         <Button Grid.Column="1"
-                Content="{DynamicResource str.ObjectTree.Load}"
+                Content="{StaticResource str.ObjectTree.Load}"
                 Command="{Binding LoadCommand}"
                 Margin="0,0,4,0" Padding="8,4"/>
         <Button Grid.Column="2"
@@ -34,10 +34,18 @@
                 Padding="8,4"/>
       </Grid>
 
-      <!-- Local filter -->
-      <TextBox Watermark="{DynamicResource str.ObjectTree.FilterHint}"
-               Text="{Binding FilterText}"
-               Padding="4,2" FontSize="12"/>
+      <!-- Class type + text filter -->
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <TextBlock Text="{StaticResource str.ObjectTree.ClassFilter}"
+                   Foreground="#888" FontSize="12" VerticalAlignment="Center"/>
+        <ComboBox ItemsSource="{Binding ClassFilterOptions}"
+                  SelectedIndex="{Binding SelectedClassFilterIndex}"
+                  MinWidth="140" Padding="4,2" FontSize="12"/>
+        <TextBox Watermark="{StaticResource str.ObjectTree.FilterHint}"
+                 Text="{Binding FilterText}"
+                 Padding="4,2" FontSize="12"
+                 MinWidth="160"/>
+      </StackPanel>
     </StackPanel>
 
     <!-- Object list (flat list with virtualization) -->
@@ -47,13 +55,13 @@
       <!-- ContextMenu on ListBox: uses SelectedNode for commands (works on full row area) -->
       <ListBox.ContextMenu>
         <ContextMenu>
-          <MenuItem Header="{DynamicResource str.ObjectTree.CopyClassName}"
+          <MenuItem Header="{StaticResource str.ObjectTree.CopyClassName}"
                     Command="{Binding CopyClassNameCommand}"
                     CommandParameter="{Binding SelectedNode}"/>
-          <MenuItem Header="{DynamicResource str.ObjectTree.CopyObjectName}"
+          <MenuItem Header="{StaticResource str.ObjectTree.CopyObjectName}"
                     Command="{Binding CopyObjectNameCommand}"
                     CommandParameter="{Binding SelectedNode}"/>
-          <MenuItem Header="{DynamicResource str.ObjectTree.CopyAddress}"
+          <MenuItem Header="{StaticResource str.ObjectTree.CopyAddress}"
                     Command="{Binding CopyAddressCommand}"
                     CommandParameter="{Binding SelectedNode}"/>
         </ContextMenu>
