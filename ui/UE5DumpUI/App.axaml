@@ -16,11 +16,6 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <!-- All language dictionaries loaded at compile time (AOT-safe).
-                     LocalizationService moves the desired language to the end
-                     of the list so it takes priority for DynamicResource lookups. -->
-                <ResourceInclude Source="/Resources/Strings/zh-TW.axaml"/>
-                <ResourceInclude Source="/Resources/Strings/ja.axaml"/>
                 <ResourceInclude Source="/Resources/Strings/en.axaml"/>
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>

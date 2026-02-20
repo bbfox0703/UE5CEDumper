@@ -13,11 +13,9 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly IPipeClient _pipeClient;
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
-    private readonly LocalizationService _localization;
 
     [ObservableProperty] private string _statusText = "Disconnected";
     [ObservableProperty] private bool _isConnected;
-    [ObservableProperty] private string _selectedLanguage = "en";
 
     // Child ViewModels
     public ObjectTreeViewModel ObjectTree { get; }
@@ -27,19 +25,15 @@ public partial class MainWindowViewModel : ViewModelBase
     public LiveWalkerViewModel LiveWalker { get; }
     public InstanceFinderViewModel InstanceFinder { get; }
 
-    public string[] AvailableLanguages { get; } = ["en", "zh-TW", "ja"];
-
     public MainWindowViewModel(
         IPipeClient pipeClient,
         IDumpService dump,
         ILoggingService log,
-        IPlatformService platform,
-        LocalizationService localization)
+        IPlatformService platform)
     {
         _pipeClient = pipeClient;
         _dump = dump;
         _log = log;
-        _localization = localization;
 
         ObjectTree = new ObjectTreeViewModel(dump, log, platform);
         ClassStruct = new ClassStructViewModel(dump, log);
@@ -122,10 +116,5 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             SetError(ex);
         }
-    }
-
-    partial void OnSelectedLanguageChanged(string value)
-    {
-        _localization.SwitchLanguage(value);
     }
 }
