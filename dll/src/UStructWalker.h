@@ -67,6 +67,11 @@ struct LiveFieldValue {
     std::string ptrName;       // Name of the pointed-to object
     std::string ptrClassName;  // Class name of the pointed-to object
 
+    // For BoolProperty: bit field info
+    int32_t     boolBitIndex = -1;  // Bit index (0-7) within the byte; -1 = not a bool
+    uint8_t     boolFieldMask = 0;  // Raw FieldMask byte from FBoolProperty
+    uint8_t     boolByteOffset = 0; // ByteOffset within the property offset
+
     // For ArrayProperty: TArray header info
     int32_t     arrayCount = -1;  // -1 = not an array
 

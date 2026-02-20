@@ -43,39 +43,35 @@
     <!-- Object list (flat list with virtualization) -->
     <ListBox ItemsSource="{Binding FilteredNodes}"
              SelectedItem="{Binding SelectedNode}"
-             Background="Transparent"
-             >
+             Background="Transparent">
+      <!-- ContextMenu on ListBox: uses SelectedNode for commands (works on full row area) -->
+      <ListBox.ContextMenu>
+        <ContextMenu>
+          <MenuItem Header="{DynamicResource str.ObjectTree.CopyClassName}"
+                    Command="{Binding CopyClassNameCommand}"
+                    CommandParameter="{Binding SelectedNode}"/>
+          <MenuItem Header="{DynamicResource str.ObjectTree.CopyObjectName}"
+                    Command="{Binding CopyObjectNameCommand}"
+                    CommandParameter="{Binding SelectedNode}"/>
+          <MenuItem Header="{DynamicResource str.ObjectTree.CopyAddress}"
+                    Command="{Binding CopyAddressCommand}"
+                    CommandParameter="{Binding SelectedNode}"/>
+        </ContextMenu>
+      </ListBox.ContextMenu>
       <ListBox.ItemTemplate>
         <DataTemplate x:DataType="models:UObjectNode">
-          <!-- Border fills full row width so right-click works anywhere on the row -->
-          <Border Background="Transparent" Padding="2,1"
-                  HorizontalAlignment="Stretch">
-            <Border.ContextMenu>
-              <ContextMenu>
-                <MenuItem Header="{DynamicResource str.ObjectTree.CopyClassName}"
-                          Command="{Binding $parent[UserControl].((vm:ObjectTreeViewModel)DataContext).CopyClassNameCommand}"
-                          CommandParameter="{Binding}"/>
-                <MenuItem Header="{DynamicResource str.ObjectTree.CopyObjectName}"
-                          Command="{Binding $parent[UserControl].((vm:ObjectTreeViewModel)DataContext).CopyObjectNameCommand}"
-                          CommandParameter="{Binding}"/>
-                <MenuItem Header="{DynamicResource str.ObjectTree.CopyAddress}"
-                          Command="{Binding $parent[UserControl].((vm:ObjectTreeViewModel)DataContext).CopyAddressCommand}"
-                          CommandParameter="{Binding}"/>
-              </ContextMenu>
-            </Border.ContextMenu>
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="{Binding ClassName}"
-                         Foreground="#569CD6" FontSize="14"
-                         FontWeight="SemiBold"
-                         MinWidth="140"/>
-              <TextBlock Text="{Binding Name}"
-                         Foreground="#D4D4D4" FontSize="14"/>
-              <TextBlock Text="{Binding Address}"
-                         Foreground="#6A9955" FontSize="13"
-                         Opacity="0.7"
-                         VerticalAlignment="Center"/>
-            </StackPanel>
-          </Border>
+          <StackPanel Orientation="Horizontal" Spacing="8" Margin="2,1">
+            <TextBlock Text="{Binding ClassName}"
+                       Foreground="#569CD6" FontSize="14"
+                       FontWeight="SemiBold"
+                       MinWidth="140"/>
+            <TextBlock Text="{Binding Name}"
+                       Foreground="#D4D4D4" FontSize="14"/>
+            <TextBlock Text="{Binding Address}"
+                       Foreground="#6A9955" FontSize="13"
+                       Opacity="0.7"
+                       VerticalAlignment="Center"/>
+          </StackPanel>
         </DataTemplate>
       </ListBox.ItemTemplate>
     </ListBox>
