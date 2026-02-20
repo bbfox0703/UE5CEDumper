@@ -15,7 +15,6 @@ public class App : Application
     private LoggingService? _logging;
     private PipeClient? _pipeClient;
     private DumpService? _dumpService;
-    private LocalizationService? _localization;
 
     public override void Initialize()
     {
@@ -41,7 +40,6 @@ public class App : Application
             _logging = new LoggingService(logDir);
             _pipeClient = new PipeClient(_logging);
             _dumpService = new DumpService(_pipeClient, _logging);
-            _localization = new LocalizationService();
 
             _logging.Info("UE5DumpUI starting...");
             _logging.Info($"Version:   {typeof(App).Assembly.GetName().Version}");
@@ -52,7 +50,7 @@ public class App : Application
 
             // Create main window
             var mainVm = new MainWindowViewModel(
-                _pipeClient, _dumpService, _logging, _platform, _localization);
+                _pipeClient, _dumpService, _logging, _platform);
 
             desktop.MainWindow = new MainWindow
             {

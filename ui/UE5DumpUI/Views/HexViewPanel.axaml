@@ -8,17 +8,17 @@
   <DockPanel Margin="8">
     <!-- Controls bar -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-      <TextBox Watermark="{DynamicResource str.HexView.Address}"
+      <TextBox Watermark="{StaticResource str.HexView.Address}"
                Text="{Binding Address}" Width="200"/>
-      <TextBox Watermark="{DynamicResource str.HexView.Size}"
+      <TextBox Watermark="{StaticResource str.HexView.Size}"
                Text="{Binding Size}" Width="80"/>
-      <Button Content="{DynamicResource str.HexView.Read}"
+      <Button Content="{StaticResource str.HexView.Read}"
               Command="{Binding ReadCommand}" Padding="12,4"/>
-      <ToggleButton Content="{DynamicResource str.HexView.LiveWatch}"
+      <ToggleButton Content="{StaticResource str.HexView.LiveWatch}"
                     IsChecked="{Binding IsWatching}"
                     Command="{Binding ToggleWatchCommand}"
                     Margin="8,0,0,0" Padding="12,4"/>
-      <TextBox Watermark="{DynamicResource str.HexView.Interval}"
+      <TextBox Watermark="{StaticResource str.HexView.Interval}"
                Text="{Binding WatchInterval}" Width="80"/>
     </StackPanel>
 

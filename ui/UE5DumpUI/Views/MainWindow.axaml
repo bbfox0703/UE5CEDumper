@@ -13,11 +13,11 @@
     <!-- Top Toolbar -->
     <Border DockPanel.Dock="Top" Background="#2D2D2D" Height="44" Padding="8,0">
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
-        <Button Content="{DynamicResource str.Connect}"
+        <Button Content="{StaticResource str.Connect}"
                 Command="{Binding ConnectCommand}"
                 IsVisible="{Binding !IsConnected}"
                 Classes="accent" Padding="12,4"/>
-        <Button Content="{DynamicResource str.Disconnect}"
+        <Button Content="{StaticResource str.Disconnect}"
                 Command="{Binding DisconnectCommand}"
                 IsVisible="{Binding IsConnected}"
                 Padding="12,4"/>
@@ -26,17 +26,6 @@
                    Foreground="#4EC9B0"
                    VerticalAlignment="Center"
                    Margin="12,0"/>
-
-        <!-- Language selector -->
-        <Border Margin="20,0,0,0">
-          <StackPanel Orientation="Horizontal" Spacing="4">
-            <TextBlock Text="{DynamicResource str.Language}"
-                       Foreground="#888" VerticalAlignment="Center"/>
-            <ComboBox ItemsSource="{Binding AvailableLanguages}"
-                      SelectedItem="{Binding SelectedLanguage, Mode=TwoWay}"
-                      Width="90" Padding="4,2"/>
-          </StackPanel>
-        </Border>
 
         <!-- Error display -->
         <TextBlock Text="{Binding ErrorMessage}"
@@ -63,19 +52,19 @@
 
       <!-- Right: Tab panels -->
       <TabControl Grid.Column="2" Background="#1E1E1E" Padding="4">
-        <TabItem Header="{DynamicResource str.Tab.LiveWalker}">
+        <TabItem Header="{StaticResource str.Tab.LiveWalker}">
           <views:LiveWalkerPanel DataContext="{Binding LiveWalker}"/>
         </TabItem>
-        <TabItem Header="{DynamicResource str.Tab.InstanceFinder}">
+        <TabItem Header="{StaticResource str.Tab.InstanceFinder}">
           <views:InstanceFinderPanel DataContext="{Binding InstanceFinder}"/>
         </TabItem>
-        <TabItem Header="{DynamicResource str.Tab.ClassStruct}">
+        <TabItem Header="{StaticResource str.Tab.ClassStruct}">
           <views:ClassStructPanel DataContext="{Binding ClassStruct}"/>
         </TabItem>
-        <TabItem Header="{DynamicResource str.Tab.Pointers}">
+        <TabItem Header="{StaticResource str.Tab.Pointers}">
           <views:PointerPanel DataContext="{Binding Pointers}"/>
         </TabItem>
-        <TabItem Header="{DynamicResource str.Tab.HexView}">
+        <TabItem Header="{StaticResource str.Tab.HexView}">
           <views:HexViewPanel DataContext="{Binding HexView}"/>
         </TabItem>
       </TabControl>

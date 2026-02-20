@@ -39,6 +39,34 @@ static uintptr_t TryPatternRIP(const char* pattern, int opcodeLen = 3, int total
     return target;
 }
 
+// Try an AOB pattern where the RIP-relative instruction is at a known
+// offset from the match start (not necessarily at byte 0).
+// instrOffset = byte offset from match start to the RIP opcode
+// opcodeLen   = bytes before the 4-byte displacement (e.g. 3 for lea/mov)
+// totalLen    = total instruction length (e.g. 7 for standard RIP-relative)
+static uintptr_t TryPatternRIPOffset(const char* pattern, int instrOffset,
+                                     int opcodeLen = 3, int totalLen = 7,
+                                     bool derefResult = false) {
+    uintptr_t addr = Mem::AOBScan(pattern);
+    if (!addr) return 0;
+
+    uintptr_t instrAddr = addr + instrOffset;
+    uintptr_t target = Mem::ResolveRIP(instrAddr, opcodeLen, totalLen);
+    if (!target) return 0;
+
+    if (derefResult) {
+        uintptr_t value = 0;
+        if (!Mem::ReadSafe(target, value) || value == 0) {
+            LOG_WARN("TryPatternRIPOffset: Deref at 0x%llX yielded null",
+                     static_cast<unsigned long long>(target));
+            return 0;
+        }
+        return value;
+    }
+
+    return target;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Symbol Export Fallback (RE-UE4SS technique)
 // Many retail UE games export MSVC-mangled symbols. GetProcAddress resolves
@@ -318,6 +346,24 @@ uintptr_t FindGObjects() {
 
     for (auto& c : candidates) {
         uintptr_t result = TryPatternRIP(c.pattern, 3, 7, c.deref);
+        if (result && ValidateGObjects(result)) return result;
+    }
+
+    // === Patternsleuth patterns (RIP instruction at non-zero offset) ===
+    struct { const char* pattern; int instrOffset; int opcodeLen; int totalLen; } psCandidates[] = {
+        { Constants::AOB_GOBJECTS_PS1, 23, 3, 7 },  // cmp/cmp/jne; lea rdx; lea rcx
+        { Constants::AOB_GOBJECTS_PS2,  2, 3, 7 },  // jz; lea rcx
+        { Constants::AOB_GOBJECTS_PS3,  5, 3, 7 },  // jne; mov; lea rcx
+        { Constants::AOB_GOBJECTS_PS4, 16, 3, 7 },  // test; mov; lea r11
+        { Constants::AOB_GOBJECTS_PS5, 12, 3, 7 },  // or; and; mov; lea rcx
+        { Constants::AOB_GOBJECTS_PS6, 14, 2, 6 },  // arithmetic sub eax,[rip+X]
+        { Constants::AOB_GOBJECTS_PS7, 17, 2, 6 },  // arithmetic add ecx,[rip+X]
+    };
+    for (auto& c : psCandidates) {
+        uintptr_t result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen);
+        if (result && ValidateGObjects(result)) return result;
+        // Try with deref for pointer-to-pointer layouts
+        result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen, true);
         if (result && ValidateGObjects(result)) return result;
     }
 
@@ -715,6 +761,23 @@ uintptr_t FindGNames() {
         // structural validation (FRWLock, CurrentBlock, Blocks sentinel).
         // Accept if either validates — they check complementary properties.
         if (ValidateGNames(result) || ValidateGNamesStructural(result)) return result;
+    }
+
+    // === Patternsleuth FNamePool patterns (RIP instruction at non-zero offset) ===
+    struct { const char* pattern; int instrOffset; int opcodeLen; int totalLen; } psGNamesCandidates[] = {
+        { Constants::AOB_GNAMES_PS1, 2, 3, 7 },  // jz+9; lea r8,[rip+X]
+        { Constants::AOB_GNAMES_PS2, 7, 3, 7 },  // sub rsp; shr edx; lea rbp,[rip+X]
+    };
+    for (auto& c : psGNamesCandidates) {
+        uintptr_t result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen);
+        if (result) {
+            if (ValidateGNames(result) || ValidateGNamesStructural(result)) return result;
+            // Try deref for pointer-to-pointer layouts
+            uintptr_t derefed = 0;
+            if (Mem::ReadSafe(result, derefed) && derefed) {
+                if (ValidateGNames(derefed) || ValidateGNamesStructural(derefed)) return derefed;
+            }
+        }
     }
 
     // === FName ctor call-site pattern (V7, FF7 Rebirth) ===
