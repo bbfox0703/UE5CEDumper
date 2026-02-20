@@ -246,6 +246,41 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
         return FNamePool::GetString(nameIdx);
     }
 
+    // StructProperty: for small structs, show inline float hints
+    // Many gameplay structs (FGameplayAttributeData, FVector, FRotator, etc.)
+    // contain float fields. Show a summary like "f:[100.0, 100.0]" for quick analysis.
+    if (typeName == "StructProperty" && size >= 4) {
+        // Skip the first 8 bytes if size > 8 — often a vtable/pointer preamble.
+        // For structs <= 8 bytes, interpret from byte 0.
+        int floatStart = (size > 8) ? 8 : 0;
+        int floatCount = (size - floatStart) / 4;
+        if (floatCount > 0 && floatCount <= 16) {
+            // Check if at least one float in range looks meaningful (not 0, not NaN/garbage)
+            bool anyMeaningful = false;
+            for (int i = 0; i < floatCount; ++i) {
+                float v;
+                memcpy(&v, bytes + floatStart + i * 4, 4);
+                if (v != 0.0f && v == v && v > -1e12f && v < 1e12f) { // not zero, not NaN, reasonable range
+                    anyMeaningful = true;
+                    break;
+                }
+            }
+            if (anyMeaningful) {
+                std::string hint = "f:[";
+                for (int i = 0; i < floatCount; ++i) {
+                    if (i > 0) hint += ", ";
+                    float v;
+                    memcpy(&v, bytes + floatStart + i * 4, 4);
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%.4g", v);
+                    hint += buf;
+                }
+                hint += "]";
+                return hint;
+            }
+        }
+    }
+
     return ""; // Unknown type — caller shows hex
 }
 
@@ -313,15 +348,31 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
 
         // Handle StructProperty: extract inner UScriptStruct* for navigation
         if (fi.TypeName == "StructProperty") {
-            uintptr_t innerStruct = 0;
-            if (Mem::ReadSafe(fi.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
-                // Validate: check that GetName returns a non-empty ASCII string
-                std::string sname = GetName(innerStruct);
+            // Try the derived offset first, then probe nearby offsets
+            static const int kStructPtrProbeOffsets[] = { 0, 4, -4, 8, -8, 0x10, -0x10 };
+            bool found = false;
+            for (int delta : kStructPtrProbeOffsets) {
+                int tryOffset = DynOff::FSTRUCTPROP_STRUCT + delta;
+                if (tryOffset < 0) continue;
+                uintptr_t candidate = 0;
+                if (!Mem::ReadSafe(fi.Address + tryOffset, candidate) || !candidate) continue;
+                // Validate: must be a UScriptStruct (inherits UObject), so GetName should return ASCII
+                std::string sname = GetName(candidate);
                 if (!sname.empty() && sname[0] >= 0x20 && sname[0] < 0x7F) {
-                    fv.structClassAddr = innerStruct;
-                    fv.structTypeName = sname;
-                    fv.structDataAddr = instanceAddr + fi.Offset;
+                    fv.structClassAddr = candidate;
+                    fv.structTypeName  = sname;
+                    fv.structDataAddr  = instanceAddr + fi.Offset;
+                    if (delta != 0) {
+                        Logger::Info("WALK:StructP", "FStructProperty::Struct at FField+0x%X (base=0x%X, delta=%d) for '%s' -> '%s'",
+                            tryOffset, DynOff::FSTRUCTPROP_STRUCT, delta, fi.Name.c_str(), sname.c_str());
+                    }
+                    found = true;
+                    break;
                 }
+            }
+            if (!found) {
+                Logger::Debug("WALK:StructP", "FStructProperty::Struct not found for '%s' (FField=0x%llX, probed 0x%X +/- 16)",
+                    fi.Name.c_str(), static_cast<unsigned long long>(fi.Address), DynOff::FSTRUCTPROP_STRUCT);
             }
             // Fall through to read hex value below
         }

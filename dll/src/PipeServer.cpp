@@ -436,13 +436,27 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
         // === walk_world: Browse GWorld → PersistentLevel → Actors hierarchy ===
         if (cmd == PipeProtocol::CMD_WALK_WORLD) {
             extern uintptr_t g_cachedGWorld;
-            uintptr_t worldAddr = g_cachedGWorld;
 
             // Allow overriding with a custom address
             std::string addrStr = request.value("addr", "");
-            if (!addrStr.empty()) worldAddr = PipeProtocol::StrToAddr(addrStr);
+            uintptr_t worldAddr = 0;
+            if (!addrStr.empty()) {
+                worldAddr = PipeProtocol::StrToAddr(addrStr);
+            } else {
+                // g_cachedGWorld is &GWorld (address of the global pointer variable).
+                // Must dereference to get the actual UWorld* value.
+                if (g_cachedGWorld) {
+                    bool ok = Mem::ReadSafe(g_cachedGWorld, worldAddr);
+                    Logger::Info("PIPE:world", "GWorld deref: &GWorld=0x%llX -> UWorld*=0x%llX (ReadSafe=%s)",
+                        static_cast<unsigned long long>(g_cachedGWorld),
+                        static_cast<unsigned long long>(worldAddr),
+                        ok ? "ok" : "fail");
+                } else {
+                    Logger::Warn("PIPE:world", "g_cachedGWorld is 0 — GWorld was not found during init");
+                }
+            }
 
-            if (!worldAddr) return PipeProtocol::MakeError(id, "GWorld not found").dump();
+            if (!worldAddr) return PipeProtocol::MakeError(id, "GWorld not found (deref 0x0 — world may not be loaded yet)").dump();
 
             json data;
             data["world_addr"] = PipeProtocol::AddrToStr(worldAddr);

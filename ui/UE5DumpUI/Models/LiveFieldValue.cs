@@ -50,4 +50,7 @@ public sealed class LiveFieldValue
     public bool IsNavigable =>
         (!string.IsNullOrEmpty(PtrAddress) && PtrAddress != "0x0") ||
         (!string.IsNullOrEmpty(StructDataAddr) && StructDataAddr != "0x0");
+
+    /// <summary>Whether this field matches the current search query (set by ViewModel).</summary>
+    public bool IsSearchMatch { get; set; }
 }

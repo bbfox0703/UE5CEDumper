@@ -78,6 +78,41 @@ public static class CeXmlExportService
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Generate a CE-compatible XML with an AutoAssembler script that registers a symbol
+    /// for a static pointer address. Output format:
+    /// define(symbolName, "MODULE.EXE"+RVA) / registersymbol(symbolName)
+    /// </summary>
+    public static string GenerateRegisterSymbolXml(string symbolName, string moduleName, ulong rva)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        sb.AppendLine("<CheatTable>");
+        sb.AppendLine("  <CheatEntries>");
+        sb.AppendLine($"    <CheatEntry>");
+        sb.AppendLine($"      <ID>0</ID>");
+        sb.AppendLine($"      <Description>\"{symbolName}\"</Description>");
+        sb.AppendLine($"      <VariableType>Auto Assembler Script</VariableType>");
+        sb.AppendLine($"      <AssemblerScript>");
+
+        // Enable script
+        sb.AppendLine("[ENABLE]");
+        sb.AppendLine($"define({symbolName},\"{moduleName}\"+{rva:X})");
+        sb.AppendLine($"registersymbol({symbolName})");
+        sb.AppendLine();
+
+        // Disable script
+        sb.AppendLine("[DISABLE]");
+        sb.AppendLine($"unregistersymbol({symbolName})");
+
+        sb.AppendLine($"      </AssemblerScript>");
+        sb.AppendLine($"    </CheatEntry>");
+        sb.AppendLine("  </CheatEntries>");
+        sb.AppendLine("</CheatTable>");
+
+        return sb.ToString();
+    }
+
     private static string GenerateEntry(string ceBase, string description, string ceType, int[] offsets)
     {
         var sb = new StringBuilder();
