@@ -25,6 +25,12 @@ public sealed class LiveFieldValue
     /// <summary>For ObjectProperty: class name of the pointed-to object.</summary>
     public string PtrClassName { get; init; } = "";
 
+    /// <summary>For BoolProperty: bit index (0-7) within the byte; -1 = not a bool.</summary>
+    public int BoolBitIndex { get; init; } = -1;
+
+    /// <summary>For BoolProperty: raw FieldMask byte.</summary>
+    public int BoolFieldMask { get; init; }
+
     /// <summary>For ArrayProperty: element count (-1 = not an array).</summary>
     public int ArrayCount { get; init; } = -1;
 

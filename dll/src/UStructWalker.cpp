@@ -191,16 +191,17 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
     if (typeName == "FloatProperty" && size >= 4) {
         float v;
         memcpy(&v, bytes, 4);
-        // Use snprintf for clean formatting (avoid trailing zeros)
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%.4f", v);
+        // No scientific notation, at least 7 decimal places
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.7f", v);
         return buf;
     }
     if (typeName == "DoubleProperty" && size >= 8) {
         double v;
         memcpy(&v, bytes, 8);
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%.6f", v);
+        // No scientific notation, full double precision (15 decimal places)
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.15f", v);
         return buf;
     }
     if (typeName == "IntProperty" && size >= 4) {
@@ -216,6 +217,7 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
     if (typeName == "Int64Property" && size >= 8) {
         int64_t v;
         memcpy(&v, bytes, 8);
+        // std::to_string never uses scientific notation for integers
         return std::to_string(v);
     }
     if (typeName == "UInt64Property" && size >= 8) {
@@ -237,6 +239,9 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
         return std::to_string(bytes[0]);
     }
     if (typeName == "BoolProperty") {
+        // Note: for bitfield bools, the caller should pass the correct byte
+        // and use FieldMask to determine the bit value. This fallback handles
+        // the simple case where the raw byte is passed.
         return bytes[0] ? "true" : "false";
     }
     if (typeName == "NameProperty" && size >= 4) {
@@ -271,8 +276,9 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
                     if (i > 0) hint += ", ";
                     float v;
                     memcpy(&v, bytes + floatStart + i * 4, 4);
-                    char buf[32];
-                    snprintf(buf, sizeof(buf), "%.4g", v);
+                    char buf[48];
+                    // No scientific notation — fixed 4 decimal places
+                    snprintf(buf, sizeof(buf), "%.4f", v);
                     hint += buf;
                 }
                 hint += "]";
@@ -375,6 +381,65 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     fi.Name.c_str(), static_cast<unsigned long long>(fi.Address), DynOff::FSTRUCTPROP_STRUCT);
             }
             // Fall through to read hex value below
+        }
+
+        // BoolProperty: extract FieldMask/ByteOffset for bitfield display
+        if (fi.TypeName == "BoolProperty") {
+            // FBoolProperty layout after FProperty base:
+            //   uint8 FieldSize, ByteOffset, ByteMask, FieldMask
+            // Try known offset first, then probe nearby if needed
+            uint8_t boolBytes[4] = {};
+            bool boolInfoRead = false;
+
+            for (int tryOff : { DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBOOLPROP_FIELDSIZE - 4,
+                                DynOff::FBOOLPROP_FIELDSIZE + 4, DynOff::FBOOLPROP_FIELDSIZE + 8 }) {
+                if (tryOff < 0) continue;
+                if (!Mem::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
+
+                uint8_t fieldSize  = boolBytes[0];
+                uint8_t byteOff    = boolBytes[1];
+                uint8_t byteMask   = boolBytes[2];
+                uint8_t fieldMask  = boolBytes[3];
+
+                // Validate: FieldSize should be 1 (single byte), ByteOffset typically 0-7,
+                // FieldMask should be a single bit (power of 2) and non-zero
+                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0 &&
+                    byteOff <= 7 && byteMask != 0 && (byteMask & (byteMask - 1)) == 0) {
+                    fv.boolFieldMask = fieldMask;
+                    fv.boolByteOffset = byteOff;
+
+                    // Compute bit index from FieldMask
+                    int bitIdx = 0;
+                    uint8_t mask = fieldMask;
+                    while (mask > 1) { mask >>= 1; ++bitIdx; }
+                    fv.boolBitIndex = bitIdx;
+
+                    boolInfoRead = true;
+                    break;
+                }
+            }
+
+            // Read actual value using FieldMask
+            uint8_t rawByte = 0;
+            int readOffset = fi.Offset + fv.boolByteOffset;
+            if (Mem::ReadSafe(instanceAddr + readOffset, rawByte)) {
+                char hexBuf[3];
+                snprintf(hexBuf, sizeof(hexBuf), "%02X", rawByte);
+                fv.hexValue = hexBuf;
+
+                if (boolInfoRead) {
+                    bool value = (rawByte & fv.boolFieldMask) != 0;
+                    char desc[64];
+                    snprintf(desc, sizeof(desc), "%s (bit %d, mask 0x%02X)",
+                             value ? "true" : "false", fv.boolBitIndex, fv.boolFieldMask);
+                    fv.typedValue = desc;
+                } else {
+                    fv.typedValue = rawByte ? "true" : "false";
+                }
+            }
+
+            result.fields.push_back(std::move(fv));
+            continue;
         }
 
         // Scalar or struct: read raw bytes and interpret

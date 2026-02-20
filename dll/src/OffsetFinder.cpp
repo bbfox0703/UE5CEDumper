@@ -305,6 +305,7 @@ uintptr_t FindGObjects() {
         { Constants::AOB_GOBJECTS_V3, false }, // 4C 8B 05
         { Constants::AOB_GOBJECTS_V4, false }, // 48 8B 05 (longer context)
         { Constants::AOB_GOBJECTS_V5, false }, // 4C 8B 15
+        { Constants::AOB_GOBJECTS_V13, false }, // Palworld: 48 8B 05 + extended context
         // Retry with extra deref for pointer-to-pointer layouts
         { Constants::AOB_GOBJECTS_V2, true  },
         { Constants::AOB_GOBJECTS_V1, true  },
@@ -312,6 +313,7 @@ uintptr_t FindGObjects() {
         { Constants::AOB_GOBJECTS_V7, true  },
         { Constants::AOB_GOBJECTS_V8, true  },
         { Constants::AOB_GOBJECTS_V9, true  },
+        { Constants::AOB_GOBJECTS_V13, true  }, // Palworld deref
     };
 
     for (auto& c : candidates) {
@@ -702,6 +704,8 @@ uintptr_t FindGNames() {
         { Constants::AOB_GNAMES_V2, true  },  // lea rcx; call; deref pointer
         { Constants::AOB_GNAMES_V6, false },  // mov rax,[rip+X]; test; jnz (GSpots UE5+)
         { Constants::AOB_GNAMES_V6, true  },  // mov rax,[rip+X]; test; jnz; deref
+        { Constants::AOB_GNAMES_V8, false },  // Palworld: lea rax,[rip+X]; jmp 0x13 (extended context)
+        { Constants::AOB_GNAMES_V8, true  },  // Palworld deref
     };
 
     for (auto& c : candidates) {
@@ -787,6 +791,7 @@ uintptr_t FindGWorld() {
         { Constants::AOB_GWORLD_V4, true  }, // mov rdi,[rip+X]
         { Constants::AOB_GWORLD_V5, true  }, // cmp [rip+X],rax
         { Constants::AOB_GWORLD_V6, false }, // mov [rip+X],rbx (write)
+        { Constants::AOB_GWORLD_V7, true  }, // Palworld: mov rbx,[rip+X]; test; jz 0x33; mov r8b
     };
 
     for (auto& c : candidates) {
@@ -1260,6 +1265,12 @@ bool ValidateAndFixOffsets() {
     DynOff::FSTRUCTPROP_STRUCT = DynOff::FPROPERTY_OFFSET + 0x2C;
     Logger::Info("DYNO", "ValidateAndFixOffsets: FStructProperty::Struct (derived) at FField+0x%02X",
              DynOff::FSTRUCTPROP_STRUCT);
+
+    // FBoolProperty::FieldSize is at the same offset as FStructProperty::Struct for most builds.
+    // Both are first-subclass-field offsets — they overlap in offset but differ in type.
+    DynOff::FBOOLPROP_FIELDSIZE = DynOff::FSTRUCTPROP_STRUCT;
+    Logger::Info("DYNO", "ValidateAndFixOffsets: FBoolProperty::FieldSize (derived) at FField+0x%02X",
+             DynOff::FBOOLPROP_FIELDSIZE);
 
     DynOff::bOffsetsValidated = true;
 

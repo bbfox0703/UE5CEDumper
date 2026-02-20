@@ -415,6 +415,13 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["ptr_class"] = fv.ptrClassName;
                 }
 
+                // BoolProperty: bit field info
+                if (fv.boolBitIndex >= 0) {
+                    fj["bool_bit"] = fv.boolBitIndex;
+                    fj["bool_mask"] = fv.boolFieldMask;
+                    fj["bool_byte_offset"] = fv.boolByteOffset;
+                }
+
                 // ArrayProperty: element count
                 if (fv.arrayCount >= 0) {
                     fj["count"] = fv.arrayCount;
