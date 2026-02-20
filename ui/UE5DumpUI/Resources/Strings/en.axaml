@@ -37,7 +37,7 @@
     <!-- Live Walker -->
     <sys:String x:Key="str.LiveWalker.SearchHint">Search fields...</sys:String>
     <sys:String x:Key="str.LiveWalker.SearchCount">{0} matches</sys:String>
-    <sys:String x:Key="str.LiveWalker.GenerateCeAA">Generate CE AA Script</sys:String>
+    <sys:String x:Key="str.LiveWalker.GenerateCeAA">Copy CE AA Script</sys:String>
 
     <!-- Class Structure -->
     <sys:String x:Key="str.ClassStruct.Name">Name</sys:String>
@@ -54,9 +54,10 @@
     <sys:String x:Key="str.LiveWalker.Refresh">Refresh</sys:String>
     <sys:String x:Key="str.LiveWalker.AddressHint">Address (0x...)</sys:String>
     <sys:String x:Key="str.LiveWalker.Go">Go</sys:String>
-    <sys:String x:Key="str.LiveWalker.ExportCE">Export CE XML</sys:String>
+    <sys:String x:Key="str.LiveWalker.ExportCE">Copy CE XML</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
-    <sys:String x:Key="str.LiveWalker.CopyAddress">CP</sys:String>
+    <sys:String x:Key="str.LiveWalker.CopyAddress">Addr</sys:String>
+    <sys:String x:Key="str.LiveWalker.CopyName">Name</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.ClassNameHint">Class name (e.g. PlayerController)</sys:String>

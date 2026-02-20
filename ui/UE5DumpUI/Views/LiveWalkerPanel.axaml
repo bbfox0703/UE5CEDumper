@@ -87,17 +87,6 @@
     <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                  IsVisible="{Binding IsLoading}" Height="2" Margin="0,0,0,4"/>
 
-    <!-- CE XML output (shown when exported) -->
-    <Border DockPanel.Dock="Bottom" IsVisible="{Binding ShowCeXml}"
-            Background="#1A1A2E" Padding="8" CornerRadius="4" MaxHeight="200"
-            Margin="0,4,0,0">
-      <ScrollViewer>
-        <SelectableTextBlock Text="{Binding CeXmlOutput}"
-                             FontFamily="Consolas" FontSize="11"
-                             Foreground="#98C379"/>
-      </ScrollViewer>
-    </Border>
-
     <!-- Field list -->
     <DataGrid x:Name="FieldGrid"
               ItemsSource="{Binding Fields}"
@@ -125,25 +114,55 @@
         <DataGridTextColumn Header="Hex"
                             Binding="{Binding HexValue}"
                             Width="160"/>
+        <DataGridTextColumn Header="{DynamicResource str.InstanceFinder.Address}"
+                            Binding="{Binding FieldAddress}"
+                            Width="140"/>
         <DataGridTemplateColumn Header="" Width="80">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
-              <Button Content=">"
-                      Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToFieldCommand}"
-                      CommandParameter="{Binding}"
-                      IsVisible="{Binding IsNavigable}"
-                      Padding="8,2" Margin="2"
-                      Foreground="#4EC9B0" Background="Transparent"
-                      BorderThickness="1" BorderBrush="#4EC9B0"
-                      Cursor="Hand" FontWeight="Bold"/>
+              <StackPanel Orientation="Horizontal">
+                <!-- Pointer navigation: arrow icon -->
+                <Button Content="&#x2192;"
+                        Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToFieldCommand}"
+                        CommandParameter="{Binding}"
+                        IsVisible="{Binding IsPointerNavigation}"
+                        Padding="8,2" Margin="2"
+                        Foreground="#4EC9B0" Background="Transparent"
+                        BorderThickness="1" BorderBrush="#4EC9B0"
+                        Cursor="Hand" FontWeight="Bold"
+                        ToolTip.Tip="Navigate to pointer target"/>
+                <!-- Struct navigation: braces icon -->
+                <Button Content="{}{}"
+                        Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToFieldCommand}"
+                        CommandParameter="{Binding}"
+                        IsVisible="{Binding IsStructNavigation}"
+                        Padding="8,2" Margin="2"
+                        Foreground="#E5C07B" Background="Transparent"
+                        BorderThickness="1" BorderBrush="#E5C07B"
+                        Cursor="Hand" FontWeight="Bold"
+                        ToolTip.Tip="Expand inline struct"/>
+              </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
         <DataGridTemplateColumn Header="{DynamicResource str.LiveWalker.CopyAddress}" Width="50">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
-              <Button Content="CP"
+              <Button Content="Addr"
                       Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).CopyFieldAddressCommand}"
+                      CommandParameter="{Binding}"
+                      Padding="4,2" Margin="2"
+                      Foreground="#D4D4D4" Background="Transparent"
+                      BorderThickness="1" BorderBrush="#555"
+                      Cursor="Hand" FontSize="10"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTemplateColumn Header="{DynamicResource str.LiveWalker.CopyName}" Width="50">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:LiveFieldValue">
+              <Button Content="Name"
+                      Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).CopyFieldNameCommand}"
                       CommandParameter="{Binding}"
                       Padding="4,2" Margin="2"
                       Foreground="#D4D4D4" Background="Transparent"
