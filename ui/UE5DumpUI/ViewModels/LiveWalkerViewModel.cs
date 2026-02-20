@@ -34,6 +34,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private string _ceXmlOutput = "";
     [ObservableProperty] private bool _showCeXml;
 
+    // Search
+    [ObservableProperty] private string _searchText = "";
+    [ObservableProperty] private int _searchMatchCount;
+    [ObservableProperty] private bool _hasSearchResults;
+
     public LiveWalkerViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
     {
         _dump = dump;
@@ -296,6 +301,37 @@ public partial class LiveWalkerViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task GenerateCeAAScriptAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentAddress)) return;
+        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName) || string.IsNullOrEmpty(_engineState.ModuleBase)) return;
+
+        try
+        {
+            ClearError();
+            var addr = Convert.ToUInt64(CurrentAddress.Replace("0x", "").Replace("0X", ""), 16);
+            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
+            var rva = addr - moduleBase;
+
+            var symbolName = !string.IsNullOrEmpty(CurrentClassName)
+                ? CurrentClassName.Replace(" ", "_").Replace("-", "_")
+                : "UE5_Symbol";
+
+            var xml = CeXmlExportService.GenerateRegisterSymbolXml(
+                symbolName, _engineState.ModuleName, rva);
+
+            CeXmlOutput = xml;
+            ShowCeXml = true;
+            _log.Info($"CE AA script generated for {CurrentClassName} at RVA {rva:X}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error("Failed to generate CE AA script", ex);
+        }
+    }
+
+    [RelayCommand]
     private async Task RefreshAsync()
     {
         if (string.IsNullOrEmpty(CurrentAddress)) return;
@@ -348,6 +384,44 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             _log.Error($"Failed to copy address for {field.Name}", ex);
         }
+    }
+
+    partial void OnSearchTextChanged(string value)
+    {
+        ApplySearch(value);
+    }
+
+    private void ApplySearch(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            foreach (var f in Fields) f.IsSearchMatch = false;
+            SearchMatchCount = 0;
+            HasSearchResults = false;
+        }
+        else
+        {
+            int count = 0;
+            foreach (var f in Fields)
+            {
+                bool match =
+                    f.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    f.TypeName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    f.DisplayValue.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    f.PtrClassName.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                    (!string.IsNullOrEmpty(f.StructTypeName) && f.StructTypeName.Contains(query, StringComparison.OrdinalIgnoreCase));
+
+                f.IsSearchMatch = match;
+                if (match) count++;
+            }
+
+            SearchMatchCount = count;
+            HasSearchResults = count > 0;
+        }
+
+        // Force DataGrid to re-evaluate row styles by resetting the collection
+        var items = new ObservableCollection<LiveFieldValue>(Fields);
+        Fields = items;
     }
 
     private async Task NavigateToAsync(string addr, string label)

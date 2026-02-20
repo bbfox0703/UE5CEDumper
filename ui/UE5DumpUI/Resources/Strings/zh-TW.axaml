@@ -26,6 +26,17 @@
     <sys:String x:Key="str.ObjectTree.Load">載入</sys:String>
     <sys:String x:Key="str.ObjectTree.Loading">載入中...</sys:String>
     <sys:String x:Key="str.ObjectTree.Count">物件數: {0}</sys:String>
+    <sys:String x:Key="str.ObjectTree.CopyClassName">複製類別名稱</sys:String>
+    <sys:String x:Key="str.ObjectTree.CopyObjectName">複製物件名稱</sys:String>
+    <sys:String x:Key="str.ObjectTree.CopyAddress">複製位址</sys:String>
+
+    <!-- Instance Finder -->
+    <sys:String x:Key="str.InstanceFinder.CopyAddress">複製位址</sys:String>
+
+    <!-- Live Walker -->
+    <sys:String x:Key="str.LiveWalker.SearchHint">搜尋欄位...</sys:String>
+    <sys:String x:Key="str.LiveWalker.SearchCount">{0} 筆符合</sys:String>
+    <sys:String x:Key="str.LiveWalker.GenerateCeAA">產生 CE AA 腳本</sys:String>
 
     <!-- Class Structure -->
     <sys:String x:Key="str.ClassStruct.Name">名稱</sys:String>

@@ -41,7 +41,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _log = log;
         _localization = localization;
 
-        ObjectTree = new ObjectTreeViewModel(dump, log);
+        ObjectTree = new ObjectTreeViewModel(dump, log, platform);
         ClassStruct = new ClassStructViewModel(dump, log);
         Pointers = new PointerPanelViewModel(platform);
         HexView = new HexViewViewModel(dump, pipeClient, log);
