@@ -15,6 +15,7 @@
 #include <Windows.h>
 #include <cstddef>   // offsetof
 #include <cstring>
+#define LOG_CAT "CEP"
 #include "Logger.h"
 
 // ── Externals from dllmain.cpp ────────────────────────────────────────────

@@ -3,6 +3,7 @@
 // ============================================================
 
 #include <Windows.h>
+#define LOG_CAT "INIT"
 #include "Logger.h"
 #include "BuildInfo.h"
 

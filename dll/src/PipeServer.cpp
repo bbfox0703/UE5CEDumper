@@ -5,6 +5,7 @@
 #include "PipeServer.h"
 #include "PipeProtocol.h"
 #include "Constants.h"
+#define LOG_CAT "PIPE:svr"
 #include "Logger.h"
 #include "Memory.h"
 #include "OffsetFinder.h"
@@ -124,7 +125,7 @@ std::string PipeServer::ReadLine(HANDLE pipe) {
 
         // Safety: don't let a line grow unbounded
         if (line.size() > Constants::PIPE_BUF_SIZE) {
-            LOG_WARN("PipeServer: Line too long, dropping");
+            Logger::Warn("PIPE:cmd", "PipeServer: Line too long, dropping");
             return "";
         }
     }
@@ -143,12 +144,12 @@ void PipeServer::HandleClient(HANDLE pipe) {
         std::string line = ReadLine(pipe);
         if (line.empty()) break; // Disconnected
 
-        LOG_DEBUG("PipeServer: Received: %s", line.c_str());
+        Logger::Debug("PIPE:cmd", "PipeServer: Received: %s", line.c_str());
 
         std::string response = DispatchCommand(line);
         if (!response.empty()) {
             if (!WriteLine(pipe, response)) {
-                LOG_ERROR("PipeServer: Failed to write response");
+                Logger::Error("PIPE:cmd", "PipeServer: Failed to write response");
                 break;
             }
         }
@@ -165,7 +166,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
     try {
         request = json::parse(jsonLine);
     } catch (const json::exception& e) {
-        LOG_ERROR("PipeServer: JSON parse error: %s", e.what());
+        Logger::Error("PIPE:cmd", "PipeServer: JSON parse error: %s", e.what());
         return PipeProtocol::MakeError(0, "Invalid JSON").dump();
     }
 
@@ -658,7 +659,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
         return PipeProtocol::MakeError(id, "Unknown command: " + cmd).dump();
 
     } catch (const std::exception& e) {
-        LOG_ERROR("PipeServer: Exception in command '%s': %s", cmd.c_str(), e.what());
+        Logger::Error("PIPE:cmd", "PipeServer: Exception in command '%s': %s", cmd.c_str(), e.what());
         return PipeProtocol::MakeError(id, std::string("Internal error: ") + e.what()).dump();
     }
 }
@@ -692,7 +693,7 @@ void PipeServer::StartWatch(uintptr_t addr, uint32_t size, uint32_t interval_ms)
     });
 
     m_watches[addr] = std::move(entry);
-    LOG_INFO("PipeServer: Watch started on 0x%llX (size=%u, interval=%ums)",
+    Logger::Info("PIPE:watch", "PipeServer: Watch started on 0x%llX (size=%u, interval=%ums)",
              static_cast<unsigned long long>(addr), size, interval_ms);
 }
 
@@ -705,7 +706,7 @@ void PipeServer::StopWatch(uintptr_t addr) {
             it->second->watchThread.join();
         }
         m_watches.erase(it);
-        LOG_INFO("PipeServer: Watch stopped on 0x%llX", static_cast<unsigned long long>(addr));
+        Logger::Info("PIPE:watch", "PipeServer: Watch stopped on 0x%llX", static_cast<unsigned long long>(addr));
     }
 }
 
