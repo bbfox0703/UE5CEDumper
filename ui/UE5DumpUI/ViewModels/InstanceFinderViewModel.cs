@@ -15,6 +15,9 @@ public partial class InstanceFinderViewModel : ViewModelBase
 {
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
+    private readonly IPlatformService _platform;
+
+    private EngineState? _engineState;
 
     [ObservableProperty] private string _searchClassName = "";
     [ObservableProperty] private ObservableCollection<InstanceResult> _instances = new();
@@ -33,10 +36,16 @@ public partial class InstanceFinderViewModel : ViewModelBase
     /// </summary>
     public event Action<string>? NavigateToLiveWalker;
 
-    public InstanceFinderViewModel(IDumpService dump, ILoggingService log)
+    public InstanceFinderViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
     {
         _dump = dump;
         _log = log;
+        _platform = platform;
+    }
+
+    public void SetEngineState(EngineState state)
+    {
+        _engineState = state;
     }
 
     [RelayCommand]
@@ -142,6 +151,29 @@ public partial class InstanceFinderViewModel : ViewModelBase
         {
             SetError(ex);
             _log.Error("Failed to export CE XML", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyFieldAddressAsync(LiveFieldValue? field)
+    {
+        if (field == null || _engineState == null || SelectedInstance == null) return;
+        if (string.IsNullOrEmpty(SelectedInstance.Address) || string.IsNullOrEmpty(_engineState.ModuleName)) return;
+
+        try
+        {
+            var instanceAddr = Convert.ToUInt64(SelectedInstance.Address.Replace("0x", "").Replace("0X", ""), 16);
+            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
+
+            var absAddr = instanceAddr + (ulong)field.Offset;
+            var rva = absAddr - moduleBase;
+
+            var ceFormat = $"\"{_engineState.ModuleName}\"+{rva:X}";
+            await _platform.CopyToClipboardAsync(ceFormat);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to copy address for {field.Name}", ex);
         }
     }
 

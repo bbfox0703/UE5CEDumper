@@ -147,15 +147,50 @@ print(string.format("[UE5Dump] SaveDialog1.FileName = '%s'", _savePath))
 print(string.format("[UE5Dump] Resolved CT dir      = '%s'", _ctDir))
 
 -- ============================================================
--- Logging helpers
+-- File Logging (to %LOCALAPPDATA%\UE5CEDumper\Logs)
+-- ============================================================
+
+local _logHandle = nil
+
+local function ue5_logInit()
+    local localAppData = os.getenv("LOCALAPPDATA") or ""
+    if localAppData == "" then return end
+
+    local logDir = localAppData .. "\\UE5CEDumper\\Logs\\"
+    os.execute('mkdir "' .. logDir .. '" 2>nul')
+
+    local logFile = logDir .. "UE5Dumper-lua.log"
+    local h = io.open(logFile, "w")  -- overwrite each session
+    if h then
+        _logHandle = h
+        h:write(string.format("[%s] [UE5Dump] Log file opened: %s\n", os.date("%H:%M:%S"), logFile))
+        h:flush()
+    end
+    -- If io.open fails, silently skip
+end
+
+ue5_logInit()
+
+-- ============================================================
+-- Logging helpers (CE console + file)
 -- ============================================================
 
 function ue5_log(fmt, ...)
-    print(string.format("[%s] [UE5Dump] " .. fmt, os.date("%H:%M:%S"), ...))
+    local msg = string.format("[%s] [UE5Dump] " .. fmt, os.date("%H:%M:%S"), ...)
+    print(msg)
+    if _logHandle then
+        _logHandle:write(msg .. "\n")
+        _logHandle:flush()
+    end
 end
 
 function ue5_logError(fmt, ...)
-    print(string.format("[%s] [UE5Dump ERROR] " .. fmt, os.date("%H:%M:%S"), ...))
+    local msg = string.format("[%s] [UE5Dump ERROR] " .. fmt, os.date("%H:%M:%S"), ...)
+    print(msg)
+    if _logHandle then
+        _logHandle:write(msg .. "\n")
+        _logHandle:flush()
+    end
 end
 
 -- ============================================================
@@ -232,6 +267,10 @@ function ue5_shutdown()
         getAddressList().refresh()
     end)
     ue5_log("UE5 Dumper stopped.")
+    if _logHandle then
+        _logHandle:close()
+        _logHandle = nil
+    end
 end
 
 -- ============================================================

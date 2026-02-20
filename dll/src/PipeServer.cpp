@@ -198,6 +198,24 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["gworld"]       = PipeProtocol::AddrToStr(g_cachedGWorld);
             data["ue_version"]   = g_cachedUEVersion;
             data["object_count"] = ObjectArray::GetCount();
+
+            // Module info for CE address formatting
+            uintptr_t moduleBase = Mem::GetModuleBase(nullptr);
+            data["module_base"] = PipeProtocol::AddrToStr(moduleBase);
+            {
+                wchar_t moduleNameW[MAX_PATH] = {};
+                GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
+                std::wstring modulePath(moduleNameW);
+                auto lastSlash = modulePath.find_last_of(L"\\/");
+                std::wstring moduleFileName = (lastSlash != std::wstring::npos)
+                    ? modulePath.substr(lastSlash + 1) : modulePath;
+                std::string moduleName;
+                for (wchar_t wc : moduleFileName) {
+                    moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
+                }
+                data["module_name"] = moduleName;
+            }
+
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
@@ -400,6 +418,13 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 // ArrayProperty: element count
                 if (fv.arrayCount >= 0) {
                     fj["count"] = fv.arrayCount;
+                }
+
+                // StructProperty: inner struct info
+                if (fv.structDataAddr != 0) {
+                    fj["struct_data_addr"]  = PipeProtocol::AddrToStr(fv.structDataAddr);
+                    fj["struct_class_addr"] = PipeProtocol::AddrToStr(fv.structClassAddr);
+                    fj["struct_type"]       = fv.structTypeName;
                 }
 
                 fields.push_back(fj);
