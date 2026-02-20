@@ -44,6 +44,7 @@
     <sys:String x:Key="str.LiveWalker.Go">Go</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCE">Export CE XML</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
+    <sys:String x:Key="str.LiveWalker.CopyAddress">CP</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.ClassNameHint">Class name (e.g. PlayerController)</sys:String>

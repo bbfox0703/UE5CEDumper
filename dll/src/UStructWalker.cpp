@@ -311,6 +311,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
             continue;
         }
 
+        // Handle StructProperty: extract inner UScriptStruct* for navigation
+        if (fi.TypeName == "StructProperty") {
+            uintptr_t innerStruct = 0;
+            if (Mem::ReadSafe(fi.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
+                // Validate: check that GetName returns a non-empty ASCII string
+                std::string sname = GetName(innerStruct);
+                if (!sname.empty() && sname[0] >= 0x20 && sname[0] < 0x7F) {
+                    fv.structClassAddr = innerStruct;
+                    fv.structTypeName = sname;
+                    fv.structDataAddr = instanceAddr + fi.Offset;
+                }
+            }
+            // Fall through to read hex value below
+        }
+
         // Scalar or struct: read raw bytes and interpret
         if (fi.Size > 0 && fi.Size <= 256) {
             std::vector<uint8_t> buf(fi.Size, 0);

@@ -45,8 +45,8 @@ public partial class MainWindowViewModel : ViewModelBase
         ClassStruct = new ClassStructViewModel(dump, log);
         Pointers = new PointerPanelViewModel(platform);
         HexView = new HexViewViewModel(dump, pipeClient, log);
-        LiveWalker = new LiveWalkerViewModel(dump, log);
-        InstanceFinder = new InstanceFinderViewModel(dump, log);
+        LiveWalker = new LiveWalkerViewModel(dump, log, platform);
+        InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
 
         // Wire cross-VM communication
         ObjectTree.SelectionChanged += async (node) =>
@@ -92,6 +92,9 @@ public partial class MainWindowViewModel : ViewModelBase
                 state.GWorldAddr,
                 state.UEVersion,
                 state.ObjectCount);
+
+            LiveWalker.SetEngineState(state);
+            InstanceFinder.SetEngineState(state);
 
             IsConnected = true;
             StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";

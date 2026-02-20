@@ -28,15 +28,26 @@ public sealed class LiveFieldValue
     /// <summary>For ArrayProperty: element count (-1 = not an array).</summary>
     public int ArrayCount { get; init; } = -1;
 
+    /// <summary>For StructProperty: absolute address of struct data (instance + offset).</summary>
+    public string StructDataAddr { get; init; } = "";
+
+    /// <summary>For StructProperty: UScriptStruct* address for the struct type.</summary>
+    public string StructClassAddr { get; init; } = "";
+
+    /// <summary>For StructProperty: struct type name (e.g. "FGameplayAttributeData").</summary>
+    public string StructTypeName { get; init; } = "";
+
     /// <summary>Display-friendly value string.</summary>
     public string DisplayValue =>
         !string.IsNullOrEmpty(TypedValue) ? TypedValue :
         !string.IsNullOrEmpty(PtrName) ? $"{PtrName} ({PtrClassName})" :
+        !string.IsNullOrEmpty(StructTypeName) ? $"{{{StructTypeName}}}" :
         ArrayCount >= 0 ? $"[{ArrayCount} elements]" :
         !string.IsNullOrEmpty(HexValue) ? HexValue :
         "";
 
     /// <summary>Whether this field is a clickable pointer to another object.</summary>
     public bool IsNavigable =>
-        !string.IsNullOrEmpty(PtrAddress) && PtrAddress != "0x0";
+        (!string.IsNullOrEmpty(PtrAddress) && PtrAddress != "0x0") ||
+        (!string.IsNullOrEmpty(StructDataAddr) && StructDataAddr != "0x0");
 }
