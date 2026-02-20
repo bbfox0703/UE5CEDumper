@@ -871,9 +871,13 @@ uint32_t DetectVersion() {
     }
 
     // Patterns like "++UE5+Release-5.X" or bare "5.X." in .rdata
+    // Include UE4 versions too for broader support
     struct { const char* needle; uint32_t value; } patterns[] = {
+        { "5.7.", 507 }, { "5.6.", 506 }, { "5.5.", 505 },
         { "5.4.", 504 }, { "5.3.", 503 }, { "5.2.", 502 },
         { "5.1.", 501 }, { "5.0.", 500 },
+        { "4.27.", 427 }, { "4.26.", 426 }, { "4.25.", 425 },
+        { "4.24.", 424 }, { "4.23.", 423 }, { "4.22.", 422 },
     };
 
     const uint8_t* scan = reinterpret_cast<const uint8_t*>(base);
@@ -946,25 +950,212 @@ static uintptr_t FindStructByName(const char* structName) {
     return 0;
 }
 
-bool ValidateAndFixOffsets() {
+// ─────────────────────────────────────────────────────────────────────────────
+// DetectCasePreservingName — Measure FName size from UObject layout.
+//
+// Strategy (from Dumper-7 InitFNameSettings):
+//   Pick any UObject* from GObjects. Read the pointer at +0x20 (candidate Outer).
+//   If it's a valid pointer, FName is 8 bytes (standard), Outer=0x20.
+//   If not, try +0x28. If THAT is a valid pointer (or null for Package),
+//   FName is 0x10 bytes (CasePreservingName), Outer=0x28.
+//
+// Also checks: if the two int32s at UObject::Name (+0x18 and +0x1C) are equal,
+// it's likely ComparisonIndex == DisplayIndex, confirming CPN.
+// ─────────────────────────────────────────────────────────────────────────────
+static void DetectCasePreservingName() {
+    Logger::Info("DYNO", "DetectCasePreservingName: Probing UObject layout...");
+
+    // Collect a few UObjects to test consensus
+    int voteStandard = 0, voteCPN = 0;
+    int tested = 0;
+
+    int32_t count = ObjectArray::GetCount();
+    for (int32_t i = 1; i < count && tested < 20; ++i) {
+        uintptr_t obj = ObjectArray::GetByIndex(i);
+        if (!obj) continue;
+
+        // Read Class at +0x10 to confirm this is a valid UObject
+        uintptr_t cls = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+        if (cls < 0x10000 || cls > 0x00007FFFFFFFFFFF) continue;
+
+        // Read candidate Outer at standard offset 0x20
+        uintptr_t outerAt20 = 0;
+        Mem::ReadSafe(obj + 0x20, outerAt20);
+
+        // Read candidate Outer at CPN offset 0x28
+        uintptr_t outerAt28 = 0;
+        Mem::ReadSafe(obj + 0x28, outerAt28);
+
+        // A valid Outer is either null (Package-level objects) or a plausible user-space pointer.
+        // Also: Outer must be a UObject, so its Class at +0x10 should be a valid pointer too.
+        auto isValidOuter = [](uintptr_t val) -> bool {
+            if (val == 0) return true; // null = root package
+            if (val < 0x10000 || val > 0x00007FFFFFFFFFFF) return false;
+            uintptr_t outerCls = 0;
+            if (!Mem::ReadSafe(val + Constants::OFF_UOBJECT_CLASS, outerCls)) return false;
+            return outerCls > 0x10000 && outerCls < 0x00007FFFFFFFFFFF;
+        };
+
+        bool at20valid = isValidOuter(outerAt20);
+        bool at28valid = isValidOuter(outerAt28);
+
+        // If +0x20 is valid and +0x28 is NOT a valid UObject pointer → standard
+        // If +0x20 is NOT valid and +0x28 IS valid → CPN
+        // If both valid, check ComparisonIndex vs DisplayIndex
+        if (at20valid && !at28valid) {
+            ++voteStandard;
+        } else if (!at20valid && at28valid) {
+            ++voteCPN;
+        } else if (at20valid && at28valid) {
+            // Ambiguous — check if CompIdx == DispIdx (CPN signature)
+            uint32_t compIdx = 0, dispIdx = 0;
+            Mem::ReadSafe(obj + 0x18, compIdx);
+            Mem::ReadSafe(obj + 0x1C, dispIdx);
+            if (compIdx == dispIdx && compIdx > 0 && compIdx < 0x00FFFFFF) {
+                ++voteCPN;
+            } else {
+                ++voteStandard;
+            }
+        }
+        ++tested;
+    }
+
+    Logger::Info("DYNO", "DetectCasePreservingName: votes standard=%d, CPN=%d (tested %d objects)",
+             voteStandard, voteCPN, tested);
+
+    if (voteCPN > voteStandard) {
+        DynOff::bCasePreservingName = true;
+        DynOff::UOBJECT_OUTER = 0x28;
+        Logger::Info("DYNO", "DetectCasePreservingName: CPN ACTIVE — UObject::Outer = +0x28");
+    } else {
+        DynOff::bCasePreservingName = false;
+        DynOff::UOBJECT_OUTER = 0x20;
+        Logger::Info("DYNO", "DetectCasePreservingName: Standard FName — UObject::Outer = +0x20");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DetectUPropertyMode — Determine if this is a UE4 <4.25 game using UProperty
+// (UObject-derived properties in Children chain) vs FProperty (FField-based).
+//
+// Primary: Use the detected UE version number (>= 425 means FProperty).
+// Fallback (version unknown): Search for actual UProperty *instances* in GObjects.
+//   In UE4 <4.25, property instances (e.g., "Owner" with class "ObjectProperty")
+//   are UObject-derived and registered in GObjects.
+//   In UE4.25+/UE5, property instances are FField-based and NOT in GObjects
+//   (even though the UClass "ObjectProperty" still exists for reflection).
+// ─────────────────────────────────────────────────────────────────────────────
+static void DetectUPropertyMode(uint32_t ueVersion) {
+    Logger::Info("DYNO", "DetectUPropertyMode: Checking for UProperty vs FProperty (UE version=%u)...", ueVersion);
+
+    // Primary: version-based detection (most reliable)
+    if (ueVersion >= 425) {
+        // UE4.25 introduced FProperty/FField; all UE5 versions use it
+        DynOff::bUseFProperty = true;
+        Logger::Info("DYNO", "DetectUPropertyMode: FProperty mode (UE version %u >= 425)", ueVersion);
+        return;
+    }
+
+    if (ueVersion > 0 && ueVersion < 425) {
+        // Confirmed UE4 <4.25 — uses UProperty
+        DynOff::bUseFProperty = false;
+        DynOff::UFIELD_NEXT = DynOff::bCasePreservingName ? 0x30 : 0x28;
+        Logger::Info("DYNO", "DetectUPropertyMode: UProperty mode (UE version %u < 425), UField::Next = +0x%02X",
+                 ueVersion, DynOff::UFIELD_NEXT);
+        return;
+    }
+
+    // Fallback: UE version unknown (0) — heuristic detection via GObjects.
+    // Search for actual property *instances* whose class name ends with "Property".
+    // In UE4 <4.25: objects like "Owner" (class=ObjectProperty) exist in GObjects.
+    // In UE5: only the UClass definition "ObjectProperty" exists (class=Class), not instances.
+    Logger::Info("DYNO", "DetectUPropertyMode: Version unknown — using heuristic GObjects scan");
+
+    bool foundPropertyInstance = false;
+    int32_t count = ObjectArray::GetCount();
+
+    for (int32_t i = 0; i < count && i < 50000; ++i) {
+        uintptr_t obj = ObjectArray::GetByIndex(i);
+        if (!obj) continue;
+
+        // Read this object's class
+        uintptr_t cls = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        // Get the class name
+        uint32_t clsNameIdx = 0;
+        if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+        std::string clsName = FNamePool::GetString(clsNameIdx);
+
+        // Skip "Class" — we don't want the UClass definition, we want instances
+        if (clsName == "Class" || clsName == "ScriptStruct" || clsName == "Package" ||
+            clsName == "Function" || clsName == "Enum") continue;
+
+        // Check if class name ends with "Property" (e.g., "ObjectProperty", "IntProperty")
+        if (clsName.size() > 8 && clsName.substr(clsName.size() - 8) == "Property") {
+            // This is a UProperty instance — confirms UE4 <4.25 mode
+            uint32_t objNameIdx = 0;
+            Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, objNameIdx);
+            std::string objName = FNamePool::GetString(objNameIdx);
+            foundPropertyInstance = true;
+            Logger::Info("DYNO", "DetectUPropertyMode: Found UProperty instance '%s' (class=%s) at 0x%llX",
+                     objName.c_str(), clsName.c_str(), (unsigned long long)obj);
+            break;
+        }
+    }
+
+    if (foundPropertyInstance) {
+        DynOff::bUseFProperty = false;
+        DynOff::UFIELD_NEXT = DynOff::bCasePreservingName ? 0x30 : 0x28;
+        Logger::Info("DYNO", "DetectUPropertyMode: UProperty mode (heuristic), UField::Next = +0x%02X",
+                 DynOff::UFIELD_NEXT);
+    } else {
+        DynOff::bUseFProperty = true;
+        Logger::Info("DYNO", "DetectUPropertyMode: FProperty mode (no UProperty instances found in GObjects)");
+    }
+}
+
+bool ValidateAndFixOffsets(uint32_t ueVersion) {
     Logger::Info("DYNO", "ValidateAndFixOffsets: Starting dynamic offset detection...");
 
-    // Step 1: Detect CasePreservingName by checking FName size in UObject
-    // UObject layout: Name at 0x18, Outer at 0x20 (standard).
-    // If FName is 8 bytes: 0x20 - 0x18 = 8 → standard
-    // If FName is 0x10 bytes: the gap would be larger, meaning Outer shifts.
-    // But actually, UObject offsets are compile-time fixed. The CasePreservingName
-    // flag affects FName *contents* (adds DisplayIndex), not UObject field positions.
-    // The effect is on FField layout — FField::Flags shifts because FName after Name is bigger.
-    //
-    // We detect by probing empirically on known structs.
+    // Step 1: Detect CasePreservingName by probing UObject layout
+    DetectCasePreservingName();
 
-    // Step 2: Find "Guid" struct
+    // Step 2: Detect UE4 UProperty vs FProperty mode
+    DetectUPropertyMode(ueVersion);
+
+    // Step 2.5: Set version-based defaults BEFORE probing (so if probing fails, we have sane values)
+    // These serve as the fallback if Guid/Vector structs can't be found.
+    if (DynOff::bUseFProperty) {
+        if (ueVersion >= 501 || ueVersion == 0) {
+            // UE5.1.1+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44
+            // Also apply for unknown version since most modern UE5 games are 5.1+
+            // Note: UE5.0 and UE5.1.0 use FFieldVariant=0x10 (larger): Next=0x20, Name=0x28, Offset=0x4C
+            // We default to the more common 5.1.1+ layout; probing will correct if wrong.
+            if (ueVersion >= 502 || (ueVersion == 0)) {
+                // UE5.2+ almost certainly uses the smaller FFieldVariant
+                DynOff::FFIELD_NEXT        = 0x18;
+                DynOff::FFIELD_NAME        = 0x20;
+                DynOff::FPROPERTY_ELEMSIZE = 0x34;
+                DynOff::FPROPERTY_FLAGS    = 0x38;
+                DynOff::FPROPERTY_OFFSET   = 0x44;
+                DynOff::FSTRUCTPROP_STRUCT  = 0x70;
+                DynOff::FBOOLPROP_FIELDSIZE = 0x70;
+                Logger::Info("DYNO", "ValidateAndFixOffsets: Set UE5.1.1+ defaults (FFieldVariant=0x08)");
+            }
+            // UE5.1 is ambiguous (5.1.0 = larger, 5.1.1+ = smaller), leave as-is for probing
+        }
+    }
+
+    // Step 3: Find "Guid" or "Vector" struct for probing
     uintptr_t guidStruct = FindStructByName("Guid");
     uintptr_t vectorStruct = FindStructByName("Vector");
 
     if (!guidStruct && !vectorStruct) {
-        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find Guid or Vector struct, keeping defaults");
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find Guid or Vector struct, using version-based defaults");
+        // Still mark as validated since CPN and UProperty detection succeeded
+        DynOff::bOffsetsValidated = true;
         return false;
     }
 
@@ -973,155 +1164,174 @@ bool ValidateAndFixOffsets() {
 
     // Expected field names for each struct
     // Guid:   A, B, C, D  (offsets: 0, 4, 8, 12)
-    // Vector: X, Y, Z     (offsets: 0, 4, 8) — but may be float (ElementSize=4)
+    // Vector: X, Y, Z     (offsets: 0, 4, 8) — but may be float/double
     const char* expectedFirst  = guidStruct ? "A" : "X";
     const char* expectedSecond = guidStruct ? "B" : "Y";
     int expectedElemSize     = 4;
 
     Logger::Info("DYNO", "ValidateAndFixOffsets: Using struct '%s' at 0x%llX", testName, (unsigned long long)testStruct);
 
-    // Step 3: Find ChildProperties pointer
-    // Probe offsets 0x38..0x80 in 8-byte steps for a valid FField* pointer
+    // Step 4: Find ChildProperties (or Children for UE4 UProperty mode)
     uintptr_t childProps = 0;
     int childPropsOff = -1;
 
+    // For UE4 UProperty mode, the chain is in UStruct::Children and items are UObject-derived.
+    // For FProperty mode, the chain is in UStruct::ChildProperties and items are FField-based.
+
+    // Probe offsets 0x38..0x80 in 8-byte steps for a valid chain head pointer
     for (int off = 0x38; off <= 0x80; off += 8) {
         uintptr_t ptr = 0;
         if (!Mem::ReadSafe(testStruct + off, ptr) || !ptr) continue;
 
-        // Basic pointer validity: must be in user space, non-module
+        // Basic pointer validity: must be in user space
         if (ptr < 0x10000 || ptr > 0x00007FFFFFFFFFFF) continue;
 
-        // Check if this pointer has an FFieldClass* at the known offset (0x08)
-        uintptr_t fieldClass = 0;
-        if (!Mem::ReadSafe(ptr + 0x08, fieldClass) || !fieldClass) continue;
-        if (fieldClass < 0x10000 || fieldClass > 0x00007FFFFFFFFFFF) continue;
+        if (DynOff::bUseFProperty) {
+            // FProperty mode: check if this pointer has an FFieldClass* at +0x08
+            uintptr_t fieldClass = 0;
+            if (!Mem::ReadSafe(ptr + 0x08, fieldClass) || !fieldClass) continue;
+            if (fieldClass < 0x10000 || fieldClass > 0x00007FFFFFFFFFFF) continue;
 
-        // The FFieldClass should have an FName that resolves to a *Property type name
-        uint32_t fcNameIdx = 0;
-        if (!Mem::ReadSafe(fieldClass, fcNameIdx)) continue;
-        std::string fcName = FNamePool::GetString(fcNameIdx);
-        if (fcName.find("Property") != std::string::npos) {
-            childProps = ptr;
-            childPropsOff = off;
-            Logger::Info("DYNO", "ValidateAndFixOffsets: ChildProperties found at struct+0x%02X → 0x%llX (FFieldClass='%s')",
-                     off, (unsigned long long)ptr, fcName.c_str());
-            break;
+            // The FFieldClass should have an FName that resolves to a *Property type name
+            uint32_t fcNameIdx = 0;
+            if (!Mem::ReadSafe(fieldClass, fcNameIdx)) continue;
+            std::string fcName = FNamePool::GetString(fcNameIdx);
+            if (fcName.find("Property") != std::string::npos) {
+                childProps = ptr;
+                childPropsOff = off;
+                Logger::Info("DYNO", "ValidateAndFixOffsets: ChildProperties found at struct+0x%02X → 0x%llX (FFieldClass='%s')",
+                         off, (unsigned long long)ptr, fcName.c_str());
+                break;
+            }
+        } else {
+            // UProperty mode: items are UObjects. Check if Class at +0x10 resolves to a *Property class.
+            uintptr_t cls = 0;
+            if (!Mem::ReadSafe(ptr + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+            if (cls < 0x10000 || cls > 0x00007FFFFFFFFFFF) continue;
+
+            uint32_t clsNameIdx = 0;
+            if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+            std::string clsName = FNamePool::GetString(clsNameIdx);
+            if (clsName.find("Property") != std::string::npos) {
+                childProps = ptr;
+                childPropsOff = off;
+                Logger::Info("DYNO", "ValidateAndFixOffsets: Children (UProperty) found at struct+0x%02X → 0x%llX (Class='%s')",
+                         off, (unsigned long long)ptr, clsName.c_str());
+                break;
+            }
         }
     }
 
     if (!childProps) {
         Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
+        DynOff::bOffsetsValidated = true;
         return false;
     }
 
     // Update ChildProperties offset
-    DynOff::USTRUCT_CHILDPROPS = childPropsOff;
+    if (DynOff::bUseFProperty) {
+        DynOff::USTRUCT_CHILDPROPS = childPropsOff;
+    } else {
+        // In UE4 UProperty mode, the chain is in Children
+        DynOff::USTRUCT_CHILDREN = childPropsOff;
+    }
 
-    // Also find SuperStruct: probe 0x30..childPropsOff-8 for a pointer to another UStruct
-    // (Guid's super is probably UStruct itself or none)
-    // We'll keep the default 0x40 unless we find evidence otherwise.
-
-    // Step 4: Find FField::Name offset
-    // Probe 4-byte aligned offsets from 0x18 to 0x48 on the first FField
+    // Step 5: Find Name offset on the first chain item
     int nameOff = -1;
-    for (int off = 0x18; off <= 0x48; off += 4) {
-        uint32_t nameIdx = 0;
-        if (!Mem::ReadSafe(childProps + off, nameIdx)) continue;
-        if (nameIdx == 0 || nameIdx > 0x00FFFFFF) continue; // Sanity: reasonable FName index
 
-        std::string name = FNamePool::GetString(nameIdx);
-        if (name == expectedFirst || name == expectedSecond) {
-            nameOff = off;
-            Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Name at FField+0x%02X (resolved='%s')",
-                     off, name.c_str());
-            break;
-        }
-    }
+    if (DynOff::bUseFProperty) {
+        // FProperty: Probe 4-byte aligned offsets from 0x18 to 0x48 on the first FField
+        for (int off = 0x18; off <= 0x48; off += 4) {
+            uint32_t nameIdx = 0;
+            if (!Mem::ReadSafe(childProps + off, nameIdx)) continue;
+            if (nameIdx == 0 || nameIdx > 0x00FFFFFF) continue;
 
-    if (nameOff < 0) {
-        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FField::Name, keeping default 0x%02X",
-                 DynOff::FFIELD_NAME);
-    } else {
-        DynOff::FFIELD_NAME = nameOff;
-    }
-
-    // Detect CasePreservingName: if Name offset is still 0x28 but there's a DisplayIndex
-    // at 0x2C that equals ComparisonIndex, then CasePreservingName is true.
-    if (nameOff == 0x28) {
-        uint32_t compIdx = 0, dispIdx = 0;
-        Mem::ReadSafe(childProps + 0x28, compIdx);
-        Mem::ReadSafe(childProps + 0x2C, dispIdx);
-        if (compIdx == dispIdx && compIdx != 0) {
-            DynOff::bCasePreservingName = true;
-            Logger::Info("DYNO", "ValidateAndFixOffsets: CasePreservingName detected (CompIdx==DispIdx=0x%X)", compIdx);
-        }
-    } else if (nameOff > 0x28) {
-        // Name shifted → likely due to larger FFieldVariant or other layout change
-        Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Name at 0x%02X (shifted from default 0x28)", nameOff);
-    }
-
-    // Step 5: Find FField::Next offset
-    // Probe 8-byte aligned offsets 0x10..0x38 for a pointer to the next FField
-    // The next field should also have an FFieldClass at +0x08 with a "Property" name
-    int nextOff = -1;
-    for (int off = 0x10; off <= 0x38; off += 8) {
-        if (off == DynOff::FFIELD_CLASS) continue; // Skip the Class pointer
-
-        uintptr_t nextPtr = 0;
-        if (!Mem::ReadSafe(childProps + off, nextPtr) || !nextPtr) continue;
-        if (nextPtr < 0x10000 || nextPtr > 0x00007FFFFFFFFFFF) continue;
-
-        // Verify it looks like an FField: check FFieldClass at +0x08
-        uintptr_t nextFieldClass = 0;
-        if (!Mem::ReadSafe(nextPtr + DynOff::FFIELD_CLASS, nextFieldClass) || !nextFieldClass) continue;
-
-        uint32_t fcNameIdx2 = 0;
-        if (!Mem::ReadSafe(nextFieldClass, fcNameIdx2)) continue;
-        std::string fcName2 = FNamePool::GetString(fcNameIdx2);
-        if (fcName2.find("Property") == std::string::npos) continue;
-
-        // Double-check: read FName at the detected Name offset on the next field
-        if (nameOff >= 0) {
-            uint32_t nextNameIdx = 0;
-            if (Mem::ReadSafe(nextPtr + nameOff, nextNameIdx) && nextNameIdx > 0) {
-                std::string nextName = FNamePool::GetString(nextNameIdx);
-                if (!nextName.empty() && nextName.length() <= 64) {
-                    nextOff = off;
-                    Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Next at FField+0x%02X (next='%s')",
-                             off, nextName.c_str());
-                    break;
-                }
+            std::string name = FNamePool::GetString(nameIdx);
+            if (name == expectedFirst || name == expectedSecond) {
+                nameOff = off;
+                Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Name at FField+0x%02X (resolved='%s')",
+                         off, name.c_str());
+                break;
             }
+        }
+
+        if (nameOff < 0) {
+            Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FField::Name, keeping default 0x%02X",
+                     DynOff::FFIELD_NAME);
         } else {
-            // Can't verify name, just accept it has valid FFieldClass
-            nextOff = off;
-            Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Next at FField+0x%02X (unverified name)", off);
-            break;
+            DynOff::FFIELD_NAME = nameOff;
+        }
+    } else {
+        // UProperty (UObject-derived): Name is at UObject::Name = 0x18 (always stable)
+        nameOff = Constants::OFF_UOBJECT_NAME;
+        Logger::Info("DYNO", "ValidateAndFixOffsets: UProperty::Name at UObject+0x%02X (standard)", nameOff);
+    }
+
+    // Step 6: Find Next offset on the chain
+    int nextOff = -1;
+
+    if (DynOff::bUseFProperty) {
+        // FField::Next: Probe 8-byte aligned offsets 0x10..0x38
+        for (int off = 0x10; off <= 0x38; off += 8) {
+            if (off == DynOff::FFIELD_CLASS) continue; // Skip the Class pointer
+
+            uintptr_t nextPtr = 0;
+            if (!Mem::ReadSafe(childProps + off, nextPtr) || !nextPtr) continue;
+            if (nextPtr < 0x10000 || nextPtr > 0x00007FFFFFFFFFFF) continue;
+
+            // Verify it looks like an FField: check FFieldClass at +0x08
+            uintptr_t nextFieldClass = 0;
+            if (!Mem::ReadSafe(nextPtr + DynOff::FFIELD_CLASS, nextFieldClass) || !nextFieldClass) continue;
+
+            uint32_t fcNameIdx2 = 0;
+            if (!Mem::ReadSafe(nextFieldClass, fcNameIdx2)) continue;
+            std::string fcName2 = FNamePool::GetString(fcNameIdx2);
+            if (fcName2.find("Property") == std::string::npos) continue;
+
+            // Double-check: read FName at the detected Name offset on the next field
+            if (nameOff >= 0) {
+                uint32_t nextNameIdx = 0;
+                if (Mem::ReadSafe(nextPtr + nameOff, nextNameIdx) && nextNameIdx > 0) {
+                    std::string nextName = FNamePool::GetString(nextNameIdx);
+                    if (!nextName.empty() && nextName.length() <= 64) {
+                        nextOff = off;
+                        Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Next at FField+0x%02X (next='%s')",
+                                 off, nextName.c_str());
+                        break;
+                    }
+                }
+            } else {
+                nextOff = off;
+                Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Next at FField+0x%02X (unverified name)", off);
+                break;
+            }
+        }
+
+        if (nextOff < 0) {
+            Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FField::Next, keeping default 0x%02X",
+                     DynOff::FFIELD_NEXT);
+        } else {
+            DynOff::FFIELD_NEXT = nextOff;
+        }
+    } else {
+        // UProperty: Next is UField::Next (0x28 standard, 0x30 for CPN)
+        nextOff = DynOff::UFIELD_NEXT;
+
+        // Verify: the pointer at childProps + nextOff should be another UObject (or null for last)
+        uintptr_t nextPtr = 0;
+        Mem::ReadSafe(childProps + nextOff, nextPtr);
+        if (nextPtr) {
+            uintptr_t nextCls = 0;
+            if (Mem::ReadSafe(nextPtr + Constants::OFF_UOBJECT_CLASS, nextCls) && nextCls > 0x10000) {
+                Logger::Info("DYNO", "ValidateAndFixOffsets: UField::Next at UObject+0x%02X verified", nextOff);
+            }
         }
     }
 
-    if (nextOff < 0) {
-        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FField::Next, keeping default 0x%02X",
-                 DynOff::FFIELD_NEXT);
-    } else {
-        DynOff::FFIELD_NEXT = nextOff;
-    }
-
-    // Step 6: Find FProperty::Offset_Internal
-    // Walk the chain to find a field we know the struct offset of.
-    // For Guid: A=0, B=4, C=8, D=12.  For Vector: X=0, Y=4, Z=8.
-    // We use the second field (B or Y) which should have Offset_Internal=4.
-    uintptr_t secondField = 0;
-    if (nextOff >= 0) {
-        Mem::ReadSafe(childProps + nextOff, secondField);
-    }
-
-    // Also try to collect the first and second field names
+    // Step 7: Collect fields from the chain for offset probing
     struct { uintptr_t addr; std::string name; int expectedOffset; } fields[4] = {};
     int fieldCount = 0;
 
-    // Walk the chain
     uintptr_t curField = childProps;
     for (int i = 0; i < 4 && curField && fieldCount < 4; ++i) {
         fields[fieldCount].addr = curField;
@@ -1131,7 +1341,6 @@ bool ValidateAndFixOffsets() {
             fields[fieldCount].name = FNamePool::GetString(ni);
         }
 
-        // Map known names to expected offsets
         const auto& fn = fields[fieldCount].name;
         if (fn == "A" || fn == "X") fields[fieldCount].expectedOffset = 0;
         else if (fn == "B" || fn == "Y") fields[fieldCount].expectedOffset = 4;
@@ -1141,7 +1350,6 @@ bool ValidateAndFixOffsets() {
 
         ++fieldCount;
 
-        // Advance to next
         if (nextOff >= 0) {
             uintptr_t next = 0;
             Mem::ReadSafe(curField + nextOff, next);
@@ -1157,12 +1365,15 @@ bool ValidateAndFixOffsets() {
                   i, fields[i].name.c_str(), (unsigned long long)fields[i].addr, fields[i].expectedOffset);
     }
 
-    // Probe for Offset_Internal: scan 4-byte aligned offsets from 0x38 to 0x68
-    // For a field with expectedOffset >= 0, find where int32 matches
+    // Step 8: Probe for Offset_Internal: scan 4-byte aligned offsets
+    // Range depends on mode: FProperty starts after FField header (~0x30-0x68),
+    // UProperty starts after UField header (~0x30-0x60)
+    int probeStart = DynOff::bUseFProperty ? 0x30 : 0x28;
+    int probeEnd   = DynOff::bUseFProperty ? 0x68 : 0x60;
     int propOffsetOff = -1;
     int propElemSizeOff = -1;
 
-    for (int probe = 0x38; probe <= 0x68; probe += 4) {
+    for (int probe = probeStart; probe <= probeEnd; probe += 4) {
         int matches = 0;
         int sizeMatches = 0;
 
@@ -1174,7 +1385,6 @@ bool ValidateAndFixOffsets() {
                 ++matches;
             }
 
-            // Also check if this could be ElementSize (all should be 4)
             int32_t sz = -1;
             if (Mem::ReadSafe(fields[i].addr + probe, sz) && sz == expectedElemSize) {
                 ++sizeMatches;
@@ -1183,111 +1393,101 @@ bool ValidateAndFixOffsets() {
 
         if (matches >= 2 && propOffsetOff < 0) {
             propOffsetOff = probe;
-            Logger::Info("DYNO", "ValidateAndFixOffsets: FProperty::Offset_Internal at FField+0x%02X (%d matches)",
-                     probe, matches);
+            Logger::Info("DYNO", "ValidateAndFixOffsets: Offset_Internal at +0x%02X (%d matches)", probe, matches);
         }
 
-        // ElementSize: all fields should have size == 4, but only count if different from Offset probe
         if (sizeMatches >= 2 && propElemSizeOff < 0 && probe != propOffsetOff) {
             propElemSizeOff = probe;
-            Logger::Info("DYNO", "ValidateAndFixOffsets: FProperty::ElementSize at FField+0x%02X (%d matches)",
-                     probe, sizeMatches);
+            Logger::Info("DYNO", "ValidateAndFixOffsets: ElementSize at +0x%02X (%d matches)", probe, sizeMatches);
         }
     }
 
-    if (propOffsetOff < 0) {
-        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FProperty::Offset_Internal, keeping default 0x%02X",
-                 DynOff::FPROPERTY_OFFSET);
+    if (propOffsetOff >= 0) {
+        if (DynOff::bUseFProperty) {
+            DynOff::FPROPERTY_OFFSET = propOffsetOff;
+        } else {
+            DynOff::UPROPERTY_OFFSET = propOffsetOff;
+        }
     } else {
-        DynOff::FPROPERTY_OFFSET = propOffsetOff;
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find Offset_Internal, keeping defaults");
     }
 
-    if (propElemSizeOff < 0) {
-        // ElementSize is harder to detect uniquely because it equals the same value as offset
-        // for field "B" (both are 4). Use a heuristic: it's usually 0x14 bytes before Offset_Internal
-        // in the standard layout (0x38 vs 0x4C), so try propOffsetOff - 0x14
-        if (propOffsetOff > 0) {
-            int guess = propOffsetOff - 0x14;
-            if (guess >= 0x30) {
-                int32_t val = 0;
-                if (Mem::ReadSafe(childProps + guess, val) && val == expectedElemSize) {
-                    propElemSizeOff = guess;
-                    Logger::Info("DYNO", "ValidateAndFixOffsets: FProperty::ElementSize (heuristic) at FField+0x%02X", guess);
-                }
+    if (propElemSizeOff < 0 && propOffsetOff > 0) {
+        // Heuristic: ElementSize is usually 0x14 bytes before Offset_Internal
+        int guess = propOffsetOff - 0x14;
+        if (guess >= probeStart) {
+            int32_t val = 0;
+            if (Mem::ReadSafe(childProps + guess, val) && val == expectedElemSize) {
+                propElemSizeOff = guess;
+                Logger::Info("DYNO", "ValidateAndFixOffsets: ElementSize (heuristic) at +0x%02X", guess);
             }
         }
-        if (propElemSizeOff < 0) {
-            Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FProperty::ElementSize, keeping default 0x%02X",
-                     DynOff::FPROPERTY_ELEMSIZE);
+    }
+
+    if (propElemSizeOff >= 0) {
+        if (DynOff::bUseFProperty) {
+            DynOff::FPROPERTY_ELEMSIZE = propElemSizeOff;
+        } else {
+            DynOff::UPROPERTY_ELEMSIZE = propElemSizeOff;
         }
     }
 
-    if (propElemSizeOff >= 0) {
-        DynOff::FPROPERTY_ELEMSIZE = propElemSizeOff;
+    // Step 9: Derive remaining offsets
+    // PropertyFlags: ElementSize + 8 (ArrayDim int32 fills the gap)
+    if (DynOff::bUseFProperty) {
+        if (propElemSizeOff >= 0) {
+            DynOff::FPROPERTY_FLAGS = propElemSizeOff + 8;
+        }
+    } else {
+        if (propElemSizeOff >= 0) {
+            DynOff::UPROPERTY_FLAGS = propElemSizeOff + 8;
+        }
     }
 
-    // Step 7: Derive other offsets
-    // FProperty::PropertyFlags is typically right after ElementSize + ArrayDim (int32)
-    // Standard: ElementSize=0x38, ArrayDim=0x3C, PropertyFlags=0x40
-    // The gap ElementSize→PropertyFlags is usually 8 bytes (ArrayDim fills the gap)
-    if (propElemSizeOff >= 0) {
-        DynOff::FPROPERTY_FLAGS = propElemSizeOff + 8;
-        Logger::Info("DYNO", "ValidateAndFixOffsets: FProperty::PropertyFlags (derived) at FField+0x%02X",
-                 DynOff::FPROPERTY_FLAGS);
+    // UStruct offsets derived from ChildProperties position
+    if (DynOff::bUseFProperty) {
+        DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
+        DynOff::USTRUCT_CHILDREN  = childPropsOff - 8;
+        DynOff::USTRUCT_SUPER     = childPropsOff - 0x10;
+    } else {
+        // UE4 UProperty mode: Children is the chain itself
+        DynOff::USTRUCT_SUPER     = childPropsOff - 8;
+        DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
     }
 
-    // UStruct::PropertiesSize: typically ChildProperties + 8
-    DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
-    Logger::Info("DYNO", "ValidateAndFixOffsets: UStruct::PropertiesSize (derived) at UStruct+0x%02X",
-             DynOff::USTRUCT_PROPSSIZE);
+    Logger::Info("DYNO", "ValidateAndFixOffsets: UStruct::SuperStruct at +0x%02X", DynOff::USTRUCT_SUPER);
 
-    // UStruct::Children (UField* chain for functions): typically ChildProperties - 8
-    DynOff::USTRUCT_CHILDREN = childPropsOff - 8;
-    Logger::Info("DYNO", "ValidateAndFixOffsets: UStruct::Children (derived) at UStruct+0x%02X",
-             DynOff::USTRUCT_CHILDREN);
-
-    // UStruct::SuperStruct: typically 0x10 before ChildProperties
-    // But probe to be safe — it should be a pointer to another UStruct (or null for root structs)
-    // For "Guid" struct, SuperStruct is probably null. Let's check the default 0x40.
-    // If ChildProperties moved, SuperStruct likely moved proportionally.
-    int superOff = childPropsOff - 0x10; // Default gap
-    uintptr_t superVal = 0;
-    Mem::ReadSafe(testStruct + superOff, superVal);
-    // Guid's super might be null, which is fine
-    DynOff::USTRUCT_SUPER = superOff;
-    Logger::Info("DYNO", "ValidateAndFixOffsets: UStruct::SuperStruct (derived) at UStruct+0x%02X (value=0x%llX)",
-             superOff, (unsigned long long)superVal);
-
-    // Derive FStructProperty::Struct offset from detected FProperty layout.
-    // FProperty ends after Offset_Internal (int32) + Size (int32) + alignment.
-    // FStructProperty::Struct is the first subclass field after FProperty base.
-    // Heuristic: FPROPERTY_OFFSET + 0x2C (0x4C + 0x2C = 0x78 standard)
-    DynOff::FSTRUCTPROP_STRUCT = DynOff::FPROPERTY_OFFSET + 0x2C;
-    Logger::Info("DYNO", "ValidateAndFixOffsets: FStructProperty::Struct (derived) at FField+0x%02X",
-             DynOff::FSTRUCTPROP_STRUCT);
-
-    // FBoolProperty::FieldSize is at the same offset as FStructProperty::Struct for most builds.
-    // Both are first-subclass-field offsets — they overlap in offset but differ in type.
-    DynOff::FBOOLPROP_FIELDSIZE = DynOff::FSTRUCTPROP_STRUCT;
-    Logger::Info("DYNO", "ValidateAndFixOffsets: FBoolProperty::FieldSize (derived) at FField+0x%02X",
-             DynOff::FBOOLPROP_FIELDSIZE);
+    // FStructProperty::Struct = Offset_Internal + 0x2C
+    if (DynOff::bUseFProperty && propOffsetOff >= 0) {
+        DynOff::FSTRUCTPROP_STRUCT  = propOffsetOff + 0x2C;
+        DynOff::FBOOLPROP_FIELDSIZE = DynOff::FSTRUCTPROP_STRUCT;
+    }
 
     DynOff::bOffsetsValidated = true;
 
     // Summary log
     Logger::Info("DYNO", "=== Dynamic Offset Summary ===");
     Logger::Info("DYNO", "  CasePreservingName: %s", DynOff::bCasePreservingName ? "YES" : "no");
+    Logger::Info("DYNO", "  UseFProperty:       %s", DynOff::bUseFProperty ? "yes (UE4.25+/UE5)" : "NO (UE4 UProperty)");
+    Logger::Info("DYNO", "  UObject::Outer      = +0x%02X", DynOff::UOBJECT_OUTER);
     Logger::Info("DYNO", "  UStruct::Super      = +0x%02X", DynOff::USTRUCT_SUPER);
     Logger::Info("DYNO", "  UStruct::Children   = +0x%02X", DynOff::USTRUCT_CHILDREN);
     Logger::Info("DYNO", "  UStruct::ChildProps = +0x%02X", DynOff::USTRUCT_CHILDPROPS);
     Logger::Info("DYNO", "  UStruct::PropsSize  = +0x%02X", DynOff::USTRUCT_PROPSSIZE);
-    Logger::Info("DYNO", "  FField::Class       = +0x%02X", DynOff::FFIELD_CLASS);
-    Logger::Info("DYNO", "  FField::Next        = +0x%02X", DynOff::FFIELD_NEXT);
-    Logger::Info("DYNO", "  FField::Name        = +0x%02X", DynOff::FFIELD_NAME);
-    Logger::Info("DYNO", "  FProperty::ElemSize = +0x%02X", DynOff::FPROPERTY_ELEMSIZE);
-    Logger::Info("DYNO", "  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
-    Logger::Info("DYNO", "  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
-    Logger::Info("DYNO", "  FStructProp::Struct = +0x%02X", DynOff::FSTRUCTPROP_STRUCT);
+    if (DynOff::bUseFProperty) {
+        Logger::Info("DYNO", "  FField::Class       = +0x%02X", DynOff::FFIELD_CLASS);
+        Logger::Info("DYNO", "  FField::Next        = +0x%02X", DynOff::FFIELD_NEXT);
+        Logger::Info("DYNO", "  FField::Name        = +0x%02X", DynOff::FFIELD_NAME);
+        Logger::Info("DYNO", "  FProperty::ElemSize = +0x%02X", DynOff::FPROPERTY_ELEMSIZE);
+        Logger::Info("DYNO", "  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
+        Logger::Info("DYNO", "  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
+        Logger::Info("DYNO", "  FStructProp::Struct = +0x%02X", DynOff::FSTRUCTPROP_STRUCT);
+    } else {
+        Logger::Info("DYNO", "  UField::Next        = +0x%02X", DynOff::UFIELD_NEXT);
+        Logger::Info("DYNO", "  UProperty::ElemSize = +0x%02X", DynOff::UPROPERTY_ELEMSIZE);
+        Logger::Info("DYNO", "  UProperty::Flags    = +0x%02X", DynOff::UPROPERTY_FLAGS);
+        Logger::Info("DYNO", "  UProperty::Offset   = +0x%02X", DynOff::UPROPERTY_OFFSET);
+    }
     Logger::Info("DYNO", "==============================");
 
     return true;
