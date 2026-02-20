@@ -1,16 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <CheatTable CheatEngineTableVersion="46">
   <CheatEntries>
-
-    <!-- ========== Header ========== -->
     <CheatEntry>
       <ID>100</ID>
       <Description>"=== UE5 CEDumper v1.0 — bbfox / UE5CEDumper ==="</Description>
       <Color>00BB5E</Color>
       <GroupHeader>1</GroupHeader>
     </CheatEntry>
-
-    <!-- ========== Main: Inject + Start Pipe ========== -->
     <CheatEntry>
       <ID>1</ID>
       <Description>"Inject DLL + Start Pipe Server"</Description>
@@ -28,13 +24,11 @@ if syntaxcheck then return end
 ue5_shutdown()
 </AssemblerScript>
     </CheatEntry>
-
-    <!-- ========== Global Pointers (active after init) ========== -->
     <CheatEntry>
       <ID>10</ID>
       <Description>"--- Global Pointers (enabled after init) ---"</Description>
-      <Color>4080FF</Color>
       <Options moHideChildren="1"/>
+      <Color>4080FF</Color>
       <GroupHeader>1</GroupHeader>
       <CheatEntries>
         <CheatEntry>
@@ -71,8 +65,6 @@ ue5_shutdown()
         </CheatEntry>
       </CheatEntries>
     </CheatEntry>
-
-    <!-- ========== Setup Instructions ========== -->
     <CheatEntry>
       <ID>20</ID>
       <Description>"--- Setup Instructions ---"</Description>
@@ -81,15 +73,23 @@ ue5_shutdown()
     </CheatEntry>
     <CheatEntry>
       <ID>21</ID>
-      <Description>"1. Build: .\build.cmd release (or publish)"</Description>
+      <Description>"1. Build from repos: .\build.cmd release (or publish)"</Description>
       <Color>C08000</Color>
       <GroupHeader>1</GroupHeader>
     </CheatEntry>
     <CheatEntry>
       <ID>22</ID>
-      <Description>"2. Copy dist\UE5Dumper.dll  →  [CE_DIR]\ue5dumper\UE5Dumper.dll"</Description>
+      <Description>"2. Option: copy dist\UE5Dumper.dll  →  [CE_DIR]\ue5dumper\UE5Dumper.dll"</Description>
       <Color>C08000</Color>
       <GroupHeader>1</GroupHeader>
+      <CheatEntries>
+        <CheatEntry>
+          <ID>101</ID>
+          <Description>"2.1 or just leave DLL in the same directory"</Description>
+          <Color>C08000</Color>
+          <GroupHeader>1</GroupHeader>
+        </CheatEntry>
+      </CheatEntries>
     </CheatEntry>
     <CheatEntry>
       <ID>23</ID>
@@ -115,17 +115,15 @@ ue5_shutdown()
       <Color>569CD6</Color>
       <GroupHeader>1</GroupHeader>
     </CheatEntry>
-
   </CheatEntries>
   <UserdefinedSymbols/>
-  <LuaScript>
--- ============================================================
+  <LuaScript>-- ============================================================
 -- UE5CEDumper — Table Script
 -- Auto-runs when this CT is opened in Cheat Engine.
 -- ============================================================
 
 -- Auto-detect DLL from the same folder as this CT file.
--- CE's File>Open updates OpenDialog1.FileName; File>Save updates SaveDialog1.FileName.
+-- CE's File&gt;Open updates OpenDialog1.FileName; File&gt;Save updates SaveDialog1.FileName.
 -- Try both, then fall back to CE install dir.
 local _savePath = getMainForm().SaveDialog1.FileName or ""
 local _openPath = ""
@@ -157,7 +155,7 @@ local function ue5_logInit()
     if localAppData == "" then return end
 
     local logDir = localAppData .. "\\UE5CEDumper\\Logs\\"
-    os.execute('mkdir "' .. logDir .. '" 2>nul')
+    os.execute('mkdir "' .. logDir .. '" 2&gt;nul')
 
     local logFile = logDir .. "UE5Dumper-lua.log"
     local h = io.open(logFile, "w")  -- overwrite each session
@@ -231,8 +229,8 @@ function ue5_inject()
     -- A common mistake is running the CT without first attaching CE to the game.
     local pid = getOpenedProcessID()
     if pid == 0 then
-        ue5_logError("No game process attached! Open a game process in CE first (File > Open Process).")
-        showMessage("UE5 Dumper Error:\n\nNo game process is attached to Cheat Engine.\n\nPlease attach CE to a running UE5 game first:\n  File > Open Process (or click the process icon)")
+        ue5_logError("No game process attached! Open a game process in CE first (File &gt; Open Process).")
+        showMessage("UE5 Dumper Error:\n\nNo game process is attached to Cheat Engine.\n\nPlease attach CE to a running UE5 game first:\n  File &gt; Open Process (or click the process icon)")
         return
     end
     ue5_log("Target process PID: %d", pid)
@@ -298,5 +296,6 @@ registerLuaFunctionHighlight('ue5_logError')
 -- Print startup hint
 ue5_log("Table loaded. Check [Inject DLL + Start Pipe Server] to begin.")
 ue5_log("DLL_PATH = %s", DLL_PATH)
-  </LuaScript>
+  
+</LuaScript>
 </CheatTable>
