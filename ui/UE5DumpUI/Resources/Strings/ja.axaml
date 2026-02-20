@@ -29,6 +29,7 @@
     <sys:String x:Key="str.ObjectTree.CopyClassName">クラス名をコピー</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyObjectName">オブジェクト名をコピー</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyAddress">アドレスをコピー</sys:String>
+    <sys:String x:Key="str.ObjectTree.FilterHint">読み込み済みを絞り込み...</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.CopyAddress">アドレスをコピー</sys:String>

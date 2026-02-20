@@ -15,11 +15,31 @@ public partial class ObjectTreeViewModel : ViewModelBase
     private readonly ILoggingService _log;
     private readonly IPlatformService _platform;
 
-    [ObservableProperty] private ObservableCollection<UObjectNode> _nodes = new();
+    // All loaded nodes (unfiltered)
+    private readonly List<UObjectNode> _allNodes = new();
+
+    [ObservableProperty] private ObservableCollection<UObjectNode> _filteredNodes = new();
     [ObservableProperty] private UObjectNode? _selectedNode;
     [ObservableProperty] private string _searchText = "";
+    [ObservableProperty] private string _filterText = "";
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private int _objectCount;
+    [ObservableProperty] private string _displayCount = "";
+
+    /// <summary>Common search suggestions for UE5 class names.</summary>
+    public string[] SearchSuggestions { get; } =
+    [
+        "AttributesComponent",
+        "AbilitySystemComponent",
+        "PlayerController",
+        "PlayerState",
+        "GameMode",
+        "GameState",
+        "Character",
+        "Pawn",
+        "HUD",
+        "Widget",
+    ];
 
     /// <summary>Fired when the selected node changes, for cross-VM communication.</summary>
     public event Action<UObjectNode?>? SelectionChanged;
@@ -27,6 +47,11 @@ public partial class ObjectTreeViewModel : ViewModelBase
     partial void OnSelectedNodeChanged(UObjectNode? value)
     {
         SelectionChanged?.Invoke(value);
+    }
+
+    partial void OnFilterTextChanged(string value)
+    {
+        ApplyFilter();
     }
 
     public ObjectTreeViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
@@ -64,7 +89,8 @@ public partial class ObjectTreeViewModel : ViewModelBase
         {
             ClearError();
             IsLoading = true;
-            Nodes.Clear();
+            _allNodes.Clear();
+            FilterText = "";
 
             int offset = 0;
             int total = 0;
@@ -77,7 +103,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
 
                 foreach (var obj in result.Objects)
                 {
-                    Nodes.Add(obj);
+                    _allNodes.Add(obj);
                 }
 
                 offset += result.Objects.Count;
@@ -87,7 +113,8 @@ public partial class ObjectTreeViewModel : ViewModelBase
 
             } while (offset < total);
 
-            _log.Info($"Loaded {Nodes.Count} of {total} objects");
+            ApplyFilter();
+            _log.Info($"Loaded {_allNodes.Count} of {total} objects");
         }
         catch (Exception ex)
         {
@@ -114,20 +141,23 @@ public partial class ObjectTreeViewModel : ViewModelBase
         {
             ClearError();
             IsLoading = true;
+            FilterText = "";
 
             // Server-side case-insensitive partial search across ALL objects
             var result = await _dump.SearchObjectsAsync(SearchText, 2000);
-            Nodes.Clear();
+            _allNodes.Clear();
             ObjectCount = result.Total;
 
             foreach (var obj in result.Objects)
             {
-                Nodes.Add(obj);
+                _allNodes.Add(obj);
             }
 
-            if (Nodes.Count > 0)
+            ApplyFilter();
+
+            if (FilteredNodes.Count > 0)
             {
-                SelectedNode = Nodes[0];
+                SelectedNode = FilteredNodes[0];
             }
 
             _log.Info($"Search '{SearchText}': found {result.Total} results");
@@ -141,5 +171,33 @@ public partial class ObjectTreeViewModel : ViewModelBase
         {
             IsLoading = false;
         }
+    }
+
+    private void ApplyFilter()
+    {
+        FilteredNodes.Clear();
+        var filter = FilterText?.Trim() ?? "";
+
+        if (string.IsNullOrEmpty(filter))
+        {
+            foreach (var node in _allNodes)
+                FilteredNodes.Add(node);
+        }
+        else
+        {
+            foreach (var node in _allNodes)
+            {
+                if (node.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                    node.ClassName.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                    node.Address.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                {
+                    FilteredNodes.Add(node);
+                }
+            }
+        }
+
+        DisplayCount = string.IsNullOrEmpty(filter)
+            ? $"Objects: {_allNodes.Count} (of {ObjectCount})"
+            : $"Filtered: {FilteredNodes.Count} / {_allNodes.Count}";
     }
 }

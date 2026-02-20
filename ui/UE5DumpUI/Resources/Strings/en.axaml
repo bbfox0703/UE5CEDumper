@@ -29,6 +29,7 @@
     <sys:String x:Key="str.ObjectTree.CopyClassName">Copy Class Name</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyObjectName">Copy Object Name</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyAddress">Copy Address</sys:String>
+    <sys:String x:Key="str.ObjectTree.FilterHint">Filter loaded objects...</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.CopyAddress">Copy Address</sys:String>

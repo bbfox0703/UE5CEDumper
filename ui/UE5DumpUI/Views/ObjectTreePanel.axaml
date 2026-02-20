@@ -8,14 +8,22 @@
   <DockPanel>
     <!-- Search bar -->
     <StackPanel DockPanel.Dock="Top" Margin="4" Spacing="4">
-      <TextBlock Text="{DynamicResource str.ObjectTree.Title}"
-                 FontWeight="SemiBold" FontSize="14" Foreground="#CCC"/>
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <TextBlock Text="{DynamicResource str.ObjectTree.Title}"
+                   FontWeight="SemiBold" FontSize="14" Foreground="#CCC"/>
+        <TextBlock Text="{Binding DisplayCount}"
+                   Foreground="#888" FontSize="12" VerticalAlignment="Center"/>
+      </StackPanel>
 
       <Grid ColumnDefinitions="*,Auto,Auto">
-        <TextBox Grid.Column="0"
+        <AutoCompleteBox Grid.Column="0"
                  Watermark="{DynamicResource str.ObjectTree.Search}"
                  Text="{Binding SearchText}"
-                 Margin="0,0,4,0"/>
+                 FilterMode="Contains"
+                 ItemsSource="{Binding SearchSuggestions}"
+                 Margin="0,0,4,0"
+                 KeyDown="SearchBox_KeyDown"
+                 x:Name="SearchBox"/>
         <Button Grid.Column="1"
                 Content="{DynamicResource str.ObjectTree.Load}"
                 Command="{Binding LoadCommand}"
@@ -26,24 +34,23 @@
                 Padding="8,4"/>
       </Grid>
 
-      <StackPanel Orientation="Horizontal" Spacing="8">
-        <TextBlock Text="{Binding ObjectCount, StringFormat='Objects: {0}'}"
-                   Foreground="#888" FontSize="12"/>
-        <TextBlock Text="{DynamicResource str.ObjectTree.Loading}"
-                   Foreground="#4EC9B0" FontSize="12"
-                   IsVisible="{Binding IsLoading}"/>
-      </StackPanel>
+      <!-- Local filter -->
+      <TextBox Watermark="{DynamicResource str.ObjectTree.FilterHint}"
+               Text="{Binding FilterText}"
+               Padding="4,2" FontSize="12"/>
     </StackPanel>
 
     <!-- Object list (flat list with virtualization) -->
-    <ListBox ItemsSource="{Binding Nodes}"
+    <ListBox ItemsSource="{Binding FilteredNodes}"
              SelectedItem="{Binding SelectedNode}"
              Background="Transparent"
              >
       <ListBox.ItemTemplate>
         <DataTemplate x:DataType="models:UObjectNode">
-          <StackPanel Orientation="Horizontal" Spacing="8" Margin="2,1">
-            <StackPanel.ContextMenu>
+          <!-- Border fills full row width so right-click works anywhere on the row -->
+          <Border Background="Transparent" Padding="2,1"
+                  HorizontalAlignment="Stretch">
+            <Border.ContextMenu>
               <ContextMenu>
                 <MenuItem Header="{DynamicResource str.ObjectTree.CopyClassName}"
                           Command="{Binding $parent[UserControl].((vm:ObjectTreeViewModel)DataContext).CopyClassNameCommand}"
@@ -55,18 +62,20 @@
                           Command="{Binding $parent[UserControl].((vm:ObjectTreeViewModel)DataContext).CopyAddressCommand}"
                           CommandParameter="{Binding}"/>
               </ContextMenu>
-            </StackPanel.ContextMenu>
-            <TextBlock Text="{Binding ClassName}"
-                       Foreground="#569CD6" FontSize="14"
-                       FontWeight="SemiBold"
-                       MinWidth="140"/>
-            <TextBlock Text="{Binding Name}"
-                       Foreground="#D4D4D4" FontSize="14"/>
-            <TextBlock Text="{Binding Address}"
-                       Foreground="#6A9955" FontSize="13"
-                       Opacity="0.7"
-                       VerticalAlignment="Center"/>
-          </StackPanel>
+            </Border.ContextMenu>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="{Binding ClassName}"
+                         Foreground="#569CD6" FontSize="14"
+                         FontWeight="SemiBold"
+                         MinWidth="140"/>
+              <TextBlock Text="{Binding Name}"
+                         Foreground="#D4D4D4" FontSize="14"/>
+              <TextBlock Text="{Binding Address}"
+                         Foreground="#6A9955" FontSize="13"
+                         Opacity="0.7"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+          </Border>
         </DataTemplate>
       </ListBox.ItemTemplate>
     </ListBox>
