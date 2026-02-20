@@ -57,6 +57,17 @@ public sealed class LiveFieldValue
         (!string.IsNullOrEmpty(PtrAddress) && PtrAddress != "0x0") ||
         (!string.IsNullOrEmpty(StructDataAddr) && StructDataAddr != "0x0");
 
+    /// <summary>Whether this field is a pointer navigation (true) or struct navigation (false).</summary>
+    public bool IsPointerNavigation =>
+        !string.IsNullOrEmpty(PtrAddress) && PtrAddress != "0x0";
+
+    /// <summary>Whether this field is a struct-inline navigation.</summary>
+    public bool IsStructNavigation =>
+        !IsPointerNavigation && !string.IsNullOrEmpty(StructDataAddr) && StructDataAddr != "0x0";
+
+    /// <summary>Absolute memory address of this field (instance base + offset). Set by ViewModel.</summary>
+    public string FieldAddress { get; set; } = "";
+
     /// <summary>Whether this field matches the current search query (set by ViewModel).</summary>
     public bool IsSearchMatch { get; set; }
 }
