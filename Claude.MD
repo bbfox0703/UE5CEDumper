@@ -65,16 +65,16 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-19 (DynOff dynamic offset detection added)
+> Last updated: 2026-02-20 (Dual-channel logger with category tags + SUMMARY)
 
 ### Component Status
 
 | Component | File(s) | Status | Notes |
 |-----------|---------|--------|-------|
 | Memory module | `Memory.cpp/.h` | Done | AOBScan (exec sections only), ResolveRIP, ReadSafe (SEH) |
-| Logger | `Logger.cpp/.h` | Done | File rotation, 5-version, 5MB cap, thread-safe |
-| OffsetFinder — GObjects | `OffsetFinder.cpp` | Working | 5 AOB patterns + deref variants; validated in TQ2 (UE5.7) |
-| OffsetFinder — GNames | `OffsetFinder.cpp` | Partial | 4 AOB patterns fail on TQ2; `.data` pointer-scan fallback added but untested |
+| Logger | `Logger.cpp/.h` | Done | Dual-channel (scan+pipe), category tags, SUMMARY level, 5-version rotation, 5MB cap, thread-safe; commit `c9263ed` |
+| OffsetFinder — GObjects | `OffsetFinder.cpp` | Working | 5 AOB patterns + deref variants + MSVC symbol export (`GUObjectArray`); validated in TQ2 (UE5.7) |
+| OffsetFinder — GNames | `OffsetFinder.cpp` | Partial | 7 AOB patterns + FName ctor export + `.data` pointer-scan with corroboration; AOBs fail on TQ2, fallbacks untested |
 | OffsetFinder — GWorld | `OffsetFinder.cpp` | Done | 6 patterns, non-critical |
 | OffsetFinder — Version | `OffsetFinder.cpp` | Working | PE VERSIONINFO fast path + memory string scan fallback |
 | OffsetFinder — DynOff | `OffsetFinder.cpp`, `Constants.h` | Untested | Dynamic FField/FProperty/UStruct offset detection via known struct probing; commit `8c2f983` |
@@ -96,7 +96,7 @@ git submodule update --init --recursive
 - **UE version detection** — PE VERSIONINFO returns UE5.7 for TQ2 correctly
 - **Build system** — CMake + Ninja + MSVC via `vswhere`, reproducible Release build
 - **CE plugin mode** — `g_isCEPlugin = true` suppresses auto-start when loaded into CE.exe itself
-- **Logging** — `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5Dumper-0.log` created with full diagnostics
+- **Logging** — Dual-channel: `UE5Dumper-scan-0.log` (init/scan, ~20-50KB) + `UE5Dumper-pipe-0.log` (runtime); category tags on all 166 calls; SUMMARY level for 3-line triage; auto-switches Scan→Pipe after `UE5_Init()`
 - **Pipe Server** — Named pipe `\\.\pipe\UE5DumpBfx` accepts connections, JSON dispatch working
 - **Live Data Walker** — `walk_class`, `walk_instance`, `walk_world` commands functional (type names correct on TQ2)
 - **Instance Finder** — `find_instances` command returns matching objects by class name
@@ -170,6 +170,8 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - **CasePreservingName (UE5.5+/5.7)**: FName grows from 0x8 to 0x10 bytes (adds DisplayIndex), shifting FField::Flags and all subsequent FProperty offsets by +0x8. Never hardcode FField/FProperty offsets — always detect dynamically using known structs (Guid, Vector)
 - **Dumper-7 reference patterns**: `FindFFieldNameOffset()` brute-force probing, `FixupHardcodedOffsets()`, `InitFNameSettings()` for CasePreservingName detection — these are the gold standard for dynamic offset discovery
 - **"rty" diagnostic pattern**: When field names show truncated type names (e.g., "rty" from "Property"), it means Name offset is wrong and reading into adjacent FFieldClass data. Type names being correct while field names are wrong = FField::ClassPrivate offset is OK but FField::Name offset is shifted
+- **Log structure matters for AI analysis**: A single 2MB log with mixed init/runtime traffic wastes context tokens. Splitting by phase (scan vs pipe) + adding category tags + SUMMARY level reduces analysis from reading 2MB to `grep "[SUMMARY]"` → 3 lines. Use `LOG_CAT` file-level `#define` for minimal call-site changes; functions needing subcategories call `Logger::Info("SUBCAT", ...)` directly
+- **Build system**: VS 2026 (v18) at `C:\Program Files\Microsoft Visual Studio\18\Community`. Use a temp `build.bat` that calls `vcvarsall.bat amd64` then cmake, because bash→cmd quoting for paths with spaces is fragile. Delete after build.
 
 ### Recommended Test Games
 
@@ -180,11 +182,11 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 
 ### Next Steps
 
-1. **Test dynamic offset detection** on TQ2 — inject DLL, check log for detected offsets, verify via `get_offsets` pipe command
+1. **Test dynamic offset detection** on TQ2 — inject DLL, check `UE5Dumper-scan-0.log` for `[SUMMARY]` lines and `[DYNO]` category entries, verify via `get_offsets` pipe command
 2. Verify Live Walker field names are correct (not "rty") and offsets are non-zero
 3. Verify Instance Finder can locate `bp_tq2_character_stats_component_C` via top-down GWorld navigation
 4. **Test pointer-scan fallback for GNames** on EverSpace 2 (use `.pdb` to verify address)
-5. Once both GNames + DynOff confirmed working -> begin Avalonia UI (`Phase 3` in plan)
+5. Once both GNames + DynOff confirmed working → begin Avalonia UI (`Phase 3` in plan)
 6. Consider adding more GNames AOB patterns specific to UE5.5+ codegen patterns
 
 -----

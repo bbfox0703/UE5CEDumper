@@ -41,6 +41,8 @@ public sealed class DumpService : IDumpService
             GNamesAddr = ptrs["gnames"]?.GetValue<string>() ?? "",
             GWorldAddr = ptrs["gworld"]?.GetValue<string>() ?? "",
             ObjectCount = ptrs["object_count"]?.GetValue<int>() ?? 0,
+            ModuleName = ptrs["module_name"]?.GetValue<string>() ?? "",
+            ModuleBase = ptrs["module_base"]?.GetValue<string>() ?? "",
         };
     }
 
@@ -55,6 +57,8 @@ public sealed class DumpService : IDumpService
             GNamesAddr = res["gnames"]?.GetValue<string>() ?? "",
             GWorldAddr = res["gworld"]?.GetValue<string>() ?? "",
             ObjectCount = res["object_count"]?.GetValue<int>() ?? 0,
+            ModuleName = res["module_name"]?.GetValue<string>() ?? "",
+            ModuleBase = res["module_base"]?.GetValue<string>() ?? "",
         };
     }
 
@@ -278,6 +282,9 @@ public sealed class DumpService : IDumpService
                     PtrName = fo["ptr_name"]?.GetValue<string>() ?? "",
                     PtrClassName = fo["ptr_class"]?.GetValue<string>() ?? "",
                     ArrayCount = fo["count"]?.GetValue<int>() ?? -1,
+                    StructDataAddr = fo["struct_data_addr"]?.GetValue<string>() ?? "",
+                    StructClassAddr = fo["struct_class_addr"]?.GetValue<string>() ?? "",
+                    StructTypeName = fo["struct_type"]?.GetValue<string>() ?? "",
                 });
             }
         }

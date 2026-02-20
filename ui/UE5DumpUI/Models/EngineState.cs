@@ -10,4 +10,6 @@ public sealed class EngineState
     public string GNamesAddr { get; init; } = "";
     public string GWorldAddr { get; init; } = "";
     public int ObjectCount { get; init; }
+    public string ModuleName { get; init; } = "";
+    public string ModuleBase { get; init; } = "";
 }

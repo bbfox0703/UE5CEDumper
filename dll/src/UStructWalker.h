@@ -69,6 +69,11 @@ struct LiveFieldValue {
 
     // For ArrayProperty: TArray header info
     int32_t     arrayCount = -1;  // -1 = not an array
+
+    // For StructProperty: inner struct info
+    uintptr_t   structDataAddr  = 0;  // Absolute address of struct data (instanceAddr + offset)
+    uintptr_t   structClassAddr = 0;  // UScriptStruct* for the struct type
+    std::string structTypeName;       // e.g. "FGameplayAttributeData"
 };
 
 // Result of walking a live instance

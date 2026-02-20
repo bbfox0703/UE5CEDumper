@@ -1253,6 +1253,14 @@ bool ValidateAndFixOffsets() {
     Logger::Info("DYNO", "ValidateAndFixOffsets: UStruct::SuperStruct (derived) at UStruct+0x%02X (value=0x%llX)",
              superOff, (unsigned long long)superVal);
 
+    // Derive FStructProperty::Struct offset from detected FProperty layout.
+    // FProperty ends after Offset_Internal (int32) + Size (int32) + alignment.
+    // FStructProperty::Struct is the first subclass field after FProperty base.
+    // Heuristic: FPROPERTY_OFFSET + 0x2C (0x4C + 0x2C = 0x78 standard)
+    DynOff::FSTRUCTPROP_STRUCT = DynOff::FPROPERTY_OFFSET + 0x2C;
+    Logger::Info("DYNO", "ValidateAndFixOffsets: FStructProperty::Struct (derived) at FField+0x%02X",
+             DynOff::FSTRUCTPROP_STRUCT);
+
     DynOff::bOffsetsValidated = true;
 
     // Summary log
@@ -1268,6 +1276,7 @@ bool ValidateAndFixOffsets() {
     Logger::Info("DYNO", "  FProperty::ElemSize = +0x%02X", DynOff::FPROPERTY_ELEMSIZE);
     Logger::Info("DYNO", "  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
     Logger::Info("DYNO", "  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
+    Logger::Info("DYNO", "  FStructProp::Struct = +0x%02X", DynOff::FSTRUCTPROP_STRUCT);
     Logger::Info("DYNO", "==============================");
 
     return true;

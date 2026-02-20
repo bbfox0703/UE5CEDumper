@@ -126,6 +126,11 @@ inline int FPROPERTY_OFFSET   = 0x4C;  // int32 Offset_Internal
 // FFieldClass
 inline int FFIELDCLASS_NAME   = 0x00;  // FName at start of FFieldClass
 
+// FStructProperty (subclass of FProperty)
+// UScriptStruct* — first field after FProperty base layout.
+// Default 0x78 for UE5.0-5.4; derived from FPROPERTY_OFFSET in ValidateAndFixOffsets.
+inline int FSTRUCTPROP_STRUCT = 0x78;
+
 // Detection state
 inline bool bCasePreservingName  = false;
 inline bool bOffsetsValidated    = false;
