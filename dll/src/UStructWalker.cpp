@@ -4,6 +4,7 @@
 
 #include "UStructWalker.h"
 #include "Memory.h"
+#define LOG_CAT "WALK"
 #include "Logger.h"
 #include "Constants.h"
 #include "FNamePool.h"

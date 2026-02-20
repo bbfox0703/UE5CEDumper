@@ -4,6 +4,7 @@
 
 #include "OffsetFinder.h"
 #include "Memory.h"
+#define LOG_CAT "SCAN"
 #include "Logger.h"
 #include "Constants.h"
 #include "ObjectArray.h"
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <vector>
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
+#include <Psapi.h>    // EnumProcessModules
 
 namespace OffsetFinder {
 
@@ -37,6 +39,48 @@ static uintptr_t TryPatternRIP(const char* pattern, int opcodeLen = 3, int total
     return target;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Symbol Export Fallback (RE-UE4SS technique)
+// Many retail UE games export MSVC-mangled symbols. GetProcAddress resolves
+// them in O(1), far faster than AOB scanning.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Try to resolve a symbol from loaded modules' export tables.
+// Since the DLL is injected into the game process, GetModuleHandle(nullptr)
+// returns the game executable's HMODULE.
+static uintptr_t TrySymbolExport(const char* mangledName) {
+    // Try main module first (most common case for monolithic builds)
+    HMODULE hGame = GetModuleHandleW(nullptr);
+    if (hGame) {
+        FARPROC addr = GetProcAddress(hGame, mangledName);
+        if (addr) {
+            LOG_INFO("TrySymbolExport: Found '%s' in main module at 0x%llX",
+                     mangledName, (unsigned long long)(uintptr_t)addr);
+            return reinterpret_cast<uintptr_t>(addr);
+        }
+    }
+
+    // Try other loaded modules (UE modular builds may split into separate DLLs)
+    HMODULE modules[1024];
+    DWORD cbNeeded = 0;
+    if (EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &cbNeeded)) {
+        DWORD count = cbNeeded / sizeof(HMODULE);
+        for (DWORD i = 0; i < count; ++i) {
+            if (modules[i] == hGame) continue;
+            FARPROC addr = GetProcAddress(modules[i], mangledName);
+            if (addr) {
+                wchar_t modName[MAX_PATH] = {};
+                GetModuleFileNameW(modules[i], modName, MAX_PATH);
+                LOG_INFO("TrySymbolExport: Found '%s' in module '%ls' at 0x%llX",
+                         mangledName, modName, (unsigned long long)(uintptr_t)addr);
+                return reinterpret_cast<uintptr_t>(addr);
+            }
+        }
+    }
+
+    return 0;
+}
+
 // Validate a candidate GObjects address (basic: check NumElements range)
 static bool ValidateGObjects(uintptr_t addr) {
     if (!addr) return false;
@@ -47,12 +91,12 @@ static bool ValidateGObjects(uintptr_t addr) {
 
     // Sanity: should have a reasonable number of objects
     if (numElements < 0x1000 || numElements > 0x400000) {
-        LOG_WARN("ValidateGObjects: NumElements=%d out of range at 0x%llX",
+        Logger::Warn("SCAN:GObj", "ValidateGObjects: NumElements=%d out of range at 0x%llX",
                  numElements, static_cast<unsigned long long>(addr));
         return false;
     }
 
-    LOG_INFO("ValidateGObjects: Valid at 0x%llX, NumElements=%d",
+    Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX, NumElements=%d",
              static_cast<unsigned long long>(addr), numElements);
     return true;
 }
@@ -71,7 +115,7 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
     uint64_t rwLock = 0;
     if (!Mem::ReadSafe(addr, rwLock)) return false;
     if (rwLock != 0) {
-        LOG_DEBUG("ValidateGNamesStructural: FRWLock=0x%llX (non-zero) at 0x%llX",
+        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: FRWLock=0x%llX (non-zero) at 0x%llX",
                   (unsigned long long)rwLock, (unsigned long long)addr);
         return false;
     }
@@ -80,7 +124,7 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
     int32_t currentBlock = 0;
     if (!Mem::ReadSafe(addr + 0x08, currentBlock)) return false;
     if (currentBlock < 0 || currentBlock > 8192) {
-        LOG_DEBUG("ValidateGNamesStructural: CurrentBlock=%d out of range at 0x%llX",
+        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: CurrentBlock=%d out of range at 0x%llX",
                   currentBlock, (unsigned long long)addr);
         return false;
     }
@@ -89,7 +133,7 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
     uintptr_t nextBlock = 0;
     if (!Mem::ReadSafe(addr + 0x10 + ((currentBlock + 1) * 8), nextBlock)) return false;
     if (nextBlock != 0) {
-        LOG_DEBUG("ValidateGNamesStructural: Blocks[%d+1] = 0x%llX (non-null) at 0x%llX",
+        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[%d+1] = 0x%llX (non-null) at 0x%llX",
                   currentBlock, (unsigned long long)nextBlock, (unsigned long long)addr);
         return false;
     }
@@ -106,13 +150,13 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
         char name[5] = {};
         if (!Mem::ReadBytesSafe(block0 + 2, name, 4)) return false;
         if (strcmp(name, "None") != 0) {
-            LOG_DEBUG("ValidateGNamesStructural: Blocks[0] doesn't start with 'None' at 0x%llX",
+            Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[0] doesn't start with 'None' at 0x%llX",
                       (unsigned long long)addr);
             return false;
         }
     }
 
-    LOG_INFO("ValidateGNamesStructural: Valid FNamePool at 0x%llX (CurrentBlock=%d)",
+    Logger::Info("SCAN:GNam", "ValidateGNamesStructural: Valid FNamePool at 0x%llX (CurrentBlock=%d)",
              (unsigned long long)addr, currentBlock);
     return true;
 }
@@ -123,7 +167,7 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
 // each candidate as a GObjects/FUObjectArray.
 // ─────────────────────────────────────────────────────────────────────────────
 static uintptr_t FindGObjectsByDataScan() {
-    LOG_INFO("FindGObjectsByDataScan: Collecting static pointer references...");
+    Logger::Info("SCAN:GObj", "FindGObjectsByDataScan: Collecting static pointer references...");
 
     uintptr_t base = Mem::GetModuleBase(nullptr);
     if (!base) return 0;
@@ -155,11 +199,11 @@ static uintptr_t FindGObjectsByDataScan() {
     }
 
     if (!codeStart || !dataStart) {
-        LOG_WARN("FindGObjectsByDataScan: Could not identify code/data sections");
+        Logger::Warn("SCAN:GObj", "FindGObjectsByDataScan: Could not identify code/data sections");
         return 0;
     }
 
-    LOG_DEBUG("FindGObjectsByDataScan: code=[0x%llX-0x%llX], data=[0x%llX-0x%llX]",
+    Logger::Debug("SCAN:GObj", "FindGObjectsByDataScan: code=[0x%llX-0x%llX], data=[0x%llX-0x%llX]",
               (unsigned long long)codeStart, (unsigned long long)codeEnd,
               (unsigned long long)dataStart, (unsigned long long)dataEnd);
 
@@ -197,25 +241,56 @@ static uintptr_t FindGObjectsByDataScan() {
         }
     }
 
-    LOG_INFO("FindGObjectsByDataScan: Found %zu static pointers in data section", bag.size());
+    Logger::Info("SCAN:GObj", "FindGObjectsByDataScan: Found %zu static pointers in data section", bag.size());
 
     // Try each candidate with GObjects validation
     for (auto& sp : bag) {
         uintptr_t candidate = 0;
         if (!Mem::ReadSafe(sp.targetAddr, candidate) || !candidate) continue;
         if (ValidateGObjects(candidate)) {
-            LOG_INFO("FindGObjectsByDataScan: GObjects validated at 0x%llX (via instr@0x%llX)",
+            Logger::Info("SCAN:GObj", "FindGObjectsByDataScan: GObjects validated at 0x%llX (via instr@0x%llX)",
                      (unsigned long long)candidate, (unsigned long long)sp.instrAddr);
             return candidate;
         }
     }
 
-    LOG_WARN("FindGObjectsByDataScan: No valid GObjects found among %zu candidates", bag.size());
+    Logger::Warn("SCAN:GObj", "FindGObjectsByDataScan: No valid GObjects found among %zu candidates", bag.size());
+    return 0;
+}
+
+// Try to find GObjects via MSVC symbol export.
+// The symbol is the global variable itself — exported address IS the FUObjectArray.
+static uintptr_t FindGObjectsByExport() {
+    uintptr_t addr = TrySymbolExport(Constants::EXPORT_GOBJECTARRAY);
+    if (!addr) return 0;
+
+    // The export may point directly to FUObjectArray or to a pointer to it
+    if (ValidateGObjects(addr)) {
+        Logger::Info("SCAN:GObj", "FindGObjectsByExport: Validated at 0x%llX (direct)",
+                 (unsigned long long)addr);
+        return addr;
+    }
+
+    uintptr_t derefed = 0;
+    if (Mem::ReadSafe(addr, derefed) && derefed && ValidateGObjects(derefed)) {
+        Logger::Info("SCAN:GObj", "FindGObjectsByExport: Validated at 0x%llX (deref'd)",
+                 (unsigned long long)derefed);
+        return derefed;
+    }
+
+    Logger::Warn("SCAN:GObj", "FindGObjectsByExport: Symbol at 0x%llX failed validation",
+             (unsigned long long)addr);
     return 0;
 }
 
 uintptr_t FindGObjects() {
-    LOG_INFO("FindGObjects: Scanning for GObjects...");
+    Logger::Info("SCAN:GObj", "FindGObjects: Scanning for GObjects...");
+
+    // === Priority 0: Symbol export lookup (O(1), fastest) ===
+    {
+        uintptr_t result = FindGObjectsByExport();
+        if (result) return result;
+    }
 
     // Try all known patterns in order of commonness.
     // Each resolves the RIP-relative address, then optionally dereferences.
@@ -244,14 +319,57 @@ uintptr_t FindGObjects() {
         if (result && ValidateGObjects(result)) return result;
     }
 
+    // === RE-UE4SS patterns with special offset adjustments ===
+
+    // V10 (Split Fiction): lea rcx; call; call; mov byte[],1
+    // Resolved address is +0x10 into FUObjectArray — subtract 0x10
+    {
+        uintptr_t addr = Mem::AOBScan(Constants::AOB_GOBJECTS_V10);
+        if (addr) {
+            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
+            if (target) {
+                if (ValidateGObjects(target - 0x10)) return target - 0x10;
+                if (ValidateGObjects(target))        return target;
+            }
+        }
+    }
+
+    // V11 (Little Nightmares 3): lea reg; mov r9,rcx; mov [rcx],rax; mov eax,-1
+    {
+        uintptr_t addr = Mem::AOBScan(Constants::AOB_GOBJECTS_V11);
+        if (addr) {
+            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
+            if (target) {
+                if (ValidateGObjects(target))        return target;
+                if (ValidateGObjects(target - 0x10)) return target - 0x10;
+            }
+        }
+    }
+
+    // V12 (FF7 Remake): mov reg,[rip+X]; mov r8,[rax+rcx*8]; test; jz
+    // This is a MOV, so deref is needed; also try -0x10 adjustment
+    {
+        uintptr_t addr = Mem::AOBScan(Constants::AOB_GOBJECTS_V12);
+        if (addr) {
+            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
+            if (target) {
+                uintptr_t value = 0;
+                if (Mem::ReadSafe(target, value) && value) {
+                    if (ValidateGObjects(value - 0x10)) return value - 0x10;
+                    if (ValidateGObjects(value))        return value;
+                }
+            }
+        }
+    }
+
     // Fallback: exhaustive data-section pointer scan
-    LOG_WARN("FindGObjects: All patterns failed, trying data-section scan fallback...");
+    Logger::Warn("SCAN:GObj", "FindGObjects: All patterns failed, trying data-section scan fallback...");
     {
         uintptr_t result = FindGObjectsByDataScan();
         if (result) return result;
     }
 
-    LOG_ERROR("FindGObjects: All patterns and fallback scan failed");
+    Logger::Error("SCAN:GObj", "FindGObjects: All patterns and fallback scan failed");
     return 0;
 }
 
@@ -290,19 +408,19 @@ static bool ValidateGNames(uintptr_t addr) {
         char name[5] = {};
         int lenA = header >> 6;
         if (lenA == 4 && Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
-            LOG_INFO("ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtA, 'None')",
+            Logger::Info("SCAN:GNam", "ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtA, 'None')",
                      static_cast<unsigned long long>(addr), off);
             return true;
         }
         int lenB = (header >> 1) & 0x7FF;
         memset(name, 0, sizeof(name));
         if (lenB == 4 && Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
-            LOG_INFO("ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtB, 'None')",
+            Logger::Info("SCAN:GNam", "ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtB, 'None')",
                      static_cast<unsigned long long>(addr), off);
             return true;
         }
 
-        LOG_DEBUG("ValidateGNames: offset +0x%02X chunk0=0x%llX header=0x%04X lenA=%d lenB=%d name='%.4s'",
+        Logger::Debug("SCAN:GNam", "ValidateGNames: offset +0x%02X chunk0=0x%llX header=0x%04X lenA=%d lenB=%d name='%.4s'",
                   off, static_cast<unsigned long long>(chunk0), header, lenA, lenB, name);
     }
 
@@ -318,10 +436,10 @@ static bool ValidateGNames(uintptr_t addr) {
             else
                 pos += snprintf(hexbuf + pos, sizeof(hexbuf) - pos, " +%02X:[??]", i);
         }
-        LOG_DEBUG("ValidateGNames: dump@0x%llX:%s",
+        Logger::Debug("SCAN:GNam", "ValidateGNames: dump@0x%llX:%s",
                   (unsigned long long)addr, hexbuf);
     }
-    LOG_WARN("ValidateGNames: Validation failed at 0x%llX", static_cast<unsigned long long>(addr));
+    Logger::Warn("SCAN:GNam", "ValidateGNames: Validation failed at 0x%llX", static_cast<unsigned long long>(addr));
     return false;
 }
 
@@ -338,6 +456,32 @@ static bool ValidateGNames(uintptr_t addr) {
 //   aligned pointer that dereferences to a "None" FNameEntry, we can locate
 //   Blocks[0] and work backwards to the FNamePool base address.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Corroborate a FNamePool chunk by checking for common UE type name strings.
+// Real FNamePool Blocks[0] always contains fundamental type names ("ByteProperty",
+// "IntProperty", "Object", "Class", etc.) within the first 2048 bytes.
+// Random heap data containing "None" won't also have these UE-specific strings.
+static bool CorroborateFNameChunk(uintptr_t chunkAddr) {
+    // Read first 2048 bytes of the chunk
+    constexpr int kScanSize = 2048;
+    uint8_t buf[kScanSize];
+    if (!Mem::ReadBytesSafe(chunkAddr, buf, kScanSize)) return false;
+
+    // Look for at least 2 of these UE type names within the chunk
+    const char* markers[] = { "Property", "Object", "Struct", "Class", "Package", "Function" };
+    int found = 0;
+    for (const char* marker : markers) {
+        size_t mlen = strlen(marker);
+        for (int i = 0; i + (int)mlen <= kScanSize; ++i) {
+            if (memcmp(buf + i, marker, mlen) == 0) {
+                ++found;
+                break;  // Only count each marker once
+            }
+        }
+        if (found >= 2) return true;  // Early exit
+    }
+    return false;
+}
 
 // Return true if the memory at `addr` starts with a "None" FNameEntry.
 // The FNameEntry header is 2 bytes (all known UE5 versions), followed by the
@@ -360,7 +504,7 @@ static bool LooksLikeNoneEntry(uintptr_t addr) {
 }
 
 static uintptr_t FindGNamesByPointerScan() {
-    LOG_INFO("FindGNamesByPointerScan: Scanning .data for pointer-to-'None' FNameEntry...");
+    Logger::Info("SCAN:GNam", "FindGNamesByPointerScan: Scanning .data for pointer-to-'None' FNameEntry...");
 
     uintptr_t base = Mem::GetModuleBase(nullptr);
     if (!base) return 0;
@@ -389,7 +533,7 @@ static uintptr_t FindGNamesByPointerScan() {
 
         char secName[9] = {};
         memcpy(secName, section->Name, 8);
-        LOG_DEBUG("FindGNamesByPointerScan: Scanning section [%s] at 0x%llX (%zu bytes)",
+        Logger::Debug("SCAN:GNam", "FindGNamesByPointerScan: Scanning section [%s] at 0x%llX (%zu bytes)",
                   secName, (unsigned long long)secBase, secSize);
 
         // Walk every 8-byte-aligned slot and treat it as a potential pointer.
@@ -413,7 +557,7 @@ static uintptr_t FindGNamesByPointerScan() {
                     if (Mem::ReadBytesSafe(ptr, peek, 16)) {
                         for (int p = 0; p + 4 <= 16; ++p) {
                             if (peek[p] == 'N' && peek[p+1] == 'o' && peek[p+2] == 'n' && peek[p+3] == 'e') {
-                                LOG_WARN("FindGNamesByPointerScan: NEAR-MISS 'None' at ptr=0x%llX offset=%d "
+                                Logger::Warn("SCAN:GNam", "FindGNamesByPointerScan: NEAR-MISS 'None' at ptr=0x%llX offset=%d "
                                          "header=%02X%02X%02X%02X bytes=%02X %02X %02X %02X %02X %02X %02X %02X "
                                          "%02X %02X %02X %02X %02X %02X %02X %02X (.data+0x%zX)",
                                          (unsigned long long)ptr, p,
@@ -435,8 +579,14 @@ static uintptr_t FindGNamesByPointerScan() {
             // FNamePool base = pAddr − (offset of Blocks[0] within FNamePool)
             uintptr_t pAddr = secBase + off;
 
-            LOG_INFO("FindGNamesByPointerScan: chunk0=0x%llX @ 0x%llX — trying pool offsets...",
+            Logger::Info("SCAN:GNam", "FindGNamesByPointerScan: chunk0=0x%llX @ 0x%llX — corroborating...",
                      (unsigned long long)ptr, (unsigned long long)pAddr);
+
+            // Corroborate: real FNamePool chunks contain UE type names
+            if (!CorroborateFNameChunk(ptr)) {
+                Logger::Debug("SCAN:GNam", "FindGNamesByPointerScan: Corroboration failed — skipping");
+                continue;
+            }
 
             // Dump what the candidate actually points to for diagnostics
             if (diagCount < 5) {
@@ -448,7 +598,7 @@ static uintptr_t FindGNamesByPointerScan() {
                              peek[0], peek[1], peek[2], peek[3], peek[4], peek[5], peek[6], peek[7],
                              peek[8], peek[9], peek[10], peek[11], peek[12], peek[13], peek[14], peek[15]);
                 }
-                LOG_DEBUG("FindGNamesByPointerScan: candidate chunk0 bytes: %s", hexbuf);
+                Logger::Debug("SCAN:GNam", "FindGNamesByPointerScan: candidate chunk0 bytes: %s", hexbuf);
                 ++diagCount;
             }
 
@@ -459,7 +609,7 @@ static uintptr_t FindGNamesByPointerScan() {
                 if ((size_t)blkOff > pAddr) continue; // underflow guard
                 uintptr_t pool = pAddr - static_cast<uintptr_t>(blkOff);
                 if (ValidateGNames(pool) || ValidateGNamesStructural(pool)) {
-                    LOG_INFO("FindGNamesByPointerScan: Valid pool at 0x%llX (Blocks[0]@+0x%02X)",
+                    Logger::Info("SCAN:GNam", "FindGNamesByPointerScan: Valid pool at 0x%llX (Blocks[0]@+0x%02X)",
                              (unsigned long long)pool, blkOff);
                     return pool;
                 }
@@ -467,12 +617,73 @@ static uintptr_t FindGNamesByPointerScan() {
         }
     }
 
-    LOG_WARN("FindGNamesByPointerScan: No valid FNamePool found in .data");
+    Logger::Warn("SCAN:GNam", "FindGNamesByPointerScan: No valid FNamePool found in .data");
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FindGNamesByExport — find FName::ToString or FName::FName via symbol export,
+// then scan inside the function body for RIP-relative references to FNamePool.
+//
+// No game exports FNamePool directly, but many export FName functions that
+// must reference the pool internally. We scan the first 256 bytes of the
+// function for LEA/MOV RIP-relative instructions and validate each target.
+// ─────────────────────────────────────────────────────────────────────────────
+static uintptr_t FindGNamesByExport() {
+    const char* symbols[] = {
+        Constants::EXPORT_FNAME_TOSTRING,
+        Constants::EXPORT_FNAME_CTOR,
+        Constants::EXPORT_FNAME_CTOR_CHAR,
+    };
+
+    for (const char* sym : symbols) {
+        uintptr_t funcAddr = TrySymbolExport(sym);
+        if (!funcAddr) continue;
+
+        Logger::Info("SCAN:GNam", "FindGNamesByExport: Scanning function body at 0x%llX for FNamePool refs ('%s')",
+                 (unsigned long long)funcAddr, sym);
+
+        // Scan first 256 bytes of the function for RIP-relative LEA/MOV
+        // Pattern: REX.W prefix (0x48 or 0x4C) + opcode (0x8B=MOV or 0x8D=LEA) + ModR/M with r/m=101 (RIP)
+        for (int off = 0; off + 7 <= 256; ++off) {
+            uint8_t b0 = 0, b1 = 0, b2 = 0;
+            if (!Mem::ReadSafe(funcAddr + off, b0)) break;
+            if (b0 != 0x48 && b0 != 0x4C) continue;
+            if (!Mem::ReadSafe(funcAddr + off + 1, b1)) break;
+            if (b1 != 0x8B && b1 != 0x8D) continue;
+            if (!Mem::ReadSafe(funcAddr + off + 2, b2)) break;
+            if ((b2 & 0x07) != 0x05) continue;  // RIP-relative addressing
+
+            uintptr_t target = Mem::ResolveRIP(funcAddr + off, 3, 7);
+            if (!target) continue;
+
+            // For MOV (0x8B), target is a pointer — dereference it
+            uintptr_t candidate = target;
+            if (b1 == 0x8B) {
+                if (!Mem::ReadSafe(target, candidate) || !candidate) continue;
+            }
+
+            // Validate as FNamePool
+            if (ValidateGNames(candidate) || ValidateGNamesStructural(candidate)) {
+                Logger::Info("SCAN:GNam", "FindGNamesByExport: Found FNamePool at 0x%llX (via %s func+0x%X, %s)",
+                         (unsigned long long)candidate, sym, off,
+                         b1 == 0x8D ? "LEA" : "MOV");
+                return candidate;
+            }
+        }
+    }
+
     return 0;
 }
 
 uintptr_t FindGNames() {
-    LOG_INFO("FindGNames: Scanning for GNames (FNamePool)...");
+    Logger::Info("SCAN:GNam", "FindGNames: Scanning for GNames (FNamePool)...");
+
+    // === Priority 0: Symbol export + function body scan (O(1) lookup) ===
+    {
+        uintptr_t result = FindGNamesByExport();
+        if (result) return result;
+    }
 
     // Try each pattern both with and without a pointer dereference:
     //   deref=false: the LEA resolves directly to the FNamePool object
@@ -502,19 +713,68 @@ uintptr_t FindGNames() {
         if (ValidateGNames(result) || ValidateGNamesStructural(result)) return result;
     }
 
+    // === FName ctor call-site pattern (V7, FF7 Rebirth) ===
+    // This pattern finds a call-site that invokes FName::FName(). We follow the
+    // CALL target, then scan the function body for RIP-relative refs to FNamePool.
+    {
+        uintptr_t callSite = Mem::AOBScan(Constants::AOB_GNAMES_V7_FNAME_CTOR);
+        if (callSite) {
+            // The CALL instruction is at offset +11 in the pattern: E8 xx xx xx xx
+            // Pattern: 41 B8 01 00 00 00 48 8D 4C 24 ?? E8 ?? ?? ?? ?? C6 44 24
+            //          0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15
+            uintptr_t callInstr = callSite + 11;
+            uint8_t callOpcode = 0;
+            Mem::ReadSafe(callInstr, callOpcode);
+
+            if (callOpcode == 0xE8) {
+                int32_t rel32 = 0;
+                if (Mem::ReadSafe(callInstr + 1, rel32)) {
+                    uintptr_t funcAddr = callInstr + 5 + rel32;
+                    Logger::Info("SCAN:GNam", "FindGNames: V7 FName ctor call-site → function at 0x%llX",
+                             (unsigned long long)funcAddr);
+
+                    // Scan function body for RIP-relative refs to FNamePool
+                    for (int off = 0; off + 7 <= 256; ++off) {
+                        uint8_t b0 = 0, b1 = 0, b2 = 0;
+                        if (!Mem::ReadSafe(funcAddr + off, b0)) break;
+                        if (b0 != 0x48 && b0 != 0x4C) continue;
+                        if (!Mem::ReadSafe(funcAddr + off + 1, b1)) break;
+                        if (b1 != 0x8B && b1 != 0x8D) continue;
+                        if (!Mem::ReadSafe(funcAddr + off + 2, b2)) break;
+                        if ((b2 & 0x07) != 0x05) continue;
+
+                        uintptr_t target = Mem::ResolveRIP(funcAddr + off, 3, 7);
+                        if (!target) continue;
+
+                        uintptr_t candidate = target;
+                        if (b1 == 0x8B) {
+                            if (!Mem::ReadSafe(target, candidate) || !candidate) continue;
+                        }
+
+                        if (ValidateGNames(candidate) || ValidateGNamesStructural(candidate)) {
+                            Logger::Info("SCAN:GNam", "FindGNames: V7 found FNamePool at 0x%llX (func+0x%X)",
+                                     (unsigned long long)candidate, off);
+                            return candidate;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // All AOB patterns failed — fall back to data-pointer scan.
-    LOG_WARN("FindGNames: All patterns failed, trying pointer scan fallback...");
+    Logger::Warn("SCAN:GNam", "FindGNames: All patterns failed, trying pointer scan fallback...");
     {
         uintptr_t result = FindGNamesByPointerScan();
         if (result) return result;
     }
 
-    LOG_ERROR("FindGNames: All patterns failed");
+    Logger::Error("SCAN:GNam", "FindGNames: All patterns failed");
     return 0;
 }
 
 uintptr_t FindGWorld() {
-    LOG_INFO("FindGWorld: Scanning for GWorld...");
+    Logger::Info("SCAN:GWld", "FindGWorld: Scanning for GWorld...");
 
     // All GWorld patterns are 7-byte RIP-relative instructions (read or write).
     // We return the address of the global variable (&GWorld), not the UWorld* value,
@@ -537,14 +797,14 @@ uintptr_t FindGWorld() {
         Mem::ReadSafe(result, world);
 
         if (!c.requireNonNull || world != 0) {
-            LOG_INFO("FindGWorld: Found at 0x%llX (value=0x%llX)",
+            Logger::Info("SCAN:GWld", "FindGWorld: Found at 0x%llX (value=0x%llX)",
                      static_cast<unsigned long long>(result),
                      static_cast<unsigned long long>(world));
             return result;
         }
     }
 
-    LOG_WARN("FindGWorld: All patterns failed (non-critical)");
+    Logger::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)");
     return 0;
 }
 
@@ -573,35 +833,35 @@ static uint32_t DetectVersionFromPEResource() {
     uint32_t minor = LOWORD(fi->dwProductVersionMS);
 
     if (major == 5 && minor <= 9) {
-        LOG_INFO("DetectVersion: PE VERSIONINFO -> UE %u.%u -> %u",
+        Logger::Info("SCAN:Ver", "DetectVersion: PE VERSIONINFO -> UE %u.%u -> %u",
                  major, minor, 500u + minor);
         return 500u + minor;
     }
 
     // Some shippers put 4.x in the info (UE4 fork claiming UE5 classes)
     if (major == 4 && minor <= 27) {
-        LOG_INFO("DetectVersion: PE VERSIONINFO -> UE4.%u (treated as 400+minor)", minor);
+        Logger::Info("SCAN:Ver", "DetectVersion: PE VERSIONINFO -> UE4.%u (treated as 400+minor)", minor);
         return 400u + minor;
     }
 
-    LOG_WARN("DetectVersion: PE VERSIONINFO major=%u minor=%u — unrecognised", major, minor);
+    Logger::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO major=%u minor=%u — unrecognised", major, minor);
     return 0;
 }
 
 uint32_t DetectVersion() {
-    LOG_INFO("DetectVersion: Attempting to detect UE version...");
+    Logger::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
 
     // Fast path: read the PE VERSIONINFO resource (O(1), no memory scan)
     uint32_t ver = DetectVersionFromPEResource();
     if (ver) return ver;
 
-    LOG_WARN("DetectVersion: PE resource failed, falling back to memory string scan");
+    Logger::Warn("SCAN:Ver", "DetectVersion: PE resource failed, falling back to memory string scan");
 
     // Slow path: scan for UE version strings embedded in the binary
     uintptr_t base = Mem::GetModuleBase(nullptr);
     size_t    size = Mem::GetModuleSize(nullptr);
     if (!base || !size) {
-        LOG_WARN("DetectVersion: Cannot get module base — defaulting to 504");
+        Logger::Warn("SCAN:Ver", "DetectVersion: Cannot get module base — defaulting to 504");
         return 504;
     }
 
@@ -622,20 +882,20 @@ uint32_t DetectVersion() {
                 char ctx[17] = {};
                 memcpy(ctx, scan + off - 8, 8);
                 if (strstr(ctx, "Release") || strstr(ctx, "release")) {
-                    LOG_INFO("DetectVersion: String scan -> %u (Release prefix at 0x%zX)",
+                    Logger::Info("SCAN:Ver", "DetectVersion: String scan -> %u (Release prefix at 0x%zX)",
                              p.value, off);
                     return p.value;
                 }
             }
             // Also accept if the char after "5.X." is a digit (e.g. "5.4.0")
             if (scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
-                LOG_INFO("DetectVersion: String scan -> %u (at 0x%zX)", p.value, off);
+                Logger::Info("SCAN:Ver", "DetectVersion: String scan -> %u (at 0x%zX)", p.value, off);
                 return p.value;
             }
         }
     }
 
-    LOG_WARN("DetectVersion: Could not detect UE version, defaulting to 504");
+    Logger::Warn("SCAN:Ver", "DetectVersion: Could not detect UE version, defaulting to 504");
     return 504;
 }
 
@@ -673,7 +933,7 @@ static uintptr_t FindStructByName(const char* structName) {
         if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx)) continue;
         std::string name = FNamePool::GetString(nameIdx);
         if (name == structName) {
-            LOG_INFO("FindStructByName: Found '%s' at 0x%llX (index=%d)",
+            Logger::Info("DYNO", "FindStructByName: Found '%s' at 0x%llX (index=%d)",
                      structName, (unsigned long long)obj, i);
             return obj;
         }
@@ -682,7 +942,7 @@ static uintptr_t FindStructByName(const char* structName) {
 }
 
 bool ValidateAndFixOffsets() {
-    LOG_INFO("ValidateAndFixOffsets: Starting dynamic offset detection...");
+    Logger::Info("DYNO", "ValidateAndFixOffsets: Starting dynamic offset detection...");
 
     // Step 1: Detect CasePreservingName by checking FName size in UObject
     // UObject layout: Name at 0x18, Outer at 0x20 (standard).
@@ -699,7 +959,7 @@ bool ValidateAndFixOffsets() {
     uintptr_t vectorStruct = FindStructByName("Vector");
 
     if (!guidStruct && !vectorStruct) {
-        LOG_WARN("ValidateAndFixOffsets: Cannot find Guid or Vector struct, keeping defaults");
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find Guid or Vector struct, keeping defaults");
         return false;
     }
 
@@ -713,7 +973,7 @@ bool ValidateAndFixOffsets() {
     const char* expectedSecond = guidStruct ? "B" : "Y";
     int expectedElemSize     = 4;
 
-    LOG_INFO("ValidateAndFixOffsets: Using struct '%s' at 0x%llX", testName, (unsigned long long)testStruct);
+    Logger::Info("DYNO", "ValidateAndFixOffsets: Using struct '%s' at 0x%llX", testName, (unsigned long long)testStruct);
 
     // Step 3: Find ChildProperties pointer
     // Probe offsets 0x38..0x80 in 8-byte steps for a valid FField* pointer
@@ -739,14 +999,14 @@ bool ValidateAndFixOffsets() {
         if (fcName.find("Property") != std::string::npos) {
             childProps = ptr;
             childPropsOff = off;
-            LOG_INFO("ValidateAndFixOffsets: ChildProperties found at struct+0x%02X → 0x%llX (FFieldClass='%s')",
+            Logger::Info("DYNO", "ValidateAndFixOffsets: ChildProperties found at struct+0x%02X → 0x%llX (FFieldClass='%s')",
                      off, (unsigned long long)ptr, fcName.c_str());
             break;
         }
     }
 
     if (!childProps) {
-        LOG_WARN("ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
         return false;
     }
 
@@ -768,14 +1028,14 @@ bool ValidateAndFixOffsets() {
         std::string name = FNamePool::GetString(nameIdx);
         if (name == expectedFirst || name == expectedSecond) {
             nameOff = off;
-            LOG_INFO("ValidateAndFixOffsets: FField::Name at FField+0x%02X (resolved='%s')",
+            Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Name at FField+0x%02X (resolved='%s')",
                      off, name.c_str());
             break;
         }
     }
 
     if (nameOff < 0) {
-        LOG_WARN("ValidateAndFixOffsets: Cannot find FField::Name, keeping default 0x%02X",
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FField::Name, keeping default 0x%02X",
                  DynOff::FFIELD_NAME);
     } else {
         DynOff::FFIELD_NAME = nameOff;
@@ -789,11 +1049,11 @@ bool ValidateAndFixOffsets() {
         Mem::ReadSafe(childProps + 0x2C, dispIdx);
         if (compIdx == dispIdx && compIdx != 0) {
             DynOff::bCasePreservingName = true;
-            LOG_INFO("ValidateAndFixOffsets: CasePreservingName detected (CompIdx==DispIdx=0x%X)", compIdx);
+            Logger::Info("DYNO", "ValidateAndFixOffsets: CasePreservingName detected (CompIdx==DispIdx=0x%X)", compIdx);
         }
     } else if (nameOff > 0x28) {
         // Name shifted → likely due to larger FFieldVariant or other layout change
-        LOG_INFO("ValidateAndFixOffsets: FField::Name at 0x%02X (shifted from default 0x28)", nameOff);
+        Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Name at 0x%02X (shifted from default 0x28)", nameOff);
     }
 
     // Step 5: Find FField::Next offset
@@ -823,7 +1083,7 @@ bool ValidateAndFixOffsets() {
                 std::string nextName = FNamePool::GetString(nextNameIdx);
                 if (!nextName.empty() && nextName.length() <= 64) {
                     nextOff = off;
-                    LOG_INFO("ValidateAndFixOffsets: FField::Next at FField+0x%02X (next='%s')",
+                    Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Next at FField+0x%02X (next='%s')",
                              off, nextName.c_str());
                     break;
                 }
@@ -831,13 +1091,13 @@ bool ValidateAndFixOffsets() {
         } else {
             // Can't verify name, just accept it has valid FFieldClass
             nextOff = off;
-            LOG_INFO("ValidateAndFixOffsets: FField::Next at FField+0x%02X (unverified name)", off);
+            Logger::Info("DYNO", "ValidateAndFixOffsets: FField::Next at FField+0x%02X (unverified name)", off);
             break;
         }
     }
 
     if (nextOff < 0) {
-        LOG_WARN("ValidateAndFixOffsets: Cannot find FField::Next, keeping default 0x%02X",
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FField::Next, keeping default 0x%02X",
                  DynOff::FFIELD_NEXT);
     } else {
         DynOff::FFIELD_NEXT = nextOff;
@@ -886,9 +1146,9 @@ bool ValidateAndFixOffsets() {
         }
     }
 
-    LOG_INFO("ValidateAndFixOffsets: Collected %d fields from '%s' chain", fieldCount, testName);
+    Logger::Info("DYNO", "ValidateAndFixOffsets: Collected %d fields from '%s' chain", fieldCount, testName);
     for (int i = 0; i < fieldCount; ++i) {
-        LOG_DEBUG("  Field[%d]: '%s' at 0x%llX, expectedOff=%d",
+        Logger::Debug("DYNO", "  Field[%d]: '%s' at 0x%llX, expectedOff=%d",
                   i, fields[i].name.c_str(), (unsigned long long)fields[i].addr, fields[i].expectedOffset);
     }
 
@@ -918,20 +1178,20 @@ bool ValidateAndFixOffsets() {
 
         if (matches >= 2 && propOffsetOff < 0) {
             propOffsetOff = probe;
-            LOG_INFO("ValidateAndFixOffsets: FProperty::Offset_Internal at FField+0x%02X (%d matches)",
+            Logger::Info("DYNO", "ValidateAndFixOffsets: FProperty::Offset_Internal at FField+0x%02X (%d matches)",
                      probe, matches);
         }
 
         // ElementSize: all fields should have size == 4, but only count if different from Offset probe
         if (sizeMatches >= 2 && propElemSizeOff < 0 && probe != propOffsetOff) {
             propElemSizeOff = probe;
-            LOG_INFO("ValidateAndFixOffsets: FProperty::ElementSize at FField+0x%02X (%d matches)",
+            Logger::Info("DYNO", "ValidateAndFixOffsets: FProperty::ElementSize at FField+0x%02X (%d matches)",
                      probe, sizeMatches);
         }
     }
 
     if (propOffsetOff < 0) {
-        LOG_WARN("ValidateAndFixOffsets: Cannot find FProperty::Offset_Internal, keeping default 0x%02X",
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FProperty::Offset_Internal, keeping default 0x%02X",
                  DynOff::FPROPERTY_OFFSET);
     } else {
         DynOff::FPROPERTY_OFFSET = propOffsetOff;
@@ -947,12 +1207,12 @@ bool ValidateAndFixOffsets() {
                 int32_t val = 0;
                 if (Mem::ReadSafe(childProps + guess, val) && val == expectedElemSize) {
                     propElemSizeOff = guess;
-                    LOG_INFO("ValidateAndFixOffsets: FProperty::ElementSize (heuristic) at FField+0x%02X", guess);
+                    Logger::Info("DYNO", "ValidateAndFixOffsets: FProperty::ElementSize (heuristic) at FField+0x%02X", guess);
                 }
             }
         }
         if (propElemSizeOff < 0) {
-            LOG_WARN("ValidateAndFixOffsets: Cannot find FProperty::ElementSize, keeping default 0x%02X",
+            Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FProperty::ElementSize, keeping default 0x%02X",
                      DynOff::FPROPERTY_ELEMSIZE);
         }
     }
@@ -967,18 +1227,18 @@ bool ValidateAndFixOffsets() {
     // The gap ElementSize→PropertyFlags is usually 8 bytes (ArrayDim fills the gap)
     if (propElemSizeOff >= 0) {
         DynOff::FPROPERTY_FLAGS = propElemSizeOff + 8;
-        LOG_INFO("ValidateAndFixOffsets: FProperty::PropertyFlags (derived) at FField+0x%02X",
+        Logger::Info("DYNO", "ValidateAndFixOffsets: FProperty::PropertyFlags (derived) at FField+0x%02X",
                  DynOff::FPROPERTY_FLAGS);
     }
 
     // UStruct::PropertiesSize: typically ChildProperties + 8
     DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
-    LOG_INFO("ValidateAndFixOffsets: UStruct::PropertiesSize (derived) at UStruct+0x%02X",
+    Logger::Info("DYNO", "ValidateAndFixOffsets: UStruct::PropertiesSize (derived) at UStruct+0x%02X",
              DynOff::USTRUCT_PROPSSIZE);
 
     // UStruct::Children (UField* chain for functions): typically ChildProperties - 8
     DynOff::USTRUCT_CHILDREN = childPropsOff - 8;
-    LOG_INFO("ValidateAndFixOffsets: UStruct::Children (derived) at UStruct+0x%02X",
+    Logger::Info("DYNO", "ValidateAndFixOffsets: UStruct::Children (derived) at UStruct+0x%02X",
              DynOff::USTRUCT_CHILDREN);
 
     // UStruct::SuperStruct: typically 0x10 before ChildProperties
@@ -990,25 +1250,25 @@ bool ValidateAndFixOffsets() {
     Mem::ReadSafe(testStruct + superOff, superVal);
     // Guid's super might be null, which is fine
     DynOff::USTRUCT_SUPER = superOff;
-    LOG_INFO("ValidateAndFixOffsets: UStruct::SuperStruct (derived) at UStruct+0x%02X (value=0x%llX)",
+    Logger::Info("DYNO", "ValidateAndFixOffsets: UStruct::SuperStruct (derived) at UStruct+0x%02X (value=0x%llX)",
              superOff, (unsigned long long)superVal);
 
     DynOff::bOffsetsValidated = true;
 
     // Summary log
-    LOG_INFO("=== Dynamic Offset Summary ===");
-    LOG_INFO("  CasePreservingName: %s", DynOff::bCasePreservingName ? "YES" : "no");
-    LOG_INFO("  UStruct::Super      = +0x%02X", DynOff::USTRUCT_SUPER);
-    LOG_INFO("  UStruct::Children   = +0x%02X", DynOff::USTRUCT_CHILDREN);
-    LOG_INFO("  UStruct::ChildProps = +0x%02X", DynOff::USTRUCT_CHILDPROPS);
-    LOG_INFO("  UStruct::PropsSize  = +0x%02X", DynOff::USTRUCT_PROPSSIZE);
-    LOG_INFO("  FField::Class       = +0x%02X", DynOff::FFIELD_CLASS);
-    LOG_INFO("  FField::Next        = +0x%02X", DynOff::FFIELD_NEXT);
-    LOG_INFO("  FField::Name        = +0x%02X", DynOff::FFIELD_NAME);
-    LOG_INFO("  FProperty::ElemSize = +0x%02X", DynOff::FPROPERTY_ELEMSIZE);
-    LOG_INFO("  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
-    LOG_INFO("  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
-    LOG_INFO("==============================");
+    Logger::Info("DYNO", "=== Dynamic Offset Summary ===");
+    Logger::Info("DYNO", "  CasePreservingName: %s", DynOff::bCasePreservingName ? "YES" : "no");
+    Logger::Info("DYNO", "  UStruct::Super      = +0x%02X", DynOff::USTRUCT_SUPER);
+    Logger::Info("DYNO", "  UStruct::Children   = +0x%02X", DynOff::USTRUCT_CHILDREN);
+    Logger::Info("DYNO", "  UStruct::ChildProps = +0x%02X", DynOff::USTRUCT_CHILDPROPS);
+    Logger::Info("DYNO", "  UStruct::PropsSize  = +0x%02X", DynOff::USTRUCT_PROPSSIZE);
+    Logger::Info("DYNO", "  FField::Class       = +0x%02X", DynOff::FFIELD_CLASS);
+    Logger::Info("DYNO", "  FField::Next        = +0x%02X", DynOff::FFIELD_NEXT);
+    Logger::Info("DYNO", "  FField::Name        = +0x%02X", DynOff::FFIELD_NAME);
+    Logger::Info("DYNO", "  FProperty::ElemSize = +0x%02X", DynOff::FPROPERTY_ELEMSIZE);
+    Logger::Info("DYNO", "  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
+    Logger::Info("DYNO", "  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
+    Logger::Info("DYNO", "==============================");
 
     return true;
 }

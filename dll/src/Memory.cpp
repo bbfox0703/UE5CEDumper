@@ -3,6 +3,7 @@
 // ============================================================
 
 #include "Memory.h"
+#define LOG_CAT "MEM"
 #include "Logger.h"
 
 #include <Psapi.h>
