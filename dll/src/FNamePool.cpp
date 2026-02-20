@@ -4,6 +4,7 @@
 
 #include "FNamePool.h"
 #include "Memory.h"
+#define LOG_CAT "FNAM"
 #include "Logger.h"
 #include "Constants.h"
 

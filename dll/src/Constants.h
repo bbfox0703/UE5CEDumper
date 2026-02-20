@@ -10,6 +10,8 @@ namespace Constants {
 constexpr const wchar_t* LOG_FOLDER_NAME  = L"UE5CEDumper";
 constexpr const wchar_t* LOG_SUBFOLDER    = L"Logs";
 constexpr const wchar_t* LOG_FILE_PREFIX  = L"UE5Dumper";
+constexpr const wchar_t* LOG_SCAN_PREFIX  = L"UE5Dumper-scan";
+constexpr const wchar_t* LOG_PIPE_PREFIX  = L"UE5Dumper-pipe";
 constexpr int            LOG_MAX_FILES    = 5;
 constexpr size_t         LOG_MAX_SIZE_MB  = 5;
 constexpr size_t         LOG_MAX_SIZE     = LOG_MAX_SIZE_MB * 1024 * 1024;
@@ -18,6 +20,15 @@ constexpr size_t         LOG_MAX_SIZE     = LOG_MAX_SIZE_MB * 1024 * 1024;
 constexpr const wchar_t* PIPE_NAME        = L"\\\\.\\pipe\\UE5DumpBfx";
 constexpr const char*    PIPE_NAME_NARROW  = "\\\\.\\pipe\\UE5DumpBfx";
 constexpr unsigned long  PIPE_BUF_SIZE    = 65536;
+
+// --- MSVC Mangled Symbol Exports ---
+// Many retail UE games (especially modular builds) export these symbols.
+// GetProcAddress on the game module resolves them in O(1).
+// Source: RE-UE4SS CustomGameConfigs (Satisfactory, Returnal, Split Fiction)
+constexpr const char* EXPORT_GOBJECTARRAY     = "?GUObjectArray@@3VFUObjectArray@@A";
+constexpr const char* EXPORT_FNAME_CTOR       = "??0FName@@QEAA@PEB_WW4EFindName@@@Z";
+constexpr const char* EXPORT_FNAME_TOSTRING   = "?ToString@FName@@QEBAXAEAVFString@@@Z";
+constexpr const char* EXPORT_FNAME_CTOR_CHAR  = "??0FName@@QEAA@PEBDW4EFindName@@@Z";
 
 // --- AOB Patterns (GObjects / FUObjectArray) ---
 // V1: mov rax,[rip+X]; mov rcx,[rax+rcx*8]   (48 8B 05) — classic UE5.0–5.2
@@ -38,6 +49,14 @@ constexpr const char* AOB_GOBJECTS_V7 = "4C 8B 0D ?? ?? ?? ?? 99 0F B7 D2";
 constexpr const char* AOB_GOBJECTS_V8 = "4C 8B 0D ?? ?? ?? ?? 8B D0 C1 EA 10";
 // V9: mov r9,[rip+X]; cdqe; lea rcx,[rax+rax*2]; (4C 8B 0D) — extended index
 constexpr const char* AOB_GOBJECTS_V9 = "4C 8B 0D ?? ?? ?? ?? 48 98 48 8D 0C 40 49";
+// V10: lea rcx,[rip+X]; call; call; mov byte[],1 — Split Fiction (UE5.5+)
+// OnMatchFound needs -0x10 adjustment (points into FUObjectArray, not base)
+constexpr const char* AOB_GOBJECTS_V10 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01";
+// V11: lea reg,[rip+X]; mov r9,rcx; mov [rcx],rax; mov eax,-1 — Little Nightmares 3
+constexpr const char* AOB_GOBJECTS_V11 = "48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01 B8 FF FF FF FF";
+// V12: mov reg,[rip+X]; mov r8,[rax+rcx*8]; test r8,r8; jz — FF7 Remake
+// OnMatchFound needs -0x10 adjustment
+constexpr const char* AOB_GOBJECTS_V12 = "48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8 4D 85 C0 74 07";
 
 // --- AOB Patterns (GNames / FNamePool) ---
 // V1: lea rsi,[rip+X]; jmp
@@ -52,6 +71,9 @@ constexpr const char* AOB_GNAMES_V4 = "4C 8D 05 ?? ?? ?? ?? EB";
 constexpr const char* AOB_GNAMES_V5 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01";
 // V6: mov rax,[rip+X]; test rax,rax; jnz; mov ecx,0808h — GSpots UE5+ variant
 constexpr const char* AOB_GNAMES_V6 = "48 8B 05 ?? ?? ?? ?? 48 85 C0 75 ?? B9 08 08 00";
+// V7: FName ctor call-site — mov r8d,1; lea rcx,[rsp+?]; call; mov byte — FF7 Rebirth
+// Resolves the CALL target (FName::FName), then scans inside for FNamePool refs
+constexpr const char* AOB_GNAMES_V7_FNAME_CTOR = "41 B8 01 00 00 00 48 8D 4C 24 ?? E8 ?? ?? ?? ?? C6 44 24";
 
 // --- AOB Patterns (GWorld) ---
 // V1: mov rax,[rip+X]; cmp rcx,rax; cmovz rax,[rip+Y]

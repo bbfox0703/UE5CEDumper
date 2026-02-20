@@ -4,6 +4,7 @@
 
 #include "ObjectArray.h"
 #include "Memory.h"
+#define LOG_CAT "OARR"
 #include "Logger.h"
 #include "Constants.h"
 #include "FNamePool.h"

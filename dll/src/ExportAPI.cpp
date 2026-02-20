@@ -3,7 +3,10 @@
 // ============================================================
 
 #include "ExportAPI.h"
+#define LOG_CAT "INIT"
 #include "Logger.h"
+#include "BuildInfo.h"
+#include "Constants.h"
 #include "OffsetFinder.h"
 #include "ObjectArray.h"
 #include "FNamePool.h"
@@ -71,6 +74,23 @@ bool UE5_Init() {
              static_cast<unsigned long long>(ptrs.GObjects),
              static_cast<unsigned long long>(ptrs.GNames),
              ObjectArray::GetCount());
+
+    // Condensed summary for quick scan-log triage
+    LOG_SUMMARY("build=%s config=%s UE=%u",
+                BUILD_GIT_SHORT, BUILD_CONFIG, ptrs.UEVersion);
+    LOG_SUMMARY("GObjects=0x%llX GNames=0x%llX GWorld=0x%llX Objects=%d",
+                static_cast<unsigned long long>(ptrs.GObjects),
+                static_cast<unsigned long long>(ptrs.GNames),
+                static_cast<unsigned long long>(ptrs.GWorld),
+                ObjectArray::GetCount());
+    LOG_SUMMARY("DynOff: CPN=%s Super=+0x%02X ChildProps=+0x%02X Name=+0x%02X Offset=+0x%02X validated=%s",
+                DynOff::bCasePreservingName ? "yes" : "no",
+                DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDPROPS,
+                DynOff::FFIELD_NAME, DynOff::FPROPERTY_OFFSET,
+                DynOff::bOffsetsValidated ? "yes" : "no");
+
+    // Switch to Pipe channel — all subsequent runtime logging goes to pipe file
+    Logger::SetChannel(LogChannel::Pipe);
 
     return true;
 }
