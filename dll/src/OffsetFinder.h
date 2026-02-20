@@ -33,7 +33,9 @@ uint32_t DetectVersion();
 
 // Dynamically detect and fix FField/FProperty/UStruct offsets.
 // Must be called AFTER GObjects + GNames are initialized (ObjectArray::Init + FNamePool::Init).
+// ueVersion: detected UE version (e.g. 505 = UE5.5, 427 = UE4.27). Used to determine
+// UProperty vs FProperty mode. Pass 0 if unknown (will fall back to heuristic detection).
 // Updates DynOff:: namespace variables.
-bool ValidateAndFixOffsets();
+bool ValidateAndFixOffsets(uint32_t ueVersion);
 
 } // namespace OffsetFinder

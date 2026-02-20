@@ -184,7 +184,7 @@ std::vector<SearchResult> SearchByName(const std::string& query, int maxResults)
         }
 
         // Get outer
-        Mem::ReadSafe(obj + Constants::OFF_UOBJECT_OUTER, sr.outer);
+        Mem::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
 
         results.push_back(std::move(sr));
     }
@@ -233,7 +233,7 @@ std::vector<SearchResult> FindInstancesByClass(const std::string& className, int
         sr.className = clsName;
 
         // Read outer
-        Mem::ReadSafe(obj + Constants::OFF_UOBJECT_OUTER, sr.outer);
+        Mem::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
 
         results.push_back(std::move(sr));
     }

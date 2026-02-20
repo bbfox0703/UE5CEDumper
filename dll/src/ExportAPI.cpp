@@ -64,7 +64,7 @@ bool UE5_Init() {
 
     // Dynamically detect FField/FProperty/UStruct offsets
     // Must be called AFTER FNamePool + ObjectArray are initialized
-    if (!OffsetFinder::ValidateAndFixOffsets()) {
+    if (!OffsetFinder::ValidateAndFixOffsets(ptrs.UEVersion)) {
         LOG_WARN("UE5_Init: Offset validation failed — using default offsets (may be wrong for this UE version)");
     }
 
@@ -83,10 +83,13 @@ bool UE5_Init() {
                 static_cast<unsigned long long>(ptrs.GNames),
                 static_cast<unsigned long long>(ptrs.GWorld),
                 ObjectArray::GetCount());
-    LOG_SUMMARY("DynOff: CPN=%s Super=+0x%02X ChildProps=+0x%02X Name=+0x%02X Offset=+0x%02X validated=%s",
+    LOG_SUMMARY("DynOff: CPN=%s FProp=%s Outer=+0x%02X Super=+0x%02X ChildProps=+0x%02X Name=+0x%02X Offset=+0x%02X validated=%s",
                 DynOff::bCasePreservingName ? "yes" : "no",
+                DynOff::bUseFProperty ? "yes" : "no",
+                DynOff::UOBJECT_OUTER,
                 DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDPROPS,
-                DynOff::FFIELD_NAME, DynOff::FPROPERTY_OFFSET,
+                DynOff::bUseFProperty ? DynOff::FFIELD_NAME : Constants::OFF_UOBJECT_NAME,
+                DynOff::bUseFProperty ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET,
                 DynOff::bOffsetsValidated ? "yes" : "no");
 
     // Switch to Pipe channel — all subsequent runtime logging goes to pipe file

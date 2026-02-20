@@ -33,7 +33,7 @@
             <TextBlock Text="{DynamicResource str.Language}"
                        Foreground="#888" VerticalAlignment="Center"/>
             <ComboBox ItemsSource="{Binding AvailableLanguages}"
-                      SelectedItem="{Binding SelectedLanguage}"
+                      SelectedItem="{Binding SelectedLanguage, Mode=TwoWay}"
                       Width="90" Padding="4,2"/>
           </StackPanel>
         </Border>

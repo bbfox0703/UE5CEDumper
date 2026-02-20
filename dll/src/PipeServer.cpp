@@ -685,16 +685,25 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["build_info"]         = BUILD_VERSION_STRING;
             data["validated"]          = DynOff::bOffsetsValidated;
             data["case_preserving"]    = DynOff::bCasePreservingName;
+            data["use_fproperty"]      = DynOff::bUseFProperty;
+            data["uobject_outer"]      = DynOff::UOBJECT_OUTER;
             data["ustruct_super"]      = DynOff::USTRUCT_SUPER;
             data["ustruct_children"]   = DynOff::USTRUCT_CHILDREN;
             data["ustruct_childprops"] = DynOff::USTRUCT_CHILDPROPS;
             data["ustruct_propssize"]  = DynOff::USTRUCT_PROPSSIZE;
-            data["ffield_class"]       = DynOff::FFIELD_CLASS;
-            data["ffield_next"]        = DynOff::FFIELD_NEXT;
-            data["ffield_name"]        = DynOff::FFIELD_NAME;
-            data["fproperty_elemsize"] = DynOff::FPROPERTY_ELEMSIZE;
-            data["fproperty_flags"]    = DynOff::FPROPERTY_FLAGS;
-            data["fproperty_offset"]   = DynOff::FPROPERTY_OFFSET;
+            if (DynOff::bUseFProperty) {
+                data["ffield_class"]       = DynOff::FFIELD_CLASS;
+                data["ffield_next"]        = DynOff::FFIELD_NEXT;
+                data["ffield_name"]        = DynOff::FFIELD_NAME;
+                data["fproperty_elemsize"] = DynOff::FPROPERTY_ELEMSIZE;
+                data["fproperty_flags"]    = DynOff::FPROPERTY_FLAGS;
+                data["fproperty_offset"]   = DynOff::FPROPERTY_OFFSET;
+            } else {
+                data["ufield_next"]        = DynOff::UFIELD_NEXT;
+                data["uproperty_elemsize"] = DynOff::UPROPERTY_ELEMSIZE;
+                data["uproperty_flags"]    = DynOff::UPROPERTY_FLAGS;
+                data["uproperty_offset"]   = DynOff::UPROPERTY_OFFSET;
+            }
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
