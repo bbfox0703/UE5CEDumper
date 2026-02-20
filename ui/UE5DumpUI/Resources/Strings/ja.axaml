@@ -37,7 +37,7 @@
     <!-- Live Walker -->
     <sys:String x:Key="str.LiveWalker.SearchHint">フィールド検索...</sys:String>
     <sys:String x:Key="str.LiveWalker.SearchCount">{0} 件一致</sys:String>
-    <sys:String x:Key="str.LiveWalker.GenerateCeAA">CE AA スクリプト生成</sys:String>
+    <sys:String x:Key="str.LiveWalker.GenerateCeAA">CE AA スクリプトをコピー</sys:String>
 
     <!-- Class Structure -->
     <sys:String x:Key="str.ClassStruct.Name">名前</sys:String>
@@ -54,9 +54,10 @@
     <sys:String x:Key="str.LiveWalker.Refresh">更新</sys:String>
     <sys:String x:Key="str.LiveWalker.AddressHint">アドレス (0x...)</sys:String>
     <sys:String x:Key="str.LiveWalker.Go">移動</sys:String>
-    <sys:String x:Key="str.LiveWalker.ExportCE">CE XML エクスポート</sys:String>
+    <sys:String x:Key="str.LiveWalker.ExportCE">CE XML をコピー</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">値</sys:String>
-    <sys:String x:Key="str.LiveWalker.CopyAddress">CP</sys:String>
+    <sys:String x:Key="str.LiveWalker.CopyAddress">Addr</sys:String>
+    <sys:String x:Key="str.LiveWalker.CopyName">Name</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.ClassNameHint">クラス名 (例: PlayerController)</sys:String>

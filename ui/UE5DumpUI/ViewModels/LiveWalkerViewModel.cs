@@ -31,6 +31,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private string _currentClassName = "";
     [ObservableProperty] private string _currentAddress = "";
     [ObservableProperty] private bool _hasData;
+    // CE XML output (kept for possible future use but no longer shown in panel)
     [ObservableProperty] private string _ceXmlOutput = "";
     [ObservableProperty] private bool _showCeXml;
 
@@ -63,7 +64,14 @@ public partial class LiveWalkerViewModel : ViewModelBase
             _cachedWorld = world;
 
             Breadcrumbs.Clear();
-            Breadcrumbs.Add(new BreadcrumbItem { Address = world.WorldAddr, Label = "GWorld" });
+            Breadcrumbs.Add(new BreadcrumbItem
+            {
+                Address = world.WorldAddr,
+                Label = "GWorld",
+                IsPointerDeref = true,
+                FieldOffset = 0,
+                FieldName = "GWorld",
+            });
 
             PopulateFromWorld(world);
         }
@@ -146,8 +154,8 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
             if (!string.IsNullOrEmpty(field.PtrAddress) && field.PtrAddress != "0x0")
             {
-                // ObjectProperty navigation
-                await NavigateToAsync(field.PtrAddress, field.Name);
+                // ObjectProperty navigation (pointer dereference)
+                await NavigateToAsync(field.PtrAddress, field.Name, field.Offset, field.Name, isPointer: true);
             }
             else if (!string.IsNullOrEmpty(field.StructDataAddr) && field.StructDataAddr != "0x0")
             {
@@ -161,6 +169,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
                     Address = field.StructDataAddr,
                     Label = displayName,
                     ClassAddr = field.StructClassAddr,
+                    FieldOffset = field.Offset,
+                    FieldName = field.Name,
+                    IsPointerDeref = false,
                 });
                 UpdateDisplay(result);
             }
@@ -259,7 +270,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             ClearError();
             IsLoading = true;
             Breadcrumbs.Clear();
-            await NavigateToAsync(addr, "Custom");
+            await NavigateToAsync(addr, "Custom", 0, "Custom", isPointer: true);
         }
         catch (Exception ex)
         {
@@ -275,29 +286,39 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [RelayCommand]
     private async Task ExportCeXmlAsync()
     {
-        if (string.IsNullOrEmpty(CurrentAddress)) return;
+        if (string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;
+        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName) || string.IsNullOrEmpty(_engineState.ModuleBase)) return;
 
         try
         {
             ClearError();
-            var ceInfo = await _dump.GetCePointerInfoAsync(CurrentAddress);
-            var instance = new InstanceWalkResult
-            {
-                Address = CurrentAddress,
-                Name = CurrentObjectName,
-                ClassName = CurrentClassName,
-                Fields = new List<LiveFieldValue>(Fields),
-            };
 
-            CeXmlOutput = CeXmlExportService.GenerateInstanceXml(ceInfo, instance);
-            ShowCeXml = true;
-            _log.Info($"CE XML exported for {CurrentClassName}");
+            // Compute root address as "Module.exe"+RVA
+            var rootBc = Breadcrumbs[0];
+            var rootModuleRva = ComputeModuleRva(rootBc.Address);
+
+            var xml = CeXmlExportService.GenerateHierarchicalXml(
+                rootModuleRva, rootBc.Label, Breadcrumbs, Fields);
+
+            await _platform.CopyToClipboardAsync(xml);
+            _log.Info($"CE XML copied to clipboard for {CurrentClassName}");
         }
         catch (Exception ex)
         {
             SetError(ex);
             _log.Error("Failed to export CE XML", ex);
         }
+    }
+
+    /// <summary>
+    /// Compute CE-compatible "Module.exe"+RVA string from an absolute address.
+    /// </summary>
+    private string ComputeModuleRva(string hexAddr)
+    {
+        var addr = Convert.ToUInt64(hexAddr.Replace("0x", "").Replace("0X", ""), 16);
+        var moduleBase = Convert.ToUInt64(_engineState!.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
+        var rva = addr - moduleBase;
+        return $"\"{_engineState.ModuleName}\"+{rva:X}";
     }
 
     [RelayCommand]
@@ -385,6 +406,21 @@ public partial class LiveWalkerViewModel : ViewModelBase
         }
     }
 
+    [RelayCommand]
+    private async Task CopyFieldNameAsync(LiveFieldValue? field)
+    {
+        if (field == null || string.IsNullOrEmpty(field.Name)) return;
+
+        try
+        {
+            await _platform.CopyToClipboardAsync(field.Name);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to copy name for {field.Name}", ex);
+        }
+    }
+
     partial void OnSearchTextChanged(string value)
     {
         ApplySearch(value);
@@ -423,12 +459,19 @@ public partial class LiveWalkerViewModel : ViewModelBase
         Fields = items;
     }
 
-    private async Task NavigateToAsync(string addr, string label)
+    private async Task NavigateToAsync(string addr, string label, int fieldOffset, string fieldName, bool isPointer)
     {
         var result = await _dump.WalkInstanceAsync(addr);
 
         var displayName = !string.IsNullOrEmpty(result.Name) ? result.Name : label;
-        Breadcrumbs.Add(new BreadcrumbItem { Address = addr, Label = displayName });
+        Breadcrumbs.Add(new BreadcrumbItem
+        {
+            Address = addr,
+            Label = displayName,
+            FieldOffset = fieldOffset,
+            FieldName = fieldName,
+            IsPointerDeref = isPointer,
+        });
 
         UpdateDisplay(result);
     }
@@ -441,20 +484,40 @@ public partial class LiveWalkerViewModel : ViewModelBase
         HasData = true;
         ShowCeXml = false;
 
+        // Compute absolute field addresses
+        ulong baseAddr = 0;
+        try
+        {
+            if (!string.IsNullOrEmpty(result.Address))
+                baseAddr = Convert.ToUInt64(result.Address.Replace("0x", "").Replace("0X", ""), 16);
+        }
+        catch { /* ignore parse failures */ }
+
         Fields.Clear();
         foreach (var f in result.Fields)
         {
+            if (baseAddr != 0)
+                f.FieldAddress = $"0x{baseAddr + (ulong)f.Offset:X}";
             Fields.Add(f);
         }
     }
 }
 
 /// <summary>
-/// A breadcrumb navigation item.
+/// A breadcrumb navigation item, recording navigation history for CE XML export.
 /// </summary>
 public sealed class BreadcrumbItem
 {
     public string Address { get; init; } = "";
     public string Label { get; init; } = "";
     public string ClassAddr { get; init; } = "";
+
+    /// <summary>Offset of the field that was clicked to reach this level (hex).</summary>
+    public int FieldOffset { get; init; }
+
+    /// <summary>Field name (e.g., "m_pAttributeSetHealth").</summary>
+    public string FieldName { get; init; } = "";
+
+    /// <summary>True if navigation was through a pointer dereference (ObjectProperty), false for inline struct.</summary>
+    public bool IsPointerDeref { get; init; }
 }

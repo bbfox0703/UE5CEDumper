@@ -22,17 +22,6 @@
     <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                  IsVisible="{Binding IsSearching}" Height="2" Margin="0,0,0,4"/>
 
-    <!-- CE XML output -->
-    <Border DockPanel.Dock="Bottom" IsVisible="{Binding ShowCeXml}"
-            Background="#1A1A2E" Padding="8" CornerRadius="4" MaxHeight="200"
-            Margin="0,4,0,0">
-      <ScrollViewer>
-        <SelectableTextBlock Text="{Binding CeXmlOutput}"
-                             FontFamily="Consolas" FontSize="11"
-                             Foreground="#98C379"/>
-      </ScrollViewer>
-    </Border>
-
     <!-- Main content: instances list (top) + field values (bottom) -->
     <Grid>
       <Grid.RowDefinitions>
@@ -67,7 +56,7 @@
           <DataGridTemplateColumn Header="{DynamicResource str.InstanceFinder.CopyAddress}" Width="50">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate x:DataType="m:InstanceResult">
-                <Button Content="CP"
+                <Button Content="Addr"
                         Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyInstanceAddressCommand}"
                         CommandParameter="{Binding}"
                         Padding="4,2" Margin="2"
@@ -138,7 +127,7 @@
             <DataGridTemplateColumn Header="{DynamicResource str.LiveWalker.CopyAddress}" Width="50">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="m:LiveFieldValue">
-                  <Button Content="CP"
+                  <Button Content="Addr"
                           Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyFieldAddressCommand}"
                           CommandParameter="{Binding}"
                           Padding="4,2" Margin="2"

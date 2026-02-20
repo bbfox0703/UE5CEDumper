@@ -37,7 +37,7 @@
     <!-- Live Walker -->
     <sys:String x:Key="str.LiveWalker.SearchHint">搜尋欄位...</sys:String>
     <sys:String x:Key="str.LiveWalker.SearchCount">{0} 筆符合</sys:String>
-    <sys:String x:Key="str.LiveWalker.GenerateCeAA">產生 CE AA 腳本</sys:String>
+    <sys:String x:Key="str.LiveWalker.GenerateCeAA">複製 CE AA 腳本</sys:String>
 
     <!-- Class Structure -->
     <sys:String x:Key="str.ClassStruct.Name">名稱</sys:String>
@@ -54,9 +54,10 @@
     <sys:String x:Key="str.LiveWalker.Refresh">重新整理</sys:String>
     <sys:String x:Key="str.LiveWalker.AddressHint">位址 (0x...)</sys:String>
     <sys:String x:Key="str.LiveWalker.Go">前往</sys:String>
-    <sys:String x:Key="str.LiveWalker.ExportCE">匯出 CE XML</sys:String>
+    <sys:String x:Key="str.LiveWalker.ExportCE">複製 CE XML</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">數值</sys:String>
-    <sys:String x:Key="str.LiveWalker.CopyAddress">CP</sys:String>
+    <sys:String x:Key="str.LiveWalker.CopyAddress">Addr</sys:String>
+    <sys:String x:Key="str.LiveWalker.CopyName">Name</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.ClassNameHint">類別名稱 (例: PlayerController)</sys:String>
