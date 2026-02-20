@@ -415,6 +415,13 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["ptr_class"] = fv.ptrClassName;
                 }
 
+                // BoolProperty: bit field info
+                if (fv.boolBitIndex >= 0) {
+                    fj["bool_bit"] = fv.boolBitIndex;
+                    fj["bool_mask"] = fv.boolFieldMask;
+                    fj["bool_byte_offset"] = fv.boolByteOffset;
+                }
+
                 // ArrayProperty: element count
                 if (fv.arrayCount >= 0) {
                     fj["count"] = fv.arrayCount;
@@ -451,12 +458,28 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                         static_cast<unsigned long long>(g_cachedGWorld),
                         static_cast<unsigned long long>(worldAddr),
                         ok ? "ok" : "fail");
-                } else {
-                    Logger::Warn("PIPE:world", "g_cachedGWorld is 0 — GWorld was not found during init");
+                }
+
+                // Fallback: if AOB-resolved GWorld is null/wrong, search GObjects for a UWorld instance.
+                // This handles games where the AOB pattern matched the wrong global variable.
+                if (!worldAddr) {
+                    Logger::Info("PIPE:world", "GWorld pointer is null, searching GObjects for UWorld...");
+                    ObjectArray::ForEach([&](int32_t idx, uintptr_t obj) -> bool {
+                        uintptr_t cls = UStructWalker::GetClass(obj);
+                        if (!cls) return true; // continue
+                        std::string clsName = UStructWalker::GetName(cls);
+                        if (clsName == "World") {
+                            worldAddr = obj;
+                            Logger::Info("PIPE:world", "Found UWorld via GObjects scan: 0x%llX (index=%d)",
+                                static_cast<unsigned long long>(obj), idx);
+                            return false; // stop
+                        }
+                        return true; // continue
+                    });
                 }
             }
 
-            if (!worldAddr) return PipeProtocol::MakeError(id, "GWorld not found (deref 0x0 — world may not be loaded yet)").dump();
+            if (!worldAddr) return PipeProtocol::MakeError(id, "GWorld not found — no UWorld instance in GObjects").dump();
 
             json data;
             data["world_addr"] = PipeProtocol::AddrToStr(worldAddr);

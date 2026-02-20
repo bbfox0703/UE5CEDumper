@@ -29,6 +29,7 @@
     <sys:String x:Key="str.ObjectTree.CopyClassName">複製類別名稱</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyObjectName">複製物件名稱</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyAddress">複製位址</sys:String>
+    <sys:String x:Key="str.ObjectTree.FilterHint">過濾已載入物件...</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.CopyAddress">複製位址</sys:String>

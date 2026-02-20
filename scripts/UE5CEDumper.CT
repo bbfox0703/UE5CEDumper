@@ -226,12 +226,24 @@ function ue5_inject()
     ue5_log("Starting UE5 Dumper...")
     ue5_log("DLL path: %s", DLL_PATH)
 
+    -- 0. Pre-check: verify CE has attached to a game process.
+    -- getOpenedProcessID() returns 0 when no process is attached.
+    -- A common mistake is running the CT without first attaching CE to the game.
+    local pid = getOpenedProcessID()
+    if pid == 0 then
+        ue5_logError("No game process attached! Open a game process in CE first (File > Open Process).")
+        showMessage("UE5 Dumper Error:\n\nNo game process is attached to Cheat Engine.\n\nPlease attach CE to a running UE5 game first:\n  File > Open Process (or click the process icon)")
+        return
+    end
+    ue5_log("Target process PID: %d", pid)
+
     -- 1. Inject DLL into the target process.
     -- The DLL auto-start thread handles UE5_Init (AOBScan) + UE5_StartPipeServer
     -- internally — no executeCodeEx calls needed or possible (remote threads may
     -- be blocked by the game; executeCodeEx relies on CreateRemoteThread).
     if not injectDLL(DLL_PATH) then
-        ue5_logError("injectDLL failed! Check DLL_PATH: %s", DLL_PATH)
+        ue5_logError("injectDLL failed! Is CE attached to the game? DLL_PATH: %s", DLL_PATH)
+        showMessage("UE5 Dumper Error:\n\ninjectDLL failed.\n\nPossible causes:\n1. CE is not attached to a game process\n2. DLL file not found: " .. DLL_PATH .. "\n3. Anti-cheat blocking injection")
         return
     end
     ue5_log("DLL injected OK")
