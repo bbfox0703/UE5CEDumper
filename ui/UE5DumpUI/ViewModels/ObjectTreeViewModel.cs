@@ -13,6 +13,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
 {
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
+    private readonly IPlatformService _platform;
 
     [ObservableProperty] private ObservableCollection<UObjectNode> _nodes = new();
     [ObservableProperty] private UObjectNode? _selectedNode;
@@ -28,10 +29,32 @@ public partial class ObjectTreeViewModel : ViewModelBase
         SelectionChanged?.Invoke(value);
     }
 
-    public ObjectTreeViewModel(IDumpService dump, ILoggingService log)
+    public ObjectTreeViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
     {
         _dump = dump;
         _log = log;
+        _platform = platform;
+    }
+
+    [RelayCommand]
+    private async Task CopyClassNameAsync(UObjectNode? node)
+    {
+        if (node == null || string.IsNullOrEmpty(node.ClassName)) return;
+        await _platform.CopyToClipboardAsync(node.ClassName);
+    }
+
+    [RelayCommand]
+    private async Task CopyObjectNameAsync(UObjectNode? node)
+    {
+        if (node == null || string.IsNullOrEmpty(node.Name)) return;
+        await _platform.CopyToClipboardAsync(node.Name);
+    }
+
+    [RelayCommand]
+    private async Task CopyAddressAsync(UObjectNode? node)
+    {
+        if (node == null || string.IsNullOrEmpty(node.Address)) return;
+        await _platform.CopyToClipboardAsync(node.Address);
     }
 
     [RelayCommand]

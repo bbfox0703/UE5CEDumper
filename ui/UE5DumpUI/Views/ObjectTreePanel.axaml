@@ -43,6 +43,19 @@
       <ListBox.ItemTemplate>
         <DataTemplate x:DataType="models:UObjectNode">
           <StackPanel Orientation="Horizontal" Spacing="8" Margin="2,1">
+            <StackPanel.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="{DynamicResource str.ObjectTree.CopyClassName}"
+                          Command="{Binding $parent[UserControl].((vm:ObjectTreeViewModel)DataContext).CopyClassNameCommand}"
+                          CommandParameter="{Binding}"/>
+                <MenuItem Header="{DynamicResource str.ObjectTree.CopyObjectName}"
+                          Command="{Binding $parent[UserControl].((vm:ObjectTreeViewModel)DataContext).CopyObjectNameCommand}"
+                          CommandParameter="{Binding}"/>
+                <MenuItem Header="{DynamicResource str.ObjectTree.CopyAddress}"
+                          Command="{Binding $parent[UserControl].((vm:ObjectTreeViewModel)DataContext).CopyAddressCommand}"
+                          CommandParameter="{Binding}"/>
+              </ContextMenu>
+            </StackPanel.ContextMenu>
             <TextBlock Text="{Binding ClassName}"
                        Foreground="#569CD6" FontSize="14"
                        FontWeight="SemiBold"

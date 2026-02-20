@@ -178,6 +178,61 @@ public partial class InstanceFinderViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task CopyInstanceAddressAsync(InstanceResult? instance)
+    {
+        if (instance == null || string.IsNullOrEmpty(instance.Address)) return;
+
+        try
+        {
+            if (_engineState != null && !string.IsNullOrEmpty(_engineState.ModuleName) && !string.IsNullOrEmpty(_engineState.ModuleBase))
+            {
+                var addr = Convert.ToUInt64(instance.Address.Replace("0x", "").Replace("0X", ""), 16);
+                var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
+                var rva = addr - moduleBase;
+                var ceFormat = $"\"{_engineState.ModuleName}\"+{rva:X}";
+                await _platform.CopyToClipboardAsync(ceFormat);
+            }
+            else
+            {
+                await _platform.CopyToClipboardAsync(instance.Address);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to copy instance address for {instance.Name}", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task GenerateCeAAScriptAsync(InstanceResult? instance)
+    {
+        if (instance == null || string.IsNullOrEmpty(instance.Address)) return;
+        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName) || string.IsNullOrEmpty(_engineState.ModuleBase)) return;
+
+        try
+        {
+            var addr = Convert.ToUInt64(instance.Address.Replace("0x", "").Replace("0X", ""), 16);
+            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
+            var rva = addr - moduleBase;
+
+            // CE-compatible symbol name: replace invalid chars
+            var symbolName = instance.ClassName.Replace(" ", "_").Replace("-", "_");
+
+            var xml = CeXmlExportService.GenerateRegisterSymbolXml(
+                symbolName, _engineState.ModuleName, rva);
+
+            CeXmlOutput = xml;
+            ShowCeXml = true;
+            _log.Info($"CE AA script generated for {instance.ClassName} at RVA {rva:X}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error("Failed to generate CE AA script", ex);
+        }
+    }
+
+    [RelayCommand]
     private void OpenInLiveWalker()
     {
         if (SelectedInstance == null) return;

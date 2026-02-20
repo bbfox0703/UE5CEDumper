@@ -28,6 +28,10 @@
               Command="{Binding ExportCeXmlCommand}"
               IsVisible="{Binding HasData}"
               Padding="8,4"/>
+      <Button Content="{DynamicResource str.LiveWalker.GenerateCeAA}"
+              Command="{Binding GenerateCeAAScriptCommand}"
+              IsVisible="{Binding HasData}"
+              Padding="8,4"/>
     </StackPanel>
 
     <!-- Breadcrumb -->
@@ -68,6 +72,17 @@
       </StackPanel>
     </Border>
 
+    <!-- Search bar -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
+                IsVisible="{Binding HasData}">
+      <TextBox Watermark="{DynamicResource str.LiveWalker.SearchHint}"
+               Text="{Binding SearchText, Mode=TwoWay}"
+               Width="250" Padding="4,2" FontSize="12"/>
+      <TextBlock Text="{Binding SearchMatchCount, StringFormat='{}{0} matches'}"
+                 Foreground="#888" VerticalAlignment="Center" FontSize="12"
+                 IsVisible="{Binding HasSearchResults}"/>
+    </StackPanel>
+
     <!-- Loading indicator -->
     <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                  IsVisible="{Binding IsLoading}" Height="2" Margin="0,0,0,4"/>
@@ -84,14 +99,16 @@
     </Border>
 
     <!-- Field list -->
-    <DataGrid ItemsSource="{Binding Fields}"
+    <DataGrid x:Name="FieldGrid"
+              ItemsSource="{Binding Fields}"
               IsReadOnly="True"
               CanUserResizeColumns="True"
               CanUserSortColumns="True"
               GridLinesVisibility="Horizontal"
               BorderThickness="0"
               Background="#1E1E1E"
-              FontFamily="Consolas" FontSize="12">
+              FontFamily="Consolas" FontSize="12"
+              LoadingRow="FieldGrid_LoadingRow">
       <DataGrid.Columns>
         <DataGridTextColumn Header="{DynamicResource str.ClassStruct.Offset}"
                             Binding="{Binding Offset, StringFormat='0x{0:X}'}"
