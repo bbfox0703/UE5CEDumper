@@ -396,6 +396,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["name"]       = result.name;
             data["class"]      = result.className;
             data["class_addr"] = PipeProtocol::AddrToStr(result.classAddr);
+            data["outer"]      = PipeProtocol::AddrToStr(result.outerAddr);
+            data["outer_name"] = result.outerName;
+            data["outer_class"]= result.outerClassName;
 
             json fields = json::array();
             for (const auto& fv : result.fields) {
@@ -603,6 +606,31 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             json data;
             data["total"]     = static_cast<int>(results.size());
             data["instances"] = instances;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // === find_by_address: Reverse lookup — address to UObject instance ===
+        if (cmd == PipeProtocol::CMD_FIND_BY_ADDRESS) {
+            std::string addrStr = request.value("addr", "");
+            if (addrStr.empty()) return PipeProtocol::MakeError(id, "Missing addr").dump();
+
+            uintptr_t queryAddr = PipeProtocol::StrToAddr(addrStr);
+            auto lookupResult = ObjectArray::FindByAddress(queryAddr);
+
+            json data;
+            data["found"] = lookupResult.found;
+
+            if (lookupResult.found) {
+                data["match_type"]       = lookupResult.exactMatch ? "exact" : "contains";
+                data["addr"]             = PipeProtocol::AddrToStr(lookupResult.objectAddr);
+                data["index"]            = lookupResult.index;
+                data["name"]             = lookupResult.name;
+                data["class"]            = lookupResult.className;
+                data["outer"]            = PipeProtocol::AddrToStr(lookupResult.outer);
+                data["offset_from_base"] = lookupResult.offsetFromBase;
+                data["query_addr"]       = addrStr;
+            }
+
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 

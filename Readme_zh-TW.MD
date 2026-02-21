@@ -260,6 +260,7 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 | [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) | Live Editor UI 架構參考 |
 | [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 執行期反射，另一角度的實作參考 |
 | [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | GObjects/GNames 的額外 AOB Pattern |
+| [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | GObjects/GNames 的額外 AOB Pattern 來源 |
 | [nlohmann/json](https://github.com/nlohmann/json) | DLL 使用的 Header-only JSON 函式庫 |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua 腳本 API 參考 |
 | AOBMaker（私有） | AOB Pattern 生成工具 |

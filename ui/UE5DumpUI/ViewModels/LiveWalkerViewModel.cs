@@ -31,6 +31,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private string _currentClassName = "";
     [ObservableProperty] private string _currentAddress = "";
     [ObservableProperty] private bool _hasData;
+    [ObservableProperty] private string _currentOuterAddr = "";
+    [ObservableProperty] private string _currentOuterName = "";
+    [ObservableProperty] private string _currentOuterClassName = "";
+    [ObservableProperty] private bool _hasParent;
     // CE XML output (kept for possible future use but no longer shown in panel)
     [ObservableProperty] private string _ceXmlOutput = "";
     [ObservableProperty] private bool _showCeXml;
@@ -93,6 +97,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
         CurrentAddress = world.WorldAddr;
         HasData = true;
         ShowCeXml = false;
+        HasParent = false;
+        CurrentOuterAddr = "";
+        CurrentOuterName = "";
+        CurrentOuterClassName = "";
 
         Fields.Clear();
 
@@ -253,6 +261,44 @@ public partial class LiveWalkerViewModel : ViewModelBase
         catch (Exception ex)
         {
             SetError(ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task GoToParentAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentOuterAddr) || CurrentOuterAddr == "0x0") return;
+
+        try
+        {
+            ClearError();
+            IsLoading = true;
+
+            // Navigate to the parent (OuterPrivate) object
+            var parentAddr = CurrentOuterAddr;
+
+            // Add current object as a breadcrumb before navigating up
+            // so user can go back down via breadcrumbs
+            Breadcrumbs.Add(new BreadcrumbItem
+            {
+                Address = parentAddr,
+                Label = !string.IsNullOrEmpty(CurrentOuterName) ? CurrentOuterName : "Parent",
+                IsPointerDeref = true,
+                FieldOffset = 0,
+                FieldName = "Outer",
+            });
+
+            var result = await _dump.WalkInstanceAsync(parentAddr);
+            UpdateDisplay(result);
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"Failed to navigate to parent {CurrentOuterAddr}", ex);
         }
         finally
         {
@@ -483,6 +529,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
         CurrentAddress = result.Address;
         HasData = true;
         ShowCeXml = false;
+
+        // Update parent (Outer) info
+        CurrentOuterAddr = result.OuterAddr;
+        CurrentOuterName = result.OuterName;
+        CurrentOuterClassName = result.OuterClassName;
+        HasParent = !string.IsNullOrEmpty(result.OuterAddr) && result.OuterAddr != "0x0";
 
         // Compute absolute field addresses
         ulong baseAddr = 0;
