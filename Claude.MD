@@ -65,7 +65,7 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-21 (Stride scoring v4 for FF7R + 8-game test results including Hogwarts Legacy & EverSpace 2)
+> Last updated: 2026-02-21 (FF7R flat array fix + UI search indicator + 10-game test results)
 > Latest commit: `362c0ae` on `dev` branch (uncommitted: DetectStride + UProperty fallback)
 
 ### Component Status
@@ -80,7 +80,7 @@ git submodule update --init --recursive
 | OffsetFinder — GWorld | `OffsetFinder.cpp` | Done | 7 patterns, non-critical |
 | OffsetFinder — Version | `OffsetFinder.cpp` | Working | PE VERSIONINFO (ProductVersion + FileVersion) + 3-tier memory string scan (++UE prefix → Release context → bare pattern with digit guard) |
 | OffsetFinder — DynOff | `OffsetFinder.cpp`, `Constants.h` | Untested | Dynamic FField/FProperty/UStruct offset detection via known struct probing |
-| ObjectArray | `ObjectArray.cpp/.h` | Done | FChunkedFixedUObjectArray + flat array support, ForEach, GetByIndex; auto-detect FUObjectItem stride {16,24,20} via FNamePool validation with tiebreaker (bad-count secondary) |
+| ObjectArray | `ObjectArray.cpp/.h` | Done | FChunkedFixedUObjectArray + FFixedUObjectArray (flat) auto-detection, ForEach, GetByIndex; auto-detect FUObjectItem stride {16,24,20} via FNamePool validation with scoring + fallback; flat array detected via chunk[1] pointer validation |
 | FNamePool | `FNamePool.cpp/.h` | Done | Triple-mode: UE5 FNamePool (multi-format header A/B, chunk index) + UE4 TNameEntryArray (double-deref, 0x4000 chunk size) + hash-prefixed FNamePool (4B hash + 2B header, auto-detected) |
 | UStructWalker | `UStructWalker.cpp/.h` | Done | FField chain, SuperStruct inheritance, GetFullName; uses DynOff for all offsets |
 | ExportAPI | `ExportAPI.cpp/.h` | Done | C ABI exports, UE5_AutoStart, WalkClass Begin/Get/End; calls ValidateAndFixOffsets |
@@ -115,6 +115,9 @@ git submodule update --init --recursive
 - **FF7R UProperty fallback (build 1.0.0.20)** — FProperty-to-UProperty fallback triggered correctly: Children at struct+0x38, SuperStruct=+0x30, UField::Next=+0x28, UProperty::Offset_Internal=+0x44 (matching RE-UE4SS exactly). But FUObjectItem stride still wrong (16 instead of 24) — see challenge #17
 - **EverSpace 2 (UE5.5, build 1.0.0.20)** — Full pipeline working: stride 24 (tiebreaker), GNames via pointer-scan fallback (all AOB patterns failed), 1,158,676 objects, DynOff validated. UE 505 detected from PE.
 - **Hogwarts Legacy (UE4.27, build 1.0.0.20)** — Full pipeline working: stride 24 (tiebreaker: 0 bad), 379,793 objects, FProperty mode with FField::Name=+0x28, FField::Next=+0x20. PE reports UE 4.27 → version 427.
+- **IDOLM@STER STARLIT SEASON (UE4.24, build 1.0.0.25)** — Working. Object Tree populated. "Start from GWorld" fails in UI.
+- **Romancing SaGa 2: Revenge of the Seven (UE4.27, build 1.0.0.25)** — Working. Object Tree populated. "Start from GWorld" fails in UI.
+- **Star Wars Jedi: Fallen Order (UE4.21, build 1.0.0.25)** — Working. 318,022 objects. Full pipeline functional.
 
 ### Known Challenges & Failures
 
@@ -415,7 +418,35 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - EverSpace 2 (stride 24): 24 wins (0 bad >> 5 bad for stride 16)
 - DQ (stride 24): 24 wins (0 bad >> 4 bad for stride 16)
 
-**Status**: Built successfully (0 errors, 0 warnings), **untested** — requires injection test.
+**Status (build 1.0.0.23)**: v4 scoring insufficient. FF7R stride 16 still wins: score -83 vs -99 (both negative). v5 fallback added: when all scores negative, pick stride with fewest bad. Build 1.0.0.25 correctly selects stride 24 via fallback. But names STILL garbled — root cause is flat array, not stride. See #18.
+
+#### 18. FF7R (Remake Intergrade): Flat FFixedUObjectArray Misidentified as Chunked
+
+**Symptom**: After stride v5 correctly selects 24, FF7R scan log (build 1.0.0.25) shows stride 24 detected but name sanity only 2/10. Object Tree still shows "vel", "Package", "None_2". Both strides have ~53-61 bad items (unusual — correct stride on other games has ~0 bad).
+
+**Root cause**: FF7R uses UE4.18 which has `FFixedUObjectArray` (flat, 16-byte struct: `{FUObjectItem* Objects, int32 Max, int32 Num}`), NOT `FChunkedFixedUObjectArray` (chunked, 32-byte struct with chunk table). RE-UE4SS MemberVariableLayout_4_18_Template.ini confirms: `TUObjectArray` is 16 bytes with `Objects=0x0, MaxElements=0x8, NumElements=0xC`.
+
+Our Layout B correctly reads `Objects = 0x20C7AAB0000` at GObjects+0x10. But this pointer points directly to the flat FUObjectItem array, not a chunk table. The code then reads `*(0x20C7AAB0000) = 0x20C7C880000` thinking it's "chunk[0]" — but `0x20C7C880000` is actually `Item[0].Object` (the first UObject* in the flat array). ProbeStride then reads UObject internal memory as FUObjectItems → mostly garbage → high bad counts for ALL strides. GetByIndex uses chunked path with OBJECTS_PER_CHUNK=65536, computing wrong addresses for all objects.
+
+**Evidence from hex dump**:
+```
+arrayBase@0x20C7AAB0000 (what code thinks is chunk table):
++00: 0000020C7C880000  ← Item[0].Object (UObject*)
++08: 0000000040000000  ← Item[0].Flags (EObjectFlags::Const = 0x40000000)
++10: 0000000000000000  ← Item[0].ClusterIdx + SerialNum
++18: 0000020C60F50A00  ← Item[1].Object (UObject*)
++20: 0000000042000000  ← Item[1].Flags
+```
+
+**Detection signal**: For 165792 objects with OBJECTS_PER_CHUNK=65536, we need 3 chunks. But `chunk[1] = *(arrayBase + 8) = 0x40000000` is NOT a valid heap pointer → the "chunk table" is actually a flat item array.
+
+**Fix applied**: Added flat array pre-detection in `DetectItemSize()`. Before Phase 1 (chunked probe), check if `chunk[1]` looks like a heap pointer when 2+ chunks are needed. If chunk[1] is NOT a valid pointer (fails `LooksLikeHeapPtr`), try flat layout first (probe `chunkTable` directly as item base, set `s_isFlat=true`). If flat probe finds ≥2 named items, confirm flat mode and skip chunked phases. Otherwise fall back to chunked detection.
+
+**Expected result**: FF7R flat array detected via chunk[1] validation → stride 24 with correct item addresses → 8-10/10 name sanity → correct Object Tree names.
+
+**Regression safety**: For chunked games (TQ2, ES2, Hogwarts, etc.), chunk[1] is either a valid heap pointer or null (single chunk). For small games with ≤65536 objects, chunksNeeded=1, so the check is skipped entirely. Only triggers when numElements > OBJECTS_PER_CHUNK AND chunk[1] is not a pointer.
+
+**Status**: Built successfully (build 1.0.0.26), **untested** — requires injection test.
 
 ### Lessons Learned
 
@@ -463,6 +494,9 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - **Hogwarts Legacy uses UE4.27**: PE VERSIONINFO correctly detects it as UE4.27 (version=427). Despite being a large AAA game, it uses FProperty mode (UE4.25+) with FField::Name at +0x28, FField::Next at +0x20. The 'b' field in Guid (lowercase) is a minor anomaly but doesn't affect functionality.
 - **EverSpace 2 and Hogwarts Legacy require GNames pointer-scan fallback**: All 17 standard GNames AOB patterns fail on these UE5.5/4.27 games. The pointer-scan fallback (`FindGNamesByPointerScan`) successfully finds FNamePool by scanning `.data` section for pointers to "None" FNameEntry. This pattern may become the primary discovery method for newer UE builds.
 - **OctoPath Traveler uses stride 16 (not 24)**: Despite being UE4, OctoPath's FUObjectItem is 16 bytes. This was confirmed by correct Object Tree operation with stride 16. Not all UE4 games use 24-byte items. The stride depends on whether the engine was compiled with GC clustering support.
+- **UE4.11-4.20 uses FFixedUObjectArray (flat), not FChunkedFixedUObjectArray**: RE-UE4SS MemberVariableLayout_4_18_Template.ini confirms `TUObjectArray` is 16 bytes: `{FUObjectItem* Objects, int32 MaxElements, int32 NumElements}`. Objects points directly to the item array (single indirection). UE4.21+ switches to `FChunkedFixedUObjectArray` (32 bytes) with a chunk pointer table (double indirection). Detection: when numElements > OBJECTS_PER_CHUNK (need 2+ chunks), check if `*(Objects + 8)` is a valid heap pointer. If not (e.g., it's `0x40000000` = EObjectFlags), the array is flat.
+- **EObjectFlags 0x40000000 = Const**: In UE4's FUObjectItem, the Flags field at item+0x08 can contain values like `0x40000000` (RF_Const) which look like small integers, not pointers. When a flat item array is misidentified as a chunk table, reading item[0].Flags as "chunk[1]" gives these flag values, which correctly fail `LooksLikeHeapPtr()`.
+- **Flat array detection must happen BEFORE chunked probing**: If flat detection only runs as fallback (Phase 3, when chunked finds nothing), it won't trigger for FF7R because chunked Phase 1 accidentally finds some valid items via LCM alignment when reading UObject internal memory. The fix: check chunk[1] validity FIRST, and if suspicious, try flat layout before chunked.
 
 ### Recommended Test Games
 
@@ -472,20 +506,24 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 | Titan Quest II | UE5.7 (PE reports) | Primary test target for CasePreservingName + dynamic offset detection. Stride 16 |
 | OctoPath Traveler | UE4 (pre-4.25) | UE4 TNameEntryArray + Layout B + stride 16. Object Tree working (build 1.0.0.20). "Start from GWorld" fails in UI |
 | Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry (hdrOff=4, stride=4) + stride 24 — fully working. CE address-to-object lookup fails |
-| Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | UProperty fallback ✅. Stride 16→24 fix pending test (scoring v4). 165792 objects |
+| Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | UProperty fallback ✅. Flat FFixedUObjectArray fix pending test (build 1.0.0.26). 165792 objects |
 | DQ I&II HD-2D Remake | UE5.05 | Stride 24, 128678 objects — full pipeline working. GWorld null. CE pointer lookup works |
 | Tower of Mask | UE4.27 | Standard UE4 indie game — full pipeline confirmed working. Stride 24 |
 | Hogwarts Legacy | UE4.27 (PE: 427) | GNames via pointer-scan fallback. Stride 24, 379K objects — fully working (build 1.0.0.20) |
+| IDOLM@STER STARLIT SEASON | UE4.24 | Working (build 1.0.0.25). "Start from GWorld" fails in UI |
+| Romancing SaGa 2 | UE4.27 | Working (build 1.0.0.25). "Start from GWorld" fails in UI |
+| Star Wars Jedi: Fallen Order | UE4.21 | Working (build 1.0.0.25). 318022 objects |
 
 ### Next Steps
 
-1. **Test FF7R** with stride scoring v4 build:
-   - Expect: stride 24 selected (score > stride 16 due to bad penalty)
-   - Expect: 10/10 name sanity, correct Object Tree names
+1. **Test FF7R** with flat array fix (build 1.0.0.26):
+   - Expect: flat array detected via chunk[1] validation
+   - Expect: stride 24 selected with good named count, low bad
+   - Expect: 8-10/10 name sanity, correct Object Tree names
    - Expect: Live Walker with correct fields (UProperty mode already working)
-2. **Test all 8 games** for regression: TQ2, OctoPath, FF7Re, DQ HD-2D, FF7R, EverSpace 2, Hogwarts Legacy, Tower of Mask
-3. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re. User noted: closing CE injectDLL lua and loading table doesn't help. Different CE instance + load table works on DQ.
-4. **Fix "Start from GWorld" UI** — GWorld found for OctoPath and FF7Re but UI button doesn't work (address shown but fields empty)
+2. **Regression test** all 10+ games: TQ2, OctoPath, FF7Re, DQ HD-2D, FF7R, EverSpace 2, Hogwarts Legacy, Tower of Mask, Star Wars Jedi, IDOLM@STER
+3. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re
+4. **Fix "Start from GWorld" UI** — GWorld found for OctoPath, FF7Re, IDOLM@STER, Romancing SaGa 2 but UI button doesn't work
 5. ~~Test pointer-scan fallback for GNames on EverSpace 2~~ → Done: works on both ES2 and Hogwarts Legacy
 6. Once FF7R confirmed working → continue Avalonia UI development
 7. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources in `Signatures.h`

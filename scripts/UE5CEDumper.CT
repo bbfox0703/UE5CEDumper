@@ -8,9 +8,26 @@
       <GroupHeader>1</GroupHeader>
     </CheatEntry>
     <CheatEntry>
+      <ID>1</ID>
+      <Description>"Inject DLL + Start Pipe Server"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript>[ENABLE]
+{$lua}
+if syntaxcheck then return end
+
+ue5_inject()
+
+[DISABLE]
+{$lua}
+if syntaxcheck then return end
+
+ue5_shutdown()
+</AssemblerScript>
+    </CheatEntry>
+    <CheatEntry>
       <ID>102</ID>
-      <Description>"init."</Description>
-      <Options moHideChildren="1" moDeactivateChildrenAsWell="1"/>
+      <Description>"(start script backup)"</Description>
+      <Options moDeactivateChildrenAsWell="1"/>
       <VariableType>Auto Assembler Script</VariableType>
       <AssemblerScript>[ENABLE]
 {$lua}
@@ -20,27 +37,64 @@ if syntaxcheck then return end
 -- Auto-runs when this CT is opened in Cheat Engine.
 -- ============================================================
 
--- Auto-detect DLL from the same folder as this CT file.
--- CE's File&gt;Open updates OpenDialog1.FileName; File&gt;Save updates SaveDialog1.FileName.
--- Try both, then fall back to CE install dir.
-local _savePath = getMainForm().SaveDialog1.FileName or ""
+-- Auto-detect DLL path by searching candidate directories.
+-- CE dialog paths are unreliable (cache stale paths from previous sessions),
+-- so we try multiple locations and pick the first where UE5Dumper.dll exists.
+local _candidates = {}
 local _openPath = ""
 pcall(function() _openPath = getMainForm().OpenDialog1.FileName or "" end)
+local _savePath = getMainForm().SaveDialog1.FileName or ""
 
--- Pick whichever dialog has a directory component
-local _ctDir = extractFilePath(_openPath)
-if _ctDir == nil or _ctDir == "" then
-    _ctDir = extractFilePath(_savePath)
-end
-if _ctDir == nil or _ctDir == "" then
-    _ctDir = getCheatEngineDir() or ""
-end
-DLL_PATH = _ctDir .. "UE5Dumper.dll"
+-- 1. CE dialog paths (may be stale — check file existence below)
+local _openDir = extractFilePath(_openPath)
+local _saveDir = extractFilePath(_savePath)
+if _openDir and _openDir ~= "" then table.insert(_candidates, _openDir) end
+if _saveDir and _saveDir ~= "" and _saveDir ~= _openDir then table.insert(_candidates, _saveDir) end
 
--- Diagnostic: show what paths CE reported (helps catch wrong-folder loads)
-print(string.format("[UE5Dump] OpenDialog1.FileName = '%s'", _openPath))
-print(string.format("[UE5Dump] SaveDialog1.FileName = '%s'", _savePath))
-print(string.format("[UE5Dump] Resolved CT dir      = '%s'", _ctDir))
+-- 2. TrainerOrigin (only set in trainer mode)
+if TrainerOrigin and TrainerOrigin ~= "" then
+    local _trainerDir = extractFilePath(TrainerOrigin)
+    if _trainerDir and _trainerDir ~= "" then table.insert(_candidates, _trainerDir) end
+end
+
+-- 3. CE install directory
+local _ceDir = getCheatEngineDir() or ""
+if _ceDir ~= "" then table.insert(_candidates, _ceDir) end
+
+-- 4. Known app data location
+local _appData = os.getenv("LOCALAPPDATA") or ""
+if _appData ~= "" then table.insert(_candidates, _appData .. "\\UE5CEDumper\\") end
+
+-- Find first directory containing UE5Dumper.dll
+DLL_PATH = nil
+local _dllFoundIn = nil
+for _, dir in ipairs(_candidates) do
+    local test = dir .. "UE5Dumper.dll"
+    local f = io.open(test, "rb")
+    if f then
+        f:close()
+        DLL_PATH = test
+        _dllFoundIn = dir
+        break
+    end
+end
+
+if not DLL_PATH then
+    -- Last resort: use first candidate even though DLL wasn't found there
+    DLL_PATH = (_candidates[1] or "") .. "UE5Dumper.dll"
+end
+
+-- Diagnostic: show search results
+print(string.format("[UE5Dump] OpenDialog1 = '%s'", _openPath))
+print(string.format("[UE5Dump] SaveDialog1 = '%s'", _savePath))
+if _dllFoundIn then
+    print(string.format("[UE5Dump] DLL found in: '%s'", _dllFoundIn))
+else
+    print(string.format("[UE5Dump] WARNING: DLL not found in any candidate!"))
+    for i, dir in ipairs(_candidates) do
+        print(string.format("[UE5Dump]   candidate %d: '%s'", i, dir))
+    end
+end
 
 -- ============================================================
 -- File Logging (to %LOCALAPPDATA%\UE5CEDumper\Logs)
@@ -193,25 +247,6 @@ ue5_log("DLL_PATH = %s", DLL_PATH)
 [DISABLE]
 {$asm}
 </AssemblerScript>
-      <CheatEntries>
-        <CheatEntry>
-          <ID>1</ID>
-          <Description>"Inject DLL + Start Pipe Server"</Description>
-          <VariableType>Auto Assembler Script</VariableType>
-          <AssemblerScript>[ENABLE]
-{$lua}
-if syntaxcheck then return end
-
-ue5_inject()
-
-[DISABLE]
-{$lua}
-if syntaxcheck then return end
-
-ue5_shutdown()
-</AssemblerScript>
-        </CheatEntry>
-      </CheatEntries>
     </CheatEntry>
     <CheatEntry>
       <ID>20</ID>
@@ -265,6 +300,218 @@ ue5_shutdown()
     </CheatEntry>
   </CheatEntries>
   <UserdefinedSymbols/>
-  <LuaScript>
+  <LuaScript>-- ============================================================
+-- UE5CEDumper — Table Script
+-- Auto-runs when this CT is opened in Cheat Engine.
+-- ============================================================
+
+-- Auto-detect DLL path by searching candidate directories.
+-- CE dialog paths are unreliable (cache stale paths from previous sessions),
+-- so we try multiple locations and pick the first where UE5Dumper.dll exists.
+local _candidates = {}
+local _openPath = ""
+pcall(function() _openPath = getMainForm().OpenDialog1.FileName or "" end)
+local _savePath = getMainForm().SaveDialog1.FileName or ""
+
+-- 1. CE dialog paths (may be stale — check file existence below)
+local _openDir = extractFilePath(_openPath)
+local _saveDir = extractFilePath(_savePath)
+if _openDir and _openDir ~= "" then table.insert(_candidates, _openDir) end
+if _saveDir and _saveDir ~= "" and _saveDir ~= _openDir then table.insert(_candidates, _saveDir) end
+
+-- 2. TrainerOrigin (only set in trainer mode)
+if TrainerOrigin and TrainerOrigin ~= "" then
+    local _trainerDir = extractFilePath(TrainerOrigin)
+    if _trainerDir and _trainerDir ~= "" then table.insert(_candidates, _trainerDir) end
+end
+
+-- 3. CE install directory
+local _ceDir = getCheatEngineDir() or ""
+if _ceDir ~= "" then table.insert(_candidates, _ceDir) end
+
+-- 4. Known app data location
+local _appData = os.getenv("LOCALAPPDATA") or ""
+if _appData ~= "" then table.insert(_candidates, _appData .. "\\UE5CEDumper\\") end
+
+-- Find first directory containing UE5Dumper.dll
+DLL_PATH = nil
+local _dllFoundIn = nil
+for _, dir in ipairs(_candidates) do
+    local test = dir .. "UE5Dumper.dll"
+    local f = io.open(test, "rb")
+    if f then
+        f:close()
+        DLL_PATH = test
+        _dllFoundIn = dir
+        break
+    end
+end
+
+if not DLL_PATH then
+    -- Last resort: use first candidate even though DLL wasn't found there
+    DLL_PATH = (_candidates[1] or "") .. "UE5Dumper.dll"
+end
+
+-- Diagnostic: show search results
+print(string.format("[UE5Dump] OpenDialog1 = '%s'", _openPath))
+print(string.format("[UE5Dump] SaveDialog1 = '%s'", _savePath))
+if _dllFoundIn then
+    print(string.format("[UE5Dump] DLL found in: '%s'", _dllFoundIn))
+else
+    print(string.format("[UE5Dump] WARNING: DLL not found in any candidate!"))
+    for i, dir in ipairs(_candidates) do
+        print(string.format("[UE5Dump]   candidate %d: '%s'", i, dir))
+    end
+end
+
+-- ============================================================
+-- File Logging (to %LOCALAPPDATA%\UE5CEDumper\Logs)
+-- ============================================================
+
+local _logHandle = nil
+
+local function ue5_logInit()
+    local localAppData = os.getenv("LOCALAPPDATA") or ""
+    if localAppData == "" then return end
+
+    local logDir = localAppData .. "\\UE5CEDumper\\Logs\\"
+    os.execute('mkdir "' .. logDir .. '" 2&gt;nul')
+
+    local logFile = logDir .. "UE5Dumper-lua.log"
+    local h = io.open(logFile, "w")  -- overwrite each session
+    if h then
+        _logHandle = h
+        h:write(string.format("[%s] [UE5Dump] Log file opened: %s\n", os.date("%H:%M:%S"), logFile))
+        h:flush()
+    end
+    -- If io.open fails, silently skip
+end
+
+ue5_logInit()
+
+-- ============================================================
+-- Logging helpers (CE console + file)
+-- ============================================================
+
+function ue5_log(fmt, ...)
+    local msg = string.format("[%s] [UE5Dump] " .. fmt, os.date("%H:%M:%S"), ...)
+    print(msg)
+    if _logHandle then
+        _logHandle:write(msg .. "\n")
+        _logHandle:flush()
+    end
+end
+
+function ue5_logError(fmt, ...)
+    local msg = string.format("[%s] [UE5Dump ERROR] " .. fmt, os.date("%H:%M:%S"), ...)
+    print(msg)
+    if _logHandle then
+        _logHandle:write(msg .. "\n")
+        _logHandle:flush()
+    end
+end
+
+-- ============================================================
+-- DLL call wrapper  (executeCodeEx: retType 0=void, 1=integer)
+-- ============================================================
+
+function ue5_callDLL(funcName, retType, ...)
+    local fn = getAddress(funcName)
+    if fn == nil or fn == 0 then
+        ue5_logError("Export not found: %s  (DLL not injected?)", funcName)
+        return nil
+    end
+
+    local ceRetType = (retType == "void") and 0 or 1
+    local result = executeCodeEx(ceRetType, fn, ...)
+
+    -- Propagate nil: executeCodeEx returns nil when the remote call fails
+    -- (process gone, crash, timeout). Treat nil as failure for all types.
+    if result == nil then
+        ue5_logError("executeCodeEx returned nil for %s — process alive?", funcName)
+        return nil
+    end
+
+    if retType == "bool" then return result ~= 0 end
+    return result
+end
+
+-- ============================================================
+-- ue5_inject()  —  called from [ENABLE] of the AA entry
+-- ============================================================
+
+function ue5_inject()
+    ue5_log("Starting UE5 Dumper...")
+    ue5_log("DLL path: %s", DLL_PATH)
+
+    -- 0. Pre-check: verify CE has attached to a game process.
+    -- getOpenedProcessID() returns 0 when no process is attached.
+    -- A common mistake is running the CT without first attaching CE to the game.
+    local pid = getOpenedProcessID()
+    if pid == 0 then
+        ue5_logError("No game process attached! Open a game process in CE first (File &gt; Open Process).")
+        showMessage("UE5 Dumper Error:\n\nNo game process is attached to Cheat Engine.\n\nPlease attach CE to a running UE5 game first:\n  File &gt; Open Process (or click the process icon)")
+        return
+    end
+    ue5_log("Target process PID: %d", pid)
+
+    -- 1. Inject DLL into the target process.
+    -- The DLL auto-start thread handles UE5_Init (AOBScan) + UE5_StartPipeServer
+    -- internally — no executeCodeEx calls needed or possible (remote threads may
+    -- be blocked by the game; executeCodeEx relies on CreateRemoteThread).
+    if not injectDLL(DLL_PATH) then
+        ue5_logError("injectDLL failed! Is CE attached to the game? DLL_PATH: %s", DLL_PATH)
+        showMessage("UE5 Dumper Error:\n\ninjectDLL failed.\n\nPossible causes:\n1. CE is not attached to a game process\n2. DLL file not found: " .. DLL_PATH .. "\n3. Anti-cheat blocking injection")
+        return
+    end
+    ue5_log("DLL injected OK")
+
+    -- 2. Wait for auto-start thread to complete.
+    -- Timeline: 1s thread delay + ~2-8s AOB scan + pipe server start.
+    -- Total budget: 15 seconds. We count down to show progress.
+    local WAIT_SEC = 15
+    ue5_log("Waiting %d sec for GObjects/GNames scan + Pipe Server...", WAIT_SEC)
+    for i = WAIT_SEC, 1, -1 do
+        sleep(1000)
+        ue5_log("  ... %d sec remaining", i - 1)
+    end
+
+    ue5_log("=========================================")
+    ue5_log("DLL auto-start complete (or failed — check DLL log).")
+    ue5_log("Pipe: \\\\.\\pipe\\UE5DumpBfx")
+    ue5_log("Launch UE5DumpUI.exe and click Connect.")
+    ue5_log("DLL log: %%LOCALAPPDATA%%\\UE5CEDumper\\Logs")
+    ue5_log("=========================================")
+end
+
+-- ============================================================
+-- ue5_shutdown()  —  called from [DISABLE] of the AA entry
+-- ============================================================
+
+function ue5_shutdown()
+    ue5_callDLL("UE5_StopPipeServer", "void")
+    ue5_callDLL("UE5_Shutdown",       "void")
+    ue5_log("UE5 Dumper stopped.")
+    if _logHandle then
+        _logHandle:close()
+        _logHandle = nil
+    end
+end
+
+-- ============================================================
+-- Highlight custom functions in CE's Lua syntax highlighter
+-- ============================================================
+
+registerLuaFunctionHighlight('ue5_inject')
+registerLuaFunctionHighlight('ue5_shutdown')
+registerLuaFunctionHighlight('ue5_callDLL')
+registerLuaFunctionHighlight('ue5_log')
+registerLuaFunctionHighlight('ue5_logError')
+
+-- Print startup hint
+ue5_log("Table loaded. Check [Inject DLL + Start Pipe Server] to begin.")
+ue5_log("DLL_PATH = %s", DLL_PATH)
+
+
 </LuaScript>
 </CheatTable>

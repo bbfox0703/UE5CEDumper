@@ -26,6 +26,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private int _objectCount;
     [ObservableProperty] private string _displayCount = "";
+    [ObservableProperty] private string _statusText = "";
 
     /// <summary>Class type filter options. Index 0 = show all, others = exact ClassName match.</summary>
     public string[] ClassFilterOptions { get; } =
@@ -117,6 +118,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
         {
             ClearError();
             IsLoading = true;
+            StatusText = "Loading...";
             _allNodes.Clear();
             FilterText = "";
             SelectedClassFilterIndex = 0;
@@ -145,11 +147,13 @@ public partial class ObjectTreeViewModel : ViewModelBase
             } while (offset < total);
 
             ApplyFilter();
+            StatusText = $"Loaded {_allNodes.Count} of {total} objects";
             _log.Info($"Loaded {_allNodes.Count} of {total} objects");
         }
         catch (Exception ex)
         {
             SetError(ex);
+            StatusText = "Load failed";
             _log.Error("Failed to load objects", ex);
         }
         finally
@@ -172,6 +176,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
         {
             ClearError();
             IsLoading = true;
+            StatusText = "Searching...";
             FilterText = "";
             SelectedClassFilterIndex = 0;
 
@@ -192,11 +197,13 @@ public partial class ObjectTreeViewModel : ViewModelBase
                 SelectedNode = FilteredNodes[0];
             }
 
+            StatusText = $"Found {result.Total} results";
             _log.Info($"Search '{SearchText}': found {result.Total} results");
         }
         catch (Exception ex)
         {
             SetError(ex);
+            StatusText = "Search failed";
             _log.Error($"Search failed for '{SearchText}'", ex);
         }
         finally

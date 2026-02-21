@@ -23,16 +23,25 @@
                  ItemsSource="{Binding SearchSuggestions}"
                  Margin="0,0,4,0"
                  KeyDown="SearchBox_KeyDown"
+                 IsEnabled="{Binding !IsLoading}"
                  x:Name="SearchBox"/>
         <Button Grid.Column="1"
                 Content="{StaticResource str.ObjectTree.Load}"
                 Command="{Binding LoadCommand}"
+                IsEnabled="{Binding !IsLoading}"
                 Margin="0,0,4,0" Padding="8,4"/>
         <Button Grid.Column="2"
                 Content="&#x1F50D;"
                 Command="{Binding SearchCommand}"
+                IsEnabled="{Binding !IsLoading}"
                 Padding="8,4"/>
       </Grid>
+
+      <!-- Status text (shown during search/load operations) -->
+      <TextBlock Text="{Binding StatusText}"
+                 Foreground="#888" FontSize="12"
+                 IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                 Margin="0,0,0,2"/>
 
       <!-- Class type + text filter -->
       <StackPanel Orientation="Horizontal" Spacing="4">
