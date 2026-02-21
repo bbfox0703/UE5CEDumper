@@ -5,7 +5,10 @@
 > **現況**：DLL 核心已通過 TQ2（UE 5.7）測試。動態 Offset 偵測（CasePreservingName）已編譯完成，待下次注入測試驗證。Avalonia UI 骨架已完成，Pipe 整合進行中。
 
 ---
-
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+[![C++](https://img.shields.io/badge/C++-23)](https://isocpp.org/std/the-standard#:~:text=The%20current%20ISO%20C++%20standard%20is%20C++23%2C,Standard%20ISO/IEC%2014882:2024(E)%20%E2%80%93%20Programming%20Language%20C++.)
+[![Avalonia](https://img.shields.io/badge/Avalonia-UI-8B5CF6)](https://avaloniaui.net/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ## 功能一覽
 
 | 功能 | 狀態 |
