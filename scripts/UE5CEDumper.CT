@@ -8,75 +8,14 @@
       <GroupHeader>1</GroupHeader>
     </CheatEntry>
     <CheatEntry>
-      <ID>1</ID>
-      <Description>"Inject DLL + Start Pipe Server"</Description>
+      <ID>102</ID>
+      <Description>"init."</Description>
+      <Options moHideChildren="1" moDeactivateChildrenAsWell="1"/>
       <VariableType>Auto Assembler Script</VariableType>
       <AssemblerScript>[ENABLE]
 {$lua}
 if syntaxcheck then return end
-
-ue5_inject()
-
-[DISABLE]
-{$lua}
-if syntaxcheck then return end
-
-ue5_shutdown()
-</AssemblerScript>
-    </CheatEntry>
-    <CheatEntry>
-      <ID>20</ID>
-      <Description>"--- Setup Instructions ---"</Description>
-      <Color>8000FF</Color>
-      <GroupHeader>1</GroupHeader>
-    </CheatEntry>
-    <CheatEntry>
-      <ID>21</ID>
-      <Description>"1. Build from repos: .\build.cmd release (or publish)"</Description>
-      <Color>C08000</Color>
-      <GroupHeader>1</GroupHeader>
-    </CheatEntry>
-    <CheatEntry>
-      <ID>22</ID>
-      <Description>"2. Option: copy dist\UE5Dumper.dll  →  [CE_DIR]\ue5dumper\UE5Dumper.dll"</Description>
-      <Color>C08000</Color>
-      <GroupHeader>1</GroupHeader>
-      <CheatEntries>
-        <CheatEntry>
-          <ID>101</ID>
-          <Description>"2.1 or just leave DLL in the same directory"</Description>
-          <Color>C08000</Color>
-          <GroupHeader>1</GroupHeader>
-        </CheatEntry>
-      </CheatEntries>
-    </CheatEntry>
-    <CheatEntry>
-      <ID>23</ID>
-      <Description>"3. Open target UE5 game process in CE"</Description>
-      <Color>C08000</Color>
-      <GroupHeader>1</GroupHeader>
-    </CheatEntry>
-    <CheatEntry>
-      <ID>24</ID>
-      <Description>"4. Check [Inject DLL + Start Pipe Server]  (Lua console shows progress)"</Description>
-      <Color>C08000</Color>
-      <GroupHeader>1</GroupHeader>
-    </CheatEntry>
-    <CheatEntry>
-      <ID>25</ID>
-      <Description>"5. Launch dist\UE5DumpUI.exe  and click Connect"</Description>
-      <Color>C08000</Color>
-      <GroupHeader>1</GroupHeader>
-    </CheatEntry>
-    <CheatEntry>
-      <ID>26</ID>
-      <Description>"   Pipe: \\.\pipe\UE5DumpBfx"</Description>
-      <Color>569CD6</Color>
-      <GroupHeader>1</GroupHeader>
-    </CheatEntry>
-  </CheatEntries>
-  <UserdefinedSymbols/>
-  <LuaScript>-- ============================================================
+-- ============================================================
 -- UE5CEDumper — Table Script
 -- Auto-runs when this CT is opened in Cheat Engine.
 -- ============================================================
@@ -250,6 +189,82 @@ registerLuaFunctionHighlight('ue5_logError')
 -- Print startup hint
 ue5_log("Table loaded. Check [Inject DLL + Start Pipe Server] to begin.")
 ue5_log("DLL_PATH = %s", DLL_PATH)
-  
+
+[DISABLE]
+{$asm}
+</AssemblerScript>
+      <CheatEntries>
+        <CheatEntry>
+          <ID>1</ID>
+          <Description>"Inject DLL + Start Pipe Server"</Description>
+          <VariableType>Auto Assembler Script</VariableType>
+          <AssemblerScript>[ENABLE]
+{$lua}
+if syntaxcheck then return end
+
+ue5_inject()
+
+[DISABLE]
+{$lua}
+if syntaxcheck then return end
+
+ue5_shutdown()
+</AssemblerScript>
+        </CheatEntry>
+      </CheatEntries>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>20</ID>
+      <Description>"--- Setup Instructions ---"</Description>
+      <Color>8000FF</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>21</ID>
+      <Description>"1. Build from repos: .\build.cmd release (or publish)"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>22</ID>
+      <Description>"2. Option: copy dist\UE5Dumper.dll  →  [CE_DIR]\ue5dumper\UE5Dumper.dll"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+      <CheatEntries>
+        <CheatEntry>
+          <ID>101</ID>
+          <Description>"2.1 or just leave DLL in the same directory"</Description>
+          <Color>C08000</Color>
+          <GroupHeader>1</GroupHeader>
+        </CheatEntry>
+      </CheatEntries>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>23</ID>
+      <Description>"3. Open target UE5 game process in CE"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>24</ID>
+      <Description>"4. Check [Inject DLL + Start Pipe Server]  (Lua console shows progress)"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>25</ID>
+      <Description>"5. Launch dist\UE5DumpUI.exe  and click Connect"</Description>
+      <Color>C08000</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+    <CheatEntry>
+      <ID>26</ID>
+      <Description>"   Pipe: \\.\pipe\UE5DumpBfx"</Description>
+      <Color>569CD6</Color>
+      <GroupHeader>1</GroupHeader>
+    </CheatEntry>
+  </CheatEntries>
+  <UserdefinedSymbols/>
+  <LuaScript>
 </LuaScript>
 </CheatTable>
