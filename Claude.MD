@@ -65,7 +65,8 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-21 (Signatures.h consolidation — 51 AOB patterns + 4 symbol exports)
+> Last updated: 2026-02-21 (Pagination fix + hash-prefixed FNameEntry support for UE4.26/FF7Re)
+> Latest commit: `1087931` on `dev` branch
 
 ### Component Status
 
@@ -75,19 +76,19 @@ git submodule update --init --recursive
 | Logger | `Logger.cpp/.h` | Done | Dual-channel (scan+pipe), category tags, SUMMARY level, 5-version rotation, 5MB cap, thread-safe; commit `c9263ed` |
 | AOB Signatures | `Signatures.h` | Done | 51 patterns + 4 symbol exports from 6 sources (original, patternsleuth, RE-UE4SS, Dumper-7, UE4 Dumper.CT, UEDumper) |
 | OffsetFinder — GObjects | `OffsetFinder.cpp` | Working | 27 AOB patterns + deref variants + MSVC symbol export (`GUObjectArray`); validated in TQ2 (UE5.7) |
-| OffsetFinder — GNames | `OffsetFinder.cpp` | Partial | 17 AOB patterns + FName ctor export + `.data` pointer-scan with corroboration; AOBs fail on TQ2, fallbacks untested |
+| OffsetFinder — GNames | `OffsetFinder.cpp` | Partial | 17 AOB patterns + FName ctor export + `.data` pointer-scan + UE4 TNameEntryArray validator; unified `ValidateGNamesAny` tries FNamePool→Structural→UE4; structural validator hardened with exact header format + corroboration |
 | OffsetFinder — GWorld | `OffsetFinder.cpp` | Done | 7 patterns, non-critical |
-| OffsetFinder — Version | `OffsetFinder.cpp` | Working | PE VERSIONINFO fast path + memory string scan fallback |
+| OffsetFinder — Version | `OffsetFinder.cpp` | Working | PE VERSIONINFO (ProductVersion + FileVersion) + 3-tier memory string scan (++UE prefix → Release context → bare pattern with digit guard) |
 | OffsetFinder — DynOff | `OffsetFinder.cpp`, `Constants.h` | Untested | Dynamic FField/FProperty/UStruct offset detection via known struct probing |
 | ObjectArray | `ObjectArray.cpp/.h` | Done | FChunkedFixedUObjectArray, ForEach, GetByIndex |
-| FNamePool | `FNamePool.cpp/.h` | Done | Multi-format header (A/B), chunk index, GetString |
+| FNamePool | `FNamePool.cpp/.h` | Done | Triple-mode: UE5 FNamePool (multi-format header A/B, chunk index) + UE4 TNameEntryArray (double-deref, 0x4000 chunk size) + hash-prefixed FNamePool (4B hash + 2B header, auto-detected) |
 | UStructWalker | `UStructWalker.cpp/.h` | Done | FField chain, SuperStruct inheritance, GetFullName; uses DynOff for all offsets |
 | ExportAPI | `ExportAPI.cpp/.h` | Done | C ABI exports, UE5_AutoStart, WalkClass Begin/Get/End; calls ValidateAndFixOffsets |
-| PipeServer | `PipeServer.cpp/.h` | Done | Named pipe, JSON dispatch, watch/unwatch, get_offsets, walk_world, find_instances, get_ce_pointer_info |
+| PipeServer | `PipeServer.cpp/.h` | Done | Named pipe, JSON dispatch, watch/unwatch, get_offsets, walk_world, find_instances, get_ce_pointer_info; get_object_list returns `scanned` count for proper pagination |
 | CE Cheat Table | `scripts/UE5CEDumper.CT` | Done | injectDLL-only flow (no executeCodeEx), 15s countdown |
 | CEPlugin interface | `CEPlugin.cpp` | Done | CE plugin Type 5 main menu; g_isCEPlugin flag |
 | DLL auto-start | `dllmain.cpp` | Done | AutoStartThreadProc, 1s delay, g_isCEPlugin check |
-| Avalonia UI | `ui/` | Not started | Pending DynOff validation on TQ2 and end-to-end pipe validation |
+| Avalonia UI | `ui/` | Skeleton done | Object tree + Instance Finder + Class struct panels; pipe integration in progress |
 
 ### What Is Working (Confirmed in Testing)
 
@@ -161,6 +162,64 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 
 **Status**: Built successfully (0 errors, 0 warnings), **untested on TQ2** — requires next injection test.
 
+#### 6. FF7 Rebirth (FF7Re): Garbled Names + Wrong UE Version + GWorld Empty
+
+**Symptom**: Object tree showed garbled names (????), UE version reported as 5.06 (should be UE4), GWorld scan returned pointer value 0x348 (garbage).
+
+**Root causes** (three cascading failures):
+1. **Version detection false positive**: Bare "5.6." string found in FF7Re game data → string scan matched → reported UE 5.06 (actually UE4 fork)
+2. **GNames structural validator false positive**: `strstr(buf+2, "None")` accepted garbage address 0x7FF61A7CA780 because FRWLock happened to be 0 and `strstr` matched "None" in random adjacent bytes
+3. **GWorld AOB pattern false match**: Pattern resolved to wrong global → UWorld*=0x348 (garbage)
+
+**Fixes applied**:
+1. **Version detection**: Added 3-tier detection — Tier 1: `++UE5+Release-` / `++UE4+Release-` exact prefix; Tier 2: `Release` in preceding 16 bytes; Tier 3: bare pattern with guard against preceding digit/period (rejects "15.6.0")
+2. **ValidateGNamesStructural hardened**: Replaced `strstr` with exact FNameEntry header format matching (Format A/B length check + strcmp for "None") + `CorroborateFNameChunk` gate (requires UE type names like "Property", "Object" in chunk)
+3. PE FileVersion fallback added alongside ProductVersion check
+
+#### 7. OctoPath Traveler: Pipe Connection Failed (UE4 TNameEntryArray)
+
+**Symptom**: UI pipe connection failed — DLL init aborted, pipe server never started.
+
+**Root cause**: OctoPath Traveler is a UE4 game using `TNameEntryArray` (flat chunked pointer array), not `FNamePool`. All 17 GNames AOB patterns + pointer-scan fallback failed because they only validate against FNamePool structure → GNames=0 → `FindAll` returned false → pipe server never started.
+
+**Fix applied**: Added `ValidateGNamesUE4()` validator for UE4 TNameEntryArray layout (double-deref: array→chunk→entry pointer, tries string offsets 0x10/0x06/0x0C/0x08 for "None" with corroboration). Added dual-mode `FNamePool` with `InitUE4()` for UE4 path. `ValidateGNamesAny()` wrapper tries all three validators in sequence: FNamePool→Structural→UE4. `EnginePointers` extended with `bUE4NameArray` + `ue4StringOffset` flags. `ExportAPI::UE5_Init()` branches on the flag.
+
+**Status**: Fix confirmed working — GNames found via UE4 path, pipe server starts, UI connects. But Object Tree empty (see #8).
+
+#### 8. OctoPath Traveler: Object Tree Empty (Pagination Bug)
+
+**Symptom**: UI connects, GObjects=32758, but Object Tree shows "Objects: 0 (of 0)". Live Walker UWorld fields also empty.
+
+**Root cause**: Pagination bug in `get_object_list` handler. The DLL iterates indices `offset..offset+limit` and silently skips objects with empty names (null objects, unnamed objects). The UI advances pagination by `result.Objects.Count` (number of actually returned items), not by the number of indices scanned. If most objects in a range are unnamed/null, the UI stalls (returns 0 objects → offset never advances → infinite loop, or very slow progress).
+
+**Fix applied**:
+1. DLL: `get_object_list` now returns `"scanned"` field = number of indices actually iterated (`end - offset`)
+2. UI: `ObjectTreeViewModel.LoadAsync()` advances `offset += result.Scanned` instead of `offset += result.Objects.Count`
+3. UI: Break condition changed from `offset >= 2000` to `_allNodes.Count >= 2000` (limit by loaded objects, not scanned indices)
+
+**Status**: Built successfully, **untested** — requires next injection test.
+
+#### 9. FF7 Rebirth: GNames Not Found (Hash-Prefixed FNameEntry)
+
+**Symptom**: All GNames AOB patterns resolve to `0x7FF7D95AA780` which has correct FNamePool structure (FRWLock=0, Blocks[] at +0x10 with valid heap pointers), but `ValidateGNames` fails because entry 0 has header `0x2DC2` at offset +0 which doesn't decode to length 4.
+
+**Root cause**: FF7Re (UE4.26, Square Enix fork) uses a **hash-prefixed FNameEntry** format:
+- Standard UE5: `[2B header][string]` → string at entry+2
+- FF7Re UE4.26: `[4B ComparisonId/hash][2B header][string]` → string at entry+6
+- The near-miss log showed "None" at offset +6 from chunk pointer, with bytes `C2 2D 35 A6 2A 01 4E 6F 6E 65`
+- Header at offset +4: `0x012A`, and `0x012A >> 6 = 4` (length 4, Format A) ✓
+
+**Fix applied**:
+1. `ValidateGNames`: now tries header at both offset +0 (standard) and +4 (hash-prefixed), sets `g_fnameEntryHeaderOffset`
+2. `ValidateGNamesStructural`: same dual-offset check
+3. `LooksLikeNoneEntry`: now checks offsets +2, +4, and +6 for "None" string
+4. `EnginePointers`: added `fnameEntryHeaderOffset` field
+5. `FNamePool::Init()`: accepts `headerOffset` parameter, stores as `s_headerOffset`
+6. `FNamePool::GetString()`: reads header at `entry + s_headerOffset`, string at `entry + s_headerOffset + 2`
+7. All detection functions (`DetectHeaderFormat`, `DetectBlockOffsetBits`, `ValidateChunkForNone`) use `s_headerOffset`
+
+**Status**: Built successfully (0 errors, 0 warnings), **untested** — requires next injection test.
+
 ### Lessons Learned
 
 - `executeCodeEx` internally uses `CreateRemoteThread` — games with thread injection protection will block it silently (returns nil, not an error code)
@@ -174,6 +233,14 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - **Log structure matters for AI analysis**: A single 2MB log with mixed init/runtime traffic wastes context tokens. Splitting by phase (scan vs pipe) + adding category tags + SUMMARY level reduces analysis from reading 2MB to `grep "[SUMMARY]"` → 3 lines. Use `LOG_CAT` file-level `#define` for minimal call-site changes; functions needing subcategories call `Logger::Info("SUBCAT", ...)` directly
 - **Build system**: VS 2026 (v18) at `C:\Program Files\Microsoft Visual Studio\18\Community`. Use a temp `build.bat` that calls `vcvarsall.bat amd64` then cmake, because bash→cmd quoting for paths with spaces is fragile. Delete after build.
 - **AOB patterns are cheap insurance**: Each new pattern potentially covers a specific game/UE version that others miss. 51 patterns + 4 symbol exports from 6 sources (original, patternsleuth, RE-UE4SS, Dumper-7, UE4 Dumper.CT, UEDumper) provide ~90-95% coverage. Keep patterns in a dedicated `Signatures.h` file for easy contribution and maintenance.
+- **`strstr` in validators is dangerous**: It ignores null terminators within the buffer, allowing matches across garbage bytes. Always use `strcmp` with exact length checks in security-critical validation paths.
+- **Version detection needs context**: Bare version patterns like "5.6." can appear in game data (release notes, changelogs, embedded strings). Three-tier approach: (1) exact `++UE5+Release-` prefix, (2) "Release" context, (3) bare pattern with guard against preceding digit/period.
+- **UE4 TNameEntryArray vs UE5 FNamePool**: Completely different data structures. UE4: `Chunks[chunkIdx]` → `FNameEntry*[0x4000]` (double deref, 16384 entries per chunk, string at fixed offset +0x10/+0x06). UE5: packed inline entries with 2-byte header in continuous chunks (single deref, header encodes length). Must detect and branch on mode at init time.
+- **Unified validation helper**: `ValidateGNamesAny()` wraps FNamePool→Structural→UE4 validators. Single call site makes code DRYer and ensures new validators are automatically tried for all patterns.
+- **Game naming convention**: FF7Re = Final Fantasy VII Rebirth, FF7R = Final Fantasy VII Remake Intergrade. Both are UE4 forks despite different version numbers.
+- **Hash-prefixed FNameEntry (UE4.26)**: Some UE4 builds (notably Square Enix's UE4.26 fork used in FF7Re) prepend a 4-byte ComparisonId/hash to each FNameEntry before the standard 2-byte header. Layout: `[4B hash][2B header][string]` vs standard `[2B header][string]`. Validators must try header at both offset 0 and offset 4. The diagnostic clue: near-miss log showing "None" at offset 6 from the chunk pointer, with bytes before it being non-ASCII garbage.
+- **Pagination: advance by scanned, not returned**: When the DLL skips unnamed/null objects in paginated results, the UI must advance by the number of indices scanned (`scanned` field), not by the number of objects returned (`objects.count`). Otherwise pagination stalls or loops infinitely when many objects have empty names.
+- **RE-UE4SS CustomGameConfigs**: RE-UE4SS maintains per-game configs (`UE4SS-settings.ini` + `MemberVariableLayout.ini`) with engine version overrides and exact struct offsets. These are invaluable reference data for verifying our auto-detection. Located at `D:\Github\RE-UE4SS\assets\CustomGameConfigs\<GameName>\`.
 
 ### Recommended Test Games
 
@@ -181,22 +248,26 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 |------|-----------|-------|
 | EverSpace 2 | UE5.1-5.3 (est.) | Ships with `.pdb` — ideal for validating scanner against known symbols |
 | Titan Quest II | UE5.7 (PE reports) | Primary test target for CasePreservingName + dynamic offset detection |
+| OctoPath Traveler | UE4 | UE4 TNameEntryArray test target — pipe connection failed pre-fix |
+| Final Fantasy VII Rebirth (FF7Re) | UE4 fork | Garbled names + wrong version pre-fix — tests version detection + GNames validation hardening |
 
 ### Next Steps
 
-1. **Test dynamic offset detection** on TQ2 — inject DLL, check `UE5Dumper-scan-0.log` for `[SUMMARY]` lines and `[DYNO]` category entries, verify via `get_offsets` pipe command
-2. Verify Live Walker field names are correct (not "rty") and offsets are non-zero
-3. Verify Instance Finder can locate `bp_tq2_character_stats_component_C` via top-down GWorld navigation
-4. **Test pointer-scan fallback for GNames** on EverSpace 2 (use `.pdb` to verify address)
-5. Once both GNames + DynOff confirmed working → begin Avalonia UI (`Phase 3` in plan)
-6. ~~Consider adding more GNames AOB patterns specific to UE5.5+ codegen patterns~~ → Done: consolidated 51 patterns from 6 sources into `Signatures.h`
+1. **Test FF7Re** — verify hash-prefixed FNameEntry detection works: GNames found, names resolve correctly, pipe server starts, UI connects
+2. **Test OctoPath Traveler** — verify pagination fix: Object Tree populates, field names visible in Live Walker
+3. **Test no regression** on TQ2 (UE5.7) — verify GNames still found, names correct, DynOff detection works
+4. **Test dynamic offset detection** on TQ2 — check `[SUMMARY]` + `[DYNO]` entries in scan log, verify via `get_offsets` pipe command
+5. Verify Live Walker field names correct (not "rty") and offsets non-zero on TQ2
+6. **Test pointer-scan fallback for GNames** on EverSpace 2 (use `.pdb` to verify address)
+7. Once UE4 + DynOff confirmed working → continue Avalonia UI development
+8. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources in `Signatures.h`
 
 -----
 
 ## Project Goal
 
-Develop a **C++ DLL + Cheat Engine Lua Bridge** Unreal Engine 5 Dumper.
-Target: Support all UE5 versions (5.0 ~ 5.4+), find global pointers (GObjects / GNames / GWorld), build complete object/struct hierarchy, integrate with CE.
+Develop a **C++ DLL + Cheat Engine Lua Bridge** Unreal Engine Dumper.
+Target: Support UE4 (4.22+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects / GNames / GWorld), build complete object/struct hierarchy, integrate with CE. Despite the "UE5" name, UE4 games are a priority target — many popular games use UE4, and RE-UE4SS demonstrates broad UE4 support is achievable.
 
 -----
 

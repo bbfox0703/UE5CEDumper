@@ -83,6 +83,7 @@ public sealed class DumpService : IDumpService
         var result = new ObjectListResult
         {
             Total = res["total"]?.GetValue<int>() ?? 0,
+            Scanned = res["scanned"]?.GetValue<int>() ?? limit, // Fallback to limit for backward compat
         };
 
         if (res["objects"] is JsonArray arr)

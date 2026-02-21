@@ -10,9 +10,12 @@ namespace OffsetFinder {
 
 struct EnginePointers {
     uintptr_t GObjects  = 0;   // FUObjectArray*
-    uintptr_t GNames    = 0;   // FNamePool*
+    uintptr_t GNames    = 0;   // FNamePool* or TNameEntryArray*
     uintptr_t GWorld    = 0;   // UWorld**
-    uint32_t  UEVersion = 0;   // e.g. 500, 501, 503, 504
+    uint32_t  UEVersion = 0;   // e.g. 500, 501, 503, 504, 427, 422
+    bool      bUE4NameArray = false;   // true = TNameEntryArray (UE4 <4.23), false = FNamePool
+    int       ue4StringOffset = 0x10;  // FNameEntry string offset for UE4 mode
+    int       fnameEntryHeaderOffset = 0; // Offset to 2-byte header within FNameEntry (0=standard, 4=hash-prefixed UE4.26)
 };
 
 // Scan and cache all global pointers
