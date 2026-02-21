@@ -1,6 +1,28 @@
 cmake_minimum_required(VERSION 3.25)
 
 # ============================================================
+# Product version (major.minor.patch) — shared with UI project
+# ============================================================
+set(VER_MAJOR 1)
+set(VER_MINOR 0)
+set(VER_PATCH 0)
+
+# ============================================================
+# Auto-increment build number (4th digit) — persisted in file
+# Incremented on every cmake configure (i.e. every build)
+# ============================================================
+set(BUILD_NUMBER_FILE "${CMAKE_SOURCE_DIR}/build_number.txt")
+if(EXISTS "${BUILD_NUMBER_FILE}")
+    file(READ "${BUILD_NUMBER_FILE}" VER_BUILD)
+    string(STRIP "${VER_BUILD}" VER_BUILD)
+else()
+    set(VER_BUILD 0)
+endif()
+math(EXPR VER_BUILD "${VER_BUILD} + 1")
+file(WRITE "${BUILD_NUMBER_FILE}" "${VER_BUILD}\n")
+message(STATUS "Version: ${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}.${VER_BUILD}")
+
+# ============================================================
 # Git commit hash extraction — embedded into DLL at build time
 # ============================================================
 execute_process(

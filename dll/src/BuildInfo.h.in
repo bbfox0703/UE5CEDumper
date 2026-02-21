@@ -5,11 +5,20 @@
 // DO NOT EDIT — regenerated on every cmake configure
 // ============================================================
 
+// Product version (synced with UI project)
+#define VER_MAJOR  @VER_MAJOR@
+#define VER_MINOR  @VER_MINOR@
+#define VER_PATCH  @VER_PATCH@
+#define VER_BUILD  @VER_BUILD@
+
 #define BUILD_GIT_HASH     "@GIT_COMMIT_HASH@"
 #define BUILD_GIT_SHORT    "@GIT_COMMIT_SHORT@"
 #define BUILD_GIT_DIRTY    @GIT_IS_DIRTY@
 #define BUILD_TIMESTAMP    "@BUILD_TIMESTAMP@"
 #define BUILD_CONFIG       "@CMAKE_BUILD_TYPE@"
 
-// Combined build string for logging: "abc1234 (Release, 2026-02-19T15:30:00)"
-#define BUILD_VERSION_STRING  BUILD_GIT_SHORT " (" BUILD_CONFIG ", " BUILD_TIMESTAMP ")"
+// Combined build string for logging: "1.0.0.42 abc1234 (Release, 2026-02-19T15:30:00)"
+#define BUILD_VERSION_STRING  "@VER_MAJOR@.@VER_MINOR@.@VER_PATCH@.@VER_BUILD@ " BUILD_GIT_SHORT " (" BUILD_CONFIG ", " BUILD_TIMESTAMP ")"
+
+// Version string for PE VERSIONINFO: "1.0.0.42"
+#define BUILD_FILE_VERSION_STRING  "@VER_MAJOR@.@VER_MINOR@.@VER_PATCH@.@VER_BUILD@"

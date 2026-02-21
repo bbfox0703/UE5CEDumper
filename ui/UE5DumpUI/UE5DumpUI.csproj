@@ -15,6 +15,25 @@
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <ApplicationIcon>Assets\Mainicon.ico</ApplicationIcon>
+
+    <!-- ============================================================ -->
+    <!-- Version: major.minor.patch synced with DLL (CMakeLists.txt)  -->
+    <!-- Build number (4th digit) read from shared build_number.txt   -->
+    <!-- ============================================================ -->
+    <VerMajor>1</VerMajor>
+    <VerMinor>0</VerMinor>
+    <VerPatch>0</VerPatch>
+    <BuildNumberFile>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\build_number.txt'))</BuildNumberFile>
+    <VerBuild Condition="Exists('$(BuildNumberFile)')">$([System.IO.File]::ReadAllText('$(BuildNumberFile)').Trim())</VerBuild>
+    <VerBuild Condition="'$(VerBuild)' == ''">0</VerBuild>
+
+    <Version>$(VerMajor).$(VerMinor).$(VerPatch).$(VerBuild)</Version>
+    <AssemblyVersion>$(VerMajor).$(VerMinor).$(VerPatch).$(VerBuild)</AssemblyVersion>
+    <FileVersion>$(VerMajor).$(VerMinor).$(VerPatch).$(VerBuild)</FileVersion>
+    <InformationalVersion>$(VerMajor).$(VerMinor).$(VerPatch).$(VerBuild)</InformationalVersion>
+    <Product>UE5CEDumper</Product>
+    <Company>UE5CEDumper</Company>
+    <Description>UE5 Object Dumper UI</Description>
   </PropertyGroup>
 
   <ItemGroup>
