@@ -1,16 +1,10 @@
 // ============================================================
 // version.rc — PE VERSIONINFO resource for UE5Dumper.dll
-// Git commit hash is embedded via BuildInfo.h (CMake-generated)
+// VER_MAJOR/MINOR/PATCH/BUILD come from BuildInfo.h (CMake-generated)
 // ============================================================
 
 #include <winresrc.h>
 #include "BuildInfo.h"
-
-// Version numbers: 1.0.0.0 (major.minor.patch.build)
-#define VER_MAJOR 1
-#define VER_MINOR 0
-#define VER_PATCH 0
-#define VER_BUILD 0
 
 VS_VERSION_INFO VERSIONINFO
     FILEVERSION    VER_MAJOR, VER_MINOR, VER_PATCH, VER_BUILD
@@ -31,11 +25,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "UE5CEDumper"
             VALUE "FileDescription",  "UE5 Object Dumper DLL"
-            VALUE "FileVersion",      BUILD_VERSION_STRING
+            VALUE "FileVersion",      BUILD_FILE_VERSION_STRING
             VALUE "InternalName",     "UE5Dumper"
             VALUE "OriginalFilename", "UE5Dumper.dll"
             VALUE "ProductName",      "UE5CEDumper"
-            VALUE "ProductVersion",   BUILD_VERSION_STRING
+            VALUE "ProductVersion",   BUILD_FILE_VERSION_STRING
             VALUE "GitCommit",        BUILD_GIT_HASH
             VALUE "GitShort",         BUILD_GIT_SHORT
             VALUE "BuildTimestamp",   BUILD_TIMESTAMP
