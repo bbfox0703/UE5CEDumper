@@ -5,7 +5,10 @@ A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for run
 > **Status**: DLL core functional and tested on TQ2 (UE 5.7). Dynamic offset detection (CasePreservingName) built and compiled; awaiting next injection test. Avalonia UI scaffold complete; pipe integration in progress.
 
 ---
-
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+[![C++](https://img.shields.io/badge/C++-23)](https://isocpp.org/std/the-standard#:~:text=The%20current%20ISO%20C++%20standard%20is%20C++23%2C,Standard%20ISO/IEC%2014882:2024(E)%20%E2%80%93%20Programming%20Language%20C++.)
+[![Avalonia](https://img.shields.io/badge/Avalonia-UI-8B5CF6)](https://avaloniaui.net/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 ## Features
 
 | Feature | Status |
