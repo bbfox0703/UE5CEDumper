@@ -1,8 +1,8 @@
 # UE5CEDumper
 
-一套針對 Unreal Engine 5 遊戲的**執行期結構探查工具**，由 C++ 注入式 DLL、Cheat Engine Lua Bridge 及 Avalonia UI 三個元件組成。透過 AOB 掃描定位引擎全域指標（GObjects / GNames / GWorld），遍歷 UObject 層次結構，並透過 Named Pipe 將即時資料串流至外部 GUI。
+一套針對 Unreal Engine 4 & 5 遊戲的**執行期結構探查工具**，由 C++ 注入式 DLL、Cheat Engine Lua Bridge 及 Avalonia UI 三個元件組成。透過 AOB 掃描定位引擎全域指標（GObjects / GNames / GWorld），遍歷 UObject 層次結構，並透過 Named Pipe 將即時資料串流至外部 GUI。
 
-> **現況**：DLL 核心已通過 TQ2（UE 5.7）測試。動態 Offset 偵測（CasePreservingName）已編譯完成，待下次注入測試驗證。Avalonia UI 骨架已完成，Pipe 整合進行中。
+> **現況**：DLL 核心功能完成。已在 **11 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、OctoPath Traveler、DQ I&II HD-2D、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
 
 ---
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
@@ -13,20 +13,22 @@
 
 | 功能 | 狀態 |
 |---|---|
-| GObjects AOB 掃描（27 組 Pattern，6 個來源，UE5.0–5.7） | ✅ |
-| GNames AOB 掃描（17 組 Pattern）＋ `.data` 指標掃描 Fallback | ⚠️ Fallback 未測試 |
+| GObjects AOB 掃描（51 組 Pattern，6 個來源，UE4.18–5.7） | ✅ |
+| GNames AOB 掃描（17 組 Pattern）＋ `.data` 指標掃描 Fallback | ✅ |
 | GWorld AOB 掃描（7 組 Pattern） | ✅ |
 | UE 版本偵測（PE VERSIONINFO ＋ 記憶體字串掃描） | ✅ |
-| FChunkedFixedUObjectArray — ForEach / GetByIndex | ✅ |
-| FNamePool 多格式讀取（格式 A/B、Chunk 索引） | ✅ |
-| 動態 FField/FProperty/UStruct Offset 偵測（DynOff） | ⚠️ 已編譯，未測試 |
-| CasePreservingName 偵測（UE5.5+，FName = 16 bytes） | ⚠️ 已編譯，未測試 |
+| FChunkedFixedUObjectArray ＋ FFixedUObjectArray（平坦陣列）自動偵測 | ✅ |
+| FUObjectItem Stride 自動偵測（16/24/20 bytes） | ✅ |
+| FNamePool 多格式讀取：標準、Hash 前綴、UE4 TNameEntryArray | ✅ |
+| 動態 FField/FProperty/UStruct Offset 偵測（DynOff） | ✅ |
+| CasePreservingName 偵測（UE5.5+，FName = 16 bytes） | ✅ |
+| FProperty 至 UProperty 回退（UE4 <4.25） | ✅ |
 | Live Data Walker — walk_class / walk_instance / walk_world | ✅ |
 | Instance Finder — 依 Class 名稱搜尋所有實例 | ✅ |
 | CE XML 匯出 — get_ce_pointer_info | ✅ |
 | Named Pipe IPC 伺服器（JSON 換行分隔） | ✅ |
 | CE Plugin 模式（Type 5 主選單入口） | ✅ |
-| Avalonia UI（深色主題，i18n：zh-TW / en / ja） | 🔲 骨架完成 |
+| Avalonia UI（Object Tree、Live Walker、Instance Finder、Class Structure） | ✅ |
 | Git Commit Hash ＋ 建置時間戳嵌入 DLL | ✅ |
 
 ---
@@ -35,7 +37,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  遊戲程序（x64，UE5）                               │
+│  遊戲程序（x64，UE4/UE5）                            │
 │                                                      │
 │  CE Lua  (UE5CEDumper.CT / ue5dump.lua)              │
 │      │  injectDLL()                                  │
@@ -44,8 +46,8 @@
 │      ├── ExportAPI       ← C ABI，供 CE Lua 呼叫     │
 │      ├── PipeServer      ← Named Pipe IPC 伺服器     │
 │      ├── OffsetFinder    ← AOB 掃描 + DynOff 偵測    │
-│      ├── ObjectArray     ← FChunkedFixedUObjectArray  │
-│      ├── FNamePool       ← UE5 FNamePool 讀取器      │
+│      ├── ObjectArray     ← FChunkedFixed + FFixed 自動 │
+│      ├── FNamePool       ← UE4/UE5 FNamePool 讀取器  │
 │      ├── UStructWalker   ← FField 鏈遍歷              │
 │      ├── CEPlugin        ← CE Plugin Type 5 入口      │
 │      ├── Logger          ← 檔案日誌，5 版輪轉，5MB 上限│
@@ -85,7 +87,7 @@ UE5CEDumper/
 │       ├── PipeServer.cpp/.h   ← Named Pipe 伺服器 + JSON 分派
 │       ├── PipeProtocol.h      ← IPC 命令/回應定義
 │       ├── OffsetFinder.cpp/.h ← GObjects/GNames 掃描 + ValidateAndFixOffsets
-│       ├── ObjectArray.cpp/.h  ← FChunkedFixedUObjectArray
+│       ├── ObjectArray.cpp/.h  ← FChunkedFixed + FFixed（平坦）自動偵測
 │       ├── FNamePool.cpp/.h    ← FNamePool Chunk 讀取器
 │       ├── UStructWalker.cpp/.h← FField 鏈 + SuperStruct 繼承鏈遍歷
 │       ├── CEPlugin.cpp        ← CE Plugin Type 5 主選單
@@ -136,7 +138,7 @@ UE5CEDumper/
 
 - Windows 10/11 x64
 - Cheat Engine 7.5+
-- 已執行的 Unreal Engine 5 遊戲程序（x64）
+- 已執行的 Unreal Engine 4 或 5 遊戲程序（x64）
 
 ---
 
@@ -240,19 +242,21 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 
 ## UE 版本支援情況
 
-| UE 版本 | GObjects | GNames | DynOff |
-|---|---|---|---|
-| 5.0–5.2 | ✅ | ✅ | 不需要 |
-| 5.3–5.4 | ✅ | ✅ | 不需要 |
-| 5.5–5.7 | ✅ | ⚠️ 依賴 Fallback | ⚠️ 已編譯，未測試 |
+| UE 版本 | GObjects | GNames | DynOff | 已測試遊戲 |
+|---|---|---|---|---|
+| 4.18 | ✅ | ✅ | ✅（UProperty 回退） | FF7 Remake Intergrade |
+| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi、IDOLM@STER、OctoPath Traveler |
+| 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth、Tower of Mask、Hogwarts Legacy、Romancing SaGa 2 |
+| 5.0–5.2 | ✅ | ✅ | ✅ | DQ I&II HD-2D Remake |
+| 5.3–5.4 | ✅ | ✅ | ✅ | — |
+| 5.5–5.7 | ✅ | ✅（指標掃描） | ✅（CPN） | Titan Quest II、EverSpace 2 |
 
 ---
 
 ## 已知問題
 
-- **TQ2（UE 5.7）上 GNames Pattern 失敗** — 部分 LEA-based Pattern 在某些 UE5.7 建置上解析到錯誤的全域變數。目前已有 17 組 Pattern 可用；另已實作 `.data` 區段指標掃描 Fallback（`FindGNamesByPointerScan`），但尚未測試。
-- **DynOff / CasePreservingName** — 已完成編譯，需在 TQ2 上進行注入測試驗證。
-- **Avalonia UI** — 骨架已完成；端對端 Pipe 整合待 DynOff 驗證完成後推進。
+- **UI「Start from GWorld」功能異常** — 部分 UE4 遊戲可找到 GWorld，但 UI 按鈕無法填充 Live Walker。調查中。
+- **FF7 Rebirth CE 位址查詢** — `get_ce_pointer_info` 的位址對物件查詢在 FF7 Rebirth 上失敗，其他遊戲正常。
 
 ---
 

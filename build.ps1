@@ -500,7 +500,7 @@ if ($Target -in "All", "Test") {
 # Copy CE Lua scripts
 # ============================================================
 
-if ($Target -eq "All") {
+if ($Target -in "All", "DLL") {
     Write-Step "Copying CT table to dist\..."
     # CT goes in the same folder as DLL + EXE so it can auto-detect the DLL path
     $src = Join-Path $ROOT_DIR "scripts\UE5CEDumper.CT"
