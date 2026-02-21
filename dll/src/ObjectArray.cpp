@@ -215,7 +215,11 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
                             int& bestBad, bool& bestHasNames) {
     int bestScore = INT_MIN;
 
-    for (int i = 0; i < numCandidates; ++i) {
+    // Store results for all candidates (for fallback logic)
+    struct ProbeResult { int stride, good, named, null_, bad, score; };
+    ProbeResult results[5] = {};  // max 5 candidates
+
+    for (int i = 0; i < numCandidates && i < 5; ++i) {
         int stride = candidates[i];
         int good, named, null_, bad;
         ProbeStride(base, stride, maxItems, good, named, null_, bad);
@@ -224,6 +228,7 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
                  phase, stride, good, named, null_, bad);
 
         int score = ComputeStrideScore(named, good, bad);
+        results[i] = { stride, good, named, null_, bad, score };
 
         if (score > bestScore) {
             bestScore = score;
@@ -232,6 +237,33 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
             bestNamed = named;
             bestBad = bad;
             bestHasNames = (named > 0);
+        }
+    }
+
+    // Fallback: when best score is negative (all strides have bad > named),
+    // the primary scoring is unreliable due to LCM alignment false positives.
+    // In this case, among strides that have named > 0, prefer the one with
+    // fewest bad items — the correct stride reads aligned data and produces
+    // fewer garbage reads even when the chunk table is non-standard.
+    if (bestScore < 0) {
+        int fallbackBad = INT_MAX;
+        int fallbackStride = -1;
+        int fallbackIdx = -1;
+        for (int i = 0; i < numCandidates && i < 5; ++i) {
+            if (results[i].named > 0 && results[i].bad < fallbackBad) {
+                fallbackBad = results[i].bad;
+                fallbackStride = results[i].stride;
+                fallbackIdx = i;
+            }
+        }
+        if (fallbackIdx >= 0 && fallbackStride != bestStride) {
+            LOG_INFO("ObjectArray: %s fallback: all scores negative, selecting stride %d (fewest bad=%d) over stride %d (bad=%d)",
+                     phase, fallbackStride, fallbackBad, bestStride, bestBad);
+            bestStride = results[fallbackIdx].stride;
+            bestCount = results[fallbackIdx].good;
+            bestNamed = results[fallbackIdx].named;
+            bestBad = results[fallbackIdx].bad;
+            bestHasNames = (results[fallbackIdx].named > 0);
         }
     }
 }
@@ -273,9 +305,57 @@ static void DetectItemSize() {
     int bestBad = INT_MAX;
     bool bestHasNames = false;
 
+    constexpr int MAX_ITEMS_PHASE1 = 200;
+
+    // --- Pre-check: detect flat (non-chunked) FFixedUObjectArray (UE4.11-4.20) ---
+    // In a chunked array, each entry in the chunk table is an 8-byte pointer.
+    // If we need 2+ chunks but chunk[1] (at chunkTable+8) is NOT a valid heap pointer,
+    // then chunkTable is likely the flat item array itself (FUObjectItem*), not a
+    // chunk pointer table (FUObjectItem**).
+    //
+    // UE4.18 (e.g. FF7R) uses FFixedUObjectArray = { FUObjectItem* Objects, int32 Max, int32 Num }
+    // where Objects points directly to items. Our Layout B reads Objects at GObjects+0x10,
+    // so chunkTable = Objects = flat item array. Reading *(chunkTable) gives Item[0].Object
+    // which is a UObject*, not a chunk pointer. chunk[1] = *(chunkTable+8) reads Item[0].Flags
+    // (e.g. 0x40000000 = EObjectFlags), which fails LooksLikeHeapPtr.
+    {
+        uintptr_t chunk1 = 0;
+        Mem::ReadSafe(chunkTable + sizeof(uintptr_t), chunk1);
+        int32_t numElements = GetCount();
+        bool mightBeFlat = false;
+
+        if (chunk0 && numElements > 0) {
+            int chunksNeeded = (numElements + Constants::OBJECTS_PER_CHUNK - 1) / Constants::OBJECTS_PER_CHUNK;
+            if (chunksNeeded >= 2 && !LooksLikeHeapPtr(chunk1)) {
+                // Need 2+ chunks but chunk[1] is not a pointer → likely flat array
+                mightBeFlat = true;
+                LOG_INFO("ObjectArray: chunk[1]=0x%llX is not a heap pointer (need %d chunks for %d objects) — testing flat layout first",
+                         (unsigned long long)chunk1, chunksNeeded, numElements);
+            }
+        }
+
+        if (mightBeFlat) {
+            // Try flat layout first: probe chunkTable itself as item base (no deref)
+            s_isFlat = true;
+            ProbeAllStrides(chunkTable, MAX_ITEMS_PHASE1, "P0-flat",
+                            candidates, NUM_CANDIDATES,
+                            bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+
+            if (bestHasNames && bestNamed >= 2) {
+                LOG_INFO("ObjectArray: Flat (non-chunked) array confirmed (P0-flat: %d named, %d bad)",
+                         bestNamed, bestBad);
+                goto accept_size;
+            }
+            // Flat didn't work convincingly — reset and try chunked
+            LOG_INFO("ObjectArray: Flat probe inconclusive (named=%d), falling back to chunked detection",
+                     bestNamed);
+            s_isFlat = false;
+            bestStride = 0; bestCount = 0; bestNamed = 0; bestBad = INT_MAX; bestHasNames = false;
+        }
+    }
+
     // Phase 1: scan first 200 items of chunk[0] (standard chunked layout)
     // Use 200 items (not 100) to give sparse UE4 arrays enough items for correct stride detection.
-    constexpr int MAX_ITEMS_PHASE1 = 200;
     ProbeAllStrides(chunk0, MAX_ITEMS_PHASE1, "P1",
                     candidates, NUM_CANDIDATES,
                     bestStride, bestCount, bestNamed, bestBad, bestHasNames);
@@ -316,6 +396,7 @@ static void DetectItemSize() {
         }
     }
 
+accept_size:
     // Determine minimum threshold for acceptance
     int threshold = bestHasNames ? 2 : 3;
     int bestTotal = bestHasNames ? bestNamed : bestCount;
