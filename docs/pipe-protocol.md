@@ -55,6 +55,9 @@ Pipe 名稱：`\\.\pipe\UE5DumpBfx`
 
 // 取得 CE pointer info（XML 格式，用於 Cheat Engine 匯入）
 { "id": 15, "cmd": "get_ce_pointer_info", "addr": "0x7FF123456789", "class_addr": "0x7FF..." }
+
+// 反向位址查詢：給定任意位址，找到對應的 UObject instance
+{ "id": 16, "cmd": "find_by_address", "addr": "0x7FF123456789" }
 ```
 
 -----
@@ -117,6 +120,25 @@ Pipe 名稱：`\\.\pipe\UE5DumpBfx`
     "case_preserving_name": true, "offsets_validated": true
   }
 }
+
+// find_by_address 回應（精確匹配）
+{
+  "id": 16, "ok": true, "found": true, "match_type": "exact",
+  "addr": "0x7FF123456789", "index": 12345, "name": "BP_Player_C_0",
+  "class": "BP_Player_C", "outer": "0x...", "offset_from_base": 0,
+  "query_addr": "0x7FF123456789"
+}
+
+// find_by_address 回應（包含匹配：位址在某 UObject 內部）
+{
+  "id": 16, "ok": true, "found": true, "match_type": "contains",
+  "addr": "0x7FF123456000", "index": 12340, "name": "BP_Player_C_0",
+  "class": "BP_Player_C", "outer": "0x...", "offset_from_base": 1929,
+  "query_addr": "0x7FF123456789"
+}
+
+// find_by_address 回應（未找到）
+{ "id": 16, "ok": true, "found": false }
 
 // Watch 主動推送 Event（無 id）
 { "event": "watch", "addr": "0x7FF...", "bytes": "0000803F", "timestamp": 1234567890 }

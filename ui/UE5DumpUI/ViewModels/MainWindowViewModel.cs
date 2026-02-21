@@ -1,3 +1,4 @@
+using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -108,13 +109,29 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         try
         {
+            ClearError();
             await _pipeClient.DisconnectAsync();
+            StatusText = "Disconnected";
+            IsConnected = false;
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during disconnect
             StatusText = "Disconnected";
             IsConnected = false;
         }
         catch (Exception ex)
         {
-            SetError(ex);
+            // Suppress pipe-related errors during disconnect
+            if (ex is IOException or ObjectDisposedException)
+            {
+                StatusText = "Disconnected";
+                IsConnected = false;
+            }
+            else
+            {
+                SetError(ex);
+            }
         }
     }
 }

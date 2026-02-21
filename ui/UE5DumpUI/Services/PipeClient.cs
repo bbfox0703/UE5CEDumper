@@ -103,7 +103,21 @@ public sealed class PipeClient : IPipeClient
         var json = request.ToJsonString();
         _log.Debug($"Pipe TX: {json}");
 
-        await _writer.WriteLineAsync(json);
+        try
+        {
+            await _writer.WriteLineAsync(json);
+        }
+        catch (IOException) when (!IsConnected || _cts.IsCancellationRequested)
+        {
+            // Pipe closed during write (disconnect in progress) — cancel this request
+            _pending.TryRemove(id, out _);
+            throw new OperationCanceledException("Pipe disconnected during send");
+        }
+        catch (ObjectDisposedException) when (!IsConnected || _cts.IsCancellationRequested)
+        {
+            _pending.TryRemove(id, out _);
+            throw new OperationCanceledException("Pipe disconnected during send");
+        }
 
         return await tcs.Task;
     }
@@ -150,6 +164,8 @@ public sealed class PipeClient : IPipeClient
             }
         }
         catch (OperationCanceledException) { /* normal shutdown */ }
+        catch (IOException) { /* expected when pipe closes during cancellation */ }
+        catch (ObjectDisposedException) { /* expected when pipe disposed during read */ }
         catch (Exception ex)
         {
             _log.Error("Pipe: ReadLoop error", ex);
