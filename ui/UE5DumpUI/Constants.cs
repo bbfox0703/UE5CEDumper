@@ -20,6 +20,10 @@ public static class Constants
     public const int LogMaxFiles = 5;
     public const long LogMaxSizeBytes = 5 * 1024 * 1024; // 5MB
 
+    // Per-process mirror logging
+    public const int MirrorLogMaxFiles = 2;           // 2-version rotation per process
+    public const int MaxProcessFolders = 20;           // Clean up oldest beyond this
+
     // Pipe Communication
     public const int PipeConnectTimeoutMs = 5000;
     public const int DefaultPageSize = 200;

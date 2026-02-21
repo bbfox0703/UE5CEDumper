@@ -1897,6 +1897,18 @@ bool FindAll(EnginePointers& out) {
     out.ue4StringOffset = g_ue4NameStringOffset;
     out.fnameEntryHeaderOffset = g_fnameEntryHeaderOffset;
 
+    // --- Version inference from detection flags ---
+    // If we detected UE4-specific structures but version says UE5, override.
+    if (out.bUE4NameArray && out.UEVersion >= 500) {
+        LOG_WARN("FindAll: UE4 TNameEntryArray detected but version=%u (>= 500). "
+                 "Overriding to 422 (UE4 pre-4.23)", out.UEVersion);
+        out.UEVersion = 422;
+    } else if (out.fnameEntryHeaderOffset == 4 && out.UEVersion >= 500) {
+        LOG_WARN("FindAll: Hash-prefixed FNameEntry (hdrOff=4) suggests UE4.26 fork, "
+                 "but version=%u. Overriding to 426", out.UEVersion);
+        out.UEVersion = 426;
+    }
+
     out.GWorld = FindGWorld();
     // GWorld is non-critical, just log
 

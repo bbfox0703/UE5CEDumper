@@ -58,10 +58,23 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         {
             // Log which process loaded this DLL — distinguishes CE plugin
             // host (ce.exe) from game process injection in the log file.
-            char procName[MAX_PATH] = {};
-            GetModuleFileNameA(nullptr, procName, MAX_PATH);
+            wchar_t procPathW[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, procPathW, MAX_PATH);
+
+            // Extract filename from path for log + mirror
+            std::wstring fullPath(procPathW);
+            auto lastSlash = fullPath.find_last_of(L"\\/");
+            std::wstring fileName = (lastSlash != std::wstring::npos)
+                ? fullPath.substr(lastSlash + 1) : fullPath;
+
+            // Narrow for log message
+            char procNameA[MAX_PATH] = {};
+            GetModuleFileNameA(nullptr, procNameA, MAX_PATH);
             LOG_INFO("UE5Dumper DLL loaded | build: %s | process: %s [PID=%lu]",
-                     BUILD_VERSION_STRING, procName, GetCurrentProcessId());
+                     BUILD_VERSION_STRING, procNameA, GetCurrentProcessId());
+
+            // Initialize per-process mirror log subfolder
+            Logger::InitProcessMirror(fileName);
         }
         // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
         // is set true by CEPlugin_InitializePlugin within 1 second.

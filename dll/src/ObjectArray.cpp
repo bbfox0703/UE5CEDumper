@@ -10,6 +10,7 @@
 #include "FNamePool.h"
 
 #include <cctype>
+#include <climits>
 #include <vector>
 
 namespace ObjectArray {
@@ -25,39 +26,369 @@ struct ArrayLayout {
 
 static uintptr_t  s_arrayAddr = 0;
 static ArrayLayout s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C }; // Default layout
+static int         s_itemSize = 16;  // FUObjectItem stride (auto-detected: 16 or 24)
+static bool        s_isFlat   = false; // true = non-chunked flat array (some UE4 builds)
+
+// Helper: check if a pointer value looks like a valid heap pointer (not code/null/low)
+static bool LooksLikeHeapPtr(uintptr_t ptr) {
+    if (!ptr || ptr < 0x10000) return false;
+    // Must be in user-mode address range (below kernel boundary)
+    if (ptr > 0x00007FFFFFFFFFFF) return false;
+    // Reject pointers in the game module's code range (likely .text section)
+    uintptr_t modBase = Mem::GetModuleBase(nullptr);
+    uintptr_t modSize = Mem::GetModuleSize(nullptr);
+    if (modBase && modSize && ptr >= modBase && ptr < modBase + modSize) return false;
+    return true;
+}
 
 static bool DetectLayout(uintptr_t addr) {
-    // Default layout: Objects at 0x00, then PreAllocatedObjects, then MaxElements, NumElements
-    int32_t numAtDefault = 0;
-    int32_t maxAtDefault = 0;
-    Mem::ReadSafe(addr + 0x14, numAtDefault);
-    Mem::ReadSafe(addr + 0x10, maxAtDefault);
-
-    if (numAtDefault > 0 && numAtDefault <= maxAtDefault && maxAtDefault <= 0x800000) {
-        s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C };
-        LOG_INFO("ObjectArray: Default layout detected (Num=%d, Max=%d)", numAtDefault, maxAtDefault);
-        return true;
+    // Diagnostic: dump first 48 bytes at the GObjects address
+    {
+        uint64_t dump[6] = {};
+        Mem::ReadBytesSafe(addr, dump, sizeof(dump));
+        LOG_DEBUG("ObjectArray: GObjects@0x%llX: +00:%016llX +08:%016llX +10:%016llX +18:%016llX +20:%016llX +28:%016llX",
+                  (unsigned long long)addr,
+                  dump[0], dump[1], dump[2], dump[3], dump[4], dump[5]);
     }
 
-    // Alternate layout (some games): Objects at 0x10, NumElements at 0x04
-    int32_t numAtAlt = 0;
-    Mem::ReadSafe(addr + 0x04, numAtAlt);
+    // Layout A (UE5 default): Objects* at +0x00, PreAllocated* at +0x08, Max at +0x10, Num at +0x14
+    {
+        int32_t num = 0, max = 0;
+        Mem::ReadSafe(addr + 0x14, num);
+        Mem::ReadSafe(addr + 0x10, max);
+        if (num > 0 && num <= max && max <= 0x800000) {
+            uintptr_t objPtr = 0;
+            Mem::ReadSafe(addr + 0x00, objPtr);
+            if (LooksLikeHeapPtr(objPtr)) {
+                s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C };
+                LOG_INFO("ObjectArray: Layout A (default) detected (Num=%d, Max=%d, Objects=0x%llX)",
+                         num, max, (unsigned long long)objPtr);
+                return true;
+            }
+        }
+    }
 
-    if (numAtAlt > 0 && numAtAlt <= 0x800000) {
-        s_layout = { 0x10, 0x08, 0x04, 0x0C, -1 };
-        LOG_INFO("ObjectArray: Alternate layout detected (Num=%d)", numAtAlt);
-        return true;
+    // Layout B: Objects* at +0x10, Num at +0x04 (some UE4 alternate layout)
+    // Validate that Objects pointer is a heap address, not code
+    {
+        int32_t num = 0;
+        Mem::ReadSafe(addr + 0x04, num);
+        if (num > 0 && num <= 0x800000) {
+            uintptr_t objPtr = 0;
+            Mem::ReadSafe(addr + 0x10, objPtr);
+            if (LooksLikeHeapPtr(objPtr)) {
+                s_layout = { 0x10, 0x08, 0x04, 0x0C, -1 };
+                LOG_INFO("ObjectArray: Layout B (alt) detected (Num=%d, Objects=0x%llX)",
+                         num, (unsigned long long)objPtr);
+                return true;
+            }
+        }
+    }
+
+    // Layout C (UE4 relaxed): Objects* at +0x00, Num at +0x14, but Max at +0x10 is garbage
+    // This happens in older UE4 where +0x08 is PreAllocatedObjects (pointer, not count),
+    // making +0x10 contain a pointer value that looks like a huge "Max".
+    // We validate Objects at +0x00 is a heap pointer and Num is reasonable.
+    {
+        int32_t num = 0;
+        Mem::ReadSafe(addr + 0x14, num);
+        if (num > 0 && num <= 0x800000) {
+            uintptr_t objPtr = 0;
+            Mem::ReadSafe(addr + 0x00, objPtr);
+            if (LooksLikeHeapPtr(objPtr)) {
+                s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C };
+                LOG_INFO("ObjectArray: Layout C (relaxed default) detected (Num=%d, Objects=0x%llX, Max@+0x10 skipped)",
+                         num, (unsigned long long)objPtr);
+                return true;
+            }
+        }
+    }
+
+    // Layout D: UE4 FUObjectArray with members before ObjObjects:
+    // +0x00: ObjFirstGCIndex, +0x04: ObjLastNonGCIndex, +0x08: MaxObjectsNotConsideredByGC,
+    // +0x0C: OpenForDisregardForGC, +0x10: ObjObjects.Objects**, +0x18: Max, +0x1C: Num
+    {
+        int32_t num = 0, max = 0;
+        Mem::ReadSafe(addr + 0x1C, num);
+        Mem::ReadSafe(addr + 0x18, max);
+        if (num > 0 && num <= max && max <= 0x800000) {
+            uintptr_t objPtr = 0;
+            Mem::ReadSafe(addr + 0x10, objPtr);
+            if (LooksLikeHeapPtr(objPtr)) {
+                s_layout = { 0x10, 0x18, 0x1C, 0x20, 0x24 };
+                LOG_INFO("ObjectArray: Layout D (UE4 extended) detected (Num=%d, Max=%d, Objects=0x%llX)",
+                         num, max, (unsigned long long)objPtr);
+                return true;
+            }
+        }
     }
 
     LOG_WARN("ObjectArray: Could not detect layout, using default");
     return true;
 }
 
+// Helper: check if a pointer looks like a valid UObject (has valid ClassPrivate chain)
+static bool LooksLikeUObject(uintptr_t obj) {
+    if (!obj || obj < 0x10000 || obj > 0x00007FFFFFFFFFFF) return false;
+    uintptr_t cls = 0;
+    if (!Mem::ReadSafe(obj + 0x10, cls)) return false;
+    if (cls < 0x10000 || cls > 0x00007FFFFFFFFFFF) return false;
+    uintptr_t clsCls = 0;
+    if (!Mem::ReadSafe(cls + 0x10, clsCls)) return false;
+    if (clsCls < 0x10000 || clsCls > 0x00007FFFFFFFFFFF) return false;
+    return true;
+}
+
+// Test a candidate stride against a chunk, counting valid UObject items.
+// Returns the number of items that resolved names (strong) and total valid items (weak).
+static void ProbeStride(uintptr_t chunkBase, int stride, int maxItems,
+                        int& outGood, int& outNamed, int& outNull, int& outBad) {
+    outGood = outNamed = outNull = outBad = 0;
+
+    for (int idx = 0; idx < maxItems; ++idx) {
+        int64_t byteOff = static_cast<int64_t>(idx) * stride;
+
+        uintptr_t obj = 0;
+        if (!Mem::ReadSafe(chunkBase + byteOff, obj)) {
+            ++outBad;
+            if (outBad > 10 && outGood == 0) break;  // Too many read failures, give up
+            continue;
+        }
+
+        if (!obj) {
+            ++outNull;
+            continue;
+        }
+
+        if (!LooksLikeUObject(obj)) {
+            ++outBad;
+            // If we already found some good items and hit too many consecutive bad,
+            // the stride might be wrong
+            if (outBad > 10 && outGood == 0) break;
+            continue;
+        }
+
+        ++outGood;
+
+        // If FNamePool is available, use strong validation
+        if (FNamePool::IsInitialized()) {
+            uint32_t nameIdx = 0;
+            if (Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx)) {
+                std::string name = FNamePool::GetString(nameIdx);
+                if (!name.empty() && name != "None") {
+                    bool validAscii = true;
+                    for (char c : name) {
+                        if (c < 0x20 || c > 0x7E) { validAscii = false; break; }
+                    }
+                    if (validAscii) ++outNamed;
+                }
+            }
+        }
+
+        // Early exit: if we have enough strong evidence, stop scanning
+        if (outNamed >= 5) break;
+    }
+}
+
+// Helper: run ProbeStride for all candidate strides on a given base address, updating best.
+static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
+                            int candidates[], int numCandidates,
+                            int& bestStride, int& bestCount, int& bestNamed,
+                            int& bestBad, bool& bestHasNames) {
+    for (int i = 0; i < numCandidates; ++i) {
+        int stride = candidates[i];
+        int good, named, null_, bad;
+        ProbeStride(base, stride, maxItems, good, named, null_, bad);
+
+        LOG_INFO("ObjectArray: %s stride %d: good=%d, named=%d, null=%d, bad=%d",
+                 phase, stride, good, named, null_, bad);
+
+        bool isBetter = false;
+        if (named > 0 || bestNamed > 0) {
+            // Primary: most named items. Tiebreaker: fewer bad items.
+            if (named > bestNamed) {
+                isBetter = true;
+            } else if (named == bestNamed && named > 0 && bad < bestBad) {
+                isBetter = true;
+            }
+        } else {
+            if (good > bestCount) {
+                isBetter = true;
+            } else if (good == bestCount && good > 0 && bad < bestBad) {
+                isBetter = true;
+            }
+        }
+
+        if (isBetter) {
+            bestStride = stride;
+            bestCount = good;
+            bestNamed = named;
+            bestBad = bad;
+            bestHasNames = (named > 0);
+        }
+    }
+}
+
+// Auto-detect FUObjectItem size by probing consecutive items in chunks.
+// UE5 (most): 16 bytes, UE4 / some UE5 with clustering: 24 bytes.
+//
+// Strategy: For each candidate stride, walk chunk at stride-aligned offsets
+// counting valid items. Use FNamePool-based name resolution (strong) if available,
+// falling back to ClassPrivate chain (weak) if not. Try all strides and pick best.
+// Uses tiebreaker: when named counts are equal, prefer stride with fewer bad items.
+static void DetectItemSize() {
+    uintptr_t chunkTable = 0;
+    if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, chunkTable) || !chunkTable) {
+        LOG_WARN("ObjectArray: Cannot read chunk table for item size detection");
+        return;
+    }
+
+    // Diagnostic: dump first 64 bytes at chunkTable address
+    {
+        uint64_t dump[8] = {};
+        Mem::ReadBytesSafe(chunkTable, dump, sizeof(dump));
+        LOG_DEBUG("ObjectArray: chunkTable@0x%llX: +00:%016llX +08:%016llX +10:%016llX +18:%016llX +20:%016llX +28:%016llX +30:%016llX +38:%016llX",
+                  (unsigned long long)chunkTable,
+                  dump[0], dump[1], dump[2], dump[3], dump[4], dump[5], dump[6], dump[7]);
+    }
+
+    uintptr_t chunk0 = 0;
+    if (!Mem::ReadSafe(chunkTable, chunk0) || !chunk0) {
+        LOG_WARN("ObjectArray: Cannot read chunk[0] for item size detection");
+        return;
+    }
+
+    int candidates[] = { 16, 24, 20 };
+    constexpr int NUM_CANDIDATES = 3;
+    int bestStride = 0;
+    int bestCount = 0;
+    int bestNamed = 0;
+    int bestBad = INT_MAX;
+    bool bestHasNames = false;
+
+    // Phase 1: scan first 100 items of chunk[0] (standard chunked layout)
+    constexpr int MAX_ITEMS_PHASE1 = 100;
+    ProbeAllStrides(chunk0, MAX_ITEMS_PHASE1, "P1",
+                    candidates, NUM_CANDIDATES,
+                    bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+
+    // Phase 2: if Phase 1 yielded nothing, try deeper in chunk (items 1000+).
+    // Some UE4 games have thousands of null slots at the start.
+    if (bestCount == 0) {
+        LOG_INFO("ObjectArray: Phase 1 found no items, trying deep scan from item 1000...");
+
+        constexpr int DEEP_START = 1000;
+        constexpr int DEEP_COUNT = 50;
+
+        for (int i = 0; i < NUM_CANDIDATES; ++i) {
+            int stride = candidates[i];
+            int64_t startByte = static_cast<int64_t>(DEEP_START) * stride;
+            uintptr_t scanBase = chunk0 + startByte;
+
+            int good, named, null_, bad;
+            ProbeStride(scanBase, stride, DEEP_COUNT, good, named, null_, bad);
+
+            LOG_INFO("ObjectArray: P2-deep stride %d (item %d): good=%d, named=%d, null=%d, bad=%d",
+                     stride, DEEP_START, good, named, null_, bad);
+
+            bool isBetter = false;
+            if (named > 0 || bestNamed > 0) {
+                if (named > bestNamed) isBetter = true;
+                else if (named == bestNamed && named > 0 && bad < bestBad) isBetter = true;
+            } else {
+                if (good > bestCount) isBetter = true;
+                else if (good == bestCount && good > 0 && bad < bestBad) isBetter = true;
+            }
+
+            if (isBetter) {
+                bestStride = stride;
+                bestCount = good;
+                bestNamed = named;
+                bestBad = bad;
+                bestHasNames = (named > 0);
+            }
+        }
+    }
+
+    // Phase 3: if still nothing, maybe the array is NOT chunked (some UE4 builds).
+    // In non-chunked layout, chunkTable IS the item array directly (no extra deref).
+    // Try probing chunkTable itself as the item base.
+    if (bestCount == 0) {
+        LOG_INFO("ObjectArray: Phase 2 found nothing. Trying flat (non-chunked) array at chunkTable=0x%llX...",
+                 (unsigned long long)chunkTable);
+
+        s_isFlat = true;  // Temporarily set for probing
+
+        ProbeAllStrides(chunkTable, MAX_ITEMS_PHASE1, "P3-flat",
+                        candidates, NUM_CANDIDATES,
+                        bestStride, bestCount, bestNamed, bestBad, bestHasNames);
+
+        if (bestCount == 0) {
+            // Try deep scan on flat array too
+            for (int i = 0; i < NUM_CANDIDATES; ++i) {
+                int stride = candidates[i];
+                int64_t startByte = static_cast<int64_t>(1000) * stride;
+
+                int good, named, null_, bad;
+                ProbeStride(chunkTable + startByte, stride, 50, good, named, null_, bad);
+
+                LOG_INFO("ObjectArray: P3-flat-deep stride %d (item 1000): good=%d, named=%d, null=%d, bad=%d",
+                         stride, good, named, null_, bad);
+
+                bool isBetter = false;
+                if (named > 0 || bestNamed > 0) {
+                    if (named > bestNamed) isBetter = true;
+                    else if (named == bestNamed && named > 0 && bad < bestBad) isBetter = true;
+                } else {
+                    if (good > bestCount) isBetter = true;
+                    else if (good == bestCount && good > 0 && bad < bestBad) isBetter = true;
+                }
+
+                if (isBetter) {
+                    bestStride = stride;
+                    bestCount = good;
+                    bestNamed = named;
+                    bestBad = bad;
+                    bestHasNames = (named > 0);
+                }
+            }
+        }
+
+        if (bestCount == 0) {
+            s_isFlat = false;  // Revert — flat didn't work either
+        } else {
+            LOG_INFO("ObjectArray: Flat (non-chunked) array layout detected");
+        }
+    }
+
+    // Determine minimum threshold for acceptance
+    int threshold = bestHasNames ? 2 : 3;
+    int bestTotal = bestHasNames ? bestNamed : bestCount;
+
+    if (bestTotal >= threshold) {
+        s_itemSize = bestStride;
+        if (bestHasNames) {
+            LOG_INFO("ObjectArray: FUObjectItem size detected as %d bytes (%d items with valid names, %d total valid, %d bad)",
+                     bestStride, bestNamed, bestCount, bestBad);
+        } else {
+            LOG_INFO("ObjectArray: FUObjectItem size detected as %d bytes (%d items validated, no FName check)",
+                     bestStride, bestCount);
+        }
+    } else if (bestStride > 0 && bestTotal > 0) {
+        s_itemSize = bestStride;
+        LOG_WARN("ObjectArray: FUObjectItem size tentatively set to %d bytes (only %d items validated)",
+                 bestStride, bestTotal);
+    } else {
+        LOG_WARN("ObjectArray: Could not auto-detect item size, keeping default %d", s_itemSize);
+    }
+}
+
 void Init(uintptr_t gobjectsAddr) {
     s_arrayAddr = gobjectsAddr;
     DetectLayout(gobjectsAddr);
-    LOG_INFO("ObjectArray: Initialized at 0x%llX, Count=%d",
-             static_cast<unsigned long long>(gobjectsAddr), GetCount());
+    DetectItemSize();
+    LOG_INFO("ObjectArray: Initialized at 0x%llX, Count=%d, ItemSize=%d",
+             static_cast<unsigned long long>(gobjectsAddr), GetCount(), s_itemSize);
 }
 
 int32_t GetCount() {
@@ -74,41 +405,59 @@ int32_t GetMax() {
     return max;
 }
 
+int GetItemSize() {
+    return s_itemSize;
+}
+
 uintptr_t GetByIndex(int32_t index) {
     if (!s_arrayAddr || index < 0 || index >= GetCount()) return 0;
 
-    // Read chunk table pointer
-    uintptr_t chunkTable = 0;
-    if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, chunkTable) || !chunkTable) return 0;
+    // Read array base pointer
+    uintptr_t arrayBase = 0;
+    if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, arrayBase) || !arrayBase) return 0;
 
-    int32_t chunkIndex = index / Constants::OBJECTS_PER_CHUNK;
-    int32_t withinChunk = index % Constants::OBJECTS_PER_CHUNK;
+    uintptr_t itemAddr = 0;
 
-    // Read chunk pointer from table
-    uintptr_t chunk = 0;
-    if (!Mem::ReadSafe(chunkTable + chunkIndex * sizeof(uintptr_t), chunk) || !chunk) return 0;
+    if (s_isFlat) {
+        // Flat (non-chunked): items are at arrayBase + index * itemSize
+        itemAddr = arrayBase + static_cast<uintptr_t>(index) * s_itemSize;
+    } else {
+        // Chunked: arrayBase is a chunk table, each chunk holds OBJECTS_PER_CHUNK items
+        int32_t chunkIndex = index / Constants::OBJECTS_PER_CHUNK;
+        int32_t withinChunk = index % Constants::OBJECTS_PER_CHUNK;
 
-    // Read FUObjectItem at the index within chunk
-    uintptr_t itemAddr = chunk + withinChunk * sizeof(FUObjectItem);
+        uintptr_t chunk = 0;
+        if (!Mem::ReadSafe(arrayBase + chunkIndex * sizeof(uintptr_t), chunk) || !chunk) return 0;
+
+        itemAddr = chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
+    }
+
     uintptr_t object = 0;
     Mem::ReadSafe(itemAddr, object);
-
     return object;
 }
 
 FUObjectItem* GetItem(int32_t index) {
     if (!s_arrayAddr || index < 0 || index >= GetCount()) return nullptr;
 
-    uintptr_t chunkTable = 0;
-    if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, chunkTable) || !chunkTable) return nullptr;
+    uintptr_t arrayBase = 0;
+    if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, arrayBase) || !arrayBase) return nullptr;
 
-    int32_t chunkIndex = index / Constants::OBJECTS_PER_CHUNK;
-    int32_t withinChunk = index % Constants::OBJECTS_PER_CHUNK;
+    uintptr_t itemAddr = 0;
 
-    uintptr_t chunk = 0;
-    if (!Mem::ReadSafe(chunkTable + chunkIndex * sizeof(uintptr_t), chunk) || !chunk) return nullptr;
+    if (s_isFlat) {
+        itemAddr = arrayBase + static_cast<uintptr_t>(index) * s_itemSize;
+    } else {
+        int32_t chunkIndex = index / Constants::OBJECTS_PER_CHUNK;
+        int32_t withinChunk = index % Constants::OBJECTS_PER_CHUNK;
 
-    return Mem::Ptr<FUObjectItem>(chunk + withinChunk * sizeof(FUObjectItem));
+        uintptr_t chunk = 0;
+        if (!Mem::ReadSafe(arrayBase + chunkIndex * sizeof(uintptr_t), chunk) || !chunk) return nullptr;
+
+        itemAddr = chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
+    }
+
+    return Mem::Ptr<FUObjectItem>(itemAddr);
 }
 
 void ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb) {

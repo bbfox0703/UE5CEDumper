@@ -37,6 +37,12 @@ static int s_wideFlag = 0;     // Bit index for wide flag
 // Hash-prefixed UE4.26 (FF7Re): 4 (entry = [4B hash][2B header][string])
 static int s_headerOffset = 0;
 
+// FNameEntry alignment stride: used to convert FName index offset to byte offset.
+// Standard UE5: 2 (alignof(FNameEntry) with uint16 header)
+// Hash-prefixed UE4.26: 4 (alignof(FNameEntry) with uint32 hash + uint16 header)
+// Formula: entry_byte_offset = (nameIndex & blockOffsetMask) * s_stride
+static int s_stride = 2;
+
 // FNameBlockOffsetBits: how many bits of the FName index are used for the within-chunk offset.
 // Standard UE5: 16 bits (chunkIndex = nameIndex >> 16, offset = (nameIndex & 0xFFFF) * stride)
 // Some UE4 builds: 14 bits
@@ -179,7 +185,7 @@ static void DetectBlockOffsetBits() {
         // Test: index 1 should produce a non-empty, valid ASCII string
         int32_t testIdx = 1;
         int32_t ci = testIdx >> bits;
-        int32_t co = (testIdx & mask) * Constants::FNAME_STRIDE;
+        int32_t co = (testIdx & mask) * s_stride;
 
         uintptr_t chunkPtr = 0;
         uintptr_t chunksBase = s_poolAddr + s_chunksOffset;
@@ -233,6 +239,12 @@ void Init(uintptr_t gnamesAddr, int headerOffset) {
     s_isUE4Mode = false;
     s_headerOffset = headerOffset;
 
+    // Hash-prefixed entries (headerOffset=4) have uint32_t ComparisonId as first member,
+    // raising alignof(FNameEntry) to 4 (vs 2 for standard entries with uint16_t header).
+    // The FNameEntryAllocator stride = alignof(FNameEntry), used to convert index offset to bytes.
+    s_stride = (headerOffset >= 4) ? 4 : Constants::FNAME_STRIDE;
+    LOG_INFO("FNamePool: Entry stride = %d (hdrOff=%d)", s_stride, headerOffset);
+
     DetectChunksOffset();
     DetectBlockOffsetBits();
     DetectHeaderFormat();
@@ -283,7 +295,7 @@ uintptr_t GetEntry(int32_t nameIndex) {
 
     // UE5 FNamePool path: packed inline entries with 2-byte header
     int32_t chunkIndex  = nameIndex >> s_blockOffsetBits;
-    int32_t chunkOffset = (nameIndex & s_blockOffsetMask) * Constants::FNAME_STRIDE;
+    int32_t chunkOffset = (nameIndex & s_blockOffsetMask) * s_stride;
 
     // Read chunk pointer
     uintptr_t chunkPtr = 0;
