@@ -65,7 +65,7 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-20 (Dual-channel logger with category tags + SUMMARY)
+> Last updated: 2026-02-21 (Signatures.h consolidation — 51 AOB patterns + 4 symbol exports)
 
 ### Component Status
 
@@ -73,11 +73,12 @@ git submodule update --init --recursive
 |-----------|---------|--------|-------|
 | Memory module | `Memory.cpp/.h` | Done | AOBScan (exec sections only), ResolveRIP, ReadSafe (SEH) |
 | Logger | `Logger.cpp/.h` | Done | Dual-channel (scan+pipe), category tags, SUMMARY level, 5-version rotation, 5MB cap, thread-safe; commit `c9263ed` |
-| OffsetFinder — GObjects | `OffsetFinder.cpp` | Working | 5 AOB patterns + deref variants + MSVC symbol export (`GUObjectArray`); validated in TQ2 (UE5.7) |
-| OffsetFinder — GNames | `OffsetFinder.cpp` | Partial | 7 AOB patterns + FName ctor export + `.data` pointer-scan with corroboration; AOBs fail on TQ2, fallbacks untested |
-| OffsetFinder — GWorld | `OffsetFinder.cpp` | Done | 6 patterns, non-critical |
+| AOB Signatures | `Signatures.h` | Done | 51 patterns + 4 symbol exports from 6 sources (original, patternsleuth, RE-UE4SS, Dumper-7, UE4 Dumper.CT, UEDumper) |
+| OffsetFinder — GObjects | `OffsetFinder.cpp` | Working | 27 AOB patterns + deref variants + MSVC symbol export (`GUObjectArray`); validated in TQ2 (UE5.7) |
+| OffsetFinder — GNames | `OffsetFinder.cpp` | Partial | 17 AOB patterns + FName ctor export + `.data` pointer-scan with corroboration; AOBs fail on TQ2, fallbacks untested |
+| OffsetFinder — GWorld | `OffsetFinder.cpp` | Done | 7 patterns, non-critical |
 | OffsetFinder — Version | `OffsetFinder.cpp` | Working | PE VERSIONINFO fast path + memory string scan fallback |
-| OffsetFinder — DynOff | `OffsetFinder.cpp`, `Constants.h` | Untested | Dynamic FField/FProperty/UStruct offset detection via known struct probing; commit `8c2f983` |
+| OffsetFinder — DynOff | `OffsetFinder.cpp`, `Constants.h` | Untested | Dynamic FField/FProperty/UStruct offset detection via known struct probing |
 | ObjectArray | `ObjectArray.cpp/.h` | Done | FChunkedFixedUObjectArray, ForEach, GetByIndex |
 | FNamePool | `FNamePool.cpp/.h` | Done | Multi-format header (A/B), chunk index, GetString |
 | UStructWalker | `UStructWalker.cpp/.h` | Done | FField chain, SuperStruct inheritance, GetFullName; uses DynOff for all offsets |
@@ -172,6 +173,7 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - **"rty" diagnostic pattern**: When field names show truncated type names (e.g., "rty" from "Property"), it means Name offset is wrong and reading into adjacent FFieldClass data. Type names being correct while field names are wrong = FField::ClassPrivate offset is OK but FField::Name offset is shifted
 - **Log structure matters for AI analysis**: A single 2MB log with mixed init/runtime traffic wastes context tokens. Splitting by phase (scan vs pipe) + adding category tags + SUMMARY level reduces analysis from reading 2MB to `grep "[SUMMARY]"` → 3 lines. Use `LOG_CAT` file-level `#define` for minimal call-site changes; functions needing subcategories call `Logger::Info("SUBCAT", ...)` directly
 - **Build system**: VS 2026 (v18) at `C:\Program Files\Microsoft Visual Studio\18\Community`. Use a temp `build.bat` that calls `vcvarsall.bat amd64` then cmake, because bash→cmd quoting for paths with spaces is fragile. Delete after build.
+- **AOB patterns are cheap insurance**: Each new pattern potentially covers a specific game/UE version that others miss. 51 patterns + 4 symbol exports from 6 sources (original, patternsleuth, RE-UE4SS, Dumper-7, UE4 Dumper.CT, UEDumper) provide ~90-95% coverage. Keep patterns in a dedicated `Signatures.h` file for easy contribution and maintenance.
 
 ### Recommended Test Games
 
@@ -187,7 +189,7 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 3. Verify Instance Finder can locate `bp_tq2_character_stats_component_C` via top-down GWorld navigation
 4. **Test pointer-scan fallback for GNames** on EverSpace 2 (use `.pdb` to verify address)
 5. Once both GNames + DynOff confirmed working → begin Avalonia UI (`Phase 3` in plan)
-6. Consider adding more GNames AOB patterns specific to UE5.5+ codegen patterns
+6. ~~Consider adding more GNames AOB patterns specific to UE5.5+ codegen patterns~~ → Done: consolidated 51 patterns from 6 sources into `Signatures.h`
 
 -----
 
@@ -210,6 +212,7 @@ Target: Support all UE5 versions (5.0 ~ 5.4+), find global pointers (GObjects / 
 |  UE5Dumper.dll  [injected]                           |
 |      +-- ExportAPI       <- C ABI for CE Lua         |
 |      +-- PipeServer      <- Named Pipe IPC server    |
+|      +-- Signatures      <- 51 AOB patterns + 4 exports|
 |      +-- OffsetFinder    <- AOB scan GObjects/GNames |
 |      +-- ObjectArray     <- FChunkedFixedUObjectArray|
 |      +-- FNamePool       <- UE5 FNamePool reader     |

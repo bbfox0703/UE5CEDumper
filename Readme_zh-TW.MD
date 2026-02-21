@@ -10,9 +10,9 @@
 
 | 功能 | 狀態 |
 |---|---|
-| GObjects AOB 掃描（9 組 Pattern，UE5.0–5.7） | ✅ |
-| GNames AOB 掃描（6 組 Pattern）＋ `.data` 指標掃描 Fallback | ⚠️ Fallback 未測試 |
-| GWorld AOB 掃描（6 組 Pattern） | ✅ |
+| GObjects AOB 掃描（27 組 Pattern，6 個來源，UE5.0–5.7） | ✅ |
+| GNames AOB 掃描（17 組 Pattern）＋ `.data` 指標掃描 Fallback | ⚠️ Fallback 未測試 |
+| GWorld AOB 掃描（7 組 Pattern） | ✅ |
 | UE 版本偵測（PE VERSIONINFO ＋ 記憶體字串掃描） | ✅ |
 | FChunkedFixedUObjectArray — ForEach / GetByIndex | ✅ |
 | FNamePool 多格式讀取（格式 A/B、Chunk 索引） | ✅ |
@@ -76,6 +76,7 @@ UE5CEDumper/
 │   ├── CMakeLists.txt
 │   └── src/
 │       ├── dllmain.cpp         ← DLL_PROCESS_ATTACH、AutoStartThreadProc
+│       ├── Signatures.h        ← 51 組 AOB Pattern + 4 組符號匯出（所有來源）
 │       ├── Constants.h         ← 集中管理字串常數 + DynOff 命名空間
 │       ├── ExportAPI.cpp/.h    ← C ABI 匯出（UE5_Init、UE5_WalkClassBegin…）
 │       ├── PipeServer.cpp/.h   ← Named Pipe 伺服器 + JSON 分派
@@ -246,7 +247,7 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 
 ## 已知問題
 
-- **TQ2（UE 5.7）上 GNames Pattern 全部失敗** — 4 組 LEA-based Pattern 均解析到錯誤的全域變數。已實作 `.data` 區段指標掃描 Fallback（`FindGNamesByPointerScan`），但尚未測試。
+- **TQ2（UE 5.7）上 GNames Pattern 失敗** — 部分 LEA-based Pattern 在某些 UE5.7 建置上解析到錯誤的全域變數。目前已有 17 組 Pattern 可用；另已實作 `.data` 區段指標掃描 Fallback（`FindGNamesByPointerScan`），但尚未測試。
 - **DynOff / CasePreservingName** — 已完成編譯，需在 TQ2 上進行注入測試驗證。
 - **Avalonia UI** — 骨架已完成；端對端 Pipe 整合待 DynOff 驗證完成後推進。
 
@@ -261,6 +262,7 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 | [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 執行期反射，另一角度的實作參考 |
 | [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | GObjects/GNames 的額外 AOB Pattern |
 | [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | GObjects/GNames 的額外 AOB Pattern 來源 |
+| UE4 Dumper.CT | Cheat Engine 作弊表 — 額外 AOB Pattern（Signatures.h 中的 CT 系列） |
 | [nlohmann/json](https://github.com/nlohmann/json) | DLL 使用的 Header-only JSON 函式庫 |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua 腳本 API 參考 |
 | AOBMaker（私有） | AOB Pattern 生成工具 |

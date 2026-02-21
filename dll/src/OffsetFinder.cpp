@@ -7,6 +7,7 @@
 #define LOG_CAT "SCAN"
 #include "Logger.h"
 #include "Constants.h"
+#include "Signatures.h"
 #include "ObjectArray.h"
 #include "FNamePool.h"
 
@@ -289,7 +290,7 @@ static uintptr_t FindGObjectsByDataScan() {
 // Try to find GObjects via MSVC symbol export.
 // The symbol is the global variable itself — exported address IS the FUObjectArray.
 static uintptr_t FindGObjectsByExport() {
-    uintptr_t addr = TrySymbolExport(Constants::EXPORT_GOBJECTARRAY);
+    uintptr_t addr = TrySymbolExport(Sig::EXPORT_GOBJECTARRAY);
     if (!addr) return 0;
 
     // The export may point directly to FUObjectArray or to a pointer to it
@@ -324,24 +325,24 @@ uintptr_t FindGObjects() {
     // Each resolves the RIP-relative address, then optionally dereferences.
     // All GObjects instructions are 7-byte RIP-relative loads (opcodeLen=3, totalLen=7).
     struct { const char* pattern; bool deref; } candidates[] = {
-        { Constants::AOB_GOBJECTS_V2, false }, // 4C 8B 0D — most common in UE5.3+
-        { Constants::AOB_GOBJECTS_V1, false }, // 48 8B 05 — classic UE5.0-5.2
-        { Constants::AOB_GOBJECTS_V6, false }, // 48 8B 0D — alt mov rcx variant
-        { Constants::AOB_GOBJECTS_V7, false }, // 4C 8B 0D; cdq; movzx (GSpots)
-        { Constants::AOB_GOBJECTS_V8, false }, // 4C 8B 0D; bit shift (GSpots)
-        { Constants::AOB_GOBJECTS_V9, false }, // 4C 8B 0D; cdqe; lea (GSpots)
-        { Constants::AOB_GOBJECTS_V3, false }, // 4C 8B 05
-        { Constants::AOB_GOBJECTS_V4, false }, // 48 8B 05 (longer context)
-        { Constants::AOB_GOBJECTS_V5, false }, // 4C 8B 15
-        { Constants::AOB_GOBJECTS_V13, false }, // Palworld: 48 8B 05 + extended context
+        { Sig::AOB_GOBJECTS_V2, false }, // 4C 8B 0D — most common in UE5.3+
+        { Sig::AOB_GOBJECTS_V1, false }, // 48 8B 05 — classic UE5.0-5.2
+        { Sig::AOB_GOBJECTS_V6, false }, // 48 8B 0D — alt mov rcx variant
+        { Sig::AOB_GOBJECTS_V7, false }, // 4C 8B 0D; cdq; movzx (GSpots)
+        { Sig::AOB_GOBJECTS_V8, false }, // 4C 8B 0D; bit shift (GSpots)
+        { Sig::AOB_GOBJECTS_V9, false }, // 4C 8B 0D; cdqe; lea (GSpots)
+        { Sig::AOB_GOBJECTS_V3, false }, // 4C 8B 05
+        { Sig::AOB_GOBJECTS_V4, false }, // 48 8B 05 (longer context)
+        { Sig::AOB_GOBJECTS_V5, false }, // 4C 8B 15
+        { Sig::AOB_GOBJECTS_V13, false }, // Palworld: 48 8B 05 + extended context
         // Retry with extra deref for pointer-to-pointer layouts
-        { Constants::AOB_GOBJECTS_V2, true  },
-        { Constants::AOB_GOBJECTS_V1, true  },
-        { Constants::AOB_GOBJECTS_V6, true  },
-        { Constants::AOB_GOBJECTS_V7, true  },
-        { Constants::AOB_GOBJECTS_V8, true  },
-        { Constants::AOB_GOBJECTS_V9, true  },
-        { Constants::AOB_GOBJECTS_V13, true  }, // Palworld deref
+        { Sig::AOB_GOBJECTS_V2, true  },
+        { Sig::AOB_GOBJECTS_V1, true  },
+        { Sig::AOB_GOBJECTS_V6, true  },
+        { Sig::AOB_GOBJECTS_V7, true  },
+        { Sig::AOB_GOBJECTS_V8, true  },
+        { Sig::AOB_GOBJECTS_V9, true  },
+        { Sig::AOB_GOBJECTS_V13, true  }, // Palworld deref
     };
 
     for (auto& c : candidates) {
@@ -351,13 +352,13 @@ uintptr_t FindGObjects() {
 
     // === Patternsleuth patterns (RIP instruction at non-zero offset) ===
     struct { const char* pattern; int instrOffset; int opcodeLen; int totalLen; } psCandidates[] = {
-        { Constants::AOB_GOBJECTS_PS1, 23, 3, 7 },  // cmp/cmp/jne; lea rdx; lea rcx
-        { Constants::AOB_GOBJECTS_PS2,  2, 3, 7 },  // jz; lea rcx
-        { Constants::AOB_GOBJECTS_PS3,  5, 3, 7 },  // jne; mov; lea rcx
-        { Constants::AOB_GOBJECTS_PS4, 16, 3, 7 },  // test; mov; lea r11
-        { Constants::AOB_GOBJECTS_PS5, 12, 3, 7 },  // or; and; mov; lea rcx
-        { Constants::AOB_GOBJECTS_PS6, 14, 2, 6 },  // arithmetic sub eax,[rip+X]
-        { Constants::AOB_GOBJECTS_PS7, 17, 2, 6 },  // arithmetic add ecx,[rip+X]
+        { Sig::AOB_GOBJECTS_PS1, 23, 3, 7 },  // cmp/cmp/jne; lea rdx; lea rcx
+        { Sig::AOB_GOBJECTS_PS2,  2, 3, 7 },  // jz; lea rcx
+        { Sig::AOB_GOBJECTS_PS3,  5, 3, 7 },  // jne; mov; lea rcx
+        { Sig::AOB_GOBJECTS_PS4, 16, 3, 7 },  // test; mov; lea r11
+        { Sig::AOB_GOBJECTS_PS5, 12, 3, 7 },  // or; and; mov; lea rcx
+        { Sig::AOB_GOBJECTS_PS6, 14, 2, 6 },  // arithmetic sub eax,[rip+X]
+        { Sig::AOB_GOBJECTS_PS7, 17, 2, 6 },  // arithmetic add ecx,[rip+X]
     };
     for (auto& c : psCandidates) {
         uintptr_t result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen);
@@ -367,12 +368,78 @@ uintptr_t FindGObjects() {
         if (result && ValidateGObjects(result)) return result;
     }
 
-    // === RE-UE4SS patterns with special offset adjustments ===
+    // === New patterns from RE-UE4SS, UE4 Dumper.CT, UEDumper ===
+
+    // RE1 (FF7 Rebirth): add [rip+X],ecx; dec; cmp; jge — instrOffset=2, resolves via nextInstr(+6)+imm32
+    {
+        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_RE1);
+        if (addr) {
+            // Resolution: nextInstr = addr+6, offset = addr+2
+            uintptr_t target = Mem::ResolveRIP(addr, 2, 6);
+            if (target) {
+                if (ValidateGObjects(target))        return target;
+                if (ValidateGObjects(target - 0x10)) return target - 0x10;
+            }
+        }
+    }
+
+    // RE2 (FF7 Remake extended): mov; mov r8,[rax+rcx*8]; test; jz; ?; ?; ?; setz — needs -0x10
+    {
+        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_RE2);
+        if (addr) {
+            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
+            if (target) {
+                uintptr_t value = 0;
+                if (Mem::ReadSafe(target, value) && value) {
+                    if (ValidateGObjects(value - 0x10)) return value - 0x10;
+                    if (ValidateGObjects(value))        return value;
+                }
+            }
+        }
+    }
+
+    // RE3 (Little Nightmares 3 Demo extended context)
+    {
+        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_RE3);
+        if (addr) {
+            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
+            if (target) {
+                if (ValidateGObjects(target))        return target;
+                if (ValidateGObjects(target - 0x10)) return target - 0x10;
+            }
+        }
+    }
+
+    // CT1 (UE4 Dumper.CT): mov r8; lea rax,[rip+X] — instrOffset=5, opcodeLen=3, totalLen=7
+    {
+        uintptr_t result = TryPatternRIPOffset(Sig::AOB_GOBJECTS_CT1, 5, 3, 7);
+        if (result && ValidateGObjects(result)) return result;
+        result = TryPatternRIPOffset(Sig::AOB_GOBJECTS_CT1, 5, 3, 7, true);
+        if (result && ValidateGObjects(result)) return result;
+    }
+
+    // CT3 (UE4 Dumper.CT): mov r8,[rip+X]; cmp [r8+?]
+    {
+        uintptr_t result = TryPatternRIP(Sig::AOB_GOBJECTS_CT3, 3, 7, false);
+        if (result && ValidateGObjects(result)) return result;
+        result = TryPatternRIP(Sig::AOB_GOBJECTS_CT3, 3, 7, true);
+        if (result && ValidateGObjects(result)) return result;
+    }
+
+    // UD1 (UEDumper): mov rax,[rip+X]; mov rcx,[rax+rcx*8]; lea rax,[rcx+rdx*8]; test rax,rax
+    {
+        uintptr_t result = TryPatternRIP(Sig::AOB_GOBJECTS_UD1, 3, 7, false);
+        if (result && ValidateGObjects(result)) return result;
+        result = TryPatternRIP(Sig::AOB_GOBJECTS_UD1, 3, 7, true);
+        if (result && ValidateGObjects(result)) return result;
+    }
+
+    // === Original patterns with special offset adjustments ===
 
     // V10 (Split Fiction): lea rcx; call; call; mov byte[],1
     // Resolved address is +0x10 into FUObjectArray — subtract 0x10
     {
-        uintptr_t addr = Mem::AOBScan(Constants::AOB_GOBJECTS_V10);
+        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_V10);
         if (addr) {
             uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
             if (target) {
@@ -384,7 +451,7 @@ uintptr_t FindGObjects() {
 
     // V11 (Little Nightmares 3): lea reg; mov r9,rcx; mov [rcx],rax; mov eax,-1
     {
-        uintptr_t addr = Mem::AOBScan(Constants::AOB_GOBJECTS_V11);
+        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_V11);
         if (addr) {
             uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
             if (target) {
@@ -397,7 +464,7 @@ uintptr_t FindGObjects() {
     // V12 (FF7 Remake): mov reg,[rip+X]; mov r8,[rax+rcx*8]; test; jz
     // This is a MOV, so deref is needed; also try -0x10 adjustment
     {
-        uintptr_t addr = Mem::AOBScan(Constants::AOB_GOBJECTS_V12);
+        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_V12);
         if (addr) {
             uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
             if (target) {
@@ -679,9 +746,9 @@ static uintptr_t FindGNamesByPointerScan() {
 // ─────────────────────────────────────────────────────────────────────────────
 static uintptr_t FindGNamesByExport() {
     const char* symbols[] = {
-        Constants::EXPORT_FNAME_TOSTRING,
-        Constants::EXPORT_FNAME_CTOR,
-        Constants::EXPORT_FNAME_CTOR_CHAR,
+        Sig::EXPORT_FNAME_TOSTRING,
+        Sig::EXPORT_FNAME_CTOR,
+        Sig::EXPORT_FNAME_CTOR_CHAR,
     };
 
     for (const char* sym : symbols) {
@@ -738,20 +805,20 @@ uintptr_t FindGNames() {
     //   deref=true:  the LEA resolves to a FNamePool* pointer we must deref
     // (Which variant applies depends on how the compiler emitted the reference.)
     struct { const char* pattern; bool deref; } candidates[] = {
-        { Constants::AOB_GNAMES_V5, false },  // lea rcx; call; mov byte ptr[],1 (extended context)
-        { Constants::AOB_GNAMES_V5, true  },  // lea rcx; call; mov byte ptr[],1; deref
-        { Constants::AOB_GNAMES_V1, false },  // lea rsi; direct
-        { Constants::AOB_GNAMES_V1, true  },  // lea rsi; deref pointer
-        { Constants::AOB_GNAMES_V3, false },  // lea rax; direct
-        { Constants::AOB_GNAMES_V3, true  },  // lea rax; deref pointer
-        { Constants::AOB_GNAMES_V4, false },  // lea r8;  direct
-        { Constants::AOB_GNAMES_V4, true  },  // lea r8;  deref pointer
-        { Constants::AOB_GNAMES_V2, false },  // lea rcx; call; direct
-        { Constants::AOB_GNAMES_V2, true  },  // lea rcx; call; deref pointer
-        { Constants::AOB_GNAMES_V6, false },  // mov rax,[rip+X]; test; jnz (GSpots UE5+)
-        { Constants::AOB_GNAMES_V6, true  },  // mov rax,[rip+X]; test; jnz; deref
-        { Constants::AOB_GNAMES_V8, false },  // Palworld: lea rax,[rip+X]; jmp 0x13 (extended context)
-        { Constants::AOB_GNAMES_V8, true  },  // Palworld deref
+        { Sig::AOB_GNAMES_V5, false },  // lea rcx; call; mov byte ptr[],1 (extended context)
+        { Sig::AOB_GNAMES_V5, true  },  // lea rcx; call; mov byte ptr[],1; deref
+        { Sig::AOB_GNAMES_V1, false },  // lea rsi; direct
+        { Sig::AOB_GNAMES_V1, true  },  // lea rsi; deref pointer
+        { Sig::AOB_GNAMES_V3, false },  // lea rax; direct
+        { Sig::AOB_GNAMES_V3, true  },  // lea rax; deref pointer
+        { Sig::AOB_GNAMES_V4, false },  // lea r8;  direct
+        { Sig::AOB_GNAMES_V4, true  },  // lea r8;  deref pointer
+        { Sig::AOB_GNAMES_V2, false },  // lea rcx; call; direct
+        { Sig::AOB_GNAMES_V2, true  },  // lea rcx; call; deref pointer
+        { Sig::AOB_GNAMES_V6, false },  // mov rax,[rip+X]; test; jnz (GSpots UE5+)
+        { Sig::AOB_GNAMES_V6, true  },  // mov rax,[rip+X]; test; jnz; deref
+        { Sig::AOB_GNAMES_V8, false },  // Palworld: lea rax,[rip+X]; jmp 0x13 (extended context)
+        { Sig::AOB_GNAMES_V8, true  },  // Palworld deref
     };
 
     for (auto& c : candidates) {
@@ -765,8 +832,8 @@ uintptr_t FindGNames() {
 
     // === Patternsleuth FNamePool patterns (RIP instruction at non-zero offset) ===
     struct { const char* pattern; int instrOffset; int opcodeLen; int totalLen; } psGNamesCandidates[] = {
-        { Constants::AOB_GNAMES_PS1, 2, 3, 7 },  // jz+9; lea r8,[rip+X]
-        { Constants::AOB_GNAMES_PS2, 7, 3, 7 },  // sub rsp; shr edx; lea rbp,[rip+X]
+        { Sig::AOB_GNAMES_PS1, 2, 3, 7 },  // jz+9; lea r8,[rip+X]
+        { Sig::AOB_GNAMES_PS2, 7, 3, 7 },  // sub rsp; shr edx; lea rbp,[rip+X]
     };
     for (auto& c : psGNamesCandidates) {
         uintptr_t result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen);
@@ -780,11 +847,67 @@ uintptr_t FindGNames() {
         }
     }
 
+    // === New GNames patterns from UE4 Dumper.CT, Dumper-7, UEDumper ===
+
+    // CT1: lea r8,[rip+X]; jmp 0x16; lea rcx; call (UE4 Dumper.CT v6+)
+    {
+        uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_CT1, 3, 7, false);
+        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        result = TryPatternRIP(Sig::AOB_GNAMES_CT1, 3, 7, true);
+        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+    }
+
+    // CT2: lea rcx; call; mov r8,rax; mov byte (UE4 Dumper.CT UE4.23+ main)
+    {
+        uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_CT2, 3, 7, false);
+        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        result = TryPatternRIP(Sig::AOB_GNAMES_CT2, 3, 7, true);
+        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+    }
+
+    // CT3: sub rsp; mov rax,[rip+X]; test; jnz; mov ecx,0x0808 (pre-FNamePool UE4 <4.23)
+    {
+        uintptr_t result = TryPatternRIPOffset(Sig::AOB_GNAMES_CT3, 4, 3, 7);
+        if (result) {
+            if (ValidateGNames(result) || ValidateGNamesStructural(result)) return result;
+            uintptr_t derefed = 0;
+            if (Mem::ReadSafe(result, derefed) && derefed)
+                if (ValidateGNames(derefed) || ValidateGNamesStructural(derefed)) return derefed;
+        }
+    }
+
+    // CT4: ret; ?; DB; mov [rip+X],rbx (pre-FNamePool write, instrOffset=3)
+    {
+        uintptr_t result = TryPatternRIPOffset(Sig::AOB_GNAMES_CT4, 3, 3, 7);
+        if (result) {
+            uintptr_t derefed = 0;
+            if (Mem::ReadSafe(result, derefed) && derefed)
+                if (ValidateGNames(derefed) || ValidateGNamesStructural(derefed)) return derefed;
+        }
+    }
+
+    // D7_1 (Dumper-7 basic form): lea rcx; call — same as V2 but shorter context
+    // Already partly covered by V2, but the shorter pattern may hit where V2 misses.
+    {
+        uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_D7_1, 3, 7, false);
+        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        result = TryPatternRIP(Sig::AOB_GNAMES_D7_1, 3, 7, true);
+        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+    }
+
+    // UD2 (UEDumper): lea rcx; call; mov r8,rax; mov byte (extended context)
+    {
+        uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_UD2, 3, 7, false);
+        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        result = TryPatternRIP(Sig::AOB_GNAMES_UD2, 3, 7, true);
+        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+    }
+
     // === FName ctor call-site pattern (V7, FF7 Rebirth) ===
     // This pattern finds a call-site that invokes FName::FName(). We follow the
     // CALL target, then scan the function body for RIP-relative refs to FNamePool.
     {
-        uintptr_t callSite = Mem::AOBScan(Constants::AOB_GNAMES_V7_FNAME_CTOR);
+        uintptr_t callSite = Mem::AOBScan(Sig::AOB_GNAMES_V7_FNAME_CTOR);
         if (callSite) {
             // The CALL instruction is at offset +11 in the pattern: E8 xx xx xx xx
             // Pattern: 41 B8 01 00 00 00 48 8D 4C 24 ?? E8 ?? ?? ?? ?? C6 44 24
@@ -848,13 +971,13 @@ uintptr_t FindGWorld() {
     // so the UI can do live-watch.  The current UWorld* must be non-null to validate
     // read-patterns; write-patterns are accepted even if currently null (at startup).
     struct { const char* pattern; bool requireNonNull; } candidates[] = {
-        { Constants::AOB_GWORLD_V1, true  }, // mov rax,[rip+X]; cmp/cmov
-        { Constants::AOB_GWORLD_V2, false }, // mov [rip+X],rax (write — may be null at scan time)
-        { Constants::AOB_GWORLD_V3, true  }, // mov rbx,[rip+X]
-        { Constants::AOB_GWORLD_V4, true  }, // mov rdi,[rip+X]
-        { Constants::AOB_GWORLD_V5, true  }, // cmp [rip+X],rax
-        { Constants::AOB_GWORLD_V6, false }, // mov [rip+X],rbx (write)
-        { Constants::AOB_GWORLD_V7, true  }, // Palworld: mov rbx,[rip+X]; test; jz 0x33; mov r8b
+        { Sig::AOB_GWORLD_V1, true  }, // mov rax,[rip+X]; cmp/cmov
+        { Sig::AOB_GWORLD_V2, false }, // mov [rip+X],rax (write — may be null at scan time)
+        { Sig::AOB_GWORLD_V3, true  }, // mov rbx,[rip+X]
+        { Sig::AOB_GWORLD_V4, true  }, // mov rdi,[rip+X]
+        { Sig::AOB_GWORLD_V5, true  }, // cmp [rip+X],rax
+        { Sig::AOB_GWORLD_V6, false }, // mov [rip+X],rbx (write)
+        { Sig::AOB_GWORLD_V7, true  }, // Palworld: mov rbx,[rip+X]; test; jz 0x33; mov r8b
     };
 
     for (auto& c : candidates) {
