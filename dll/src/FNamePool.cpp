@@ -233,27 +233,73 @@ static void DetectBlockOffsetBits() {
     LOG_INFO("FNamePool: BlockOffsetBits = %d (default)", s_blockOffsetBits);
 }
 
+// Auto-detect FNameEntry stride by scanning chunk[0] for the "None" string.
+// Dumper-7 approach: the byte offset where "None" appears = FNameEntryHeaderSize.
+// Stride = (headerSize == 2) ? 2 : 4.
+// Must be called after DetectChunksOffset() so s_chunksOffset is set.
+static void DetectStride() {
+    uintptr_t chunksBase = s_poolAddr + s_chunksOffset;
+    uintptr_t chunk0 = 0;
+    if (!Mem::ReadSafe(chunksBase, chunk0) || !chunk0) return;
+
+    // Scan first 16 bytes of chunk[0] for "None" (0x4E6F6E65)
+    // The offset where "None" appears tells us the header size.
+    constexpr uint32_t NoneAsU32 = 0x656E6F4E; // "None" in little-endian
+    char buf[16] = {};
+    if (!Mem::ReadBytesSafe(chunk0, buf, 16)) return;
+
+    int noneOffset = -1;
+    for (int i = 0; i <= 12; ++i) {
+        uint32_t val = 0;
+        memcpy(&val, buf + i, 4);
+        if (val == NoneAsU32) {
+            noneOffset = i;
+            break;
+        }
+    }
+
+    if (noneOffset < 0) {
+        LOG_WARN("FNamePool: Could not find 'None' in chunk[0], keeping stride=%d", s_stride);
+        return;
+    }
+
+    // noneOffset = FNameEntryHeaderSize (bytes before the string starts)
+    // headerSize 2 → standard UE5 [2B header][string], stride 2
+    // headerSize 4 → could be hash-prefixed [4B][string] or padded header, stride 4
+    // headerSize 6 → hash-prefixed [4B hash][2B header][string], stride 4
+    int newStride = (noneOffset <= 2) ? 2 : 4;
+
+    if (newStride != s_stride) {
+        LOG_INFO("FNamePool: DetectStride: 'None' at chunk[0]+%d, changing stride %d -> %d",
+                 noneOffset, s_stride, newStride);
+        s_stride = newStride;
+    } else {
+        LOG_INFO("FNamePool: DetectStride: 'None' at chunk[0]+%d, stride=%d confirmed", noneOffset, s_stride);
+    }
+}
+
 void Init(uintptr_t gnamesAddr, int headerOffset) {
     s_poolAddr = gnamesAddr;
     s_initialized = true;
     s_isUE4Mode = false;
     s_headerOffset = headerOffset;
 
+    // Initial stride guess based on header offset.
     // Hash-prefixed entries (headerOffset=4) have uint32_t ComparisonId as first member,
     // raising alignof(FNameEntry) to 4 (vs 2 for standard entries with uint16_t header).
-    // The FNameEntryAllocator stride = alignof(FNameEntry), used to convert index offset to bytes.
     s_stride = (headerOffset >= 4) ? 4 : Constants::FNAME_STRIDE;
-    LOG_INFO("FNamePool: Entry stride = %d (hdrOff=%d)", s_stride, headerOffset);
+    LOG_INFO("FNamePool: Entry stride = %d (initial, hdrOff=%d)", s_stride, headerOffset);
 
     DetectChunksOffset();
+    DetectStride(); // Refine stride by scanning chunk[0] for "None"
     DetectBlockOffsetBits();
     DetectHeaderFormat();
 
     // Verify by reading a few known names
     std::string none = GetString(0);
     std::string name1 = GetString(1);
-    LOG_INFO("FNamePool: Initialized at 0x%llX (hdrOff=%d), FName[0]='%s', FName[1]='%s'",
-             static_cast<unsigned long long>(gnamesAddr), headerOffset,
+    LOG_INFO("FNamePool: Initialized at 0x%llX (hdrOff=%d, stride=%d), FName[0]='%s', FName[1]='%s'",
+             static_cast<unsigned long long>(gnamesAddr), headerOffset, s_stride,
              none.c_str(), name1.c_str());
 }
 

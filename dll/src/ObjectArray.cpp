@@ -141,6 +141,7 @@ static bool LooksLikeUObject(uintptr_t obj) {
 
 // Test a candidate stride against a chunk, counting valid UObject items.
 // Returns the number of items that resolved names (strong) and total valid items (weak).
+// NOTE: No early exit — scans all maxItems for fair comparison across strides.
 static void ProbeStride(uintptr_t chunkBase, int stride, int maxItems,
                         int& outGood, int& outNamed, int& outNull, int& outBad) {
     outGood = outNamed = outNull = outBad = 0;
@@ -151,7 +152,7 @@ static void ProbeStride(uintptr_t chunkBase, int stride, int maxItems,
         uintptr_t obj = 0;
         if (!Mem::ReadSafe(chunkBase + byteOff, obj)) {
             ++outBad;
-            if (outBad > 10 && outGood == 0) break;  // Too many read failures, give up
+            if (outBad > 30 && outGood == 0) break;  // Too many read failures, give up
             continue;
         }
 
@@ -162,9 +163,7 @@ static void ProbeStride(uintptr_t chunkBase, int stride, int maxItems,
 
         if (!LooksLikeUObject(obj)) {
             ++outBad;
-            // If we already found some good items and hit too many consecutive bad,
-            // the stride might be wrong
-            if (outBad > 10 && outGood == 0) break;
+            if (outBad > 30 && outGood == 0) break;
             continue;
         }
 
@@ -184,10 +183,29 @@ static void ProbeStride(uintptr_t chunkBase, int stride, int maxItems,
                 }
             }
         }
-
-        // Early exit: if we have enough strong evidence, stop scanning
-        if (outNamed >= 5) break;
     }
+}
+
+// Compute a quality score for a stride probe result.
+// Positive signal: named items (strong) or good items (weak).
+// Negative signal: bad items (wrong stride produces many misaligned reads).
+// The correct stride should have high named/good and very low bad.
+static int ComputeStrideScore(int named, int good, int bad) {
+    // If we have named items, the score is primarily based on named count,
+    // heavily penalized by bad count. Wrong strides that get "lucky" hits
+    // via LCM alignment will have both named AND many bad items.
+    if (named > 0) {
+        // Score = (named * 10) - (bad * 3)
+        // This means a stride with 2 named, 0 bad (score=20) beats
+        // a stride with 5 named, 29 bad (score=50-87=-37).
+        return named * 10 - bad * 3;
+    }
+    // No named items — use good count with lesser bad penalty
+    if (good > 0) {
+        return good * 5 - bad * 2;
+    }
+    // Nothing found
+    return -bad;
 }
 
 // Helper: run ProbeStride for all candidate strides on a given base address, updating best.
@@ -195,6 +213,8 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
                             int candidates[], int numCandidates,
                             int& bestStride, int& bestCount, int& bestNamed,
                             int& bestBad, bool& bestHasNames) {
+    int bestScore = INT_MIN;
+
     for (int i = 0; i < numCandidates; ++i) {
         int stride = candidates[i];
         int good, named, null_, bad;
@@ -203,23 +223,10 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
         LOG_INFO("ObjectArray: %s stride %d: good=%d, named=%d, null=%d, bad=%d",
                  phase, stride, good, named, null_, bad);
 
-        bool isBetter = false;
-        if (named > 0 || bestNamed > 0) {
-            // Primary: most named items. Tiebreaker: fewer bad items.
-            if (named > bestNamed) {
-                isBetter = true;
-            } else if (named == bestNamed && named > 0 && bad < bestBad) {
-                isBetter = true;
-            }
-        } else {
-            if (good > bestCount) {
-                isBetter = true;
-            } else if (good == bestCount && good > 0 && bad < bestBad) {
-                isBetter = true;
-            }
-        }
+        int score = ComputeStrideScore(named, good, bad);
 
-        if (isBetter) {
+        if (score > bestScore) {
+            bestScore = score;
             bestStride = stride;
             bestCount = good;
             bestNamed = named;
@@ -266,8 +273,9 @@ static void DetectItemSize() {
     int bestBad = INT_MAX;
     bool bestHasNames = false;
 
-    // Phase 1: scan first 100 items of chunk[0] (standard chunked layout)
-    constexpr int MAX_ITEMS_PHASE1 = 100;
+    // Phase 1: scan first 200 items of chunk[0] (standard chunked layout)
+    // Use 200 items (not 100) to give sparse UE4 arrays enough items for correct stride detection.
+    constexpr int MAX_ITEMS_PHASE1 = 200;
     ProbeAllStrides(chunk0, MAX_ITEMS_PHASE1, "P1",
                     candidates, NUM_CANDIDATES,
                     bestStride, bestCount, bestNamed, bestBad, bestHasNames);
@@ -276,38 +284,9 @@ static void DetectItemSize() {
     // Some UE4 games have thousands of null slots at the start.
     if (bestCount == 0) {
         LOG_INFO("ObjectArray: Phase 1 found no items, trying deep scan from item 1000...");
-
-        constexpr int DEEP_START = 1000;
-        constexpr int DEEP_COUNT = 50;
-
-        for (int i = 0; i < NUM_CANDIDATES; ++i) {
-            int stride = candidates[i];
-            int64_t startByte = static_cast<int64_t>(DEEP_START) * stride;
-            uintptr_t scanBase = chunk0 + startByte;
-
-            int good, named, null_, bad;
-            ProbeStride(scanBase, stride, DEEP_COUNT, good, named, null_, bad);
-
-            LOG_INFO("ObjectArray: P2-deep stride %d (item %d): good=%d, named=%d, null=%d, bad=%d",
-                     stride, DEEP_START, good, named, null_, bad);
-
-            bool isBetter = false;
-            if (named > 0 || bestNamed > 0) {
-                if (named > bestNamed) isBetter = true;
-                else if (named == bestNamed && named > 0 && bad < bestBad) isBetter = true;
-            } else {
-                if (good > bestCount) isBetter = true;
-                else if (good == bestCount && good > 0 && bad < bestBad) isBetter = true;
-            }
-
-            if (isBetter) {
-                bestStride = stride;
-                bestCount = good;
-                bestNamed = named;
-                bestBad = bad;
-                bestHasNames = (named > 0);
-            }
-        }
+        ProbeAllStrides(chunk0 + static_cast<int64_t>(1000) * 24, 100, "P2-deep",
+                        candidates, NUM_CANDIDATES,
+                        bestStride, bestCount, bestNamed, bestBad, bestHasNames);
     }
 
     // Phase 3: if still nothing, maybe the array is NOT chunked (some UE4 builds).
@@ -325,33 +304,9 @@ static void DetectItemSize() {
 
         if (bestCount == 0) {
             // Try deep scan on flat array too
-            for (int i = 0; i < NUM_CANDIDATES; ++i) {
-                int stride = candidates[i];
-                int64_t startByte = static_cast<int64_t>(1000) * stride;
-
-                int good, named, null_, bad;
-                ProbeStride(chunkTable + startByte, stride, 50, good, named, null_, bad);
-
-                LOG_INFO("ObjectArray: P3-flat-deep stride %d (item 1000): good=%d, named=%d, null=%d, bad=%d",
-                         stride, good, named, null_, bad);
-
-                bool isBetter = false;
-                if (named > 0 || bestNamed > 0) {
-                    if (named > bestNamed) isBetter = true;
-                    else if (named == bestNamed && named > 0 && bad < bestBad) isBetter = true;
-                } else {
-                    if (good > bestCount) isBetter = true;
-                    else if (good == bestCount && good > 0 && bad < bestBad) isBetter = true;
-                }
-
-                if (isBetter) {
-                    bestStride = stride;
-                    bestCount = good;
-                    bestNamed = named;
-                    bestBad = bad;
-                    bestHasNames = (named > 0);
-                }
-            }
+            ProbeAllStrides(chunkTable + static_cast<int64_t>(1000) * 24, 100, "P3-flat-deep",
+                            candidates, NUM_CANDIDATES,
+                            bestStride, bestCount, bestNamed, bestBad, bestHasNames);
         }
 
         if (bestCount == 0) {

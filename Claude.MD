@@ -65,8 +65,8 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-21 (DetectLayout v2: multi-layout + heap-pointer validation + OctoPath fix)
-> Latest commit: `bb6ccde` on `dev` branch
+> Last updated: 2026-02-21 (Stride scoring v4 for FF7R + 8-game test results including Hogwarts Legacy & EverSpace 2)
+> Latest commit: `362c0ae` on `dev` branch (uncommitted: DetectStride + UProperty fallback)
 
 ### Component Status
 
@@ -108,6 +108,13 @@ git submodule update --init --recursive
 - **FF7Re Instance Finder** — `find_instances` returns correct results with valid names
 - **FF7Re DetectItemSize v3** — tiebreaker correctly selects stride 24 (0 bad) over stride 16 (5 bad) when named counts are equal (both 5)
 - **Tower of Mask (UE4.27)** — Full pipeline working: stride 24 detected, DynOff offsets correct, Object Tree populated (62661 objects), Live Walker walks classes with fields. GWorld null but UWorld found via GObjects scan fallback
+- **DQ I&II HD-2D Remake (UE5.05)** — Full pipeline working: stride 24, 128678 objects, standard FNamePool, Object Tree populated, Instance Finder works. GWorld null. Guid/Vector struct-based offset detection works.
+- **OctoPath Traveler (UE4, build 1.0.0.19)** — GObjects found (Layout B, 35087 objects), GNames found via UE4 TNameEntryArray, FName[0]='None', FName[1]='ByteProperty'. Object Tree populates. GWorld found but "Start from GWorld" fails in UI.
+- **FF7R ValidateGObjects v2 (build 1.0.0.19)** — False positive correctly rejected. V12 pattern finds real GObjects at `0x7FF7868AD470` (Layout B, 165792 objects, chunk[0] valid heap pointer). But names truncated — see challenge #16.
+- **DQ I&II CE pointer lookup (build 1.0.0.19)** — Address-to-object lookup success (used different CE instance to load table and get value)
+- **FF7R UProperty fallback (build 1.0.0.20)** — FProperty-to-UProperty fallback triggered correctly: Children at struct+0x38, SuperStruct=+0x30, UField::Next=+0x28, UProperty::Offset_Internal=+0x44 (matching RE-UE4SS exactly). But FUObjectItem stride still wrong (16 instead of 24) — see challenge #17
+- **EverSpace 2 (UE5.5, build 1.0.0.20)** — Full pipeline working: stride 24 (tiebreaker), GNames via pointer-scan fallback (all AOB patterns failed), 1,158,676 objects, DynOff validated. UE 505 detected from PE.
+- **Hogwarts Legacy (UE4.27, build 1.0.0.20)** — Full pipeline working: stride 24 (tiebreaker: 0 bad), 379,793 objects, FProperty mode with FField::Name=+0x28, FField::Next=+0x20. PE reports UE 4.27 → version 427.
 
 ### Known Challenges & Failures
 
@@ -329,6 +336,85 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 
 **Expected result**: OctoPath should now match Layout C: Objects at +0x00 (heap pointer), Num at +0x14 (32758). DetectItemSize should then find valid items.
 
+**Status**: OctoPath was tested with old build (pre-DetectLayout v2). The fix was NOT in the compiled DLL. Re-test required with build 1.0.0.18.
+
+#### 15. FF7R (Remake Intergrade): ValidateGObjects False Positive + V12 Deref Bug
+
+**Symptom**: FF7R connected (UE504, 32759 objects), but Object Tree shows "Objects: 0 (of 32759)". All DetectItemSize phases return `good=0, named=0, bad=11`. FNamePool initialized correctly, FName[0]='None', FName[1]='ne??ByteProperty' (garbled concatenation). Name sanity: 0/10 objects resolved.
+
+**Root causes** (two cascading failures):
+
+1. **ValidateGObjects false positive**: The deref variant of pattern V6 (`48 8B 0D`) resolves to `0x7FF786CD99D0`, reads `*(0x7FF786CD99D0)` → `0x1B32FE82B80` (heap pointer). Then `ValidateGObjects(0x1B32FE82B80)` checks `*(0x1B32FE82B80 + 0x14)` = `0x00007FF7` (upper 32 bits of a code-section pointer at +0x10) = 32759 — which COINCIDENTALLY passes the NumElements range check. The address `0x1B32FE82B80` is NOT an FUObjectArray — it's some heap allocation where pointer bytes happen to look like a valid count.
+
+2. **V12/RE2 pattern deref-only resolution**: The FF7R-specific V12 pattern (`48 8B ?? ?? ?? ?? ?? 4C 8B 04 C8`) and RE2 pattern should use `target - 0x10` (RE-UE4SS style: the RIP target points to the ObjObjects field, base = target-0x10). But our code only tried `*(target) - 0x10` (deref'd), which computes a nonsensical heap-pointer-minus-16. Since the false positive from issue #1 was accepted first, V12/RE2 was never even reached.
+
+**Diagnosis clues**:
+- `GObjects@0x1B32FE82B80: +00:00007FF7860A5D70` — all objects pointers are in game module range (code section), not heap
+- `chunkTable` hex dump shows game module code pointers, not heap chunk pointers
+- RE-UE4SS config for FF7R: `EngineVersionOverride: 4.18`, `UStruct::SuperStruct = +0x30`, GUObjectArray signature uses `-0x10` offset (ObjObjects at +0x10)
+- DQ I&II HD-2D Remake (UE5.05) works correctly with same stride detection logic — the FF7R issue is purely in GObjects address discovery
+
+**Fix applied (ValidateGObjects v2 + V12 non-deref)**:
+1. Rewrote `ValidateGObjects` with multi-layout validation: tries 3 layout candidates (A/C: Num+0x14/Obj+0x00, B: Num+0x04/Obj+0x10, D: Num+0x1C/Obj+0x10). For each, validates:
+   - NumElements in [0x1000, 0x400000]
+   - Objects pointer can be dereferenced to get chunk[0]
+   - chunk[0] must be a valid heap pointer (not in game module) via `LooksLikeDataPtr()` — rejects code section addresses
+   - If chunk[0] is null, Objects pointer itself must be a heap pointer
+2. Added `LooksLikeDataPtr()` helper: rejects null, low, kernel, and game-module-range pointers
+3. Fixed V12 and RE2 handlers to try `ValidateGObjects(target - 0x10)` BEFORE deref variant, matching RE-UE4SS's resolution logic
+
+**Expected result**: False positive `0x1B32FE82B80` rejected (chunk[0] is in game module). Scan continues to V12 pattern, which resolves with `target - 0x10` to find the real FUObjectArray in the game module's data section.
+
+**Status**: ValidateGObjects v2 ✅ (false positive correctly rejected). V12 non-deref ✅ (finds real GObjects at `0x7FF7868AD470`, Layout B, 165792 objects). But names still garbled — see #16.
+
+#### 16. FF7R (Remake Intergrade): Truncated Names + UProperty Mode Misdetection
+
+**Symptom**: Object Tree loads 165792 objects but names are visibly truncated/garbled ("vel", "Package" appearing repeatedly). FName[0]='None' correct but FName[1]='ne'. Sanity check: 4/10 objects resolved names. Live Walker shows no fields (DynOff `Cannot find ChildProperties in 'Guid'`).
+
+**Root causes** (three cascading failures):
+
+1. **FNamePool stride not auto-detected**: FF7R has standard FNamePool (hdrOff=0, Format A) with stride=2 confirmed by "None" at offset 2. FName[1]='ne' is expected — index 1 falls inside "None" entry and is an invalid/unallocated index. The real issue is FUObjectItem stride (see below).
+
+2. **FUObjectItem stride=16 selected (should be 24)**: DetectItemSize P1 shows stride 16: `good=5, named=5, null=56, bad=29` vs stride 24: `good=2, named=2, null=68, bad=30`. Stride 16 wins on named count. But stride 16 with actual stride 24 means every 3rd item (LCM(16,24)=48) coincidentally aligns. The tiebreaker (bad count) only applies when named counts are equal. Here 5 > 2, so no tiebreaker. With wrong stride, 2/3 of objects have wrong UObject pointer → wrong FName index → truncated/garbage names.
+
+3. **Version misdetection → FProperty mode → wrong UStruct offsets**: Version defaults to 504 (no version string found). `DetectUPropertyMode(504)` → FProperty mode (>= 425). But FF7R is UE4.18 (RE-UE4SS config confirms `MajorVersion=4, MinorVersion=18`). UE4.18 uses UProperty (UObject-derived), not FProperty. UStruct offsets are completely different:
+   - Our defaults: SuperStruct=0x40, Children=0x48, ChildProperties=0x50
+   - FF7R (RE-UE4SS): SuperStruct=0x30, Children=0x38, NO ChildProperties
+   - Also: FProperty::Offset_Internal=0x44, UField::Next=0x28
+
+   `ValidateAndFixOffsets` probes Guid struct for FFieldClass at ptr+0x08 (FProperty mode) — fails because FF7R properties are UObject-derived. Falls back to defaults. All class walking produces garbage.
+
+**Fix applied**:
+1. `FNamePool.cpp`: Added `DetectStride()` — scans chunk[0] for "None" (0x656E6F4E) to auto-detect FNameEntry alignment stride. Called after `DetectChunksOffset()` but before `DetectBlockOffsetBits()`. Won't change the result for FF7R (stride stays 2, which is correct for standard FNamePool), but provides insurance for future games.
+2. `OffsetFinder.cpp`: Added **FProperty-to-UProperty fallback** in `ValidateAndFixOffsets()`. When FProperty mode can't find ChildProperties, retries with UProperty mode by scanning for UObject-derived properties (Class at ptr+0x10 → class name contains "Property"). If found, switches `bUseFProperty=false` and sets `UFIELD_NEXT=0x28`. All subsequent offset detection (Name, Next, Offset_Internal, SuperStruct derivation) then uses UProperty logic correctly.
+
+**Expected result**: FF7R fallback finds UProperty chain at struct+0x38 → derives SuperStruct=0x30, PropertiesSize=0x40. UField::Next=0x28, UProperty::Offset_Internal=0x44 (matching RE-UE4SS exactly). Class walking should produce correct fields. FUObjectItem stride still 16 (may need separate fix if tiebreaker doesn't help).
+
+**Status (build 1.0.0.20)**: UProperty fallback ✅ (correct offsets detected: Super=+0x30, Children=+0x38, Next=+0x28, Offset=+0x44). FUObjectItem stride still 16 ❌ (5 named vs 2 named — scoring doesn't penalize bad items). See #17.
+
+#### 17. FF7R (Remake Intergrade): Stride 16 Wins Over 24 Despite High Bad Count
+
+**Symptom**: After fix #16, FF7R scan log (build 1.0.0.20) shows stride detection still selects 16 bytes: `P1 stride 16: good=5, named=5, null=56, bad=29` vs `P1 stride 24: good=2, named=2, null=68, bad=30`. Object Tree still shows truncated names ("vel", "Package"). Name sanity: 4/10 objects resolved.
+
+**Root cause**: The stride comparison used `named` count as the primary metric. Stride 16 gets 5 named items (LCM alignment every 3rd) while stride 24 only gets 2 (sparse beginning of GObjects array). The tiebreaker (bad count) only applies when named counts are equal. Additionally, the `ProbeStride` function had `if (outNamed >= 5) break;` early exit — this capped all strides at 5 named items max, preventing the correct stride from accumulating more evidence with longer scans. Without the early exit and with more items scanned, the correct stride (24) would show 0 bad items while the wrong stride (16) would show 60-90+ bad items.
+
+**Fix applied (stride scoring v4)**:
+1. `ObjectArray.cpp` `ProbeStride()`: Removed `if (outNamed >= 5) break;` early exit. All strides now scan the same number of items for fair comparison.
+2. `ObjectArray.cpp`: Added `ComputeStrideScore()` function: `score = named * 10 - bad * 3` (named), `score = good * 5 - bad * 2` (good-only), or `-bad` (nothing). This heavily penalizes strides with many bad items.
+3. `ObjectArray.cpp` `ProbeAllStrides()`: Comparison now uses `ComputeStrideScore()` instead of named-count-first logic. The stride with the highest score wins.
+4. Phase 1 items increased from 100 to 200 for better signal.
+5. Phase 2/3 simplified to use `ProbeAllStrides()` instead of duplicating comparison logic.
+
+**Expected result**: FF7R stride 24 should win with score ≈ 50-150 (many named, near-zero bad) vs stride 16's score ≈ -120 (some named, but 60-90 bad items heavily penalize it). Other games remain correct because correct strides always have low bad counts.
+
+**Regression check** (predicted scores from scan data):
+- TQ2 (stride 16): 16 wins (positive score, others have 0 named)
+- OctoPath (stride 16): 16 wins (5 named, others have ≤2, and 16 has same bad pattern)
+- Hogwarts Legacy (stride 24): 24 wins (0 bad >> 6 bad for stride 16)
+- FF7Re (stride 24): 24 wins (0 bad >> 5 bad for stride 16)
+- EverSpace 2 (stride 24): 24 wins (0 bad >> 5 bad for stride 16)
+- DQ (stride 24): 24 wins (0 bad >> 4 bad for stride 16)
+
 **Status**: Built successfully (0 errors, 0 warnings), **untested** — requires injection test.
 
 ### Lessons Learned
@@ -354,6 +440,11 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - **RE-UE4SS CustomGameConfigs**: RE-UE4SS maintains per-game configs (`UE4SS-settings.ini` + `MemberVariableLayout.ini`) with engine version overrides and exact struct offsets. These are invaluable reference data for verifying our auto-detection. Located at `D:\Github\RE-UE4SS\assets\CustomGameConfigs\<GameName>\`.
 - **FUObjectItem item[0] can be null**: GObjects arrays often have null in slot 0 (especially UE4). `DetectItemSize` must scan forward to find the first non-null item before validating strides. Don't require item[0] to be valid — scan chunk bytes in alignment steps.
 - **Hash-prefixed FNameEntry stride = 4, not 2**: When FNameEntry has a 4-byte ComparisonId prefix, `alignof(FNameEntry)` becomes 4 (due to uint32_t member), and the FNameEntryAllocator stride is 4. The FName index offset-to-byte conversion must use `offset * 4` instead of `offset * 2`. Diagnostic clue: names like 'operty' (tail of 'Property') or '?' with some correct names intermixed → stride is wrong, indices land at wrong byte offsets within chunks.
+- **ValidateGObjects must validate the chunk chain, not just NumElements**: Checking `*(addr+0x14)` in range is too weak — the upper 32 bits of a code-section pointer (e.g., `0x00007FF7` = 32759) can coincidentally fall in the valid NumElements range. Must also verify: (1) Objects pointer can be deref'd, (2) chunk[0] is a heap pointer (not in game module). This prevents false positives from deref'd heap addresses where pointer bytes masquerade as valid counts.
+- **V12/RE2 pattern resolution: target-0x10 vs *(target)-0x10**: RE-UE4SS's GUObjectArray signatures resolve to the address of the ObjObjects field inside FUObjectArray, then subtract 0x10 to get the struct base. This is `target - 0x10` (no deref). Our code was doing `*(target) - 0x10` (deref first, then subtract), which gives a nonsensical heap-pointer-minus-16. Always try the non-deref `target - 0x10` first.
+- **Build scripts should always force clean builds**: CMake's incremental build can miss source changes, causing the DLL to ship with stale code. The build script now deletes `build/` before cmake configure and `bin/obj/` before dotnet build, ensuring every build is fresh. Build number auto-increment in cmake configure also requires a fresh configure to update.
+- **FF7R (Remake Intergrade) is UE4.18**: RE-UE4SS config confirms `EngineVersionOverride: MajorVersion=4, MinorVersion=18`. The game uses FProperty (not UProperty), and the FUObjectArray has ObjObjects at +0x10 (needs -0x10 adjustment from GUObjectArray pattern).
+- **DQ I&II HD-2D Remake is UE5.05**: Detected via Tier 3 bare pattern "5.05". Standard FNamePool, stride 24, 128678 objects. Works with no special handling. GWorld=0 (null, common for some games).
 - **Anchor-scan is fragile for stride detection**: Scanning chunk bytes in fine steps (e.g., 8-byte) to find a "first valid pointer" is unreliable because non-UObject fields (Flags, SerialNumber, padding) can look like valid pointers by coincidence. `LooksLikeUObject()` triple-deref check is too weak — random pointer-like values at 8-byte-aligned offsets can pass it. The correct approach: walk at stride-aligned positions only (offset = idx * stride, starting from 0) and validate with FNamePool string resolution (strong signal) rather than pointer chain checks (weak signal).
 - **FNamePool should be initialized before ObjectArray**: This ordering enables using FName resolution as the primary validation signal for FUObjectItem stride detection. Name resolution is nearly impossible to get false positives on — it requires the correct stride AND a valid UObject AND correct FNamePool parameters.
 - **LCM alignment creates false positive strides**: For items of true stride S, probing with stride S' finds valid items at positions that are multiples of `LCM(S, S')`. For S=24 and S'=16, LCM=48, so every 3rd 16-byte position (0, 48, 96...) lands on a real 24-byte boundary. The `named` count can be equal across strides — always add a tiebreaker (fewer bad items = correct stride, since wrong strides read misaligned data as bad).
@@ -363,28 +454,41 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - **DetectLayout must validate Objects pointer**: The alternate layout check `*(addr+0x04) > 0` is too loose — values like `ObjLastNonGCIndex` can match. Always validate that `*(addr + objectsOffset)` is a heap-like pointer (non-null, user-mode, NOT in the game module's code section). This catches cases where a layout candidate puts `objectsOffset` on a field that contains code addresses instead of heap pointers.
 - **UE4 FUObjectArray has extra members before ObjObjects**: Fields like `ObjFirstGCIndex`, `ObjLastNonGCIndex`, `MaxObjectsNotConsideredByGC`, `OpenForDisregardForGC` can appear at offsets 0x00-0x0C, pushing `ObjObjects.Objects**` to +0x10. The `Max` at +0x10 in default layout may actually be a PreAllocatedObjects pointer. Multiple layout candidates with pointer validation are needed.
 - **GWorld null is common in UE4**: Many UE4 games have GWorld=0 or garbage. The DLL's `walk_world` command has a fallback: searches GObjects for a UWorld instance. This finds `Default__World` (CDO) or actual world instances.
+- **FProperty-to-UProperty fallback**: When version is misdetected (e.g., 504 instead of 418), `DetectUPropertyMode` selects FProperty mode. But `ValidateAndFixOffsets` fails to find ChildProperties (FFieldClass check fails on UProperty). Solution: when FProperty scan fails, retry with UProperty scan (check UObject::ClassPrivate for "Property" class name). This auto-corrects the mode even with wrong version detection.
+- **RE-UE4SS CustomGameConfigs are the ground truth for UE4 offset validation**: `MemberVariableLayout.ini` provides exact struct member offsets per game. FF7R (UE4.18): SuperStruct=0x30, Children=0x38, UProperty::Offset_Internal=0x44. These are a 0x10 offset shift from UE5 defaults due to smaller UObject base size.
+- **UE4.18 uses FNamePool, not TNameEntryArray**: Despite being a very old UE version, FF7R (Square Enix UE4.18 fork) uses FNamePool with standard 2-byte header (not UE4 TNameEntryArray). The validator correctly identified this. Don't assume UE4 = TNameEntryArray.
+- **FName index 1 can be invalid**: In FNamePool, FName indices are allocation offsets (byte_offset / stride), not sequential entry indices. Index 1 (byte offset 2 with stride=2) falls INSIDE entry[0]'s "None" string (header=2 bytes + "None"=4 bytes = 6 bytes). This is normal — index 1 is simply an unallocated/invalid index. Don't use FName[1] as a diagnostic indicator; use actual object name indices instead.
+- **Stride detection early exit creates unfair comparisons**: `if (outNamed >= 5) break;` in ProbeStride causes all strides to stop at the same named count when LCM alignment provides enough matches. This makes the comparison meaningless — all strides show 5 named. Removing the early exit and scanning all items equally reveals the true signal: correct strides have near-zero bad items, wrong strides have many bad items from misaligned reads.
+- **Bad items are the strongest stride signal**: When LCM alignment causes wrong strides to find named items (e.g., LCM(16,24)=48 means stride 16 hits real stride-24 items every 3rd slot), the named count becomes unreliable. But the bad count is highly discriminative: the correct stride reads valid data (objects or null) at every position, while wrong strides read misaligned garbage at most positions. Scoring formula `named * 10 - bad * 3` correctly penalizes this.
+- **Hogwarts Legacy uses UE4.27**: PE VERSIONINFO correctly detects it as UE4.27 (version=427). Despite being a large AAA game, it uses FProperty mode (UE4.25+) with FField::Name at +0x28, FField::Next at +0x20. The 'b' field in Guid (lowercase) is a minor anomaly but doesn't affect functionality.
+- **EverSpace 2 and Hogwarts Legacy require GNames pointer-scan fallback**: All 17 standard GNames AOB patterns fail on these UE5.5/4.27 games. The pointer-scan fallback (`FindGNamesByPointerScan`) successfully finds FNamePool by scanning `.data` section for pointers to "None" FNameEntry. This pattern may become the primary discovery method for newer UE builds.
+- **OctoPath Traveler uses stride 16 (not 24)**: Despite being UE4, OctoPath's FUObjectItem is 16 bytes. This was confirmed by correct Object Tree operation with stride 16. Not all UE4 games use 24-byte items. The stride depends on whether the engine was compiled with GC clustering support.
 
 ### Recommended Test Games
 
 | Game | UE Version | Notes |
 |------|-----------|-------|
-| EverSpace 2 | UE5.1-5.3 (est.) | Ships with `.pdb` — ideal for validating scanner against known symbols |
-| Titan Quest II | UE5.7 (PE reports) | Primary test target for CasePreservingName + dynamic offset detection |
-| OctoPath Traveler | UE4 (pre-4.25) | UE4 TNameEntryArray + GObjects layout detection test — DetectLayout v2 pending verification |
-| Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry + stride 24 — fully working after tiebreaker fix |
-| Tower of Mask | UE4.27 | Standard UE4 indie game — full pipeline confirmed working |
+| EverSpace 2 | UE5.5 (PE: 505) | GNames via pointer-scan fallback. Stride 24, 1.16M objects — fully working (build 1.0.0.20) |
+| Titan Quest II | UE5.7 (PE reports) | Primary test target for CasePreservingName + dynamic offset detection. Stride 16 |
+| OctoPath Traveler | UE4 (pre-4.25) | UE4 TNameEntryArray + Layout B + stride 16. Object Tree working (build 1.0.0.20). "Start from GWorld" fails in UI |
+| Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry (hdrOff=4, stride=4) + stride 24 — fully working. CE address-to-object lookup fails |
+| Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | UProperty fallback ✅. Stride 16→24 fix pending test (scoring v4). 165792 objects |
+| DQ I&II HD-2D Remake | UE5.05 | Stride 24, 128678 objects — full pipeline working. GWorld null. CE pointer lookup works |
+| Tower of Mask | UE4.27 | Standard UE4 indie game — full pipeline confirmed working. Stride 24 |
+| Hogwarts Legacy | UE4.27 (PE: 427) | GNames via pointer-scan fallback. Stride 24, 379K objects — fully working (build 1.0.0.20) |
 
 ### Next Steps
 
-1. **Test OctoPath** with DetectLayout v2:
-   - Expect Layout C (relaxed default) to match: Objects at +0x00, Num at +0x14
-   - Then DetectItemSize should detect stride 24
-   - Object Tree should populate
-2. **Verify no regression** on TQ2, FF7Re, Tower of Mask
-3. **Investigate FF7Re GWorld** — currently garbage (0x354). May need game-specific GWorld pattern or skip for UE4 forks
-4. **Test pointer-scan fallback for GNames** on EverSpace 2 (use `.pdb` to verify address)
-5. Once UE4 + DynOff confirmed working → continue Avalonia UI development
-6. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources in `Signatures.h`
+1. **Test FF7R** with stride scoring v4 build:
+   - Expect: stride 24 selected (score > stride 16 due to bad penalty)
+   - Expect: 10/10 name sanity, correct Object Tree names
+   - Expect: Live Walker with correct fields (UProperty mode already working)
+2. **Test all 8 games** for regression: TQ2, OctoPath, FF7Re, DQ HD-2D, FF7R, EverSpace 2, Hogwarts Legacy, Tower of Mask
+3. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re. User noted: closing CE injectDLL lua and loading table doesn't help. Different CE instance + load table works on DQ.
+4. **Fix "Start from GWorld" UI** — GWorld found for OctoPath and FF7Re but UI button doesn't work (address shown but fields empty)
+5. ~~Test pointer-scan fallback for GNames on EverSpace 2~~ → Done: works on both ES2 and Hogwarts Legacy
+6. Once FF7R confirmed working → continue Avalonia UI development
+7. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources in `Signatures.h`
 
 -----
 
