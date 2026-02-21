@@ -260,6 +260,7 @@ All `UStructWalker` code uses `DynOff::*` exclusively — no hardcoded FField/FP
 | [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) | Live editor UI architecture reference |
 | [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 runtime reflection, alternative angle |
 | [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | Additional AOB patterns for GObjects/GNames |
+| [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | Additional AOB patterns for GObjects/GNames scanning |
 | [nlohmann/json](https://github.com/nlohmann/json) | Header-only JSON library used in DLL |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua scripting API reference |
 | AOBMaker (private) | AOB pattern generation tooling |

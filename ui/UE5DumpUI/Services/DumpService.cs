@@ -263,6 +263,9 @@ public sealed class DumpService : IDumpService
             Name = res["name"]?.GetValue<string>() ?? "",
             ClassName = res["class"]?.GetValue<string>() ?? "",
             ClassAddr = res["class_addr"]?.GetValue<string>() ?? "",
+            OuterAddr = res["outer"]?.GetValue<string>() ?? "",
+            OuterName = res["outer_name"]?.GetValue<string>() ?? "",
+            OuterClassName = res["outer_class"]?.GetValue<string>() ?? "",
         };
 
         if (res["fields"] is JsonArray fields)
@@ -405,6 +408,40 @@ public sealed class DumpService : IDumpService
             FieldOffset = fieldOffset,
             CeOffsets = offsets.ToArray(),
             CeBase = res["ce_base"]?.GetValue<string>() ?? "",
+        };
+    }
+
+    public async Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "find_by_address",
+            ["addr"] = addr
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var found = res["found"]?.GetValue<bool>() ?? false;
+        if (!found)
+        {
+            return new AddressLookupResult
+            {
+                Found = false,
+                QueryAddress = addr,
+            };
+        }
+
+        return new AddressLookupResult
+        {
+            Found = true,
+            MatchType = res["match_type"]?.GetValue<string>() ?? "",
+            Address = res["addr"]?.GetValue<string>() ?? "",
+            Index = res["index"]?.GetValue<int>() ?? -1,
+            Name = res["name"]?.GetValue<string>() ?? "",
+            ClassName = res["class"]?.GetValue<string>() ?? "",
+            OuterAddr = res["outer"]?.GetValue<string>() ?? "",
+            OffsetFromBase = res["offset_from_base"]?.GetValue<int>() ?? 0,
+            QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
         };
     }
 

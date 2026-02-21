@@ -25,47 +25,6 @@ ue5_shutdown()
 </AssemblerScript>
     </CheatEntry>
     <CheatEntry>
-      <ID>10</ID>
-      <Description>"--- Global Pointers (enabled after init) ---"</Description>
-      <Options moHideChildren="1"/>
-      <Color>4080FF</Color>
-      <GroupHeader>1</GroupHeader>
-      <CheatEntries>
-        <CheatEntry>
-          <ID>11</ID>
-          <Description>"GObjects (FUObjectArray*)"</Description>
-          <ShowAsSigned>0</ShowAsSigned>
-          <Color>FF8080</Color>
-          <VariableType>8 Bytes</VariableType>
-          <Address>ue5_gobjects</Address>
-        </CheatEntry>
-        <CheatEntry>
-          <ID>12</ID>
-          <Description>"GNames (FNamePool*)"</Description>
-          <ShowAsSigned>0</ShowAsSigned>
-          <Color>FF8080</Color>
-          <VariableType>8 Bytes</VariableType>
-          <Address>ue5_gnames</Address>
-        </CheatEntry>
-        <CheatEntry>
-          <ID>13</ID>
-          <Description>"Object Count"</Description>
-          <ShowAsSigned>0</ShowAsSigned>
-          <Color>FF8080</Color>
-          <VariableType>4 Bytes</VariableType>
-          <Address>ue5_gobjects+C</Address>
-        </CheatEntry>
-        <CheatEntry>
-          <ID>14</ID>
-          <Description>"UE Version (e.g. 504 = UE5.4)"</Description>
-          <ShowAsSigned>0</ShowAsSigned>
-          <Color>FF8080</Color>
-          <VariableType>4 Bytes</VariableType>
-          <Address>ue5_version</Address>
-        </CheatEntry>
-      </CheatEntries>
-    </CheatEntry>
-    <CheatEntry>
       <ID>20</ID>
       <Description>"--- Setup Instructions ---"</Description>
       <Color>8000FF</Color>
@@ -271,11 +230,6 @@ end
 function ue5_shutdown()
     ue5_callDLL("UE5_StopPipeServer", "void")
     ue5_callDLL("UE5_Shutdown",       "void")
-    unregisterSymbol("ue5_gobjects")
-    unregisterSymbol("ue5_gnames")
-    synchronize(function()
-        getAddressList().refresh()
-    end)
     ue5_log("UE5 Dumper stopped.")
     if _logHandle then
         _logHandle:close()

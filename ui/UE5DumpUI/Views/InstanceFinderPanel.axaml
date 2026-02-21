@@ -18,9 +18,25 @@
                  Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
     </StackPanel>
 
-    <!-- Loading -->
+    <!-- Loading (class search) -->
     <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                  IsVisible="{Binding IsSearching}" Height="2" Margin="0,0,0,4"/>
+
+    <!-- Address-to-Instance reverse lookup -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+      <TextBox Watermark="{StaticResource str.InstanceFinder.AddressHint}"
+               Text="{Binding LookupAddress}"
+               Width="300" Padding="4,2"/>
+      <Button Content="{StaticResource str.InstanceFinder.Lookup}"
+              Command="{Binding LookupAddressCommand}"
+              Padding="12,4"/>
+      <TextBlock Text="{Binding LookupStatusText}"
+                 Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
+    </StackPanel>
+
+    <!-- Loading (address lookup) -->
+    <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
+                 IsVisible="{Binding IsLookingUp}" Height="2" Margin="0,0,0,4"/>
 
     <!-- Main content: instances list (top) + field values (bottom) -->
     <Grid>
@@ -122,8 +138,10 @@
                                 Binding="{Binding DisplayValue}"
                                 Width="200"/>
             <DataGridTextColumn Header="Hex"
-                                Binding="{Binding HexValue}"
-                                Width="*"/>
+                                Binding="{Binding HexValue}" Width="160"/>
+            <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Address}"
+                                Binding="{Binding FieldAddress}"
+                                Width="140"/>
             <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.CopyAddress}" Width="50">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="m:LiveFieldValue">

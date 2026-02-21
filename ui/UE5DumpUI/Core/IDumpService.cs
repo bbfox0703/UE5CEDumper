@@ -25,4 +25,7 @@ public interface IDumpService
     Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, CancellationToken ct = default);
     Task<List<InstanceResult>> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default);
     Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default);
+
+    // --- Address-to-Instance Reverse Lookup ---
+    Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default);
 }

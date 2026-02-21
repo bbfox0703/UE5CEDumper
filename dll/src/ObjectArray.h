@@ -61,4 +61,21 @@ std::vector<SearchResult> SearchByName(const std::string& query, int maxResults 
 // Returns addr, index, name, className, outer for each instance
 std::vector<SearchResult> FindInstancesByClass(const std::string& className, int maxResults = 500);
 
+// Address-to-Instance reverse lookup result
+struct AddressLookupResult {
+    bool        found         = false;
+    bool        exactMatch    = false;  // true = addr is a UObject, false = addr is inside a UObject
+    uintptr_t   objectAddr    = 0;      // The owning UObject address
+    int32_t     index         = -1;     // InternalIndex in GObjects
+    std::string name;
+    std::string className;
+    uintptr_t   outer         = 0;
+    int32_t     offsetFromBase = 0;     // addr - objectAddr (0 for exact match)
+};
+
+// Given an arbitrary address, find which UObject it belongs to.
+// First tries exact match (is this address a UObject?), then containment
+// (is this address inside a UObject's property data?).
+AddressLookupResult FindByAddress(uintptr_t addr);
+
 } // namespace ObjectArray
