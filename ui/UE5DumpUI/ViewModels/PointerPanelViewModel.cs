@@ -33,24 +33,28 @@ public partial class PointerPanelViewModel : ViewModelBase
         HasData = true;
     }
 
+    /// <summary>Strip leading "0x" or "0X" prefix for clipboard copy.</summary>
+    private static string StripHexPrefix(string addr)
+        => addr.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? addr[2..] : addr;
+
     [RelayCommand]
     private async Task CopyGObjectsAsync()
     {
         if (!string.IsNullOrEmpty(GObjectsAddress))
-            await _platform.CopyToClipboardAsync(GObjectsAddress);
+            await _platform.CopyToClipboardAsync(StripHexPrefix(GObjectsAddress));
     }
 
     [RelayCommand]
     private async Task CopyGNamesAsync()
     {
         if (!string.IsNullOrEmpty(GNamesAddress))
-            await _platform.CopyToClipboardAsync(GNamesAddress);
+            await _platform.CopyToClipboardAsync(StripHexPrefix(GNamesAddress));
     }
 
     [RelayCommand]
     private async Task CopyGWorldAsync()
     {
         if (!string.IsNullOrEmpty(GWorldAddress))
-            await _platform.CopyToClipboardAsync(GWorldAddress);
+            await _platform.CopyToClipboardAsync(StripHexPrefix(GWorldAddress));
     }
 }

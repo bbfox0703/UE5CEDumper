@@ -7,6 +7,7 @@
 #include "Logger.h"
 #include "BuildInfo.h"
 #include "Constants.h"
+#include "Memory.h"
 #include "OffsetFinder.h"
 #include "ObjectArray.h"
 #include "FNamePool.h"
@@ -65,6 +66,30 @@ bool UE5_Init() {
         FNamePool::Init(ptrs.GNames, ptrs.fnameEntryHeaderOffset);
     }
     ObjectArray::Init(ptrs.GObjects);
+
+    // Quick sanity check: verify name resolution works for a few objects
+    {
+        int verified = 0, tested = 0;
+        for (int32_t i = 0; i < ObjectArray::GetCount() && tested < 10; ++i) {
+            uintptr_t obj = ObjectArray::GetByIndex(i);
+            if (!obj) continue;
+            ++tested;
+            uint32_t nameIdx = 0;
+            if (Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx)) {
+                std::string name = FNamePool::GetString(nameIdx);
+                if (!name.empty() && name != "None") {
+                    ++verified;
+                    if (verified <= 3) {
+                        LOG_INFO("UE5_Init: Sanity obj[%d] name='%s' (idx=%u)", i, name.c_str(), nameIdx);
+                    }
+                }
+            }
+        }
+        LOG_INFO("UE5_Init: Name sanity: %d/%d objects resolved", verified, tested);
+        if (verified == 0 && tested >= 5) {
+            LOG_WARN("UE5_Init: WARNING — No objects resolved names! Check FUObjectItem size or FNamePool.");
+        }
+    }
 
     // Dynamically detect FField/FProperty/UStruct offsets
     // Must be called AFTER FNamePool + ObjectArray are initialized

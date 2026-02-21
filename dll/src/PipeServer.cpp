@@ -689,11 +689,11 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             // CE offset chain (bottom-to-top):
             // Level 4 (outermost): deref FUObjectArray* → chunkTable (offset 0)
             // Level 3: chunkTable + chunkIndex*8 → chunk
-            // Level 2: chunk + withinChunk*16 → FUObjectItem.Object (offset 0)
+            // Level 2: chunk + withinChunk*itemSize → FUObjectItem.Object (offset 0)
             // Level 1 (innermost): Object + fieldOffset → value
             json offsets = json::array();
             offsets.push_back(fieldOffset);                              // field offset from UObject*
-            offsets.push_back(withinChunk * static_cast<int>(sizeof(FUObjectItem)));  // item in chunk
+            offsets.push_back(withinChunk * ObjectArray::GetItemSize()); // item in chunk
             offsets.push_back(chunkIndex * 8);                           // chunk in table
             offsets.push_back(0);                                         // deref FUObjectArray.Objects
 

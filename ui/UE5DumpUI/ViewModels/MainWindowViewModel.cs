@@ -16,6 +16,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly ILoggingService _log;
 
     [ObservableProperty] private string _statusText = "Disconnected";
+    [ObservableProperty] private string _windowTitle = "UE5 Dump UI";
     [ObservableProperty] private bool _isConnected;
 
     // Child ViewModels
@@ -61,10 +62,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
         _pipeClient.ConnectionStateChanged += (connected) =>
         {
+            if (!connected) _log.StopProcessMirror();
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
                 IsConnected = connected;
                 StatusText = connected ? "Connected" : "Disconnected";
+                if (!connected) WindowTitle = "UE5 Dump UI";
             });
         };
     }
@@ -94,7 +97,14 @@ public partial class MainWindowViewModel : ViewModelBase
             IsConnected = true;
             StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
 
-            _log.Info($"Connected: UE{state.UEVersion}, {state.ObjectCount} objects");
+            // Update window title with process name and start per-process mirror log
+            if (!string.IsNullOrEmpty(state.ModuleName))
+            {
+                WindowTitle = $"UE5 Dump UI — {state.ModuleName}";
+                _log.StartProcessMirror(state.ModuleName);
+            }
+
+            _log.Info($"Connected: UE{state.UEVersion}, {state.ObjectCount} objects, module={state.ModuleName}");
         }
         catch (Exception ex)
         {
@@ -110,8 +120,10 @@ public partial class MainWindowViewModel : ViewModelBase
         try
         {
             ClearError();
+            _log.StopProcessMirror();
             await _pipeClient.DisconnectAsync();
             StatusText = "Disconnected";
+            WindowTitle = "UE5 Dump UI";
             IsConnected = false;
         }
         catch (OperationCanceledException)

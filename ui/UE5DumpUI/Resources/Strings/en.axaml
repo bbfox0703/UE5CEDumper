@@ -47,7 +47,7 @@
     <sys:String x:Key="str.LiveWalker.Back">Back</sys:String>
     <sys:String x:Key="str.LiveWalker.Parent">Parent &#x2191;</sys:String>
     <sys:String x:Key="str.LiveWalker.Refresh">Refresh</sys:String>
-    <sys:String x:Key="str.LiveWalker.AddressHint">Address (0x...)</sys:String>
+    <sys:String x:Key="str.LiveWalker.AddressHint">Address (hex or module.exe+offset)</sys:String>
     <sys:String x:Key="str.LiveWalker.Go">Go</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCE">Copy CE XML</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
@@ -59,7 +59,7 @@
     <sys:String x:Key="str.InstanceFinder.Search">Search</sys:String>
     <sys:String x:Key="str.InstanceFinder.Address">Address</sys:String>
     <sys:String x:Key="str.InstanceFinder.OpenInWalker">Open in Live Walker</sys:String>
-    <sys:String x:Key="str.InstanceFinder.AddressHint">Address (0x... or module.exe+offset)</sys:String>
+    <sys:String x:Key="str.InstanceFinder.AddressHint">Address (hex or module.exe+offset)</sys:String>
     <sys:String x:Key="str.InstanceFinder.Lookup">Lookup</sys:String>
 
     <!-- Pointer Panel -->
@@ -72,7 +72,7 @@
     <sys:String x:Key="str.Pointers.NotConnected">Not connected — connect to view pointers</sys:String>
 
     <!-- Hex View -->
-    <sys:String x:Key="str.HexView.Address">Address (0x...)</sys:String>
+    <sys:String x:Key="str.HexView.Address">Address (hex or module.exe+offset)</sys:String>
     <sys:String x:Key="str.HexView.Size">Size</sys:String>
     <sys:String x:Key="str.HexView.Read">Read</sys:String>
     <sys:String x:Key="str.HexView.LiveWatch">Live Watch</sys:String>

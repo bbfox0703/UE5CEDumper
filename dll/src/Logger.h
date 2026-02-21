@@ -22,7 +22,13 @@ namespace Logger {
 // Initialize both log files (scan + pipe), rotate old logs, write build header
 bool Init();
 
-// Shutdown: flush and close both files
+// Initialize per-process mirror logs in a subfolder named after the process.
+// Call AFTER Init() and after DLL determines the host process name.
+// Creates <logDir>/<processName>/ with scan + pipe mirrors, 2-version rotation.
+// Cleans up old subfolders if more than maxSubfolders exist.
+void InitProcessMirror(const std::wstring& processName, int maxSubfolders = 20);
+
+// Shutdown: flush and close both files (and process mirror if active)
 void Shutdown();
 
 // Switch the active channel (default: Scan at startup)

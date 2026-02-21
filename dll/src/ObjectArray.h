@@ -8,17 +8,16 @@
 #include <functional>
 #include <string>
 
-// UE5 FUObjectItem structure (in FChunkedFixedUObjectArray)
-// Standard UE5 layout: 16 bytes per item
-//   +0x00  Object*       (8 bytes, UObject*)
-//   +0x08  Flags         (4 bytes, EInternalObjectFlags)
-//   +0x0C  SerialNumber  (4 bytes)
+// FUObjectItem structure (in FChunkedFixedUObjectArray)
+// Size varies by UE version — auto-detected at Init() time:
+//   UE5 (most):  16 bytes { Object*(8), Flags(4), SerialNumber(4) }
+//   UE4 / some UE5: 24 bytes { Object*(8), Flags(4), ClusterRootIndex(4), SerialNumber(4), _pad(4) }
+// Only the Object* field at +0x00 is used; the rest is stride padding.
 struct FUObjectItem {
-    uintptr_t Object;           // UObject*
+    uintptr_t Object;           // UObject* (always at +0x00)
     int32_t   Flags;
     int32_t   SerialNumber;
 };
-static_assert(sizeof(FUObjectItem) == 16, "FUObjectItem must be 16 bytes for correct chunk stride");
 
 namespace ObjectArray {
 
@@ -46,6 +45,9 @@ uintptr_t FindByName(const std::string& name);
 
 // Find first object matching full path (linear scan)
 uintptr_t FindByFullName(const std::string& fullName);
+
+// Get the detected FUObjectItem stride in bytes (16 or 24)
+int GetItemSize();
 
 // Search objects by partial name (case-insensitive), returns up to maxResults
 struct SearchResult {

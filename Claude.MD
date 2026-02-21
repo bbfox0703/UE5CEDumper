@@ -65,30 +65,30 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-21 (Pagination fix + hash-prefixed FNameEntry support for UE4.26/FF7Re)
-> Latest commit: `1087931` on `dev` branch
+> Last updated: 2026-02-21 (DetectLayout v2: multi-layout + heap-pointer validation + OctoPath fix)
+> Latest commit: `bb6ccde` on `dev` branch
 
 ### Component Status
 
 | Component | File(s) | Status | Notes |
 |-----------|---------|--------|-------|
 | Memory module | `Memory.cpp/.h` | Done | AOBScan (exec sections only), ResolveRIP, ReadSafe (SEH) |
-| Logger | `Logger.cpp/.h` | Done | Dual-channel (scan+pipe), category tags, SUMMARY level, 5-version rotation, 5MB cap, thread-safe; commit `c9263ed` |
+| Logger | `Logger.cpp/.h` | Done | Dual-channel (scan+pipe), category tags, SUMMARY level, 5-version rotation, 5MB cap, thread-safe; per-process mirror logging (subfolder per process name, 2-version rotation, max 20 subfolders) |
 | AOB Signatures | `Signatures.h` | Done | 51 patterns + 4 symbol exports from 6 sources (original, patternsleuth, RE-UE4SS, Dumper-7, UE4 Dumper.CT, UEDumper) |
 | OffsetFinder — GObjects | `OffsetFinder.cpp` | Working | 27 AOB patterns + deref variants + MSVC symbol export (`GUObjectArray`); validated in TQ2 (UE5.7) |
 | OffsetFinder — GNames | `OffsetFinder.cpp` | Partial | 17 AOB patterns + FName ctor export + `.data` pointer-scan + UE4 TNameEntryArray validator; unified `ValidateGNamesAny` tries FNamePool→Structural→UE4; structural validator hardened with exact header format + corroboration |
 | OffsetFinder — GWorld | `OffsetFinder.cpp` | Done | 7 patterns, non-critical |
 | OffsetFinder — Version | `OffsetFinder.cpp` | Working | PE VERSIONINFO (ProductVersion + FileVersion) + 3-tier memory string scan (++UE prefix → Release context → bare pattern with digit guard) |
 | OffsetFinder — DynOff | `OffsetFinder.cpp`, `Constants.h` | Untested | Dynamic FField/FProperty/UStruct offset detection via known struct probing |
-| ObjectArray | `ObjectArray.cpp/.h` | Done | FChunkedFixedUObjectArray, ForEach, GetByIndex |
+| ObjectArray | `ObjectArray.cpp/.h` | Done | FChunkedFixedUObjectArray + flat array support, ForEach, GetByIndex; auto-detect FUObjectItem stride {16,24,20} via FNamePool validation with tiebreaker (bad-count secondary) |
 | FNamePool | `FNamePool.cpp/.h` | Done | Triple-mode: UE5 FNamePool (multi-format header A/B, chunk index) + UE4 TNameEntryArray (double-deref, 0x4000 chunk size) + hash-prefixed FNamePool (4B hash + 2B header, auto-detected) |
 | UStructWalker | `UStructWalker.cpp/.h` | Done | FField chain, SuperStruct inheritance, GetFullName; uses DynOff for all offsets |
 | ExportAPI | `ExportAPI.cpp/.h` | Done | C ABI exports, UE5_AutoStart, WalkClass Begin/Get/End; calls ValidateAndFixOffsets |
 | PipeServer | `PipeServer.cpp/.h` | Done | Named pipe, JSON dispatch, watch/unwatch, get_offsets, walk_world, find_instances, get_ce_pointer_info; get_object_list returns `scanned` count for proper pagination |
 | CE Cheat Table | `scripts/UE5CEDumper.CT` | Done | injectDLL-only flow (no executeCodeEx), 15s countdown |
 | CEPlugin interface | `CEPlugin.cpp` | Done | CE plugin Type 5 main menu; g_isCEPlugin flag |
-| DLL auto-start | `dllmain.cpp` | Done | AutoStartThreadProc, 1s delay, g_isCEPlugin check |
-| Avalonia UI | `ui/` | Skeleton done | Object tree + Instance Finder + Class struct panels; pipe integration in progress |
+| DLL auto-start | `dllmain.cpp` | Done | AutoStartThreadProc, 1s delay, g_isCEPlugin check; per-process mirror log init |
+| Avalonia UI | `ui/` | Skeleton done | Object tree + Instance Finder + Class struct panels; pipe integration working; dynamic window title (process name on connect) |
 
 ### What Is Working (Confirmed in Testing)
 
@@ -103,6 +103,11 @@ git submodule update --init --recursive
 - **Live Data Walker** — `walk_class`, `walk_instance`, `walk_world` commands functional (type names correct on TQ2)
 - **Instance Finder** — `find_instances` command returns matching objects by class name
 - **CE XML Export** — `get_ce_pointer_info` returns Cheat Engine-compatible XML pointer records
+- **FF7Re Object Tree** — working after FNAME_STRIDE=4 fix + stride detection v1 (24 bytes detected); names correct, Instance Finder functional
+- **TQ2 DetectItemSize v2** — stride 16 correctly detected (5 named, 0 from wrong strides); FNamePool validation prevents false positives
+- **FF7Re Instance Finder** — `find_instances` returns correct results with valid names
+- **FF7Re DetectItemSize v3** — tiebreaker correctly selects stride 24 (0 bad) over stride 16 (5 bad) when named counts are equal (both 5)
+- **Tower of Mask (UE4.27)** — Full pipeline working: stride 24 detected, DynOff offsets correct, Object Tree populated (62661 objects), Live Walker walks classes with fields. GWorld null but UWorld found via GObjects scan fallback
 
 ### Known Challenges & Failures
 
@@ -220,6 +225,112 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 
 **Status**: Built successfully (0 errors, 0 warnings), **untested** — requires next injection test.
 
+#### 10. OctoPath + FF7Re: Object Names Empty / Garbled (FUObjectItem Size Mismatch)
+
+**Symptom**: OctoPath: Object Tree shows "Objects: 0 (of 32758)" — all 167 paginated requests return 0 named objects. CPN detection: "tested 0 objects". FF7Re: Names show as "????Editor", "????e????????????????e?..." — garbled with valid suffixes.
+
+**Root cause**: `ObjectArray.h` hardcoded `FUObjectItem = 16 bytes` (`static_assert`), but UE4 (and some UE5) uses **24 bytes** (`Object*(8) + Flags(4) + ClusterRootIndex(4) + SerialNumber(4) + _pad(4)`). `GetByIndex(n)` reads at `chunk + n * 16` instead of `chunk + n * 24`. Index 0 works (offset 0), but index 1+ reads wrong memory. OctoPath: ALL names fail → 0 objects. FF7Re: every 3rd index accidentally aligns (LCM(16,24)=48, 48/16=3) → partial garbled names.
+
+**Secondary cause**: Version detection defaults to 504/505 when no UE version strings found. For OctoPath (UE4 pre-4.25), this makes `DetectUPropertyMode` select FProperty mode instead of UProperty mode.
+
+**Fix applied**:
+1. `ObjectArray.cpp`: Added `DetectItemSize()` — probes consecutive items in chunk 0 with strides {16, 24, 20}, validates 3+ items by checking UObject ClassPrivate chain (triple deref). Dynamic `s_itemSize` replaces all `sizeof(FUObjectItem)`.
+2. `ObjectArray.h`: Removed `static_assert(sizeof(FUObjectItem) == 16)`, added `GetItemSize()`.
+3. `OffsetFinder.cpp` `FindAll()`: Version override — if `bUE4NameArray && version >= 500` → force 422; if `hdrOff=4 && version >= 500` → force 426.
+4. `ExportAPI.cpp`: Added post-init name resolution sanity check (10 objects, logs count of successful resolutions).
+5. `PipeServer.cpp`: CE pointer info uses `ObjectArray::GetItemSize()` instead of hardcoded 16.
+
+**Status (first attempt)**: Item size detection worked for FF7Re (24 bytes) but failed for OctoPath (item[0] null → fell back to 16). Version override worked for both. TQ2 regression OK. But names still garbled in FF7Re, Object Tree still empty in OctoPath. See #11.
+
+#### 11. OctoPath: DetectItemSize Fails on Null item[0] + FF7Re: FNAME_STRIDE Wrong for Hash-Prefixed Entries
+
+**Symptom**: After fix #10, OctoPath still shows 0 objects (scan log: `item[0].Object is null or invalid`, `ItemSize=16`). FF7Re item size correctly detected as 24 but names still garbled (`obj[0] name='?' idx=1985`, `obj[3] name='operty' idx=270`).
+
+**Root causes** (two separate issues):
+
+1. **OctoPath DetectItemSize**: The `DetectItemSize()` function reads `item[0].Object` and gives up if null. But OctoPath's GObjects array has null in slot 0 (common in UE4). The function falls back to `s_itemSize=16` (wrong — should be 24). TQ2 also had null item[0] but happened to work because UE5 default of 16 was correct.
+
+2. **FF7Re FNAME_STRIDE**: Hash-prefixed FNameEntry has `struct { uint32_t ComparisonId; uint16_t Header; char String[]; }`. The `alignof` is 4 (due to uint32_t), so `FNameEntryAllocator::Stride = 4`. Our code used `FNAME_STRIDE=2` (correct for standard entries), making `GetEntry(nameIndex)` compute wrong byte offsets: `(nameIndex & 0xFFFF) * 2` instead of `* 4`. This means every entry address is off by a factor of 2, landing in the middle of other entries. Explains: 'operty' = tail of 'Property', '?' = reading hash bytes as string.
+
+**Diagnosis clues**:
+- OctoPath: `Name sanity: 0/0 objects resolved` — zero objects could be read at all (stride 16 instead of 24 made every pointer garbage)
+- FF7Re: `obj[2] name='PropertyAccess/EPropertyAccessCopyBatch'` — some names resolve partially because large indices happen to land near valid entries, but most are off
+- RE-UE4SS `MemberVariableLayout.ini` for FF7Re confirms all UObject/FField/FProperty offsets match our DynOff detection → the UObject layout is correct, only FNamePool stride was wrong
+
+**Fix applied (v1)**:
+1. `ObjectArray.cpp` `DetectItemSize()`: Complete rewrite. Scans first 384 bytes of chunk[0] in 8-byte steps to find first valid UObject (via `LooksLikeUObject()` helper). Then tries strides {24, 16, 20} both forward and backward from the anchor to validate. No longer requires item[0] to be non-null.
+2. `FNamePool.cpp`: Added `s_stride` variable (2 for standard, 4 for hash-prefixed). Set in `Init()` based on `headerOffset >= 4`. `GetEntry()` and `DetectBlockOffsetBits()` now use `s_stride` instead of `Constants::FNAME_STRIDE`.
+
+**Status (v1)**: FF7Re FNAME_STRIDE fix ✅ (names correct, Object Tree works, Instance Finder works). TQ2 REGRESSED ❌ (DetectItemSize falsely detects 24 instead of 16). OctoPath still fails ❌. See #12.
+
+#### 12. TQ2 Regression + OctoPath Still Empty (DetectItemSize Anchor-Scan Flaws)
+
+**Symptom**: After fix #11:
+- TQ2: `First valid UObject at chunk+0x8`, `FUObjectItem size detected as 24 bytes` → wrong (should be 16). `Name sanity: 0/10 objects resolved`.
+- OctoPath: `No valid UObject found in first 384 bytes of chunk[0]` → falls back to default 16 (should be 24). Object Tree still empty.
+
+**Root causes** (two separate issues):
+
+1. **TQ2 false detection**: The anchor-scan approach found a "valid UObject" at chunk offset 0x8 — which is NOT an item boundary for any stride. Offset 0x8 lands in the middle of item[0]'s Flags/SerialNumber fields (for 16-byte items, items are at 0, 16, 32...). The 64-bit value at that offset happened to pass `LooksLikeUObject()` (triple-deref chain by coincidence). Then stride 24 was tried first (24>16>20 order) and found enough false positives at {32, 56, 80...} to validate 10 items. The code didn't enforce `anchorOffset % stride == 0` and tried 24 before 16.
+
+2. **OctoPath insufficient scan range**: 384 bytes = ~16 items at stride 24. OctoPath has many null/empty items at the start of chunk[0] (possibly thousands). The scan range was too small to find any valid items.
+
+**Fix applied (v2)**: Complete rewrite of `DetectItemSize()` with fundamentally different approach:
+1. **No anchor scan** — instead, for each candidate stride, walk chunk from offset 0 at stride-aligned positions only (offset = idx * stride). This inherently ensures stride alignment.
+2. **FNamePool-based validation** — since FNamePool is initialized before ObjectArray, use `FNamePool::GetString()` to verify each UObject's FName resolves to a valid ASCII string. This is far stronger than the `LooksLikeUObject()` triple-deref check which produces false positives.
+3. **Try all strides, pick best** — no early exit. Compare named counts (strong signal) across all strides.
+4. **Extracted `ProbeStride()` helper** — reusable function that counts good/named/null/bad items for a given stride.
+5. **Deep scan phase** — if first 100 items per stride yield nothing (e.g., OctoPath's many null early slots), retry starting from item index 1000 for 50 more items.
+6. **Order: {16, 24, 20}** — try 16 first (UE5 most common).
+
+**Status (v2)**: TQ2 ✅ (stride 16 correct: `Stride 16: good=5, named=5, null=4, bad=6` vs others all 0). FF7Re ❌ (stride 16 falsely wins: all strides show `named=5` due to LCM alignment, no tiebreaker). OctoPath ❌ (all strides show `good=0, named=0, bad=11` — not even a chunked array). See #13.
+
+#### 13. FF7Re Stride Tiebreaker + OctoPath Flat Array (DetectItemSize v3)
+
+**Symptom**: After DetectItemSize v2:
+- FF7Re: `Stride 16: good=5, named=5, null=3, bad=5`, `Stride 24: good=5, named=5, null=0, bad=0`, `Stride 20: good=5, named=5, null=6, bad=14`. Stride 16 wins (tried first) but should be 24 (0 bad items). `ItemSize=16` (wrong).
+- OctoPath: ALL strides show `good=0, named=0, null=0, bad=11` in Phase 1 AND Phase 2 deep scan. All bytes read as "bad".
+
+**Root causes** (two separate issues):
+
+1. **FF7Re tiebreaker**: With `ProbeStride` early exit `if (outNamed >= 5) break`, all strides stop at exactly 5 named items. For stride 16, every 3rd 16-byte slot (LCM(16,24)=48, 48/16=3) happens to align with a real 24-byte item boundary. So stride 16 finds 5 named items but with 5 bad items (misaligned reads). Stride 24 finds 5 named with 0 bad items. Since named counts are equal and stride 16 is tried first, it wins — no tiebreaker existed.
+
+2. **OctoPath non-chunked array**: The `chunk[0]` deref (reading `*(chunkTable + 0)`) yields a pointer that does not contain UObject items. This suggests OctoPath's GObjects array is **flat** (non-chunked): `*(GObjects + objectsOffset)` directly points to the item array, without the extra chunk table indirection. The chunkTable hex dump shows `+00` is a valid heap pointer but `*(chunkTable + 0)` at that location contains item data directly, not more chunk pointers.
+
+**Fix applied (v3)**:
+1. **Tiebreaker**: In `ProbeAllStrides()`, when named counts are equal (both > 0), prefer the stride with fewer bad items (`bad < bestBad`). Same logic for good-count-only comparisons.
+2. **Flat array Phase 3**: If Phases 1+2 find nothing, set `s_isFlat=true` and probe `chunkTable` itself (not `*chunkTable`) as the item base. Deep scan (item 1000+) also tried on flat layout. If still nothing, revert `s_isFlat=false`.
+3. **GetByIndex/GetItem flat path**: When `s_isFlat`, compute `itemAddr = arrayBase + index * itemSize` directly (no chunk table deref).
+4. **Diagnostic hex dump**: First 64 bytes of chunkTable logged for diagnosis.
+
+**Status (v3)**: TQ2 ✅ (stride 16, no regression). FF7Re ✅ (tiebreaker: stride 24 wins with 0 bad vs stride 16's 5 bad). OctoPath ❌ (all phases fail — not a stride issue, see #14). Tower of Mask ✅ (stride 24, full pipeline working).
+
+#### 14. OctoPath: DetectLayout Selects Wrong Layout (Objects Pointer is Code Address)
+
+**Symptom**: After DetectItemSize v3, OctoPath still shows 0 objects. All 4 phases of DetectItemSize (P1, P2-deep, P3-flat, P3-flat-deep) return `good=0, named=0, bad=11` for all strides. The `chunkTable` hex dump shows machine code bytes: `83485708245C8948...`.
+
+**Root cause**: `DetectLayout` selects **alternate layout** (`Objects at +0x10, Num at +0x04`), but `*(GObjects + 0x10) = 0x7FF62D12B410` is in the game module's `.text` section — it's executable code, not a pointer to the Objects array.
+
+**Why alternate layout was selected**:
+1. Default layout check: `*(addr+0x10)` (MaxElements) is `0x7FF62D12B410` truncated to int32 = `0x2D12B410` = 756M, exceeding the 0x800000 (8M) cap → fails.
+2. Alternate layout check: `*(addr+0x04)` = 32758, which passes the `numAtAlt > 0 && numAtAlt <= 0x800000` check. But this value is actually `ObjLastNonGCIndex` (an FUObjectArray member), NOT NumElements.
+3. With `objectsOffset = 0x10`, the code reads a code address as the Objects pointer. All subsequent stride probing reads garbage.
+
+**Actual layout**: The GObjects address `0x7FF62EB02190` was validated by `ValidateGObjects` checking `*(addr+0x14)` = 32758 (the real NumElements). The default layout (`Objects at +0x00, Num at +0x14`) is correct, but the MaxElements check rejects it because `*(addr+0x10)` is a pointer value (PreAllocatedObjects*), not a count.
+
+**Fix applied (DetectLayout v2)**:
+1. Added `LooksLikeHeapPtr()` helper: validates that a pointer is non-null, in user-mode range, and NOT inside the game module's code section.
+2. Rewrote `DetectLayout` with 4 layout candidates (A/B/C/D), each validating that the Objects pointer is a heap address:
+   - **A** (UE5 default): Objects +0x00, Max +0x10, Num +0x14 — full Max/Num validation + heap pointer check
+   - **B** (UE4 alternate): Objects +0x10, Num +0x04 — now requires Objects pointer to be a heap address
+   - **C** (UE4 relaxed): Objects +0x00, Num +0x14 — accepts invalid Max at +0x10 (pointer contamination), validates Objects pointer is heap
+   - **D** (UE4 extended): Objects +0x10, Max +0x18, Num +0x1C — for FUObjectArray with ObjFirstGCIndex/ObjLastNonGCIndex before ObjObjects
+3. Added hex dump of first 48 bytes at GObjects address for diagnosis.
+
+**Expected result**: OctoPath should now match Layout C: Objects at +0x00 (heap pointer), Num at +0x14 (32758). DetectItemSize should then find valid items.
+
+**Status**: Built successfully (0 errors, 0 warnings), **untested** — requires injection test.
+
 ### Lessons Learned
 
 - `executeCodeEx` internally uses `CreateRemoteThread` — games with thread injection protection will block it silently (returns nil, not an error code)
@@ -241,6 +352,17 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 - **Hash-prefixed FNameEntry (UE4.26)**: Some UE4 builds (notably Square Enix's UE4.26 fork used in FF7Re) prepend a 4-byte ComparisonId/hash to each FNameEntry before the standard 2-byte header. Layout: `[4B hash][2B header][string]` vs standard `[2B header][string]`. Validators must try header at both offset 0 and offset 4. The diagnostic clue: near-miss log showing "None" at offset 6 from the chunk pointer, with bytes before it being non-ASCII garbage.
 - **Pagination: advance by scanned, not returned**: When the DLL skips unnamed/null objects in paginated results, the UI must advance by the number of indices scanned (`scanned` field), not by the number of objects returned (`objects.count`). Otherwise pagination stalls or loops infinitely when many objects have empty names.
 - **RE-UE4SS CustomGameConfigs**: RE-UE4SS maintains per-game configs (`UE4SS-settings.ini` + `MemberVariableLayout.ini`) with engine version overrides and exact struct offsets. These are invaluable reference data for verifying our auto-detection. Located at `D:\Github\RE-UE4SS\assets\CustomGameConfigs\<GameName>\`.
+- **FUObjectItem item[0] can be null**: GObjects arrays often have null in slot 0 (especially UE4). `DetectItemSize` must scan forward to find the first non-null item before validating strides. Don't require item[0] to be valid — scan chunk bytes in alignment steps.
+- **Hash-prefixed FNameEntry stride = 4, not 2**: When FNameEntry has a 4-byte ComparisonId prefix, `alignof(FNameEntry)` becomes 4 (due to uint32_t member), and the FNameEntryAllocator stride is 4. The FName index offset-to-byte conversion must use `offset * 4` instead of `offset * 2`. Diagnostic clue: names like 'operty' (tail of 'Property') or '?' with some correct names intermixed → stride is wrong, indices land at wrong byte offsets within chunks.
+- **Anchor-scan is fragile for stride detection**: Scanning chunk bytes in fine steps (e.g., 8-byte) to find a "first valid pointer" is unreliable because non-UObject fields (Flags, SerialNumber, padding) can look like valid pointers by coincidence. `LooksLikeUObject()` triple-deref check is too weak — random pointer-like values at 8-byte-aligned offsets can pass it. The correct approach: walk at stride-aligned positions only (offset = idx * stride, starting from 0) and validate with FNamePool string resolution (strong signal) rather than pointer chain checks (weak signal).
+- **FNamePool should be initialized before ObjectArray**: This ordering enables using FName resolution as the primary validation signal for FUObjectItem stride detection. Name resolution is nearly impossible to get false positives on — it requires the correct stride AND a valid UObject AND correct FNamePool parameters.
+- **LCM alignment creates false positive strides**: For items of true stride S, probing with stride S' finds valid items at positions that are multiples of `LCM(S, S')`. For S=24 and S'=16, LCM=48, so every 3rd 16-byte position (0, 48, 96...) lands on a real 24-byte boundary. The `named` count can be equal across strides — always add a tiebreaker (fewer bad items = correct stride, since wrong strides read misaligned data as bad).
+- **Early exit bias**: `if (outNamed >= 5) break` makes all strides stop at same named count when LCM alignment provides enough matches. The early exit is needed for performance but the tiebreaker (bad count) is essential to disambiguate.
+- **Some UE4 builds use flat (non-chunked) GObjects arrays**: Instead of `FUObjectArray → Objects** (chunk table) → chunk[] → FUObjectItem`, the array is `Objects* → FUObjectItem[]` directly. Detection: if chunked probing finds nothing, try the Objects pointer itself as the item base. Must update `GetByIndex` to skip the chunk table deref in flat mode.
+- **Per-process mirror logging aids cross-session comparison**: Writing logs to both the main `Logs/` folder and a `Logs/<ProcessName>/` subfolder allows comparing current vs previous runs without renaming files. 2-version rotation per process keeps disk usage bounded.
+- **DetectLayout must validate Objects pointer**: The alternate layout check `*(addr+0x04) > 0` is too loose — values like `ObjLastNonGCIndex` can match. Always validate that `*(addr + objectsOffset)` is a heap-like pointer (non-null, user-mode, NOT in the game module's code section). This catches cases where a layout candidate puts `objectsOffset` on a field that contains code addresses instead of heap pointers.
+- **UE4 FUObjectArray has extra members before ObjObjects**: Fields like `ObjFirstGCIndex`, `ObjLastNonGCIndex`, `MaxObjectsNotConsideredByGC`, `OpenForDisregardForGC` can appear at offsets 0x00-0x0C, pushing `ObjObjects.Objects**` to +0x10. The `Max` at +0x10 in default layout may actually be a PreAllocatedObjects pointer. Multiple layout candidates with pointer validation are needed.
+- **GWorld null is common in UE4**: Many UE4 games have GWorld=0 or garbage. The DLL's `walk_world` command has a fallback: searches GObjects for a UWorld instance. This finds `Default__World` (CDO) or actual world instances.
 
 ### Recommended Test Games
 
@@ -248,19 +370,21 @@ All 4 LEA-based patterns resolve to wrong globals — none contain FNamePool dat
 |------|-----------|-------|
 | EverSpace 2 | UE5.1-5.3 (est.) | Ships with `.pdb` — ideal for validating scanner against known symbols |
 | Titan Quest II | UE5.7 (PE reports) | Primary test target for CasePreservingName + dynamic offset detection |
-| OctoPath Traveler | UE4 | UE4 TNameEntryArray test target — pipe connection failed pre-fix |
-| Final Fantasy VII Rebirth (FF7Re) | UE4 fork | Garbled names + wrong version pre-fix — tests version detection + GNames validation hardening |
+| OctoPath Traveler | UE4 (pre-4.25) | UE4 TNameEntryArray + GObjects layout detection test — DetectLayout v2 pending verification |
+| Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry + stride 24 — fully working after tiebreaker fix |
+| Tower of Mask | UE4.27 | Standard UE4 indie game — full pipeline confirmed working |
 
 ### Next Steps
 
-1. **Test FF7Re** — verify hash-prefixed FNameEntry detection works: GNames found, names resolve correctly, pipe server starts, UI connects
-2. **Test OctoPath Traveler** — verify pagination fix: Object Tree populates, field names visible in Live Walker
-3. **Test no regression** on TQ2 (UE5.7) — verify GNames still found, names correct, DynOff detection works
-4. **Test dynamic offset detection** on TQ2 — check `[SUMMARY]` + `[DYNO]` entries in scan log, verify via `get_offsets` pipe command
-5. Verify Live Walker field names correct (not "rty") and offsets non-zero on TQ2
-6. **Test pointer-scan fallback for GNames** on EverSpace 2 (use `.pdb` to verify address)
-7. Once UE4 + DynOff confirmed working → continue Avalonia UI development
-8. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources in `Signatures.h`
+1. **Test OctoPath** with DetectLayout v2:
+   - Expect Layout C (relaxed default) to match: Objects at +0x00, Num at +0x14
+   - Then DetectItemSize should detect stride 24
+   - Object Tree should populate
+2. **Verify no regression** on TQ2, FF7Re, Tower of Mask
+3. **Investigate FF7Re GWorld** — currently garbage (0x354). May need game-specific GWorld pattern or skip for UE4 forks
+4. **Test pointer-scan fallback for GNames** on EverSpace 2 (use `.pdb` to verify address)
+5. Once UE4 + DynOff confirmed working → continue Avalonia UI development
+6. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources in `Signatures.h`
 
 -----
 
