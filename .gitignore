@@ -429,3 +429,9 @@ build_log.txt
 nul
 vendor/TQ2-Win64-Shipping.CT
 vendor/UE4 Dumper.CT
+_build.bat
+_build_error.txt
+_build_result.txt
+_rebuild.bat
+_rebuild2.bat
+build_now.bat
