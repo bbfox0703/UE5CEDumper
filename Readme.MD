@@ -1,8 +1,8 @@
 # UE5CEDumper
 
-A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for runtime inspection of Unreal Engine 5 games. It locates global engine pointers (GObjects / GNames / GWorld) via AOB scanning, traverses the UObject hierarchy, and streams live data over a Named Pipe to an external GUI.
+A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for runtime inspection of Unreal Engine 4 & 5 games. It locates global engine pointers (GObjects / GNames / GWorld) via AOB scanning, traverses the UObject hierarchy, and streams live data over a Named Pipe to an external GUI.
 
-> **Status**: DLL core functional and tested on TQ2 (UE 5.7). Dynamic offset detection (CasePreservingName) built and compiled; awaiting next injection test. Avalonia UI scaffold complete; pipe integration in progress.
+> **Status**: DLL core functional. Tested and working on **11 games** across UE 4.18 ~ 5.7 (TQ2, EverSpace 2, Hogwarts Legacy, FF7 Rebirth, FF7 Remake, OctoPath Traveler, DQ I&II HD-2D, Tower of Mask, Star Wars Jedi, IDOLM@STER, Romancing SaGa 2). Avalonia UI functional with Object Tree, Live Walker, Instance Finder, and Class Structure panels.
 
 ---
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
@@ -13,20 +13,22 @@ A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for run
 
 | Feature | Status |
 |---|---|
-| GObjects AOB scan (27 patterns from 6 sources, UE5.0–5.7) | ✅ |
-| GNames AOB scan (17 patterns) + `.data` pointer-scan fallback | ⚠️ fallback untested |
+| GObjects AOB scan (51 patterns from 6 sources, UE4.18–5.7) | ✅ |
+| GNames AOB scan (17 patterns) + `.data` pointer-scan fallback | ✅ |
 | GWorld AOB scan (7 patterns) | ✅ |
 | UE version detection (PE VERSIONINFO + memory string scan) | ✅ |
-| FChunkedFixedUObjectArray — ForEach / GetByIndex | ✅ |
-| FNamePool multi-format reader (format A/B, chunk index) | ✅ |
-| Dynamic FField/FProperty/UStruct offset detection (DynOff) | ⚠️ built, untested |
-| CasePreservingName detection (UE5.5+, FName = 16 bytes) | ⚠️ built, untested |
+| FChunkedFixedUObjectArray + FFixedUObjectArray (flat) auto-detect | ✅ |
+| FUObjectItem stride auto-detect (16/24/20 bytes) | ✅ |
+| FNamePool multi-format: standard, hash-prefixed, UE4 TNameEntryArray | ✅ |
+| Dynamic FField/FProperty/UStruct offset detection (DynOff) | ✅ |
+| CasePreservingName detection (UE5.5+, FName = 16 bytes) | ✅ |
+| FProperty-to-UProperty fallback (UE4 <4.25) | ✅ |
 | Live Data Walker — walk_class, walk_instance, walk_world | ✅ |
 | Instance Finder — find_instances by class name | ✅ |
 | CE XML export — get_ce_pointer_info | ✅ |
 | Named Pipe IPC server (JSON newline-delimited) | ✅ |
 | CE Plugin mode (Type 5 main menu entry) | ✅ |
-| Avalonia UI (Dark, i18n: zh-TW / en / ja) | 🔲 scaffold only |
+| Avalonia UI (Object Tree, Live Walker, Instance Finder, Class Structure) | ✅ |
 | Git commit hash + build timestamp embedded in DLL | ✅ |
 
 ---
@@ -35,7 +37,7 @@ A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for run
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  Game Process (x64, UE5)                            │
+│  Game Process (x64, UE4/UE5)                         │
 │                                                      │
 │  CE Lua  (UE5CEDumper.CT / ue5dump.lua)              │
 │      │  injectDLL()                                  │
@@ -44,8 +46,8 @@ A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for run
 │      ├── ExportAPI       ← C ABI, called by CE Lua   │
 │      ├── PipeServer      ← Named Pipe IPC server     │
 │      ├── OffsetFinder    ← AOB scan + DynOff detect  │
-│      ├── ObjectArray     ← FChunkedFixedUObjectArray  │
-│      ├── FNamePool       ← UE5 FNamePool reader      │
+│      ├── ObjectArray     ← FChunkedFixed + FFixed auto │
+│      ├── FNamePool       ← UE4/UE5 FNamePool reader   │
 │      ├── UStructWalker   ← FField chain traversal    │
 │      ├── CEPlugin        ← CE plugin Type 5 entry    │
 │      ├── Logger          ← File rotation, 5MB cap    │
@@ -85,7 +87,7 @@ UE5CEDumper/
 │       ├── PipeServer.cpp/.h   ← Named Pipe server + JSON dispatch
 │       ├── PipeProtocol.h      ← IPC command/response definitions
 │       ├── OffsetFinder.cpp/.h ← GObjects/GNames scan + ValidateAndFixOffsets
-│       ├── ObjectArray.cpp/.h  ← FChunkedFixedUObjectArray
+│       ├── ObjectArray.cpp/.h  ← FChunkedFixed + FFixed (flat) auto-detect
 │       ├── FNamePool.cpp/.h    ← FNamePool chunk reader
 │       ├── UStructWalker.cpp/.h← FField chain + SuperStruct inheritance
 │       ├── CEPlugin.cpp        ← CE plugin Type 5 main menu
@@ -240,19 +242,21 @@ All `UStructWalker` code uses `DynOff::*` exclusively — no hardcoded FField/FP
 
 ## UE Version Support
 
-| UE Version | GObjects | GNames | DynOff |
-|---|---|---|---|
-| 5.0–5.2 | ✅ | ✅ | not needed |
-| 5.3–5.4 | ✅ | ✅ | not needed |
-| 5.5–5.7 | ✅ | ⚠️ fallback | ⚠️ built, untested |
+| UE Version | GObjects | GNames | DynOff | Tested Games |
+|---|---|---|---|---|
+| 4.18 | ✅ | ✅ | ✅ (UProperty fallback) | FF7 Remake Intergrade |
+| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi, IDOLM@STER, OctoPath Traveler |
+| 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth, Tower of Mask, Hogwarts Legacy, Romancing SaGa 2 |
+| 5.0–5.2 | ✅ | ✅ | ✅ | DQ I&II HD-2D Remake |
+| 5.3–5.4 | ✅ | ✅ | ✅ | — |
+| 5.5–5.7 | ✅ | ✅ (pointer-scan) | ✅ (CPN) | Titan Quest II, EverSpace 2 |
 
 ---
 
 ## Known Issues
 
-- **GNames patterns fail on TQ2 (UE 5.7)** — LEA-based patterns resolve to wrong globals on some UE5.7 builds. 17 patterns now available; a `.data` section pointer-scan fallback (`FindGNamesByPointerScan`) is also implemented but untested.
-- **DynOff / CasePreservingName** — built and compiled successfully, requires injection test on TQ2.
-- **Avalonia UI** — scaffold is complete; end-to-end pipe integration pending DynOff validation.
+- **"Start from GWorld" fails in UI** — GWorld is found for some UE4 games but the UI button doesn't populate the Live Walker. Under investigation.
+- **FF7 Rebirth CE address lookup** — `get_ce_pointer_info` address-to-object lookup fails on FF7 Rebirth but works on other games.
 
 ---
 
