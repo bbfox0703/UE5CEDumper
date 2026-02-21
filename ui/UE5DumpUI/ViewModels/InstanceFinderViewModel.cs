@@ -19,6 +19,7 @@ public partial class InstanceFinderViewModel : ViewModelBase
 
     private EngineState? _engineState;
 
+    // --- Class name search ---
     [ObservableProperty] private string _searchClassName = "";
     [ObservableProperty] private ObservableCollection<InstanceResult> _instances = new();
     [ObservableProperty] private InstanceResult? _selectedInstance;
@@ -30,6 +31,11 @@ public partial class InstanceFinderViewModel : ViewModelBase
     [ObservableProperty] private string _ceXmlOutput = "";
     [ObservableProperty] private bool _showCeXml;
     [ObservableProperty] private string _statusText = "";
+
+    // --- Address-to-Instance reverse lookup ---
+    [ObservableProperty] private string _lookupAddress = "";
+    [ObservableProperty] private string _lookupStatusText = "";
+    [ObservableProperty] private bool _isLookingUp;
 
     /// <summary>
     /// Event raised when user wants to navigate to an address in the Live Walker.
@@ -84,6 +90,119 @@ public partial class InstanceFinderViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Parse a user-provided address string into a normalized "0x..." hex address.
+    /// Supports formats:
+    ///   "0x16255B8A224"                                              -> "0x16255B8A224"
+    ///   "16255B8A224"                                                -> "0x16255B8A224"
+    ///   "TQ2-Win64-Shipping.exe+FFFF81820A83F268"                    -> resolved via moduleBase
+    ///   "\"TQ2-Win64-Shipping.exe\"+FFFF81820A83F268"                -> resolved via moduleBase
+    /// When a module+offset format is detected and moduleBase is available,
+    /// the absolute address is computed as moduleBase + offset.
+    /// </summary>
+    private static string NormalizeAddress(string input, string? moduleBase = null)
+    {
+        var s = input.Trim().Trim('"');
+
+        // CE format: "module.exe"+offset or module.exe+offset
+        // Extract the part after the last '+'
+        var plusIdx = s.LastIndexOf('+');
+        if (plusIdx >= 0 && plusIdx < s.Length - 1)
+        {
+            // Check if the part before '+' looks like a module name (contains '.' or letters)
+            var beforePlus = s[..plusIdx].Trim().Trim('"');
+            if (beforePlus.Contains('.') || beforePlus.Any(char.IsLetter))
+            {
+                var offsetHex = s[(plusIdx + 1)..].Trim();
+                if (offsetHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                    offsetHex = offsetHex[2..];
+
+                // Resolve to absolute address if moduleBase is available
+                if (!string.IsNullOrEmpty(moduleBase))
+                {
+                    var baseHex = moduleBase;
+                    if (baseHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+                        baseHex = baseHex[2..];
+
+                    var baseAddr = Convert.ToUInt64(baseHex, 16);
+                    var offset = Convert.ToUInt64(offsetHex, 16);
+                    var absolute = unchecked(baseAddr + offset);
+                    return "0x" + absolute.ToString("X");
+                }
+
+                // No moduleBase — use offset as-is (best effort)
+                return "0x" + offsetHex;
+            }
+        }
+
+        // Remove 0x prefix if present (we'll re-add it)
+        if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            s = s[2..];
+        }
+
+        return "0x" + s;
+    }
+
+    [RelayCommand]
+    private async Task LookupAddressAsync()
+    {
+        if (string.IsNullOrWhiteSpace(LookupAddress)) return;
+
+        try
+        {
+            ClearError();
+            IsLookingUp = true;
+            LookupStatusText = "Looking up...";
+            ShowCeXml = false;
+
+            var addrStr = NormalizeAddress(LookupAddress, _engineState?.ModuleBase);
+
+            var result = await _dump.FindByAddressAsync(addrStr);
+
+            Instances.Clear();
+            Fields.Clear();
+            HasFields = false;
+
+            if (result.Found)
+            {
+                var instance = new InstanceResult
+                {
+                    Address = result.Address,
+                    Index = result.Index,
+                    Name = result.Name,
+                    ClassName = result.ClassName,
+                    OuterAddr = result.OuterAddr,
+                };
+                Instances.Add(instance);
+                HasInstances = true;
+                SelectedInstance = instance;  // Auto-select to trigger field loading
+
+                var matchInfo = result.MatchType == "exact"
+                    ? "Exact UObject match"
+                    : $"Inside {result.Name} (offset +0x{result.OffsetFromBase:X})";
+                LookupStatusText = matchInfo;
+                _log.Info($"FindByAddress: '{addrStr}' -> {matchInfo}");
+            }
+            else
+            {
+                HasInstances = false;
+                LookupStatusText = "No UObject found at this address";
+                _log.Info($"FindByAddress: '{addrStr}' -> not found");
+            }
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            LookupStatusText = "Lookup failed";
+            _log.Error($"FindByAddress failed for '{LookupAddress}'", ex);
+        }
+        finally
+        {
+            IsLookingUp = false;
+        }
+    }
+
     partial void OnSelectedInstanceChanged(InstanceResult? value)
     {
         if (value != null)
@@ -107,9 +226,20 @@ public partial class InstanceFinderViewModel : ViewModelBase
 
             var result = await _dump.WalkInstanceAsync(instance.Address);
 
+            // Compute base address for FieldAddress calculation
+            ulong baseAddr = 0;
+            try
+            {
+                if (!string.IsNullOrEmpty(result.Address))
+                    baseAddr = Convert.ToUInt64(result.Address.Replace("0x", "").Replace("0X", ""), 16);
+            }
+            catch { /* ignore parse failures */ }
+
             Fields.Clear();
             foreach (var f in result.Fields)
             {
+                if (baseAddr != 0)
+                    f.FieldAddress = $"0x{baseAddr + (ulong)f.Offset:X}";
                 Fields.Add(f);
             }
 

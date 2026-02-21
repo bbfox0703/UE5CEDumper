@@ -87,6 +87,9 @@ struct InstanceWalkResult {
     std::string name;
     std::string className;
     uintptr_t   classAddr = 0;
+    uintptr_t   outerAddr = 0;    // OuterPrivate — parent UObject
+    std::string outerName;         // Name of the outer object
+    std::string outerClassName;    // Class name of the outer object
     std::vector<LiveFieldValue> fields;
 };
 

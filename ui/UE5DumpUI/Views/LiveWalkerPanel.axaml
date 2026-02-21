@@ -14,6 +14,12 @@
       <Button Content="{StaticResource str.LiveWalker.Back}"
               Command="{Binding GoBackCommand}"
               Padding="8,4"/>
+      <Button Content="{StaticResource str.LiveWalker.Parent}"
+              Command="{Binding GoToParentCommand}"
+              IsVisible="{Binding HasParent}"
+              Padding="8,4"
+              Foreground="#C586C0"
+              ToolTip.Tip="Navigate to parent (OuterPrivate)"/>
       <Button Content="{StaticResource str.LiveWalker.Refresh}"
               Command="{Binding RefreshCommand}"
               Padding="8,4"/>
@@ -59,16 +65,38 @@
     <!-- Object info header -->
     <Border DockPanel.Dock="Top" Background="#252525" Padding="8,4" Margin="0,0,0,4"
             IsVisible="{Binding HasData}" CornerRadius="4">
-      <StackPanel Orientation="Horizontal" Spacing="16">
-        <TextBlock Foreground="#569CD6" FontWeight="Bold">
-          <Run Text="{Binding CurrentClassName}"/>
-        </TextBlock>
-        <TextBlock Foreground="#D4D4D4">
-          <Run Text="{Binding CurrentObjectName}"/>
-        </TextBlock>
-        <TextBlock Foreground="#666" FontFamily="Consolas" FontSize="12">
-          <Run Text="{Binding CurrentAddress}"/>
-        </TextBlock>
+      <StackPanel Spacing="2">
+        <StackPanel Orientation="Horizontal" Spacing="16">
+          <TextBlock Foreground="#569CD6" FontWeight="Bold">
+            <Run Text="{Binding CurrentClassName}"/>
+          </TextBlock>
+          <TextBlock Foreground="#D4D4D4">
+            <Run Text="{Binding CurrentObjectName}"/>
+          </TextBlock>
+          <TextBlock Foreground="#666" FontFamily="Consolas" FontSize="12">
+            <Run Text="{Binding CurrentAddress}"/>
+          </TextBlock>
+        </StackPanel>
+        <!-- Parent (Outer) info -->
+        <StackPanel Orientation="Horizontal" Spacing="8"
+                    IsVisible="{Binding HasParent}">
+          <TextBlock Text="Outer:" Foreground="#888" FontSize="11"/>
+          <Button Command="{Binding GoToParentCommand}"
+                  Padding="2,0" Background="Transparent" BorderThickness="0"
+                  Cursor="Hand">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Foreground="#C586C0" FontSize="11">
+                <Run Text="{Binding CurrentOuterClassName}"/>
+              </TextBlock>
+              <TextBlock Foreground="#CE9178" FontSize="11">
+                <Run Text="{Binding CurrentOuterName}"/>
+              </TextBlock>
+              <TextBlock Foreground="#666" FontFamily="Consolas" FontSize="11">
+                <Run Text="{Binding CurrentOuterAddr}"/>
+              </TextBlock>
+            </StackPanel>
+          </Button>
+        </StackPanel>
       </StackPanel>
     </Border>
 

@@ -356,6 +356,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
     result.name      = GetName(instanceAddr);
     result.className = classAddr ? GetName(classAddr) : "";
 
+    // Read OuterPrivate
+    uintptr_t outerAddr = GetOuter(instanceAddr);
+    result.outerAddr = outerAddr;
+    if (outerAddr) {
+        result.outerName      = GetName(outerAddr);
+        uintptr_t outerClass  = GetClass(outerAddr);
+        result.outerClassName = outerClass ? GetName(outerClass) : "";
+    }
+
     // Walk the class to get field layout
     ClassInfo ci = WalkClass(classAddr);
 
