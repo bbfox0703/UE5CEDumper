@@ -128,10 +128,12 @@ public partial class ObjectTreeViewModel : ViewModelBase
                     _allNodes.Add(obj);
                 }
 
-                offset += result.Objects.Count;
+                // Advance by scanned count (not returned count) to avoid stalling
+                // when many objects in a range are unnamed/null
+                offset += result.Scanned;
 
                 // Limit initial load to prevent UI freeze
-                if (offset >= 2000) break;
+                if (_allNodes.Count >= 2000) break;
 
             } while (offset < total);
 

@@ -255,6 +255,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
             json data;
             data["total"]   = total;
+            data["scanned"] = end - offset; // Number of indices scanned (for pagination)
             data["objects"] = objects;
             return PipeProtocol::MakeResponse(id, data).dump();
         }

@@ -59,7 +59,11 @@ bool UE5_Init() {
     g_cachedUEVersion = ptrs.UEVersion;
 
     // Initialize subsystems
-    FNamePool::Init(ptrs.GNames);
+    if (ptrs.bUE4NameArray) {
+        FNamePool::InitUE4(ptrs.GNames, ptrs.ue4StringOffset);
+    } else {
+        FNamePool::Init(ptrs.GNames, ptrs.fnameEntryHeaderOffset);
+    }
     ObjectArray::Init(ptrs.GObjects);
 
     // Dynamically detect FField/FProperty/UStruct offsets

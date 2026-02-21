@@ -19,6 +19,17 @@
 
 namespace OffsetFinder {
 
+// UE4 TNameEntryArray detection state (set by ValidateGNamesUE4, read by FindAll)
+static bool g_isUE4NameArray = false;
+static int  g_ue4NameStringOffset = 0x10;
+
+// FNameEntry hash prefix size: some UE4 builds (e.g. UE4.26 / FF7Re) prepend a 4-byte
+// ComparisonId/hash before the standard 2-byte header.  Layout:
+//   Standard UE5:       [2B header] [string]        → headerOffset = 0
+//   UE4.26 w/ hash:     [4B hash] [2B header] [string]  → headerOffset = 4
+// Set by ValidateGNames when it detects the hash prefix.
+static int g_fnameEntryHeaderOffset = 0;
+
 // Try a single AOB pattern and resolve RIP-relative address
 static uintptr_t TryPatternRIP(const char* pattern, int opcodeLen = 3, int totalLen = 7, bool derefResult = false) {
     uintptr_t addr = Mem::AOBScan(pattern);
@@ -130,12 +141,18 @@ static bool ValidateGObjects(uintptr_t addr) {
     return true;
 }
 
+// Forward declarations for validators used across sections
+static bool CorroborateFNameChunk(uintptr_t chunkAddr);
+static bool ValidateGNamesUE4(uintptr_t addr, int& outStringOffset);
+static bool ValidateGNamesAny(uintptr_t addr);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Structural validation for GNames (FNamePool):
 //   1. FRWLock at +0x00 should be 0 (unlocked)
 //   2. CurrentBlock at +0x08 should be a small int
 //   3. Blocks[CurrentBlock+1] should be NULL (no block after last used)
-//   4. Blocks[0] starts with "None" FNameEntry
+//   4. Blocks[0] starts with "None" FNameEntry (exact header format match)
+//   5. Blocks[0] corroborated with UE type name markers
 // ─────────────────────────────────────────────────────────────────────────────
 static bool ValidateGNamesStructural(uintptr_t addr) {
     if (!addr) return false;
@@ -171,21 +188,50 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
     uintptr_t block0 = 0;
     if (!Mem::ReadSafe(addr + 0x10, block0) || block0 == 0) return false;
 
-    // Read first bytes from block0 — should contain "None"
-    char buf[10] = {};
-    if (!Mem::ReadBytesSafe(block0, buf, 10)) return false;
-    if (strstr(buf + 2, "None") == nullptr) {
-        // Try reading as string starting at offset +2 (after 2-byte header)
-        char name[5] = {};
-        if (!Mem::ReadBytesSafe(block0 + 2, name, 4)) return false;
-        if (strcmp(name, "None") != 0) {
-            Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[0] doesn't start with 'None' at 0x%llX",
-                      (unsigned long long)addr);
-            return false;
-        }
+    // Validate block0 as a "None" FNameEntry using exact header format matching.
+    // Try both standard (header at +0, string at +2) and hash-prefixed (header at +4, string at +6).
+    // For each, try Format A (header >> 6 = 4) and Format B ((header >> 1) & 0x7FF = 4).
+    auto checkNoneAtOffset = [&](int hdrOff) -> bool {
+        uint16_t header = 0;
+        if (!Mem::ReadSafe(block0 + hdrOff, header)) return false;
+
+        auto tryFormat = [&](int shift, int mask) -> bool {
+            int len = (header >> shift) & mask;
+            if (len != 4) return false;
+            char name[5] = {};
+            if (!Mem::ReadBytesSafe(block0 + hdrOff + 2, name, 4)) return false;
+            return strcmp(name, "None") == 0;
+        };
+
+        return tryFormat(6, 0x3FF) || tryFormat(1, 0x7FF);
+    };
+
+    bool noneFound = checkNoneAtOffset(0);
+    if (!noneFound) noneFound = checkNoneAtOffset(4);  // Hash-prefixed UE4.26 layout
+
+    if (noneFound && g_fnameEntryHeaderOffset == 0) {
+        // If standard check failed but hash-prefixed succeeded, record it
+        if (!checkNoneAtOffset(0)) g_fnameEntryHeaderOffset = 4;
     }
 
-    Logger::Info("SCAN:GNam", "ValidateGNamesStructural: Valid FNamePool at 0x%llX (CurrentBlock=%d)",
+    if (!noneFound) {
+        uint16_t h0 = 0, h4 = 0;
+        Mem::ReadSafe(block0, h0);
+        Mem::ReadSafe(block0 + 4, h4);
+        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[0] headers=0x%04X/0x%04X don't decode to 'None' at 0x%llX",
+                  h0, h4, (unsigned long long)addr);
+        return false;
+    }
+
+    // Corroborate: the first chunk must also contain common UE type names
+    // (ByteProperty, Object, Class, etc.) — random heap data won't have these.
+    if (!CorroborateFNameChunk(block0)) {
+        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[0] corroboration failed at 0x%llX",
+                  (unsigned long long)addr);
+        return false;
+    }
+
+    Logger::Info("SCAN:GNam", "ValidateGNamesStructural: Valid FNamePool at 0x%llX (CurrentBlock=%d, corroborated)",
              (unsigned long long)addr, currentBlock);
     return true;
 }
@@ -512,31 +558,41 @@ static bool ValidateGNames(uintptr_t addr) {
         uintptr_t chunk0 = 0;
         if (!Mem::ReadSafe(addr + off, chunk0) || chunk0 == 0) continue;
 
-        // chunk0 must be a readable address
-        uint16_t header = 0;
-        if (!Mem::ReadSafe(chunk0, header)) continue;
+        // Try two header layouts:
+        //   (A) Standard: 2-byte header at chunk0+0, string at chunk0+2
+        //   (B) Hash-prefixed (UE4.26): 4-byte hash at chunk0+0, 2-byte header at chunk0+4, string at chunk0+6
+        // For each layout, try both Format A (len = header >> 6) and Format B (len = (header >> 1) & 0x7FF)
 
-        // FName[0] should be "None" (length 4).
-        // Try both header formats:
-        //   Format A (older): len = header >> 6
-        //   Format B (newer): len = (header >> 1) & 0x7FF
-        char name[5] = {};
-        int lenA = header >> 6;
-        if (lenA == 4 && Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
-            Logger::Info("SCAN:GNam", "ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtA, 'None')",
-                     static_cast<unsigned long long>(addr), off);
-            return true;
-        }
-        int lenB = (header >> 1) & 0x7FF;
-        memset(name, 0, sizeof(name));
-        if (lenB == 4 && Mem::ReadBytesSafe(chunk0 + 2, name, 4) && strcmp(name, "None") == 0) {
-            Logger::Info("SCAN:GNam", "ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, FmtB, 'None')",
-                     static_cast<unsigned long long>(addr), off);
-            return true;
-        }
+        auto tryHeaderAt = [&](int hdrOff) -> bool {
+            uint16_t header = 0;
+            if (!Mem::ReadSafe(chunk0 + hdrOff, header)) return false;
 
-        Logger::Debug("SCAN:GNam", "ValidateGNames: offset +0x%02X chunk0=0x%llX header=0x%04X lenA=%d lenB=%d name='%.4s'",
-                  off, static_cast<unsigned long long>(chunk0), header, lenA, lenB, name);
+            char name[5] = {};
+            int lenA = header >> 6;
+            if (lenA == 4 && Mem::ReadBytesSafe(chunk0 + hdrOff + 2, name, 4) && strcmp(name, "None") == 0) {
+                g_fnameEntryHeaderOffset = hdrOff;
+                Logger::Info("SCAN:GNam", "ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, hdrOff=%d, FmtA, 'None')",
+                         static_cast<unsigned long long>(addr), off, hdrOff);
+                return true;
+            }
+            memset(name, 0, sizeof(name));
+            int lenB = (header >> 1) & 0x7FF;
+            if (lenB == 4 && Mem::ReadBytesSafe(chunk0 + hdrOff + 2, name, 4) && strcmp(name, "None") == 0) {
+                g_fnameEntryHeaderOffset = hdrOff;
+                Logger::Info("SCAN:GNam", "ValidateGNames: Valid at 0x%llX (chunks@+0x%02X, hdrOff=%d, FmtB, 'None')",
+                         static_cast<unsigned long long>(addr), off, hdrOff);
+                return true;
+            }
+
+            Logger::Debug("SCAN:GNam", "ValidateGNames: offset +0x%02X hdrOff=%d chunk0=0x%llX header=0x%04X lenA=%d lenB=%d name='%.4s'",
+                      off, hdrOff, static_cast<unsigned long long>(chunk0), header, lenA, lenB, name);
+            return false;
+        };
+
+        // Standard layout: header at +0
+        if (tryHeaderAt(0)) return true;
+        // Hash-prefixed layout: 4-byte ComparisonId then 2-byte header at +4
+        if (tryHeaderAt(4)) return true;
     }
 
     // Dump the first 128 bytes so we can diagnose the layout manually
@@ -598,14 +654,87 @@ static bool CorroborateFNameChunk(uintptr_t chunkAddr) {
     return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// UE4 TNameEntryArray validation
+//
+// UE4 <4.23 uses TNameEntryArray instead of FNamePool:
+//   TNameEntryArray = array of chunk pointers
+//   Each chunk = array of FNameEntry* pointers (up to 0x4000 entries per chunk)
+//   FNameEntry has a null-terminated string at a fixed offset (+0x10 for UE4.14-4.22, +0x06 for older)
+//
+// Double-dereference: arrayBase[0] → chunkPtr → entry0Ptr → FNameEntry with "None"
+// ─────────────────────────────────────────────────────────────────────────────
+static bool ValidateGNamesUE4(uintptr_t addr, int& outStringOffset) {
+    if (!addr) return false;
+
+    // Read first chunk pointer: TNameEntryArray[0]
+    uintptr_t chunk0Ptr = 0;
+    if (!Mem::ReadSafe(addr, chunk0Ptr) || !chunk0Ptr) return false;
+    if (chunk0Ptr < 0x10000 || chunk0Ptr > 0x00007FFFFFFFFFFF) return false;
+
+    // chunk0Ptr points to an array of FNameEntry* pointers
+    // Read chunk0[0] = first FNameEntry*
+    uintptr_t entry0 = 0;
+    if (!Mem::ReadSafe(chunk0Ptr, entry0) || !entry0) return false;
+    if (entry0 < 0x10000 || entry0 > 0x00007FFFFFFFFFFF) return false;
+
+    // Try reading "None" at common UE4 FNameEntry string offsets
+    int offsets[] = { 0x10, 0x06, 0x0C, 0x08 };
+    for (int strOff : offsets) {
+        char name[5] = {};
+        if (!Mem::ReadBytesSafe(entry0 + strOff, name, 4)) continue;
+        if (strcmp(name, "None") != 0) continue;
+
+        // Corroborate: entry at index 1 should also be a valid pointer with ASCII string
+        uintptr_t entry1 = 0;
+        if (!Mem::ReadSafe(chunk0Ptr + 8, entry1) || entry1 < 0x10000) continue;
+
+        char name1[8] = {};
+        if (!Mem::ReadBytesSafe(entry1 + strOff, name1, 7)) continue;
+
+        bool valid = true;
+        for (int i = 0; i < 7 && name1[i]; ++i) {
+            auto c = static_cast<unsigned char>(name1[i]);
+            if (c < 0x20 || c >= 0x7F) { valid = false; break; }
+        }
+        if (!valid) continue;
+
+        // Extra corroboration: entry at index 2 should also be valid
+        uintptr_t entry2 = 0;
+        if (Mem::ReadSafe(chunk0Ptr + 16, entry2) && entry2 > 0x10000) {
+            char name2[8] = {};
+            if (Mem::ReadBytesSafe(entry2 + strOff, name2, 7)) {
+                bool valid2 = true;
+                for (int i = 0; i < 7 && name2[i]; ++i) {
+                    auto c = static_cast<unsigned char>(name2[i]);
+                    if (c < 0x20 || c >= 0x7F) { valid2 = false; break; }
+                }
+                if (!valid2) continue;
+            }
+        }
+
+        outStringOffset = strOff;
+        Logger::Info("SCAN:GNam", "ValidateGNamesUE4: Valid TNameEntryArray at 0x%llX "
+                 "(strOff=0x%X, entry[0]='None', entry[1]='%.7s')",
+                 (unsigned long long)addr, strOff, name1);
+        return true;
+    }
+
+    return false;
+}
+
 // Return true if the memory at `addr` starts with a "None" FNameEntry.
 // The FNameEntry header is 2 bytes (all known UE5 versions), followed by the
 // name string.  Instead of checking specific header values (which vary across
 // UE versions), we just look for ASCII "None" at offset +2.
 // Also checks offset +4 in case a future build uses a 4-byte header.
 static bool LooksLikeNoneEntry(uintptr_t addr) {
-    uint8_t buf[8] = {};
-    if (!Mem::ReadBytesSafe(addr, buf, 8)) return false;
+    // Read enough bytes to check all known header layouts:
+    //   +2: standard 2-byte header
+    //   +4: potential 4-byte header variant
+    //   +6: UE4.26 hash-prefixed (4-byte hash + 2-byte header)
+    uint8_t buf[10] = {};
+    if (!Mem::ReadBytesSafe(addr, buf, 10)) return false;
 
     // Standard 2-byte header: "None" at offset +2
     if (buf[2] == 'N' && buf[3] == 'o' && buf[4] == 'n' && buf[5] == 'e')
@@ -613,6 +742,10 @@ static bool LooksLikeNoneEntry(uintptr_t addr) {
 
     // Potential 4-byte header variant: "None" at offset +4
     if (buf[4] == 'N' && buf[5] == 'o' && buf[6] == 'n' && buf[7] == 'e')
+        return true;
+
+    // UE4.26 hash-prefixed: 4-byte ComparisonId + 2-byte header, "None" at offset +6
+    if (buf[6] == 'N' && buf[7] == 'o' && buf[8] == 'n' && buf[9] == 'e')
         return true;
 
     return false;
@@ -779,7 +912,7 @@ static uintptr_t FindGNamesByExport() {
             }
 
             // Validate as FNamePool
-            if (ValidateGNames(candidate) || ValidateGNamesStructural(candidate)) {
+            if (ValidateGNamesAny(candidate)) {
                 Logger::Info("SCAN:GNam", "FindGNamesByExport: Found FNamePool at 0x%llX (via %s func+0x%X, %s)",
                          (unsigned long long)candidate, sym, off,
                          b1 == 0x8D ? "LEA" : "MOV");
@@ -791,8 +924,27 @@ static uintptr_t FindGNamesByExport() {
     return 0;
 }
 
+// Unified GNames validation: tries FNamePool validators first, then UE4 TNameEntryArray.
+// Sets g_isUE4NameArray and g_ue4NameStringOffset if UE4 mode is detected.
+static bool ValidateGNamesAny(uintptr_t addr) {
+    if (ValidateGNames(addr)) return true;
+    if (ValidateGNamesStructural(addr)) return true;
+    int strOff = 0;
+    if (ValidateGNamesUE4(addr, strOff)) {
+        g_isUE4NameArray = true;
+        g_ue4NameStringOffset = strOff;
+        return true;
+    }
+    return false;
+}
+
 uintptr_t FindGNames() {
-    Logger::Info("SCAN:GNam", "FindGNames: Scanning for GNames (FNamePool)...");
+    // Reset detection state for each scan attempt
+    g_isUE4NameArray = false;
+    g_ue4NameStringOffset = 0x10;
+    g_fnameEntryHeaderOffset = 0;
+
+    Logger::Info("SCAN:GNam", "FindGNames: Scanning for GNames (FNamePool / TNameEntryArray)...");
 
     // === Priority 0: Symbol export + function body scan (O(1) lookup) ===
     {
@@ -827,7 +979,7 @@ uintptr_t FindGNames() {
         // Use both original ValidateGNames (checks "None" entry) and
         // structural validation (FRWLock, CurrentBlock, Blocks sentinel).
         // Accept if either validates — they check complementary properties.
-        if (ValidateGNames(result) || ValidateGNamesStructural(result)) return result;
+        if (ValidateGNamesAny(result)) return result;
     }
 
     // === Patternsleuth FNamePool patterns (RIP instruction at non-zero offset) ===
@@ -838,11 +990,11 @@ uintptr_t FindGNames() {
     for (auto& c : psGNamesCandidates) {
         uintptr_t result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen);
         if (result) {
-            if (ValidateGNames(result) || ValidateGNamesStructural(result)) return result;
+            if (ValidateGNamesAny(result)) return result;
             // Try deref for pointer-to-pointer layouts
             uintptr_t derefed = 0;
             if (Mem::ReadSafe(result, derefed) && derefed) {
-                if (ValidateGNames(derefed) || ValidateGNamesStructural(derefed)) return derefed;
+                if (ValidateGNamesAny(derefed)) return derefed;
             }
         }
     }
@@ -852,27 +1004,27 @@ uintptr_t FindGNames() {
     // CT1: lea r8,[rip+X]; jmp 0x16; lea rcx; call (UE4 Dumper.CT v6+)
     {
         uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_CT1, 3, 7, false);
-        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        if (result && (ValidateGNamesAny(result))) return result;
         result = TryPatternRIP(Sig::AOB_GNAMES_CT1, 3, 7, true);
-        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        if (result && (ValidateGNamesAny(result))) return result;
     }
 
     // CT2: lea rcx; call; mov r8,rax; mov byte (UE4 Dumper.CT UE4.23+ main)
     {
         uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_CT2, 3, 7, false);
-        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        if (result && (ValidateGNamesAny(result))) return result;
         result = TryPatternRIP(Sig::AOB_GNAMES_CT2, 3, 7, true);
-        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        if (result && (ValidateGNamesAny(result))) return result;
     }
 
     // CT3: sub rsp; mov rax,[rip+X]; test; jnz; mov ecx,0x0808 (pre-FNamePool UE4 <4.23)
     {
         uintptr_t result = TryPatternRIPOffset(Sig::AOB_GNAMES_CT3, 4, 3, 7);
         if (result) {
-            if (ValidateGNames(result) || ValidateGNamesStructural(result)) return result;
+            if (ValidateGNamesAny(result)) return result;
             uintptr_t derefed = 0;
             if (Mem::ReadSafe(result, derefed) && derefed)
-                if (ValidateGNames(derefed) || ValidateGNamesStructural(derefed)) return derefed;
+                if (ValidateGNamesAny(derefed)) return derefed;
         }
     }
 
@@ -882,7 +1034,7 @@ uintptr_t FindGNames() {
         if (result) {
             uintptr_t derefed = 0;
             if (Mem::ReadSafe(result, derefed) && derefed)
-                if (ValidateGNames(derefed) || ValidateGNamesStructural(derefed)) return derefed;
+                if (ValidateGNamesAny(derefed)) return derefed;
         }
     }
 
@@ -890,17 +1042,17 @@ uintptr_t FindGNames() {
     // Already partly covered by V2, but the shorter pattern may hit where V2 misses.
     {
         uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_D7_1, 3, 7, false);
-        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        if (result && (ValidateGNamesAny(result))) return result;
         result = TryPatternRIP(Sig::AOB_GNAMES_D7_1, 3, 7, true);
-        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        if (result && (ValidateGNamesAny(result))) return result;
     }
 
     // UD2 (UEDumper): lea rcx; call; mov r8,rax; mov byte (extended context)
     {
         uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_UD2, 3, 7, false);
-        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        if (result && (ValidateGNamesAny(result))) return result;
         result = TryPatternRIP(Sig::AOB_GNAMES_UD2, 3, 7, true);
-        if (result && (ValidateGNames(result) || ValidateGNamesStructural(result))) return result;
+        if (result && (ValidateGNamesAny(result))) return result;
     }
 
     // === FName ctor call-site pattern (V7, FF7 Rebirth) ===
@@ -941,7 +1093,7 @@ uintptr_t FindGNames() {
                             if (!Mem::ReadSafe(target, candidate) || !candidate) continue;
                         }
 
-                        if (ValidateGNames(candidate) || ValidateGNamesStructural(candidate)) {
+                        if (ValidateGNamesAny(candidate)) {
                             Logger::Info("SCAN:GNam", "FindGNames: V7 found FNamePool at 0x%llX (func+0x%X)",
                                      (unsigned long long)candidate, off);
                             return candidate;
@@ -1035,7 +1187,20 @@ static uint32_t DetectVersionFromPEResource() {
         return 400u + minor;
     }
 
-    Logger::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO major=%u minor=%u — unrecognised", major, minor);
+    // Some shippers put UE version in FileVersion instead of ProductVersion
+    uint32_t fmajor = HIWORD(fi->dwFileVersionMS);
+    uint32_t fminor = LOWORD(fi->dwFileVersionMS);
+    if (fmajor == 5 && fminor <= 9) {
+        Logger::Info("SCAN:Ver", "DetectVersion: PE FileVersion -> UE %u.%u -> %u", fmajor, fminor, 500u + fminor);
+        return 500u + fminor;
+    }
+    if (fmajor == 4 && fminor <= 27) {
+        Logger::Info("SCAN:Ver", "DetectVersion: PE FileVersion -> UE4.%u (treated as 400+minor)", fminor);
+        return 400u + fminor;
+    }
+
+    Logger::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO Product=%u.%u File=%u.%u — unrecognised",
+             major, minor, fmajor, fminor);
     return 0;
 }
 
@@ -1056,8 +1221,7 @@ uint32_t DetectVersion() {
         return 504;
     }
 
-    // Patterns like "++UE5+Release-5.X" or bare "5.X." in .rdata
-    // Include UE4 versions too for broader support
+    // Version string patterns to match (ordered by priority — newest first)
     struct { const char* needle; uint32_t value; } patterns[] = {
         { "5.7.", 507 }, { "5.6.", 506 }, { "5.5.", 505 },
         { "5.4.", 504 }, { "5.3.", 503 }, { "5.2.", 502 },
@@ -1067,24 +1231,55 @@ uint32_t DetectVersion() {
     };
 
     const uint8_t* scan = reinterpret_cast<const uint8_t*>(base);
+
+    // === Tier 1: Exact UE build strings "++UE5+Release-5.X" / "++UE4+Release-4.XX" ===
+    // These are embedded in shipping UE builds and are the most reliable identifier.
+    {
+        const char* prefixes[] = { "++UE5+Release-", "++UE4+Release-" };
+        for (const char* prefix : prefixes) {
+            size_t prefixLen = strlen(prefix);
+            for (size_t off = 0; off + prefixLen + 4 < size; ++off) {
+                if (memcmp(scan + off, prefix, prefixLen) != 0) continue;
+                for (auto& p : patterns) {
+                    size_t needleLen = strlen(p.needle);
+                    if (off + prefixLen + needleLen <= size &&
+                        memcmp(scan + off + prefixLen, p.needle, needleLen) == 0) {
+                        Logger::Info("SCAN:Ver", "DetectVersion: Tier 1 '%s' -> %u at 0x%zX",
+                                 prefix, p.value, off);
+                        return p.value;
+                    }
+                }
+            }
+        }
+    }
+
+    // === Tier 2 + 3: Per-pattern scan with context checks ===
     for (auto& p : patterns) {
         size_t needleLen = strlen(p.needle);
         for (size_t off = 0; off + needleLen + 10 < size; ++off) {
             if (memcmp(scan + off, p.needle, needleLen) != 0) continue;
 
-            // Require "Release" prefix within the preceding 16 bytes
+            // Tier 2: "Release" prefix within the preceding 16 bytes
             if (off >= 8) {
                 char ctx[17] = {};
                 memcpy(ctx, scan + off - 8, 8);
                 if (strstr(ctx, "Release") || strstr(ctx, "release")) {
-                    Logger::Info("SCAN:Ver", "DetectVersion: String scan -> %u (Release prefix at 0x%zX)",
+                    Logger::Info("SCAN:Ver", "DetectVersion: Tier 2 Release prefix -> %u at 0x%zX",
                              p.value, off);
                     return p.value;
                 }
             }
-            // Also accept if the char after "5.X." is a digit (e.g. "5.4.0")
+
+            // Tier 3: bare "X.Y.D" — only accept if preceding char is NOT a digit or period.
+            // This prevents matching game version strings like "15.6.0" or "v2.5.6.1".
             if (scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
-                Logger::Info("SCAN:Ver", "DetectVersion: String scan -> %u (at 0x%zX)", p.value, off);
+                if (off > 0) {
+                    uint8_t prev = scan[off - 1];
+                    if ((prev >= '0' && prev <= '9') || prev == '.') {
+                        continue;  // Skip — likely a game version string, not UE version
+                    }
+                }
+                Logger::Info("SCAN:Ver", "DetectVersion: Tier 3 bare pattern -> %u at 0x%zX", p.value, off);
                 return p.value;
             }
         }
@@ -1697,14 +1892,21 @@ bool FindAll(EnginePointers& out) {
         return false;
     }
 
+    // Propagate UE4 TNameEntryArray detection state
+    out.bUE4NameArray = g_isUE4NameArray;
+    out.ue4StringOffset = g_ue4NameStringOffset;
+    out.fnameEntryHeaderOffset = g_fnameEntryHeaderOffset;
+
     out.GWorld = FindGWorld();
     // GWorld is non-critical, just log
 
-    LOG_INFO("FindAll: Complete — GObjects=0x%llX, GNames=0x%llX, GWorld=0x%llX, UE=%u",
+    LOG_INFO("FindAll: Complete — GObjects=0x%llX, GNames=0x%llX, GWorld=0x%llX, UE=%u, UE4Names=%s, hdrOff=%d",
              static_cast<unsigned long long>(out.GObjects),
              static_cast<unsigned long long>(out.GNames),
              static_cast<unsigned long long>(out.GWorld),
-             out.UEVersion);
+             out.UEVersion,
+             out.bUE4NameArray ? "yes" : "no",
+             out.fnameEntryHeaderOffset);
 
     return true;
 }
