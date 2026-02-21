@@ -10,9 +10,9 @@ A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for run
 
 | Feature | Status |
 |---|---|
-| GObjects AOB scan (9 patterns, UE5.0–5.7) | ✅ |
-| GNames AOB scan (6 patterns) + `.data` pointer-scan fallback | ⚠️ fallback untested |
-| GWorld AOB scan (6 patterns) | ✅ |
+| GObjects AOB scan (27 patterns from 6 sources, UE5.0–5.7) | ✅ |
+| GNames AOB scan (17 patterns) + `.data` pointer-scan fallback | ⚠️ fallback untested |
+| GWorld AOB scan (7 patterns) | ✅ |
 | UE version detection (PE VERSIONINFO + memory string scan) | ✅ |
 | FChunkedFixedUObjectArray — ForEach / GetByIndex | ✅ |
 | FNamePool multi-format reader (format A/B, chunk index) | ✅ |
@@ -76,6 +76,7 @@ UE5CEDumper/
 │   ├── CMakeLists.txt
 │   └── src/
 │       ├── dllmain.cpp         ← DLL_PROCESS_ATTACH, AutoStartThreadProc
+│       ├── Signatures.h        ← 51 AOB patterns + 4 symbol exports (all sources)
 │       ├── Constants.h         ← Centralized magic strings + DynOff namespace
 │       ├── ExportAPI.cpp/.h    ← C ABI exports (UE5_Init, UE5_WalkClassBegin…)
 │       ├── PipeServer.cpp/.h   ← Named Pipe server + JSON dispatch
@@ -246,7 +247,7 @@ All `UStructWalker` code uses `DynOff::*` exclusively — no hardcoded FField/FP
 
 ## Known Issues
 
-- **GNames patterns fail on TQ2 (UE 5.7)** — all 4 LEA-based patterns resolve to wrong globals. A `.data` section pointer-scan fallback (`FindGNamesByPointerScan`) is implemented but untested.
+- **GNames patterns fail on TQ2 (UE 5.7)** — LEA-based patterns resolve to wrong globals on some UE5.7 builds. 17 patterns now available; a `.data` section pointer-scan fallback (`FindGNamesByPointerScan`) is also implemented but untested.
 - **DynOff / CasePreservingName** — built and compiled successfully, requires injection test on TQ2.
 - **Avalonia UI** — scaffold is complete; end-to-end pipe integration pending DynOff validation.
 
@@ -261,6 +262,7 @@ All `UStructWalker` code uses `DynOff::*` exclusively — no hardcoded FField/FP
 | [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 runtime reflection, alternative angle |
 | [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | Additional AOB patterns for GObjects/GNames |
 | [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | Additional AOB patterns for GObjects/GNames scanning |
+| UE4 Dumper.CT | Cheat Engine cheat table — additional AOB patterns (CT-series in Signatures.h) |
 | [nlohmann/json](https://github.com/nlohmann/json) | Header-only JSON library used in DLL |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua scripting API reference |
 | AOBMaker (private) | AOB pattern generation tooling |
