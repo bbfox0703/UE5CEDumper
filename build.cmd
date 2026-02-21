@@ -5,12 +5,15 @@ setlocal EnableDelayedExpansion
 :: ============================================================
 :: build.cmd — UE5CEDumper build wrapper
 ::
+:: NOTE: All builds are ALWAYS clean (no cache).
+::   CMake build/ dir and dotnet bin/obj are removed before each build.
+::
 :: Usage:
 ::   build              Build Release (all targets)
 ::   build debug        Build Debug
 ::   build release      Build Release
 ::   build publish      Build Publish (Native AOT single-file)
-::   build clean        Clean + Release build
+::   build clean        Clean dist/ folder too
 ::   build dll          Build DLL only
 ::   build ui           Build UI only
 ::   build test         Build + run tests
