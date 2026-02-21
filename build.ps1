@@ -260,6 +260,13 @@ $exitCode = 0
 if ($Target -in "All", "DLL") {
     Write-Banner "C++ DLL  |  $CppConfig"
 
+    # Always do a clean build — remove CMake cache to force full recompile
+    if (Test-Path $BUILD_DIR) {
+        Write-Step "Removing CMake cache for clean build..."
+        Remove-Item $BUILD_DIR -Recurse -Force
+        Write-Ok "Build directory cleaned"
+    }
+
     Write-Step "Configuring CMake (Ninja + MSVC)..."
     $configOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig"
 
@@ -313,6 +320,16 @@ if ($Target -in "All", "DLL") {
 
 if ($Target -in "All", "UI") {
     Write-Banner "C# Avalonia UI  |  $CSharpConfig ($Mode)"
+
+    # Always do a clean build — remove bin/obj to force full recompile
+    $uiProjDir = Split-Path $UI_PROJ -Parent
+    foreach ($subdir in @("bin", "obj")) {
+        $p = Join-Path $uiProjDir $subdir
+        if (Test-Path $p) {
+            Write-Step "Removing $subdir for clean build..."
+            Remove-Item $p -Recurse -Force
+        }
+    }
 
     # Restore packages
     if (-not $SkipRestore) {

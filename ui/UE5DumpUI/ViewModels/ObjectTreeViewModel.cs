@@ -42,18 +42,25 @@ public partial class ObjectTreeViewModel : ViewModelBase
         "Level",
     ];
 
-    /// <summary>Common search suggestions for UE5 class names.</summary>
+    /// <summary>Common search suggestions for UE class names.</summary>
     public string[] SearchSuggestions { get; } =
     [
-        "AttributesComponent",
         "AbilitySystemComponent",
-        "PlayerController",
-        "PlayerState",
+        "ACharacter",
+        "ActorComponent",
+        "APawn",
+        "AttributeSet",
+        "AttributesComponent",
+        "Character",
+        "CharacterMovementComponent",
         "GameMode",
         "GameState",
-        "Character",
-        "Pawn",
         "HUD",
+        "LocalPlayer",
+        "Pawn",
+        "PlayerController",
+        "PlayerState",
+        "UAttributeSet",
         "Widget",
     ];
 

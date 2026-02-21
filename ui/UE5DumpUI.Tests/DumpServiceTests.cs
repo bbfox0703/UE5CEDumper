@@ -56,6 +56,8 @@ public sealed class MockLoggingService : ILoggingService
     public void Error(string message) => Messages.Add($"[ERROR] {message}");
     public void Error(string message, Exception ex) => Messages.Add($"[ERROR] {message}: {ex.Message}");
     public void Debug(string message) => Messages.Add($"[DEBUG] {message}");
+    public void StartProcessMirror(string processName) { }
+    public void StopProcessMirror() { }
 }
 
 public class DumpServiceTests

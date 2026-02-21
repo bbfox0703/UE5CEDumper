@@ -122,23 +122,73 @@ static uintptr_t TrySymbolExport(const char* mangledName) {
 }
 
 // Validate a candidate GObjects address (basic: check NumElements range)
+// Helper: check if a pointer looks like a valid heap/data pointer (not code/null/low).
+// Used by ValidateGObjects to reject false positives.
+static bool LooksLikeDataPtr(uintptr_t ptr) {
+    if (!ptr || ptr < 0x10000) return false;
+    if (ptr > 0x00007FFFFFFFFFFF) return false;
+    // Reject pointers inside the game module's loaded range (code/rdata/data all contiguous)
+    uintptr_t modBase = Mem::GetModuleBase(nullptr);
+    uintptr_t modSize = Mem::GetModuleSize(nullptr);
+    if (modBase && modSize && ptr >= modBase && ptr < modBase + modSize) return false;
+    return true;
+}
+
 static bool ValidateGObjects(uintptr_t addr) {
     if (!addr) return false;
 
-    // Read NumElements (at offset 0x14 in default layout)
-    int32_t numElements = 0;
-    if (!Mem::ReadSafe(addr + 0x14, numElements)) return false;
+    // Try multiple layout candidates for NumElements:
+    //   Layout A/C: Num at +0x14, Objects at +0x00
+    //   Layout B:   Num at +0x04, Objects at +0x10
+    //   Layout D:   Num at +0x1C, Objects at +0x10
+    // For each, we require: (1) NumElements in range, (2) Objects* is a valid data pointer
+    // that can be dereferenced to get chunk[0] (also a valid pointer).
+    struct { int numOff; int objOff; const char* name; } layouts[] = {
+        { 0x14, 0x00, "A/C" },
+        { 0x04, 0x10, "B"   },
+        { 0x1C, 0x10, "D"   },
+    };
 
-    // Sanity: should have a reasonable number of objects
-    if (numElements < 0x1000 || numElements > 0x400000) {
-        Logger::Warn("SCAN:GObj", "ValidateGObjects: NumElements=%d out of range at 0x%llX",
-                 numElements, static_cast<unsigned long long>(addr));
-        return false;
+    for (auto& L : layouts) {
+        int32_t numElements = 0;
+        if (!Mem::ReadSafe(addr + L.numOff, numElements)) continue;
+        if (numElements < 0x1000 || numElements > 0x400000) continue;
+
+        uintptr_t objPtr = 0;
+        if (!Mem::ReadSafe(addr + L.objOff, objPtr)) continue;
+
+        // Objects pointer must be dereferenceable to get chunk[0]
+        uintptr_t chunk0 = 0;
+        if (!Mem::ReadSafe(objPtr, chunk0)) continue;
+
+        // chunk[0] should be a valid heap pointer (where actual UObject items live).
+        // It can be null in some UE4 games, but if non-null it MUST be a heap pointer
+        // (not inside the game module's loaded image — that would mean we're reading
+        // code/vtable pointers, not a real chunk table).
+        if (chunk0 == 0) {
+            // chunk[0] null — might be a valid sparse array, but only accept if objPtr
+            // itself is a heap pointer (not game module). This prevents accepting random
+            // game module addresses that happen to deref to null.
+            if (!LooksLikeDataPtr(objPtr)) continue;
+        } else {
+            // chunk[0] non-null — it must be a heap/data pointer (not game module code)
+            if (!LooksLikeDataPtr(chunk0)) continue;
+        }
+
+        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX, NumElements=%d (layout %s, Objects=0x%llX, chunk0=0x%llX)",
+                 static_cast<unsigned long long>(addr), numElements, L.name,
+                 static_cast<unsigned long long>(objPtr), static_cast<unsigned long long>(chunk0));
+        return true;
     }
 
-    Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX, NumElements=%d",
-             static_cast<unsigned long long>(addr), numElements);
-    return true;
+    // Log failure with diagnostic info
+    int32_t numA = 0, numB = 0, numD = 0;
+    Mem::ReadSafe(addr + 0x14, numA);
+    Mem::ReadSafe(addr + 0x04, numB);
+    Mem::ReadSafe(addr + 0x1C, numD);
+    Logger::Warn("SCAN:GObj", "ValidateGObjects: Failed at 0x%llX (Num@+14=%d, Num@+04=%d, Num@+1C=%d)",
+             static_cast<unsigned long long>(addr), numA, numB, numD);
+    return false;
 }
 
 // Forward declarations for validators used across sections
@@ -430,11 +480,16 @@ uintptr_t FindGObjects() {
     }
 
     // RE2 (FF7 Remake extended): mov; mov r8,[rax+rcx*8]; test; jz; ?; ?; ?; setz — needs -0x10
+    // Same as V12 but with more context bytes. Target is ObjObjects field address.
     {
         uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_RE2);
         if (addr) {
             uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
             if (target) {
+                // Try 1: target is address of ObjObjects field, base = target-0x10
+                if (ValidateGObjects(target - 0x10)) return target - 0x10;
+                if (ValidateGObjects(target))        return target;
+                // Try 2: deref
                 uintptr_t value = 0;
                 if (Mem::ReadSafe(target, value) && value) {
                     if (ValidateGObjects(value - 0x10)) return value - 0x10;
@@ -508,12 +563,18 @@ uintptr_t FindGObjects() {
     }
 
     // V12 (FF7 Remake): mov reg,[rip+X]; mov r8,[rax+rcx*8]; test; jz
-    // This is a MOV, so deref is needed; also try -0x10 adjustment
+    // The RIP target points to the ObjObjects member inside FUObjectArray.
+    // RE-UE4SS resolves as: target - 0x10 = FUObjectArray base (ObjObjects at +0x10).
+    // Also try deref'd value in case the global is a pointer-to-FUObjectArray.
     {
         uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_V12);
         if (addr) {
             uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
             if (target) {
+                // Try 1: RE-UE4SS style — target is address of ObjObjects field, base = target-0x10
+                if (ValidateGObjects(target - 0x10)) return target - 0x10;
+                if (ValidateGObjects(target))        return target;
+                // Try 2: deref — *(target) is ObjObjects value (heap pointer), base unknown
                 uintptr_t value = 0;
                 if (Mem::ReadSafe(target, value) && value) {
                     if (ValidateGObjects(value - 0x10)) return value - 0x10;
@@ -1597,6 +1658,40 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                 childProps = ptr;
                 childPropsOff = off;
                 Logger::Info("DYNO", "ValidateAndFixOffsets: Children (UProperty) found at struct+0x%02X → 0x%llX (Class='%s')",
+                         off, (unsigned long long)ptr, clsName.c_str());
+                break;
+            }
+        }
+    }
+
+    if (!childProps && DynOff::bUseFProperty) {
+        // FProperty scan failed. This could mean the game is actually UE4 pre-4.25
+        // using UProperty (UObject-derived properties). Common when version is misdetected
+        // (e.g., FF7R detected as UE5.04 but is actually UE4.18).
+        // Retry with UProperty mode: look for UObject-derived properties in the chain.
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: FProperty scan failed on '%s', retrying as UProperty...", testName);
+
+        // Expand probe range to include UE4 offsets (UStruct may start at +0x30)
+        for (int off = 0x28; off <= 0x80; off += 8) {
+            uintptr_t ptr = 0;
+            if (!Mem::ReadSafe(testStruct + off, ptr) || !ptr) continue;
+            if (ptr < 0x10000 || ptr > 0x00007FFFFFFFFFFF) continue;
+
+            // UProperty mode: items are UObjects. Check if Class at +0x10 resolves to a *Property class.
+            uintptr_t cls = 0;
+            if (!Mem::ReadSafe(ptr + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+            if (cls < 0x10000 || cls > 0x00007FFFFFFFFFFF) continue;
+
+            uint32_t clsNameIdx = 0;
+            if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+            std::string clsName = FNamePool::GetString(clsNameIdx);
+            if (clsName.find("Property") != std::string::npos) {
+                childProps = ptr;
+                childPropsOff = off;
+                DynOff::bUseFProperty = false;
+                DynOff::UFIELD_NEXT = DynOff::bCasePreservingName ? 0x30 : 0x28;
+                Logger::Info("DYNO", "ValidateAndFixOffsets: FALLBACK — UProperty mode detected. "
+                         "Children at struct+0x%02X → 0x%llX (Class='%s')",
                          off, (unsigned long long)ptr, clsName.c_str());
                 break;
             }
