@@ -1,9 +1,8 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal EnableDelayedExpansion
 
 :: ============================================================
-:: build.cmd — UE5CEDumper build wrapper
+:: build.cmd -- UE5CEDumper build wrapper
 ::
 :: NOTE: All builds are ALWAYS clean (no cache).
 ::   CMake build/ dir and dotnet bin/obj are removed before each build.
@@ -12,7 +11,7 @@ setlocal EnableDelayedExpansion
 ::   build              Build Release (all targets)
 ::   build debug        Build Debug
 ::   build release      Build Release
-::   build publish      Build Publish (Native AOT single-file)
+::   build publish      Build Publish (optimized single-file)
 ::   build clean        Clean dist/ folder too
 ::   build dll          Build DLL only
 ::   build ui           Build UI only
@@ -23,7 +22,6 @@ setlocal EnableDelayedExpansion
 set "MODE=Release"
 set "TARGET=All"
 set "CLEAN="
-set "EXTRA_ARGS="
 set "HAS_ARGS=0"
 
 :: Parse arguments
@@ -49,10 +47,10 @@ if "!UPPER!"=="/?"      goto :usage
 if "!UPPER!"=="-H"      goto :usage
 if "!UPPER!"=="--HELP"  goto :usage
 
-:: Unknown arg — pass through
-set "EXTRA_ARGS=!EXTRA_ARGS! %~1"
-shift
-goto :parse_args
+:: Unknown arg -- show error and usage
+echo.
+echo  ERROR: Unknown argument '%~1'
+goto :usage_error
 
 :run
 set "LOG=%~dp0build_log.txt"
@@ -64,40 +62,51 @@ echo  Log:  %LOG%
 
 :: Show hint when no arguments provided (default Release build)
 if "!HAS_ARGS!"=="0" (
-    echo  Hint: No arguments — using defaults. Available options:
+    echo  Hint: No arguments -- using defaults. Available options:
     echo    build debug          Debug build
     echo    build dll            DLL only
     echo    build ui             UI only
     echo    build test           Run tests
-    echo    build publish        Native AOT single-file
+    echo    build publish        Optimized single-file
     echo    build clean          Clean first
     echo    build --help         Full usage
 )
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& '%~dp0build.ps1' -Mode %MODE% -Target %TARGET% %CLEAN% %EXTRA_ARGS% 2>&1 | Tee-Object -FilePath '%LOG%'"
+:: Use -File instead of -Command to avoid encoding issues at the
+:: cmd.exe -> PowerShell -> Tee-Object -> cmd.exe pipe boundary.
+:: Logging is handled inside build.ps1 via Start-Transcript.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1" -Mode %MODE% -Target %TARGET% %CLEAN% -LogFile "%LOG%"
 set "EC=%ERRORLEVEL%"
 
 if %EC% neq 0 (
     echo.
-    echo  BUILD FAILED [exit code %EC%]  — see %LOG%
+    echo  BUILD FAILED [exit code %EC%] -- see %LOG%
     echo.
 ) else (
     echo.
-    echo  BUILD SUCCEEDED  — log: %LOG%
+    echo  BUILD SUCCEEDED -- log: %LOG%
     echo.
 )
 
 exit /b %EC%
 
+:usage_error
+call :print_usage
+exit /b 1
+
 :usage
+call :print_usage
+exit /b 0
+
+:print_usage
 echo.
 echo  Usage: build [mode] [target] [options]
 echo.
 echo  Modes:
 echo    debug       Unoptimized, debug symbols (fast iteration)
 echo    release     Optimized build (default)
-echo    publish     Native AOT single-file exe (distribution)
+echo    publish     Optimized single-file exe (distribution)
 echo.
 echo  Targets:
 echo    all         Build everything (default)
@@ -111,11 +120,11 @@ echo.
 echo  Examples:
 echo    build                   Release build, all targets
 echo    build debug             Debug build
-echo    build publish clean     Clean + AOT publish
+echo    build publish clean     Clean + publish
 echo    build dll               Build DLL only
 echo    build test              Run tests
 echo.
-exit /b 0
+goto :eof
 
 :to_upper
 :: Convert variable to uppercase

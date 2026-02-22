@@ -63,6 +63,7 @@
 
       <!-- Right: Tab panels -->
       <TabControl x:Name="MainTabs" Grid.Column="2" Background="#1E1E1E" Padding="4"
+                  SelectedIndex="{Binding SelectedTabIndex}"
                   SelectionChanged="MainTabs_SelectionChanged">
         <TabItem Header="{StaticResource str.Tab.LiveWalker}">
           <views:LiveWalkerPanel DataContext="{Binding LiveWalker}"/>
