@@ -6,6 +6,8 @@
 // NOTE: AOB patterns and symbol exports have moved to Signatures.h
 // ============================================================
 
+#include <atomic>
+
 namespace Constants {
 
 // --- Logging ---
@@ -103,7 +105,10 @@ inline int UPROPERTY_FLAGS    = 0x38;  // UProperty::PropertyFlags (uint64)
 // === Detection state ===
 inline bool bCasePreservingName  = false;  // FName is 0x10 bytes (CompIdx + DisplayIdx + Number + pad)
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
-inline bool bOffsetsValidated    = false;
+// bOffsetsValidated is atomic with release/acquire ordering: the release-store after
+// writing all DynOff values fences the preceding non-atomic writes, ensuring they are
+// visible to any thread that acquire-loads this flag and sees 'true'.
+inline std::atomic<bool> bOffsetsValidated{false};
 
 } // namespace DynOff
 
