@@ -3,6 +3,7 @@
 // ============================================================
 
 #include <Windows.h>
+#include <atomic>
 #define LOG_CAT "INIT"
 #include "Logger.h"
 #include "BuildInfo.h"
@@ -14,10 +15,14 @@ HMODULE g_hDllModule = nullptr;
 // Set to true by CEPlugin_InitializePlugin when this DLL is loaded as a
 // CE plugin (in CE's own process). Auto-start thread checks this flag to
 // decide whether to self-initialize.
-bool g_isCEPlugin = false;
+std::atomic<bool> g_isCEPlugin{false};
 
 // Forward declaration — defined in ExportAPI.cpp
 extern "C" bool UE5_AutoStart();
+extern "C" void UE5_Shutdown();
+
+// Handle for the auto-start thread — stored so we can wait for it during DLL unload
+static HANDLE g_hAutoStartThread = nullptr;
 
 // ── Auto-start thread ──────────────────────────────────────────────────────
 // Spawned on DLL_PROCESS_ATTACH. Waits 1 second to allow CEPlugin_InitializePlugin
@@ -31,14 +36,14 @@ extern "C" bool UE5_AutoStart();
 static DWORD WINAPI AutoStartThreadProc(LPVOID)
 {
     // Log immediately (before any sleep) to confirm thread is running.
-    LOG_INFO("DllMain AutoStart: thread started (g_isCEPlugin=%d)", (int)g_isCEPlugin);
+    LOG_INFO("DllMain AutoStart: thread started (g_isCEPlugin=%d)", (int)g_isCEPlugin.load());
 
     // Give CE time to call CEPlugin_InitializePlugin (~200 ms typical).
     Sleep(1000);
 
-    LOG_INFO("DllMain AutoStart: after 1s delay (g_isCEPlugin=%d)", (int)g_isCEPlugin);
+    LOG_INFO("DllMain AutoStart: after 1s delay (g_isCEPlugin=%d)", (int)g_isCEPlugin.load());
 
-    if (g_isCEPlugin) {
+    if (g_isCEPlugin.load()) {
         LOG_INFO("DllMain AutoStart: CE plugin host — skipping auto-start");
         return 0;
     }
@@ -78,10 +83,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         }
         // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
         // is set true by CEPlugin_InitializePlugin within 1 second.
-        HANDLE hThread = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
-        if (hThread) {
+        // Store the handle so DLL_PROCESS_DETACH can wait for it to finish.
+        g_hAutoStartThread = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
+        if (g_hAutoStartThread) {
             LOG_INFO("DllMain: auto-start thread created OK");
-            CloseHandle(hThread);
         } else {
             LOG_ERROR("DllMain: CreateThread failed (error=%lu)", GetLastError());
         }
@@ -90,6 +95,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
 
     case DLL_PROCESS_DETACH:
         LOG_INFO("UE5Dumper DLL unloading (DLL_PROCESS_DETACH)");
+        // Wait for auto-start thread to finish (max 5s) before tearing down
+        if (g_hAutoStartThread) {
+            WaitForSingleObject(g_hAutoStartThread, 5000);
+            CloseHandle(g_hAutoStartThread);
+            g_hAutoStartThread = nullptr;
+        }
+        // Stop pipe server and watch threads before logger shutdown
+        UE5_Shutdown();
         Logger::Shutdown();
         break;
 

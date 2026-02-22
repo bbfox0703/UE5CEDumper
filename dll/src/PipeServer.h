@@ -13,6 +13,7 @@
 
 class PipeServer {
 public:
+    ~PipeServer() { Stop(); }
     bool Start();
     void Stop();
     bool IsClientConnected() const { return m_clientConnected.load(); }
@@ -25,6 +26,7 @@ private:
     std::atomic<bool>  m_running{false};
     std::atomic<bool>  m_clientConnected{false};
     HANDLE             m_pipe{INVALID_HANDLE_VALUE};
+    std::mutex         m_pipeMutex;     // Protects m_pipe access across threads
     std::mutex         m_writeMutex;
 
     // Watch entries
