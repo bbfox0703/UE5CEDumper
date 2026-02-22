@@ -461,6 +461,17 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["struct_type"]       = fv.structTypeName;
                 }
 
+                // EnumProperty: resolved enum name + raw value
+                if (!fv.enumName.empty()) {
+                    fj["enum_name"]  = fv.enumName;
+                    fj["enum_value"] = fv.enumValue;
+                }
+
+                // StrProperty: decoded string value
+                if (!fv.strValue.empty()) {
+                    fj["str_value"] = fv.strValue;
+                }
+
                 fields.push_back(fj);
             }
             data["fields"] = fields;

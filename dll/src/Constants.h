@@ -102,6 +102,18 @@ inline int UPROPERTY_OFFSET   = 0x44;  // UProperty::Offset_Internal
 inline int UPROPERTY_ELEMSIZE = 0x34;  // UProperty::ElementSize
 inline int UPROPERTY_FLAGS    = 0x38;  // UProperty::PropertyFlags (uint64)
 
+// === FEnumProperty / FByteProperty subclass fields ===
+// Both store UEnum* at the same offset relative to FProperty base.
+// Derived from FSTRUCTPROP_STRUCT (same subclass extension offset).
+inline int FENUMPROP_ENUM       = 0x78;  // FEnumProperty::Enum (UEnum*)
+inline int FBYTEPROP_ENUM       = 0x78;  // FByteProperty::Enum (UEnum*)
+
+// === UEnum — lazy-detected by DetectUEnumNames() ===
+inline int UENUM_NAMES          = 0x40;  // UEnum::Names (TArray<TPair<FName,int64>>)
+inline int UENUM_ENTRY_SIZE     = 0x10;  // sizeof(TPair<FName,int64>) = 8+8 = 16 bytes
+// bUEnumNamesDetected uses release/acquire like bOffsetsValidated.
+inline std::atomic<bool> bUEnumNamesDetected{false};
+
 // === Detection state ===
 inline bool bCasePreservingName  = false;  // FName is 0x10 bytes (CompIdx + DisplayIdx + Number + pad)
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)

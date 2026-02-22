@@ -41,4 +41,9 @@ uint32_t DetectVersion();
 // Updates DynOff:: namespace variables.
 bool ValidateAndFixOffsets(uint32_t ueVersion);
 
+// Lazy-detect UEnum::Names offset by probing known enums (ENetRole, etc.) in GObjects.
+// Called on first EnumProperty encounter, NOT during init.
+// Sets DynOff::UENUM_NAMES and DynOff::bUEnumNamesDetected on success.
+bool DetectUEnumNames();
+
 } // namespace OffsetFinder

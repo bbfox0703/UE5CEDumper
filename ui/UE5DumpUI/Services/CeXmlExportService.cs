@@ -418,6 +418,13 @@ public static class CeXmlExportService
             // FName index
             "NameProperty" => new CeFieldInfo("4 Bytes"),
 
+            // Enum — underlying value is typically int32 (4 bytes)
+            "EnumProperty" => new CeFieldInfo("4 Bytes"),
+
+            // String types — CE "String" reads pointer-to-string
+            "StrProperty" => new CeFieldInfo("String"),
+            "TextProperty" => new CeFieldInfo("String"),
+
             _ => null // Unknown — not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
         };
     }
