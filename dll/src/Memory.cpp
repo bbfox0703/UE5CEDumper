@@ -135,7 +135,7 @@ GetExecutableSections(uintptr_t moduleBase)
 // Scan a single contiguous memory region for the pattern.
 // Returns pointer to first match, or nullptr.
 //
-// Key optimisations (per CE-Memory-Scanning-Internals.md):
+// Key optimisations (per Memory-Scanning-Internals.md):
 //  1. First-byte skip  — when bytes[0] is a literal, use memchr to jump to
 //     the next candidate position instead of testing every byte.
 //  2. uint8_t mask     — avoids the bit-manipulation overhead of vector<bool>.

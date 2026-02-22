@@ -18,11 +18,19 @@ public partial class HexViewViewModel : ViewModelBase
 
     private EngineState? _engineState;
 
+    // Track the resolved address used for the active watch
+    private string _watchedResolvedAddr = "";
+
+    // Update counter for watch status
+    private int _watchUpdateCount;
+
     [ObservableProperty] private string _address = "";
     [ObservableProperty] private int _size = Constants.DefaultHexViewSize;
     [ObservableProperty] private ObservableCollection<HexViewRow> _hexRows = new();
     [ObservableProperty] private bool _isWatching;
     [ObservableProperty] private int _watchInterval = Constants.DefaultWatchIntervalMs;
+    [ObservableProperty] private string _watchStatusText = "";
+    [ObservableProperty] private string _watchButtonText = "Watch";
 
     public HexViewViewModel(IDumpService dump, IPipeClient pipeClient, ILoggingService log)
     {
@@ -74,21 +82,70 @@ public partial class HexViewViewModel : ViewModelBase
 
             if (IsWatching)
             {
-                await _dump.UnwatchAsync(Address);
-                IsWatching = false;
+                await StopWatchAsync();
             }
             else
             {
-                if (string.IsNullOrWhiteSpace(Address)) return;
-                var resolved = ResolveAddress(Address);
-                await _dump.WatchAsync(resolved, Size, WatchInterval);
-                IsWatching = true;
+                await StartWatchAsync();
             }
         }
         catch (Exception ex)
         {
             SetError(ex);
             IsWatching = false;
+            UpdateWatchUI();
+        }
+    }
+
+    [RelayCommand]
+    private async Task StopWatchAsync()
+    {
+        if (!IsWatching) return;
+
+        try
+        {
+            ClearError();
+            await _dump.UnwatchAsync(_watchedResolvedAddr);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to stop watch on {_watchedResolvedAddr}", ex);
+        }
+        finally
+        {
+            IsWatching = false;
+            _watchedResolvedAddr = "";
+            UpdateWatchUI();
+        }
+    }
+
+    private async Task StartWatchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Address)) return;
+
+        var resolved = ResolveAddress(Address);
+        await _dump.WatchAsync(resolved, Size, WatchInterval);
+        _watchedResolvedAddr = resolved;
+        _watchUpdateCount = 0;
+        IsWatching = true;
+        UpdateWatchUI();
+    }
+
+    private void UpdateWatchUI()
+    {
+        if (IsWatching)
+        {
+            WatchButtonText = "Stop";
+            WatchStatusText = _watchUpdateCount > 0
+                ? $"Watching (every {WatchInterval}ms) — {_watchUpdateCount} updates"
+                : $"Watching (every {WatchInterval}ms)";
+        }
+        else
+        {
+            WatchButtonText = "Watch";
+            WatchStatusText = _watchUpdateCount > 0
+                ? $"Stopped ({_watchUpdateCount} updates received)"
+                : "";
         }
     }
 
@@ -103,14 +160,21 @@ public partial class HexViewViewModel : ViewModelBase
         if (eventType != "watch") return;
 
         var addr = evt["addr"]?.GetValue<string>() ?? "";
-        if (!string.Equals(addr, Address, StringComparison.OrdinalIgnoreCase)) return;
+        if (!string.Equals(addr, _watchedResolvedAddr, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(addr, Address, StringComparison.OrdinalIgnoreCase))
+            return;
 
         var hexStr = evt["bytes"]?.GetValue<string>() ?? "";
         try
         {
             var data = Convert.FromHexString(hexStr);
             // Must dispatch to UI thread
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => UpdateHexRows(data));
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                UpdateHexRows(data);
+                _watchUpdateCount++;
+                UpdateWatchUI();
+            });
         }
         catch { /* ignore malformed data */ }
     }

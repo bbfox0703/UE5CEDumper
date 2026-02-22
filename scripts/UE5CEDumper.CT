@@ -63,8 +63,18 @@ for _, dir in ipairs(_candidates) do
 end
 
 if not DLL_PATH then
-    -- Last resort: use first candidate even though DLL wasn't found there
-    DLL_PATH = (_candidates[1] or "") .. "UE5Dumper.dll"
+    -- DLL not found in any candidate directory -- alert and stop
+    print("[UE5Dump] ERROR: UE5Dumper.dll not found in any candidate directory!")
+    for i, dir in ipairs(_candidates) do
+        print(string.format("[UE5Dump]   candidate %d: '%s'", i, dir))
+    end
+    local msg = "UE5 Dumper Error:\n\nUE5Dumper.dll not found!\n\nSearched locations:\n"
+    for i, dir in ipairs(_candidates) do
+        msg = msg .. "  " .. i .. ". " .. dir .. "\n"
+    end
+    msg = msg .. "\nPlease place UE5Dumper.dll in the same folder as this CT file."
+    showMessage(msg)
+    return
 end
 
 -- Diagnostic: show search results

@@ -5,7 +5,9 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// Serilog-based logging service implementation.
-/// Logs to %LOCALAPPDATA%\UE5CEDumper\Logs with 5MB rolling, 5 versions.
+/// Logs to %LOCALAPPDATA%\UE5CEDumper\Logs with per-startup rotation.
+/// Each app startup shifts existing logs: -0.log → -1.log → ... → -(N-1).log
+/// Matches the DLL-side convention (UE5Dumper-scan-0.log, -1.log, etc.).
 /// Supports per-process mirror logging via StartProcessMirror/StopProcessMirror.
 /// </summary>
 public sealed class LoggingService : ILoggingService, IDisposable
@@ -23,14 +25,18 @@ public sealed class LoggingService : ILoggingService, IDisposable
         _logDirectory = logDirectory;
         Directory.CreateDirectory(logDirectory);
 
-        var logPath = Path.Combine(logDirectory, $"{Constants.LogFilePrefix}-.log");
+        // Per-startup rotation: shift -0 → -1 → -2 → ... → -(N-1), delete oldest
+        RotateLogFiles(logDirectory, Constants.LogFilePrefix, Constants.LogMaxFiles);
+
+        // Clean up old daily format files (UE5DumpUI-YYYYMMDD.log) from previous versions
+        CleanupOldDailyLogs(logDirectory, Constants.LogFilePrefix);
+
+        var logFile = Path.Combine(logDirectory, $"{Constants.LogFilePrefix}-0.log");
 
         _logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.File(
-                logPath,
-                rollingInterval: RollingInterval.Day,
-                retainedFileCountLimit: Constants.LogMaxFiles,
+                logFile,
                 fileSizeLimitBytes: Constants.LogMaxSizeBytes,
                 outputTemplate: OutputTemplate)
             .WriteTo.Console(outputTemplate: "[{Level:u4}] {Message:lj}{NewLine}")
@@ -80,14 +86,17 @@ public sealed class LoggingService : ILoggingService, IDisposable
         try
         {
             Directory.CreateDirectory(mirrorDir);
-            var mirrorPath = Path.Combine(mirrorDir, $"{Constants.LogFilePrefix}-.log");
+
+            // Per-startup rotation for mirror logs too
+            RotateLogFiles(mirrorDir, Constants.LogFilePrefix, Constants.MirrorLogMaxFiles);
+            CleanupOldDailyLogs(mirrorDir, Constants.LogFilePrefix);
+
+            var mirrorFile = Path.Combine(mirrorDir, $"{Constants.LogFilePrefix}-0.log");
 
             var newLogger = new LoggerConfiguration()
                 .MinimumLevel.Debug()
                 .WriteTo.File(
-                    mirrorPath,
-                    rollingInterval: RollingInterval.Day,
-                    retainedFileCountLimit: Constants.MirrorLogMaxFiles,
+                    mirrorFile,
                     fileSizeLimitBytes: Constants.LogMaxSizeBytes,
                     outputTemplate: OutputTemplate)
                 .CreateLogger();
@@ -127,6 +136,65 @@ public sealed class LoggingService : ILoggingService, IDisposable
     {
         StopProcessMirror();
         _logger.Dispose();
+    }
+
+    // ================================================================
+    // Per-startup log rotation
+    // ================================================================
+
+    /// <summary>
+    /// Rotate numbered log files: delete oldest, shift N-2 → N-1, ..., 0 → 1.
+    /// After rotation, slot 0 is free for the new session's log.
+    /// Matches DLL-side rotation convention (UE5Dumper-scan-0.log, -1.log, ...).
+    /// </summary>
+    private static void RotateLogFiles(string directory, string prefix, int maxFiles)
+    {
+        try
+        {
+            // Delete the oldest file (slot N-1)
+            var oldest = Path.Combine(directory, $"{prefix}-{maxFiles - 1}.log");
+            if (File.Exists(oldest)) File.Delete(oldest);
+
+            // Shift each file: i → i+1 (from N-2 down to 0)
+            for (int i = maxFiles - 2; i >= 0; i--)
+            {
+                var src = Path.Combine(directory, $"{prefix}-{i}.log");
+                var dst = Path.Combine(directory, $"{prefix}-{i + 1}.log");
+                if (File.Exists(src)) File.Move(src, dst);
+            }
+        }
+        catch
+        {
+            // Best effort — don't prevent app startup over log rotation
+        }
+    }
+
+    /// <summary>
+    /// Remove old daily-format log files (UE5DumpUI-YYYYMMDD.log) left over
+    /// from the previous Serilog RollingInterval.Day configuration.
+    /// Also removes the base file without date suffix (UE5DumpUI-.log).
+    /// </summary>
+    private static void CleanupOldDailyLogs(string directory, string prefix)
+    {
+        try
+        {
+            // Match files like "UE5DumpUI-20260222.log" and "UE5DumpUI-.log"
+            foreach (var file in Directory.GetFiles(directory, $"{prefix}-*.log"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                var suffix = name[(prefix.Length + 1)..]; // part after "UE5DumpUI-"
+
+                // Keep numbered files (0, 1, 2, ...) — those are the new format
+                if (int.TryParse(suffix, out _)) continue;
+
+                // Delete daily files (YYYYMMDD) and the bare dash file ("")
+                try { File.Delete(file); } catch { }
+            }
+        }
+        catch
+        {
+            // Best effort
+        }
     }
 
     /// <summary>

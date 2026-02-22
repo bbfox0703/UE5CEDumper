@@ -362,21 +362,30 @@ public partial class LiveWalkerViewModel : ViewModelBase
         try
         {
             ClearError();
+            IsLoading = true;
+
+            // Pre-resolve StructProperty inner fields via DLL
+            var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
+                _dump, new List<LiveFieldValue>(Fields));
 
             // Compute root address as "Module.exe"+RVA
             var rootBc = Breadcrumbs[0];
             var rootModuleRva = ComputeModuleRva(rootBc.Address);
 
             var xml = CeXmlExportService.GenerateHierarchicalXml(
-                rootModuleRva, rootBc.Label, Breadcrumbs, Fields);
+                rootModuleRva, rootBc.Label, Breadcrumbs, Fields, resolvedStructs);
 
             await _platform.CopyToClipboardAsync(xml);
-            _log.Info($"CE XML copied to clipboard for {CurrentClassName}");
+            _log.Info($"CE XML copied to clipboard for {CurrentClassName} ({resolvedStructs.Count} structs resolved)");
         }
         catch (Exception ex)
         {
             SetError(ex);
             _log.Error("Failed to export CE XML", ex);
+        }
+        finally
+        {
+            IsLoading = false;
         }
     }
 

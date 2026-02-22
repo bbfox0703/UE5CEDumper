@@ -115,4 +115,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 ---
 
+## Built with Claude Code
+
+This project is developed with the assistance of [Claude Code](https://claude.ai/code) by Anthropic. The C++ DLL, C# Avalonia UI, build scripts, and documentation are collaboratively authored by the developer and Claude Code.
+
+---
+
 **License**: [MIT](LICENSE) © 2026 bbfox0703

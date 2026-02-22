@@ -34,7 +34,7 @@
                      Minimum="{Binding AutoRefreshMinSec}"
                      Maximum="60" Increment="1"
                      IsVisible="{Binding HasData}"
-                     Width="90" Padding="4,2" FontSize="12"
+                     Width="140" Padding="4,2" FontSize="12"
                      Foreground="#D4D4D4"
                      FormatString="0"
                      ShowButtonSpinner="True"
