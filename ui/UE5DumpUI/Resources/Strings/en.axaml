@@ -19,8 +19,8 @@
     <sys:String x:Key="str.ObjectTree.Load">Load</sys:String>
     <sys:String x:Key="str.ObjectTree.Loading">Loading...</sys:String>
     <sys:String x:Key="str.ObjectTree.Count">Objects: {0}</sys:String>
-    <sys:String x:Key="str.ObjectTree.CopyClassName">Copy Class Name</sys:String>
-    <sys:String x:Key="str.ObjectTree.CopyObjectName">Copy Object Name</sys:String>
+    <sys:String x:Key="str.ObjectTree.CopyClassName">Copy Type</sys:String>
+    <sys:String x:Key="str.ObjectTree.CopyObjectName">Copy Name</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyAddress">Copy Address</sys:String>
     <sys:String x:Key="str.ObjectTree.FilterHint">Filter loaded objects...</sys:String>
     <sys:String x:Key="str.ObjectTree.ClassFilter">Class Type:</sys:String>
