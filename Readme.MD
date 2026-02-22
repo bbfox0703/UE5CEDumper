@@ -53,11 +53,13 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 3.  **Pipe Stream**: Live data is streamed to the **UE5DumpUI** via Named Pipes (JSON-RPC).
 4.  **Create Table**: Browse the `UObject` hierarchy, find your HP/MP offsets, and export to CE.
 
-┌─────────────────────────┐         Named Pipe          ┌────────────────────────┐
-│   Game Process (Injected)│  ───────────────────────▶  │      External GUI      │
-│   (DLL + CE Lua Bridge)  │  ◀───────────────────────  │   (Avalonia UI App)    │
-└─────────────────────────┘      JSON-RPC Protocol      └────────────────────────┘
-
+| **Game Process (Injected)** |
+| :---: |
+| DLL + CE Lua Bridge |
+| ⬇️ |
+| **Named Pipe IPC (JSON-RPC Protocol)** |
+| ⬇️ |
+| **External GUI (Avalonia UI App)** |
 ---
 
 ## Requirements
