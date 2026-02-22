@@ -2,7 +2,7 @@
 
 A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for runtime inspection of Unreal Engine 4 & 5 games. It locates global engine pointers (GObjects / GNames / GWorld) via AOB scanning, traverses the UObject hierarchy, and streams live data over a Named Pipe to an external GUI.
 
-> **Status**: DLL core functional. Tested and working on **14 games** across UE 4.18 ~ 5.7 (TQ2, EverSpace 2, Hogwarts Legacy, FF7 Rebirth, FF7 Remake, OctoPath Traveler, DQ I&II HD-2D, DQ III HD-2D, DQ XI S, Tower of Mask, Star Wars Jedi, IDOLM@STER, Romancing SaGa 2, Ghostwire: Tokyo). Avalonia UI functional with Object Tree, Live Walker, Instance Finder, and Class Structure panels.
+> **Status**: DLL core functional. Tested and working on **14 games** across UE 4.18 ~ 5.7 (TQ2, EverSpace 2, Hogwarts Legacy, FF7 Rebirth, FF7 Remake, Octopath Traveler, DQ I&II HD-2D, DQ III HD-2D, DQ XI S, Tower of Mask, Star Wars Jedi, IDOLM@STER, Romancing SaGa 2 RotS, Ghostwire: Tokyo). Avalonia UI functional with Object Tree, Live Walker, Instance Finder, and Class Structure panels.
 
 ---
 
@@ -25,14 +25,14 @@ A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for run
 | FChunkedFixedUObjectArray + FFixedUObjectArray (flat) auto-detect | ✅ |
 | FUObjectItem stride auto-detect (16/24/20 bytes) | ✅ |
 | FNamePool multi-format: standard, hash-prefixed, UE4 TNameEntryArray | ✅ |
-| Dynamic FField/FProperty/UStruct offset detection (DynOff) | ✅ |
+| Dynamic FField/FProperty/UStruct offset detection (DynOff): UE 5.5+ CasePreservingName support | ✅ |
 | CasePreservingName detection (UE5.5+, FName = 16 bytes) | ✅ |
 | FProperty-to-UProperty fallback (UE4 <4.25) | ✅ |
-| Live Data Walker — walk_class, walk_instance, walk_world | ✅ |
-| Instance Finder — find_instances by class name | ✅ |
-| CE XML export — signed int, bool bit fields, struct auto-expansion | ✅ |
+| Live Data Walker — Inspect instance memory data | ✅ |
+| Instance Finder — find instance by address or class name. Can open in Live Walker | ✅ |
+| CE XML export — One-click CE XML address records export (with bitfields) and paste into CE address field | ✅ |
 | Named Pipe IPC server (JSON newline-delimited) | ✅ |
-| CE Plugin mode (Type 5 main menu entry) | ✅ |
+| CE Plugin mode (Type 5 main menu entry, not used now) | ✅ |
 | Avalonia UI (Object Tree, Live Walker, Instance Finder, Class Structure) | ✅ |
 | Git commit hash + build timestamp embedded in DLL | ✅ |
 

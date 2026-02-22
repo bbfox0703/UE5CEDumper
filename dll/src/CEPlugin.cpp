@@ -15,12 +15,13 @@
 #include <Windows.h>
 #include <cstddef>   // offsetof
 #include <cstring>
+#include <atomic>
 #define LOG_CAT "CEP"
 #include "Logger.h"
 
 // ── Externals from dllmain.cpp ────────────────────────────────────────────
-extern HMODULE g_hDllModule;  // DLL module handle
-extern bool    g_isCEPlugin;  // Set true here to suppress game-process auto-start
+extern HMODULE g_hDllModule;           // DLL module handle
+extern std::atomic<bool> g_isCEPlugin; // Set true here to suppress game-process auto-start
 
 // ── CE SDK v6 constants ───────────────────────────────────────────────────
 static constexpr unsigned int CESDK_VERSION = 6;
@@ -174,16 +175,17 @@ BOOL __stdcall CEPlugin_InitializePlugin(ExportedFunctions* ef, int pluginid)
 
     // Mark this instance as the CE plugin host so the DllMain auto-start
     // thread (which waits 1 second before checking) will skip auto-init.
-    g_isCEPlugin = true;
+    g_isCEPlugin.store(true);
+
+    // Sanity check: CE's declared struct size must be >= our partial struct.
+    // Must be checked BEFORE copying to avoid reading past the source buffer.
+    if (ef->sizeofExportedFunctions < static_cast<int>(sizeof(ExportedFunctions)))
+        return FALSE;
 
     // Copy only our truncated struct portion from CE's full struct.
     // CE's struct is always larger than ours — safe because we verified offsets.
-    g_CE      = *ef;
+    g_CE       = *ef;
     g_PluginId = pluginid;
-
-    // Sanity check: CE's declared struct size must be >= our partial struct.
-    if (g_CE.sizeofExportedFunctions < static_cast<int>(sizeof(ExportedFunctions)))
-        return FALSE;
 
     // Register Type 5 (ptMainMenu) — adds item to CE's main Plugins menu.
     PLUGINTYPE5_INIT init = {};

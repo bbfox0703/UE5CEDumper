@@ -10,6 +10,7 @@
 #include "Logger.h"
 #include "Constants.h"
 
+#include <atomic>
 #include <cstring>
 #include <vector>
 #include <string>
@@ -17,7 +18,7 @@
 namespace FNamePool {
 
 static uintptr_t s_poolAddr = 0;
-static bool       s_initialized = false;
+static std::atomic<bool> s_initialized{false};
 
 // UE4 TNameEntryArray mode (pre-FNamePool)
 static bool s_isUE4Mode = false;
@@ -280,7 +281,6 @@ static void DetectStride() {
 
 void Init(uintptr_t gnamesAddr, int headerOffset) {
     s_poolAddr = gnamesAddr;
-    s_initialized = true;
     s_isUE4Mode = false;
     s_headerOffset = headerOffset;
 
@@ -295,6 +295,10 @@ void Init(uintptr_t gnamesAddr, int headerOffset) {
     DetectBlockOffsetBits();
     DetectHeaderFormat();
 
+    // Mark initialized with release ordering — fences all preceding writes so
+    // any thread that acquire-loads s_initialized==true sees consistent state.
+    s_initialized.store(true, std::memory_order_release);
+
     // Verify by reading a few known names
     std::string none = GetString(0);
     std::string name1 = GetString(1);
@@ -307,7 +311,9 @@ void InitUE4(uintptr_t nameArrayAddr, int stringOffset) {
     s_poolAddr = nameArrayAddr;
     s_isUE4Mode = true;
     s_ue4StringOffset = stringOffset;
-    s_initialized = true;
+
+    // Mark initialized with release ordering
+    s_initialized.store(true, std::memory_order_release);
 
     // Verify by reading name at index 0 ("None")
     std::string none = GetString(0);
@@ -318,13 +324,16 @@ void InitUE4(uintptr_t nameArrayAddr, int stringOffset) {
 }
 
 uintptr_t GetEntry(int32_t nameIndex) {
-    if (!s_initialized || !s_poolAddr) return 0;
+    if (!s_initialized.load(std::memory_order_acquire) || !s_poolAddr) return 0;
 
     if (s_isUE4Mode) {
         // UE4 TNameEntryArray: Chunks[chunkIdx] -> FNameEntry*[UE4_CHUNK_SIZE]
         // Double dereference: array -> chunk -> entry pointer
         int32_t chunkIndex = nameIndex / UE4_CHUNK_SIZE;
         int32_t elemIndex  = nameIndex % UE4_CHUNK_SIZE;
+
+        // Bounds guard: UE4 typically has < 256 chunks (256 * 16384 = 4M names max)
+        if (chunkIndex < 0 || chunkIndex > 256) return 0;
 
         // Read chunk pointer from array
         uintptr_t chunkPtr = 0;
@@ -342,6 +351,9 @@ uintptr_t GetEntry(int32_t nameIndex) {
     // UE5 FNamePool path: packed inline entries with 2-byte header
     int32_t chunkIndex  = nameIndex >> s_blockOffsetBits;
     int32_t chunkOffset = (nameIndex & s_blockOffsetMask) * s_stride;
+
+    // Bounds guard: FNamePool typically has < 8192 chunks (each 128KB = 1GB total max)
+    if (chunkIndex < 0 || chunkIndex > 8192) return 0;
 
     // Read chunk pointer
     uintptr_t chunkPtr = 0;
@@ -435,7 +447,7 @@ std::string GetString(int32_t nameIndex, int32_t number) {
 }
 
 bool IsInitialized() {
-    return s_initialized;
+    return s_initialized.load(std::memory_order_acquire);
 }
 
 bool IsUE4Mode() {

@@ -104,7 +104,7 @@ static uintptr_t TrySymbolExport(const char* mangledName) {
     HMODULE modules[1024];
     DWORD cbNeeded = 0;
     if (EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &cbNeeded)) {
-        DWORD count = cbNeeded / sizeof(HMODULE);
+        DWORD count = static_cast<DWORD>((std::min)(static_cast<size_t>(cbNeeded / sizeof(HMODULE)), _countof(modules)));
         for (DWORD i = 0; i < count; ++i) {
             if (modules[i] == hGame) continue;
             FARPROC addr = GetProcAddress(modules[i], mangledName);
@@ -1597,7 +1597,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     if (!guidStruct && !vectorStruct) {
         Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find Guid or Vector struct, using version-based defaults");
         // Still mark as validated since CPN and UProperty detection succeeded
-        DynOff::bOffsetsValidated = true;
+        DynOff::bOffsetsValidated.store(true, std::memory_order_release);
         return false;
     }
 
@@ -1700,7 +1700,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     if (!childProps) {
         Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ChildProperties in '%s', keeping defaults", testName);
-        DynOff::bOffsetsValidated = true;
+        DynOff::bOffsetsValidated.store(true, std::memory_order_release);
         return false;
     }
 
@@ -1939,7 +1939,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         DynOff::FBOOLPROP_FIELDSIZE = DynOff::FSTRUCTPROP_STRUCT;
     }
 
-    DynOff::bOffsetsValidated = true;
+    DynOff::bOffsetsValidated.store(true, std::memory_order_release);
 
     // Summary log
     Logger::Info("DYNO", "=== Dynamic Offset Summary ===");
