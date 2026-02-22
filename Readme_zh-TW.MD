@@ -2,6 +2,9 @@
 
 一套針對 Unreal Engine 4 & 5 遊戲的**執行期結構探查工具**，由 C++ 注入式 DLL、Cheat Engine Lua Bridge 及 Avalonia UI 三個元件組成。透過 AOB 掃描定位引擎全域指標（GObjects / GNames / GWorld），遍歷 UObject 層次結構，並透過 Named Pipe 將即時資料串流至外部 GUI。
 
+這並不是另一個 UE dumpers，也就是說我名字沒取好。此工具的主要功能是能更方便開發 Cheat Engine 的作弊表格。要使用專業 Dumper，請移駕： 
+[Encryqed/Dumper-7](https://github.com/Encryqed/Dumper-7), [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) and [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS)
+
 > **現況**：DLL 核心功能完成。已在 **17 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、Octopath Traveler、DQ I&II HD-2D、DQ III HD-2D、DQ XI S、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2 RotS、Ghostwire: Tokyo、Lushfoil Photography Sim、Manor Lords、Satisfactory）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
 
 ---
@@ -262,7 +265,7 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 
 - **部分遊戲「Start from GWorld」失敗** — 17 款已測試遊戲中有 9 款 GWorld 功能正常（TQ2、EverSpace 2、Hogwarts Legacy、IDOLM@STER、Romancing SaGa 2 RotS、Tower of Mask、Ghostwire: Tokyo、Lushfoil Photography Sim、Manor Lords）。部分 UE4 遊戲及 Satisfactory 仍失敗（FF7R、FF7Re、DQ 系列、OctoPath）。持續調查中。
 - **UE 版本偵測錯誤** — 部分遊戲回報不正確的 UE 版本（例如 FF7R 顯示 504 應為 418、Ghostwire: Tokyo 顯示 505）。此為外觀問題，所有管線均透過自動回退偵測正常運作。
-- **FF7 Rebirth CE 位址查詢** — `get_ce_pointer_info` 的位址對物件查詢在 FF7 Rebirth 上失敗，其他遊戲正常。
+- **FF7 Rebirth CE 位址查詢** — `get_ce_pointer_info` 的位址對物件查詢在 FF7 Rebirth 上失敗，其他遊戲正常。主要是因為 FF7Re的資料，例如 HP，並不是存在 UObject中。
 
 ---
 
