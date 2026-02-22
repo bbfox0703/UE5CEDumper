@@ -2,13 +2,18 @@
 
 一套針對 Unreal Engine 4 & 5 遊戲的**執行期結構探查工具**，由 C++ 注入式 DLL、Cheat Engine Lua Bridge 及 Avalonia UI 三個元件組成。透過 AOB 掃描定位引擎全域指標（GObjects / GNames / GWorld），遍歷 UObject 層次結構，並透過 Named Pipe 將即時資料串流至外部 GUI。
 
-> **現況**：DLL 核心功能完成。已在 **11 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、OctoPath Traveler、DQ I&II HD-2D、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
+> **現況**：DLL 核心功能完成。已在 **14 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、OctoPath Traveler、DQ I&II HD-2D、DQ III HD-2D、DQ XI S、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2、Ghostwire: Tokyo）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
 
 ---
+
+[![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D4)](https://www.microsoft.com/windows)
+[![UE Version](https://img.shields.io/badge/UE-4.18--5.7-orange)](https://www.unrealengine.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
-[![C++](https://img.shields.io/badge/C++-23)](https://isocpp.org/std/the-standard#:~:text=The%20current%20ISO%20C++%20standard%20is%20C++23%2C,Standard%20ISO/IEC%2014882:2024(E)%20%E2%80%93%20Programming%20Language%20C++.)
+[![C++](https://img.shields.io/badge/C++-23-00599C)](https://isocpp.org/)
 [![Avalonia](https://img.shields.io/badge/Avalonia-UI-8B5CF6)](https://avaloniaui.net/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-CC785C?logo=claude)](https://claude.ai/code)
+
 ## 功能一覽
 
 | 功能 | 狀態 |
@@ -25,7 +30,7 @@
 | FProperty 至 UProperty 回退（UE4 <4.25） | ✅ |
 | Live Data Walker — walk_class / walk_instance / walk_world | ✅ |
 | Instance Finder — 依 Class 名稱搜尋所有實例 | ✅ |
-| CE XML 匯出 — get_ce_pointer_info | ✅ |
+| CE XML 匯出 — 正負號整數、Bool 位元欄位、Struct 自動展開 | ✅ |
 | Named Pipe IPC 伺服器（JSON 換行分隔） | ✅ |
 | CE Plugin 模式（Type 5 主選單入口） | ✅ |
 | Avalonia UI（Object Tree、Live Walker、Instance Finder、Class Structure） | ✅ |
@@ -245,9 +250,9 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 | UE 版本 | GObjects | GNames | DynOff | 已測試遊戲 |
 |---|---|---|---|---|
 | 4.18 | ✅ | ✅ | ✅（UProperty 回退） | FF7 Remake Intergrade |
-| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi、IDOLM@STER、OctoPath Traveler |
+| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi、DQ XI S、IDOLM@STER、OctoPath Traveler |
 | 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth、Tower of Mask、Hogwarts Legacy、Romancing SaGa 2 |
-| 5.0–5.2 | ✅ | ✅ | ✅ | DQ I&II HD-2D Remake |
+| 5.0–5.2 | ✅ | ✅ | ✅ | DQ I&II HD-2D Remake、DQ III HD-2D Remake、Ghostwire: Tokyo |
 | 5.3–5.4 | ✅ | ✅ | ✅ | — |
 | 5.5–5.7 | ✅ | ✅（指標掃描） | ✅（CPN） | Titan Quest II、EverSpace 2 |
 
@@ -255,8 +260,18 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 
 ## 已知問題
 
-- **UI「Start from GWorld」功能異常** — 部分 UE4 遊戲可找到 GWorld，但 UI 按鈕無法填充 Live Walker。調查中。
+- **部分遊戲「Start from GWorld」失敗** — 14 款已測試遊戲中有 7 款 GWorld 功能正常（TQ2、EverSpace 2、Hogwarts Legacy、IDOLM@STER、Romancing SaGa 2、Tower of Mask、Ghostwire: Tokyo）。部分 UE4 遊戲仍失敗（FF7R、FF7Re、DQ 系列、OctoPath）。持續調查中。
+- **UE 版本偵測錯誤** — 部分遊戲回報不正確的 UE 版本（例如 FF7R 顯示 504 應為 418、Ghostwire: Tokyo 顯示 505）。此為外觀問題，所有管線均透過自動回退偵測正常運作。
 - **FF7 Rebirth CE 位址查詢** — `get_ce_pointer_info` 的位址對物件查詢在 FF7 Rebirth 上失敗，其他遊戲正常。
+
+---
+
+## 貢獻指南
+
+請參閱 [CONTRIBUTING_zh-TW.md](CONTRIBUTING_zh-TW.md) 了解：
+- **提交 AOB Pattern** — 需要提供哪些證據、驗證流程如何運作
+- **回報偵測失敗** — 需要附上哪些日誌與資訊
+- **程式碼貢獻** — PR 流程與程式碼風格
 
 ---
 
@@ -269,10 +284,16 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 | [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 執行期反射，另一角度的實作參考 |
 | [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | GObjects/GNames 的額外 AOB Pattern |
 | [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | GObjects/GNames 的額外 AOB Pattern 來源 |
-| UE4 Dumper.CT | Cheat Engine 作弊表 — 額外 AOB Pattern（Signatures.h 中的 CT 系列） |
+| UE4 Dumper.CT | Cake-san 的作弊表 — 額外 AOB Pattern（Signatures.h 中的 CT 系列） |
 | [nlohmann/json](https://github.com/nlohmann/json) | DLL 使用的 Header-only JSON 函式庫 |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua 腳本 API 參考 |
 | AOBMaker（私有） | AOB Pattern 生成工具 |
+
+---
+
+## 使用 Claude Code 開發
+
+本專案在 Anthropic 的 [Claude Code](https://claude.ai/code) 協助下開發。C++ DLL、C# Avalonia UI、建置腳本及文件均由開發者與 Claude Code 協作完成。
 
 ---
 

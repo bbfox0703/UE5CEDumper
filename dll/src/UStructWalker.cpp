@@ -244,18 +244,36 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
     if (typeName == "FloatProperty" && size >= 4) {
         float v;
         memcpy(&v, bytes, 4);
-        // No scientific notation, at least 7 decimal places
+        // 10 decimal places; if fractional part is all zeros, show as integer
         char buf[64];
-        snprintf(buf, sizeof(buf), "%.7f", v);
-        return buf;
+        snprintf(buf, sizeof(buf), "%.10f", v);
+        std::string s(buf);
+        auto dot = s.find('.');
+        if (dot != std::string::npos) {
+            bool allZero = true;
+            for (size_t i = dot + 1; i < s.size(); ++i) {
+                if (s[i] != '0') { allZero = false; break; }
+            }
+            if (allZero) s.erase(dot);
+        }
+        return s;
     }
     if (typeName == "DoubleProperty" && size >= 8) {
         double v;
         memcpy(&v, bytes, 8);
-        // No scientific notation, full double precision (15 decimal places)
-        char buf[64];
+        // 15 decimal places; if fractional part is all zeros, show as integer
+        char buf[80];
         snprintf(buf, sizeof(buf), "%.15f", v);
-        return buf;
+        std::string s(buf);
+        auto dot = s.find('.');
+        if (dot != std::string::npos) {
+            bool allZero = true;
+            for (size_t i = dot + 1; i < s.size(); ++i) {
+                if (s[i] != '0') { allZero = false; break; }
+            }
+            if (allZero) s.erase(dot);
+        }
+        return s;
     }
     if (typeName == "IntProperty" && size >= 4) {
         int32_t v;

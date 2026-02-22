@@ -12,10 +12,33 @@ namespace UE5DumpUI.Services;
 /// - Same-layer offset: &lt;Address&gt;+{hex}&lt;/Address&gt; (no dereference)
 /// - Pointer dereference: &lt;Address&gt;+0&lt;/Address&gt; with &lt;Offsets&gt;&lt;Offset&gt;{hex}&lt;/Offset&gt;&lt;/Offsets&gt;
 /// - GroupHeader=1 makes an entry a collapsible folder with children
+///
+/// CE type mapping:
+/// - Signed integers (IntProperty, Int8/16/64Property): ShowAsSigned=1
+/// - Unsigned integers (UInt32/16/64Property, ByteProperty): ShowAsSigned=0
+/// - BoolProperty with bit mask: VariableType=Binary, BitStart/BitLength from UE FieldMask
+/// - Pointer fields (ObjectProperty navigable): ShowAsHex=1, GroupHeader placeholder
+/// - Struct fields (StructProperty navigable): GroupHeader placeholder (no empty CheatEntries)
+///
+/// Struct auto-expansion:
+/// - Simple StructProperty with 1-2 numeric values (detected via f:[...] hint) are auto-expanded
+/// - Children named #1, #2 with Float type, at +8 and +C (8-byte struct preamble skip)
+/// - Only triggers when TypedValue shows actual values, NOT when showing {TypeName}
 /// </summary>
 public static class CeXmlExportService
 {
     private static int _nextId;
+
+    /// <summary>CE field metadata for XML generation.</summary>
+    private record CeFieldInfo(
+        string VariableType,
+        bool IsSigned = false,
+        bool ShowAsHex = false,
+        int BitStart = -1,
+        int BitLength = 0);
+
+    /// <summary>Info for auto-expanding a simple StructProperty in CE XML.</summary>
+    private record StructExpandInfo(int ValueCount, string CeType, int TypeSize, int Preamble);
 
     /// <summary>
     /// Generate hierarchical CE XML from the navigation breadcrumb trail and current fields.
@@ -90,8 +113,8 @@ public static class CeXmlExportService
 
         foreach (var field in currentFields)
         {
-            var ceType = MapCeType(field.TypeName, field.Size);
-            bool isScalar = ceType != null;
+            var ceField = MapCeField(field);
+            bool isScalar = ceField != null;
 
             if (parentIsPointer && breadcrumbs.Count > 1)
             {
@@ -99,15 +122,14 @@ public static class CeXmlExportService
                 // Address=+0, Offsets=[field.Offset]
                 if (isScalar)
                 {
-                    EmitLeaf(sb, leafIndent, field.Name, ceType!,
+                    EmitLeaf(sb, leafIndent, field.Name, ceField!,
                         "+0", new[] { field.Offset });
                 }
                 else if (field.IsNavigable)
                 {
-                    // Navigable but non-scalar (struct/object): emit as group placeholder
-                    EmitGroupOpen(sb, leafIndent, field.Name,
+                    // Navigable but non-scalar (struct/object): auto-expand or placeholder
+                    EmitNavigableField(sb, leafIndent, field,
                         "+0", new[] { field.Offset });
-                    EmitGroupClose(sb, leafIndent);
                 }
             }
             else
@@ -115,14 +137,13 @@ public static class CeXmlExportService
                 // Under root directly, or under an inline struct parent: just +offset
                 if (isScalar)
                 {
-                    EmitLeaf(sb, leafIndent, field.Name, ceType!,
+                    EmitLeaf(sb, leafIndent, field.Name, ceField!,
                         $"+{field.Offset:X}", null);
                 }
                 else if (field.IsNavigable)
                 {
-                    EmitGroupOpen(sb, leafIndent, field.Name,
+                    EmitNavigableField(sb, leafIndent, field,
                         $"+{field.Offset:X}", null);
-                    EmitGroupClose(sb, leafIndent);
                 }
             }
         }
@@ -163,17 +184,16 @@ public static class CeXmlExportService
         var leafIndent = indent + "  ";
         foreach (var field in fields)
         {
-            var ceType = MapCeType(field.TypeName, field.Size);
-            if (ceType != null)
+            var ceField = MapCeField(field);
+            if (ceField != null)
             {
-                EmitLeaf(sb, leafIndent, field.Name, ceType,
+                EmitLeaf(sb, leafIndent, field.Name, ceField,
                     $"+{field.Offset:X}", null);
             }
             else if (field.IsNavigable)
             {
-                EmitGroupOpen(sb, leafIndent, field.Name,
+                EmitNavigableField(sb, leafIndent, field,
                     $"+{field.Offset:X}", null);
-                EmitGroupClose(sb, leafIndent);
             }
         }
 
@@ -220,6 +240,7 @@ public static class CeXmlExportService
     // Private helpers
     // ========================================
 
+    /// <summary>Emit a group header that will contain child entries (opens CheatEntries block).</summary>
     private static void EmitGroupOpen(StringBuilder sb, string indent, string description,
         string address, int[]? offsets, bool showAsHex = false, string? varType = null)
     {
@@ -233,31 +254,64 @@ public static class CeXmlExportService
         if (varType != null)
             sb.AppendLine($"{indent}  <VariableType>{varType}</VariableType>");
         sb.AppendLine($"{indent}  <Address>{address}</Address>");
-        if (offsets != null && offsets.Length > 0)
-        {
-            sb.AppendLine($"{indent}  <Offsets>");
-            foreach (var o in offsets)
-                sb.AppendLine($"{indent}    <Offset>{o:X}</Offset>");
-            sb.AppendLine($"{indent}  </Offsets>");
-        }
+        EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}  <CheatEntries>");
     }
 
+    /// <summary>Close a group header's CheatEntries block.</summary>
     private static void EmitGroupClose(StringBuilder sb, string indent)
     {
         sb.AppendLine($"{indent}  </CheatEntries>");
         sb.AppendLine($"{indent}</CheatEntry>");
     }
 
-    private static void EmitLeaf(StringBuilder sb, string indent, string description,
-        string ceType, string address, int[]? offsets)
+    /// <summary>
+    /// Emit a group placeholder — a GroupHeader with no children.
+    /// Used for navigable struct/pointer fields at leaf level.
+    /// Pointer fields get ShowAsHex=1.
+    /// </summary>
+    private static void EmitGroupPlaceholder(StringBuilder sb, string indent, string description,
+        string address, int[]? offsets, bool showAsHex = false)
     {
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{description}\"</Description>");
+        if (showAsHex)
+            sb.AppendLine($"{indent}  <ShowAsHex>1</ShowAsHex>");
         sb.AppendLine($"{indent}  <ShowAsSigned>0</ShowAsSigned>");
-        sb.AppendLine($"{indent}  <VariableType>{ceType}</VariableType>");
+        sb.AppendLine($"{indent}  <GroupHeader>1</GroupHeader>");
         sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        EmitOffsets(sb, indent, offsets);
+        sb.AppendLine($"{indent}</CheatEntry>");
+    }
+
+    /// <summary>
+    /// Emit a scalar leaf entry with proper CE type, signedness, and bit field support.
+    /// </summary>
+    private static void EmitLeaf(StringBuilder sb, string indent, string description,
+        CeFieldInfo ceField, string address, int[]? offsets)
+    {
+        sb.AppendLine($"{indent}<CheatEntry>");
+        sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
+        sb.AppendLine($"{indent}  <Description>\"{description}\"</Description>");
+        if (ceField.ShowAsHex)
+            sb.AppendLine($"{indent}  <ShowAsHex>1</ShowAsHex>");
+        sb.AppendLine($"{indent}  <ShowAsSigned>{(ceField.IsSigned ? 1 : 0)}</ShowAsSigned>");
+        sb.AppendLine($"{indent}  <VariableType>{ceField.VariableType}</VariableType>");
+        if (ceField.BitStart >= 0)
+        {
+            sb.AppendLine($"{indent}  <BitStart>{ceField.BitStart}</BitStart>");
+            sb.AppendLine($"{indent}  <BitLength>{ceField.BitLength}</BitLength>");
+            sb.AppendLine($"{indent}  <ShowAsBinary>0</ShowAsBinary>");
+        }
+        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        EmitOffsets(sb, indent, offsets);
+        sb.AppendLine($"{indent}</CheatEntry>");
+    }
+
+    /// <summary>Emit Offsets block if offsets are provided.</summary>
+    private static void EmitOffsets(StringBuilder sb, string indent, int[]? offsets)
+    {
         if (offsets != null && offsets.Length > 0)
         {
             sb.AppendLine($"{indent}  <Offsets>");
@@ -265,28 +319,102 @@ public static class CeXmlExportService
                 sb.AppendLine($"{indent}    <Offset>{o:X}</Offset>");
             sb.AppendLine($"{indent}  </Offsets>");
         }
-        sb.AppendLine($"{indent}</CheatEntry>");
     }
 
     /// <summary>
-    /// Map UE property type to CE variable type. Returns null for unsupported/unknown types.
+    /// Try to get struct auto-expansion info for a simple StructProperty.
+    /// Returns expansion info if the field has f:[val1] or f:[val1, val2] hint in TypedValue.
+    /// Returns null if not expandable (not StructProperty, no values, showing {TypeName}, etc.).
     /// </summary>
-    private static string? MapCeType(string ueType, int size)
+    private static StructExpandInfo? TryGetStructExpand(LiveFieldValue field)
     {
-        return ueType switch
+        if (field.TypeName != "StructProperty") return null;
+        if (string.IsNullOrEmpty(field.TypedValue)) return null;
+        // Only expand when TypedValue shows actual values: "f:[300.0000, 300.0000]"
+        // NOT when showing "{GameplayAttributeData}" (uninitialized/unknown struct)
+        if (!field.TypedValue.StartsWith("f:[") || !field.TypedValue.EndsWith("]")) return null;
+
+        var inner = field.TypedValue[3..^1]; // Extract content between "f:[" and "]"
+        var parts = inner.Split(',', StringSplitOptions.TrimEntries);
+        if (parts.Length < 1 || parts.Length > 2) return null;
+
+        // Preamble: structs > 8 bytes have an 8-byte preamble (vtable/base class pointer)
+        int preamble = (field.Size > 8) ? 8 : 0;
+        return new StructExpandInfo(parts.Length, "Float", 4, preamble);
+    }
+
+    /// <summary>
+    /// Emit a navigable field — either auto-expanded (struct with values) or as a group placeholder.
+    /// For expandable structs: emits GroupOpen + #1/#2 Float children + GroupClose.
+    /// For non-expandable: emits GroupPlaceholder (pointer gets ShowAsHex=1).
+    /// </summary>
+    private static void EmitNavigableField(StringBuilder sb, string indent,
+        LiveFieldValue field, string address, int[]? offsets)
+    {
+        var expand = TryGetStructExpand(field);
+        if (expand != null)
         {
-            "FloatProperty" => "Float",
-            "DoubleProperty" => "Double",
-            "IntProperty" => "4 Bytes",
-            "UInt32Property" => "4 Bytes",
-            "Int64Property" => "8 Bytes",
-            "UInt64Property" => "8 Bytes",
-            "Int16Property" => "2 Bytes",
-            "UInt16Property" => "2 Bytes",
-            "ByteProperty" => "Byte",
-            "BoolProperty" => "Byte",
-            "NameProperty" => "4 Bytes",
-            _ => null // Unknown — not a scalar
+            // Auto-expand: group with #1, #2 children
+            EmitGroupOpen(sb, indent, field.Name, address, offsets);
+            var childIndent = indent + "  ";
+            int valueOffset = expand.Preamble;
+            for (int vi = 0; vi < expand.ValueCount; vi++)
+            {
+                EmitLeaf(sb, childIndent, $"#{vi + 1}",
+                    new CeFieldInfo(expand.CeType),
+                    $"+{valueOffset:X}", null);
+                valueOffset += expand.TypeSize;
+            }
+            EmitGroupClose(sb, indent);
+        }
+        else
+        {
+            // Non-expandable navigable field: placeholder
+            EmitGroupPlaceholder(sb, indent, field.Name, address, offsets,
+                showAsHex: field.IsPointerNavigation);
+        }
+    }
+
+    /// <summary>
+    /// Map UE property type + field metadata to CE field info.
+    /// Returns null for unsupported/unknown types (struct, array, delegate, etc.).
+    ///
+    /// Signedness rules:
+    /// - Signed: IntProperty (int32), Int8Property, Int16Property, Int64Property
+    /// - Unsigned: UInt32Property, UInt16Property, UInt64Property, ByteProperty
+    ///
+    /// BoolProperty rules:
+    /// - If BoolBitIndex >= 0: Binary type with BitStart/BitLength (CE bit field)
+    /// - Otherwise: Byte type (fallback for bool without bit info)
+    /// </summary>
+    private static CeFieldInfo? MapCeField(LiveFieldValue field)
+    {
+        return field.TypeName switch
+        {
+            "FloatProperty" => new CeFieldInfo("Float"),
+            "DoubleProperty" => new CeFieldInfo("Double"),
+
+            // Signed integers
+            "Int8Property" => new CeFieldInfo("Byte", IsSigned: true),
+            "Int16Property" => new CeFieldInfo("2 Bytes", IsSigned: true),
+            "IntProperty" => new CeFieldInfo("4 Bytes", IsSigned: true),
+            "Int64Property" => new CeFieldInfo("8 Bytes", IsSigned: true),
+
+            // Unsigned integers
+            "ByteProperty" => new CeFieldInfo("Byte"),
+            "UInt16Property" => new CeFieldInfo("2 Bytes"),
+            "UInt32Property" => new CeFieldInfo("4 Bytes"),
+            "UInt64Property" => new CeFieldInfo("8 Bytes"),
+
+            // Bool with bit field support
+            "BoolProperty" when field.BoolBitIndex >= 0 =>
+                new CeFieldInfo("Binary", BitStart: field.BoolBitIndex, BitLength: 1),
+            "BoolProperty" => new CeFieldInfo("Byte"),
+
+            // FName index
+            "NameProperty" => new CeFieldInfo("4 Bytes"),
+
+            _ => null // Unknown — not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
         };
     }
 }

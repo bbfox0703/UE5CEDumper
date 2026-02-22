@@ -473,9 +473,16 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                         if (!cls) return true; // continue
                         std::string clsName = UStructWalker::GetName(cls);
                         if (clsName == "World") {
+                            // Skip CDOs (Default__World) — they have null PersistentLevel
+                            std::string objName = UStructWalker::GetName(obj);
+                            if (objName.rfind("Default__", 0) == 0) {
+                                Logger::Debug("PIPE:world", "Skipping CDO '%s' at 0x%llX",
+                                    objName.c_str(), static_cast<unsigned long long>(obj));
+                                return true; // continue
+                            }
                             worldAddr = obj;
-                            Logger::Info("PIPE:world", "Found UWorld via GObjects scan: 0x%llX (index=%d)",
-                                static_cast<unsigned long long>(obj), idx);
+                            Logger::Info("PIPE:world", "Found UWorld '%s' via GObjects scan: 0x%llX (index=%d)",
+                                objName.c_str(), static_cast<unsigned long long>(obj), idx);
                             return false; // stop
                         }
                         return true; // continue
@@ -497,16 +504,24 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
             // Find PersistentLevel field (ObjectProperty)
             uintptr_t levelAddr = 0;
+            bool foundPersistentLevel = false;
             for (const auto& f : worldCI.Fields) {
                 if (f.Name == "PersistentLevel" && f.Size >= 8) {
+                    foundPersistentLevel = true;
                     Mem::ReadSafe(worldAddr + f.Offset, levelAddr);
                     break;
                 }
             }
 
+            if (!foundPersistentLevel) {
+                data["error"] = "PersistentLevel field not found in UWorld class (WalkClass returned "
+                    + std::to_string(worldCI.Fields.size()) + " fields)";
+                Logger::Warn("PIPE:world", "%s", data["error"].get<std::string>().c_str());
+                return PipeProtocol::MakeResponse(id, data).dump();
+            }
             if (!levelAddr) {
-                // Return world info even if we can't find level
-                data["error"] = "PersistentLevel field not found in UWorld";
+                data["error"] = "PersistentLevel is null (CDO or uninitialized world instance)";
+                Logger::Warn("PIPE:world", "%s", data["error"].get<std::string>().c_str());
                 return PipeProtocol::MakeResponse(id, data).dump();
             }
 

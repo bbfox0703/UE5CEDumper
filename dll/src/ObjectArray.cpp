@@ -326,11 +326,28 @@ static void DetectItemSize() {
 
         if (chunk0 && numElements > 0) {
             int chunksNeeded = (numElements + Constants::OBJECTS_PER_CHUNK - 1) / Constants::OBJECTS_PER_CHUNK;
-            if (chunksNeeded >= 2 && !LooksLikeHeapPtr(chunk1)) {
-                // Need 2+ chunks but chunk[1] is not a pointer → likely flat array
-                mightBeFlat = true;
-                LOG_INFO("ObjectArray: chunk[1]=0x%llX is not a heap pointer (need %d chunks for %d objects) — testing flat layout first",
-                         (unsigned long long)chunk1, chunksNeeded, numElements);
+            if (chunksNeeded >= 2) {
+                // Validate chunk[1]: in a real chunk table, chunk[1] must be a valid heap pointer.
+                // LooksLikeHeapPtr alone is insufficient — 32-bit values like EObjectFlags
+                // (e.g. 0x40000000) pass its checks. Add two extra validations:
+                //   1. Magnitude: real heap pointers on x64 with ASLR are > 4GB
+                //   2. Dereference: real chunk pointers are readable memory
+                bool chunk1Valid = LooksLikeHeapPtr(chunk1);
+                if (chunk1Valid && chunk1 < 0x100000000ULL) {
+                    // Value fits in 32 bits — suspicious. Verify by dereference.
+                    uintptr_t testDeref = 0;
+                    if (!Mem::ReadSafe(chunk1, testDeref)) {
+                        chunk1Valid = false;
+                        LOG_DEBUG("ObjectArray: chunk[1]=0x%llX fits in 32 bits and is unreadable — not a chunk pointer",
+                                  (unsigned long long)chunk1);
+                    }
+                }
+
+                if (!chunk1Valid) {
+                    mightBeFlat = true;
+                    LOG_INFO("ObjectArray: chunk[1]=0x%llX is not a valid chunk pointer (need %d chunks for %d objects) — testing flat layout first",
+                             (unsigned long long)chunk1, chunksNeeded, numElements);
+                }
             }
         }
 

@@ -311,6 +311,7 @@ public sealed class DumpService : IDumpService
             LevelAddr = res["level_addr"]?.GetValue<string>() ?? "",
             LevelName = res["level_name"]?.GetValue<string>() ?? "",
             ActorCount = res["actor_count"]?.GetValue<int>() ?? 0,
+            Error = res["error"]?.GetValue<string>() ?? "",
         };
 
         if (res["actors"] is JsonArray actors)
