@@ -56,8 +56,8 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 ## 架構與工作流程 (Architecture & Workflow)
 
 graph TD
-    A["<b>遊戲進程 (已注入)</b><br/>(DLL + CE Lua Bridge)"]
-    B["<b>外部 GUI 介面</b><br/>(Avalonia UI App)"]
+    A["遊戲進程 (已注入)<br/>(DLL + CE Lua Bridge)"]
+    B["外部 GUI 介面<br/>(Avalonia UI App)"]
     
     A -- "具名管道 (Named Pipe)<br/>JSON-RPC 傳輸協定" --> B
 
