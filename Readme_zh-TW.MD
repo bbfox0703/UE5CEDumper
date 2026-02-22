@@ -53,13 +53,13 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 3. **管道串流**: 即時數據透過具名管道 (Named Pipe, JSON-RPC) 串流至 **UE5DumpUI**。
 4. **製作 Table**: 瀏覽 `UObject` 階層，尋找 HP/MP 等偏移量，並快速匯出至 CE。
 
-## 架構與工作流程 (Architecture & Workflow)
-
-graph TD
-    A["遊戲進程 (已注入)<br/>(DLL + CE Lua Bridge)"]
-    B["外部 GUI 介面<br/>(Avalonia UI App)"]
-    
-    A -- "具名管道 (Named Pipe)<br/>JSON-RPC 傳輸協定" --> B
+| **Game Process (Injected)** |
+| :---: |
+| DLL + CE Lua Bridge |
+| ⬇️ |
+| **Named Pipe IPC (JSON-RPC Protocol)** |
+| ⬇️ |
+| **External GUI (Avalonia UI App)** |
 
 ## 系統需求 (Requirements)
 
