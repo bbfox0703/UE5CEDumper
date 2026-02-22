@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -44,6 +46,15 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private int _searchMatchCount;
     [ObservableProperty] private bool _hasSearchResults;
 
+    // Auto-refresh
+    [ObservableProperty] private bool _isAutoRefreshing;
+    [ObservableProperty] private int _autoRefreshIntervalSec = Constants.DefaultAutoRefreshIntervalSec;
+    [ObservableProperty] private int _autoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
+    [ObservableProperty] private string _autoRefreshStatusText = "";
+    private DispatcherTimer? _autoRefreshTimer;
+    private bool _isAutoRefreshBenchmarked;
+    private bool _isAutoRefreshing_InProgress; // Guard against overlapping refreshes
+
     public LiveWalkerViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
     {
         _dump = dump;
@@ -63,6 +74,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             ClearError();
             IsLoading = true;
+            StopAutoRefreshTimer();
 
             var world = await _dump.WalkWorldAsync(500);
             _cachedWorld = world;
@@ -321,8 +333,14 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             ClearError();
             IsLoading = true;
+            StopAutoRefreshTimer();
             Breadcrumbs.Clear();
-            await NavigateToAsync(addr, "Custom", 0, "Custom", isPointer: true);
+
+            // Normalize address: supports CE formats like "module.exe"+offset,
+            // quoted module names ("module.exe"+offset), and plain hex
+            var normalizedAddr = AddressHelper.NormalizeAddress(addr, _engineState?.ModuleBase);
+
+            await NavigateToAsync(normalizedAddr, "Custom", 0, "Custom", isPointer: true);
         }
         catch (Exception ex)
         {
@@ -473,6 +491,198 @@ public partial class LiveWalkerViewModel : ViewModelBase
         }
     }
 
+    [RelayCommand]
+    private async Task CopyPtrAddressAsync(LiveFieldValue? field)
+    {
+        if (field == null || string.IsNullOrEmpty(field.PtrAddress)) return;
+
+        try
+        {
+            await _platform.CopyToClipboardAsync(field.PtrAddress);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to copy ptr address for {field.Name}", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyCurrentAddressAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentAddress)) return;
+        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName)) return;
+
+        try
+        {
+            var ceAddr = ComputeModuleRva(CurrentAddress);
+            await _platform.CopyToClipboardAsync(ceAddr);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to copy current address", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyCurrentNameAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentObjectName)) return;
+
+        try
+        {
+            await _platform.CopyToClipboardAsync(CurrentObjectName);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to copy current name", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyOuterAddressAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentOuterAddr) || CurrentOuterAddr == "0x0") return;
+        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName)) return;
+
+        try
+        {
+            var ceAddr = ComputeModuleRva(CurrentOuterAddr);
+            await _platform.CopyToClipboardAsync(ceAddr);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to copy outer address", ex);
+        }
+    }
+
+    // ========================================
+    // Auto-refresh
+    // ========================================
+
+    [RelayCommand]
+    private void ToggleAutoRefresh()
+    {
+        IsAutoRefreshing = !IsAutoRefreshing;
+
+        if (IsAutoRefreshing)
+        {
+            StartAutoRefreshTimer();
+        }
+        else
+        {
+            StopAutoRefreshTimer();
+        }
+    }
+
+    partial void OnAutoRefreshIntervalSecChanged(int value)
+    {
+        // Enforce minimum interval (dynamic minimum from benchmark)
+        if (value < AutoRefreshMinSec)
+        {
+            AutoRefreshIntervalSec = AutoRefreshMinSec;
+            return;
+        }
+
+        // Update timer interval if already running
+        if (_autoRefreshTimer != null && _autoRefreshTimer.IsEnabled)
+        {
+            _autoRefreshTimer.Interval = TimeSpan.FromSeconds(value);
+        }
+    }
+
+    private void StartAutoRefreshTimer()
+    {
+        // Stop existing timer, but don't reset IsAutoRefreshing
+        if (_autoRefreshTimer != null)
+        {
+            _autoRefreshTimer.Stop();
+            _autoRefreshTimer.Tick -= OnAutoRefreshTick;
+            _autoRefreshTimer = null;
+        }
+
+        // Reset benchmark state — first tick will measure refresh duration
+        _isAutoRefreshBenchmarked = false;
+        AutoRefreshStatusText = "";
+
+        _autoRefreshTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(Math.Max(AutoRefreshIntervalSec, AutoRefreshMinSec))
+        };
+        _autoRefreshTimer.Tick += OnAutoRefreshTick;
+        _autoRefreshTimer.Start();
+        IsAutoRefreshing = true;
+    }
+
+    public void StopAutoRefreshTimer()
+    {
+        if (_autoRefreshTimer != null)
+        {
+            _autoRefreshTimer.Stop();
+            _autoRefreshTimer.Tick -= OnAutoRefreshTick;
+            _autoRefreshTimer = null;
+        }
+
+        IsAutoRefreshing = false;
+
+        // Reset dynamic minimum and benchmark state on stop (tab switch, navigation, etc.)
+        AutoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
+        _isAutoRefreshBenchmarked = false;
+        AutoRefreshStatusText = "";
+    }
+
+    private async void OnAutoRefreshTick(object? sender, EventArgs e)
+    {
+        // Anti-flooding: skip if a refresh is already in progress or no data to refresh.
+        // Uses a dedicated flag (_isAutoRefreshing_InProgress) to prevent re-entrant calls
+        // from the DispatcherTimer firing while a previous refresh is still awaiting.
+        if (_isAutoRefreshing_InProgress || !HasData || string.IsNullOrEmpty(CurrentAddress)) return;
+
+        _isAutoRefreshing_InProgress = true;
+        try
+        {
+            var sw = Stopwatch.StartNew();
+            await RefreshAsync();
+            sw.Stop();
+
+            var durationSec = (int)Math.Ceiling(sw.Elapsed.TotalSeconds);
+
+            // Benchmark: on first successful auto-refresh, check if the interval is too short.
+            // If refresh took longer than the user's interval, auto-clamp the minimum.
+            if (!_isAutoRefreshBenchmarked)
+            {
+                _isAutoRefreshBenchmarked = true;
+
+                if (durationSec >= AutoRefreshIntervalSec)
+                {
+                    var newMin = durationSec + Constants.AutoRefreshBenchmarkBufferSec;
+                    AutoRefreshMinSec = newMin;
+                    AutoRefreshIntervalSec = newMin;
+                    AutoRefreshStatusText = $"(min {newMin}s, refresh took {durationSec}s)";
+
+                    // Restart timer with the new interval
+                    if (_autoRefreshTimer != null)
+                    {
+                        _autoRefreshTimer.Interval = TimeSpan.FromSeconds(newMin);
+                    }
+
+                    _log.Info($"Auto-refresh: benchmark {durationSec}s, clamped interval to {newMin}s");
+                }
+                else
+                {
+                    AutoRefreshStatusText = $"(refresh took {durationSec}s)";
+                }
+            }
+        }
+        catch
+        {
+            // Silently ignore auto-refresh errors to avoid flooding the UI with error dialogs
+        }
+        finally
+        {
+            _isAutoRefreshing_InProgress = false;
+        }
+    }
+
     partial void OnSearchTextChanged(string value)
     {
         ApplySearch(value);
@@ -542,6 +752,18 @@ public partial class LiveWalkerViewModel : ViewModelBase
         CurrentOuterClassName = result.OuterClassName;
         HasParent = !string.IsNullOrEmpty(result.OuterAddr) && result.OuterAddr != "0x0";
 
+        // Inline structs are not UObjects — they don't have OuterPrivate.
+        // The DLL reads garbage when walking a struct address as if it were a UObject.
+        // Disable the Parent button and clear Outer info when inside a struct view.
+        if (Breadcrumbs.Count > 0 && !Breadcrumbs[^1].IsPointerDeref
+            && !string.IsNullOrEmpty(Breadcrumbs[^1].ClassAddr))
+        {
+            HasParent = false;
+            CurrentOuterAddr = "";
+            CurrentOuterName = "";
+            CurrentOuterClassName = "";
+        }
+
         // Compute absolute field addresses
         ulong baseAddr = 0;
         try
@@ -551,12 +773,29 @@ public partial class LiveWalkerViewModel : ViewModelBase
         }
         catch { /* ignore parse failures */ }
 
-        Fields.Clear();
-        foreach (var f in result.Fields)
+        // Update fields. When refreshing the same object (same field count and layout),
+        // replace items in-place to preserve DataGrid scroll position.
+        // When navigating to a different object, do a full clear+rebuild.
+        var newFields = result.Fields;
+        foreach (var f in newFields)
         {
             if (baseAddr != 0)
                 f.FieldAddress = $"0x{baseAddr + (ulong)f.Offset:X}";
-            Fields.Add(f);
+        }
+
+        if (Fields.Count == newFields.Count && Fields.Count > 0
+            && Fields[0].Name == newFields[0].Name)
+        {
+            // Same layout — replace in-place (preserves scroll position)
+            for (int i = 0; i < newFields.Count; i++)
+                Fields[i] = newFields[i];
+        }
+        else
+        {
+            // Different layout — full rebuild
+            Fields.Clear();
+            foreach (var f in newFields)
+                Fields.Add(f);
         }
     }
 }

@@ -120,6 +120,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
             LiveWalker.SetEngineState(state);
             InstanceFinder.SetEngineState(state);
+            HexView.SetEngineState(state);
 
             IsConnected = true;
             StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";

@@ -91,11 +91,14 @@ public sealed class DumpService : IDumpService
             foreach (var item in arr)
             {
                 if (item is not JsonObject obj) continue;
+                // Intern ClassName to deduplicate — most objects share a small set
+                // of class names (Class, Package, Function, etc.). Saves ~19 MB
+                // when loading 486K+ objects with ~500 unique class names.
                 result.Objects.Add(new UObjectNode
                 {
                     Address = obj["addr"]?.GetValue<string>() ?? "",
                     Name = obj["name"]?.GetValue<string>() ?? "",
-                    ClassName = obj["class"]?.GetValue<string>() ?? "",
+                    ClassName = string.Intern(obj["class"]?.GetValue<string>() ?? ""),
                     OuterAddr = obj["outer"]?.GetValue<string>() ?? "",
                 });
             }
@@ -291,6 +294,9 @@ public sealed class DumpService : IDumpService
                     StructDataAddr = fo["struct_data_addr"]?.GetValue<string>() ?? "",
                     StructClassAddr = fo["struct_class_addr"]?.GetValue<string>() ?? "",
                     StructTypeName = fo["struct_type"]?.GetValue<string>() ?? "",
+                    EnumName = fo["enum_name"]?.GetValue<string>() ?? "",
+                    EnumValue = fo["enum_value"]?.GetValue<long>() ?? 0,
+                    StrValue = fo["str_value"]?.GetValue<string>() ?? "",
                 });
             }
         }

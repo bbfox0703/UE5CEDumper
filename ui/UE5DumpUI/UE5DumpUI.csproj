@@ -37,6 +37,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="UE5DumpUI.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Avalonia -->
     <PackageReference Include="Avalonia" Version="11.3.12" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.12" />

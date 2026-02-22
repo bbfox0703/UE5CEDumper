@@ -79,6 +79,13 @@ struct LiveFieldValue {
     uintptr_t   structDataAddr  = 0;  // Absolute address of struct data (instanceAddr + offset)
     uintptr_t   structClassAddr = 0;  // UScriptStruct* for the struct type
     std::string structTypeName;       // e.g. "FGameplayAttributeData"
+
+    // For EnumProperty / ByteProperty-with-enum
+    int64_t     enumValue = 0;      // Raw enum integer value
+    std::string enumName;            // Resolved enum name (e.g., "ROLE_Authority")
+
+    // For StrProperty: decoded FString value
+    std::string strValue;            // UTF-8 string from FString (wchar→UTF-8)
 };
 
 // Result of walking a live instance

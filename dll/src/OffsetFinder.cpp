@@ -1937,6 +1937,9 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     if (DynOff::bUseFProperty && propOffsetOff >= 0) {
         DynOff::FSTRUCTPROP_STRUCT  = propOffsetOff + 0x2C;
         DynOff::FBOOLPROP_FIELDSIZE = DynOff::FSTRUCTPROP_STRUCT;
+        // FEnumProperty::Enum and FByteProperty::Enum share the same subclass extension offset
+        DynOff::FENUMPROP_ENUM     = DynOff::FSTRUCTPROP_STRUCT;
+        DynOff::FBYTEPROP_ENUM     = DynOff::FSTRUCTPROP_STRUCT;
     }
 
     DynOff::bOffsetsValidated.store(true, std::memory_order_release);
@@ -2016,6 +2019,137 @@ bool FindAll(EnginePointers& out) {
              out.fnameEntryHeaderOffset);
 
     return true;
+}
+
+// ============================================================
+// DetectUEnumNames — Lazy-detect UEnum::Names TArray offset
+//
+// Strategy: Find a well-known UEnum object (ENetRole or EObjectFlags)
+// in GObjects, then probe offsets 0x30..0x120 for a TArray header
+// whose entries resolve to known enum value names.
+// ============================================================
+
+// Read the FName ComparisonIndex at addr and resolve to string (local helper)
+static std::string ReadFNameStr(uintptr_t addr) {
+    int32_t idx = 0;
+    if (!Mem::ReadSafe(addr, idx)) return "";
+    return FNamePool::GetString(idx);
+}
+
+// Read UObject::ClassPrivate name (compact helper, avoids UStructWalker dep)
+static std::string GetObjectClassName(uintptr_t obj) {
+    if (!obj) return "";
+    uintptr_t cls = 0;
+    Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls);
+    if (!cls) return "";
+    return ReadFNameStr(cls + Constants::OFF_UOBJECT_NAME);
+}
+
+// Read UObject::NamePrivate as string
+static std::string GetObjectName(uintptr_t obj) {
+    if (!obj) return "";
+    return ReadFNameStr(obj + Constants::OFF_UOBJECT_NAME);
+}
+
+bool DetectUEnumNames() {
+    // Already detected?
+    if (DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+        return true;
+
+    Logger::Info("DYNO:Enum", "DetectUEnumNames: Searching for known enums in GObjects...");
+
+    // Candidate enum names to search for, with expected value count ranges
+    // and a verification substring that should appear in the first few entry names.
+    struct EnumCandidate {
+        const char* name;           // UEnum object name
+        int         minCount;       // Expected min TArray count
+        int         maxCount;       // Expected max TArray count
+        const char* verifySubstr;   // Substring to find in entry FNames
+    };
+    static const EnumCandidate candidates[] = {
+        { "ENetRole",       4, 10, "ROLE_" },
+        { "EObjectFlags",   5, 50, "RF_" },
+        { "EPropertyFlags", 5, 80, "CPF_" },
+    };
+
+    // Search GObjects for each candidate
+    for (const auto& cand : candidates) {
+        uintptr_t enumAddr = 0;
+
+        ObjectArray::ForEach([&](int32_t /*idx*/, uintptr_t obj) -> bool {
+            std::string clsName = GetObjectClassName(obj);
+            if (clsName != "Enum" && clsName != "UserDefinedEnum")
+                return true; // continue
+
+            std::string objName = GetObjectName(obj);
+            if (objName == cand.name) {
+                enumAddr = obj;
+                return false; // stop
+            }
+            return true; // continue
+        });
+
+        if (!enumAddr) {
+            Logger::Debug("DYNO:Enum", "  '%s' not found in GObjects", cand.name);
+            continue;
+        }
+
+        Logger::Info("DYNO:Enum", "  Found '%s' at 0x%llX, probing for Names offset...",
+            cand.name, static_cast<unsigned long long>(enumAddr));
+
+        // Probe offsets 0x30..0x120 (step 8) for TArray<TPair<FName,int64>>
+        for (int off = 0x30; off <= 0x120; off += 8) {
+            uintptr_t data = 0;
+            int32_t count = 0;
+            if (!Mem::ReadSafe(enumAddr + off, data)) continue;
+            if (!Mem::ReadSafe(enumAddr + off + 8, count)) continue;
+
+            // Validate count range
+            if (count < cand.minCount || count > cand.maxCount) continue;
+
+            // Validate data pointer looks like heap (non-null, user-mode, not tiny)
+            if (data < 0x10000 || data > 0x7FFFFFFFFFFF) continue;
+
+            // Read first few entries and check if FNames resolve to expected substrings
+            // Each entry: TPair<FName(8 bytes), int64(8 bytes)> = 16 bytes
+            int verified = 0;
+            for (int i = 0; i < (std::min)(count, 5); ++i) {
+                uintptr_t entryAddr = data + i * 16; // UENUM_ENTRY_SIZE = 0x10
+                int32_t nameIdx = 0;
+                if (!Mem::ReadSafe(entryAddr, nameIdx)) break;
+
+                std::string entryName = FNamePool::GetString(nameIdx);
+                if (entryName.empty()) continue;
+
+                // Check for printable ASCII (basic sanity)
+                bool allAscii = true;
+                for (char c : entryName) {
+                    if (c < 0x20 || c > 0x7E) { allAscii = false; break; }
+                }
+                if (!allAscii) continue;
+
+                // Check for verification substring
+                if (entryName.find(cand.verifySubstr) != std::string::npos) {
+                    ++verified;
+                }
+            }
+
+            if (verified >= 2) {
+                DynOff::UENUM_NAMES = off;
+                DynOff::bUEnumNamesDetected.store(true, std::memory_order_release);
+
+                Logger::Info("DYNO:Enum", "  UEnum::Names detected at UEnum+0x%02X "
+                    "(verified with '%s', count=%d, %d name matches)",
+                    off, cand.name, count, verified);
+                return true;
+            }
+        }
+
+        Logger::Debug("DYNO:Enum", "  '%s' found but no valid Names offset detected", cand.name);
+    }
+
+    Logger::Warn("DYNO:Enum", "DetectUEnumNames: FAILED — no known enums found or validated");
+    return false;
 }
 
 } // namespace OffsetFinder

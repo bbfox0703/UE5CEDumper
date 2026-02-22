@@ -64,6 +64,10 @@ public static class CeXmlExportService
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         IReadOnlyList<LiveFieldValue> currentFields)
     {
+        // Clean breadcrumbs: remove navigation cycles (e.g., Child→Parent→Child)
+        // before generating XML to avoid deeply nested duplicate pointer chains.
+        var cleanedBc = CleanBreadcrumbs(breadcrumbs);
+
         _nextId = 100;
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
@@ -74,14 +78,14 @@ public static class CeXmlExportService
         var indent = "    ";
         var openTags = 0;
 
-        // Root entry
+        // Root entry (cycle removal preserves breadcrumbs[0], so rootAddress/rootName are still valid)
         EmitGroupOpen(sb, indent, rootName, rootAddress, null, showAsHex: true, varType: "8 Bytes");
         openTags++;
 
         // Intermediate breadcrumb levels (navigation path)
-        for (int i = 1; i < breadcrumbs.Count; i++)
+        for (int i = 1; i < cleanedBc.Count; i++)
         {
-            var bc = breadcrumbs[i];
+            var bc = cleanedBc[i];
             var childIndent = indent + new string(' ', i * 2);
 
             if (i == 1)
@@ -94,7 +98,7 @@ public static class CeXmlExportService
             }
             else
             {
-                var prev = breadcrumbs[i - 1];
+                var prev = cleanedBc[i - 1];
                 if (prev.IsPointerDeref)
                 {
                     // Parent was a pointer field. Must dereference to reach target object.
@@ -112,15 +116,15 @@ public static class CeXmlExportService
         }
 
         // Leaf fields at the deepest level
-        var leafIndent = indent + new string(' ', breadcrumbs.Count * 2);
-        bool parentIsPointer = breadcrumbs.Count == 1 || breadcrumbs[^1].IsPointerDeref;
+        var leafIndent = indent + new string(' ', cleanedBc.Count * 2);
+        bool parentIsPointer = cleanedBc.Count == 1 || cleanedBc[^1].IsPointerDeref;
 
         foreach (var field in currentFields)
         {
             var ceField = MapCeField(field);
             bool isScalar = ceField != null;
 
-            if (parentIsPointer && breadcrumbs.Count > 1)
+            if (parentIsPointer && cleanedBc.Count > 1)
             {
                 // Under a pointer parent (not root): need dereference
                 // Address=+0, Offsets=[field.Offset]
@@ -238,6 +242,50 @@ public static class CeXmlExportService
         sb.AppendLine("</CheatTable>");
 
         return sb.ToString();
+    }
+
+    // ========================================
+    // Breadcrumb cleaning
+    // ========================================
+
+    /// <summary>
+    /// Remove cycles from the breadcrumb navigation path before XML generation.
+    ///
+    /// A cycle occurs when the user navigates away from an object and later returns to
+    /// the same address (e.g., Child → Parent → Child again). The intermediate entries
+    /// (the detour) are removed, keeping only the shortest path.
+    ///
+    /// Example: [A, B, C, A, B] → A appears at 0 and 3 → remove [1..3] → [A, B]
+    /// This gives the clean CE pointer chain: Root(A) → field(B) instead of
+    /// Root(A) → field(B) → Outer(C) → field(A) → field(B).
+    /// </summary>
+    internal static IReadOnlyList<BreadcrumbItem> CleanBreadcrumbs(IReadOnlyList<BreadcrumbItem> breadcrumbs)
+    {
+        if (breadcrumbs.Count <= 1) return breadcrumbs;
+
+        var result = new List<BreadcrumbItem>(breadcrumbs);
+
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            for (int i = 0; i < result.Count && !changed; i++)
+            {
+                for (int j = i + 1; j < result.Count; j++)
+                {
+                    if (string.Equals(result[i].Address, result[j].Address, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Found cycle from i to j — remove entries (i+1) through j inclusive.
+                        // Keeps the first occurrence at i and continues with j+1 onward.
+                        result.RemoveRange(i + 1, j - i);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     // ========================================
@@ -417,6 +465,13 @@ public static class CeXmlExportService
 
             // FName index
             "NameProperty" => new CeFieldInfo("4 Bytes"),
+
+            // Enum — underlying value is typically int32 (4 bytes)
+            "EnumProperty" => new CeFieldInfo("4 Bytes"),
+
+            // String types — CE "String" reads pointer-to-string
+            "StrProperty" => new CeFieldInfo("String"),
+            "TextProperty" => new CeFieldInfo("String"),
 
             _ => null // Unknown — not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
         };

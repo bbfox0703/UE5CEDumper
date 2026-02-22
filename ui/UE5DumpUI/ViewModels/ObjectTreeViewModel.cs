@@ -8,6 +8,9 @@ namespace UE5DumpUI.ViewModels;
 
 /// <summary>
 /// ViewModel for the Object Tree panel.
+/// Loads ALL objects into an in-memory cache on "Load" click.
+/// Client-side filter searches the full cache; UI displays at most
+/// <see cref="Constants.ObjectTreeMaxDisplay"/> items via virtualized ListBox.
 /// </summary>
 public partial class ObjectTreeViewModel : ViewModelBase
 {
@@ -15,8 +18,14 @@ public partial class ObjectTreeViewModel : ViewModelBase
     private readonly ILoggingService _log;
     private readonly IPlatformService _platform;
 
-    // All loaded nodes (unfiltered)
+    // All loaded nodes — full cache, unfiltered
     private readonly List<UObjectNode> _allNodes = new();
+
+    // Cancellation for the current load operation
+    private CancellationTokenSource? _loadCts;
+
+    // Debounce timer for FilterText changes (200 ms)
+    private System.Threading.Timer? _filterDebounce;
 
     [ObservableProperty] private ObservableCollection<UObjectNode> _filteredNodes = new();
     [ObservableProperty] private UObjectNode? _selectedNode;
@@ -75,7 +84,12 @@ public partial class ObjectTreeViewModel : ViewModelBase
 
     partial void OnFilterTextChanged(string value)
     {
-        ApplyFilter();
+        // Debounce filter to avoid per-keystroke scanning of large caches (486K+ items).
+        // 200ms delay allows typing to complete before filtering starts.
+        _filterDebounce?.Dispose();
+        _filterDebounce = new System.Threading.Timer(
+            _ => Avalonia.Threading.Dispatcher.UIThread.Post(ApplyFilter),
+            null, 200, Timeout.Infinite);
     }
 
     partial void OnSelectedClassFilterIndexChanged(int value)
@@ -111,9 +125,19 @@ public partial class ObjectTreeViewModel : ViewModelBase
         await _platform.CopyToClipboardAsync(node.Address);
     }
 
+    /// <summary>
+    /// Load ALL objects from the DLL into the in-memory cache.
+    /// Uses large batch size (2000) for fast loading. Shows progress.
+    /// Supports cancellation via <see cref="CancelLoadCommand"/>.
+    /// </summary>
     [RelayCommand]
     private async Task LoadAsync()
     {
+        // Cancel any previous load in progress
+        _loadCts?.Cancel();
+        _loadCts = new CancellationTokenSource();
+        var ct = _loadCts.Token;
+
         try
         {
             ClearError();
@@ -128,7 +152,9 @@ public partial class ObjectTreeViewModel : ViewModelBase
 
             do
             {
-                var result = await _dump.GetObjectListAsync(offset, Constants.DefaultPageSize);
+                ct.ThrowIfCancellationRequested();
+
+                var result = await _dump.GetObjectListAsync(offset, Constants.ObjectTreePageSize, ct);
                 total = result.Total;
                 ObjectCount = total;
 
@@ -141,17 +167,26 @@ public partial class ObjectTreeViewModel : ViewModelBase
                 // when many objects in a range are unnamed/null
                 offset += result.Scanned;
 
-                // Limit initial load to prevent UI freeze
-                if (_allNodes.Count >= 2000) break;
+                // Update progress display
+                StatusText = $"Loading... {_allNodes.Count:N0} / {total:N0}";
 
             } while (offset < total);
 
             ApplyFilter();
-            StatusText = $"Loaded {_allNodes.Count} of {total} objects";
-            _log.Info($"Loaded {_allNodes.Count} of {total} objects");
+            StatusText = $"Loaded {_allNodes.Count:N0} objects";
+            _log.Info($"Loaded {_allNodes.Count:N0} of {total:N0} objects");
+        }
+        catch (OperationCanceledException)
+        {
+            // User cancelled — keep whatever was loaded so far
+            ApplyFilter();
+            StatusText = $"Loaded {_allNodes.Count:N0} of {ObjectCount:N0} (cancelled)";
+            _log.Info($"Load cancelled at {_allNodes.Count:N0} of {ObjectCount:N0} objects");
         }
         catch (Exception ex)
         {
+            // On error, keep whatever was loaded so far
+            ApplyFilter();
             SetError(ex);
             StatusText = "Load failed";
             _log.Error("Failed to load objects", ex);
@@ -160,6 +195,13 @@ public partial class ObjectTreeViewModel : ViewModelBase
         {
             IsLoading = false;
         }
+    }
+
+    /// <summary>Cancel an ongoing load operation.</summary>
+    [RelayCommand]
+    private void CancelLoad()
+    {
+        _loadCts?.Cancel();
     }
 
     [RelayCommand]
@@ -197,8 +239,8 @@ public partial class ObjectTreeViewModel : ViewModelBase
                 SelectedNode = FilteredNodes[0];
             }
 
-            StatusText = $"Found {result.Total} results";
-            _log.Info($"Search '{SearchText}': found {result.Total} results");
+            StatusText = $"Found {result.Total:N0} results";
+            _log.Info($"Search '{SearchText}': found {result.Total:N0} results");
         }
         catch (Exception ex)
         {
@@ -212,12 +254,19 @@ public partial class ObjectTreeViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Apply client-side class + text filter on the full in-memory cache.
+    /// Caps the displayed items at <see cref="Constants.ObjectTreeMaxDisplay"/>
+    /// to keep the UI responsive (Avalonia ListBox virtualization handles rendering).
+    /// </summary>
     private void ApplyFilter()
     {
         FilteredNodes.Clear();
         var textFilter = FilterText?.Trim() ?? "";
         var classFilter = SelectedClassFilterIndex > 0
             ? ClassFilterOptions[SelectedClassFilterIndex] : null;
+
+        int matchCount = 0;
 
         foreach (var node in _allNodes)
         {
@@ -233,12 +282,25 @@ public partial class ObjectTreeViewModel : ViewModelBase
                 !node.Address.Contains(textFilter, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            FilteredNodes.Add(node);
+            matchCount++;
+
+            // Cap the UI display collection to prevent excessive rendering overhead
+            if (FilteredNodes.Count < Constants.ObjectTreeMaxDisplay)
+                FilteredNodes.Add(node);
         }
 
         bool hasAnyFilter = !string.IsNullOrEmpty(textFilter) || classFilter != null;
-        DisplayCount = hasAnyFilter
-            ? $"Filtered: {FilteredNodes.Count} / {_allNodes.Count}"
-            : $"Objects: {_allNodes.Count} (of {ObjectCount})";
+        if (hasAnyFilter)
+        {
+            DisplayCount = matchCount > Constants.ObjectTreeMaxDisplay
+                ? $"Filtered: {matchCount:N0} matches (showing {Constants.ObjectTreeMaxDisplay:N0})"
+                : $"Filtered: {matchCount:N0} / {_allNodes.Count:N0}";
+        }
+        else
+        {
+            DisplayCount = matchCount > Constants.ObjectTreeMaxDisplay
+                ? $"Objects: {_allNodes.Count:N0} (showing {Constants.ObjectTreeMaxDisplay:N0})"
+                : $"Objects: {_allNodes.Count:N0}";
+        }
     }
 }

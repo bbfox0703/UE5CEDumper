@@ -16,6 +16,8 @@ public partial class HexViewViewModel : ViewModelBase
     private readonly IPipeClient _pipeClient;
     private readonly ILoggingService _log;
 
+    private EngineState? _engineState;
+
     [ObservableProperty] private string _address = "";
     [ObservableProperty] private int _size = Constants.DefaultHexViewSize;
     [ObservableProperty] private ObservableCollection<HexViewRow> _hexRows = new();
@@ -31,6 +33,19 @@ public partial class HexViewViewModel : ViewModelBase
         _pipeClient.EventReceived += OnEventReceived;
     }
 
+    public void SetEngineState(EngineState state)
+    {
+        _engineState = state;
+    }
+
+    /// <summary>
+    /// Normalize the user-provided address (supports CE formats like "module.exe"+offset).
+    /// </summary>
+    private string ResolveAddress(string raw)
+    {
+        return AddressHelper.NormalizeAddress(raw, _engineState?.ModuleBase);
+    }
+
     [RelayCommand]
     private async Task ReadAsync()
     {
@@ -39,7 +54,8 @@ public partial class HexViewViewModel : ViewModelBase
         try
         {
             ClearError();
-            var data = await _dump.ReadMemAsync(Address, Size);
+            var resolved = ResolveAddress(Address);
+            var data = await _dump.ReadMemAsync(resolved, Size);
             UpdateHexRows(data);
         }
         catch (Exception ex)
@@ -64,7 +80,8 @@ public partial class HexViewViewModel : ViewModelBase
             else
             {
                 if (string.IsNullOrWhiteSpace(Address)) return;
-                await _dump.WatchAsync(Address, Size, WatchInterval);
+                var resolved = ResolveAddress(Address);
+                await _dump.WatchAsync(resolved, Size, WatchInterval);
                 IsWatching = true;
             }
         }

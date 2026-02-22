@@ -24,6 +24,7 @@
     <sys:String x:Key="str.ObjectTree.CopyAddress">Copy Address</sys:String>
     <sys:String x:Key="str.ObjectTree.FilterHint">Filter loaded objects...</sys:String>
     <sys:String x:Key="str.ObjectTree.ClassFilter">Class Type:</sys:String>
+    <sys:String x:Key="str.ObjectTree.Cancel">Cancel</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.CopyAddress">Copy Address</sys:String>
@@ -53,6 +54,11 @@
     <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyAddress">Addr</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyName">Name</sys:String>
+    <sys:String x:Key="str.LiveWalker.PtrValue">[Ptr]</sys:String>
+    <sys:String x:Key="str.LiveWalker.CopyPtr">Ptr</sys:String>
+    <sys:String x:Key="str.LiveWalker.AutoRefresh">Auto</sys:String>
+    <sys:String x:Key="str.LiveWalker.IntervalSec">sec</sys:String>
+    <sys:String x:Key="str.LiveWalker.Copy">Copy</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.ClassNameHint">Class name (e.g. PlayerController)</sys:String>

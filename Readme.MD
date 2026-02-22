@@ -2,7 +2,10 @@
 
 A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for runtime inspection of Unreal Engine 4 & 5 games. It locates global engine pointers (GObjects / GNames / GWorld) via AOB scanning, traverses the UObject hierarchy, and streams live data over a Named Pipe to an external GUI.
 
-> **Status**: DLL core functional. Tested and working on **14 games** across UE 4.18 ~ 5.7 (TQ2, EverSpace 2, Hogwarts Legacy, FF7 Rebirth, FF7 Remake, Octopath Traveler, DQ I&II HD-2D, DQ III HD-2D, DQ XI S, Tower of Mask, Star Wars Jedi, IDOLM@STER, Romancing SaGa 2 RotS, Ghostwire: Tokyo). Avalonia UI functional with Object Tree, Live Walker, Instance Finder, and Class Structure panels.
+This is not another replacement of existing UE dumpers. It's like a inspector. Targeted to make a more easy to create Cheat Engine tables. For professional dumpers, refer: 
+[Encryqed/Dumper-7](https://github.com/Encryqed/Dumper-7), [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) and [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS)
+
+> **Status**: DLL core functional. Tested and working on **17 games** across UE 4.18 ~ 5.7 (TQ2, EverSpace 2, Hogwarts Legacy, FF7 Rebirth, FF7 Remake, Octopath Traveler, DQ I&II HD-2D, DQ III HD-2D, DQ XI S, Tower of Mask, Star Wars Jedi, IDOLM@STER, Romancing SaGa 2 RotS, Ghostwire: Tokyo, Lushfoil Photography Sim, Manor Lords, Satisfactory). Avalonia UI functional with Object Tree, Live Walker, Instance Finder, and Class Structure panels.
 
 ---
 
@@ -250,19 +253,19 @@ All `UStructWalker` code uses `DynOff::*` exclusively — no hardcoded FField/FP
 | UE Version | GObjects | GNames | DynOff | Tested Games |
 |---|---|---|---|---|
 | 4.18 | ✅ | ✅ | ✅ (UProperty fallback) | FF7 Remake Intergrade |
-| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi, DQ XI S, IDOLM@STER, OctoPath Traveler |
-| 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth, Tower of Mask, Hogwarts Legacy, Romancing SaGa 2 |
-| 5.0–5.2 | ✅ | ✅ | ✅ | DQ I&II HD-2D Remake, DQ III HD-2D Remake, Ghostwire: Tokyo |
-| 5.3–5.4 | ✅ | ✅ | ✅ | — |
-| 5.5–5.7 | ✅ | ✅ (pointer-scan) | ✅ (CPN) | Titan Quest II, EverSpace 2 |
+| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi, DQ XI S, IDOLM@STER, Octopath Traveler, DQ I&II HD-2D Remake, DQ III HD-2D Remake |
+| 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth, Tower of Mask, Hogwarts Legacy, Romancing SaGa 2, Ghostwire: Tokyo (TBD) |
+| 5.0–5.2 | ✅ | ✅ | ✅ | — |
+| 5.3–5.4 | ✅ | ✅ | ✅ | Satisfactory |
+| 5.5–5.7 | ✅ | ✅ (pointer-scan) | ✅ (CPN) | Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords |
 
 ---
 
 ## Known Issues
 
-- **"Start from GWorld" fails on some games** — GWorld works on 7/14 tested games (TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo). Fails on some UE4 games (FF7R, FF7Re, DQ series, OctoPath). Under investigation.
+- **"Start from GWorld" fails on some games** — GWorld works on 9/17 tested games (TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2 RotS, Tower of Mask, Ghostwire: Tokyo, Lushfoil Photography Sim, Manor Lords). Fails on some UE4 games (FF7R, FF7Re, DQ series, OctoPath) and Satisfactory. Under investigation.
 - **UE version misdetection** — Some games report incorrect UE version (e.g., FF7R shows 504 instead of 418, Ghostwire: Tokyo shows 505). Cosmetic issue — all pipelines work correctly via automatic fallback detection.
-- **FF7 Rebirth CE address lookup** — `get_ce_pointer_info` address-to-object lookup fails on FF7 Rebirth but works on other games.
+- **FF7 Rebirth CE address lookup** — `get_ce_pointer_info` address-to-object lookup fails on FF7 Rebirth but works on other games. Because FF7Re data, like HP is stored outside UObject.
 
 ---
 

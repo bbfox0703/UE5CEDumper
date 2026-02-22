@@ -30,6 +30,15 @@ public static class Constants
     public const int DefaultHexViewSize = 256;
     public const int DefaultWatchIntervalMs = 500;
 
+    // Object Tree
+    public const int ObjectTreePageSize = 2000;     // Batch size for loading all objects
+    public const int ObjectTreeMaxDisplay = 5000;   // Max items shown in FilteredNodes ListBox
+
+    // Live Walker auto-refresh
+    public const int DefaultAutoRefreshIntervalSec = 10;
+    public const int MinAutoRefreshIntervalSec = 8;
+    public const int AutoRefreshBenchmarkBufferSec = 5; // Extra seconds added to benchmarked duration
+
     // UI
     public const int DefaultWindowWidth = 1400;
     public const int DefaultWindowHeight = 900;
