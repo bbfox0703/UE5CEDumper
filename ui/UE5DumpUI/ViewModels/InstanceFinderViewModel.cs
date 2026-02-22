@@ -211,6 +211,11 @@ public partial class InstanceFinderViewModel : ViewModelBase
         try
         {
             ClearError();
+            IsLoadingFields = true;
+
+            // Pre-resolve StructProperty inner fields via DLL
+            var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
+                _dump, new List<LiveFieldValue>(Fields));
 
             // Compute root address as "Module.exe"+RVA
             var addr = Convert.ToUInt64(SelectedInstance.Address.Replace("0x", "").Replace("0X", ""), 16);
@@ -220,15 +225,19 @@ public partial class InstanceFinderViewModel : ViewModelBase
 
             var xml = CeXmlExportService.GenerateInstanceXml(
                 rootAddress, SelectedInstance.Name, SelectedInstance.ClassName,
-                new List<LiveFieldValue>(Fields));
+                new List<LiveFieldValue>(Fields), resolvedStructs);
 
             await _platform.CopyToClipboardAsync(xml);
-            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name}");
+            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)");
         }
         catch (Exception ex)
         {
             SetError(ex);
             _log.Error("Failed to export CE XML", ex);
+        }
+        finally
+        {
+            IsLoadingFields = false;
         }
     }
 

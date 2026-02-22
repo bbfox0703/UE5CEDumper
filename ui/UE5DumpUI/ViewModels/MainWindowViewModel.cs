@@ -19,6 +19,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "Disconnected";
     [ObservableProperty] private string _windowTitle = "UE5 Dump UI";
     [ObservableProperty] private bool _isConnected;
+    [ObservableProperty] private int _selectedTabIndex;
 
     /// <summary>
     /// Application version string read from assembly metadata (e.g. "v1.0.0.37").
@@ -74,11 +75,12 @@ public partial class MainWindowViewModel : ViewModelBase
             }
         };
 
-        // Wire InstanceFinder -> LiveWalker navigation
+        // Wire InstanceFinder -> LiveWalker navigation + tab switch
         InstanceFinder.NavigateToLiveWalker += async (addr) =>
         {
             try
             {
+                SelectedTabIndex = 0; // Switch to Live Walker tab
                 await LiveWalker.NavigateToAddressCommand.ExecuteAsync(addr);
             }
             catch (Exception ex)

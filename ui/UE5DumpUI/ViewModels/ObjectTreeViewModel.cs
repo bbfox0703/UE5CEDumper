@@ -173,8 +173,8 @@ public partial class ObjectTreeViewModel : ViewModelBase
             } while (offset < total);
 
             ApplyFilter();
-            StatusText = $"Loaded {_allNodes.Count:N0} objects";
-            _log.Info($"Loaded {_allNodes.Count:N0} of {total:N0} objects");
+            StatusText = $"Loaded {_allNodes.Count:N0} named objects (of {total:N0} total)";
+            _log.Info($"Loaded {_allNodes.Count:N0} named objects of {total:N0} total");
         }
         catch (OperationCanceledException)
         {
@@ -290,6 +290,10 @@ public partial class ObjectTreeViewModel : ViewModelBase
         }
 
         bool hasAnyFilter = !string.IsNullOrEmpty(textFilter) || classFilter != null;
+        var totalSuffix = ObjectCount > 0 && ObjectCount != _allNodes.Count
+            ? $" / {ObjectCount:N0} total"
+            : "";
+
         if (hasAnyFilter)
         {
             DisplayCount = matchCount > Constants.ObjectTreeMaxDisplay
@@ -299,8 +303,8 @@ public partial class ObjectTreeViewModel : ViewModelBase
         else
         {
             DisplayCount = matchCount > Constants.ObjectTreeMaxDisplay
-                ? $"Objects: {_allNodes.Count:N0} (showing {Constants.ObjectTreeMaxDisplay:N0})"
-                : $"Objects: {_allNodes.Count:N0}";
+                ? $"Objects: {_allNodes.Count:N0}{totalSuffix} (showing {Constants.ObjectTreeMaxDisplay:N0})"
+                : $"Objects: {_allNodes.Count:N0}{totalSuffix}";
         }
     }
 }

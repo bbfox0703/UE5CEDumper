@@ -114,4 +114,10 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 
 ---
 
+## 使用 Claude Code 開發
+
+本專案在 Anthropic 的 [Claude Code](https://claude.ai/code) 協助下開發。C++ DLL、C# Avalonia UI、建置腳本及文件均由開發者與 Claude Code 協作完成。
+
+---
+
 **授權條款**: [MIT](LICENSE) © 2026 bbfox0703

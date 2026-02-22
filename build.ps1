@@ -7,7 +7,7 @@
     Supports three build modes:
       - Debug    : Unoptimized builds with debug symbols (fast iteration)
       - Release  : Optimized builds (normal development)
-      - Publish  : C++ Release + C# Native AOT exe + native DLLs (distribution)
+      - Publish  : C++ Release + C# optimized single-file exe (distribution)
 
 .PARAMETER Mode
     Build mode: Debug, Release, or Publish (default: Release)
@@ -24,7 +24,7 @@
 .EXAMPLE
     .\build.ps1                          # Release build, all targets
     .\build.ps1 -Mode Debug             # Debug build
-    .\build.ps1 -Mode Publish           # AOT single-file publish
+    .\build.ps1 -Mode Publish           # Optimized single-file publish
     .\build.ps1 -Mode Publish -Clean    # Clean + publish
     .\build.ps1 -Target DLL             # Build only the C++ DLL
     .\build.ps1 -Target UI -Mode Debug  # Debug build UI only
@@ -40,7 +40,9 @@ param(
     [string]$Target = "All",
 
     [switch]$Clean,
-    [switch]$SkipRestore
+    [switch]$SkipRestore,
+
+    [string]$LogFile = ""
 )
 
 # ============================================================
@@ -54,6 +56,20 @@ $sw = [System.Diagnostics.Stopwatch]::StartNew()
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 $env:DOTNET_CLI_UI_LANGUAGE = "en"  # dotnet CLI in English to avoid codepage issues
+
+# Start log transcript if a log file path was provided (from build.cmd).
+# This replaces the old Tee-Object pipe which caused encoding issues when
+# crossing the cmd.exe <-> PowerShell boundary on CJK Windows.
+$script:transcriptActive = $false
+if ($LogFile) {
+    try {
+        Start-Transcript -Path $LogFile -Force | Out-Null
+        $script:transcriptActive = $true
+    }
+    catch {
+        Write-Warning "Could not start transcript to $LogFile : $_"
+    }
+}
 
 $ROOT_DIR   = $PSScriptRoot
 $vsDevShellLoaded = $false
@@ -345,126 +361,57 @@ if ($Target -in "All", "UI") {
     }
 
     if ($exitCode -eq 0) {
-        if ($Mode -eq "Publish") {
-            # ===== Publish mode: Native AOT =====
-            # Native AOT requires MSVC linker — run inside VS developer environment.
-            # Output: exe + native DLLs (SkiaSharp, HarfBuzz, Avalonia GL).
-            Write-Step "Publishing with Native AOT (this may take several minutes)..."
+        # ===== All modes: dotnet publish --self-contained single-file =====
+        # All three modes produce a self-contained single-file EXE (~96MB).
+        # The exe includes .NET runtime — runs on any Windows x64 without runtime installed.
+        # Debug includes PDB; Release/Publish are identical optimized builds.
+        # Note: Native AOT and ReadyToRun are NOT used (Avalonia 11 compatibility issues).
+        $publishDir = Join-Path $DIST_DIR "publish"
 
-            $publishDir = Join-Path $DIST_DIR "publish"
+        $publishConfig = if ($Mode -eq "Debug") { "Debug" } else { "Release" }
+        Write-Step "Publishing UE5DumpUI ($publishConfig, self-contained single-file)..."
 
-            # Ensure vswhere is on PATH (ILCompiler invokes it internally)
-            $vswhereBin = Split-Path $vswhere -Parent
-            if ($env:PATH -notlike "*$vswhereBin*") {
-                $env:PATH = "$env:PATH;$vswhereBin"
-            }
-            $env:Platform = "x64"
+        & dotnet publish $UI_PROJ `
+            -c $publishConfig `
+            -r win-x64 `
+            --self-contained `
+            -p:PublishSingleFile=true `
+            -p:PublishAot=false `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:IncludeAllContentForSelfExtract=true `
+            -o $publishDir `
+            --nologo
 
-            # Enter MSVC environment (needed for native linker)
-            $envOk = Enter-VsDevEnvironment
-            if (-not $envOk) {
-                Write-Fail "Cannot load MSVC environment for AOT publish"
-                $exitCode = 1
-            }
-            else {
-                & dotnet publish $UI_PROJ `
-                    -c Release `
-                    -r win-x64 `
-                    --self-contained `
-                    -p:PublishAot=true `
-                    -o $publishDir `
-                    --nologo
-
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Fail "AOT publish failed"
-                    $exitCode = 1
-                }
-                else {
-                    $exeFile = Get-ChildItem -Path $publishDir -Filter "UE5DumpUI.exe" |
-                               Select-Object -First 1
-                    if ($exeFile) {
-                        # Copy exe + any native DLLs (e.g. libSkiaSharp) to dist/
-                        Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
-                        Get-ChildItem $publishDir -Filter "*.dll" | ForEach-Object {
-                            Copy-Item $_.FullName -Destination $DIST_DIR -Force
-                            Write-Info "  + $($_.Name)  ($(Get-FileSize $_.FullName))"
-                        }
-                        # Clean up the temp publish subfolder — keep dist\ tidy
-                        Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
-                        $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
-                        Write-Ok "UE5DumpUI.exe  |  Native AOT ($exeSize)"
-                    }
-                    else {
-                        Write-Fail "UE5DumpUI.exe not found in publish output"
-                        $exitCode = 1
-                    }
-                }
-            }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "UI publish failed"
+            $exitCode = 1
         }
         else {
-            # ===== Debug / Release mode: dotnet publish --self-contained single-file (no AOT) =====
-            # Both modes produce a self-contained single-file EXE (~90MB).
-            # Debug includes debug symbols; Release is optimized.
-            $publishDir = Join-Path $DIST_DIR "publish"
-            if ($Mode -eq "Debug") {
-                Write-Step "Publishing UE5DumpUI (Debug, self-contained single-file)..."
-                & dotnet publish $UI_PROJ `
-                    -c Debug `
-                    -r win-x64 `
-                    --self-contained `
-                    -p:PublishSingleFile=true `
-                    -p:PublishAot=false `
-                    -p:IncludeNativeLibrariesForSelfExtract=true `
-                    -p:IncludeAllContentForSelfExtract=true `
-                    -o $publishDir `
-                    --nologo
+            $exeFile = Get-ChildItem -Path $publishDir -Filter "UE5DumpUI.exe" -ErrorAction SilentlyContinue |
+                       Select-Object -First 1
+
+            if ($exeFile) {
+                Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
+
+                if ($Mode -eq "Debug") {
+                    $pdb = Join-Path $exeFile.DirectoryName "UE5DumpUI.pdb"
+                    if (Test-Path $pdb) { Copy-Item $pdb -Destination $DIST_DIR -Force }
+                }
+
+                # Clean up publish temp folder
+                Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+                # Remove loose native DLLs if present (single-file bundles them inside the exe)
+                foreach ($nativeDll in @("av_libglesv2.dll", "libHarfBuzzSharp.dll", "libSkiaSharp.dll")) {
+                    $p = Join-Path $DIST_DIR $nativeDll
+                    if (Test-Path $p) { Remove-Item $p -Force }
+                }
+
+                $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
+                Write-Ok "UE5DumpUI.exe ($exeSize)"
             }
             else {
-                Write-Step "Publishing UE5DumpUI (Release, self-contained single-file)..."
-                & dotnet publish $UI_PROJ `
-                    -c Release `
-                    -r win-x64 `
-                    --self-contained `
-                    -p:PublishSingleFile=true `
-                    -p:PublishAot=false `
-                    -p:IncludeNativeLibrariesForSelfExtract=true `
-                    -p:IncludeAllContentForSelfExtract=true `
-                    -o $publishDir `
-                    --nologo
-            }
-
-            if ($LASTEXITCODE -ne 0) {
-                Write-Fail "UI build failed"
+                Write-Fail "No build output found"
                 $exitCode = 1
-            }
-            else {
-                # Locate output exe from publish dir
-                $exeFile = Get-ChildItem -Path $publishDir -Filter "UE5DumpUI.exe" -ErrorAction SilentlyContinue |
-                           Select-Object -First 1
-
-                if ($exeFile) {
-                    Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
-
-                    if ($Mode -eq "Debug") {
-                        $pdb = Join-Path $exeFile.DirectoryName "UE5DumpUI.pdb"
-                        if (Test-Path $pdb) { Copy-Item $pdb -Destination $DIST_DIR -Force }
-                    }
-
-                    # Clean up publish temp folder
-                    Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
-                    # Remove AOT native DLLs if present (single-file bundles them inside the exe)
-                    foreach ($nativeDll in @("av_libglesv2.dll", "libHarfBuzzSharp.dll", "libSkiaSharp.dll")) {
-                        $p = Join-Path $DIST_DIR $nativeDll
-                        if (Test-Path $p) { Remove-Item $p -Force }
-                    }
-
-                    $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
-                    Write-Ok "UE5DumpUI.exe ($exeSize)"
-                }
-                else {
-                    Write-Fail "No build output found"
-                    $exitCode = 1
-                }
             }
         }
     }
@@ -538,4 +485,8 @@ if (Test-Path $DIST_DIR) {
 }
 
 Write-Host ""
+
+if ($script:transcriptActive) {
+    try { Stop-Transcript | Out-Null } catch { }
+}
 exit $exitCode
