@@ -6,8 +6,8 @@
              x:DataType="vm:LiveWalkerViewModel">
 
   <DockPanel Margin="8">
-    <!-- Top toolbar -->
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+    <!-- Top toolbar row 1: Navigation -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
       <Button Content="{StaticResource str.LiveWalker.StartWorld}"
               Command="{Binding StartFromWorldCommand}"
               Classes="accent" Padding="12,4"/>
@@ -23,9 +23,35 @@
       <Button Content="{StaticResource str.LiveWalker.Refresh}"
               Command="{Binding RefreshCommand}"
               Padding="8,4"/>
+      <!-- Auto-refresh toggle + interval -->
+      <ToggleButton Content="{StaticResource str.LiveWalker.AutoRefresh}"
+                    IsChecked="{Binding IsAutoRefreshing}"
+                    Command="{Binding ToggleAutoRefreshCommand}"
+                    IsVisible="{Binding HasData}"
+                    Padding="8,4"
+                    ToolTip.Tip="Toggle automatic refresh"/>
+      <NumericUpDown Value="{Binding AutoRefreshIntervalSec}"
+                     Minimum="{Binding AutoRefreshMinSec}"
+                     Maximum="60" Increment="1"
+                     IsVisible="{Binding HasData}"
+                     Width="90" Padding="4,2" FontSize="12"
+                     Foreground="#D4D4D4"
+                     FormatString="0"
+                     ShowButtonSpinner="True"
+                     ToolTip.Tip="Auto-refresh interval (seconds)"/>
+      <TextBlock Text="{StaticResource str.LiveWalker.IntervalSec}"
+                 Foreground="#888" VerticalAlignment="Center" FontSize="11"
+                 IsVisible="{Binding HasData}"/>
+      <TextBlock Text="{Binding AutoRefreshStatusText}"
+                 Foreground="#888" VerticalAlignment="Center" FontSize="11"
+                 IsVisible="{Binding IsAutoRefreshing}"/>
+    </StackPanel>
+
+    <!-- Top toolbar row 2: Address + Export -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
       <TextBox Watermark="{StaticResource str.LiveWalker.AddressHint}"
                x:Name="AddressInput"
-               Width="220" Padding="4,2" Margin="8,0,0,0"/>
+               Width="280" Padding="4,2"/>
       <Button Content="{StaticResource str.LiveWalker.Go}"
               Command="{Binding NavigateToAddressCommand}"
               CommandParameter="{Binding #AddressInput.Text}"
@@ -66,7 +92,7 @@
     <Border DockPanel.Dock="Top" Background="#252525" Padding="8,4" Margin="0,0,0,4"
             IsVisible="{Binding HasData}" CornerRadius="4">
       <StackPanel Spacing="2">
-        <StackPanel Orientation="Horizontal" Spacing="16">
+        <StackPanel Orientation="Horizontal" Spacing="8">
           <TextBlock Foreground="#569CD6" FontWeight="Bold">
             <Run Text="{Binding CurrentClassName}"/>
           </TextBlock>
@@ -76,6 +102,21 @@
           <TextBlock Foreground="#666" FontFamily="Consolas" FontSize="12">
             <Run Text="{Binding CurrentAddress}"/>
           </TextBlock>
+          <!-- Copy buttons for current object -->
+          <Button Content="Addr"
+                  Command="{Binding CopyCurrentAddressCommand}"
+                  Padding="3,1" Margin="4,0,0,0"
+                  Foreground="#D4D4D4" Background="Transparent"
+                  BorderThickness="1" BorderBrush="#555"
+                  Cursor="Hand" FontSize="10"
+                  ToolTip.Tip="Copy CE address"/>
+          <Button Content="Name"
+                  Command="{Binding CopyCurrentNameCommand}"
+                  Padding="3,1"
+                  Foreground="#D4D4D4" Background="Transparent"
+                  BorderThickness="1" BorderBrush="#555"
+                  Cursor="Hand" FontSize="10"
+                  ToolTip.Tip="Copy object name"/>
         </StackPanel>
         <!-- Parent (Outer) info -->
         <StackPanel Orientation="Horizontal" Spacing="8"
@@ -96,6 +137,13 @@
               </TextBlock>
             </StackPanel>
           </Button>
+          <Button Content="Addr"
+                  Command="{Binding CopyOuterAddressCommand}"
+                  Padding="3,1"
+                  Foreground="#D4D4D4" Background="Transparent"
+                  BorderThickness="1" BorderBrush="#555"
+                  Cursor="Hand" FontSize="10"
+                  ToolTip.Tip="Copy Outer CE address"/>
         </StackPanel>
       </StackPanel>
     </Border>
@@ -199,6 +247,21 @@
                       Foreground="#D4D4D4" Background="Transparent"
                       BorderThickness="1" BorderBrush="#555"
                       Cursor="Hand" FontSize="10"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.CopyPtr}" Width="50">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:LiveFieldValue">
+              <Button Content="Ptr"
+                      Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).CopyPtrAddressCommand}"
+                      CommandParameter="{Binding}"
+                      IsVisible="{Binding IsPointerNavigation}"
+                      Padding="4,2" Margin="2"
+                      Foreground="#4EC9B0" Background="Transparent"
+                      BorderThickness="1" BorderBrush="#555"
+                      Cursor="Hand" FontSize="10"
+                      ToolTip.Tip="Copy pointer target address"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
