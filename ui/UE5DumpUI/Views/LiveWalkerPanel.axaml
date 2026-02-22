@@ -145,6 +145,9 @@
         <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Address}"
                             Binding="{Binding FieldAddress}"
                             Width="140"/>
+        <DataGridTextColumn Header="{StaticResource str.LiveWalker.PtrValue}"
+                            Binding="{Binding PtrAddress}"
+                            Width="140"/>
         <DataGridTemplateColumn Header="" Width="80">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
