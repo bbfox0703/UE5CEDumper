@@ -27,6 +27,10 @@ namespace UE5DumpUI.Services;
 /// </summary>
 public static class CeXmlExportService
 {
+    // NOTE: _nextId is reset at the start of each Generate* method call,
+    // so concurrent calls are safe as long as each completes atomically.
+    // Using ThreadStatic to eliminate any cross-thread risk.
+    [ThreadStatic]
     private static int _nextId;
 
     /// <summary>CE field metadata for XML generation.</summary>

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -18,6 +19,17 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "Disconnected";
     [ObservableProperty] private string _windowTitle = "UE5 Dump UI";
     [ObservableProperty] private bool _isConnected;
+
+    /// <summary>
+    /// Application version string read from assembly metadata (e.g. "v1.0.0.37").
+    /// </summary>
+    public string AppVersion { get; } = GetAppVersion();
+
+    private static string GetAppVersion()
+    {
+        var ver = Assembly.GetEntryAssembly()?.GetName().Version;
+        return ver != null ? $"v{ver}" : "";
+    }
 
     // Child ViewModels
     public ObjectTreeViewModel ObjectTree { get; }
@@ -45,19 +57,34 @@ public partial class MainWindowViewModel : ViewModelBase
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
 
         // Wire cross-VM communication
+        // Wrap async lambdas in try/catch to prevent async void from crashing the app
         ObjectTree.SelectionChanged += async (node) =>
         {
-            await ClassStruct.OnObjectSelected(node);
-            if (node != null)
+            try
             {
-                HexView.SetAddress(node.Address);
+                await ClassStruct.OnObjectSelected(node);
+                if (node != null)
+                {
+                    HexView.SetAddress(node.Address);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Error("SelectionChanged handler error", ex);
             }
         };
 
         // Wire InstanceFinder -> LiveWalker navigation
         InstanceFinder.NavigateToLiveWalker += async (addr) =>
         {
-            await LiveWalker.NavigateToAddressCommand.ExecuteAsync(addr);
+            try
+            {
+                await LiveWalker.NavigateToAddressCommand.ExecuteAsync(addr);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("NavigateToLiveWalker handler error", ex);
+            }
         };
 
         _pipeClient.ConnectionStateChanged += (connected) =>

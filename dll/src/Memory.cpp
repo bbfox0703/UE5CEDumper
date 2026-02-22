@@ -30,7 +30,7 @@ bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size) {
 
 bool WriteBytes(uintptr_t addr, const void* buf, size_t size) {
     DWORD oldProtect = 0;
-    if (!VirtualProtect(reinterpret_cast<void*>(addr), size, PAGE_EXECUTE_READWRITE, &oldProtect))
+    if (!VirtualProtect(reinterpret_cast<void*>(addr), size, PAGE_READWRITE, &oldProtect))
         return false;
     __try {
         memcpy(reinterpret_cast<void*>(addr), buf, size);
@@ -83,7 +83,7 @@ static bool ParsePattern(const char* patStr, ParsedPattern& out) {
     const char* p = patStr;
     while (*p) {
         while (*p == ' ' || *p == '\t') ++p;
-        if (!*p) break;
+        if (!p[0] || !p[1]) break; // Need at least 2 chars for a hex byte or ??
 
         if (p[0] == '?' && p[1] == '?') {
             out.bytes.push_back(0);

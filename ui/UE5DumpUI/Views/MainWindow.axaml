@@ -12,28 +12,39 @@
   <DockPanel>
     <!-- Top Toolbar -->
     <Border DockPanel.Dock="Top" Background="#2D2D2D" Height="44" Padding="8,0">
-      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
-        <Button Content="{StaticResource str.Connect}"
-                Command="{Binding ConnectCommand}"
-                IsVisible="{Binding !IsConnected}"
-                Classes="accent" Padding="12,4"/>
-        <Button Content="{StaticResource str.Disconnect}"
-                Command="{Binding DisconnectCommand}"
-                IsVisible="{Binding IsConnected}"
-                Padding="12,4"/>
-
-        <TextBlock Text="{Binding StatusText}"
-                   Foreground="#4EC9B0"
+      <DockPanel VerticalAlignment="Center">
+        <!-- Version label — right-aligned -->
+        <TextBlock DockPanel.Dock="Right"
+                   Text="{Binding AppVersion}"
+                   Foreground="#808080"
+                   FontSize="11"
                    VerticalAlignment="Center"
-                   Margin="12,0"/>
+                   Margin="8,0"/>
 
-        <!-- Error display -->
-        <TextBlock Text="{Binding ErrorMessage}"
-                   Foreground="#F44747"
-                   VerticalAlignment="Center"
-                   Margin="12,0"
-                   IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-      </StackPanel>
+        <!-- Left content: buttons + status + error -->
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Content="{StaticResource str.Connect}"
+                  Command="{Binding ConnectCommand}"
+                  IsVisible="{Binding !IsConnected}"
+                  Classes="accent" Padding="12,4"/>
+          <Button Content="{StaticResource str.Disconnect}"
+                  Command="{Binding DisconnectCommand}"
+                  IsVisible="{Binding IsConnected}"
+                  Padding="12,4"/>
+
+          <TextBlock Text="{Binding StatusText}"
+                     Foreground="#4EC9B0"
+                     VerticalAlignment="Center"
+                     Margin="12,0"/>
+
+          <!-- Error display -->
+          <TextBlock Text="{Binding ErrorMessage}"
+                     Foreground="#F44747"
+                     VerticalAlignment="Center"
+                     Margin="12,0"
+                     IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+        </StackPanel>
+      </DockPanel>
     </Border>
 
     <!-- Main Content: Left Tree + Right Tabs -->

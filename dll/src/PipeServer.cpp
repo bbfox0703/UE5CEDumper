@@ -34,14 +34,17 @@ bool PipeServer::Start() {
 }
 
 void PipeServer::Stop() {
-    m_running = false;
+    if (!m_running.exchange(false)) return; // Already stopped
     StopAllWatches();
 
-    // Close the pipe to unblock ConnectNamedPipe
-    if (m_pipe != INVALID_HANDLE_VALUE) {
-        DisconnectNamedPipe(m_pipe);
-        CloseHandle(m_pipe);
-        m_pipe = INVALID_HANDLE_VALUE;
+    // Close the pipe to unblock ConnectNamedPipe / ReadFile
+    {
+        std::lock_guard<std::mutex> lock(m_pipeMutex);
+        if (m_pipe != INVALID_HANDLE_VALUE) {
+            DisconnectNamedPipe(m_pipe);
+            CloseHandle(m_pipe);
+            m_pipe = INVALID_HANDLE_VALUE;
+        }
     }
 
     if (m_acceptThread.joinable()) {
@@ -72,7 +75,10 @@ void PipeServer::AcceptLoop() {
             continue;
         }
 
-        m_pipe = pipe;
+        {
+            std::lock_guard<std::mutex> lock(m_pipeMutex);
+            m_pipe = pipe;
+        }
         LOG_INFO("PipeServer: Waiting for client connection...");
 
         // Wait for a client to connect
@@ -80,12 +86,14 @@ void PipeServer::AcceptLoop() {
         if (!connected && GetLastError() != ERROR_PIPE_CONNECTED) {
             if (!m_running.load()) break; // Normal shutdown
             LOG_ERROR("PipeServer: ConnectNamedPipe failed (err=%lu)", GetLastError());
-            CloseHandle(pipe);
+            std::lock_guard<std::mutex> lock(m_pipeMutex);
+            if (m_pipe == pipe) { CloseHandle(pipe); m_pipe = INVALID_HANDLE_VALUE; }
             continue;
         }
 
         if (!m_running.load()) {
-            CloseHandle(pipe);
+            std::lock_guard<std::mutex> lock(m_pipeMutex);
+            if (m_pipe == pipe) { CloseHandle(pipe); m_pipe = INVALID_HANDLE_VALUE; }
             break;
         }
 
@@ -97,9 +105,15 @@ void PipeServer::AcceptLoop() {
         // Client disconnected
         m_clientConnected = false;
         StopAllWatches();
-        DisconnectNamedPipe(pipe);
-        CloseHandle(pipe);
-        m_pipe = INVALID_HANDLE_VALUE;
+        {
+            std::lock_guard<std::mutex> lock(m_pipeMutex);
+            // Only close if Stop() hasn't already closed it
+            if (m_pipe == pipe) {
+                DisconnectNamedPipe(pipe);
+                CloseHandle(pipe);
+                m_pipe = INVALID_HANDLE_VALUE;
+            }
+        }
 
         LOG_INFO("PipeServer: Client disconnected");
     }
@@ -157,8 +171,14 @@ void PipeServer::HandleClient(HANDLE pipe) {
 }
 
 void PipeServer::PushEvent(const std::string& jsonLine) {
-    if (!m_clientConnected.load() || m_pipe == INVALID_HANDLE_VALUE) return;
-    WriteLine(m_pipe, jsonLine);
+    if (!m_clientConnected.load()) return;
+    HANDLE pipe;
+    {
+        std::lock_guard<std::mutex> lock(m_pipeMutex);
+        pipe = m_pipe;
+    }
+    if (pipe == INVALID_HANDLE_VALUE) return;
+    WriteLine(pipe, jsonLine);
 }
 
 std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
@@ -374,6 +394,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
             uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
             auto bytes = PipeProtocol::HexToBytes(hexBytes);
+            if (bytes.empty() || bytes.size() > 65536) {
+                return PipeProtocol::MakeError(id, "Invalid write size (max 65536)").dump();
+            }
             if (!Mem::WriteBytes(addr, bytes.data(), bytes.size())) {
                 return PipeProtocol::MakeError(id, "Write failed").dump();
             }
@@ -727,7 +750,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
         if (cmd == PipeProtocol::CMD_GET_OFFSETS) {
             json data;
             data["build_info"]         = BUILD_VERSION_STRING;
-            data["validated"]          = DynOff::bOffsetsValidated;
+            data["validated"]          = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
             data["case_preserving"]    = DynOff::bCasePreservingName;
             data["use_fproperty"]      = DynOff::bUseFProperty;
             data["uobject_outer"]      = DynOff::UOBJECT_OUTER;
@@ -756,6 +779,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             int size = request.value("size", 4);
             int interval = request.value("interval_ms", 500);
             if (addrStr.empty()) return PipeProtocol::MakeError(id, "Missing addr").dump();
+            if (size <= 0 || size > 65536) return PipeProtocol::MakeError(id, "Invalid size (1-65536)").dump();
+            if (interval < 50) interval = 50; // Minimum 50ms to prevent CPU spin
 
             uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
             StartWatch(addr, size, interval);

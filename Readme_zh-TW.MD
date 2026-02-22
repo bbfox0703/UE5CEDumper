@@ -2,7 +2,7 @@
 
 一套針對 Unreal Engine 4 & 5 遊戲的**執行期結構探查工具**，由 C++ 注入式 DLL、Cheat Engine Lua Bridge 及 Avalonia UI 三個元件組成。透過 AOB 掃描定位引擎全域指標（GObjects / GNames / GWorld），遍歷 UObject 層次結構，並透過 Named Pipe 將即時資料串流至外部 GUI。
 
-> **現況**：DLL 核心功能完成。已在 **14 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、OctoPath Traveler、DQ I&II HD-2D、DQ III HD-2D、DQ XI S、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2、Ghostwire: Tokyo）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
+> **現況**：DLL 核心功能完成。已在 **14 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、Octopath Traveler、DQ I&II HD-2D、DQ III HD-2D、DQ XI S、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2 RotS、Ghostwire: Tokyo）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
 
 ---
 
@@ -25,14 +25,14 @@
 | FChunkedFixedUObjectArray ＋ FFixedUObjectArray（平坦陣列）自動偵測 | ✅ |
 | FUObjectItem Stride 自動偵測（16/24/20 bytes） | ✅ |
 | FNamePool 多格式讀取：標準、Hash 前綴、UE4 TNameEntryArray | ✅ |
-| 動態 FField/FProperty/UStruct Offset 偵測（DynOff） | ✅ |
+| 動態 FField/FProperty/UStruct Offset 偵測（DynOff）：支援 UE 5.5+ CasePreservingName | ✅ |
 | CasePreservingName 偵測（UE5.5+，FName = 16 bytes） | ✅ |
-| FProperty 至 UProperty 回退（UE4 <4.25） | ✅ |
-| Live Data Walker — walk_class / walk_instance / walk_world | ✅ |
-| Instance Finder — 依 Class 名稱搜尋所有實例 | ✅ |
-| CE XML 匯出 — 正負號整數、Bool 位元欄位、Struct 自動展開 | ✅ |
+| FProperty 至 UProperty 自動偵測回退（UE4 <4.25） | ✅ |
+| Live Data Walker — 檢視目前物件結構的記憶體資料 | ✅ |
+| Instance Finder — 依 Class 名稱、或是記憶體位址搜尋所有實例、並可在 Live Data Walker 中開啟 | ✅ |
+| CE XML 匯出 — 將 Live Walker 的資料轉換成 CE 格式，可直接在 CE 中貼上 | ✅ |
 | Named Pipe IPC 伺服器（JSON 換行分隔） | ✅ |
-| CE Plugin 模式（Type 5 主選單入口） | ✅ |
+| CE Plugin 模式（Type 5 主選單入口、未使用） | ✅ |
 | Avalonia UI（Object Tree、Live Walker、Instance Finder、Class Structure） | ✅ |
 | Git Commit Hash ＋ 建置時間戳嵌入 DLL | ✅ |
 

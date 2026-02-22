@@ -19,6 +19,7 @@ public sealed class PipeClient : IPipeClient
     private int _nextId = 1;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonObject>> _pending = new();
     private readonly ILoggingService _log;
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
     private Task? _readLoopTask;
 
     public bool IsConnected { get; private set; }
@@ -34,6 +35,8 @@ public sealed class PipeClient : IPipeClient
     {
         if (IsConnected) return;
 
+        // Dispose previous CTS before creating a new one (prevent WaitHandle leak)
+        _cts.Dispose();
         _cts = new CancellationTokenSource();
 
         _pipe = new NamedPipeClientStream(".", Constants.PipeName,
@@ -105,7 +108,16 @@ public sealed class PipeClient : IPipeClient
 
         try
         {
-            await _writer.WriteLineAsync(json);
+            // Serialize writes to prevent interleaved JSON on the pipe
+            await _writeLock.WaitAsync(ct);
+            try
+            {
+                await _writer.WriteLineAsync(json);
+            }
+            finally
+            {
+                _writeLock.Release();
+            }
         }
         catch (IOException) when (!IsConnected || _cts.IsCancellationRequested)
         {
@@ -184,8 +196,18 @@ public sealed class PipeClient : IPipeClient
     public void Dispose()
     {
         _cts.Cancel();
+
+        // Cancel all pending requests so callers don't hang
+        foreach (var kvp in _pending)
+        {
+            kvp.Value.TrySetCanceled();
+        }
+        _pending.Clear();
+
         _reader?.Dispose();
         _writer?.Dispose();
         _pipe?.Dispose();
+        _cts.Dispose();
+        _writeLock.Dispose();
     }
 }

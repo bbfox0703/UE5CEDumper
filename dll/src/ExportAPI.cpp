@@ -119,7 +119,7 @@ bool UE5_Init() {
                 DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDPROPS,
                 DynOff::bUseFProperty ? DynOff::FFIELD_NAME : Constants::OFF_UOBJECT_NAME,
                 DynOff::bUseFProperty ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET,
-                DynOff::bOffsetsValidated ? "yes" : "no");
+                DynOff::bOffsetsValidated.load(std::memory_order_acquire) ? "yes" : "no");
 
     // Switch to Pipe channel — all subsequent runtime logging goes to pipe file
     Logger::SetChannel(LogChannel::Pipe);
