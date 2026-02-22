@@ -2,13 +2,18 @@
 
 A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for runtime inspection of Unreal Engine 4 & 5 games. It locates global engine pointers (GObjects / GNames / GWorld) via AOB scanning, traverses the UObject hierarchy, and streams live data over a Named Pipe to an external GUI.
 
-> **Status**: DLL core functional. Tested and working on **11 games** across UE 4.18 ~ 5.7 (TQ2, EverSpace 2, Hogwarts Legacy, FF7 Rebirth, FF7 Remake, OctoPath Traveler, DQ I&II HD-2D, Tower of Mask, Star Wars Jedi, IDOLM@STER, Romancing SaGa 2). Avalonia UI functional with Object Tree, Live Walker, Instance Finder, and Class Structure panels.
+> **Status**: DLL core functional. Tested and working on **14 games** across UE 4.18 ~ 5.7 (TQ2, EverSpace 2, Hogwarts Legacy, FF7 Rebirth, FF7 Remake, OctoPath Traveler, DQ I&II HD-2D, DQ III HD-2D, DQ XI S, Tower of Mask, Star Wars Jedi, IDOLM@STER, Romancing SaGa 2, Ghostwire: Tokyo). Avalonia UI functional with Object Tree, Live Walker, Instance Finder, and Class Structure panels.
 
 ---
+
+[![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D4)](https://www.microsoft.com/windows)
+[![UE Version](https://img.shields.io/badge/UE-4.18--5.7-orange)](https://www.unrealengine.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
-[![C++](https://img.shields.io/badge/C++-23)](https://isocpp.org/std/the-standard#:~:text=The%20current%20ISO%20C++%20standard%20is%20C++23%2C,Standard%20ISO/IEC%2014882:2024(E)%20%E2%80%93%20Programming%20Language%20C++.)
+[![C++](https://img.shields.io/badge/C++-23-00599C)](https://isocpp.org/)
 [![Avalonia](https://img.shields.io/badge/Avalonia-UI-8B5CF6)](https://avaloniaui.net/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-CC785C?logo=claude)](https://claude.ai/code)
+
 ## Features
 
 | Feature | Status |
@@ -25,7 +30,7 @@ A **C++ injected DLL + Cheat Engine Lua Bridge + Avalonia UI** toolchain for run
 | FProperty-to-UProperty fallback (UE4 <4.25) | ✅ |
 | Live Data Walker — walk_class, walk_instance, walk_world | ✅ |
 | Instance Finder — find_instances by class name | ✅ |
-| CE XML export — get_ce_pointer_info | ✅ |
+| CE XML export — signed int, bool bit fields, struct auto-expansion | ✅ |
 | Named Pipe IPC server (JSON newline-delimited) | ✅ |
 | CE Plugin mode (Type 5 main menu entry) | ✅ |
 | Avalonia UI (Object Tree, Live Walker, Instance Finder, Class Structure) | ✅ |
@@ -138,7 +143,7 @@ UE5CEDumper/
 
 - Windows 10/11 x64
 - Cheat Engine 7.5+
-- A running Unreal Engine 5 game process (x64)
+- A running Unreal Engine 4 or 5 game process (x64)
 
 ---
 
@@ -188,7 +193,7 @@ Copy `dist\UE5Dumper.dll` next to `dist\UE5CEDumper.CT` (they must be in the sam
 
 ### 3. Inject via Cheat Engine
 
-1. Open Cheat Engine and attach it to the UE5 game process.
+1. Open Cheat Engine and attach it to the UE game process.
 2. Open `dist\UE5CEDumper.CT`.
 3. Check **[Inject DLL + Start Pipe Server]** in the cheat table.
 4. The Lua console shows a 15-second countdown while the DLL scans for GObjects/GNames.
@@ -245,9 +250,9 @@ All `UStructWalker` code uses `DynOff::*` exclusively — no hardcoded FField/FP
 | UE Version | GObjects | GNames | DynOff | Tested Games |
 |---|---|---|---|---|
 | 4.18 | ✅ | ✅ | ✅ (UProperty fallback) | FF7 Remake Intergrade |
-| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi, IDOLM@STER, OctoPath Traveler |
+| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi, DQ XI S, IDOLM@STER, OctoPath Traveler |
 | 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth, Tower of Mask, Hogwarts Legacy, Romancing SaGa 2 |
-| 5.0–5.2 | ✅ | ✅ | ✅ | DQ I&II HD-2D Remake |
+| 5.0–5.2 | ✅ | ✅ | ✅ | DQ I&II HD-2D Remake, DQ III HD-2D Remake, Ghostwire: Tokyo |
 | 5.3–5.4 | ✅ | ✅ | ✅ | — |
 | 5.5–5.7 | ✅ | ✅ (pointer-scan) | ✅ (CPN) | Titan Quest II, EverSpace 2 |
 
@@ -255,8 +260,18 @@ All `UStructWalker` code uses `DynOff::*` exclusively — no hardcoded FField/FP
 
 ## Known Issues
 
-- **"Start from GWorld" fails in UI** — GWorld is found for some UE4 games but the UI button doesn't populate the Live Walker. Under investigation.
+- **"Start from GWorld" fails on some games** — GWorld works on 7/14 tested games (TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo). Fails on some UE4 games (FF7R, FF7Re, DQ series, OctoPath). Under investigation.
+- **UE version misdetection** — Some games report incorrect UE version (e.g., FF7R shows 504 instead of 418, Ghostwire: Tokyo shows 505). Cosmetic issue — all pipelines work correctly via automatic fallback detection.
 - **FF7 Rebirth CE address lookup** — `get_ce_pointer_info` address-to-object lookup fails on FF7 Rebirth but works on other games.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+- **Submitting AOB patterns** — what evidence to provide and how verification works
+- **Reporting detection failures** — what logs and info to include
+- **Code contributions** — PR process and code style
 
 ---
 
@@ -269,10 +284,16 @@ All `UStructWalker` code uses `DynOff::*` exclusively — no hardcoded FField/FP
 | [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 runtime reflection, alternative angle |
 | [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | Additional AOB patterns for GObjects/GNames |
 | [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | Additional AOB patterns for GObjects/GNames scanning |
-| UE4 Dumper.CT | Cheat Engine cheat table — additional AOB patterns (CT-series in Signatures.h) |
+| UE4 Dumper.CT | Cake-san's cheat table — additional AOB patterns (CT-series in Signatures.h) |
 | [nlohmann/json](https://github.com/nlohmann/json) | Header-only JSON library used in DLL |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua scripting API reference |
 | AOBMaker (private) | AOB pattern generation tooling |
+
+---
+
+## Built with Claude Code
+
+This project is developed with the assistance of [Claude Code](https://claude.ai/code) by Anthropic. The C++ DLL, C# Avalonia UI, build scripts, and documentation are collaboratively authored by the developer and Claude Code.
 
 ---
 

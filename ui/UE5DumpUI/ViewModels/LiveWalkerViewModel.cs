@@ -78,6 +78,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
             });
 
             PopulateFromWorld(world);
+
+            // Show DLL-side error if world walk was partial (e.g. PersistentLevel not found)
+            if (!string.IsNullOrEmpty(world.Error))
+            {
+                SetError(new InvalidOperationException(world.Error));
+            }
         }
         catch (Exception ex)
         {

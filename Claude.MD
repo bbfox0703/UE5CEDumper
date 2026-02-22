@@ -65,8 +65,8 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-21 (FF7R flat array fix + UI search indicator + 10-game test results)
-> Latest commit: `362c0ae` on `dev` branch (uncommitted: DetectStride + UProperty fallback)
+> Last updated: 2026-02-22 (CE XML export overhaul + Float/Double formatting + CT instructions fix)
+> Latest commit: `425b37a` on `dev` branch (uncommitted: CE XML overhaul + DLL value formatting + GWorld CDO skip + CT cleanup)
 
 ### Component Status
 
@@ -85,10 +85,11 @@ git submodule update --init --recursive
 | UStructWalker | `UStructWalker.cpp/.h` | Done | FField chain, SuperStruct inheritance, GetFullName; uses DynOff for all offsets |
 | ExportAPI | `ExportAPI.cpp/.h` | Done | C ABI exports, UE5_AutoStart, WalkClass Begin/Get/End; calls ValidateAndFixOffsets |
 | PipeServer | `PipeServer.cpp/.h` | Done | Named pipe, JSON dispatch, watch/unwatch, get_offsets, walk_world, find_instances, get_ce_pointer_info; get_object_list returns `scanned` count for proper pagination |
-| CE Cheat Table | `scripts/UE5CEDumper.CT` | Done | injectDLL-only flow (no executeCodeEx), 15s countdown |
+| CE XML Export | `CeXmlExportService.cs` | Done | Hierarchical XML: signed int, BoolProperty bit fields, pointer ShowAsHex, StructProperty auto-expansion (f:[...] → #1/#2 Float children) |
+| CE Cheat Table | `scripts/UE5CEDumper.CT` | Done | injectDLL-only flow (no executeCodeEx), 15s countdown; DLL path auto-detect via OpenDialog1 |
 | CEPlugin interface | `CEPlugin.cpp` | Done | CE plugin Type 5 main menu; g_isCEPlugin flag |
 | DLL auto-start | `dllmain.cpp` | Done | AutoStartThreadProc, 1s delay, g_isCEPlugin check; per-process mirror log init |
-| Avalonia UI | `ui/` | Skeleton done | Object tree + Instance Finder + Class struct panels; pipe integration working; dynamic window title (process name on connect) |
+| Avalonia UI | `ui/` | Skeleton done | Object tree + Instance Finder + Class struct panels; pipe integration working; dynamic window title (process name on connect); GWorld error display |
 
 ### What Is Working (Confirmed in Testing)
 
@@ -118,6 +119,21 @@ git submodule update --init --recursive
 - **IDOLM@STER STARLIT SEASON (UE4.24, build 1.0.0.25)** — Working. Object Tree populated. "Start from GWorld" fails in UI.
 - **Romancing SaGa 2: Revenge of the Seven (UE4.27, build 1.0.0.25)** — Working. Object Tree populated. "Start from GWorld" fails in UI.
 - **Star Wars Jedi: Fallen Order (UE4.21, build 1.0.0.25)** — Working. 318,022 objects. Full pipeline functional.
+- **FF7R flat array confirmed (build 1.0.0.27)** — Object Tree correct names (Package, Class, AnimNotifyState, etc.). 165,792 objects. Flat FFixedUObjectArray detected via P0 dereference check. Stride 24. UE version shows 504 (cosmetic, should be 418). UProperty fallback working.
+- **TQ2 Start from GWorld (build 1.0.0.27)** — GWorld now working. CDO skip fix effective.
+- **EverSpace 2 Start from GWorld (build 1.0.0.27)** — GWorld now working (previously failed).
+- **Hogwarts Legacy Start from GWorld (build 1.0.0.27)** — GWorld now working (previously failed).
+- **DQ XI S: Echoes of an Elusive Age (UE4.22, build 1.0.0.27)** — Working. Object Tree populated (70,137 objects). "Start from GWorld" fails.
+- **IDOLM@STER Start from GWorld (build 1.0.0.27)** — GWorld now working. CDO skip fix effective.
+- **DQ III HD-2D Remake (UE5.05, build 1.0.0.27)** — Working. Object Tree populated (126,022 objects). "Start from GWorld" fails. UE version shows 505 (may be incorrect — HD-2D engine lineage suggests possible UE4 fork).
+- **Romancing SaGa 2 Start from GWorld (build 1.0.0.27)** — GWorld now working.
+- **Tower of Mask Start from GWorld (build 1.0.0.27)** — GWorld now working.
+- **OctoPath Traveler GWorld (build 1.0.0.27)** — "Start from GWorld" still fails. UE version detected as 422.
+- **Ghostwire: Tokyo (UE505 detected, build 1.0.0.27)** — Working. Object Tree populated (254,493 objects). "Start from GWorld" works. UE version shows 505 (user reports should be UE4 series). RE-UE4SS CustomGameConfigs only has AOB signatures (no version override, no MemberVariableLayout).
+- **CE XML Export overhaul (build 1.0.0.27)** — CeXmlExportService rewritten: signed integer types (IntProperty→ShowAsSigned=1), BoolProperty bit fields (Binary+BitStart/BitLength), pointer fields (ShowAsHex=1), empty CheatEntries removal (EmitGroupPlaceholder). StructProperty auto-expansion: fields with `f:[val1, val2]` hints auto-expanded with #1/#2 Float children at +8/+C (8-byte preamble skip). Fields showing `{TypeName}` remain as group placeholders.
+- **DLL Float/Double formatting (build 1.0.0.27)** — `InterpretValue()` updated: Float shows 10 decimal places, Double shows 15 decimal places. Both strip to integer display when all decimal digits are 0 (e.g., `300.0000000000` → `300`).
+- **CT instructions fix (build 1.0.0.27)** — Removed misleading step 2 (`copy to [CE_DIR]\ue5dumper\`) which never worked (Lua searches CE root dir, not subdirectory). Simplified to 4 steps: place DLL next to CT → open game → inject → launch UI.
+- **TQ2 re-verified (build 1.0.0.27)** — UE version 507, GObjects at 0x7FF6BB8D4B20 (486,782 objects), GNames at 0x7FF6BB806580 (FNamePool inline, [addr]=0 is FRWLock — normal), GWorld at 0x7FF6BBB077D8 ([addr]=0, UWorld found via GObjects fallback). Start from GWorld working.
 
 ### Known Challenges & Failures
 
@@ -446,7 +462,44 @@ arrayBase@0x20C7AAB0000 (what code thinks is chunk table):
 
 **Regression safety**: For chunked games (TQ2, ES2, Hogwarts, etc.), chunk[1] is either a valid heap pointer or null (single chunk). For small games with ≤65536 objects, chunksNeeded=1, so the check is skipped entirely. Only triggers when numElements > OBJECTS_PER_CHUNK AND chunk[1] is not a pointer.
 
-**Status**: Built successfully (build 1.0.0.26), **untested** — requires injection test.
+**Status (build 1.0.0.26)**: P0 flat detection did NOT trigger — `LooksLikeHeapPtr(0x40000000)` returned true because the 32-bit flags value passed all three checks (non-null, user-mode, not in game module). Scan went straight to P1 chunked, stride 24 selected via fallback, but names still garbled (2/10 sanity). See #19.
+
+#### 19. FF7R: LooksLikeHeapPtr Too Lenient for Flat Array Detection
+
+**Symptom**: After build 1.0.0.26 with flat array pre-detection code, FF7R scan log shows NO P0 phase output. Goes straight to P1 chunked detection. Object Tree still garbled ("vel", "Package").
+
+**Root cause**: `LooksLikeHeapPtr(0x40000000)` returns `true`:
+- `0x40000000 >= 0x10000` (passes minimum check)
+- `0x40000000 <= 0x7FFFFFFFFFFF` (passes user-mode range check)
+- `0x40000000` NOT in game module range (game at `0x7FF6xx`) (passes game module check)
+
+But `0x40000000` is `EObjectFlags::Const` — a 32-bit flags value, not a heap pointer. Real heap pointers on x64 Windows with ASLR are > 4GB (e.g., `0x1AEC98E0000`).
+
+**Fix applied (build 1.0.0.27)**: Two-layer validation specifically in the P0 flat check site (without modifying `LooksLikeHeapPtr` globally):
+1. **Magnitude check**: If `chunk1 < 0x100000000` (fits in 32 bits), trigger extra validation
+2. **ReadSafe dereference**: Try `Mem::ReadSafe(chunk1, testDeref)` — if the address is unmapped (likely for flag values like 0x40000000), mark as not a valid chunk pointer
+
+**Expected result**: `0x40000000 < 0x100000000` → triggers extra check → `ReadSafe(0x40000000)` fails → `chunk1Valid = false` → `mightBeFlat = true` → P0 flat probe runs → flat array confirmed → correct names.
+
+**Status (build 1.0.0.27)**: ✅ **CONFIRMED WORKING**. FF7R Object Tree now shows correct names: Package `/Script/CoreUObject`, Class `Object`, Class `AnimNotifyState`, etc. 165792 objects, flat array detected and working. UE version displays as 504 (cosmetic — should be 418, but all pipelines work correctly due to UProperty fallback from challenge #16).
+
+#### 20. "Start from GWorld" Fails in UI — CDO Detection + Missing Error Display
+
+**Symptom**: On games where GWorld is found (OctoPath, IDOLM@STER, Romancing SaGa 2), clicking "Start from GWorld" shows nothing in the Live Walker panel — no error, no data.
+
+**Root causes** (two issues):
+
+1. **CDO selected in GObjects fallback**: When `*GWorld == 0` (common in UE4), the DLL falls back to searching GObjects for any object with class name "World". The `ForEach` loop takes the FIRST match, which is often `Default__World` (a Class Default Object / CDO). CDOs have all instance pointers null (PersistentLevel, etc.), so the walk_world handler finds the field definition but reads null value → returns `"error": "PersistentLevel is null"` as a partial success (ok=true).
+
+2. **UI ignores error field**: The DLL returns `ok=true` with a data `"error"` field, but `DumpService.WalkWorldAsync` never reads it. The `WorldWalkResult` had no `Error` property. `CheckResponse` passes (ok=true), `PopulateFromWorld` gets empty data, and the user sees a mysterious empty panel with no explanation.
+
+**Fix applied (build 1.0.0.27)**:
+1. **DLL (`PipeServer.cpp`)**: GObjects fallback skips CDOs by checking `objName.rfind("Default__", 0) == 0`. Also separated error messages: "field not found in class (N fields)" vs "PersistentLevel is null (CDO or uninitialized)".
+2. **UI (`WorldWalkResult.cs`)**: Added `Error` property.
+3. **UI (`DumpService.cs`)**: Reads `res["error"]` field from response.
+4. **UI (`LiveWalkerViewModel.cs`)**: After `PopulateFromWorld`, checks `world.Error` and calls `SetError()` to display it.
+
+**Status (build 1.0.0.27)**: Mostly confirmed. GWorld works on: TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo (7/14 games). GWorld fails on: DQ XI S, FF7R, FF7Re, DQ III, DQ I&II, OctoPath, Star Wars Jedi (mostly Square Enix UE4 forks).
 
 ### Lessons Learned
 
@@ -497,36 +550,49 @@ arrayBase@0x20C7AAB0000 (what code thinks is chunk table):
 - **UE4.11-4.20 uses FFixedUObjectArray (flat), not FChunkedFixedUObjectArray**: RE-UE4SS MemberVariableLayout_4_18_Template.ini confirms `TUObjectArray` is 16 bytes: `{FUObjectItem* Objects, int32 MaxElements, int32 NumElements}`. Objects points directly to the item array (single indirection). UE4.21+ switches to `FChunkedFixedUObjectArray` (32 bytes) with a chunk pointer table (double indirection). Detection: when numElements > OBJECTS_PER_CHUNK (need 2+ chunks), check if `*(Objects + 8)` is a valid heap pointer. If not (e.g., it's `0x40000000` = EObjectFlags), the array is flat.
 - **EObjectFlags 0x40000000 = Const**: In UE4's FUObjectItem, the Flags field at item+0x08 can contain values like `0x40000000` (RF_Const) which look like small integers, not pointers. When a flat item array is misidentified as a chunk table, reading item[0].Flags as "chunk[1]" gives these flag values, which correctly fail `LooksLikeHeapPtr()`.
 - **Flat array detection must happen BEFORE chunked probing**: If flat detection only runs as fallback (Phase 3, when chunked finds nothing), it won't trigger for FF7R because chunked Phase 1 accidentally finds some valid items via LCM alignment when reading UObject internal memory. The fix: check chunk[1] validity FIRST, and if suspicious, try flat layout before chunked.
+- **`LooksLikeHeapPtr` is insufficient for rejecting 32-bit flag values on x64**: Values like `0x40000000` (EObjectFlags::Const, ~1GB) pass all three checks: non-null, in user-mode range, not in game module. On x64 Windows with ASLR, real heap pointers are typically > 4GB (`0x100000000`). When strong pointer validation is needed, add a magnitude check (< 4GB → suspicious) plus a `ReadSafe` dereference check (unmapped → not a pointer). Don't modify `LooksLikeHeapPtr` globally — add stronger checks at the specific call site.
+- **GObjects fallback for GWorld should skip CDOs**: When `*GWorld == 0`, searching GObjects for any "World" class instance may find `Default__World` (CDO) first. CDOs have all instance pointers null. Filter by checking if object name starts with "Default__".
+- **DLL partial-success responses need UI error handling**: When the DLL returns `ok=true` with an `error` field (e.g., "PersistentLevel is null"), the UI must read and display it. Otherwise the user sees an empty panel with no explanation. Always propagate error fields from partial-success responses through the model to the ViewModel.
+- **RE-UE4SS CustomGameConfigs consolidation analysis**: Evaluated 30 game configs in RE-UE4SS. Key findings: (1) Only FF7R (4.18) and FF7Re (4.26) have version overrides — most games rely on auto-detection. (2) MemberVariableLayout offsets (SuperStruct=0x30, Children=0x38, Offset_Internal=0x44 for all UE4.18-4.26 games) are already auto-detected by our DynOff. (3) Ghostwire: Tokyo has ONLY AOB signatures (FName_Constructor, FName_ToString, GMalloc, StaticConstructObject) — functions we don't use. (4) Star Wars Jedi has only MemberVariableLayout, no version override. **Conclusion**: Don't consolidate RE-UE4SS per-game configs into our codebase — our DynOff auto-detection already discovers correct offsets dynamically, version overrides are cosmetic (pipelines work via UProperty fallback), and adding per-game configs contradicts our universal auto-detection design philosophy. Use RE-UE4SS configs only as validation reference.
+- **GWorld works on 7/14 tested games**: TQ2, ES2, Hogwarts, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo. Fails on FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, OctoPath, Star Wars Jedi (untested). Pattern: non-SE games tend to work; SE UE4 forks tend to fail (likely custom UWorld layout or null GWorld with no fallback-resolvable UWorld instance).
+- **GNames address `[addr]=0` is normal**: GNames/FNamePool is an inline structure in `.data`, not a pointer-to-pointer. `[GNames]` reads FRWLock (first 8 bytes), which is 0 when unlocked. Actual name data is at `GNames+0x10` (Blocks[]). This is NOT a bug.
+- **GWorld `[addr]=0` doesn't mean broken**: GWorld IS a pointer-to-pointer, but `*GWorld` can be 0 when no world loaded, during loading screens, or when AOB found wrong address. The DLL's walk_world has GObjects fallback that searches for UWorld instances, making the feature work even with null `*GWorld`.
+- **CE XML type mapping**: UE IntProperty/Int8/16/64 → signed (ShowAsSigned=1), UInt32/16/64/ByteProperty → unsigned. BoolProperty with bit mask → Binary type (BitStart + BitLength=1, ShowAsBinary=0). Pointer ObjectProperty → ShowAsHex=1. StructProperty with `f:[...]` values → auto-expand with #1/#2 Float children.
+- **CT Lua DLL path search**: `getCheatEngineDir()` returns CE root (e.g., `C:\Program Files\CE 7.5\`), searches for DLL there directly — NOT in subdirectories. Instructions telling users to copy to `[CE_DIR]\ue5dumper\` were wrong. The working path is always candidate #1: `OpenDialog1.FileName` directory (= CT file's folder).
 
 ### Recommended Test Games
 
 | Game | UE Version | Notes |
 |------|-----------|-------|
-| EverSpace 2 | UE5.5 (PE: 505) | GNames via pointer-scan fallback. Stride 24, 1.16M objects — fully working (build 1.0.0.20) |
-| Titan Quest II | UE5.7 (PE reports) | Primary test target for CasePreservingName + dynamic offset detection. Stride 16 |
-| OctoPath Traveler | UE4 (pre-4.25) | UE4 TNameEntryArray + Layout B + stride 16. Object Tree working (build 1.0.0.20). "Start from GWorld" fails in UI |
-| Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry (hdrOff=4, stride=4) + stride 24 — fully working. CE address-to-object lookup fails |
-| Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | UProperty fallback ✅. Flat FFixedUObjectArray fix pending test (build 1.0.0.26). 165792 objects |
-| DQ I&II HD-2D Remake | UE5.05 | Stride 24, 128678 objects — full pipeline working. GWorld null. CE pointer lookup works |
-| Tower of Mask | UE4.27 | Standard UE4 indie game — full pipeline confirmed working. Stride 24 |
-| Hogwarts Legacy | UE4.27 (PE: 427) | GNames via pointer-scan fallback. Stride 24, 379K objects — fully working (build 1.0.0.20) |
-| IDOLM@STER STARLIT SEASON | UE4.24 | Working (build 1.0.0.25). "Start from GWorld" fails in UI |
-| Romancing SaGa 2 | UE4.27 | Working (build 1.0.0.25). "Start from GWorld" fails in UI |
-| Star Wars Jedi: Fallen Order | UE4.21 | Working (build 1.0.0.25). 318022 objects |
+| EverSpace 2 | UE5.5 (PE: 505) | GNames via pointer-scan fallback. Stride 24, 1.16M objects. GWorld ✅ (build 1.0.0.27) |
+| Titan Quest II | UE5.7 (PE: 507) | CasePreservingName + DynOff. Stride 16. 486,782 objects. GWorld ✅ via fallback ([GWorld]=0, UWorld found in GObjects) |
+| OctoPath Traveler | UE4 (pre-4.25) | UE4 TNameEntryArray + Layout B + stride 16. Object Tree working. GWorld fails |
+| Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry (hdrOff=4, stride=4) + stride 24 — fully working. GWorld fails |
+| Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | Flat FFixedUObjectArray ✅ (build 1.0.0.27). UProperty fallback ✅. 165792 objects. GWorld fails. UE version shows 504 (cosmetic) |
+| DQ I&II HD-2D Remake | UE5.05 (detected) | Stride 24, 128678 objects — full pipeline working. GWorld fails. UE version may be incorrect (HD-2D lineage). CE pointer lookup works |
+| DQ III HD-2D Remake | UE5.05 (detected) | Working (build 1.0.0.27). 126022 objects. GWorld fails. UE version may be incorrect |
+| DQ XI S: Echoes of an Elusive Age | UE4.22 | Working (build 1.0.0.27). 70137 objects. GWorld fails |
+| Tower of Mask | UE4.27 | Standard UE4 indie game — full pipeline confirmed working. Stride 24. GWorld ✅ (build 1.0.0.27) |
+| Hogwarts Legacy | UE4.27 (PE: 427) | GNames via pointer-scan fallback. Stride 24, 379K objects. GWorld ✅ (build 1.0.0.27) |
+| IDOLM@STER STARLIT SEASON | UE4.24 | Working. GWorld ✅ (build 1.0.0.27). CDO skip fix effective |
+| Romancing SaGa 2 | UE4.27 | Working (build 1.0.0.27). GWorld ✅ |
+| Star Wars Jedi: Fallen Order | UE4.21 | Working (build 1.0.0.25). 318022 objects. GWorld untested |
+| Ghostwire: Tokyo | UE505 detected (possibly UE4) | Working (build 1.0.0.27). 254493 objects. GWorld ✅. UE version likely incorrect. RE-UE4SS has only AOB signatures, no version override |
 
 ### Next Steps
 
-1. **Test FF7R** with flat array fix (build 1.0.0.26):
-   - Expect: flat array detected via chunk[1] validation
-   - Expect: stride 24 selected with good named count, low bad
-   - Expect: 8-10/10 name sanity, correct Object Tree names
-   - Expect: Live Walker with correct fields (UProperty mode already working)
-2. **Regression test** all 10+ games: TQ2, OctoPath, FF7Re, DQ HD-2D, FF7R, EverSpace 2, Hogwarts Legacy, Tower of Mask, Star Wars Jedi, IDOLM@STER
-3. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re
-4. **Fix "Start from GWorld" UI** — GWorld found for OctoPath, FF7Re, IDOLM@STER, Romancing SaGa 2 but UI button doesn't work
-5. ~~Test pointer-scan fallback for GNames on EverSpace 2~~ → Done: works on both ES2 and Hogwarts Legacy
-6. Once FF7R confirmed working → continue Avalonia UI development
-7. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources in `Signatures.h`
+1. ~~Test FF7R with flat array fix v2~~ → ✅ Done (build 1.0.0.27)
+2. ~~Fix "Start from GWorld" UI~~ → ✅ Done: 7/14 games working
+3. ~~CE XML Export overhaul~~ → ✅ Done: signed int, BoolProperty bits, pointer hex, StructProperty auto-expansion
+4. ~~Float/Double display formatting~~ → ✅ Done: Float 10dp, Double 15dp, strip-to-integer
+5. ~~CT instructions fix~~ → ✅ Done: removed misleading step 2, simplified to 4 steps
+6. **Fix FF7R UE version display** — shows 504 instead of 418. Cosmetic issue (all pipelines work via UProperty fallback). Need version override for flat array / UProperty fallback games
+7. **Investigate GWorld failure on remaining games** — FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, OctoPath, Star Wars Jedi still fail. Pattern: mostly Square Enix UE4 forks
+8. **Investigate UE version misdetection** — DQ I&II/DQ III/Ghostwire: Tokyo all show UE505 but may be UE4. OctoPath (same HD-2D tech, 2019) detects as UE422
+9. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re
+10. Continue Avalonia UI development — all 14 tested games have working Object Tree
+11. ~~Test pointer-scan fallback for GNames on EverSpace 2~~ → Done
+12. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources
 
 -----
 

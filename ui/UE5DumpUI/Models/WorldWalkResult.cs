@@ -12,6 +12,7 @@ public sealed class WorldWalkResult
     public string LevelAddr { get; init; } = "";
     public string LevelName { get; init; } = "";
     public int ActorCount { get; init; }
+    public string Error { get; init; } = "";
     public List<ActorInfo> Actors { get; init; } = new();
 }
 
