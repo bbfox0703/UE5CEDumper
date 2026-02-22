@@ -48,10 +48,10 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 
 ## 架構與工作流程 (Architecture & Workflow)
 
-1. **注入 DLL**: 開啟 Cheat Engine 附加至遊戲，執行 `UE5CEDumper.CT`。
-2. **AOB 掃描**: DLL 自動定位引擎全域指標，並偵測 UE 版本與記憶體佈局。
-3. **管道串流**: 即時數據透過具名管道 (Named Pipe, JSON-RPC) 串流至 **UE5DumpUI**。
-4. **製作 Table**: 瀏覽 `UObject` 階層，尋找 HP/MP 等偏移量，並快速匯出至 CE。
+1. **注入 DLL**: 開啟 Cheat Engine 附加遊戲，開始 `UE5CEDumper.CT`。
+2. **啟用CE腳本**: 先啟用 `init <== enable after process attached` 腳本、然後啟用 `Inject DLL + Start Pipe Server`. DLL 自動定位引擎全域指標，並偵測 UE 版本與記憶體佈局。
+3. **管道串流**: 等待一段時間、讓 DLL 抓取資料。執行 **UE5DumpUI.exe**，按下 Connect。即時數據透過具名管道 (Named Pipe, JSON-RPC) 串流至 **UE5DumpUI**。
+4. **瀏覽及分析**: 瀏覽 `UObject` 階層，找到要查的 Class，或是由 CE 中的 HP/MP 等值，試著在 UI 中反查，並可直接匯出至 CE。
 
 | **Game Process (Injected)** |
 | :---: |
