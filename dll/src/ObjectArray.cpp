@@ -729,13 +729,12 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
     }
 
     if (numCandidates == 0) {
-        LOG_INFO("FindByAddress: No objects within 256KB below 0x%llX",
+        LOG_INFO("FindByAddress: No objects within 256KB below 0x%llX — will try backward scan",
                  static_cast<unsigned long long>(addr));
-        return result;
+    } else {
+        LOG_INFO("FindByAddress: No exact match. %d candidates within range. Closest at dist=0x%llX",
+                 numCandidates, static_cast<unsigned long long>(candidates[0].dist));
     }
-
-    LOG_INFO("FindByAddress: No exact match. %d candidates within range. Closest at dist=0x%llX",
-             numCandidates, static_cast<unsigned long long>(candidates[0].dist));
 
     // --- Containment check on candidates ---
     // Try each candidate (closest first), check if addr is within its PropertiesSize.
@@ -799,9 +798,9 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
     //   +0x20/0x28: OuterPrivate* (UObject*, nullable)
     //
     // We scan backward in 8-byte steps (UObjects are at least 8-byte aligned),
-    // up to a reasonable range (e.g., 16KB), checking each candidate address.
+    // up to a reasonable range (64KB), checking each candidate address.
 
-    constexpr uintptr_t MAX_BACKWARD_SCAN = 0x4000;  // 16KB backward scan
+    constexpr uintptr_t MAX_BACKWARD_SCAN = 0x10000;  // 64KB backward scan
 
     uintptr_t moduleBase = Mem::GetModuleBase(nullptr);
     uintptr_t moduleEnd = moduleBase + Mem::GetModuleSize(nullptr);
@@ -872,25 +871,37 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
         break;
     }
 
-    if (bestScanObj && bestScanDist < candidates[0].dist) {
-        // Backward scan found a closer UObject than GObjects scan
-        FillLookupResult(result, bestScanObj, -1,
-                         static_cast<int32_t>(bestScanDist), false);
-        LOG_INFO("FindByAddress: Backward scan match: %s at 0x%llX, offset +0x%X",
+    if (bestScanObj) {
+        // Backward scan found a UObject — use it if no GObjects candidates,
+        // or if it's closer than the best GObjects candidate
+        bool useBackward = (numCandidates == 0) ||
+                           (bestScanDist < candidates[0].dist);
+        if (useBackward) {
+            FillLookupResult(result, bestScanObj, -1,
+                             static_cast<int32_t>(bestScanDist), false);
+            LOG_INFO("FindByAddress: Backward scan match: %s at 0x%llX, offset +0x%X",
+                     result.name.c_str(),
+                     static_cast<unsigned long long>(bestScanObj),
+                     result.offsetFromBase);
+            return result;
+        }
+    }
+
+    if (numCandidates > 0) {
+        // --- Fallback: Return closest GObjects object as "nearest" ---
+        FillLookupResult(result, candidates[0].obj, candidates[0].idx,
+                         static_cast<int32_t>(candidates[0].dist), false);
+        result.exactMatch = false;
+        LOG_INFO("FindByAddress: Nearest GObjects fallback: %s at 0x%llX, offset +0x%X",
                  result.name.c_str(),
-                 static_cast<unsigned long long>(bestScanObj),
+                 static_cast<unsigned long long>(candidates[0].obj),
                  result.offsetFromBase);
         return result;
     }
 
-    // --- Fallback: Return closest GObjects object as "nearest" ---
-    FillLookupResult(result, candidates[0].obj, candidates[0].idx,
-                     static_cast<int32_t>(candidates[0].dist), false);
-    result.exactMatch = false;
-    LOG_INFO("FindByAddress: Nearest GObjects fallback: %s at 0x%llX, offset +0x%X",
-             result.name.c_str(),
-             static_cast<unsigned long long>(candidates[0].obj),
-             result.offsetFromBase);
+    // Nothing found at all
+    LOG_INFO("FindByAddress: No match found for 0x%llX (no candidates, no backward scan hit)",
+             static_cast<unsigned long long>(addr));
     return result;
 }
 

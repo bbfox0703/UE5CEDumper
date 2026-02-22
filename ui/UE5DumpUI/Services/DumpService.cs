@@ -291,6 +291,9 @@ public sealed class DumpService : IDumpService
                     StructDataAddr = fo["struct_data_addr"]?.GetValue<string>() ?? "",
                     StructClassAddr = fo["struct_class_addr"]?.GetValue<string>() ?? "",
                     StructTypeName = fo["struct_type"]?.GetValue<string>() ?? "",
+                    EnumName = fo["enum_name"]?.GetValue<string>() ?? "",
+                    EnumValue = fo["enum_value"]?.GetValue<long>() ?? 0,
+                    StrValue = fo["str_value"]?.GetValue<string>() ?? "",
                 });
             }
         }

@@ -8,8 +8,15 @@
 #include "Logger.h"
 #include "Constants.h"
 #include "FNamePool.h"
+#include "OffsetFinder.h"
 
 #include <algorithm>
+#include <unordered_map>
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
 
 namespace UStructWalker {
 
@@ -23,6 +30,86 @@ static std::string ReadFName(uintptr_t fnameAddr) {
     Mem::ReadSafe(fnameAddr + 4, number);
 
     return FNamePool::GetString(compIndex, number);
+}
+
+// ============================================================
+// ResolveEnumValue — resolve an enum integer value to its name string.
+// Uses a per-UEnum cache (static unordered_map) for performance.
+// Triggers lazy DetectUEnumNames() on first call.
+// ============================================================
+static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
+    if (!enumAddr) return "";
+
+    // Lazy init: trigger DetectUEnumNames on first call
+    if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+        OffsetFinder::DetectUEnumNames();
+    if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+        return "";  // Detection failed
+
+    // Cache: keyed by UEnum address → vector of (value, name) pairs
+    static std::unordered_map<uintptr_t, std::vector<std::pair<int64_t, std::string>>> s_cache;
+
+    auto it = s_cache.find(enumAddr);
+    if (it == s_cache.end()) {
+        // Read UEnum::Names TArray<TPair<FName, int64>>
+        uintptr_t data = 0;
+        int32_t count = 0;
+        Mem::ReadSafe(enumAddr + DynOff::UENUM_NAMES, data);
+        Mem::ReadSafe(enumAddr + DynOff::UENUM_NAMES + 8, count);
+
+        std::vector<std::pair<int64_t, std::string>> entries;
+        if (data && count > 0 && count < 1024) {
+            entries.reserve(count);
+            for (int i = 0; i < count; ++i) {
+                uintptr_t entryAddr = data + static_cast<uintptr_t>(i) * DynOff::UENUM_ENTRY_SIZE;
+                int32_t nameIdx = 0;
+                int64_t val = 0;
+                Mem::ReadSafe(entryAddr, nameIdx);
+                Mem::ReadSafe(entryAddr + 8, val);
+                std::string name = FNamePool::GetString(nameIdx);
+                entries.push_back({val, std::move(name)});
+            }
+            LOG_DEBUG("ResolveEnumValue: Cached UEnum 0x%llX with %d entries",
+                static_cast<unsigned long long>(enumAddr), count);
+        }
+        it = s_cache.emplace(enumAddr, std::move(entries)).first;
+    }
+
+    // Lookup value
+    for (const auto& [v, n] : it->second) {
+        if (v == value) return n;
+    }
+    return "";  // Value not in enum
+}
+
+// ============================================================
+// ReadFString — read an FString (TArray<wchar_t>) from a live
+// instance and convert UTF-16 → UTF-8.
+// Returns empty string on failure or if string is empty/too long.
+// ============================================================
+static std::string ReadFString(uintptr_t instanceAddr, int32_t offset) {
+    // FString = TArray<wchar_t> = { wchar_t* Data (8B), int32 Count (4B), int32 Max (4B) }
+    uintptr_t data = 0;
+    int32_t count = 0;
+    Mem::ReadSafe(instanceAddr + offset, data);
+    Mem::ReadSafe(instanceAddr + offset + 8, count);
+
+    if (!data || count <= 0 || count > 256) return "";
+
+    // Read wchar_t buffer (count includes null terminator in most UE builds)
+    std::vector<wchar_t> wbuf(count, 0);
+    if (!Mem::ReadBytesSafe(data, wbuf.data(), count * sizeof(wchar_t)))
+        return "";
+
+    // Ensure null termination
+    wbuf.back() = 0;
+
+    // UTF-16 → UTF-8 via WideCharToMultiByte
+    int needed = WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), -1, nullptr, 0, nullptr, nullptr);
+    if (needed <= 0) return "";
+    std::string result(needed - 1, '\0');  // -1 to exclude null terminator
+    WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), -1, result.data(), needed, nullptr, nullptr);
+    return result;
 }
 
 uintptr_t GetClass(uintptr_t uobjectAddr) {
@@ -309,6 +396,9 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
     if (typeName == "ByteProperty" && size >= 1) {
         return std::to_string(bytes[0]);
     }
+    if (typeName == "Int8Property" && size >= 1) {
+        return std::to_string(static_cast<int8_t>(bytes[0]));
+    }
     if (typeName == "BoolProperty") {
         // Note: for bitfield bools, the caller should pass the correct byte
         // and use FieldMask to determine the bit value. This fallback handles
@@ -518,6 +608,76 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                 }
             }
 
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle EnumProperty: read underlying int, resolve via UEnum
+        if (fi.TypeName == "EnumProperty") {
+            uintptr_t enumPtr = 0;
+            Mem::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumPtr);
+
+            // Read raw value based on property size
+            int64_t rawVal = 0;
+            if (fi.Size == 1) { uint8_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (fi.Size == 2) { int16_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (fi.Size == 4) { int32_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (fi.Size == 8) { int64_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+
+            fv.enumValue = rawVal;
+            if (enumPtr) fv.enumName = ResolveEnumValue(enumPtr, rawVal);
+            fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
+
+            // Populate hex
+            if (fi.Size > 0 && fi.Size <= 8) {
+                uint8_t buf[8] = {};
+                Mem::ReadBytesSafe(instanceAddr + fi.Offset, buf, fi.Size);
+                std::string hex;
+                hex.reserve(fi.Size * 2);
+                for (int i = 0; i < fi.Size; ++i) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", buf[i]); hex += hx; }
+                fv.hexValue = hex;
+            }
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle ByteProperty: check if it has a UEnum* (byte-sized enum)
+        if (fi.TypeName == "ByteProperty") {
+            uintptr_t enumPtr = 0;
+            Mem::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, enumPtr);
+            if (enumPtr) {
+                // Validate it's actually a UEnum by checking its class name
+                uintptr_t enumClass = GetClass(enumPtr);
+                std::string enumClassName = enumClass ? GetName(enumClass) : "";
+                if (enumClassName == "Enum" || enumClassName == "UserDefinedEnum") {
+                    uint8_t rawVal = 0;
+                    Mem::ReadSafe(instanceAddr + fi.Offset, rawVal);
+                    fv.enumValue = rawVal;
+                    fv.enumName = ResolveEnumValue(enumPtr, rawVal);
+                    fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
+                    char hx[3];
+                    snprintf(hx, sizeof(hx), "%02X", rawVal);
+                    fv.hexValue = hx;
+                    result.fields.push_back(std::move(fv));
+                    continue;
+                }
+            }
+            // Fall through to generic scalar handling below
+        }
+
+        // Handle StrProperty / TextProperty: read FString (TArray<wchar_t>) → UTF-8
+        if (fi.TypeName == "StrProperty" || fi.TypeName == "TextProperty") {
+            fv.strValue = ReadFString(instanceAddr, fi.Offset);
+            fv.typedValue = fv.strValue.empty() ? "(empty)" : fv.strValue;
+            // Hex of the TArray<wchar_t> header (Data ptr + Count)
+            uintptr_t strData = 0;
+            int32_t strCount = 0;
+            Mem::ReadSafe(instanceAddr + fi.Offset, strData);
+            Mem::ReadSafe(instanceAddr + fi.Offset + 8, strCount);
+            char buf[48];
+            snprintf(buf, sizeof(buf), "%016llX %08X",
+                static_cast<unsigned long long>(strData), strCount);
+            fv.hexValue = buf;
             result.fields.push_back(std::move(fv));
             continue;
         }

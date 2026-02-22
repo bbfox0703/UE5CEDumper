@@ -65,8 +65,8 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-22 (CE XML export overhaul + Float/Double formatting + CT instructions fix)
-> Latest commit: `425b37a` on `dev` branch (uncommitted: CE XML overhaul + DLL value formatting + GWorld CDO skip + CT cleanup)
+> Last updated: 2026-02-22 (EnumProperty + StrProperty support + 3 new games confirmed)
+> Latest commit: `b216b94` on `dev` branch (uncommitted: EnumProperty/StrProperty/Int8Property support + audit hardening)
 
 ### Component Status
 
@@ -134,6 +134,12 @@ git submodule update --init --recursive
 - **DLL Float/Double formatting (build 1.0.0.27)** — `InterpretValue()` updated: Float shows 10 decimal places, Double shows 15 decimal places. Both strip to integer display when all decimal digits are 0 (e.g., `300.0000000000` → `300`).
 - **CT instructions fix (build 1.0.0.27)** — Removed misleading step 2 (`copy to [CE_DIR]\ue5dumper\`) which never worked (Lua searches CE root dir, not subdirectory). Simplified to 4 steps: place DLL next to CT → open game → inject → launch UI.
 - **TQ2 re-verified (build 1.0.0.27)** — UE version 507, GObjects at 0x7FF6BB8D4B20 (486,782 objects), GNames at 0x7FF6BB806580 (FNamePool inline, [addr]=0 is FRWLock — normal), GWorld at 0x7FF6BBB077D8 ([addr]=0, UWorld found via GObjects fallback). Start from GWorld working.
+- **EnumProperty + StrProperty support (build 1.0.0.40)** — Full pipeline: DLL detects UEnum::Names offset lazily (first enum encounter), resolves enum values to names via per-UEnum cache, reads FString (TArray<wchar_t> → UTF-8). Int8Property added. CE XML maps EnumProperty→4Bytes, StrProperty→String. ByteProperty-with-enum also handled.
+- **TQ2 re-verified (build 1.0.0.40)** — EnumProperty/StrProperty build. All pipelines working.
+- **FF7Re re-verified (build 1.0.0.40)** — EnumProperty/StrProperty build. All pipelines working.
+- **Lushfoil Photography Sim (UE5.6, build 1.0.0.40)** — NEW GAME. All working: Object Tree, Live Walker, Instance Finder. 58630 objects. UE version 506.
+- **Manor Lords (UE5.5, build 1.0.0.40)** — NEW GAME. All working: Object Tree, Live Walker, Instance Finder.
+- **Satisfactory (UE5.3, build 1.0.0.40)** — NEW GAME. Working: Object Tree, Live Walker, Instance Finder. "Start from GWorld" fails. UE version 503. 35776 objects.
 
 ### Known Challenges & Failures
 
@@ -578,6 +584,9 @@ But `0x40000000` is `EObjectFlags::Const` — a 32-bit flags value, not a heap p
 | Romancing SaGa 2 | UE4.27 | Working (build 1.0.0.27). GWorld ✅ |
 | Star Wars Jedi: Fallen Order | UE4.21 | Working (build 1.0.0.25). 318022 objects. GWorld untested |
 | Ghostwire: Tokyo | UE505 detected (possibly UE4) | Working (build 1.0.0.27). 254493 objects. GWorld ✅. UE version likely incorrect. RE-UE4SS has only AOB signatures, no version override |
+| Lushfoil Photography Sim | UE5.6 (PE: 506) | NEW (build 1.0.0.40). All working. 58630 objects |
+| Manor Lords | UE5.5 | NEW (build 1.0.0.40). All working |
+| Satisfactory | UE5.3 (PE: 503) | NEW (build 1.0.0.40). Working. GWorld fails. 35776 objects |
 
 ### Next Steps
 
@@ -586,13 +595,14 @@ But `0x40000000` is `EObjectFlags::Const` — a 32-bit flags value, not a heap p
 3. ~~CE XML Export overhaul~~ → ✅ Done: signed int, BoolProperty bits, pointer hex, StructProperty auto-expansion
 4. ~~Float/Double display formatting~~ → ✅ Done: Float 10dp, Double 15dp, strip-to-integer
 5. ~~CT instructions fix~~ → ✅ Done: removed misleading step 2, simplified to 4 steps
-6. **Fix FF7R UE version display** — shows 504 instead of 418. Cosmetic issue (all pipelines work via UProperty fallback). Need version override for flat array / UProperty fallback games
-7. **Investigate GWorld failure on remaining games** — FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, OctoPath, Star Wars Jedi still fail. Pattern: mostly Square Enix UE4 forks
-8. **Investigate UE version misdetection** — DQ I&II/DQ III/Ghostwire: Tokyo all show UE505 but may be UE4. OctoPath (same HD-2D tech, 2019) detects as UE422
-9. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re
-10. Continue Avalonia UI development — all 14 tested games have working Object Tree
-11. ~~Test pointer-scan fallback for GNames on EverSpace 2~~ → Done
-12. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources
+6. ~~EnumProperty + StrProperty support~~ → ✅ Done (build 1.0.0.40): lazy UEnum::Names detection, enum name cache, FString UTF-16→UTF-8, ByteProperty-with-enum, Int8Property, CE XML mappings
+7. **Fix FF7R UE version display** — shows 504 instead of 418. Cosmetic issue (all pipelines work via UProperty fallback). Need version override for flat array / UProperty fallback games
+8. **Investigate GWorld failure on remaining games** — FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, OctoPath, Star Wars Jedi, Satisfactory still fail. Pattern: mostly Square Enix UE4 forks + some UE5
+9. **Investigate UE version misdetection** — DQ I&II/DQ III/Ghostwire: Tokyo all show UE505 but may be UE4. OctoPath (same HD-2D tech, 2019) detects as UE422
+10. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re
+11. Continue Avalonia UI development — all 17 tested games have working Object Tree
+12. ~~Test pointer-scan fallback for GNames on EverSpace 2~~ → Done
+13. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources
 
 -----
 

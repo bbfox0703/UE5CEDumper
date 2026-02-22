@@ -2,7 +2,7 @@
 
 一套針對 Unreal Engine 4 & 5 遊戲的**執行期結構探查工具**，由 C++ 注入式 DLL、Cheat Engine Lua Bridge 及 Avalonia UI 三個元件組成。透過 AOB 掃描定位引擎全域指標（GObjects / GNames / GWorld），遍歷 UObject 層次結構，並透過 Named Pipe 將即時資料串流至外部 GUI。
 
-> **現況**：DLL 核心功能完成。已在 **14 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、Octopath Traveler、DQ I&II HD-2D、DQ III HD-2D、DQ XI S、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2 RotS、Ghostwire: Tokyo）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
+> **現況**：DLL 核心功能完成。已在 **17 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、Octopath Traveler、DQ I&II HD-2D、DQ III HD-2D、DQ XI S、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2 RotS、Ghostwire: Tokyo、Lushfoil Photography Sim、Manor Lords、Satisfactory）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
 
 ---
 
@@ -250,17 +250,17 @@ UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 
 | UE 版本 | GObjects | GNames | DynOff | 已測試遊戲 |
 |---|---|---|---|---|
 | 4.18 | ✅ | ✅ | ✅（UProperty 回退） | FF7 Remake Intergrade |
-| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi、DQ XI S、IDOLM@STER、OctoPath Traveler |
-| 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth、Tower of Mask、Hogwarts Legacy、Romancing SaGa 2 |
-| 5.0–5.2 | ✅ | ✅ | ✅ | DQ I&II HD-2D Remake、DQ III HD-2D Remake、Ghostwire: Tokyo |
-| 5.3–5.4 | ✅ | ✅ | ✅ | — |
-| 5.5–5.7 | ✅ | ✅（指標掃描） | ✅（CPN） | Titan Quest II、EverSpace 2 |
+| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi、DQ XI S、IDOLM@STER、Octopath Traveler、DQ I&II HD-2D Remake、DQ III HD-2D Remake |
+| 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth、Tower of Mask、Hogwarts Legacy、Romancing SaGa 2 RotS、Ghostwire: Tokyo (TBD) |
+| 5.0–5.2 | ✅ | ✅ | ✅ | — |
+| 5.3–5.4 | ✅ | ✅ | ✅ | Satisfactory |
+| 5.5–5.7 | ✅ | ✅（指標掃描） | ✅（CPN） | Titan Quest II、EverSpace 2、Lushfoil Photography Sim、Manor Lords |
 
 ---
 
 ## 已知問題
 
-- **部分遊戲「Start from GWorld」失敗** — 14 款已測試遊戲中有 7 款 GWorld 功能正常（TQ2、EverSpace 2、Hogwarts Legacy、IDOLM@STER、Romancing SaGa 2、Tower of Mask、Ghostwire: Tokyo）。部分 UE4 遊戲仍失敗（FF7R、FF7Re、DQ 系列、OctoPath）。持續調查中。
+- **部分遊戲「Start from GWorld」失敗** — 17 款已測試遊戲中有 9 款 GWorld 功能正常（TQ2、EverSpace 2、Hogwarts Legacy、IDOLM@STER、Romancing SaGa 2 RotS、Tower of Mask、Ghostwire: Tokyo、Lushfoil Photography Sim、Manor Lords）。部分 UE4 遊戲及 Satisfactory 仍失敗（FF7R、FF7Re、DQ 系列、OctoPath）。持續調查中。
 - **UE 版本偵測錯誤** — 部分遊戲回報不正確的 UE 版本（例如 FF7R 顯示 504 應為 418、Ghostwire: Tokyo 顯示 505）。此為外觀問題，所有管線均透過自動回退偵測正常運作。
 - **FF7 Rebirth CE 位址查詢** — `get_ce_pointer_info` 的位址對物件查詢在 FF7 Rebirth 上失敗，其他遊戲正常。
 

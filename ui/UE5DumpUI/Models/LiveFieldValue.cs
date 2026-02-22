@@ -43,12 +43,22 @@ public sealed class LiveFieldValue
     /// <summary>For StructProperty: struct type name (e.g. "FGameplayAttributeData").</summary>
     public string StructTypeName { get; init; } = "";
 
+    /// <summary>For EnumProperty: resolved enum name (e.g., "ROLE_Authority").</summary>
+    public string EnumName { get; init; } = "";
+
+    /// <summary>For EnumProperty: raw enum integer value.</summary>
+    public long EnumValue { get; init; }
+
+    /// <summary>For StrProperty: decoded UTF-8 string value.</summary>
+    public string StrValue { get; init; } = "";
+
     /// <summary>Display-friendly value string.</summary>
     public string DisplayValue =>
         !string.IsNullOrEmpty(TypedValue) ? TypedValue :
         !string.IsNullOrEmpty(PtrName) ? $"{PtrName} ({PtrClassName})" :
         !string.IsNullOrEmpty(StructTypeName) ? $"{{{StructTypeName}}}" :
         ArrayCount >= 0 ? $"[{ArrayCount} elements]" :
+        !string.IsNullOrEmpty(StrValue) ? $"\"{StrValue}\"" :
         !string.IsNullOrEmpty(HexValue) ? HexValue :
         "";
 
