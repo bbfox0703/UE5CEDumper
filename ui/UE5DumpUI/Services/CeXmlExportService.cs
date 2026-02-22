@@ -1,4 +1,5 @@
 using System.Text;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.ViewModels;
 
@@ -18,12 +19,13 @@ namespace UE5DumpUI.Services;
 /// - Unsigned integers (UInt32/16/64Property, ByteProperty): ShowAsSigned=0
 /// - BoolProperty with bit mask: VariableType=Binary, BitStart/BitLength from UE FieldMask
 /// - Pointer fields (ObjectProperty navigable): ShowAsHex=1, GroupHeader placeholder
-/// - Struct fields (StructProperty navigable): GroupHeader placeholder (no empty CheatEntries)
+/// - Struct fields (StructProperty): real field names via DLL resolution, flattened nested structs
 ///
-/// Struct auto-expansion:
-/// - Simple StructProperty with 1-2 numeric values (detected via f:[...] hint) are auto-expanded
-/// - Children named #1, #2 with Float type, at +8 and +C (8-byte struct preamble skip)
-/// - Only triggers when TypedValue shows actual values, NOT when showing {TypeName}
+/// Struct expansion:
+/// - StructProperty fields are resolved via WalkInstanceAsync to get real field names/types
+/// - Nested StructProperty are recursively flattened (all inner fields at the same level)
+/// - Pointer fields inside structs emit as 8 Bytes ShowAsHex placeholder
+/// - Max recursion depth: 5 levels
 /// </summary>
 public static class CeXmlExportService
 {
@@ -33,6 +35,9 @@ public static class CeXmlExportService
     [ThreadStatic]
     private static int _nextId;
 
+    /// <summary>Max depth for recursive struct resolution.</summary>
+    private const int MaxStructDepth = 5;
+
     /// <summary>CE field metadata for XML generation.</summary>
     private record CeFieldInfo(
         string VariableType,
@@ -41,8 +46,114 @@ public static class CeXmlExportService
         int BitStart = -1,
         int BitLength = 0);
 
-    /// <summary>Info for auto-expanding a simple StructProperty in CE XML.</summary>
-    private record StructExpandInfo(int ValueCount, string CeType, int TypeSize, int Preamble);
+    // ========================================
+    // Struct field resolution (async, requires DLL pipe)
+    // ========================================
+
+    /// <summary>
+    /// Pre-resolve all StructProperty fields by walking their inner structure via the DLL.
+    /// Returns a dictionary keyed by field offset, containing flattened inner fields
+    /// with relative offsets from the struct start and dot-prefixed names for nested structs.
+    ///
+    /// Example: StructA at offset 0x100 with inner StructB at +0x10 containing X at +0x0
+    ///   -> resolvedStructs[0x100] = [
+    ///        LiveFieldValue { Name="IntField", Offset=0x0 },
+    ///        LiveFieldValue { Name="StructB.X", Offset=0x10 },
+    ///        LiveFieldValue { Name="StructB.Y", Offset=0x14 },
+    ///      ]
+    /// </summary>
+    public static async Task<Dictionary<int, List<LiveFieldValue>>> ResolveStructFieldsAsync(
+        IDumpService dump, IReadOnlyList<LiveFieldValue> fields)
+    {
+        var result = new Dictionary<int, List<LiveFieldValue>>();
+
+        foreach (var field in fields)
+        {
+            if (field.TypeName != "StructProperty"
+                || string.IsNullOrEmpty(field.StructClassAddr)
+                || string.IsNullOrEmpty(field.StructDataAddr)
+                || field.StructDataAddr == "0x0")
+                continue;
+
+            var resolved = new List<LiveFieldValue>();
+            try
+            {
+                await ResolveStructRecursiveAsync(dump, field.StructDataAddr, field.StructClassAddr,
+                    "", 0, resolved, 0);
+            }
+            catch
+            {
+                // If resolution fails (pipe error, etc.), leave empty — will fall back to placeholder
+            }
+
+            if (resolved.Count > 0)
+                result[field.Offset] = resolved;
+        }
+
+        return result;
+    }
+
+    private static async Task ResolveStructRecursiveAsync(
+        IDumpService dump, string dataAddr, string classAddr,
+        string namePrefix, int baseOffset, List<LiveFieldValue> output, int depth)
+    {
+        if (depth >= MaxStructDepth) return;
+
+        var walkResult = await dump.WalkInstanceAsync(dataAddr, classAddr);
+
+        foreach (var f in walkResult.Fields)
+        {
+            var displayName = string.IsNullOrEmpty(namePrefix) ? f.Name : $"{namePrefix}.{f.Name}";
+            var absOffset = baseOffset + f.Offset;
+
+            if (f.TypeName == "StructProperty"
+                && !string.IsNullOrEmpty(f.StructClassAddr)
+                && !string.IsNullOrEmpty(f.StructDataAddr)
+                && f.StructDataAddr != "0x0")
+            {
+                // Nested struct — recurse and flatten into the same list
+                await ResolveStructRecursiveAsync(dump, f.StructDataAddr, f.StructClassAddr,
+                    displayName, absOffset, output, depth + 1);
+            }
+            else if (f.IsPointerNavigation)
+            {
+                // Pointer inside struct — emit as pointer placeholder
+                output.Add(new LiveFieldValue
+                {
+                    Name = displayName,
+                    TypeName = f.TypeName,
+                    Offset = absOffset,
+                    Size = f.Size,
+                    PtrAddress = f.PtrAddress,
+                    PtrName = f.PtrName,
+                    PtrClassName = f.PtrClassName,
+                });
+            }
+            else
+            {
+                // Scalar field — add with accumulated offset and prefixed name
+                output.Add(new LiveFieldValue
+                {
+                    Name = displayName,
+                    TypeName = f.TypeName,
+                    Offset = absOffset,
+                    Size = f.Size,
+                    HexValue = f.HexValue,
+                    TypedValue = f.TypedValue,
+                    BoolBitIndex = f.BoolBitIndex,
+                    BoolFieldMask = f.BoolFieldMask,
+                    ArrayCount = f.ArrayCount,
+                    EnumName = f.EnumName,
+                    EnumValue = f.EnumValue,
+                    StrValue = f.StrValue,
+                });
+            }
+        }
+    }
+
+    // ========================================
+    // XML generation
+    // ========================================
 
     /// <summary>
     /// Generate hierarchical CE XML from the navigation breadcrumb trail and current fields.
@@ -62,9 +173,10 @@ public static class CeXmlExportService
         string rootAddress,
         string rootName,
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
-        IReadOnlyList<LiveFieldValue> currentFields)
+        IReadOnlyList<LiveFieldValue> currentFields,
+        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null)
     {
-        // Clean breadcrumbs: remove navigation cycles (e.g., Child→Parent→Child)
+        // Clean breadcrumbs: remove navigation cycles (e.g., Child->Parent->Child)
         // before generating XML to avoid deeply nested duplicate pointer chains.
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
 
@@ -119,42 +231,7 @@ public static class CeXmlExportService
         var leafIndent = indent + new string(' ', cleanedBc.Count * 2);
         bool parentIsPointer = cleanedBc.Count == 1 || cleanedBc[^1].IsPointerDeref;
 
-        foreach (var field in currentFields)
-        {
-            var ceField = MapCeField(field);
-            bool isScalar = ceField != null;
-
-            if (parentIsPointer && cleanedBc.Count > 1)
-            {
-                // Under a pointer parent (not root): need dereference
-                // Address=+0, Offsets=[field.Offset]
-                if (isScalar)
-                {
-                    EmitLeaf(sb, leafIndent, field.Name, ceField!,
-                        "+0", new[] { field.Offset });
-                }
-                else if (field.IsNavigable)
-                {
-                    // Navigable but non-scalar (struct/object): auto-expand or placeholder
-                    EmitNavigableField(sb, leafIndent, field,
-                        "+0", new[] { field.Offset });
-                }
-            }
-            else
-            {
-                // Under root directly, or under an inline struct parent: just +offset
-                if (isScalar)
-                {
-                    EmitLeaf(sb, leafIndent, field.Name, ceField!,
-                        $"+{field.Offset:X}", null);
-                }
-                else if (field.IsNavigable)
-                {
-                    EmitNavigableField(sb, leafIndent, field,
-                        $"+{field.Offset:X}", null);
-                }
-            }
-        }
+        EmitFields(sb, leafIndent, currentFields, parentIsPointer, cleanedBc.Count > 1, resolvedStructs);
 
         // Close all nested levels (innermost first)
         for (int i = openTags - 1; i >= 0; i--)
@@ -177,7 +254,8 @@ public static class CeXmlExportService
         string rootAddress,
         string rootName,
         string className,
-        IReadOnlyList<LiveFieldValue> fields)
+        IReadOnlyList<LiveFieldValue> fields,
+        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null)
     {
         _nextId = 100;
         var sb = new StringBuilder();
@@ -190,20 +268,7 @@ public static class CeXmlExportService
             showAsHex: true, varType: "8 Bytes");
 
         var leafIndent = indent + "  ";
-        foreach (var field in fields)
-        {
-            var ceField = MapCeField(field);
-            if (ceField != null)
-            {
-                EmitLeaf(sb, leafIndent, field.Name, ceField,
-                    $"+{field.Offset:X}", null);
-            }
-            else if (field.IsNavigable)
-            {
-                EmitNavigableField(sb, leafIndent, field,
-                    $"+{field.Offset:X}", null);
-            }
-        }
+        EmitFields(sb, leafIndent, fields, parentIsPointer: false, needDeref: false, resolvedStructs);
 
         EmitGroupClose(sb, indent);
 
@@ -252,12 +317,12 @@ public static class CeXmlExportService
     /// Remove cycles from the breadcrumb navigation path before XML generation.
     ///
     /// A cycle occurs when the user navigates away from an object and later returns to
-    /// the same address (e.g., Child → Parent → Child again). The intermediate entries
+    /// the same address (e.g., Child -> Parent -> Child again). The intermediate entries
     /// (the detour) are removed, keeping only the shortest path.
     ///
-    /// Example: [A, B, C, A, B] → A appears at 0 and 3 → remove [1..3] → [A, B]
-    /// This gives the clean CE pointer chain: Root(A) → field(B) instead of
-    /// Root(A) → field(B) → Outer(C) → field(A) → field(B).
+    /// Example: [A, B, C, A, B] -> A appears at 0 and 3 -> remove [1..3] -> [A, B]
+    /// This gives the clean CE pointer chain: Root(A) -> field(B) instead of
+    /// Root(A) -> field(B) -> Outer(C) -> field(A) -> field(B).
     /// </summary>
     internal static IReadOnlyList<BreadcrumbItem> CleanBreadcrumbs(IReadOnlyList<BreadcrumbItem> breadcrumbs)
     {
@@ -275,7 +340,7 @@ public static class CeXmlExportService
                 {
                     if (string.Equals(result[i].Address, result[j].Address, StringComparison.OrdinalIgnoreCase))
                     {
-                        // Found cycle from i to j — remove entries (i+1) through j inclusive.
+                        // Found cycle from i to j -- remove entries (i+1) through j inclusive.
                         // Keeps the first occurrence at i and continues with j+1 onward.
                         result.RemoveRange(i + 1, j - i);
                         changed = true;
@@ -291,6 +356,112 @@ public static class CeXmlExportService
     // ========================================
     // Private helpers
     // ========================================
+
+    /// <summary>
+    /// Emit all leaf fields, handling scalars, resolved structs, and navigable placeholders.
+    /// </summary>
+    private static void EmitFields(StringBuilder sb, string indent,
+        IReadOnlyList<LiveFieldValue> fields, bool parentIsPointer, bool needDeref,
+        Dictionary<int, List<LiveFieldValue>>? resolvedStructs)
+    {
+        foreach (var field in fields)
+        {
+            // Check if this StructProperty has pre-resolved children
+            if (field.TypeName == "StructProperty"
+                && resolvedStructs != null
+                && resolvedStructs.TryGetValue(field.Offset, out var structChildren)
+                && structChildren.Count > 0)
+            {
+                EmitResolvedStruct(sb, indent, field, structChildren, parentIsPointer, needDeref);
+                continue;
+            }
+
+            var ceField = MapCeField(field);
+            bool isScalar = ceField != null;
+
+            if (parentIsPointer && needDeref)
+            {
+                // Under a pointer parent (not root): need dereference
+                if (isScalar)
+                {
+                    EmitLeaf(sb, indent, field.Name, ceField!,
+                        "+0", new[] { field.Offset });
+                }
+                else if (field.IsNavigable)
+                {
+                    EmitNavigableField(sb, indent, field,
+                        "+0", new[] { field.Offset });
+                }
+            }
+            else
+            {
+                // Under root directly, or under an inline struct parent: just +offset
+                if (isScalar)
+                {
+                    EmitLeaf(sb, indent, field.Name, ceField!,
+                        $"+{field.Offset:X}", null);
+                }
+                else if (field.IsNavigable)
+                {
+                    EmitNavigableField(sb, indent, field,
+                        $"+{field.Offset:X}", null);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Emit a StructProperty with pre-resolved inner fields as a CE group.
+    /// Children are flattened (nested structs already expanded with dot-prefixed names).
+    /// Each child's Offset is relative to the struct start.
+    /// </summary>
+    private static void EmitResolvedStruct(StringBuilder sb, string indent,
+        LiveFieldValue structField, List<LiveFieldValue> children,
+        bool parentIsPointer, bool needDeref)
+    {
+        // Determine the group header's address (same logic as other fields)
+        string address;
+        int[]? offsets;
+
+        if (parentIsPointer && needDeref)
+        {
+            address = "+0";
+            offsets = new[] { structField.Offset };
+        }
+        else
+        {
+            address = $"+{structField.Offset:X}";
+            offsets = null;
+        }
+
+        // Struct group header with struct type name in description
+        var description = !string.IsNullOrEmpty(structField.StructTypeName)
+            ? $"{structField.Name} ({structField.StructTypeName})"
+            : structField.Name;
+
+        EmitGroupOpen(sb, indent, description, address, offsets);
+        var childIndent = indent + "  ";
+
+        foreach (var child in children)
+        {
+            var ceField = MapCeField(child);
+            if (ceField != null)
+            {
+                // Scalar child: offset relative to struct start
+                EmitLeaf(sb, childIndent, child.Name, ceField,
+                    $"+{child.Offset:X}", null);
+            }
+            else if (child.IsPointerNavigation)
+            {
+                // Pointer inside struct: emit as 8 Bytes hex placeholder
+                EmitGroupPlaceholder(sb, childIndent, child.Name,
+                    $"+{child.Offset:X}", null, showAsHex: true);
+            }
+            // Skip unknown types (arrays, delegates, etc.) — they're not useful in CE
+        }
+
+        EmitGroupClose(sb, indent);
+    }
 
     /// <summary>Emit a group header that will contain child entries (opens CheatEntries block).</summary>
     private static void EmitGroupOpen(StringBuilder sb, string indent, string description,
@@ -318,8 +489,8 @@ public static class CeXmlExportService
     }
 
     /// <summary>
-    /// Emit a group placeholder — a GroupHeader with no children.
-    /// Used for navigable struct/pointer fields at leaf level.
+    /// Emit a group placeholder -- a GroupHeader with no children.
+    /// Used for navigable struct/pointer fields at leaf level when resolution is unavailable.
     /// Pointer fields get ShowAsHex=1.
     /// </summary>
     private static void EmitGroupPlaceholder(StringBuilder sb, string indent, string description,
@@ -374,57 +545,14 @@ public static class CeXmlExportService
     }
 
     /// <summary>
-    /// Try to get struct auto-expansion info for a simple StructProperty.
-    /// Returns expansion info if the field has f:[val1] or f:[val1, val2] hint in TypedValue.
-    /// Returns null if not expandable (not StructProperty, no values, showing {TypeName}, etc.).
-    /// </summary>
-    private static StructExpandInfo? TryGetStructExpand(LiveFieldValue field)
-    {
-        if (field.TypeName != "StructProperty") return null;
-        if (string.IsNullOrEmpty(field.TypedValue)) return null;
-        // Only expand when TypedValue shows actual values: "f:[300.0000, 300.0000]"
-        // NOT when showing "{GameplayAttributeData}" (uninitialized/unknown struct)
-        if (!field.TypedValue.StartsWith("f:[") || !field.TypedValue.EndsWith("]")) return null;
-
-        var inner = field.TypedValue[3..^1]; // Extract content between "f:[" and "]"
-        var parts = inner.Split(',', StringSplitOptions.TrimEntries);
-        if (parts.Length < 1 || parts.Length > 2) return null;
-
-        // Preamble: structs > 8 bytes have an 8-byte preamble (vtable/base class pointer)
-        int preamble = (field.Size > 8) ? 8 : 0;
-        return new StructExpandInfo(parts.Length, "Float", 4, preamble);
-    }
-
-    /// <summary>
-    /// Emit a navigable field — either auto-expanded (struct with values) or as a group placeholder.
-    /// For expandable structs: emits GroupOpen + #1/#2 Float children + GroupClose.
-    /// For non-expandable: emits GroupPlaceholder (pointer gets ShowAsHex=1).
+    /// Emit a navigable field as a group placeholder (no resolved children available).
+    /// Pointer fields get ShowAsHex=1.
     /// </summary>
     private static void EmitNavigableField(StringBuilder sb, string indent,
         LiveFieldValue field, string address, int[]? offsets)
     {
-        var expand = TryGetStructExpand(field);
-        if (expand != null)
-        {
-            // Auto-expand: group with #1, #2 children
-            EmitGroupOpen(sb, indent, field.Name, address, offsets);
-            var childIndent = indent + "  ";
-            int valueOffset = expand.Preamble;
-            for (int vi = 0; vi < expand.ValueCount; vi++)
-            {
-                EmitLeaf(sb, childIndent, $"#{vi + 1}",
-                    new CeFieldInfo(expand.CeType),
-                    $"+{valueOffset:X}", null);
-                valueOffset += expand.TypeSize;
-            }
-            EmitGroupClose(sb, indent);
-        }
-        else
-        {
-            // Non-expandable navigable field: placeholder
-            EmitGroupPlaceholder(sb, indent, field.Name, address, offsets,
-                showAsHex: field.IsPointerNavigation);
-        }
+        EmitGroupPlaceholder(sb, indent, field.Name, address, offsets,
+            showAsHex: field.IsPointerNavigation);
     }
 
     /// <summary>
@@ -466,14 +594,14 @@ public static class CeXmlExportService
             // FName index
             "NameProperty" => new CeFieldInfo("4 Bytes"),
 
-            // Enum — underlying value is typically int32 (4 bytes)
+            // Enum -- underlying value is typically int32 (4 bytes)
             "EnumProperty" => new CeFieldInfo("4 Bytes"),
 
-            // String types — CE "String" reads pointer-to-string
+            // String types -- CE "String" reads pointer-to-string
             "StrProperty" => new CeFieldInfo("String"),
             "TextProperty" => new CeFieldInfo("String"),
 
-            _ => null // Unknown — not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
+            _ => null // Unknown -- not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
         };
     }
 }

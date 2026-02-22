@@ -6,20 +6,36 @@
              x:DataType="vm:HexViewViewModel">
 
   <DockPanel Margin="8">
-    <!-- Controls bar -->
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+    <!-- Row 1: Address + Size + Read -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
       <TextBox Watermark="{StaticResource str.HexView.Address}"
                Text="{Binding Address}" Width="200"/>
       <TextBox Watermark="{StaticResource str.HexView.Size}"
                Text="{Binding Size}" Width="80"/>
       <Button Content="{StaticResource str.HexView.Read}"
               Command="{Binding ReadCommand}" Padding="12,4"/>
-      <ToggleButton Content="{StaticResource str.HexView.LiveWatch}"
-                    IsChecked="{Binding IsWatching}"
-                    Command="{Binding ToggleWatchCommand}"
-                    Margin="8,0,0,0" Padding="12,4"/>
-      <TextBox Watermark="{StaticResource str.HexView.Interval}"
-               Text="{Binding WatchInterval}" Width="80"/>
+    </StackPanel>
+
+    <!-- Row 2: Live Watch controls -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+      <Button Content="{Binding WatchButtonText}"
+              Command="{Binding ToggleWatchCommand}"
+              Padding="12,4"
+              ToolTip.Tip="Start or stop live memory watching"/>
+      <TextBlock Text="{StaticResource str.HexView.Interval}"
+                 Foreground="#888" VerticalAlignment="Center" FontSize="12"/>
+      <TextBox Text="{Binding WatchInterval}" Width="80"
+               IsEnabled="{Binding !IsWatching}"
+               ToolTip.Tip="Watch interval in milliseconds"/>
+      <!-- Watch status indicator -->
+      <Border Background="#2A4A2A" CornerRadius="4" Padding="8,2"
+              IsVisible="{Binding IsWatching}">
+        <TextBlock Text="{Binding WatchStatusText}"
+                   Foreground="#4EC9B0" VerticalAlignment="Center" FontSize="12"/>
+      </Border>
+      <TextBlock Text="{Binding WatchStatusText}"
+                 Foreground="#888" VerticalAlignment="Center" FontSize="12"
+                 IsVisible="{Binding !IsWatching}"/>
     </StackPanel>
 
     <!-- Error display -->
