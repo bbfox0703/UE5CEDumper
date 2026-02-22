@@ -1,14 +1,14 @@
 # UE5CEDumper
 
-一套針對 Unreal Engine 4 & 5 遊戲的**執行期結構探查工具**，由 C++ 注入式 DLL、Cheat Engine Lua Bridge 及 Avalonia UI 三個元件組成。透過 AOB 掃描定位引擎全域指標（GObjects / GNames / GWorld），遍歷 UObject 層次結構，並透過 Named Pipe 將即時資料串流至外部 GUI。
+一套針對 Unreal Engine 4 & 5 遊戲的**執行期結構探查工具**、配和 Cheat Engine、可更方便的開發 Table。
 
-這並不是另一個 UE dumpers，也就是說我名字沒取好。此工具的主要功能是能更方便開發 Cheat Engine 的作弊表格。要使用專業 Dumper，請移駕： 
-[Encryqed/Dumper-7](https://github.com/Encryqed/Dumper-7), [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) and [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS)
+UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumper，它為遊戲記憶體提供了一個**即時視窗**，讓你能即時瀏覽物件、尋找實例，並匯出支援 Cheat Engine (CE) 的結構定義。
 
-> **現況**：DLL 核心功能完成。已在 **17 款遊戲**上測試通過，涵蓋 UE 4.18 ~ 5.7（TQ2、EverSpace 2、Hogwarts Legacy、FF7 Rebirth、FF7 Remake、Octopath Traveler、DQ I&II HD-2D、DQ III HD-2D、DQ XI S、Tower of Mask、Star Wars Jedi、IDOLM@STER、Romancing SaGa 2 RotS、Ghostwire: Tokyo、Lushfoil Photography Sim、Manor Lords、Satisfactory）。Avalonia UI 功能完成，包含 Object Tree、Live Walker、Instance Finder 及 Class Structure 面板。
+> 本工具為「實戰型」的 Table 製作人員打造，旨在消除UE物件的偵測、識別到在 CE 中的實作之間的鴻溝。
+
+> 這並不定一般 Dumper 無法把大量資料倒出並分析，其集中在簡單找到 UE 結構，並和 CE 開發配合使用。故請視為是一個通用型的 UE 工具。
 
 ---
-
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D4)](https://www.microsoft.com/windows)
 [![UE Version](https://img.shields.io/badge/UE-4.18--5.7-orange)](https://www.unrealengine.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
@@ -17,289 +17,100 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-CC785C?logo=claude)](https://claude.ai/code)
 
-## 功能一覽
+## 實測版本矩陣 (Tested Version Matrix)
 
-| 功能 | 狀態 |
+| UE 版本 | GObjects | GNames | DynOff | 已驗證遊戲 |
+|---|:---:|:---:|:---:|---|
+| **4.18** | ✅ | ✅ | ✅ | *Final Fantasy VII Remake Intergrade* |
+| **4.21 – 4.24** | ✅ | ✅ | ✅ | *《STAR WARS 絕地：組織殞落™》, 勇者鬥惡龍 XI S, 偶像大師 星耀季節, 八方旅人, 勇者鬥惡龍 I&II / III HD-2D 重製版* |
+| **4.25 – 4.27** | ✅ | ✅ | ✅ | *Final Fantasy VII Rebirth, Tower of Mask, 霍格華茲的傳承, 復活邪神 2 七英雄的復仇, Ghostwire: Tokyo* |
+| **5.0 – 5.2** | ✅ | ✅ | ✅ | (透過通用特徵碼確認支援) |
+| **5.3 – 5.4** | ✅ | ✅ | ✅ | *Satisfactory (v1.0 滿意工廠)* |
+| **5.5 – 5.7** | ✅ | ✅* | ✅** | *泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords)* |
+
+*\*GNames 在 5.5+ 版本使用 .data 指標掃描回退機制。*
+*\**DynOff 支援 **CasePreservingName (FName = 16 bytes)** 佈局。
+
+---
+
+## 專為 Table 製作人員設計的功能
+
+| 功能 | 說明 |
 |---|---|
-| GObjects AOB 掃描（51 組 Pattern，6 個來源，UE4.18–5.7） | ✅ |
-| GNames AOB 掃描（17 組 Pattern）＋ `.data` 指標掃描 Fallback | ✅ |
-| GWorld AOB 掃描（7 組 Pattern） | ✅ |
-| UE 版本偵測（PE VERSIONINFO ＋ 記憶體字串掃描） | ✅ |
-| FChunkedFixedUObjectArray ＋ FFixedUObjectArray（平坦陣列）自動偵測 | ✅ |
-| FUObjectItem Stride 自動偵測（16/24/20 bytes） | ✅ |
-| FNamePool 多格式讀取：標準、Hash 前綴、UE4 TNameEntryArray | ✅ |
-| 動態 FField/FProperty/UStruct Offset 偵測（DynOff）：支援 UE 5.5+ CasePreservingName | ✅ |
-| CasePreservingName 偵測（UE5.5+，FName = 16 bytes） | ✅ |
-| FProperty 至 UProperty 自動偵測回退（UE4 <4.25） | ✅ |
-| Live Data Walker — 檢視目前物件結構的記憶體資料 | ✅ |
-| Instance Finder — 依 Class 名稱、或是記憶體位址搜尋所有實例、並可在 Live Data Walker 中開啟 | ✅ |
-| CE XML 匯出 — 將 Live Walker 的資料轉換成 CE 格式，可直接在 CE 中貼上 | ✅ |
-| Named Pipe IPC 伺服器（JSON 換行分隔） | ✅ |
-| CE Plugin 模式（Type 5 主選單入口、未使用） | ✅ |
-| Avalonia UI（Object Tree、Live Walker、Instance Finder、Class Structure） | ✅ |
-| Git Commit Hash ＋ 建置時間戳嵌入 DLL | ✅ |
+| **AOB 掃描** | 整合來自 6 個來源的 50 多種特徵碼。支援 `FChunkedFixed` 與 `FFixed` 物件陣列。 |
+| **DynOff (動態偏移量)** | 執行時自動探測 `FField`、`FProperty` 與 `UStruct`。遊戲改版後不再需要手動更新偏移量。 |
+| **Live Walker (即時檢視)** | 即時檢查實例 (Instance) 的記憶體數據，數值變動一目瞭然。 |
+| **實例搜尋器** | 瞬間定位類別中所有作用中的實例。支援一鍵開啟 Live Walker 檢視。 |
+| **一鍵 CE 匯出** | 自動產生 CE XML 位址紀錄（含布林值的位元欄位 Bitfields），可直接貼上至你的位址列表。 |
+| **現代化 UI** | 外部 **Avalonia UI** 透過高速具名管道 (Named Pipe) 連線，確保遊戲執行效能不受影響。 |
 
 ---
 
-## 系統架構
+## 架構與工作流程 (Architecture & Workflow)
 
-```
-┌──────────────────────────────────────────────────────┐
-│  遊戲程序（x64，UE4/UE5）                            │
-│                                                      │
-│  CE Lua  (UE5CEDumper.CT / ue5dump.lua)              │
-│      │  injectDLL()                                  │
-│      ▼                                               │
-│  UE5Dumper.dll  [已注入]                             │
-│      ├── ExportAPI       ← C ABI，供 CE Lua 呼叫     │
-│      ├── PipeServer      ← Named Pipe IPC 伺服器     │
-│      ├── OffsetFinder    ← AOB 掃描 + DynOff 偵測    │
-│      ├── ObjectArray     ← FChunkedFixed + FFixed 自動 │
-│      ├── FNamePool       ← UE4/UE5 FNamePool 讀取器  │
-│      ├── UStructWalker   ← FField 鏈遍歷              │
-│      ├── CEPlugin        ← CE Plugin Type 5 入口      │
-│      ├── Logger          ← 檔案日誌，5 版輪轉，5MB 上限│
-│      └── Memory          ← AOBScan + ResolveRIP      │
-└──────────────────────┬───────────────────────────────┘
-                       │ \\.\pipe\UE5DumpBfx
-                       │ JSON，換行分隔
-┌──────────────────────▼───────────────────────────────┐
-│  UE5DumpUI.exe  (Avalonia 11 + CommunityToolkit.Mvvm)│
-│      ├── PipeClient       ← 非同步，Request/Response │
-│      ├── ObjectTreePanel  ← UObject 層次瀏覽器       │
-│      ├── ClassStructPanel ← 欄位/屬性格狀顯示         │
-│      ├── PointerPanel     ← GObjects / GNames 顯示   │
-│      ├── HexViewPanel     ← 即時記憶體 Hex 檢視       │
-│      ├── LiveWalkerPanel  ← 即時欄位值監控            │
-│      └── InstanceFinder   ← 依 Class 名稱搜尋         │
-└──────────────────────────────────────────────────────┘
+1. **注入 DLL**: 開啟 Cheat Engine 附加至遊戲，執行 `UE5CEDumper.CT`。
+2. **AOB 掃描**: DLL 自動定位引擎全域指標，並偵測 UE 版本與記憶體佈局。
+3. **管道串流**: 即時數據透過具名管道 (Named Pipe, JSON-RPC) 串流至 **UE5DumpUI**。
+4. **製作 Table**: 瀏覽 `UObject` 階層，尋找 HP/MP 等偏移量，並快速匯出至 CE。
+
+```text
+┌─────────────────────────┐         具名管道          ┌────────────────────────┐
+│   遊戲進程 (已注入)      │  ───────────────────────▶  │      外部 GUI 介面     │
+│  (DLL + CE Lua Bridge)  │  ◀───────────────────────  │   (Avalonia UI App)    │
+└─────────────────────────┘      JSON-RPC 協定        └────────────────────────┘
 ```
 
----
+## 系統需求 (Requirements)
 
-## 目錄結構
+### 編譯環境 (Build)
 
-```
-UE5CEDumper/
-├── build.cmd                   ← 建置包裝器（debug/release/publish/test）
-├── build.ps1                   ← PowerShell 建置驅動
-├── CMakeLists.txt              ← 根 CMake（委派至 dll/）
-│
-├── dll/                        ← C++ 注入式 DLL
-│   ├── CMakeLists.txt
-│   └── src/
-│       ├── dllmain.cpp         ← DLL_PROCESS_ATTACH、AutoStartThreadProc
-│       ├── Signatures.h        ← 51 組 AOB Pattern + 4 組符號匯出（所有來源）
-│       ├── Constants.h         ← 集中管理字串常數 + DynOff 命名空間
-│       ├── ExportAPI.cpp/.h    ← C ABI 匯出（UE5_Init、UE5_WalkClassBegin…）
-│       ├── PipeServer.cpp/.h   ← Named Pipe 伺服器 + JSON 分派
-│       ├── PipeProtocol.h      ← IPC 命令/回應定義
-│       ├── OffsetFinder.cpp/.h ← GObjects/GNames 掃描 + ValidateAndFixOffsets
-│       ├── ObjectArray.cpp/.h  ← FChunkedFixed + FFixed（平坦）自動偵測
-│       ├── FNamePool.cpp/.h    ← FNamePool Chunk 讀取器
-│       ├── UStructWalker.cpp/.h← FField 鏈 + SuperStruct 繼承鏈遍歷
-│       ├── CEPlugin.cpp        ← CE Plugin Type 5 主選單
-│       ├── Logger.cpp/.h       ← 檔案日誌，5 版輪轉，5 MB 上限
-│       └── Memory.cpp/.h       ← AOBScan（僅掃執行區段）、ResolveRIP、ReadSafe
-│
-├── ui/                         ← C# Avalonia UI
-│   ├── UE5DumpUI.sln
-│   └── UE5DumpUI/
-│       ├── UE5DumpUI.csproj
-│       ├── Core/               ← 平台抽象介面（IPlatformService…）
-│       ├── Models/             ← UObjectNode、FieldInfoModel、EngineState…
-│       ├── Services/           ← PipeClient、DumpService、LoggingService…
-│       ├── ViewModels/         ← MainWindow、ObjectTree、ClassStruct…
-│       └── Views/              ← AXAML 面板
-│
-├── scripts/
-│   ├── UE5CEDumper.CT          ← Cheat Engine Cheat Table（主要入口）
-│   ├── ue5dump.lua             ← CE Lua 輔助腳本
-│   └── test_pipe.ps1           ← PowerShell Pipe 煙霧測試
-│
-├── dist/                       ← 預先建置的 Release 二進位檔
-│   ├── UE5Dumper.dll
-│   └── UE5DumpUI.exe
-│
-└── vendor/                     ← Git Submodules（僅供參考）
-    ├── Dumper-7/
-    ├── UEDumper/
-    └── GSpots/
-```
-
----
-
-## 環境需求
-
-### 建置工具
-
-| 工具 | 版本 |
+| 工具 | 版本要求 |
 |---|---|
-| Visual Studio / MSVC | 2022 v17+（MSVC v143） |
+| Visual Studio / MSVC | 2022 v17+ (MSVC v143) |
 | CMake | 3.25+ |
-| Ninja | 任意近期版本 |
+| Ninja | 任何近期版本 |
 | .NET SDK | 10.0 |
 
-> `build.cmd` / `build.ps1` 透過 `vswhere` 自動定位 MSVC，不使用硬編路徑。
+> `build.cmd` / `build.ps1` 會透過 `vswhere` 自動定位 MSVC，無需手動設定路徑。
 
-### 執行環境
+### 執行環境 (Runtime)
 
 - Windows 10/11 x64
-- Cheat Engine 7.5+
-- 已執行的 Unreal Engine 4 或 5 遊戲程序（x64）
+- Cheat Engine 7.6 或更高版本
+- 執行中的 Unreal Engine 4 或 5 遊戲作業程序 (x64)
 
 ---
 
-## 建置方式
+## 重要注意事項 (Important Notes)
 
-```cmd
-:: 建置全部（Release）
-build
-
-:: 僅建置 DLL
-build dll
-
-:: 僅建置 UI
-build ui
-
-:: Debug 建置
-build debug
-
-:: 執行測試
-build test
-
-:: Native AOT 單檔發布
-build publish
-
-:: 先清除再 Release 建置
-build clean
-```
-
-輸出位置：
-- `build/UE5Dumper.dll` — 注入式 DLL
-- `ui/UE5DumpUI/bin/Release/.../UE5DumpUI.exe` — UI 應用程式
-- `dist/` — Release 或 Publish 成功後自動複製至此
+* **自定義數據結構**: 在如《FF7 Rebirth》等遊戲中，部分關鍵數據（如 HP）存儲在標準 `UObject` 之外的自定義結構中。 本工具沒有辦法找到這些數據。
+* **GWorld 連通性**: `GWorld` 遍歷在約 60% 的實測遊戲中可正常運作。 若無法運作，請改用 **Object Tree** 或 **Instance Finder** 作為主要進入點。
 
 ---
 
-## 使用流程
+## 專案貢獻 (Contributing)
 
-### 1. 建置
-
-```cmd
-build release
-```
-
-### 2. 部署 DLL
-
-將 `dist\UE5Dumper.dll` 放在與 `dist\UE5CEDumper.CT` **相同的資料夾**中。
-
-### 3. 透過 Cheat Engine 注入
-
-1. 開啟 Cheat Engine，附加至 UE5 遊戲程序。
-2. 開啟 `dist\UE5CEDumper.CT`。
-3. 勾選 **[Inject DLL + Start Pipe Server]**。
-4. Lua 主控台會顯示 15 秒倒數，DLL 在背景掃描 GObjects/GNames。
-
-### 4. 連接 UI
-
-```cmd
-dist\UE5DumpUI.exe
-```
-
-點擊工具列的 **Connect** 按鈕，UI 將連接至 `\\.\pipe\UE5DumpBfx`。
-
-### 5. 除錯診斷
-
-- DLL 日誌：`%LOCALAPPDATA%\UE5CEDumper\Logs\UE5Dumper-0.log`
-- UI 日誌：`%APPDATA%\UE5CEDumper\Logs\UE5DumpUI-0.log`
-- Pipe 煙霧測試：`powershell -f scripts\test_pipe.ps1`
+請參閱 [CONTRIBUTING.md](CONTRIBUTING.md) 以瞭解：
+- **提交 AOB 特徵碼** — 需要提供哪些證據及驗證流程。
+- **回報偵測失敗** — 需要附上哪些日誌與資訊。
+- **程式碼貢獻** — PR 流程與程式碼風格規範。
 
 ---
 
-## Pipe IPC 協定
-
-通訊格式為換行分隔 JSON，透過 `\\.\pipe\UE5DumpBfx` 傳輸。
-
-**主要命令（UI → DLL）：**
-
-| 命令 | 說明 |
-|---|---|
-| `init` | 初始化引擎，回傳 UE 版本與全域指標位址 |
-| `get_pointers` | 回傳 GObjects / GNames 位址與物件總數 |
-| `get_object_list` | 分頁取得 UObject 列表 |
-| `walk_class` | 回傳 UClass 的所有 FField 欄位資訊 |
-| `walk_world` | 遍歷 GWorld → PersistentLevel → Actors |
-| `find_instances` | 搜尋指定 Class 名稱的所有實例 |
-| `get_ce_pointer_info` | 回傳 Cheat Engine 相容的 XML 指標鏈 |
-| `read_mem` / `write_mem` | 原始記憶體存取 |
-| `watch` / `unwatch` | 訂閱即時記憶體更新（主動推送事件） |
-| `get_offsets` | 回傳執行期偵測的 DynOff 值（診斷用途） |
-
----
-
-## 動態 Offset 偵測（DynOff）
-
-UE 5.5+ 引入了 **CasePreservingName** 機制，`FName` 從 8 bytes 擴大為 16 bytes（新增 `DisplayIndex` 欄位）。這使得 `FField::Flags`、`FField::Name` 及所有 `FProperty` 欄位的 Offset 偏移 +8 bytes。
-
-`ValidateAndFixOffsets()`（位於 `OffsetFinder.cpp`）透過探測已知結構（Guid — 欄位 A/B/C/D 在 Offset 0/4/8/12；Vector — X/Y/Z 在 Offset 0/4/8）來自動偵測正確的記憶體佈局，並在執行期動態更新 `DynOff::*` 變數。
-
-所有 `UStructWalker` 程式碼均使用 `DynOff::*`，完全不依賴硬編的 FField/FProperty Offset。
-
----
-
-## UE 版本支援情況
-
-| UE 版本 | GObjects | GNames | DynOff | 已測試遊戲 |
-|---|---|---|---|---|
-| 4.18 | ✅ | ✅ | ✅（UProperty 回退） | FF7 Remake Intergrade |
-| 4.21–4.24 | ✅ | ✅ | ✅ | Star Wars Jedi、DQ XI S、IDOLM@STER、Octopath Traveler、DQ I&II HD-2D Remake、DQ III HD-2D Remake |
-| 4.25–4.27 | ✅ | ✅ | ✅ | FF7 Rebirth、Tower of Mask、Hogwarts Legacy、Romancing SaGa 2 RotS、Ghostwire: Tokyo (TBD) |
-| 5.0–5.2 | ✅ | ✅ | ✅ | — |
-| 5.3–5.4 | ✅ | ✅ | ✅ | Satisfactory |
-| 5.5–5.7 | ✅ | ✅（指標掃描） | ✅（CPN） | Titan Quest II、EverSpace 2、Lushfoil Photography Sim、Manor Lords |
-
----
-
-## 已知問題
-
-- **部分遊戲「Start from GWorld」失敗** — 17 款已測試遊戲中有 9 款 GWorld 功能正常（TQ2、EverSpace 2、Hogwarts Legacy、IDOLM@STER、Romancing SaGa 2 RotS、Tower of Mask、Ghostwire: Tokyo、Lushfoil Photography Sim、Manor Lords）。部分 UE4 遊戲及 Satisfactory 仍失敗（FF7R、FF7Re、DQ 系列、OctoPath）。持續調查中。
-- **UE 版本偵測錯誤** — 部分遊戲回報不正確的 UE 版本（例如 FF7R 顯示 504 應為 418、Ghostwire: Tokyo 顯示 505）。此為外觀問題，所有管線均透過自動回退偵測正常運作。
-- **FF7 Rebirth CE 位址查詢** — `get_ce_pointer_info` 的位址對物件查詢在 FF7 Rebirth 上失敗，其他遊戲正常。主要是因為 FF7Re的資料，例如 HP，並不是存在 UObject中。
-
----
-
-## 貢獻指南
-
-請參閱 [CONTRIBUTING_zh-TW.md](CONTRIBUTING_zh-TW.md) 了解：
-- **提交 AOB Pattern** — 需要提供哪些證據、驗證流程如何運作
-- **回報偵測失敗** — 需要附上哪些日誌與資訊
-- **程式碼貢獻** — PR 流程與程式碼風格
-
----
-
-## 參考來源與致謝
+## 參考專案與致謝 (References & Credits)
 
 | 專案 | 用途 |
 |---|---|
-| [Encryqed/Dumper-7](https://github.com/Encryqed/Dumper-7) | 動態 Offset 偵測模式、FField/FProperty 探測策略 |
-| [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) | Live Editor UI 架構參考 |
-| [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 執行期反射，另一角度的實作參考 |
-| [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | GObjects/GNames 的額外 AOB Pattern |
-| [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | GObjects/GNames 的額外 AOB Pattern 來源 |
-| UE4 Dumper.CT | Cake-san 的作弊表 — 額外 AOB Pattern（Signatures.h 中的 CT 系列） |
-| [nlohmann/json](https://github.com/nlohmann/json) | DLL 使用的 Header-only JSON 函式庫 |
+| [Encryqed/Dumper-7](https://github.com/Encryqed/Dumper-7) | 動態偏移量偵測模式、FField/FProperty 探測策略 |
+| [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) | 即時編輯器 UI 架構參考 |
+| [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 執行時反射機制參考 |
+| [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | GObjects/GNames 的額外 AOB 特徵碼 |
+| [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | 額外的 AOB 掃描模式 |
+| UE4 Dumper.CT | Cake-san 的 Cheat Table — 額外的 AOB 特徵碼 |
+| [nlohmann/json](https://github.com/nlohmann/json) | DLL 使用的 JSON 函式庫 |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua 腳本 API 參考 |
-| AOBMaker（私有） | AOB Pattern 生成工具 |
+| **AOBMaker (內部工具)** | AOB 特徵碼產生工具 |
 
 ---
 
-## 使用 Claude Code 開發
-
-本專案在 Anthropic 的 [Claude Code](https://claude.ai/code) 協助下開發。C++ DLL、C# Avalonia UI、建置腳本及文件均由開發者與 Claude Code 協作完成。
-
----
-
-## 授權條款
-
-[MIT](LICENSE) © 2026 bbfox0703
+**授權條款**: [MIT](LICENSE) © 2026 bbfox0703
