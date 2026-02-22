@@ -48,10 +48,10 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 ## Architecture & Workflow
 
-1.  **Inject DLL**: Attach Cheat Engine, run `UE5CEDumper.CT`.
-2.  **AOB Scan**: The DLL locates global engine pointers and detects the UE version/layout automatically.
-3.  **Pipe Stream**: Live data is streamed to the **UE5DumpUI** via Named Pipes (JSON-RPC).
-4.  **Create Table**: Browse the `UObject` hierarchy, find your HP/MP offsets, and export to CE.
+1.  **Inject DLL**: Run Cheat Engine, attach game process, load saves. Be sure game progress loaded. Run `UE5CEDumper.CT`.
+2.  **Enable Script**: Enable `init <== enable after process attached` script, then `Inject DLL + Start Pipe Server`. The DLL locates global engine pointers and detects the UE version/layout automatically.
+3.  **Pipe Stream**: Waiting for seconds. Execute **UE5DumpUI.exe**. Live data is streamed to the **UE5DumpUI** via Named Pipes (JSON-RPC).
+4.  **Navigate, Analyze**: Browse the `UObject` hierarchy, find class, or paste HP/MP address in UI to perform a reverse lookup, and export data to CE.
 
 | **Game Process (Injected)** |
 | :---: |
