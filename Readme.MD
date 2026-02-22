@@ -25,7 +25,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 | **4.21 – 4.24** | ✅ | ✅ | ✅ | *Star Wars Jedi, DQ XI S, IDOLM@STER STARLIT SEASON, Octopath Traveler, DQ I&II / III HD-2D Remaster* |
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | *FF7 Rebirth, Tower of Mask, Hogwarts Legacy, Romancing SaGa 2 RotS, Ghostwire: Tokyo* |
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | (Confirmed support via generic patterns) |
-| **5.3 – 5.4** | ✅ | ✅ | ✅ | *Satisfactory (v1.0)* |
+| **5.3 – 5.4** | ✅ | ✅ | ✅ | *Satisfactory (v1.1.3.1)* |
 | **5.5 – 5.7** | ✅ | ✅* | ✅** | *Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords* |
 
 *\*GNames uses .data pointer-scan fallback for 5.5+*
