@@ -79,12 +79,16 @@ struct LiveFieldValue {
     int32_t     arrayElemSize = 0;     // Element size in bytes
     uintptr_t   arrayInnerFFieldAddr = 0;  // Inner FProperty* (for read_array_elements command)
 
-    // For ArrayProperty Phase B: inline scalar element values (up to 64)
+    // For ArrayProperty Phase B/D: inline element values (up to 64)
     struct ArrayElement {
         int32_t     index = 0;
         std::string value;      // Human-readable typed value
         std::string hex;        // Per-element hex string
         std::string enumName;   // Only for enum arrays
+        // Phase D: pointer array fields
+        uintptr_t   ptrAddr = 0;       // UObject* value (0 = null)
+        std::string ptrName;           // Object name
+        std::string ptrClassName;      // Class name
     };
     std::vector<ArrayElement> arrayElements;
 
@@ -144,6 +148,15 @@ bool IsScalarArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     uintptr_t innerFFieldAddr, const std::string& innerTypeName,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase D: check if inner type is a pointer type (ObjectProperty, ClassProperty)
+bool IsPointerArrayType(const std::string& innerTypeName);
+
+// Phase D: read pointer elements from a TArray of UObject pointers.
+// For each element, reads the pointer, then resolves name + class name.
+ReadArrayResult ReadPointerArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
 } // namespace UStructWalker
