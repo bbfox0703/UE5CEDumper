@@ -79,6 +79,9 @@ struct LiveFieldValue {
     int32_t     arrayElemSize = 0;     // Element size in bytes
     uintptr_t   arrayInnerFFieldAddr = 0;  // Inner FProperty* (for read_array_elements command)
     uintptr_t   arrayInnerStructAddr = 0;  // UScriptStruct* for struct arrays (Phase F)
+    uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
+    struct EnumEntry { int64_t value; std::string name; };
+    std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList
 
     // For ArrayProperty Phase B/D/E/F: inline element values (up to 64)
     struct ArrayElement {
@@ -86,6 +89,7 @@ struct LiveFieldValue {
         std::string value;      // Human-readable typed value
         std::string hex;        // Per-element hex string
         std::string enumName;   // Only for enum arrays
+        int64_t     rawIntValue = 0;   // Raw integer for CE DropDownList (enum value or FName index)
         // Phase D: pointer array fields
         uintptr_t   ptrAddr = 0;       // UObject* value (0 = null)
         std::string ptrName;           // Object name
@@ -142,6 +146,7 @@ struct ReadArrayResult {
     std::string error;
     int32_t     totalCount = 0;
     int32_t     readCount  = 0;
+    uintptr_t   enumAddr = 0;  // UEnum* address (for CE DropDownList sharing)
     std::vector<LiveFieldValue::ArrayElement> elements;
 };
 
@@ -180,6 +185,10 @@ bool IsWeakPointerArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadWeakObjectArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Get all cached enum entries for a UEnum address (for CE DropDownList).
+// Triggers cache population if not yet cached.
+std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr);
 
 // Phase F: check if inner type is a struct type
 bool IsStructArrayType(const std::string& innerTypeName);

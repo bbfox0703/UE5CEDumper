@@ -23,12 +23,23 @@ public sealed class ArrayElementValue
     public string Value { get; init; } = "";
     public string Hex { get; init; } = "";
     public string EnumName { get; init; } = "";
+    /// <summary>Raw integer value for CE DropDownList (enum value or FName ComparisonIndex).</summary>
+    public long RawIntValue { get; init; }
     // Phase D: pointer array fields
     public string PtrAddress { get; init; } = "";
     public string PtrName { get; init; } = "";
     public string PtrClassName { get; init; } = "";
     // Phase F: struct sub-fields
     public List<StructSubFieldValue>? StructFields { get; init; }
+}
+
+/// <summary>
+/// A single enum entry (value + name) for CE DropDownList.
+/// </summary>
+public sealed class EnumEntryValue
+{
+    public long Value { get; init; }
+    public string Name { get; init; } = "";
 }
 
 /// <summary>
@@ -91,6 +102,12 @@ public sealed class LiveFieldValue
 
     /// <summary>For ArrayProperty Phase B: inline scalar element values (up to 64).</summary>
     public List<ArrayElementValue>? ArrayElements { get; init; }
+
+    /// <summary>For ArrayProperty (enum/byte-with-enum): UEnum* address for CE DropDownList sharing.</summary>
+    public string ArrayEnumAddr { get; init; } = "";
+
+    /// <summary>For ArrayProperty (enum/byte-with-enum): full UEnum entries for CE DropDownList.</summary>
+    public List<EnumEntryValue>? ArrayEnumEntries { get; init; }
 
     /// <summary>For StructProperty: absolute address of struct data (instance + offset).</summary>
     public string StructDataAddr { get; init; } = "";
