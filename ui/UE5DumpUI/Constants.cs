@@ -13,16 +13,21 @@ public static class Constants
     public const string MutexName = "Global\\UE5DumpUI_SingleInstance";
     public const string AppVersion = "1.0.0";
 
-    // Logging
+    // Logging — category-routed to separate files
     public const string LogFolderName = "UE5CEDumper";
     public const string LogSubFolder = "Logs";
-    public const string LogFilePrefix = "UE5DumpUI";
-    public const int LogMaxFiles = 5;
-    public const long LogMaxSizeBytes = 5 * 1024 * 1024; // 5MB
+    public const string LogSubfolderName = "UE5DumpUI";      // UI module subfolder under Logs/
+    public const string MirrorLogPrefix = "ui";               // Prefix for mirror files in game folders
+    public const int LogRotateMax = 2;                        // 2-file rotation per category
+    public const long LogMaxSizeBytes = 5 * 1024 * 1024;     // 5MB per file
 
     // Per-process mirror logging
-    public const int MirrorLogMaxFiles = 2;           // 2-version rotation per process
     public const int MaxProcessFolders = 20;           // Clean up oldest beyond this
+
+    // Log category names
+    public const string LogCatInit = "init";
+    public const string LogCatPipe = "pipe";
+    public const string LogCatView = "view";
 
     // Pipe Communication
     public const int PipeConnectTimeoutMs = 5000;

@@ -1936,6 +1936,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     // FStructProperty::Struct = Offset_Internal + 0x2C
     if (DynOff::bUseFProperty && propOffsetOff >= 0) {
         DynOff::FSTRUCTPROP_STRUCT  = propOffsetOff + 0x2C;
+        DynOff::FARRAYPROP_INNER   = propOffsetOff + 0x2C;  // Same subclass extension offset
         DynOff::FBOOLPROP_FIELDSIZE = DynOff::FSTRUCTPROP_STRUCT;
         // FEnumProperty::Enum and FByteProperty::Enum share the same subclass extension offset
         DynOff::FENUMPROP_ENUM     = DynOff::FSTRUCTPROP_STRUCT;

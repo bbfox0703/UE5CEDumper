@@ -4,82 +4,163 @@ using UE5DumpUI.Core;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Serilog-based logging service implementation.
-/// Logs to %LOCALAPPDATA%\UE5CEDumper\Logs with per-startup rotation.
-/// Each app startup shifts existing logs: -0.log → -1.log → ... → -(N-1).log
-/// Matches the DLL-side convention (UE5Dumper-scan-0.log, -1.log, etc.).
-/// Supports per-process mirror logging via StartProcessMirror/StopProcessMirror.
+/// Serilog-based logging service with category-based file routing.
+///
+/// Category files (under Logs/UE5DumpUI/ subfolder):
+///   init-0.log — app lifecycle, version, connection events
+///   pipe-0.log — pipe TX/RX JSON lines, connect/disconnect
+///   view-0.log — UI operations, search, navigation, export (default)
+///
+/// Per-process mirror files (under Logs/{ProcessName}/):
+///   ui-init-0.log, ui-pipe-0.log, ui-view-0.log
+///   Prefixed with "ui-" to avoid collision with DLL log files.
+///
+/// Each file: 2-file rotation, 5MB cap.
 /// </summary>
 public sealed class LoggingService : ILoggingService, IDisposable
 {
     private const string OutputTemplate =
         "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff}] [{Level:u4}] {Message:lj}{NewLine}{Exception}";
 
-    private readonly Serilog.Core.Logger _logger;
+    // Category log file names (without rotation suffix)
+    private static readonly string[] CategoryNames = [
+        Constants.LogCatInit,   // "init"
+        Constants.LogCatPipe,   // "pipe"
+        Constants.LogCatView,   // "view"
+    ];
+
     private readonly string _logDirectory;
+    private readonly string _moduleDir;  // Logs/UE5DumpUI/
+
+    // Category loggers (main)
+    private readonly Serilog.Core.Logger _initLogger;
+    private readonly Serilog.Core.Logger _pipeLogger;
+    private readonly Serilog.Core.Logger _viewLogger;
+
+    // Console logger (shared)
+    private readonly Serilog.Core.Logger _consoleLogger;
+
+    // Per-process mirror loggers
     private readonly object _mirrorLock = new();
-    private Serilog.Core.Logger? _mirrorLogger;
+    private Serilog.Core.Logger? _mirrorInitLogger;
+    private Serilog.Core.Logger? _mirrorPipeLogger;
+    private Serilog.Core.Logger? _mirrorViewLogger;
 
     public LoggingService(string logDirectory)
     {
         _logDirectory = logDirectory;
         Directory.CreateDirectory(logDirectory);
 
-        // Per-startup rotation: shift -0 → -1 → -2 → ... → -(N-1), delete oldest
-        RotateLogFiles(logDirectory, Constants.LogFilePrefix, Constants.LogMaxFiles);
+        // Create UI module subfolder: Logs/UE5DumpUI/
+        _moduleDir = Path.Combine(logDirectory, Constants.LogSubfolderName);
+        Directory.CreateDirectory(_moduleDir);
 
-        // Clean up old daily format files (UE5DumpUI-YYYYMMDD.log) from previous versions
-        CleanupOldDailyLogs(logDirectory, Constants.LogFilePrefix);
+        // Clean up old daily format files from previous versions
+        CleanupOldDailyLogs(_moduleDir, "UE5DumpUI");
+        // Also clean root for leftover old-format files
+        CleanupOldDailyLogs(logDirectory, "UE5DumpUI");
 
-        var logFile = Path.Combine(logDirectory, $"{Constants.LogFilePrefix}-0.log");
+        // Per-startup rotation for each category file
+        foreach (var cat in CategoryNames)
+        {
+            RotateLogFiles(_moduleDir, cat, Constants.LogRotateMax);
+        }
 
-        _logger = new LoggerConfiguration()
+        // Create category loggers
+        _initLogger = CreateFileLogger(Path.Combine(_moduleDir, "init-0.log"));
+        _pipeLogger = CreateFileLogger(Path.Combine(_moduleDir, "pipe-0.log"));
+        _viewLogger = CreateFileLogger(Path.Combine(_moduleDir, "view-0.log"));
+
+        // Console logger (shared across all categories)
+        _consoleLogger = new LoggerConfiguration()
             .MinimumLevel.Debug()
-            .WriteTo.File(
-                logFile,
-                fileSizeLimitBytes: Constants.LogMaxSizeBytes,
-                outputTemplate: OutputTemplate)
             .WriteTo.Console(outputTemplate: "[{Level:u4}] {Message:lj}{NewLine}")
             .CreateLogger();
 
-        _logger.Information("LoggingService initialized, log dir: {LogDir}", logDirectory);
+        _initLogger.Information("LoggingService initialized, log dir: {LogDir}", _moduleDir);
     }
 
-    public void Info(string message)
+    // ================================================================
+    // Category resolution
+    // ================================================================
+
+    private Serilog.Core.Logger ResolveLogger(string? category) => category switch
     {
-        _logger.Information(message);
-        lock (_mirrorLock) { _mirrorLogger?.Information(message); }
+        Constants.LogCatInit => _initLogger,
+        Constants.LogCatPipe => _pipeLogger,
+        _ => _viewLogger,
+    };
+
+    private Serilog.Core.Logger? ResolveMirrorLogger(string? category)
+    {
+        lock (_mirrorLock)
+        {
+            return category switch
+            {
+                Constants.LogCatInit => _mirrorInitLogger,
+                Constants.LogCatPipe => _mirrorPipeLogger,
+                _ => _mirrorViewLogger,
+            };
+        }
     }
 
-    public void Warn(string message)
+    // ================================================================
+    // Default-category methods (route to "view")
+    // ================================================================
+
+    public void Info(string message) => Info(Constants.LogCatView, message);
+    public void Warn(string message) => Warn(Constants.LogCatView, message);
+    public void Error(string message) => Error(Constants.LogCatView, message);
+    public void Error(string message, Exception ex) => Error(Constants.LogCatView, message, ex);
+    public void Debug(string message) => Debug(Constants.LogCatView, message);
+
+    // ================================================================
+    // Category-aware methods
+    // ================================================================
+
+    public void Info(string category, string message)
     {
-        _logger.Warning(message);
-        lock (_mirrorLock) { _mirrorLogger?.Warning(message); }
+        ResolveLogger(category).Information(message);
+        _consoleLogger.Information(message);
+        ResolveMirrorLogger(category)?.Information(message);
     }
 
-    public void Error(string message)
+    public void Warn(string category, string message)
     {
-        _logger.Error(message);
-        lock (_mirrorLock) { _mirrorLogger?.Error(message); }
+        ResolveLogger(category).Warning(message);
+        _consoleLogger.Warning(message);
+        ResolveMirrorLogger(category)?.Warning(message);
     }
 
-    public void Error(string message, Exception ex)
+    public void Error(string category, string message)
     {
-        _logger.Error(ex, message);
-        lock (_mirrorLock) { _mirrorLogger?.Error(ex, message); }
+        ResolveLogger(category).Error(message);
+        _consoleLogger.Error(message);
+        ResolveMirrorLogger(category)?.Error(message);
     }
 
-    public void Debug(string message)
+    public void Error(string category, string message, Exception ex)
     {
-        _logger.Debug(message);
-        lock (_mirrorLock) { _mirrorLogger?.Debug(message); }
+        ResolveLogger(category).Error(ex, message);
+        _consoleLogger.Error(ex, message);
+        ResolveMirrorLogger(category)?.Error(ex, message);
     }
+
+    public void Debug(string category, string message)
+    {
+        ResolveLogger(category).Debug(message);
+        _consoleLogger.Debug(message);
+        ResolveMirrorLogger(category)?.Debug(message);
+    }
+
+    // ================================================================
+    // Per-process mirror logging
+    // ================================================================
 
     public void StartProcessMirror(string processName)
     {
         if (string.IsNullOrWhiteSpace(processName)) return;
 
-        // Sanitize process name for use as folder name
         var safeName = SanitizeFolderName(processName);
         var mirrorDir = Path.Combine(_logDirectory, safeName);
 
@@ -87,35 +168,37 @@ public sealed class LoggingService : ILoggingService, IDisposable
         {
             Directory.CreateDirectory(mirrorDir);
 
-            // Per-startup rotation for mirror logs too
-            RotateLogFiles(mirrorDir, Constants.LogFilePrefix, Constants.MirrorLogMaxFiles);
-            CleanupOldDailyLogs(mirrorDir, Constants.LogFilePrefix);
+            // Rotate mirror files for each category
+            foreach (var cat in CategoryNames)
+            {
+                var mirrorPrefix = $"{Constants.MirrorLogPrefix}-{cat}";
+                RotateLogFiles(mirrorDir, mirrorPrefix, Constants.LogRotateMax);
+            }
+            // Also clean up old-format mirror files
+            CleanupOldDailyLogs(mirrorDir, "UE5DumpUI");
 
-            var mirrorFile = Path.Combine(mirrorDir, $"{Constants.LogFilePrefix}-0.log");
-
-            var newLogger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
-                .WriteTo.File(
-                    mirrorFile,
-                    fileSizeLimitBytes: Constants.LogMaxSizeBytes,
-                    outputTemplate: OutputTemplate)
-                .CreateLogger();
+            var newInit = CreateFileLogger(Path.Combine(mirrorDir, $"{Constants.MirrorLogPrefix}-init-0.log"));
+            var newPipe = CreateFileLogger(Path.Combine(mirrorDir, $"{Constants.MirrorLogPrefix}-pipe-0.log"));
+            var newView = CreateFileLogger(Path.Combine(mirrorDir, $"{Constants.MirrorLogPrefix}-view-0.log"));
 
             lock (_mirrorLock)
             {
-                _mirrorLogger?.Dispose();
-                _mirrorLogger = newLogger;
+                _mirrorInitLogger?.Dispose();
+                _mirrorPipeLogger?.Dispose();
+                _mirrorViewLogger?.Dispose();
+                _mirrorInitLogger = newInit;
+                _mirrorPipeLogger = newPipe;
+                _mirrorViewLogger = newView;
             }
 
-            _logger.Information("Process mirror log started: {MirrorDir}", mirrorDir);
-            newLogger.Information("Mirror log started for process: {Process}", processName);
+            _initLogger.Information("Process mirror log started: {MirrorDir}", mirrorDir);
+            newInit.Information("Mirror log started for process: {Process}", processName);
 
-            // Clean up old process folders
             CleanupProcessFolders();
         }
         catch (Exception ex)
         {
-            _logger.Warning("Failed to start process mirror log: {Error}", ex.Message);
+            _initLogger.Warning("Failed to start process mirror log: {Error}", ex.Message);
         }
     }
 
@@ -123,39 +206,54 @@ public sealed class LoggingService : ILoggingService, IDisposable
     {
         lock (_mirrorLock)
         {
-            if (_mirrorLogger != null)
+            if (_mirrorInitLogger != null)
             {
-                _mirrorLogger.Information("Mirror log stopped");
-                _mirrorLogger.Dispose();
-                _mirrorLogger = null;
+                _mirrorInitLogger.Information("Mirror log stopped");
+                _mirrorInitLogger.Dispose();
+                _mirrorInitLogger = null;
             }
+            _mirrorPipeLogger?.Dispose();
+            _mirrorPipeLogger = null;
+            _mirrorViewLogger?.Dispose();
+            _mirrorViewLogger = null;
         }
     }
 
     public void Dispose()
     {
         StopProcessMirror();
-        _logger.Dispose();
+        _initLogger.Dispose();
+        _pipeLogger.Dispose();
+        _viewLogger.Dispose();
+        _consoleLogger.Dispose();
     }
 
     // ================================================================
-    // Per-startup log rotation
+    // Helpers
     // ================================================================
+
+    private static Serilog.Core.Logger CreateFileLogger(string filePath)
+    {
+        return new LoggerConfiguration()
+            .MinimumLevel.Debug()
+            .WriteTo.File(
+                filePath,
+                fileSizeLimitBytes: Constants.LogMaxSizeBytes,
+                outputTemplate: OutputTemplate)
+            .CreateLogger();
+    }
 
     /// <summary>
     /// Rotate numbered log files: delete oldest, shift N-2 → N-1, ..., 0 → 1.
     /// After rotation, slot 0 is free for the new session's log.
-    /// Matches DLL-side rotation convention (UE5Dumper-scan-0.log, -1.log, ...).
     /// </summary>
     private static void RotateLogFiles(string directory, string prefix, int maxFiles)
     {
         try
         {
-            // Delete the oldest file (slot N-1)
             var oldest = Path.Combine(directory, $"{prefix}-{maxFiles - 1}.log");
             if (File.Exists(oldest)) File.Delete(oldest);
 
-            // Shift each file: i → i+1 (from N-2 down to 0)
             for (int i = maxFiles - 2; i >= 0; i--)
             {
                 var src = Path.Combine(directory, $"{prefix}-{i}.log");
@@ -171,23 +269,22 @@ public sealed class LoggingService : ILoggingService, IDisposable
 
     /// <summary>
     /// Remove old daily-format log files (UE5DumpUI-YYYYMMDD.log) left over
-    /// from the previous Serilog RollingInterval.Day configuration.
-    /// Also removes the base file without date suffix (UE5DumpUI-.log).
+    /// from previous Serilog RollingInterval.Day configuration.
+    /// Also removes numbered files beyond the rotation max.
     /// </summary>
     private static void CleanupOldDailyLogs(string directory, string prefix)
     {
         try
         {
-            // Match files like "UE5DumpUI-20260222.log" and "UE5DumpUI-.log"
             foreach (var file in Directory.GetFiles(directory, $"{prefix}-*.log"))
             {
                 var name = Path.GetFileNameWithoutExtension(file);
-                var suffix = name[(prefix.Length + 1)..]; // part after "UE5DumpUI-"
+                var suffix = name[(prefix.Length + 1)..];
 
-                // Keep numbered files (0, 1, 2, ...) — those are the new format
+                // Keep numbered files that match category format (e.g., "init-0")
                 if (int.TryParse(suffix, out _)) continue;
 
-                // Delete daily files (YYYYMMDD) and the bare dash file ("")
+                // Delete daily files (YYYYMMDD) and other non-matching patterns
                 try { File.Delete(file); } catch { }
             }
         }
@@ -197,17 +294,11 @@ public sealed class LoggingService : ILoggingService, IDisposable
         }
     }
 
-    /// <summary>
-    /// Remove characters invalid in folder names and trim the extension.
-    /// E.g. "ff7rebirth_.exe" -> "ff7rebirth_"
-    /// </summary>
     private static string SanitizeFolderName(string name)
     {
-        // Remove .exe extension if present
         if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
             name = name[..^4];
 
-        // Replace invalid path chars
         var invalid = Path.GetInvalidFileNameChars();
         foreach (var c in invalid)
             name = name.Replace(c, '_');
@@ -215,9 +306,6 @@ public sealed class LoggingService : ILoggingService, IDisposable
         return string.IsNullOrWhiteSpace(name) ? "unknown" : name;
     }
 
-    /// <summary>
-    /// Keep at most MaxProcessFolders subfolders, removing the oldest by last write time.
-    /// </summary>
     private void CleanupProcessFolders()
     {
         try
@@ -235,11 +323,11 @@ public sealed class LoggingService : ILoggingService, IDisposable
                 try
                 {
                     old.Delete(true);
-                    _logger.Debug("Cleaned up old process log folder: {Folder}", old.Name);
+                    _initLogger.Debug("Cleaned up old process log folder: {Folder}", old.Name);
                 }
                 catch
                 {
-                    // Best effort — don't fail logging over cleanup
+                    // Best effort
                 }
             }
         }
