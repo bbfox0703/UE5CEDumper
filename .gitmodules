@@ -10,3 +10,6 @@
 [submodule "vendor/GSpots"]
 	path = vendor/GSpots
 	url = https://github.com/Do0ks/GSpots.git
+[submodule "vendor/RE-UE4SS"]
+	path = vendor/RE-UE4SS
+	url = https://github.com/UE4SS-RE/RE-UE4SS.git
