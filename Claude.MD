@@ -56,7 +56,7 @@ git submodule update --init --recursive
 - **Single Instance**: UI app uses Mutex to ensure only one instance runs
 - **Async everywhere**: All I/O, pipe operations, and alert actions must be async
 - **Platform Abstraction**: Any system/OS-dependent call (P/Invoke, Registry, OS commands) MUST go through an interface in `Core` project. `Core` must NEVER contain direct platform-specific code
-- **Log output**: All logs go to `%APPDATA%\UE5CEDumper\Logs`, 5-version rotation, 5MB max per file. Each app/DLL start triggers a rotate
+- **Log output**: All logs go to `%LOCALAPPDATA%\UE5CEDumper\Logs`, split by category into per-process subfolders. DLL: 5 files (init, scan, offsets, pipe, walk). UI: 3 files (init, pipe, view). 2-file rotation, 5MB max per file. Root `Logs/` has no loose files — only subfolders
 - **Magic words management**: All magic strings kept in one file per project with proper comments
 - **UI Strings**: English only. All UI strings in `Resources/Strings/en.axaml`, referenced via `StaticResource` bindings
 - **UE offsets**: All UObject/UStruct offsets must be dynamically verified via OffsetFinder, never hardcoded
@@ -65,15 +65,15 @@ git submodule update --init --recursive
 
 ## Implementation Status & Challenges Log
 
-> Last updated: 2026-02-22 (EnumProperty + StrProperty support + 3 new games confirmed)
-> Latest commit: `b216b94` on `dev` branch (uncommitted: EnumProperty/StrProperty/Int8Property support + audit hardening)
+> Last updated: 2026-02-23 (ArrayProperty inner type + category-based logging)
+> Latest commit: `0ff3d4a` on `dev` branch (merged to main via PR #54)
 
 ### Component Status
 
 | Component | File(s) | Status | Notes |
 |-----------|---------|--------|-------|
 | Memory module | `Memory.cpp/.h` | Done | AOBScan (exec sections only), ResolveRIP, ReadSafe (SEH) |
-| Logger | `Logger.cpp/.h` | Done | Dual-channel (scan+pipe), category tags, SUMMARY level, 5-version rotation, 5MB cap, thread-safe; per-process mirror logging (subfolder per process name, 2-version rotation, max 20 subfolders) |
+| Logger | `Logger.cpp/.h` | Done | Category-routed multi-file: 5 files (init, scan, offsets, pipe, walk) via prefix-match routing, early buffering, SUMMARY level, 2-file rotation, 5MB cap, thread-safe; per-process mirror logging (subfolder per process name, max 20 subfolders) |
 | AOB Signatures | `Signatures.h` | Done | 51 patterns + 4 symbol exports from 6 sources (original, patternsleuth, RE-UE4SS, Dumper-7, UE4 Dumper.CT, UEDumper) |
 | OffsetFinder — GObjects | `OffsetFinder.cpp` | Working | 27 AOB patterns + deref variants + MSVC symbol export (`GUObjectArray`); validated in TQ2 (UE5.7) |
 | OffsetFinder — GNames | `OffsetFinder.cpp` | Partial | 17 AOB patterns + FName ctor export + `.data` pointer-scan + UE4 TNameEntryArray validator; unified `ValidateGNamesAny` tries FNamePool→Structural→UE4; structural validator hardened with exact header format + corroboration |
@@ -140,6 +140,9 @@ git submodule update --init --recursive
 - **Lushfoil Photography Sim (UE5.6, build 1.0.0.40)** — NEW GAME. All working: Object Tree, Live Walker, Instance Finder. 58630 objects. UE version 506.
 - **Manor Lords (UE5.5, build 1.0.0.40)** — NEW GAME. All working: Object Tree, Live Walker, Instance Finder.
 - **Satisfactory (UE5.3, build 1.0.0.40)** — NEW GAME. Working: Object Tree, Live Walker, Instance Finder. "Start from GWorld" fails. UE version 503. 35776 objects.
+- **ArrayProperty inner type (build 1.0.0.61)** — Phase A implemented: DLL reads `FArrayProperty::Inner` FProperty* to show `[N x TypeName (SizeB)]` in Live Walker. Probe-with-delta pattern for offset detection. UI parses `array_inner_type`, `array_elem_size`, `array_struct_type` JSON fields. **NOT YET VERIFIED** — TQ2 test showed `[0 elements]` still (inner type not detected). Diagnostic logging added to trace probe failures. Needs re-test with build 1.0.0.61.
+- **Logger category restructuring (build 1.0.0.61)** — DLL: 5 category files (init, scan, offsets, pipe, walk) via prefix-match routing with early buffering. UI: 3 Serilog loggers (init, pipe, view) with `ui-` prefixed mirror files. 2-file rotation per category, 5MB cap. All call sites updated with category tags. 42 UI tests pass.
+- **Address format toggle (build 1.0.0.58, PR #53)** — Toolbar ComboBox with 3 modes: hex no-prefix, hex 0x-prefix, module+offset. Applied to Object Tree, Live Walker, Instance Finder.
 
 ### Known Challenges & Failures
 
@@ -596,11 +599,14 @@ But `0x40000000` is `EObjectFlags::Const` — a 32-bit flags value, not a heap p
 4. ~~Float/Double display formatting~~ → ✅ Done: Float 10dp, Double 15dp, strip-to-integer
 5. ~~CT instructions fix~~ → ✅ Done: removed misleading step 2, simplified to 4 steps
 6. ~~EnumProperty + StrProperty support~~ → ✅ Done (build 1.0.0.40): lazy UEnum::Names detection, enum name cache, FString UTF-16→UTF-8, ByteProperty-with-enum, Int8Property, CE XML mappings
-7. **Fix FF7R UE version display** — shows 504 instead of 418. Cosmetic issue (all pipelines work via UProperty fallback). Need version override for flat array / UProperty fallback games
-8. **Investigate GWorld failure on remaining games** — FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, OctoPath, Star Wars Jedi, Satisfactory still fail. Pattern: mostly Square Enix UE4 forks + some UE5
-9. **Investigate UE version misdetection** — DQ I&II/DQ III/Ghostwire: Tokyo all show UE505 but may be UE4. OctoPath (same HD-2D tech, 2019) detects as UE422
-10. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re
-11. Continue Avalonia UI development — all 17 tested games have working Object Tree
+7. ~~Address format toggle~~ → ✅ Done (PR #53): 3 modes (hex/0x/module+offset)
+8. ~~Logger category restructuring~~ → ✅ Done (PR #54): DLL 5 files + UI 3 files, 2-file rotation
+9. **Debug ArrayProperty inner type on TQ2** — Phase A code complete but not working. Diagnostic logging added (build 1.0.0.61). Need to re-test TQ2, check `walk-0.log` for `ARRAYPROP` probe results. See challenge details below
+10. **Fix FF7R UE version display** — shows 504 instead of 418. Cosmetic issue (all pipelines work via UProperty fallback). Need version override for flat array / UProperty fallback games
+11. **Investigate GWorld failure on remaining games** — FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, OctoPath, Star Wars Jedi, Satisfactory still fail. Pattern: mostly Square Enix UE4 forks + some UE5
+12. **Investigate UE version misdetection** — DQ I&II/DQ III/Ghostwire: Tokyo all show UE505 but may be UE4. OctoPath (same HD-2D tech, 2019) detects as UE422
+13. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re
+14. Continue Avalonia UI development — all 17 tested games have working Object Tree
 12. ~~Test pointer-scan fallback for GNames on EverSpace 2~~ → Done
 13. ~~Consider adding more GNames AOB patterns~~ → Done: 51 patterns from 6 sources
 
