@@ -3,7 +3,7 @@ using System.Linq;
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// A single element value from an array (Phase B).
+/// A single element value from an array (Phase B scalar / Phase D pointer).
 /// </summary>
 public sealed class ArrayElementValue
 {
@@ -11,6 +11,10 @@ public sealed class ArrayElementValue
     public string Value { get; init; } = "";
     public string Hex { get; init; } = "";
     public string EnumName { get; init; } = "";
+    // Phase D: pointer array fields
+    public string PtrAddress { get; init; } = "";
+    public string PtrName { get; init; } = "";
+    public string PtrClassName { get; init; } = "";
 }
 
 /// <summary>
@@ -134,7 +138,14 @@ public sealed class LiveFieldValue
         const int previewCount = 5;
         var preview = ArrayElements
             .Take(previewCount)
-            .Select(e => !string.IsNullOrEmpty(e.EnumName) ? e.EnumName : e.Value);
+            .Select(e =>
+                !string.IsNullOrEmpty(e.EnumName) ? e.EnumName :
+                !string.IsNullOrEmpty(e.PtrName) ? (
+                    !string.IsNullOrEmpty(e.PtrClassName)
+                        ? $"{e.PtrName} ({e.PtrClassName})"
+                        : e.PtrName
+                ) :
+                e.Value);
         var joined = string.Join(", ", preview);
 
         if (ArrayCount > previewCount)

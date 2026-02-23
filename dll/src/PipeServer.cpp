@@ -462,7 +462,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     }
                     if (fv.arrayInnerFFieldAddr != 0)
                         fj["array_inner_addr"] = PipeProtocol::AddrToStr(fv.arrayInnerFFieldAddr);
-                    // Phase B: inline scalar element values
+                    // Phase B/D: inline element values (scalar or pointer)
                     if (!fv.arrayElements.empty()) {
                         json elems = json::array();
                         for (const auto& e : fv.arrayElements) {
@@ -472,6 +472,12 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                             ej["h"] = e.hex;
                             if (!e.enumName.empty())
                                 ej["en"] = e.enumName;
+                            // Phase D: pointer element fields
+                            if (e.ptrAddr != 0) {
+                                ej["pa"] = PipeProtocol::AddrToStr(e.ptrAddr);
+                                ej["pn"] = e.ptrName;
+                                ej["pc"] = e.ptrClassName;
+                            }
                             elems.push_back(ej);
                         }
                         fj["elements"] = elems;
@@ -540,6 +546,12 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 ej["h"] = e.hex;
                 if (!e.enumName.empty())
                     ej["en"] = e.enumName;
+                // Phase D: pointer element fields
+                if (e.ptrAddr != 0) {
+                    ej["pa"] = PipeProtocol::AddrToStr(e.ptrAddr);
+                    ej["pn"] = e.ptrName;
+                    ej["pc"] = e.ptrClassName;
+                }
                 elems.push_back(ej);
             }
             data["elements"] = elems;
