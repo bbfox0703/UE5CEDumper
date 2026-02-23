@@ -159,4 +159,16 @@ ReadArrayResult ReadPointerArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
+// Phase E: resolve FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }
+// Returns the UObject* if valid (serial matches), or 0 if stale/invalid.
+uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber);
+
+// Phase E: check if inner type is a weak-pointer type
+bool IsWeakPointerArrayType(const std::string& innerTypeName);
+
+// Phase E: read weak object pointer elements from a TArray of FWeakObjectPtr.
+ReadArrayResult ReadWeakObjectArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
 } // namespace UStructWalker

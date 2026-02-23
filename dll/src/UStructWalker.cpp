@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include "Constants.h"
 #include "FNamePool.h"
+#include "ObjectArray.h"
 #include "OffsetFinder.h"
 
 #include <algorithm>
@@ -684,6 +685,122 @@ ReadArrayResult ReadPointerArrayElements(
 }
 
 // ============================================================
+// ResolveWeakObjectPtr — resolve FWeakObjectPtr to UObject* (Phase E).
+//
+// FWeakObjectPtr = { int32 ObjectIndex, int32 SerialNumber }.
+// ObjectIndex is a GObjects index. The SerialNumber must match the
+// FUObjectItem's serial to confirm the object is still alive.
+// Returns the UObject* or 0 if stale/invalid.
+// ============================================================
+uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber) {
+    if (objectIndex <= 0) return 0;
+    uintptr_t obj = ObjectArray::GetByIndex(objectIndex);
+    if (!obj) return 0;
+    int32_t actualSerial = ObjectArray::GetSerialNumber(objectIndex);
+    if (actualSerial != serialNumber) return 0;  // stale reference
+    return obj;
+}
+
+// ============================================================
+// IsWeakPointerArrayType — check if inner type is a weak-pointer type
+// (Phase E). Currently only WeakObjectProperty.
+// ============================================================
+bool IsWeakPointerArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "WeakObjectProperty";
+}
+
+// ============================================================
+// ReadWeakObjectArrayElements — read FWeakObjectPtr elements from a
+// TArray (Phase E). Each element is { int32 ObjectIndex, int32 Serial }.
+// Resolves each to a UObject* via GObjects + serial verification.
+// ============================================================
+ReadArrayResult ReadWeakObjectArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    if (elemSize <= 0) elemSize = 8;  // FWeakObjectPtr is 8 bytes
+
+    // Read TArray header
+    Mem::TArrayView arr;
+    if (!Mem::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    // Clamp offset/limit
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > 256) end = offset + 256;
+
+    result.elements.reserve(end - offset);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+
+        // Read FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }
+        int32_t objIdx = 0, serial = 0;
+        if (!Mem::ReadSafe(elemAddr, objIdx) || !Mem::ReadSafe(elemAddr + 4, serial)) {
+            elem.value = "???";
+            elem.hex = "????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+
+        // Hex: ObjectIndex + SerialNumber
+        char hexBuf[20];
+        snprintf(hexBuf, sizeof(hexBuf), "%08X%08X", objIdx, serial);
+        elem.hex = hexBuf;
+
+        // Resolve via GObjects
+        uintptr_t ptr = ResolveWeakObjectPtr(objIdx, serial);
+        elem.ptrAddr = ptr;
+
+        if (ptr) {
+            elem.ptrName = GetName(ptr);
+            uintptr_t cls = GetClass(ptr);
+            if (cls) elem.ptrClassName = GetName(cls);
+
+            if (!elem.ptrName.empty()) {
+                elem.value = elem.ptrName;
+                if (!elem.ptrClassName.empty())
+                    elem.value += " (" + elem.ptrClassName + ")";
+            } else {
+                elem.value = hexBuf;
+            }
+        } else if (objIdx > 0) {
+            elem.value = "null (stale)";
+        } else {
+            elem.value = "null";
+        }
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
 // CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
 // and related subclass extension offsets.
 //
@@ -767,9 +884,28 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
         fv.offset   = fi.Offset;
         fv.size     = fi.Size;
 
+        // Handle WeakObjectProperty: FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }
+        if (fi.TypeName == "WeakObjectProperty") {
+            int32_t objIdx = 0, serial = 0;
+            Mem::ReadSafe(instanceAddr + fi.Offset, objIdx);
+            Mem::ReadSafe(instanceAddr + fi.Offset + 4, serial);
+            uintptr_t ptr = ResolveWeakObjectPtr(objIdx, serial);
+            if (ptr) {
+                fv.ptrValue = ptr;
+                fv.ptrName = GetName(ptr);
+                uintptr_t cls = GetClass(ptr);
+                if (cls) fv.ptrClassName = GetName(cls);
+            }
+            char buf[20];
+            snprintf(buf, sizeof(buf), "%08X%08X", objIdx, serial);
+            fv.hexValue = buf;
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
         // Handle ObjectProperty: read pointer, resolve name/class
         if (fi.TypeName == "ObjectProperty" || fi.TypeName == "ClassProperty" ||
-            fi.TypeName == "SoftObjectProperty" || fi.TypeName == "WeakObjectProperty" ||
+            fi.TypeName == "SoftObjectProperty" ||
             fi.TypeName == "LazyObjectProperty") {
             uintptr_t ptr = 0;
             if (fi.Size >= 8 && Mem::ReadSafe(instanceAddr + fi.Offset, ptr) && ptr) {
@@ -875,6 +1011,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     if (ptrResult.ok && !ptrResult.elements.empty()) {
                         fv.arrayElements = std::move(ptrResult.elements);
                         Logger::Debug("WALK:ArrayP", "Ptr elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
+                // Phase E: read weak object pointer array element names (up to 64)
+                if (innerFound && IsWeakPointerArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= 64
+                    && fv.arrayElemSize > 0) {
+                    auto weakResult = ReadWeakObjectArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, 64);
+                    if (weakResult.ok && !weakResult.elements.empty()) {
+                        fv.arrayElements = std::move(weakResult.elements);
+                        Logger::Debug("WALK:ArrayP", "Weak ptr elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
                     }
                 }

@@ -678,6 +678,9 @@ public static class CeXmlExportService
             "ObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "ClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
+            // Phase E: weak object pointer — 8 bytes (ObjectIndex + SerialNumber)
+            "WeakObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
             _ => null // Non-scalar (StructProperty, SoftObjectProperty, etc.)
         };
     }
