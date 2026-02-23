@@ -140,6 +140,49 @@ Pipe 名稱：`\\.\pipe\UE5DumpBfx`
 // find_by_address 回應（未找到）
 { "id": 16, "ok": true, "found": false }
 
+// walk_instance 回應 — ArrayProperty with inline elements (Phase B)
+{
+  "id": 8, "ok": true,
+  "addr": "0x...", "name": "TestActor", "class": "BP_Player_C",
+  "class_addr": "0x...", "outer": "0x...", "outer_name": "Level", "outer_class": "World",
+  "fields": [
+    {
+      "name": "DamageMultipliers", "type": "ArrayProperty",
+      "offset": 256, "size": 16,
+      "hex": "000001A0B4C00000 00000005 00000005",
+      "count": 5,
+      "array_inner_type": "FloatProperty",
+      "array_elem_size": 4,
+      "array_inner_addr": "0x7FF601234560",
+      "elements": [
+        { "i": 0, "v": "1.5000000000", "h": "0000C03F" },
+        { "i": 1, "v": "2", "h": "00000040" },
+        { "i": 2, "v": "0.5000000000", "h": "0000003F" }
+      ]
+    }
+  ]
+}
+// Note: "elements" is only present for scalar arrays with count <= 64.
+// For enum arrays, each element also has "en" (resolved enum name).
+// For struct/object arrays, "elements" is omitted.
+
+// read_array_elements 請求（Phase B: paginated array element reading）
+{ "cmd": "read_array_elements",
+  "addr": "0x7FF6BB123000", "field_offset": 256,
+  "inner_addr": "0x7FF601234560", "inner_type": "FloatProperty",
+  "elem_size": 4, "offset": 0, "limit": 64 }
+
+// read_array_elements 回應
+{
+  "id": 20, "ok": true,
+  "total": 128, "read": 64,
+  "inner_type": "FloatProperty", "elem_size": 4,
+  "elements": [
+    { "i": 0, "v": "100.5", "h": "0000C842" },
+    { "i": 1, "v": "200", "h": "00004843" }
+  ]
+}
+
 // Watch 主動推送 Event（無 id）
 { "event": "watch", "addr": "0x7FF...", "bytes": "0000803F", "timestamp": 1234567890 }
 ```

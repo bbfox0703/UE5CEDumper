@@ -449,7 +449,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["bool_byte_offset"] = fv.boolByteOffset;
                 }
 
-                // ArrayProperty: element count + inner type info
+                // ArrayProperty: element count + inner type info + inline elements
                 if (fv.arrayCount >= 0) {
                     fj["count"] = fv.arrayCount;
                     if (!fv.arrayInnerType.empty()) {
@@ -458,6 +458,22 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                             fj["array_elem_size"] = fv.arrayElemSize;
                         if (!fv.arrayInnerStructType.empty())
                             fj["array_struct_type"] = fv.arrayInnerStructType;
+                    }
+                    if (fv.arrayInnerFFieldAddr != 0)
+                        fj["array_inner_addr"] = PipeProtocol::AddrToStr(fv.arrayInnerFFieldAddr);
+                    // Phase B: inline scalar element values
+                    if (!fv.arrayElements.empty()) {
+                        json elems = json::array();
+                        for (const auto& e : fv.arrayElements) {
+                            json ej;
+                            ej["i"] = e.index;
+                            ej["v"] = e.value;
+                            ej["h"] = e.hex;
+                            if (!e.enumName.empty())
+                                ej["en"] = e.enumName;
+                            elems.push_back(ej);
+                        }
+                        fj["elements"] = elems;
                     }
                 }
 
@@ -482,6 +498,50 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 fields.push_back(fj);
             }
             data["fields"] = fields;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // === read_array_elements: Read scalar elements from a TArray (Phase B) ===
+        if (cmd == PipeProtocol::CMD_READ_ARRAY_ELEMS) {
+            std::string addrStr = request.value("addr", "");
+            if (addrStr.empty())
+                return PipeProtocol::MakeError(id, "missing 'addr'").dump();
+            uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
+
+            int32_t fieldOffset = request.value("field_offset", 0);
+            std::string innerAddrStr = request.value("inner_addr", "");
+            uintptr_t innerAddr = innerAddrStr.empty() ? 0 : PipeProtocol::StrToAddr(innerAddrStr);
+            std::string innerType = request.value("inner_type", "");
+            int32_t elemSize = request.value("elem_size", 0);
+            int32_t offset = request.value("offset", 0);
+            int32_t limit = request.value("limit", 64);
+
+            if (innerType.empty() || elemSize <= 0)
+                return PipeProtocol::MakeError(id, "missing inner_type or invalid elem_size").dump();
+
+            auto result = UStructWalker::ReadArrayElements(
+                addr, fieldOffset, innerAddr, innerType, elemSize, offset, limit);
+
+            if (!result.ok)
+                return PipeProtocol::MakeError(id, result.error).dump();
+
+            json data;
+            data["total"] = result.totalCount;
+            data["read"] = result.readCount;
+            data["inner_type"] = innerType;
+            data["elem_size"] = elemSize;
+
+            json elems = json::array();
+            for (const auto& e : result.elements) {
+                json ej;
+                ej["i"] = e.index;
+                ej["v"] = e.value;
+                ej["h"] = e.hex;
+                if (!e.enumName.empty())
+                    ej["en"] = e.enumName;
+                elems.push_back(ej);
+            }
+            data["elements"] = elems;
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
