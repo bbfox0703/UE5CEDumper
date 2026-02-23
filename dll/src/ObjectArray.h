@@ -36,6 +36,10 @@ uintptr_t GetByIndex(int32_t index);
 // Get FUObjectItem by index (returns nullptr if invalid)
 FUObjectItem* GetItem(int32_t index);
 
+// Read the SerialNumber of the FUObjectItem at the given index.
+// Handles both 16-byte (serial@+0x0C) and 24-byte (serial@+0x10) items.
+int32_t GetSerialNumber(int32_t index);
+
 // Iterate all valid objects
 // Callback: return false to stop iteration
 void ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb);

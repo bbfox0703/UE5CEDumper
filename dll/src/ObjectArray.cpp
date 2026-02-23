@@ -513,6 +513,34 @@ FUObjectItem* GetItem(int32_t index) {
     return Mem::Ptr<FUObjectItem>(itemAddr);
 }
 
+int32_t GetSerialNumber(int32_t index) {
+    if (!s_arrayAddr || index < 0 || index >= GetCount()) return 0;
+
+    uintptr_t arrayBase = 0;
+    if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, arrayBase) || !arrayBase)
+        return 0;
+
+    uintptr_t itemAddr = 0;
+    if (s_isFlat) {
+        itemAddr = arrayBase + static_cast<uintptr_t>(index) * s_itemSize;
+    } else {
+        int32_t chunkIndex  = index / Constants::OBJECTS_PER_CHUNK;
+        int32_t withinChunk = index % Constants::OBJECTS_PER_CHUNK;
+        uintptr_t chunk = 0;
+        if (!Mem::ReadSafe(arrayBase + chunkIndex * sizeof(uintptr_t), chunk) || !chunk)
+            return 0;
+        itemAddr = chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
+    }
+
+    // SerialNumber offset depends on item stride:
+    //   16B: Object(8) + Flags(4) + Serial(4)                        → +0x0C
+    //   24B: Object(8) + Flags(4) + ClusterRootIndex(4) + Serial(4)  → +0x10
+    int serialOff = (s_itemSize >= 24) ? 0x10 : 0x0C;
+    int32_t serial = 0;
+    Mem::ReadSafe(itemAddr + serialOff, serial);
+    return serial;
+}
+
 void ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb) {
     int32_t count = GetCount();
     for (int32_t i = 0; i < count; ++i) {
