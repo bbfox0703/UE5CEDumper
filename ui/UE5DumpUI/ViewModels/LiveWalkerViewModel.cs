@@ -41,6 +41,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private string _ceXmlOutput = "";
     [ObservableProperty] private bool _showCeXml;
 
+    // Address format
+    [ObservableProperty] private int _selectedAddressFormatIndex;
+    private AddressFormat AddrFormat => (AddressFormat)SelectedAddressFormatIndex;
+
     // Search
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private int _searchMatchCount;
@@ -357,7 +361,6 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private async Task ExportCeXmlAsync()
     {
         if (string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;
-        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName) || string.IsNullOrEmpty(_engineState.ModuleBase)) return;
 
         try
         {
@@ -368,12 +371,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, new List<LiveFieldValue>(Fields));
 
-            // Compute root address as "Module.exe"+RVA
+            // Compute root address in user-selected format
             var rootBc = Breadcrumbs[0];
-            var rootModuleRva = ComputeModuleRva(rootBc.Address);
+            var rootAddress = AddressHelper.FormatAddress(
+                rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
             var xml = CeXmlExportService.GenerateHierarchicalXml(
-                rootModuleRva, rootBc.Label, Breadcrumbs, Fields, resolvedStructs);
+                rootAddress, rootBc.Label, Breadcrumbs, Fields, resolvedStructs);
 
             await _platform.CopyToClipboardAsync(xml);
             _log.Info($"CE XML copied to clipboard for {CurrentClassName} ({resolvedStructs.Count} structs resolved)");
@@ -404,24 +408,21 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private async Task GenerateCeAAScriptAsync()
     {
         if (string.IsNullOrEmpty(CurrentAddress)) return;
-        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName) || string.IsNullOrEmpty(_engineState.ModuleBase)) return;
 
         try
         {
             ClearError();
-            var addr = Convert.ToUInt64(CurrentAddress.Replace("0x", "").Replace("0X", ""), 16);
-            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
-            var rva = addr - moduleBase;
-
             var symbolName = !string.IsNullOrEmpty(CurrentClassName)
                 ? CurrentClassName.Replace(" ", "_").Replace("-", "_")
                 : "UE5_Symbol";
 
-            var xml = CeXmlExportService.GenerateRegisterSymbolXml(
-                symbolName, _engineState.ModuleName, rva);
+            var formattedAddr = AddressHelper.FormatAddress(
+                CurrentAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+
+            var xml = CeXmlExportService.GenerateRegisterSymbolXml(symbolName, formattedAddr);
 
             await _platform.CopyToClipboardAsync(xml);
-            _log.Info($"CE AA script copied to clipboard for {CurrentClassName} at RVA {rva:X}");
+            _log.Info($"CE AA script copied to clipboard for {CurrentClassName}");
         }
         catch (Exception ex)
         {
@@ -465,19 +466,17 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [RelayCommand]
     private async Task CopyFieldAddressAsync(LiveFieldValue? field)
     {
-        if (field == null || _engineState == null) return;
-        if (string.IsNullOrEmpty(CurrentAddress) || string.IsNullOrEmpty(_engineState.ModuleName)) return;
+        if (field == null || string.IsNullOrEmpty(CurrentAddress)) return;
 
         try
         {
             var instanceAddr = Convert.ToUInt64(CurrentAddress.Replace("0x", "").Replace("0X", ""), 16);
-            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
-
             var absAddr = instanceAddr + (ulong)field.Offset;
-            var rva = absAddr - moduleBase;
+            var hexAddr = $"0x{absAddr:X}";
 
-            var ceFormat = $"\"{_engineState.ModuleName}\"+{rva:X}";
-            await _platform.CopyToClipboardAsync(ceFormat);
+            var formatted = AddressHelper.FormatAddress(
+                hexAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+            await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
         {
@@ -519,12 +518,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private async Task CopyCurrentAddressAsync()
     {
         if (string.IsNullOrEmpty(CurrentAddress)) return;
-        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName)) return;
 
         try
         {
-            var ceAddr = ComputeModuleRva(CurrentAddress);
-            await _platform.CopyToClipboardAsync(ceAddr);
+            var formatted = AddressHelper.FormatAddress(
+                CurrentAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+            await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
         {
@@ -551,12 +550,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private async Task CopyOuterAddressAsync()
     {
         if (string.IsNullOrEmpty(CurrentOuterAddr) || CurrentOuterAddr == "0x0") return;
-        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName)) return;
 
         try
         {
-            var ceAddr = ComputeModuleRva(CurrentOuterAddr);
-            await _platform.CopyToClipboardAsync(ceAddr);
+            var formatted = AddressHelper.FormatAddress(
+                CurrentOuterAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+            await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
         {

@@ -43,6 +43,12 @@
                      VerticalAlignment="Center"
                      Margin="12,0"
                      IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+          <!-- Address format selector -->
+          <ComboBox ItemsSource="{Binding AddressFormatOptions}"
+                    SelectedIndex="{Binding SelectedAddressFormatIndex}"
+                    MinWidth="140" Padding="4,2" FontSize="12"
+                    VerticalAlignment="Center" Margin="12,0"/>
         </StackPanel>
       </DockPanel>
     </Border>
