@@ -296,6 +296,8 @@ public sealed class DumpService : IDumpService
                     ArrayElemSize = fo["array_elem_size"]?.GetValue<int>() ?? 0,
                     ArrayInnerAddr = fo["array_inner_addr"]?.GetValue<string>() ?? "",
                     ArrayElements = ParseArrayElements(fo["elements"]),
+                    ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
+                    ArrayEnumEntries = ParseEnumEntries(fo["enum_entries"]),
                     StructDataAddr = fo["struct_data_addr"]?.GetValue<string>() ?? "",
                     StructClassAddr = fo["struct_class_addr"]?.GetValue<string>() ?? "",
                     StructTypeName = fo["struct_type"]?.GetValue<string>() ?? "",
@@ -508,6 +510,7 @@ public sealed class DumpService : IDumpService
                 Value = eo["v"]?.GetValue<string>() ?? "",
                 Hex = eo["h"]?.GetValue<string>() ?? "",
                 EnumName = eo["en"]?.GetValue<string>() ?? "",
+                RawIntValue = eo["rv"]?.GetValue<long>() ?? 0,
                 // Phase D: pointer element fields
                 PtrAddress = eo["pa"]?.GetValue<string>() ?? "",
                 PtrName = eo["pn"]?.GetValue<string>() ?? "",
@@ -534,6 +537,23 @@ public sealed class DumpService : IDumpService
                 Offset = sfObj["o"]?.GetValue<int>() ?? 0,
                 Size = sfObj["s"]?.GetValue<int>() ?? 0,
                 Value = sfObj["v"]?.GetValue<string>() ?? "",
+            });
+        }
+        return result;
+    }
+
+    private static List<EnumEntryValue>? ParseEnumEntries(JsonNode? node)
+    {
+        if (node is not JsonArray arr || arr.Count == 0) return null;
+
+        var result = new List<EnumEntryValue>(arr.Count);
+        foreach (var item in arr)
+        {
+            if (item is not JsonObject obj) continue;
+            result.Add(new EnumEntryValue
+            {
+                Value = obj["v"]?.GetValue<long>() ?? 0,
+                Name = obj["n"]?.GetValue<string>() ?? "",
             });
         }
         return result;
