@@ -547,17 +547,19 @@ uintptr_t FindByFullName(const std::string& fullName) {
     return 0;
 }
 
-std::vector<SearchResult> SearchByName(const std::string& query, int maxResults) {
-    std::vector<SearchResult> results;
+SearchResultSet SearchByName(const std::string& query, int maxResults) {
+    SearchResultSet rset;
 
     // Convert query to lowercase for case-insensitive comparison
     std::string lowerQuery = query;
     for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
     int32_t count = GetCount();
-    for (int32_t i = 0; i < count && static_cast<int>(results.size()) < maxResults; ++i) {
+    rset.scanned = count;
+    for (int32_t i = 0; i < count && static_cast<int>(rset.results.size()) < maxResults; ++i) {
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
+        rset.nonNull++;
 
         // Read FName from UObject
         uint32_t nameIndex = 0;
@@ -565,6 +567,7 @@ std::vector<SearchResult> SearchByName(const std::string& query, int maxResults)
 
         std::string objName = FNamePool::GetString(nameIndex);
         if (objName.empty()) continue;
+        rset.named++;
 
         // Case-insensitive partial match
         std::string lowerName = objName;
@@ -588,23 +591,25 @@ std::vector<SearchResult> SearchByName(const std::string& query, int maxResults)
         // Get outer
         Mem::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
 
-        results.push_back(std::move(sr));
+        rset.results.push_back(std::move(sr));
     }
 
-    return results;
+    return rset;
 }
 
-std::vector<SearchResult> FindInstancesByClass(const std::string& className, int maxResults) {
-    std::vector<SearchResult> results;
+SearchResultSet FindInstancesByClass(const std::string& className, int maxResults) {
+    SearchResultSet rset;
 
     // Convert query to lowercase for case-insensitive comparison
     std::string lowerQuery = className;
     for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
     int32_t count = GetCount();
-    for (int32_t i = 0; i < count && static_cast<int>(results.size()) < maxResults; ++i) {
+    rset.scanned = count;
+    for (int32_t i = 0; i < count && static_cast<int>(rset.results.size()) < maxResults; ++i) {
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
+        rset.nonNull++;
 
         // Read ClassPrivate
         uintptr_t cls = 0;
@@ -616,6 +621,7 @@ std::vector<SearchResult> FindInstancesByClass(const std::string& className, int
 
         std::string clsName = FNamePool::GetString(clsNameIdx);
         if (clsName.empty()) continue;
+        rset.named++;
 
         // Case-insensitive partial match on class name
         std::string lowerClsName = clsName;
@@ -637,10 +643,12 @@ std::vector<SearchResult> FindInstancesByClass(const std::string& className, int
         // Read outer
         Mem::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
 
-        results.push_back(std::move(sr));
+        rset.results.push_back(std::move(sr));
     }
 
-    return results;
+    Logger::Info("PIPE:find", "FindInstancesByClass '%s': %d found, scanned=%d, nonNull=%d, named=%d",
+                 className.c_str(), (int)rset.results.size(), rset.scanned, rset.nonNull, rset.named);
+    return rset;
 }
 
 // Helper: populate an AddressLookupResult from a UObject pointer
