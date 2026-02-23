@@ -126,19 +126,31 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         Fields.Clear();
 
-        // PersistentLevel as first navigable entry
+        // Compute base address for FieldAddress display
+        ulong worldBase = 0;
+        try
+        {
+            if (!string.IsNullOrEmpty(world.WorldAddr))
+                worldBase = Convert.ToUInt64(world.WorldAddr.Replace("0x", "").Replace("0X", ""), 16);
+        }
+        catch { /* ignore parse failures */ }
+
+        // PersistentLevel as first navigable entry (offset from DLL walk_world response)
         if (!string.IsNullOrEmpty(world.LevelAddr) && world.LevelAddr != "0x0")
         {
-            Fields.Add(new LiveFieldValue
+            var pLevel = new LiveFieldValue
             {
                 Name = world.LevelName ?? "PersistentLevel",
                 TypeName = "ObjectProperty",
-                Offset = 0,
+                Offset = world.LevelOffset,
                 Size = 8,
                 PtrAddress = world.LevelAddr,
                 PtrName = world.LevelName ?? "PersistentLevel",
                 PtrClassName = "ULevel",
-            });
+            };
+            if (worldBase != 0)
+                pLevel.FieldAddress = $"0x{worldBase + (ulong)world.LevelOffset:X}";
+            Fields.Add(pLevel);
         }
 
         // Each actor as a navigable entry

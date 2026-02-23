@@ -26,6 +26,12 @@ public interface IDumpService
     Task<List<InstanceResult>> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default);
     Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default);
 
+    // --- Array Element Reading (Phase B) ---
+    Task<ArrayElementsResult> ReadArrayElementsAsync(
+        string instanceAddr, int fieldOffset,
+        string innerAddr, string innerType, int elemSize,
+        int offset = 0, int limit = 64, CancellationToken ct = default);
+
     // --- Address-to-Instance Reverse Lookup ---
     Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default);
 }

@@ -1,4 +1,29 @@
+using System.Linq;
+
 namespace UE5DumpUI.Models;
+
+/// <summary>
+/// A single element value from an array (Phase B).
+/// </summary>
+public sealed class ArrayElementValue
+{
+    public int Index { get; init; }
+    public string Value { get; init; } = "";
+    public string Hex { get; init; } = "";
+    public string EnumName { get; init; } = "";
+}
+
+/// <summary>
+/// Result of reading array elements via read_array_elements command.
+/// </summary>
+public sealed class ArrayElementsResult
+{
+    public int TotalCount { get; init; }
+    public int ReadCount { get; init; }
+    public string InnerType { get; init; } = "";
+    public int ElemSize { get; init; }
+    public List<ArrayElementValue> Elements { get; init; } = new();
+}
 
 /// <summary>
 /// A single field value read from a live UObject instance.
@@ -43,6 +68,12 @@ public sealed class LiveFieldValue
     /// <summary>For ArrayProperty: element size in bytes.</summary>
     public int ArrayElemSize { get; init; }
 
+    /// <summary>For ArrayProperty: Inner FProperty* address (for read_array_elements command).</summary>
+    public string ArrayInnerAddr { get; init; } = "";
+
+    /// <summary>For ArrayProperty Phase B: inline scalar element values (up to 64).</summary>
+    public List<ArrayElementValue>? ArrayElements { get; init; }
+
     /// <summary>For StructProperty: absolute address of struct data (instance + offset).</summary>
     public string StructDataAddr { get; init; } = "";
 
@@ -67,9 +98,7 @@ public sealed class LiveFieldValue
         !string.IsNullOrEmpty(PtrName) ? $"{PtrName} ({PtrClassName})" :
         !string.IsNullOrEmpty(StructTypeName) ? $"{{{StructTypeName}}}" :
         ArrayCount >= 0 && !string.IsNullOrEmpty(ArrayInnerType)
-            ? (!string.IsNullOrEmpty(ArrayStructType)
-                ? $"[{ArrayCount} x {ArrayStructType} ({ArrayElemSize}B)]"
-                : $"[{ArrayCount} x {ArrayInnerType} ({ArrayElemSize}B)]")
+            ? FormatArrayDisplay()
             : ArrayCount >= 0 ? $"[{ArrayCount} elements]" :
         !string.IsNullOrEmpty(StrValue) ? $"\"{StrValue}\"" :
         !string.IsNullOrEmpty(HexValue) ? HexValue :
@@ -93,4 +122,24 @@ public sealed class LiveFieldValue
 
     /// <summary>Whether this field matches the current search query (set by ViewModel).</summary>
     public bool IsSearchMatch { get; set; }
+
+    private string FormatArrayDisplay()
+    {
+        var typeLabel = !string.IsNullOrEmpty(ArrayStructType) ? ArrayStructType : ArrayInnerType;
+        var header = $"[{ArrayCount} x {typeLabel} ({ArrayElemSize}B)]";
+
+        if (ArrayElements == null || ArrayElements.Count == 0)
+            return header;
+
+        const int previewCount = 5;
+        var preview = ArrayElements
+            .Take(previewCount)
+            .Select(e => !string.IsNullOrEmpty(e.EnumName) ? e.EnumName : e.Value);
+        var joined = string.Join(", ", preview);
+
+        if (ArrayCount > previewCount)
+            joined += ", ...";
+
+        return $"{header} = [{joined}]";
+    }
 }

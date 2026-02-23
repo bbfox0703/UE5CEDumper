@@ -294,6 +294,8 @@ public sealed class DumpService : IDumpService
                     ArrayInnerType = fo["array_inner_type"]?.GetValue<string>() ?? "",
                     ArrayStructType = fo["array_struct_type"]?.GetValue<string>() ?? "",
                     ArrayElemSize = fo["array_elem_size"]?.GetValue<int>() ?? 0,
+                    ArrayInnerAddr = fo["array_inner_addr"]?.GetValue<string>() ?? "",
+                    ArrayElements = ParseArrayElements(fo["elements"]),
                     StructDataAddr = fo["struct_data_addr"]?.GetValue<string>() ?? "",
                     StructClassAddr = fo["struct_class_addr"]?.GetValue<string>() ?? "",
                     StructTypeName = fo["struct_type"]?.GetValue<string>() ?? "",
@@ -319,6 +321,7 @@ public sealed class DumpService : IDumpService
             WorldName = res["world_name"]?.GetValue<string>() ?? "",
             LevelAddr = res["level_addr"]?.GetValue<string>() ?? "",
             LevelName = res["level_name"]?.GetValue<string>() ?? "",
+            LevelOffset = res["level_offset"]?.GetValue<int>() ?? 0,
             ActorCount = res["actor_count"]?.GetValue<int>() ?? 0,
             Error = res["error"]?.GetValue<string>() ?? "",
         };
@@ -454,6 +457,54 @@ public sealed class DumpService : IDumpService
             OffsetFromBase = res["offset_from_base"]?.GetValue<int>() ?? 0,
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
         };
+    }
+
+    public async Task<ArrayElementsResult> ReadArrayElementsAsync(
+        string instanceAddr, int fieldOffset,
+        string innerAddr, string innerType, int elemSize,
+        int offset = 0, int limit = 64, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "read_array_elements",
+            ["addr"] = instanceAddr,
+            ["field_offset"] = fieldOffset,
+            ["inner_addr"] = innerAddr,
+            ["inner_type"] = innerType,
+            ["elem_size"] = elemSize,
+            ["offset"] = offset,
+            ["limit"] = limit,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        return new ArrayElementsResult
+        {
+            TotalCount = res["total"]?.GetValue<int>() ?? 0,
+            ReadCount = res["read"]?.GetValue<int>() ?? 0,
+            InnerType = res["inner_type"]?.GetValue<string>() ?? innerType,
+            ElemSize = res["elem_size"]?.GetValue<int>() ?? elemSize,
+            Elements = ParseArrayElements(res["elements"]) ?? new(),
+        };
+    }
+
+    private static List<ArrayElementValue>? ParseArrayElements(JsonNode? node)
+    {
+        if (node is not JsonArray arr || arr.Count == 0) return null;
+
+        var result = new List<ArrayElementValue>(arr.Count);
+        foreach (var item in arr)
+        {
+            if (item is not JsonObject eo) continue;
+            result.Add(new ArrayElementValue
+            {
+                Index = eo["i"]?.GetValue<int>() ?? 0,
+                Value = eo["v"]?.GetValue<string>() ?? "",
+                Hex = eo["h"]?.GetValue<string>() ?? "",
+                EnumName = eo["en"]?.GetValue<string>() ?? "",
+            });
+        }
+        return result;
     }
 
     private static void CheckResponse(JsonObject res)

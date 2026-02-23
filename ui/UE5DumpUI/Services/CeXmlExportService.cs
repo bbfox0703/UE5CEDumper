@@ -8,10 +8,12 @@ namespace UE5DumpUI.Services;
 /// <summary>
 /// Generates Cheat Engine XML address records using hierarchical nested format.
 ///
-/// CE XML address resolution rules:
+/// CE XML address resolution rules (hierarchical tree model):
 /// - Root node: absolute address "Module.exe"+RVA
-/// - Same-layer offset: &lt;Address&gt;+{hex}&lt;/Address&gt; (no dereference)
-/// - Pointer dereference: &lt;Address&gt;+0&lt;/Address&gt; with &lt;Offsets&gt;&lt;Offset&gt;{hex}&lt;/Offset&gt;&lt;/Offsets&gt;
+/// - Each child's Address is relative to its parent's RESOLVED address
+/// - Pointer field: &lt;Address&gt;+{offset}&lt;/Address&gt; with &lt;Offsets&gt;&lt;Offset&gt;0&lt;/Offset&gt;&lt;/Offsets&gt;
+///   → CE resolves to *(parentAddr + offset), children offset from the dereferenced value
+/// - Inline field (scalar/struct): &lt;Address&gt;+{offset}&lt;/Address&gt; (no Offsets, no dereference)
 /// - GroupHeader=1 makes an entry a collapsible folder with children
 ///
 /// CE type mapping:
@@ -160,14 +162,15 @@ public static class CeXmlExportService
     ///
     /// Algorithm:
     /// - Root (breadcrumbs[0]): absolute address, GroupHeader
-    /// - Each breadcrumb[i] (i>=1): determines Address and Offsets based on parent type
-    ///   - If i==1 (direct child of root): Address=+{fieldOffset} (root is already the object)
-    ///   - If parent was pointer: Address=+0, Offsets=[fieldOffset] (dereference parent pointer)
-    ///   - If parent was struct: Address=+{fieldOffset} (inline offset)
-    /// - Leaf fields at current level:
-    ///   - Under root only (Count==1): Address=+{field.Offset}
-    ///   - Under pointer parent: Address=+0, Offsets=[field.Offset]
-    ///   - Under struct parent: Address=+{field.Offset}
+    /// - Each breadcrumb[i] (i>=1): Address=+{fieldOffset}
+    ///   - If the breadcrumb is a pointer (IsPointerDeref): add Offsets=[0] to dereference
+    ///   - If inline (struct): no Offsets
+    ///   Parent's Offsets=[0] resolves the pointer, so children just add their offset
+    /// - Leaf fields: always Address=+{field.Offset}, no Offsets
+    ///   (Parent breadcrumb already resolved any pointer dereference via its Offsets=[0])
+    /// - StructProperty (inline): Address=+{structOffset}, no Offsets, children at relative offsets
+    /// - ArrayProperty (scalar): Address=+{fieldOffset}, Offsets=[0] (deref TArray.Data)
+    ///   Element children: Address=+{N*elemSize} (Data pointer already dereferenced by parent)
     /// </summary>
     public static string GenerateHierarchicalXml(
         string rootAddress,
@@ -195,43 +198,27 @@ public static class CeXmlExportService
         openTags++;
 
         // Intermediate breadcrumb levels (navigation path)
+        // Each breadcrumb: go to field offset from parent's resolved address.
+        // If this field is a pointer, add Offsets=[0] to dereference it.
+        // Parent's own Offsets=[0] (if pointer) already resolved the dereference,
+        // so children just add their field offset.
         for (int i = 1; i < cleanedBc.Count; i++)
         {
             var bc = cleanedBc[i];
             var childIndent = indent + new string(' ', i * 2);
 
-            if (i == 1)
-            {
-                // Direct child of root. Root is the object instance itself.
-                // Access field at offset N: just +N (no dereference needed from root)
-                EmitGroupOpen(sb, childIndent, bc.FieldName,
-                    $"+{bc.FieldOffset:X}", null,
-                    showAsHex: bc.IsPointerDeref);
-            }
-            else
-            {
-                var prev = cleanedBc[i - 1];
-                if (prev.IsPointerDeref)
-                {
-                    // Parent was a pointer field. Must dereference to reach target object.
-                    EmitGroupOpen(sb, childIndent, bc.FieldName,
-                        "+0", new[] { bc.FieldOffset });
-                }
-                else
-                {
-                    // Parent was inline struct. Just offset from parent.
-                    EmitGroupOpen(sb, childIndent, bc.FieldName,
-                        $"+{bc.FieldOffset:X}", null);
-                }
-            }
+            EmitGroupOpen(sb, childIndent, bc.FieldName,
+                $"+{bc.FieldOffset:X}",
+                bc.IsPointerDeref ? new[] { 0 } : null,
+                showAsHex: bc.IsPointerDeref);
             openTags++;
         }
 
         // Leaf fields at the deepest level
+        // Parent breadcrumb (if any) already handled pointer dereference via Offsets=[0],
+        // so all leaf fields simply use Address=+{field.Offset}.
         var leafIndent = indent + new string(' ', cleanedBc.Count * 2);
-        bool parentIsPointer = cleanedBc.Count == 1 || cleanedBc[^1].IsPointerDeref;
-
-        EmitFields(sb, leafIndent, currentFields, parentIsPointer, cleanedBc.Count > 1, resolvedStructs);
+        EmitFields(sb, leafIndent, currentFields, resolvedStructs);
 
         // Close all nested levels (innermost first)
         for (int i = openTags - 1; i >= 0; i--)
@@ -268,7 +255,7 @@ public static class CeXmlExportService
             showAsHex: true, varType: "8 Bytes");
 
         var leafIndent = indent + "  ";
-        EmitFields(sb, leafIndent, fields, parentIsPointer: false, needDeref: false, resolvedStructs);
+        EmitFields(sb, leafIndent, fields, resolvedStructs);
 
         EmitGroupClose(sb, indent);
 
@@ -360,9 +347,11 @@ public static class CeXmlExportService
 
     /// <summary>
     /// Emit all leaf fields, handling scalars, resolved structs, and navigable placeholders.
+    /// All fields use Address=+{field.Offset} (no Offsets) because parent breadcrumb/group
+    /// already resolved any pointer dereference via its own Offsets=[0].
     /// </summary>
     private static void EmitFields(StringBuilder sb, string indent,
-        IReadOnlyList<LiveFieldValue> fields, bool parentIsPointer, bool needDeref,
+        IReadOnlyList<LiveFieldValue> fields,
         Dictionary<int, List<LiveFieldValue>>? resolvedStructs)
     {
         foreach (var field in fields)
@@ -373,74 +362,49 @@ public static class CeXmlExportService
                 && resolvedStructs.TryGetValue(field.Offset, out var structChildren)
                 && structChildren.Count > 0)
             {
-                EmitResolvedStruct(sb, indent, field, structChildren, parentIsPointer, needDeref);
+                EmitResolvedStruct(sb, indent, field, structChildren);
+                continue;
+            }
+
+            // ArrayProperty: emit as group with element children (Phase C)
+            if (field.TypeName == "ArrayProperty" && field.ArrayCount >= 0)
+            {
+                EmitArrayProperty(sb, indent, field);
                 continue;
             }
 
             var ceField = MapCeField(field);
-            bool isScalar = ceField != null;
-
-            if (parentIsPointer && needDeref)
+            if (ceField != null)
             {
-                // Under a pointer parent (not root): need dereference
-                if (isScalar)
-                {
-                    EmitLeaf(sb, indent, field.Name, ceField!,
-                        "+0", new[] { field.Offset });
-                }
-                else if (field.IsNavigable)
-                {
-                    EmitNavigableField(sb, indent, field,
-                        "+0", new[] { field.Offset });
-                }
+                EmitLeaf(sb, indent, field.Name, ceField,
+                    $"+{field.Offset:X}", null);
             }
-            else
+            else if (field.IsNavigable)
             {
-                // Under root directly, or under an inline struct parent: just +offset
-                if (isScalar)
-                {
-                    EmitLeaf(sb, indent, field.Name, ceField!,
-                        $"+{field.Offset:X}", null);
-                }
-                else if (field.IsNavigable)
-                {
-                    EmitNavigableField(sb, indent, field,
-                        $"+{field.Offset:X}", null);
-                }
+                EmitNavigableField(sb, indent, field,
+                    $"+{field.Offset:X}", null);
             }
         }
     }
 
     /// <summary>
     /// Emit a StructProperty with pre-resolved inner fields as a CE group.
+    /// Struct is inline (not a pointer), so Address=+{structOffset}, no Offsets.
     /// Children are flattened (nested structs already expanded with dot-prefixed names).
     /// Each child's Offset is relative to the struct start.
     /// </summary>
     private static void EmitResolvedStruct(StringBuilder sb, string indent,
-        LiveFieldValue structField, List<LiveFieldValue> children,
-        bool parentIsPointer, bool needDeref)
+        LiveFieldValue structField, List<LiveFieldValue> children)
     {
-        // Determine the group header's address (same logic as other fields)
-        string address;
-        int[]? offsets;
-
-        if (parentIsPointer && needDeref)
-        {
-            address = "+0";
-            offsets = new[] { structField.Offset };
-        }
-        else
-        {
-            address = $"+{structField.Offset:X}";
-            offsets = null;
-        }
+        // Struct is inline: just offset from parent, no dereference
+        var address = $"+{structField.Offset:X}";
 
         // Struct group header with struct type name in description
         var description = !string.IsNullOrEmpty(structField.StructTypeName)
             ? $"{structField.Name} ({structField.StructTypeName})"
             : structField.Name;
 
-        EmitGroupOpen(sb, indent, description, address, offsets);
+        EmitGroupOpen(sb, indent, description, address, null);
         var childIndent = indent + "  ";
 
         foreach (var child in children)
@@ -458,7 +422,69 @@ public static class CeXmlExportService
                 EmitGroupPlaceholder(sb, childIndent, child.Name,
                     $"+{child.Offset:X}", null, showAsHex: true);
             }
-            // Skip unknown types (arrays, delegates, etc.) — they're not useful in CE
+            else if (child.TypeName == "ArrayProperty" && child.ArrayCount >= 0)
+            {
+                // Array inside struct — emit as group placeholder (no Phase B elements for resolved children)
+                var arrTypeLabel = !string.IsNullOrEmpty(child.ArrayStructType)
+                    ? child.ArrayStructType : child.ArrayInnerType;
+                var arrDesc = child.ArrayCount > 0 && !string.IsNullOrEmpty(arrTypeLabel)
+                    ? $"{child.Name} [{child.ArrayCount} x {arrTypeLabel} ({child.ArrayElemSize}B)]"
+                    : child.Name;
+                EmitGroupPlaceholder(sb, childIndent, arrDesc, $"+{child.Offset:X}", null);
+            }
+            // Skip unknown types (delegates, etc.) — they're not useful in CE
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// Emit an ArrayProperty as a CE group with per-element children.
+    /// Scalar arrays (Float, Int, Bool, Byte, Enum, Name) get individual leaf entries.
+    /// Non-scalar arrays (Struct, Object) or empty arrays emit as placeholder only.
+    ///
+    /// TArray addressing:
+    /// - Group header: Address=+{fieldOffset}, Offsets=[0] → dereferences TArray.Data pointer
+    /// - Element children: Address=+{N*elemSize} → simple offset from the dereferenced Data pointer
+    /// </summary>
+    private static void EmitArrayProperty(StringBuilder sb, string indent,
+        LiveFieldValue field)
+    {
+        // Map inner type to CE type
+        var ceElem = MapInnerTypeToCeField(field.ArrayInnerType);
+
+        // Build description: "FieldName [N x Type (SizeB)]"
+        var typeLabel = !string.IsNullOrEmpty(field.ArrayStructType)
+            ? field.ArrayStructType : field.ArrayInnerType;
+        var desc = field.ArrayCount > 0 && !string.IsNullOrEmpty(typeLabel)
+            ? $"{field.Name} [{field.ArrayCount} x {typeLabel} ({field.ArrayElemSize}B)]"
+            : field.Name;
+
+        // Non-scalar, empty, or no inline elements → placeholder only (no deref needed)
+        if (ceElem == null || field.ArrayCount <= 0
+            || field.ArrayElements == null || field.ArrayElements.Count == 0)
+        {
+            EmitGroupPlaceholder(sb, indent, desc, $"+{field.Offset:X}", null);
+            return;
+        }
+
+        // Array group: Address=+{fieldOffset}, Offsets=[0] to dereference TArray.Data pointer.
+        // TArray layout: { Data* +0x00, Count +0x08, Max +0x0C }
+        // Offsets=[0] reads the pointer at TArray+0x00 (the Data pointer).
+        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        var childIndent = indent + "  ";
+
+        foreach (var elem in field.ArrayElements)
+        {
+            // Element description: "[N]" or "[N] EnumName"
+            var elemDesc = !string.IsNullOrEmpty(elem.EnumName)
+                ? $"[{elem.Index}] {elem.EnumName}"
+                : $"[{elem.Index}]";
+
+            // Element: simple offset from the already-dereferenced Data pointer
+            int elemByteOffset = elem.Index * field.ArrayElemSize;
+            EmitLeaf(sb, childIndent, elemDesc, ceElem,
+                $"+{elemByteOffset:X}", null);
         }
 
         EmitGroupClose(sb, indent);
@@ -603,6 +629,44 @@ public static class CeXmlExportService
             "TextProperty" => new CeFieldInfo("String"),
 
             _ => null // Unknown -- not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
+        };
+    }
+
+    /// <summary>
+    /// Map an array inner type name to CE field info.
+    /// Similar to MapCeField but takes a type name string (for array element types).
+    /// BoolProperty in arrays = full byte (no bitfield).
+    /// Returns null for non-scalar types (StructProperty, ObjectProperty, etc.).
+    /// </summary>
+    private static CeFieldInfo? MapInnerTypeToCeField(string innerTypeName)
+    {
+        return innerTypeName switch
+        {
+            "FloatProperty" => new CeFieldInfo("Float"),
+            "DoubleProperty" => new CeFieldInfo("Double"),
+
+            // Signed integers
+            "Int8Property" => new CeFieldInfo("Byte", IsSigned: true),
+            "Int16Property" => new CeFieldInfo("2 Bytes", IsSigned: true),
+            "IntProperty" => new CeFieldInfo("4 Bytes", IsSigned: true),
+            "Int64Property" => new CeFieldInfo("8 Bytes", IsSigned: true),
+
+            // Unsigned integers
+            "ByteProperty" => new CeFieldInfo("Byte"),
+            "UInt16Property" => new CeFieldInfo("2 Bytes"),
+            "UInt32Property" => new CeFieldInfo("4 Bytes"),
+            "UInt64Property" => new CeFieldInfo("8 Bytes"),
+
+            // Bool in arrays: stored as full bytes (no bitfield)
+            "BoolProperty" => new CeFieldInfo("Byte"),
+
+            // FName index
+            "NameProperty" => new CeFieldInfo("4 Bytes"),
+
+            // Enum -- underlying value is typically int32
+            "EnumProperty" => new CeFieldInfo("4 Bytes"),
+
+            _ => null // Non-scalar (StructProperty, ObjectProperty, etc.)
         };
     }
 }
