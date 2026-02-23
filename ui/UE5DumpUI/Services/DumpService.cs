@@ -508,6 +508,10 @@ public sealed class DumpService : IDumpService
                 Value = eo["v"]?.GetValue<string>() ?? "",
                 Hex = eo["h"]?.GetValue<string>() ?? "",
                 EnumName = eo["en"]?.GetValue<string>() ?? "",
+                // Phase D: pointer element fields
+                PtrAddress = eo["pa"]?.GetValue<string>() ?? "",
+                PtrName = eo["pn"]?.GetValue<string>() ?? "",
+                PtrClassName = eo["pc"]?.GetValue<string>() ?? "",
             });
         }
         return result;

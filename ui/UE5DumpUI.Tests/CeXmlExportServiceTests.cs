@@ -615,6 +615,119 @@ public class CeXmlExportServiceTests
     }
 
     // ========================================
+    // Pointer Array CE XML tests (Phase D)
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_PointerArray_EmitsGroupWithElements()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Levels", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "ObjectProperty", ArrayElemSize = 8,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "PersistentLevel (Level)", Hex = "0000020C12340000",
+                        PtrAddress = "0x20C12340000", PtrName = "PersistentLevel", PtrClassName = "Level" },
+                    new() { Index = 1, Value = "SubLevel_01 (Level)", Hex = "0000020C56780000",
+                        PtrAddress = "0x20C56780000", PtrName = "SubLevel_01", PtrClassName = "Level" },
+                    new() { Index = 2, Value = "null", Hex = "0000000000000000",
+                        PtrAddress = "", PtrName = "", PtrClassName = "" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Group header with array type info
+        Assert.Contains("Levels [3 x ObjectProperty (8B)]", xml);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        // Array group: Address=+80, Offsets=[0] (deref TArray.Data)
+        Assert.Contains("<Address>+80</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Elements with resolved names in descriptions
+        Assert.Contains("[0] PersistentLevel (Level)", xml);
+        Assert.Contains("[1] SubLevel_01 (Level)", xml);
+        Assert.Contains("[2]", xml); // null element, no name
+        // Pointer type: 8 Bytes, ShowAsHex
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+        // Element offsets: +0, +8, +10 (8 bytes per pointer)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+8</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_PointerArrayNoElements_StillPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "BigPtrArr", TypeName = "ArrayProperty", Offset = 0xA0, Size = 16,
+                ArrayCount = 200, ArrayInnerType = "ObjectProperty", ArrayElemSize = 8,
+                // No ArrayElements — exceeds 64-element cap
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Placeholder with type info
+        Assert.Contains("BigPtrArr [200 x ObjectProperty (8B)]", xml);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        Assert.DoesNotContain("[0]", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_PointerArrayUnderPointerBreadcrumb()
+    {
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1000", "Root"),
+            MakeBc("0x2000", "Child", "m_pChild", isPointer: true, offset: 0x100),
+        };
+
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Components", TypeName = "ArrayProperty", Offset = 0x50, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "ObjectProperty", ArrayElemSize = 8,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "MeshComp (StaticMeshComponent)",
+                        Hex = "0000020CABC00000",
+                        PtrAddress = "0x20CABC00000", PtrName = "MeshComp",
+                        PtrClassName = "StaticMeshComponent" },
+                    new() { Index = 1, Value = "CollisionComp (BoxComponent)",
+                        Hex = "0000020CDEF00000",
+                        PtrAddress = "0x20CDEF00000", PtrName = "CollisionComp",
+                        PtrClassName = "BoxComponent" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"Game.exe\"+1000", "Root", breadcrumbs, fields);
+
+        // Breadcrumb m_pChild: pointer dereference
+        Assert.Contains("<Address>+100</Address>", xml);
+        // Array group
+        Assert.Contains("Components [2 x ObjectProperty (8B)]", xml);
+        Assert.Contains("<Address>+50</Address>", xml);
+        // Elements
+        Assert.Contains("[0] MeshComp (StaticMeshComponent)", xml);
+        Assert.Contains("[1] CollisionComp (BoxComponent)", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    // ========================================
     // Helper
     // ========================================
 
