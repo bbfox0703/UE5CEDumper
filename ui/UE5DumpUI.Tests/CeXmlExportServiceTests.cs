@@ -414,11 +414,204 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateHierarchicalXml(
             "\"Game.exe\"+1000", "Root", breadcrumbs, fields, resolvedStructs);
 
-        // Under pointer parent, struct should use dereference addressing
+        // Breadcrumb m_pChild: Address=+100, Offsets=[0] (pointer dereference)
+        Assert.Contains("<Address>+100</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Struct Stats: Address=+20 (inline, no additional dereference)
+        Assert.Contains("<Address>+20</Address>", xml);
+        Assert.Contains("FStats", xml);
+        // Struct children: HP at +0, MP at +4 (relative to struct start)
         Assert.Contains("HP", xml);
         Assert.Contains("MP", xml);
-        Assert.Contains("FStats", xml);
-        Assert.Contains("<Offset>20</Offset>", xml);
+    }
+
+    // ========================================
+    // ArrayProperty CE XML tests (Phase C)
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_ScalarArray_EmitsGroupWithElements()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "DamageMultipliers", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "FloatProperty", ArrayElemSize = 4,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "1.5", Hex = "3FC00000" },
+                    new() { Index = 1, Value = "2.0", Hex = "40000000" },
+                    new() { Index = 2, Value = "0.5", Hex = "3F000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Group header with array description
+        Assert.Contains("DamageMultipliers [3 x FloatProperty (4B)]", xml);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        // Array group: Address=+100, Offsets=[0] (dereference TArray.Data pointer)
+        Assert.Contains("<Address>+100</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Element entries: simple offsets from deref'd Data pointer
+        Assert.Contains("[0]", xml);
+        Assert.Contains("[1]", xml);
+        Assert.Contains("[2]", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        // Element addresses: +0, +4, +8 (no Offsets, parent group already deref'd Data)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+4</Address>", xml);
+        Assert.Contains("<Address>+8</Address>", xml);
+        // Elements should NOT have their own Offset entries (only group has Offset=0)
+        Assert.DoesNotContain("<Offset>4</Offset>", xml);
+        Assert.DoesNotContain("<Offset>8</Offset>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_EnumArray_ElementDescIncludesEnumName()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ShipTypes", TypeName = "ArrayProperty", Offset = 0x200, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "ByteProperty", ArrayElemSize = 1,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "0", Hex = "00", EnumName = "EShip::Scout" },
+                    new() { Index = 1, Value = "1", Hex = "01", EnumName = "EShip::SpecOps" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Enum names in element descriptions
+        Assert.Contains("[0] EShip::Scout", xml);
+        Assert.Contains("[1] EShip::SpecOps", xml);
+        Assert.Contains("<VariableType>Byte</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_EmptyArray_EmitsPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "EmptyArr", TypeName = "ArrayProperty", Offset = 0x50, Size = 16,
+                ArrayCount = 0, ArrayInnerType = "FloatProperty", ArrayElemSize = 4,
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Should be a placeholder (GroupHeader, no CheatEntries children inside it)
+        Assert.Contains("EmptyArr", xml);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        // No element entries (no [0], [1])
+        Assert.DoesNotContain("[0]", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_NonScalarArray_EmitsPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Levels", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
+                ArrayCount = 5, ArrayInnerType = "ObjectProperty", ArrayElemSize = 8,
+                ArrayStructType = "",
+                // No ArrayElements (ObjectProperty is non-scalar, Phase B skips it)
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Placeholder with type info in description
+        Assert.Contains("Levels [5 x ObjectProperty (8B)]", xml);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        // No element entries
+        Assert.DoesNotContain("[0]", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_ArrayUnderPointer_CorrectChain()
+    {
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1000", "Root"),
+            MakeBc("0x2000", "Child", "m_pChild", isPointer: true, offset: 0x100),
+        };
+
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Scores", TypeName = "ArrayProperty", Offset = 0x30, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "100", Hex = "64000000" },
+                    new() { Index = 1, Value = "200", Hex = "C8000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"Game.exe\"+1000", "Root", breadcrumbs, fields);
+
+        // Breadcrumb m_pChild: Address=+100, Offsets=[0] (pointer dereference)
+        Assert.Contains("<Address>+100</Address>", xml);
+        // Array group Scores: Address=+30, Offsets=[0] (TArray.Data dereference)
+        Assert.Contains("Scores [2 x IntProperty (4B)]", xml);
+        Assert.Contains("<Address>+30</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+        // Elements: simple offsets from deref'd Data pointer (no Offsets)
+        Assert.Contains("[0]", xml);
+        Assert.Contains("[1]", xml);
+        // No double deref — each layer handles its own dereference
+        Assert.DoesNotContain("<Offset>30</Offset>", xml);
+        Assert.DoesNotContain("<Offset>4</Offset>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_LargeArray_CappedByInlineElements()
+    {
+        // ArrayCount=100 but only 3 inline elements (Phase B caps at 64, test with 3)
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "BigArray", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 100, ArrayInnerType = "FloatProperty", ArrayElemSize = 4,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "1.0", Hex = "3F800000" },
+                    new() { Index = 1, Value = "2.0", Hex = "40000000" },
+                    new() { Index = 2, Value = "3.0", Hex = "40400000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Header shows full count (100)
+        Assert.Contains("BigArray [100 x FloatProperty (4B)]", xml);
+        // Only 3 element entries (capped by inline data)
+        Assert.Contains("[0]", xml);
+        Assert.Contains("[1]", xml);
+        Assert.Contains("[2]", xml);
+        Assert.DoesNotContain("[3]", xml);
     }
 
     // ========================================

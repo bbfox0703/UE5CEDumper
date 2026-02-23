@@ -95,4 +95,100 @@ public class ModelTests
         Assert.Empty(result.Objects);
         Assert.Equal(0, result.Total);
     }
+
+    [Fact]
+    public void LiveFieldValue_DisplayValue_ArrayWithElements()
+    {
+        var field = new LiveFieldValue
+        {
+            ArrayCount = 3,
+            ArrayInnerType = "FloatProperty",
+            ArrayElemSize = 4,
+            ArrayElements = new List<ArrayElementValue>
+            {
+                new() { Index = 0, Value = "1.5" },
+                new() { Index = 1, Value = "2" },
+                new() { Index = 2, Value = "3.75" },
+            },
+        };
+
+        Assert.Equal("[3 x FloatProperty (4B)] = [1.5, 2, 3.75]", field.DisplayValue);
+    }
+
+    [Fact]
+    public void LiveFieldValue_DisplayValue_ArrayWithEnumElements()
+    {
+        var field = new LiveFieldValue
+        {
+            ArrayCount = 2,
+            ArrayInnerType = "EnumProperty",
+            ArrayElemSize = 4,
+            ArrayElements = new List<ArrayElementValue>
+            {
+                new() { Index = 0, Value = "0", EnumName = "ROLE_Authority" },
+                new() { Index = 1, Value = "2", EnumName = "ROLE_SimulatedProxy" },
+            },
+        };
+
+        Assert.Equal("[2 x EnumProperty (4B)] = [ROLE_Authority, ROLE_SimulatedProxy]", field.DisplayValue);
+    }
+
+    [Fact]
+    public void LiveFieldValue_DisplayValue_ArrayWithMoreThanPreview()
+    {
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < 10; i++)
+            elems.Add(new ArrayElementValue { Index = i, Value = i.ToString() });
+
+        var field = new LiveFieldValue
+        {
+            ArrayCount = 10,
+            ArrayInnerType = "IntProperty",
+            ArrayElemSize = 4,
+            ArrayElements = elems,
+        };
+
+        Assert.Equal("[10 x IntProperty (4B)] = [0, 1, 2, 3, 4, ...]", field.DisplayValue);
+    }
+
+    [Fact]
+    public void LiveFieldValue_DisplayValue_ArrayNoElements_FallsBackToTypeInfo()
+    {
+        var field = new LiveFieldValue
+        {
+            ArrayCount = 5,
+            ArrayInnerType = "FloatProperty",
+            ArrayElemSize = 4,
+        };
+
+        Assert.Equal("[5 x FloatProperty (4B)]", field.DisplayValue);
+    }
+
+    [Fact]
+    public void LiveFieldValue_DisplayValue_EmptyArray()
+    {
+        var field = new LiveFieldValue
+        {
+            ArrayCount = 0,
+            ArrayInnerType = "FloatProperty",
+            ArrayElemSize = 4,
+        };
+
+        Assert.Equal("[0 x FloatProperty (4B)]", field.DisplayValue);
+    }
+
+    [Fact]
+    public void LiveFieldValue_DisplayValue_ArrayStructType()
+    {
+        var field = new LiveFieldValue
+        {
+            ArrayCount = 3,
+            ArrayInnerType = "StructProperty",
+            ArrayStructType = "FVector",
+            ArrayElemSize = 12,
+        };
+
+        // Struct arrays don't have inline elements in Phase B
+        Assert.Equal("[3 x FVector (12B)]", field.DisplayValue);
+    }
 }

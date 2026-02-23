@@ -77,6 +77,16 @@ struct LiveFieldValue {
     std::string arrayInnerType;        // Inner element type (e.g., "FloatProperty", "StructProperty")
     std::string arrayInnerStructType;  // For struct arrays: UScriptStruct name (e.g., "FVector")
     int32_t     arrayElemSize = 0;     // Element size in bytes
+    uintptr_t   arrayInnerFFieldAddr = 0;  // Inner FProperty* (for read_array_elements command)
+
+    // For ArrayProperty Phase B: inline scalar element values (up to 64)
+    struct ArrayElement {
+        int32_t     index = 0;
+        std::string value;      // Human-readable typed value
+        std::string hex;        // Per-element hex string
+        std::string enumName;   // Only for enum arrays
+    };
+    std::vector<ArrayElement> arrayElements;
 
     // For StructProperty: inner struct info
     uintptr_t   structDataAddr  = 0;  // Absolute address of struct data (instanceAddr + offset)
@@ -109,5 +119,31 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr = 0)
 
 // Interpret raw bytes as a typed value string based on the field type name
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size);
+
+// --- Array Element Reading (Phase B) ---
+
+// Result of reading array elements
+struct ReadArrayResult {
+    bool        ok = false;
+    std::string error;
+    int32_t     totalCount = 0;
+    int32_t     readCount  = 0;
+    std::vector<LiveFieldValue::ArrayElement> elements;
+};
+
+// Check if an inner type name is a scalar type whose elements can be read inline
+bool IsScalarArrayType(const std::string& innerTypeName);
+
+// Read scalar elements from a TArray.
+// instanceAddr: base address of the UObject instance
+// fieldOffset:  byte offset of the TArray field within the instance
+// innerFFieldAddr: Inner FProperty* (needed for enum resolution)
+// innerTypeName: e.g. "FloatProperty", "EnumProperty"
+// elemSize: bytes per element
+// offset/limit: pagination (element index range)
+ReadArrayResult ReadArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    uintptr_t innerFFieldAddr, const std::string& innerTypeName,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
 } // namespace UStructWalker
