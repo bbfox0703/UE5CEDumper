@@ -3,7 +3,19 @@ using System.Linq;
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// A single element value from an array (Phase B scalar / Phase D pointer).
+/// A sub-field value within a struct array element (Phase F).
+/// </summary>
+public sealed class StructSubFieldValue
+{
+    public string Name { get; init; } = "";
+    public string TypeName { get; init; } = "";
+    public int Offset { get; init; }
+    public int Size { get; init; }
+    public string Value { get; init; } = "";
+}
+
+/// <summary>
+/// A single element value from an array (Phase B scalar / Phase D pointer / Phase F struct).
 /// </summary>
 public sealed class ArrayElementValue
 {
@@ -15,6 +27,8 @@ public sealed class ArrayElementValue
     public string PtrAddress { get; init; } = "";
     public string PtrName { get; init; } = "";
     public string PtrClassName { get; init; } = "";
+    // Phase F: struct sub-fields
+    public List<StructSubFieldValue>? StructFields { get; init; }
 }
 
 /// <summary>

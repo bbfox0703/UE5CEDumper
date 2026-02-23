@@ -478,6 +478,15 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                                 ej["pn"] = e.ptrName;
                                 ej["pc"] = e.ptrClassName;
                             }
+                            // Phase F: struct sub-fields
+                            if (!e.structFields.empty()) {
+                                json sfs = json::array();
+                                for (const auto& sf : e.structFields) {
+                                    sfs.push_back({{"n", sf.name}, {"t", sf.typeName},
+                                                   {"o", sf.offset}, {"s", sf.size}, {"v", sf.value}});
+                                }
+                                ej["sf"] = sfs;
+                            }
                             elems.push_back(ej);
                         }
                         fj["elements"] = elems;
@@ -551,6 +560,15 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     ej["pa"] = PipeProtocol::AddrToStr(e.ptrAddr);
                     ej["pn"] = e.ptrName;
                     ej["pc"] = e.ptrClassName;
+                }
+                // Phase F: struct sub-fields
+                if (!e.structFields.empty()) {
+                    json sfs = json::array();
+                    for (const auto& sf : e.structFields) {
+                        sfs.push_back({{"n", sf.name}, {"t", sf.typeName},
+                                       {"o", sf.offset}, {"s", sf.size}, {"v", sf.value}});
+                    }
+                    ej["sf"] = sfs;
                 }
                 elems.push_back(ej);
             }

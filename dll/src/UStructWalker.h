@@ -78,8 +78,9 @@ struct LiveFieldValue {
     std::string arrayInnerStructType;  // For struct arrays: UScriptStruct name (e.g., "FVector")
     int32_t     arrayElemSize = 0;     // Element size in bytes
     uintptr_t   arrayInnerFFieldAddr = 0;  // Inner FProperty* (for read_array_elements command)
+    uintptr_t   arrayInnerStructAddr = 0;  // UScriptStruct* for struct arrays (Phase F)
 
-    // For ArrayProperty Phase B/D: inline element values (up to 64)
+    // For ArrayProperty Phase B/D/E/F: inline element values (up to 64)
     struct ArrayElement {
         int32_t     index = 0;
         std::string value;      // Human-readable typed value
@@ -89,6 +90,15 @@ struct LiveFieldValue {
         uintptr_t   ptrAddr = 0;       // UObject* value (0 = null)
         std::string ptrName;           // Object name
         std::string ptrClassName;      // Class name
+        // Phase F: struct array sub-fields
+        struct StructSubField {
+            std::string name;
+            std::string typeName;
+            int32_t     offset = 0;   // relative to element start
+            int32_t     size = 0;
+            std::string value;        // formatted scalar value
+        };
+        std::vector<StructSubField> structFields;
     };
     std::vector<ArrayElement> arrayElements;
 
@@ -170,5 +180,15 @@ bool IsWeakPointerArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadWeakObjectArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase F: check if inner type is a struct type
+bool IsStructArrayType(const std::string& innerTypeName);
+
+// Phase F: read struct array elements, expanding each element's scalar fields.
+// innerStructAddr: UScriptStruct* for the inner element type.
+ReadArrayResult ReadStructArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    uintptr_t innerStructAddr, int32_t elemSize,
+    int32_t offset = 0, int32_t limit = 64);
 
 } // namespace UStructWalker
