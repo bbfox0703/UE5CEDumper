@@ -56,6 +56,11 @@ public sealed class MockLoggingService : ILoggingService
     public void Error(string message) => Messages.Add($"[ERROR] {message}");
     public void Error(string message, Exception ex) => Messages.Add($"[ERROR] {message}: {ex.Message}");
     public void Debug(string message) => Messages.Add($"[DEBUG] {message}");
+    public void Info(string category, string message) => Messages.Add($"[INFO:{category}] {message}");
+    public void Warn(string category, string message) => Messages.Add($"[WARN:{category}] {message}");
+    public void Error(string category, string message) => Messages.Add($"[ERROR:{category}] {message}");
+    public void Error(string category, string message, Exception ex) => Messages.Add($"[ERROR:{category}] {message}: {ex.Message}");
+    public void Debug(string category, string message) => Messages.Add($"[DEBUG:{category}] {message}");
     public void StartProcessMirror(string processName) { }
     public void StopProcessMirror() { }
 }

@@ -151,13 +151,13 @@ public partial class MainWindowViewModel : ViewModelBase
                 _log.StartProcessMirror(state.ModuleName);
             }
 
-            _log.Info($"Connected: UE{state.UEVersion}, {state.ObjectCount} objects, module={state.ModuleName}");
+            _log.Info(Constants.LogCatInit, $"Connected: UE{state.UEVersion}, {state.ObjectCount} objects, module={state.ModuleName}");
         }
         catch (Exception ex)
         {
             StatusText = "Connection Error";
             SetError(ex);
-            _log.Error("Connection failed", ex);
+            _log.Error(Constants.LogCatInit, "Connection failed", ex);
         }
     }
 

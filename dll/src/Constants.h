@@ -13,10 +13,7 @@ namespace Constants {
 // --- Logging ---
 constexpr const wchar_t* LOG_FOLDER_NAME  = L"UE5CEDumper";
 constexpr const wchar_t* LOG_SUBFOLDER    = L"Logs";
-constexpr const wchar_t* LOG_FILE_PREFIX  = L"UE5Dumper";
-constexpr const wchar_t* LOG_SCAN_PREFIX  = L"UE5Dumper-scan";
-constexpr const wchar_t* LOG_PIPE_PREFIX  = L"UE5Dumper-pipe";
-constexpr int            LOG_MAX_FILES    = 5;
+constexpr int            LOG_ROTATE_MAX   = 2;        // 2-file rotation per category
 constexpr size_t         LOG_MAX_SIZE_MB  = 5;
 constexpr size_t         LOG_MAX_SIZE     = LOG_MAX_SIZE_MB * 1024 * 1024;
 
@@ -87,6 +84,11 @@ inline int FFIELDCLASS_NAME   = 0x00;  // FName at start of FFieldClass
 // UScriptStruct* — first field after FProperty base layout.
 // Derived from FPROPERTY_OFFSET + 0x2C (UE5.0: 0x78, UE5.1.1+: 0x70).
 inline int FSTRUCTPROP_STRUCT = 0x78;
+
+// === FArrayProperty (subclass of FProperty) ===
+// FProperty* Inner — element type descriptor, same offset as FSTRUCTPROP_STRUCT.
+// Both are the first subclass field after FProperty base layout.
+inline int FARRAYPROP_INNER   = 0x78;
 
 // === FBoolProperty layout (subclass of FProperty) ===
 //   uint8 FieldSize, ByteOffset, ByteMask, FieldMask

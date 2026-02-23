@@ -42,7 +42,7 @@ public sealed class PipeClient : IPipeClient
         _pipe = new NamedPipeClientStream(".", Constants.PipeName,
             PipeDirection.InOut, PipeOptions.Asynchronous);
 
-        _log.Info($"Connecting to pipe: {Constants.PipeName}...");
+        _log.Info(Constants.LogCatPipe, $"Connecting to pipe: {Constants.PipeName}...");
         await _pipe.ConnectAsync(Constants.PipeConnectTimeoutMs, ct);
 
         _reader = new StreamReader(_pipe, Encoding.UTF8);
@@ -50,7 +50,7 @@ public sealed class PipeClient : IPipeClient
 
         IsConnected = true;
         ConnectionStateChanged?.Invoke(true);
-        _log.Info("Pipe connected");
+        _log.Info(Constants.LogCatPipe, "Pipe connected");
 
         _readLoopTask = Task.Run(ReadLoopAsync, _cts.Token);
     }
@@ -59,7 +59,7 @@ public sealed class PipeClient : IPipeClient
     {
         if (!IsConnected) return;
 
-        _log.Info("Disconnecting pipe...");
+        _log.Info(Constants.LogCatPipe, "Disconnecting pipe...");
         _cts.Cancel();
 
         // Complete all pending requests with cancellation
@@ -83,7 +83,7 @@ public sealed class PipeClient : IPipeClient
 
         IsConnected = false;
         ConnectionStateChanged?.Invoke(false);
-        _log.Info("Pipe disconnected");
+        _log.Info(Constants.LogCatPipe, "Pipe disconnected");
     }
 
     public async Task<JsonObject> SendAsync(JsonObject request, CancellationToken ct = default)
@@ -104,7 +104,7 @@ public sealed class PipeClient : IPipeClient
         });
 
         var json = request.ToJsonString();
-        _log.Debug($"Pipe TX: {json}");
+        _log.Debug(Constants.LogCatPipe, $"Pipe TX: {json}");
 
         try
         {
@@ -143,11 +143,11 @@ public sealed class PipeClient : IPipeClient
                 var line = await _reader.ReadLineAsync(_cts.Token);
                 if (line is null)
                 {
-                    _log.Warn("Pipe: ReadLine returned null (disconnected)");
+                    _log.Warn(Constants.LogCatPipe, "Pipe: ReadLine returned null (disconnected)");
                     break;
                 }
 
-                _log.Debug($"Pipe RX: {line}");
+                _log.Debug(Constants.LogCatPipe, $"Pipe RX: {line}");
 
                 try
                 {
@@ -171,7 +171,7 @@ public sealed class PipeClient : IPipeClient
                 }
                 catch (JsonException ex)
                 {
-                    _log.Error($"Pipe: JSON parse error: {ex.Message}");
+                    _log.Error(Constants.LogCatPipe, $"Pipe: JSON parse error: {ex.Message}");
                 }
             }
         }
@@ -180,7 +180,7 @@ public sealed class PipeClient : IPipeClient
         catch (ObjectDisposedException) { /* expected when pipe disposed during read */ }
         catch (Exception ex)
         {
-            _log.Error("Pipe: ReadLoop error", ex);
+            _log.Error(Constants.LogCatPipe, "Pipe: ReadLoop error", ex);
         }
         finally
         {
