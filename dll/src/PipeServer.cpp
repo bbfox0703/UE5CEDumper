@@ -472,6 +472,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                             ej["h"] = e.hex;
                             if (!e.enumName.empty())
                                 ej["en"] = e.enumName;
+                            if (e.rawIntValue != 0 || !e.enumName.empty())
+                                ej["rv"] = e.rawIntValue;
                             // Phase D: pointer element fields
                             if (e.ptrAddr != 0) {
                                 ej["pa"] = PipeProtocol::AddrToStr(e.ptrAddr);
@@ -490,6 +492,15 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                             elems.push_back(ej);
                         }
                         fj["elements"] = elems;
+                    }
+
+                    // CE DropDownList: full enum entries for this array field
+                    if (fv.arrayEnumAddr != 0 && !fv.arrayEnumEntries.empty()) {
+                        fj["enum_addr"] = PipeProtocol::AddrToStr(fv.arrayEnumAddr);
+                        json entries = json::array();
+                        for (const auto& ee : fv.arrayEnumEntries)
+                            entries.push_back({{"v", ee.value}, {"n", ee.name}});
+                        fj["enum_entries"] = entries;
                     }
                 }
 
@@ -555,6 +566,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 ej["h"] = e.hex;
                 if (!e.enumName.empty())
                     ej["en"] = e.enumName;
+                if (e.rawIntValue != 0 || !e.enumName.empty())
+                    ej["rv"] = e.rawIntValue;
                 // Phase D: pointer element fields
                 if (e.ptrAddr != 0) {
                     ej["pa"] = PipeProtocol::AddrToStr(e.ptrAddr);

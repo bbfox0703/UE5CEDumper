@@ -829,8 +829,148 @@ public class CeXmlExportServiceTests
     }
 
     // ========================================
+    // CE DropDownList tests
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_EnumArray_EmitsDropDownList()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ShipTypes", TypeName = "ArrayProperty", Offset = 0x200, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "ByteProperty", ArrayElemSize = 1,
+                ArrayEnumAddr = "0x1234",
+                ArrayEnumEntries = new List<EnumEntryValue>
+                {
+                    new() { Value = 0, Name = "EShip::Scout" },
+                    new() { Value = 1, Name = "EShip::SpecOps" },
+                    new() { Value = 2, Name = "EShip::Gunship" },
+                },
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "EShip::Scout", Hex = "00", EnumName = "EShip::Scout", RawIntValue = 0 },
+                    new() { Index = 1, Value = "EShip::SpecOps", Hex = "01", EnumName = "EShip::SpecOps", RawIntValue = 1 },
+                    new() { Index = 2, Value = "EShip::Gunship", Hex = "02", EnumName = "EShip::Gunship", RawIntValue = 2 },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // First element has DropDownList with all enum entries
+        Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
+        Assert.Contains("0:EShip::Scout", xml);
+        Assert.Contains("1:EShip::SpecOps", xml);
+        Assert.Contains("2:EShip::Gunship", xml);
+        // Subsequent elements use DropDownListLink referencing first element's description
+        Assert.Contains("<DropDownListLink Description=", xml);
+        Assert.Contains("[0] EShip::Scout", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SharedEnumArray_EmitsDropDownListLink()
+    {
+        // Two arrays with the same enum type (same ArrayEnumAddr)
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "StarterShips", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "ByteProperty", ArrayElemSize = 1,
+                ArrayEnumAddr = "0xABCD",
+                ArrayEnumEntries = new List<EnumEntryValue>
+                {
+                    new() { Value = 0, Name = "EShip::Scout" },
+                    new() { Value = 1, Name = "EShip::SpecOps" },
+                },
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "EShip::Scout", Hex = "00", EnumName = "EShip::Scout", RawIntValue = 0 },
+                    new() { Index = 1, Value = "EShip::SpecOps", Hex = "01", EnumName = "EShip::SpecOps", RawIntValue = 1 },
+                }
+            },
+            new LiveFieldValue
+            {
+                Name = "AvailableShips", TypeName = "ArrayProperty", Offset = 0x200, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "ByteProperty", ArrayElemSize = 1,
+                ArrayEnumAddr = "0xABCD",  // Same enum type as above
+                ArrayEnumEntries = new List<EnumEntryValue>
+                {
+                    new() { Value = 0, Name = "EShip::Scout" },
+                    new() { Value = 1, Name = "EShip::SpecOps" },
+                },
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "EShip::SpecOps", Hex = "01", EnumName = "EShip::SpecOps", RawIntValue = 1 },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // First array's first element has the DropDownList
+        Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
+        // Second array's element uses DropDownListLink (shared, no duplicate DropDownList)
+        // Count occurrences of DropDownList (should be exactly 1 full list)
+        int listCount = CountOccurrences(xml, "<DropDownList ");
+        Assert.Equal(1, listCount);
+        // Multiple DropDownListLink entries (from both arrays' subsequent elements)
+        int linkCount = CountOccurrences(xml, "<DropDownListLink ");
+        Assert.True(linkCount >= 2, $"Expected at least 2 DropDownListLink entries, got {linkCount}");
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_NameArray_EmitsDropDownList()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Locations", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "NameProperty", ArrayElemSize = 8,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "S01L04", Hex = "12340000", RawIntValue = 0x1234 },
+                    new() { Index = 1, Value = "S01L08", Hex = "56780000", RawIntValue = 0x5678 },
+                    new() { Index = 2, Value = "S02L01", Hex = "9ABC0000", RawIntValue = 0x9ABC },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // First element has DropDownList built from element values
+        Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
+        Assert.Contains("4660:S01L04", xml);   // 0x1234 = 4660 decimal
+        Assert.Contains("22136:S01L08", xml);   // 0x5678 = 22136 decimal
+        Assert.Contains("39612:S02L01", xml);   // 0x9ABC = 39612 decimal
+        // Subsequent elements use DropDownListLink
+        Assert.Contains("<DropDownListLink Description=", xml);
+        // NameProperty elements show value in description
+        Assert.Contains("[0] S01L04", xml);
+        Assert.Contains("[1] S01L08", xml);
+    }
+
+    // ========================================
     // Helper
     // ========================================
+
+    private static int CountOccurrences(string text, string pattern)
+    {
+        int count = 0;
+        int idx = 0;
+        while ((idx = text.IndexOf(pattern, idx, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            idx += pattern.Length;
+        }
+        return count;
+    }
 
     private static BreadcrumbItem MakeBc(string addr, string label,
         string fieldName = "", bool isPointer = false, int offset = 0)
