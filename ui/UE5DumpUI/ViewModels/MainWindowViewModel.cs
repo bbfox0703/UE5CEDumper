@@ -20,6 +20,15 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private string _windowTitle = "UE5 Dump UI";
     [ObservableProperty] private bool _isConnected;
     [ObservableProperty] private int _selectedTabIndex;
+    [ObservableProperty] private int _selectedAddressFormatIndex;
+
+    /// <summary>Address format options for toolbar ComboBox.</summary>
+    public string[] AddressFormatOptions { get; } =
+    [
+        "Hex (no prefix)",
+        "Hex (0x prefix)",
+        "Module+Offset",
+    ];
 
     /// <summary>
     /// Application version string read from assembly metadata (e.g. "v1.0.0.37").
@@ -39,6 +48,13 @@ public partial class MainWindowViewModel : ViewModelBase
     public HexViewViewModel HexView { get; }
     public LiveWalkerViewModel LiveWalker { get; }
     public InstanceFinderViewModel InstanceFinder { get; }
+
+    partial void OnSelectedAddressFormatIndexChanged(int value)
+    {
+        ObjectTree.SelectedAddressFormatIndex = value;
+        LiveWalker.SelectedAddressFormatIndex = value;
+        InstanceFinder.SelectedAddressFormatIndex = value;
+    }
 
     public MainWindowViewModel(
         IPipeClient pipeClient,
@@ -120,6 +136,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 state.UEVersion,
                 state.ObjectCount);
 
+            ObjectTree.SetEngineState(state);
             LiveWalker.SetEngineState(state);
             InstanceFinder.SetEngineState(state);
             HexView.SetEngineState(state);

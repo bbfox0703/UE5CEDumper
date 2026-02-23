@@ -280,8 +280,9 @@ public static class CeXmlExportService
 
     /// <summary>
     /// Generate a CE-compatible XML with an AutoAssembler script that registers a symbol.
+    /// Accepts a pre-formatted address string (e.g., "module.exe"+RVA or plain hex).
     /// </summary>
-    public static string GenerateRegisterSymbolXml(string symbolName, string moduleName, ulong rva)
+    public static string GenerateRegisterSymbolXml(string symbolName, string formattedAddress)
     {
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
@@ -294,7 +295,7 @@ public static class CeXmlExportService
         sb.AppendLine($"      <AssemblerScript>");
 
         sb.AppendLine("[ENABLE]");
-        sb.AppendLine($"define({symbolName},\"{moduleName}\"+{rva:X})");
+        sb.AppendLine($"define({symbolName},{formattedAddress})");
         sb.AppendLine($"registersymbol({symbolName})");
         sb.AppendLine();
 

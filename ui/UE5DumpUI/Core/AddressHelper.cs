@@ -1,6 +1,16 @@
 namespace UE5DumpUI.Core;
 
 /// <summary>
+/// Address copy format options for the toolbar selector.
+/// </summary>
+public enum AddressFormat
+{
+    HexNoPrefix = 0,   // 7FF71B7A1820
+    HexWithPrefix = 1, // 0x7FF71B7A1820
+    ModuleOffset = 2,  // "module.exe"+RVA
+}
+
+/// <summary>
 /// Shared address string parsing and normalization utilities.
 /// Supports CE (Cheat Engine) address formats:
 ///   "0x16255B8A224"                                            → "0x16255B8A224"
@@ -10,6 +20,37 @@ namespace UE5DumpUI.Core;
 /// </summary>
 public static class AddressHelper
 {
+    /// <summary>
+    /// Format an address according to the selected format.
+    /// </summary>
+    /// <param name="hexAddr">Raw hex address (e.g., "0x7FF71B7A1820")</param>
+    /// <param name="moduleName">Module name (e.g., "TQ2-Win64-Shipping.exe")</param>
+    /// <param name="moduleBase">Module base address (e.g., "0x7FF700000000")</param>
+    /// <param name="format">The desired output format</param>
+    public static string FormatAddress(string hexAddr, string? moduleName, string? moduleBase, AddressFormat format)
+    {
+        switch (format)
+        {
+            case AddressFormat.ModuleOffset:
+                if (string.IsNullOrEmpty(moduleName) || string.IsNullOrEmpty(moduleBase))
+                    goto case AddressFormat.HexNoPrefix;
+                var addrHex = hexAddr.Replace("0x", "").Replace("0X", "");
+                var baseHex = moduleBase.Replace("0x", "").Replace("0X", "");
+                var addr = Convert.ToUInt64(addrHex, 16);
+                var baseAddr = Convert.ToUInt64(baseHex, 16);
+                var rva = addr - baseAddr;
+                return $"\"{moduleName}\"+{rva:X}";
+
+            case AddressFormat.HexWithPrefix:
+                var hex = hexAddr.Replace("0x", "").Replace("0X", "");
+                return $"0x{hex}";
+
+            case AddressFormat.HexNoPrefix:
+            default:
+                return hexAddr.Replace("0x", "").Replace("0X", "");
+        }
+    }
+
     /// <summary>
     /// Parse a user-provided address string into a normalized "0x..." hex address.
     /// When a module+offset format is detected and <paramref name="moduleBase"/> is available,
