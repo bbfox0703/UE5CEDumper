@@ -360,7 +360,7 @@ public sealed class DumpService : IDumpService
         return result;
     }
 
-    public async Task<List<InstanceResult>> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default)
+    public async Task<FindInstancesResult> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default)
     {
         var req = new JsonObject
         {
@@ -371,13 +371,19 @@ public sealed class DumpService : IDumpService
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
-        var results = new List<InstanceResult>();
+        var result = new FindInstancesResult
+        {
+            Scanned = res["scanned"]?.GetValue<int>() ?? 0,
+            NonNull = res["non_null"]?.GetValue<int>() ?? 0,
+            Named = res["named"]?.GetValue<int>() ?? 0,
+        };
+
         if (res["instances"] is JsonArray arr)
         {
             foreach (var item in arr)
             {
                 if (item is not JsonObject obj) continue;
-                results.Add(new InstanceResult
+                result.Instances.Add(new InstanceResult
                 {
                     Address = obj["addr"]?.GetValue<string>() ?? "",
                     Index = obj["index"]?.GetValue<int>() ?? -1,
@@ -388,7 +394,7 @@ public sealed class DumpService : IDumpService
             }
         }
 
-        return results;
+        return result;
     }
 
     public async Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default)

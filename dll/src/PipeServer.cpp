@@ -319,10 +319,10 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             int limit = request.value("limit", 200);
             if (query.empty()) return PipeProtocol::MakeError(id, "Missing query").dump();
 
-            auto results = ObjectArray::SearchByName(query, limit);
+            auto rset = ObjectArray::SearchByName(query, limit);
 
             json objects = json::array();
-            for (const auto& sr : results) {
+            for (const auto& sr : rset.results) {
                 json item;
                 item["addr"]  = PipeProtocol::AddrToStr(sr.addr);
                 item["name"]  = sr.name;
@@ -332,7 +332,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             }
 
             json data;
-            data["total"]   = static_cast<int>(results.size());
+            data["total"]   = static_cast<int>(rset.results.size());
+            data["scanned"] = rset.scanned;
             data["objects"] = objects;
             return PipeProtocol::MakeResponse(id, data).dump();
         }
@@ -710,10 +711,10 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             int limit = request.value("limit", 500);
             if (className.empty()) return PipeProtocol::MakeError(id, "Missing class_name").dump();
 
-            auto results = ObjectArray::FindInstancesByClass(className, limit);
+            auto rset = ObjectArray::FindInstancesByClass(className, limit);
 
             json instances = json::array();
-            for (const auto& sr : results) {
+            for (const auto& sr : rset.results) {
                 json item;
                 item["addr"]  = PipeProtocol::AddrToStr(sr.addr);
                 item["index"] = sr.index;
@@ -724,7 +725,10 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             }
 
             json data;
-            data["total"]     = static_cast<int>(results.size());
+            data["total"]     = static_cast<int>(rset.results.size());
+            data["scanned"]   = rset.scanned;
+            data["non_null"]  = rset.nonNull;
+            data["named"]     = rset.named;
             data["instances"] = instances;
             return PipeProtocol::MakeResponse(id, data).dump();
         }

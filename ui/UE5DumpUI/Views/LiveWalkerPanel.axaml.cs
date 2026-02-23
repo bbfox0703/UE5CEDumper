@@ -1,6 +1,9 @@
+using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Threading;
 using UE5DumpUI.Models;
+using UE5DumpUI.ViewModels;
 
 namespace UE5DumpUI.Views;
 
@@ -11,6 +14,33 @@ public partial class LiveWalkerPanel : UserControl
     public LiveWalkerPanel()
     {
         InitializeComponent();
+        DataContextChanged += OnDataContextChanged;
+    }
+
+    private void OnDataContextChanged(object? sender, System.EventArgs e)
+    {
+        if (DataContext is LiveWalkerViewModel vm)
+        {
+            vm.ScrollToFieldRequested += OnScrollToFieldRequested;
+        }
+    }
+
+    private void OnScrollToFieldRequested(string fieldName)
+    {
+        // Post to UI thread to ensure DataGrid has rendered the new items
+        Dispatcher.UIThread.Post(() =>
+        {
+            var grid = this.FindControl<DataGrid>("FieldGrid");
+            if (grid?.ItemsSource == null) return;
+
+            var target = grid.ItemsSource.Cast<LiveFieldValue>()
+                .FirstOrDefault(f => f.Name == fieldName);
+            if (target != null)
+            {
+                grid.ScrollIntoView(target, null);
+                grid.SelectedItem = target;
+            }
+        }, DispatcherPriority.Background);
     }
 
     private void FieldGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
