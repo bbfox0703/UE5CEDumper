@@ -21,6 +21,10 @@
 
 namespace UStructWalker {
 
+// File-scope enum cache: keyed by UEnum* → vector of (value, name) pairs.
+// Shared between ResolveEnumValue (lookup) and GetEnumEntries (full list export).
+static std::unordered_map<uintptr_t, std::vector<std::pair<int64_t, std::string>>> s_enumCache;
+
 // Read FName from an address and resolve to string
 static std::string ReadFName(uintptr_t fnameAddr) {
     // FName is typically: int32 ComparisonIndex, int32 Number
@@ -47,11 +51,8 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
         return "";  // Detection failed
 
-    // Cache: keyed by UEnum address → vector of (value, name) pairs
-    static std::unordered_map<uintptr_t, std::vector<std::pair<int64_t, std::string>>> s_cache;
-
-    auto it = s_cache.find(enumAddr);
-    if (it == s_cache.end()) {
+    auto it = s_enumCache.find(enumAddr);
+    if (it == s_enumCache.end()) {
         // Read UEnum::Names TArray<TPair<FName, int64>>
         uintptr_t data = 0;
         int32_t count = 0;
@@ -73,7 +74,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
             LOG_DEBUG("ResolveEnumValue: Cached UEnum 0x%llX with %d entries",
                 static_cast<unsigned long long>(enumAddr), count);
         }
-        it = s_cache.emplace(enumAddr, std::move(entries)).first;
+        it = s_enumCache.emplace(enumAddr, std::move(entries)).first;
     }
 
     // Lookup value
@@ -81,6 +82,27 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
         if (v == value) return n;
     }
     return "";  // Value not in enum
+}
+
+// ============================================================
+// GetEnumEntries — return all cached entries for a UEnum address.
+// Triggers cache population if not yet cached.
+// Used by PipeServer to send full enum lists for CE DropDownList.
+// ============================================================
+std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
+    if (!enumAddr) return {};
+
+    // Trigger cache population (value -999999 won't match any real enum entry)
+    ResolveEnumValue(enumAddr, -999999);
+
+    auto it = s_enumCache.find(enumAddr);
+    if (it == s_enumCache.end()) return {};
+
+    std::vector<LiveFieldValue::EnumEntry> result;
+    result.reserve(it->second.size());
+    for (const auto& [v, n] : it->second)
+        result.push_back({v, n});
+    return result;
 }
 
 // ============================================================
@@ -535,6 +557,7 @@ ReadArrayResult ReadArrayElements(
             }
         }
     }
+    result.enumAddr = enumPtr;  // Expose for CE DropDownList sharing
 
     // Read elements
     std::vector<uint8_t> buf(elemSize, 0);
@@ -570,10 +593,17 @@ ReadArrayResult ReadArrayElements(
             else if (elemSize == 2) { int16_t v; memcpy(&v, buf.data(), 2); rawVal = v; }
             else if (elemSize == 4) { int32_t v; memcpy(&v, buf.data(), 4); rawVal = v; }
             else if (elemSize == 8) { int64_t v; memcpy(&v, buf.data(), 8); rawVal = v; }
+            elem.rawIntValue = rawVal;
             elem.enumName = ResolveEnumValue(enumPtr, rawVal);
             elem.value = elem.enumName.empty() ? std::to_string(rawVal) : elem.enumName;
         } else {
             elem.value = InterpretValue(innerTypeName, buf.data(), elemSize);
+            // Store FName ComparisonIndex for NameProperty CE DropDownList
+            if (innerTypeName == "NameProperty" && elemSize >= 4) {
+                int32_t nameIdx = 0;
+                memcpy(&nameIdx, buf.data(), 4);
+                elem.rawIntValue = nameIdx;
+            }
         }
 
         result.elements.push_back(std::move(elem));
@@ -1217,6 +1247,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                         fv.arrayElements = std::move(elemResult.elements);
                         Logger::Debug("WALK:ArrayP", "Inline elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                    // Populate full enum entries for CE DropDownList
+                    if (elemResult.enumAddr) {
+                        fv.arrayEnumAddr = elemResult.enumAddr;
+                        fv.arrayEnumEntries = GetEnumEntries(elemResult.enumAddr);
                     }
                 }
 
