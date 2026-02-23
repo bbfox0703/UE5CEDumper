@@ -801,6 +801,223 @@ ReadArrayResult ReadWeakObjectArrayElements(
 }
 
 // ============================================================
+// Phase F: IsStructArrayType
+// ============================================================
+bool IsStructArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "StructProperty";
+}
+
+// ============================================================
+// Phase F: Cached struct field layout for struct array expansion
+// ============================================================
+struct CachedStructField {
+    std::string name;
+    std::string typeName;
+    int32_t     offset = 0;
+    int32_t     size = 0;
+    uint8_t     boolFieldMask = 0;   // BoolProperty: FieldMask byte
+    uintptr_t   enumAddr = 0;        // EnumProperty / ByteProperty-with-enum: UEnum*
+    std::string nestedTypeName;      // StructProperty: struct type name
+};
+
+static std::unordered_map<uintptr_t, std::vector<CachedStructField>> s_structFieldCache;
+
+static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t structAddr) {
+    auto it = s_structFieldCache.find(structAddr);
+    if (it != s_structFieldCache.end())
+        return it->second;
+
+    // Walk the struct to get field layout
+    ClassInfo ci = WalkClass(structAddr);
+    std::vector<CachedStructField> cached;
+    cached.reserve(ci.Fields.size());
+
+    for (const auto& fi : ci.Fields) {
+        CachedStructField cf;
+        cf.name     = fi.Name;
+        cf.typeName = fi.TypeName;
+        cf.offset   = fi.Offset;
+        cf.size     = fi.Size;
+
+        // BoolProperty: read FieldMask from FBoolProperty FField
+        if (fi.TypeName == "BoolProperty" && fi.Address) {
+            uint8_t boolBytes[4] = {};
+            for (int tryOff : { DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBOOLPROP_FIELDSIZE - 4,
+                                DynOff::FBOOLPROP_FIELDSIZE + 4, DynOff::FBOOLPROP_FIELDSIZE + 8 }) {
+                if (tryOff < 0) continue;
+                if (!Mem::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
+                uint8_t fieldSize = boolBytes[0];
+                uint8_t fieldMask = boolBytes[3];
+                if (fieldSize >= 1 && fieldSize <= 8 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
+                    cf.boolFieldMask = fieldMask;
+                    break;
+                }
+            }
+        }
+
+        // EnumProperty: read UEnum*
+        if (fi.TypeName == "EnumProperty" && fi.Address) {
+            Mem::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, cf.enumAddr);
+        }
+
+        // ByteProperty: check for UEnum* (ByteProperty-with-enum)
+        if (fi.TypeName == "ByteProperty" && fi.Address) {
+            Mem::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, cf.enumAddr);
+        }
+
+        // StructProperty: read nested struct type name
+        if (fi.TypeName == "StructProperty" && fi.Address) {
+            uintptr_t nestedStruct = 0;
+            if (Mem::ReadSafe(fi.Address + DynOff::FSTRUCTPROP_STRUCT, nestedStruct) && nestedStruct) {
+                cf.nestedTypeName = GetName(nestedStruct);
+            }
+        }
+
+        cached.push_back(std::move(cf));
+    }
+
+    Logger::Debug("WALK:ArrayF", "Cached struct fields for 0x%llX: %d fields",
+        static_cast<unsigned long long>(structAddr), static_cast<int>(cached.size()));
+
+    auto [ins, _] = s_structFieldCache.emplace(structAddr, std::move(cached));
+    return ins->second;
+}
+
+// ============================================================
+// Phase F: ReadStructArrayElements
+// ============================================================
+ReadArrayResult ReadStructArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    uintptr_t innerStructAddr, int32_t elemSize,
+    int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+
+    Mem::TArrayView arr;
+    if (!Mem::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "Failed to read TArray header";
+        return result;
+    }
+    result.totalCount = arr.Count;
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        return result;
+    }
+
+    int32_t end = (std::min)(offset + limit, arr.Count);
+    if (offset >= arr.Count) { result.ok = true; return result; }
+
+    // Get cached field layout
+    const auto& cachedFields = GetCachedStructFields(innerStructAddr);
+    if (cachedFields.empty()) {
+        result.ok = true;  // Struct has no fields — return empty elements
+        return result;
+    }
+
+    // Cap element buffer at 1024 bytes to avoid stack overflow
+    const int32_t maxBufSize = 1024;
+    int32_t readSize = (std::min)(elemSize, maxBufSize);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t elemAddr = arr.Data + static_cast<uintptr_t>(i) * elemSize;
+
+        // Bulk read element bytes
+        std::vector<uint8_t> buf(readSize, 0);
+        if (!Mem::ReadBytesSafe(elemAddr, buf.data(), readSize)) {
+            elem.value = "???";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+
+        // Hex of first 16 bytes (or less)
+        int hexLen = (std::min)(readSize, 16);
+        std::string hexStr;
+        hexStr.reserve(hexLen * 2);
+        for (int h = 0; h < hexLen; ++h) {
+            char hx[3];
+            snprintf(hx, sizeof(hx), "%02X", buf[h]);
+            hexStr += hx;
+        }
+        elem.hex = hexStr;
+
+        // Build compact value string and sub-fields
+        std::string compact = "{";
+        bool first = true;
+
+        for (const auto& cf : cachedFields) {
+            // Skip fields that extend beyond our read buffer
+            if (cf.offset < 0 || cf.offset + cf.size > readSize) continue;
+
+            LiveFieldValue::ArrayElement::StructSubField sf;
+            sf.name     = cf.name;
+            sf.typeName = cf.typeName;
+            sf.offset   = cf.offset;
+            sf.size     = cf.size;
+
+            // Interpret based on type
+            if (cf.typeName == "BoolProperty") {
+                uint8_t byteVal = buf[cf.offset];
+                bool boolVal = (cf.boolFieldMask != 0)
+                    ? (byteVal & cf.boolFieldMask) != 0
+                    : byteVal != 0;
+                sf.value = boolVal ? "true" : "false";
+            } else if ((cf.typeName == "EnumProperty" || cf.typeName == "ByteProperty") && cf.enumAddr) {
+                int64_t rawVal = 0;
+                if (cf.size == 1) rawVal = static_cast<int8_t>(buf[cf.offset]);
+                else if (cf.size == 2) { int16_t v; memcpy(&v, buf.data() + cf.offset, 2); rawVal = v; }
+                else if (cf.size == 4) { int32_t v; memcpy(&v, buf.data() + cf.offset, 4); rawVal = v; }
+                else if (cf.size == 8) { int64_t v; memcpy(&v, buf.data() + cf.offset, 8); rawVal = v; }
+                sf.value = ResolveEnumValue(cf.enumAddr, rawVal);
+                if (sf.value.empty()) sf.value = std::to_string(rawVal);
+            } else if (cf.typeName == "StructProperty") {
+                sf.value = cf.nestedTypeName.empty() ? "{Struct}" : "{" + cf.nestedTypeName + "}";
+            } else if (cf.typeName == "ObjectProperty" || cf.typeName == "ClassProperty"
+                    || cf.typeName == "SoftObjectProperty" || cf.typeName == "LazyObjectProperty"
+                    || cf.typeName == "WeakObjectProperty") {
+                sf.value = "ptr";
+            } else if (cf.typeName == "StrProperty") {
+                sf.value = "(str)";
+            } else if (cf.typeName == "ArrayProperty" || cf.typeName == "MapProperty"
+                    || cf.typeName == "SetProperty") {
+                sf.value = "(container)";
+            } else {
+                // Scalar: use InterpretValue
+                sf.value = InterpretValue(cf.typeName, buf.data() + cf.offset, cf.size);
+                if (sf.value.empty()) {
+                    // Fallback: hex of the field bytes
+                    std::string fhex;
+                    int flen = (std::min)(cf.size, 8);
+                    for (int h = 0; h < flen; ++h) {
+                        char hx[3];
+                        snprintf(hx, sizeof(hx), "%02X", buf[cf.offset + h]);
+                        fhex += hx;
+                    }
+                    sf.value = fhex;
+                }
+            }
+
+            // Append to compact string
+            if (!first) compact += ", ";
+            first = false;
+            compact += cf.name + "=" + sf.value;
+
+            elem.structFields.push_back(std::move(sf));
+        }
+        compact += "}";
+        elem.value = compact;
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
 // CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
 // and related subclass extension offsets.
 //
@@ -970,6 +1187,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                             uintptr_t innerStruct = 0;
                             if (Mem::ReadSafe(inner + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
                                 fv.arrayInnerStructType = GetName(innerStruct);
+                                fv.arrayInnerStructAddr = innerStruct;  // Phase F: store for struct array expansion
                             }
                         }
 
@@ -1024,6 +1242,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     if (weakResult.ok && !weakResult.elements.empty()) {
                         fv.arrayElements = std::move(weakResult.elements);
                         Logger::Debug("WALK:ArrayP", "Weak ptr elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
+                // Phase F: read struct array element fields (up to 64)
+                if (innerFound && IsStructArrayType(fv.arrayInnerType)
+                    && fv.arrayInnerStructAddr != 0
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= 64
+                    && fv.arrayElemSize > 0) {
+                    auto structResult = ReadStructArrayElements(
+                        instanceAddr, fi.Offset,
+                        fv.arrayInnerStructAddr, fv.arrayElemSize, 0, 64);
+                    if (structResult.ok && !structResult.elements.empty()) {
+                        fv.arrayElements = std::move(structResult.elements);
+                        Logger::Debug("WALK:ArrayP", "Struct elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
                     }
                 }

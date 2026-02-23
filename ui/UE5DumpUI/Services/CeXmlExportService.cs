@@ -450,15 +450,24 @@ public static class CeXmlExportService
     private static void EmitArrayProperty(StringBuilder sb, string indent,
         LiveFieldValue field)
     {
-        // Map inner type to CE type
-        var ceElem = MapInnerTypeToCeField(field.ArrayInnerType);
-
         // Build description: "FieldName [N x Type (SizeB)]"
         var typeLabel = !string.IsNullOrEmpty(field.ArrayStructType)
             ? field.ArrayStructType : field.ArrayInnerType;
         var desc = field.ArrayCount > 0 && !string.IsNullOrEmpty(typeLabel)
             ? $"{field.Name} [{field.ArrayCount} x {typeLabel} ({field.ArrayElemSize}B)]"
             : field.Name;
+
+        // Phase F: struct array with resolved sub-fields → per-element group emission
+        if (field.ArrayInnerType == "StructProperty"
+            && field.ArrayElements is { Count: > 0 }
+            && field.ArrayElements[0].StructFields is { Count: > 0 })
+        {
+            EmitStructArrayProperty(sb, indent, field, desc);
+            return;
+        }
+
+        // Map inner type to CE type
+        var ceElem = MapInnerTypeToCeField(field.ArrayInnerType);
 
         // Non-scalar, empty, or no inline elements → placeholder only (no deref needed)
         if (ceElem == null || field.ArrayCount <= 0
@@ -493,6 +502,50 @@ public static class CeXmlExportService
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             EmitLeaf(sb, childIndent, elemDesc, ceElem,
                 $"+{elemByteOffset:X}", null);
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// Phase F: Emit struct array with per-element groups containing field children.
+    /// Array group: Offsets=[0] (deref TArray.Data)
+    /// Element group: Address=+{N*elemSize}, no Offsets (inline within Data)
+    /// Field leaf: Address=+{fieldOffset} (relative to element start)
+    /// </summary>
+    private static void EmitStructArrayProperty(StringBuilder sb, string indent,
+        LiveFieldValue field, string desc)
+    {
+        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        var elemIndent = indent + "  ";
+
+        foreach (var elem in field.ArrayElements!)
+        {
+            int elemByteOffset = elem.Index * field.ArrayElemSize;
+            var elemDesc = $"[{elem.Index}]";
+
+            if (elem.StructFields is { Count: > 0 })
+            {
+                // Element group: inline offset from Data pointer
+                EmitGroupOpen(sb, elemIndent, elemDesc, $"+{elemByteOffset:X}", null);
+                var fieldIndent = elemIndent + "  ";
+
+                foreach (var sf in elem.StructFields)
+                {
+                    var ceField = MapInnerTypeToCeField(sf.TypeName);
+                    if (ceField != null)
+                    {
+                        EmitLeaf(sb, fieldIndent, sf.Name, ceField, $"+{sf.Offset:X}", null);
+                    }
+                    // Skip unmappable types (nested structs, pointers, containers)
+                }
+
+                EmitGroupClose(sb, elemIndent);
+            }
+            else
+            {
+                EmitGroupPlaceholder(sb, elemIndent, elemDesc, $"+{elemByteOffset:X}", null);
+            }
         }
 
         EmitGroupClose(sb, indent);

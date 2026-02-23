@@ -512,6 +512,28 @@ public sealed class DumpService : IDumpService
                 PtrAddress = eo["pa"]?.GetValue<string>() ?? "",
                 PtrName = eo["pn"]?.GetValue<string>() ?? "",
                 PtrClassName = eo["pc"]?.GetValue<string>() ?? "",
+                // Phase F: struct sub-fields
+                StructFields = ParseStructSubFields(eo["sf"]),
+            });
+        }
+        return result;
+    }
+
+    private static List<StructSubFieldValue>? ParseStructSubFields(JsonNode? node)
+    {
+        if (node is not JsonArray arr || arr.Count == 0) return null;
+
+        var result = new List<StructSubFieldValue>(arr.Count);
+        foreach (var item in arr)
+        {
+            if (item is not JsonObject sfObj) continue;
+            result.Add(new StructSubFieldValue
+            {
+                Name = sfObj["n"]?.GetValue<string>() ?? "",
+                TypeName = sfObj["t"]?.GetValue<string>() ?? "",
+                Offset = sfObj["o"]?.GetValue<int>() ?? 0,
+                Size = sfObj["s"]?.GetValue<int>() ?? 0,
+                Value = sfObj["v"]?.GetValue<string>() ?? "",
             });
         }
         return result;

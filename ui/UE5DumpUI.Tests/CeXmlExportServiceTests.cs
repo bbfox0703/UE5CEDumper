@@ -766,6 +766,68 @@ public class CeXmlExportServiceTests
         Assert.Contains("<Address>+8</Address>", xml);
     }
 
+    [Fact]
+    public void GenerateInstanceXml_StructArray_EmitsPerElementGroup()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Positions", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "StructProperty", ArrayStructType = "Vector",
+                ArrayElemSize = 12,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new()
+                    {
+                        Index = 0, Value = "{X=100.0, Y=200.0, Z=0.0}", Hex = "0000C84200004843",
+                        StructFields = new List<StructSubFieldValue>
+                        {
+                            new() { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4, Value = "100.0" },
+                            new() { Name = "Y", TypeName = "FloatProperty", Offset = 4, Size = 4, Value = "200.0" },
+                            new() { Name = "Z", TypeName = "FloatProperty", Offset = 8, Size = 4, Value = "0.0" },
+                        }
+                    },
+                    new()
+                    {
+                        Index = 1, Value = "{X=50.0, Y=-10.0, Z=300.0}", Hex = "00004842000020C1",
+                        StructFields = new List<StructSubFieldValue>
+                        {
+                            new() { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4, Value = "50.0" },
+                            new() { Name = "Y", TypeName = "FloatProperty", Offset = 4, Size = 4, Value = "-10.0" },
+                            new() { Name = "Z", TypeName = "FloatProperty", Offset = 8, Size = 4, Value = "300.0" },
+                        }
+                    },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Array group header with struct type info
+        Assert.Contains("Positions [2 x Vector (12B)]", xml);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        // Array group: Address=+60, Offsets=[0] (deref TArray.Data)
+        Assert.Contains("<Address>+60</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Element [0] group at offset +0
+        Assert.Contains("[0]", xml);
+        Assert.Contains("<Address>+0</Address>", xml);
+        // Element [1] group at offset +C (12 bytes)
+        Assert.Contains("[1]", xml);
+        Assert.Contains("<Address>+C</Address>", xml);
+        // Sub-fields: Float type leaves
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        // Sub-field names
+        Assert.Contains("X", xml);
+        Assert.Contains("Y", xml);
+        Assert.Contains("Z", xml);
+        // Sub-field offsets within element: +0, +4, +8
+        Assert.Contains("<Address>+4</Address>", xml);
+        Assert.Contains("<Address>+8</Address>", xml);
+    }
+
     // ========================================
     // Helper
     // ========================================
