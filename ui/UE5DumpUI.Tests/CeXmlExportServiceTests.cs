@@ -727,6 +727,45 @@ public class CeXmlExportServiceTests
         Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
     }
 
+    [Fact]
+    public void GenerateInstanceXml_WeakObjectArray_EmitsGroupWithElements()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "WeakRefs", TypeName = "ArrayProperty", Offset = 0x90, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "WeakObjectProperty", ArrayElemSize = 8,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "PlayerChar (Character)", Hex = "0000004200000003",
+                        PtrAddress = "0x20C11110000", PtrName = "PlayerChar", PtrClassName = "Character" },
+                    new() { Index = 1, Value = "null (stale)", Hex = "0000002500000007",
+                        PtrAddress = "", PtrName = "", PtrClassName = "" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Group header with weak object array type info
+        Assert.Contains("WeakRefs [2 x WeakObjectProperty (8B)]", xml);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        // Array group: Address=+90, Offsets=[0] (deref TArray.Data)
+        Assert.Contains("<Address>+90</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Elements: resolved name in description
+        Assert.Contains("[0] PlayerChar (Character)", xml);
+        Assert.Contains("[1]", xml); // stale, no name
+        // WeakObjectProperty: 8 Bytes, ShowAsHex
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+        // Element offsets: +0, +8 (8 bytes per weak ptr)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+8</Address>", xml);
+    }
+
     // ========================================
     // Helper
     // ========================================
