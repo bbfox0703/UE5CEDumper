@@ -452,6 +452,138 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
 }
 
 // ============================================================
+// IsScalarArrayType — check if an inner type name supports inline
+// element reading (Phase B). Returns true for numeric, bool, enum,
+// and name types. StructProperty, ObjectProperty, MapProperty, etc.
+// are NOT scalar and are handled in Phase D/E.
+// ============================================================
+bool IsScalarArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "FloatProperty"
+        || innerTypeName == "DoubleProperty"
+        || innerTypeName == "IntProperty"
+        || innerTypeName == "UInt32Property"
+        || innerTypeName == "Int64Property"
+        || innerTypeName == "UInt64Property"
+        || innerTypeName == "Int16Property"
+        || innerTypeName == "UInt16Property"
+        || innerTypeName == "ByteProperty"
+        || innerTypeName == "Int8Property"
+        || innerTypeName == "BoolProperty"
+        || innerTypeName == "NameProperty"
+        || innerTypeName == "EnumProperty";
+}
+
+// ============================================================
+// ReadArrayElements — read scalar elements from a TArray (Phase B).
+//
+// Reads up to `limit` elements starting at index `offset`.
+// For EnumProperty / ByteProperty-with-enum, resolves enum names
+// via the UEnum* stored in the Inner FProperty.
+// ============================================================
+ReadArrayResult ReadArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    uintptr_t innerFFieldAddr, const std::string& innerTypeName,
+    int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    if (elemSize <= 0 || elemSize > 256) {
+        result.error = "Invalid element size";
+        return result;
+    }
+
+    // Read TArray header
+    Mem::TArrayView arr;
+    if (!Mem::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    // Clamp offset/limit
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > 256) end = offset + 256;  // hard cap per request
+
+    // For enum arrays: read UEnum* once from Inner FProperty
+    uintptr_t enumPtr = 0;
+    if (innerFFieldAddr) {
+        if (innerTypeName == "EnumProperty") {
+            Mem::ReadSafe(innerFFieldAddr + DynOff::FENUMPROP_ENUM, enumPtr);
+        } else if (innerTypeName == "ByteProperty") {
+            uintptr_t candidateEnum = 0;
+            if (Mem::ReadSafe(innerFFieldAddr + DynOff::FBYTEPROP_ENUM, candidateEnum) && candidateEnum) {
+                // Validate it's a UEnum
+                uintptr_t enumClass = GetClass(candidateEnum);
+                std::string enumClassName = enumClass ? GetName(enumClass) : "";
+                if (enumClassName == "Enum" || enumClassName == "UserDefinedEnum")
+                    enumPtr = candidateEnum;
+            }
+        }
+    }
+
+    // Read elements
+    std::vector<uint8_t> buf(elemSize, 0);
+    result.elements.reserve(end - offset);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+        if (!Mem::ReadBytesSafe(elemAddr, buf.data(), elemSize)) {
+            elem.value = "???";
+            elem.hex = "??";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+
+        // Build per-element hex string
+        std::string hex;
+        hex.reserve(elemSize * 2);
+        for (int b = 0; b < elemSize; ++b) {
+            char hx[3];
+            snprintf(hx, sizeof(hx), "%02X", buf[b]);
+            hex += hx;
+        }
+        elem.hex = std::move(hex);
+
+        // Interpret value
+        if (enumPtr) {
+            // Enum element: read raw integer value and resolve name
+            int64_t rawVal = 0;
+            if (elemSize == 1) rawVal = buf[0];
+            else if (elemSize == 2) { int16_t v; memcpy(&v, buf.data(), 2); rawVal = v; }
+            else if (elemSize == 4) { int32_t v; memcpy(&v, buf.data(), 4); rawVal = v; }
+            else if (elemSize == 8) { int64_t v; memcpy(&v, buf.data(), 8); rawVal = v; }
+            elem.enumName = ResolveEnumValue(enumPtr, rawVal);
+            elem.value = elem.enumName.empty() ? std::to_string(rawVal) : elem.enumName;
+        } else {
+            elem.value = InterpretValue(innerTypeName, buf.data(), elemSize);
+        }
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
 // CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
 // and related subclass extension offsets.
 //
@@ -613,10 +745,27 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                                 DynOff::FARRAYPROP_INNER, tryOff);
                             DynOff::FARRAYPROP_INNER = tryOff;
                         }
+                        fv.arrayInnerFFieldAddr = inner;
                         innerFound = true;
                         break;
                     }
                 }
+
+                // Phase B: read inline scalar element values (up to 64)
+                if (innerFound && IsScalarArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= 64
+                    && fv.arrayElemSize > 0) {
+                    auto elemResult = ReadArrayElements(
+                        instanceAddr, fi.Offset,
+                        fv.arrayInnerFFieldAddr, fv.arrayInnerType,
+                        fv.arrayElemSize, 0, 64);
+                    if (elemResult.ok && !elemResult.elements.empty()) {
+                        fv.arrayElements = std::move(elemResult.elements);
+                        Logger::Debug("WALK:ArrayP", "Inline elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
                 if (!innerFound) {
                     // Diagnostic: hex dump around FARRAYPROP_INNER to help identify correct offset
                     uint8_t dumpBuf[64] = {};

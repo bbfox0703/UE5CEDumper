@@ -174,4 +174,166 @@ public class DumpServiceTests
 
         Assert.Contains("Object not found", ex.Message);
     }
+
+    [Fact]
+    public async Task WalkInstanceAsync_ParsesInlineArrayElements()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x100",
+            ["name"] = "TestObj",
+            ["class"] = "Actor",
+            ["class_addr"] = "0x200",
+            ["outer"] = "0x0",
+            ["outer_name"] = "",
+            ["outer_class"] = "",
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "Multipliers",
+                    ["type"] = "ArrayProperty",
+                    ["offset"] = 256,
+                    ["size"] = 16,
+                    ["count"] = 3,
+                    ["array_inner_type"] = "FloatProperty",
+                    ["array_elem_size"] = 4,
+                    ["array_inner_addr"] = "0x7FF601234560",
+                    ["elements"] = new JsonArray
+                    {
+                        new JsonObject { ["i"] = 0, ["v"] = "1.5", ["h"] = "0000C03F" },
+                        new JsonObject { ["i"] = 1, ["v"] = "2", ["h"] = "00000040" },
+                        new JsonObject { ["i"] = 2, ["v"] = "0.5", ["h"] = "0000003F" },
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x100");
+
+        Assert.Single(result.Fields);
+        var field = result.Fields[0];
+        Assert.Equal("Multipliers", field.Name);
+        Assert.Equal("ArrayProperty", field.TypeName);
+        Assert.Equal(3, field.ArrayCount);
+        Assert.Equal("FloatProperty", field.ArrayInnerType);
+        Assert.Equal(4, field.ArrayElemSize);
+        Assert.Equal("0x7FF601234560", field.ArrayInnerAddr);
+        Assert.NotNull(field.ArrayElements);
+        Assert.Equal(3, field.ArrayElements!.Count);
+        Assert.Equal(0, field.ArrayElements[0].Index);
+        Assert.Equal("1.5", field.ArrayElements[0].Value);
+        Assert.Equal("0000C03F", field.ArrayElements[0].Hex);
+        Assert.Equal("2", field.ArrayElements[1].Value);
+    }
+
+    [Fact]
+    public async Task WalkInstanceAsync_ParsesEnumArrayElements()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x100",
+            ["name"] = "TestObj",
+            ["class"] = "Actor",
+            ["class_addr"] = "0x200",
+            ["outer"] = "0x0",
+            ["outer_name"] = "",
+            ["outer_class"] = "",
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "Roles",
+                    ["type"] = "ArrayProperty",
+                    ["offset"] = 300,
+                    ["size"] = 16,
+                    ["count"] = 2,
+                    ["array_inner_type"] = "EnumProperty",
+                    ["array_elem_size"] = 1,
+                    ["elements"] = new JsonArray
+                    {
+                        new JsonObject { ["i"] = 0, ["v"] = "0", ["h"] = "00", ["en"] = "ROLE_Authority" },
+                        new JsonObject { ["i"] = 1, ["v"] = "2", ["h"] = "02", ["en"] = "ROLE_SimulatedProxy" },
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x100");
+
+        var field = result.Fields[0];
+        Assert.NotNull(field.ArrayElements);
+        Assert.Equal("ROLE_Authority", field.ArrayElements![0].EnumName);
+        Assert.Equal("ROLE_SimulatedProxy", field.ArrayElements[1].EnumName);
+    }
+
+    [Fact]
+    public async Task WalkInstanceAsync_NoElements_ArrayElementsNull()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x100",
+            ["name"] = "TestObj",
+            ["class"] = "Actor",
+            ["class_addr"] = "0x200",
+            ["outer"] = "0x0",
+            ["outer_name"] = "",
+            ["outer_class"] = "",
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "BigArray",
+                    ["type"] = "ArrayProperty",
+                    ["offset"] = 100,
+                    ["size"] = 16,
+                    ["count"] = 500,
+                    ["array_inner_type"] = "IntProperty",
+                    ["array_elem_size"] = 4,
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x100");
+
+        var field = result.Fields[0];
+        Assert.Equal(500, field.ArrayCount);
+        Assert.Null(field.ArrayElements);
+    }
+
+    [Fact]
+    public async Task ReadArrayElementsAsync_ParsesResponse()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["total"] = 128,
+            ["read"] = 3,
+            ["inner_type"] = "IntProperty",
+            ["elem_size"] = 4,
+            ["elements"] = new JsonArray
+            {
+                new JsonObject { ["i"] = 0, ["v"] = "42", ["h"] = "2A000000" },
+                new JsonObject { ["i"] = 1, ["v"] = "99", ["h"] = "63000000" },
+                new JsonObject { ["i"] = 2, ["v"] = "-1", ["h"] = "FFFFFFFF" },
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.ReadArrayElementsAsync("0x100", 256, "0x200", "IntProperty", 4);
+
+        Assert.Equal(128, result.TotalCount);
+        Assert.Equal(3, result.ReadCount);
+        Assert.Equal("IntProperty", result.InnerType);
+        Assert.Equal(4, result.ElemSize);
+        Assert.Equal(3, result.Elements.Count);
+        Assert.Equal(42, int.Parse(result.Elements[0].Value));
+        Assert.Equal("2A000000", result.Elements[0].Hex);
+    }
 }
