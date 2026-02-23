@@ -70,17 +70,19 @@ public partial class InstanceFinderViewModel : ViewModelBase
             StatusText = "Searching...";
             ShowCeXml = false;
 
-            var results = await _dump.FindInstancesAsync(SearchClassName.Trim());
+            var result = await _dump.FindInstancesAsync(SearchClassName.Trim());
 
             Instances.Clear();
-            foreach (var r in results)
+            foreach (var r in result.Instances)
             {
                 Instances.Add(r);
             }
 
             HasInstances = Instances.Count > 0;
-            StatusText = $"Found {Instances.Count} instances";
-            _log.Info($"FindInstances: '{SearchClassName}' -> {Instances.Count} results");
+            StatusText = result.Scanned > 0
+                ? $"Found {Instances.Count} instances (scanned {result.Scanned:N0}, non-null {result.NonNull:N0}, named {result.Named:N0})"
+                : $"Found {Instances.Count} instances";
+            _log.Info($"FindInstances: '{SearchClassName}' -> {Instances.Count} results (scanned={result.Scanned}, nonNull={result.NonNull}, named={result.Named})");
         }
         catch (Exception ex)
         {

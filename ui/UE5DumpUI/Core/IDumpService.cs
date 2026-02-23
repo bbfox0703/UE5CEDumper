@@ -23,7 +23,7 @@ public interface IDumpService
     // --- Live Data Walker ---
     Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, CancellationToken ct = default);
     Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, CancellationToken ct = default);
-    Task<List<InstanceResult>> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default);
+    Task<FindInstancesResult> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default);
     Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default);
 
     // --- Array Element Reading (Phase B) ---

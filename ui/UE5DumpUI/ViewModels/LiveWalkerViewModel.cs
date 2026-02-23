@@ -59,6 +59,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private bool _isAutoRefreshBenchmarked;
     private bool _isAutoRefreshing_InProgress; // Guard against overlapping refreshes
 
+    /// <summary>
+    /// Raised when the View should scroll the DataGrid to a specific field name.
+    /// The View subscribes to this and calls ScrollIntoView on the DataGrid.
+    /// </summary>
+    public event Action<string>? ScrollToFieldRequested;
+
     public LiveWalkerViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
     {
         _dump = dump;
@@ -194,6 +200,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
             ClearError();
             IsLoading = true;
 
+            // Save the clicked field name on the current breadcrumb for scroll restoration on Back
+            if (Breadcrumbs.Count > 0)
+                Breadcrumbs[^1].ScrollHintFieldName = field.Name;
+
             if (!string.IsNullOrEmpty(field.PtrAddress) && field.PtrAddress != "0x0")
             {
                 // ObjectProperty navigation (pointer dereference)
@@ -246,10 +256,14 @@ public partial class LiveWalkerViewModel : ViewModelBase
             while (Breadcrumbs.Count > idx + 1)
                 Breadcrumbs.RemoveAt(Breadcrumbs.Count - 1);
 
+            var scrollHint = item.ScrollHintFieldName;
+
             // If navigating back to GWorld, re-display actor list
             if (_cachedWorld != null && item.Address == _cachedWorld.WorldAddr)
             {
                 PopulateFromWorld(_cachedWorld);
+                if (!string.IsNullOrEmpty(scrollHint))
+                    ScrollToFieldRequested?.Invoke(scrollHint);
                 return;
             }
 
@@ -257,6 +271,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var classAddr = string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
             var result = await _dump.WalkInstanceAsync(item.Address, classAddr);
             UpdateDisplay(result);
+
+            if (!string.IsNullOrEmpty(scrollHint))
+                ScrollToFieldRequested?.Invoke(scrollHint);
         }
         catch (Exception ex)
         {
@@ -275,6 +292,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         Breadcrumbs.RemoveAt(Breadcrumbs.Count - 1);
         var prev = Breadcrumbs[^1];
+        var scrollHint = prev.ScrollHintFieldName;
 
         try
         {
@@ -285,12 +303,17 @@ public partial class LiveWalkerViewModel : ViewModelBase
             if (_cachedWorld != null && prev.Address == _cachedWorld.WorldAddr)
             {
                 PopulateFromWorld(_cachedWorld);
+                if (!string.IsNullOrEmpty(scrollHint))
+                    ScrollToFieldRequested?.Invoke(scrollHint);
                 return;
             }
 
             var classAddr = string.IsNullOrEmpty(prev.ClassAddr) ? null : prev.ClassAddr;
             var result = await _dump.WalkInstanceAsync(prev.Address, classAddr);
             UpdateDisplay(result);
+
+            if (!string.IsNullOrEmpty(scrollHint))
+                ScrollToFieldRequested?.Invoke(scrollHint);
         }
         catch (Exception ex)
         {
@@ -837,4 +860,7 @@ public sealed class BreadcrumbItem
 
     /// <summary>True if navigation was through a pointer dereference (ObjectProperty), false for inline struct.</summary>
     public bool IsPointerDeref { get; init; }
+
+    /// <summary>Field name the user was looking at before drilling in. Used to restore scroll position on Back.</summary>
+    public string? ScrollHintFieldName { get; set; }
 }
