@@ -19,6 +19,10 @@ public partial class InstanceFinderViewModel : ViewModelBase
 
     private EngineState? _engineState;
 
+    // Address format
+    [ObservableProperty] private int _selectedAddressFormatIndex;
+    private AddressFormat AddrFormat => (AddressFormat)SelectedAddressFormatIndex;
+
     // --- Class name search ---
     [ObservableProperty] private string _searchClassName = "";
     [ObservableProperty] private ObservableCollection<InstanceResult> _instances = new();
@@ -206,7 +210,6 @@ public partial class InstanceFinderViewModel : ViewModelBase
     private async Task ExportCeXmlAsync()
     {
         if (SelectedInstance == null) return;
-        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName) || string.IsNullOrEmpty(_engineState.ModuleBase)) return;
 
         try
         {
@@ -217,11 +220,9 @@ public partial class InstanceFinderViewModel : ViewModelBase
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, new List<LiveFieldValue>(Fields));
 
-            // Compute root address as "Module.exe"+RVA
-            var addr = Convert.ToUInt64(SelectedInstance.Address.Replace("0x", "").Replace("0X", ""), 16);
-            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
-            var rva = addr - moduleBase;
-            var rootAddress = $"\"{_engineState.ModuleName}\"+{rva:X}";
+            // Compute root address in user-selected format
+            var rootAddress = AddressHelper.FormatAddress(
+                SelectedInstance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
             var xml = CeXmlExportService.GenerateInstanceXml(
                 rootAddress, SelectedInstance.Name, SelectedInstance.ClassName,
@@ -244,19 +245,18 @@ public partial class InstanceFinderViewModel : ViewModelBase
     [RelayCommand]
     private async Task CopyFieldAddressAsync(LiveFieldValue? field)
     {
-        if (field == null || _engineState == null || SelectedInstance == null) return;
-        if (string.IsNullOrEmpty(SelectedInstance.Address) || string.IsNullOrEmpty(_engineState.ModuleName)) return;
+        if (field == null || SelectedInstance == null) return;
+        if (string.IsNullOrEmpty(SelectedInstance.Address)) return;
 
         try
         {
             var instanceAddr = Convert.ToUInt64(SelectedInstance.Address.Replace("0x", "").Replace("0X", ""), 16);
-            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
-
             var absAddr = instanceAddr + (ulong)field.Offset;
-            var rva = absAddr - moduleBase;
+            var hexAddr = $"0x{absAddr:X}";
 
-            var ceFormat = $"\"{_engineState.ModuleName}\"+{rva:X}";
-            await _platform.CopyToClipboardAsync(ceFormat);
+            var formatted = AddressHelper.FormatAddress(
+                hexAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+            await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
         {
@@ -271,18 +271,9 @@ public partial class InstanceFinderViewModel : ViewModelBase
 
         try
         {
-            if (_engineState != null && !string.IsNullOrEmpty(_engineState.ModuleName) && !string.IsNullOrEmpty(_engineState.ModuleBase))
-            {
-                var addr = Convert.ToUInt64(instance.Address.Replace("0x", "").Replace("0X", ""), 16);
-                var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
-                var rva = addr - moduleBase;
-                var ceFormat = $"\"{_engineState.ModuleName}\"+{rva:X}";
-                await _platform.CopyToClipboardAsync(ceFormat);
-            }
-            else
-            {
-                await _platform.CopyToClipboardAsync(instance.Address);
-            }
+            var formatted = AddressHelper.FormatAddress(
+                instance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+            await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
         {
@@ -294,22 +285,18 @@ public partial class InstanceFinderViewModel : ViewModelBase
     private async Task GenerateCeAAScriptAsync(InstanceResult? instance)
     {
         if (instance == null || string.IsNullOrEmpty(instance.Address)) return;
-        if (_engineState == null || string.IsNullOrEmpty(_engineState.ModuleName) || string.IsNullOrEmpty(_engineState.ModuleBase)) return;
 
         try
         {
-            var addr = Convert.ToUInt64(instance.Address.Replace("0x", "").Replace("0X", ""), 16);
-            var moduleBase = Convert.ToUInt64(_engineState.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
-            var rva = addr - moduleBase;
-
-            // CE-compatible symbol name: replace invalid chars
             var symbolName = instance.ClassName.Replace(" ", "_").Replace("-", "_");
 
-            var xml = CeXmlExportService.GenerateRegisterSymbolXml(
-                symbolName, _engineState.ModuleName, rva);
+            var formattedAddr = AddressHelper.FormatAddress(
+                instance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+
+            var xml = CeXmlExportService.GenerateRegisterSymbolXml(symbolName, formattedAddr);
 
             await _platform.CopyToClipboardAsync(xml);
-            _log.Info($"CE AA script copied to clipboard for {instance.ClassName} at RVA {rva:X}");
+            _log.Info($"CE AA script copied to clipboard for {instance.ClassName}");
         }
         catch (Exception ex)
         {

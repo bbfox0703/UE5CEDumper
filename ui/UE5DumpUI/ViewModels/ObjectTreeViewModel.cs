@@ -18,6 +18,9 @@ public partial class ObjectTreeViewModel : ViewModelBase
     private readonly ILoggingService _log;
     private readonly IPlatformService _platform;
 
+    // Engine state for address formatting
+    private EngineState? _engineState;
+
     // All loaded nodes — full cache, unfiltered
     private readonly List<UObjectNode> _allNodes = new();
 
@@ -36,6 +39,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
     [ObservableProperty] private int _objectCount;
     [ObservableProperty] private string _displayCount = "";
     [ObservableProperty] private string _statusText = "";
+    [ObservableProperty] private int _selectedAddressFormatIndex;
 
     /// <summary>Class type filter options. Index 0 = show all, others = exact ClassName match.</summary>
     public string[] ClassFilterOptions { get; } =
@@ -104,6 +108,11 @@ public partial class ObjectTreeViewModel : ViewModelBase
         _platform = platform;
     }
 
+    public void SetEngineState(EngineState state)
+    {
+        _engineState = state;
+    }
+
     [RelayCommand]
     private async Task CopyClassNameAsync(UObjectNode? node)
     {
@@ -122,7 +131,10 @@ public partial class ObjectTreeViewModel : ViewModelBase
     private async Task CopyAddressAsync(UObjectNode? node)
     {
         if (node == null || string.IsNullOrEmpty(node.Address)) return;
-        await _platform.CopyToClipboardAsync(node.Address);
+        var formatted = AddressHelper.FormatAddress(
+            node.Address, _engineState?.ModuleName, _engineState?.ModuleBase,
+            (AddressFormat)SelectedAddressFormatIndex);
+        await _platform.CopyToClipboardAsync(formatted);
     }
 
     /// <summary>
