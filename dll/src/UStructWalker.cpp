@@ -451,6 +451,54 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
     return ""; // Unknown type — caller shows hex
 }
 
+// ============================================================
+// CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
+// and related subclass extension offsets.
+//
+// The derivation formula (Offset_Internal + 0x2C) may be wrong for
+// newer UE versions (e.g., UE5.7 uses +0x30). We calibrate by probing
+// a known StructProperty FField for the UScriptStruct* pointer.
+// If a non-zero delta is found, all subclass offsets are updated.
+// ============================================================
+static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
+    static std::atomic<bool> s_checked{false};
+    if (s_checked.load(std::memory_order_acquire)) return;
+    if (!DynOff::bUseFProperty) { s_checked.store(true, std::memory_order_release); return; }
+
+    static const int kProbeDeltas[] = { 0, 4, -4, 8, -8, 0xC, -0xC };
+    for (const auto& fi : fields) {
+        if (fi.TypeName != "StructProperty") continue;
+
+        for (int delta : kProbeDeltas) {
+            int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
+            if (tryOff < 0) continue;
+            uintptr_t candidate = 0;
+            if (!Mem::ReadSafe(fi.Address + tryOff, candidate) || !candidate) continue;
+            // Validate: must be a UScriptStruct (UObject) with a readable ASCII name
+            std::string sname = GetName(candidate);
+            if (sname.empty() || sname[0] < 0x20 || sname[0] >= 0x7F) continue;
+
+            if (delta != 0) {
+                int corrected = DynOff::FSTRUCTPROP_STRUCT + delta;
+                Logger::Info("WALK", "CorrectSubclassOffsets: delta=%d, FSTRUCTPROP 0x%X -> 0x%X (validated with '%s' -> '%s')",
+                    delta, DynOff::FSTRUCTPROP_STRUCT, corrected, fi.Name.c_str(), sname.c_str());
+                DynOff::FSTRUCTPROP_STRUCT  = corrected;
+                // Note: FARRAYPROP_INNER may differ from FSTRUCTPROP_STRUCT (UE5.7 has
+                // EArrayPropertyFlags before Inner). Set it to same base; the ArrayProperty
+                // probe will try delta=8 to account for this.
+                DynOff::FARRAYPROP_INNER   = corrected;
+                DynOff::FBOOLPROP_FIELDSIZE = corrected;
+                DynOff::FENUMPROP_ENUM     = corrected;
+                DynOff::FBYTEPROP_ENUM     = corrected;
+            }
+            s_checked.store(true, std::memory_order_release);
+            return;
+        }
+        // This StructProperty probe failed — try next one
+    }
+    // No StructProperty found in this class; will retry on next WalkInstance call
+}
+
 InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
     InstanceWalkResult result;
     result.addr = instanceAddr;
@@ -475,6 +523,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
 
     // Walk the class to get field layout
     ClassInfo ci = WalkClass(classAddr);
+
+    // Pre-pass: calibrate subclass extension offsets using StructProperty probe.
+    // Must run BEFORE the main loop so ArrayProperty fields use corrected offsets.
+    CorrectSubclassOffsets(ci.Fields);
 
     for (const auto& fi : ci.Fields) {
         LiveFieldValue fv;
@@ -519,9 +571,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                 fv.arrayCount = 0;
             }
 
-            // Read FArrayProperty::Inner (FProperty*) to get element type info
+            // Read FArrayProperty::Inner (FProperty*) to get element type info.
+            // Note: In UE5.7+, FArrayProperty may store EArrayPropertyFlags (4B + 4B pad)
+            // BEFORE Inner, so Inner can be at FARRAYPROP_INNER + 8. The probe list
+            // includes delta=8 to handle this.  Delta=0xC covers the case where the base
+            // offset hasn't been corrected yet (0x74 + 0xC = 0x80 for TQ2).
             if (DynOff::bUseFProperty) {
-                static const int kInnerProbeOffsets[] = { 0, 4, -4, 8, -8, 0x10, -0x10 };
+                static const int kInnerProbeOffsets[] = { 0, 8, 4, 0xC, -4, -8, 0x10, -0x10 };
                 bool innerFound = false;
                 for (int delta : kInnerProbeOffsets) {
                     int tryOff = DynOff::FARRAYPROP_INNER + delta;
@@ -551,6 +607,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
 
                         Logger::Info("WALK:ArrayP", "FArrayProperty::Inner found at FField+0x%X (delta=%d) for '%s' -> '%s' elemSize=%d",
                             tryOff, delta, fi.Name.c_str(), innerTypeName.c_str(), fv.arrayElemSize);
+                        // Persist corrected FARRAYPROP_INNER if delta != 0
+                        if (delta != 0) {
+                            Logger::Info("WALK:ArrayP", "Correcting FARRAYPROP_INNER: 0x%X -> 0x%X",
+                                DynOff::FARRAYPROP_INNER, tryOff);
+                            DynOff::FARRAYPROP_INNER = tryOff;
+                        }
                         innerFound = true;
                         break;
                     }
@@ -594,6 +656,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     if (delta != 0) {
                         Logger::Info("WALK:StructP", "FStructProperty::Struct at FField+0x%X (base=0x%X, delta=%d) for '%s' -> '%s'",
                             tryOffset, DynOff::FSTRUCTPROP_STRUCT, delta, fi.Name.c_str(), sname.c_str());
+                        // Persist correction to DynOff (CorrectSubclassOffsets handles the global
+                        // update, but if it didn't run yet or missed, update here too)
+                        DynOff::FSTRUCTPROP_STRUCT = tryOffset;
                     }
                     found = true;
                     break;
