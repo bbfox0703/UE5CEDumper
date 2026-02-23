@@ -57,11 +57,20 @@ struct SearchResult {
     std::string className;
     uintptr_t outer;
 };
-std::vector<SearchResult> SearchByName(const std::string& query, int maxResults = 200);
+
+// Search results with diagnostic counters for debugging
+struct SearchResultSet {
+    std::vector<SearchResult> results;
+    int32_t scanned = 0;    // Total indices iterated (= GetCount() at call time)
+    int32_t nonNull = 0;    // Objects that were non-null
+    int32_t named   = 0;    // Objects whose class name resolved successfully
+};
+
+SearchResultSet SearchByName(const std::string& query, int maxResults = 200);
 
 // Find all instances whose class name matches (case-insensitive partial match)
 // Returns addr, index, name, className, outer for each instance
-std::vector<SearchResult> FindInstancesByClass(const std::string& className, int maxResults = 500);
+SearchResultSet FindInstancesByClass(const std::string& className, int maxResults = 500);
 
 // Address-to-Instance reverse lookup result
 struct AddressLookupResult {
