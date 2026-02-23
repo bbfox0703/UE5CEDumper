@@ -321,6 +321,7 @@ public sealed class DumpService : IDumpService
             WorldName = res["world_name"]?.GetValue<string>() ?? "",
             LevelAddr = res["level_addr"]?.GetValue<string>() ?? "",
             LevelName = res["level_name"]?.GetValue<string>() ?? "",
+            LevelOffset = res["level_offset"]?.GetValue<int>() ?? 0,
             ActorCount = res["actor_count"]?.GetValue<int>() ?? 0,
             Error = res["error"]?.GetValue<string>() ?? "",
         };

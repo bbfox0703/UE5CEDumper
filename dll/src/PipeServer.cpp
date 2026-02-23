@@ -605,10 +605,12 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
             // Find PersistentLevel field (ObjectProperty)
             uintptr_t levelAddr = 0;
+            int persistentLevelOffset = 0;
             bool foundPersistentLevel = false;
             for (const auto& f : worldCI.Fields) {
                 if (f.Name == "PersistentLevel" && f.Size >= 8) {
                     foundPersistentLevel = true;
+                    persistentLevelOffset = f.Offset;
                     Mem::ReadSafe(worldAddr + f.Offset, levelAddr);
                     break;
                 }
@@ -628,6 +630,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
             data["level_addr"] = PipeProtocol::AddrToStr(levelAddr);
             data["level_name"] = UStructWalker::GetName(levelAddr);
+            data["level_offset"] = persistentLevelOffset;
 
             // Walk ULevel class to find Actors TArray field
             uintptr_t levelClass = UStructWalker::GetClass(levelAddr);

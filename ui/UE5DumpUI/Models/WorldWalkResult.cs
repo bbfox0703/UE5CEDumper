@@ -11,6 +11,8 @@ public sealed class WorldWalkResult
     public string WorldName { get; init; } = "";
     public string LevelAddr { get; init; } = "";
     public string LevelName { get; init; } = "";
+    /// <summary>Offset of PersistentLevel field within UWorld (e.g., 0x30).</summary>
+    public int LevelOffset { get; init; }
     public int ActorCount { get; init; }
     public string Error { get; init; } = "";
     public List<ActorInfo> Actors { get; init; } = new();
