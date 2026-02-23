@@ -74,6 +74,9 @@ struct LiveFieldValue {
 
     // For ArrayProperty: TArray header info
     int32_t     arrayCount = -1;  // -1 = not an array
+    std::string arrayInnerType;        // Inner element type (e.g., "FloatProperty", "StructProperty")
+    std::string arrayInnerStructType;  // For struct arrays: UScriptStruct name (e.g., "FVector")
+    int32_t     arrayElemSize = 0;     // Element size in bytes
 
     // For StructProperty: inner struct info
     uintptr_t   structDataAddr  = 0;  // Absolute address of struct data (instanceAddr + offset)

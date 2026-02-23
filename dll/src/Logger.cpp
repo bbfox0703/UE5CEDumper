@@ -1,5 +1,8 @@
 // ============================================================
-// Logger.cpp — Dual-channel file logger with category tags
+// Logger.cpp — Category-routed file logger
+//
+// Routes log messages to category-specific files under the
+// per-process subfolder based on the category tag prefix.
 // ============================================================
 
 #include "Logger.h"
@@ -10,32 +13,104 @@
 #include <ShlObj.h>
 #include <cstdio>
 #include <cstdarg>
+#include <cstring>
 #include <mutex>
 #include <filesystem>
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <vector>
+#include <utility>
 
 namespace fs = std::filesystem;
 
 namespace Logger {
 
-// --- Per-channel state ---
-struct ChannelState {
-    FILE*           file    = nullptr;
-    size_t          written = 0;
-    fs::path        currentPath;
-    const wchar_t*  prefix  = nullptr;
+// ================================================================
+// Log file categories
+// ================================================================
+
+enum LogFile : uint8_t {
+    LF_Init = 0,   // init.log    — INIT, CEP, SUMMARY
+    LF_Scan,        // scan.log    — SCAN:*, MEM
+    LF_Offsets,     // offsets.log — DYNO:*, OARR, FNAM
+    LF_Pipe,        // pipe.log    — PIPE:*
+    LF_Walk,        // walk.log    — WALK:*
+    LF_COUNT
+};
+
+static const wchar_t* s_fileNames[LF_COUNT] = {
+    L"init", L"scan", L"offsets", L"pipe", L"walk"
+};
+
+// ================================================================
+// Category → file routing (prefix-match, longest first)
+// ================================================================
+
+struct CatMapping {
+    const char* prefix;
+    uint8_t     prefixLen;
+    LogFile     file;
+};
+
+// Sorted longest-prefix-first for correct matching
+static const CatMapping s_catMap[] = {
+    { "WALK:StructP",  12, LF_Walk    },
+    { "WALK:ArrayP",   11, LF_Walk    },
+    { "PIPE:world",    10, LF_Pipe    },
+    { "PIPE:watch",    10, LF_Pipe    },
+    { "DYNO:Enum",      9, LF_Offsets },
+    { "SCAN:GObj",      8, LF_Scan    },
+    { "SCAN:GNam",      8, LF_Scan    },
+    { "SCAN:GWld",      8, LF_Scan    },
+    { "SCAN:Ver",       8, LF_Scan    },
+    { "PIPE:svr",       8, LF_Pipe    },
+    { "PIPE:cmd",       8, LF_Pipe    },
+    { "SUMMARY",        7, LF_Init    },
+    { "INIT",           4, LF_Init    },
+    { "SCAN",           4, LF_Scan    },
+    { "DYNO",           4, LF_Offsets },
+    { "OARR",           4, LF_Offsets },
+    { "FNAM",           4, LF_Offsets },
+    { "WALK",           4, LF_Walk    },
+    { "PIPE",           4, LF_Pipe    },
+    { "CEP",            3, LF_Init    },
+    { "MEM",            3, LF_Scan    },
+};
+
+static LogFile ResolveFile(const char* cat) {
+    if (!cat || cat[0] == '\0') return LF_Init;
+    for (const auto& m : s_catMap) {
+        if (strncmp(cat, m.prefix, m.prefixLen) == 0) return m.file;
+    }
+    return LF_Init;  // fallback: unknown categories go to init.log
+}
+
+// ================================================================
+// Per-file state
+// ================================================================
+
+struct LogFileState {
+    FILE*          file    = nullptr;
+    size_t         written = 0;
+    fs::path       currentPath;
+    std::wstring   baseName;
 };
 
 static std::mutex     s_mutex;
-static ChannelState   s_scan;
-static ChannelState   s_pipe;
-static ChannelState   s_mirrorScan;  // per-process mirror
-static ChannelState   s_mirrorPipe;
-static bool           s_mirrorActive = false;
-static LogChannel     s_activeChannel = LogChannel::Scan;
-static fs::path       s_logDir;
+static LogFileState   s_files[LF_COUNT];
+static bool           s_filesOpen   = false;
+static fs::path       s_logDir;                 // base: %LOCALAPPDATA%\UE5CEDumper\Logs
+static fs::path       s_processDir;             // per-process subfolder
+
+// Early buffering: lines logged before InitProcessMirror opens files
+static std::vector<std::pair<LogFile, std::string>> s_earlyBuffer;
+static bool           s_buffering   = true;
+static constexpr size_t EARLY_BUFFER_MAX = 100;
+
+// ================================================================
+// Helpers
+// ================================================================
 
 static fs::path GetLogDirectory() {
     wchar_t* appdata = nullptr;
@@ -62,81 +137,113 @@ static std::string GetTimestamp() {
     return oss.str();
 }
 
-static void RotateLogs(const wchar_t* prefix) {
-    for (int i = Constants::LOG_MAX_FILES - 1; i >= 1; --i) {
-        auto older = s_logDir / (std::wstring(prefix) + L"-" + std::to_wstring(i) + L".log");
-        auto newer = s_logDir / (std::wstring(prefix) + L"-" + std::to_wstring(i - 1) + L".log");
+// ================================================================
+// File rotation
+// ================================================================
 
-        if (i == Constants::LOG_MAX_FILES - 1 && fs::exists(older)) {
-            fs::remove(older);
-        }
-        if (fs::exists(newer)) {
-            fs::rename(newer, older);
-        }
+static void RotateLogsInDir(const fs::path& dir, const wchar_t* baseName, int maxFiles) {
+    for (int i = maxFiles - 1; i >= 1; --i) {
+        auto older = dir / (std::wstring(baseName) + L"-" + std::to_wstring(i) + L".log");
+        auto newer = dir / (std::wstring(baseName) + L"-" + std::to_wstring(i - 1) + L".log");
+        if (i == maxFiles - 1 && fs::exists(older)) fs::remove(older);
+        if (fs::exists(newer)) fs::rename(newer, older);
     }
 }
 
-static void RotateIfNeeded(ChannelState& ch) {
-    if (ch.written < Constants::LOG_MAX_SIZE) return;
+static void RotateIfNeeded(LogFileState& fs_state) {
+    if (fs_state.written < Constants::LOG_MAX_SIZE) return;
 
-    fflush(ch.file);
-    fclose(ch.file);
-    RotateLogs(ch.prefix);
-    ch.file = _wfopen(ch.currentPath.c_str(), L"w");
-    ch.written = 0;
+    fflush(fs_state.file);
+    fclose(fs_state.file);
 
-    if (ch.file) {
+    RotateLogsInDir(fs_state.currentPath.parent_path(), fs_state.baseName.c_str(),
+                    Constants::LOG_ROTATE_MAX);
+
+    fs_state.file = _wfopen(fs_state.currentPath.c_str(), L"w");
+    fs_state.written = 0;
+
+    if (fs_state.file) {
         auto ts = GetTimestamp();
-        int n = fprintf(ch.file, "[%s] [INFO] [INIT] Log rotated | build: %s\n",
+        int n = fprintf(fs_state.file, "[%s] [INFO] [INIT] Log rotated | build: %s\n",
                         ts.c_str(), BUILD_VERSION_STRING);
-        if (n > 0) ch.written += static_cast<size_t>(n);
-        fflush(ch.file);
+        if (n > 0) fs_state.written += static_cast<size_t>(n);
+        fflush(fs_state.file);
     }
 }
 
-static bool InitChannel(ChannelState& ch, const wchar_t* prefix) {
-    ch.prefix = prefix;
-    RotateLogs(prefix);
-    ch.currentPath = s_logDir / (std::wstring(prefix) + L"-0.log");
-    ch.file = _wfopen(ch.currentPath.c_str(), L"w");
-    if (!ch.file) return false;
-    ch.written = 0;
+// ================================================================
+// Init / open / close files
+// ================================================================
 
-    // Write build version header as first line
+static bool OpenFileInDir(LogFileState& fs_state, const fs::path& dir,
+                          const wchar_t* baseName, int maxRotate) {
+    fs_state.baseName = baseName;
+    RotateLogsInDir(dir, baseName, maxRotate);
+    fs_state.currentPath = dir / (std::wstring(baseName) + L"-0.log");
+    fs_state.file = _wfopen(fs_state.currentPath.c_str(), L"w");
+    if (!fs_state.file) return false;
+    fs_state.written = 0;
+
     auto ts = GetTimestamp();
-    int n = fprintf(ch.file, "[%s] [INFO] [INIT] Logger started | build: %s\n",
+    int n = fprintf(fs_state.file, "[%s] [INFO] [INIT] Logger started | build: %s\n",
                     ts.c_str(), BUILD_VERSION_STRING);
-    if (n > 0) ch.written += static_cast<size_t>(n);
-    fflush(ch.file);
+    if (n > 0) fs_state.written += static_cast<size_t>(n);
+    fflush(fs_state.file);
     return true;
 }
 
-static void ShutdownChannel(ChannelState& ch) {
-    if (ch.file) {
-        fflush(ch.file);
-        fclose(ch.file);
-        ch.file = nullptr;
+static void CloseFile(LogFileState& fs_state) {
+    if (fs_state.file) {
+        fflush(fs_state.file);
+        fclose(fs_state.file);
+        fs_state.file = nullptr;
     }
 }
 
-static ChannelState& GetActiveState() {
-    return (s_activeChannel == LogChannel::Scan) ? s_scan : s_pipe;
+// Write a pre-formatted line to a file
+static void WriteToFile(LogFileState& fs_state, const char* line) {
+    if (!fs_state.file) return;
+    RotateIfNeeded(fs_state);
+    int written = fprintf(fs_state.file, "%s\n", line);
+    if (written > 0) fs_state.written += static_cast<size_t>(written);
+    fflush(fs_state.file);
 }
 
-// Write a pre-formatted line to a channel (helper for mirror writes)
-static void WriteToChannel(ChannelState& ch, const char* line) {
-    if (!ch.file) return;
-    RotateIfNeeded(ch);
-    int written = fprintf(ch.file, "%s\n", line);
-    if (written > 0) ch.written += static_cast<size_t>(written);
-    fflush(ch.file);
+// ================================================================
+// Process folder cleanup
+// ================================================================
+
+static void CleanupProcessFolders(const fs::path& parentDir, int maxKeep) {
+    std::vector<std::pair<fs::file_time_type, fs::path>> folders;
+    std::error_code ec;
+    for (auto& entry : fs::directory_iterator(parentDir, ec)) {
+        if (entry.is_directory(ec)) {
+            auto latestTime = entry.last_write_time(ec);
+            for (auto& sub : fs::directory_iterator(entry.path(), ec)) {
+                auto t = sub.last_write_time(ec);
+                if (t > latestTime) latestTime = t;
+            }
+            folders.emplace_back(latestTime, entry.path());
+        }
+    }
+
+    if (static_cast<int>(folders.size()) <= maxKeep) return;
+
+    std::sort(folders.begin(), folders.end(), [](auto& a, auto& b) {
+        return a.first > b.first;
+    });
+
+    for (size_t i = static_cast<size_t>(maxKeep); i < folders.size(); ++i) {
+        fs::remove_all(folders[i].second, ec);
+    }
 }
+
+// ================================================================
+// Core write functions
+// ================================================================
 
 static void WriteLog(const char* level, const char* cat, const char* fmt, va_list args) {
     std::lock_guard<std::mutex> lock(s_mutex);
-
-    ChannelState& ch = GetActiveState();
-    if (!ch.file && !s_mirrorActive) return;
 
     auto ts = GetTimestamp();
     char msgBuf[4096];
@@ -149,13 +256,12 @@ static void WriteLog(const char* level, const char* cat, const char* fmt, va_lis
         snprintf(lineBuf, sizeof(lineBuf), "[%s] [%s] %s", ts.c_str(), level, msgBuf);
     }
 
-    // Write to primary channel
-    WriteToChannel(ch, lineBuf);
+    LogFile target = ResolveFile(cat);
 
-    // Write to mirror (same channel mapping)
-    if (s_mirrorActive) {
-        ChannelState& mirror = (s_activeChannel == LogChannel::Scan) ? s_mirrorScan : s_mirrorPipe;
-        WriteToChannel(mirror, lineBuf);
+    if (s_filesOpen) {
+        WriteToFile(s_files[target], lineBuf);
+    } else if (s_buffering && s_earlyBuffer.size() < EARLY_BUFFER_MAX) {
+        s_earlyBuffer.emplace_back(target, std::string(lineBuf));
     }
 }
 
@@ -169,16 +275,16 @@ static void WriteSummary(const char* fmt, va_list args) {
     char lineBuf[4352];
     snprintf(lineBuf, sizeof(lineBuf), "[%s] [SUMMARY] %s", ts.c_str(), msgBuf);
 
-    // SUMMARY always writes to the scan log
-    WriteToChannel(s_scan, lineBuf);
-
-    // Also write to mirror scan
-    if (s_mirrorActive) {
-        WriteToChannel(s_mirrorScan, lineBuf);
+    if (s_filesOpen) {
+        WriteToFile(s_files[LF_Init], lineBuf);
+    } else if (s_buffering && s_earlyBuffer.size() < EARLY_BUFFER_MAX) {
+        s_earlyBuffer.emplace_back(LF_Init, std::string(lineBuf));
     }
 }
 
-// --- Public API ---
+// ================================================================
+// Public API
+// ================================================================
 
 bool Init() {
     std::lock_guard<std::mutex> lock(s_mutex);
@@ -187,64 +293,13 @@ bool Init() {
     std::error_code ec;
     fs::create_directories(s_logDir, ec);
 
-    bool ok = true;
-    ok &= InitChannel(s_scan, Constants::LOG_SCAN_PREFIX);
-    ok &= InitChannel(s_pipe, Constants::LOG_PIPE_PREFIX);
-    s_activeChannel = LogChannel::Scan;
-    return ok;
-}
+    // Enable early buffering — files will be opened in InitProcessMirror
+    s_buffering = true;
+    s_earlyBuffer.clear();
+    s_earlyBuffer.reserve(EARLY_BUFFER_MAX);
+    s_filesOpen = false;
 
-static void RotateLogsInDir(const fs::path& dir, const wchar_t* prefix, int maxFiles) {
-    for (int i = maxFiles - 1; i >= 1; --i) {
-        auto older = dir / (std::wstring(prefix) + L"-" + std::to_wstring(i) + L".log");
-        auto newer = dir / (std::wstring(prefix) + L"-" + std::to_wstring(i - 1) + L".log");
-        if (i == maxFiles - 1 && fs::exists(older)) fs::remove(older);
-        if (fs::exists(newer)) fs::rename(newer, older);
-    }
-}
-
-static bool InitChannelInDir(ChannelState& ch, const fs::path& dir, const wchar_t* prefix, int maxRotate) {
-    ch.prefix = prefix;
-    RotateLogsInDir(dir, prefix, maxRotate);
-    ch.currentPath = dir / (std::wstring(prefix) + L"-0.log");
-    ch.file = _wfopen(ch.currentPath.c_str(), L"w");
-    if (!ch.file) return false;
-    ch.written = 0;
-
-    auto ts = GetTimestamp();
-    int n = fprintf(ch.file, "[%s] [INFO] [INIT] Logger started | build: %s\n",
-                    ts.c_str(), BUILD_VERSION_STRING);
-    if (n > 0) ch.written += static_cast<size_t>(n);
-    fflush(ch.file);
     return true;
-}
-
-// Cleanup old process subfolders, keeping only the most recent maxKeep
-static void CleanupProcessFolders(const fs::path& parentDir, int maxKeep) {
-    std::vector<std::pair<fs::file_time_type, fs::path>> folders;
-    std::error_code ec;
-    for (auto& entry : fs::directory_iterator(parentDir, ec)) {
-        if (entry.is_directory(ec)) {
-            // Get latest modification time of any file in the subfolder
-            auto latestTime = entry.last_write_time(ec);
-            for (auto& sub : fs::directory_iterator(entry.path(), ec)) {
-                auto t = sub.last_write_time(ec);
-                if (t > latestTime) latestTime = t;
-            }
-            folders.emplace_back(latestTime, entry.path());
-        }
-    }
-
-    if (static_cast<int>(folders.size()) <= maxKeep) return;
-
-    // Sort by time (newest first), remove the oldest
-    std::sort(folders.begin(), folders.end(), [](auto& a, auto& b) {
-        return a.first > b.first;
-    });
-
-    for (size_t i = static_cast<size_t>(maxKeep); i < folders.size(); ++i) {
-        fs::remove_all(folders[i].second, ec);
-    }
 }
 
 void InitProcessMirror(const std::wstring& processName, int maxSubfolders) {
@@ -252,12 +307,10 @@ void InitProcessMirror(const std::wstring& processName, int maxSubfolders) {
 
     if (processName.empty()) return;
 
-    // Sanitize process name (remove .exe, replace non-filesystem chars)
+    // Sanitize process name
     std::wstring safeName = processName;
-    // Remove .exe extension if present
     auto dotPos = safeName.rfind(L'.');
     if (dotPos != std::wstring::npos) safeName = safeName.substr(0, dotPos);
-    // Replace invalid filesystem characters
     for (wchar_t& c : safeName) {
         if (c == L'/' || c == L'\\' || c == L':' || c == L'*' ||
             c == L'?' || c == L'"' || c == L'<' || c == L'>' || c == L'|') {
@@ -265,39 +318,45 @@ void InitProcessMirror(const std::wstring& processName, int maxSubfolders) {
         }
     }
 
-    fs::path mirrorDir = s_logDir / safeName;
+    s_processDir = s_logDir / safeName;
     std::error_code ec;
-    fs::create_directories(mirrorDir, ec);
+    fs::create_directories(s_processDir, ec);
     if (ec) return;
 
-    // 2-version rotation for per-process logs
-    constexpr int PROCESS_LOG_ROTATE = 2;
-    InitChannelInDir(s_mirrorScan, mirrorDir, Constants::LOG_SCAN_PREFIX, PROCESS_LOG_ROTATE);
-    InitChannelInDir(s_mirrorPipe, mirrorDir, Constants::LOG_PIPE_PREFIX, PROCESS_LOG_ROTATE);
-    s_mirrorActive = true;
+    // Open all 5 category files
+    for (int i = 0; i < LF_COUNT; ++i) {
+        OpenFileInDir(s_files[i], s_processDir, s_fileNames[i], Constants::LOG_ROTATE_MAX);
+    }
+    s_filesOpen = true;
 
-    // Clean up old process folders (keep maxSubfolders most recent)
+    // Flush early buffer to the correct files
+    s_buffering = false;
+    for (auto& [target, line] : s_earlyBuffer) {
+        WriteToFile(s_files[target], line.c_str());
+    }
+    s_earlyBuffer.clear();
+    s_earlyBuffer.shrink_to_fit();
+
+    // Clean up old process folders
     CleanupProcessFolders(s_logDir, maxSubfolders);
 }
 
 void Shutdown() {
     std::lock_guard<std::mutex> lock(s_mutex);
-    ShutdownChannel(s_scan);
-    ShutdownChannel(s_pipe);
-    if (s_mirrorActive) {
-        ShutdownChannel(s_mirrorScan);
-        ShutdownChannel(s_mirrorPipe);
-        s_mirrorActive = false;
+    for (int i = 0; i < LF_COUNT; ++i) {
+        CloseFile(s_files[i]);
     }
+    s_filesOpen = false;
+    s_buffering = false;
+    s_earlyBuffer.clear();
 }
 
-void SetChannel(LogChannel ch) {
-    std::lock_guard<std::mutex> lock(s_mutex);
-    s_activeChannel = ch;
+void SetChannel(LogChannel /*ch*/) {
+    // No-op: category routing replaces channel switching
 }
 
 LogChannel GetChannel() {
-    return s_activeChannel;
+    return LogChannel::Scan;  // No-op
 }
 
 void Info(const char* cat, const char* fmt, ...) {

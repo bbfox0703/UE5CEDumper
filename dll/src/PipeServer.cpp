@@ -449,9 +449,16 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["bool_byte_offset"] = fv.boolByteOffset;
                 }
 
-                // ArrayProperty: element count
+                // ArrayProperty: element count + inner type info
                 if (fv.arrayCount >= 0) {
                     fj["count"] = fv.arrayCount;
+                    if (!fv.arrayInnerType.empty()) {
+                        fj["array_inner_type"] = fv.arrayInnerType;
+                        if (fv.arrayElemSize > 0)
+                            fj["array_elem_size"] = fv.arrayElemSize;
+                        if (!fv.arrayInnerStructType.empty())
+                            fj["array_struct_type"] = fv.arrayInnerStructType;
+                    }
                 }
 
                 // StructProperty: inner struct info

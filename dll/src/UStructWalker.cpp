@@ -505,7 +505,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
             continue;
         }
 
-        // Handle ArrayProperty: read TArray header
+        // Handle ArrayProperty: read TArray header + Inner element type
         if (fi.TypeName == "ArrayProperty") {
             Mem::TArrayView arr;
             if (Mem::ReadTArray(instanceAddr + fi.Offset, arr)) {
@@ -518,6 +518,59 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
             } else {
                 fv.arrayCount = 0;
             }
+
+            // Read FArrayProperty::Inner (FProperty*) to get element type info
+            if (DynOff::bUseFProperty) {
+                static const int kInnerProbeOffsets[] = { 0, 4, -4, 8, -8, 0x10, -0x10 };
+                bool innerFound = false;
+                for (int delta : kInnerProbeOffsets) {
+                    int tryOff = DynOff::FARRAYPROP_INNER + delta;
+                    if (tryOff < 0) continue;
+                    uintptr_t inner = 0;
+                    if (!Mem::ReadSafe(fi.Address + tryOff, inner) || !inner) continue;
+
+                    // Validate: Inner must be an FField with a readable FFieldClass name
+                    std::string innerTypeName = GetFieldTypeName(inner);
+                    Logger::Debug("WALK:ArrayP", "  probe delta=%d off=0x%X inner=0x%llX typeName='%s'",
+                        delta, tryOff, static_cast<unsigned long long>(inner), innerTypeName.c_str());
+
+                    if (!innerTypeName.empty() && innerTypeName != "Unknown"
+                        && innerTypeName.find("Property") != std::string::npos) {
+                        fv.arrayInnerType = innerTypeName;
+
+                        // Read element size from Inner FProperty
+                        Mem::ReadSafe<int32_t>(inner + DynOff::FPROPERTY_ELEMSIZE, fv.arrayElemSize);
+
+                        // If inner is StructProperty, also read the UScriptStruct name
+                        if (innerTypeName == "StructProperty") {
+                            uintptr_t innerStruct = 0;
+                            if (Mem::ReadSafe(inner + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
+                                fv.arrayInnerStructType = GetName(innerStruct);
+                            }
+                        }
+
+                        Logger::Info("WALK:ArrayP", "FArrayProperty::Inner found at FField+0x%X (delta=%d) for '%s' -> '%s' elemSize=%d",
+                            tryOff, delta, fi.Name.c_str(), innerTypeName.c_str(), fv.arrayElemSize);
+                        innerFound = true;
+                        break;
+                    }
+                }
+                if (!innerFound) {
+                    // Diagnostic: hex dump around FARRAYPROP_INNER to help identify correct offset
+                    uint8_t dumpBuf[64] = {};
+                    int dumpStart = DynOff::FARRAYPROP_INNER - 16;
+                    if (dumpStart < 0) dumpStart = 0;
+                    Mem::ReadBytesSafe(fi.Address + dumpStart, dumpBuf, 64);
+                    char hexDump[200] = {};
+                    for (int i = 0; i < 64 && i < (int)sizeof(hexDump)/3; i++)
+                        snprintf(hexDump + i*3, 4, "%02X ", dumpBuf[i]);
+                    Logger::Info("WALK:ArrayP", "Inner NOT found for '%s' (FField=0x%llX, FARRAYPROP_INNER=0x%X, FSTRUCTPROP_STRUCT=0x%X)",
+                        fi.Name.c_str(), static_cast<unsigned long long>(fi.Address),
+                        DynOff::FARRAYPROP_INNER, DynOff::FSTRUCTPROP_STRUCT);
+                    Logger::Info("WALK:ArrayP", "  hex @+0x%X..+0x%X: %s", dumpStart, dumpStart+64, hexDump);
+                }
+            }
+
             result.fields.push_back(std::move(fv));
             continue;
         }

@@ -34,6 +34,15 @@ public sealed class LiveFieldValue
     /// <summary>For ArrayProperty: element count (-1 = not an array).</summary>
     public int ArrayCount { get; init; } = -1;
 
+    /// <summary>For ArrayProperty: inner element type name (e.g., "FloatProperty", "StructProperty").</summary>
+    public string ArrayInnerType { get; init; } = "";
+
+    /// <summary>For ArrayProperty (struct arrays): UScriptStruct name (e.g., "FVector").</summary>
+    public string ArrayStructType { get; init; } = "";
+
+    /// <summary>For ArrayProperty: element size in bytes.</summary>
+    public int ArrayElemSize { get; init; }
+
     /// <summary>For StructProperty: absolute address of struct data (instance + offset).</summary>
     public string StructDataAddr { get; init; } = "";
 
@@ -57,7 +66,11 @@ public sealed class LiveFieldValue
         !string.IsNullOrEmpty(TypedValue) ? TypedValue :
         !string.IsNullOrEmpty(PtrName) ? $"{PtrName} ({PtrClassName})" :
         !string.IsNullOrEmpty(StructTypeName) ? $"{{{StructTypeName}}}" :
-        ArrayCount >= 0 ? $"[{ArrayCount} elements]" :
+        ArrayCount >= 0 && !string.IsNullOrEmpty(ArrayInnerType)
+            ? (!string.IsNullOrEmpty(ArrayStructType)
+                ? $"[{ArrayCount} x {ArrayStructType} ({ArrayElemSize}B)]"
+                : $"[{ArrayCount} x {ArrayInnerType} ({ArrayElemSize}B)]")
+            : ArrayCount >= 0 ? $"[{ArrayCount} elements]" :
         !string.IsNullOrEmpty(StrValue) ? $"\"{StrValue}\"" :
         !string.IsNullOrEmpty(HexValue) ? HexValue :
         "";

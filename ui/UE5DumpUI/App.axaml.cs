@@ -41,12 +41,12 @@ public class App : Application
             _pipeClient = new PipeClient(_logging);
             _dumpService = new DumpService(_pipeClient, _logging);
 
-            _logging.Info("UE5DumpUI starting...");
-            _logging.Info($"Version:   {typeof(App).Assembly.GetName().Version}");
-            _logging.Info($"OS:        {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
-            _logging.Info($"Runtime:   {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
-            _logging.Info($"Arch:      {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
-            _logging.Info($"Log dir:   {logDir}");
+            _logging.Info(Constants.LogCatInit, "UE5DumpUI starting...");
+            _logging.Info(Constants.LogCatInit, $"Version:   {typeof(App).Assembly.GetName().Version}");
+            _logging.Info(Constants.LogCatInit, $"OS:        {System.Runtime.InteropServices.RuntimeInformation.OSDescription}");
+            _logging.Info(Constants.LogCatInit, $"Runtime:   {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+            _logging.Info(Constants.LogCatInit, $"Arch:      {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
+            _logging.Info(Constants.LogCatInit, $"Log dir:   {logDir}");
 
             // Create main window
             var mainVm = new MainWindowViewModel(
@@ -59,7 +59,7 @@ public class App : Application
 
             desktop.ShutdownRequested += (_, _) =>
             {
-                _logging?.Info("UE5DumpUI shutting down...");
+                _logging?.Info(Constants.LogCatInit, "UE5DumpUI shutting down...");
                 _pipeClient?.Dispose();
                 _platform?.Dispose();
                 (_logging as IDisposable)?.Dispose();
