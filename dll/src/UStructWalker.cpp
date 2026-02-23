@@ -584,6 +584,106 @@ ReadArrayResult ReadArrayElements(
 }
 
 // ============================================================
+// IsPointerArrayType — check if an inner type name is a pointer
+// type whose elements are raw UObject* pointers (Phase D).
+// ObjectProperty and ClassProperty store UObject* (8 bytes).
+// WeakObjectProperty, SoftObjectProperty, LazyObjectProperty
+// have different internal layouts and are deferred to Phase E.
+// ============================================================
+bool IsPointerArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "ObjectProperty"
+        || innerTypeName == "ClassProperty";
+}
+
+// ============================================================
+// ReadPointerArrayElements — read pointer elements from a TArray
+// of UObject pointers (Phase D).
+//
+// For each element, reads the 8-byte pointer, then resolves the
+// object name and class name via GetName/GetClass.
+// ============================================================
+ReadArrayResult ReadPointerArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // ObjectProperty elements are always 8 bytes (UObject pointer on x64)
+    if (elemSize <= 0) elemSize = 8;
+
+    // Read TArray header
+    Mem::TArrayView arr;
+    if (!Mem::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    // Clamp offset/limit
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > 256) end = offset + 256;  // hard cap per request
+
+    result.elements.reserve(end - offset);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t ptr = 0;
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+        if (!Mem::ReadSafe(elemAddr, ptr)) {
+            elem.value = "???";
+            elem.hex = "????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+
+        // Hex of the pointer value
+        char hexBuf[20];
+        snprintf(hexBuf, sizeof(hexBuf), "%016llX", static_cast<unsigned long long>(ptr));
+        elem.hex = hexBuf;
+        elem.ptrAddr = ptr;
+
+        if (ptr) {
+            elem.ptrName = GetName(ptr);
+            uintptr_t cls = GetClass(ptr);
+            if (cls) elem.ptrClassName = GetName(cls);
+
+            // Display value: "Name (ClassName)" or just hex address if name fails
+            if (!elem.ptrName.empty()) {
+                elem.value = elem.ptrName;
+                if (!elem.ptrClassName.empty())
+                    elem.value += " (" + elem.ptrClassName + ")";
+            } else {
+                elem.value = hexBuf;  // Fallback to hex address
+            }
+        } else {
+            elem.value = "null";
+        }
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
 // CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
 // and related subclass extension offsets.
 //
@@ -762,6 +862,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     if (elemResult.ok && !elemResult.elements.empty()) {
                         fv.arrayElements = std::move(elemResult.elements);
                         Logger::Debug("WALK:ArrayP", "Inline elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
+                // Phase D: read pointer array element names (up to 64)
+                if (innerFound && IsPointerArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= 64
+                    && fv.arrayElemSize > 0) {
+                    auto ptrResult = ReadPointerArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, 64);
+                    if (ptrResult.ok && !ptrResult.elements.empty()) {
+                        fv.arrayElements = std::move(ptrResult.elements);
+                        Logger::Debug("WALK:ArrayP", "Ptr elements: %d read for '%s'",
                             static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
                     }
                 }

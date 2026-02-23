@@ -476,10 +476,18 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements)
         {
-            // Element description: "[N]" or "[N] EnumName"
-            var elemDesc = !string.IsNullOrEmpty(elem.EnumName)
-                ? $"[{elem.Index}] {elem.EnumName}"
-                : $"[{elem.Index}]";
+            // Element description: pointer name > enum name > plain index
+            string elemDesc;
+            if (!string.IsNullOrEmpty(elem.PtrName))
+            {
+                elemDesc = !string.IsNullOrEmpty(elem.PtrClassName)
+                    ? $"[{elem.Index}] {elem.PtrName} ({elem.PtrClassName})"
+                    : $"[{elem.Index}] {elem.PtrName}";
+            }
+            else if (!string.IsNullOrEmpty(elem.EnumName))
+                elemDesc = $"[{elem.Index}] {elem.EnumName}";
+            else
+                elemDesc = $"[{elem.Index}]";
 
             // Element: simple offset from the already-dereferenced Data pointer
             int elemByteOffset = elem.Index * field.ArrayElemSize;
@@ -666,7 +674,11 @@ public static class CeXmlExportService
             // Enum -- underlying value is typically int32
             "EnumProperty" => new CeFieldInfo("4 Bytes"),
 
-            _ => null // Non-scalar (StructProperty, ObjectProperty, etc.)
+            // Phase D: pointer types — 8 bytes, shown as hex
+            "ObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "ClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            _ => null // Non-scalar (StructProperty, SoftObjectProperty, etc.)
         };
     }
 }
