@@ -44,11 +44,19 @@ public static class CeXmlExportService
     private const int MaxDropDownEntries = 3000;
 
     /// <summary>
-    /// Tracks emitted DropDownList owners by UEnum address → first element's Description.
-    /// Reset per GenerateInstanceXml call. Enables DropDownListLink sharing for same-enum arrays.
+    /// Tracks emitted DropDownList owners by UEnum address → parent group's Description.
+    /// Reset per Generate* call. Enables DropDownListLink sharing for same-enum arrays.
     /// </summary>
     [ThreadStatic]
     private static Dictionary<string, string>? _dropDownOwners;
+
+    /// <summary>
+    /// Tracks emitted DropDownList parent descriptions to ensure uniqueness.
+    /// CE uses Description text as DropDownListLink key, so duplicates cause ambiguity.
+    /// If a duplicate is found, ".001", ".002" etc. suffix is appended.
+    /// </summary>
+    [ThreadStatic]
+    private static HashSet<string>? _dropDownDescriptions;
 
     /// <summary>CE field metadata for XML generation.</summary>
     private record CeFieldInfo(
@@ -195,6 +203,7 @@ public static class CeXmlExportService
 
         _nextId = 100;
         _dropDownOwners = new Dictionary<string, string>();
+        _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
@@ -257,6 +266,7 @@ public static class CeXmlExportService
     {
         _nextId = 100;
         _dropDownOwners = new Dictionary<string, string>();
+        _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
@@ -489,16 +499,11 @@ public static class CeXmlExportService
             return;
         }
 
-        // Array group: Address=+{fieldOffset}, Offsets=[0] to dereference TArray.Data pointer.
-        // TArray layout: { Data* +0x00, Count +0x08, Max +0x0C }
-        // Offsets=[0] reads the pointer at TArray+0x00 (the Data pointer).
-        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
-        var childIndent = indent + "  ";
-
-        // CE DropDownList: determine if this array should have dropdown support
+        // CE DropDownList: determine if this array should have dropdown support.
+        // DropDownList goes on the parent GroupHeader; all children use DropDownListLink.
         _dropDownOwners ??= new Dictionary<string, string>();
-        string? enumDropDown = null;
-        string? enumLinkTarget = null;
+        string? dropDownContent = null;
+        string? dropDownLinkTarget = null;
         bool isEnumArray = field.ArrayInnerType is "EnumProperty" or "ByteProperty"
             && field.ArrayEnumEntries is { Count: > 0 and <= MaxDropDownEntries };
         bool isNameArray = field.ArrayInnerType == "NameProperty"
@@ -509,12 +514,19 @@ public static class CeXmlExportService
             var enumKey = field.ArrayEnumAddr;
             if (!string.IsNullOrEmpty(enumKey) && _dropDownOwners.TryGetValue(enumKey, out var existing))
             {
-                enumLinkTarget = existing;  // shared: link to first occurrence
+                // Shared: this parent and all children link to first occurrence's parent
+                dropDownLinkTarget = existing;
             }
             else
             {
-                enumDropDown = BuildDropDownContent(
+                // First occurrence: parent gets DropDownList, children link to this parent.
+                // Ensure unique description (CE uses Description text as DropDownListLink key).
+                dropDownContent = BuildDropDownContent(
                     field.ArrayEnumEntries!.Select(e => (e.Value, e.Name)));
+                desc = EnsureUniqueDropDownDesc(desc);
+                dropDownLinkTarget = desc;
+                if (!string.IsNullOrEmpty(enumKey))
+                    _dropDownOwners[enumKey] = desc;
             }
         }
         else if (isNameArray)
@@ -528,15 +540,44 @@ public static class CeXmlExportService
                     pairs.Add((e.RawIntValue, e.Value));
             }
             if (pairs.Count > 0)
-                enumDropDown = BuildDropDownContent(pairs);
+            {
+                dropDownContent = BuildDropDownContent(pairs);
+                desc = EnsureUniqueDropDownDesc(desc);
+                dropDownLinkTarget = desc;
+            }
         }
 
-        bool isFirstDropDownElement = true;
+        // Array group: Address=+{fieldOffset}, Offsets=[0] to dereference TArray.Data pointer.
+        // TArray layout: { Data* +0x00, Count +0x08, Max +0x0C }
+        // Offsets=[0] reads the pointer at TArray+0x00 (the Data pointer).
+        // DropDownList/DropDownListLink is emitted on this parent group node.
+        if (dropDownContent != null)
+        {
+            EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 },
+                dropDownContent: dropDownContent);
+        }
+        else if (dropDownLinkTarget != null)
+        {
+            // Shared enum: parent links to first occurrence's parent
+            EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 },
+                dropDownListLink: dropDownLinkTarget);
+        }
+        else
+        {
+            EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        }
+        var childIndent = indent + "  ";
+
         foreach (var elem in field.ArrayElements)
         {
-            // Element description: pointer name > enum name > plain index
+            // Element description: simplified [N] when dropdown is active, else full names
             string elemDesc;
-            if (!string.IsNullOrEmpty(elem.PtrName))
+            if (dropDownLinkTarget != null)
+            {
+                // DisplayValueAsItem=1 handles showing the resolved name in CE's Value column
+                elemDesc = $"[{elem.Index}]";
+            }
+            else if (!string.IsNullOrEmpty(elem.PtrName))
             {
                 elemDesc = !string.IsNullOrEmpty(elem.PtrClassName)
                     ? $"[{elem.Index}] {elem.PtrName} ({elem.PtrClassName})"
@@ -544,36 +585,21 @@ public static class CeXmlExportService
             }
             else if (!string.IsNullOrEmpty(elem.EnumName))
                 elemDesc = $"[{elem.Index}] {elem.EnumName}";
-            else if (!string.IsNullOrEmpty(elem.Value) && isNameArray)
-                elemDesc = $"[{elem.Index}] {elem.Value}";
             else
                 elemDesc = $"[{elem.Index}]";
 
             // Element: simple offset from the already-dereferenced Data pointer
             int elemByteOffset = elem.Index * field.ArrayElemSize;
 
-            if (isFirstDropDownElement && enumDropDown != null)
+            if (dropDownLinkTarget != null)
             {
-                // First element with DropDownList content: emit inline list
+                // All children link to the parent (or first occurrence's parent) Description
                 EmitLeaf(sb, childIndent, elemDesc, ceElem,
                     $"+{elemByteOffset:X}", null,
-                    dropDownContent: enumDropDown);
-                // Register as owner for sharing (within this GenerateInstanceXml call)
-                if (isEnumArray && !string.IsNullOrEmpty(field.ArrayEnumAddr))
-                    _dropDownOwners[field.ArrayEnumAddr] = elemDesc;
-                enumLinkTarget = elemDesc;  // subsequent elements link to this
-                isFirstDropDownElement = false;
-            }
-            else if (enumLinkTarget != null)
-            {
-                // Subsequent elements: link to the first element's DropDownList
-                EmitLeaf(sb, childIndent, elemDesc, ceElem,
-                    $"+{elemByteOffset:X}", null,
-                    dropDownListLink: enumLinkTarget);
+                    dropDownListLink: dropDownLinkTarget);
             }
             else
             {
-                // No dropdown support for this element
                 EmitLeaf(sb, childIndent, elemDesc, ceElem,
                     $"+{elemByteOffset:X}", null);
             }
@@ -628,11 +654,17 @@ public static class CeXmlExportService
 
     /// <summary>Emit a group header that will contain child entries (opens CheatEntries block).</summary>
     private static void EmitGroupOpen(StringBuilder sb, string indent, string description,
-        string address, int[]? offsets, bool showAsHex = false, string? varType = null)
+        string address, int[]? offsets, bool showAsHex = false, string? varType = null,
+        string? dropDownContent = null, string? dropDownListLink = null)
     {
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{description}\"</Description>");
+        // CE DropDownList: inline list on this group, or link to another group's list
+        if (dropDownContent != null)
+            sb.AppendLine($"{indent}  <DropDownList DisplayValueAsItem=\"1\">{dropDownContent}</DropDownList>");
+        else if (dropDownListLink != null)
+            sb.AppendLine($"{indent}  <DropDownListLink>{EscapeXmlContent(dropDownListLink)}</DropDownListLink>");
         if (showAsHex)
             sb.AppendLine($"{indent}  <ShowAsHex>1</ShowAsHex>");
         sb.AppendLine($"{indent}  <ShowAsSigned>0</ShowAsSigned>");
@@ -676,11 +708,14 @@ public static class CeXmlExportService
     /// </summary>
     private static void EmitLeaf(StringBuilder sb, string indent, string description,
         CeFieldInfo ceField, string address, int[]? offsets,
-        string? dropDownContent = null, string? dropDownListLink = null)
+        string? dropDownListLink = null)
     {
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{description}\"</Description>");
+        // CE DropDownListLink: element content referencing the parent group's Description
+        if (dropDownListLink != null)
+            sb.AppendLine($"{indent}  <DropDownListLink>{EscapeXmlContent(dropDownListLink)}</DropDownListLink>");
         if (ceField.ShowAsHex)
             sb.AppendLine($"{indent}  <ShowAsHex>1</ShowAsHex>");
         sb.AppendLine($"{indent}  <ShowAsSigned>{(ceField.IsSigned ? 1 : 0)}</ShowAsSigned>");
@@ -691,11 +726,6 @@ public static class CeXmlExportService
             sb.AppendLine($"{indent}  <BitLength>{ceField.BitLength}</BitLength>");
             sb.AppendLine($"{indent}  <ShowAsBinary>0</ShowAsBinary>");
         }
-        // CE DropDownList: inline list of value:name pairs
-        if (dropDownContent != null)
-            sb.AppendLine($"{indent}  <DropDownList DisplayValueAsItem=\"1\">{dropDownContent}</DropDownList>");
-        else if (dropDownListLink != null)
-            sb.AppendLine($"{indent}  <DropDownListLink Description=\"{EscapeXmlAttr(dropDownListLink)}\"/>");
         sb.AppendLine($"{indent}  <Address>{address}</Address>");
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
@@ -726,9 +756,30 @@ public static class CeXmlExportService
         return sb.ToString().TrimEnd();
     }
 
-    /// <summary>Escape special characters for use in XML attribute values.</summary>
-    private static string EscapeXmlAttr(string s)
-        => s.Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;").Replace(">", "&gt;");
+    /// <summary>Escape special characters for XML element text content.</summary>
+    private static string EscapeXmlContent(string s)
+        => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    /// <summary>
+    /// Ensure a DropDownList parent Description is unique.
+    /// CE uses Description text as DropDownListLink key, so duplicates cause ambiguity.
+    /// Appends ".001", ".002" etc. suffix if the description was already used.
+    /// </summary>
+    private static string EnsureUniqueDropDownDesc(string desc)
+    {
+        _dropDownDescriptions ??= new HashSet<string>(StringComparer.Ordinal);
+        if (_dropDownDescriptions.Add(desc))
+            return desc;  // first use — unique
+
+        // Collision: append suffix .001, .002, ...
+        for (int i = 1; i < 1000; i++)
+        {
+            var suffixed = $"{desc}.{i:D3}";
+            if (_dropDownDescriptions.Add(suffixed))
+                return suffixed;
+        }
+        return desc;  // fallback (should never happen)
+    }
 
     /// <summary>
     /// Emit a navigable field as a group placeholder (no resolved children available).
