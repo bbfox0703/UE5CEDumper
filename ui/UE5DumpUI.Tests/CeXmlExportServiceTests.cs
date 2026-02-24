@@ -1021,6 +1021,201 @@ public class CeXmlExportServiceTests
     }
 
     // ========================================
+    // Collapse pointer nodes tests
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_CollapsePointerNodes_EmitsOptionsOnPointerAndArrayGroups()
+    {
+        // Arrange: one scalar field + one array with elements (has Offsets=[0] → gets Options)
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x10, Size = 4 },
+            new()
+            {
+                Name = "Scores", TypeName = "ArrayProperty", Offset = 0x20, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "100" },
+                    new() { Index = 1, Value = "200" },
+                }
+            },
+        };
+
+        // Act
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"game.exe\"+1234", "MyObj", "MyClass", fields,
+            collapsePointerNodes: true);
+
+        // Assert: root node does NOT have Options (absolute address, no +prefix)
+        // Array group (Offsets=[0], address starts with +) DOES have Options
+        var optionsTag = "<Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>";
+        int optionsCount = CountOccurrences(xml, optionsTag);
+        Assert.Equal(1, optionsCount); // Only the array group, not the root
+
+        // Verify root doesn't have it
+        var rootIdx = xml.IndexOf("\"MyClass: MyObj\"", StringComparison.Ordinal);
+        var rootEnd = xml.IndexOf("</CheatEntry>", rootIdx, StringComparison.Ordinal);
+        // The first Options should come AFTER the root's GroupHeader, inside the array group
+        var firstOptionsIdx = xml.IndexOf(optionsTag, StringComparison.Ordinal);
+        Assert.True(firstOptionsIdx > rootIdx);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_NoCollapse_NoOptionsEmitted()
+    {
+        // Arrange: same array field
+        var fields = new List<LiveFieldValue>
+        {
+            new()
+            {
+                Name = "Scores", TypeName = "ArrayProperty", Offset = 0x20, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "100" },
+                    new() { Index = 1, Value = "200" },
+                }
+            },
+        };
+
+        // Act: collapse OFF (default)
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"game.exe\"+1234", "MyObj", "MyClass", fields,
+            collapsePointerNodes: false);
+
+        // Assert: no Options elements at all
+        Assert.DoesNotContain("<Options", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_CollapsePointerNodes_EmitsOptionsOnBreadcrumbPointers()
+    {
+        // Arrange: breadcrumb with pointer navigation (intermediate level)
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1000", "Root"),
+            MakeBc("0x2000", "Child", "m_pChild", isPointer: true, offset: 0x50),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Value", TypeName = "IntProperty", Offset = 0x10, Size = 4 },
+        };
+
+        // Act
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "Root", breadcrumbs, fields,
+            collapsePointerNodes: true);
+
+        // Assert: breadcrumb pointer node gets Options, root does not
+        var optionsTag = "<Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>";
+        int optionsCount = CountOccurrences(xml, optionsTag);
+        Assert.Equal(1, optionsCount); // Only the pointer breadcrumb, not root
+    }
+
+    // ========================================
+    // Single-field (Copy CE Field) tests
+    // ========================================
+
+    [Fact]
+    public void GenerateHierarchicalXml_SingleScalarField_EmitsOnlyThatField()
+    {
+        var breadcrumbs = new[] { MakeBc("0x1000", "Root") };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x10, Size = 4 },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "Root", breadcrumbs, fields);
+
+        // Should contain exactly 2 CheatEntry nodes (root group + 1 leaf)
+        Assert.Equal(2, CountOccurrences(xml, "<CheatEntry>"));
+        Assert.Contains("\"Health\"", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_SingleArrayField_EmitsGroupWithElements()
+    {
+        var breadcrumbs = new[] { MakeBc("0x1000", "Root") };
+        var fields = new List<LiveFieldValue>
+        {
+            new()
+            {
+                Name = "Scores", TypeName = "ArrayProperty", Offset = 0x20, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "10" },
+                    new() { Index = 1, Value = "20" },
+                    new() { Index = 2, Value = "30" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "Root", breadcrumbs, fields);
+
+        // Root group + array group + 3 element leaves = 5 CheatEntry nodes
+        Assert.Equal(5, CountOccurrences(xml, "<CheatEntry>"));
+        Assert.Contains("Scores [3 x IntProperty (4B)]", xml);
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"[1]\"", xml);
+        Assert.Contains("\"[2]\"", xml);
+        // Array group should have Offsets=[0] for TArray.Data deref
+        Assert.Contains("<Offset>0</Offset>", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_SingleFieldWithBreadcrumbs_PreservesPointerChain()
+    {
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1000", "Root"),
+            MakeBc("0x2000", "Player", "m_pPlayer", isPointer: true, offset: 0x50),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Level", TypeName = "IntProperty", Offset = 0x18, Size = 4 },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "Root", breadcrumbs, fields);
+
+        // Root group + breadcrumb pointer group + 1 leaf = 3 CheatEntry nodes
+        Assert.Equal(3, CountOccurrences(xml, "<CheatEntry>"));
+        Assert.Contains("\"Root\"", xml);
+        Assert.Contains("\"m_pPlayer\"", xml);
+        Assert.Contains("\"Level\"", xml);
+        // Breadcrumb pointer should have offset and dereference
+        Assert.Contains("<Address>+50</Address>", xml);
+        Assert.Contains("<Address>+18</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_SingleBoolField_EmitsBitField()
+    {
+        var breadcrumbs = new[] { MakeBc("0x1000", "Root") };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "bIsAlive", TypeName = "BoolProperty", Offset = 0x30, Size = 1,
+                     BoolBitIndex = 3, BoolFieldMask = 0x08 },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "Root", breadcrumbs, fields);
+
+        Assert.Equal(2, CountOccurrences(xml, "<CheatEntry>"));
+        Assert.Contains("\"bIsAlive\"", xml);
+        Assert.Contains("<VariableType>Binary</VariableType>", xml);
+        Assert.Contains("<BitStart>3</BitStart>", xml);
+        Assert.Contains("<BitLength>1</BitLength>", xml);
+    }
+
+    // ========================================
     // Helper
     // ========================================
 

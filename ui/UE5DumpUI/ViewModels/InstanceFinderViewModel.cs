@@ -23,6 +23,9 @@ public partial class InstanceFinderViewModel : ViewModelBase
     [ObservableProperty] private int _selectedAddressFormatIndex;
     private AddressFormat AddrFormat => (AddressFormat)SelectedAddressFormatIndex;
 
+    /// <summary>Whether CE XML export should collapse pointer/array nodes.</summary>
+    public bool CollapsePointerNodes { get; set; }
+
     // --- Class name search ---
     [ObservableProperty] private string _searchClassName = "";
     [ObservableProperty] private ObservableCollection<InstanceResult> _instances = new();
@@ -228,7 +231,8 @@ public partial class InstanceFinderViewModel : ViewModelBase
 
             var xml = CeXmlExportService.GenerateInstanceXml(
                 rootAddress, SelectedInstance.Name, SelectedInstance.ClassName,
-                new List<LiveFieldValue>(Fields), resolvedStructs);
+                new List<LiveFieldValue>(Fields), resolvedStructs,
+                collapsePointerNodes: CollapsePointerNodes);
 
             await _platform.CopyToClipboardAsync(xml);
             _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)");

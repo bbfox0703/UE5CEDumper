@@ -45,9 +45,18 @@
                      IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
           <!-- Address format selector -->
+          <TextBlock Text="{StaticResource str.Toolbar.AddressFormat}"
+                     Foreground="#CCCCCC" FontSize="12"
+                     VerticalAlignment="Center" Margin="12,0,4,0"/>
           <ComboBox ItemsSource="{Binding AddressFormatOptions}"
                     SelectedIndex="{Binding SelectedAddressFormatIndex}"
                     MinWidth="140" Padding="4,2" FontSize="12"
+                    VerticalAlignment="Center"/>
+
+          <!-- CE XML collapse toggle -->
+          <CheckBox Content="{StaticResource str.Toolbar.CollapsePointers}"
+                    IsChecked="{Binding CollapsePointerNodes}"
+                    Foreground="#CCCCCC" FontSize="12"
                     VerticalAlignment="Center" Margin="12,0"/>
         </StackPanel>
       </DockPanel>
