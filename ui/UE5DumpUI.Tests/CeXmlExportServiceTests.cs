@@ -471,14 +471,16 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
-    public void GenerateInstanceXml_EnumArray_ElementDescIncludesEnumName()
+    public void GenerateInstanceXml_EnumArrayWithoutEntries_ElementDescIncludesEnumName()
     {
+        // When ArrayEnumEntries is absent (no DropDownList), enum names appear in descriptions
         var fields = new[]
         {
             new LiveFieldValue
             {
                 Name = "ShipTypes", TypeName = "ArrayProperty", Offset = 0x200, Size = 16,
                 ArrayCount = 2, ArrayInnerType = "ByteProperty", ArrayElemSize = 1,
+                // No ArrayEnumEntries → no DropDownList → enum names stay in descriptions
                 ArrayElements = new List<ArrayElementValue>
                 {
                     new() { Index = 0, Value = "0", Hex = "00", EnumName = "EShip::Scout" },
@@ -490,10 +492,13 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Enum names in element descriptions
+        // Without DropDownList, enum names appear in element descriptions
         Assert.Contains("[0] EShip::Scout", xml);
         Assert.Contains("[1] EShip::SpecOps", xml);
         Assert.Contains("<VariableType>Byte</VariableType>", xml);
+        // No DropDownList/DropDownListLink should be present
+        Assert.DoesNotContain("<DropDownList", xml);
+        Assert.DoesNotContain("<DropDownListLink", xml);
     }
 
     [Fact]
@@ -860,14 +865,21 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // First element has DropDownList with all enum entries
+        // DropDownList on parent GroupHeader (not on first child)
         Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
         Assert.Contains("0:EShip::Scout", xml);
         Assert.Contains("1:EShip::SpecOps", xml);
         Assert.Contains("2:EShip::Gunship", xml);
-        // Subsequent elements use DropDownListLink referencing first element's description
-        Assert.Contains("<DropDownListLink Description=", xml);
-        Assert.Contains("[0] EShip::Scout", xml);
+        // Parent description contains the array info
+        Assert.Contains("ShipTypes [3 x ByteProperty (1B)]", xml);
+        // All children use DropDownListLink (element content, not attribute) referencing parent
+        Assert.Contains("<DropDownListLink>ShipTypes [3 x ByteProperty (1B)]</DropDownListLink>", xml);
+        // Child descriptions are simplified to [N] only (no enum names)
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"[1]\"", xml);
+        Assert.Contains("\"[2]\"", xml);
+        // Enum names should NOT appear in child descriptions
+        Assert.DoesNotContain("[0] EShip::Scout", xml);
     }
 
     [Fact]
@@ -912,15 +924,18 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // First array's first element has the DropDownList
+        // First array's parent GroupHeader has the DropDownList
         Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
-        // Second array's element uses DropDownListLink (shared, no duplicate DropDownList)
-        // Count occurrences of DropDownList (should be exactly 1 full list)
+        // Exactly 1 DropDownList (on first array's parent only)
         int listCount = CountOccurrences(xml, "<DropDownList ");
         Assert.Equal(1, listCount);
-        // Multiple DropDownListLink entries (from both arrays' subsequent elements)
-        int linkCount = CountOccurrences(xml, "<DropDownListLink ");
-        Assert.True(linkCount >= 2, $"Expected at least 2 DropDownListLink entries, got {linkCount}");
+        // Second array's parent uses DropDownListLink to first array's parent Description
+        var firstParentDesc = "StarterShips [2 x ByteProperty (1B)]";
+        Assert.Contains($"<DropDownListLink>{firstParentDesc}</DropDownListLink>", xml);
+        // All children from both arrays use DropDownListLink referencing first parent
+        int linkCount = CountOccurrences(xml, $"<DropDownListLink>{firstParentDesc}</DropDownListLink>");
+        // 2 children from first array + 1 parent from second array + 1 child from second array = 4
+        Assert.True(linkCount >= 4, $"Expected at least 4 DropDownListLink entries, got {linkCount}");
     }
 
     [Fact]
@@ -944,16 +959,65 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // First element has DropDownList built from element values
+        // DropDownList on parent GroupHeader (not on first child)
         Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
         Assert.Contains("4660:S01L04", xml);   // 0x1234 = 4660 decimal
         Assert.Contains("22136:S01L08", xml);   // 0x5678 = 22136 decimal
         Assert.Contains("39612:S02L01", xml);   // 0x9ABC = 39612 decimal
-        // Subsequent elements use DropDownListLink
-        Assert.Contains("<DropDownListLink Description=", xml);
-        // NameProperty elements show value in description
-        Assert.Contains("[0] S01L04", xml);
-        Assert.Contains("[1] S01L08", xml);
+        // Parent description
+        var parentDesc = "Locations [3 x NameProperty (8B)]";
+        Assert.Contains(parentDesc, xml);
+        // All children use DropDownListLink (element content) referencing parent
+        Assert.Contains($"<DropDownListLink>{parentDesc}</DropDownListLink>", xml);
+        // Child descriptions are simplified to [N] only (no name values)
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"[1]\"", xml);
+        Assert.Contains("\"[2]\"", xml);
+        // Name values should NOT appear in child descriptions
+        Assert.DoesNotContain("[0] S01L04", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_DuplicateDescEnumArray_AppendsSuffix()
+    {
+        // Two NameProperty arrays with the SAME description (same name, count, type)
+        // CE uses Description as DropDownListLink key, so duplicates need .001 suffix
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Tags", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "NameProperty", ArrayElemSize = 8,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "TagA", Hex = "11110000", RawIntValue = 0x1111 },
+                    new() { Index = 1, Value = "TagB", Hex = "22220000", RawIntValue = 0x2222 },
+                }
+            },
+            new LiveFieldValue
+            {
+                Name = "Tags", TypeName = "ArrayProperty", Offset = 0x200, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "NameProperty", ArrayElemSize = 8,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "TagC", Hex = "33330000", RawIntValue = 0x3333 },
+                    new() { Index = 1, Value = "TagD", Hex = "44440000", RawIntValue = 0x4444 },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Exactly 2 DropDownList entries (each NameProperty array gets its own, no sharing)
+        int listCount = CountOccurrences(xml, "<DropDownList ");
+        Assert.Equal(2, listCount);
+        // First array: original description
+        Assert.Contains("\"Tags [2 x NameProperty (8B)]\"", xml);
+        // Second array: suffixed description for uniqueness
+        Assert.Contains("\"Tags [2 x NameProperty (8B)].001\"", xml);
+        // Children of second array link to the suffixed parent
+        Assert.Contains("<DropDownListLink>Tags [2 x NameProperty (8B)].001</DropDownListLink>", xml);
     }
 
     // ========================================
