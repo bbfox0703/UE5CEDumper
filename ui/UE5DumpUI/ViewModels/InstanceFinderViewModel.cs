@@ -26,6 +26,21 @@ public partial class InstanceFinderViewModel : ViewModelBase
     /// <summary>Whether CE XML export should collapse pointer/array nodes.</summary>
     public bool CollapsePointerNodes { get; set; }
 
+    /// <summary>Max array element count for inline reading (2^N, default 64).</summary>
+    private int _arrayLimit = 64;
+    public int ArrayLimit
+    {
+        get => _arrayLimit;
+        set
+        {
+            if (_arrayLimit == value) return;
+            _arrayLimit = value;
+            // Auto-refresh selected instance with new limit
+            if (SelectedInstance != null)
+                _ = LoadInstanceFieldsAsync(SelectedInstance);
+        }
+    }
+
     // --- Class name search ---
     [ObservableProperty] private string _searchClassName = "";
     [ObservableProperty] private ObservableCollection<InstanceResult> _instances = new();
@@ -179,7 +194,7 @@ public partial class InstanceFinderViewModel : ViewModelBase
             IsLoadingFields = true;
             ShowCeXml = false;
 
-            var result = await _dump.WalkInstanceAsync(instance.Address);
+            var result = await _dump.WalkInstanceAsync(instance.Address, arrayLimit: ArrayLimit);
 
             // Compute base address for FieldAddress calculation
             ulong baseAddr = 0;
@@ -223,7 +238,7 @@ public partial class InstanceFinderViewModel : ViewModelBase
 
             // Pre-resolve StructProperty inner fields via DLL
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
-                _dump, new List<LiveFieldValue>(Fields));
+                _dump, new List<LiveFieldValue>(Fields), arrayLimit: ArrayLimit);
 
             // Compute root address in user-selected format
             var rootAddress = AddressHelper.FormatAddress(

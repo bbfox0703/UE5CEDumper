@@ -21,8 +21,8 @@ public interface IDumpService
     Task UnwatchAsync(string addr, CancellationToken ct = default);
 
     // --- Live Data Walker ---
-    Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, CancellationToken ct = default);
-    Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, CancellationToken ct = default);
+    Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, int arrayLimit = 64, CancellationToken ct = default);
+    Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, int arrayLimit = 64, CancellationToken ct = default);
     Task<FindInstancesResult> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default);
     Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default);
 

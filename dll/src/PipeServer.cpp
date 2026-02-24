@@ -413,8 +413,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
             std::string classAddrStr = request.value("class_addr", "");
             uintptr_t classAddr = classAddrStr.empty() ? 0 : PipeProtocol::StrToAddr(classAddrStr);
+            int32_t arrayLimit = request.value("array_limit", 64);
 
-            auto result = UStructWalker::WalkInstance(addr, classAddr);
+            auto result = UStructWalker::WalkInstance(addr, classAddr, arrayLimit);
 
             json data;
             data["addr"]       = PipeProtocol::AddrToStr(result.addr);
