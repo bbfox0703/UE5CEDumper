@@ -539,7 +539,7 @@ ReadArrayResult ReadArrayElements(
     }
     int32_t end = offset + limit;
     if (end > arr.Count) end = arr.Count;
-    if (end - offset > 256) end = offset + 256;  // hard cap per request
+    if (end - offset > 4096) end = offset + 4096;  // hard cap per request
 
     // For enum arrays: read UEnum* once from Inner FProperty
     uintptr_t enumPtr = 0;
@@ -666,7 +666,7 @@ ReadArrayResult ReadPointerArrayElements(
     }
     int32_t end = offset + limit;
     if (end > arr.Count) end = arr.Count;
-    if (end - offset > 256) end = offset + 256;  // hard cap per request
+    if (end - offset > 4096) end = offset + 4096;  // hard cap per request
 
     result.elements.reserve(end - offset);
 
@@ -776,7 +776,7 @@ ReadArrayResult ReadWeakObjectArrayElements(
     }
     int32_t end = offset + limit;
     if (end > arr.Count) end = arr.Count;
-    if (end - offset > 256) end = offset + 256;
+    if (end - offset > 4096) end = offset + 4096;
 
     result.elements.reserve(end - offset);
 
@@ -1095,7 +1095,10 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
     // No StructProperty found in this class; will retry on next WalkInstance call
 }
 
-InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
+InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int32_t arrayLimit) {
+    // Clamp arrayLimit to sane range [1, 4096]
+    if (arrayLimit < 1) arrayLimit = 1;
+    if (arrayLimit > 4096) arrayLimit = 4096;
     InstanceWalkResult result;
     result.addr = instanceAddr;
 
@@ -1235,14 +1238,14 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     }
                 }
 
-                // Phase B: read inline scalar element values (up to 64)
+                // Phase B: read inline scalar element values (up to arrayLimit)
                 if (innerFound && IsScalarArrayType(fv.arrayInnerType)
-                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= 64
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= arrayLimit
                     && fv.arrayElemSize > 0) {
                     auto elemResult = ReadArrayElements(
                         instanceAddr, fi.Offset,
                         fv.arrayInnerFFieldAddr, fv.arrayInnerType,
-                        fv.arrayElemSize, 0, 64);
+                        fv.arrayElemSize, 0, arrayLimit);
                     if (elemResult.ok && !elemResult.elements.empty()) {
                         fv.arrayElements = std::move(elemResult.elements);
                         Logger::Debug("WALK:ArrayP", "Inline elements: %d read for '%s'",
@@ -1255,12 +1258,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     }
                 }
 
-                // Phase D: read pointer array element names (up to 64)
+                // Phase D: read pointer array element names (up to arrayLimit)
                 if (innerFound && IsPointerArrayType(fv.arrayInnerType)
-                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= 64
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= arrayLimit
                     && fv.arrayElemSize > 0) {
                     auto ptrResult = ReadPointerArrayElements(
-                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, 64);
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
                     if (ptrResult.ok && !ptrResult.elements.empty()) {
                         fv.arrayElements = std::move(ptrResult.elements);
                         Logger::Debug("WALK:ArrayP", "Ptr elements: %d read for '%s'",
@@ -1268,12 +1271,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     }
                 }
 
-                // Phase E: read weak object pointer array element names (up to 64)
+                // Phase E: read weak object pointer array element names (up to arrayLimit)
                 if (innerFound && IsWeakPointerArrayType(fv.arrayInnerType)
-                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= 64
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= arrayLimit
                     && fv.arrayElemSize > 0) {
                     auto weakResult = ReadWeakObjectArrayElements(
-                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, 64);
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
                     if (weakResult.ok && !weakResult.elements.empty()) {
                         fv.arrayElements = std::move(weakResult.elements);
                         Logger::Debug("WALK:ArrayP", "Weak ptr elements: %d read for '%s'",
@@ -1281,14 +1284,14 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr) {
                     }
                 }
 
-                // Phase F: read struct array element fields (up to 64)
+                // Phase F: read struct array element fields (up to arrayLimit)
                 if (innerFound && IsStructArrayType(fv.arrayInnerType)
                     && fv.arrayInnerStructAddr != 0
-                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= 64
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= arrayLimit
                     && fv.arrayElemSize > 0) {
                     auto structResult = ReadStructArrayElements(
                         instanceAddr, fi.Offset,
-                        fv.arrayInnerStructAddr, fv.arrayElemSize, 0, 64);
+                        fv.arrayInnerStructAddr, fv.arrayElemSize, 0, arrayLimit);
                     if (structResult.ok && !structResult.elements.empty()) {
                         fv.arrayElements = std::move(structResult.elements);
                         Logger::Debug("WALK:ArrayP", "Struct elements: %d read for '%s'",
