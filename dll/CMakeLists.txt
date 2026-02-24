@@ -107,6 +107,8 @@ if(MSVC)
         /W4
         /permissive-
         /EHa        # Enable SEH exceptions for __try/__except
+		/arch:AVX2          # 啟用 AVX2 指令集最佳化
+        /favor:blend        # 針對現代 CPU 混合架構最佳化		
     )
 endif()
 
