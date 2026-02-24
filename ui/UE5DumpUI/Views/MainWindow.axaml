@@ -58,6 +58,24 @@
                     IsChecked="{Binding CollapsePointerNodes}"
                     Foreground="#CCCCCC" FontSize="12"
                     VerticalAlignment="Center" Margin="12,0"/>
+
+          <!-- Array element limit slider (2^N steps: 2..4096) -->
+          <TextBlock Text="{StaticResource str.Toolbar.ArrayLimit}"
+                     Foreground="#CCCCCC" FontSize="12"
+                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+          <Slider Value="{Binding ArrayLimitExponent}"
+                  Minimum="1" Maximum="12"
+                  TickFrequency="1" IsSnapToTickEnabled="True"
+                  Width="140"
+                  VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding ArrayLimit}"
+                     Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                     VerticalAlignment="Center" MinWidth="35"
+                     Margin="4,0"/>
+          <TextBlock Text="{StaticResource str.Toolbar.ArrayLimitWarn}"
+                     Foreground="#F4A747" FontSize="11"
+                     VerticalAlignment="Center" Margin="4,0"
+                     IsVisible="{Binding ShowArrayLimitWarning}"/>
         </StackPanel>
       </DockPanel>
     </Border>

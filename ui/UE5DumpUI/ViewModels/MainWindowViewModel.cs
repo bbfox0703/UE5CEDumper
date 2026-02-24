@@ -22,6 +22,13 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private int _selectedTabIndex;
     [ObservableProperty] private int _selectedAddressFormatIndex;
     [ObservableProperty] private bool _collapsePointerNodes;
+    [ObservableProperty] private int _arrayLimitExponent = 6; // 2^6 = 64
+
+    /// <summary>Computed array element limit: 2^ArrayLimitExponent (2..4096).</summary>
+    public int ArrayLimit => 1 << ArrayLimitExponent;
+
+    /// <summary>Show warning when array limit exceeds default 64.</summary>
+    public bool ShowArrayLimitWarning => ArrayLimitExponent > 6;
 
     /// <summary>Address format options for toolbar ComboBox.</summary>
     public string[] AddressFormatOptions { get; } =
@@ -61,6 +68,14 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         LiveWalker.CollapsePointerNodes = value;
         InstanceFinder.CollapsePointerNodes = value;
+    }
+
+    partial void OnArrayLimitExponentChanged(int value)
+    {
+        OnPropertyChanged(nameof(ArrayLimit));
+        OnPropertyChanged(nameof(ShowArrayLimitWarning));
+        LiveWalker.ArrayLimit = ArrayLimit;
+        InstanceFinder.ArrayLimit = ArrayLimit;
     }
 
     public MainWindowViewModel(

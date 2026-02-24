@@ -471,20 +471,21 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
-    public void GenerateInstanceXml_EnumArrayWithoutEntries_ElementDescIncludesEnumName()
+    public void GenerateInstanceXml_EnumArrayWithoutEntries_FallbackDropDown()
     {
-        // When ArrayEnumEntries is absent (no DropDownList), enum names appear in descriptions
+        // When ArrayEnumEntries is absent but elements have EnumName,
+        // the fallback builds a DropDownList from element values
         var fields = new[]
         {
             new LiveFieldValue
             {
                 Name = "ShipTypes", TypeName = "ArrayProperty", Offset = 0x200, Size = 16,
                 ArrayCount = 2, ArrayInnerType = "ByteProperty", ArrayElemSize = 1,
-                // No ArrayEnumEntries → no DropDownList → enum names stay in descriptions
+                // No ArrayEnumEntries → fallback builds DropDownList from element EnumName values
                 ArrayElements = new List<ArrayElementValue>
                 {
-                    new() { Index = 0, Value = "0", Hex = "00", EnumName = "EShip::Scout" },
-                    new() { Index = 1, Value = "1", Hex = "01", EnumName = "EShip::SpecOps" },
+                    new() { Index = 0, Value = "0", Hex = "00", EnumName = "EShip::Scout", RawIntValue = 0 },
+                    new() { Index = 1, Value = "1", Hex = "01", EnumName = "EShip::SpecOps", RawIntValue = 1 },
                 }
             },
         };
@@ -492,13 +493,15 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Without DropDownList, enum names appear in element descriptions
-        Assert.Contains("[0] EShip::Scout", xml);
-        Assert.Contains("[1] EShip::SpecOps", xml);
+        // Fallback DropDownList should be present with enum names
+        Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
+        Assert.Contains("0:EShip::Scout", xml);
+        Assert.Contains("1:EShip::SpecOps", xml);
         Assert.Contains("<VariableType>Byte</VariableType>", xml);
-        // No DropDownList/DropDownListLink should be present
-        Assert.DoesNotContain("<DropDownList", xml);
-        Assert.DoesNotContain("<DropDownListLink", xml);
+        // Element descriptions simplified to [N] when DropDownList is active
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"[1]\"", xml);
+        Assert.DoesNotContain("[0] EShip::Scout", xml);
     }
 
     [Fact]
@@ -1018,6 +1021,148 @@ public class CeXmlExportServiceTests
         Assert.Contains("\"Tags [2 x NameProperty (8B)].001\"", xml);
         // Children of second array link to the suffixed parent
         Assert.Contains("<DropDownListLink>Tags [2 x NameProperty (8B)].001</DropDownListLink>", xml);
+    }
+
+    // ========================================
+    // Struct containing ArrayProperty tests
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_ResolvedStructWithArray_ExpandsArrayElements()
+    {
+        // Simulates: StructProperty "JobScore" containing ArrayProperty "ClaimedRewards" with elements
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "JobScore", TypeName = "StructProperty", Offset = 0x100, Size = 32,
+                StructDataAddr = "0xABC", StructClassAddr = "0xDEF", StructTypeName = "FJobScore"
+            },
+        };
+
+        // Resolved struct has a scalar field + an ArrayProperty with inline elements
+        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        {
+            [0x100] = new()
+            {
+                new LiveFieldValue { Name = "CurrentRank", TypeName = "IntProperty", Offset = 0x0, Size = 4 },
+                new LiveFieldValue
+                {
+                    Name = "ClaimedRewards", TypeName = "ArrayProperty", Offset = 0x8, Size = 16,
+                    ArrayCount = 3, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+                    ArrayElements = new List<ArrayElementValue>
+                    {
+                        new() { Index = 0, Value = "10", Hex = "0A000000" },
+                        new() { Index = 1, Value = "20", Hex = "14000000" },
+                        new() { Index = 2, Value = "30", Hex = "1E000000" },
+                    }
+                },
+            }
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields, resolvedStructs);
+
+        // Struct group should exist
+        Assert.Contains("FJobScore", xml);
+        Assert.Contains("CurrentRank", xml);
+        // Array inside struct should be fully expanded (NOT a placeholder)
+        Assert.Contains("ClaimedRewards [3 x IntProperty (4B)]", xml);
+        // Array elements should be present
+        Assert.Contains("[0]", xml);
+        Assert.Contains("[1]", xml);
+        Assert.Contains("[2]", xml);
+        // Array group should have Offsets=[0] for TArray.Data deref
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Struct scalar field
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ResolvedStructWithEnumArray_EmitsDropDownFallback()
+    {
+        // Simulates: StructProperty containing ByteProperty/EnumProperty array where
+        // ArrayEnumEntries is empty but elements have EnumName set (fallback path)
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Settings", TypeName = "StructProperty", Offset = 0x50, Size = 32,
+                StructDataAddr = "0xABC", StructClassAddr = "0xDEF", StructTypeName = "FSettings"
+            },
+        };
+
+        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        {
+            [0x50] = new()
+            {
+                new LiveFieldValue
+                {
+                    Name = "Modes", TypeName = "ArrayProperty", Offset = 0x0, Size = 16,
+                    ArrayCount = 2, ArrayInnerType = "ByteProperty", ArrayElemSize = 1,
+                    // No ArrayEnumEntries (empty/null) — triggers fallback path
+                    ArrayElements = new List<ArrayElementValue>
+                    {
+                        new() { Index = 0, Value = "0", Hex = "00", EnumName = "EMode::Easy", RawIntValue = 0 },
+                        new() { Index = 1, Value = "1", Hex = "01", EnumName = "EMode::Hard", RawIntValue = 1 },
+                    }
+                },
+            }
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields, resolvedStructs);
+
+        // Struct group exists
+        Assert.Contains("FSettings", xml);
+        // Array should have DropDownList from element enum names (fallback)
+        Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
+        Assert.Contains("0:EMode::Easy", xml);
+        Assert.Contains("1:EMode::Hard", xml);
+        // Element descriptions simplified to [N]
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"[1]\"", xml);
+        // Enum names should NOT be in element descriptions when DropDownList is active
+        Assert.DoesNotContain("[0] EMode::Easy", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_EnumFallbackDropDown_BuildsFromElementValues()
+    {
+        // Direct (non-struct) array with no ArrayEnumEntries but elements have EnumName
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Ranks", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "EnumProperty", ArrayElemSize = 4,
+                // ArrayEnumEntries is null → isEnumArray=false
+                // But elements have EnumName → isEnumFallback=true
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "EJobRank::Rank1", Hex = "00000000", EnumName = "EJobRank::Rank1", RawIntValue = 0 },
+                    new() { Index = 1, Value = "EJobRank::Rank2", Hex = "01000000", EnumName = "EJobRank::Rank2", RawIntValue = 1 },
+                    new() { Index = 2, Value = "EJobRank::Rank1", Hex = "00000000", EnumName = "EJobRank::Rank1", RawIntValue = 0 },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // DropDownList should be present (fallback from element names)
+        Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
+        Assert.Contains("0:EJobRank::Rank1", xml);
+        Assert.Contains("1:EJobRank::Rank2", xml);
+        // Deduplicated: Rank1 appears twice in elements but only once in DropDownList
+        int rank1Count = CountOccurrences(xml, "0:EJobRank::Rank1");
+        Assert.Equal(1, rank1Count);
+        // All children use DropDownListLink
+        Assert.Contains("<DropDownListLink>", xml);
+        // Element descriptions are simplified [N]
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"[1]\"", xml);
+        Assert.Contains("\"[2]\"", xml);
     }
 
     // ========================================

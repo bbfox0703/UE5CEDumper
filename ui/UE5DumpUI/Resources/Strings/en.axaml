@@ -7,6 +7,8 @@
     <sys:String x:Key="str.Disconnect">Disconnect</sys:String>
     <sys:String x:Key="str.Toolbar.AddressFormat">Address:</sys:String>
     <sys:String x:Key="str.Toolbar.CollapsePointers">Collapse Pointer Nodes</sys:String>
+    <sys:String x:Key="str.Toolbar.ArrayLimit">Array Limit:</sys:String>
+    <sys:String x:Key="str.Toolbar.ArrayLimitWarn">⚠ High memory usage — may cause crash</sys:String>
 
     <!-- Tabs -->
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>

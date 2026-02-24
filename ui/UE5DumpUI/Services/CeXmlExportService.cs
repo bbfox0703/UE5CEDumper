@@ -91,7 +91,7 @@ public static class CeXmlExportService
     ///      ]
     /// </summary>
     public static async Task<Dictionary<int, List<LiveFieldValue>>> ResolveStructFieldsAsync(
-        IDumpService dump, IReadOnlyList<LiveFieldValue> fields)
+        IDumpService dump, IReadOnlyList<LiveFieldValue> fields, int arrayLimit = 64)
     {
         var result = new Dictionary<int, List<LiveFieldValue>>();
 
@@ -107,7 +107,7 @@ public static class CeXmlExportService
             try
             {
                 await ResolveStructRecursiveAsync(dump, field.StructDataAddr, field.StructClassAddr,
-                    "", 0, resolved, 0);
+                    "", 0, resolved, 0, arrayLimit);
             }
             catch
             {
@@ -123,11 +123,12 @@ public static class CeXmlExportService
 
     private static async Task ResolveStructRecursiveAsync(
         IDumpService dump, string dataAddr, string classAddr,
-        string namePrefix, int baseOffset, List<LiveFieldValue> output, int depth)
+        string namePrefix, int baseOffset, List<LiveFieldValue> output, int depth,
+        int arrayLimit = 64)
     {
         if (depth >= MaxStructDepth) return;
 
-        var walkResult = await dump.WalkInstanceAsync(dataAddr, classAddr);
+        var walkResult = await dump.WalkInstanceAsync(dataAddr, classAddr, arrayLimit: arrayLimit);
 
         foreach (var f in walkResult.Fields)
         {
@@ -141,7 +142,7 @@ public static class CeXmlExportService
             {
                 // Nested struct — recurse and flatten into the same list
                 await ResolveStructRecursiveAsync(dump, f.StructDataAddr, f.StructClassAddr,
-                    displayName, absOffset, output, depth + 1);
+                    displayName, absOffset, output, depth + 1, arrayLimit);
             }
             else if (f.IsPointerNavigation)
             {
@@ -159,7 +160,7 @@ public static class CeXmlExportService
             }
             else
             {
-                // Scalar field — add with accumulated offset and prefixed name
+                // Scalar or array field — add with accumulated offset and prefixed name
                 output.Add(new LiveFieldValue
                 {
                     Name = displayName,
@@ -171,6 +172,12 @@ public static class CeXmlExportService
                     BoolBitIndex = f.BoolBitIndex,
                     BoolFieldMask = f.BoolFieldMask,
                     ArrayCount = f.ArrayCount,
+                    ArrayInnerType = f.ArrayInnerType,
+                    ArrayElemSize = f.ArrayElemSize,
+                    ArrayStructType = f.ArrayStructType,
+                    ArrayElements = f.ArrayElements,
+                    ArrayEnumAddr = f.ArrayEnumAddr,
+                    ArrayEnumEntries = f.ArrayEnumEntries,
                     EnumName = f.EnumName,
                     EnumValue = f.EnumValue,
                     StrValue = f.StrValue,
@@ -458,13 +465,8 @@ public static class CeXmlExportService
             }
             else if (child.TypeName == "ArrayProperty" && child.ArrayCount >= 0)
             {
-                // Array inside struct — emit as group placeholder (no Phase B elements for resolved children)
-                var arrTypeLabel = !string.IsNullOrEmpty(child.ArrayStructType)
-                    ? child.ArrayStructType : child.ArrayInnerType;
-                var arrDesc = child.ArrayCount > 0 && !string.IsNullOrEmpty(arrTypeLabel)
-                    ? $"{child.Name} [{child.ArrayCount} x {arrTypeLabel} ({child.ArrayElemSize}B)]"
-                    : child.Name;
-                EmitGroupPlaceholder(sb, childIndent, arrDesc, $"+{child.Offset:X}", null);
+                // Array inside struct — full expansion if element data is available
+                EmitArrayProperty(sb, childIndent, child);
             }
             // Skip unknown types (delegates, etc.) — they're not useful in CE
         }
@@ -520,6 +522,12 @@ public static class CeXmlExportService
             && field.ArrayEnumEntries is { Count: > 0 and <= MaxDropDownEntries };
         bool isNameArray = field.ArrayInnerType == "NameProperty"
             && field.ArrayElements is { Count: > 0 and <= MaxDropDownEntries };
+        // Fallback: enum/byte array with per-element enum names but no full UEnum entries list.
+        // Build DropDownList from element values (like NameProperty), no sharing.
+        bool isEnumFallback = !isEnumArray
+            && field.ArrayInnerType is "EnumProperty" or "ByteProperty"
+            && field.ArrayElements is { Count: > 0 and <= MaxDropDownEntries }
+            && field.ArrayElements.Any(e => !string.IsNullOrEmpty(e.EnumName));
 
         if (isEnumArray)
         {
@@ -539,6 +547,23 @@ public static class CeXmlExportService
                 dropDownLinkTarget = desc;
                 if (!string.IsNullOrEmpty(enumKey))
                     _dropDownOwners[enumKey] = desc;
+            }
+        }
+        else if (isEnumFallback)
+        {
+            // Build from current element enum values (deduplicated)
+            var seen = new HashSet<long>();
+            var pairs = new List<(long, string)>();
+            foreach (var e in field.ArrayElements!)
+            {
+                if (seen.Add(e.RawIntValue) && !string.IsNullOrEmpty(e.EnumName))
+                    pairs.Add((e.RawIntValue, e.EnumName));
+            }
+            if (pairs.Count > 0)
+            {
+                dropDownContent = BuildDropDownContent(pairs);
+                desc = EnsureUniqueDropDownDesc(desc);
+                dropDownLinkTarget = desc;
             }
         }
         else if (isNameArray)

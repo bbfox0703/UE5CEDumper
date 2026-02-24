@@ -49,6 +49,21 @@ public partial class LiveWalkerViewModel : ViewModelBase
     /// <summary>Whether CE XML export should collapse pointer/array nodes.</summary>
     public bool CollapsePointerNodes { get; set; }
 
+    /// <summary>Max array element count for inline reading (2^N, default 64).</summary>
+    private int _arrayLimit = 64;
+    public int ArrayLimit
+    {
+        get => _arrayLimit;
+        set
+        {
+            if (_arrayLimit == value) return;
+            _arrayLimit = value;
+            // Auto-refresh current view with new limit
+            if (!string.IsNullOrEmpty(CurrentAddress))
+                RefreshCommand.Execute(null);
+        }
+    }
+
     // Search
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private int _searchMatchCount;
@@ -90,7 +105,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             IsLoading = true;
             StopAutoRefreshTimer();
 
-            var world = await _dump.WalkWorldAsync(500);
+            var world = await _dump.WalkWorldAsync(500, arrayLimit: ArrayLimit);
             _cachedWorld = world;
 
             Breadcrumbs.Clear();
@@ -216,7 +231,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             else if (!string.IsNullOrEmpty(field.StructDataAddr) && field.StructDataAddr != "0x0")
             {
                 // StructProperty navigation: walk struct data using its class
-                var result = await _dump.WalkInstanceAsync(field.StructDataAddr, field.StructClassAddr);
+                var result = await _dump.WalkInstanceAsync(field.StructDataAddr, field.StructClassAddr, arrayLimit: ArrayLimit);
                 var displayName = !string.IsNullOrEmpty(field.StructTypeName)
                     ? $"{field.Name} ({field.StructTypeName})"
                     : field.Name;
@@ -273,7 +288,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
             // Re-walk this object (pass ClassAddr for StructProperty navigation)
             var classAddr = string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
-            var result = await _dump.WalkInstanceAsync(item.Address, classAddr);
+            var result = await _dump.WalkInstanceAsync(item.Address, classAddr, arrayLimit: ArrayLimit);
             UpdateDisplay(result);
 
             if (!string.IsNullOrEmpty(scrollHint))
@@ -313,7 +328,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             }
 
             var classAddr = string.IsNullOrEmpty(prev.ClassAddr) ? null : prev.ClassAddr;
-            var result = await _dump.WalkInstanceAsync(prev.Address, classAddr);
+            var result = await _dump.WalkInstanceAsync(prev.Address, classAddr, arrayLimit: ArrayLimit);
             UpdateDisplay(result);
 
             if (!string.IsNullOrEmpty(scrollHint))
@@ -353,7 +368,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 FieldName = "Outer",
             });
 
-            var result = await _dump.WalkInstanceAsync(parentAddr);
+            var result = await _dump.WalkInstanceAsync(parentAddr, arrayLimit: ArrayLimit);
             UpdateDisplay(result);
         }
         catch (Exception ex)
@@ -408,7 +423,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
             // Pre-resolve StructProperty inner fields via DLL
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
-                _dump, new List<LiveFieldValue>(Fields));
+                _dump, new List<LiveFieldValue>(Fields), arrayLimit: ArrayLimit);
 
             // Compute root address in user-selected format
             var rootBc = Breadcrumbs[0];
@@ -447,7 +462,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
             // Pre-resolve StructProperty inner fields for the selected field
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
-                _dump, singleFieldList);
+                _dump, singleFieldList, arrayLimit: ArrayLimit);
 
             // Compute root address in user-selected format
             var rootBc = Breadcrumbs[0];
@@ -523,13 +538,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
             // If refreshing GWorld view, re-fetch the world
             if (_cachedWorld != null && CurrentAddress == _cachedWorld.WorldAddr)
             {
-                var world = await _dump.WalkWorldAsync(500);
+                var world = await _dump.WalkWorldAsync(500, arrayLimit: ArrayLimit);
                 _cachedWorld = world;
                 PopulateFromWorld(world);
                 return;
             }
 
-            var result = await _dump.WalkInstanceAsync(CurrentAddress);
+            var result = await _dump.WalkInstanceAsync(CurrentAddress, arrayLimit: ArrayLimit);
             UpdateDisplay(result);
         }
         catch (Exception ex)
@@ -810,7 +825,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
     private async Task NavigateToAsync(string addr, string label, int fieldOffset, string fieldName, bool isPointer)
     {
-        var result = await _dump.WalkInstanceAsync(addr);
+        var result = await _dump.WalkInstanceAsync(addr, arrayLimit: ArrayLimit);
 
         var displayName = !string.IsNullOrEmpty(result.Name) ? result.Name : label;
         Breadcrumbs.Add(new BreadcrumbItem
