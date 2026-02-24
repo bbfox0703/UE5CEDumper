@@ -133,7 +133,8 @@ struct InstanceWalkResult {
 
 // Walk a live instance: read class fields + live values from memory.
 // If classAddr == 0, reads ClassPrivate from the instance itself.
-InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr = 0);
+// arrayLimit: max array element count for inline reading (default 64, max 4096).
+InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr = 0, int32_t arrayLimit = 64);
 
 // Interpret raw bytes as a typed value string based on the field type name
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size);

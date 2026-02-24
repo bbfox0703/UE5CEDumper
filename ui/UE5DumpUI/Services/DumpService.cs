@@ -253,10 +253,11 @@ public sealed class DumpService : IDumpService
 
     // --- Live Data Walker ---
 
-    public async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, CancellationToken ct = default)
+    public async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, int arrayLimit = 64, CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "walk_instance", ["addr"] = addr };
         if (!string.IsNullOrEmpty(classAddr)) req["class_addr"] = classAddr;
+        if (arrayLimit != 64) req["array_limit"] = arrayLimit;
 
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
@@ -311,9 +312,10 @@ public sealed class DumpService : IDumpService
         return result;
     }
 
-    public async Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, CancellationToken ct = default)
+    public async Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, int arrayLimit = 64, CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "walk_world", ["limit"] = actorLimit };
+        if (arrayLimit != 64) req["array_limit"] = arrayLimit;
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
