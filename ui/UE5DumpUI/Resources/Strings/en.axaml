@@ -5,6 +5,8 @@
     <!-- Toolbar -->
     <sys:String x:Key="str.Connect">Connect</sys:String>
     <sys:String x:Key="str.Disconnect">Disconnect</sys:String>
+    <sys:String x:Key="str.Toolbar.AddressFormat">Address:</sys:String>
+    <sys:String x:Key="str.Toolbar.CollapsePointers">Collapse Pointer Nodes</sys:String>
 
     <!-- Tabs -->
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>
@@ -51,6 +53,7 @@
     <sys:String x:Key="str.LiveWalker.AddressHint">Address (hex or module.exe+offset)</sys:String>
     <sys:String x:Key="str.LiveWalker.Go">Go</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCE">Copy CE XML</sys:String>
+    <sys:String x:Key="str.LiveWalker.ExportCEField">Copy CE Field</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyAddress">Addr</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyName">Name</sys:String>

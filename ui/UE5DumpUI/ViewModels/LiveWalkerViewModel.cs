@@ -33,6 +33,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private string _currentClassName = "";
     [ObservableProperty] private string _currentAddress = "";
     [ObservableProperty] private bool _hasData;
+    [ObservableProperty] private LiveFieldValue? _selectedField;
     [ObservableProperty] private string _currentOuterAddr = "";
     [ObservableProperty] private string _currentOuterName = "";
     [ObservableProperty] private string _currentOuterClassName = "";
@@ -44,6 +45,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
     // Address format
     [ObservableProperty] private int _selectedAddressFormatIndex;
     private AddressFormat AddrFormat => (AddressFormat)SelectedAddressFormatIndex;
+
+    /// <summary>Whether CE XML export should collapse pointer/array nodes.</summary>
+    public bool CollapsePointerNodes { get; set; }
 
     // Search
     [ObservableProperty] private string _searchText = "";
@@ -412,7 +416,8 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
             var xml = CeXmlExportService.GenerateHierarchicalXml(
-                rootAddress, rootBc.Label, Breadcrumbs, Fields, resolvedStructs);
+                rootAddress, rootBc.Label, Breadcrumbs, Fields, resolvedStructs,
+                collapsePointerNodes: CollapsePointerNodes);
 
             await _platform.CopyToClipboardAsync(xml);
             _log.Info($"CE XML copied to clipboard for {CurrentClassName} ({resolvedStructs.Count} structs resolved)");
@@ -421,6 +426,45 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             SetError(ex);
             _log.Error("Failed to export CE XML", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ExportCeFieldXmlAsync()
+    {
+        if (SelectedField == null || string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;
+
+        try
+        {
+            ClearError();
+            IsLoading = true;
+
+            var singleFieldList = new List<LiveFieldValue> { SelectedField };
+
+            // Pre-resolve StructProperty inner fields for the selected field
+            var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
+                _dump, singleFieldList);
+
+            // Compute root address in user-selected format
+            var rootBc = Breadcrumbs[0];
+            var rootAddress = AddressHelper.FormatAddress(
+                rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+
+            var xml = CeXmlExportService.GenerateHierarchicalXml(
+                rootAddress, rootBc.Label, Breadcrumbs, singleFieldList, resolvedStructs,
+                collapsePointerNodes: CollapsePointerNodes);
+
+            await _platform.CopyToClipboardAsync(xml);
+            _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName})");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error("Failed to export CE Field XML", ex);
         }
         finally
         {

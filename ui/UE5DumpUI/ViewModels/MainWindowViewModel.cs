@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private bool _isConnected;
     [ObservableProperty] private int _selectedTabIndex;
     [ObservableProperty] private int _selectedAddressFormatIndex;
+    [ObservableProperty] private bool _collapsePointerNodes;
 
     /// <summary>Address format options for toolbar ComboBox.</summary>
     public string[] AddressFormatOptions { get; } =
@@ -54,6 +55,12 @@ public partial class MainWindowViewModel : ViewModelBase
         ObjectTree.SelectedAddressFormatIndex = value;
         LiveWalker.SelectedAddressFormatIndex = value;
         InstanceFinder.SelectedAddressFormatIndex = value;
+    }
+
+    partial void OnCollapsePointerNodesChanged(bool value)
+    {
+        LiveWalker.CollapsePointerNodes = value;
+        InstanceFinder.CollapsePointerNodes = value;
     }
 
     public MainWindowViewModel(

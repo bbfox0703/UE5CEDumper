@@ -60,6 +60,10 @@
               Command="{Binding ExportCeXmlCommand}"
               IsVisible="{Binding HasData}"
               Padding="8,4"/>
+      <Button Content="{StaticResource str.LiveWalker.ExportCEField}"
+              Command="{Binding ExportCeFieldXmlCommand}"
+              IsVisible="{Binding SelectedField, Converter={x:Static ObjectConverters.IsNotNull}}"
+              Padding="8,4"/>
       <Button Content="{StaticResource str.LiveWalker.GenerateCeAA}"
               Command="{Binding GenerateCeAAScriptCommand}"
               IsVisible="{Binding HasData}"
@@ -166,6 +170,7 @@
     <!-- Field list -->
     <DataGrid x:Name="FieldGrid"
               ItemsSource="{Binding Fields}"
+              SelectedItem="{Binding SelectedField}"
               IsReadOnly="True"
               CanUserResizeColumns="True"
               CanUserSortColumns="True"

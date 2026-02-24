@@ -58,6 +58,14 @@ public static class CeXmlExportService
     [ThreadStatic]
     private static HashSet<string>? _dropDownDescriptions;
 
+    /// <summary>
+    /// When true, pointer/array GroupHeader nodes (those with Offsets=[0]) emit
+    /// &lt;Options moHideChildren="1" moDeactivateChildrenAsWell="1"/&gt; to collapse
+    /// them by default in Cheat Engine. Root node is excluded (stays expanded).
+    /// </summary>
+    [ThreadStatic]
+    private static bool _collapsePointerNodes;
+
     /// <summary>CE field metadata for XML generation.</summary>
     private record CeFieldInfo(
         string VariableType,
@@ -195,13 +203,15 @@ public static class CeXmlExportService
         string rootName,
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         IReadOnlyList<LiveFieldValue> currentFields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null)
+        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        bool collapsePointerNodes = false)
     {
         // Clean breadcrumbs: remove navigation cycles (e.g., Child->Parent->Child)
         // before generating XML to avoid deeply nested duplicate pointer chains.
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
 
         _nextId = 100;
+        _collapsePointerNodes = collapsePointerNodes;
         _dropDownOwners = new Dictionary<string, string>();
         _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
         var sb = new StringBuilder();
@@ -262,9 +272,11 @@ public static class CeXmlExportService
         string rootName,
         string className,
         IReadOnlyList<LiveFieldValue> fields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null)
+        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        bool collapsePointerNodes = false)
     {
         _nextId = 100;
+        _collapsePointerNodes = collapsePointerNodes;
         _dropDownOwners = new Dictionary<string, string>();
         _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
         var sb = new StringBuilder();
@@ -669,6 +681,9 @@ public static class CeXmlExportService
             sb.AppendLine($"{indent}  <ShowAsHex>1</ShowAsHex>");
         sb.AppendLine($"{indent}  <ShowAsSigned>0</ShowAsSigned>");
         sb.AppendLine($"{indent}  <GroupHeader>1</GroupHeader>");
+        // Collapse pointer/array nodes: emit Options only for non-root nodes with pointer dereference
+        if (_collapsePointerNodes && offsets != null && address.StartsWith("+"))
+            sb.AppendLine($"{indent}  <Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>");
         if (varType != null)
             sb.AppendLine($"{indent}  <VariableType>{varType}</VariableType>");
         sb.AppendLine($"{indent}  <Address>{address}</Address>");
@@ -698,6 +713,9 @@ public static class CeXmlExportService
             sb.AppendLine($"{indent}  <ShowAsHex>1</ShowAsHex>");
         sb.AppendLine($"{indent}  <ShowAsSigned>0</ShowAsSigned>");
         sb.AppendLine($"{indent}  <GroupHeader>1</GroupHeader>");
+        // Collapse pointer/array nodes: emit Options only for non-root nodes with pointer dereference
+        if (_collapsePointerNodes && offsets != null && address.StartsWith("+"))
+            sb.AppendLine($"{indent}  <Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>");
         sb.AppendLine($"{indent}  <Address>{address}</Address>");
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
