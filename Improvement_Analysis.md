@@ -226,7 +226,7 @@ Adds an independent discovery path that works even when GNames is relocated or c
 |-------|-------|
 | **Priority** | P1 - High |
 | **Source** | RE-UE4SS (`FField.hpp:37-100`) |
-| **UE5CEDumper Status** | Uses FFieldVariant size detection but not tag-bit |
+| **UE5CEDumper Status** | **IMPLEMENTED** — `StripFFieldTag()` / `IsFFieldVariantUObject()` in Constants.h, applied in UStructWalker + OffsetFinder |
 
 ### What RE-UE4SS Does
 
@@ -241,28 +241,13 @@ Pre-5.3:  FFieldVariant = { void* Field; bool bIsUObject; }  // 0x10 bytes
 
 RE-UE4SS handles this with `Version::IsAtLeast(5, 3)` checks and masks the LSB before dereferencing.
 
-### Current UE5CEDumper Approach
+### Implementation (Build 101)
 
-DynOff detects FFieldVariant *size* (0x10 vs 0x08) and adjusts offsets accordingly, but doesn't handle the tag-bit masking during FField chain traversal. This could cause crashes or misreads on UE 5.3+ games where ChildProperties returns a tagged pointer.
+Added FFieldVariant tag-bit infrastructure across 3 files:
 
-### Recommendation
-
-In `UStructWalker` FField chain traversal:
-1. When `FFieldVariant` size is detected as 0x08 (UE 5.3+), mask LSB before following pointers:
-   ```cpp
-   uintptr_t raw = Read<uintptr_t>(structAddr + FFIELD_CHILDPROPERTIES);
-   bool isUObject = (raw & 0x1) != 0;
-   uintptr_t ptr = raw & ~(uintptr_t)0x1;
-   ```
-2. Skip UObject-tagged entries in the property chain (they're not FField)
-
-### Impact
-
-Prevents potential crashes or misreads on UE 5.3+ games. Currently working by coincidence (tag bit is usually 0 for FField entries) but not guaranteed.
-
-### Estimated Scope
-
-~30 LOC in UStructWalker.cpp + Constants.h.
+1. **Constants.h**: `bTaggedFFieldVariant` flag + `StripFFieldTag()` / `IsFFieldVariantUObject()` helpers
+2. **OffsetFinder.cpp**: Sets flag for UE5.3+ (version-based) and infers from probed `FField::Next=0x18` (unknown version). Applies tag-bit stripping in FField::Next probe loop to reject tagged Owner pointers.
+3. **UStructWalker.cpp**: `WalkFFieldChain()` strips tag bit on entry and on each Next pointer read. Breaks chain if tagged pointer indicates UObject (not FField).
 
 ---
 
@@ -511,7 +496,7 @@ No CPUID check needed — the DLL build already requires `/arch:AVX2`.
 | 3 | MapProperty / SetProperty | **P1** | Dumper-7 | Medium (~200 LOC) | Common container types visible |
 | 4 | DelegateProperty Support | **P1** | Dumper-7 | Medium (~200 LOC) | Blueprint delegate inspection |
 | 5 | String-Ref GNames Fallback | **P1** | Dumper-7 | Small (~100 LOC) | Independent GNames discovery path |
-| 6 | FFieldVariant Tag-Bit (UE 5.3+) | **P1** | RE-UE4SS | Small (~30 LOC) | Prevents 5.3+ edge-case crashes |
+| 6 | FFieldVariant Tag-Bit (UE 5.3+) | ~~P1~~ | RE-UE4SS | ~~Small~~ | **DONE** — `StripFFieldTag()` in Constants.h, applied in walker + offset finder |
 | 7 | SDK/Header Generation | **P2** | Dumper-7 | Large (~300-900 LOC) | #1 requested dumper feature |
 | 8 | USMAP / IDA Mapping Export | **P2** | Dumper-7 | Medium (~450 LOC) | Modding tool interop |
 | 9 | PredefinedMembers Override | **P2** | Dumper-7 | Medium (~280 LOC) | User-fixable broken layouts |
