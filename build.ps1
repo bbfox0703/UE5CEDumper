@@ -361,57 +361,89 @@ if ($Target -in "All", "UI") {
     }
 
     if ($exitCode -eq 0) {
-        # ===== All modes: dotnet publish --self-contained single-file =====
-        # All three modes produce a self-contained single-file EXE (~96MB).
-        # The exe includes .NET runtime — runs on any Windows x64 without runtime installed.
-        # Debug includes PDB; Release/Publish are identical optimized builds.
-        # Note: Native AOT and ReadyToRun are NOT used (Avalonia 11 compatibility issues).
         $publishDir = Join-Path $DIST_DIR "publish"
 
-        $publishConfig = if ($Mode -eq "Debug") { "Debug" } else { "Release" }
-        Write-Step "Publishing UE5DumpUI ($publishConfig, self-contained single-file)..."
+        if ($Mode -eq "Publish") {
+            # ===== Publish mode: Native AOT =====
+            # Produces a lean native EXE + a few native DLLs (SkiaSharp, HarfBuzz, ANGLE).
+            # No .NET runtime bundled — much smaller than self-contained single-file.
+            Write-Step "Publishing UE5DumpUI (Native AOT, Release)..."
 
-        & dotnet publish $UI_PROJ `
-            -c $publishConfig `
-            -r win-x64 `
-            --self-contained `
-            -p:PublishSingleFile=true `
-            -p:PublishAot=false `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:IncludeAllContentForSelfExtract=true `
-            -o $publishDir `
-            --nologo
+            & dotnet publish $UI_PROJ `
+                -c Release `
+                -r win-x64 `
+                -p:PublishAot=true `
+                -o $publishDir `
+                --nologo
 
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "UI publish failed"
-            $exitCode = 1
-        }
-        else {
-            $exeFile = Get-ChildItem -Path $publishDir -Filter "UE5DumpUI.exe" -ErrorAction SilentlyContinue |
-                       Select-Object -First 1
-
-            if ($exeFile) {
-                Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
-
-                if ($Mode -eq "Debug") {
-                    $pdb = Join-Path $exeFile.DirectoryName "UE5DumpUI.pdb"
-                    if (Test-Path $pdb) { Copy-Item $pdb -Destination $DIST_DIR -Force }
-                }
-
-                # Clean up publish temp folder
-                Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
-                # Remove loose native DLLs if present (single-file bundles them inside the exe)
-                foreach ($nativeDll in @("av_libglesv2.dll", "libHarfBuzzSharp.dll", "libSkiaSharp.dll")) {
-                    $p = Join-Path $DIST_DIR $nativeDll
-                    if (Test-Path $p) { Remove-Item $p -Force }
-                }
-
-                $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
-                Write-Ok "UE5DumpUI.exe ($exeSize)"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "UI AOT publish failed"
+                $exitCode = 1
             }
             else {
-                Write-Fail "No build output found"
+                $exeFile = Get-ChildItem -Path $publishDir -Filter "UE5DumpUI.exe" -ErrorAction SilentlyContinue |
+                           Select-Object -First 1
+
+                if ($exeFile) {
+                    # Copy EXE, native DLLs, and PDB (PDB needed for crash address resolution)
+                    Get-ChildItem -Path $publishDir -File |
+                        Where-Object { $_.Extension -in ".exe", ".dll", ".pdb" } |
+                        ForEach-Object { Copy-Item $_.FullName -Destination $DIST_DIR -Force }
+
+                    Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+
+                    $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
+                    Write-Ok "UE5DumpUI.exe ($exeSize)"
+                }
+                else {
+                    Write-Fail "No build output found"
+                    $exitCode = 1
+                }
+            }
+        }
+        else {
+            # ===== Debug / Release mode: self-contained single-file =====
+            # Bundles .NET runtime + all managed/native DLLs into one EXE (~96 MB).
+            # Convenient for dev iteration — no AOT compile step.
+            $publishConfig = if ($Mode -eq "Debug") { "Debug" } else { "Release" }
+            Write-Step "Publishing UE5DumpUI ($publishConfig, self-contained single-file)..."
+
+            & dotnet publish $UI_PROJ `
+                -c $publishConfig `
+                -r win-x64 `
+                --self-contained `
+                -p:PublishSingleFile=true `
+                -p:PublishAot=false `
+                -p:IncludeNativeLibrariesForSelfExtract=true `
+                -p:IncludeAllContentForSelfExtract=true `
+                -o $publishDir `
+                --nologo
+
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "UI publish failed"
                 $exitCode = 1
+            }
+            else {
+                $exeFile = Get-ChildItem -Path $publishDir -Filter "UE5DumpUI.exe" -ErrorAction SilentlyContinue |
+                           Select-Object -First 1
+
+                if ($exeFile) {
+                    Copy-Item $exeFile.FullName -Destination $DIST_DIR -Force
+
+                    if ($Mode -eq "Debug") {
+                        $pdb = Join-Path $exeFile.DirectoryName "UE5DumpUI.pdb"
+                        if (Test-Path $pdb) { Copy-Item $pdb -Destination $DIST_DIR -Force }
+                    }
+
+                    Remove-Item $publishDir -Recurse -Force -ErrorAction SilentlyContinue
+
+                    $exeSize = Get-FileSize (Join-Path $DIST_DIR "UE5DumpUI.exe")
+                    Write-Ok "UE5DumpUI.exe ($exeSize)"
+                }
+                else {
+                    Write-Fail "No build output found"
+                    $exitCode = 1
+                }
             }
         }
     }
