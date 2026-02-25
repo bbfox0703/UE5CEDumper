@@ -487,35 +487,18 @@ These types appear frequently in content-heavy games (RPGs, open world). Current
 |-------|-------|
 | **Priority** | P3 - Low |
 | **Source** | Internal research (`docs/simd-scanning-notes.md`) |
-| **UE5CEDumper Status** | **Partially addressed** — `/arch:AVX2` compiler flag enabled (commit 9b4c758), but no explicit SIMD vector intrinsics in AOBScan |
+| **UE5CEDumper Status** | **IMPLEMENTED** — `ScanRegion()` now uses explicit AVX2 intrinsics with anchor-based scanning |
 
-### Current Approach
+### Implementation (Build 99)
 
-`Memory::AOBScan()` uses first-byte `memchr` skip optimization — effective (~95% skip rate) but scalar comparison loop. The `/arch:AVX2` compiler flag (added in Build 97) allows MSVC to auto-vectorize loops, but the critical byte-comparison logic in AOBScan is not structured for auto-vectorization.
+Replaced the `memchr`-based `ScanRegion()` with an AVX2 anchor-based approach:
 
-### Potential Improvement
+1. **Anchor selection**: `ParsePattern()` now finds the first non-wildcard byte at *any* position (not just byte 0). Handles wildcard-prefixed patterns like `"?? ?? 48 8B 05"`.
+2. **SIMD scan**: `_mm256_cmpeq_epi8` compares 32 bytes at a time against the anchor byte. `_mm256_movemask_epi8` extracts a 32-bit match bitmask. `_BitScanForward` iterates set bits.
+3. **Scalar verification**: For each SIMD hit, the full pattern is verified byte-by-byte with early exit on first mismatch.
+4. **Scalar tail**: Positions where a 32-byte SIMD load won't fit fall back to `ScanRegionScalar()`.
 
-The SIMD scanning notes document an AVX2 anchor-based technique:
-1. Use `_mm256_cmpeq_epi8` to compare 32 bytes simultaneously against anchor byte
-2. `_mm256_movemask_epi8` to extract match bitmask
-3. Only do full pattern comparison at anchor-hit positions
-
-### Recommendation
-
-**Defer** unless scan times become a bottleneck. Current `memchr` approach completes in <200ms for most games. The `/arch:AVX2` flag already provides some benefit through compiler auto-vectorization of other code paths.
-
-If implemented:
-- Add as a separate `AOBScanSIMD()` path using explicit `_mm256_*` intrinsics
-- Runtime CPUID check for AVX2 support
-- Fallback to current `memchr` path on older CPUs
-
-### Impact
-
-~2-4x speedup on AOB scanning phase. Marginal user-visible improvement since scanning is already fast.
-
-### Estimated Scope
-
-~150 LOC for AVX2 path + CPUID detection.
+No CPUID check needed — the DLL build already requires `/arch:AVX2`.
 
 ---
 
@@ -534,7 +517,7 @@ If implemented:
 | 9 | PredefinedMembers Override | **P2** | Dumper-7 | Medium (~280 LOC) | User-fixable broken layouts |
 | 10 | Cyclic Class Pointer Validation | **P2** | Dumper-7 | Small (~60 LOC) | Fewer false positive GObjects |
 | 11 | Soft/Lazy/Interface/Text Properties | **P2** | Both | Medium (~150 LOC) | More property types readable (TextProperty already partial) |
-| 12 | AVX2/SIMD Vector Scanning | **P3** | Internal | Medium (~150 LOC) | Marginal speedup (`/arch:AVX2` flag already enabled) |
+| 12 | AVX2/SIMD Vector Scanning | ~~P3~~ | Internal | ~~Medium~~ | **DONE** — explicit AVX2 intrinsics in `ScanRegion()` |
 
 ---
 
