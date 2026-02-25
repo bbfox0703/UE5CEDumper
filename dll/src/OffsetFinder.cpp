@@ -1585,6 +1585,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                 DynOff::FSTRUCTPROP_STRUCT  = 0x70;
                 DynOff::FBOOLPROP_FIELDSIZE = 0x70;
                 Logger::Info("DYNO", "ValidateAndFixOffsets: Set UE5.1.1+ defaults (FFieldVariant=0x08)");
+                // UE5.3+ uses tagged FFieldVariant: LSB=1 means UObject, LSB=0 means FField
+                if (ueVersion >= 503) {
+                    DynOff::bTaggedFFieldVariant = true;
+                    Logger::Info("DYNO", "ValidateAndFixOffsets: UE5.3+ tagged FFieldVariant enabled");
+                }
             }
             // UE5.1 is ambiguous (5.1.0 = larger, 5.1.1+ = smaller), leave as-is for probing
         }
@@ -1753,6 +1758,12 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
             uintptr_t nextPtr = 0;
             if (!Mem::ReadSafe(childProps + off, nextPtr) || !nextPtr) continue;
+
+            // UE5.3+: offset 0x10 is FFieldVariant Owner (tagged pointer).
+            // If LSB is set, this is a UObject owner reference — skip it as Next candidate.
+            if (DynOff::IsFFieldVariantUObject(nextPtr)) continue;
+            nextPtr = DynOff::StripFFieldTag(nextPtr);
+
             if (nextPtr < 0x10000 || nextPtr > 0x00007FFFFFFFFFFF) continue;
 
             // Verify it looks like an FField: check FFieldClass at +0x08
@@ -1943,11 +1954,21 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         DynOff::FBYTEPROP_ENUM     = DynOff::FSTRUCTPROP_STRUCT;
     }
 
+    // Infer tagged FFieldVariant from probed offsets:
+    // FFieldVariant=0x08 (Next at 0x18) implies UE5.1.1+ layout.
+    // UE5.3+ uses the tag-bit encoding. If version is unknown but layout matches,
+    // enable tag-bit masking defensively — the StripFFieldTag is a no-op when bit is 0.
+    if (DynOff::bUseFProperty && DynOff::FFIELD_NEXT == 0x18 && !DynOff::bTaggedFFieldVariant) {
+        DynOff::bTaggedFFieldVariant = true;
+        Logger::Info("DYNO", "ValidateAndFixOffsets: Inferred tagged FFieldVariant from FField::Next=0x18");
+    }
+
     DynOff::bOffsetsValidated.store(true, std::memory_order_release);
 
     // Summary log
     Logger::Info("DYNO", "=== Dynamic Offset Summary ===");
     Logger::Info("DYNO", "  CasePreservingName: %s", DynOff::bCasePreservingName ? "YES" : "no");
+    Logger::Info("DYNO", "  TaggedFFieldVariant:%s", DynOff::bTaggedFFieldVariant ? " YES (UE5.3+)" : " no");
     Logger::Info("DYNO", "  UseFProperty:       %s", DynOff::bUseFProperty ? "yes (UE4.25+/UE5)" : "NO (UE4 UProperty)");
     Logger::Info("DYNO", "  UObject::Outer      = +0x%02X", DynOff::UOBJECT_OUTER);
     Logger::Info("DYNO", "  UStruct::Super      = +0x%02X", DynOff::USTRUCT_SUPER);

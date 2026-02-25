@@ -209,10 +209,14 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
 
 // Walk the FField chain starting from the first field (UE4.25+ / UE5)
 static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields) {
-    uintptr_t current = firstField;
+    // UE5.3+: ChildProperties may come from an FFieldVariant read — strip tag bit defensively
+    uintptr_t current = DynOff::StripFFieldTag(firstField);
     int safetyLimit = 4096;
 
     while (current != 0 && safetyLimit-- > 0) {
+        // UE5.3+: if tag bit indicates UObject rather than FField, skip this entry
+        if (DynOff::IsFFieldVariantUObject(current)) break;
+
         FieldInfo fi{};
         fi.Address = current;
 
@@ -231,10 +235,10 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
             fields.push_back(fi);
         }
 
-        // Move to next FField
+        // Move to next FField (strip tag bit for UE5.3+ safety)
         uintptr_t next = 0;
         if (!Mem::ReadSafe(current + DynOff::FFIELD_NEXT, next)) break;
-        current = next;
+        current = DynOff::StripFFieldTag(next);
     }
 }
 
@@ -298,6 +302,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     // Walk the property chain — dispatch based on UProperty vs FProperty mode
     if (DynOff::bUseFProperty) {
         // UE4.25+ / UE5: FField chain via ChildProperties
+        // Tag-bit stripping is handled inside WalkFFieldChain for UE5.3+ safety
         uintptr_t childProps = 0;
         if (Mem::ReadSafe(uclassAddr + DynOff::USTRUCT_CHILDPROPS, childProps) && childProps) {
             WalkFFieldChain(childProps, info.Fields);

@@ -10,6 +10,7 @@
 #include <vector>
 #include <string>
 #include <cstring>
+#include <immintrin.h>  // AVX2 intrinsics for SIMD pattern scanning
 
 namespace Mem {
 
@@ -74,6 +75,8 @@ struct ParsedPattern {
     std::vector<uint8_t> mask;    // 1 = must match, 0 = wildcard
     uint8_t  firstByte    = 0;
     bool     firstIsFixed = false; // true when bytes[0] is a literal
+    int      anchorOffset = -1;   // first non-wildcard byte index (SIMD anchor)
+    uint8_t  anchorByte   = 0;    // value at anchorOffset
 };
 
 static bool ParsePattern(const char* patStr, ParsedPattern& out) {
@@ -100,6 +103,18 @@ static bool ParsePattern(const char* patStr, ParsedPattern& out) {
     if (out.bytes.empty()) return false;
     out.firstByte    = out.bytes[0];
     out.firstIsFixed = (out.mask[0] != 0);
+
+    // Find anchor: first non-wildcard byte for AVX2 SIMD acceleration.
+    // Unlike memchr (always byte 0), the anchor can be at any position,
+    // enabling fast-skip for wildcard-prefixed patterns like "?? ?? 48 8B".
+    out.anchorOffset = -1;
+    for (size_t i = 0; i < out.mask.size(); ++i) {
+        if (out.mask[i]) {
+            out.anchorOffset = static_cast<int>(i);
+            out.anchorByte   = out.bytes[i];
+            break;
+        }
+    }
     return true;
 }
 
@@ -132,14 +147,38 @@ GetExecutableSections(uintptr_t moduleBase)
     return result;
 }
 
-// Scan a single contiguous memory region for the pattern.
-// Returns pointer to first match, or nullptr.
+// ── Scalar fallback ──────────────────────────────────────────────────────
+// Used when the pattern has no non-wildcard byte (all ??), or when
+// the region is too small for a single AVX2 load.
+static const uint8_t* ScanRegionScalar(
+    const uint8_t*       scanStart,
+    size_t               count,       // number of start positions to check
+    const ParsedPattern& pat)
+{
+    const size_t patLen = pat.bytes.size();
+    for (size_t i = 0; i < count; ++i) {
+        bool matched = true;
+        for (size_t j = 0; j < patLen; ++j) {
+            if (pat.mask[j] && scanStart[i + j] != pat.bytes[j]) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) return scanStart + i;
+    }
+    return nullptr;
+}
+
+// ── AVX2 SIMD pattern scan ──────────────────────────────────────────────
+// Compares 32 bytes at a time against the anchor byte using AVX2 intrinsics.
+// For each SIMD match, falls back to scalar verification of the full pattern.
 //
-// Key optimisations (per Memory-Scanning-Internals.md):
-//  1. First-byte skip  — when bytes[0] is a literal, use memchr to jump to
-//     the next candidate position instead of testing every byte.
-//  2. uint8_t mask     — avoids the bit-manipulation overhead of vector<bool>.
-//  3. Early exit       — inner loop breaks at the first mismatch (CE §4).
+// Key improvements over the previous memchr approach:
+//  1. Anchor at ANY position  — handles wildcard-prefixed patterns
+//     (e.g., "?? ?? 48 8B 05") that memchr(byte[0]) cannot accelerate.
+//  2. Batch processing        — finds ALL anchor matches in a 32-byte
+//     window at once via movemask, reducing loop overhead.
+//  3. Early exit              — inner verification breaks at first mismatch.
 static const uint8_t* ScanRegion(
     const uint8_t*      scanStart,
     size_t              regionSize,
@@ -148,32 +187,53 @@ static const uint8_t* ScanRegion(
     const size_t patLen = pat.bytes.size();
     if (regionSize < patLen) return nullptr;
 
-    const uint8_t* scanEnd = scanStart + regionSize - patLen; // last valid start
-    const uint8_t* cur     = scanStart;
+    const size_t maxStart = regionSize - patLen; // last valid pattern-start offset
 
-    while (cur <= scanEnd) {
-        // ── First-byte fast skip ───────────────────────────────────────────
-        // memchr scans at native speed (SSE2/AVX on modern CRT) to find the
-        // next position where cur[0] == firstByte, eliminating the per-byte
-        // overhead of our outer loop for non-matching positions.
-        if (pat.firstIsFixed) {
-            const size_t remaining = static_cast<size_t>(scanEnd - cur) + patLen;
-            cur = static_cast<const uint8_t*>(
-                memchr(cur, pat.firstByte, remaining));
-            if (!cur) return nullptr;
-        }
-
-        // ── Full pattern check (skip index 0 — already verified by memchr) ─
-        bool matched = true;
-        for (size_t i = (pat.firstIsFixed ? 1u : 0u); i < patLen; ++i) {
-            if (pat.mask[i] && cur[i] != pat.bytes[i]) {
-                matched = false;
-                break; // early exit on first mismatch
-            }
-        }
-        if (matched) return cur;
-        ++cur;
+    // All-wildcard pattern — no anchor byte to search for
+    if (pat.anchorOffset < 0) {
+        return ScanRegionScalar(scanStart, maxStart + 1, pat);
     }
+
+    const int anchorOff = pat.anchorOffset;
+    const __m256i needle = _mm256_set1_epi8(static_cast<char>(pat.anchorByte));
+
+    // ── SIMD phase: 32 bytes per iteration at the anchor offset ──────────
+    size_t i = 0;
+    while (i + anchorOff + 32 <= regionSize) {
+        __m256i chunk = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(scanStart + i + anchorOff));
+        __m256i cmp  = _mm256_cmpeq_epi8(chunk, needle);
+        uint32_t bits = static_cast<uint32_t>(_mm256_movemask_epi8(cmp));
+
+        while (bits) {
+            unsigned long bitPos;
+            _BitScanForward(&bitPos, bits);
+            const size_t candidate = i + bitPos;
+
+            if (candidate <= maxStart) {
+                const uint8_t* p = scanStart + candidate;
+                bool matched = true;
+                for (size_t j = 0; j < patLen; ++j) {
+                    if (pat.mask[j] && p[j] != pat.bytes[j]) {
+                        matched = false;
+                        break;
+                    }
+                }
+                if (matched) return p;
+            }
+
+            bits &= bits - 1; // clear lowest set bit
+        }
+        i += 32;
+    }
+
+    // ── Scalar tail: positions where a full 32-byte SIMD load won't fit ──
+    if (i <= maxStart) {
+        const uint8_t* tailHit = ScanRegionScalar(
+            scanStart + i, maxStart - i + 1, pat);
+        if (tailHit) return tailHit;
+    }
+
     return nullptr;
 }
 
