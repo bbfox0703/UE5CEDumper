@@ -119,10 +119,25 @@ inline std::atomic<bool> bUEnumNamesDetected{false};
 // === Detection state ===
 inline bool bCasePreservingName  = false;  // FName is 0x10 bytes (CompIdx + DisplayIdx + Number + pad)
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
+inline bool bTaggedFFieldVariant = false;  // UE5.3+: FFieldVariant is 0x08 tagged ptr (LSB=1 → UObject)
 // bOffsetsValidated is atomic with release/acquire ordering: the release-store after
 // writing all DynOff values fences the preceding non-atomic writes, ensuring they are
 // visible to any thread that acquire-loads this flag and sees 'true'.
 inline std::atomic<bool> bOffsetsValidated{false};
+
+// Strip the FFieldVariant tag bit (LSB) from a pointer if we're on UE 5.3+.
+// On UE 5.3+, FFieldVariant stores type info in the LSB:
+//   bit 0 = 0 → FField*, bit 0 = 1 → UObject*
+// Applied defensively to FField-related pointer reads to prevent misreads
+// if an offset probe lands on a tagged Owner field.
+inline uintptr_t StripFFieldTag(uintptr_t ptr) {
+    return bTaggedFFieldVariant ? (ptr & ~static_cast<uintptr_t>(1)) : ptr;
+}
+
+// Check if a tagged FFieldVariant pointer is a UObject (LSB set).
+inline bool IsFFieldVariantUObject(uintptr_t ptr) {
+    return bTaggedFFieldVariant && (ptr & 1) != 0;
+}
 
 } // namespace DynOff
 
