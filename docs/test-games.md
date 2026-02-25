@@ -23,12 +23,15 @@
 | Lushfoil Photography Sim | UE5.6 (PE: 506) | NEW (build 1.0.0.40). All working. 58630 objects |
 | Manor Lords | UE5.5 | NEW (build 1.0.0.40). All working |
 | Satisfactory | UE5.3 (PE: 503) | NEW (build 1.0.0.40). Working. GWorld fails. 35776 objects |
+| Cat Island Petrichor Demo | UE5.6 | Full working. GWorld ✅ |
+| Way of the Hunter 2 Demo | UE5.7 | Full working. GWorld ✅ |
+| COMBAT PILOT: CARRIER QUALIFICATION Demo | UE5.5 | Full working. GWorld ✅ |
 
 -----
 
 ## GWorld Status Summary
 
-**Working (7/17):** TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo
+**Working (10/20):** TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT Demo
 
 **Failing:** FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, OctoPath, Star Wars Jedi, Satisfactory — mostly Square Enix UE4 forks + some UE5.
 
