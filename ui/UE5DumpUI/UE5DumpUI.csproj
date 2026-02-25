@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!-- IL3053: AOT analysis warnings from Avalonia/MicroCom (third-party, safe to suppress).
+         IL2104: DataGrid trim warning — TrimmerRootAssembly preserves it, safe to suppress. -->
+    <NoWarn>$(NoWarn);IL3053;IL2104</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
@@ -10,8 +16,11 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
 
-    <!-- AOT + SingleFile: off by default, enabled via -p:PublishAot=true on publish -->
+    <!-- AOT: off by default, enabled via -p:PublishAot=true on publish -->
     <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
+    <!-- partial trim: only [Trimmable]-annotated assemblies get aggressive trimming;
+         Avalonia/MicroCom infrastructure is preserved via TrimmerRootAssembly below. -->
+    <TrimMode>partial</TrimMode>
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <ApplicationIcon>Assets\Mainicon.ico</ApplicationIcon>
@@ -63,5 +72,32 @@
   <ItemGroup>
     <AvaloniaResource Include="Resources\**" />
     <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <!-- Prevent Avalonia assemblies from being over-trimmed during AOT publish.
+       Avalonia.Win32 and Avalonia.Skia are loaded via reflection by UsePlatformDetect()
+       and would be partially trimmed without explicit roots, causing NullReferenceException
+       in the rendering compositor thread at runtime. -->
+  <ItemGroup>
+    <!-- Core -->
+    <TrimmerRootAssembly Include="Avalonia" />
+    <TrimmerRootAssembly Include="Avalonia.Base" />
+    <TrimmerRootAssembly Include="Avalonia.Markup" />
+    <TrimmerRootAssembly Include="Avalonia.Markup.Xaml" />
+    <TrimmerRootAssembly Include="Avalonia.MicroCom" />
+    <!-- Controls & Themes -->
+    <TrimmerRootAssembly Include="Avalonia.Controls" />
+    <TrimmerRootAssembly Include="Avalonia.Controls.DataGrid" />
+    <TrimmerRootAssembly Include="Avalonia.Themes.Fluent" />
+    <!-- Platform backend (loaded via reflection — critical) -->
+    <TrimmerRootAssembly Include="Avalonia.Desktop" />
+    <TrimmerRootAssembly Include="Avalonia.Win32" />
+    <TrimmerRootAssembly Include="Avalonia.Win32.Automation" />
+    <!-- Rendering backend (loaded via reflection — critical) -->
+    <TrimmerRootAssembly Include="Avalonia.Skia" />
+    <!-- Fonts -->
+    <TrimmerRootAssembly Include="Avalonia.Fonts.Inter" />
+    <!-- COM interop -->
+    <TrimmerRootAssembly Include="MicroCom.Runtime" />
   </ItemGroup>
 </Project>
