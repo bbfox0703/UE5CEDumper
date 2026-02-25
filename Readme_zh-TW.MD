@@ -26,7 +26,7 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | *Final Fantasy VII Rebirth, Tower of Mask, 霍格華茲的傳承, 復活邪神 2 七英雄的復仇, Ghostwire: Tokyo* |
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | (透過通用特徵碼確認支援) |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | *Satisfactory (v1.1.3.1 滿意工廠)* |
-| **5.5 – 5.7** | ✅ | ✅* | ✅** | *泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords)* |
+| **5.5 – 5.7** | ✅ | ✅* | ✅** | *泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords), Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo* |
 
 *\*GNames 在 5.5+ 版本使用 .data 指標掃描回退機制。*
 *\**DynOff 支援 **CasePreservingName (FName = 16 bytes)** 佈局。

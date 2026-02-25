@@ -26,7 +26,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | *FF7 Rebirth, Tower of Mask, Hogwarts Legacy, Romancing SaGa 2 RotS, Ghostwire: Tokyo* |
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | (Confirmed support via generic patterns) |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | *Satisfactory (v1.1.3.1)* |
-| **5.5 – 5.7** | ✅ | ✅* | ✅** | *Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords* |
+| **5.5 – 5.7** | ✅ | ✅* | ✅** | *Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo* |
 
 *\*GNames uses .data pointer-scan fallback for 5.5+*
 *\**DynOff supports **CasePreservingName (FName = 16 bytes)** layout.*
