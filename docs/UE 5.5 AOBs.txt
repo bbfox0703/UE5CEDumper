@@ -1,0 +1,135 @@
+# New AOBs: long AOB, more unique result
+
+## `GWorld` (UE 5.5)
+GWorld: `?GWorld@@3VUWorldProxy@@A`
+```asm
+147032480 48 8b 05 51 39 b0 02 			MOV        RAX ,qword ptr [GWorld ]
+147032487 48 8d 95 f8 01 00 00 			LEA        param_1 => local_4b0 ,[RBP  + 0x1f8 ]
+14703248e 48 8b 48 18 					MOV        this ,qword ptr [RAX  + 0x18 ]
+147032492 48 89 4d 48 					MOV        qword ptr [RBP  + local_660 ],this
+147032496 48 8d 4d 48 					LEA        this=>local_660 => local_660 ,[RBP  + 0x48 ]
+          E8 A9 42 25 FA
+		  48 8D 8D F8 01 00 00 			lea        rcx,[rbp+000001F8]
+```
+
+Base AOB:  48 8b 05 ?? ?? ?? ?? 48 8d 95 f8 01 00 00 48 8b 48 18 48 89 4d 48 48 8d 4d 48 E8
+Fix1: ?? 8B 05 ?? ?? ?? ?? ?? 8D ?? ?? ?? 00 00 ?? 8B ?? 18 ?? 89 ?? ?? ?? 8D ?? ?? E8 ?? ?? ?? ?? ?? 8D (GWorld RIP start: Offset 3)
+Fix2: ?? 8B 05 ?? ?? ?? ?? ?? 8D 95 ?? ?? 00 00 ?? 8B 48 18 ?? 89 ?? ?? ?? 8D 4D ?? E8 (GWorld RIP start: Offset 3)
+
+```asm
+143f4ebc5 4c 0f 44 2d 0b 72 be 05 		CMOVZ      R13 ,qword ptr [GWorld ]
+143f4ebcd 4c 8b 90 58 03 00 00			MOV        R10 ,qword ptr [RAX  + 0x358 ]
+143f4ebd4 48 8b 06 						MOV        RAX ,qword ptr [RSI ]
+143f4ebd7 48 89 45 b0					MOV        qword ptr [RBP  + local_98 ],RAX
+143f4ebdb 48 8b 46 08 					MOV        RAX ,qword ptr [RSI  + 0x8 ]
+```
+
+Base AOB:  4c 0f 44 2d ?? ?? ?? ?? 4c 8b 90 58 03 00 00 48 8b 06 48 89 45 b0 48 8b 46 08
+Fix1: ?? 0F 44 ?? ?? ?? ?? ?? ?? 8B ?? 58 03 00 00 ?? 8B ?? ?? 89 ?? ?? ?? 8B ?? 08 (GWorld RIP start: Offset 4)
+Fix2: ?? 0F 44 ?? ?? ?? ?? ?? ?? 8B 90 ?? ?? 00 00 48 8B 06 ?? 89 ?? ?? ?? 8B 46 ?? (GWorld RIP start: Offset 4)
+
+
+```asm
+1415c5f35 48 8b 05 9c fe 56 08 			MOV        RAX ,qword ptr [GWorld ]
+1415c5f3c 4c 8b c3 						MOV        param_2 ,RBX
+1415c5f3f 49 8b 08 						MOV        this ,qword ptr [param_2 ]
+1415c5f42 48 39 81 c0 02 00 00 			CMP        qword ptr [RCX  + this->_padding_ ],RAX
+1415c5f49 0f 85 fd 31 3d 01 			JNZ        LAB_14299914c
+```    
+
+Base AOB:  48 8b 05 ?? ?? ?? ?? 4c 8b c3 49 8b 08 48 39 81 c0 02 00 00 0f 85 ?? ?? ?? ??
+Fix1: ?? 8B 05 ?? ?? ?? ?? ?? 8B ?? ?? 8B ?? ?? 39 ?? C0 02 00 00 0F 85 ?? ?? ?? ?? ?? 63 (GWorld RIP start: Offset 3)
+Fix2: ?? 8B 05 ?? ?? ?? ?? ?? 8B ?? 49 8B 08 ?? 39 ?? ?? ?? 00 00 0F 85 ?? ?? ?? ?? ?? 63 (GWorld RIP start: Offset 3)
+
+```asm
+1450e260c 48 39 1d c5 37 a5 04 			CMP        qword ptr [GWorld ],RBX
+1450e2613 75 08 						JNZ        LAB_1450e261d
+1450e2615 48 83 25 bb 37 a5 04 00 		AND        qword ptr [GWorld ],0x0
+1450e261d 48 8b 8b 40 04 00 00 			MOV        this ,qword ptr [RBX  + 0x440 ]
+1450e2624 48 85 c9 						TEST       this ,this
+```
+
+Base AOB:  48 39 1d ?? ?? ?? ?? 75 08 48 83 25 ?? ?? ?? ?? 00 48 8b 8b 40 04 00 00 48 85 c9
+Fix1: ?? 39 ?? ?? ?? ?? ?? 75 ?? ?? 83 ?? ?? ?? ?? ?? 00 ?? 8B ?? 40 04 00 00 ?? 85 ?? 74 (GWorld RIP start: Offset 3)
+Fix2: ?? 39 ?? ?? ?? ?? ?? 75 ?? ?? 83 25 ?? ?? ?? ?? 00 ?? 8B 8B ?? ?? 00 00 ?? 85 ?? 74 (GWorld RIP start: Offset 3)
+
+
+```asm
+142ad5eac 48 8b 15 25 ff 05 07 			MOV        RDX ,qword ptr [GWorld ]
+142ad5eb3 48 8d 4e 28 					LEA        RCX ,[RSI  + 0x28 ]
+142ad5eb7 4c 8b c8 						MOV        R9 ,RAX
+142ad5eba 41 ff d4 						CALL       R12
+142ad5ebd 48 83 c7 10 					ADD        RDI ,0x10
+142ad5ec1 49 83 ee 01 					SUB        R14 ,0x1
+```
+
+Base AOB:  48 8b 15 ?? ?? ?? ?? 48 8d 4e 28 4c 8b c8 41 ff d4 48 83 c7 10 49 83 ee 01
+Fix1: ?? 8B 15 ?? ?? ?? ?? ?? 8D ?? 28 ?? 8B ?? ?? FF ?? ?? 83 ?? 10 ?? 83 ?? 01 0F 85 (GWorld RIP start: Offset 3)
+Fix2: ?? 8B 15 ?? ?? ?? ?? ?? 8D 4E ?? ?? 8B ?? 41 FF D4 48 83 C7 10 49 83 EE 01 0F 85 (GWorld RIP start: Offset 3)
+
+```asm
+"Game-Win64-Shipping.exe"+4B03036 - 48 8B 15 9B2D0305     - mov rdx,["Game-Win64-Shipping.exe"+9B35DD8]
+"Game-Win64-Shipping.exe"+4B0303D - 48 8D 4F 28           - lea rcx,[rdi+28]
+"Game-Win64-Shipping.exe"+4B03041 - 4C 0F45 44 24 20      - cmovne r8,[rsp+20]
+"Game-Win64-Shipping.exe"+4B03047 - 4C 8B C8              - mov r9,rax
+"Game-Win64-Shipping.exe"+4B0304A - FF D3                 - call rbx
+"Game-Win64-Shipping.exe"+4B0304C - 48 8B 4C 24 20        - mov rcx,[rsp+20]
+"Game-Win64-Shipping.exe"+4B03051 - 48 85 C9              - test rcx,rcx
+```
+
+Base AOB:  48 8B 15 ?? ?? ?? ?? 48 8D 4F 28 4C 0F 45 44 24 20 4C 8B C8 FF D3 48 8B 4C 24
+Fix1: ?? 8B 15 ?? ?? ?? ?? ?? 8D ?? 28 ?? 0F 45 ?? 24 ?? ?? 8B ?? FF ?? ?? 8B ?? 24 (GWorld RIP start: Offset 3)
+Fix2: ?? 8B 15 ?? ?? ?? ?? ?? 8D 4F ?? ?? 0F 45 44 ?? ?? ?? 8B ?? FF D3 ?? 8B 4C ?? (GWorld RIP start: Offset 3)
+
+
+## `GNames` (`NamePoolData`, `FNamePool`) (UE 5.5)
+?GetRawNames@FNamePool@@QEAAAEAV1@XZ -> FName::ToString() -> ResolveEntry()
+```C++
+FNameEntry * __cdecl ResolveEntry(FNameEntryId param_1)
+```
+
+```asm
+"Game-Win64-Shipping.exe"+15B1CBD - 48 8D 15 7CCC6408     - lea rdx,["Game-Win64-Shipping.exe"+9BFE940]
+"Game-Win64-Shipping.exe"+15B1CC4 - 8B CB                 - mov ecx,ebx
+"Game-Win64-Shipping.exe"+15B1CC6 - 0FB7 C3               - movzx eax,bx
+"Game-Win64-Shipping.exe"+15B1CC9 - 89 44 24 3C           - mov [rsp+3C],eax
+"Game-Win64-Shipping.exe"+15B1CCD - C1 E9 10              - shr ecx,10
+"Game-Win64-Shipping.exe"+15B1CD0 - 89 4C 24 38           - mov [rsp+38],ecx
+"Game-Win64-Shipping.exe"+15B1CD4 - 48 8B 44 24 38        - mov rax,[rsp+38]
+"Game-Win64-Shipping.exe"+15B1CD9 - 48 C1 E8 20           - shr rax,20
+"Game-Win64-Shipping.exe"+15B1CDD - 03 C0                 - add eax,eax
+"Game-Win64-Shipping.exe"+15B1CDF - 48 03 44 CA 10        - add rax,[rdx+rcx*8+10]
+"Game-Win64-Shipping.exe"+15B1CE4 - 48 83 C4 20           - add rsp,20
+"Game-Win64-Shipping.exe"+15B1CE8 - 5B                    - pop rbx
+"Game-Win64-Shipping.exe"+15B1CE9 - C3                    - ret 
+```
+
+AOB:  48 8D 15 ?? ?? ?? ?? 8B CB 0F B7 C3 89 44 24 3C C1 E9 10 89 4C 24 ?? 48 8B
+Fix1: ?? 8D 15 ?? ?? ?? ?? 8B ?? 0F B7 ?? 89 ?? 24 ?? C1 ?? 10 89 ?? 24 ?? ?? 8B
+Fix2: ?? 8D 15 ?? ?? ?? ?? 8B ?? 0F B7 ?? 89 ?? 24 ?? C1 E9 10 89 ?? 24 ?? ?? 8B
+
+
+
+## GObjects (GUObjectArray) (UE 5.5)
+```C++
+void void __thiscall FUObjectArray::AllocateUObjectIndex(FUObjectArray *this,UObjectBase *param_1,EInternalObjectFlags param_2,int param_3, int param_4)
+```
+
+```asm
+"Game-Win64-Shipping.exe"+1344610 - 48 8D 0D 79197608     - lea rcx,["Game-Win64-Shipping.exe"+9AA5F90]
+"Game-Win64-Shipping.exe"+1344617 - 41 8B F1              - mov esi,r9d
+"Game-Win64-Shipping.exe"+134461A - 41 8B E8              - mov ebp,r8d
+"Game-Win64-Shipping.exe"+134461D - 4C 8B FA              - mov r15,rdx
+"Game-Win64-Shipping.exe"+1344620 - FF 15 DA144206        - call qword ptr ["Game-Win64-Shipping.exe"+7765B00]
+"Game-Win64-Shipping.exe"+1344626 - 33 DB                 - xor ebx,ebx
+"Game-Win64-Shipping.exe"+1344628 - 85 F6                 - test esi,esi
+"Game-Win64-Shipping.exe"+134462A - 79 3B                 - jns "Game-Win64-Shipping.exe"+1344667
+"Game-Win64-Shipping.exe"+134462C - 38 1D 3A197608        - cmp ["Game-Win64-Shipping.exe"+9AA5F6C],bl
+"Game-Win64-Shipping.exe"+1344632 - 0F85 44C55601         - jne "Game-Win64-Shipping.exe"+28B0B7C
+"Game-Win64-Shipping.exe"+1344638 - 48 63 15 81197608     - movsxd  rdx,dword ptr ["Game-Win64-Shipping.exe"+9AA5FC0]
+"Game-Win64-Shipping.exe"+134463F - 85 D2                 - test edx,edx
+```
+
+AOB:  48 8D 0D ?? ?? ?? ?? 41 8B F1 41 8B E8 4C 8B FA FF 15
+Fix1: ?? 8D 0D ?? ?? ?? ?? ?? 8B ?? ?? 8B ?? ?? 8B ?? FF ?? ?? ?? ?? ?? 33 ?? 85 ?? 79 (GWorld RIP start: Offset 3)
+Fix2: 48 8D ?? ?? ?? ?? ?? ?? 8B ?? ?? 8B ?? ?? 8B ?? FF 15 ?? ?? ?? ?? 33 ?? 85 ?? 79 (GWorld RIP start: Offset 3)
