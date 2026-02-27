@@ -454,6 +454,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 // ArrayProperty: element count + inner type info + inline elements
                 if (fv.arrayCount >= 0) {
                     fj["count"] = fv.arrayCount;
+                    if (fv.arrayDataAddr != 0)
+                        fj["array_data_addr"] = PipeProtocol::AddrToStr(fv.arrayDataAddr);
                     if (!fv.arrayInnerType.empty()) {
                         fj["array_inner_type"] = fv.arrayInnerType;
                         if (fv.arrayElemSize > 0)
@@ -512,6 +514,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["map_value_type"] = fv.mapValueType;
                     fj["map_key_size"]   = fv.mapKeySize;
                     fj["map_value_size"] = fv.mapValueSize;
+                    if (fv.mapDataAddr != 0)
+                        fj["map_data_addr"] = PipeProtocol::AddrToStr(fv.mapDataAddr);
                     if (!fv.containerElements.empty()) {
                         json elems = json::array();
                         for (const auto& e : fv.containerElements) {
@@ -522,7 +526,11 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                             if (!e.keyHex.empty())   ej["kh"] = e.keyHex;
                             if (!e.valueHex.empty()) ej["vh"] = e.valueHex;
                             if (!e.keyPtrName.empty())   ej["kn"] = e.keyPtrName;
+                            if (e.keyPtrAddr != 0)       ej["ka"] = PipeProtocol::AddrToStr(e.keyPtrAddr);
+                            if (!e.keyPtrClassName.empty()) ej["kc"] = e.keyPtrClassName;
                             if (!e.valuePtrName.empty()) ej["vn"] = e.valuePtrName;
+                            if (e.valuePtrAddr != 0)     ej["va"] = PipeProtocol::AddrToStr(e.valuePtrAddr);
+                            if (!e.valuePtrClassName.empty()) ej["vc"] = e.valuePtrClassName;
                             elems.push_back(ej);
                         }
                         fj["map_elements"] = elems;
@@ -534,6 +542,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["set_count"]     = fv.setCount;
                     fj["set_elem_type"] = fv.setElemType;
                     fj["set_elem_size"] = fv.setElemSize;
+                    if (fv.setDataAddr != 0)
+                        fj["set_data_addr"] = PipeProtocol::AddrToStr(fv.setDataAddr);
                     if (!fv.containerElements.empty()) {
                         json elems = json::array();
                         for (const auto& e : fv.containerElements) {
@@ -542,6 +552,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                             ej["k"] = e.key;
                             if (!e.keyHex.empty()) ej["kh"] = e.keyHex;
                             if (!e.keyPtrName.empty()) ej["kn"] = e.keyPtrName;
+                            if (e.keyPtrAddr != 0)    ej["ka"] = PipeProtocol::AddrToStr(e.keyPtrAddr);
+                            if (!e.keyPtrClassName.empty()) ej["kc"] = e.keyPtrClassName;
                             elems.push_back(ej);
                         }
                         fj["set_elements"] = elems;

@@ -296,6 +296,7 @@ public sealed class DumpService : IDumpService
                     ArrayStructType = fo["array_struct_type"]?.GetValue<string>() ?? "",
                     ArrayElemSize = fo["array_elem_size"]?.GetValue<int>() ?? 0,
                     ArrayInnerAddr = fo["array_inner_addr"]?.GetValue<string>() ?? "",
+                    ArrayDataAddr = fo["array_data_addr"]?.GetValue<string>() ?? "",
                     ArrayElements = ParseArrayElements(fo["elements"]),
                     ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
                     ArrayEnumEntries = ParseEnumEntries(fo["enum_entries"]),
@@ -304,10 +305,12 @@ public sealed class DumpService : IDumpService
                     MapValueType = fo["map_value_type"]?.GetValue<string>() ?? "",
                     MapKeySize = fo["map_key_size"]?.GetValue<int>() ?? 0,
                     MapValueSize = fo["map_value_size"]?.GetValue<int>() ?? 0,
+                    MapDataAddr = fo["map_data_addr"]?.GetValue<string>() ?? "",
                     MapElements = ParseContainerElements(fo["map_elements"]),
                     SetCount = fo["set_count"]?.GetValue<int>() ?? -1,
                     SetElemType = fo["set_elem_type"]?.GetValue<string>() ?? "",
                     SetElemSize = fo["set_elem_size"]?.GetValue<int>() ?? 0,
+                    SetDataAddr = fo["set_data_addr"]?.GetValue<string>() ?? "",
                     SetElements = ParseContainerElements(fo["set_elements"]),
                     StructDataAddr = fo["struct_data_addr"]?.GetValue<string>() ?? "",
                     StructClassAddr = fo["struct_class_addr"]?.GetValue<string>() ?? "",
@@ -572,7 +575,11 @@ public sealed class DumpService : IDumpService
                 KeyHex = eo["kh"]?.GetValue<string>() ?? "",
                 ValueHex = eo["vh"]?.GetValue<string>() ?? "",
                 KeyPtrName = eo["kn"]?.GetValue<string>() ?? "",
+                KeyPtrAddress = eo["ka"]?.GetValue<string>() ?? "",
+                KeyPtrClassName = eo["kc"]?.GetValue<string>() ?? "",
                 ValuePtrName = eo["vn"]?.GetValue<string>() ?? "",
+                ValuePtrAddress = eo["va"]?.GetValue<string>() ?? "",
+                ValuePtrClassName = eo["vc"]?.GetValue<string>() ?? "",
             });
         }
         return result;

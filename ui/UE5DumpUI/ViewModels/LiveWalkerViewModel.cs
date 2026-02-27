@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Linq;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -108,12 +109,19 @@ public partial class LiveWalkerViewModel : ViewModelBase
         _engineState = state;
     }
 
+    /// <summary>Clear both error message and status text (e.g., container limit warnings).</summary>
+    private void ClearStatus()
+    {
+        ClearError();
+        StatusText = "";
+    }
+
     [RelayCommand]
     private async Task StartFromWorldAsync()
     {
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
             StopAutoRefreshTimer();
 
@@ -228,7 +236,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
 
             // Save the clicked field name on the current breadcrumb for scroll restoration on Back
@@ -271,13 +279,415 @@ public partial class LiveWalkerViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task NavigateToContainerAsync(LiveFieldValue? field)
+    {
+        if (field == null || !field.IsContainerNavigable) return;
+
+        try
+        {
+            ClearStatus();
+            IsLoading = true;
+
+            // Save scroll hint on current breadcrumb
+            if (Breadcrumbs.Count > 0)
+                Breadcrumbs[^1].ScrollHintFieldName = field.Name;
+
+            if (field.ArrayCount > 0 && !string.IsNullOrEmpty(field.ArrayInnerType))
+            {
+                await NavigateToArrayContainerAsync(field);
+            }
+            else if (field.MapCount > 0 && field.MapElements is { Count: > 0 })
+            {
+                NavigateToMapContainer(field);
+            }
+            else if (field.SetCount > 0 && field.SetElements is { Count: > 0 })
+            {
+                NavigateToSetContainer(field);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"Failed to navigate to container {field.Name}", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task NavigateToArrayContainerAsync(LiveFieldValue field)
+    {
+        var typeLabel = !string.IsNullOrEmpty(field.ArrayStructType)
+            ? field.ArrayStructType : field.ArrayInnerType;
+        var label = $"{field.Name} [{field.ArrayCount} x {typeLabel}]";
+
+        Breadcrumbs.Add(new BreadcrumbItem
+        {
+            Address = CurrentAddress,
+            Label = label,
+            FieldOffset = field.Offset,
+            FieldName = field.Name,
+            IsPointerDeref = false,
+            IsContainerView = true,
+            ContainerField = field,
+        });
+
+        List<ArrayElementValue> elements;
+        if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
+        {
+            // All elements already inline (complete set)
+            elements = field.ArrayElements;
+        }
+        else if (field.ArrayElements is { Count: > 0 } && IsPointerOrStructArrayType(field.ArrayInnerType))
+        {
+            // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
+            // read_array_elements is scalar-only and cannot resolve pointer names.
+            elements = field.ArrayElements;
+        }
+        else if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(CurrentAddress))
+        {
+            // Scalar arrays: fetch full element list from DLL (Phase B)
+            var result = await _dump.ReadArrayElementsAsync(
+                CurrentAddress, field.Offset, field.ArrayInnerAddr,
+                field.ArrayInnerType, field.ArrayElemSize, 0, field.ArrayCount);
+            elements = result.Elements;
+        }
+        else
+        {
+            elements = field.ArrayElements ?? new();
+        }
+
+        PopulateArrayContainerFields(elements, field);
+    }
+
+    private void NavigateToMapContainer(LiveFieldValue field)
+    {
+        var keyLabel = !string.IsNullOrEmpty(field.MapKeyType) ? field.MapKeyType : "?";
+        var valLabel = !string.IsNullOrEmpty(field.MapValueType) ? field.MapValueType : "?";
+        var label = $"{field.Name} {{Map: {field.MapCount}, {keyLabel} \u2192 {valLabel}}}";
+
+        Breadcrumbs.Add(new BreadcrumbItem
+        {
+            Address = CurrentAddress,
+            Label = label,
+            FieldOffset = field.Offset,
+            FieldName = field.Name,
+            IsPointerDeref = false,
+            IsContainerView = true,
+            ContainerField = field,
+        });
+
+        PopulateMapContainerFields(field.MapElements!, field);
+    }
+
+    private void NavigateToSetContainer(LiveFieldValue field)
+    {
+        var elemLabel = !string.IsNullOrEmpty(field.SetElemType) ? field.SetElemType : "?";
+        var label = $"{field.Name} {{Set: {field.SetCount}, {elemLabel}}}";
+
+        Breadcrumbs.Add(new BreadcrumbItem
+        {
+            Address = CurrentAddress,
+            Label = label,
+            FieldOffset = field.Offset,
+            FieldName = field.Name,
+            IsPointerDeref = false,
+            IsContainerView = true,
+            ContainerField = field,
+        });
+
+        PopulateSetContainerFields(field.SetElements!, field);
+    }
+
+    private void PopulateArrayContainerFields(List<ArrayElementValue> elements, LiveFieldValue sourceField)
+    {
+        var typeLabel = !string.IsNullOrEmpty(sourceField.ArrayStructType)
+            ? sourceField.ArrayStructType : sourceField.ArrayInnerType;
+        CurrentObjectName = sourceField.Name;
+        CurrentClassName = $"Array<{typeLabel}>";
+        HasData = true;
+        ShowCeXml = false;
+        // Disable Parent button for container views (not a UObject)
+        HasParent = false;
+        CurrentOuterAddr = "";
+        CurrentOuterName = "";
+        CurrentOuterClassName = "";
+
+        // Parse TArray::Data base address for computing element addresses
+        ulong dataBase = 0;
+        if (!string.IsNullOrEmpty(sourceField.ArrayDataAddr))
+            ulong.TryParse(sourceField.ArrayDataAddr.Replace("0x", "").Replace("0X", ""),
+                System.Globalization.NumberStyles.HexNumber, null, out dataBase);
+
+        Fields.Clear();
+        foreach (var elem in elements)
+        {
+            var f = new LiveFieldValue
+            {
+                Name = $"[{elem.Index}]",
+                TypeName = sourceField.ArrayInnerType,
+                Offset = elem.Index * sourceField.ArrayElemSize,
+                Size = sourceField.ArrayElemSize,
+                HexValue = elem.Hex,
+                TypedValue = !string.IsNullOrEmpty(elem.PtrName)
+                    ? (!string.IsNullOrEmpty(elem.PtrClassName)
+                        ? $"{elem.PtrName} ({elem.PtrClassName})"
+                        : elem.PtrName)
+                    : (!string.IsNullOrEmpty(elem.EnumName) ? elem.EnumName : elem.Value),
+                PtrAddress = elem.PtrAddress,
+                PtrName = elem.PtrName,
+                PtrClassName = elem.PtrClassName,
+                EnumName = elem.EnumName,
+            };
+            if (dataBase != 0 && sourceField.ArrayElemSize > 0)
+                f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * sourceField.ArrayElemSize):X}";
+            Fields.Add(f);
+        }
+    }
+
+    private void PopulateMapContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
+    {
+        var keyLabel = !string.IsNullOrEmpty(sourceField.MapKeyType) ? sourceField.MapKeyType : "?";
+        var valLabel = !string.IsNullOrEmpty(sourceField.MapValueType) ? sourceField.MapValueType : "?";
+        CurrentObjectName = sourceField.Name;
+        CurrentClassName = $"Map<{keyLabel}, {valLabel}>";
+        HasData = true;
+        ShowCeXml = false;
+        HasParent = false;
+        CurrentOuterAddr = "";
+        CurrentOuterName = "";
+        CurrentOuterClassName = "";
+
+        // Parse TSparseArray::Data base address for computing element addresses
+        ulong dataBase = 0;
+        if (!string.IsNullOrEmpty(sourceField.MapDataAddr))
+            ulong.TryParse(sourceField.MapDataAddr.Replace("0x", "").Replace("0X", ""),
+                System.Globalization.NumberStyles.HexNumber, null, out dataBase);
+        int pairSize = sourceField.MapKeySize + sourceField.MapValueSize;
+        int stride = ComputeSetElementStride(pairSize);
+
+        Fields.Clear();
+        foreach (var elem in elements)
+        {
+            var keyDisplay = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
+            var valDisplay = !string.IsNullOrEmpty(elem.ValuePtrName) ? elem.ValuePtrName : elem.Value;
+            var f = new LiveFieldValue
+            {
+                Name = $"[{elem.Index}] {keyDisplay}",
+                TypeName = sourceField.MapValueType,
+                Offset = elem.Index * stride,
+                Size = sourceField.MapKeySize + sourceField.MapValueSize,
+                HexValue = !string.IsNullOrEmpty(elem.ValueHex) ? $"{elem.KeyHex} | {elem.ValueHex}" : elem.KeyHex,
+                TypedValue = $"{keyDisplay} \u2192 {valDisplay}",
+                // Enable → navigation for ObjectProperty values
+                PtrAddress = elem.ValuePtrAddress,
+                PtrName = elem.ValuePtrName,
+                PtrClassName = elem.ValuePtrClassName,
+            };
+            if (dataBase != 0 && stride > 0)
+                f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
+            Fields.Add(f);
+        }
+    }
+
+    /// <summary>
+    /// Re-populate the container view from a (potentially refreshed) container field.
+    /// Dispatches to the appropriate populate helper based on container type.
+    /// </summary>
+    private void RepopulateContainerView(LiveFieldValue containerField)
+    {
+        if (containerField.ArrayCount > 0 && !string.IsNullOrEmpty(containerField.ArrayInnerType))
+        {
+            PopulateArrayContainerFields(containerField.ArrayElements ?? new(), containerField);
+        }
+        else if (containerField.MapCount > 0 && containerField.MapElements is { Count: > 0 })
+        {
+            PopulateMapContainerFields(containerField.MapElements, containerField);
+        }
+        else if (containerField.SetCount > 0 && containerField.SetElements is { Count: > 0 })
+        {
+            PopulateSetContainerFields(containerField.SetElements, containerField);
+        }
+    }
+
+    private void PopulateSetContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
+    {
+        var elemLabel = !string.IsNullOrEmpty(sourceField.SetElemType) ? sourceField.SetElemType : "?";
+        CurrentObjectName = sourceField.Name;
+        CurrentClassName = $"Set<{elemLabel}>";
+        HasData = true;
+        ShowCeXml = false;
+        HasParent = false;
+        CurrentOuterAddr = "";
+        CurrentOuterName = "";
+        CurrentOuterClassName = "";
+
+        // Parse TSparseArray::Data base address for computing element addresses
+        ulong dataBase = 0;
+        if (!string.IsNullOrEmpty(sourceField.SetDataAddr))
+            ulong.TryParse(sourceField.SetDataAddr.Replace("0x", "").Replace("0X", ""),
+                System.Globalization.NumberStyles.HexNumber, null, out dataBase);
+        int stride = ComputeSetElementStride(sourceField.SetElemSize);
+
+        Fields.Clear();
+        foreach (var elem in elements)
+        {
+            var display = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
+            var f = new LiveFieldValue
+            {
+                Name = $"[{elem.Index}]",
+                TypeName = sourceField.SetElemType,
+                Offset = elem.Index * stride,
+                Size = sourceField.SetElemSize,
+                HexValue = elem.KeyHex,
+                TypedValue = display,
+                // Enable → navigation for ObjectProperty elements
+                PtrAddress = elem.KeyPtrAddress,
+                PtrName = elem.KeyPtrName,
+                PtrClassName = elem.KeyPtrClassName,
+            };
+            if (dataBase != 0 && stride > 0)
+                f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
+            Fields.Add(f);
+        }
+    }
+
+    /// <summary>
+    /// Create a container field copy with only the element matching the selected synthetic field.
+    /// Extracts sparse index from the "[N]" or "[N] description" name pattern.
+    /// Used by CE XML export to emit only the selected element within the container.
+    /// </summary>
+    private static LiveFieldValue FilterContainerToElement(LiveFieldValue containerField, LiveFieldValue selectedField)
+    {
+        var sparseIndex = ParseSparseIndex(selectedField.Name);
+        if (!sparseIndex.HasValue) return containerField;
+
+        if (containerField.MapCount > 0 && containerField.MapElements != null)
+        {
+            return new LiveFieldValue
+            {
+                Name = containerField.Name,
+                TypeName = containerField.TypeName,
+                Offset = containerField.Offset,
+                Size = containerField.Size,
+                MapCount = containerField.MapCount,
+                MapKeyType = containerField.MapKeyType,
+                MapValueType = containerField.MapValueType,
+                MapKeySize = containerField.MapKeySize,
+                MapValueSize = containerField.MapValueSize,
+                MapDataAddr = containerField.MapDataAddr,
+                MapElements = containerField.MapElements.Where(e => e.Index == sparseIndex.Value).ToList(),
+            };
+        }
+
+        if (containerField.SetCount > 0 && containerField.SetElements != null)
+        {
+            return new LiveFieldValue
+            {
+                Name = containerField.Name,
+                TypeName = containerField.TypeName,
+                Offset = containerField.Offset,
+                Size = containerField.Size,
+                SetCount = containerField.SetCount,
+                SetElemType = containerField.SetElemType,
+                SetElemSize = containerField.SetElemSize,
+                SetDataAddr = containerField.SetDataAddr,
+                SetElements = containerField.SetElements.Where(e => e.Index == sparseIndex.Value).ToList(),
+            };
+        }
+
+        if (containerField.ArrayCount > 0 && containerField.ArrayElements != null)
+        {
+            return new LiveFieldValue
+            {
+                Name = containerField.Name,
+                TypeName = containerField.TypeName,
+                Offset = containerField.Offset,
+                Size = containerField.Size,
+                ArrayCount = containerField.ArrayCount,
+                ArrayInnerType = containerField.ArrayInnerType,
+                ArrayStructType = containerField.ArrayStructType,
+                ArrayElemSize = containerField.ArrayElemSize,
+                ArrayInnerAddr = containerField.ArrayInnerAddr,
+                ArrayDataAddr = containerField.ArrayDataAddr,
+                ArrayElements = containerField.ArrayElements.Where(e => e.Index == sparseIndex.Value).ToList(),
+                ArrayEnumAddr = containerField.ArrayEnumAddr,
+                ArrayEnumEntries = containerField.ArrayEnumEntries,
+            };
+        }
+
+        return containerField; // fallback: emit whole container
+    }
+
+    /// <summary>Parse sparse index from "[N]" or "[N] name" patterns.</summary>
+    private static int? ParseSparseIndex(string name)
+    {
+        if (string.IsNullOrEmpty(name) || name[0] != '[') return null;
+        var endBracket = name.IndexOf(']');
+        if (endBracket <= 1) return null;
+        if (int.TryParse(name.Substring(1, endBracket - 1), out var index))
+            return index;
+        return null;
+    }
+
+    /// <summary>
+    /// Check if an array inner type requires Phase D/E/F resolution (pointer names, struct fields).
+    /// read_array_elements (Phase B) only handles scalars; pointer/struct arrays must use
+    /// the inline elements from walk_instance which have full resolution.
+    /// </summary>
+    private static bool IsPointerOrStructArrayType(string innerType)
+        => innerType is "ObjectProperty" or "ClassProperty"
+            or "WeakObjectProperty" or "SoftObjectProperty" or "LazyObjectProperty"
+            or "StructProperty";
+
+    /// <summary>
+    /// Compute TSparseArray element stride: AlignUp(elemSize, 4) + 8.
+    /// Mirrors Mem::ComputeSetElementStride in the DLL and CeXmlExportService.
+    /// </summary>
+    private static int ComputeSetElementStride(int elemSize)
+    {
+        int hashStart = (elemSize + 3) & ~3;
+        return hashStart + 8;
+    }
+
+    /// <summary>
+    /// Detect fields whose container element count exceeds the loaded element count.
+    /// Returns a warning string listing the truncated fields, or null if none.
+    /// </summary>
+    private static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit)
+    {
+        var truncated = new List<string>();
+        foreach (var f in fields)
+        {
+            if (f.ArrayCount > arrayLimit)
+            {
+                int loaded = f.ArrayElements?.Count ?? 0;
+                truncated.Add($"{f.Name} (Array: {f.ArrayCount} total, {loaded} loaded)");
+            }
+            if (f.MapCount > arrayLimit)
+            {
+                int loaded = f.MapElements?.Count ?? 0;
+                truncated.Add($"{f.Name} (Map: {f.MapCount} total, {loaded} loaded)");
+            }
+            if (f.SetCount > arrayLimit)
+            {
+                int loaded = f.SetElements?.Count ?? 0;
+                truncated.Add($"{f.Name} (Set: {f.SetCount} total, {loaded} loaded)");
+            }
+        }
+        if (truncated.Count == 0) return null;
+        return $"⚠ Container element limit ({arrayLimit}): {string.Join(", ", truncated)}";
+    }
+
+    [RelayCommand]
     private async Task NavigateToBreadcrumbAsync(BreadcrumbItem? item)
     {
         if (item == null) return;
 
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
 
             // Remove all breadcrumbs after this one
@@ -288,6 +698,15 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 Breadcrumbs.RemoveAt(Breadcrumbs.Count - 1);
 
             var scrollHint = item.ScrollHintFieldName;
+
+            // If navigating back to a container view, re-populate from saved field
+            if (item.IsContainerView && item.ContainerField != null)
+            {
+                RepopulateContainerView(item.ContainerField);
+                if (!string.IsNullOrEmpty(scrollHint))
+                    ScrollToFieldRequested?.Invoke(scrollHint);
+                return;
+            }
 
             // If navigating back to GWorld, re-display actor list
             if (_cachedWorld != null && item.Address == _cachedWorld.WorldAddr)
@@ -327,8 +746,17 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
+
+            // If going back to a container view, re-populate from saved field
+            if (prev.IsContainerView && prev.ContainerField != null)
+            {
+                RepopulateContainerView(prev.ContainerField);
+                if (!string.IsNullOrEmpty(scrollHint))
+                    ScrollToFieldRequested?.Invoke(scrollHint);
+                return;
+            }
 
             // If going back to GWorld, re-display actor list
             if (_cachedWorld != null && prev.Address == _cachedWorld.WorldAddr)
@@ -363,7 +791,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
 
             // Navigate to the parent (OuterPrivate) object
@@ -401,7 +829,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
             StopAutoRefreshTimer();
             Breadcrumbs.Clear();
@@ -430,27 +858,41 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
+
+            // Container view: strip container breadcrumb, use original ContainerField.
+            // Container breadcrumbs share the parent's Address, which causes CleanBreadcrumbs
+            // to falsely detect a cycle and remove them. Using parent breadcrumbs + ContainerField
+            // lets EmitFields dispatch to EmitMapProperty/EmitArrayProperty/EmitSetProperty correctly.
+            var lastBc = Breadcrumbs[^1];
+            var isContainerView = lastBc.IsContainerView && lastBc.ContainerField != null;
+            var breadcrumbsForXml = isContainerView
+                ? (IReadOnlyList<BreadcrumbItem>)Breadcrumbs.Take(Breadcrumbs.Count - 1).ToList()
+                : Breadcrumbs;
+            var fieldsForXml = isContainerView
+                ? new List<LiveFieldValue> { lastBc.ContainerField! }
+                : new List<LiveFieldValue>(Fields);
 
             // Pre-resolve StructProperty inner fields via DLL
             StatusText = "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
-                _dump, new List<LiveFieldValue>(Fields), arrayLimit: ArrayLimit);
+                _dump, fieldsForXml, arrayLimit: ArrayLimit);
 
             // Compute root address in user-selected format
-            var rootBc = Breadcrumbs[0];
+            var rootBc = breadcrumbsForXml[0];
             var rootAddress = AddressHelper.FormatAddress(
                 rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
             StatusText = "Generating CE XML...";
             var xml = CeXmlExportService.GenerateHierarchicalXml(
-                rootAddress, rootBc.Label, Breadcrumbs, Fields, resolvedStructs,
+                rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit);
 
             await _platform.CopyToClipboardAsync(xml);
-            StatusText = "";
+            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
+            StatusText = limitWarn ?? "";
             _log.Info($"CE XML copied to clipboard for {CurrentClassName} ({resolvedStructs.Count} structs resolved)");
         }
         catch (Exception ex)
@@ -472,10 +914,28 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
 
-            var singleFieldList = new List<LiveFieldValue> { SelectedField };
+            // Container view: strip container breadcrumb, use filtered ContainerField
+            // containing only the selected element. Same rationale as ExportCeXmlAsync.
+            var lastBc = Breadcrumbs[^1];
+            var isContainerView = lastBc.IsContainerView && lastBc.ContainerField != null;
+
+            IReadOnlyList<BreadcrumbItem> breadcrumbsForXml;
+            List<LiveFieldValue> singleFieldList;
+
+            if (isContainerView)
+            {
+                breadcrumbsForXml = Breadcrumbs.Take(Breadcrumbs.Count - 1).ToList();
+                singleFieldList = new List<LiveFieldValue>
+                    { FilterContainerToElement(lastBc.ContainerField!, SelectedField) };
+            }
+            else
+            {
+                breadcrumbsForXml = Breadcrumbs;
+                singleFieldList = new List<LiveFieldValue> { SelectedField };
+            }
 
             // Pre-resolve StructProperty inner fields for the selected field
             StatusText = "Resolving struct fields...";
@@ -483,18 +943,19 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 _dump, singleFieldList, arrayLimit: ArrayLimit);
 
             // Compute root address in user-selected format
-            var rootBc = Breadcrumbs[0];
+            var rootBc = breadcrumbsForXml[0];
             var rootAddress = AddressHelper.FormatAddress(
                 rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
             StatusText = "Generating CE Field XML...";
             var xml = CeXmlExportService.GenerateHierarchicalXml(
-                rootAddress, rootBc.Label, Breadcrumbs, singleFieldList, resolvedStructs,
+                rootAddress, rootBc.Label, breadcrumbsForXml, singleFieldList, resolvedStructs,
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit);
 
             await _platform.CopyToClipboardAsync(xml);
-            StatusText = "";
+            var limitWarn = BuildContainerLimitWarning(singleFieldList, ArrayLimit);
+            StatusText = limitWarn ?? "";
             _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName})");
         }
         catch (Exception ex)
@@ -527,7 +988,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            ClearError();
+            ClearStatus();
             var symbolName = !string.IsNullOrEmpty(CurrentClassName)
                 ? CurrentClassName.Replace(" ", "_").Replace("-", "_")
                 : "UE5_Symbol";
@@ -559,8 +1020,35 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            ClearError();
+            ClearStatus();
             IsLoading = true;
+
+            // If refreshing a container view, re-walk the parent instance and re-extract container data
+            if (Breadcrumbs.Count > 0 && Breadcrumbs[^1].IsContainerView && Breadcrumbs[^1].ContainerField != null)
+            {
+                var containerBc = Breadcrumbs[^1];
+                var containerField = containerBc.ContainerField!;
+
+                // Re-walk the parent instance to get fresh container data
+                string? parentClassAddr = null;
+                if (Breadcrumbs.Count >= 2)
+                {
+                    var parentBc = Breadcrumbs[^2];
+                    if (!string.IsNullOrEmpty(parentBc.ClassAddr))
+                        parentClassAddr = parentBc.ClassAddr;
+                }
+
+                var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit);
+                if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
+
+                // Find the container field by name and offset in the refreshed result
+                var updatedField = parentResult.Fields
+                    .FirstOrDefault(f => f.Name == containerField.Name && f.Offset == containerField.Offset);
+
+                if (updatedField != null)
+                    RepopulateContainerView(updatedField);
+                return;
+            }
 
             // If refreshing GWorld view (first breadcrumb only), re-fetch the world.
             // Must check Breadcrumbs.Count == 1 because a sub-World (e.g. S01L04) can share
@@ -1001,4 +1489,10 @@ public sealed class BreadcrumbItem
 
     /// <summary>Field name the user was looking at before drilling in. Used to restore scroll position on Back.</summary>
     public string? ScrollHintFieldName { get; set; }
+
+    /// <summary>True if this breadcrumb represents a container element view (Array/Map/Set).</summary>
+    public bool IsContainerView { get; init; }
+
+    /// <summary>The source container field (for refreshing container views).</summary>
+    public LiveFieldValue? ContainerField { get; init; }
 }
