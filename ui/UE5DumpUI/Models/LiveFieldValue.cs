@@ -47,8 +47,16 @@ public sealed class ContainerElementValue
     public string ValueHex { get; init; } = "";
     /// <summary>For pointer keys: resolved name.</summary>
     public string KeyPtrName { get; init; } = "";
+    /// <summary>For pointer keys: UObject* address (hex string).</summary>
+    public string KeyPtrAddress { get; init; } = "";
+    /// <summary>For pointer keys: class name of the pointed-to object.</summary>
+    public string KeyPtrClassName { get; init; } = "";
     /// <summary>For pointer values: resolved name.</summary>
     public string ValuePtrName { get; init; } = "";
+    /// <summary>For pointer values: UObject* address (hex string).</summary>
+    public string ValuePtrAddress { get; init; } = "";
+    /// <summary>For pointer values: class name of the pointed-to object.</summary>
+    public string ValuePtrClassName { get; init; } = "";
 }
 
 /// <summary>
@@ -118,6 +126,9 @@ public sealed class LiveFieldValue
     /// <summary>For ArrayProperty: Inner FProperty* address (for read_array_elements command).</summary>
     public string ArrayInnerAddr { get; init; } = "";
 
+    /// <summary>For ArrayProperty: TArray::Data base address (for computing element addresses in container view).</summary>
+    public string ArrayDataAddr { get; init; } = "";
+
     /// <summary>For ArrayProperty Phase B: inline scalar element values (up to 64).</summary>
     public List<ArrayElementValue>? ArrayElements { get; init; }
 
@@ -142,6 +153,9 @@ public sealed class LiveFieldValue
     /// <summary>For MapProperty: value element size in bytes.</summary>
     public int MapValueSize { get; init; }
 
+    /// <summary>For MapProperty: TSparseArray::Data base address.</summary>
+    public string MapDataAddr { get; init; } = "";
+
     /// <summary>For MapProperty: inline element preview.</summary>
     public List<ContainerElementValue>? MapElements { get; init; }
 
@@ -153,6 +167,9 @@ public sealed class LiveFieldValue
 
     /// <summary>For SetProperty: element size in bytes.</summary>
     public int SetElemSize { get; init; }
+
+    /// <summary>For SetProperty: TSparseArray::Data base address.</summary>
+    public string SetDataAddr { get; init; } = "";
 
     /// <summary>For SetProperty: inline element preview.</summary>
     public List<ContainerElementValue>? SetElements { get; init; }
@@ -194,6 +211,12 @@ public sealed class LiveFieldValue
         !string.IsNullOrEmpty(StrValue) ? $"\"{StrValue}\"" :
         !string.IsNullOrEmpty(HexValue) ? HexValue :
         "";
+
+    /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set with data).</summary>
+    public bool IsContainerNavigable =>
+        (ArrayCount > 0 && !string.IsNullOrEmpty(ArrayInnerType)) ||
+        (MapCount > 0 && MapElements is { Count: > 0 }) ||
+        (SetCount > 0 && SetElements is { Count: > 0 });
 
     /// <summary>Whether this field is a clickable pointer to another object.</summary>
     public bool IsNavigable =>

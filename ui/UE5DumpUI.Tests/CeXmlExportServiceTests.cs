@@ -1361,8 +1361,467 @@ public class CeXmlExportServiceTests
     }
 
     // ========================================
-    // Helper
+    // MapProperty / SetProperty CE XML tests
     // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_ScalarMap_EmitsGroupWithKeyValueElements()
+    {
+        // Map<IntProperty, FloatProperty> with 2 allocated elements at sparse indices 0,3
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ScoreMap", TypeName = "MapProperty", Offset = 0x100, Size = 0x50,
+                MapCount = 2, MapKeyType = "IntProperty", MapValueType = "FloatProperty",
+                MapKeySize = 4, MapValueSize = 4,
+                MapElements = new List<ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "42", Value = "3.14", KeyHex = "2A000000", ValueHex = "C3F54840" },
+                    new() { Index = 3, Key = "99", Value = "2.71", KeyHex = "63000000", ValueHex = "AE472D40" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Map group should exist with description
+        Assert.Contains("ScoreMap {Map: 2, IntProperty", xml);
+        // Map group should have Offsets=[0] for TSparseArray.Data deref
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Stride = ComputeSetElementStride(4+4) = AlignUp(8,4)+8 = 16
+        // Element at index 0: offset = 0*16 = 0
+        Assert.Contains("<Address>+0</Address>", xml);
+        // Element at index 3: offset = 3*16 = 48 = 0x30
+        Assert.Contains("<Address>+30</Address>", xml);
+        // Key at +0, Value at +keySize (4)
+        Assert.Contains("Key: 42", xml);
+        Assert.Contains("Value: 3.14", xml);
+        Assert.Contains("Key: 99", xml);
+        Assert.Contains("Value: 2.71", xml);
+        // Key type is 4 Bytes (IntProperty), Value type is Float
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        // Element descriptions include key values
+        Assert.Contains("[0] 42", xml);
+        Assert.Contains("[3] 99", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_EmptyMap_EmitsPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "EmptyMap", TypeName = "MapProperty", Offset = 0x80, Size = 0x50,
+                MapCount = 0, MapKeyType = "IntProperty", MapValueType = "FloatProperty",
+                MapKeySize = 4, MapValueSize = 4,
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Should be a placeholder (GroupHeader=1, no Offsets, no children)
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        Assert.Contains("EmptyMap", xml);
+        // No Offsets=[0] (not a pointer deref)
+        Assert.DoesNotContain("<Offset>0</Offset>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_NonScalarMapKey_EmitsPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "StructMap", TypeName = "MapProperty", Offset = 0x80, Size = 0x50,
+                MapCount = 3, MapKeyType = "StructProperty", MapValueType = "IntProperty",
+                MapKeySize = 16, MapValueSize = 4,
+                MapElements = new List<ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "(struct)", Value = "10" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // StructProperty key is non-scalar → placeholder
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        // No Offsets=[0] (not a pointer deref since it's a placeholder)
+        Assert.DoesNotContain("<Offset>0</Offset>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ScalarSet_EmitsGroupWithElements()
+    {
+        // Set<IntProperty> with 3 elements at sparse indices 0,1,5
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "TagSet", TypeName = "SetProperty", Offset = 0x100, Size = 0x50,
+                SetCount = 3, SetElemType = "IntProperty", SetElemSize = 4,
+                SetElements = new List<ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "10", KeyHex = "0A000000" },
+                    new() { Index = 1, Key = "20", KeyHex = "14000000" },
+                    new() { Index = 5, Key = "50", KeyHex = "32000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Set group should exist
+        Assert.Contains("TagSet {Set: 3, IntProperty}", xml);
+        // Set group should have Offsets=[0] for TSparseArray.Data deref
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Stride = ComputeSetElementStride(4) = AlignUp(4,4)+8 = 12 = 0xC
+        // Element at index 0: offset = 0*12 = 0
+        Assert.Contains("<Address>+0</Address>", xml);
+        // Element at index 1: offset = 1*12 = 12 = 0xC
+        Assert.Contains("<Address>+C</Address>", xml);
+        // Element at index 5: offset = 5*12 = 60 = 0x3C
+        Assert.Contains("<Address>+3C</Address>", xml);
+        // Element descriptions include values
+        Assert.Contains("[0] 10", xml);
+        Assert.Contains("[1] 20", xml);
+        Assert.Contains("[5] 50", xml);
+        // Element type is 4 Bytes (IntProperty)
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_EmptySet_EmitsPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "EmptySet", TypeName = "SetProperty", Offset = 0x80, Size = 0x50,
+                SetCount = 0, SetElemType = "IntProperty", SetElemSize = 4,
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("<GroupHeader>1</GroupHeader>", xml);
+        Assert.Contains("EmptySet", xml);
+        Assert.DoesNotContain("<Offset>0</Offset>", xml);
+    }
+
+    // ========================================
+    // Container View CE XML tests
+    // (simulates the fix: container breadcrumb stripped, ContainerField as leaf)
+    // ========================================
+
+    [Fact]
+    public void GenerateHierarchicalXml_MapContainerField_UnderPointerChain_EmitsCorrectStructure()
+    {
+        // Simulates: GWorld -> OwningGameInstance (+1D8, deref) -> PlayerData (+1C0, deref)
+        // ContainerField: AttributeAugmentLevels (MapProperty, offset 0x358)
+        // The container breadcrumb is NOT included (stripped by ViewModel fix).
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1DF67CE0150", "GWorld"),
+            MakeBc("0x1DEC856EDC0", "OwningGameInstance", "OwningGameInstance", isPointer: true, offset: 0x1D8),
+            MakeBc("0x1DF847C24A0", "PlayerData", "PlayerData", isPointer: true, offset: 0x1C0),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new()
+            {
+                Name = "AttributeAugmentLevels", TypeName = "MapProperty", Offset = 0x358, Size = 0x50,
+                MapCount = 6, MapKeyType = "NameProperty", MapValueType = "IntProperty",
+                MapKeySize = 8, MapValueSize = 4,
+                MapElements = new List<ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "firepower", Value = "5", KeyHex = "37F3000000000000" },
+                    new() { Index = 3, Key = "resistance", Value = "481", KeyHex = "4EF3000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "1DF67CE0150", "GWorld", breadcrumbs, fields);
+
+        // Verify full pointer chain is preserved
+        Assert.Contains("\"GWorld\"", xml);
+        Assert.Contains("\"OwningGameInstance\"", xml);
+        Assert.Contains("<Address>+1D8</Address>", xml);
+        Assert.Contains("\"PlayerData\"", xml);
+        Assert.Contains("<Address>+1C0</Address>", xml);
+
+        // Map group: offset 0x358 with Offsets=[0] for TSparseArray.Data deref
+        Assert.Contains("AttributeAugmentLevels {Map: 6, NameProperty", xml);
+        Assert.Contains("<Address>+358</Address>", xml);
+
+        // Map elements: key/value per-element groups
+        Assert.Contains("[0] firepower", xml);
+        Assert.Contains("Key: firepower", xml);
+        Assert.Contains("Value: 5", xml);
+        Assert.Contains("[3] resistance", xml);
+        Assert.Contains("Key: resistance", xml);
+        Assert.Contains("Value: 481", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_StructArrayContainerField_UnderPointerChain_EmitsElementsWithSubFields()
+    {
+        // Simulates: GWorld -> OwningGameInstance -> PlayerData
+        // ContainerField: Ships (ArrayProperty, StructProperty inner, with struct sub-fields)
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1000", "GWorld"),
+            MakeBc("0x2000", "OwningGameInstance", "OwningGameInstance", isPointer: true, offset: 0x1D8),
+            MakeBc("0x3000", "PlayerData", "PlayerData", isPointer: true, offset: 0x1C0),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new()
+            {
+                Name = "Ships", TypeName = "ArrayProperty", Offset = 0x468, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "StructProperty", ArrayStructType = "ShipData",
+                ArrayElemSize = 976,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new()
+                    {
+                        Index = 0, Value = "",
+                        StructFields = new List<StructSubFieldValue>
+                        {
+                            new() { Name = "HealthRatio", TypeName = "FloatProperty", Offset = 0x360, Size = 4 },
+                            new() { Name = "ArmorRatio", TypeName = "FloatProperty", Offset = 0x364, Size = 4 },
+                        }
+                    },
+                    new()
+                    {
+                        Index = 1, Value = "",
+                        StructFields = new List<StructSubFieldValue>
+                        {
+                            new() { Name = "HealthRatio", TypeName = "FloatProperty", Offset = 0x360, Size = 4 },
+                            new() { Name = "ArmorRatio", TypeName = "FloatProperty", Offset = 0x364, Size = 4 },
+                        }
+                    },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "GWorld", breadcrumbs, fields);
+
+        // Array group at +468 with Offsets=[0]
+        Assert.Contains("Ships [2 x ShipData (976B)]", xml);
+        Assert.Contains("<Address>+468</Address>", xml);
+
+        // Element [0] at +0, [1] at +elemSize = 976 = 0x3D0
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("<Address>+3D0</Address>", xml);  // elem 1 offset
+
+        // Struct sub-fields within element
+        Assert.Contains("\"HealthRatio\"", xml);
+        Assert.Contains("\"ArmorRatio\"", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        Assert.Contains("<Address>+360</Address>", xml);
+        Assert.Contains("<Address>+364</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_MapSingleElement_OnlySelectedElementEmitted()
+    {
+        // Simulates "Copy CE Field" for a single map element.
+        // The ViewModel creates a filtered ContainerField with only the selected element.
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1000", "Root"),
+            MakeBc("0x2000", "Player", "Player", isPointer: true, offset: 0x50),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new()
+            {
+                Name = "Scores", TypeName = "MapProperty", Offset = 0x80, Size = 0x50,
+                MapCount = 10, MapKeyType = "NameProperty", MapValueType = "IntProperty",
+                MapKeySize = 8, MapValueSize = 4,
+                // Only 1 element (filtered by ViewModel)
+                MapElements = new List<ContainerElementValue>
+                {
+                    new() { Index = 5, Key = "speed", Value = "200" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "Root", breadcrumbs, fields);
+
+        // Map group shows full count in description
+        Assert.Contains("Scores {Map: 10, NameProperty", xml);
+        // But only 1 element is emitted
+        Assert.Contains("[5] speed", xml);
+        Assert.Contains("Key: speed", xml);
+        Assert.Contains("Value: 200", xml);
+        // No other element indices
+        Assert.DoesNotContain("[0]", xml);
+        Assert.DoesNotContain("[1]", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_SetContainerField_UnderPointerChain_EmitsElements()
+    {
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1000", "Root"),
+            MakeBc("0x2000", "Player", "Player", isPointer: true, offset: 0x50),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new()
+            {
+                Name = "ActiveTags", TypeName = "SetProperty", Offset = 0x200, Size = 0x50,
+                SetCount = 2, SetElemType = "IntProperty", SetElemSize = 4,
+                SetElements = new List<ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "7", KeyHex = "07000000" },
+                    new() { Index = 2, Key = "42", KeyHex = "2A000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "Root", breadcrumbs, fields);
+
+        // Pointer chain preserved
+        Assert.Contains("\"Root\"", xml);
+        Assert.Contains("\"Player\"", xml);
+        Assert.Contains("<Address>+50</Address>", xml);
+
+        // Set group at +200 with Offsets=[0]
+        Assert.Contains("ActiveTags {Set: 2, IntProperty}", xml);
+        Assert.Contains("<Address>+200</Address>", xml);
+
+        // Elements
+        Assert.Contains("[0] 7", xml);
+        Assert.Contains("[2] 42", xml);
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+    }
+
+    // ========================================
+    // StructProperty array without sub-fields tests
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_StructArrayNoSubFields_EmitsGroupWithOffsetsAndPlaceholderElements()
+    {
+        // Array<StructProperty> (Guid, 16B) with 3 elements but no StructFields resolution
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "StreamingTextureGuids", TypeName = "ArrayProperty", Offset = 0x130, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "StructProperty", ArrayStructType = "Guid",
+                ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "", StructFields = null },
+                    new() { Index = 1, Value = "", StructFields = null },
+                    new() { Index = 2, Value = "", StructFields = null },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"game.exe\"+1000", "MyLevel", "ULevel", fields);
+
+        // Array group should exist with description
+        Assert.Contains("StreamingTextureGuids [3 x Guid (16B)]", xml);
+        // CRITICAL: Must have Offsets=[0] to dereference TArray.Data pointer
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Per-element placeholder groups at stride offsets
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"[1]\"", xml);
+        Assert.Contains("\"[2]\"", xml);
+        // Element 0 at +0, Element 1 at +16 = +10, Element 2 at +32 = +20
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<Address>+20</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_StructArrayNoSubFields_UnderPointerChain()
+    {
+        // Simulates StreamingTextureGuids under GWorld -> PersistentLevel chain
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x1000", "GWorld"),
+            MakeBc("0x2000", "PersistentLevel", "PersistentLevel", isPointer: true, offset: 0x30),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new()
+            {
+                Name = "StreamingTextureGuids", TypeName = "ArrayProperty", Offset = 0x130, Size = 16,
+                ArrayCount = 78, ArrayInnerType = "StructProperty", ArrayStructType = "Guid",
+                ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "" },
+                    new() { Index = 1, Value = "" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+1000", "GWorld", breadcrumbs, fields);
+
+        // Full chain preserved
+        Assert.Contains("\"GWorld\"", xml);
+        Assert.Contains("\"PersistentLevel\"", xml);
+        Assert.Contains("<Address>+30</Address>", xml);
+
+        // Array group with Offsets=[0]
+        Assert.Contains("StreamingTextureGuids [78 x Guid (16B)]", xml);
+        Assert.Contains("<Address>+130</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+
+        // Per-element placeholders
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"[1]\"", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_StructArrayNoElements_EmitsGroupWithOffsetsOnly()
+    {
+        // StructProperty array with count > 0 but no inline elements
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "LargeStructArr", TypeName = "ArrayProperty", Offset = 0x200, Size = 16,
+                ArrayCount = 1000, ArrayInnerType = "StructProperty", ArrayStructType = "FData",
+                ArrayElemSize = 64,
+                ArrayElements = null,
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Should still emit with Offsets=[0] (not a placeholder without deref)
+        Assert.Contains("LargeStructArr [1000 x FData (64B)]", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // No element children (no inline data)
+        Assert.DoesNotContain("\"[0]\"", xml);
+    }
+
+    // ========================================
+    // Helper
 
     private static int CountOccurrences(string text, string pattern)
     {
