@@ -60,7 +60,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
         Mem::ReadSafe(enumAddr + DynOff::UENUM_NAMES + 8, count);
 
         std::vector<std::pair<int64_t, std::string>> entries;
-        if (data && count > 0 && count < 1024) {
+        if (data && count > 0 && count < 16384) {
             entries.reserve(count);
             for (int i = 0; i < count; ++i) {
                 uintptr_t entryAddr = data + static_cast<uintptr_t>(i) * DynOff::UENUM_ENTRY_SIZE;
@@ -1430,7 +1430,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             else if (fi.Size == 8) { int64_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
 
             fv.enumValue = rawVal;
-            if (enumPtr) fv.enumName = ResolveEnumValue(enumPtr, rawVal);
+            if (enumPtr) {
+                fv.enumName = ResolveEnumValue(enumPtr, rawVal);
+                fv.enumAddr = enumPtr;
+                fv.enumEntries = GetEnumEntries(enumPtr);
+            }
             fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
 
             // Populate hex
@@ -1459,6 +1463,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     Mem::ReadSafe(instanceAddr + fi.Offset, rawVal);
                     fv.enumValue = rawVal;
                     fv.enumName = ResolveEnumValue(enumPtr, rawVal);
+                    fv.enumAddr = enumPtr;
+                    fv.enumEntries = GetEnumEntries(enumPtr);
                     fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
                     char hx[3];
                     snprintf(hx, sizeof(hx), "%02X", rawVal);
