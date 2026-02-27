@@ -1188,6 +1188,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             Mem::TArrayView arr;
             if (Mem::ReadTArray(instanceAddr + fi.Offset, arr)) {
                 fv.arrayCount = arr.Count;
+                fv.arrayDataAddr = arr.Data;
                 // Hex of the TArray header (Data ptr + Count + Max)
                 char buf[48];
                 snprintf(buf, sizeof(buf), "%016llX %08X %08X",
@@ -1248,7 +1249,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                 // Phase B: read inline scalar element values (up to arrayLimit)
                 if (innerFound && IsScalarArrayType(fv.arrayInnerType)
-                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= arrayLimit
+                    && arr.Data && fv.arrayCount > 0
                     && fv.arrayElemSize > 0) {
                     auto elemResult = ReadArrayElements(
                         instanceAddr, fi.Offset,
@@ -1268,7 +1269,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                 // Phase D: read pointer array element names (up to arrayLimit)
                 if (innerFound && IsPointerArrayType(fv.arrayInnerType)
-                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= arrayLimit
+                    && arr.Data && fv.arrayCount > 0
                     && fv.arrayElemSize > 0) {
                     auto ptrResult = ReadPointerArrayElements(
                         instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
@@ -1281,7 +1282,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                 // Phase E: read weak object pointer array element names (up to arrayLimit)
                 if (innerFound && IsWeakPointerArrayType(fv.arrayInnerType)
-                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= arrayLimit
+                    && arr.Data && fv.arrayCount > 0
                     && fv.arrayElemSize > 0) {
                     auto weakResult = ReadWeakObjectArrayElements(
                         instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
@@ -1295,7 +1296,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Phase F: read struct array element fields (up to arrayLimit)
                 if (innerFound && IsStructArrayType(fv.arrayInnerType)
                     && fv.arrayInnerStructAddr != 0
-                    && arr.Data && fv.arrayCount > 0 && fv.arrayCount <= arrayLimit
+                    && arr.Data && fv.arrayCount > 0
                     && fv.arrayElemSize > 0) {
                     auto structResult = ReadStructArrayElements(
                         instanceAddr, fi.Offset,
@@ -1333,6 +1334,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             if (Mem::ReadTSparseArray(instanceAddr + fi.Offset, sa)) {
                 fv.mapCount = sa.MaxIndex - sa.NumFreeIndices;
                 if (fv.mapCount < 0) fv.mapCount = 0;
+                fv.mapDataAddr = sa.Data;
                 // Hex header: Data + MaxIndex + NumFree
                 char buf[48];
                 snprintf(buf, sizeof(buf), "%016llX %08X %08X",
@@ -1370,7 +1372,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             delta, fi.Name.c_str());
 
                         // Read inline element values if count is manageable
-                        if (fv.mapCount > 0 && fv.mapCount <= arrayLimit
+                        if (fv.mapCount > 0
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             int32_t pairSize = fv.mapKeySize + fv.mapValueSize;
                             int32_t stride = Mem::ComputeSetElementStride(pairSize);
@@ -1392,11 +1394,16 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                         kh += hx;
                                     }
                                     ce.keyHex = kh;
-                                    // Pointer key: resolve name
+                                    // Pointer key: resolve name, addr, class
                                     if (keyTypeName == "ObjectProperty" || keyTypeName == "ClassProperty") {
                                         uintptr_t ptr = 0;
                                         memcpy(&ptr, keyBuf.data(), (std::min)(fv.mapKeySize, (int32_t)sizeof(ptr)));
-                                        if (ptr) ce.keyPtrName = GetName(ptr);
+                                        if (ptr) {
+                                            ce.keyPtrAddr = ptr;
+                                            ce.keyPtrName = GetName(ptr);
+                                            uintptr_t cls = GetClass(ptr);
+                                            if (cls) ce.keyPtrClassName = GetName(cls);
+                                        }
                                     }
                                     // FName key: resolve name
                                     if (keyTypeName == "NameProperty" && ce.key.empty()) {
@@ -1417,7 +1424,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                     if (valueTypeName == "ObjectProperty" || valueTypeName == "ClassProperty") {
                                         uintptr_t ptr = 0;
                                         memcpy(&ptr, valBuf.data(), (std::min)(fv.mapValueSize, (int32_t)sizeof(ptr)));
-                                        if (ptr) ce.valuePtrName = GetName(ptr);
+                                        if (ptr) {
+                                            ce.valuePtrAddr = ptr;
+                                            ce.valuePtrName = GetName(ptr);
+                                            uintptr_t cls = GetClass(ptr);
+                                            if (cls) ce.valuePtrClassName = GetName(cls);
+                                        }
                                     }
                                 }
                                 fv.containerElements.push_back(std::move(ce));
@@ -1440,6 +1452,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             if (Mem::ReadTSparseArray(instanceAddr + fi.Offset, sa)) {
                 fv.setCount = sa.MaxIndex - sa.NumFreeIndices;
                 if (fv.setCount < 0) fv.setCount = 0;
+                fv.setDataAddr = sa.Data;
                 char buf[48];
                 snprintf(buf, sizeof(buf), "%016llX %08X %08X",
                     static_cast<unsigned long long>(sa.Data), sa.MaxIndex, sa.NumFreeIndices);
@@ -1467,7 +1480,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         elemTypeName.c_str(), fv.setElemSize, delta, fi.Name.c_str());
 
                     // Read inline element values if count is manageable
-                    if (fv.setCount > 0 && fv.setCount <= arrayLimit
+                    if (fv.setCount > 0
                         && sa.Data && fv.setElemSize > 0) {
                         int32_t stride = Mem::ComputeSetElementStride(fv.setElemSize);
                         int read = 0;
@@ -1489,7 +1502,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 if (elemTypeName == "ObjectProperty" || elemTypeName == "ClassProperty") {
                                     uintptr_t ptr = 0;
                                     memcpy(&ptr, elemBuf.data(), (std::min)(fv.setElemSize, (int32_t)sizeof(ptr)));
-                                    if (ptr) ce.keyPtrName = GetName(ptr);
+                                    if (ptr) {
+                                        ce.keyPtrAddr = ptr;
+                                        ce.keyPtrName = GetName(ptr);
+                                        uintptr_t cls = GetClass(ptr);
+                                        if (cls) ce.keyPtrClassName = GetName(cls);
+                                    }
                                 }
                             }
                             fv.containerElements.push_back(std::move(ce));

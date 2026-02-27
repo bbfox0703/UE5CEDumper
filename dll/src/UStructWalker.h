@@ -83,6 +83,9 @@ struct LiveFieldValue {
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList
 
+    // For ArrayProperty: base address of TArray::Data (for computing element addresses)
+    uintptr_t   arrayDataAddr = 0;
+
     // For ArrayProperty Phase B/D/E/F: inline element values (up to 64)
     struct ArrayElement {
         int32_t     index = 0;
@@ -112,11 +115,13 @@ struct LiveFieldValue {
     std::string mapValueType;        // Value FProperty type name (e.g. "IntProperty")
     int32_t     mapKeySize = 0;      // Key element size in bytes
     int32_t     mapValueSize = 0;    // Value element size in bytes
+    uintptr_t   mapDataAddr = 0;     // TSparseArray::Data base address
 
     // For SetProperty: TSet header info
     int32_t     setCount = -1;       // -1 = not a set; ≥0 = actual entry count
     std::string setElemType;         // Element FProperty type name
     int32_t     setElemSize = 0;     // Element size in bytes
+    uintptr_t   setDataAddr = 0;     // TSparseArray::Data base address
 
     // For Map/Set: inline element preview (shared structure)
     struct ContainerElement {
@@ -125,9 +130,13 @@ struct LiveFieldValue {
         std::string value;         // Map: formatted value; Set: unused
         std::string keyHex;
         std::string valueHex;
-        // For pointer keys/values
+        // For pointer keys/values: name, address, and class name
         std::string keyPtrName;
+        uintptr_t   keyPtrAddr = 0;
+        std::string keyPtrClassName;
         std::string valuePtrName;
+        uintptr_t   valuePtrAddr = 0;
+        std::string valuePtrClassName;
     };
     std::vector<ContainerElement> containerElements;
 
