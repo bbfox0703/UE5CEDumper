@@ -505,6 +505,49 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     }
                 }
 
+                // MapProperty: key/value type info + inline elements
+                if (fv.mapCount >= 0) {
+                    fj["map_count"]      = fv.mapCount;
+                    fj["map_key_type"]   = fv.mapKeyType;
+                    fj["map_value_type"] = fv.mapValueType;
+                    fj["map_key_size"]   = fv.mapKeySize;
+                    fj["map_value_size"] = fv.mapValueSize;
+                    if (!fv.containerElements.empty()) {
+                        json elems = json::array();
+                        for (const auto& e : fv.containerElements) {
+                            json ej;
+                            ej["i"] = e.index;
+                            ej["k"] = e.key;
+                            ej["v"] = e.value;
+                            if (!e.keyHex.empty())   ej["kh"] = e.keyHex;
+                            if (!e.valueHex.empty()) ej["vh"] = e.valueHex;
+                            if (!e.keyPtrName.empty())   ej["kn"] = e.keyPtrName;
+                            if (!e.valuePtrName.empty()) ej["vn"] = e.valuePtrName;
+                            elems.push_back(ej);
+                        }
+                        fj["map_elements"] = elems;
+                    }
+                }
+
+                // SetProperty: element type info + inline elements
+                if (fv.setCount >= 0) {
+                    fj["set_count"]     = fv.setCount;
+                    fj["set_elem_type"] = fv.setElemType;
+                    fj["set_elem_size"] = fv.setElemSize;
+                    if (!fv.containerElements.empty()) {
+                        json elems = json::array();
+                        for (const auto& e : fv.containerElements) {
+                            json ej;
+                            ej["i"] = e.index;
+                            ej["k"] = e.key;
+                            if (!e.keyHex.empty()) ej["kh"] = e.keyHex;
+                            if (!e.keyPtrName.empty()) ej["kn"] = e.keyPtrName;
+                            elems.push_back(ej);
+                        }
+                        fj["set_elements"] = elems;
+                    }
+                }
+
                 // StructProperty: inner struct info
                 if (fv.structDataAddr != 0) {
                     fj["struct_data_addr"]  = PipeProtocol::AddrToStr(fv.structDataAddr);
