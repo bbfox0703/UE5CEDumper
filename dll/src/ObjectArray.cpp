@@ -29,6 +29,44 @@ static ArrayLayout s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C }; // Default layou
 static int         s_itemSize = 16;  // FUObjectItem stride (auto-detected: 16 or 24)
 static bool        s_isFlat   = false; // true = non-chunked flat array (some UE4 builds)
 
+// GAP #1: Decryption hook for encrypted GObjects pointers.
+// Default nullptr = identity (zero overhead — no indirect call on hot path).
+// Set by SetDecryptFunc() from CE Lua export before Init().
+static ObjectArray::DecryptFunc s_decryptFunc = nullptr;
+
+void ObjectArray::SetDecryptFunc(DecryptFunc func) {
+    s_decryptFunc = func;
+    LOG_INFO("ObjectArray: Custom decryption function %s",
+             func ? "SET" : "CLEARED (identity)");
+}
+
+uintptr_t ObjectArray::DecryptObjectPtr(uintptr_t rawPtr) {
+    if (!rawPtr || !s_decryptFunc) return rawPtr;
+    return s_decryptFunc(rawPtr);
+}
+
+// GAP #2: Named preset layouts for FChunkedFixedUObjectArray (from Dumper-7 reference).
+// Games can reorder struct members; these presets cover known variants.
+struct LayoutPreset {
+    const char* name;
+    ArrayLayout layout;
+};
+
+// All known chunked layouts. Order: default first, then game-specific.
+static const LayoutPreset s_chunkedPresets[] = {
+    { "Default",     { 0x00, 0x10, 0x14, 0x18, 0x1C } },  // UE4.21+ and UE5 standard
+    { "Back4Blood",  { 0x10, 0x00, 0x04, 0x08, 0x0C } },  // Objects at end
+    { "Multiversus", { 0x18, 0x10, 0x00, 0x14, 0x20 } },  // NumElements first
+    { "MindsEye",    { 0x18, 0x00, 0x14, 0x10, 0x04 } },  // MaxElements first
+};
+static constexpr int NUM_CHUNKED_PRESETS = sizeof(s_chunkedPresets) / sizeof(s_chunkedPresets[0]);
+
+// UE4 extended: FUObjectArray with GC index fields before ObjObjects.
+static const LayoutPreset s_ue4ExtendedPresets[] = {
+    { "UE4-Extended", { 0x10, 0x18, 0x1C, 0x20, 0x24 } },
+};
+static constexpr int NUM_UE4_EXTENDED_PRESETS = sizeof(s_ue4ExtendedPresets) / sizeof(s_ue4ExtendedPresets[0]);
+
 // Helper: check if a pointer value looks like a valid heap pointer (not code/null/low)
 static bool LooksLikeHeapPtr(uintptr_t ptr) {
     if (!ptr || ptr < 0x10000) return false;
@@ -38,6 +76,89 @@ static bool LooksLikeHeapPtr(uintptr_t ptr) {
     uintptr_t modBase = Mem::GetModuleBase(nullptr);
     uintptr_t modSize = Mem::GetModuleSize(nullptr);
     if (modBase && modSize && ptr >= modBase && ptr < modBase + modSize) return false;
+    return true;
+}
+
+// Log all 5 layout field values at an address for diagnosis.
+static void LogLayoutFields(uintptr_t addr, const ArrayLayout& layout, const char* presetName) {
+    int32_t numElements = 0, maxElements = 0, numChunks = 0, maxChunks = 0;
+    uintptr_t objPtr = 0;
+    Mem::ReadSafe(addr + layout.numElementsOffset, numElements);
+    Mem::ReadSafe(addr + layout.maxElementsOffset, maxElements);
+    Mem::ReadSafe(addr + layout.objectsOffset, objPtr);
+    if (layout.maxChunksOffset >= 0) Mem::ReadSafe(addr + layout.maxChunksOffset, maxChunks);
+    if (layout.numChunksOffset >= 0) Mem::ReadSafe(addr + layout.numChunksOffset, numChunks);
+
+    uintptr_t decObjPtr = DecryptObjectPtr(objPtr);
+    LOG_INFO("ObjectArray: Layout '%s': Num=%d, Max=%d, NumChunks=%d, MaxChunks=%d, Objects=0x%llX%s",
+             presetName, numElements, maxElements, numChunks, maxChunks,
+             (unsigned long long)decObjPtr,
+             (objPtr != decObjPtr) ? " (decrypted)" : "");
+}
+
+// Full validation of a chunked FUObjectArray layout (Dumper-7 rigor).
+// Reads all 5 fields and checks range, alignment, and consistency.
+static bool ValidateChunkedLayout(uintptr_t addr, const ArrayLayout& layout) {
+    int32_t numElements = 0, maxElements = 0, numChunks = 0, maxChunks = 0;
+    uintptr_t objPtr = 0;
+
+    if (!Mem::ReadSafe(addr + layout.numElementsOffset, numElements)) return false;
+    if (!Mem::ReadSafe(addr + layout.maxElementsOffset, maxElements)) return false;
+    if (!Mem::ReadSafe(addr + layout.objectsOffset, objPtr)) return false;
+    objPtr = DecryptObjectPtr(objPtr);
+
+    bool hasChunkFields = (layout.maxChunksOffset >= 0 && layout.numChunksOffset >= 0);
+    if (hasChunkFields) {
+        if (!Mem::ReadSafe(addr + layout.maxChunksOffset, maxChunks)) return false;
+        if (!Mem::ReadSafe(addr + layout.numChunksOffset, numChunks)) return false;
+    }
+
+    // --- Range checks ---
+    if (numElements < 0x1000 || numElements > 0x400000) return false;
+    if (maxElements < numElements || maxElements > 0x800000) return false;
+
+    // Objects pointer must be a valid heap pointer
+    if (!LooksLikeHeapPtr(objPtr)) return false;
+
+    // --- Chunk consistency (Dumper-7 rigor, only if chunk fields present) ---
+    if (hasChunkFields) {
+        if (numChunks < 1 || numChunks > 0x14) return false;
+        if (maxChunks < 6 || maxChunks > 0x5FF) return false;
+        if (numChunks > maxChunks) return false;
+
+        // MaxElements alignment
+        if ((maxElements % 0x10) != 0) return false;
+
+        // Elements per chunk consistency
+        int32_t elemPerChunk = maxElements / maxChunks;
+        if ((elemPerChunk % 0x10) != 0) return false;
+        if (elemPerChunk < 0x8000 || elemPerChunk > 0x80000) return false;
+
+        // Cross-field consistency
+        if (((numElements / elemPerChunk) + 1) != numChunks) return false;
+        if ((maxElements / elemPerChunk) != maxChunks) return false;
+    }
+
+    // --- Pointer dereference validation ---
+    uintptr_t chunk0 = 0;
+    if (!Mem::ReadSafe(objPtr, chunk0)) return false;
+
+    if (chunk0 == 0) {
+        // chunk[0] null — unlikely for valid array, but accept if objPtr is heap
+        return true;
+    }
+
+    if (!LooksLikeHeapPtr(chunk0)) return false;
+
+    // Validate additional chunk pointers are readable (cap at 5 to avoid excess reads)
+    if (hasChunkFields && numChunks > 1) {
+        for (int i = 1; i < numChunks && i < 5; ++i) {
+            uintptr_t chunkI = 0;
+            if (!Mem::ReadSafe(objPtr + i * sizeof(uintptr_t), chunkI)) return false;
+            if (chunkI && !LooksLikeHeapPtr(chunkI)) return false;
+        }
+    }
+
     return true;
 }
 
@@ -51,62 +172,68 @@ static bool DetectLayout(uintptr_t addr) {
                   dump[0], dump[1], dump[2], dump[3], dump[4], dump[5]);
     }
 
-    // Layout A (UE5 default): Objects* at +0x00, PreAllocated* at +0x08, Max at +0x10, Num at +0x14
+    // --- Tier 1: Try all chunked presets with FULL validation (Dumper-7 rigor) ---
+    for (int i = 0; i < NUM_CHUNKED_PRESETS; ++i) {
+        const auto& preset = s_chunkedPresets[i];
+        if (ValidateChunkedLayout(addr, preset.layout)) {
+            s_layout = preset.layout;
+            LOG_INFO("ObjectArray: Layout '%s' detected (strict, preset %d/%d)",
+                     preset.name, i + 1, NUM_CHUNKED_PRESETS);
+            LogLayoutFields(addr, s_layout, preset.name);
+            return true;
+        }
+    }
+
+    // --- Tier 2: Try UE4 extended presets with full validation ---
+    for (int i = 0; i < NUM_UE4_EXTENDED_PRESETS; ++i) {
+        const auto& preset = s_ue4ExtendedPresets[i];
+        if (ValidateChunkedLayout(addr, preset.layout)) {
+            s_layout = preset.layout;
+            LOG_INFO("ObjectArray: Layout '%s' detected (strict)", preset.name);
+            LogLayoutFields(addr, s_layout, preset.name);
+            return true;
+        }
+    }
+
+    // --- Tier 3: RELAXED fallback (preserves current behavior, prevents regression) ---
+    // Some games pass weak checks but fail strict Dumper-7 chunk consistency.
+    LOG_INFO("ObjectArray: Strict validation failed for all presets, trying relaxed fallback...");
+
+    // Layout A/C (relaxed): Objects@+0x00, Num@+0x14
     {
-        int32_t num = 0, max = 0;
+        int32_t num = 0;
         Mem::ReadSafe(addr + 0x14, num);
-        Mem::ReadSafe(addr + 0x10, max);
-        if (num > 0 && num <= max && max <= 0x800000) {
+        if (num > 0 && num <= 0x800000) {
             uintptr_t objPtr = 0;
             Mem::ReadSafe(addr + 0x00, objPtr);
+            objPtr = DecryptObjectPtr(objPtr);
             if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C };
-                LOG_INFO("ObjectArray: Layout A (default) detected (Num=%d, Max=%d, Objects=0x%llX)",
-                         num, max, (unsigned long long)objPtr);
+                LOG_INFO("ObjectArray: Layout A/C (relaxed) detected (Num=%d, Objects=0x%llX)",
+                         num, (unsigned long long)objPtr);
                 return true;
             }
         }
     }
 
-    // Layout B: Objects* at +0x10, Num at +0x04 (some UE4 alternate layout)
-    // Validate that Objects pointer is a heap address, not code
+    // Layout B (flat/alt): Objects@+0x10, Num@+0x04
     {
         int32_t num = 0;
         Mem::ReadSafe(addr + 0x04, num);
         if (num > 0 && num <= 0x800000) {
             uintptr_t objPtr = 0;
             Mem::ReadSafe(addr + 0x10, objPtr);
+            objPtr = DecryptObjectPtr(objPtr);
             if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x10, 0x08, 0x04, 0x0C, -1 };
-                LOG_INFO("ObjectArray: Layout B (alt) detected (Num=%d, Objects=0x%llX)",
+                LOG_INFO("ObjectArray: Layout B (relaxed alt) detected (Num=%d, Objects=0x%llX)",
                          num, (unsigned long long)objPtr);
                 return true;
             }
         }
     }
 
-    // Layout C (UE4 relaxed): Objects* at +0x00, Num at +0x14, but Max at +0x10 is garbage
-    // This happens in older UE4 where +0x08 is PreAllocatedObjects (pointer, not count),
-    // making +0x10 contain a pointer value that looks like a huge "Max".
-    // We validate Objects at +0x00 is a heap pointer and Num is reasonable.
-    {
-        int32_t num = 0;
-        Mem::ReadSafe(addr + 0x14, num);
-        if (num > 0 && num <= 0x800000) {
-            uintptr_t objPtr = 0;
-            Mem::ReadSafe(addr + 0x00, objPtr);
-            if (LooksLikeHeapPtr(objPtr)) {
-                s_layout = { 0x00, 0x10, 0x14, 0x18, 0x1C };
-                LOG_INFO("ObjectArray: Layout C (relaxed default) detected (Num=%d, Objects=0x%llX, Max@+0x10 skipped)",
-                         num, (unsigned long long)objPtr);
-                return true;
-            }
-        }
-    }
-
-    // Layout D: UE4 FUObjectArray with members before ObjObjects:
-    // +0x00: ObjFirstGCIndex, +0x04: ObjLastNonGCIndex, +0x08: MaxObjectsNotConsideredByGC,
-    // +0x0C: OpenForDisregardForGC, +0x10: ObjObjects.Objects**, +0x18: Max, +0x1C: Num
+    // Layout D (UE4 extended relaxed): Objects@+0x10, Num@+0x1C, Max@+0x18
     {
         int32_t num = 0, max = 0;
         Mem::ReadSafe(addr + 0x1C, num);
@@ -114,9 +241,10 @@ static bool DetectLayout(uintptr_t addr) {
         if (num > 0 && num <= max && max <= 0x800000) {
             uintptr_t objPtr = 0;
             Mem::ReadSafe(addr + 0x10, objPtr);
+            objPtr = DecryptObjectPtr(objPtr);
             if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x10, 0x18, 0x1C, 0x20, 0x24 };
-                LOG_INFO("ObjectArray: Layout D (UE4 extended) detected (Num=%d, Max=%d, Objects=0x%llX)",
+                LOG_INFO("ObjectArray: Layout D (relaxed UE4 ext) detected (Num=%d, Max=%d, Objects=0x%llX)",
                          num, max, (unsigned long long)objPtr);
                 return true;
             }
@@ -124,6 +252,7 @@ static bool DetectLayout(uintptr_t addr) {
     }
 
     LOG_WARN("ObjectArray: Could not detect layout, using default");
+    s_layout = s_chunkedPresets[0].layout;
     return true;
 }
 
@@ -281,6 +410,7 @@ static void DetectItemSize() {
         LOG_WARN("ObjectArray: Cannot read chunk table for item size detection");
         return;
     }
+    chunkTable = DecryptObjectPtr(chunkTable);
 
     // Diagnostic: dump first 64 bytes at chunkTable address
     {
@@ -468,6 +598,7 @@ uintptr_t GetByIndex(int32_t index) {
     // Read array base pointer
     uintptr_t arrayBase = 0;
     if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, arrayBase) || !arrayBase) return 0;
+    arrayBase = DecryptObjectPtr(arrayBase);
 
     uintptr_t itemAddr = 0;
 
@@ -495,6 +626,7 @@ FUObjectItem* GetItem(int32_t index) {
 
     uintptr_t arrayBase = 0;
     if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, arrayBase) || !arrayBase) return nullptr;
+    arrayBase = DecryptObjectPtr(arrayBase);
 
     uintptr_t itemAddr = 0;
 
@@ -519,6 +651,7 @@ int32_t GetSerialNumber(int32_t index) {
     uintptr_t arrayBase = 0;
     if (!Mem::ReadSafe(s_arrayAddr + s_layout.objectsOffset, arrayBase) || !arrayBase)
         return 0;
+    arrayBase = DecryptObjectPtr(arrayBase);
 
     uintptr_t itemAddr = 0;
     if (s_isFlat) {

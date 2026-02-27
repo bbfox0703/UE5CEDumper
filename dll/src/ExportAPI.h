@@ -47,6 +47,13 @@ __declspec(dllexport) void      UE5_WalkClassEnd();
 // === FName Resolution ===
 __declspec(dllexport) bool      UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen);
 
+// === Object Decryption (GAP #1) ===
+// Set a custom decryption function for encrypted GObjects pointers.
+// Pass NULL to clear (revert to identity/no decryption).
+// Must be called BEFORE UE5_Init() — decryption is needed during scanning.
+// UE5_AutoStart() does NOT support decryption (use manual Lua flow).
+__declspec(dllexport) void      UE5_SetObjectDecryption(uintptr_t (*decryptFunc)(uintptr_t));
+
 // === Pipe Server ===
 __declspec(dllexport) bool      UE5_StartPipeServer();
 __declspec(dllexport) void      UE5_StopPipeServer();

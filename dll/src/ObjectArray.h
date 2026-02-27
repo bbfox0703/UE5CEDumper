@@ -21,6 +21,14 @@ struct FUObjectItem {
 
 namespace ObjectArray {
 
+// === Encrypted GObjects Support (GAP #1) ===
+// Some anti-cheat games encrypt the Objects pointer in FUObjectArray.
+// Set a custom decryption function BEFORE calling Init().
+// Default: nullptr (identity, zero overhead for non-encrypted games).
+using DecryptFunc = uintptr_t(*)(uintptr_t rawPtr);
+void SetDecryptFunc(DecryptFunc func);
+uintptr_t DecryptObjectPtr(uintptr_t rawPtr);
+
 // Initialize with the FUObjectArray address found by OffsetFinder
 void Init(uintptr_t gobjectsAddr);
 

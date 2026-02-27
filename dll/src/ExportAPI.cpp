@@ -97,6 +97,16 @@ bool UE5_Init() {
         LOG_WARN("UE5_Init: Offset validation failed — using default offsets (may be wrong for this UE version)");
     }
 
+    // Post-DynOff version correction: UProperty mode definitively means UE4 pre-4.25.
+    // If version detection failed or misidentified as UE5, correct it now.
+    // (e.g., FF7 Remake is UE4.18 but version defaults to 504 when detection fails)
+    if (!DynOff::bUseFProperty && ptrs.UEVersion >= 500) {
+        LOG_WARN("UE5_Init: UProperty mode detected (no FProperty) but version=%u (>= 500). "
+                 "Overriding to 424 (UE4 pre-4.25)", ptrs.UEVersion);
+        ptrs.UEVersion = 424;
+        g_cachedUEVersion = ptrs.UEVersion;  // Update cached value for pipe protocol
+    }
+
     s_initialized = true;
     LOG_INFO("UE5_Init: Complete (UE%u, GObjects=0x%llX, GNames=0x%llX, Objects=%d)",
              ptrs.UEVersion,
@@ -143,6 +153,12 @@ uintptr_t UE5_GetGObjectsAddr() {
 
 uintptr_t UE5_GetGNamesAddr() {
     return g_cachedGNames;
+}
+
+void UE5_SetObjectDecryption(uintptr_t (*decryptFunc)(uintptr_t)) {
+    ObjectArray::SetDecryptFunc(decryptFunc);
+    LOG_INFO("UE5_SetObjectDecryption: %s",
+             decryptFunc ? "Custom decryption set" : "Decryption cleared");
 }
 
 int32_t UE5_GetObjectCount() {

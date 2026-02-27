@@ -14,6 +14,7 @@
 #include <string>
 #include <cstring>
 #include <vector>
+#include <algorithm>  // std::sort
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
 #include <Psapi.h>    // EnumProcessModules
 
@@ -30,54 +31,11 @@ static int  g_ue4NameStringOffset = 0x10;
 // Set by ValidateGNames when it detects the hash prefix.
 static int g_fnameEntryHeaderOffset = 0;
 
-// Try a single AOB pattern and resolve RIP-relative address
-static uintptr_t TryPatternRIP(const char* pattern, int opcodeLen = 3, int totalLen = 7, bool derefResult = false) {
-    uintptr_t addr = Mem::AOBScan(pattern);
-    if (!addr) return 0;
-
-    uintptr_t target = Mem::ResolveRIP(addr, opcodeLen, totalLen);
-    if (!target) return 0;
-
-    if (derefResult) {
-        uintptr_t value = 0;
-        if (!Mem::ReadSafe(target, value) || value == 0) {
-            LOG_WARN("TryPatternRIP: Deref at 0x%llX yielded null",
-                     static_cast<unsigned long long>(target));
-            return 0;
-        }
-        return value;
-    }
-
-    return target;
-}
-
-// Try an AOB pattern where the RIP-relative instruction is at a known
-// offset from the match start (not necessarily at byte 0).
-// instrOffset = byte offset from match start to the RIP opcode
-// opcodeLen   = bytes before the 4-byte displacement (e.g. 3 for lea/mov)
-// totalLen    = total instruction length (e.g. 7 for standard RIP-relative)
-static uintptr_t TryPatternRIPOffset(const char* pattern, int instrOffset,
-                                     int opcodeLen = 3, int totalLen = 7,
-                                     bool derefResult = false) {
-    uintptr_t addr = Mem::AOBScan(pattern);
-    if (!addr) return 0;
-
-    uintptr_t instrAddr = addr + instrOffset;
-    uintptr_t target = Mem::ResolveRIP(instrAddr, opcodeLen, totalLen);
-    if (!target) return 0;
-
-    if (derefResult) {
-        uintptr_t value = 0;
-        if (!Mem::ReadSafe(target, value) || value == 0) {
-            LOG_WARN("TryPatternRIPOffset: Deref at 0x%llX yielded null",
-                     static_cast<unsigned long long>(target));
-            return 0;
-        }
-        return value;
-    }
-
-    return target;
-}
+// Validation debug log throttle — prevents scan.log rotation from massive
+// false-positive output (e.g. 20K+ matches each producing 14+ debug lines).
+// Reset per-pattern in ScanForTarget; validators check before logging.
+static int  g_validationDbgCount = 0;
+static constexpr int kMaxValidationDbgLogs = 10;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Symbol Export Fallback (RE-UE4SS technique)
@@ -134,49 +92,138 @@ static bool LooksLikeDataPtr(uintptr_t ptr) {
     return true;
 }
 
+// Cyclic class pointer validation (GAP #10):
+// Reads UObject pointers from chunk[0] and follows obj->Class chain.
+// Valid UObjects have a chain that terminates at UClass (Class == itself).
+// Returns true if >= 2 objects pass with any common FUObjectItem stride.
+static bool ValidateCyclicClassChain(uintptr_t chunk0) {
+    if (!chunk0) return false;
+
+    static const int kStrides[] = { 16, 24, 20 };   // UE5 (16), UE4 (24), alt (20) item sizes
+    static const int kScanRange = 20;                // Scan up to 20 slots (early slots may be null)
+    static const int kMinTried = 2;                  // Need at least 2 non-null objects to judge
+    static const int kMinPass = 2;                   // Minimum passing objects
+    static const int kMaxHops = 16;                  // Max class chain depth
+
+    for (int stride : kStrides) {
+        int passed = 0;
+        int tried  = 0;
+
+        for (int i = 0; i < kScanRange; i++) {
+            uintptr_t objPtr = 0;
+            if (!Mem::ReadSafe(chunk0 + i * stride, objPtr) || !objPtr) continue;
+            if (objPtr < 0x10000 || objPtr > 0x00007FFFFFFFFFFF) continue;
+            tried++;
+
+            // Follow Class chain: obj->Class->Class->... looking for self-referential UClass
+            uintptr_t current = objPtr;
+            bool valid = false;
+            for (int hop = 0; hop < kMaxHops; hop++) {
+                uintptr_t cls = 0;
+                if (!Mem::ReadSafe(current + Constants::OFF_UOBJECT_CLASS, cls)) break;
+                if (cls < 0x10000 || cls > 0x00007FFFFFFFFFFF) break;
+
+                // UClass terminates: its ClassPrivate points to itself
+                uintptr_t clsCls = 0;
+                if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_CLASS, clsCls)) break;
+                if (clsCls == cls) { valid = true; break; }
+
+                current = cls;
+            }
+            if (valid) passed++;
+
+            // Early exit: already have enough passing objects
+            if (passed >= kMinPass) break;
+        }
+
+        if (tried >= kMinTried && passed >= kMinPass) return true;
+    }
+    return false;
+}
+
 static bool ValidateGObjects(uintptr_t addr) {
     if (!addr) return false;
 
-    // Try multiple layout candidates for NumElements:
-    //   Layout A/C: Num at +0x14, Objects at +0x00
-    //   Layout B:   Num at +0x04, Objects at +0x10
-    //   Layout D:   Num at +0x1C, Objects at +0x10
-    // For each, we require: (1) NumElements in range, (2) Objects* is a valid data pointer
-    // that can be dereferenced to get chunk[0] (also a valid pointer).
-    struct { int numOff; int objOff; const char* name; } layouts[] = {
+    // --- Tier 1: Try all known presets with full validation ---
+    // Includes chunk consistency checks and decryption support.
+    struct { int objOff; int maxOff; int numOff; int maxCOff; int numCOff; const char* name; } presets[] = {
+        { 0x00, 0x10, 0x14, 0x18, 0x1C, "Default" },
+        { 0x10, 0x00, 0x04, 0x08, 0x0C, "Back4Blood" },
+        { 0x18, 0x10, 0x00, 0x14, 0x20, "Multiversus" },
+        { 0x18, 0x00, 0x14, 0x10, 0x04, "MindsEye" },
+        { 0x10, 0x18, 0x1C, 0x20, 0x24, "UE4-Extended" },
+    };
+
+    for (auto& P : presets) {
+        int32_t num = 0, max = 0;
+        if (!Mem::ReadSafe(addr + P.numOff, num)) continue;
+        if (!Mem::ReadSafe(addr + P.maxOff, max)) continue;
+        if (num < 0x1000 || num > 0x400000) continue;
+        if (max < num || max > 0x800000) continue;
+
+        // Chunk consistency (if chunk offset fields are valid)
+        if (P.maxCOff >= 0 && P.numCOff >= 0) {
+            int32_t numC = 0, maxC = 0;
+            if (!Mem::ReadSafe(addr + P.numCOff, numC)) continue;
+            if (!Mem::ReadSafe(addr + P.maxCOff, maxC)) continue;
+            if (numC < 1 || maxC < 1 || numC > maxC) continue;
+        }
+
+        uintptr_t objPtr = 0;
+        if (!Mem::ReadSafe(addr + P.objOff, objPtr)) continue;
+        objPtr = ObjectArray::DecryptObjectPtr(objPtr);
+
+        uintptr_t chunk0 = 0;
+        if (!Mem::ReadSafe(objPtr, chunk0)) continue;
+
+        if (chunk0 == 0) {
+            if (!LooksLikeDataPtr(objPtr)) continue;
+        } else {
+            if (!LooksLikeDataPtr(chunk0)) continue;
+        }
+
+        // Cyclic class chain validation (GAP #10): verify actual UObject instances
+        uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
+        if (!ValidateCyclicClassChain(validateBase)) continue;
+
+        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (preset %s, Num=%d, Max=%d, Objects=0x%llX)",
+                 static_cast<unsigned long long>(addr), P.name, num, max,
+                 static_cast<unsigned long long>(objPtr));
+        return true;
+    }
+
+    // --- Tier 2: Relaxed fallback (prevents regression) ---
+    // Only check NumElements range + Objects pointer validity.
+    struct { int numOff; int objOff; const char* name; } relaxed[] = {
         { 0x14, 0x00, "A/C" },
         { 0x04, 0x10, "B"   },
         { 0x1C, 0x10, "D"   },
     };
 
-    for (auto& L : layouts) {
+    for (auto& L : relaxed) {
         int32_t numElements = 0;
         if (!Mem::ReadSafe(addr + L.numOff, numElements)) continue;
         if (numElements < 0x1000 || numElements > 0x400000) continue;
 
         uintptr_t objPtr = 0;
         if (!Mem::ReadSafe(addr + L.objOff, objPtr)) continue;
+        objPtr = ObjectArray::DecryptObjectPtr(objPtr);
 
-        // Objects pointer must be dereferenceable to get chunk[0]
         uintptr_t chunk0 = 0;
         if (!Mem::ReadSafe(objPtr, chunk0)) continue;
 
-        // chunk[0] should be a valid heap pointer (where actual UObject items live).
-        // It can be null in some UE4 games, but if non-null it MUST be a heap pointer
-        // (not inside the game module's loaded image — that would mean we're reading
-        // code/vtable pointers, not a real chunk table).
         if (chunk0 == 0) {
-            // chunk[0] null — might be a valid sparse array, but only accept if objPtr
-            // itself is a heap pointer (not game module). This prevents accepting random
-            // game module addresses that happen to deref to null.
             if (!LooksLikeDataPtr(objPtr)) continue;
         } else {
-            // chunk[0] non-null — it must be a heap/data pointer (not game module code)
             if (!LooksLikeDataPtr(chunk0)) continue;
         }
 
-        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX, NumElements=%d (layout %s, Objects=0x%llX, chunk0=0x%llX)",
-                 static_cast<unsigned long long>(addr), numElements, L.name,
+        // Cyclic class chain validation (GAP #10): verify actual UObject instances
+        uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
+        if (!ValidateCyclicClassChain(validateBase)) continue;
+
+        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (relaxed %s, Num=%d, Objects=0x%llX, chunk0=0x%llX)",
+                 static_cast<unsigned long long>(addr), L.name, numElements,
                  static_cast<unsigned long long>(objPtr), static_cast<unsigned long long>(chunk0));
         return true;
     }
@@ -211,8 +258,9 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
     uint64_t rwLock = 0;
     if (!Mem::ReadSafe(addr, rwLock)) return false;
     if (rwLock != 0) {
-        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: FRWLock=0x%llX (non-zero) at 0x%llX",
-                  (unsigned long long)rwLock, (unsigned long long)addr);
+        if (g_validationDbgCount++ < kMaxValidationDbgLogs)
+            Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: FRWLock=0x%llX (non-zero) at 0x%llX",
+                      (unsigned long long)rwLock, (unsigned long long)addr);
         return false;
     }
 
@@ -220,8 +268,9 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
     int32_t currentBlock = 0;
     if (!Mem::ReadSafe(addr + 0x08, currentBlock)) return false;
     if (currentBlock < 0 || currentBlock > 8192) {
-        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: CurrentBlock=%d out of range at 0x%llX",
-                  currentBlock, (unsigned long long)addr);
+        if (g_validationDbgCount++ < kMaxValidationDbgLogs)
+            Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: CurrentBlock=%d out of range at 0x%llX",
+                      currentBlock, (unsigned long long)addr);
         return false;
     }
 
@@ -229,8 +278,9 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
     uintptr_t nextBlock = 0;
     if (!Mem::ReadSafe(addr + 0x10 + ((currentBlock + 1) * 8), nextBlock)) return false;
     if (nextBlock != 0) {
-        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[%d+1] = 0x%llX (non-null) at 0x%llX",
-                  currentBlock, (unsigned long long)nextBlock, (unsigned long long)addr);
+        if (g_validationDbgCount++ < kMaxValidationDbgLogs)
+            Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[%d+1] = 0x%llX (non-null) at 0x%llX",
+                      currentBlock, (unsigned long long)nextBlock, (unsigned long long)addr);
         return false;
     }
 
@@ -265,19 +315,22 @@ static bool ValidateGNamesStructural(uintptr_t addr) {
     }
 
     if (!noneFound) {
-        uint16_t h0 = 0, h4 = 0;
-        Mem::ReadSafe(block0, h0);
-        Mem::ReadSafe(block0 + 4, h4);
-        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[0] headers=0x%04X/0x%04X don't decode to 'None' at 0x%llX",
-                  h0, h4, (unsigned long long)addr);
+        if (g_validationDbgCount++ < kMaxValidationDbgLogs) {
+            uint16_t h0 = 0, h4 = 0;
+            Mem::ReadSafe(block0, h0);
+            Mem::ReadSafe(block0 + 4, h4);
+            Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[0] headers=0x%04X/0x%04X don't decode to 'None' at 0x%llX",
+                      h0, h4, (unsigned long long)addr);
+        }
         return false;
     }
 
     // Corroborate: the first chunk must also contain common UE type names
     // (ByteProperty, Object, Class, etc.) — random heap data won't have these.
     if (!CorroborateFNameChunk(block0)) {
-        Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[0] corroboration failed at 0x%llX",
-                  (unsigned long long)addr);
+        if (g_validationDbgCount++ < kMaxValidationDbgLogs)
+            Logger::Debug("SCAN:GNam", "ValidateGNamesStructural: Blocks[0] corroboration failed at 0x%llX",
+                      (unsigned long long)addr);
         return false;
     }
 
@@ -383,216 +436,362 @@ static uintptr_t FindGObjectsByDataScan() {
     return 0;
 }
 
-// Try to find GObjects via MSVC symbol export.
-// The symbol is the global variable itself — exported address IS the FUObjectArray.
-static uintptr_t FindGObjectsByExport() {
-    uintptr_t addr = TrySymbolExport(Sig::EXPORT_GOBJECTARRAY);
+// ============================================================
+// ScanForTarget — Unified AOB scanning engine
+//
+// Iterates all AobSignature entries for a target in priority order.
+// For each pattern: AOBScanAll to find ALL matches, resolve RIP,
+// apply adjustment, validate, and select the best result.
+// Returns the winning address or 0 on failure.
+// ============================================================
+
+using ValidatorFn = bool(*)(uintptr_t);
+
+struct PatternScanResult {
+    const char* id       = nullptr;
+    int         hitCount = 0;
+    uintptr_t   selected = 0;
+    bool        validated = false;
+};
+
+struct ScanReport {
+    const char*                    targetName = "";
+    std::vector<PatternScanResult> results;
+    uintptr_t                      finalAddress = 0;
+    const char*                    winningId    = nullptr;
+};
+
+// Try to resolve a symbol export from any loaded module.
+// Reuses the existing TrySymbolExport helper.
+static uintptr_t ResolveSymbolExport(const AobSignature& sig, ValidatorFn validate) {
+    uintptr_t addr = TrySymbolExport(sig.pattern);
     if (!addr) return 0;
 
-    // The export may point directly to FUObjectArray or to a pointer to it
-    if (ValidateGObjects(addr)) {
-        Logger::Info("SCAN:GObj", "FindGObjectsByExport: Validated at 0x%llX (direct)",
-                 (unsigned long long)addr);
-        return addr;
-    }
+    // Direct validation
+    if (validate(addr)) return addr;
 
+    // Deref and validate
     uintptr_t derefed = 0;
-    if (Mem::ReadSafe(addr, derefed) && derefed && ValidateGObjects(derefed)) {
-        Logger::Info("SCAN:GObj", "FindGObjectsByExport: Validated at 0x%llX (deref'd)",
-                 (unsigned long long)derefed);
+    if (Mem::ReadSafe(addr, derefed) && derefed && validate(derefed))
         return derefed;
-    }
 
-    Logger::Warn("SCAN:GObj", "FindGObjectsByExport: Symbol at 0x%llX failed validation",
-             (unsigned long long)addr);
     return 0;
 }
+
+// Scan the first N bytes of a function body for RIP-relative LEA/MOV
+// instructions and validate each resolved target.
+// Shared by CallFollow and SymbolCallFollow.
+static uintptr_t ScanFunctionBodyForRipRef(
+    uintptr_t funcAddr, const char* sigId, ValidatorFn validate, int scanBytes = 256)
+{
+    for (int off = 0; off + 7 <= scanBytes; ++off) {
+        uint8_t b0 = 0, b1 = 0, b2 = 0;
+        if (!Mem::ReadSafe(funcAddr + off, b0)) break;
+        if (b0 != 0x48 && b0 != 0x4C) continue;
+        if (!Mem::ReadSafe(funcAddr + off + 1, b1)) break;
+        if (b1 != 0x8B && b1 != 0x8D) continue;
+        if (!Mem::ReadSafe(funcAddr + off + 2, b2)) break;
+        if ((b2 & 0x07) != 0x05) continue; // RIP-relative addressing
+
+        uintptr_t target = Mem::ResolveRIP(funcAddr + off, 3, 7);
+        if (!target) continue;
+
+        uintptr_t candidate = target;
+        if (b1 == 0x8B) { // MOV — need deref
+            if (!Mem::ReadSafe(target, candidate) || !candidate) continue;
+        }
+
+        if (validate(candidate)) {
+            LOG_INFO("FuncBodyScan [%s]: Found at 0x%llX (func+0x%X, %s)",
+                     sigId, (unsigned long long)candidate, off,
+                     b1 == 0x8D ? "LEA" : "MOV");
+            return candidate;
+        }
+    }
+    return 0;
+}
+
+// Follow a CALL instruction at callOffset within the matched pattern,
+// then scan the called function's body for RIP-relative references.
+// Used for GNames V7_FNAME_CTOR pattern.
+static uintptr_t ResolveCallFollow(uintptr_t matchAddr, const AobSignature& sig, ValidatorFn validate) {
+    uintptr_t callInstr = matchAddr + sig.callOffset;
+    uint8_t opcode = 0;
+    Mem::ReadSafe(callInstr, opcode);
+    if (opcode != 0xE8) return 0;
+
+    int32_t rel32 = 0;
+    if (!Mem::ReadSafe(callInstr + 1, rel32)) return 0;
+    uintptr_t funcAddr = callInstr + 5 + rel32;
+
+    LOG_DEBUG("CallFollow [%s]: Following CALL to function at 0x%llX",
+              sig.id, (unsigned long long)funcAddr);
+
+    return ScanFunctionBodyForRipRef(funcAddr, sig.id, validate);
+}
+
+// Resolve a MSVC symbol export as a function address, then scan
+// the function body for RIP-relative references to the target global.
+// Used for GNames: FName::ToString/FName::FName export → FNamePool ref.
+static uintptr_t ResolveSymbolCallFollow(const AobSignature& sig, ValidatorFn validate) {
+    uintptr_t funcAddr = TrySymbolExport(sig.pattern);
+    if (!funcAddr) return 0;
+
+    LOG_DEBUG("SymbolCallFollow [%s]: Scanning function body at 0x%llX",
+              sig.id, (unsigned long long)funcAddr);
+
+    return ScanFunctionBodyForRipRef(funcAddr, sig.id, validate);
+}
+
+// Try resolving a single match address according to the signature's resolve strategy.
+// Returns validated address or 0.
+static uintptr_t TryResolveMatch(uintptr_t matchAddr, const AobSignature& sig, ValidatorFn validate) {
+    uintptr_t instrAddr = matchAddr + sig.instrOffset;
+    uintptr_t target = Mem::ResolveRIP(instrAddr, sig.opcodeLen, sig.totalLen);
+    if (!target) return 0;
+
+    // Try with adjustment first (e.g. -0x10), then without
+    auto tryValidate = [&](uintptr_t addr) -> uintptr_t {
+        if (!addr) return 0;
+        // For GWorld write-patterns: check if pointer value is accessible
+        if (sig.target == AobTarget::GWorld) {
+            uintptr_t world = 0;
+            if (!Mem::ReadSafe(addr, world)) return 0;
+            if (!sig.gworldAllowNull && world == 0) return 0;
+            // Basic pointer sanity for non-null values
+            if (world != 0 && (world < 0x10000 || world > 0x00007FFFFFFFFFFF))
+                return 0;
+        }
+        if (validate(addr)) return addr;
+        return 0;
+    };
+
+    // RipDirect or first pass of RipBoth
+    if (sig.resolve == AobResolve::RipDirect || sig.resolve == AobResolve::RipBoth) {
+        if (sig.adjustment != 0) {
+            uintptr_t adjusted = tryValidate(target + sig.adjustment);
+            if (adjusted) return adjusted;
+        }
+        uintptr_t direct = tryValidate(target);
+        if (direct) return direct;
+    }
+
+    // RipDeref or second pass of RipBoth
+    if (sig.resolve == AobResolve::RipDeref || sig.resolve == AobResolve::RipBoth) {
+        uintptr_t value = 0;
+        if (Mem::ReadSafe(target, value) && value) {
+            if (sig.adjustment != 0) {
+                uintptr_t adjusted = tryValidate(value + sig.adjustment);
+                if (adjusted) return adjusted;
+            }
+            uintptr_t derefed = tryValidate(value);
+            if (derefed) return derefed;
+        }
+    }
+
+    return 0;
+}
+
+static uintptr_t ScanForTarget(
+    const AobSignature* patterns, size_t count,
+    ValidatorFn validate, ScanReport& report,
+    bool tryMultiModule)
+{
+    // Sort entries by priority (patterns array is constexpr, so copy pointers)
+    std::vector<const AobSignature*> sorted;
+    sorted.reserve(count);
+    for (size_t i = 0; i < count; ++i) sorted.push_back(&patterns[i]);
+    std::sort(sorted.begin(), sorted.end(),
+              [](const AobSignature* a, const AobSignature* b) { return a->priority < b->priority; });
+
+    for (const AobSignature* sig : sorted) {
+        g_validationDbgCount = 0;  // Reset throttle per pattern
+
+        PatternScanResult pr;
+        pr.id = sig->id;
+
+        // ── Symbol Export (variable) ─────────────────────────
+        if (sig->resolve == AobResolve::SymbolExport) {
+            uintptr_t result = ResolveSymbolExport(*sig, validate);
+            pr.hitCount = result ? 1 : 0;
+            pr.selected = result;
+            pr.validated = (result != 0);
+            report.results.push_back(pr);
+            if (result) {
+                LOG_INFO("[%s] %s: Symbol export -> 0x%llX",
+                         report.targetName, sig->id, (unsigned long long)result);
+                report.finalAddress = result;
+                report.winningId = sig->id;
+                return result;
+            }
+            continue;
+        }
+
+        // ── Symbol Call Follow (function → scan body) ────────
+        if (sig->resolve == AobResolve::SymbolCallFollow) {
+            uintptr_t result = ResolveSymbolCallFollow(*sig, validate);
+            pr.hitCount = result ? 1 : 0;
+            pr.selected = result;
+            pr.validated = (result != 0);
+            report.results.push_back(pr);
+            if (result) {
+                LOG_INFO("[%s] %s: SymbolCallFollow -> 0x%llX",
+                         report.targetName, sig->id, (unsigned long long)result);
+                report.finalAddress = result;
+                report.winningId = sig->id;
+                return result;
+            }
+            continue;
+        }
+
+        // ── CallFollow ───────────────────────────────────────
+        if (sig->resolve == AobResolve::CallFollow) {
+            uintptr_t matchAddr = Mem::AOBScan(sig->pattern);
+            pr.hitCount = matchAddr ? 1 : 0;
+            if (matchAddr) {
+                uintptr_t result = ResolveCallFollow(matchAddr, *sig, validate);
+                pr.selected = result;
+                pr.validated = (result != 0);
+            }
+            report.results.push_back(pr);
+            if (pr.validated) {
+                LOG_INFO("[%s] %s: CallFollow -> 0x%llX",
+                         report.targetName, sig->id, (unsigned long long)pr.selected);
+                report.finalAddress = pr.selected;
+                report.winningId = sig->id;
+                return pr.selected;
+            }
+            continue;
+        }
+
+        // ── AOB pattern (RipDirect / RipDeref / RipBoth) ────
+        // Phase 1: Scan main module
+        std::vector<uintptr_t> matches = Mem::AOBScanAll(sig->pattern);
+
+        // Phase 2: If no matches in main module and multi-module enabled, scan all
+        bool usedMultiModule = false;
+        if (matches.empty() && tryMultiModule) {
+            matches = Mem::AOBScanAllModules(sig->pattern);
+            usedMultiModule = !matches.empty();
+        }
+
+        pr.hitCount = static_cast<int>(matches.size());
+
+        if (matches.empty()) {
+            report.results.push_back(pr);
+            continue;
+        }
+
+        // Try to validate each match
+        uintptr_t bestResult = 0;
+        for (uintptr_t matchAddr : matches) {
+            uintptr_t resolved = TryResolveMatch(matchAddr, *sig, validate);
+            if (resolved) {
+                bestResult = resolved;
+                break; // Take first validated match
+            }
+        }
+
+        // Log suppression summary if validation debug output was throttled
+        if (g_validationDbgCount > kMaxValidationDbgLogs) {
+            LOG_INFO("[%s] %s: Validation debug output throttled (%d entries, showed first %d)",
+                     report.targetName, sig->id, g_validationDbgCount, kMaxValidationDbgLogs);
+        }
+
+        pr.selected = bestResult;
+        pr.validated = (bestResult != 0);
+        report.results.push_back(pr);
+
+        if (bestResult) {
+            if (pr.hitCount > 1) {
+                LOG_INFO("[%s] %s: %d matches%s, validated -> 0x%llX",
+                         report.targetName, sig->id, pr.hitCount,
+                         usedMultiModule ? " (multi-module)" : "",
+                         (unsigned long long)bestResult);
+            } else {
+                LOG_INFO("[%s] %s: Unique match%s -> 0x%llX",
+                         report.targetName, sig->id,
+                         usedMultiModule ? " (multi-module)" : "",
+                         (unsigned long long)bestResult);
+            }
+            report.finalAddress = bestResult;
+            report.winningId = sig->id;
+            return bestResult;
+        }
+
+        // Log non-zero hitCount with no validation
+        LOG_INFO("[%s] %s: %d match(es)%s, none validated",
+                 report.targetName, sig->id, pr.hitCount,
+                 usedMultiModule ? " (multi-module)" : "");
+    }
+
+    return 0;
+}
+
+// Log the scan report summary and per-pattern details for analysis.
+// Output goes to scan.log for post-mortem diagnosis.
+static void LogScanReport(const ScanReport& report) {
+    int totalPatterns = static_cast<int>(report.results.size());
+    int patternsWithHits = 0;
+    int patternsValidated = 0;
+    for (auto& r : report.results) {
+        if (r.hitCount > 0) ++patternsWithHits;
+        if (r.validated) ++patternsValidated;
+    }
+
+    // Summary line
+    if (report.finalAddress) {
+        Logger::Info("SCAN", "=== %s: %d patterns tried, %d with hits, winner: %s -> 0x%llX ===",
+                 report.targetName, totalPatterns, patternsWithHits,
+                 report.winningId ? report.winningId : "?",
+                 (unsigned long long)report.finalAddress);
+    } else {
+        Logger::Warn("SCAN", "=== %s: %d patterns tried, %d with hits, NONE validated ===",
+                 report.targetName, totalPatterns, patternsWithHits);
+    }
+
+    // Per-pattern detail: list all patterns with hits (INFO) and 0-hit (DEBUG)
+    for (auto& r : report.results) {
+        if (r.validated) {
+            Logger::Info("SCAN", "  [%s] %-16s hits=%-4d -> 0x%llX  [WINNER]",
+                     report.targetName, r.id, r.hitCount,
+                     (unsigned long long)r.selected);
+        } else if (r.hitCount > 0) {
+            Logger::Info("SCAN", "  [%s] %-16s hits=%-4d  (not validated)",
+                     report.targetName, r.id, r.hitCount);
+        } else {
+            Logger::Debug("SCAN", "  [%s] %-16s hits=0",
+                      report.targetName, r.id);
+        }
+    }
+}
+
+// ============================================================
+// FindGObjects — unified scan + data-section fallback
+// ============================================================
 
 uintptr_t FindGObjects() {
     Logger::Info("SCAN:GObj", "FindGObjects: Scanning for GObjects...");
 
-    // === Priority 0: Symbol export lookup (O(1), fastest) ===
-    {
-        uintptr_t result = FindGObjectsByExport();
-        if (result) return result;
+    ScanReport report;
+    report.targetName = "GObjects";
+
+    uintptr_t result = ScanForTarget(
+        Sig::GOBJECTS_PATTERNS, std::size(Sig::GOBJECTS_PATTERNS),
+        ValidateGObjects, report, /*tryMultiModule=*/true);
+
+    LogScanReport(report);
+
+    if (!result) {
+        // Fallback: exhaustive data-section pointer scan
+        Logger::Warn("SCAN:GObj", "FindGObjects: All patterns failed, trying data-section scan fallback...");
+        result = FindGObjectsByDataScan();
     }
 
-    // Try all known patterns in order of commonness.
-    // Each resolves the RIP-relative address, then optionally dereferences.
-    // All GObjects instructions are 7-byte RIP-relative loads (opcodeLen=3, totalLen=7).
-    struct { const char* pattern; bool deref; } candidates[] = {
-        { Sig::AOB_GOBJECTS_V2, false }, // 4C 8B 0D — most common in UE5.3+
-        { Sig::AOB_GOBJECTS_V1, false }, // 48 8B 05 — classic UE5.0-5.2
-        { Sig::AOB_GOBJECTS_V6, false }, // 48 8B 0D — alt mov rcx variant
-        { Sig::AOB_GOBJECTS_V7, false }, // 4C 8B 0D; cdq; movzx (GSpots)
-        { Sig::AOB_GOBJECTS_V8, false }, // 4C 8B 0D; bit shift (GSpots)
-        { Sig::AOB_GOBJECTS_V9, false }, // 4C 8B 0D; cdqe; lea (GSpots)
-        { Sig::AOB_GOBJECTS_V3, false }, // 4C 8B 05
-        { Sig::AOB_GOBJECTS_V4, false }, // 48 8B 05 (longer context)
-        { Sig::AOB_GOBJECTS_V5, false }, // 4C 8B 15
-        { Sig::AOB_GOBJECTS_V13, false }, // Palworld: 48 8B 05 + extended context
-        // Retry with extra deref for pointer-to-pointer layouts
-        { Sig::AOB_GOBJECTS_V2, true  },
-        { Sig::AOB_GOBJECTS_V1, true  },
-        { Sig::AOB_GOBJECTS_V6, true  },
-        { Sig::AOB_GOBJECTS_V7, true  },
-        { Sig::AOB_GOBJECTS_V8, true  },
-        { Sig::AOB_GOBJECTS_V9, true  },
-        { Sig::AOB_GOBJECTS_V13, true  }, // Palworld deref
-    };
-
-    for (auto& c : candidates) {
-        uintptr_t result = TryPatternRIP(c.pattern, 3, 7, c.deref);
-        if (result && ValidateGObjects(result)) return result;
+    if (!result) {
+        Logger::Error("SCAN:GObj", "FindGObjects: All patterns and fallback scan failed");
     }
-
-    // === Patternsleuth patterns (RIP instruction at non-zero offset) ===
-    struct { const char* pattern; int instrOffset; int opcodeLen; int totalLen; } psCandidates[] = {
-        { Sig::AOB_GOBJECTS_PS1, 23, 3, 7 },  // cmp/cmp/jne; lea rdx; lea rcx
-        { Sig::AOB_GOBJECTS_PS2,  2, 3, 7 },  // jz; lea rcx
-        { Sig::AOB_GOBJECTS_PS3,  5, 3, 7 },  // jne; mov; lea rcx
-        { Sig::AOB_GOBJECTS_PS4, 16, 3, 7 },  // test; mov; lea r11
-        { Sig::AOB_GOBJECTS_PS5, 12, 3, 7 },  // or; and; mov; lea rcx
-        { Sig::AOB_GOBJECTS_PS6, 14, 2, 6 },  // arithmetic sub eax,[rip+X]
-        { Sig::AOB_GOBJECTS_PS7, 17, 2, 6 },  // arithmetic add ecx,[rip+X]
-    };
-    for (auto& c : psCandidates) {
-        uintptr_t result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen);
-        if (result && ValidateGObjects(result)) return result;
-        // Try with deref for pointer-to-pointer layouts
-        result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen, true);
-        if (result && ValidateGObjects(result)) return result;
-    }
-
-    // === New patterns from RE-UE4SS, UE4 Dumper.CT, UEDumper ===
-
-    // RE1 (FF7 Rebirth): add [rip+X],ecx; dec; cmp; jge — instrOffset=2, resolves via nextInstr(+6)+imm32
-    {
-        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_RE1);
-        if (addr) {
-            // Resolution: nextInstr = addr+6, offset = addr+2
-            uintptr_t target = Mem::ResolveRIP(addr, 2, 6);
-            if (target) {
-                if (ValidateGObjects(target))        return target;
-                if (ValidateGObjects(target - 0x10)) return target - 0x10;
-            }
-        }
-    }
-
-    // RE2 (FF7 Remake extended): mov; mov r8,[rax+rcx*8]; test; jz; ?; ?; ?; setz — needs -0x10
-    // Same as V12 but with more context bytes. Target is ObjObjects field address.
-    {
-        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_RE2);
-        if (addr) {
-            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
-            if (target) {
-                // Try 1: target is address of ObjObjects field, base = target-0x10
-                if (ValidateGObjects(target - 0x10)) return target - 0x10;
-                if (ValidateGObjects(target))        return target;
-                // Try 2: deref
-                uintptr_t value = 0;
-                if (Mem::ReadSafe(target, value) && value) {
-                    if (ValidateGObjects(value - 0x10)) return value - 0x10;
-                    if (ValidateGObjects(value))        return value;
-                }
-            }
-        }
-    }
-
-    // RE3 (Little Nightmares 3 Demo extended context)
-    {
-        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_RE3);
-        if (addr) {
-            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
-            if (target) {
-                if (ValidateGObjects(target))        return target;
-                if (ValidateGObjects(target - 0x10)) return target - 0x10;
-            }
-        }
-    }
-
-    // CT1 (UE4 Dumper.CT): mov r8; lea rax,[rip+X] — instrOffset=5, opcodeLen=3, totalLen=7
-    {
-        uintptr_t result = TryPatternRIPOffset(Sig::AOB_GOBJECTS_CT1, 5, 3, 7);
-        if (result && ValidateGObjects(result)) return result;
-        result = TryPatternRIPOffset(Sig::AOB_GOBJECTS_CT1, 5, 3, 7, true);
-        if (result && ValidateGObjects(result)) return result;
-    }
-
-    // CT3 (UE4 Dumper.CT): mov r8,[rip+X]; cmp [r8+?]
-    {
-        uintptr_t result = TryPatternRIP(Sig::AOB_GOBJECTS_CT3, 3, 7, false);
-        if (result && ValidateGObjects(result)) return result;
-        result = TryPatternRIP(Sig::AOB_GOBJECTS_CT3, 3, 7, true);
-        if (result && ValidateGObjects(result)) return result;
-    }
-
-    // UD1 (UEDumper): mov rax,[rip+X]; mov rcx,[rax+rcx*8]; lea rax,[rcx+rdx*8]; test rax,rax
-    {
-        uintptr_t result = TryPatternRIP(Sig::AOB_GOBJECTS_UD1, 3, 7, false);
-        if (result && ValidateGObjects(result)) return result;
-        result = TryPatternRIP(Sig::AOB_GOBJECTS_UD1, 3, 7, true);
-        if (result && ValidateGObjects(result)) return result;
-    }
-
-    // === Original patterns with special offset adjustments ===
-
-    // V10 (Split Fiction): lea rcx; call; call; mov byte[],1
-    // Resolved address is +0x10 into FUObjectArray — subtract 0x10
-    {
-        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_V10);
-        if (addr) {
-            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
-            if (target) {
-                if (ValidateGObjects(target - 0x10)) return target - 0x10;
-                if (ValidateGObjects(target))        return target;
-            }
-        }
-    }
-
-    // V11 (Little Nightmares 3): lea reg; mov r9,rcx; mov [rcx],rax; mov eax,-1
-    {
-        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_V11);
-        if (addr) {
-            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
-            if (target) {
-                if (ValidateGObjects(target))        return target;
-                if (ValidateGObjects(target - 0x10)) return target - 0x10;
-            }
-        }
-    }
-
-    // V12 (FF7 Remake): mov reg,[rip+X]; mov r8,[rax+rcx*8]; test; jz
-    // The RIP target points to the ObjObjects member inside FUObjectArray.
-    // RE-UE4SS resolves as: target - 0x10 = FUObjectArray base (ObjObjects at +0x10).
-    // Also try deref'd value in case the global is a pointer-to-FUObjectArray.
-    {
-        uintptr_t addr = Mem::AOBScan(Sig::AOB_GOBJECTS_V12);
-        if (addr) {
-            uintptr_t target = Mem::ResolveRIP(addr, 3, 7);
-            if (target) {
-                // Try 1: RE-UE4SS style — target is address of ObjObjects field, base = target-0x10
-                if (ValidateGObjects(target - 0x10)) return target - 0x10;
-                if (ValidateGObjects(target))        return target;
-                // Try 2: deref — *(target) is ObjObjects value (heap pointer), base unknown
-                uintptr_t value = 0;
-                if (Mem::ReadSafe(target, value) && value) {
-                    if (ValidateGObjects(value - 0x10)) return value - 0x10;
-                    if (ValidateGObjects(value))        return value;
-                }
-            }
-        }
-    }
-
-    // Fallback: exhaustive data-section pointer scan
-    Logger::Warn("SCAN:GObj", "FindGObjects: All patterns failed, trying data-section scan fallback...");
-    {
-        uintptr_t result = FindGObjectsByDataScan();
-        if (result) return result;
-    }
-
-    Logger::Error("SCAN:GObj", "FindGObjects: All patterns and fallback scan failed");
-    return 0;
+    return result;
 }
 
 // Validate GNames by checking that FName[0] == "None".
@@ -645,8 +844,9 @@ static bool ValidateGNames(uintptr_t addr) {
                 return true;
             }
 
-            Logger::Debug("SCAN:GNam", "ValidateGNames: offset +0x%02X hdrOff=%d chunk0=0x%llX header=0x%04X lenA=%d lenB=%d name='%.4s'",
-                      off, hdrOff, static_cast<unsigned long long>(chunk0), header, lenA, lenB, name);
+            if (g_validationDbgCount++ < kMaxValidationDbgLogs)
+                Logger::Debug("SCAN:GNam", "ValidateGNames: offset +0x%02X hdrOff=%d chunk0=0x%llX header=0x%04X lenA=%d lenB=%d name='%.4s'",
+                          off, hdrOff, static_cast<unsigned long long>(chunk0), header, lenA, lenB, name);
             return false;
         };
 
@@ -657,7 +857,7 @@ static bool ValidateGNames(uintptr_t addr) {
     }
 
     // Dump the first 128 bytes so we can diagnose the layout manually
-    {
+    if (g_validationDbgCount++ < kMaxValidationDbgLogs) {
         char hexbuf[256];
         int pos = 0;
         for (int i = 0; i < 128 && pos < 200; i += 8) {
@@ -930,61 +1130,6 @@ static uintptr_t FindGNamesByPointerScan() {
     return 0;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// FindGNamesByExport — find FName::ToString or FName::FName via symbol export,
-// then scan inside the function body for RIP-relative references to FNamePool.
-//
-// No game exports FNamePool directly, but many export FName functions that
-// must reference the pool internally. We scan the first 256 bytes of the
-// function for LEA/MOV RIP-relative instructions and validate each target.
-// ─────────────────────────────────────────────────────────────────────────────
-static uintptr_t FindGNamesByExport() {
-    const char* symbols[] = {
-        Sig::EXPORT_FNAME_TOSTRING,
-        Sig::EXPORT_FNAME_CTOR,
-        Sig::EXPORT_FNAME_CTOR_CHAR,
-    };
-
-    for (const char* sym : symbols) {
-        uintptr_t funcAddr = TrySymbolExport(sym);
-        if (!funcAddr) continue;
-
-        Logger::Info("SCAN:GNam", "FindGNamesByExport: Scanning function body at 0x%llX for FNamePool refs ('%s')",
-                 (unsigned long long)funcAddr, sym);
-
-        // Scan first 256 bytes of the function for RIP-relative LEA/MOV
-        // Pattern: REX.W prefix (0x48 or 0x4C) + opcode (0x8B=MOV or 0x8D=LEA) + ModR/M with r/m=101 (RIP)
-        for (int off = 0; off + 7 <= 256; ++off) {
-            uint8_t b0 = 0, b1 = 0, b2 = 0;
-            if (!Mem::ReadSafe(funcAddr + off, b0)) break;
-            if (b0 != 0x48 && b0 != 0x4C) continue;
-            if (!Mem::ReadSafe(funcAddr + off + 1, b1)) break;
-            if (b1 != 0x8B && b1 != 0x8D) continue;
-            if (!Mem::ReadSafe(funcAddr + off + 2, b2)) break;
-            if ((b2 & 0x07) != 0x05) continue;  // RIP-relative addressing
-
-            uintptr_t target = Mem::ResolveRIP(funcAddr + off, 3, 7);
-            if (!target) continue;
-
-            // For MOV (0x8B), target is a pointer — dereference it
-            uintptr_t candidate = target;
-            if (b1 == 0x8B) {
-                if (!Mem::ReadSafe(target, candidate) || !candidate) continue;
-            }
-
-            // Validate as FNamePool
-            if (ValidateGNamesAny(candidate)) {
-                Logger::Info("SCAN:GNam", "FindGNamesByExport: Found FNamePool at 0x%llX (via %s func+0x%X, %s)",
-                         (unsigned long long)candidate, sym, off,
-                         b1 == 0x8D ? "LEA" : "MOV");
-                return candidate;
-            }
-        }
-    }
-
-    return 0;
-}
-
 // Unified GNames validation: tries FNamePool validators first, then UE4 TNameEntryArray.
 // Sets g_isUE4NameArray and g_ue4NameStringOffset if UE4 mode is detected.
 static bool ValidateGNamesAny(uintptr_t addr) {
@@ -1007,209 +1152,59 @@ uintptr_t FindGNames() {
 
     Logger::Info("SCAN:GNam", "FindGNames: Scanning for GNames (FNamePool / TNameEntryArray)...");
 
-    // === Priority 0: Symbol export + function body scan (O(1) lookup) ===
-    {
-        uintptr_t result = FindGNamesByExport();
-        if (result) return result;
+    ScanReport report;
+    report.targetName = "GNames";
+
+    uintptr_t result = ScanForTarget(
+        Sig::GNAMES_PATTERNS, std::size(Sig::GNAMES_PATTERNS),
+        ValidateGNamesAny, report, /*tryMultiModule=*/true);
+
+    LogScanReport(report);
+
+    if (!result) {
+        // All patterns failed — fall back to data-pointer scan
+        Logger::Warn("SCAN:GNam", "FindGNames: All patterns failed, trying pointer scan fallback...");
+        result = FindGNamesByPointerScan();
     }
 
-    // Try each pattern both with and without a pointer dereference:
-    //   deref=false: the LEA resolves directly to the FNamePool object
-    //   deref=true:  the LEA resolves to a FNamePool* pointer we must deref
-    // (Which variant applies depends on how the compiler emitted the reference.)
-    struct { const char* pattern; bool deref; } candidates[] = {
-        { Sig::AOB_GNAMES_V5, false },  // lea rcx; call; mov byte ptr[],1 (extended context)
-        { Sig::AOB_GNAMES_V5, true  },  // lea rcx; call; mov byte ptr[],1; deref
-        { Sig::AOB_GNAMES_V1, false },  // lea rsi; direct
-        { Sig::AOB_GNAMES_V1, true  },  // lea rsi; deref pointer
-        { Sig::AOB_GNAMES_V3, false },  // lea rax; direct
-        { Sig::AOB_GNAMES_V3, true  },  // lea rax; deref pointer
-        { Sig::AOB_GNAMES_V4, false },  // lea r8;  direct
-        { Sig::AOB_GNAMES_V4, true  },  // lea r8;  deref pointer
-        { Sig::AOB_GNAMES_V2, false },  // lea rcx; call; direct
-        { Sig::AOB_GNAMES_V2, true  },  // lea rcx; call; deref pointer
-        { Sig::AOB_GNAMES_V6, false },  // mov rax,[rip+X]; test; jnz (GSpots UE5+)
-        { Sig::AOB_GNAMES_V6, true  },  // mov rax,[rip+X]; test; jnz; deref
-        { Sig::AOB_GNAMES_V8, false },  // Palworld: lea rax,[rip+X]; jmp 0x13 (extended context)
-        { Sig::AOB_GNAMES_V8, true  },  // Palworld deref
-    };
-
-    for (auto& c : candidates) {
-        uintptr_t result = TryPatternRIP(c.pattern, 3, 7, c.deref);
-        if (!result) continue;
-        // Use both original ValidateGNames (checks "None" entry) and
-        // structural validation (FRWLock, CurrentBlock, Blocks sentinel).
-        // Accept if either validates — they check complementary properties.
-        if (ValidateGNamesAny(result)) return result;
+    if (!result) {
+        Logger::Error("SCAN:GNam", "FindGNames: All patterns failed");
     }
+    return result;
+}
 
-    // === Patternsleuth FNamePool patterns (RIP instruction at non-zero offset) ===
-    struct { const char* pattern; int instrOffset; int opcodeLen; int totalLen; } psGNamesCandidates[] = {
-        { Sig::AOB_GNAMES_PS1, 2, 3, 7 },  // jz+9; lea r8,[rip+X]
-        { Sig::AOB_GNAMES_PS2, 7, 3, 7 },  // sub rsp; shr edx; lea rbp,[rip+X]
-    };
-    for (auto& c : psGNamesCandidates) {
-        uintptr_t result = TryPatternRIPOffset(c.pattern, c.instrOffset, c.opcodeLen, c.totalLen);
-        if (result) {
-            if (ValidateGNamesAny(result)) return result;
-            // Try deref for pointer-to-pointer layouts
-            uintptr_t derefed = 0;
-            if (Mem::ReadSafe(result, derefed) && derefed) {
-                if (ValidateGNamesAny(derefed)) return derefed;
-            }
-        }
-    }
-
-    // === New GNames patterns from UE4 Dumper.CT, Dumper-7, UEDumper ===
-
-    // CT1: lea r8,[rip+X]; jmp 0x16; lea rcx; call (UE4 Dumper.CT v6+)
-    {
-        uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_CT1, 3, 7, false);
-        if (result && (ValidateGNamesAny(result))) return result;
-        result = TryPatternRIP(Sig::AOB_GNAMES_CT1, 3, 7, true);
-        if (result && (ValidateGNamesAny(result))) return result;
-    }
-
-    // CT2: lea rcx; call; mov r8,rax; mov byte (UE4 Dumper.CT UE4.23+ main)
-    {
-        uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_CT2, 3, 7, false);
-        if (result && (ValidateGNamesAny(result))) return result;
-        result = TryPatternRIP(Sig::AOB_GNAMES_CT2, 3, 7, true);
-        if (result && (ValidateGNamesAny(result))) return result;
-    }
-
-    // CT3: sub rsp; mov rax,[rip+X]; test; jnz; mov ecx,0x0808 (pre-FNamePool UE4 <4.23)
-    {
-        uintptr_t result = TryPatternRIPOffset(Sig::AOB_GNAMES_CT3, 4, 3, 7);
-        if (result) {
-            if (ValidateGNamesAny(result)) return result;
-            uintptr_t derefed = 0;
-            if (Mem::ReadSafe(result, derefed) && derefed)
-                if (ValidateGNamesAny(derefed)) return derefed;
-        }
-    }
-
-    // CT4: ret; ?; DB; mov [rip+X],rbx (pre-FNamePool write, instrOffset=3)
-    {
-        uintptr_t result = TryPatternRIPOffset(Sig::AOB_GNAMES_CT4, 3, 3, 7);
-        if (result) {
-            uintptr_t derefed = 0;
-            if (Mem::ReadSafe(result, derefed) && derefed)
-                if (ValidateGNamesAny(derefed)) return derefed;
-        }
-    }
-
-    // D7_1 (Dumper-7 basic form): lea rcx; call — same as V2 but shorter context
-    // Already partly covered by V2, but the shorter pattern may hit where V2 misses.
-    {
-        uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_D7_1, 3, 7, false);
-        if (result && (ValidateGNamesAny(result))) return result;
-        result = TryPatternRIP(Sig::AOB_GNAMES_D7_1, 3, 7, true);
-        if (result && (ValidateGNamesAny(result))) return result;
-    }
-
-    // UD2 (UEDumper): lea rcx; call; mov r8,rax; mov byte (extended context)
-    {
-        uintptr_t result = TryPatternRIP(Sig::AOB_GNAMES_UD2, 3, 7, false);
-        if (result && (ValidateGNamesAny(result))) return result;
-        result = TryPatternRIP(Sig::AOB_GNAMES_UD2, 3, 7, true);
-        if (result && (ValidateGNamesAny(result))) return result;
-    }
-
-    // === FName ctor call-site pattern (V7, FF7 Rebirth) ===
-    // This pattern finds a call-site that invokes FName::FName(). We follow the
-    // CALL target, then scan the function body for RIP-relative refs to FNamePool.
-    {
-        uintptr_t callSite = Mem::AOBScan(Sig::AOB_GNAMES_V7_FNAME_CTOR);
-        if (callSite) {
-            // The CALL instruction is at offset +11 in the pattern: E8 xx xx xx xx
-            // Pattern: 41 B8 01 00 00 00 48 8D 4C 24 ?? E8 ?? ?? ?? ?? C6 44 24
-            //          0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15
-            uintptr_t callInstr = callSite + 11;
-            uint8_t callOpcode = 0;
-            Mem::ReadSafe(callInstr, callOpcode);
-
-            if (callOpcode == 0xE8) {
-                int32_t rel32 = 0;
-                if (Mem::ReadSafe(callInstr + 1, rel32)) {
-                    uintptr_t funcAddr = callInstr + 5 + rel32;
-                    Logger::Info("SCAN:GNam", "FindGNames: V7 FName ctor call-site → function at 0x%llX",
-                             (unsigned long long)funcAddr);
-
-                    // Scan function body for RIP-relative refs to FNamePool
-                    for (int off = 0; off + 7 <= 256; ++off) {
-                        uint8_t b0 = 0, b1 = 0, b2 = 0;
-                        if (!Mem::ReadSafe(funcAddr + off, b0)) break;
-                        if (b0 != 0x48 && b0 != 0x4C) continue;
-                        if (!Mem::ReadSafe(funcAddr + off + 1, b1)) break;
-                        if (b1 != 0x8B && b1 != 0x8D) continue;
-                        if (!Mem::ReadSafe(funcAddr + off + 2, b2)) break;
-                        if ((b2 & 0x07) != 0x05) continue;
-
-                        uintptr_t target = Mem::ResolveRIP(funcAddr + off, 3, 7);
-                        if (!target) continue;
-
-                        uintptr_t candidate = target;
-                        if (b1 == 0x8B) {
-                            if (!Mem::ReadSafe(target, candidate) || !candidate) continue;
-                        }
-
-                        if (ValidateGNamesAny(candidate)) {
-                            Logger::Info("SCAN:GNam", "FindGNames: V7 found FNamePool at 0x%llX (func+0x%X)",
-                                     (unsigned long long)candidate, off);
-                            return candidate;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // All AOB patterns failed — fall back to data-pointer scan.
-    Logger::Warn("SCAN:GNam", "FindGNames: All patterns failed, trying pointer scan fallback...");
-    {
-        uintptr_t result = FindGNamesByPointerScan();
-        if (result) return result;
-    }
-
-    Logger::Error("SCAN:GNam", "FindGNames: All patterns failed");
-    return 0;
+// Basic GWorld validator for use with ScanForTarget.
+// GWorld validation is simpler than GObjects/GNames — we just check that the
+// address is readable and, if the pointer is non-null, it looks like a valid
+// heap pointer.  The gworldAllowNull flag in AobSignature controls whether
+// null UWorld* values are accepted (handled in TryResolveMatch).
+static bool ValidateGWorldBasic(uintptr_t addr) {
+    if (!addr) return false;
+    uintptr_t world = 0;
+    if (!Mem::ReadSafe(addr, world)) return false;
+    // A null world is acceptable (write-patterns at startup) — the null
+    // filtering is already handled by TryResolveMatch via gworldAllowNull.
+    // Here we just accept any readable address.
+    if (world == 0) return true;
+    return LooksLikeDataPtr(world);
 }
 
 uintptr_t FindGWorld() {
     Logger::Info("SCAN:GWld", "FindGWorld: Scanning for GWorld...");
 
-    // All GWorld patterns are 7-byte RIP-relative instructions (read or write).
-    // We return the address of the global variable (&GWorld), not the UWorld* value,
-    // so the UI can do live-watch.  The current UWorld* must be non-null to validate
-    // read-patterns; write-patterns are accepted even if currently null (at startup).
-    struct { const char* pattern; bool requireNonNull; } candidates[] = {
-        { Sig::AOB_GWORLD_V1, true  }, // mov rax,[rip+X]; cmp/cmov
-        { Sig::AOB_GWORLD_V2, false }, // mov [rip+X],rax (write — may be null at scan time)
-        { Sig::AOB_GWORLD_V3, true  }, // mov rbx,[rip+X]
-        { Sig::AOB_GWORLD_V4, true  }, // mov rdi,[rip+X]
-        { Sig::AOB_GWORLD_V5, true  }, // cmp [rip+X],rax
-        { Sig::AOB_GWORLD_V6, false }, // mov [rip+X],rbx (write)
-        { Sig::AOB_GWORLD_V7, true  }, // Palworld: mov rbx,[rip+X]; test; jz 0x33; mov r8b
-    };
+    ScanReport report;
+    report.targetName = "GWorld";
 
-    for (auto& c : candidates) {
-        uintptr_t result = TryPatternRIP(c.pattern, 3, 7, false);
-        if (!result) continue;
+    uintptr_t result = ScanForTarget(
+        Sig::GWORLD_PATTERNS, std::size(Sig::GWORLD_PATTERNS),
+        ValidateGWorldBasic, report, /*tryMultiModule=*/true);
 
-        uintptr_t world = 0;
-        Mem::ReadSafe(result, world);
+    LogScanReport(report);
 
-        if (!c.requireNonNull || world != 0) {
-            Logger::Info("SCAN:GWld", "FindGWorld: Found at 0x%llX (value=0x%llX)",
-                     static_cast<unsigned long long>(result),
-                     static_cast<unsigned long long>(world));
-            return result;
-        }
+    if (!result) {
+        Logger::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)");
     }
-
-    Logger::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)");
-    return 0;
+    return result;
 }
 
 // Fast O(1) version detection via PE VERSIONINFO resource.
@@ -1694,6 +1689,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                 childProps = ptr;
                 childPropsOff = off;
                 DynOff::bUseFProperty = false;
+                DynOff::bTaggedFFieldVariant = false;  // UE4 has no tagged FFieldVariant
                 DynOff::UFIELD_NEXT = DynOff::bCasePreservingName ? 0x30 : 0x28;
                 Logger::Info("DYNO", "ValidateAndFixOffsets: FALLBACK — UProperty mode detected. "
                          "Children at struct+0x%02X → 0x%llX (Class='%s')",
