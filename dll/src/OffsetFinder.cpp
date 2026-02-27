@@ -92,6 +92,55 @@ static bool LooksLikeDataPtr(uintptr_t ptr) {
     return true;
 }
 
+// Cyclic class pointer validation (GAP #10):
+// Reads UObject pointers from chunk[0] and follows obj->Class chain.
+// Valid UObjects have a chain that terminates at UClass (Class == itself).
+// Returns true if >= 2 objects pass with any common FUObjectItem stride.
+static bool ValidateCyclicClassChain(uintptr_t chunk0) {
+    if (!chunk0) return false;
+
+    static const int kStrides[] = { 16, 24, 20 };   // UE5 (16), UE4 (24), alt (20) item sizes
+    static const int kScanRange = 20;                // Scan up to 20 slots (early slots may be null)
+    static const int kMinTried = 2;                  // Need at least 2 non-null objects to judge
+    static const int kMinPass = 2;                   // Minimum passing objects
+    static const int kMaxHops = 16;                  // Max class chain depth
+
+    for (int stride : kStrides) {
+        int passed = 0;
+        int tried  = 0;
+
+        for (int i = 0; i < kScanRange; i++) {
+            uintptr_t objPtr = 0;
+            if (!Mem::ReadSafe(chunk0 + i * stride, objPtr) || !objPtr) continue;
+            if (objPtr < 0x10000 || objPtr > 0x00007FFFFFFFFFFF) continue;
+            tried++;
+
+            // Follow Class chain: obj->Class->Class->... looking for self-referential UClass
+            uintptr_t current = objPtr;
+            bool valid = false;
+            for (int hop = 0; hop < kMaxHops; hop++) {
+                uintptr_t cls = 0;
+                if (!Mem::ReadSafe(current + Constants::OFF_UOBJECT_CLASS, cls)) break;
+                if (cls < 0x10000 || cls > 0x00007FFFFFFFFFFF) break;
+
+                // UClass terminates: its ClassPrivate points to itself
+                uintptr_t clsCls = 0;
+                if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_CLASS, clsCls)) break;
+                if (clsCls == cls) { valid = true; break; }
+
+                current = cls;
+            }
+            if (valid) passed++;
+
+            // Early exit: already have enough passing objects
+            if (passed >= kMinPass) break;
+        }
+
+        if (tried >= kMinTried && passed >= kMinPass) return true;
+    }
+    return false;
+}
+
 static bool ValidateGObjects(uintptr_t addr) {
     if (!addr) return false;
 
@@ -133,6 +182,10 @@ static bool ValidateGObjects(uintptr_t addr) {
             if (!LooksLikeDataPtr(chunk0)) continue;
         }
 
+        // Cyclic class chain validation (GAP #10): verify actual UObject instances
+        uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
+        if (!ValidateCyclicClassChain(validateBase)) continue;
+
         Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (preset %s, Num=%d, Max=%d, Objects=0x%llX)",
                  static_cast<unsigned long long>(addr), P.name, num, max,
                  static_cast<unsigned long long>(objPtr));
@@ -164,6 +217,10 @@ static bool ValidateGObjects(uintptr_t addr) {
         } else {
             if (!LooksLikeDataPtr(chunk0)) continue;
         }
+
+        // Cyclic class chain validation (GAP #10): verify actual UObject instances
+        uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
+        if (!ValidateCyclicClassChain(validateBase)) continue;
 
         Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (relaxed %s, Num=%d, Objects=0x%llX, chunk0=0x%llX)",
                  static_cast<unsigned long long>(addr), L.name, numElements,
