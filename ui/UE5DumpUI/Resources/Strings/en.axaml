@@ -9,6 +9,7 @@
     <sys:String x:Key="str.Toolbar.CollapsePointers">Collapse Pointer Nodes</sys:String>
     <sys:String x:Key="str.Toolbar.ArrayLimit">Array Limit:</sys:String>
     <sys:String x:Key="str.Toolbar.ArrayLimitWarn">⚠ High memory usage — may cause crash</sys:String>
+    <sys:String x:Key="str.Toolbar.DropDownLimit">DropDown Limit:</sys:String>
 
     <!-- Tabs -->
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>

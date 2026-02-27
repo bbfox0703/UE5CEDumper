@@ -76,6 +76,20 @@
                      Foreground="#F4A747" FontSize="11"
                      VerticalAlignment="Center" Margin="4,0"
                      IsVisible="{Binding ShowArrayLimitWarning}"/>
+
+          <!-- CE DropDownList max entries slider (2^N steps: 64..8192) -->
+          <TextBlock Text="{StaticResource str.Toolbar.DropDownLimit}"
+                     Foreground="#CCCCCC" FontSize="12"
+                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+          <Slider Value="{Binding DropDownLimitExponent}"
+                  Minimum="6" Maximum="13"
+                  TickFrequency="1" IsSnapToTickEnabled="True"
+                  Width="100"
+                  VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding DropDownLimit}"
+                     Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                     VerticalAlignment="Center" MinWidth="35"
+                     Margin="4,0"/>
         </StackPanel>
       </DockPanel>
     </Border>

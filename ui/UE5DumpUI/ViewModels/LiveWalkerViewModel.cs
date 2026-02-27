@@ -29,6 +29,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private ObservableCollection<BreadcrumbItem> _breadcrumbs = new();
     [ObservableProperty] private ObservableCollection<LiveFieldValue> _fields = new();
     [ObservableProperty] private bool _isLoading;
+    [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private string _currentObjectName = "";
     [ObservableProperty] private string _currentClassName = "";
     [ObservableProperty] private string _currentAddress = "";
@@ -64,6 +65,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Max CE DropDownList entries (2^N, default 512). Used during CE XML export.</summary>
+    public int DropDownLimit { get; set; } = 512;
+
     // Search
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private int _searchMatchCount;
@@ -73,8 +77,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private bool _isAutoRefreshing;
     [ObservableProperty] private int _autoRefreshIntervalSec = Constants.DefaultAutoRefreshIntervalSec;
     [ObservableProperty] private int _autoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
-    [ObservableProperty] private string _autoRefreshStatusText = "";
+    [ObservableProperty] private string _autoRefreshStatusText = "sec";
     private DispatcherTimer? _autoRefreshTimer;
+    private DispatcherTimer? _countdownTimer;
+    private int _countdownRemaining;
     private bool _isAutoRefreshBenchmarked;
     private bool _isAutoRefreshing_InProgress; // Guard against overlapping refreshes
 
@@ -83,6 +89,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
     /// The View subscribes to this and calls ScrollIntoView on the DataGrid.
     /// </summary>
     public event Action<string>? ScrollToFieldRequested;
+
+    /// <summary>
+    /// Raised when the View should scroll the DataGrid to the first search match.
+    /// </summary>
+    public event Action? ScrollToFirstSearchMatch;
+    private string _lastScrolledSearchText = "";
 
     public LiveWalkerViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
     {
@@ -422,6 +434,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             IsLoading = true;
 
             // Pre-resolve StructProperty inner fields via DLL
+            StatusText = "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, new List<LiveFieldValue>(Fields), arrayLimit: ArrayLimit);
 
@@ -430,15 +443,19 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var rootAddress = AddressHelper.FormatAddress(
                 rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
+            StatusText = "Generating CE XML...";
             var xml = CeXmlExportService.GenerateHierarchicalXml(
                 rootAddress, rootBc.Label, Breadcrumbs, Fields, resolvedStructs,
-                collapsePointerNodes: CollapsePointerNodes);
+                collapsePointerNodes: CollapsePointerNodes,
+                maxDropDownEntries: DropDownLimit);
 
             await _platform.CopyToClipboardAsync(xml);
+            StatusText = "";
             _log.Info($"CE XML copied to clipboard for {CurrentClassName} ({resolvedStructs.Count} structs resolved)");
         }
         catch (Exception ex)
         {
+            StatusText = "";
             SetError(ex);
             _log.Error("Failed to export CE XML", ex);
         }
@@ -461,6 +478,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var singleFieldList = new List<LiveFieldValue> { SelectedField };
 
             // Pre-resolve StructProperty inner fields for the selected field
+            StatusText = "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, singleFieldList, arrayLimit: ArrayLimit);
 
@@ -469,15 +487,19 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var rootAddress = AddressHelper.FormatAddress(
                 rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
+            StatusText = "Generating CE Field XML...";
             var xml = CeXmlExportService.GenerateHierarchicalXml(
                 rootAddress, rootBc.Label, Breadcrumbs, singleFieldList, resolvedStructs,
-                collapsePointerNodes: CollapsePointerNodes);
+                collapsePointerNodes: CollapsePointerNodes,
+                maxDropDownEntries: DropDownLimit);
 
             await _platform.CopyToClipboardAsync(xml);
+            StatusText = "";
             _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName})");
         }
         catch (Exception ex)
         {
+            StatusText = "";
             SetError(ex);
             _log.Error("Failed to export CE Field XML", ex);
         }
@@ -530,21 +552,42 @@ public partial class LiveWalkerViewModel : ViewModelBase
     {
         if (string.IsNullOrEmpty(CurrentAddress)) return;
 
+        // Snapshot address before async call — if user navigates while we're awaiting,
+        // CurrentAddress will differ and we discard the stale result.
+        var addressAtStart = CurrentAddress;
+        var breadcrumbCountAtStart = Breadcrumbs.Count;
+
         try
         {
             ClearError();
             IsLoading = true;
 
-            // If refreshing GWorld view, re-fetch the world
-            if (_cachedWorld != null && CurrentAddress == _cachedWorld.WorldAddr)
+            // If refreshing GWorld view (first breadcrumb only), re-fetch the world.
+            // Must check Breadcrumbs.Count == 1 because a sub-World (e.g. S01L04) can share
+            // the same address as GWorld — without this guard, auto-refresh at deeper levels
+            // would incorrectly show the GWorld actor list instead of instance fields.
+            if (_cachedWorld != null && CurrentAddress == _cachedWorld.WorldAddr
+                && Breadcrumbs.Count == 1)
             {
                 var world = await _dump.WalkWorldAsync(500, arrayLimit: ArrayLimit);
+                if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
                 _cachedWorld = world;
                 PopulateFromWorld(world);
                 return;
             }
 
-            var result = await _dump.WalkInstanceAsync(CurrentAddress, arrayLimit: ArrayLimit);
+            // Pass ClassAddr from current breadcrumb (needed for StructProperty context;
+            // without it the DLL interprets struct memory as UObject → garbage → empty grid)
+            string? classAddr = null;
+            if (Breadcrumbs.Count > 0)
+            {
+                var current = Breadcrumbs[^1];
+                if (!string.IsNullOrEmpty(current.ClassAddr))
+                    classAddr = current.ClassAddr;
+            }
+
+            var result = await _dump.WalkInstanceAsync(CurrentAddress, classAddr, arrayLimit: ArrayLimit);
+            if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
             UpdateDisplay(result);
         }
         catch (Exception ex)
@@ -661,19 +704,16 @@ public partial class LiveWalkerViewModel : ViewModelBase
     // Auto-refresh
     // ========================================
 
-    [RelayCommand]
-    private void ToggleAutoRefresh()
+    /// <summary>
+    /// Reacts to IsAutoRefreshing changes (driven by ToggleButton.IsChecked binding).
+    /// Starts or stops the auto-refresh timer accordingly.
+    /// </summary>
+    partial void OnIsAutoRefreshingChanged(bool value)
     {
-        IsAutoRefreshing = !IsAutoRefreshing;
-
-        if (IsAutoRefreshing)
-        {
+        if (value)
             StartAutoRefreshTimer();
-        }
         else
-        {
             StopAutoRefreshTimer();
-        }
     }
 
     partial void OnAutoRefreshIntervalSecChanged(int value)
@@ -689,6 +729,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
         if (_autoRefreshTimer != null && _autoRefreshTimer.IsEnabled)
         {
             _autoRefreshTimer.Interval = TimeSpan.FromSeconds(value);
+            _countdownRemaining = value; // Reset countdown to new interval
         }
     }
 
@@ -704,15 +745,45 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         // Reset benchmark state — first tick will measure refresh duration
         _isAutoRefreshBenchmarked = false;
-        AutoRefreshStatusText = "";
 
+        var interval = Math.Max(AutoRefreshIntervalSec, AutoRefreshMinSec);
         _autoRefreshTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(Math.Max(AutoRefreshIntervalSec, AutoRefreshMinSec))
+            Interval = TimeSpan.FromSeconds(interval)
         };
         _autoRefreshTimer.Tick += OnAutoRefreshTick;
         _autoRefreshTimer.Start();
-        IsAutoRefreshing = true;
+
+        // Start 1-second countdown timer for status display
+        StopCountdownTimer();
+        _countdownRemaining = interval;
+        AutoRefreshStatusText = $"sec · {_countdownRemaining}s";
+        _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _countdownTimer.Tick += OnCountdownTick;
+        _countdownTimer.Start();
+    }
+
+    private void StopCountdownTimer()
+    {
+        if (_countdownTimer != null)
+        {
+            _countdownTimer.Stop();
+            _countdownTimer.Tick -= OnCountdownTick;
+            _countdownTimer = null;
+        }
+    }
+
+    private void OnCountdownTick(object? sender, EventArgs e)
+    {
+        if (_isAutoRefreshing_InProgress)
+        {
+            AutoRefreshStatusText = "sec · refreshing...";
+            return;
+        }
+
+        _countdownRemaining--;
+        if (_countdownRemaining < 0) _countdownRemaining = 0;
+        AutoRefreshStatusText = $"sec · {_countdownRemaining}s";
     }
 
     public void StopAutoRefreshTimer()
@@ -724,12 +795,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
             _autoRefreshTimer = null;
         }
 
+        StopCountdownTimer();
         IsAutoRefreshing = false;
 
         // Reset dynamic minimum and benchmark state on stop (tab switch, navigation, etc.)
         AutoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
         _isAutoRefreshBenchmarked = false;
-        AutoRefreshStatusText = "";
+        AutoRefreshStatusText = "sec";
     }
 
     private async void OnAutoRefreshTick(object? sender, EventArgs e)
@@ -759,7 +831,6 @@ public partial class LiveWalkerViewModel : ViewModelBase
                     var newMin = durationSec + Constants.AutoRefreshBenchmarkBufferSec;
                     AutoRefreshMinSec = newMin;
                     AutoRefreshIntervalSec = newMin;
-                    AutoRefreshStatusText = $"(min {newMin}s, refresh took {durationSec}s)";
 
                     // Restart timer with the new interval
                     if (_autoRefreshTimer != null)
@@ -769,11 +840,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
                     _log.Info($"Auto-refresh: benchmark {durationSec}s, clamped interval to {newMin}s");
                 }
-                else
-                {
-                    AutoRefreshStatusText = $"(refresh took {durationSec}s)";
-                }
             }
+
+            // Reset countdown after refresh completes
+            _countdownRemaining = Math.Max(AutoRefreshIntervalSec, AutoRefreshMinSec);
         }
         catch
         {
@@ -792,11 +862,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
     private void ApplySearch(string query)
     {
-        if (string.IsNullOrWhiteSpace(query))
+        // Require at least 2 characters — single char matches too broadly
+        if (string.IsNullOrWhiteSpace(query) || query.Trim().Length < 2)
         {
             foreach (var f in Fields) f.IsSearchMatch = false;
             SearchMatchCount = 0;
             HasSearchResults = false;
+            _lastScrolledSearchText = "";
         }
         else
         {
@@ -816,6 +888,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
             SearchMatchCount = count;
             HasSearchResults = count > 0;
+
+            // Scroll to first match when search text changes and has results
+            if (count > 0 && query != _lastScrolledSearchText)
+            {
+                _lastScrolledSearchText = query;
+                ScrollToFirstSearchMatch?.Invoke();
+            }
         }
 
         // Force DataGrid to re-evaluate row styles by resetting the collection

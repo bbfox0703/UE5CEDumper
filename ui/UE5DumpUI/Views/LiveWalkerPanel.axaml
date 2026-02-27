@@ -26,7 +26,6 @@
       <!-- Auto-refresh toggle + interval -->
       <ToggleButton Content="{StaticResource str.LiveWalker.AutoRefresh}"
                     IsChecked="{Binding IsAutoRefreshing}"
-                    Command="{Binding ToggleAutoRefreshCommand}"
                     IsVisible="{Binding HasData}"
                     Padding="8,4"
                     ToolTip.Tip="Toggle automatic refresh"/>
@@ -39,12 +38,9 @@
                      FormatString="0"
                      ShowButtonSpinner="True"
                      ToolTip.Tip="Auto-refresh interval (seconds)"/>
-      <TextBlock Text="{StaticResource str.LiveWalker.IntervalSec}"
-                 Foreground="#888" VerticalAlignment="Center" FontSize="11"
-                 IsVisible="{Binding HasData}"/>
       <TextBlock Text="{Binding AutoRefreshStatusText}"
                  Foreground="#888" VerticalAlignment="Center" FontSize="11"
-                 IsVisible="{Binding IsAutoRefreshing}"/>
+                 IsVisible="{Binding HasData}"/>
     </StackPanel>
 
     <!-- Top toolbar row 2: Address + Export -->
@@ -166,6 +162,9 @@
     <!-- Loading indicator -->
     <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                  IsVisible="{Binding IsLoading}" Height="2" Margin="0,0,0,4"/>
+    <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}"
+               Foreground="#AAB8D0" FontSize="11" Margin="4,0,0,2"
+               IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
     <!-- Field list -->
     <DataGrid x:Name="FieldGrid"

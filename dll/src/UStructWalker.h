@@ -114,6 +114,8 @@ struct LiveFieldValue {
     // For EnumProperty / ByteProperty-with-enum
     int64_t     enumValue = 0;      // Raw enum integer value
     std::string enumName;            // Resolved enum name (e.g., "ROLE_Authority")
+    uintptr_t   enumAddr  = 0;      // UEnum* address for CE DropDownList (non-array enums)
+    std::vector<EnumEntry> enumEntries;  // Full UEnum entries for CE DropDownList (non-array enums)
 
     // For StrProperty: decoded FString value
     std::string strValue;            // UTF-8 string from FString (wchar→UTF-8)

@@ -512,10 +512,17 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["struct_type"]       = fv.structTypeName;
                 }
 
-                // EnumProperty: resolved enum name + raw value
+                // EnumProperty / ByteProperty-with-enum: resolved name, value, and full entries
                 if (!fv.enumName.empty()) {
                     fj["enum_name"]  = fv.enumName;
                     fj["enum_value"] = fv.enumValue;
+                }
+                if (fv.enumAddr != 0 && !fv.enumEntries.empty()) {
+                    fj["enum_addr"] = PipeProtocol::AddrToStr(fv.enumAddr);
+                    json enumEntries = json::array();
+                    for (const auto& ee : fv.enumEntries)
+                        enumEntries.push_back({{"v", ee.value}, {"n", ee.name}});
+                    fj["enum_entries"] = enumEntries;
                 }
 
                 // StrProperty: decoded string value

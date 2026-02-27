@@ -304,6 +304,8 @@ public sealed class DumpService : IDumpService
                     StructTypeName = fo["struct_type"]?.GetValue<string>() ?? "",
                     EnumName = fo["enum_name"]?.GetValue<string>() ?? "",
                     EnumValue = fo["enum_value"]?.GetValue<long>() ?? 0,
+                    EnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
+                    EnumEntries = ParseEnumEntries(fo["enum_entries"]),
                     StrValue = fo["str_value"]?.GetValue<string>() ?? "",
                 });
             }

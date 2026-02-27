@@ -124,6 +124,12 @@ public sealed class LiveFieldValue
     /// <summary>For EnumProperty: raw enum integer value.</summary>
     public long EnumValue { get; init; }
 
+    /// <summary>For non-array EnumProperty/ByteProperty: UEnum* address for CE DropDownList sharing.</summary>
+    public string EnumAddr { get; init; } = "";
+
+    /// <summary>For non-array EnumProperty/ByteProperty: full UEnum entries for CE DropDownList.</summary>
+    public List<EnumEntryValue>? EnumEntries { get; init; }
+
     /// <summary>For StrProperty: decoded UTF-8 string value.</summary>
     public string StrValue { get; init; } = "";
 

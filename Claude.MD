@@ -8,40 +8,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Dev Commands
 
-### C++ DLL (dll/)
+### Unified Build Script (PREFERRED — always use this)
 
-The DLL build uses CMake + Ninja + MSVC. Locate Visual Studio toolchain via `vswhere`, not hardcoded paths.
+The `build.ps1` script handles VS DevShell setup, CMake, dotnet, and test execution automatically. **Always use this for building** — bare `cmake` / `dotnet build` commands will fail without the VS DevShell environment.
 
 ```bash
-# Find VS install path (use in scripts)
-vswhere -latest -property installationPath
+# Build everything (DLL + UI + Tests) — Release
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1"
 
-# Configure (from repo root)
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+# Build DLL only
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target DLL
 
-# Build
-cmake --build build --config Release
+# Build UI only
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target UI
 
-# Output: build/UE5Dumper.dll
+# Run tests only
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target Test
+
+# Debug build
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Mode Debug
+
+# Clean + publish (distribution)
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Mode Publish -Clean
 ```
 
-### C# Avalonia UI (ui/)
+> **Why not bare cmake/dotnet?** The C++ DLL requires MSVC x64 environment (include paths, linker). `build.ps1` loads this via `Enter-VsDevShell` automatically. Running `cmake --build` without it causes `fatal error C1083: No such file or directory` for standard headers.
+
+### Manual Commands (reference only — prefer build.ps1)
 
 ```bash
-# Restore packages
-dotnet restore ui/UE5DumpUI.csproj
+# C++ DLL (requires VS DevShell loaded first)
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
 
-# Build
-dotnet build ui/UE5DumpUI.csproj -c Release
-
-# Run
-dotnet run --project ui/UE5DumpUI.csproj
-
-# Run tests
-dotnet test ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj
-
-# Publish single-file exe
-dotnet publish ui/UE5DumpUI.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+# C# UI
+dotnet build "ui/UE5DumpUI/UE5DumpUI.csproj" -c Release
+dotnet test "ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj"
 ```
 
 ### Git Submodules
