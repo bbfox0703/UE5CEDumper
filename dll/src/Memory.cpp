@@ -336,4 +336,181 @@ uintptr_t ResolveRIP(uintptr_t instrAddr, int opcodeLen, int totalLen) {
     return target;
 }
 
+// ============================================================
+// Internal: ScanRegionAll — collect ALL matches in a region
+// ============================================================
+// Same SIMD logic as ScanRegion, but accumulates every match
+// instead of returning on the first one.
+
+static void ScanRegionAll(
+    const uint8_t*       scanStart,
+    size_t               regionSize,
+    const ParsedPattern& pat,
+    std::vector<uintptr_t>& results)
+{
+    const size_t patLen = pat.bytes.size();
+    if (regionSize < patLen) return;
+
+    const size_t maxStart = regionSize - patLen;
+
+    // All-wildcard pattern — no anchor byte to search for
+    if (pat.anchorOffset < 0) {
+        for (size_t i = 0; i <= maxStart; ++i) {
+            bool matched = true;
+            for (size_t j = 0; j < patLen; ++j) {
+                if (pat.mask[j] && scanStart[i + j] != pat.bytes[j]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) results.push_back(reinterpret_cast<uintptr_t>(scanStart + i));
+        }
+        return;
+    }
+
+    const int anchorOff = pat.anchorOffset;
+    const __m256i needle = _mm256_set1_epi8(static_cast<char>(pat.anchorByte));
+
+    // ── SIMD phase ──
+    size_t i = 0;
+    while (i + anchorOff + 32 <= regionSize) {
+        __m256i chunk = _mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(scanStart + i + anchorOff));
+        __m256i cmp  = _mm256_cmpeq_epi8(chunk, needle);
+        uint32_t bits = static_cast<uint32_t>(_mm256_movemask_epi8(cmp));
+
+        while (bits) {
+            unsigned long bitPos;
+            _BitScanForward(&bitPos, bits);
+            const size_t candidate = i + bitPos;
+
+            if (candidate <= maxStart) {
+                const uint8_t* p = scanStart + candidate;
+                bool matched = true;
+                for (size_t j = 0; j < patLen; ++j) {
+                    if (pat.mask[j] && p[j] != pat.bytes[j]) {
+                        matched = false;
+                        break;
+                    }
+                }
+                if (matched) results.push_back(reinterpret_cast<uintptr_t>(p));
+            }
+
+            bits &= bits - 1;
+        }
+        i += 32;
+    }
+
+    // ── Scalar tail ──
+    for (; i <= maxStart; ++i) {
+        bool matched = true;
+        for (size_t j = 0; j < patLen; ++j) {
+            if (pat.mask[j] && scanStart[i + j] != pat.bytes[j]) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) results.push_back(reinterpret_cast<uintptr_t>(scanStart + i));
+    }
+}
+
+// ============================================================
+// Public: AOBScanAll
+// ============================================================
+
+std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
+    std::vector<uintptr_t> results;
+
+    ParsedPattern pat;
+    if (!ParsePattern(pattern, pat)) {
+        LOG_ERROR("AOBScanAll: Failed to parse pattern [%s]", pattern);
+        return results;
+    }
+
+    if (!moduleBase) moduleBase = GetModuleBase(nullptr);
+    if (!moduleBase) {
+        LOG_ERROR("AOBScanAll: Cannot get module base");
+        return results;
+    }
+
+    auto sections = GetExecutableSections(moduleBase);
+    if (sections.empty()) {
+        // Fallback: scan whole module
+        MODULEINFO mi{};
+        if (GetModuleInformation(GetCurrentProcess(),
+                                 reinterpret_cast<HMODULE>(moduleBase), &mi, sizeof(mi))) {
+            ScanRegionAll(reinterpret_cast<const uint8_t*>(moduleBase),
+                          mi.SizeOfImage, pat, results);
+        }
+    } else {
+        for (auto& [secBase, secSize] : sections) {
+            ScanRegionAll(reinterpret_cast<const uint8_t*>(secBase), secSize, pat, results);
+        }
+    }
+
+    LOG_DEBUG("AOBScanAll: %zu matches for [%.40s%s]",
+              results.size(), pattern, (strlen(pattern) > 40 ? "..." : ""));
+    return results;
+}
+
+// ============================================================
+// Public: GetLoadedModules
+// ============================================================
+
+std::vector<ModuleInfo> GetLoadedModules() {
+    std::vector<ModuleInfo> out;
+
+    HMODULE modules[1024];
+    DWORD cbNeeded = 0;
+    if (!EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &cbNeeded))
+        return out;
+
+    DWORD count = static_cast<DWORD>(
+        (std::min)(static_cast<size_t>(cbNeeded / sizeof(HMODULE)), _countof(modules)));
+
+    for (DWORD i = 0; i < count; ++i) {
+        ModuleInfo mi{};
+        mi.hModule = modules[i];
+        mi.base = reinterpret_cast<uintptr_t>(modules[i]);
+
+        MODULEINFO info{};
+        if (GetModuleInformation(GetCurrentProcess(), modules[i], &info, sizeof(info)))
+            mi.size = info.SizeOfImage;
+
+        GetModuleFileNameW(modules[i], mi.name, MAX_PATH);
+        out.push_back(mi);
+    }
+
+    return out;
+}
+
+// ============================================================
+// Public: AOBScanAllModules
+// ============================================================
+
+std::vector<uintptr_t> AOBScanAllModules(const char* pattern) {
+    std::vector<uintptr_t> allResults;
+
+    // Scan main module first (most likely to contain the match)
+    uintptr_t mainBase = GetModuleBase(nullptr);
+    auto mainHits = AOBScanAll(pattern, mainBase);
+    allResults.insert(allResults.end(), mainHits.begin(), mainHits.end());
+
+    // Scan other loaded modules (UE modular builds: Engine, Core DLLs, etc.)
+    auto modules = GetLoadedModules();
+    for (auto& m : modules) {
+        if (m.base == mainBase) continue;  // already scanned
+        if (m.size < 0x10000) continue;    // skip tiny modules (< 64KB)
+
+        auto hits = AOBScanAll(pattern, m.base);
+        if (!hits.empty()) {
+            LOG_DEBUG("AOBScanAllModules: %zu matches in '%ls'",
+                      hits.size(), m.name);
+            allResults.insert(allResults.end(), hits.begin(), hits.end());
+        }
+    }
+
+    return allResults;
+}
+
 } // namespace Mem
