@@ -21,6 +21,7 @@
     <sys:String x:Key="str.ObjectTree.Title">Object Tree</sys:String>
     <sys:String x:Key="str.ObjectTree.Search">Search objects...</sys:String>
     <sys:String x:Key="str.ObjectTree.Load">Load</sys:String>
+    <sys:String x:Key="str.ObjectTree.Reload">Reload</sys:String>
     <sys:String x:Key="str.ObjectTree.Loading">Loading...</sys:String>
     <sys:String x:Key="str.ObjectTree.Count">Objects: {0}</sys:String>
     <sys:String x:Key="str.ObjectTree.CopyClassName">Copy Type</sys:String>

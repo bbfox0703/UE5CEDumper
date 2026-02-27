@@ -174,6 +174,9 @@ public partial class MainWindowViewModel : ViewModelBase
             }
 
             _log.Info(Constants.LogCatInit, $"Connected: UE{state.UEVersion}, {state.ObjectCount} objects, module={state.ModuleName}");
+
+            // Auto-load objects after successful connection
+            _ = ObjectTree.LoadCommand.ExecuteAsync(null);
         }
         catch (Exception ex)
         {
@@ -189,6 +192,7 @@ public partial class MainWindowViewModel : ViewModelBase
         try
         {
             ClearError();
+            ObjectTree.CancelLoadCommand.Execute(null);
             _log.StopProcessMirror();
             await _pipeClient.DisconnectAsync();
             StatusText = "Disconnected";
