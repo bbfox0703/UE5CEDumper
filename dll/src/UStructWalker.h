@@ -106,6 +106,31 @@ struct LiveFieldValue {
     };
     std::vector<ArrayElement> arrayElements;
 
+    // For MapProperty: TMap header info
+    int32_t     mapCount = -1;       // -1 = not a map; ≥0 = actual entry count
+    std::string mapKeyType;          // Key FProperty type name (e.g. "StrProperty")
+    std::string mapValueType;        // Value FProperty type name (e.g. "IntProperty")
+    int32_t     mapKeySize = 0;      // Key element size in bytes
+    int32_t     mapValueSize = 0;    // Value element size in bytes
+
+    // For SetProperty: TSet header info
+    int32_t     setCount = -1;       // -1 = not a set; ≥0 = actual entry count
+    std::string setElemType;         // Element FProperty type name
+    int32_t     setElemSize = 0;     // Element size in bytes
+
+    // For Map/Set: inline element preview (shared structure)
+    struct ContainerElement {
+        int32_t     index = 0;
+        std::string key;           // Map: formatted key; Set: formatted element
+        std::string value;         // Map: formatted value; Set: unused
+        std::string keyHex;
+        std::string valueHex;
+        // For pointer keys/values
+        std::string keyPtrName;
+        std::string valuePtrName;
+    };
+    std::vector<ContainerElement> containerElements;
+
     // For StructProperty: inner struct info
     uintptr_t   structDataAddr  = 0;  // Absolute address of struct data (instanceAddr + offset)
     uintptr_t   structClassAddr = 0;  // UScriptStruct* for the struct type

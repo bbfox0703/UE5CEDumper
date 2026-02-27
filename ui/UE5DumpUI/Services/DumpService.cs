@@ -299,6 +299,16 @@ public sealed class DumpService : IDumpService
                     ArrayElements = ParseArrayElements(fo["elements"]),
                     ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
                     ArrayEnumEntries = ParseEnumEntries(fo["enum_entries"]),
+                    MapCount = fo["map_count"]?.GetValue<int>() ?? -1,
+                    MapKeyType = fo["map_key_type"]?.GetValue<string>() ?? "",
+                    MapValueType = fo["map_value_type"]?.GetValue<string>() ?? "",
+                    MapKeySize = fo["map_key_size"]?.GetValue<int>() ?? 0,
+                    MapValueSize = fo["map_value_size"]?.GetValue<int>() ?? 0,
+                    MapElements = ParseContainerElements(fo["map_elements"]),
+                    SetCount = fo["set_count"]?.GetValue<int>() ?? -1,
+                    SetElemType = fo["set_elem_type"]?.GetValue<string>() ?? "",
+                    SetElemSize = fo["set_elem_size"]?.GetValue<int>() ?? 0,
+                    SetElements = ParseContainerElements(fo["set_elements"]),
                     StructDataAddr = fo["struct_data_addr"]?.GetValue<string>() ?? "",
                     StructClassAddr = fo["struct_class_addr"]?.GetValue<string>() ?? "",
                     StructTypeName = fo["struct_type"]?.GetValue<string>() ?? "",
@@ -541,6 +551,28 @@ public sealed class DumpService : IDumpService
                 Offset = sfObj["o"]?.GetValue<int>() ?? 0,
                 Size = sfObj["s"]?.GetValue<int>() ?? 0,
                 Value = sfObj["v"]?.GetValue<string>() ?? "",
+            });
+        }
+        return result;
+    }
+
+    private static List<ContainerElementValue>? ParseContainerElements(JsonNode? node)
+    {
+        if (node is not JsonArray arr || arr.Count == 0) return null;
+
+        var result = new List<ContainerElementValue>(arr.Count);
+        foreach (var item in arr)
+        {
+            if (item is not JsonObject eo) continue;
+            result.Add(new ContainerElementValue
+            {
+                Index = eo["i"]?.GetValue<int>() ?? 0,
+                Key = eo["k"]?.GetValue<string>() ?? "",
+                Value = eo["v"]?.GetValue<string>() ?? "",
+                KeyHex = eo["kh"]?.GetValue<string>() ?? "",
+                ValueHex = eo["vh"]?.GetValue<string>() ?? "",
+                KeyPtrName = eo["kn"]?.GetValue<string>() ?? "",
+                ValuePtrName = eo["vn"]?.GetValue<string>() ?? "",
             });
         }
         return result;
