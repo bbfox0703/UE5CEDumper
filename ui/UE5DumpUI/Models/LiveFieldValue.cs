@@ -34,6 +34,24 @@ public sealed class ArrayElementValue
 }
 
 /// <summary>
+/// A single element from a Map or Set container.
+/// </summary>
+public sealed class ContainerElementValue
+{
+    public int Index { get; init; }
+    /// <summary>Map: formatted key; Set: formatted element.</summary>
+    public string Key { get; init; } = "";
+    /// <summary>Map: formatted value; Set: unused.</summary>
+    public string Value { get; init; } = "";
+    public string KeyHex { get; init; } = "";
+    public string ValueHex { get; init; } = "";
+    /// <summary>For pointer keys: resolved name.</summary>
+    public string KeyPtrName { get; init; } = "";
+    /// <summary>For pointer values: resolved name.</summary>
+    public string ValuePtrName { get; init; } = "";
+}
+
+/// <summary>
 /// A single enum entry (value + name) for CE DropDownList.
 /// </summary>
 public sealed class EnumEntryValue
@@ -109,6 +127,36 @@ public sealed class LiveFieldValue
     /// <summary>For ArrayProperty (enum/byte-with-enum): full UEnum entries for CE DropDownList.</summary>
     public List<EnumEntryValue>? ArrayEnumEntries { get; init; }
 
+    /// <summary>For MapProperty: entry count (-1 = not a map).</summary>
+    public int MapCount { get; init; } = -1;
+
+    /// <summary>For MapProperty: key type name (e.g. "StrProperty").</summary>
+    public string MapKeyType { get; init; } = "";
+
+    /// <summary>For MapProperty: value type name (e.g. "IntProperty").</summary>
+    public string MapValueType { get; init; } = "";
+
+    /// <summary>For MapProperty: key element size in bytes.</summary>
+    public int MapKeySize { get; init; }
+
+    /// <summary>For MapProperty: value element size in bytes.</summary>
+    public int MapValueSize { get; init; }
+
+    /// <summary>For MapProperty: inline element preview.</summary>
+    public List<ContainerElementValue>? MapElements { get; init; }
+
+    /// <summary>For SetProperty: entry count (-1 = not a set).</summary>
+    public int SetCount { get; init; } = -1;
+
+    /// <summary>For SetProperty: element type name.</summary>
+    public string SetElemType { get; init; } = "";
+
+    /// <summary>For SetProperty: element size in bytes.</summary>
+    public int SetElemSize { get; init; }
+
+    /// <summary>For SetProperty: inline element preview.</summary>
+    public List<ContainerElementValue>? SetElements { get; init; }
+
     /// <summary>For StructProperty: absolute address of struct data (instance + offset).</summary>
     public string StructDataAddr { get; init; } = "";
 
@@ -124,6 +172,12 @@ public sealed class LiveFieldValue
     /// <summary>For EnumProperty: raw enum integer value.</summary>
     public long EnumValue { get; init; }
 
+    /// <summary>For non-array EnumProperty/ByteProperty: UEnum* address for CE DropDownList sharing.</summary>
+    public string EnumAddr { get; init; } = "";
+
+    /// <summary>For non-array EnumProperty/ByteProperty: full UEnum entries for CE DropDownList.</summary>
+    public List<EnumEntryValue>? EnumEntries { get; init; }
+
     /// <summary>For StrProperty: decoded UTF-8 string value.</summary>
     public string StrValue { get; init; } = "";
 
@@ -135,6 +189,8 @@ public sealed class LiveFieldValue
         ArrayCount >= 0 && !string.IsNullOrEmpty(ArrayInnerType)
             ? FormatArrayDisplay()
             : ArrayCount >= 0 ? $"[{ArrayCount} elements]" :
+        MapCount >= 0 ? FormatMapDisplay() :
+        SetCount >= 0 ? FormatSetDisplay() :
         !string.IsNullOrEmpty(StrValue) ? $"\"{StrValue}\"" :
         !string.IsNullOrEmpty(HexValue) ? HexValue :
         "";
@@ -183,5 +239,54 @@ public sealed class LiveFieldValue
             joined += ", ...";
 
         return $"{header} = [{joined}]";
+    }
+
+    private string FormatMapDisplay()
+    {
+        var keyLabel = !string.IsNullOrEmpty(MapKeyType) ? MapKeyType : "?";
+        var valLabel = !string.IsNullOrEmpty(MapValueType) ? MapValueType : "?";
+        var header = $"{{Map: {MapCount}, {keyLabel} \u2192 {valLabel}}}";
+
+        if (MapElements == null || MapElements.Count == 0)
+            return header;
+
+        const int previewCount = 3;
+        var preview = MapElements
+            .Take(previewCount)
+            .Select(e =>
+            {
+                var k = !string.IsNullOrEmpty(e.KeyPtrName) ? e.KeyPtrName
+                    : !string.IsNullOrEmpty(e.Key) ? e.Key : e.KeyHex;
+                var v = !string.IsNullOrEmpty(e.ValuePtrName) ? e.ValuePtrName
+                    : !string.IsNullOrEmpty(e.Value) ? e.Value : e.ValueHex;
+                return $"{k}: {v}";
+            });
+        var joined = string.Join(", ", preview);
+
+        if (MapCount > previewCount)
+            joined += ", ...";
+
+        return $"{header} = {{{joined}}}";
+    }
+
+    private string FormatSetDisplay()
+    {
+        var elemLabel = !string.IsNullOrEmpty(SetElemType) ? SetElemType : "?";
+        var header = $"{{Set: {SetCount}, {elemLabel}}}";
+
+        if (SetElements == null || SetElements.Count == 0)
+            return header;
+
+        const int previewCount = 5;
+        var preview = SetElements
+            .Take(previewCount)
+            .Select(e => !string.IsNullOrEmpty(e.KeyPtrName) ? e.KeyPtrName
+                : !string.IsNullOrEmpty(e.Key) ? e.Key : e.KeyHex);
+        var joined = string.Join(", ", preview);
+
+        if (SetCount > previewCount)
+            joined += ", ...";
+
+        return $"{header} = {{{joined}}}";
     }
 }
