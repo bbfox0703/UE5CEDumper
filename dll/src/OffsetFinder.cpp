@@ -95,46 +95,78 @@ static bool LooksLikeDataPtr(uintptr_t ptr) {
 static bool ValidateGObjects(uintptr_t addr) {
     if (!addr) return false;
 
-    // Try multiple layout candidates for NumElements:
-    //   Layout A/C: Num at +0x14, Objects at +0x00
-    //   Layout B:   Num at +0x04, Objects at +0x10
-    //   Layout D:   Num at +0x1C, Objects at +0x10
-    // For each, we require: (1) NumElements in range, (2) Objects* is a valid data pointer
-    // that can be dereferenced to get chunk[0] (also a valid pointer).
-    struct { int numOff; int objOff; const char* name; } layouts[] = {
+    // --- Tier 1: Try all known presets with full validation ---
+    // Includes chunk consistency checks and decryption support.
+    struct { int objOff; int maxOff; int numOff; int maxCOff; int numCOff; const char* name; } presets[] = {
+        { 0x00, 0x10, 0x14, 0x18, 0x1C, "Default" },
+        { 0x10, 0x00, 0x04, 0x08, 0x0C, "Back4Blood" },
+        { 0x18, 0x10, 0x00, 0x14, 0x20, "Multiversus" },
+        { 0x18, 0x00, 0x14, 0x10, 0x04, "MindsEye" },
+        { 0x10, 0x18, 0x1C, 0x20, 0x24, "UE4-Extended" },
+    };
+
+    for (auto& P : presets) {
+        int32_t num = 0, max = 0;
+        if (!Mem::ReadSafe(addr + P.numOff, num)) continue;
+        if (!Mem::ReadSafe(addr + P.maxOff, max)) continue;
+        if (num < 0x1000 || num > 0x400000) continue;
+        if (max < num || max > 0x800000) continue;
+
+        // Chunk consistency (if chunk offset fields are valid)
+        if (P.maxCOff >= 0 && P.numCOff >= 0) {
+            int32_t numC = 0, maxC = 0;
+            if (!Mem::ReadSafe(addr + P.numCOff, numC)) continue;
+            if (!Mem::ReadSafe(addr + P.maxCOff, maxC)) continue;
+            if (numC < 1 || maxC < 1 || numC > maxC) continue;
+        }
+
+        uintptr_t objPtr = 0;
+        if (!Mem::ReadSafe(addr + P.objOff, objPtr)) continue;
+        objPtr = ObjectArray::DecryptObjectPtr(objPtr);
+
+        uintptr_t chunk0 = 0;
+        if (!Mem::ReadSafe(objPtr, chunk0)) continue;
+
+        if (chunk0 == 0) {
+            if (!LooksLikeDataPtr(objPtr)) continue;
+        } else {
+            if (!LooksLikeDataPtr(chunk0)) continue;
+        }
+
+        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (preset %s, Num=%d, Max=%d, Objects=0x%llX)",
+                 static_cast<unsigned long long>(addr), P.name, num, max,
+                 static_cast<unsigned long long>(objPtr));
+        return true;
+    }
+
+    // --- Tier 2: Relaxed fallback (prevents regression) ---
+    // Only check NumElements range + Objects pointer validity.
+    struct { int numOff; int objOff; const char* name; } relaxed[] = {
         { 0x14, 0x00, "A/C" },
         { 0x04, 0x10, "B"   },
         { 0x1C, 0x10, "D"   },
     };
 
-    for (auto& L : layouts) {
+    for (auto& L : relaxed) {
         int32_t numElements = 0;
         if (!Mem::ReadSafe(addr + L.numOff, numElements)) continue;
         if (numElements < 0x1000 || numElements > 0x400000) continue;
 
         uintptr_t objPtr = 0;
         if (!Mem::ReadSafe(addr + L.objOff, objPtr)) continue;
+        objPtr = ObjectArray::DecryptObjectPtr(objPtr);
 
-        // Objects pointer must be dereferenceable to get chunk[0]
         uintptr_t chunk0 = 0;
         if (!Mem::ReadSafe(objPtr, chunk0)) continue;
 
-        // chunk[0] should be a valid heap pointer (where actual UObject items live).
-        // It can be null in some UE4 games, but if non-null it MUST be a heap pointer
-        // (not inside the game module's loaded image — that would mean we're reading
-        // code/vtable pointers, not a real chunk table).
         if (chunk0 == 0) {
-            // chunk[0] null — might be a valid sparse array, but only accept if objPtr
-            // itself is a heap pointer (not game module). This prevents accepting random
-            // game module addresses that happen to deref to null.
             if (!LooksLikeDataPtr(objPtr)) continue;
         } else {
-            // chunk[0] non-null — it must be a heap/data pointer (not game module code)
             if (!LooksLikeDataPtr(chunk0)) continue;
         }
 
-        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX, NumElements=%d (layout %s, Objects=0x%llX, chunk0=0x%llX)",
-                 static_cast<unsigned long long>(addr), numElements, L.name,
+        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (relaxed %s, Num=%d, Objects=0x%llX, chunk0=0x%llX)",
+                 static_cast<unsigned long long>(addr), L.name, numElements,
                  static_cast<unsigned long long>(objPtr), static_cast<unsigned long long>(chunk0));
         return true;
     }

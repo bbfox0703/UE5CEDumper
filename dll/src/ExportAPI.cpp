@@ -155,6 +155,12 @@ uintptr_t UE5_GetGNamesAddr() {
     return g_cachedGNames;
 }
 
+void UE5_SetObjectDecryption(uintptr_t (*decryptFunc)(uintptr_t)) {
+    ObjectArray::SetDecryptFunc(decryptFunc);
+    LOG_INFO("UE5_SetObjectDecryption: %s",
+             decryptFunc ? "Custom decryption set" : "Decryption cleared");
+}
+
 int32_t UE5_GetObjectCount() {
     return ObjectArray::GetCount();
 }
