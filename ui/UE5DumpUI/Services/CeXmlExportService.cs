@@ -177,6 +177,7 @@ public static class CeXmlExportService
                     ArrayElemSize = f.ArrayElemSize,
                     ArrayStructType = f.ArrayStructType,
                     ArrayElements = f.ArrayElements,
+                    ArrayDataAddr = f.ArrayDataAddr,
                     ArrayEnumAddr = f.ArrayEnumAddr,
                     ArrayEnumEntries = f.ArrayEnumEntries,
                     EnumName = f.EnumName,
@@ -184,6 +185,18 @@ public static class CeXmlExportService
                     EnumAddr = f.EnumAddr,
                     EnumEntries = f.EnumEntries,
                     StrValue = f.StrValue,
+                    MapCount = f.MapCount,
+                    MapKeyType = f.MapKeyType,
+                    MapValueType = f.MapValueType,
+                    MapKeySize = f.MapKeySize,
+                    MapValueSize = f.MapValueSize,
+                    MapDataAddr = f.MapDataAddr,
+                    MapElements = f.MapElements,
+                    SetCount = f.SetCount,
+                    SetElemType = f.SetElemType,
+                    SetElemSize = f.SetElemSize,
+                    SetDataAddr = f.SetDataAddr,
+                    SetElements = f.SetElements,
                 });
             }
         }
@@ -421,6 +434,20 @@ public static class CeXmlExportService
                 continue;
             }
 
+            // MapProperty: emit as group with key/value children per element
+            if (field.TypeName == "MapProperty" && field.MapCount >= 0)
+            {
+                EmitMapProperty(sb, indent, field);
+                continue;
+            }
+
+            // SetProperty: emit as group with element children
+            if (field.TypeName == "SetProperty" && field.SetCount >= 0)
+            {
+                EmitSetProperty(sb, indent, field);
+                continue;
+            }
+
             var ceField = MapCeField(field);
             if (ceField != null)
             {
@@ -512,6 +539,16 @@ public static class CeXmlExportService
                 // Array inside struct — full expansion if element data is available
                 EmitArrayProperty(sb, childIndent, child);
             }
+            else if (child.TypeName == "MapProperty" && child.MapCount >= 0)
+            {
+                // Map inside struct — expand with key/value elements
+                EmitMapProperty(sb, childIndent, child);
+            }
+            else if (child.TypeName == "SetProperty" && child.SetCount >= 0)
+            {
+                // Set inside struct — expand with element entries
+                EmitSetProperty(sb, childIndent, child);
+            }
             // Skip unknown types (delegates, etc.) — they're not useful in CE
         }
 
@@ -543,6 +580,28 @@ public static class CeXmlExportService
             && field.ArrayElements[0].StructFields is { Count: > 0 })
         {
             EmitStructArrayProperty(sb, indent, field, desc);
+            return;
+        }
+
+        // StructProperty array without resolved sub-fields:
+        // Still emit with Offsets=[0] for TArray.Data deref and per-element placeholder groups.
+        // CE users can manually add sub-entries for the struct fields within each element.
+        if (field.ArrayInnerType == "StructProperty"
+            && field.ArrayCount > 0 && field.ArrayElemSize > 0)
+        {
+            EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+            var elemIndent = indent + "  ";
+
+            if (field.ArrayElements is { Count: > 0 })
+            {
+                foreach (var elem in field.ArrayElements)
+                {
+                    int elemByteOffset = elem.Index * field.ArrayElemSize;
+                    EmitGroupPlaceholder(sb, elemIndent, $"[{elem.Index}]", $"+{elemByteOffset:X}", null);
+                }
+            }
+
+            EmitGroupClose(sb, indent);
             return;
         }
 
@@ -732,6 +791,133 @@ public static class CeXmlExportService
         }
 
         EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// Emit a MapProperty as a CE group with per-element children.
+    /// TMap uses TSparseArray internally. Data pointer is at +0x00 (same as TArray).
+    /// Element stride = ComputeSetElementStride(keySize + valueSize).
+    /// Each allocated element: key at +0, value at +keySize within the element.
+    ///
+    /// TSparseArray addressing:
+    /// - Group header: Address=+{fieldOffset}, Offsets=[0] → dereferences TSparseArray.Data pointer
+    /// - Element group: Address=+{allocatedIndex * stride} → element start from Data pointer
+    ///   - Key leaf: Address=+0, type from MapKeyType
+    ///   - Value leaf: Address=+{keySize}, type from MapValueType
+    /// </summary>
+    private static void EmitMapProperty(StringBuilder sb, string indent, LiveFieldValue field)
+    {
+        var keyLabel = !string.IsNullOrEmpty(field.MapKeyType) ? field.MapKeyType : "?";
+        var valLabel = !string.IsNullOrEmpty(field.MapValueType) ? field.MapValueType : "?";
+        var desc = field.MapCount > 0
+            ? $"{field.Name} {{Map: {field.MapCount}, {keyLabel} \u2192 {valLabel}}}"
+            : field.Name;
+
+        // Need key/value type info and elements for addressable CE entries
+        var ceKey = MapInnerTypeToCeField(field.MapKeyType);
+        var ceVal = MapInnerTypeToCeField(field.MapValueType);
+
+        // If types are non-scalar or no elements available, emit as placeholder only
+        if (ceKey == null || ceVal == null
+            || field.MapCount <= 0
+            || field.MapElements == null || field.MapElements.Count == 0
+            || field.MapKeySize <= 0 || field.MapValueSize <= 0)
+        {
+            EmitGroupPlaceholder(sb, indent, desc, $"+{field.Offset:X}", null);
+            return;
+        }
+
+        int pairSize = field.MapKeySize + field.MapValueSize;
+        int stride = ComputeSetElementStride(pairSize);
+
+        // Map group: Address=+{fieldOffset}, Offsets=[0] (deref TSparseArray.Data)
+        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        var elemIndent = indent + "  ";
+
+        foreach (var elem in field.MapElements)
+        {
+            int elemByteOffset = elem.Index * stride;
+            var elemDesc = !string.IsNullOrEmpty(elem.KeyPtrName)
+                ? $"[{elem.Index}] {elem.KeyPtrName}"
+                : !string.IsNullOrEmpty(elem.Key)
+                    ? $"[{elem.Index}] {elem.Key}"
+                    : $"[{elem.Index}]";
+
+            // Element group: inline from Data pointer
+            EmitGroupOpen(sb, elemIndent, elemDesc, $"+{elemByteOffset:X}", null);
+            var fieldIndent = elemIndent + "  ";
+
+            // Key at +0
+            var keyDesc = !string.IsNullOrEmpty(elem.Key) ? $"Key: {elem.Key}" : "Key";
+            EmitLeaf(sb, fieldIndent, keyDesc, ceKey, "+0", null);
+
+            // Value at +keySize
+            var valDesc = !string.IsNullOrEmpty(elem.Value) ? $"Value: {elem.Value}" : "Value";
+            EmitLeaf(sb, fieldIndent, valDesc, ceVal, $"+{field.MapKeySize:X}", null);
+
+            EmitGroupClose(sb, elemIndent);
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// Emit a SetProperty as a CE group with per-element children.
+    /// TSet uses TSparseArray. Data pointer at +0x00.
+    /// Element stride = ComputeSetElementStride(elemSize).
+    ///
+    /// TSparseArray addressing:
+    /// - Group header: Address=+{fieldOffset}, Offsets=[0] → dereferences TSparseArray.Data pointer
+    /// - Element leaf: Address=+{allocatedIndex * stride}, type from SetElemType
+    /// </summary>
+    private static void EmitSetProperty(StringBuilder sb, string indent, LiveFieldValue field)
+    {
+        var elemLabel = !string.IsNullOrEmpty(field.SetElemType) ? field.SetElemType : "?";
+        var desc = field.SetCount > 0
+            ? $"{field.Name} {{Set: {field.SetCount}, {elemLabel}}}"
+            : field.Name;
+
+        var ceElem = MapInnerTypeToCeField(field.SetElemType);
+
+        // Non-scalar, empty, or no elements → placeholder
+        if (ceElem == null
+            || field.SetCount <= 0
+            || field.SetElements == null || field.SetElements.Count == 0
+            || field.SetElemSize <= 0)
+        {
+            EmitGroupPlaceholder(sb, indent, desc, $"+{field.Offset:X}", null);
+            return;
+        }
+
+        int stride = ComputeSetElementStride(field.SetElemSize);
+
+        // Set group: Address=+{fieldOffset}, Offsets=[0] (deref TSparseArray.Data)
+        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        var childIndent = indent + "  ";
+
+        foreach (var elem in field.SetElements)
+        {
+            int elemByteOffset = elem.Index * stride;
+            var elemDesc = !string.IsNullOrEmpty(elem.KeyPtrName)
+                ? $"[{elem.Index}] {elem.KeyPtrName}"
+                : !string.IsNullOrEmpty(elem.Key)
+                    ? $"[{elem.Index}] {elem.Key}"
+                    : $"[{elem.Index}]";
+
+            EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset:X}", null);
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// Compute TSetElement stride: AlignUp(elemSize, 4) + 8 (HashNextId + HashIndex).
+    /// Mirrors Mem::ComputeSetElementStride in the DLL.
+    /// </summary>
+    private static int ComputeSetElementStride(int elemSize)
+    {
+        int hashStart = (elemSize + 3) & ~3;  // align to 4
+        return hashStart + 8;  // + HashNextId(4) + HashIndex(4)
     }
 
     /// <summary>Emit a group header that will contain child entries (opens CheatEntries block).</summary>

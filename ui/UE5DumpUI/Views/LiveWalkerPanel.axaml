@@ -224,6 +224,16 @@
                         BorderThickness="1" BorderBrush="#E5C07B"
                         Cursor="Hand" FontWeight="Bold"
                         ToolTip.Tip="Expand inline struct"/>
+                <!-- Container navigation: bracket icon (Array/Map/Set) -->
+                <Button Content="[]"
+                        Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToContainerCommand}"
+                        CommandParameter="{Binding}"
+                        IsVisible="{Binding IsContainerNavigable}"
+                        Padding="8,2" Margin="2"
+                        Foreground="#61AFEF" Background="Transparent"
+                        BorderThickness="1" BorderBrush="#61AFEF"
+                        Cursor="Hand" FontWeight="Bold"
+                        ToolTip.Tip="View container elements"/>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
