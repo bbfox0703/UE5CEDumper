@@ -106,4 +106,71 @@ inline uintptr_t ReadTArrayElement(const TArrayView& arr, int32_t i) {
     return elem;
 }
 
+// --- TSparseArray reading utilities (for TSet/TMap) ---
+// UE TSparseArray layout within TSet/TMap (0x40 bytes):
+//   +0x00  TArray<ElementOrFreeListLink>  (Data*, Count, Max)
+//   +0x10  TBitArray AllocationFlags
+//          +0x10  InlineData[4] (uint32 x4 = 128 bits inline)
+//          +0x20  SecondaryData* (heap ptr for >128 bits)
+//          +0x28  NumBits (int32)
+//          +0x2C  MaxBits (int32)
+//   +0x38  FirstFreeIndex (int32)
+//   +0x3C  NumFreeIndices (int32)
+struct TSparseArrayView {
+    uintptr_t Data         = 0;     // Element data pointer
+    int32_t   MaxIndex     = 0;     // Total slots (allocated + free)
+    int32_t   MaxCapacity  = 0;     // TArray::Max
+    int32_t   NumFreeIndices = 0;   // Free slot count
+    // Allocation flags
+    uint32_t  inlineBits[4] = {};   // First 128 bits inline
+    uintptr_t secondaryData = 0;    // Heap pointer for >128 bits
+    int32_t   numBits      = 0;     // Total bit count
+};
+
+// Read a TSparseArray header from memory. Returns true if valid.
+inline bool ReadTSparseArray(uintptr_t addr, TSparseArrayView& out) {
+    out = {};
+    if (!addr) return false;
+    // TArray header at +0x00
+    if (!ReadSafe(addr + 0x00, out.Data)) return false;
+    if (!ReadSafe(addr + 0x08, out.MaxIndex)) return false;
+    if (!ReadSafe(addr + 0x0C, out.MaxCapacity)) return false;
+    // Sanity: MaxIndex should be reasonable
+    if (out.MaxIndex < 0 || out.MaxIndex > 0x100000) { out = {}; return false; }
+    if (out.MaxCapacity < out.MaxIndex) { out = {}; return false; }
+    // Allocation flags inline data (4 x uint32 at +0x10)
+    for (int i = 0; i < 4; ++i)
+        ReadSafe(addr + 0x10 + i * 4, out.inlineBits[i]);
+    // Secondary data pointer at +0x20
+    ReadSafe(addr + 0x20, out.secondaryData);
+    // NumBits at +0x28
+    ReadSafe(addr + 0x28, out.numBits);
+    // NumFreeIndices at +0x3C
+    ReadSafe(addr + 0x3C, out.NumFreeIndices);
+    return true;
+}
+
+// Check if a sparse array index is allocated (bit set in AllocationFlags).
+inline bool IsSparseIndexAllocated(const TSparseArrayView& sa, int32_t index) {
+    if (index < 0 || index >= sa.numBits) return false;
+    int wordIdx = index / 32;
+    int bitIdx  = index % 32;
+    uint32_t word = 0;
+    if (wordIdx < 4) {
+        word = sa.inlineBits[wordIdx];
+    } else if (sa.secondaryData) {
+        ReadSafe(sa.secondaryData + wordIdx * 4, word);
+    } else {
+        return false;
+    }
+    return (word & (1u << bitIdx)) != 0;
+}
+
+// Compute TSetElement stride: { T value; int32 HashNextId; int32 HashIndex; }
+// HashNextId is aligned to 4 bytes after the value.
+inline int32_t ComputeSetElementStride(int32_t elemSize) {
+    int32_t hashStart = (elemSize + 3) & ~3;  // align to 4
+    return hashStart + 8;  // + HashNextId(4) + HashIndex(4)
+}
+
 } // namespace Mem

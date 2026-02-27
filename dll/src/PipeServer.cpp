@@ -505,6 +505,49 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     }
                 }
 
+                // MapProperty: key/value type info + inline elements
+                if (fv.mapCount >= 0) {
+                    fj["map_count"]      = fv.mapCount;
+                    fj["map_key_type"]   = fv.mapKeyType;
+                    fj["map_value_type"] = fv.mapValueType;
+                    fj["map_key_size"]   = fv.mapKeySize;
+                    fj["map_value_size"] = fv.mapValueSize;
+                    if (!fv.containerElements.empty()) {
+                        json elems = json::array();
+                        for (const auto& e : fv.containerElements) {
+                            json ej;
+                            ej["i"] = e.index;
+                            ej["k"] = e.key;
+                            ej["v"] = e.value;
+                            if (!e.keyHex.empty())   ej["kh"] = e.keyHex;
+                            if (!e.valueHex.empty()) ej["vh"] = e.valueHex;
+                            if (!e.keyPtrName.empty())   ej["kn"] = e.keyPtrName;
+                            if (!e.valuePtrName.empty()) ej["vn"] = e.valuePtrName;
+                            elems.push_back(ej);
+                        }
+                        fj["map_elements"] = elems;
+                    }
+                }
+
+                // SetProperty: element type info + inline elements
+                if (fv.setCount >= 0) {
+                    fj["set_count"]     = fv.setCount;
+                    fj["set_elem_type"] = fv.setElemType;
+                    fj["set_elem_size"] = fv.setElemSize;
+                    if (!fv.containerElements.empty()) {
+                        json elems = json::array();
+                        for (const auto& e : fv.containerElements) {
+                            json ej;
+                            ej["i"] = e.index;
+                            ej["k"] = e.key;
+                            if (!e.keyHex.empty()) ej["kh"] = e.keyHex;
+                            if (!e.keyPtrName.empty()) ej["kn"] = e.keyPtrName;
+                            elems.push_back(ej);
+                        }
+                        fj["set_elements"] = elems;
+                    }
+                }
+
                 // StructProperty: inner struct info
                 if (fv.structDataAddr != 0) {
                     fj["struct_data_addr"]  = PipeProtocol::AddrToStr(fv.structDataAddr);
@@ -512,10 +555,17 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["struct_type"]       = fv.structTypeName;
                 }
 
-                // EnumProperty: resolved enum name + raw value
+                // EnumProperty / ByteProperty-with-enum: resolved name, value, and full entries
                 if (!fv.enumName.empty()) {
                     fj["enum_name"]  = fv.enumName;
                     fj["enum_value"] = fv.enumValue;
+                }
+                if (fv.enumAddr != 0 && !fv.enumEntries.empty()) {
+                    fj["enum_addr"] = PipeProtocol::AddrToStr(fv.enumAddr);
+                    json enumEntries = json::array();
+                    for (const auto& ee : fv.enumEntries)
+                        enumEntries.push_back({{"v", ee.value}, {"n", ee.name}});
+                    fj["enum_entries"] = enumEntries;
                 }
 
                 // StrProperty: decoded string value
