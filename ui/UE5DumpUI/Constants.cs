@@ -19,10 +19,11 @@ public static class Constants
     public const string LogSubfolderName = "UE5DumpUI";      // UI module subfolder under Logs/
     public const string MirrorLogPrefix = "ui";               // Prefix for mirror files in game folders
     public const int LogRotateMax = 2;                        // 2-file rotation per category
-    public const long LogMaxSizeBytes = 5 * 1024 * 1024;     // 5MB per file
+    public const long LogMaxSizeBytes = 8 * 1024 * 1024;     // 8MB per file
 
     // Per-process mirror logging
     public const int MaxProcessFolders = 20;           // Clean up oldest beyond this
+    public const int LogMaxAgeDays = 15;               // Delete log folders older than this
 
     // Log category names
     public const string LogCatInit = "init";

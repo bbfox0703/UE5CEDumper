@@ -60,6 +60,9 @@ public sealed class LoggingService : ILoggingService, IDisposable
         // Also clean root for leftover old-format files
         CleanupOldDailyLogs(logDirectory, "UE5DumpUI");
 
+        // Delete log folders older than 15 days
+        CleanupOldLogFolders(Constants.LogMaxAgeDays);
+
         // Per-startup rotation for each category file
         foreach (var cat in CategoryNames)
         {
@@ -334,6 +337,51 @@ public sealed class LoggingService : ILoggingService, IDisposable
         catch
         {
             // Best effort
+        }
+    }
+
+    /// <summary>
+    /// Delete log subfolders (and their contents) that haven't been written to
+    /// for more than <paramref name="maxAgeDays"/> days.
+    /// Runs at UI startup to prevent unbounded log accumulation.
+    /// The UI module folder (UE5DumpUI) is never deleted.
+    /// </summary>
+    private void CleanupOldLogFolders(int maxAgeDays)
+    {
+        try
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-maxAgeDays);
+            var dirs = Directory.GetDirectories(_logDirectory)
+                .Select(d => new DirectoryInfo(d))
+                .Where(d => d.Name != "." && d.Name != "..")
+                .ToList();
+
+            foreach (var dir in dirs)
+            {
+                // Never delete the UI module's own folder
+                if (string.Equals(dir.Name, Constants.LogSubfolderName,
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (dir.LastWriteTimeUtc < cutoff)
+                {
+                    try
+                    {
+                        dir.Delete(true);
+                        _initLogger.Information(
+                            "Deleted old log folder (>{MaxAge}d): {Folder}",
+                            maxAgeDays, dir.Name);
+                    }
+                    catch
+                    {
+                        // Best effort — folder may be locked by another process
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Best effort — don't prevent app startup
         }
     }
 }

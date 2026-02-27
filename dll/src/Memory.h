@@ -6,6 +6,7 @@
 
 #include <Windows.h>
 #include <cstdint>
+#include <vector>
 
 namespace Mem {
 
@@ -50,6 +51,25 @@ size_t GetModuleSize(const wchar_t* moduleName = nullptr);
 // Pattern format: "48 8B 05 ?? ?? ?? ??" where ?? is wildcard
 // Returns first match address, or 0 on failure
 uintptr_t AOBScan(const char* pattern, uintptr_t start = 0, size_t size = 0);
+
+// AOBScanAll: returns ALL match addresses for the given pattern.
+// Scans executable sections of a specific module (moduleBase=0 → main module).
+std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase = 0);
+
+// Loaded module info
+struct ModuleInfo {
+    HMODULE   hModule = nullptr;
+    uintptr_t base    = 0;
+    size_t    size    = 0;
+    wchar_t   name[MAX_PATH] = {};
+};
+
+// Get all loaded modules in the current process
+std::vector<ModuleInfo> GetLoadedModules();
+
+// AOBScanAll across ALL loaded modules (main EXE + DLLs).
+// Returns all match addresses found in any module.
+std::vector<uintptr_t> AOBScanAllModules(const char* pattern);
 
 // Resolve RIP-relative address
 // instrAddr: address of the instruction start

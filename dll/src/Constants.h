@@ -14,7 +14,7 @@ namespace Constants {
 constexpr const wchar_t* LOG_FOLDER_NAME  = L"UE5CEDumper";
 constexpr const wchar_t* LOG_SUBFOLDER    = L"Logs";
 constexpr int            LOG_ROTATE_MAX   = 2;        // 2-file rotation per category
-constexpr size_t         LOG_MAX_SIZE_MB  = 5;
+constexpr size_t         LOG_MAX_SIZE_MB  = 8;
 constexpr size_t         LOG_MAX_SIZE     = LOG_MAX_SIZE_MB * 1024 * 1024;
 
 // --- Named Pipe ---
