@@ -37,21 +37,22 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 | Feature | Description |
 |---|---|
-| **AOB Scanning** | 50+ patterns from 6 sources. Supports `FChunkedFixed` and `FFixed` object arrays. |
+| **AOB Scanning** | 87 entries (82 patterns + 5 exports) from 6 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. |
 | **DynOff (Dynamic Offsets)** | Runtime probing of `FField`, `FProperty`, and `UStruct`. No more manual offset updating after game patches. |
-| **Live Walker** | Inspect instance memory data with real-time value updates. |
+| **Live Walker** | Inspect instance memory data with real-time value updates. Navigate into pointers (→), inline structs ({}), and containers ([]). Breadcrumb trail for full navigation history. |
+| **Container Drill-Down** | Drill into **Array**, **Map**, and **Set** containers. ObjectProperty elements show resolved names and support click-through navigation. |
 | **Instance Finder** | Locate all active objects of a class instantly. One-click to open in Live Walker. |
-| **One-Click CE Export** | Generate CE XML address records (including bitfields for booleans) and paste directly into your address list. |
+| **One-Click CE Export** | Generate CE XML address records — scalars, bitfields, structs, arrays, **Map/Set**, and **UEnum DropDownLists**. Paste directly into your address list. |
 | **Modern UI** | External **Avalonia UI** connected via high-speed Named Pipe. Keep your game performance smooth. |
 
 ---
 
 ## Architecture & Workflow
 
-1.  **Inject DLL**: Run Cheat Engine, attach game process, load saves. Be sure game progress loaded. Run `UE5CEDumper.CT`.
-2.  **Enable Script**: Enable `init <== enable after process attached` script, then `Inject DLL + Start Pipe Server`. The DLL locates global engine pointers and detects the UE version/layout automatically.
-3.  **Pipe Stream**: Waiting for seconds. Execute **UE5DumpUI.exe**. Live data is streamed to the **UE5DumpUI** via Named Pipes (JSON-RPC).
-4.  **Navigate, Analyze**: Browse the `UObject` hierarchy, find class, or paste HP/MP address in UI to perform a reverse lookup, and export data to CE.
+1.  **Inject DLL**: Run Cheat Engine, attach game process, load a save. Make sure game data is loaded first. Open `UE5CEDumper.CT`.
+2.  **Enable Script**: Enable `init <== enable after process attached`, then `Inject DLL + Start Pipe Server`. The DLL locates global engine pointers and detects the UE version/layout automatically.
+3.  **Connect UI**: Wait a few seconds for the scan to finish. Launch **UE5DumpUI.exe** and click **Connect**. Live data streams to the UI via Named Pipes (JSON-RPC).
+4.  **Navigate & Analyze**: Browse the `UObject` hierarchy, find a class, drill into containers, or paste an address from CE to reverse-lookup and export.
 
 | **Game Process (Injected)** |
 | :---: |
@@ -85,8 +86,9 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 ## Important Notes
 
-* **Custom Data Structures**: In games like *FF7 Rebirth*, some critical data (e.g., HP) is stored in custom structures outside standard `UObjects`. Use the **Live Walker** to investigate these memory regions.
+* **Custom Data Structures**: In games like *FF7 Rebirth*, some critical data (e.g., HP) is stored in custom structures outside standard `UObjects`. The Live Walker can help investigate these regions, but direct discovery is not possible.
 * **GWorld Connectivity**: `GWorld` traversal works in ~60% of tested games. For others, use the **Object Tree** or **Instance Finder** as the primary entry point.
+* **Container Limits**: Array/Map/Set element reading respects a configurable limit to avoid excessive memory reads. Adjust the **Array Limit** slider in the Live Walker when working with large containers.
 
 ---
 
