@@ -23,9 +23,13 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private int _selectedAddressFormatIndex;
     [ObservableProperty] private bool _collapsePointerNodes;
     [ObservableProperty] private int _arrayLimitExponent = 6; // 2^6 = 64
+    [ObservableProperty] private int _dropDownLimitExponent = 9; // 2^9 = 512
 
     /// <summary>Computed array element limit: 2^ArrayLimitExponent (2..4096).</summary>
     public int ArrayLimit => 1 << ArrayLimitExponent;
+
+    /// <summary>Computed CE DropDownList max entries: 2^DropDownLimitExponent (64..8192).</summary>
+    public int DropDownLimit => 1 << DropDownLimitExponent;
 
     /// <summary>Show warning when array limit exceeds default 64.</summary>
     public bool ShowArrayLimitWarning => ArrayLimitExponent > 6;
@@ -76,6 +80,13 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowArrayLimitWarning));
         LiveWalker.ArrayLimit = ArrayLimit;
         InstanceFinder.ArrayLimit = ArrayLimit;
+    }
+
+    partial void OnDropDownLimitExponentChanged(int value)
+    {
+        OnPropertyChanged(nameof(DropDownLimit));
+        LiveWalker.DropDownLimit = DropDownLimit;
+        InstanceFinder.DropDownLimit = DropDownLimit;
     }
 
     public MainWindowViewModel(

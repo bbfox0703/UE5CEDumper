@@ -41,7 +41,8 @@ public static class CeXmlExportService
     private const int MaxStructDepth = 5;
 
     /// <summary>Max entries for a CE DropDownList. Lists exceeding this are omitted.</summary>
-    private const int MaxDropDownEntries = 3000;
+    [ThreadStatic]
+    private static int _maxDropDownEntries;
 
     /// <summary>
     /// Tracks emitted DropDownList owners by UEnum address → parent group's Description.
@@ -180,6 +181,8 @@ public static class CeXmlExportService
                     ArrayEnumEntries = f.ArrayEnumEntries,
                     EnumName = f.EnumName,
                     EnumValue = f.EnumValue,
+                    EnumAddr = f.EnumAddr,
+                    EnumEntries = f.EnumEntries,
                     StrValue = f.StrValue,
                 });
             }
@@ -211,7 +214,8 @@ public static class CeXmlExportService
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         IReadOnlyList<LiveFieldValue> currentFields,
         Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
-        bool collapsePointerNodes = false)
+        bool collapsePointerNodes = false,
+        int maxDropDownEntries = 512)
     {
         // Clean breadcrumbs: remove navigation cycles (e.g., Child->Parent->Child)
         // before generating XML to avoid deeply nested duplicate pointer chains.
@@ -219,6 +223,7 @@ public static class CeXmlExportService
 
         _nextId = 100;
         _collapsePointerNodes = collapsePointerNodes;
+        _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
         _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
         var sb = new StringBuilder();
@@ -280,10 +285,12 @@ public static class CeXmlExportService
         string className,
         IReadOnlyList<LiveFieldValue> fields,
         Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
-        bool collapsePointerNodes = false)
+        bool collapsePointerNodes = false,
+        int maxDropDownEntries = 512)
     {
         _nextId = 100;
         _collapsePointerNodes = collapsePointerNodes;
+        _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
         _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
         var sb = new StringBuilder();
@@ -417,8 +424,12 @@ public static class CeXmlExportService
             var ceField = MapCeField(field);
             if (ceField != null)
             {
-                EmitLeaf(sb, indent, field.Name, ceField,
-                    $"+{field.Offset:X}", null);
+                // Non-array EnumProperty/ByteProperty: DropDownList support
+                var ddLink = TryGetEnumDropDown(field);
+                EmitLeaf(sb, indent, ddLink.desc ?? field.Name, ceField,
+                    $"+{field.Offset:X}", null,
+                    dropDownContent: ddLink.content,
+                    dropDownListLink: ddLink.link);
             }
             else if (field.IsNavigable)
             {
@@ -426,6 +437,36 @@ public static class CeXmlExportService
                     $"+{field.Offset:X}", null);
             }
         }
+    }
+
+    /// <summary>
+    /// Check if a non-array enum field should have a DropDownList.
+    /// Returns (content, link, desc): content for first occurrence, link for shared reuse,
+    /// desc = unique description to use in the CE entry (ensures DropDownListLink matching).
+    /// </summary>
+    private static (string? content, string? link, string? desc) TryGetEnumDropDown(LiveFieldValue field)
+    {
+        if (field.TypeName is not ("EnumProperty" or "ByteProperty")) return (null, null, null);
+        if (field.EnumEntries is not { Count: > 0 }) return (null, null, null);
+
+        var maxDd = _maxDropDownEntries > 0 ? _maxDropDownEntries : 512;
+        if (field.EnumEntries.Count > maxDd) return (null, null, null);
+
+        _dropDownOwners ??= new Dictionary<string, string>();
+        var enumKey = field.EnumAddr;
+
+        if (!string.IsNullOrEmpty(enumKey) && _dropDownOwners.TryGetValue(enumKey, out var existing))
+        {
+            // Shared: link to first occurrence
+            return (null, existing, null);
+        }
+
+        // First occurrence: emit DropDownList content; use unique description for link matching
+        var content = BuildDropDownContent(field.EnumEntries.Select(e => (e.Value, e.Name)));
+        var desc = EnsureUniqueDropDownDesc(field.Name);
+        if (!string.IsNullOrEmpty(enumKey))
+            _dropDownOwners[enumKey] = desc;
+        return (content, null, desc);
     }
 
     /// <summary>
@@ -454,8 +495,11 @@ public static class CeXmlExportService
             if (ceField != null)
             {
                 // Scalar child: offset relative to struct start
-                EmitLeaf(sb, childIndent, child.Name, ceField,
-                    $"+{child.Offset:X}", null);
+                var ddLink = TryGetEnumDropDown(child);
+                EmitLeaf(sb, childIndent, ddLink.desc ?? child.Name, ceField,
+                    $"+{child.Offset:X}", null,
+                    dropDownContent: ddLink.content,
+                    dropDownListLink: ddLink.link);
             }
             else if (child.IsPointerNavigation)
             {
@@ -518,15 +562,16 @@ public static class CeXmlExportService
         _dropDownOwners ??= new Dictionary<string, string>();
         string? dropDownContent = null;
         string? dropDownLinkTarget = null;
+        var maxDd = _maxDropDownEntries > 0 ? _maxDropDownEntries : 512;
         bool isEnumArray = field.ArrayInnerType is "EnumProperty" or "ByteProperty"
-            && field.ArrayEnumEntries is { Count: > 0 and <= MaxDropDownEntries };
+            && field.ArrayEnumEntries is { Count: > 0 } && field.ArrayEnumEntries.Count <= maxDd;
         bool isNameArray = field.ArrayInnerType == "NameProperty"
-            && field.ArrayElements is { Count: > 0 and <= MaxDropDownEntries };
+            && field.ArrayElements is { Count: > 0 } && field.ArrayElements.Count <= maxDd;
         // Fallback: enum/byte array with per-element enum names but no full UEnum entries list.
         // Build DropDownList from element values (like NameProperty), no sharing.
         bool isEnumFallback = !isEnumArray
             && field.ArrayInnerType is "EnumProperty" or "ByteProperty"
-            && field.ArrayElements is { Count: > 0 and <= MaxDropDownEntries }
+            && field.ArrayElements is { Count: > 0 } && field.ArrayElements.Count <= maxDd
             && field.ArrayElements.Any(e => !string.IsNullOrEmpty(e.EnumName));
 
         if (isEnumArray)
@@ -751,13 +796,16 @@ public static class CeXmlExportService
     /// </summary>
     private static void EmitLeaf(StringBuilder sb, string indent, string description,
         CeFieldInfo ceField, string address, int[]? offsets,
-        string? dropDownListLink = null)
+        string? dropDownContent = null, string? dropDownListLink = null)
     {
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{description}\"</Description>");
-        // CE DropDownListLink: element content referencing the parent group's Description
-        if (dropDownListLink != null)
+        // CE DropDownList: inline list content (first occurrence of this enum)
+        if (dropDownContent != null)
+            sb.AppendLine($"{indent}  <DropDownList DisplayValueAsItem=\"1\">{dropDownContent}</DropDownList>");
+        // CE DropDownListLink: reference to another entry's DropDownList
+        else if (dropDownListLink != null)
             sb.AppendLine($"{indent}  <DropDownListLink>{EscapeXmlContent(dropDownListLink)}</DropDownListLink>");
         if (ceField.ShowAsHex)
             sb.AppendLine($"{indent}  <ShowAsHex>1</ShowAsHex>");

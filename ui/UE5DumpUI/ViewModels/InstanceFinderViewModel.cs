@@ -41,6 +41,9 @@ public partial class InstanceFinderViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Max CE DropDownList entries (2^N, default 512). Used during CE XML export.</summary>
+    public int DropDownLimit { get; set; } = 512;
+
     // --- Class name search ---
     [ObservableProperty] private string _searchClassName = "";
     [ObservableProperty] private ObservableCollection<InstanceResult> _instances = new();
@@ -237,6 +240,7 @@ public partial class InstanceFinderViewModel : ViewModelBase
             IsLoadingFields = true;
 
             // Pre-resolve StructProperty inner fields via DLL
+            StatusText = "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, new List<LiveFieldValue>(Fields), arrayLimit: ArrayLimit);
 
@@ -244,16 +248,20 @@ public partial class InstanceFinderViewModel : ViewModelBase
             var rootAddress = AddressHelper.FormatAddress(
                 SelectedInstance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
+            StatusText = "Generating CE XML...";
             var xml = CeXmlExportService.GenerateInstanceXml(
                 rootAddress, SelectedInstance.Name, SelectedInstance.ClassName,
                 new List<LiveFieldValue>(Fields), resolvedStructs,
-                collapsePointerNodes: CollapsePointerNodes);
+                collapsePointerNodes: CollapsePointerNodes,
+                maxDropDownEntries: DropDownLimit);
 
             await _platform.CopyToClipboardAsync(xml);
+            StatusText = "";
             _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)");
         }
         catch (Exception ex)
         {
+            StatusText = "";
             SetError(ex);
             _log.Error("Failed to export CE XML", ex);
         }

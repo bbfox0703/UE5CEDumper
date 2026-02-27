@@ -22,6 +22,7 @@ public partial class LiveWalkerPanel : UserControl
         if (DataContext is LiveWalkerViewModel vm)
         {
             vm.ScrollToFieldRequested += OnScrollToFieldRequested;
+            vm.ScrollToFirstSearchMatch += OnScrollToFirstSearchMatch;
         }
     }
 
@@ -40,6 +41,20 @@ public partial class LiveWalkerPanel : UserControl
                 grid.ScrollIntoView(target, null);
                 grid.SelectedItem = target;
             }
+        }, DispatcherPriority.Background);
+    }
+
+    private void OnScrollToFirstSearchMatch()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var grid = this.FindControl<DataGrid>("FieldGrid");
+            if (grid?.ItemsSource == null) return;
+
+            var target = grid.ItemsSource.Cast<LiveFieldValue>()
+                .FirstOrDefault(f => f.IsSearchMatch);
+            if (target != null)
+                grid.ScrollIntoView(target, null);
         }, DispatcherPriority.Background);
     }
 
