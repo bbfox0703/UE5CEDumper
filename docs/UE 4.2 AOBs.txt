@@ -1,0 +1,167 @@
+UE version 4.2
+
+## GWorld
+
+```asm
+14173d2b0 48 8b 1d 09 48 ba 01 			MOV    RBX ,qword ptr [GWorld ]
+14173d2b7 48 8b 75 28 					MOV    RSI ,qword ptr [RBP + 0x28 ]
+14173d2bb e8 90 9a f3 fe 				CALL    GetGlobalLogSingleton
+14173d2c0 4c 8b c8 						MOV    R9 ,RAX
+14173d2c3 48 8d 4d 28 					LEA    this ,[RBP + 0x28 ]
+14173d2c7 48 8b d3 						MOV    RDX ,RBX
+```
+
+AOB:  48 8B 1D ?? ?? ?? ?? 48 8B 75 ?? E8
+Fix1: ?? 8B ?? ?? ?? ?? ?? ?? 8B ?? ?? E8 ?? ?? ?? ?? ?? 8B ?? ?? 8D ?? ?? ?? 8B ?? ?? 8B ?? FF (rip offset 3)
+Fix2: ?? 8B 1D ?? ?? ?? ?? ?? 8B 75 ?? E8 (rip offset 3)
+
+
+```asm
+1401dafd2 48 8b 1d e7 6a 10 03 			MOV    RBX ,qword ptr [GWorld ]
+1401dafd9 48 85 db 						TEST   RBX ,RBX
+1401dafdc 74 3b 						JZ     LAB_1401db019
+1401dafde 41 b0 01 						MOV    R8B ,0x1
+1401dafe1 33 d2 						XOR    EDX ,EDX
+1401dafe3 48 8b cb 						MOV    this ,RBX
+1401dafe6 e8 55 cb 59 01 				CALL   UWorld::GetWorldSettings
+```
+
+AOB:  48 8B 1D ?? ?? ?? ?? 48 85 DB 74 ?? 41 B0 01
+Fix1: ?? 8B ?? ?? ?? ?? ?? ?? 85 ?? 74 ?? ?? ?? 01 33 ?? ?? 8B ?? E8 ?? ?? ?? ?? F3 (rip offset 3)
+Fix2: ?? 8B 1D ?? ?? ?? ?? ?? 85 ?? 74 ?? 41 B0 ?? 33 ?? 48 (rip offset 3)
+
+
+```asm
+141095f69 48 8b 40 30 					MOV    RAX ,qword ptr [RAX + 0x30 ]
+141095f6d 48 85 c0 						TEST   RAX ,RAX
+141095f70 75 07 						JNZ    LAB_141095f79
+141095f72 48 8b 05 47 bb 24 02 			MOV    RAX ,qword ptr [GWorld ]
+141095f79 c3 							RET
+```
+
+AOB:  48 8B 40 30 48 85 c0 75 07 48 8b 05 ?? ?? ?? ?? c3 (instruction start=9, rip offset=C)
+Fix1: 48 8B 40 30 48 85 C0 75 ?? ?? 8B ?? ?? ?? ?? ?? C3 (instruction start=9, rip offset=C)
+
+
+```asm
+1417235f4 48 8b 3d c5 e4 bb 01 			MOV    RDI ,qword ptr [GWorld ]
+1417235fb 48 8b 5c 24 60 				MOV    RBX ,qword ptr [RSP + local_res18 ]
+141723600 48 8b c7 						MOV    RAX ,RDI
+141723603 48 8b 7c 24 50 				MOV    RDI ,qword ptr [RSP + local_res8 ]
+141723608 48 83 c4 40 					ADD    RSP ,0x40
+14172360c 5e 							POP    RSI
+```
+
+AOB:  48 8B 3D ?? ?? ?? ?? 48 8B 5C 24 60
+Fix1: ?? 8B 3D ?? ?? ?? ?? ?? 8B ?? 24 ?? ?? 8B ?? ?? 8B (rip offset 3)
+Fix2: ?? 8B 3D ?? ?? ?? ?? ?? 8B 5C ?? ?? ?? 8B ?? ?? 8B (rip offset 3)
+
+
+
+```asm
+141606615 48 8b 05 a4 b4 cd 01 			MOV    RAX ,qword ptr [GWorld ]
+14160661c 48 8b d9 						MOV    RBX ,this
+14160661f 48 8d 4d 20 					LEA    this=>local_res8 => local_res8 ,[RBP + 0x20 ]
+141606623 48 8b 50 18 					MOV    param_1 ,qword ptr [RAX + 0x18 ]
+141606627 48 89 55 20 					MOV    qword ptr [RBP + local_res8 ],param_1
+14160662b 48 8d 55 d0 					LEA    param_1 => local_48 ,[RBP + -0x30 ]
+```
+
+AOB:  48 8B 05 ?? ?? ?? ?? 48 8B D9 48 8D 4D 20 48
+Fix1: ?? 8B ?? ?? ?? ?? ?? ?? 8B ?? ?? 8D ?? ?? ?? 8B ?? 18 ?? 89 ?? ?? ?? 8D (rip offset 3)
+Fix2: ?? 8B 05 ?? ?? ?? ?? ?? 8B ?? ?? 8D 4D ?? ?? 8B (rip offset 3)
+
+
+## GObjects
+
+```asm
+1402f8b94 48 8d 05 55 0c b8 02 			LEA    RAX ,[GUObjectArray ]
+1402f8b9b 33 f6 						XOR    ESI ,ESI
+1402f8b9d 48 89 01 						MOV    qword ptr [this->_padding_ ],RAX => GUObjectArray
+1402f8ba0 48 89 71 10 					MOV    qword ptr [RCX + this->_padding_ ],RSI
+1402f8ba4 45 8b d9 						MOV    R11D ,param_3
+1402f8ba7 41 b9 ff ff ff ff 			MOV    param_3 ,0xffffffff
+```
+
+AOB:  48 8D 05 ?? ?? ?? ?? 33 F6 48 89 01 48 89 71
+Fix1: ?? 8D ?? ?? ?? ?? ?? 33 ?? ?? 89 ?? ?? 89 ?? 10 ?? 8B ?? ?? ?? FF (rip offset 3)
+FIx2: ?? 8D 05 ?? ?? ?? ?? 33 ?? ?? 89 ?? ?? 89 ?? ?? ?? 8B ?? 41 (rip offset 3)
+
+
+
+```asm
+140852c9e 48 8d 0d 4b 6b 62 02 			LEA    this ,[GUObjectArray ]
+140852ca5 e8 c6 04 00 00 				CALL    FUObjectArray::RemoveUObjectDeleteListener
+140852caa 48 8d 4b 18 					LEA    this ,[RBX + 0x18 ]
+140852cae 48 8b 5c 24 30 				MOV    RBX ,qword ptr [RSP + local_res8 ]
+140852cb3 48 8b 74 24 38 				MOV    RSI ,qword ptr [RSP + local_res10 ]
+140852cb8 48 83 c4 20 					ADD    RSP ,0x20
+```
+
+AOB:  48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 4B 18 48 8B 5C
+Fix1:
+Fix2:
+
+
+```asm
+140858d70 48 8d 0d 79 0a 62 02 			LEA    RCX ,[GUObjectArray ]
+140858d77 44 8b 44 24 70 				MOV    R8D ,dword ptr [RSP + local_res18 ]
+140858d7c 8b 54 24 78 					MOV    EDX ,dword ptr [RSP + local_res20 ]
+140858d80 48 89 05 89 a5 98 02 			MOV    qword ptr [GUObjectAllocator.PermanentObjectPool ],RAX
+```
+
+AOB:  48 8d 0d ?? ?? ?? ?? 44 8b 44 24 ?? 8b 54 24 ?? 48 89
+Fix1: ?? 8D ?? ?? ?? ?? ?? E8 ?? ?? ?? ?? ?? 8D ?? 18 ?? 8B ?? 24 ?? ?? 8B ?? 24 ?? 48 83 (rip offset 3)
+Fix2: ?? 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? ?? 8D 4B ?? ?? 8B 5C ?? ?? ?? 8B (rip offset 3)
+
+
+```asm
+14145f1ef 48 8d 0d fa a5 a1 01 			LEA    this ,[GUObjectArray ]
+14145f1f6 e8 75 3f 3f ff 				CALL    FUObjectArray::RemoveUObjectDeleteListener
+14145f1fb 48 8d 4d 58  					LEA    this ,[RBP + 0x58 ]
+14145f1ff 48 8b 5c 24 50 				MOV    RBX ,qword ptr [RSP + local_res8 ]
+14145f204 48 8b 6c 24 58 				MOV    RBP ,qword ptr [RSP + local_res10 ]
+```
+
+AOB:  48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 4D 58 48 8B 5C 24 50 48 8B 6C 24 58 48 8B 74 24 60 48 8B 7C 24 68 48 83 C4 40 41 5E 48 FF 25 ?? ?? ?? ?? 45 (rip offset 3)
+Fix1: ?? 8D ?? ?? ?? ?? ?? E8 ?? ?? ?? ?? ?? 8D ?? ?? ?? 8B ?? 24 ?? ?? 8B ?? ?? ?? ?? 8B ?? 24 ?? ?? 8B ?? 24 ?? 48 83 C4 40 ?? ?? ?? FF ?? ?? ?? ?? ?? ?? 85 (rip offset 3)
+Fix2: ?? 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? ?? 8D 4D ?? ?? 8B 5C ?? ?? ?? 8B 6C ?? ?? ?? 8B 74 ?? ?? ?? 8B 7C ?? ?? 48 83 C4 40 41 5E ?? FF 25 ?? ?? ?? ?? ?? 85 (rip offset 3)
+
+
+## GNames
+
+```C++
+TStaticIndirectArrayThreadSafeRead<> * __cdecl FName::GetNames(void)
+
+{
+  TStaticIndirectArrayThreadSafeRead<> *_Dst;
+  
+  if (Names == (TStaticIndirectArrayThreadSafeRead<> *)0x0) {
+    _Dst = operator_new(0x408);
+    if (_Dst != (TStaticIndirectArrayThreadSafeRead<> *)0x0) {
+      _Dst->NumElements = (TAtomic<int>)0x0;
+      _Dst->NumChunks = 0;
+      memset(_Dst,0,0x400);
+      Names = _Dst;
+      return _Dst;
+    }
+    Names = (TStaticIndirectArrayThreadSafeRead<> *)0x0;
+  }
+  return Names;
+}
+```
+
+```asm
+1406b19d4 48 8b 05 fd d0 b2 02 			MOV    RAX ,qword ptr [Names ]
+1406b19db 48 85 c0 						TEST    RAX ,RAX
+1406b19de 75 5f  						JNZ    LAB_1406b1a3f
+1406b19e0 b9 08 04 00 00 				MOV    ECX ,0x408
+1406b19e5 48 89 5c 24 20 				MOV    qword ptr [RSP + local_8 ],RBX
+1406b19ea e8 01 cd e0 ff 				CALL    operator_new
+1406b19ef 48 8b d8 						MOV    RBX ,RAX
+1406b19f2 48 85 c0 						TEST    RAX ,RAX
+```
+
+AOB:  48 8B 05 ?? ?? ?? ?? 48 85 C0 75 ?? B9 ?? ?? ?? ?? 48
+Fix1: 8B ?? ?? ?? ?? ?? ?? 85 ?? 75 ?? ?? 08 04 (rip offset 3)
+Fix2: ?? 8B 05 ?? ?? ?? ?? ?? 85 ?? 75 ?? B9 ?? ?? ?? ?? 48 (rip offset 3)

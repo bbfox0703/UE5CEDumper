@@ -24,6 +24,7 @@
 //   ES2     : Everspace 2 (UE 5.5)
 //   SF      : SatisfFactory (UE 5.3, modular build — patterns in DLLs)
 //   TQ      : TQ2 (UE 5.x)
+//   G42     : UE 4.2 game analysis (docs/UE 4.2 AOBs.txt)
 // ============================================================
 
 // ============================================================
@@ -146,6 +147,17 @@ constexpr const char* AOB_GOBJECTS_CT3 = "4C 8B 05 ?? ?? ?? ?? 45 3B 88";
 // UD1: mov rax,[rip+X]; mov rcx,[rax+rcx*8]; lea rax,[rcx+rdx*8]; test rax,rax
 constexpr const char* AOB_GOBJECTS_UD1 = "48 8B 05 ?? ?? ?? ?? 48 8B 0C C8 48 8D 04 D1 48 85 C0";
 
+// --- UE 4.2 game analysis patterns (G42 series) ---
+
+// G42_1: lea rax,[GUObjectArray]; xor esi; mov [rcx],rax; mov [rcx+10h],rsi  — UE4.2 constructor init
+constexpr const char* AOB_GOBJECTS_G42_1 = "48 8D 05 ?? ?? ?? ?? 33 F6 48 89 01 48 89 71";
+// G42_2: lea rcx,[GUObjectArray]; call RemoveUObjectDeleteListener; lea rcx,[rbx+18]; mov rbx  — UE4.2
+constexpr const char* AOB_GOBJECTS_G42_2 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 4B 18 48 8B 5C";
+// G42_3: lea rcx,[GUObjectArray]; mov r8d,[rsp+?]; mov edx,[rsp+?]; mov [GUObjectAllocator],rax  — UE4.2
+constexpr const char* AOB_GOBJECTS_G42_3 = "48 8D 0D ?? ?? ?? ?? 44 8B 44 24 ?? 8B 54 24 ?? 48 89";
+// G42_4: lea rcx,[GUObjectArray]; call; lea rcx,[rbp+58]; ... add rsp,40; pop r14; jmp  — UE4.2 long epilogue
+constexpr const char* AOB_GOBJECTS_G42_4 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 4D 58 48 8B 5C 24 50 48 8B 6C 24 58 48 8B 74 24 60 48 8B 7C 24 68 48 83 C4 40 41 5E 48 FF 25 ?? ?? ?? ?? 45";
+
 
 // ============================================================
 // GNames / FNamePool
@@ -207,6 +219,11 @@ constexpr const char* AOB_GNAMES_CT4 = "C3 ?? DB 48 89 1D ?? ?? ?? ?? ?? ?? 48 8
 constexpr const char* AOB_GNAMES_UD1 = "E8 ?? ?? ?? ?? 83 7D E8 00 4C 8D 05 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ??";
 // UD2: lea rcx,[rip+X]; call; mov r8,rax; mov byte (same as CT2)
 constexpr const char* AOB_GNAMES_UD2 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 4C 8B C0 C6 05";
+
+// --- UE 4.2 game analysis patterns (G42 series) ---
+
+// G42_1: mov rax,[Names]; test rax; jnz; mov ecx,0x408  — UE4.2 pre-FNamePool (TStaticIndirectArrayThreadSafeRead)
+constexpr const char* AOB_GNAMES_G42_1 = "48 8B 05 ?? ?? ?? ?? 48 85 C0 75 ?? B9 ?? ?? ?? ?? 48";
 
 
 // ============================================================
@@ -316,6 +333,20 @@ constexpr const char* AOB_GWORLD_TQ_3 = "?? 8B 05 ?? ?? ?? ?? ?? 8B ?? ?? 0F 29 
 //   Wildcard-prefixed write pattern, RIP at offset 3
 constexpr const char* AOB_GWORLD_TQ_4 = "?? 89 0D ?? ?? ?? ?? ?? 85 ?? 74 ?? 48 8B 06 ?? 8B ?? FF 90 ?? 00 00";
 
+// --- UE 4.2 game analysis patterns (G42 series) ---
+
+// G42_1: mov rbx,[GWorld]; mov rsi,[rbp+28]; call GetGlobalLogSingleton  — UE4.2
+constexpr const char* AOB_GWORLD_G42_1 = "48 8B 1D ?? ?? ?? ?? 48 8B 75 ?? E8";
+// G42_2: mov rbx,[GWorld]; test rbx; jz; mov r8b,1  — UE4.2 (wildcard jz offset)
+constexpr const char* AOB_GWORLD_G42_2 = "48 8B 1D ?? ?? ?? ?? 48 85 DB 74 ?? 41 B0 01";
+// G42_3: mov rax,[rax+30]; test rax; jnz; mov rax,[GWorld]; ret  — UE4.2 fallback return
+//   RIP instruction starts at offset 9 (48 8B 05)
+constexpr const char* AOB_GWORLD_G42_3 = "48 8B 40 30 48 85 C0 75 ?? 48 8B 05 ?? ?? ?? ?? C3";
+// G42_4: mov rdi,[GWorld]; mov rbx,[rsp+60]  — UE4.2 epilogue context
+constexpr const char* AOB_GWORLD_G42_4 = "48 8B 3D ?? ?? ?? ?? 48 8B 5C 24 60";
+// G42_5: mov rax,[GWorld]; mov rbx,rcx; lea rcx,[rbp+20]; mov rdx,[rax+18]  — UE4.2 extended
+constexpr const char* AOB_GWORLD_G42_5 = "48 8B 05 ?? ?? ?? ?? 48 8B D9 48 8D 4D 20 48";
+
 
 // ============================================================
 // Unified Pattern Arrays (sorted by priority)
@@ -348,6 +379,7 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     // Priority 10-20: Long specific patterns
     { "GOBJ_V10", AOB_GOBJECTS_V10, AobTarget::GObjects, AobResolve::RipBoth,
       0, 3, 7, -0x10, 10, 0, false, "V", "Split Fiction UE5.5+ lea+call+call" },
+    SIG_RIP("GOBJ_G42_4", AOB_GOBJECTS_G42_4, AobTarget::GObjects, 0, 3, 7, 0, 11, "G42", "UE4.2 long lea+call+epilogue"),
     { "GOBJ_RE3", AOB_GOBJECTS_RE3, AobTarget::GObjects, AobResolve::RipBoth,
       0, 3, 7, 0, 12, 0, false, "RE", "Little Nightmares 3 Demo extended" },
     { "GOBJ_V11", AOB_GOBJECTS_V11, AobTarget::GObjects, AobResolve::RipBoth,
@@ -359,6 +391,9 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     SIG_RIP("GOBJ_SF_1", AOB_GOBJECTS_SF_1, AobTarget::GObjects, 0, 3, 7, 0, 19, "SF", "SatisfFactory via _imp_ (in EXE)"),
 
     // Priority 20-40: Medium patterns
+    SIG_RIP("GOBJ_G42_2", AOB_GOBJECTS_G42_2, AobTarget::GObjects, 0, 3, 7, 0, 20, "G42", "UE4.2 RemoveUObjectDeleteListener"),
+    SIG_RIP("GOBJ_G42_3", AOB_GOBJECTS_G42_3, AobTarget::GObjects, 0, 3, 7, 0, 21, "G42", "UE4.2 lea+mov r8d+mov edx"),
+    SIG_RIP("GOBJ_G42_1", AOB_GOBJECTS_G42_1, AobTarget::GObjects, 0, 3, 7, 0, 22, "G42", "UE4.2 lea+xor+mov constructor"),
     { "GOBJ_RE1", AOB_GOBJECTS_RE1, AobTarget::GObjects, AobResolve::RipBoth,
       0, 2, 6, 0, 25, 0, false, "RE", "FF7 Rebirth add+cmp+jge" },
     SIG_RIP("GOBJ_V4",  AOB_GOBJECTS_V4,  AobTarget::GObjects, 0, 3, 7, 0, 30, "V", "classic UE5 longer context"),
@@ -427,6 +462,7 @@ constexpr AobSignature GNAMES_PATTERNS[] = {
     // Priority 80: UE4/legacy (pre-FNamePool)
     SIG_RIP("GNAM_CT3",   AOB_GNAMES_CT3,    AobTarget::GNames, 4, 3, 7, 0, 80, "CT", "UE4 <4.23 pre-FNamePool deref"),
     SIG_RIP("GNAM_CT4",   AOB_GNAMES_CT4,    AobTarget::GNames, 3, 3, 7, 0, 81, "CT", "UE4 pre-FNamePool write pattern"),
+    SIG_RIP("GNAM_G42_1", AOB_GNAMES_G42_1,  AobTarget::GNames, 0, 3, 7, 0, 82, "G42", "UE4.2 pre-FNamePool TStaticIndirectArray"),
 };
 
 // ── GWorld ───────────────────────────────────────────────────────────────
@@ -453,6 +489,13 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     SIG_GWORLD_RIP("GWLD_SF_4",  AOB_GWORLD_SF_4,   0, 3, 7, 0, 23, false, "SF", "Engine DLL GetWorldFromContextObject"),
     SIG_GWORLD_RIP("GWLD_SF_5",  AOB_GWORLD_SF_5,   0, 3, 7, 0, 24, false, "SF", "Engine DLL FMallocLeakReporter"),
 
+    // Priority 25-29: UE 4.2 patterns
+    SIG_GWORLD_RIP("GWLD_G42_3", AOB_GWORLD_G42_3,  9, 3, 7, 0, 25, false, "G42", "UE4.2 fallback return pattern"),
+    SIG_GWORLD_RIP("GWLD_G42_2", AOB_GWORLD_G42_2,  0, 3, 7, 0, 26, false, "G42", "UE4.2 test+jz+mov r8b"),
+    SIG_GWORLD_RIP("GWLD_G42_5", AOB_GWORLD_G42_5,  0, 3, 7, 0, 27, false, "G42", "UE4.2 mov+mov rbx+lea"),
+    SIG_GWORLD_RIP("GWLD_G42_1", AOB_GWORLD_G42_1,  0, 3, 7, 0, 28, false, "G42", "UE4.2 mov+mov rsi+call"),
+    SIG_GWORLD_RIP("GWLD_G42_4", AOB_GWORLD_G42_4,  0, 3, 7, 0, 29, false, "G42", "UE4.2 mov rdi+mov rbx"),
+
     // Priority 30: Wildcard-prefixed TQ2 patterns
     SIG_GWORLD_RIP("GWLD_TQ_3",  AOB_GWORLD_TQ_3,   3, 3, 7, 0, 30, false, "TQ", "TQ2 ??-prefix mov rax"),
     { "GWLD_TQ_4", AOB_GWORLD_TQ_4, AobTarget::GWorld, AobResolve::RipBoth,
@@ -478,9 +521,9 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
 // ============================================================
 // Pattern count summary
 // ============================================================
-// GObjects: 27 (original) + 2 (ES2, SF) = 29 patterns + 1 symbol export
-// GNames:   17 (original) + 4 (ES2, SF) = 21 patterns + 3 symbol exports
-// GWorld:    7 (original) + 15 (ES2, SF, TQ) = 22 patterns + 1 symbol export
-// Total:    72 AOB patterns + 5 symbol exports = 77 entries
+// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) = 33 patterns + 1 symbol export
+// GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) = 22 patterns + 3 symbol exports
+// GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) = 27 patterns + 1 symbol export
+// Total:    82 AOB patterns + 5 symbol exports = 87 entries
 
 } // namespace Sig
