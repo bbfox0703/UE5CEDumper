@@ -37,21 +37,22 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 
 | 功能 | 說明 |
 |---|---|
-| **AOB 掃描** | 整合來自 6 個來源的 50 多種特徵碼。支援 `FChunkedFixed` 與 `FFixed` 物件陣列。 |
+| **AOB 掃描** | 整合來自 6 個來源的 87 組特徵碼 (82 AOB + 5 符號匯出)。支援 `FChunkedFixed` 與 `FFixed` 物件陣列，並可偵測加密 GObjects 與預設佈局。 |
 | **DynOff (動態偏移量)** | 執行時自動探測 `FField`、`FProperty` 與 `UStruct`。遊戲改版後不再需要手動更新偏移量。 |
-| **Live Walker (即時檢視)** | 即時檢查實例 (Instance) 的記憶體數據，數值變動一目瞭然。 |
+| **Live Walker (即時檢視)** | 即時檢查實例的記憶體數據，數值變動一目瞭然。支援指標導航 (→)、內嵌結構展開 ({})、容器深入 ([])。瀏覽軌跡 (Breadcrumb) 完整記錄導航歷程。 |
+| **容器深入 (Container Drill-Down)** | 支援深入 **Array**、**Map**、**Set** 容器。ObjectProperty 元素顯示已解析的名稱，並可點擊跳轉至目標物件。 |
 | **實例搜尋器** | 瞬間定位類別中所有作用中的實例。支援一鍵開啟 Live Walker 檢視。 |
-| **一鍵 CE 匯出** | 自動產生 CE XML 位址紀錄（含布林值的位元欄位 Bitfields），可直接貼上至你的位址列表。 |
+| **一鍵 CE 匯出** | 自動產生 CE XML 位址紀錄 — 純量、位元欄位、結構、陣列、**Map/Set**、以及 **UEnum 下拉選單 (DropDownList)**。可直接貼上至你的位址列表。 |
 | **現代化 UI** | 外部 **Avalonia UI** 透過高速具名管道 (Named Pipe) 連線，確保遊戲執行效能不受影響。 |
 
 ---
 
 ## 架構與工作流程 (Architecture & Workflow)
 
-1. **注入 DLL**: 開啟 Cheat Engine 附加遊戲，開始 `UE5CEDumper.CT`。
-2. **啟用CE腳本**: 先啟用 `init <== enable after process attached` 腳本、然後啟用 `Inject DLL + Start Pipe Server`. DLL 自動定位引擎全域指標，並偵測 UE 版本與記憶體佈局。
-3. **管道串流**: 等待一段時間、讓 DLL 抓取資料。執行 **UE5DumpUI.exe**，按下 Connect。即時數據透過具名管道 (Named Pipe, JSON-RPC) 串流至 **UE5DumpUI**。
-4. **瀏覽及分析**: 瀏覽 `UObject` 階層，找到要查的 Class，或是由 CE 中的 HP/MP 等值，試著在 UI 中反查，並可直接匯出至 CE。
+1. **注入 DLL**: 開啟 Cheat Engine 附加遊戲，確保遊戲存檔已載入。開啟 `UE5CEDumper.CT`。
+2. **啟用 CE 腳本**: 先啟用 `init <== enable after process attached`，再啟用 `Inject DLL + Start Pipe Server`。DLL 自動定位引擎全域指標，並偵測 UE 版本與記憶體佈局。
+3. **連接 UI**: 等待數秒讓掃描完成。啟動 **UE5DumpUI.exe** 並點擊 **Connect**。即時數據透過具名管道 (Named Pipe, JSON-RPC) 串流至 UI。
+4. **瀏覽及分析**: 瀏覽 `UObject` 階層，找到目標 Class，深入容器查看元素，或由 CE 中的位址反查並匯出。
 
 | **Game Process (Injected)** |
 | :---: |
@@ -84,8 +85,9 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 
 ## 重要注意事項 (Important Notes)
 
-* **自定義數據結構**: 在如《FF7 Rebirth》等遊戲中，部分關鍵數據（如 HP）存儲在標準 `UObject` 之外的自定義結構中。 本工具沒有辦法找到這些數據。
-* **GWorld 連通性**: `GWorld` 遍歷在約 60% 的實測遊戲中可正常運作。 若無法運作，請改用 **Object Tree** 或 **Instance Finder** 作為主要進入點。
+* **自定義數據結構**: 在如《FF7 Rebirth》等遊戲中，部分關鍵數據（如 HP）存儲在標準 `UObject` 之外的自定義結構中。Live Walker 可協助探查這些區域，但無法直接自動發現。
+* **GWorld 連通性**: `GWorld` 遍歷在約 60% 的實測遊戲中可正常運作。若無法運作，請改用 **Object Tree** 或 **Instance Finder** 作為主要進入點。
+* **容器元素限制**: Array/Map/Set 的元素讀取受可調限制值控制，避免過度記憶體存取。如需處理大型容器，請在 Live Walker 中調整 **Array Limit** 滑桿。
 
 ---
 
