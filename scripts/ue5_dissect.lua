@@ -149,8 +149,8 @@ local function walkClassFields(classAddr)
             local success = callDLL("UE5_WalkClassGetField",
                 i, addrBuf, nameBuf, NAME_BUF_SIZE, typeBuf, TYPE_BUF_SIZE, offsetBuf, sizeBuf)
             if success ~= 0 then
-                local name     = readString(nameBuf, NAME_BUF_SIZE, true)
-                local typeName = readString(typeBuf, TYPE_BUF_SIZE, true)
+                local name     = readString(nameBuf, NAME_BUF_SIZE, false)
+                local typeName = readString(typeBuf, TYPE_BUF_SIZE, false)
                 local offset   = readInteger(offsetBuf)
                 local size     = readInteger(sizeBuf)
                 local faddr    = readQword(addrBuf)
@@ -197,7 +197,7 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
                 -- Resolve struct type name for display prefix
                 local sBuf = allocateMemory(128)
                 callDLL("UE5_GetObjectName", innerClass, sBuf, 128)
-                local sName = readString(sBuf, 128, true) or "Struct"
+                local sName = readString(sBuf, 128, false) or "Struct"
                 deAlloc(sBuf)
                 addFieldsToStruct(ceStruct, innerClass, absOffset,
                     displayName .. "." , depth + 1)
@@ -296,12 +296,18 @@ end
 -- Add standard UObject header fields (VTable, index, class, name, outer)
 -- ----------------------------------------------------------------
 local function addUObjectHeader(ceStruct)
+    -- Build a set of offsets already covered by existing elements
+    local covered = {}
+    for i = 0, ceStruct.Count - 1 do
+        covered[ceStruct.Element[i].Offset] = true
+    end
     local function addIfMissing(offset, name, vt)
-        if not getElementByOffset(ceStruct, offset) then
+        if not covered[offset] then
             local e = ceStruct.addElement()
             e.Offset  = offset
             e.Name    = name
             e.Vartype = vt
+            covered[offset] = true
         end
     end
     addIfMissing(0x00, "VTable",      vtPointer)
@@ -325,7 +331,7 @@ function dissect.createFromClass(classAddr, structName)
     if not structName or structName == "" then
         structName = withBuf(256, function(buf)
             callDLL("UE5_GetObjectName", classAddr, buf, 256)
-            return readString(buf, 256, true) or "Unknown"
+            return readString(buf, 256, false) or "Unknown"
         end)
     end
 
@@ -431,7 +437,7 @@ local function dissectOverrideCallback(ceStruct, instanceAddr)
     -- Get class name
     local className = withBuf(256, function(buf)
         callDLL("UE5_GetObjectName", classAddr, buf, 256)
-        return readString(buf, 256, true) or ""
+        return readString(buf, 256, false) or ""
     end)
     if className == "" then return nil end
 
@@ -465,7 +471,7 @@ local function nameLookupCallback(address)
 
     local name = withBuf(256, function(buf)
         callDLL("UE5_GetObjectName", address, buf, 256)
-        return readString(buf, 256, true)
+        return readString(buf, 256, false)
     end)
     if name and name ~= "" then
         return name, address
