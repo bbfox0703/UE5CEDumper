@@ -15,23 +15,74 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _gNamesAddress = "";
     [ObservableProperty] private string _gWorldAddress = "";
     [ObservableProperty] private int _ueVersion;
+    [ObservableProperty] private bool _versionDetected = true;
     [ObservableProperty] private int _totalObjects;
     [ObservableProperty] private bool _hasData;
+
+    // Scan method for each pointer: "aob", "data_scan", "string_ref", "pointer_scan", "not_found"
+    [ObservableProperty] private string _gObjectsMethod = "aob";
+    [ObservableProperty] private string _gNamesMethod = "aob";
+    [ObservableProperty] private string _gWorldMethod = "aob";
+
+    /// <summary>True when version detection failed — shows warning in UI.</summary>
+    public bool ShowVersionWarning => HasData && !VersionDetected;
+
+    /// <summary>True when GObjects was found via fallback (not AOB).</summary>
+    public bool ShowGObjectsWarning => HasData && GObjectsMethod != "aob";
+
+    /// <summary>True when GNames was found via fallback (not AOB).</summary>
+    public bool ShowGNamesWarning => HasData && GNamesMethod != "aob";
+
+    /// <summary>True when GWorld was not found at all.</summary>
+    public bool ShowGWorldWarning => HasData && GWorldMethod == "not_found";
+
+    /// <summary>Formatted scan method label for GObjects.</summary>
+    public string GObjectsMethodLabel => FormatMethodLabel(GObjectsMethod);
+
+    /// <summary>Formatted scan method label for GNames.</summary>
+    public string GNamesMethodLabel => FormatMethodLabel(GNamesMethod);
 
     public PointerPanelViewModel(IPlatformService platform)
     {
         _platform = platform;
     }
 
-    public void Update(string gobjects, string gnames, string gworld, int ueVersion, int totalObjects)
+    public void Update(string gobjects, string gnames, string gworld,
+                       int ueVersion, bool versionDetected, int totalObjects,
+                       string gobjectsMethod = "aob", string gnamesMethod = "aob",
+                       string gworldMethod = "aob")
     {
         GObjectsAddress = gobjects;
         GNamesAddress = gnames;
         GWorldAddress = gworld;
         UeVersion = ueVersion;
+        VersionDetected = versionDetected;
         TotalObjects = totalObjects;
+        GObjectsMethod = gobjectsMethod;
+        GNamesMethod = gnamesMethod;
+        GWorldMethod = gworldMethod;
         HasData = true;
+        NotifyComputedProperties();
     }
+
+    private void NotifyComputedProperties()
+    {
+        OnPropertyChanged(nameof(ShowVersionWarning));
+        OnPropertyChanged(nameof(ShowGObjectsWarning));
+        OnPropertyChanged(nameof(ShowGNamesWarning));
+        OnPropertyChanged(nameof(ShowGWorldWarning));
+        OnPropertyChanged(nameof(GObjectsMethodLabel));
+        OnPropertyChanged(nameof(GNamesMethodLabel));
+    }
+
+    private static string FormatMethodLabel(string method) => method switch
+    {
+        "data_scan" => "data scan",
+        "string_ref" => "string ref",
+        "pointer_scan" => "pointer scan",
+        "not_found" => "not found",
+        _ => method,
+    };
 
     /// <summary>Strip leading "0x" or "0X" prefix for clipboard copy.</summary>
     private static string StripHexPrefix(string addr)

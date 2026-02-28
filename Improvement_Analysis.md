@@ -151,7 +151,7 @@ Maps and Sets are common in UE projects (e.g., `TMap<FName, FAssetData>`, `TSet<
 |-------|-------|
 | **Priority** | P1 - High |
 | **Source** | Dumper-7 (`OffsetFinder.cpp:1058-1080`) |
-| **UE5CEDumper Status** | Not implemented |
+| **UE5CEDumper Status** | **IMPLEMENTED (Phase B)** — DelegateProperty shows `Target::FuncName`, MulticastInlineDelegateProperty shows `(N bindings) [Target::Func, ...]` in Live Walker |
 
 ### What Dumper-7 Does
 
@@ -189,7 +189,7 @@ Phase A: ~80 LOC. Phase B: ~120 LOC.
 |-------|-------|
 | **Priority** | P1 - High |
 | **Source** | Dumper-7 (`UnrealTypes.cpp:69-204`) |
-| **UE5CEDumper Status** | Not implemented (relies on AOB + pointer-scan only) |
+| **UE5CEDumper Status** | **IMPLEMENTED** — `FindGNamesByStringRef()` in OffsetFinder.cpp, Tier 2 fallback between AOB scan and pointer-scan. Searches .rdata for UE string literals, finds XREF, scans ±0x60 bytes for LEA to FNamePool in .data |
 
 ### What Dumper-7 Does
 
@@ -494,8 +494,8 @@ No CPUID check needed — the DLL build already requires `/arch:AVX2`.
 | 1 | Encrypted GObjects Array | **P0** | Dumper-7 | Small (~100 LOC) | Opens anti-cheat game support |
 | 2 | Game-Specific ObjectArray Layouts | **P0** | Dumper-7 | Small (~80 LOC) | Fixes silent data corruption |
 | 3 | MapProperty / SetProperty | **P1** | Dumper-7 | Medium (~200 LOC) | Common container types visible |
-| 4 | DelegateProperty Support | **P1** | Dumper-7 | Medium (~200 LOC) | Blueprint delegate inspection |
-| 5 | String-Ref GNames Fallback | **P1** | Dumper-7 | Small (~100 LOC) | Independent GNames discovery path |
+| 4 | DelegateProperty Support | ~~P1~~ | Dumper-7 | ~~Medium~~ | **DONE** — DelegateProperty shows Target::FuncName, MulticastInlineDelegateProperty shows (N bindings) |
+| 5 | String-Ref GNames Fallback | ~~P1~~ | Dumper-7 | ~~Small~~ | **DONE** — `FindGNamesByStringRef()` Tier 2 fallback in OffsetFinder.cpp |
 | 6 | FFieldVariant Tag-Bit (UE 5.3+) | ~~P1~~ | RE-UE4SS | ~~Small~~ | **DONE** — `StripFFieldTag()` in Constants.h, applied in walker + offset finder |
 | 7 | SDK/Header Generation | **P2** | Dumper-7 | Large (~300-900 LOC) | #1 requested dumper feature |
 | 8 | USMAP / IDA Mapping Export | **P2** | Dumper-7 | Medium (~450 LOC) | Modding tool interop |
@@ -513,11 +513,11 @@ No CPUID check needed — the DLL build already requires `/arch:AVX2`.
 2. **GAP #2**: ObjectArray layout detection (small, prevents corruption)
 3. **GAP #6**: FFieldVariant tag-bit masking (tiny, prevents crashes)
 
-### Sprint 2 — Property Coverage (P1)
-4. **GAP #3**: MapProperty / SetProperty
-5. **GAP #4**: DelegateProperty (Phase A: schema display)
-6. **GAP #11**: TextProperty + SoftObjectProperty + InterfaceProperty
-7. **GAP #5**: String-reference GNames fallback
+### Sprint 2 — Property Coverage (P1) ✅ COMPLETE
+4. **GAP #3**: MapProperty / SetProperty ✅
+5. **GAP #4**: DelegateProperty ✅
+6. **GAP #11**: TextProperty + SoftObjectProperty + InterfaceProperty ✅
+7. **GAP #5**: String-reference GNames fallback ✅
 
 ### Sprint 3 — Export & Interop (P2)
 8. **GAP #7**: SDK header generation (Phase A: offset headers)

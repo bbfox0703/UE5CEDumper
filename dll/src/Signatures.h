@@ -25,6 +25,8 @@
 //   SF      : SatisfFactory (UE 5.3, modular build — patterns in DLLs)
 //   TQ      : TQ2 (UE 5.x)
 //   G42     : UE 4.2 game analysis (docs/UE 4.2 AOBs.txt)
+//   G427    : UE 4.27 game analysis (work/UE 4.27 AOBs.txt)
+//   ES53    : Everspace 2 UE 5.3 build analysis (work/ES2 UE 5.3 AOBs.txt)
 // ============================================================
 
 // ============================================================
@@ -158,6 +160,25 @@ constexpr const char* AOB_GOBJECTS_G42_3 = "48 8D 0D ?? ?? ?? ?? 44 8B 44 24 ?? 
 // G42_4: lea rcx,[GUObjectArray]; call; lea rcx,[rbp+58]; ... add rsp,40; pop r14; jmp  — UE4.2 long epilogue
 constexpr const char* AOB_GOBJECTS_G42_4 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 4D 58 48 8B 5C 24 50 48 8B 6C 24 58 48 8B 74 24 60 48 8B 7C 24 68 48 83 C4 40 41 5E 48 FF 25 ?? ?? ?? ?? 45";
 
+// --- UE 4.27 game analysis patterns (G427 series) ---
+
+// G427_1: mov rax,[ObjObjects.Objects]; sar ecx,?; movsxd rcx,ecx; mov rdx,[rax+rcx*8]  — UE4.27 FEngineLoop::PreInitPostStartupScreen
+constexpr const char* AOB_GOBJECTS_G427_1 = "48 8B 05 ?? ?? ?? ?? C1 F9 ?? 48 63 C9 48 8B";
+// G427_2: cmp eax,[ObjObjects.NumElements]; jge; cdq; movzx edx,dx; add eax,edx  — UE4.27 FEngineLoop::PreInitPostStartupScreen
+//   opcodeLen=2 (3B 05), totalLen=6, adjustment=-0x14 (NumElements at ObjObjects+0x14)
+constexpr const char* AOB_GOBJECTS_G427_2 = "3B 05 ?? ?? ?? ?? 7D ?? 99 0F B7 D2 03 C2";
+// G427_3: mov rax,[ObjObjects.Objects]; mov rcx,[rax+?*8]; lea r8,[?+rdx*8]; jmp; xor r8d; mov eax,[r8+8]  — UE4.27 FGCObject ctor
+constexpr const char* AOB_GOBJECTS_G427_3 = "48 8B 05 ?? ?? ?? ?? ?? 8B 0C ?? ?? 8D 04 ?? EB ?? 45 33 C0 41 8B ?? 08";
+// G427_4: mov eax,[ObjLastNonGCIndex]; mov r9d,eax; mov [rcx+8],eax; inc r9d  — UE4.27 TObjectIteratorBase
+//   opcodeLen=2 (8B 05), totalLen=6, adjustment=+0x0C (ObjLastNonGCIndex at GUObjectArray+0x04, ObjObjects at +0x10)
+constexpr const char* AOB_GOBJECTS_G427_4 = "8B 05 ?? ?? ?? ?? 44 8B C8 89 41 08 41";
+
+// --- Everspace 2 UE 5.3 build patterns (ES53 series) ---
+
+// ES53_1: sub rsp,28; lea rcx,[GUObjectArray]; call FUObjectArray::FUObjectArray; lea rcx,[atexit_fn]; add rsp,28; jmp atexit
+//   instrOffset=4 (LEA RCX starts at byte 4), 26 bytes — very specific ctor+atexit pattern
+constexpr const char* AOB_GOBJECTS_ES53_1 = "48 83 EC 28 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? 48 83 C4 28 E9";
+
 
 // ============================================================
 // GNames / FNamePool
@@ -224,6 +245,12 @@ constexpr const char* AOB_GNAMES_UD2 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 4C 8
 
 // G42_1: mov rax,[Names]; test rax; jnz; mov ecx,0x408  — UE4.2 pre-FNamePool (TStaticIndirectArrayThreadSafeRead)
 constexpr const char* AOB_GNAMES_G42_1 = "48 8B 05 ?? ?? ?? ?? 48 85 C0 75 ?? B9 ?? ?? ?? ?? 48";
+
+// --- Everspace 2 UE 5.3 build patterns (ES53 series) ---
+
+// ES53_1: lea rcx,[FNamePool]; call FNamePool::FNamePool; mov rdx,rax; mov byte[],1  — FName::ToString init path
+//   Like V5 but has extra MOV RDX,RAX (48 8B D0) between CALL and MOV byte
+constexpr const char* AOB_GNAMES_ES53_1 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B D0 C6 05 ?? ?? ?? ?? 01";
 
 
 // ============================================================
@@ -347,6 +374,33 @@ constexpr const char* AOB_GWORLD_G42_4 = "48 8B 3D ?? ?? ?? ?? 48 8B 5C 24 60";
 // G42_5: mov rax,[GWorld]; mov rbx,rcx; lea rcx,[rbp+20]; mov rdx,[rax+18]  — UE4.2 extended
 constexpr const char* AOB_GWORLD_G42_5 = "48 8B 05 ?? ?? ?? ?? 48 8B D9 48 8D 4D 20 48";
 
+// --- UE 4.27 game analysis patterns (G427 series) ---
+
+// G427_1: mov rbx,[GWorld]; test rbx; jz; ??;??;01; xor edx; mov rcx,rbx  — UE4.27 FEngineLoop::Tick
+//   Extended version of G42_2 with more trailing context and wildcarded MOV R8B encoding
+constexpr const char* AOB_GWORLD_G427_1 = "48 8B 1D ?? ?? ?? ?? 48 85 DB 74 ?? ?? ?? 01 33 D2 48 8B CB";
+// G427_2: mov rdi,[GWorld]; mov rbx,[rsp+?]; mov rax,rdi; 48  — UE4.27 UEngine::GetWorldFromContextObject
+//   Stack offset wildcarded (varies: 0x50, 0x60, 0x70)
+constexpr const char* AOB_GWORLD_G427_2 = "48 8B 3D ?? ?? ?? ?? 48 8B 5C 24 ?? 48 8B C7 48";
+// G427_3: mov rdi,[R?+?]; mov r8,rsi; mov rax,[GWorld]; mov rdx,rdi  — UE4.27 UGameEngine::Tick (R8-R15 src)
+//   instrOffset=10 (0x0A): RIP instruction 48 8B 05 starts at byte offset 10
+constexpr const char* AOB_GWORLD_G427_3 = "49 8B ?? ?? ?? ?? ?? 4C 8B C6 48 8B 05 ?? ?? ?? ?? 48 8B D7";
+// G427_4: mov rdi,[R?+?]; mov r8,rsi; mov rax,[GWorld]; mov rdx,rdi  — UE4.27 UGameEngine::Tick (RAX-RDI src)
+//   instrOffset=10 (0x0A): RIP instruction 48 8B 05 starts at byte offset 10
+constexpr const char* AOB_GWORLD_G427_4 = "48 8B ?? ?? ?? ?? ?? 4C 8B C6 48 8B 05 ?? ?? ?? ?? 48 8B D7";
+// G427_5: mov rax,[GWorld]; cmp rax,rbx; cmovz rax,rsi; mov [GWorld],rax  — UE4.27 UWorld::FinishDestroy
+//   Uses CMP RAX,RBX (48 3B C3) vs V1's CMP RAX,RCX (48 3B C8)
+constexpr const char* AOB_GWORLD_G427_5 = "48 8B 05 ?? ?? ?? ?? 48 3B C3 ?? 0F 44 ?? 48 89 05";
+
+// --- Everspace 2 UE 5.3 build patterns (ES53 series) ---
+
+// ES53_1: mov [GWorld],rax; movaps xmm2,xmm6; mov rax,[r12]; mov rdx,r15  — UGameEngine::Tick write
+//   Write pattern: gworldAllowNull=true
+constexpr const char* AOB_GWORLD_ES53_1 = "48 89 05 ?? ?? ?? ?? 0F 28 ?? 49 8B 04 24 49 8B D7";
+// ES53_2: mov [GWorld],rcx; test rsi,rsi; jz; mov rax,[rsi]; mov rcx,rsi(?); call [rax+E0]
+//   Write pattern with RCX register: gworldAllowNull=true
+constexpr const char* AOB_GWORLD_ES53_2 = "48 89 0D ?? ?? ?? ?? 48 85 F6 74 ?? 48 8B 06 48 ?? ?? FF";
+
 
 // ============================================================
 // Unified Pattern Arrays (sorted by priority)
@@ -376,7 +430,8 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     // Priority 0: Symbol exports
     SIG_EXPORT("GOBJ_EXP", EXPORT_GOBJECTARRAY, AobTarget::GObjects, 0, "MSVC mangled symbol"),
 
-    // Priority 10-20: Long specific patterns
+    // Priority 9-20: Long specific patterns
+    SIG_RIP("GOBJ_ES53_1", AOB_GOBJECTS_ES53_1, AobTarget::GObjects, 4, 3, 7, 0, 9, "ES53", "ES2 UE5.3 FUObjectArray ctor+atexit"),
     { "GOBJ_V10", AOB_GOBJECTS_V10, AobTarget::GObjects, AobResolve::RipBoth,
       0, 3, 7, -0x10, 10, 0, false, "V", "Split Fiction UE5.5+ lea+call+call" },
     SIG_RIP("GOBJ_G42_4", AOB_GOBJECTS_G42_4, AobTarget::GObjects, 0, 3, 7, 0, 11, "G42", "UE4.2 long lea+call+epilogue"),
@@ -401,6 +456,8 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     SIG_RIP("GOBJ_V9",  AOB_GOBJECTS_V9,  AobTarget::GObjects, 0, 3, 7, 0, 33, "V", "extended index cdqe"),
     SIG_RIP("GOBJ_V7",  AOB_GOBJECTS_V7,  AobTarget::GObjects, 0, 3, 7, 0, 34, "V", "GSpots cdq movzx"),
     SIG_RIP("GOBJ_UD1", AOB_GOBJECTS_UD1, AobTarget::GObjects, 0, 3, 7, 0, 35, "UD", "UEDumper"),
+    SIG_RIP("GOBJ_G427_1", AOB_GOBJECTS_G427_1, AobTarget::GObjects, 0, 3, 7, 0, 36, "G427", "UE4.27 Objects SAR context"),
+    SIG_RIP("GOBJ_G427_3", AOB_GOBJECTS_G427_3, AobTarget::GObjects, 0, 3, 7, 0, 37, "G427", "UE4.27 FGCObject extended context"),
 
     // Priority 50: Standard short patterns
     SIG_RIP("GOBJ_V2",  AOB_GOBJECTS_V2,  AobTarget::GObjects, 0, 3, 7, 0, 50, "V", "common UE5.3+"),
@@ -418,6 +475,10 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     SIG_RIP("GOBJ_PS5", AOB_GOBJECTS_PS5, AobTarget::GObjects, 12, 3, 7, 0, 64, "PS", "or; and; mov; lea rcx"),
     SIG_RIP("GOBJ_PS6", AOB_GOBJECTS_PS6, AobTarget::GObjects, 14, 2, 6, 0, 65, "PS", "arithmetic sub eax"),
     SIG_RIP("GOBJ_PS7", AOB_GOBJECTS_PS7, AobTarget::GObjects, 17, 2, 6, 0, 66, "PS", "arithmetic add ecx"),
+
+    // Priority 70: UE 4.27 patterns with offsets/adjustments
+    SIG_RIP("GOBJ_G427_2", AOB_GOBJECTS_G427_2, AobTarget::GObjects, 0, 2, 6, -0x14, 70, "G427", "UE4.27 NumElements CMP (adj -0x14)"),
+    SIG_RIP("GOBJ_G427_4", AOB_GOBJECTS_G427_4, AobTarget::GObjects, 0, 2, 6, 0x0C, 71, "G427", "UE4.27 ObjLastNonGCIndex (adj +0x0C)"),
 
     // Priority 80: UE4/legacy
     SIG_RIP("GOBJ_CT1", AOB_GOBJECTS_CT1, AobTarget::GObjects, 5, 3, 7, 0, 80, "CT", "UE4 Dumper.CT v5+"),
@@ -437,6 +498,7 @@ constexpr AobSignature GNAMES_PATTERNS[] = {
     // Priority 10-20: Long specific patterns
     SIG_RIP("GNAM_V8",    AOB_GNAMES_V8,     AobTarget::GNames, 0, 3, 7, 0, 10, "V", "Palworld extended context"),
     SIG_RIP("GNAM_V5",    AOB_GNAMES_V5,     AobTarget::GNames, 0, 3, 7, 0, 12, "V", "lea rcx; call; mov byte[],1 extended"),
+    SIG_RIP("GNAM_ES53_1", AOB_GNAMES_ES53_1, AobTarget::GNames, 0, 3, 7, 0, 13, "ES53", "ES2 UE5.3 FNamePool init + MOV RDX,RAX"),
     SIG_RIP("GNAM_ES2_1", AOB_GNAMES_ES2_1,  AobTarget::GNames, 0, 3, 7, 0, 15, "ES2", "UE5.5 ResolveEntry"),
     SIG_RIP("GNAM_SF_1",  AOB_GNAMES_SF_1,   AobTarget::GNames, 0, 3, 7, 0, 16, "SF", "SatisfFactory NamePoolData init (in Core DLL)"),
     SIG_RIP("GNAM_CT1",   AOB_GNAMES_CT1,    AobTarget::GNames, 0, 3, 7, 0, 18, "CT", "UE4 Dumper.CT v6+ lea r8; jmp 16"),
@@ -496,10 +558,23 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     SIG_GWORLD_RIP("GWLD_G42_1", AOB_GWORLD_G42_1,  0, 3, 7, 0, 28, false, "G42", "UE4.2 mov+mov rsi+call"),
     SIG_GWORLD_RIP("GWLD_G42_4", AOB_GWORLD_G42_4,  0, 3, 7, 0, 29, false, "G42", "UE4.2 mov rdi+mov rbx"),
 
-    // Priority 30: Wildcard-prefixed TQ2 patterns
-    SIG_GWORLD_RIP("GWLD_TQ_3",  AOB_GWORLD_TQ_3,   3, 3, 7, 0, 30, false, "TQ", "TQ2 ??-prefix mov rax"),
+    // Priority 30-39: UE 4.27 patterns and wildcard-prefixed TQ2 patterns
+    SIG_GWORLD_RIP("GWLD_G427_1", AOB_GWORLD_G427_1, 0, 3, 7, 0, 30, false, "G427", "UE4.27 FEngineLoop::Tick extended"),
+    SIG_GWORLD_RIP("GWLD_G427_2", AOB_GWORLD_G427_2, 0, 3, 7, 0, 31, false, "G427", "UE4.27 GetWorldFromContextObject"),
+    SIG_GWORLD_RIP("GWLD_G427_3", AOB_GWORLD_G427_3, 10, 3, 7, 0, 32, false, "G427", "UE4.27 UGameEngine::Tick (49 prefix)"),
+    SIG_GWORLD_RIP("GWLD_G427_4", AOB_GWORLD_G427_4, 10, 3, 7, 0, 33, false, "G427", "UE4.27 UGameEngine::Tick (48 prefix)"),
+    SIG_GWORLD_RIP("GWLD_G427_5", AOB_GWORLD_G427_5, 0, 3, 7, 0, 34, false, "G427", "UE4.27 UWorld::FinishDestroy cmp rbx"),
+
+    // Priority 35-36: Wildcard-prefixed TQ2 patterns
+    SIG_GWORLD_RIP("GWLD_TQ_3",  AOB_GWORLD_TQ_3,   3, 3, 7, 0, 35, false, "TQ", "TQ2 ??-prefix mov rax"),
     { "GWLD_TQ_4", AOB_GWORLD_TQ_4, AobTarget::GWorld, AobResolve::RipBoth,
-      3, 3, 7, 0, 31, 0, true, "TQ", "TQ2 ??-prefix write pattern" },
+      3, 3, 7, 0, 36, 0, true, "TQ", "TQ2 ??-prefix write pattern" },
+
+    // Priority 38-39: ES2 UE 5.3 write patterns
+    { "GWLD_ES53_1", AOB_GWORLD_ES53_1, AobTarget::GWorld, AobResolve::RipBoth,
+      0, 3, 7, 0, 38, 0, true, "ES53", "ES2 UE5.3 UGameEngine::Tick MOVAPS write" },
+    { "GWLD_ES53_2", AOB_GWORLD_ES53_2, AobTarget::GWorld, AobResolve::RipBoth,
+      0, 3, 7, 0, 39, 0, true, "ES53", "ES2 UE5.3 UGameEngine::Tick RCX write" },
 
     // Priority 50: Standard short GWorld patterns
     SIG_GWORLD_RIP("GWLD_V3",    AOB_GWORLD_V3,     0, 3, 7, 0, 50, false, "V", "mov rbx test rbx"),
@@ -521,9 +596,9 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
 // ============================================================
 // Pattern count summary
 // ============================================================
-// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) = 33 patterns + 1 symbol export
-// GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) = 22 patterns + 3 symbol exports
-// GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) = 27 patterns + 1 symbol export
-// Total:    82 AOB patterns + 5 symbol exports = 87 entries
+// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) + 4 (G427) + 1 (ES53) = 38 patterns + 1 symbol export
+// GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) + 1 (ES53) = 23 patterns + 3 symbol exports
+// GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) + 5 (G427) + 2 (ES53) = 34 patterns + 1 symbol export
+// Total:    95 AOB patterns + 5 symbol exports = 100 entries (from 8 sources)
 
 } // namespace Sig

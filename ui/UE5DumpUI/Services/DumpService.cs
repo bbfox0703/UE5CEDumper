@@ -34,15 +34,22 @@ public sealed class DumpService : IDumpService
             ueVersion = ptrs["ue_version"]?.GetValue<int>() ?? 0;
         }
 
+        // version_detected: true if PE/memory scan succeeded, false if using default/inferred
+        var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
+
         return new EngineState
         {
             UEVersion = ueVersion,
+            VersionDetected = versionDetected,
             GObjectsAddr = ptrs["gobjects"]?.GetValue<string>() ?? "",
             GNamesAddr = ptrs["gnames"]?.GetValue<string>() ?? "",
             GWorldAddr = ptrs["gworld"]?.GetValue<string>() ?? "",
             ObjectCount = ptrs["object_count"]?.GetValue<int>() ?? 0,
             ModuleName = ptrs["module_name"]?.GetValue<string>() ?? "",
             ModuleBase = ptrs["module_base"]?.GetValue<string>() ?? "",
+            GObjectsMethod = ptrs["gobjects_method"]?.GetValue<string>() ?? "aob",
+            GNamesMethod = ptrs["gnames_method"]?.GetValue<string>() ?? "aob",
+            GWorldMethod = ptrs["gworld_method"]?.GetValue<string>() ?? "aob",
         };
     }
 
@@ -59,6 +66,9 @@ public sealed class DumpService : IDumpService
             ObjectCount = res["object_count"]?.GetValue<int>() ?? 0,
             ModuleName = res["module_name"]?.GetValue<string>() ?? "",
             ModuleBase = res["module_base"]?.GetValue<string>() ?? "",
+            GObjectsMethod = res["gobjects_method"]?.GetValue<string>() ?? "aob",
+            GNamesMethod = res["gnames_method"]?.GetValue<string>() ?? "aob",
+            GWorldMethod = res["gworld_method"]?.GetValue<string>() ?? "aob",
         };
     }
 
@@ -297,6 +307,7 @@ public sealed class DumpService : IDumpService
                     ArrayElemSize = fo["array_elem_size"]?.GetValue<int>() ?? 0,
                     ArrayInnerAddr = fo["array_inner_addr"]?.GetValue<string>() ?? "",
                     ArrayDataAddr = fo["array_data_addr"]?.GetValue<string>() ?? "",
+                    ArrayStructClassAddr = fo["array_struct_class_addr"]?.GetValue<string>() ?? "",
                     ArrayElements = ParseArrayElements(fo["elements"]),
                     ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
                     ArrayEnumEntries = ParseEnumEntries(fo["enum_entries"]),
@@ -306,11 +317,17 @@ public sealed class DumpService : IDumpService
                     MapKeySize = fo["map_key_size"]?.GetValue<int>() ?? 0,
                     MapValueSize = fo["map_value_size"]?.GetValue<int>() ?? 0,
                     MapDataAddr = fo["map_data_addr"]?.GetValue<string>() ?? "",
+                    MapKeyStructAddr = fo["map_key_struct_addr"]?.GetValue<string>() ?? "",
+                    MapKeyStructType = fo["map_key_struct_type"]?.GetValue<string>() ?? "",
+                    MapValueStructAddr = fo["map_value_struct_addr"]?.GetValue<string>() ?? "",
+                    MapValueStructType = fo["map_value_struct_type"]?.GetValue<string>() ?? "",
                     MapElements = ParseContainerElements(fo["map_elements"]),
                     SetCount = fo["set_count"]?.GetValue<int>() ?? -1,
                     SetElemType = fo["set_elem_type"]?.GetValue<string>() ?? "",
                     SetElemSize = fo["set_elem_size"]?.GetValue<int>() ?? 0,
                     SetDataAddr = fo["set_data_addr"]?.GetValue<string>() ?? "",
+                    SetElemStructAddr = fo["set_elem_struct_addr"]?.GetValue<string>() ?? "",
+                    SetElemStructType = fo["set_elem_struct_type"]?.GetValue<string>() ?? "",
                     SetElements = ParseContainerElements(fo["set_elements"]),
                     StructDataAddr = fo["struct_data_addr"]?.GetValue<string>() ?? "",
                     StructClassAddr = fo["struct_class_addr"]?.GetValue<string>() ?? "",
