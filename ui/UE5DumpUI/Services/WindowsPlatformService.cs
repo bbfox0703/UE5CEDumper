@@ -83,6 +83,11 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
         return null;
     }
 
+    public string GetMachineName()
+    {
+        return Environment.MachineName;
+    }
+
     public void Dispose()
     {
         ReleaseSingleInstance();

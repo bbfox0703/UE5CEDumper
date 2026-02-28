@@ -18,6 +18,7 @@ public class App : Application
     private LoggingService? _logging;
     private PipeClient? _pipeClient;
     private DumpService? _dumpService;
+    private AobUsageService? _aobUsage;
 
     public override void Initialize()
     {
@@ -47,6 +48,7 @@ public class App : Application
             _logging = new LoggingService(logDir);
             _pipeClient = new PipeClient(_logging);
             _dumpService = new DumpService(_pipeClient, _logging);
+            _aobUsage = new AobUsageService(_platform, _logging);
 
             _logging.Info(Constants.LogCatInit, "UE5DumpUI starting...");
             _logging.Info(Constants.LogCatInit, $"Version:   {typeof(App).Assembly.GetName().Version}");
@@ -57,7 +59,7 @@ public class App : Application
 
             // Create main window
             var mainVm = new MainWindowViewModel(
-                _pipeClient, _dumpService, _logging, _platform);
+                _pipeClient, _dumpService, _logging, _platform, _aobUsage);
 
             desktop.MainWindow = new MainWindow
             {

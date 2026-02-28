@@ -36,6 +36,10 @@
                        Foreground="#888" FontSize="12"/>
             <TextBlock Text="{Binding GObjectsAddress}" FontSize="16"
                        Foreground="#569CD6" FontFamily="Consolas"/>
+            <TextBlock Text="{Binding GObjectsPatternId}" FontSize="10"
+                       Foreground="#666" FontFamily="Consolas" Margin="0,2,0,0"
+                       IsVisible="{Binding HasGObjectsPatternId}"
+                       ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
             <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0"
                         IsVisible="{Binding ShowGObjectsWarning}">
               <TextBlock Text="{StaticResource str.Pointers.AobFailed}"
@@ -58,6 +62,10 @@
                        Foreground="#888" FontSize="12"/>
             <TextBlock Text="{Binding GNamesAddress}" FontSize="16"
                        Foreground="#569CD6" FontFamily="Consolas"/>
+            <TextBlock Text="{Binding GNamesPatternId}" FontSize="10"
+                       Foreground="#666" FontFamily="Consolas" Margin="0,2,0,0"
+                       IsVisible="{Binding HasGNamesPatternId}"
+                       ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
             <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0"
                         IsVisible="{Binding ShowGNamesWarning}">
               <TextBlock Text="{StaticResource str.Pointers.AobFailed}"
@@ -80,6 +88,10 @@
                        Foreground="#888" FontSize="12"/>
             <TextBlock Text="{Binding GWorldAddress}" FontSize="16"
                        Foreground="#569CD6" FontFamily="Consolas"/>
+            <TextBlock Text="{Binding GWorldPatternId}" FontSize="10"
+                       Foreground="#666" FontFamily="Consolas" Margin="0,2,0,0"
+                       IsVisible="{Binding HasGWorldPatternId}"
+                       ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
             <TextBlock Text="{StaticResource str.Pointers.GWorldNotFound}"
                        Foreground="#888" FontSize="11" Margin="0,3,0,0"
                        IsVisible="{Binding ShowGWorldWarning}"/>

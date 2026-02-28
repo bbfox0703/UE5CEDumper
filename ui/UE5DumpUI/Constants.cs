@@ -45,6 +45,9 @@ public static class Constants
     public const int MinAutoRefreshIntervalSec = 8;
     public const int AutoRefreshBenchmarkBufferSec = 5; // Extra seconds added to benchmarked duration
 
+    // AOB Usage Tracking
+    public const string AobUsageFilePrefix = "UE5CEDumper";
+
     // UI
     public const int DefaultWindowWidth = 1400;
     public const int DefaultWindowHeight = 900;

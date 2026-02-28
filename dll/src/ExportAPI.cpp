@@ -28,6 +28,15 @@ const char* g_cachedGObjectsMethod = "not_found";  // "aob", "data_scan", "not_f
 const char* g_cachedGNamesMethod   = "not_found";  // "aob", "string_ref", "pointer_scan", "not_found"
 const char* g_cachedGWorldMethod   = "not_found";  // "aob", "not_found"
 
+// AOB Usage Tracking: PE hash, winning pattern IDs, scan statistics
+char        g_cachedPeHash[17] = {0};
+const char* g_cachedGObjectsPatternId = nullptr;
+const char* g_cachedGNamesPatternId   = nullptr;
+const char* g_cachedGWorldPatternId   = nullptr;
+int         g_cachedGObjectsTried = 0, g_cachedGObjectsHit = 0;
+int         g_cachedGNamesTried   = 0, g_cachedGNamesHit   = 0;
+int         g_cachedGWorldTried   = 0, g_cachedGWorldHit   = 0;
+
 static bool        s_initialized = false;
 static PipeServer  s_pipeServer;
 static std::mutex  s_walkMutex;
@@ -66,6 +75,18 @@ bool UE5_Init() {
     g_cachedGObjectsMethod  = ptrs.gobjectsMethod;
     g_cachedGNamesMethod    = ptrs.gnamesMethod;
     g_cachedGWorldMethod    = ptrs.gworldMethod;
+
+    // AOB Usage Tracking
+    memcpy(g_cachedPeHash, ptrs.peHash, sizeof(g_cachedPeHash));
+    g_cachedGObjectsPatternId = ptrs.gobjectsPatternId;
+    g_cachedGNamesPatternId   = ptrs.gnamesPatternId;
+    g_cachedGWorldPatternId   = ptrs.gworldPatternId;
+    g_cachedGObjectsTried = ptrs.gobjectsPatternsTried;
+    g_cachedGObjectsHit   = ptrs.gobjectsPatternsHit;
+    g_cachedGNamesTried   = ptrs.gnamesPatternsTried;
+    g_cachedGNamesHit     = ptrs.gnamesPatternsHit;
+    g_cachedGWorldTried   = ptrs.gworldPatternsTried;
+    g_cachedGWorldHit     = ptrs.gworldPatternsHit;
 
     // Initialize subsystems
     if (ptrs.bUE4NameArray) {

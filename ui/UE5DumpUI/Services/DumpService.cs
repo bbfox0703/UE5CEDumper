@@ -37,6 +37,25 @@ public sealed class DumpService : IDumpService
         // version_detected: true if PE/memory scan succeeded, false if using default/inferred
         var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
 
+        return BuildEngineState(ptrs, ueVersion, versionDetected);
+    }
+
+    public async Task<EngineState> GetPointersAsync(CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "get_pointers" }, ct);
+        CheckResponse(res);
+
+        return BuildEngineState(res);
+    }
+
+    /// <summary>Build EngineState from a get_pointers response, with optional overrides from init.</summary>
+    private static EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool versionDetected = true)
+    {
+        if (ueVersion == 0)
+            ueVersion = ptrs["ue_version"]?.GetValue<int>() ?? 0;
+
+        var scanStats = ptrs["scan_stats"] as JsonObject;
+
         return new EngineState
         {
             UEVersion = ueVersion,
@@ -50,25 +69,17 @@ public sealed class DumpService : IDumpService
             GObjectsMethod = ptrs["gobjects_method"]?.GetValue<string>() ?? "aob",
             GNamesMethod = ptrs["gnames_method"]?.GetValue<string>() ?? "aob",
             GWorldMethod = ptrs["gworld_method"]?.GetValue<string>() ?? "aob",
-        };
-    }
-
-    public async Task<EngineState> GetPointersAsync(CancellationToken ct = default)
-    {
-        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "get_pointers" }, ct);
-        CheckResponse(res);
-
-        return new EngineState
-        {
-            GObjectsAddr = res["gobjects"]?.GetValue<string>() ?? "",
-            GNamesAddr = res["gnames"]?.GetValue<string>() ?? "",
-            GWorldAddr = res["gworld"]?.GetValue<string>() ?? "",
-            ObjectCount = res["object_count"]?.GetValue<int>() ?? 0,
-            ModuleName = res["module_name"]?.GetValue<string>() ?? "",
-            ModuleBase = res["module_base"]?.GetValue<string>() ?? "",
-            GObjectsMethod = res["gobjects_method"]?.GetValue<string>() ?? "aob",
-            GNamesMethod = res["gnames_method"]?.GetValue<string>() ?? "aob",
-            GWorldMethod = res["gworld_method"]?.GetValue<string>() ?? "aob",
+            // AOB Usage Tracking
+            PeHash = ptrs["pe_hash"]?.GetValue<string>() ?? "",
+            GObjectsPatternId = ptrs["gobjects_pattern_id"]?.GetValue<string>() ?? "",
+            GNamesPatternId = ptrs["gnames_pattern_id"]?.GetValue<string>() ?? "",
+            GWorldPatternId = ptrs["gworld_pattern_id"]?.GetValue<string>() ?? "",
+            GObjectsPatternsTried = scanStats?["gobjects_tried"]?.GetValue<int>() ?? 0,
+            GObjectsPatternsHit = scanStats?["gobjects_hit"]?.GetValue<int>() ?? 0,
+            GNamesPatternsTried = scanStats?["gnames_tried"]?.GetValue<int>() ?? 0,
+            GNamesPatternsHit = scanStats?["gnames_hit"]?.GetValue<int>() ?? 0,
+            GWorldPatternsTried = scanStats?["gworld_tried"]?.GetValue<int>() ?? 0,
+            GWorldPatternsHit = scanStats?["gworld_hit"]?.GetValue<int>() ?? 0,
         };
     }
 

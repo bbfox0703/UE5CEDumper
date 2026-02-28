@@ -20,6 +20,33 @@
 
 namespace OffsetFinder {
 
+// ============================================================
+// ComputePEHash — Unique game build identifier
+//
+// Reads PE TimeDateStamp + SizeOfImage from the main module's
+// in-memory NT headers. Format: "%08X%08X" (16 hex chars).
+// This is the same identity key used by Microsoft symbol servers.
+// ============================================================
+static bool ComputePEHash(char* out, size_t bufSize) {
+    if (!out || bufSize < 17) return false;
+    out[0] = '\0';
+
+    uintptr_t base = Mem::GetModuleBase(nullptr);
+    if (!base) return false;
+
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
+
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS64*>(
+        base + static_cast<LONG>(dos->e_lfanew));
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
+
+    snprintf(out, bufSize, "%08X%08X",
+             nt->FileHeader.TimeDateStamp,
+             nt->OptionalHeader.SizeOfImage);
+    return true;
+}
+
 // UE4 TNameEntryArray detection state (set by ValidateGNamesUE4, read by FindAll)
 static bool g_isUE4NameArray = false;
 static int  g_ue4NameStringOffset = 0x10;
@@ -730,6 +757,15 @@ static uintptr_t ScanForTarget(
 
 // Log the scan report summary and per-pattern details for analysis.
 // Output goes to scan.log for post-mortem diagnosis.
+// Extract summary stats from a ScanReport for EnginePointers propagation.
+static void ExtractScanStats(const ScanReport& report, int& triedCount, int& hitCount) {
+    triedCount = static_cast<int>(report.results.size());
+    hitCount = 0;
+    for (const auto& r : report.results) {
+        if (r.hitCount > 0) ++hitCount;
+    }
+}
+
 static void LogScanReport(const ScanReport& report) {
     int totalPatterns = static_cast<int>(report.results.size());
     int patternsWithHits = 0;
@@ -773,6 +809,11 @@ static const char* s_gobjectsMethod = "not_found";
 static const char* s_gnamesMethod   = "not_found";
 static const char* s_gworldMethod   = "not_found";
 
+// File-scope ScanReports — promoted from local so FindAll() can read winningId + stats
+static ScanReport s_gobjectsReport;
+static ScanReport s_gnamesReport;
+static ScanReport s_gworldReport;
+
 // ============================================================
 // FindGObjects — unified scan + data-section fallback
 // ============================================================
@@ -781,7 +822,8 @@ uintptr_t FindGObjects() {
     s_gobjectsMethod = "not_found";
     Logger::Info("SCAN:GObj", "FindGObjects: Scanning for GObjects...");
 
-    ScanReport report;
+    s_gobjectsReport = ScanReport{};
+    ScanReport& report = s_gobjectsReport;
     report.targetName = "GObjects";
 
     uintptr_t result = ScanForTarget(
@@ -1321,7 +1363,8 @@ uintptr_t FindGNames() {
 
     Logger::Info("SCAN:GNam", "FindGNames: Scanning for GNames (FNamePool / TNameEntryArray)...");
 
-    ScanReport report;
+    s_gnamesReport = ScanReport{};
+    ScanReport& report = s_gnamesReport;
     report.targetName = "GNames";
 
     uintptr_t result = ScanForTarget(
@@ -1372,7 +1415,8 @@ uintptr_t FindGWorld() {
     s_gworldMethod = "not_found";
     Logger::Info("SCAN:GWld", "FindGWorld: Scanning for GWorld...");
 
-    ScanReport report;
+    s_gworldReport = ScanReport{};
+    ScanReport& report = s_gworldReport;
     report.targetName = "GWorld";
 
     uintptr_t result = ScanForTarget(
@@ -2220,6 +2264,18 @@ bool FindAll(EnginePointers& out) {
     out.GWorld = FindGWorld();
     out.gworldMethod = s_gworldMethod;
     // GWorld is non-critical, just log
+
+    // --- AOB Usage Tracking: compute PE hash and propagate scan stats ---
+    ComputePEHash(out.peHash, sizeof(out.peHash));
+    LOG_INFO("FindAll: PE hash = %s", out.peHash);
+
+    out.gobjectsPatternId = s_gobjectsReport.winningId;
+    out.gnamesPatternId   = s_gnamesReport.winningId;
+    out.gworldPatternId   = s_gworldReport.winningId;
+
+    ExtractScanStats(s_gobjectsReport, out.gobjectsPatternsTried, out.gobjectsPatternsHit);
+    ExtractScanStats(s_gnamesReport,   out.gnamesPatternsTried,   out.gnamesPatternsHit);
+    ExtractScanStats(s_gworldReport,   out.gworldPatternsTried,   out.gworldPatternsHit);
 
     LOG_INFO("FindAll: Complete — GObjects=0x%llX (%s), GNames=0x%llX (%s), GWorld=0x%llX (%s), UE=%u, UE4Names=%s, hdrOff=%d",
              static_cast<unsigned long long>(out.GObjects), out.gobjectsMethod,
