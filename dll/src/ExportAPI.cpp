@@ -274,6 +274,52 @@ bool UE5_AutoStart() {
     return ok;
 }
 
+// === Property Detail Queries (for CE Lua dissect) ===
+
+int32_t UE5_GetFieldBoolMask(uintptr_t fieldAddr) {
+    if (!fieldAddr) return 0;
+    // FBoolProperty: { FieldSize(1), ByteOffset(1), ByteMask(1), FieldMask(1) }
+    // at DynOff::FBOOLPROP_FIELDSIZE. Probe nearby offsets for version variance.
+    for (int tryOff : { DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBOOLPROP_FIELDSIZE - 4,
+                        DynOff::FBOOLPROP_FIELDSIZE + 4, DynOff::FBOOLPROP_FIELDSIZE + 8 }) {
+        if (tryOff < 0) continue;
+        uint8_t boolBytes[4] = {};
+        if (Mem::ReadBytesSafe(fieldAddr + tryOff, boolBytes, 4)) {
+            uint8_t fieldSize = boolBytes[0];
+            uint8_t fieldMask = boolBytes[3];
+            if (fieldSize >= 1 && fieldSize <= 8 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
+                return static_cast<int32_t>(fieldMask);
+            }
+        }
+    }
+    return 0;
+}
+
+uintptr_t UE5_GetFieldStructClass(uintptr_t fieldAddr) {
+    if (!fieldAddr) return 0;
+    // FStructProperty stores UScriptStruct* at DynOff::FSTRUCTPROP_STRUCT.
+    constexpr int kDeltas[] = { 0, -8, 8, -16, 16, 4, -4, 12 };
+    for (int delta : kDeltas) {
+        int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
+        if (tryOff < 0) continue;
+        uintptr_t structPtr = 0;
+        if (Mem::ReadSafe(fieldAddr + tryOff, structPtr) && structPtr) {
+            std::string sname = UStructWalker::GetName(structPtr);
+            if (!sname.empty() && sname != "None") return structPtr;
+        }
+    }
+    return 0;
+}
+
+int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
+    if (!classAddr) return 0;
+    int32_t propsSize = 0;
+    Mem::ReadSafe(classAddr + DynOff::USTRUCT_PROPSSIZE, propsSize);
+    return propsSize;
+}
+
+// === Pipe Server ===
+
 bool UE5_StartPipeServer() {
     return s_pipeServer.Start();
 }

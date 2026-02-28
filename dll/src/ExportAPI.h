@@ -54,6 +54,18 @@ __declspec(dllexport) bool      UE5_ResolveFName(uint64_t fname, char* buf, int3
 // UE5_AutoStart() does NOT support decryption (use manual Lua flow).
 __declspec(dllexport) void      UE5_SetObjectDecryption(uintptr_t (*decryptFunc)(uintptr_t));
 
+// === Property Detail Queries (for CE Lua dissect) ===
+// Returns the FieldMask byte for a BoolProperty field (0 if not a bool).
+// fieldAddr: FProperty* address from UE5_WalkClassGetField.
+__declspec(dllexport) int32_t   UE5_GetFieldBoolMask(uintptr_t fieldAddr);
+
+// Returns the UScriptStruct* for a StructProperty (0 if not a struct).
+// fieldAddr: FProperty* address from UE5_WalkClassGetField.
+__declspec(dllexport) uintptr_t UE5_GetFieldStructClass(uintptr_t fieldAddr);
+
+// Returns the PropertiesSize of a UClass/UStruct (total struct byte size).
+__declspec(dllexport) int32_t   UE5_GetClassPropsSize(uintptr_t classAddr);
+
 // === Pipe Server ===
 __declspec(dllexport) bool      UE5_StartPipeServer();
 __declspec(dllexport) void      UE5_StopPipeServer();
