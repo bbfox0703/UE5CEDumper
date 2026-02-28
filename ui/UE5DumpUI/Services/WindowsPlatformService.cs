@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Platform.Storage;
 using UE5DumpUI.Core;
 
 namespace UE5DumpUI.Services;
@@ -45,7 +47,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     public async Task CopyToClipboardAsync(string text)
     {
         if (Avalonia.Application.Current?.ApplicationLifetime is
-            Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+            IClassicDesktopStyleApplicationLifetime desktop)
         {
             var topLevel = desktop.MainWindow;
             if (topLevel?.Clipboard != null)
@@ -53,6 +55,32 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
                 await topLevel.Clipboard.SetTextAsync(text);
             }
         }
+    }
+
+    public async Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension)
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is
+            IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            var topLevel = desktop.MainWindow;
+            if (topLevel?.StorageProvider is { } sp)
+            {
+                var file = await sp.SaveFilePickerAsync(new FilePickerSaveOptions
+                {
+                    Title = "Save File",
+                    SuggestedFileName = defaultFileName,
+                    FileTypeChoices = new[]
+                    {
+                        new FilePickerFileType(filterName)
+                        {
+                            Patterns = new[] { $"*{filterExtension}" }
+                        }
+                    }
+                });
+                return file?.Path.LocalPath;
+            }
+        }
+        return null;
     }
 
     public void Dispose()
