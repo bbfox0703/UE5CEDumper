@@ -61,9 +61,12 @@ static const LayoutPreset s_chunkedPresets[] = {
 };
 static constexpr int NUM_CHUNKED_PRESETS = sizeof(s_chunkedPresets) / sizeof(s_chunkedPresets[0]);
 
-// UE4 extended: FUObjectArray with GC index fields before ObjObjects.
+// Extended: FUObjectArray with GC index fields before ObjObjects.
+// UE4-Extended: no PreAllocatedObjects ptr in FChunkedFixedUObjectArray.
+// UE5-Extended: has PreAllocatedObjects ptr (+8 bytes shift). TQ2 (UE 5.7) confirmed.
 static const LayoutPreset s_ue4ExtendedPresets[] = {
     { "UE4-Extended", { 0x10, 0x18, 0x1C, 0x20, 0x24 } },
+    { "UE5-Extended", { 0x10, 0x20, 0x24, 0x28, 0x2C } },
 };
 static constexpr int NUM_UE4_EXTENDED_PRESETS = sizeof(s_ue4ExtendedPresets) / sizeof(s_ue4ExtendedPresets[0]);
 
@@ -245,6 +248,25 @@ static bool DetectLayout(uintptr_t addr) {
             if (LooksLikeHeapPtr(objPtr)) {
                 s_layout = { 0x10, 0x18, 0x1C, 0x20, 0x24 };
                 LOG_INFO("ObjectArray: Layout D (relaxed UE4 ext) detected (Num=%d, Max=%d, Objects=0x%llX)",
+                         num, max, (unsigned long long)objPtr);
+                return true;
+            }
+        }
+    }
+
+    // Layout E (UE5 extended relaxed): Objects@+0x10, Num@+0x24, Max@+0x20
+    // FUObjectArray with GC prefix + PreAllocatedObjects ptr before array fields.
+    {
+        int32_t num = 0, max = 0;
+        Mem::ReadSafe(addr + 0x24, num);
+        Mem::ReadSafe(addr + 0x20, max);
+        if (num > 0 && num <= max && max <= 0x800000) {
+            uintptr_t objPtr = 0;
+            Mem::ReadSafe(addr + 0x10, objPtr);
+            objPtr = DecryptObjectPtr(objPtr);
+            if (LooksLikeHeapPtr(objPtr)) {
+                s_layout = { 0x10, 0x20, 0x24, 0x28, 0x2C };
+                LOG_INFO("ObjectArray: Layout E (relaxed UE5 ext) detected (Num=%d, Max=%d, Objects=0x%llX)",
                          num, max, (unsigned long long)objPtr);
                 return true;
             }
