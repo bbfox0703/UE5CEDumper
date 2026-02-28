@@ -64,6 +64,7 @@ git submodule update --init --recursive
 - **Magic words management**: All magic strings kept in one file per project with proper comments
 - **UI Strings**: English only. All UI strings in `Resources/Strings/en.axaml`, referenced via `StaticResource` bindings
 - **UE offsets**: All UObject/UStruct offsets must be dynamically verified via OffsetFinder, never hardcoded
+- **AOT compatible**: All C# code must be Native AOT / trimming compatible. No reflection-based APIs — use source generators instead (e.g. `[JsonSerializable]` context for `System.Text.Json`, `[ObservableProperty]` for MVVM). The UI is published as a self-contained trimmed binary
 
 -----
 

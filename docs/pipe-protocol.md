@@ -127,7 +127,26 @@ Direction: bidirectional — Request/Response + async push Events
   "gobjects":     "7FF600A12340",
   "gnames":       "7FF600B56780",
   "gworld":       "7FF600C89ABC",   // may be "0" if not found
-  "object_count": 58432
+  "object_count": 58432,
+  "module_name":  "MyGame-Win64-Shipping.exe",
+  "module_base":  "7FF600000000",
+  "ue_version":   504,
+  "gobjects_method": "aob",         // "aob", "data_scan", "string_ref", "pointer_scan", "not_found"
+  "gnames_method":   "string_ref",
+  "gworld_method":   "not_found",
+  // AOB Usage Tracking (added v1.1)
+  "pe_hash":              "5F3A1B2CCDD40000",  // TimeDateStamp(8hex) + SizeOfImage(8hex)
+  "gobjects_pattern_id":  "GOBJ_V1",           // winning pattern ID, "" if not AOB
+  "gnames_pattern_id":    "",
+  "gworld_pattern_id":    "",
+  "scan_stats": {
+    "gobjects_tried": 40,    // patterns evaluated
+    "gobjects_hit":   3,     // patterns with >=1 match
+    "gnames_tried":   27,
+    "gnames_hit":     0,
+    "gworld_tried":   37,
+    "gworld_hit":     0
+  }
 }
 ```
 

@@ -87,6 +87,7 @@
     <sys:String x:Key="str.Pointers.VersionWarning">&#x26A0; Version not detected — inferred from engine analysis (custom UE build?)</sys:String>
     <sys:String x:Key="str.Pointers.AobFailed">&#x26A0; AOB failed — found via</sys:String>
     <sys:String x:Key="str.Pointers.GWorldNotFound">GWorld not found (non-critical)</sys:String>
+    <sys:String x:Key="str.Pointers.PatternIdTooltip">AOB pattern ID that matched this pointer</sys:String>
 
     <!-- Hex View -->
     <sys:String x:Key="str.HexView.Address">Address (hex or module.exe+offset)</sys:String>

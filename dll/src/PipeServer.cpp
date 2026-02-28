@@ -217,6 +217,14 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             extern const char* g_cachedGObjectsMethod;
             extern const char* g_cachedGNamesMethod;
             extern const char* g_cachedGWorldMethod;
+            // AOB Usage Tracking
+            extern char        g_cachedPeHash[17];
+            extern const char* g_cachedGObjectsPatternId;
+            extern const char* g_cachedGNamesPatternId;
+            extern const char* g_cachedGWorldPatternId;
+            extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
+            extern int         g_cachedGNamesTried,   g_cachedGNamesHit;
+            extern int         g_cachedGWorldTried,   g_cachedGWorldHit;
 
             json data;
             data["gobjects"]         = PipeProtocol::AddrToStr(g_cachedGObjects);
@@ -228,6 +236,20 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["gobjects_method"]  = g_cachedGObjectsMethod;
             data["gnames_method"]    = g_cachedGNamesMethod;
             data["gworld_method"]    = g_cachedGWorldMethod;
+
+            // AOB Usage Tracking
+            data["pe_hash"] = g_cachedPeHash;
+            data["gobjects_pattern_id"] = g_cachedGObjectsPatternId ? g_cachedGObjectsPatternId : "";
+            data["gnames_pattern_id"]   = g_cachedGNamesPatternId   ? g_cachedGNamesPatternId   : "";
+            data["gworld_pattern_id"]   = g_cachedGWorldPatternId   ? g_cachedGWorldPatternId   : "";
+            json scanStats;
+            scanStats["gobjects_tried"] = g_cachedGObjectsTried;
+            scanStats["gobjects_hit"]   = g_cachedGObjectsHit;
+            scanStats["gnames_tried"]   = g_cachedGNamesTried;
+            scanStats["gnames_hit"]     = g_cachedGNamesHit;
+            scanStats["gworld_tried"]   = g_cachedGWorldTried;
+            scanStats["gworld_hit"]     = g_cachedGWorldHit;
+            data["scan_stats"] = scanStats;
 
             // Module info for CE address formatting
             uintptr_t moduleBase = Mem::GetModuleBase(nullptr);

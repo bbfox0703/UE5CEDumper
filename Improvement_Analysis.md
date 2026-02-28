@@ -521,6 +521,9 @@ No CPUID check needed — the DLL build already requires `/arch:AVX2`.
 8. **GAP #5**: String-reference GNames fallback ✅
 9. **GAP #12**: AVX2 SIMD scanning ✅
 
+### Sprint 2.5 — Infrastructure (P2) ✅ COMPLETE
+- **AOB Usage Tracking**: Per-game pattern recording & analysis — persistent JSON file keyed by PE hash (TimeDateStamp+SizeOfImage), records winning pattern IDs, scan stats (tried/hit), per-machine files for crowdsourced analysis
+
 ### Sprint 3 — Export & Interop (P2)
 10. **GAP #7**: SDK header generation (Phase A: offset headers)
 11. **GAP #8**: USMAP export
