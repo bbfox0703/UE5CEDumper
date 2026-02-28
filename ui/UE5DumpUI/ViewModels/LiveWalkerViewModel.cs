@@ -953,6 +953,59 @@ public partial class LiveWalkerViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task ExportCsxAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentAddress) || !HasData) return;
+
+        try
+        {
+            ClearStatus();
+
+            // Build struct name: "ClassName_ObjectName" or "ClassName"
+            var structName = !string.IsNullOrEmpty(CurrentObjectName)
+                ? $"{CurrentClassName}_{CurrentObjectName}".Replace(" ", "_")
+                : CurrentClassName.Replace(" ", "_");
+            // Sanitize for file name and XML attribute
+            structName = structName.Replace("<", "").Replace(">", "").Replace("\"", "");
+            // Sanitize for file system: remove invalid chars
+            var safeFileName = string.Join("_",
+                structName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+
+            // Show save-file dialog; user picks folder + file name
+            var filePath = await _platform.ShowSaveFileDialogAsync(
+                safeFileName, "CE Structure Dissect (*.CSX)", ".CSX");
+            if (string.IsNullOrEmpty(filePath)) return; // user cancelled
+
+            IsLoading = true;
+            StatusText = "Resolving struct fields...";
+            var csx = await CsxExportService.GenerateCsxAsync(
+                _dump, structName, Fields, arrayLimit: ArrayLimit);
+
+            // Write to file (overwrite if exists — user already confirmed via dialog)
+            await File.WriteAllTextAsync(filePath, csx);
+
+            StatusText = "";
+            _log.Info($"CSX exported to {filePath} for {CurrentClassName}");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            StatusText = "";
+            SetError("Cannot write to the selected location — access denied.");
+            _log.Error("CSX export failed: access denied");
+        }
+        catch (Exception ex)
+        {
+            StatusText = "";
+            SetError(ex);
+            _log.Error("Failed to export CSX", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
     private async Task ExportCeFieldXmlAsync()
     {
         if (SelectedField == null || string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;

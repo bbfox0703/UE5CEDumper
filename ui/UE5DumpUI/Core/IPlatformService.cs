@@ -20,4 +20,10 @@ public interface IPlatformService
 
     /// <summary>Copy text to clipboard.</summary>
     Task CopyToClipboardAsync(string text);
+
+    /// <summary>
+    /// Show a platform save-file dialog.
+    /// Returns the chosen file path, or null if user cancelled.
+    /// </summary>
+    Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension);
 }
