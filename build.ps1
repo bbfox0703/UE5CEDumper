@@ -493,6 +493,12 @@ if ($Target -in "All", "DLL") {
         Copy-Item $dissectSrc -Destination $DIST_DIR -Force
         Write-Ok "ue5_dissect.lua copied to dist\"
     }
+    # README.md — script documentation for end users
+    $readmeSrc = Join-Path $ROOT_DIR "scripts\README.md"
+    if (Test-Path $readmeSrc) {
+        Copy-Item $readmeSrc -Destination $DIST_DIR -Force
+        Write-Ok "scripts README.md copied to dist\"
+    }
 }
 
 # ============================================================
