@@ -19,6 +19,9 @@
 #endif
 #include <Windows.h>
 
+// Defined in ExportAPI.cpp — cached UE version for layout branching
+extern uint32_t g_cachedUEVersion;
+
 namespace UStructWalker {
 
 // File-scope enum cache: keyed by UEnum* → vector of (value, name) pairs.
@@ -133,6 +136,83 @@ static std::string ReadFString(uintptr_t instanceAddr, int32_t offset) {
     std::string result(needed - 1, '\0');  // -1 to exclude null terminator
     WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), -1, result.data(), needed, nullptr, nullptr);
     return result;
+}
+
+// ============================================================
+// ReadSoftObjectPath — resolve FSoftObjectPath at the given
+// address to a human-readable asset path string.
+//
+// UE4 / UE5.0: FSoftObjectPath = { FName AssetPathName; FString SubPathString; }
+// UE5.1+:      FSoftObjectPath = { FTopLevelAssetPath { FName PackageName; FName AssetName; }; FString SubPathString; }
+// ============================================================
+static std::string ReadSoftObjectPath(uintptr_t addr) {
+    if (!addr) return "";
+
+    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+
+    bool isTopLevelAssetPath = (g_cachedUEVersion >= 501);
+
+    if (isTopLevelAssetPath) {
+        // UE5.1+: FTopLevelAssetPath = { FName PackageName, FName AssetName }
+        std::string packageName = ReadFName(addr);
+        std::string assetName   = ReadFName(addr + fnameSize);
+
+        if (packageName.empty() || packageName == "None") return "";
+        if (assetName.empty() || assetName == "None")
+            return packageName;
+        return packageName + "." + assetName;
+    } else {
+        // UE4 / UE5.0: FName AssetPathName
+        std::string assetPathName = ReadFName(addr);
+        if (!assetPathName.empty() && assetPathName != "None")
+            return assetPathName;
+        // Fallback: try UE5.1+ layout in case version was misdetected
+        std::string packageName = ReadFName(addr);
+        std::string assetName   = ReadFName(addr + fnameSize);
+        if (!packageName.empty() && packageName != "None"
+            && !assetName.empty() && assetName != "None")
+            return packageName + "." + assetName;
+        return "";
+    }
+}
+
+// ============================================================
+// ReadFTextString — read the display string from an FText.
+//
+// FText = { ITextData* Data (8B); void* SharedRefController (8B); ... }
+// ITextData contains an FString at a version-dependent offset.
+// We probe common offsets within ITextData to find the FString.
+// ============================================================
+static std::string ReadFTextString(uintptr_t ftextAddr) {
+    if (!ftextAddr) return "";
+
+    // Read ITextData* (first 8 bytes of FText)
+    uintptr_t textDataPtr = 0;
+    if (!Mem::ReadSafe(ftextAddr, textDataPtr) || !textDataPtr) return "";
+
+    // Probe ITextData at multiple offsets for a valid FString
+    // FString = { wchar_t* Data (8B), int32 Count (4B), int32 Max (4B) }
+    static const int probeOffsets[] = { 0x28, 0x30, 0x38, 0x40, 0x20, 0x48 };
+
+    for (int offset : probeOffsets) {
+        uintptr_t strData = 0;
+        int32_t   strCount = 0;
+        int32_t   strMax = 0;
+
+        if (!Mem::ReadSafe(textDataPtr + offset, strData) || !strData) continue;
+        if (!Mem::ReadSafe(textDataPtr + offset + 8, strCount)) continue;
+        if (!Mem::ReadSafe(textDataPtr + offset + 12, strMax)) continue;
+
+        // Validate: reasonable FString (non-null data, positive count, count <= max)
+        if (strCount <= 0 || strCount > 4096 || strMax < strCount) continue;
+
+        // Try to read the FString at this offset
+        std::string result = ReadFString(textDataPtr, offset);
+        if (!result.empty())
+            return result;
+    }
+
+    return "";
 }
 
 uintptr_t GetClass(uintptr_t uobjectAddr) {
@@ -623,8 +703,9 @@ ReadArrayResult ReadArrayElements(
 // IsPointerArrayType — check if an inner type name is a pointer
 // type whose elements are raw UObject* pointers (Phase D).
 // ObjectProperty and ClassProperty store UObject* (8 bytes).
-// WeakObjectProperty, SoftObjectProperty, LazyObjectProperty
-// have different internal layouts and are deferred to Phase E.
+// WeakObjectProperty is deferred to Phase E.
+// SoftObjectProperty, LazyObjectProperty, InterfaceProperty have
+// different internal layouts — handled inline by WalkInstance.
 // ============================================================
 bool IsPointerArrayType(const std::string& innerTypeName) {
     return innerTypeName == "ObjectProperty"
@@ -1010,9 +1091,22 @@ ReadArrayResult ReadStructArrayElements(
             } else if (cf.typeName == "StructProperty") {
                 sf.value = cf.nestedTypeName.empty() ? "{Struct}" : "{" + cf.nestedTypeName + "}";
             } else if (cf.typeName == "ObjectProperty" || cf.typeName == "ClassProperty"
-                    || cf.typeName == "SoftObjectProperty" || cf.typeName == "LazyObjectProperty"
-                    || cf.typeName == "WeakObjectProperty") {
+                    || cf.typeName == "WeakObjectProperty"
+                    || cf.typeName == "InterfaceProperty") {
                 sf.value = "ptr";
+            } else if (cf.typeName == "SoftObjectProperty" || cf.typeName == "SoftClassProperty") {
+                sf.value = ReadSoftObjectPath(elemAddr + cf.offset + 0x10);
+                if (sf.value.empty()) sf.value = "(none)";
+            } else if (cf.typeName == "LazyObjectProperty") {
+                uintptr_t gAddr = elemAddr + cf.offset + 0x10;
+                uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
+                Mem::ReadSafe(gAddr, ga); Mem::ReadSafe(gAddr + 4, gb);
+                Mem::ReadSafe(gAddr + 8, gc); Mem::ReadSafe(gAddr + 12, gd);
+                char gs[48]; snprintf(gs, sizeof(gs), "{%08X-%08X-%08X-%08X}", ga, gb, gc, gd);
+                sf.value = gs;
+            } else if (cf.typeName == "TextProperty") {
+                sf.value = ReadFTextString(elemAddr + cf.offset);
+                if (sf.value.empty()) sf.value = "(empty)";
             } else if (cf.typeName == "StrProperty") {
                 sf.value = "(str)";
             } else if (cf.typeName == "ArrayProperty") {
@@ -1161,10 +1255,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle ObjectProperty: read pointer, resolve name/class
-        if (fi.TypeName == "ObjectProperty" || fi.TypeName == "ClassProperty" ||
-            fi.TypeName == "SoftObjectProperty" ||
-            fi.TypeName == "LazyObjectProperty") {
+        // Handle ObjectProperty / ClassProperty: read pointer, resolve name/class
+        if (fi.TypeName == "ObjectProperty" || fi.TypeName == "ClassProperty") {
             uintptr_t ptr = 0;
             if (fi.Size >= 8 && Mem::ReadSafe(instanceAddr + fi.Offset, ptr) && ptr) {
                 fv.ptrValue = ptr;
@@ -1179,6 +1271,92 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(ptr));
                 fv.hexValue = buf;
             }
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle SoftObjectProperty / SoftClassProperty: read FSoftObjectPath asset path
+        // TSoftObjectPtr layout: +0x00 FWeakObjectPtr(8B), +0x08 Tag(4B), +0x0C pad(4B), +0x10 FSoftObjectPath
+        if (fi.TypeName == "SoftObjectProperty" || fi.TypeName == "SoftClassProperty") {
+            uintptr_t fieldAddr = instanceAddr + fi.Offset;
+            std::string assetPath = ReadSoftObjectPath(fieldAddr + 0x10);
+            fv.strValue = assetPath;
+            fv.typedValue = assetPath.empty() ? "(none)" : assetPath;
+
+            // Hex from raw bytes (cap at 32 bytes)
+            int showBytes = (fi.Size > 0 && fi.Size <= 64) ? (std::min)(fi.Size, (int32_t)32) : 0;
+            if (showBytes > 0) {
+                std::vector<uint8_t> rawBuf(showBytes, 0);
+                if (Mem::ReadBytesSafe(fieldAddr, rawBuf.data(), showBytes)) {
+                    std::string hex;
+                    hex.reserve(showBytes * 2);
+                    for (int i = 0; i < showBytes; ++i) {
+                        char hx[3];
+                        snprintf(hx, sizeof(hx), "%02X", rawBuf[i]);
+                        hex += hx;
+                    }
+                    if (fi.Size > 32) hex += "...";
+                    fv.hexValue = hex;
+                }
+            }
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle LazyObjectProperty: read FUniqueObjectGuid (FGuid = 4 x uint32)
+        // TLazyObjectPtr layout: +0x00 FWeakObjectPtr(8B), +0x08 Tag(4B), +0x0C pad(4B), +0x10 FGuid(16B)
+        if (fi.TypeName == "LazyObjectProperty") {
+            uintptr_t guidAddr = instanceAddr + fi.Offset + 0x10;
+            uint32_t a = 0, b = 0, c = 0, d = 0;
+            Mem::ReadSafe(guidAddr + 0, a);
+            Mem::ReadSafe(guidAddr + 4, b);
+            Mem::ReadSafe(guidAddr + 8, c);
+            Mem::ReadSafe(guidAddr + 12, d);
+
+            char guidStr[48];
+            snprintf(guidStr, sizeof(guidStr), "{%08X-%08X-%08X-%08X}", a, b, c, d);
+            fv.typedValue = guidStr;
+            fv.strValue = guidStr;
+
+            // Hex from raw bytes
+            int showBytes = (fi.Size > 0 && fi.Size <= 64) ? (std::min)(fi.Size, (int32_t)32) : 0;
+            if (showBytes > 0) {
+                std::vector<uint8_t> rawBuf(showBytes, 0);
+                if (Mem::ReadBytesSafe(instanceAddr + fi.Offset, rawBuf.data(), showBytes)) {
+                    std::string hex;
+                    hex.reserve(showBytes * 2);
+                    for (int i = 0; i < showBytes; ++i) {
+                        char hx[3];
+                        snprintf(hx, sizeof(hx), "%02X", rawBuf[i]);
+                        hex += hx;
+                    }
+                    if (fi.Size > 32) hex += "...";
+                    fv.hexValue = hex;
+                }
+            }
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle InterfaceProperty: FScriptInterface = { UObject* ObjectPointer(8B); void* InterfacePointer(8B) }
+        if (fi.TypeName == "InterfaceProperty") {
+            uintptr_t objPtr = 0;
+            uintptr_t ifacePtr = 0;
+            Mem::ReadSafe(instanceAddr + fi.Offset, objPtr);
+            Mem::ReadSafe(instanceAddr + fi.Offset + 8, ifacePtr);
+
+            if (objPtr) {
+                fv.ptrValue = objPtr;
+                fv.ptrName = GetName(objPtr);
+                uintptr_t cls = GetClass(objPtr);
+                if (cls) fv.ptrClassName = GetName(cls);
+            }
+
+            char buf[48];
+            snprintf(buf, sizeof(buf), "%016llX %016llX",
+                static_cast<unsigned long long>(objPtr),
+                static_cast<unsigned long long>(ifacePtr));
+            fv.hexValue = buf;
             result.fields.push_back(std::move(fv));
             continue;
         }
@@ -1371,6 +1549,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
                             delta, fi.Name.c_str());
 
+                        // If key/value is StructProperty, read UScriptStruct* for navigation
+                        if (keyTypeName == "StructProperty") {
+                            uintptr_t kStruct = 0;
+                            if (Mem::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, kStruct) && kStruct) {
+                                fv.mapKeyStructAddr = kStruct;
+                                fv.mapKeyStructType = GetName(kStruct);
+                            }
+                        }
+                        if (valueTypeName == "StructProperty") {
+                            uintptr_t vStruct = 0;
+                            if (Mem::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT, vStruct) && vStruct) {
+                                fv.mapValueStructAddr = vStruct;
+                                fv.mapValueStructType = GetName(vStruct);
+                            }
+                        }
+
                         // Read inline element values if count is manageable
                         if (fv.mapCount > 0
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
@@ -1478,6 +1672,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     Mem::ReadSafe<int32_t>(elemProp + DynOff::FPROPERTY_ELEMSIZE, fv.setElemSize);
                     Logger::Info("WALK:SetP", "FSetProperty ElementProp='%s'(%d) at delta=%d for '%s'",
                         elemTypeName.c_str(), fv.setElemSize, delta, fi.Name.c_str());
+
+                    // If element is StructProperty, read UScriptStruct* for navigation
+                    if (elemTypeName == "StructProperty") {
+                        uintptr_t eStruct = 0;
+                        if (Mem::ReadSafe(elemProp + DynOff::FSTRUCTPROP_STRUCT, eStruct) && eStruct) {
+                            fv.setElemStructAddr = eStruct;
+                            fv.setElemStructType = GetName(eStruct);
+                        }
+                    }
 
                     // Read inline element values if count is manageable
                     if (fv.setCount > 0
@@ -1675,8 +1878,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // Fall through to generic scalar handling below
         }
 
-        // Handle StrProperty / TextProperty: read FString (TArray<wchar_t>) → UTF-8
-        if (fi.TypeName == "StrProperty" || fi.TypeName == "TextProperty") {
+        // Handle StrProperty: read FString (TArray<wchar_t>) → UTF-8
+        if (fi.TypeName == "StrProperty") {
             fv.strValue = ReadFString(instanceAddr, fi.Offset);
             fv.typedValue = fv.strValue.empty() ? "(empty)" : fv.strValue;
             // Hex of the TArray<wchar_t> header (Data ptr + Count)
@@ -1687,6 +1890,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             char buf[48];
             snprintf(buf, sizeof(buf), "%016llX %08X",
                 static_cast<unsigned long long>(strData), strCount);
+            fv.hexValue = buf;
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle TextProperty: FText = { ITextData* Data; void* SharedRefController; ... }
+        // Dereference Data pointer, then probe for FString at common offsets within ITextData.
+        if (fi.TypeName == "TextProperty") {
+            fv.strValue = ReadFTextString(instanceAddr + fi.Offset);
+            fv.typedValue = fv.strValue.empty() ? "(empty)" : fv.strValue;
+
+            // Hex: show the ITextData pointer
+            uintptr_t textDataPtr = 0;
+            Mem::ReadSafe(instanceAddr + fi.Offset, textDataPtr);
+            char buf[20];
+            snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(textDataPtr));
             fv.hexValue = buf;
             result.fields.push_back(std::move(fv));
             continue;

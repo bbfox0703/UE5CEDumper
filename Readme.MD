@@ -37,7 +37,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 | Feature | Description |
 |---|---|
-| **AOB Scanning** | 87 entries (82 patterns + 5 exports) from 6 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. |
+| **AOB Scanning** | 96 entries (91 patterns + 5 exports) from 7 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. |
 | **DynOff (Dynamic Offsets)** | Runtime probing of `FField`, `FProperty`, and `UStruct`. No more manual offset updating after game patches. |
 | **Live Walker** | Inspect instance memory data with real-time value updates. Navigate into pointers (→), inline structs ({}), and containers ([]). Breadcrumb trail for full navigation history. |
 | **Container Drill-Down** | Drill into **Array**, **Map**, and **Set** containers. ObjectProperty elements show resolved names and support click-through navigation. |

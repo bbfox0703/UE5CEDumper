@@ -116,12 +116,18 @@ struct LiveFieldValue {
     int32_t     mapKeySize = 0;      // Key element size in bytes
     int32_t     mapValueSize = 0;    // Value element size in bytes
     uintptr_t   mapDataAddr = 0;     // TSparseArray::Data base address
+    uintptr_t   mapKeyStructAddr = 0;   // UScriptStruct* if key is StructProperty
+    std::string mapKeyStructType;        // Struct name for key (e.g. "FVector")
+    uintptr_t   mapValueStructAddr = 0; // UScriptStruct* if value is StructProperty
+    std::string mapValueStructType;      // Struct name for value
 
     // For SetProperty: TSet header info
     int32_t     setCount = -1;       // -1 = not a set; ≥0 = actual entry count
     std::string setElemType;         // Element FProperty type name
     int32_t     setElemSize = 0;     // Element size in bytes
     uintptr_t   setDataAddr = 0;     // TSparseArray::Data base address
+    uintptr_t   setElemStructAddr = 0;  // UScriptStruct* if element is StructProperty
+    std::string setElemStructType;       // Struct name for element
 
     // For Map/Set: inline element preview (shared structure)
     struct ContainerElement {

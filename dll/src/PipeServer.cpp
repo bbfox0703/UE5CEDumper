@@ -462,6 +462,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                             fj["array_elem_size"] = fv.arrayElemSize;
                         if (!fv.arrayInnerStructType.empty())
                             fj["array_struct_type"] = fv.arrayInnerStructType;
+                        if (fv.arrayInnerStructAddr != 0)
+                            fj["array_struct_class_addr"] = PipeProtocol::AddrToStr(fv.arrayInnerStructAddr);
                     }
                     if (fv.arrayInnerFFieldAddr != 0)
                         fj["array_inner_addr"] = PipeProtocol::AddrToStr(fv.arrayInnerFFieldAddr);
@@ -516,6 +518,14 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["map_value_size"] = fv.mapValueSize;
                     if (fv.mapDataAddr != 0)
                         fj["map_data_addr"] = PipeProtocol::AddrToStr(fv.mapDataAddr);
+                    if (fv.mapKeyStructAddr != 0) {
+                        fj["map_key_struct_addr"] = PipeProtocol::AddrToStr(fv.mapKeyStructAddr);
+                        fj["map_key_struct_type"] = fv.mapKeyStructType;
+                    }
+                    if (fv.mapValueStructAddr != 0) {
+                        fj["map_value_struct_addr"] = PipeProtocol::AddrToStr(fv.mapValueStructAddr);
+                        fj["map_value_struct_type"] = fv.mapValueStructType;
+                    }
                     if (!fv.containerElements.empty()) {
                         json elems = json::array();
                         for (const auto& e : fv.containerElements) {
@@ -544,6 +554,10 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["set_elem_size"] = fv.setElemSize;
                     if (fv.setDataAddr != 0)
                         fj["set_data_addr"] = PipeProtocol::AddrToStr(fv.setDataAddr);
+                    if (fv.setElemStructAddr != 0) {
+                        fj["set_elem_struct_addr"] = PipeProtocol::AddrToStr(fv.setElemStructAddr);
+                        fj["set_elem_struct_type"] = fv.setElemStructType;
+                    }
                     if (!fv.containerElements.empty()) {
                         json elems = json::array();
                         for (const auto& e : fv.containerElements) {
