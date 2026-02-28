@@ -1,5 +1,6 @@
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Threading;
 using UE5DumpUI.Models;
@@ -56,6 +57,19 @@ public partial class LiveWalkerPanel : UserControl
             if (target != null)
                 grid.ScrollIntoView(target, null);
         }, DispatcherPriority.Background);
+    }
+
+    private void AddressInput_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DataContext is LiveWalkerViewModel vm
+            && sender is TextBox tb)
+        {
+            if (vm.NavigateToAddressCommand.CanExecute(tb.Text))
+            {
+                vm.NavigateToAddressCommand.Execute(tb.Text);
+                e.Handled = true;
+            }
+        }
     }
 
     private void FieldGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
