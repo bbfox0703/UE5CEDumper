@@ -59,12 +59,12 @@
                     Foreground="#CCCCCC" FontSize="12"
                     VerticalAlignment="Center" Margin="12,0"/>
 
-          <!-- Array element limit slider (2^N steps: 2..4096) -->
+          <!-- Array element limit slider (2^N steps: 2..16384) -->
           <TextBlock Text="{StaticResource str.Toolbar.ArrayLimit}"
                      Foreground="#CCCCCC" FontSize="12"
                      VerticalAlignment="Center" Margin="12,0,4,0"/>
           <Slider Value="{Binding ArrayLimitExponent}"
-                  Minimum="1" Maximum="12"
+                  Minimum="1" Maximum="14"
                   TickFrequency="1" IsSnapToTickEnabled="True"
                   Width="140"
                   VerticalAlignment="Center"/>

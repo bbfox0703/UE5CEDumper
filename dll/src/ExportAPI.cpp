@@ -19,10 +19,14 @@
 #include <mutex>
 
 // Global cached state (also accessed by PipeServer)
-uintptr_t g_cachedGObjects  = 0;
-uintptr_t g_cachedGNames    = 0;
-uintptr_t g_cachedGWorld    = 0;
-uint32_t  g_cachedUEVersion = 0;
+uintptr_t   g_cachedGObjects  = 0;
+uintptr_t   g_cachedGNames    = 0;
+uintptr_t   g_cachedGWorld    = 0;
+uint32_t    g_cachedUEVersion = 0;
+bool        g_cachedVersionDetected = true;  // false if UE version detection failed (PE + memory scan)
+const char* g_cachedGObjectsMethod = "not_found";  // "aob", "data_scan", "not_found"
+const char* g_cachedGNamesMethod   = "not_found";  // "aob", "string_ref", "pointer_scan", "not_found"
+const char* g_cachedGWorldMethod   = "not_found";  // "aob", "not_found"
 
 static bool        s_initialized = false;
 static PipeServer  s_pipeServer;
@@ -58,6 +62,10 @@ bool UE5_Init() {
     g_cachedGNames    = ptrs.GNames;
     g_cachedGWorld    = ptrs.GWorld;
     g_cachedUEVersion = ptrs.UEVersion;
+    g_cachedVersionDetected = ptrs.bVersionDetected;
+    g_cachedGObjectsMethod  = ptrs.gobjectsMethod;
+    g_cachedGNamesMethod    = ptrs.gnamesMethod;
+    g_cachedGWorldMethod    = ptrs.gworldMethod;
 
     // Initialize subsystems
     if (ptrs.bUE4NameArray) {

@@ -129,6 +129,9 @@ public sealed class LiveFieldValue
     /// <summary>For ArrayProperty: TArray::Data base address (for computing element addresses in container view).</summary>
     public string ArrayDataAddr { get; init; } = "";
 
+    /// <summary>For ArrayProperty (struct arrays): UScriptStruct* address for struct element navigation.</summary>
+    public string ArrayStructClassAddr { get; init; } = "";
+
     /// <summary>For ArrayProperty Phase B: inline scalar element values (up to 64).</summary>
     public List<ArrayElementValue>? ArrayElements { get; init; }
 
@@ -156,6 +159,18 @@ public sealed class LiveFieldValue
     /// <summary>For MapProperty: TSparseArray::Data base address.</summary>
     public string MapDataAddr { get; init; } = "";
 
+    /// <summary>For MapProperty: UScriptStruct* if key is StructProperty.</summary>
+    public string MapKeyStructAddr { get; init; } = "";
+
+    /// <summary>For MapProperty: struct name for key (e.g. "FVector").</summary>
+    public string MapKeyStructType { get; init; } = "";
+
+    /// <summary>For MapProperty: UScriptStruct* if value is StructProperty.</summary>
+    public string MapValueStructAddr { get; init; } = "";
+
+    /// <summary>For MapProperty: struct name for value.</summary>
+    public string MapValueStructType { get; init; } = "";
+
     /// <summary>For MapProperty: inline element preview.</summary>
     public List<ContainerElementValue>? MapElements { get; init; }
 
@@ -170,6 +185,12 @@ public sealed class LiveFieldValue
 
     /// <summary>For SetProperty: TSparseArray::Data base address.</summary>
     public string SetDataAddr { get; init; } = "";
+
+    /// <summary>For SetProperty: UScriptStruct* if element is StructProperty.</summary>
+    public string SetElemStructAddr { get; init; } = "";
+
+    /// <summary>For SetProperty: struct name for element.</summary>
+    public string SetElemStructType { get; init; } = "";
 
     /// <summary>For SetProperty: inline element preview.</summary>
     public List<ContainerElementValue>? SetElements { get; init; }

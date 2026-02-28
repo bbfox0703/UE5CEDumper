@@ -25,14 +25,14 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private int _arrayLimitExponent = 6; // 2^6 = 64
     [ObservableProperty] private int _dropDownLimitExponent = 9; // 2^9 = 512
 
-    /// <summary>Computed array element limit: 2^ArrayLimitExponent (2..4096).</summary>
+    /// <summary>Computed array element limit: 2^ArrayLimitExponent (2..16384).</summary>
     public int ArrayLimit => 1 << ArrayLimitExponent;
 
     /// <summary>Computed CE DropDownList max entries: 2^DropDownLimitExponent (64..8192).</summary>
     public int DropDownLimit => 1 << DropDownLimitExponent;
 
-    /// <summary>Show warning when array limit exceeds default 64.</summary>
-    public bool ShowArrayLimitWarning => ArrayLimitExponent > 6;
+    /// <summary>Show warning when array limit &gt;= 256 (high memory usage).</summary>
+    public bool ShowArrayLimitWarning => ArrayLimitExponent >= 8;
 
     /// <summary>Address format options for toolbar ComboBox.</summary>
     public string[] AddressFormatOptions { get; } =
@@ -167,7 +167,11 @@ public partial class MainWindowViewModel : ViewModelBase
                 state.GNamesAddr,
                 state.GWorldAddr,
                 state.UEVersion,
-                state.ObjectCount);
+                state.VersionDetected,
+                state.ObjectCount,
+                state.GObjectsMethod,
+                state.GNamesMethod,
+                state.GWorldMethod);
 
             ObjectTree.SetEngineState(state);
             LiveWalker.SetEngineState(state);

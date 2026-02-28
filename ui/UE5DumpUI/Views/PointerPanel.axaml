@@ -21,6 +21,10 @@
                      Foreground="#888" FontSize="12"/>
           <TextBlock Text="{Binding UeVersion}" FontSize="20"
                      Foreground="#4EC9B0" FontWeight="SemiBold"/>
+          <TextBlock Text="{StaticResource str.Pointers.VersionWarning}"
+                     Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
+                     Margin="0,4,0,0"
+                     IsVisible="{Binding ShowVersionWarning}"/>
         </StackPanel>
       </Border>
 
@@ -32,6 +36,13 @@
                        Foreground="#888" FontSize="12"/>
             <TextBlock Text="{Binding GObjectsAddress}" FontSize="16"
                        Foreground="#569CD6" FontFamily="Consolas"/>
+            <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0"
+                        IsVisible="{Binding ShowGObjectsWarning}">
+              <TextBlock Text="{StaticResource str.Pointers.AobFailed}"
+                         Foreground="#E6A817" FontSize="11"/>
+              <TextBlock Text="{Binding GObjectsMethodLabel}"
+                         Foreground="#E6A817" FontSize="11" FontWeight="SemiBold"/>
+            </StackPanel>
           </StackPanel>
           <Button Grid.Column="1" Content="{StaticResource str.Pointers.Copy}"
                   Command="{Binding CopyGObjectsCommand}"
@@ -47,6 +58,13 @@
                        Foreground="#888" FontSize="12"/>
             <TextBlock Text="{Binding GNamesAddress}" FontSize="16"
                        Foreground="#569CD6" FontFamily="Consolas"/>
+            <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0"
+                        IsVisible="{Binding ShowGNamesWarning}">
+              <TextBlock Text="{StaticResource str.Pointers.AobFailed}"
+                         Foreground="#E6A817" FontSize="11"/>
+              <TextBlock Text="{Binding GNamesMethodLabel}"
+                         Foreground="#E6A817" FontSize="11" FontWeight="SemiBold"/>
+            </StackPanel>
           </StackPanel>
           <Button Grid.Column="1" Content="{StaticResource str.Pointers.Copy}"
                   Command="{Binding CopyGNamesCommand}"
@@ -62,6 +80,9 @@
                        Foreground="#888" FontSize="12"/>
             <TextBlock Text="{Binding GWorldAddress}" FontSize="16"
                        Foreground="#569CD6" FontFamily="Consolas"/>
+            <TextBlock Text="{StaticResource str.Pointers.GWorldNotFound}"
+                       Foreground="#888" FontSize="11" Margin="0,3,0,0"
+                       IsVisible="{Binding ShowGWorldWarning}"/>
           </StackPanel>
           <Button Grid.Column="1" Content="{StaticResource str.Pointers.Copy}"
                   Command="{Binding CopyGWorldCommand}"

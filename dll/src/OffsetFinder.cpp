@@ -767,10 +767,18 @@ static void LogScanReport(const ScanReport& report) {
 }
 
 // ============================================================
+// Scan method tracking — set by each Find function, read by FindAll()
+// ============================================================
+static const char* s_gobjectsMethod = "not_found";
+static const char* s_gnamesMethod   = "not_found";
+static const char* s_gworldMethod   = "not_found";
+
+// ============================================================
 // FindGObjects — unified scan + data-section fallback
 // ============================================================
 
 uintptr_t FindGObjects() {
+    s_gobjectsMethod = "not_found";
     Logger::Info("SCAN:GObj", "FindGObjects: Scanning for GObjects...");
 
     ScanReport report;
@@ -782,10 +790,13 @@ uintptr_t FindGObjects() {
 
     LogScanReport(report);
 
-    if (!result) {
+    if (result) {
+        s_gobjectsMethod = "aob";
+    } else {
         // Fallback: exhaustive data-section pointer scan
         Logger::Warn("SCAN:GObj", "FindGObjects: All patterns failed, trying data-section scan fallback...");
         result = FindGObjectsByDataScan();
+        if (result) s_gobjectsMethod = "data_scan";
     }
 
     if (!result) {
@@ -1144,7 +1155,165 @@ static bool ValidateGNamesAny(uintptr_t addr) {
     return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FindGNamesByStringRef — fallback: search .rdata for a known UE string
+// literal, find XREF in .text (LEA pointing to it), then scan nearby code
+// for LEA reg,[rip+disp] instructions that load FNamePool address.
+//
+// Strategy: The FName constructor is called with string literals like
+// "ForwardShadingQuality_" or "bInitializedSerializeFromMismatchedTag".
+// The call site typically has:
+//   LEA rcx, [rip+FNamePool]    ; load FNamePool address
+//   LEA rdx, [rip+StringLit]    ; load the string literal
+//   CALL FName::Init / FName::FName
+//
+// We find the string literal XREF, then scan ±0x60 bytes around it for
+// another LEA that resolves to a valid FNamePool in the .data section.
+//
+// Source: Dumper-7 UnrealTypes.cpp:69-204 (adapted approach)
+// ─────────────────────────────────────────────────────────────────────────────
+static uintptr_t FindGNamesByStringRef() {
+    Logger::Info("SCAN:GNam", "FindGNamesByStringRef: Searching for string-ref to FNamePool...");
+
+    uintptr_t base = Mem::GetModuleBase(nullptr);
+    if (!base) return 0;
+    size_t modSize = Mem::GetModuleSize(nullptr);
+    if (!modSize) return 0;
+
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
+        base + static_cast<DWORD>(dos->e_lfanew));
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
+
+    // Locate .text (code), .rdata (read-only), and .data (writable) sections
+    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+    uintptr_t codeStart = 0, codeEnd = 0;
+    uintptr_t rdataStart = 0, rdataEnd = 0;
+    uintptr_t dataStart = 0, dataEnd = 0;
+
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (!section->Misc.VirtualSize || !section->VirtualAddress) continue;
+        uintptr_t secBase = base + section->VirtualAddress;
+        uintptr_t secEnd  = secBase + section->Misc.VirtualSize;
+
+        if (section->Characteristics & IMAGE_SCN_MEM_EXECUTE) {
+            if (!codeStart || secBase < codeStart) codeStart = secBase;
+            if (secEnd > codeEnd) codeEnd = secEnd;
+        } else if (!(section->Characteristics & IMAGE_SCN_MEM_WRITE) &&
+                   !(section->Characteristics & IMAGE_SCN_MEM_EXECUTE)) {
+            // Read-only, non-executable = .rdata
+            if (!rdataStart || secBase < rdataStart) rdataStart = secBase;
+            if (secEnd > rdataEnd) rdataEnd = secEnd;
+        } else if ((section->Characteristics & IMAGE_SCN_MEM_WRITE) &&
+                   !(section->Characteristics & IMAGE_SCN_MEM_EXECUTE)) {
+            // Writable, non-exec = .data (where FNamePool lives)
+            if (!dataStart) { dataStart = secBase; dataEnd = secEnd; }
+        }
+    }
+
+    if (!codeStart || !rdataStart || !dataStart) {
+        Logger::Debug("SCAN:GNam", "FindGNamesByStringRef: Could not identify required sections");
+        return 0;
+    }
+
+    Logger::Debug("SCAN:GNam", "FindGNamesByStringRef: code=[0x%llX-0x%llX], rdata=[0x%llX-0x%llX], data=[0x%llX-0x%llX]",
+              (unsigned long long)codeStart, (unsigned long long)codeEnd,
+              (unsigned long long)rdataStart, (unsigned long long)rdataEnd,
+              (unsigned long long)dataStart, (unsigned long long)dataEnd);
+
+    // Known UE string literals used near FName construction sites.
+    // We search for each in .rdata, then find XREFs from .text.
+    const char* markerStrings[] = {
+        "ForwardShadingQuality_",
+        "bInitializedSerializeFromMismatchedTag",
+        "NameProperty",
+    };
+
+    for (const char* marker : markerStrings) {
+        size_t markerLen = strlen(marker);
+
+        // Search .rdata for the ASCII string
+        for (uintptr_t scan = rdataStart; scan + markerLen < rdataEnd; ++scan) {
+            char buf[64] = {};
+            size_t readLen = (markerLen < 63) ? markerLen + 1 : 63;
+            if (!Mem::ReadBytesSafe(scan, buf, readLen)) continue;
+            if (memcmp(buf, marker, markerLen) != 0) continue;
+
+            // Verify null-termination (exact match, not substring)
+            if (readLen > markerLen && buf[markerLen] != '\0') { scan += markerLen; continue; }
+
+            Logger::Debug("SCAN:GNam", "FindGNamesByStringRef: Found '%s' at 0x%llX",
+                      marker, (unsigned long long)scan);
+
+            // Scan .text for LEA reg,[rip+disp32] that resolve to 'scan'.
+            // LEA opcodes: {48,4C} 8D {05,0D,15,1D,25,2D,35,3D} disp32
+            int xrefCount = 0;
+            for (uintptr_t cs = codeStart; cs + 7 < codeEnd && xrefCount < 8; ++cs) {
+                uint8_t b0 = 0, b1 = 0, b2 = 0;
+                if (!Mem::ReadSafe(cs, b0)) continue;
+                if (b0 != 0x48 && b0 != 0x4C) continue;
+                if (!Mem::ReadSafe(cs + 1, b1)) continue;
+                if (b1 != 0x8D) continue;
+                if (!Mem::ReadSafe(cs + 2, b2)) continue;
+                if ((b2 & 0x07) != 0x05) continue;  // RIP-relative
+                if ((b2 & 0xC0) != 0x00) continue;
+
+                int32_t disp = 0;
+                if (!Mem::ReadSafe(cs + 3, disp)) continue;
+                uintptr_t resolved = cs + 7 + static_cast<int64_t>(disp);
+                if (resolved != scan) continue;
+
+                // Found XREF at 'cs'. Scan ±0x60 bytes around it for
+                // another LEA that resolves to a .data address (FNamePool candidate).
+                ++xrefCount;
+                Logger::Debug("SCAN:GNam", "FindGNamesByStringRef: XREF #%d at 0x%llX",
+                          xrefCount, (unsigned long long)cs);
+
+                uintptr_t searchStart = (cs > codeStart + 0x60) ? cs - 0x60 : codeStart;
+                uintptr_t searchEnd   = (cs + 0x60 < codeEnd)   ? cs + 0x60 : codeEnd;
+
+                for (uintptr_t ns = searchStart; ns + 7 < searchEnd; ++ns) {
+                    if (ns == cs) continue;  // Skip the string XREF itself
+
+                    uint8_t n0 = 0, n1 = 0, n2 = 0;
+                    if (!Mem::ReadSafe(ns, n0)) continue;
+                    if (n0 != 0x48 && n0 != 0x4C) continue;
+                    if (!Mem::ReadSafe(ns + 1, n1)) continue;
+                    if (n1 != 0x8D) continue;
+                    if (!Mem::ReadSafe(ns + 2, n2)) continue;
+                    if ((n2 & 0x07) != 0x05) continue;
+                    if ((n2 & 0xC0) != 0x00) continue;
+
+                    int32_t ndisp = 0;
+                    if (!Mem::ReadSafe(ns + 3, ndisp)) continue;
+                    uintptr_t candidate = ns + 7 + static_cast<int64_t>(ndisp);
+
+                    // Must resolve to the data section
+                    if (candidate < dataStart || candidate >= dataEnd) continue;
+
+                    // Validate as FNamePool
+                    if (ValidateGNamesAny(candidate)) {
+                        Logger::Info("SCAN:GNam", "FindGNamesByStringRef: Valid FNamePool at 0x%llX "
+                                 "(via '%s' XREF at 0x%llX, LEA at 0x%llX)",
+                                 (unsigned long long)candidate, marker,
+                                 (unsigned long long)cs, (unsigned long long)ns);
+                        return candidate;
+                    }
+                }
+            }
+
+            // Only check first occurrence of each marker string
+            break;
+        }
+    }
+
+    Logger::Debug("SCAN:GNam", "FindGNamesByStringRef: No FNamePool found via string references");
+    return 0;
+}
+
 uintptr_t FindGNames() {
+    s_gnamesMethod = "not_found";
     // Reset detection state for each scan attempt
     g_isUE4NameArray = false;
     g_ue4NameStringOffset = 0x10;
@@ -1161,14 +1330,24 @@ uintptr_t FindGNames() {
 
     LogScanReport(report);
 
-    if (!result) {
-        // All patterns failed — fall back to data-pointer scan
-        Logger::Warn("SCAN:GNam", "FindGNames: All patterns failed, trying pointer scan fallback...");
-        result = FindGNamesByPointerScan();
+    if (result) {
+        s_gnamesMethod = "aob";
+    } else {
+        // Tier 2: string-reference fallback — find FNamePool via code that uses FName
+        Logger::Warn("SCAN:GNam", "FindGNames: All patterns failed, trying string-ref fallback...");
+        result = FindGNamesByStringRef();
+        if (result) {
+            s_gnamesMethod = "string_ref";
+        } else {
+            // Tier 3: data-pointer scan — brute-force .data for "None" chunk pointers
+            Logger::Warn("SCAN:GNam", "FindGNames: String-ref failed, trying pointer scan fallback...");
+            result = FindGNamesByPointerScan();
+            if (result) s_gnamesMethod = "pointer_scan";
+        }
     }
 
     if (!result) {
-        Logger::Error("SCAN:GNam", "FindGNames: All patterns failed");
+        Logger::Error("SCAN:GNam", "FindGNames: All patterns and fallbacks failed");
     }
     return result;
 }
@@ -1190,6 +1369,7 @@ static bool ValidateGWorldBasic(uintptr_t addr) {
 }
 
 uintptr_t FindGWorld() {
+    s_gworldMethod = "not_found";
     Logger::Info("SCAN:GWld", "FindGWorld: Scanning for GWorld...");
 
     ScanReport report;
@@ -1201,7 +1381,9 @@ uintptr_t FindGWorld() {
 
     LogScanReport(report);
 
-    if (!result) {
+    if (result) {
+        s_gworldMethod = "aob";
+    } else {
         Logger::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)");
     }
     return result;
@@ -1273,8 +1455,8 @@ uint32_t DetectVersion() {
     uintptr_t base = Mem::GetModuleBase(nullptr);
     size_t    size = Mem::GetModuleSize(nullptr);
     if (!base || !size) {
-        Logger::Warn("SCAN:Ver", "DetectVersion: Cannot get module base — defaulting to 504");
-        return 504;
+        Logger::Warn("SCAN:Ver", "DetectVersion: Cannot get module base");
+        return 0;
     }
 
     // Version string patterns to match (ordered by priority — newest first)
@@ -1341,8 +1523,8 @@ uint32_t DetectVersion() {
         }
     }
 
-    Logger::Warn("SCAN:Ver", "DetectVersion: Could not detect UE version, defaulting to 504");
-    return 504;
+    Logger::Warn("SCAN:Ver", "DetectVersion: Could not detect UE version from PE or memory");
+    return 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1994,7 +2176,13 @@ bool FindAll(EnginePointers& out) {
     LOG_INFO("FindAll: Starting global pointer scan...");
 
     out.UEVersion = DetectVersion();
-    LOG_INFO("FindAll: UE Version = %u", out.UEVersion);
+    out.bVersionDetected = (out.UEVersion != 0);
+    if (out.UEVersion == 0) {
+        out.UEVersion = 504;  // Default fallback when detection fails
+        LOG_WARN("FindAll: UE version detection failed — using default %u", out.UEVersion);
+    }
+    LOG_INFO("FindAll: UE Version = %u (detected=%s)", out.UEVersion,
+             out.bVersionDetected ? "yes" : "no");
 
     out.GObjects = FindGObjects();
     if (!out.GObjects) {
@@ -2013,6 +2201,10 @@ bool FindAll(EnginePointers& out) {
     out.ue4StringOffset = g_ue4NameStringOffset;
     out.fnameEntryHeaderOffset = g_fnameEntryHeaderOffset;
 
+    // Propagate scan method info (how each pointer was found)
+    out.gobjectsMethod = s_gobjectsMethod;
+    out.gnamesMethod   = s_gnamesMethod;
+
     // --- Version inference from detection flags ---
     // If we detected UE4-specific structures but version says UE5, override.
     if (out.bUE4NameArray && out.UEVersion >= 500) {
@@ -2026,12 +2218,13 @@ bool FindAll(EnginePointers& out) {
     }
 
     out.GWorld = FindGWorld();
+    out.gworldMethod = s_gworldMethod;
     // GWorld is non-critical, just log
 
-    LOG_INFO("FindAll: Complete — GObjects=0x%llX, GNames=0x%llX, GWorld=0x%llX, UE=%u, UE4Names=%s, hdrOff=%d",
-             static_cast<unsigned long long>(out.GObjects),
-             static_cast<unsigned long long>(out.GNames),
-             static_cast<unsigned long long>(out.GWorld),
+    LOG_INFO("FindAll: Complete — GObjects=0x%llX (%s), GNames=0x%llX (%s), GWorld=0x%llX (%s), UE=%u, UE4Names=%s, hdrOff=%d",
+             static_cast<unsigned long long>(out.GObjects), out.gobjectsMethod,
+             static_cast<unsigned long long>(out.GNames), out.gnamesMethod,
+             static_cast<unsigned long long>(out.GWorld), out.gworldMethod,
              out.UEVersion,
              out.bUE4NameArray ? "yes" : "no",
              out.fnameEntryHeaderOffset);

@@ -448,6 +448,14 @@ public static class CeXmlExportService
                 continue;
             }
 
+            // StrProperty: emit as Unicode string with pointer dereference to wchar_t* Data
+            if (field.TypeName == "StrProperty")
+            {
+                EmitStringLeaf(sb, indent, field.Name, $"+{field.Offset:X}",
+                    offsets: [0], unicode: true);
+                continue;
+            }
+
             var ceField = MapCeField(field);
             if (ceField != null)
             {
@@ -518,6 +526,14 @@ public static class CeXmlExportService
 
         foreach (var child in children)
         {
+            // StrProperty inside struct: emit as Unicode string with pointer dereference
+            if (child.TypeName == "StrProperty")
+            {
+                EmitStringLeaf(sb, childIndent, child.Name, $"+{child.Offset:X}",
+                    offsets: [0], unicode: true);
+                continue;
+            }
+
             var ceField = MapCeField(child);
             if (ceField != null)
             {
@@ -1008,6 +1024,28 @@ public static class CeXmlExportService
         sb.AppendLine($"{indent}</CheatEntry>");
     }
 
+    /// <summary>
+    /// Emit a CE String leaf with proper Length/Unicode/CodePage/ZeroTerminate.
+    /// Used for StrProperty which stores FString = { wchar_t* Data, int32 Count, int32 Max }.
+    /// The Offsets=[0] dereferences the Data pointer to reach the actual character buffer.
+    /// </summary>
+    private static void EmitStringLeaf(StringBuilder sb, string indent, string description,
+        string address, int[]? offsets, bool unicode, int length = 256)
+    {
+        sb.AppendLine($"{indent}<CheatEntry>");
+        sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
+        sb.AppendLine($"{indent}  <Description>\"{description}\"</Description>");
+        sb.AppendLine($"{indent}  <ShowAsSigned>0</ShowAsSigned>");
+        sb.AppendLine($"{indent}  <VariableType>String</VariableType>");
+        sb.AppendLine($"{indent}  <Length>{length}</Length>");
+        sb.AppendLine($"{indent}  <Unicode>{(unicode ? 1 : 0)}</Unicode>");
+        sb.AppendLine($"{indent}  <CodePage>0</CodePage>");
+        sb.AppendLine($"{indent}  <ZeroTerminate>1</ZeroTerminate>");
+        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        EmitOffsets(sb, indent, offsets);
+        sb.AppendLine($"{indent}</CheatEntry>");
+    }
+
     /// <summary>Emit Offsets block if offsets are provided.</summary>
     private static void EmitOffsets(StringBuilder sb, string indent, int[]? offsets)
     {
@@ -1111,9 +1149,17 @@ public static class CeXmlExportService
             // Enum -- underlying value is typically int32 (4 bytes)
             "EnumProperty" => new CeFieldInfo("4 Bytes"),
 
-            // String types -- CE "String" reads pointer-to-string
-            "StrProperty" => new CeFieldInfo("String"),
-            "TextProperty" => new CeFieldInfo("String"),
+            // StrProperty is handled by EmitStringLeaf (not MapCeField)
+            // TextProperty: FText internal pointer chain — CE can't resolve, show as hex
+            "TextProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Soft/Lazy object: FName-based — CE can't resolve, show as hex
+            "SoftObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "SoftClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "LazyObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Interface: first 8 bytes is UObject*, show as pointer
+            "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             _ => null // Unknown -- not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
         };
@@ -1159,6 +1205,9 @@ public static class CeXmlExportService
 
             // Phase E: weak object pointer — 8 bytes (ObjectIndex + SerialNumber)
             "WeakObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Interface: first 8 bytes is UObject*, show as pointer
+            "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             _ => null // Non-scalar (StructProperty, SoftObjectProperty, etc.)
         };

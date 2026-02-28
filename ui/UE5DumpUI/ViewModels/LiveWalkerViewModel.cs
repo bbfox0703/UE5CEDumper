@@ -420,9 +420,17 @@ public partial class LiveWalkerViewModel : ViewModelBase
             ulong.TryParse(sourceField.ArrayDataAddr.Replace("0x", "").Replace("0X", ""),
                 System.Globalization.NumberStyles.HexNumber, null, out dataBase);
 
+        // Check if this is a struct array with navigation metadata
+        bool isStructArray = sourceField.ArrayInnerType == "StructProperty"
+            && !string.IsNullOrEmpty(sourceField.ArrayStructClassAddr);
+
         Fields.Clear();
         foreach (var elem in elements)
         {
+            // Compute element address for struct navigation
+            var elemAddr = (isStructArray && dataBase != 0 && sourceField.ArrayElemSize > 0)
+                ? $"0x{dataBase + (ulong)(elem.Index * sourceField.ArrayElemSize):X}" : "";
+
             var f = new LiveFieldValue
             {
                 Name = $"[{elem.Index}]",
@@ -439,6 +447,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 PtrName = elem.PtrName,
                 PtrClassName = elem.PtrClassName,
                 EnumName = elem.EnumName,
+                // Struct navigation for StructProperty elements
+                StructDataAddr = elemAddr,
+                StructClassAddr = isStructArray ? sourceField.ArrayStructClassAddr : "",
+                StructTypeName = isStructArray ? sourceField.ArrayStructType : "",
             };
             if (dataBase != 0 && sourceField.ArrayElemSize > 0)
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * sourceField.ArrayElemSize):X}";
@@ -467,11 +479,20 @@ public partial class LiveWalkerViewModel : ViewModelBase
         int pairSize = sourceField.MapKeySize + sourceField.MapValueSize;
         int stride = ComputeSetElementStride(pairSize);
 
+        // Check if value type is StructProperty with navigation metadata
+        bool isStructValue = sourceField.MapValueType == "StructProperty"
+            && !string.IsNullOrEmpty(sourceField.MapValueStructAddr);
+
         Fields.Clear();
         foreach (var elem in elements)
         {
             var keyDisplay = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
             var valDisplay = !string.IsNullOrEmpty(elem.ValuePtrName) ? elem.ValuePtrName : elem.Value;
+
+            // Compute value struct address: entry start + keySize
+            var valStructAddr = (isStructValue && dataBase != 0 && stride > 0)
+                ? $"0x{dataBase + (ulong)(elem.Index * stride) + (ulong)sourceField.MapKeySize:X}" : "";
+
             var f = new LiveFieldValue
             {
                 Name = $"[{elem.Index}] {keyDisplay}",
@@ -484,6 +505,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 PtrAddress = elem.ValuePtrAddress,
                 PtrName = elem.ValuePtrName,
                 PtrClassName = elem.ValuePtrClassName,
+                // Struct navigation for StructProperty values
+                StructDataAddr = valStructAddr,
+                StructClassAddr = isStructValue ? sourceField.MapValueStructAddr : "",
+                StructTypeName = isStructValue ? sourceField.MapValueStructType : "",
             };
             if (dataBase != 0 && stride > 0)
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
@@ -530,10 +555,19 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 System.Globalization.NumberStyles.HexNumber, null, out dataBase);
         int stride = ComputeSetElementStride(sourceField.SetElemSize);
 
+        // Check if element type is StructProperty with navigation metadata
+        bool isStructElem = sourceField.SetElemType == "StructProperty"
+            && !string.IsNullOrEmpty(sourceField.SetElemStructAddr);
+
         Fields.Clear();
         foreach (var elem in elements)
         {
             var display = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
+
+            // Compute struct element address
+            var structAddr = (isStructElem && dataBase != 0 && stride > 0)
+                ? $"0x{dataBase + (ulong)(elem.Index * stride):X}" : "";
+
             var f = new LiveFieldValue
             {
                 Name = $"[{elem.Index}]",
@@ -546,6 +580,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 PtrAddress = elem.KeyPtrAddress,
                 PtrName = elem.KeyPtrName,
                 PtrClassName = elem.KeyPtrClassName,
+                // Struct navigation for StructProperty elements
+                StructDataAddr = structAddr,
+                StructClassAddr = isStructElem ? sourceField.SetElemStructAddr : "",
+                StructTypeName = isStructElem ? sourceField.SetElemStructType : "",
             };
             if (dataBase != 0 && stride > 0)
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
@@ -577,6 +615,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 MapKeySize = containerField.MapKeySize,
                 MapValueSize = containerField.MapValueSize,
                 MapDataAddr = containerField.MapDataAddr,
+                MapKeyStructAddr = containerField.MapKeyStructAddr,
+                MapKeyStructType = containerField.MapKeyStructType,
+                MapValueStructAddr = containerField.MapValueStructAddr,
+                MapValueStructType = containerField.MapValueStructType,
                 MapElements = containerField.MapElements.Where(e => e.Index == sparseIndex.Value).ToList(),
             };
         }
@@ -593,6 +635,8 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 SetElemType = containerField.SetElemType,
                 SetElemSize = containerField.SetElemSize,
                 SetDataAddr = containerField.SetDataAddr,
+                SetElemStructAddr = containerField.SetElemStructAddr,
+                SetElemStructType = containerField.SetElemStructType,
                 SetElements = containerField.SetElements.Where(e => e.Index == sparseIndex.Value).ToList(),
             };
         }
@@ -611,6 +655,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 ArrayElemSize = containerField.ArrayElemSize,
                 ArrayInnerAddr = containerField.ArrayInnerAddr,
                 ArrayDataAddr = containerField.ArrayDataAddr,
+                ArrayStructClassAddr = containerField.ArrayStructClassAddr,
                 ArrayElements = containerField.ArrayElements.Where(e => e.Index == sparseIndex.Value).ToList(),
                 ArrayEnumAddr = containerField.ArrayEnumAddr,
                 ArrayEnumEntries = containerField.ArrayEnumEntries,
