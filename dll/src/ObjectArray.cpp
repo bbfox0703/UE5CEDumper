@@ -370,10 +370,12 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
     }
 
     // Fallback: when best score is negative (all strides have bad > named),
-    // the primary scoring is unreliable due to LCM alignment false positives.
-    // In this case, among strides that have named > 0, prefer the one with
-    // fewest bad items — the correct stride reads aligned data and produces
-    // fewer garbage reads even when the chunk table is non-standard.
+    // the primary scoring may be unreliable due to LCM alignment false positives.
+    // Among strides that have named > 0, prefer fewest bad — BUT only override
+    // if the fallback candidate has at least as many named items as the primary winner.
+    // Named count is the strongest signal (requires both valid ClassPrivate chain AND
+    // FNamePool resolution), so a stride with more named items is more trustworthy
+    // even if it has slightly more bad items.
     if (bestScore < 0) {
         int fallbackBad = INT_MAX;
         int fallbackStride = -1;
@@ -386,13 +388,21 @@ static void ProbeAllStrides(uintptr_t base, int maxItems, const char* phase,
             }
         }
         if (fallbackIdx >= 0 && fallbackStride != bestStride) {
-            LOG_INFO("ObjectArray: %s fallback: all scores negative, selecting stride %d (fewest bad=%d) over stride %d (bad=%d)",
-                     phase, fallbackStride, fallbackBad, bestStride, bestBad);
-            bestStride = results[fallbackIdx].stride;
-            bestCount = results[fallbackIdx].good;
-            bestNamed = results[fallbackIdx].named;
-            bestBad = results[fallbackIdx].bad;
-            bestHasNames = (results[fallbackIdx].named > 0);
+            // Only override if fallback has equal or more named items.
+            // If primary winner has more named, keep it — named count is the
+            // strongest quality signal and outweighs a small bad-count difference.
+            if (results[fallbackIdx].named >= bestNamed) {
+                LOG_INFO("ObjectArray: %s fallback: all scores negative, selecting stride %d (fewest bad=%d, named=%d) over stride %d (bad=%d, named=%d)",
+                         phase, fallbackStride, fallbackBad, results[fallbackIdx].named, bestStride, bestBad, bestNamed);
+                bestStride = results[fallbackIdx].stride;
+                bestCount = results[fallbackIdx].good;
+                bestNamed = results[fallbackIdx].named;
+                bestBad = results[fallbackIdx].bad;
+                bestHasNames = (results[fallbackIdx].named > 0);
+            } else {
+                LOG_INFO("ObjectArray: %s fallback: stride %d has fewer bad (%d vs %d) but primary stride %d has more named (%d vs %d), keeping primary",
+                         phase, fallbackStride, fallbackBad, bestBad, bestStride, bestNamed, results[fallbackIdx].named);
+            }
         }
     }
 }

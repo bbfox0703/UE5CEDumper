@@ -167,7 +167,11 @@ public partial class MainWindowViewModel : ViewModelBase
                 state.GNamesAddr,
                 state.GWorldAddr,
                 state.UEVersion,
-                state.ObjectCount);
+                state.VersionDetected,
+                state.ObjectCount,
+                state.GObjectsMethod,
+                state.GNamesMethod,
+                state.GWorldMethod);
 
             ObjectTree.SetEngineState(state);
             LiveWalker.SetEngineState(state);
