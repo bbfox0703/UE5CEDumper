@@ -15,11 +15,71 @@ Thank you for your interest in contributing! This document explains how to submi
 
 ## AOB Pattern Contributions
 
-AOB (Array of Bytes) patterns are the core mechanism for locating engine globals (GObjects, GNames, GWorld). We currently have **51 patterns from 6 sources** in `dll/src/Signatures.h`.
+AOB (Array of Bytes) patterns are the core mechanism for locating engine globals (GObjects, GNames, GWorld). We currently have **95+ patterns from 13 sources** in `dll/src/Signatures.h`, including MSVC symbol exports and multiple resolution strategies.
 
-### Why Verification Matters
+### Why Quality Matters
 
-A bad AOB pattern can cause false positives — matching the wrong memory location, leading to crashes or garbled data. Since maintainers may not own every game, we need sufficient evidence that a contributed pattern is correct.
+A bad AOB pattern can cause false positives — matching the wrong memory location, leading to crashes or garbled data. A pattern that is too short or too generic may match multiple locations, making validation unreliable. Since maintainers may not own every game, we need sufficient evidence that a contributed pattern is correct **and** of high enough quality to be reliable across game updates.
+
+### Pattern Quality Guidelines
+
+Before submitting, please evaluate your pattern against these criteria:
+
+#### 1. UE Version Compatibility
+
+Always specify which UE version(s) the pattern was tested on. UE internal structures change between major versions — a pattern working on UE5.3 may not work on UE4.27 or UE5.5. Include:
+- The exact UE version (e.g., `UE 5.04`, `UE 4.27`, `UE 5.5`)
+- Source of version info: PE VERSIONINFO, our tool's detection, RE-UE4SS config, or SteamDB
+
+#### 2. Prefer Core Engine Functions
+
+The best AOB patterns target **UE core engine functions** that are stable across builds and games. Preferred sources:
+
+| Priority | Function / Location | Why |
+|----------|---------------------|-----|
+| **Best** | `FUObjectArray` constructor / `UObject::StaticAllocateObject` | Core allocation — always exists |
+| **Best** | `FName::ToString`, `FName::FName()` constructor | FNamePool access — fundamental |
+| **Best** | `UGameEngine::Tick`, `UWorld::Tick` | GWorld access — standard engine loop |
+| **Good** | `FGCObject` related functions | GObjects references in GC subsystem |
+| **Good** | MSVC mangled symbol exports (`?GUObjectArray@@3V...`) | Exact match — no ambiguity |
+| **Avoid** | Game-specific blueprints or custom code | Breaks on different games |
+| **Avoid** | Initialization-only code that may be optimized out | Unreliable across compiler versions |
+
+#### 3. Match Precision
+
+Pattern quality depends on **how uniquely it matches** in the target module:
+
+| Match Count | Assessment |
+|-------------|-----------|
+| **1 (unique)** | Ideal — no ambiguity |
+| **2-5** | Acceptable if validation confirms the correct one |
+| **6+** | Too generic — add more context bytes or wildcards to narrow down |
+| **0** | Pattern doesn't match — may be version-specific, still submit with version info |
+
+You can check match count in the scan log — look for lines like `"matched at 0x..."` for your pattern ID.
+
+#### 4. Instruction Context
+
+- **Use full instructions**: Include complete x86-64 instructions, not arbitrary byte boundaries
+- **RIP-relative patterns**: The `48 8B 05 ?? ?? ?? ??` (mov rax,[rip+disp32]) or `48 8D 0D ?? ?? ?? ??` (lea rcx,[rip+disp32]) prefix is the standard form. Include surrounding instructions for uniqueness
+- **Register selection matters**: Patterns using specific GPRs (General Purpose Registers) like `r8`, `r9`, `r10` via REX prefix (`4C` vs `48`) provide extra specificity
+- **Minimum length**: Patterns should be at least 10 bytes (ideally 15+) to reduce false positives
+
+#### 5. Symbol Exports (Alternative to AOB)
+
+If the game binary exports MSVC mangled symbols (common in non-monolithic / modular UE builds), these are the most reliable method:
+
+```cpp
+// Direct variable export — address IS the global
+"?GUObjectArray@@3VFUObjectArray@@A"     // → GObjects
+"?GWorld@@3VUWorldProxy@@A"              // → GWorld
+
+// Function export — scan function body for RIP references to the global
+"?ToString@FName@@QEBAXAEAVFString@@@Z"  // → GNames (via FNamePool reference)
+"??0FName@@QEAA@PEB_WW4EFindName@@@Z"   // → GNames (via FName constructor)
+```
+
+Symbol exports have **priority 0** (tried first) because they are exact matches with zero false-positive risk.
 
 ### What to Provide
 
@@ -29,17 +89,19 @@ Open an issue with the label `aob-pattern` and include **all** of the following:
 |------|-------------|
 | **Pattern bytes** | Hex string with `??` wildcards. Example: `48 8B 05 ?? ?? ?? ?? 48 8B 0C C8 48 8D 04 D1` |
 | **Target** | Which global: `GObjects`, `GNames`, or `GWorld` |
-| **Resolution type** | `direct` (address = match), `rip-relative` (RIP + offset), or `dereference` (read pointer at resolved address) |
-| **RIP offset** | If RIP-relative: the byte offset from the start of the pattern to the 4-byte displacement (e.g., `3` for `48 8B 05 [xx xx xx xx]`) |
+| **Resolution type** | `rip-direct`, `rip-deref`, `rip-both`, `symbol-export`, `symbol-call-follow`, or `call-follow` |
+| **RIP offset** | If RIP-relative: byte offset from pattern start to the RIP instruction, and opcode length before the 4-byte displacement |
 | **Game name** | Full name as shown on Steam/store page |
-| **UE version** | From PE VERSIONINFO, or our tool's detection, or RE-UE4SS config |
-| **Scan log excerpt** | The relevant section from `UE5Dumper-scan-0.log` showing the pattern match and validation result |
+| **UE version** | Exact version (e.g., `UE 5.04`) + how determined (PE VERSIONINFO / tool detection / RE-UE4SS / SteamDB) |
+| **Source function** | What engine function this pattern is from (e.g., `FUObjectArray::AllocateUObjectIndex`, `FName::ToString`). Use IDA/Ghidra/x64dbg to identify |
+| **Match count** | How many times this pattern matches in the game module (from scan log) |
+| **Scan log excerpt** | The relevant section from the scan log showing the pattern match and validation result |
 | **Object Tree screenshot** | Screenshot of the UI showing valid object names (not garbled) |
 
 ### Log File Location
 
 ```
-%LOCALAPPDATA%\UE5CEDumper\Logs\UE5Dumper-scan-0.log
+%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\scan-0.log
 ```
 
 ### Scan Log Example
@@ -47,31 +109,37 @@ Open an issue with the label `aob-pattern` and include **all** of the following:
 A valid pattern contribution should show log output similar to:
 
 ```
-[INFO][SCAN] Pattern V_NEW matched at 0x7FF71A234560
-[INFO][SCAN] Resolved via RIP: 0x7FF71B7A1820
-[INFO][SCAN] ValidateGObjects: NumElements=483670, Layout A (Objects+0x00, Num+0x14)
-[INFO][SCAN] GObjects confirmed at 0x7FF71B7A1820
+[INFO] [SCAN] GOBJ_V_NEW: 1 match(es), best=0x7FF71B7A1820
+[INFO] [SCAN] ValidateGObjects: NumElements=483670, Layout A
+[INFO] [SCAN] GObjects confirmed at 0x7FF71B7A1820 via GOBJ_V_NEW
 ```
 
 ### Verification Process
 
-1. **Maintainer review**: We check that the pattern format is valid and the resolution logic is correct.
-2. **Log validation**: The scan log must show successful validation (NumElements in reasonable range, valid layout detected).
+1. **Maintainer review**: We check pattern format, resolution logic, instruction boundaries, and match precision.
+2. **Log validation**: The scan log must show successful validation (NumElements in reasonable range, valid layout detected, reasonable match count).
 3. **Visual confirmation**: The Object Tree screenshot must show recognizable UE type names (Package, Class, Object, BlueprintGeneratedClass, etc.), not garbled text.
-4. **Third-party confirmation** (preferred): If another user can confirm the pattern works on the same game, the pattern is accepted with higher confidence. This is strongly encouraged but not strictly required if the log + screenshot evidence is clear.
-5. **Regression check**: We verify the pattern doesn't false-match on our existing test games before merging.
+4. **Uniqueness check**: Patterns matching 6+ locations in a single module will be rejected unless additional context bytes are added to reduce matches.
+5. **Third-party confirmation** (preferred): If another user can confirm the pattern works on the same game, the pattern is accepted with higher confidence.
+6. **Regression check**: We verify the pattern doesn't false-match on our existing test games before merging.
 
 ### Pattern Style Guide
 
 Follow the existing conventions in `Signatures.h`:
 
 ```cpp
-// V_NEW — Short description of where this pattern comes from
-// Target: GObjects | GNames | GWorld
-// Resolution: direct | rip(offset) | deref
-// Tested on: Game Name (UE X.XX)
-{ "\x48\x8B\x05\x00\x00\x00\x00\x48\x8B\x0C\xC8",
-  "xxxx???xxxx", 11, PatternSource::Community },
+// AOB pattern definition
+constexpr const char* AOB_GOBJECTS_VNEW = "48 8B 05 ?? ?? ?? ?? 48 8B 0C C8 48 85 C9 74";
+
+// Registration in GOBJECTS_PATTERNS[] using SIG_RIP macro:
+//   SIG_RIP(id, pattern, target, instrOffset, opcodeLen, totalLen, adjustment, priority, source, notes)
+SIG_RIP("GOBJ_VNEW", AOB_GOBJECTS_VNEW, AobTarget::GObjects,
+        0, 3, 7, 0, 50, "Community", "FUObjectArray access in AllocateUObjectIndex (UE 5.04)"),
+```
+
+For symbol exports:
+```cpp
+SIG_EXPORT("GWLD_EXP", EXPORT_GWORLD, AobTarget::GWorld, 0, "UWorldProxy symbol"),
 ```
 
 ---
@@ -97,10 +165,11 @@ If UE5CEDumper fails to detect a game or produces incorrect results, please open
 
 | Log | Path |
 |-----|------|
-| DLL scan log | `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5Dumper-scan-0.log` |
-| DLL pipe log | `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5Dumper-pipe-0.log` |
-| UI log | `%APPDATA%\UE5CEDumper\Logs\UE5DumpUI-0.log` |
-| Per-process mirror | `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\UE5Dumper-scan-0.log` |
+| DLL scan log | `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\scan-0.log` |
+| DLL offsets log | `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\offsets-0.log` |
+| DLL pipe log | `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\pipe-0.log` |
+| DLL walk log | `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\walk-0.log` |
+| UI log | `%LOCALAPPDATA%\UE5CEDumper\Logs\ui-0.log` |
 
 ### Failure Categories
 

@@ -1198,9 +1198,9 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
 }
 
 InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int32_t arrayLimit) {
-    // Clamp arrayLimit to sane range [1, 4096]
+    // Clamp arrayLimit to sane range [1, 16384]
     if (arrayLimit < 1) arrayLimit = 1;
-    if (arrayLimit > 4096) arrayLimit = 4096;
+    if (arrayLimit > 16384) arrayLimit = 16384;
     InstanceWalkResult result;
     result.addr = instanceAddr;
 
@@ -1210,16 +1210,39 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         classAddr = GetClass(instanceAddr);
 
     result.classAddr = classAddr;
-    result.name      = GetName(instanceAddr);
     result.className = classAddr ? GetName(classAddr) : "";
 
-    // Read OuterPrivate
-    uintptr_t outerAddr = GetOuter(instanceAddr);
-    result.outerAddr = outerAddr;
-    if (outerAddr) {
-        result.outerName      = GetName(outerAddr);
-        uintptr_t outerClass  = GetClass(outerAddr);
-        result.outerClassName = outerClass ? GetName(outerClass) : "";
+    // Detect whether instanceAddr is a real UObject or raw struct data
+    // (e.g., struct element inside Map/Array/Set container).
+    // A real UObject has a ClassPrivate at OFF_UOBJECT_CLASS that points to
+    // a valid UClass with a resolvable FName. Raw struct data has arbitrary
+    // bytes at that offset — reading GetName/GetOuter produces garbage.
+    bool isRawStruct = false;
+    if (classAddr) {
+        uintptr_t testClass = 0;
+        Mem::ReadSafe(instanceAddr + Constants::OFF_UOBJECT_CLASS, testClass);
+        if (!testClass || testClass < 0x10000 || testClass > 0x00007FFFFFFFFFFF) {
+            isRawStruct = true;
+        } else {
+            std::string testName = GetName(testClass);
+            isRawStruct = testName.empty();
+        }
+    }
+
+    if (isRawStruct) {
+        // Raw struct data — use class name as display name, skip outer
+        result.name = result.className;
+    } else {
+        result.name = GetName(instanceAddr);
+
+        // Read OuterPrivate (only valid for real UObjects)
+        uintptr_t outerAddr = GetOuter(instanceAddr);
+        result.outerAddr = outerAddr;
+        if (outerAddr) {
+            result.outerName      = GetName(outerAddr);
+            uintptr_t outerClass  = GetClass(outerAddr);
+            result.outerClassName = outerClass ? GetName(outerClass) : "";
+        }
     }
 
     // Walk the class to get field layout
@@ -1907,6 +1930,108 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             char buf[20];
             snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(textDataPtr));
             fv.hexValue = buf;
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle DelegateProperty: single FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
+        if (fi.TypeName == "DelegateProperty") {
+            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            uintptr_t fieldAddr = instanceAddr + fi.Offset;
+
+            int32_t objIdx = 0, serial = 0;
+            Mem::ReadSafe(fieldAddr, objIdx);
+            Mem::ReadSafe(fieldAddr + 4, serial);
+            uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
+            std::string funcName = ReadFName(fieldAddr + 8);
+
+            if (target && !funcName.empty()) {
+                std::string targetName = GetName(target);
+                fv.typedValue = targetName + "::" + funcName;
+                fv.ptrValue = target;
+                fv.ptrName = targetName;
+                uintptr_t cls = GetClass(target);
+                if (cls) fv.ptrClassName = GetName(cls);
+            } else if (!funcName.empty()) {
+                fv.typedValue = "(stale)::" + funcName;
+            } else {
+                fv.typedValue = "(unbound)";
+            }
+
+            // Hex: FWeakObjectPtr + FName raw bytes
+            int delegateSize = 8 + fnameSize;
+            std::vector<uint8_t> buf(delegateSize, 0);
+            if (Mem::ReadBytesSafe(fieldAddr, buf.data(), delegateSize)) {
+                std::string hex;
+                hex.reserve(delegateSize * 2);
+                for (auto b : buf) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", b); hex += hx; }
+                fv.hexValue = hex;
+            }
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle MulticastInlineDelegateProperty / MulticastDelegateProperty:
+        // FMulticastScriptDelegate = { TArray<FScriptDelegate> InvocationList (16B) }
+        // FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
+        if (fi.TypeName == "MulticastInlineDelegateProperty" ||
+            fi.TypeName == "MulticastDelegateProperty") {
+            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int delegateElemSize = 8 + fnameSize;  // FWeakObjectPtr + FName
+            uintptr_t fieldAddr = instanceAddr + fi.Offset;
+
+            // Read TArray<FScriptDelegate> header
+            uintptr_t data = 0;
+            int32_t count = 0;
+            Mem::ReadSafe(fieldAddr, data);
+            Mem::ReadSafe(fieldAddr + 8, count);
+
+            if (count < 0 || count > 256) count = 0;  // Sanity clamp
+
+            std::string display;
+            if (count == 0) {
+                display = "(0 bindings)";
+            } else {
+                display = "(" + std::to_string(count) + " binding" + (count > 1 ? "s" : "") + ")";
+
+                // Read up to 8 binding target names for preview
+                int previewCount = (std::min)(count, (int32_t)8);
+                std::vector<std::string> bindings;
+                for (int i = 0; i < previewCount; ++i) {
+                    uintptr_t elemAddr = data + static_cast<int64_t>(i) * delegateElemSize;
+                    int32_t objIdx = 0, serial = 0;
+                    if (!Mem::ReadSafe(elemAddr, objIdx) || !Mem::ReadSafe(elemAddr + 4, serial))
+                        continue;
+
+                    uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
+                    std::string funcName = ReadFName(elemAddr + 8);
+
+                    if (target && !funcName.empty()) {
+                        bindings.push_back(GetName(target) + "::" + funcName);
+                    } else if (!funcName.empty()) {
+                        bindings.push_back("(stale)::" + funcName);
+                    }
+                }
+
+                if (!bindings.empty()) {
+                    display += " [";
+                    for (size_t i = 0; i < bindings.size(); ++i) {
+                        if (i > 0) display += ", ";
+                        display += bindings[i];
+                    }
+                    if (count > previewCount) display += ", ...";
+                    display += "]";
+                }
+            }
+
+            fv.typedValue = display;
+
+            // Hex: TArray header (Data ptr + Count)
+            char buf[48];
+            snprintf(buf, sizeof(buf), "%016llX %08X",
+                static_cast<unsigned long long>(data), count);
+            fv.hexValue = buf;
+
             result.fields.push_back(std::move(fv));
             continue;
         }

@@ -196,8 +196,10 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
     try {
         if (cmd == PipeProtocol::CMD_INIT) {
             extern uint32_t g_cachedUEVersion;
+            extern bool     g_cachedVersionDetected;
             json data;
-            data["ue_version"] = g_cachedUEVersion;
+            data["ue_version"]       = g_cachedUEVersion;
+            data["version_detected"] = g_cachedVersionDetected;
             data["build_git"]  = BUILD_GIT_SHORT;
             data["build_hash"] = BUILD_GIT_HASH;
             data["build_time"] = BUILD_TIMESTAMP;
@@ -207,17 +209,25 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
         if (cmd == PipeProtocol::CMD_GET_POINTERS) {
             // These are filled by ExportAPI's cached EnginePointers
-            extern uintptr_t g_cachedGObjects;
-            extern uintptr_t g_cachedGNames;
-            extern uintptr_t g_cachedGWorld;
-            extern uint32_t  g_cachedUEVersion;
+            extern uintptr_t   g_cachedGObjects;
+            extern uintptr_t   g_cachedGNames;
+            extern uintptr_t   g_cachedGWorld;
+            extern uint32_t    g_cachedUEVersion;
+            extern bool        g_cachedVersionDetected;
+            extern const char* g_cachedGObjectsMethod;
+            extern const char* g_cachedGNamesMethod;
+            extern const char* g_cachedGWorldMethod;
 
             json data;
-            data["gobjects"]     = PipeProtocol::AddrToStr(g_cachedGObjects);
-            data["gnames"]       = PipeProtocol::AddrToStr(g_cachedGNames);
-            data["gworld"]       = PipeProtocol::AddrToStr(g_cachedGWorld);
-            data["ue_version"]   = g_cachedUEVersion;
-            data["object_count"] = ObjectArray::GetCount();
+            data["gobjects"]         = PipeProtocol::AddrToStr(g_cachedGObjects);
+            data["gnames"]           = PipeProtocol::AddrToStr(g_cachedGNames);
+            data["gworld"]           = PipeProtocol::AddrToStr(g_cachedGWorld);
+            data["ue_version"]       = g_cachedUEVersion;
+            data["version_detected"] = g_cachedVersionDetected;
+            data["object_count"]     = ObjectArray::GetCount();
+            data["gobjects_method"]  = g_cachedGObjectsMethod;
+            data["gnames_method"]    = g_cachedGNamesMethod;
+            data["gworld_method"]    = g_cachedGWorldMethod;
 
             // Module info for CE address formatting
             uintptr_t moduleBase = Mem::GetModuleBase(nullptr);
