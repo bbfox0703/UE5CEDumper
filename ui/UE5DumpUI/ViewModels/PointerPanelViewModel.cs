@@ -24,6 +24,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _gNamesMethod = "aob";
     [ObservableProperty] private string _gWorldMethod = "aob";
 
+    // Pattern IDs: which AOB pattern won the scan (e.g. "GOBJ_V1")
+    [ObservableProperty] private string _gObjectsPatternId = "";
+    [ObservableProperty] private string _gNamesPatternId = "";
+    [ObservableProperty] private string _gWorldPatternId = "";
+
     /// <summary>True when version detection failed — shows warning in UI.</summary>
     public bool ShowVersionWarning => HasData && !VersionDetected;
 
@@ -42,6 +47,15 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>Formatted scan method label for GNames.</summary>
     public string GNamesMethodLabel => FormatMethodLabel(GNamesMethod);
 
+    /// <summary>True when GObjects has a non-empty pattern ID to display.</summary>
+    public bool HasGObjectsPatternId => HasData && !string.IsNullOrEmpty(GObjectsPatternId);
+
+    /// <summary>True when GNames has a non-empty pattern ID to display.</summary>
+    public bool HasGNamesPatternId => HasData && !string.IsNullOrEmpty(GNamesPatternId);
+
+    /// <summary>True when GWorld has a non-empty pattern ID to display.</summary>
+    public bool HasGWorldPatternId => HasData && !string.IsNullOrEmpty(GWorldPatternId);
+
     public PointerPanelViewModel(IPlatformService platform)
     {
         _platform = platform;
@@ -50,7 +64,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     public void Update(string gobjects, string gnames, string gworld,
                        int ueVersion, bool versionDetected, int totalObjects,
                        string gobjectsMethod = "aob", string gnamesMethod = "aob",
-                       string gworldMethod = "aob")
+                       string gworldMethod = "aob",
+                       string gobjectsPatternId = "", string gnamesPatternId = "",
+                       string gworldPatternId = "")
     {
         GObjectsAddress = gobjects;
         GNamesAddress = gnames;
@@ -61,6 +77,9 @@ public partial class PointerPanelViewModel : ViewModelBase
         GObjectsMethod = gobjectsMethod;
         GNamesMethod = gnamesMethod;
         GWorldMethod = gworldMethod;
+        GObjectsPatternId = gobjectsPatternId;
+        GNamesPatternId = gnamesPatternId;
+        GWorldPatternId = gworldPatternId;
         HasData = true;
         NotifyComputedProperties();
     }
@@ -73,6 +92,9 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowGWorldWarning));
         OnPropertyChanged(nameof(GObjectsMethodLabel));
         OnPropertyChanged(nameof(GNamesMethodLabel));
+        OnPropertyChanged(nameof(HasGObjectsPatternId));
+        OnPropertyChanged(nameof(HasGNamesPatternId));
+        OnPropertyChanged(nameof(HasGWorldPatternId));
     }
 
     private static string FormatMethodLabel(string method) => method switch

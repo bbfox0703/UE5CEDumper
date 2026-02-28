@@ -21,6 +21,9 @@ public interface IPlatformService
     /// <summary>Copy text to clipboard.</summary>
     Task CopyToClipboardAsync(string text);
 
+    /// <summary>Get the machine name for per-machine file naming.</summary>
+    string GetMachineName();
+
     /// <summary>
     /// Show a platform save-file dialog.
     /// Returns the chosen file path, or null if user cancelled.

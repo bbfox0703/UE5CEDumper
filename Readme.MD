@@ -123,4 +123,12 @@ This project is developed with the assistance of [Claude Code](https://claude.ai
 
 ---
 
+## Download
+
+Build from source with the current version to create your own binaries, or use the link below to download my pre-compiled release:
+
+https://opencheattables.com/viewtopic.php?f=17&t=1797
+
+---
+
 **License**: [MIT](LICENSE) © 2026 bbfox0703
