@@ -319,12 +319,28 @@ local function addUObjectHeader(ceStruct)
 end
 
 -- ----------------------------------------------------------------
--- PUBLIC: Create a CE Structure from a UClass address
+-- PUBLIC: Create a CE Structure from a UClass address or object instance
+--
+-- Accepts either a UClass pointer or a UObject instance.
+-- If the given address has no FField chain (i.e. it's an instance),
+-- the function auto-resolves via UE5_GetObjectClass.
 -- ----------------------------------------------------------------
 function dissect.createFromClass(classAddr, structName)
     if not classAddr or classAddr == 0 then
         warn("createFromClass: invalid classAddr")
         return nil
+    end
+
+    -- Auto-detect: if no fields on this address, treat it as an instance
+    -- and resolve its UClass instead.
+    local testCount = callDLL("UE5_WalkClassBegin", classAddr)
+    callDLL("UE5_WalkClassEnd")
+    if testCount <= 0 then
+        local realClass = callDLL("UE5_GetObjectClass", classAddr)
+        if realClass ~= 0 and realClass ~= classAddr then
+            log("0x%X is an instance (0 fields), using UClass 0x%X", classAddr, realClass)
+            classAddr = realClass
+        end
     end
 
     -- Resolve class name if not provided
