@@ -15,6 +15,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly IPipeClient _pipeClient;
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
+    private readonly AobUsageService? _aobUsage;
 
     [ObservableProperty] private string _statusText = "Disconnected";
     [ObservableProperty] private string _windowTitle = "UE5 Dump UI";
@@ -93,11 +94,13 @@ public partial class MainWindowViewModel : ViewModelBase
         IPipeClient pipeClient,
         IDumpService dump,
         ILoggingService log,
-        IPlatformService platform)
+        IPlatformService platform,
+        AobUsageService? aobUsage = null)
     {
         _pipeClient = pipeClient;
         _dump = dump;
         _log = log;
+        _aobUsage = aobUsage;
 
         ObjectTree = new ObjectTreeViewModel(dump, log, platform);
         ClassStruct = new ClassStructViewModel(dump, log);
@@ -171,12 +174,19 @@ public partial class MainWindowViewModel : ViewModelBase
                 state.ObjectCount,
                 state.GObjectsMethod,
                 state.GNamesMethod,
-                state.GWorldMethod);
+                state.GWorldMethod,
+                state.GObjectsPatternId,
+                state.GNamesPatternId,
+                state.GWorldPatternId);
 
             ObjectTree.SetEngineState(state);
             LiveWalker.SetEngineState(state);
             InstanceFinder.SetEngineState(state);
             HexView.SetEngineState(state);
+
+            // Fire-and-forget: persist AOB usage data (failure must not block UI)
+            if (_aobUsage != null)
+                _ = _aobUsage.RecordScanAsync(state);
 
             IsConnected = true;
             StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";

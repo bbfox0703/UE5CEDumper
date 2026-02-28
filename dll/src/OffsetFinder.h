@@ -22,6 +22,23 @@ struct EnginePointers {
     const char* gobjectsMethod = "not_found";
     const char* gnamesMethod   = "not_found";
     const char* gworldMethod   = "not_found";
+
+    // --- AOB Usage Tracking ---
+    // PE hash: TimeDateStamp (8 hex) + SizeOfImage (8 hex) = unique game build ID
+    char peHash[17] = {0};
+
+    // Winning pattern IDs (point to AobSignature::id constexpr strings in Signatures.h)
+    const char* gobjectsPatternId = nullptr;
+    const char* gnamesPatternId   = nullptr;
+    const char* gworldPatternId   = nullptr;
+
+    // Per-target scan statistics
+    int gobjectsPatternsTried = 0;
+    int gobjectsPatternsHit   = 0;
+    int gnamesPatternsTried   = 0;
+    int gnamesPatternsHit     = 0;
+    int gworldPatternsTried   = 0;
+    int gworldPatternsHit     = 0;
 };
 
 // Scan and cache all global pointers
