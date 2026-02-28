@@ -28,7 +28,7 @@ UE5CEDumper is production-ready for UE4.22-5.7 with 51 AOB patterns, dynamic off
 |-------|-------|
 | **Priority** | P0 - Critical |
 | **Source** | Dumper-7 (`ObjectArray.h:34-40`, `ObjectArray.cpp:187-191`) |
-| **UE5CEDumper Status** | Not implemented |
+| **UE5CEDumper Status** | **IMPLEMENTED** — `DecryptObjectPtr()` hook in ObjectArray.cpp, `UE5_SetObjectDecryption()` DLL export in ExportAPI |
 
 ### What Dumper-7 Does
 
@@ -66,7 +66,7 @@ Opens support for a class of anti-cheat protected games (Valorant, Fortnite, etc
 |-------|-------|
 | **Priority** | P0 - Critical |
 | **Source** | Dumper-7 (`ObjectArray.cpp:16-60`) |
-| **UE5CEDumper Status** | Partial (4 layouts A/B/C/D, but hardcoded member order) |
+| **UE5CEDumper Status** | **IMPLEMENTED** — 5 named presets (Default, Back4Blood, Multiversus, MindsEye, UE4-Extended) with full 5-member struct validation (Objects, NumElements, MaxElements, NumChunks, MaxChunks), strict + relaxed two-tier detection |
 
 ### What Dumper-7 Does
 
@@ -108,7 +108,7 @@ Fixes silent data corruption on games with reordered FChunkedFixedUObjectArray m
 |-------|-------|
 | **Priority** | P1 - High |
 | **Source** | Dumper-7 (`OffsetFinder.cpp:1099-1143`) |
-| **UE5CEDumper Status** | Stub only — shows "(container)" placeholder |
+| **UE5CEDumper Status** | **IMPLEMENTED** — Map/Set containers show key/value pairs with type-specific formatting, drill-down navigation for struct elements |
 
 ### Current State
 
@@ -379,7 +379,7 @@ Enables users to fix broken class layouts without code changes. Particularly val
 |-------|-------|
 | **Priority** | P2 - Medium |
 | **Source** | Dumper-7 (OffsetFinder — cyclic validation pattern) |
-| **UE5CEDumper Status** | Uses range-based validation only |
+| **UE5CEDumper Status** | **IMPLEMENTED** — `ValidateCyclicClassChain()` in OffsetFinder.cpp follows obj→Class chain (max 16 hops), requires ≥2 objects with self-terminating chains, integrated into both strict preset and relaxed fallback validation tiers |
 
 ### What Dumper-7 Does
 
@@ -422,7 +422,7 @@ Reduces false positive GObjects detection. Most beneficial for games with comple
 |-------|-------|
 | **Priority** | P2 - Medium |
 | **Source** | Dumper-7 (PropertyWrapper — type mapping), RE-UE4SS (Unreal property types) |
-| **UE5CEDumper Status** | Not implemented |
+| **UE5CEDumper Status** | **IMPLEMENTED** — SoftObjectProperty reads FSoftObjectPath (UE5.1+ FTopLevelAssetPath / UE4 single FName), LazyObjectProperty displays GUID, InterfaceProperty shows UObject with navigation, TextProperty probes ITextData for FString |
 
 ### Missing Property Types
 
@@ -491,44 +491,44 @@ No CPUID check needed — the DLL build already requires `/arch:AVX2`.
 
 | # | Gap | Priority | Source | Effort | Impact |
 |---|-----|----------|--------|--------|--------|
-| 1 | Encrypted GObjects Array | **P0** | Dumper-7 | Small (~100 LOC) | Opens anti-cheat game support |
-| 2 | Game-Specific ObjectArray Layouts | **P0** | Dumper-7 | Small (~80 LOC) | Fixes silent data corruption |
-| 3 | MapProperty / SetProperty | **P1** | Dumper-7 | Medium (~200 LOC) | Common container types visible |
+| 1 | Encrypted GObjects Array | ~~P0~~ | Dumper-7 | ~~Small~~ | **DONE** — `DecryptObjectPtr()` hook + `UE5_SetObjectDecryption()` DLL export, zero-cost identity when unused |
+| 2 | Game-Specific ObjectArray Layouts | ~~P0~~ | Dumper-7 | ~~Small~~ | **DONE** — 5 named presets (Default, Back4Blood, Multiversus, MindsEye, UE4-Extended), strict + relaxed two-tier detection |
+| 3 | MapProperty / SetProperty | ~~P1~~ | Dumper-7 | ~~Medium~~ | **DONE** — Map/Set container reading with key/value display |
 | 4 | DelegateProperty Support | ~~P1~~ | Dumper-7 | ~~Medium~~ | **DONE** — DelegateProperty shows Target::FuncName, MulticastInlineDelegateProperty shows (N bindings) |
 | 5 | String-Ref GNames Fallback | ~~P1~~ | Dumper-7 | ~~Small~~ | **DONE** — `FindGNamesByStringRef()` Tier 2 fallback in OffsetFinder.cpp |
 | 6 | FFieldVariant Tag-Bit (UE 5.3+) | ~~P1~~ | RE-UE4SS | ~~Small~~ | **DONE** — `StripFFieldTag()` in Constants.h, applied in walker + offset finder |
 | 7 | SDK/Header Generation | **P2** | Dumper-7 | Large (~300-900 LOC) | #1 requested dumper feature |
 | 8 | USMAP / IDA Mapping Export | **P2** | Dumper-7 | Medium (~450 LOC) | Modding tool interop |
 | 9 | PredefinedMembers Override | **P2** | Dumper-7 | Medium (~280 LOC) | User-fixable broken layouts |
-| 10 | Cyclic Class Pointer Validation | **P2** | Dumper-7 | Small (~60 LOC) | Fewer false positive GObjects |
-| 11 | Soft/Lazy/Interface/Text Properties | **P2** | Both | Medium (~150 LOC) | More property types readable (TextProperty already partial) |
+| 10 | Cyclic Class Pointer Validation | ~~P2~~ | Dumper-7 | ~~Small~~ | **DONE** — `ValidateCyclicClassChain()` in OffsetFinder.cpp, dual-tier integration |
+| 11 | Soft/Lazy/Interface/Text Properties | ~~P2~~ | Both | ~~Medium~~ | **DONE** — SoftObject asset paths, LazyObject GUID, InterfaceProperty navigation, TextProperty ITextData probe |
 | 12 | AVX2/SIMD Vector Scanning | ~~P3~~ | Internal | ~~Medium~~ | **DONE** — explicit AVX2 intrinsics in `ScanRegion()` |
 
 ---
 
 ## Recommended Implementation Order
 
-### Sprint 1 — Robustness (P0)
-1. **GAP #1**: Encrypted GObjects (small, high impact)
-2. **GAP #2**: ObjectArray layout detection (small, prevents corruption)
-3. **GAP #6**: FFieldVariant tag-bit masking (tiny, prevents crashes)
+### Sprint 1 — Robustness (P0) ✅ COMPLETE
+1. **GAP #1**: Encrypted GObjects ✅
+2. **GAP #2**: ObjectArray layout detection ✅
+3. **GAP #6**: FFieldVariant tag-bit masking ✅
+4. **GAP #10**: Cyclic class pointer validation ✅
 
 ### Sprint 2 — Property Coverage (P1) ✅ COMPLETE
-4. **GAP #3**: MapProperty / SetProperty ✅
-5. **GAP #4**: DelegateProperty ✅
-6. **GAP #11**: TextProperty + SoftObjectProperty + InterfaceProperty ✅
-7. **GAP #5**: String-reference GNames fallback ✅
+5. **GAP #3**: MapProperty / SetProperty ✅
+6. **GAP #4**: DelegateProperty ✅
+7. **GAP #11**: TextProperty + SoftObjectProperty + InterfaceProperty ✅
+8. **GAP #5**: String-reference GNames fallback ✅
+9. **GAP #12**: AVX2 SIMD scanning ✅
 
 ### Sprint 3 — Export & Interop (P2)
-8. **GAP #7**: SDK header generation (Phase A: offset headers)
-9. **GAP #8**: USMAP export
-10. **GAP #10**: Cyclic class pointer validation
-11. **GAP #9**: PredefinedMembers override system
+10. **GAP #7**: SDK header generation (Phase A: offset headers)
+11. **GAP #8**: USMAP export
+12. **GAP #9**: PredefinedMembers override system
 
 ### Sprint 4 — Polish (P2-P3)
-12. **GAP #7**: SDK generation Phase B (full C++ types)
-13. **GAP #8**: IDA mapping Phase B
-14. **GAP #12**: AVX2 SIMD scanning (if scan times warrant it)
+13. **GAP #7**: SDK generation Phase B (full C++ types)
+14. **GAP #8**: IDA mapping Phase B
 
 ---
 

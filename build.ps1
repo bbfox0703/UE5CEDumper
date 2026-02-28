@@ -480,12 +480,24 @@ if ($Target -in "All", "Test") {
 # ============================================================
 
 if ($Target -in "All", "DLL") {
-    Write-Step "Copying CT table to dist\..."
+    Write-Step "Copying CE scripts to dist\..."
     # CT goes in the same folder as DLL + EXE so it can auto-detect the DLL path
     $src = Join-Path $ROOT_DIR "scripts\UE5CEDumper.CT"
     if (Test-Path $src) {
         Copy-Item $src -Destination $DIST_DIR -Force
         Write-Ok "UE5CEDumper.CT copied to dist\"
+    }
+    # ue5_dissect.lua — standalone CE Structure Dissect builder (optional, for advanced users)
+    $dissectSrc = Join-Path $ROOT_DIR "scripts\ue5_dissect.lua"
+    if (Test-Path $dissectSrc) {
+        Copy-Item $dissectSrc -Destination $DIST_DIR -Force
+        Write-Ok "ue5_dissect.lua copied to dist\"
+    }
+    # README.md — script documentation for end users
+    $readmeSrc = Join-Path $ROOT_DIR "scripts\README.md"
+    if (Test-Path $readmeSrc) {
+        Copy-Item $readmeSrc -Destination $DIST_DIR -Force
+        Write-Ok "scripts README.md copied to dist\"
     }
 }
 
