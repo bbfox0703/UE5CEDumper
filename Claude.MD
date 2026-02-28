@@ -86,7 +86,7 @@ Target: Support UE4 (4.22+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects
 |  UE5Dumper.dll  [injected]                           |
 |      +-- ExportAPI       <- C ABI for CE Lua         |
 |      +-- PipeServer      <- Named Pipe IPC server    |
-|      +-- Signatures      <- 51 AOB patterns + 4 exports
+|      +-- Signatures      <- 91 AOB patterns + 5 exports
 |      +-- OffsetFinder    <- AOB scan GObjects/GNames |
 |      +-- ObjectArray     <- FChunkedFixedUObjectArray|
 |      +-- FNamePool       <- UE5 FNamePool reader     |
