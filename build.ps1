@@ -499,6 +499,12 @@ if ($Target -in "All", "DLL") {
         Copy-Item $readmeSrc -Destination $DIST_DIR -Force
         Write-Ok "scripts README.md copied to dist\"
     }
+    # build_number.txt — build version tracking
+    $buildNumSrc = Join-Path $ROOT_DIR "build_number.txt"
+    if (Test-Path $buildNumSrc) {
+        Copy-Item $buildNumSrc -Destination $DIST_DIR -Force
+        Write-Ok "build_number.txt copied to dist\"
+    }
 }
 
 # ============================================================
