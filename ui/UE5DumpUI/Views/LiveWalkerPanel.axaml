@@ -47,6 +47,7 @@
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
       <TextBox Watermark="{StaticResource str.LiveWalker.AddressHint}"
                x:Name="AddressInput"
+               KeyDown="AddressInput_KeyDown"
                Width="280" Padding="4,2"/>
       <Button Content="{StaticResource str.LiveWalker.Go}"
               Command="{Binding NavigateToAddressCommand}"
