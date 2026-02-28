@@ -370,11 +370,8 @@ function dissect.createFromClass(classAddr, structName)
 
     ceStruct.endUpdate()
 
-    -- Get PropertiesSize for gap filling
+    -- Get PropertiesSize for struct size reporting
     local propsSize = callDLL("UE5_GetClassPropsSize", classAddr)
-    if propsSize > 0 then
-        fillGaps(ceStruct, propsSize)
-    end
 
     -- Register globally
     ceStruct.addToGlobalStructureList()
@@ -464,11 +461,6 @@ local function dissectOverrideCallback(ceStruct, instanceAddr)
     addFieldsToStruct(ceStruct, classAddr, 0, "", 0)
     addUObjectHeader(ceStruct)
     ceStruct.endUpdate()
-
-    local propsSize = callDLL("UE5_GetClassPropsSize", classAddr)
-    if propsSize > 0 then
-        fillGaps(ceStruct, propsSize)
-    end
 
     if ceStruct.Count > 1 then
         return true   -- override accepted
