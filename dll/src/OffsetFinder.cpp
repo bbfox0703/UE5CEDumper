@@ -179,6 +179,7 @@ static bool ValidateGObjects(uintptr_t addr) {
         { 0x18, 0x10, 0x00, 0x14, 0x20, "Multiversus" },
         { 0x18, 0x00, 0x14, 0x10, 0x04, "MindsEye" },
         { 0x10, 0x18, 0x1C, 0x20, 0x24, "UE4-Extended" },
+        { 0x10, 0x20, 0x24, 0x28, 0x2C, "UE5-Extended" },  // GC prefix + PreAllocatedObjects ptr
     };
 
     for (auto& P : presets) {
@@ -225,6 +226,7 @@ static bool ValidateGObjects(uintptr_t addr) {
         { 0x14, 0x00, "A/C" },
         { 0x04, 0x10, "B"   },
         { 0x1C, 0x10, "D"   },
+        { 0x24, 0x10, "E"   },  // UE5-Extended: GC prefix + PreAllocatedObjects
     };
 
     for (auto& L : relaxed) {
