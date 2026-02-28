@@ -34,15 +34,22 @@ public sealed class DumpService : IDumpService
             ueVersion = ptrs["ue_version"]?.GetValue<int>() ?? 0;
         }
 
+        // version_detected: true if PE/memory scan succeeded, false if using default/inferred
+        var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
+
         return new EngineState
         {
             UEVersion = ueVersion,
+            VersionDetected = versionDetected,
             GObjectsAddr = ptrs["gobjects"]?.GetValue<string>() ?? "",
             GNamesAddr = ptrs["gnames"]?.GetValue<string>() ?? "",
             GWorldAddr = ptrs["gworld"]?.GetValue<string>() ?? "",
             ObjectCount = ptrs["object_count"]?.GetValue<int>() ?? 0,
             ModuleName = ptrs["module_name"]?.GetValue<string>() ?? "",
             ModuleBase = ptrs["module_base"]?.GetValue<string>() ?? "",
+            GObjectsMethod = ptrs["gobjects_method"]?.GetValue<string>() ?? "aob",
+            GNamesMethod = ptrs["gnames_method"]?.GetValue<string>() ?? "aob",
+            GWorldMethod = ptrs["gworld_method"]?.GetValue<string>() ?? "aob",
         };
     }
 
@@ -59,6 +66,9 @@ public sealed class DumpService : IDumpService
             ObjectCount = res["object_count"]?.GetValue<int>() ?? 0,
             ModuleName = res["module_name"]?.GetValue<string>() ?? "",
             ModuleBase = res["module_base"]?.GetValue<string>() ?? "",
+            GObjectsMethod = res["gobjects_method"]?.GetValue<string>() ?? "aob",
+            GNamesMethod = res["gnames_method"]?.GetValue<string>() ?? "aob",
+            GWorldMethod = res["gworld_method"]?.GetValue<string>() ?? "aob",
         };
     }
 

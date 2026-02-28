@@ -37,7 +37,7 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 
 | 功能 | 說明 |
 |---|---|
-| **AOB 掃描** | 整合來自 7 個來源的 96 組特徵碼 (91 AOB + 5 符號匯出)。支援 `FChunkedFixed` 與 `FFixed` 物件陣列，並可偵測加密 GObjects 與預設佈局。 |
+| **AOB 掃描** | 整合來自 8 個來源的 100 組特徵碼 (95 AOB + 5 符號匯出)。支援 `FChunkedFixed` 與 `FFixed` 物件陣列，並可偵測加密 GObjects 與預設佈局。 |
 | **DynOff (動態偏移量)** | 執行時自動探測 `FField`、`FProperty` 與 `UStruct`。遊戲改版後不再需要手動更新偏移量。 |
 | **Live Walker (即時檢視)** | 即時檢查實例的記憶體數據，數值變動一目瞭然。支援指標導航 (→)、內嵌結構展開 ({})、容器深入 ([])。瀏覽軌跡 (Breadcrumb) 完整記錄導航歷程。 |
 | **容器深入 (Container Drill-Down)** | 支援深入 **Array**、**Map**、**Set** 容器。ObjectProperty 元素顯示已解析的名稱，並可點擊跳轉至目標物件。 |

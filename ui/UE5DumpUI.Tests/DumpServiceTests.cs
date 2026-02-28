@@ -97,9 +97,37 @@ public class DumpServiceTests
         var state = await svc.InitAsync();
 
         Assert.Equal(504, state.UEVersion);
+        Assert.True(state.VersionDetected);  // Default when field absent
         Assert.Equal("0x7FF600A12340", state.GObjectsAddr);
         Assert.Equal(58432, state.ObjectCount);
         Assert.Equal(2, callCount);
+    }
+
+    [Fact]
+    public async Task InitAsync_ParsesVersionDetectedFalse()
+    {
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "init")
+                return new JsonObject { ["ok"] = true, ["ue_version"] = 504, ["version_detected"] = false };
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x7FF600A12340",
+                    ["gnames"] = "0x7FF600B56780",
+                    ["object_count"] = 32759,
+                    ["version_detected"] = false
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var svc = CreateService();
+        var state = await svc.InitAsync();
+
+        Assert.Equal(504, state.UEVersion);
+        Assert.False(state.VersionDetected);
     }
 
     [Fact]
