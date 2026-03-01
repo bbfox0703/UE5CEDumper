@@ -1,0 +1,86 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UE5DumpUI.ViewModels"
+             xmlns:m="using:UE5DumpUI.Models"
+             x:Class="UE5DumpUI.Views.PropertySearchPanel"
+             x:DataType="vm:PropertySearchViewModel">
+
+  <DockPanel Margin="8">
+    <!-- Top: Search bar -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+      <TextBox Watermark="{StaticResource str.PropertySearch.QueryHint}"
+               Text="{Binding SearchQuery}"
+               x:Name="SearchQueryInput"
+               KeyDown="SearchQueryInput_KeyDown"
+               Width="300" Padding="4,2"/>
+      <CheckBox Content="{StaticResource str.PropertySearch.GameOnly}"
+                IsChecked="{Binding GameClassesOnly}"
+                Foreground="#CCCCCC" FontSize="12"
+                VerticalAlignment="Center"/>
+      <Button Content="{StaticResource str.PropertySearch.Search}"
+              Command="{Binding SearchCommand}"
+              Classes="accent" Padding="12,4"/>
+      <TextBlock Text="{Binding StatusText}"
+                 Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
+    </StackPanel>
+
+    <!-- Loading indicator -->
+    <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
+                 IsVisible="{Binding IsSearching}" Height="2" Margin="0,0,0,4"/>
+
+    <!-- Error display -->
+    <TextBlock DockPanel.Dock="Top"
+               Text="{Binding ErrorMessage}"
+               Foreground="#F44747" Margin="0,0,0,4"
+               IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+    <!-- Results DataGrid -->
+    <DataGrid ItemsSource="{Binding Results}"
+              SelectedItem="{Binding SelectedResult}"
+              IsReadOnly="True"
+              CanUserResizeColumns="True"
+              GridLinesVisibility="Horizontal"
+              BorderThickness="0"
+              Background="#1E1E1E"
+              Foreground="#D4D4D4"
+              FontSize="12"
+              FontFamily="Consolas, Menlo, monospace">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Class"
+                            Binding="{Binding ClassName}"
+                            Width="200"/>
+        <DataGridTextColumn Header="Super"
+                            Binding="{Binding SuperName}"
+                            Width="120"/>
+        <DataGridTextColumn Header="Property"
+                            Binding="{Binding PropName}"
+                            Width="180"/>
+        <DataGridTextColumn Header="Type"
+                            Binding="{Binding TypeDisplay}"
+                            Width="200"/>
+        <DataGridTextColumn Header="Offset"
+                            Binding="{Binding OffsetHex}"
+                            Width="80"/>
+        <DataGridTextColumn Header="Size"
+                            Binding="{Binding PropSize}"
+                            Width="50"/>
+        <DataGridTemplateColumn Header="" Width="Auto">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PropertySearchMatch">
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <Button Content="{StaticResource str.PropertySearch.FindInstances}"
+                        Command="{Binding $parent[UserControl].((vm:PropertySearchViewModel)DataContext).FindInstancesCommand}"
+                        CommandParameter="{Binding}"
+                        Padding="6,2" FontSize="11"/>
+                <Button Content="{StaticResource str.PropertySearch.CopyOffset}"
+                        Command="{Binding $parent[UserControl].((vm:PropertySearchViewModel)DataContext).CopyOffsetCommand}"
+                        CommandParameter="{Binding}"
+                        Padding="6,2" FontSize="11"/>
+              </StackPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+      </DataGrid.Columns>
+    </DataGrid>
+  </DockPanel>
+</UserControl>

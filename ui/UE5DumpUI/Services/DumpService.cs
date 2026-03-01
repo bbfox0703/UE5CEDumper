@@ -722,6 +722,59 @@ public sealed class DumpService : IDumpService
         return result;
     }
 
+    public async Task<PropertySearchResult> SearchPropertiesAsync(
+        string query, string[]? types = null, bool gameOnly = true,
+        int limit = 200, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "search_properties",
+            ["query"] = query,
+            ["game_only"] = gameOnly,
+            ["limit"] = limit
+        };
+
+        if (types is { Length: > 0 })
+        {
+            var arr = new JsonArray();
+            foreach (var t in types) arr.Add(t);
+            req["types"] = arr;
+        }
+
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var result = new PropertySearchResult
+        {
+            Total = res["total"]?.GetValue<int>() ?? 0,
+            ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
+            ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
+        };
+
+        if (res["results"] is JsonArray arr2)
+        {
+            foreach (var item in arr2)
+            {
+                if (item is not JsonObject obj) continue;
+                result.Results.Add(new PropertySearchMatch
+                {
+                    ClassName  = obj["class_name"]?.GetValue<string>() ?? "",
+                    ClassAddr  = obj["class_addr"]?.GetValue<string>() ?? "",
+                    ClassPath  = obj["class_path"]?.GetValue<string>() ?? "",
+                    SuperName  = obj["super_name"]?.GetValue<string>() ?? "",
+                    PropName   = obj["prop_name"]?.GetValue<string>() ?? "",
+                    PropType   = obj["prop_type"]?.GetValue<string>() ?? "",
+                    PropOffset = obj["prop_offset"]?.GetValue<int>() ?? 0,
+                    PropSize   = obj["prop_size"]?.GetValue<int>() ?? 0,
+                    StructType = obj["struct_type"]?.GetValue<string>() ?? "",
+                    InnerType  = obj["inner_type"]?.GetValue<string>() ?? "",
+                });
+            }
+        }
+
+        return result;
+    }
+
     private static void CheckResponse(JsonObject res)
     {
         var ok = res["ok"]?.GetValue<bool>() ?? false;

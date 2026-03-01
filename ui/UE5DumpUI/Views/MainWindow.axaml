@@ -155,6 +155,9 @@
         <TabItem Header="{StaticResource str.Tab.InstanceFinder}">
           <views:InstanceFinderPanel DataContext="{Binding InstanceFinder}"/>
         </TabItem>
+        <TabItem Header="{StaticResource str.Tab.PropertySearch}">
+          <views:PropertySearchPanel DataContext="{Binding PropertySearch}"/>
+        </TabItem>
         <TabItem Header="{StaticResource str.Tab.ClassStruct}">
           <views:ClassStructPanel DataContext="{Binding ClassStruct}"/>
         </TabItem>
