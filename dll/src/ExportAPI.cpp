@@ -334,6 +334,13 @@ uintptr_t UE5_GetFieldStructClass(uintptr_t fieldAddr) {
     return 0;
 }
 
+uintptr_t UE5_GetFieldPropertyClass(uintptr_t fieldAddr) {
+    // FObjectPropertyBase::PropertyClass sits at the same offset as
+    // FStructProperty::Struct (DynOff::FSTRUCTPROP_STRUCT).
+    // Delegate to the same probe logic — both store a UClass*/UScriptStruct*.
+    return UE5_GetFieldStructClass(fieldAddr);
+}
+
 int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
     if (!classAddr) return 0;
     int32_t propsSize = 0;

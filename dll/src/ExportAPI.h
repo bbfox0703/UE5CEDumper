@@ -63,6 +63,11 @@ __declspec(dllexport) int32_t   UE5_GetFieldBoolMask(uintptr_t fieldAddr);
 // fieldAddr: FProperty* address from UE5_WalkClassGetField.
 __declspec(dllexport) uintptr_t UE5_GetFieldStructClass(uintptr_t fieldAddr);
 
+// Returns the PropertyClass (UClass*) for an ObjectProperty (0 if not an object prop).
+// fieldAddr: FProperty* address from UE5_WalkClassGetField.
+// Same offset as StructProperty::Struct — separate export for semantic clarity.
+__declspec(dllexport) uintptr_t UE5_GetFieldPropertyClass(uintptr_t fieldAddr);
+
 // Returns the PropertiesSize of a UClass/UStruct (total struct byte size).
 __declspec(dllexport) int32_t   UE5_GetClassPropsSize(uintptr_t classAddr);
 
