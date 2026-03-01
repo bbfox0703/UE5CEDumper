@@ -128,12 +128,14 @@ bool UE5_Init() {
 
     // Post-DynOff version correction: UProperty mode definitively means UE4 pre-4.25.
     // If version detection failed or misidentified as UE5, correct it now.
-    // (e.g., FF7 Remake is UE4.18 but version defaults to 504 when detection fails)
+    // Use flat array detection to narrow down: flat = UE4.11-4.20, chunked = UE4.21-4.24.
     if (!DynOff::bUseFProperty && ptrs.UEVersion >= 500) {
+        uint32_t corrected = ObjectArray::IsFlat() ? 418 : 424;
         LOG_WARN("UE5_Init: UProperty mode detected (no FProperty) but version=%u (>= 500). "
-                 "Overriding to 424 (UE4 pre-4.25)", ptrs.UEVersion);
-        ptrs.UEVersion = 424;
-        g_cachedUEVersion = ptrs.UEVersion;  // Update cached value for pipe protocol
+                 "Overriding to %u (flat=%s)", ptrs.UEVersion, corrected,
+                 ObjectArray::IsFlat() ? "yes" : "no");
+        ptrs.UEVersion = corrected;
+        g_cachedUEVersion = ptrs.UEVersion;
     }
 
     s_initialized = true;
