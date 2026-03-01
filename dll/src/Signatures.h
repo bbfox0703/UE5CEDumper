@@ -31,6 +31,7 @@
 //   SAT425  : Satisfactory UE 4.25 build analysis (work/SF UE 4.25 AOBs.txt)
 //   SAT426  : Satisfactory UE 4.26 build analysis (work/SF UE 4.26 AOBs.txt)
 //   SAT52   : Satisfactory UE 5.2 build analysis (work/SF UE 5.21 AOBs.txt)
+//   OT      : Octopath Traveller (UE4, Ghidra + CE analysis, codename "Kingship")
 // ============================================================
 
 // ============================================================
@@ -211,6 +212,17 @@ constexpr const char* AOB_GOBJECTS_SAT426_2 = "8B 0D ?? ?? ?? ?? 8B 1D ?? ?? ?? 
 constexpr const char* AOB_GOBJECTS_SAT52_1 = "4C 8D 15 ?? ?? ?? ?? 45 33 ?? 4C 89 ?? B9 FF FF FF FF 41 8B";
 // SAT52_2: lea rcx,[GUObjectArray]; call IsValid; test al; jnz; call ExecCheck  — ~UObjectBase
 constexpr const char* AOB_GOBJECTS_SAT52_2 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 75 ?? E8";
+
+// --- Octopath Traveller patterns (OT series) ---
+
+// OT_1: mov edx,edi; lea rcx,[GUObjectArray]; call AllocateObjectPool; mov eax,[MaxObjsNotGC]; test; jle; add [GObj+C]
+//   UE4 FUObjectArray::Init — uses LEA RCX (48 8D 0D), not LEA RAX (48 8D 05) like G42 series
+//   instrOffset=2 (LEA starts at byte 2), opcodeLen=3, totalLen=7
+constexpr const char* AOB_GOBJECTS_OT_1 = "8B D7 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 85 C0 7E ?? 01 05";
+// OT_2: generalized OT_1 — wildcards register choices and REX prefix for cross-game UE4 compatibility
+//   mov r32,r32; REX lea rcx,[GUObjectArray]; call; mov eax,[rip]; test; jle; add [rip],r32; call
+//   instrOffset=2, opcodeLen=3, totalLen=7 (REX at byte 2 is always 48/4C in x64)
+constexpr const char* AOB_GOBJECTS_OT_2 = "8B ?? ?? 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 85 ?? 7E ?? 01 ?? ?? ?? ?? ?? E8";
 
 
 // ============================================================
@@ -579,6 +591,8 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
 
     // Priority 80: UE4/legacy
     SIG_RIP("GOBJ_CT1", AOB_GOBJECTS_CT1, AobTarget::GObjects, 5, 3, 7, 0, 80, "CT", "UE4 Dumper.CT v5+"),
+    SIG_RIP("GOBJ_OT_1", AOB_GOBJECTS_OT_1, AobTarget::GObjects, 2, 3, 7, 0, 85, "OT", "Octopath Traveller UE4 FUObjectArray::Init LEA RCX"),
+    SIG_RIP("GOBJ_OT_2", AOB_GOBJECTS_OT_2, AobTarget::GObjects, 2, 3, 7, 0, 86, "OT", "UE4 FUObjectArray::Init generalized (wildcarded regs)"),
 };
 
 // ── GNames ───────────────────────────────────────────────────────────────
@@ -714,9 +728,9 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
 // ============================================================
 // Pattern count summary
 // ============================================================
-// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) + 4 (G427) + 1 (ES53) + 1 (SAT422) + 2 (SAT425) + 2 (SAT426) + 2 (SAT52) = 45 patterns + 1 symbol export
+// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) + 4 (G427) + 1 (ES53) + 1 (SAT422) + 2 (SAT425) + 2 (SAT426) + 2 (SAT52) + 2 (OT) = 47 patterns + 1 symbol export
 // GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) + 1 (ES53) + 1 (SAT422) + 3 (SAT425) + 1 (SAT52) = 28 patterns + 3 symbol exports
 // GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) + 5 (G427) + 2 (ES53) + 2 (SAT422) + 3 (SAT425) + 2 (SAT426) + 2 (SAT52) = 43 patterns + 1 symbol export
-// Total:    116 AOB patterns + 5 symbol exports = 121 entries (from 12 sources)
+// Total:    118 AOB patterns + 5 symbol exports = 123 entries (from 13 sources)
 
 } // namespace Sig
