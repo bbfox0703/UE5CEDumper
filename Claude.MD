@@ -71,7 +71,7 @@ git submodule update --init --recursive
 ## Project Goal
 
 Develop a **C++ DLL + Cheat Engine Lua Bridge** Unreal Engine Dumper.
-Target: Support UE4 (4.22+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects / GNames / GWorld), build complete object/struct hierarchy, integrate with CE. Despite the "UE5" name, UE4 games are a priority target — many popular games use UE4, and RE-UE4SS demonstrates broad UE4 support is achievable.
+Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects / GNames / GWorld), build complete object/struct hierarchy, integrate with CE. Despite the "UE5" name, UE4 games are a priority target — many popular games use UE4, and RE-UE4SS demonstrates broad UE4 support is achievable.
 
 -----
 
@@ -81,18 +81,21 @@ Target: Support UE4 (4.22+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects
 +------------------------------------------------------+
 |  Game Process                                        |
 |                                                      |
-|  CE Lua (ue5dump.lua)                                |
-|      |  loadLibrary / callFunction                   |
+|  CE Lua                                              |
+|    ue5dump.lua        <- DLL inject + pipe start     |
+|    ue5_dissect.lua    <- CE Structure Dissect builder |
+|      |  loadLibrary / callFunction (28 C ABI exports)|
 |      v                                               |
 |  UE5Dumper.dll  [injected]                           |
 |      +-- ExportAPI       <- C ABI for CE Lua         |
-|      +-- PipeServer      <- Named Pipe IPC server    |
-|      +-- Signatures      <- 95 AOB patterns + 5 exports
-|      +-- OffsetFinder    <- AOB scan GObjects/GNames |
-|      +-- ObjectArray     <- FChunkedFixedUObjectArray|
-|      +-- FNamePool       <- UE5 FNamePool reader     |
-|      +-- UStructWalker   <- FField chain traversal   |
-|      +-- Memory          <- Base read/write wrapper  |
+|      +-- PipeServer      <- Named Pipe IPC (15 cmds) |
+|      +-- Signatures      <- 99 AOB + 5 exports       |
+|      +-- OffsetFinder    <- GObjects/GNames/GWorld   |
+|      +-- ObjectArray     <- Chunked + Flat arrays    |
+|      +-- FNamePool       <- UE5 Pool / UE4 TNameEntry|
+|      +-- UStructWalker   <- FField + UProperty chains|
+|      +-- Memory          <- AOBScan + SEH read/write |
+|      +-- Logger          <- 5-category per-process   |
 +----------------------+-------------------------------+
                        | Named Pipe: \\.\pipe\UE5DumpBfx
                        | JSON over pipe (newline-delimited)
@@ -102,7 +105,11 @@ Target: Support UE4 (4.22+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects
 |      +-- ObjectTreePanel     <- UObject hierarchy    |
 |      +-- ClassStructPanel    <- Property Grid        |
 |      +-- PointerPanel        <- GObjects/GNames addr |
+|      +-- LiveWalkerPanel     <- Instance drill-down  |
+|      +-- InstanceFinderPanel <- Class instance search|
 |      +-- HexViewPanel        <- Live Memory Hex View |
+|      +-- CeXmlExport        <- CE XML pointer chains |
+|      +-- CsxExport          <- CE Structure Dissect  |
 +------------------------------------------------------+
 ```
 
@@ -112,14 +119,15 @@ Target: Support UE4 (4.22+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects
 
 | Document | Contents |
 |----------|----------|
-| [docs/dev-log.md](docs/dev-log.md) | Implementation status, known challenges & fixes (20 items), next steps |
-| [docs/lessons-learned.md](docs/lessons-learned.md) | Hard-won lessons from cross-game debugging |
-| [docs/test-games.md](docs/test-games.md) | Recommended test game list with UE versions and GWorld status |
-| [docs/technical-notes.md](docs/technical-notes.md) | UE version differences, FField vs UProperty, FNamePool chunk calc, DynOff, implementation phases |
-| [docs/architecture.md](docs/architecture.md) | Directory structure, git submodules, build environment (CMakeLists, csproj) |
-| [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface definitions, offset tables, CE Lua bridge |
-| [docs/pipe-protocol.md](docs/pipe-protocol.md) | Named Pipe JSON IPC protocol (Request/Response/Event formats) |
-| [docs/ui-spec.md](docs/ui-spec.md) | Avalonia UI tech stack, AOT compatibility, component skeletons |
-| [docs/references.md](docs/references.md) | Reference projects (Dumper-7, UEDumper, UE4SS), future extension ideas |
-| [docs/ue4ss-analysis.md](docs/ue4ss-analysis.md) | UE4SS/Dumper-7/UEDumper analysis: CasePreservingName, property iteration, GNames patterns |
-| [docs/simd-scanning-notes.md](docs/simd-scanning-notes.md) | AOBMaker SIMD scanning research: AVX2 anchor-based technique |
+| [docs/dev-log.md](docs/dev-log.md) | Implementation status, 60+ features, known challenges & fixes, next steps |
+| [docs/lessons-learned.md](docs/lessons-learned.md) | Hard-won lessons from cross-game debugging (20 games) |
+| [docs/test-games.md](docs/test-games.md) | 20 test games with UE versions, GWorld status, stride info |
+| [docs/technical-notes.md](docs/technical-notes.md) | UE version differences, FField vs UProperty, FNamePool, DynOff detection flow |
+| [docs/architecture.md](docs/architecture.md) | Directory structure, git submodules, build environment |
+| [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface, offset tables, CE Lua bridge exports |
+| [docs/pipe-protocol.md](docs/pipe-protocol.md) | Named Pipe JSON IPC protocol (15 commands, Request/Response/Event) |
+| [docs/ui-spec.md](docs/ui-spec.md) | Avalonia UI tech stack, AOT compatibility, component specs |
+| [docs/references.md](docs/references.md) | Reference projects (Dumper-7, UEDumper, UE4SS), future ideas |
+| [docs/ue4ss-analysis.md](docs/ue4ss-analysis.md) | UE4SS/Dumper-7/UEDumper analysis: CasePreservingName, GNames patterns |
+| [docs/simd-scanning-notes.md](docs/simd-scanning-notes.md) | AOBMaker SIMD scanning research: AVX2 anchor technique |
+| [docs/CE-Bugs-Minesweeper.md](docs/CE-Bugs-Minesweeper.md) | CE-specific quirks and undocumented API behaviors |

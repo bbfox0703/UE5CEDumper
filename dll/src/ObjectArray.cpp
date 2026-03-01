@@ -624,6 +624,10 @@ int GetItemSize() {
     return s_itemSize;
 }
 
+bool IsFlat() {
+    return s_isFlat;
+}
+
 uintptr_t GetByIndex(int32_t index) {
     if (!s_arrayAddr || index < 0 || index >= GetCount()) return 0;
 

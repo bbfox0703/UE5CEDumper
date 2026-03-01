@@ -90,6 +90,20 @@
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
                      VerticalAlignment="Center" MinWidth="35"
                      Margin="4,0"/>
+
+          <!-- CSX drilldown depth (0 = flat, 1+ = real child structures) -->
+          <TextBlock Text="{StaticResource str.Toolbar.CsxDepth}"
+                     Foreground="#CCCCCC" FontSize="12"
+                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+          <Slider Value="{Binding CsxDrilldownDepth}"
+                  Minimum="0" Maximum="4"
+                  TickFrequency="1" IsSnapToTickEnabled="True"
+                  Width="80"
+                  VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding CsxDrilldownDepth}"
+                     Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                     VerticalAlignment="Center" MinWidth="15"
+                     Margin="4,0"/>
         </StackPanel>
       </DockPanel>
     </Border>
