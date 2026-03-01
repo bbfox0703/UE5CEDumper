@@ -98,6 +98,15 @@
     <sys:String x:Key="str.HexView.LiveWatch">Live Watch</sys:String>
     <sys:String x:Key="str.HexView.Interval">Interval (ms)</sys:String>
 
+    <!-- Export -->
+    <sys:String x:Key="str.Toolbar.Export">Export</sys:String>
+    <sys:String x:Key="str.Export.SymbolsX64dbg">Symbols (x64dbg .dd64)</sys:String>
+    <sys:String x:Key="str.Export.SymbolsGhidra">Symbols (Ghidra .txt)</sys:String>
+    <sys:String x:Key="str.Export.SymbolsIda">Symbols (IDA .idc)</sys:String>
+    <sys:String x:Key="str.Export.SdkHeader">SDK Header (.h)</sys:String>
+    <sys:String x:Key="str.Export.Usmap">USMAP (.usmap)</sys:String>
+    <sys:String x:Key="str.LiveWalker.ExportHeader">Export .h</sys:String>
+
     <!-- Errors -->
     <sys:String x:Key="str.Error.Connection">Failed to connect to pipe server</sys:String>
     <sys:String x:Key="str.Error.ReadFailed">Memory read failed</sys:String>

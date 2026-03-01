@@ -34,4 +34,10 @@ public interface IDumpService
 
     // --- Address-to-Instance Reverse Lookup ---
     Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default);
+
+    // --- Enum Enumeration ---
+    Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default);
+
+    // --- Function Walking (for SDK export) ---
+    Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default);
 }

@@ -3,6 +3,7 @@ using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
+using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 
 namespace UE5DumpUI.ViewModels;
@@ -15,7 +16,9 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly IPipeClient _pipeClient;
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
+    private readonly IPlatformService _platform;
     private readonly AobUsageService? _aobUsage;
+    private EngineState? _engineState;
 
     [ObservableProperty] private string _statusText = "Disconnected";
     [ObservableProperty] private string _windowTitle = "UE5 Dump UI";
@@ -106,6 +109,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _pipeClient = pipeClient;
         _dump = dump;
         _log = log;
+        _platform = platform;
         _aobUsage = aobUsage;
 
         ObjectTree = new ObjectTreeViewModel(dump, log, platform);
@@ -188,6 +192,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 state.GNamesPatternsHit,
                 state.GWorldPatternsHit);
 
+            _engineState = state;
             ObjectTree.SetEngineState(state);
             LiveWalker.SetEngineState(state);
             InstanceFinder.SetEngineState(state);
@@ -251,6 +256,137 @@ public partial class MainWindowViewModel : ViewModelBase
             {
                 SetError(ex);
             }
+        }
+    }
+
+    // --- Export Commands ---
+
+    [RelayCommand]
+    private async Task ExportSymbolsX64dbgAsync()
+    {
+        await ExportSymbolsAsync("x64dbg Database (*.dd64)", ".dd64",
+            (symbols, moduleName) => SymbolExportService.GenerateX64dbgDatabase(symbols, moduleName));
+    }
+
+    [RelayCommand]
+    private async Task ExportSymbolsGhidraAsync()
+    {
+        await ExportSymbolsAsync("Ghidra Symbols (*.txt)", ".txt",
+            (symbols, _) => SymbolExportService.GenerateGhidraSymbols(symbols));
+    }
+
+    [RelayCommand]
+    private async Task ExportSymbolsIdaAsync()
+    {
+        await ExportSymbolsAsync("IDA Script (*.idc)", ".idc",
+            (symbols, _) => SymbolExportService.GenerateIdaScript(symbols));
+    }
+
+    private async Task ExportSymbolsAsync(
+        string filterName, string filterExtension,
+        Func<IReadOnlyList<SymbolEntry>, string, string> generator)
+    {
+        if (_engineState == null) return;
+
+        try
+        {
+            ClearError();
+            var moduleName = _engineState.ModuleName;
+            if (string.IsNullOrEmpty(moduleName)) moduleName = "game.exe";
+            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+
+            var filePath = await _platform.ShowSaveFileDialogAsync(
+                $"{safeModule}_symbols", filterName, filterExtension);
+            if (string.IsNullOrEmpty(filePath)) return;
+
+            StatusText = "Collecting symbols...";
+
+            var progress = new Progress<string>(msg =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = msg));
+
+            var symbols = await SymbolExportService.CollectSymbolsAsync(
+                _dump, moduleName, _engineState.ModuleBase, progress);
+
+            StatusText = "Writing file...";
+            var content = generator(symbols, moduleName);
+            await File.WriteAllTextAsync(filePath, content);
+
+            StatusText = $"Exported {symbols.Count} symbols";
+            _log.Info($"Symbols exported to {filePath} ({symbols.Count} entries)");
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Export failed";
+            SetError(ex);
+            _log.Error("Symbol export failed", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task ExportFullSdkAsync()
+    {
+        if (_engineState == null) return;
+
+        try
+        {
+            ClearError();
+            var moduleName = _engineState.ModuleName;
+            if (string.IsNullOrEmpty(moduleName)) moduleName = "game";
+            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+
+            var filePath = await _platform.ShowSaveFileDialogAsync(
+                $"{safeModule}_SDK", "C++ Header (*.h)", ".h");
+            if (string.IsNullOrEmpty(filePath)) return;
+
+            StatusText = "Generating SDK...";
+            var progress = new Progress<string>(msg =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = msg));
+
+            var content = await SdkExportService.GenerateFullSdkAsync(_dump, progress);
+            await File.WriteAllTextAsync(filePath, content);
+
+            StatusText = "SDK exported";
+            _log.Info($"Full SDK exported to {filePath}");
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Export failed";
+            SetError(ex);
+            _log.Error("Full SDK export failed", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task ExportUsmapAsync()
+    {
+        if (_engineState == null) return;
+
+        try
+        {
+            ClearError();
+            var moduleName = _engineState.ModuleName;
+            if (string.IsNullOrEmpty(moduleName)) moduleName = "game";
+            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+
+            var filePath = await _platform.ShowSaveFileDialogAsync(
+                $"{safeModule}", "USMAP (*.usmap)", ".usmap");
+            if (string.IsNullOrEmpty(filePath)) return;
+
+            StatusText = "Generating USMAP...";
+            var progress = new Progress<string>(msg =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() => StatusText = msg));
+
+            var bytes = await UsmapExportService.GenerateUsmapAsync(_dump, progress);
+            await File.WriteAllBytesAsync(filePath, bytes);
+
+            StatusText = "USMAP exported";
+            _log.Info($"USMAP exported to {filePath} ({bytes.Length} bytes)");
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Export failed";
+            SetError(ex);
+            _log.Error("USMAP export failed", ex);
         }
     }
 }

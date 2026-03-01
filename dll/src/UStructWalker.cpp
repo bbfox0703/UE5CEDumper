@@ -429,6 +429,264 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     return info;
 }
 
+// --- WalkClassEx: enriched field type metadata ---
+
+// Helper: read an FProperty* from a field address at a given offset, validate it returns
+// a known property type name.  Returns the inner FProperty* address and its type name,
+// or (0, "") if not found.
+static std::pair<uintptr_t, std::string> ProbeInnerProperty(uintptr_t fieldAddr, int baseOffset) {
+    static const int kProbeDeltas[] = { 0, 8, 4, 0xC, -4, -8, 0x10, -0x10 };
+    for (int delta : kProbeDeltas) {
+        int off = baseOffset + delta;
+        if (off < 0) continue;
+        uintptr_t inner = 0;
+        if (!Mem::ReadSafe(fieldAddr + off, inner) || !inner) continue;
+        std::string tn = GetFieldTypeName(inner);
+        if (!tn.empty() && tn != "Unknown" && tn.find("Property") != std::string::npos)
+            return { inner, tn };
+    }
+    return { 0, "" };
+}
+
+// Helper: given an FProperty* for StructProperty/ObjectProperty/ClassProperty,
+// read the UScriptStruct*/UClass* at the subclass extension offset and return its name.
+static std::string ReadSubclassTypeName(uintptr_t propAddr) {
+    uintptr_t ptr = 0;
+    if (!Mem::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr) return "";
+    std::string name = GetName(ptr);
+    if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return "";
+    return name;
+}
+
+ClassInfo WalkClassEx(uintptr_t uclassAddr) {
+    ClassInfo info = WalkClass(uclassAddr);
+
+    // Enrich each field with extended type metadata
+    for (auto& fi : info.Fields) {
+        if (!fi.Address) continue;
+
+        const auto& tn = fi.TypeName;
+
+        // StructProperty -> UScriptStruct name
+        if (tn == "StructProperty") {
+            fi.structType = ReadSubclassTypeName(fi.Address);
+        }
+
+        // ObjectProperty / ClassProperty / WeakObjectProperty / SoftObjectProperty / SoftClassProperty
+        // / InterfaceProperty -> target UClass name
+        // FObjectPropertyBase::PropertyClass is at the same offset as FStructProperty::Struct
+        else if (tn == "ObjectProperty" || tn == "ClassProperty"
+              || tn == "WeakObjectProperty" || tn == "SoftObjectProperty"
+              || tn == "SoftClassProperty" || tn == "InterfaceProperty"
+              || tn == "LazyObjectProperty") {
+            fi.objClassName = ReadSubclassTypeName(fi.Address);
+        }
+
+        // ArrayProperty -> inner type
+        else if (tn == "ArrayProperty") {
+            auto [innerProp, innerTn] = ProbeInnerProperty(fi.Address, DynOff::FARRAYPROP_INNER);
+            if (innerProp) {
+                fi.innerType = innerTn;
+                if (innerTn == "StructProperty")
+                    fi.innerStructType = ReadSubclassTypeName(innerProp);
+                else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
+                    fi.innerObjClass = ReadSubclassTypeName(innerProp);
+            }
+        }
+
+        // MapProperty -> key type + value type
+        // FMapProperty layout: KeyProp at ext+0, ValueProp at ext+8 (same probe as WalkInstance)
+        else if (tn == "MapProperty") {
+            static const int kProbeDeltas[] = { 0, 8, 4, 0xC, -4, -8, 0x10, -0x10 };
+            for (int delta : kProbeDeltas) {
+                int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
+                if (tryOff < 0) continue;
+                uintptr_t keyProp = 0;
+                if (!Mem::ReadSafe(fi.Address + tryOff, keyProp) || !keyProp) continue;
+                std::string keyTn = GetFieldTypeName(keyProp);
+                if (keyTn.empty() || keyTn == "Unknown" || keyTn.find("Property") == std::string::npos)
+                    continue;
+                // Found KeyProp — ValueProp is at +8
+                uintptr_t valueProp = 0;
+                Mem::ReadSafe(fi.Address + tryOff + 8, valueProp);
+                std::string valTn = valueProp ? GetFieldTypeName(valueProp) : "";
+                if (valTn.empty() || valTn.find("Property") == std::string::npos) continue;
+
+                fi.keyType = keyTn;
+                fi.valueType = valTn;
+                if (keyTn == "StructProperty")   fi.keyStructType = ReadSubclassTypeName(keyProp);
+                if (valTn == "StructProperty")   fi.valueStructType = ReadSubclassTypeName(valueProp);
+                break;
+            }
+        }
+
+        // SetProperty -> element type
+        else if (tn == "SetProperty") {
+            auto [elemProp, elemTn] = ProbeInnerProperty(fi.Address, DynOff::FARRAYPROP_INNER);
+            if (elemProp) {
+                fi.elemType = elemTn;
+                if (elemTn == "StructProperty")
+                    fi.elemStructType = ReadSubclassTypeName(elemProp);
+            }
+        }
+
+        // EnumProperty -> UEnum name
+        else if (tn == "EnumProperty") {
+            uintptr_t enumPtr = 0;
+            if (Mem::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumPtr) && enumPtr) {
+                std::string ename = GetName(enumPtr);
+                if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
+                    fi.enumName = ename;
+            }
+        }
+
+        // ByteProperty -> check if it has an associated UEnum
+        else if (tn == "ByteProperty") {
+            uintptr_t enumPtr = 0;
+            if (Mem::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, enumPtr) && enumPtr) {
+                std::string ename = GetName(enumPtr);
+                if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
+                    fi.enumName = ename;
+            }
+        }
+
+        // BoolProperty -> FieldMask byte
+        else if (tn == "BoolProperty") {
+            uint8_t boolBytes[4] = {};
+            for (int tryOff : { DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBOOLPROP_FIELDSIZE - 4,
+                                DynOff::FBOOLPROP_FIELDSIZE + 4, DynOff::FBOOLPROP_FIELDSIZE + 8 }) {
+                if (tryOff < 0) continue;
+                if (!Mem::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
+                uint8_t fieldSize = boolBytes[0];
+                uint8_t fieldMask = boolBytes[3];
+                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
+                    fi.boolFieldMask = fieldMask;
+                    break;
+                }
+            }
+        }
+    }
+
+    return info;
+}
+
+// --- WalkFunctions: enumerate UFunctions of a UClass ---
+
+std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
+    std::vector<FunctionInfo> funcs;
+    if (!uclassAddr) return funcs;
+
+    // CPF_ReturnParm = 0x0400, CPF_OutParm = 0x0100
+    constexpr uint64_t CPF_ReturnParm = 0x0400;
+    constexpr uint64_t CPF_OutParm    = 0x0100;
+
+    // Walk the UField::Children chain (UStruct::Children at 0x48)
+    // This chain contains UFunctions (and possibly other UField types)
+    uintptr_t child = 0;
+    if (!Mem::ReadSafe(uclassAddr + DynOff::USTRUCT_CHILDREN, child) || !child)
+        return funcs;
+
+    int safetyLimit = 4096;
+    while (child != 0 && safetyLimit-- > 0) {
+        // Check if this child is a UFunction by reading its class name
+        uintptr_t childClass = 0;
+        if (Mem::ReadSafe(child + Constants::OFF_UOBJECT_CLASS, childClass) && childClass) {
+            std::string clsName = ReadFName(childClass + Constants::OFF_UOBJECT_NAME);
+
+            if (clsName == "Function") {
+                FunctionInfo fi{};
+                fi.name = GetName(child);
+                fi.fullName = GetFullName(child);
+                fi.address = child;
+
+                // Read FunctionFlags (UFunction::FunctionFlags)
+                // Heuristic: try several common offsets for different UE versions
+                uint32_t funcFlags = 0;
+                for (int tryOff : { 0xB0, 0xC0, 0x88, 0xA8, 0xB8 }) {
+                    if (Mem::ReadSafe<uint32_t>(child + tryOff, funcFlags) && funcFlags != 0)
+                        break;
+                }
+                fi.functionFlags = funcFlags;
+
+                // Walk the UFunction's own property chain (its parameters)
+                // UFunction inherits UStruct, so ChildProperties is at USTRUCT_CHILDPROPS
+                if (DynOff::bUseFProperty) {
+                    uintptr_t paramChain = 0;
+                    if (Mem::ReadSafe(child + DynOff::USTRUCT_CHILDPROPS, paramChain) && paramChain) {
+                        uintptr_t cur = DynOff::StripFFieldTag(paramChain);
+                        int paramLimit = 256;
+                        while (cur != 0 && paramLimit-- > 0) {
+                            if (DynOff::IsFFieldVariantUObject(cur)) break;
+
+                            FunctionParam param{};
+                            param.name = ReadFName(cur + DynOff::FFIELD_NAME);
+                            param.typeName = GetFieldTypeName(cur);
+                            Mem::ReadSafe<int32_t>(cur + DynOff::FPROPERTY_ELEMSIZE, param.size);
+
+                            uint64_t propFlags = 0;
+                            Mem::ReadSafe<uint64_t>(cur + DynOff::FPROPERTY_FLAGS, propFlags);
+
+                            param.isReturn = (propFlags & CPF_ReturnParm) != 0;
+                            param.isOut = (propFlags & CPF_OutParm) != 0;
+
+                            if (param.isReturn)
+                                fi.returnType = param.typeName;
+
+                            if (!param.name.empty())
+                                fi.params.push_back(param);
+
+                            uintptr_t next = 0;
+                            if (!Mem::ReadSafe(cur + DynOff::FFIELD_NEXT, next)) break;
+                            cur = DynOff::StripFFieldTag(next);
+                        }
+                    }
+                } else {
+                    // UE4 <4.25: UProperty chain via Children
+                    uintptr_t paramChain = 0;
+                    if (Mem::ReadSafe(child + DynOff::USTRUCT_CHILDREN, paramChain) && paramChain) {
+                        uintptr_t cur = paramChain;
+                        int paramLimit = 256;
+                        while (cur != 0 && paramLimit-- > 0) {
+                            FunctionParam param{};
+                            param.name = ReadFName(cur + Constants::OFF_UOBJECT_NAME);
+
+                            uintptr_t paramCls = 0;
+                            if (Mem::ReadSafe(cur + Constants::OFF_UOBJECT_CLASS, paramCls) && paramCls)
+                                param.typeName = ReadFName(paramCls + Constants::OFF_UOBJECT_NAME);
+
+                            Mem::ReadSafe<int32_t>(cur + DynOff::UPROPERTY_ELEMSIZE, param.size);
+
+                            uint64_t propFlags = 0;
+                            Mem::ReadSafe<uint64_t>(cur + DynOff::UPROPERTY_FLAGS, propFlags);
+
+                            param.isReturn = (propFlags & CPF_ReturnParm) != 0;
+                            param.isOut = (propFlags & CPF_OutParm) != 0;
+
+                            if (param.isReturn) fi.returnType = param.typeName;
+                            if (!param.name.empty()) fi.params.push_back(param);
+
+                            uintptr_t next = 0;
+                            if (!Mem::ReadSafe(cur + DynOff::UFIELD_NEXT, next)) break;
+                            cur = next;
+                        }
+                    }
+                }
+
+                funcs.push_back(std::move(fi));
+            }
+        }
+
+        // Move to next UField via UField::Next
+        uintptr_t next = 0;
+        if (!Mem::ReadSafe(child + DynOff::UFIELD_NEXT, next)) break;
+        child = next;
+    }
+
+    LOG_INFO("WalkFunctions: %zu functions found at 0x%llX",
+             funcs.size(), static_cast<unsigned long long>(uclassAddr));
+    return funcs;
+}
+
 // --- Live Instance Walking ---
 
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size) {
