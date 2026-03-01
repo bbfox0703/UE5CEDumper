@@ -13,7 +13,7 @@
 | Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | Flat FFixedUObjectArray ✅. UProperty fallback ✅. 315304 objects. GWorld ✅. Version: flat+UProperty → 418. Base GameInstance (9 fields, no BP subclass) |
 | DQ I&II HD-2D Remake | UE5.05 (detected) | Stride 24, 128678 objects. GWorld ✅. SE HD-2D fork uses FFieldVariant=0x10 (UE5.0 layout) despite reporting UE505 — fixed by Step 6.5 inference (Name=0x28 from Next=0x20). BP_SantiagoGameInstance_C (64 fields) |
 | DQ III HD-2D Remake | UE5.05 (detected) | 126022 objects. GWorld ✅. Same SE HD-2D fork layout as DQ I&II — FFieldVariant=0x10 inference fix applied |
-| DQ XI S: Echoes of an Elusive Age | UE4.22 | Working (build 1.0.0.27). 70137 objects. GWorld fails |
+| DQ XI S: Echoes of an Elusive Age | UE4.22 | 350251 objects. GWorld ✅. UField::Next=+0x38 (non-standard, probed). UProperty mode. Expanded UObject layout (+0x10 shift). BP_GameInstance_C (99 fields), BP_GameFlag_C (10 fields) |
 | Tower of Mask | UE4.27 | Standard UE4 indie game — full pipeline confirmed working. Stride 24. GWorld ✅ (build 1.0.0.27) |
 | Hogwarts Legacy | UE4.27 (PE: 427) | GNames via pointer-scan fallback. Stride 24, 379K objects. GWorld ✅ (build 1.0.0.27) |
 | IDOLM@STER STARLIT SEASON | UE4.24 | Working. GWorld ✅ (build 1.0.0.27). CDO skip fix effective |
@@ -31,9 +31,9 @@
 
 ## GWorld Status Summary
 
-**Working (17/20):** TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT Demo, OctoPath Traveler, FF7R, FF7Re, DQ I&II, DQ III, Lushfoil Photography Sim, Manor Lords
+**Working (18/20):** TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT Demo, OctoPath Traveler, FF7R, FF7Re, DQ I&II, DQ III, DQ XI S, Lushfoil Photography Sim, Manor Lords
 
-**Failing (GWorld not found or untested):** DQ XI S, Star Wars Jedi, Satisfactory
+**Failing (GWorld not found or untested):** Star Wars Jedi, Satisfactory
 
 ## Naming Convention
 
