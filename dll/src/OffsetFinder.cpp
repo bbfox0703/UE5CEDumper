@@ -173,6 +173,8 @@ static bool ValidateGObjects(uintptr_t addr) {
 
     // --- Tier 1: Try all known presets with full validation ---
     // Includes chunk consistency checks and decryption support.
+    // maxCOff/numCOff = -1 means "flat" layout (no chunk indirection).
+    // Flat arrays: Objects* points directly to FUObjectItem[], not FUObjectItem*[].
     struct { int objOff; int maxOff; int numOff; int maxCOff; int numCOff; const char* name; } presets[] = {
         { 0x00, 0x10, 0x14, 0x18, 0x1C, "Default" },
         { 0x10, 0x00, 0x04, 0x08, 0x0C, "Back4Blood" },
@@ -180,6 +182,7 @@ static bool ValidateGObjects(uintptr_t addr) {
         { 0x18, 0x00, 0x14, 0x10, 0x04, "MindsEye" },
         { 0x10, 0x18, 0x1C, 0x20, 0x24, "UE4-Extended" },
         { 0x10, 0x20, 0x24, 0x28, 0x2C, "UE5-Extended" },  // GC prefix + PreAllocatedObjects ptr
+        { 0x00, 0x08, 0x0C,   -1,   -1, "Flat" },           // FFixedUObjectArray: no chunks (OT / early UE4)
     };
 
     for (auto& P : presets) {
@@ -201,32 +204,44 @@ static bool ValidateGObjects(uintptr_t addr) {
         if (!Mem::ReadSafe(addr + P.objOff, objPtr)) continue;
         objPtr = ObjectArray::DecryptObjectPtr(objPtr);
 
-        uintptr_t chunk0 = 0;
-        if (!Mem::ReadSafe(objPtr, chunk0)) continue;
+        bool isFlat = (P.maxCOff < 0 && P.numCOff < 0);
 
-        if (chunk0 == 0) {
+        if (isFlat) {
+            // Flat array: objPtr points directly to FUObjectItem[] data (no chunk indirection).
+            // Dereferencing objPtr would give a UObject* (first item), not a chunk pointer.
             if (!LooksLikeDataPtr(objPtr)) continue;
+            if (!ValidateCyclicClassChain(objPtr)) continue;
         } else {
-            if (!LooksLikeDataPtr(chunk0)) continue;
+            // Chunked array: objPtr is FUObjectItem** (array of chunk pointers)
+            uintptr_t chunk0 = 0;
+            if (!Mem::ReadSafe(objPtr, chunk0)) continue;
+
+            if (chunk0 == 0) {
+                if (!LooksLikeDataPtr(objPtr)) continue;
+            } else {
+                if (!LooksLikeDataPtr(chunk0)) continue;
+            }
+
+            // Cyclic class chain validation (GAP #10): verify actual UObject instances
+            uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
+            if (!ValidateCyclicClassChain(validateBase)) continue;
         }
 
-        // Cyclic class chain validation (GAP #10): verify actual UObject instances
-        uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
-        if (!ValidateCyclicClassChain(validateBase)) continue;
-
-        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (preset %s, Num=%d, Max=%d, Objects=0x%llX)",
+        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (preset %s, Num=%d, Max=%d, Objects=0x%llX%s)",
                  static_cast<unsigned long long>(addr), P.name, num, max,
-                 static_cast<unsigned long long>(objPtr));
+                 static_cast<unsigned long long>(objPtr), isFlat ? " [flat]" : "");
         return true;
     }
 
     // --- Tier 2: Relaxed fallback (prevents regression) ---
     // Only check NumElements range + Objects pointer validity.
-    struct { int numOff; int objOff; const char* name; } relaxed[] = {
-        { 0x14, 0x00, "A/C" },
-        { 0x04, 0x10, "B"   },
-        { 0x1C, 0x10, "D"   },
-        { 0x24, 0x10, "E"   },  // UE5-Extended: GC prefix + PreAllocatedObjects
+    // isFlat: objPtr is FUObjectItem[] directly (no chunk indirection).
+    struct { int numOff; int objOff; bool isFlat; const char* name; } relaxed[] = {
+        { 0x14, 0x00, false, "A/C" },
+        { 0x04, 0x10, false, "B"   },
+        { 0x1C, 0x10, false, "D"   },
+        { 0x24, 0x10, false, "E"   },    // UE5-Extended: GC prefix + PreAllocatedObjects
+        { 0x0C, 0x00, true,  "Flat" },   // FFixedUObjectArray: no chunks (OT / early UE4)
     };
 
     for (auto& L : relaxed) {
@@ -238,32 +253,40 @@ static bool ValidateGObjects(uintptr_t addr) {
         if (!Mem::ReadSafe(addr + L.objOff, objPtr)) continue;
         objPtr = ObjectArray::DecryptObjectPtr(objPtr);
 
-        uintptr_t chunk0 = 0;
-        if (!Mem::ReadSafe(objPtr, chunk0)) continue;
-
-        if (chunk0 == 0) {
+        if (L.isFlat) {
+            // Flat array: objPtr is FUObjectItem[] directly
             if (!LooksLikeDataPtr(objPtr)) continue;
+            if (!ValidateCyclicClassChain(objPtr)) continue;
         } else {
-            if (!LooksLikeDataPtr(chunk0)) continue;
+            uintptr_t chunk0 = 0;
+            if (!Mem::ReadSafe(objPtr, chunk0)) continue;
+
+            if (chunk0 == 0) {
+                if (!LooksLikeDataPtr(objPtr)) continue;
+            } else {
+                if (!LooksLikeDataPtr(chunk0)) continue;
+            }
+
+            // Cyclic class chain validation (GAP #10): verify actual UObject instances
+            uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
+            if (!ValidateCyclicClassChain(validateBase)) continue;
         }
 
-        // Cyclic class chain validation (GAP #10): verify actual UObject instances
-        uintptr_t validateBase = chunk0 ? chunk0 : objPtr;
-        if (!ValidateCyclicClassChain(validateBase)) continue;
-
-        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (relaxed %s, Num=%d, Objects=0x%llX, chunk0=0x%llX)",
+        Logger::Info("SCAN:GObj", "ValidateGObjects: Valid at 0x%llX (relaxed %s, Num=%d, Objects=0x%llX%s)",
                  static_cast<unsigned long long>(addr), L.name, numElements,
-                 static_cast<unsigned long long>(objPtr), static_cast<unsigned long long>(chunk0));
+                 static_cast<unsigned long long>(objPtr), L.isFlat ? " [flat]" : "");
         return true;
     }
 
-    // Log failure with diagnostic info
-    int32_t numA = 0, numB = 0, numD = 0;
-    Mem::ReadSafe(addr + 0x14, numA);
-    Mem::ReadSafe(addr + 0x04, numB);
-    Mem::ReadSafe(addr + 0x1C, numD);
-    Logger::Warn("SCAN:GObj", "ValidateGObjects: Failed at 0x%llX (Num@+14=%d, Num@+04=%d, Num@+1C=%d)",
-             static_cast<unsigned long long>(addr), numA, numB, numD);
+    // Log failure with diagnostic info (throttled — data scan can produce 20K+ failures)
+    if (g_validationDbgCount < kMaxValidationDbgLogs) {
+        int32_t numA = 0, numB = 0, numD = 0;
+        Mem::ReadSafe(addr + 0x14, numA);
+        Mem::ReadSafe(addr + 0x04, numB);
+        Mem::ReadSafe(addr + 0x1C, numD);
+        Logger::Warn("SCAN:GObj", "ValidateGObjects: Failed at 0x%llX (Num@+14=%d, Num@+04=%d, Num@+1C=%d)",
+                 static_cast<unsigned long long>(addr), numA, numB, numD);
+    }
     return false;
 }
 
@@ -433,7 +456,11 @@ static uintptr_t FindGObjectsByDataScan() {
         // ModR/M byte: mod=00, r/m=101 (RIP-relative) => lower 3 bits = 5
         if ((b2 & 0x07) != 0x05) continue;
 
-        uintptr_t target = Mem::ResolveRIP(scan, 3, 7);
+        // Inline RIP resolution (avoids Mem::ResolveRIP's per-call DEBUG logging
+        // which produces ~98K lines and causes log rotation overflow)
+        int32_t rel32 = 0;
+        if (!Mem::ReadSafe<int32_t>(scan + 3, rel32)) continue;
+        uintptr_t target = scan + 7 + rel32;
         if (!target) continue;
 
         // For MOV instructions (8B), the target is a pointer — dereference it
@@ -451,13 +478,28 @@ static uintptr_t FindGObjectsByDataScan() {
     Logger::Info("SCAN:GObj", "FindGObjectsByDataScan: Found %zu static pointers in data section", bag.size());
 
     // Try each candidate with GObjects validation
+    // Throttle validation failure logging: data scan can produce 20K+ candidates,
+    // each logging a WARN line on failure — causing log rotation overflow.
+    int dataScanFailCount = 0;
+    constexpr int kMaxDataScanFailLogs = 20;
+    g_validationDbgCount = 0;  // Reset throttle for validators
     for (auto& sp : bag) {
         uintptr_t candidate = 0;
         if (!Mem::ReadSafe(sp.targetAddr, candidate) || !candidate) continue;
         if (ValidateGObjects(candidate)) {
             Logger::Info("SCAN:GObj", "FindGObjectsByDataScan: GObjects validated at 0x%llX (via instr@0x%llX)",
                      (unsigned long long)candidate, (unsigned long long)sp.instrAddr);
+            if (dataScanFailCount > kMaxDataScanFailLogs) {
+                Logger::Info("SCAN:GObj", "FindGObjectsByDataScan: (%d validation failures were suppressed)",
+                         dataScanFailCount - kMaxDataScanFailLogs);
+            }
             return candidate;
+        }
+        dataScanFailCount++;
+        if (dataScanFailCount == kMaxDataScanFailLogs) {
+            Logger::Info("SCAN:GObj", "FindGObjectsByDataScan: Throttling validation failure logs (showed first %d)",
+                     kMaxDataScanFailLogs);
+            g_validationDbgCount = kMaxValidationDbgLogs;  // Suppress further validator debug output
         }
     }
 
@@ -2025,6 +2067,23 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                      DynOff::FFIELD_NEXT);
         } else {
             DynOff::FFIELD_NEXT = nextOff;
+        }
+
+        // Step 6.5: Infer FFieldVariant size from detected Next offset.
+        // If UE5.1.1+ defaults were set (Next=0x18) but probing found Next=0x20,
+        // the game uses FFieldVariant=0x10 (UE5.0-5.1.0 layout) despite its version number.
+        // Common in Square Enix forks (DQ HD-2D series reports UE505 but uses UE5.0 FField layout).
+        // Fix: set Name = Next + 8, disable tagged FFieldVariant.
+        // FProperty offsets will be re-probed correctly in Step 8 with fixed field names.
+        if (nextOff == 0x20 && nameOff < 0) {
+            DynOff::FFIELD_NAME = 0x28;  // FName follows Next in FField layout
+            nameOff = 0x28;
+            Logger::Info("DYNO", "ValidateAndFixOffsets: Inferred FField::Name=0x28 from Next=0x20 (FFieldVariant=0x10)");
+
+            if (DynOff::bTaggedFFieldVariant) {
+                DynOff::bTaggedFFieldVariant = false;
+                Logger::Info("DYNO", "ValidateAndFixOffsets: Disabled tagged FFieldVariant (FFieldVariant=0x10 layout)");
+            }
         }
     } else {
         // UProperty: Next is UField::Next (0x28 standard, 0x30 for CPN)
