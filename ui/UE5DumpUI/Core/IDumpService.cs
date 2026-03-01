@@ -40,4 +40,9 @@ public interface IDumpService
 
     // --- Function Walking (for SDK export) ---
     Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default);
+
+    // --- Property Keyword Search ---
+    Task<PropertySearchResult> SearchPropertiesAsync(
+        string query, string[]? types = null, bool gameOnly = true,
+        int limit = 200, CancellationToken ct = default);
 }

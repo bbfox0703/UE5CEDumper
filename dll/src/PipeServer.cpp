@@ -994,6 +994,47 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
+        // === search_properties: Keyword search across all UClass properties ===
+        if (cmd == PipeProtocol::CMD_SEARCH_PROPERTIES) {
+            std::string query = request.value("query", "");
+            bool gameOnly = request.value("game_only", true);
+            int limit = request.value("limit", 200);
+            if (query.empty()) return PipeProtocol::MakeError(id, "Missing query").dump();
+
+            // Parse optional type filter
+            std::vector<std::string> typeFilter;
+            if (request.contains("types") && request["types"].is_array()) {
+                for (const auto& t : request["types"]) {
+                    if (t.is_string()) typeFilter.push_back(t.get<std::string>());
+                }
+            }
+
+            auto searchResult = ObjectArray::SearchProperties(query, typeFilter, gameOnly, limit);
+
+            json matches = json::array();
+            for (const auto& m : searchResult.results) {
+                json item;
+                item["class_name"]  = m.className;
+                item["class_addr"]  = PipeProtocol::AddrToStr(m.classAddr);
+                item["class_path"]  = m.classPath;
+                item["super_name"]  = m.superName;
+                item["prop_name"]   = m.propName;
+                item["prop_type"]   = m.propType;
+                item["prop_offset"] = m.propOffset;
+                item["prop_size"]   = m.propSize;
+                item["struct_type"] = m.structType;
+                item["inner_type"]  = m.innerType;
+                matches.push_back(item);
+            }
+
+            json data;
+            data["total"]           = static_cast<int>(searchResult.results.size());
+            data["scanned_classes"] = searchResult.scannedClasses;
+            data["scanned_objects"] = searchResult.scannedObjects;
+            data["results"]         = matches;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
         // === find_by_address: Reverse lookup — address to UObject instance ===
         if (cmd == PipeProtocol::CMD_FIND_BY_ADDRESS) {
             std::string addrStr = request.value("addr", "");
