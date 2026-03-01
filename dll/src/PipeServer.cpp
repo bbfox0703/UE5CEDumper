@@ -474,6 +474,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     fj["ptr"]       = PipeProtocol::AddrToStr(fv.ptrValue);
                     fj["ptr_name"]  = fv.ptrName;
                     fj["ptr_class"] = fv.ptrClassName;
+                    if (fv.ptrClassAddr)
+                        fj["ptr_class_addr"] = PipeProtocol::AddrToStr(fv.ptrClassAddr);
                 }
 
                 // BoolProperty: bit field info
@@ -521,8 +523,16 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                             if (!e.structFields.empty()) {
                                 json sfs = json::array();
                                 for (const auto& sf : e.structFields) {
-                                    sfs.push_back({{"n", sf.name}, {"t", sf.typeName},
-                                                   {"o", sf.offset}, {"s", sf.size}, {"v", sf.value}});
+                                    json sfj = {{"n", sf.name}, {"t", sf.typeName},
+                                                {"o", sf.offset}, {"s", sf.size}, {"v", sf.value}};
+                                    // Pointer resolution for ObjectProperty sub-fields
+                                    if (sf.ptrAddr != 0) {
+                                        sfj["pa"] = PipeProtocol::AddrToStr(sf.ptrAddr);
+                                        sfj["pn"] = sf.ptrName;
+                                        sfj["pc"] = sf.ptrClassName;
+                                        sfj["pca"] = PipeProtocol::AddrToStr(sf.ptrClassAddr);
+                                    }
+                                    sfs.push_back(sfj);
                                 }
                                 ej["sf"] = sfs;
                             }
@@ -687,8 +697,16 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 if (!e.structFields.empty()) {
                     json sfs = json::array();
                     for (const auto& sf : e.structFields) {
-                        sfs.push_back({{"n", sf.name}, {"t", sf.typeName},
-                                       {"o", sf.offset}, {"s", sf.size}, {"v", sf.value}});
+                        json sfj = {{"n", sf.name}, {"t", sf.typeName},
+                                    {"o", sf.offset}, {"s", sf.size}, {"v", sf.value}};
+                        // Pointer resolution for ObjectProperty sub-fields
+                        if (sf.ptrAddr != 0) {
+                            sfj["pa"] = PipeProtocol::AddrToStr(sf.ptrAddr);
+                            sfj["pn"] = sf.ptrName;
+                            sfj["pc"] = sf.ptrClassName;
+                            sfj["pca"] = PipeProtocol::AddrToStr(sf.ptrClassAddr);
+                        }
+                        sfs.push_back(sfj);
                     }
                     ej["sf"] = sfs;
                 }

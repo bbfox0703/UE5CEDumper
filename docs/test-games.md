@@ -10,7 +10,7 @@
 | Titan Quest II | UE5.7 (PE: 507) | CasePreservingName + DynOff. Stride 16. 486,782 objects. GWorld ✅ via fallback ([GWorld]=0, UWorld found in GObjects) |
 | OctoPath Traveler | UE4 (pre-4.25) | UE4 TNameEntryArray + Layout B + stride 16. Object Tree working. GWorld fails |
 | Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry (hdrOff=4, stride=4) + stride 24 — fully working. GWorld fails |
-| Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | Flat FFixedUObjectArray ✅ (build 1.0.0.27). UProperty fallback ✅. 165792 objects. GWorld fails. UE version shows 504 (cosmetic) |
+| Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | Flat FFixedUObjectArray ✅ (build 1.0.0.27). UProperty fallback ✅. 165792 objects. GWorld fails. Version: flat+UProperty → 418 |
 | DQ I&II HD-2D Remake | UE5.05 (detected) | Stride 24, 128678 objects — full pipeline working. GWorld fails. UE version may be incorrect (HD-2D lineage). CE pointer lookup works |
 | DQ III HD-2D Remake | UE5.05 (detected) | Working (build 1.0.0.27). 126022 objects. GWorld fails. UE version may be incorrect |
 | DQ XI S: Echoes of an Elusive Age | UE4.22 | Working (build 1.0.0.27). 70137 objects. GWorld fails |

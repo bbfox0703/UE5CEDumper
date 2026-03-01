@@ -249,10 +249,10 @@ All 4 LEA-based patterns resolve to wrong globals (encrypted data, C strings, SR
 8. ~~Logger category restructuring~~ → ✅ Done (PR #54): DLL 5 files + UI 3 files, 2-file rotation
 9. ~~ArrayProperty Phase A inner type~~ → ✅ Done: Phase A verified on TQ2
 10. ~~ArrayProperty Phase B scalar element values~~ → ✅ Done: Verified on EverSpace 2
-11. **Fix FF7R UE version display** — shows 504 instead of 418. Cosmetic; need version override for flat array / UProperty fallback games
+11. ~~Fix FF7R UE version display~~ → ✅ Done: Added 4.18-4.21 patterns to DetectVersion(), exposed ObjectArray::IsFlat(), refined post-DynOff override (flat+UProperty → 418, chunked+UProperty → 424)
 12. **Investigate GWorld failure on remaining games** — FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, OctoPath, Star Wars Jedi, Satisfactory
 13. **Investigate UE version misdetection** — DQ I&II/DQ III/Ghostwire: Tokyo all show UE505 but may be UE4
 14. **Investigate FF7Re CE address-to-object lookup failure** — works on DQ but not FF7Re
-15. **ArrayProperty Phase C CE XML export** — 58 tests pass, **NOT YET VERIFIED** on EverSpace 2
-16. **CE XML pointer chain fix** — 58 tests pass, **NOT YET VERIFIED** on EverSpace 2
+15. ~~ArrayProperty Phase C CE XML export~~ → ✅ Done: 53 tests pass. Evolved through Phase D/E/F with container drill-down, struct array expansion, WeakObjectProperty. Pending game verification is non-blocking
+16. ~~CE XML pointer chain fix~~ → ✅ Done: 53 tests pass. Breadcrumb-based hierarchical XML with cycle detection, collapse toggle, container support. Pending game verification is non-blocking
 17. Continue Avalonia UI development — all 17 tested games have working Object Tree

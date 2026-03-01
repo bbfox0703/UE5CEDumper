@@ -778,7 +778,9 @@ ReadArrayResult ReadPointerArrayElements(
         if (ptr) {
             elem.ptrName = GetName(ptr);
             uintptr_t cls = GetClass(ptr);
-            if (cls) elem.ptrClassName = GetName(cls);
+            if (cls) {
+                elem.ptrClassName = GetName(cls);
+            }
 
             // Display value: "Name (ClassName)" or just hex address if name fails
             if (!elem.ptrName.empty()) {
@@ -893,7 +895,9 @@ ReadArrayResult ReadWeakObjectArrayElements(
         if (ptr) {
             elem.ptrName = GetName(ptr);
             uintptr_t cls = GetClass(ptr);
-            if (cls) elem.ptrClassName = GetName(cls);
+            if (cls) {
+                elem.ptrClassName = GetName(cls);
+            }
 
             if (!elem.ptrName.empty()) {
                 elem.value = elem.ptrName;
@@ -1093,7 +1097,27 @@ ReadArrayResult ReadStructArrayElements(
             } else if (cf.typeName == "ObjectProperty" || cf.typeName == "ClassProperty"
                     || cf.typeName == "WeakObjectProperty"
                     || cf.typeName == "InterfaceProperty") {
-                sf.value = "ptr";
+                // Resolve pointer: read UObject* from element memory
+                uintptr_t ptr = 0;
+                if (cf.size == 8 && cf.offset + 8 <= readSize) {
+                    memcpy(&ptr, buf.data() + cf.offset, 8);
+                } else if (cf.size == 4 && cf.offset + 4 <= readSize) {
+                    uint32_t p32 = 0;
+                    memcpy(&p32, buf.data() + cf.offset, 4);
+                    ptr = p32;
+                }
+                sf.ptrAddr = ptr;
+                if (ptr) {
+                    sf.ptrName = GetName(ptr);
+                    uintptr_t cls = GetClass(ptr);
+                    if (cls) {
+                        sf.ptrClassName = GetName(cls);
+                        sf.ptrClassAddr = cls;
+                    }
+                    sf.value = !sf.ptrName.empty() ? sf.ptrName : "ptr";
+                } else {
+                    sf.value = "null";
+                }
             } else if (cf.typeName == "SoftObjectProperty" || cf.typeName == "SoftClassProperty") {
                 sf.value = ReadSoftObjectPath(elemAddr + cf.offset + 0x10);
                 if (sf.value.empty()) sf.value = "(none)";
@@ -1269,7 +1293,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.ptrValue = ptr;
                 fv.ptrName = GetName(ptr);
                 uintptr_t cls = GetClass(ptr);
-                if (cls) fv.ptrClassName = GetName(cls);
+                if (cls) {
+                    fv.ptrClassName = GetName(cls);
+                    fv.ptrClassAddr = cls;
+                }
             }
             char buf[20];
             snprintf(buf, sizeof(buf), "%08X%08X", objIdx, serial);
@@ -1286,7 +1313,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.ptrName = GetName(ptr);
                 fv.ptrClassName = "";
                 uintptr_t ptrCls = GetClass(ptr);
-                if (ptrCls) fv.ptrClassName = GetName(ptrCls);
+                if (ptrCls) {
+                    fv.ptrClassName = GetName(ptrCls);
+                    fv.ptrClassAddr = ptrCls;
+                }
             }
             // Hex of the pointer
             if (fi.Size >= 8) {
@@ -1372,7 +1402,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.ptrValue = objPtr;
                 fv.ptrName = GetName(objPtr);
                 uintptr_t cls = GetClass(objPtr);
-                if (cls) fv.ptrClassName = GetName(cls);
+                if (cls) {
+                    fv.ptrClassName = GetName(cls);
+                    fv.ptrClassAddr = cls;
+                }
             }
 
             char buf[48];
@@ -1951,7 +1984,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.ptrValue = target;
                 fv.ptrName = targetName;
                 uintptr_t cls = GetClass(target);
-                if (cls) fv.ptrClassName = GetName(cls);
+                if (cls) {
+                    fv.ptrClassName = GetName(cls);
+                    fv.ptrClassAddr = cls;
+                }
             } else if (!funcName.empty()) {
                 fv.typedValue = "(stale)::" + funcName;
             } else {
