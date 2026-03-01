@@ -8,7 +8,7 @@
 |------|-----------|-------|
 | EverSpace 2 | UE5.5 (PE: 505) | GNames via pointer-scan fallback. Stride 24, 1.16M objects. GWorld ✅ (build 1.0.0.27) |
 | Titan Quest II | UE5.7 (PE: 507) | CasePreservingName + DynOff. Stride 16. 486,782 objects. GWorld ✅ via fallback ([GWorld]=0, UWorld found in GObjects) |
-| OctoPath Traveler | UE4 (pre-4.25) | ❌ GObjects AOB failed — no matching pattern. GNames/GWorld also fail |
+| OctoPath Traveler | UE4.22 (inferred) | 32759 objects. GNames via GNAM_CT3 ✅. GObjects AOB failed → data scan fallback (existing patterns use LEA RAX `48 8D 05`, OT uses LEA RCX `48 8D 0D`). GWorld via GWLD_TQ_1 ✅. Codename "Kingship". Ghidra confirmed: GObjects RVA `0x29E5C20`, GNames RVA `0x29DCF08` (TNameEntryArray stride 0x4000). Added GOBJ_OT_1 |
 | Final Fantasy VII Rebirth (FF7Re) | UE4.26 fork | Hash-prefixed FNameEntry (hdrOff=4, stride=4) + stride 24 — fully working. GWorld fails |
 | Final Fantasy VII Remake Intergrade (FF7R) | UE4.18 fork | Flat FFixedUObjectArray ✅ (build 1.0.0.27). UProperty fallback ✅. 165792 objects. GWorld fails. Version: flat+UProperty → 418 |
 | DQ I&II HD-2D Remake | UE5.05 (detected) | Stride 24, 128678 objects — full pipeline working. GWorld fails. UE version may be incorrect (HD-2D lineage). CE pointer lookup works |
@@ -31,11 +31,9 @@
 
 ## GWorld Status Summary
 
-**Working (10/20):** TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT Demo
+**Working (11/21):** TQ2, EverSpace 2, Hogwarts Legacy, IDOLM@STER, Romancing SaGa 2, Tower of Mask, Ghostwire: Tokyo, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT Demo, OctoPath Traveler
 
 **Failing:** FF7R, FF7Re, DQ XI S, DQ I&II, DQ III, Star Wars Jedi, Satisfactory — mostly Square Enix UE4 forks + some UE5.
-
-**Not working (GObjects AOB failed):** OctoPath Traveler
 
 ## Naming Convention
 
