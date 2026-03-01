@@ -9,8 +9,11 @@
 #include "Constants.h"
 #include "FNamePool.h"
 
+#include "UStructWalker.h"
+
 #include <cctype>
 #include <climits>
+#include <unordered_set>
 #include <vector>
 
 namespace ObjectArray {
@@ -1130,6 +1133,144 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
     // Nothing found at all
     LOG_INFO("FindByAddress: No match found for 0x%llX (no candidates, no backward scan hit)",
              static_cast<unsigned long long>(addr));
+    return result;
+}
+
+// === Property Keyword Search ===
+
+// Engine packages to skip when gameOnly is true
+static bool IsEnginePackage(const std::string& path) {
+    static const char* kEnginePrefixes[] = {
+        "/Script/Engine",
+        "/Script/CoreUObject",
+        "/Script/CoreOnline",
+        "/Script/UMG",
+        "/Script/Slate",
+        "/Script/SlateCore",
+        "/Script/InputCore",
+        "/Script/PhysicsCore",
+        "/Script/NavigationSystem",
+        "/Script/AIModule",
+        "/Script/Niagara",
+        "/Script/MovieScene",
+        "/Script/LevelSequence",
+        "/Script/Landscape",
+        "/Script/Foliage",
+        "/Script/AnimGraphRuntime",
+        "/Script/AudioMixer",
+        "/Script/ChaosCloth",
+        "/Script/ChaosSolverEngine",
+        "/Script/ClothingSystemRuntimeNv",
+        "/Script/GeometryCollectionEngine",
+        "/Script/FieldSystemEngine",
+        "/Script/GameplayTags",
+        "/Script/GameplayTasks",
+        "/Script/GameplayAbilities",
+        "/Script/PacketHandler",
+        "/Script/PropertyAccess",
+        "/Script/DeveloperSettings",
+        "/Script/AssetRegistry",
+        "/Script/MediaAssets",
+        "/Script/HeadMountedDisplay",
+    };
+
+    for (const auto* prefix : kEnginePrefixes) {
+        size_t prefixLen = std::strlen(prefix);
+        // Match exact prefix followed by end-of-string, '/', or '.'
+        if (path.compare(0, prefixLen, prefix) == 0) {
+            if (path.size() == prefixLen || path[prefixLen] == '/' || path[prefixLen] == '.') {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static std::string ToLower(const std::string& s) {
+    std::string out = s;
+    for (auto& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+}
+
+PropertySearchResult SearchProperties(
+    const std::string& query,
+    const std::vector<std::string>& typeFilter,
+    bool gameOnly,
+    int maxResults)
+{
+    PropertySearchResult result;
+
+    std::string lowerQuery = ToLower(query);
+
+    // Build lowercase type filter set for fast lookup
+    std::unordered_set<std::string> typeSet;
+    for (const auto& t : typeFilter) typeSet.insert(ToLower(t));
+
+    // Track already-visited UClass addresses to avoid duplicates
+    std::unordered_set<uintptr_t> visitedClasses;
+
+    int32_t count = GetCount();
+    result.scannedObjects = count;
+
+    for (int32_t i = 0; i < count && static_cast<int>(result.results.size()) < maxResults; ++i) {
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+
+        // Check if this object IS a UClass (its class name == "Class")
+        uintptr_t cls = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        uint32_t clsNameIdx = 0;
+        if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+
+        std::string metaClassName = FNamePool::GetString(clsNameIdx);
+        if (metaClassName != "Class") continue;
+
+        // This object is a UClass. Skip if already visited.
+        if (!visitedClasses.insert(obj).second) continue;
+
+        // Get class path for game_only filter
+        std::string classPath = UStructWalker::GetFullName(obj);
+        if (gameOnly && IsEnginePackage(classPath)) continue;
+
+        result.scannedClasses++;
+
+        // Walk class properties (including inherited)
+        ClassInfo ci = UStructWalker::WalkClassEx(obj);
+        if (ci.Fields.empty()) continue;
+
+        // Search properties
+        for (const auto& field : ci.Fields) {
+            if (static_cast<int>(result.results.size()) >= maxResults) break;
+
+            // Case-insensitive substring match on property name
+            std::string lowerPropName = ToLower(field.Name);
+            if (lowerPropName.find(lowerQuery) == std::string::npos) continue;
+
+            // Optional type filter
+            if (!typeSet.empty()) {
+                std::string lowerType = ToLower(field.TypeName);
+                if (typeSet.find(lowerType) == typeSet.end()) continue;
+            }
+
+            PropertyMatch match;
+            match.className  = ci.Name;
+            match.classAddr  = ci.Address;
+            match.classPath  = classPath;
+            match.superName  = ci.SuperName;
+            match.propName   = field.Name;
+            match.propType   = field.TypeName;
+            match.propOffset = field.Offset;
+            match.propSize   = field.Size;
+            match.structType = field.structType;
+            match.innerType  = field.innerType;
+            result.results.push_back(std::move(match));
+        }
+    }
+
+    Logger::Info("PIPE:search", "SearchProperties '%s': %d matches from %d classes (scanned %d objects)",
+                 query.c_str(), static_cast<int>(result.results.size()),
+                 result.scannedClasses, result.scannedObjects);
     return result;
 }
 

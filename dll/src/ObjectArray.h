@@ -105,4 +105,35 @@ struct AddressLookupResult {
 // (is this address inside a UObject's property data?).
 AddressLookupResult FindByAddress(uintptr_t addr);
 
+// === Property Keyword Search ===
+
+struct PropertyMatch {
+    std::string className;
+    uintptr_t   classAddr;
+    std::string classPath;
+    std::string superName;
+    std::string propName;
+    std::string propType;
+    int32_t     propOffset;
+    int32_t     propSize;
+    std::string structType;   // StructProperty -> inner struct name
+    std::string innerType;    // ArrayProperty -> inner element type
+};
+
+struct PropertySearchResult {
+    int scannedClasses = 0;
+    int scannedObjects = 0;
+    std::vector<PropertyMatch> results;
+};
+
+// Search for properties matching a keyword across all UClass objects.
+// query: case-insensitive substring match on property name.
+// typeFilter: optional list of property types (e.g. "FloatProperty"); empty = all types.
+// gameOnly: skip engine packages (/Script/Engine, /Script/CoreUObject, etc.)
+PropertySearchResult SearchProperties(
+    const std::string& query,
+    const std::vector<std::string>& typeFilter,
+    bool gameOnly,
+    int maxResults = 200);
+
 } // namespace ObjectArray

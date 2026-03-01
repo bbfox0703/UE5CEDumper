@@ -56,6 +56,7 @@ public sealed class StubDumpService : IDumpService
     public Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<PropertySearchResult> SearchPropertiesAsync(string query, string[]? types = null, bool gameOnly = true, int limit = 200, CancellationToken ct = default) => throw new NotImplementedException();
 }
 
 public class CsxExportServiceTests
