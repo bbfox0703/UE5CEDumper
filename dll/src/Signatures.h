@@ -28,6 +28,7 @@
 //   G427    : UE 4.27 game analysis (work/UE 4.27 AOBs.txt)
 //   SAT422  : Satisfactory old UE 4.22 build analysis (work/SF UE 4.22 AOBs.txt)
 //   ES53    : Everspace 2 UE 5.3 build analysis (work/ES2 UE 5.3 AOBs.txt)
+//   SAT425  : Satisfactory UE 4.25 build analysis (work/SF UE 4.25 AOBs.txt)
 // ============================================================
 
 // ============================================================
@@ -186,6 +187,14 @@ constexpr const char* AOB_GOBJECTS_ES53_1 = "48 83 EC 28 48 8D 0D ?? ?? ?? ?? E8
 //   34 bytes, very specific 4-CALL chain in engine init sequence
 constexpr const char* AOB_GOBJECTS_SAT422_1 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8D 8D ?? ?? 00 00 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 89";
 
+// --- Satisfactory UE 4.25 patterns (SAT425 series) ---
+
+// SAT425_1: lea rcx,[GUObjectArray]; mov eax,-1; mov r15d,param; mov [RDI],rcx; mov [RDI+8],eax  — FObjectIterator ctor
+constexpr const char* AOB_GOBJECTS_SAT425_1 = "48 8D 0D ?? ?? ?? ?? B8 FF FF FF FF 45 8B ?? 48 89 ?? 89 47 08";
+// SAT425_2: lea rcx,[GUObjectArray]; mov r8d,[rsp+?]; mov edx,[rsp+?]; mov [GUObjectAllocator],rax (x3); call  — UObjectBaseInit
+//   31 bytes, very specific init sequence
+constexpr const char* AOB_GOBJECTS_SAT425_2 = "48 8D 0D ?? ?? ?? ?? 44 8B ?? 24 ?? ?? 00 00 8B ?? 24 ?? ?? 00 00 48 89 05 ?? ?? ?? ?? 48 89";
+
 
 // ============================================================
 // GNames / FNamePool
@@ -258,6 +267,17 @@ constexpr const char* AOB_GNAMES_G42_1 = "48 8B 05 ?? ?? ?? ?? 48 85 C0 75 ?? B9
 // SAT422_1: mov rax,[Names]; jne; cmp [GIsGameThreadIdInitialized],al; mov [rsp+?],rbx  — FName::GetNames
 //   Pre-FNamePool TStaticIndirectArrayThreadSafeRead, uses JNE near (0F 85) + CMP byte [RIP],AL
 constexpr const char* AOB_GNAMES_SAT422_1 = "48 8B 05 ?? ?? ?? ?? 0F 85 ?? ?? ?? ?? 38 05 ?? ?? ?? ?? 48 89";
+
+// --- Satisfactory UE 4.25 patterns (SAT425 series) ---
+
+// SAT425_1: cmp [bNamePoolInitialized],0; mov [rsp+?],edi; mov [rsp+?],r8d; jz; lea r8,[NamePoolData]  — FName::AppendString
+//   instrOffset=18 (LEA R8 at byte 18), 21 bytes
+constexpr const char* AOB_GNAMES_SAT425_1 = "80 3D ?? ?? ?? ?? 00 89 7C 24 ?? 44 89 44 24 ?? 74 ?? 4C 8D 05";
+// SAT425_2: lea rax,[NamePoolData]; mov eax,[rax+8]; inc eax; shl eax,11h; add rsp,28; ret  — FName::GetNameEntryMemorySize
+constexpr const char* AOB_GNAMES_SAT425_2 = "48 8D 05 ?? ?? ?? ?? 8B 40 08 FF C0 C1 E0 11 48 83 C4 28 C3";
+// SAT425_3: lea rax,[NamePoolData]; jmp; lea rcx,[NamePoolData]; call FNamePool::FNamePool; mov byte  — FName::GetNumAnsiNames
+//   Generalized V8 with EB ?? (any JMP offset) instead of EB 13
+constexpr const char* AOB_GNAMES_SAT425_3 = "48 8D 05 ?? ?? ?? ?? EB ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05";
 
 // --- Everspace 2 UE 5.3 build patterns (ES53 series) ---
 
@@ -414,6 +434,15 @@ constexpr const char* AOB_GWORLD_SAT422_1 = "48 8B 05 ?? ?? ?? ?? 44 8B ?? 48 8B
 //   Canonical GWorld setter with null check + ObjectIndex read. Write pattern.
 constexpr const char* AOB_GWORLD_SAT422_2 = "48 89 0D ?? ?? ?? ?? 48 85 C9 0F 84 ?? ?? ?? ?? 8B 59 0C 85 DB";
 
+// --- Satisfactory UE 4.25 patterns (SAT425 series) ---
+
+// SAT425_1: cmp rcx,[GWorld]; jz; inc ebx; add r14,8; cmp ebx,[r12+0xC40]  — UGameEngine::Tick
+constexpr const char* AOB_GWORLD_SAT425_1 = "48 3B 0D ?? ?? ?? ?? 74 ?? FF C3 49 83 ?? 08 41 3B";
+// SAT425_2: mov [GWorld],rcx; mov rax,gs:[TLS]; mov ecx,[_tls_index]; mov edx,4  — UGameEngine::Tick write + TLS
+constexpr const char* AOB_GWORLD_SAT425_2 = "48 89 0D ?? ?? ?? ?? 65 48 8B 04 25 ?? ?? ?? ?? 8B 0D";
+// SAT425_3: mov [GWorld],rax; mov rcx,[r15+88h]; test byte; jnz  — write + context
+constexpr const char* AOB_GWORLD_SAT425_3 = "48 89 05 ?? ?? ?? ?? 49 8B 8F ?? ?? ?? 00 F6 81 ?? ?? ?? 00 ?? 75";
+
 // --- Everspace 2 UE 5.3 build patterns (ES53 series) ---
 
 // ES53_1: mov [GWorld],rax; movaps xmm2,xmm6; mov rax,[r12]; mov rdx,r15  — UGameEngine::Tick write
@@ -457,7 +486,9 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     { "GOBJ_V10", AOB_GOBJECTS_V10, AobTarget::GObjects, AobResolve::RipBoth,
       0, 3, 7, -0x10, 10, 0, false, "V", "Split Fiction UE5.5+ lea+call+call" },
     SIG_RIP("GOBJ_G42_4", AOB_GOBJECTS_G42_4, AobTarget::GObjects, 0, 3, 7, 0, 11, "G42", "UE4.2 long lea+call+epilogue"),
+    SIG_RIP("GOBJ_SAT425_2", AOB_GOBJECTS_SAT425_2, AobTarget::GObjects, 0, 3, 7, 0, 11, "SAT425", "Satisfactory UE4.25 UObjectBaseInit 31-byte sequence"),
     SIG_RIP("GOBJ_SAT422_1", AOB_GOBJECTS_SAT422_1, AobTarget::GObjects, 0, 3, 7, 0, 12, "SAT422", "Satisfactory UE4.22 FEngineLoop::PreInit 4-CALL chain"),
+    SIG_RIP("GOBJ_SAT425_1", AOB_GOBJECTS_SAT425_1, AobTarget::GObjects, 0, 3, 7, 0, 13, "SAT425", "Satisfactory UE4.25 FObjectIterator ctor"),
     { "GOBJ_RE3", AOB_GOBJECTS_RE3, AobTarget::GObjects, AobResolve::RipBoth,
       0, 3, 7, 0, 13, 0, false, "RE", "Little Nightmares 3 Demo extended" },
     { "GOBJ_V11", AOB_GOBJECTS_V11, AobTarget::GObjects, AobResolve::RipBoth,
@@ -522,11 +553,14 @@ constexpr AobSignature GNAMES_PATTERNS[] = {
     SIG_RIP("GNAM_V8",    AOB_GNAMES_V8,     AobTarget::GNames, 0, 3, 7, 0, 10, "V", "Palworld extended context"),
     SIG_RIP("GNAM_V5",    AOB_GNAMES_V5,     AobTarget::GNames, 0, 3, 7, 0, 12, "V", "lea rcx; call; mov byte[],1 extended"),
     SIG_RIP("GNAM_ES53_1", AOB_GNAMES_ES53_1, AobTarget::GNames, 0, 3, 7, 0, 13, "ES53", "ES2 UE5.3 FNamePool init + MOV RDX,RAX"),
-    SIG_RIP("GNAM_ES2_1", AOB_GNAMES_ES2_1,  AobTarget::GNames, 0, 3, 7, 0, 15, "ES2", "UE5.5 ResolveEntry"),
-    SIG_RIP("GNAM_SF_1",  AOB_GNAMES_SF_1,   AobTarget::GNames, 0, 3, 7, 0, 16, "SF", "SatisfFactory NamePoolData init (in Core DLL)"),
-    SIG_RIP("GNAM_CT1",   AOB_GNAMES_CT1,    AobTarget::GNames, 0, 3, 7, 0, 18, "CT", "UE4 Dumper.CT v6+ lea r8; jmp 16"),
-    SIG_RIP("GNAM_CT2",   AOB_GNAMES_CT2,    AobTarget::GNames, 0, 3, 7, 0, 19, "CT", "UE4 Dumper.CT UE4.23+ main"),
-    SIG_RIP("GNAM_UD2",   AOB_GNAMES_UD2,    AobTarget::GNames, 0, 3, 7, 0, 20, "UD", "UEDumper lea rcx; call; mov r8"),
+    SIG_RIP("GNAM_SAT425_1", AOB_GNAMES_SAT425_1, AobTarget::GNames, 18, 3, 7, 0, 14, "SAT425", "Satisfactory UE4.25 FName::AppendString LEA R8"),
+    SIG_RIP("GNAM_SAT425_2", AOB_GNAMES_SAT425_2, AobTarget::GNames, 0, 3, 7, 0, 15, "SAT425", "Satisfactory UE4.25 FName::GetNameEntryMemorySize"),
+    SIG_RIP("GNAM_ES2_1", AOB_GNAMES_ES2_1,  AobTarget::GNames, 0, 3, 7, 0, 16, "ES2", "UE5.5 ResolveEntry"),
+    SIG_RIP("GNAM_SAT425_3", AOB_GNAMES_SAT425_3, AobTarget::GNames, 0, 3, 7, 0, 17, "SAT425", "Satisfactory UE4.25 GetNumAnsiNames (general V8)"),
+    SIG_RIP("GNAM_SF_1",  AOB_GNAMES_SF_1,   AobTarget::GNames, 0, 3, 7, 0, 18, "SF", "SatisfFactory NamePoolData init (in Core DLL)"),
+    SIG_RIP("GNAM_CT1",   AOB_GNAMES_CT1,    AobTarget::GNames, 0, 3, 7, 0, 19, "CT", "UE4 Dumper.CT v6+ lea r8; jmp 16"),
+    SIG_RIP("GNAM_CT2",   AOB_GNAMES_CT2,    AobTarget::GNames, 0, 3, 7, 0, 20, "CT", "UE4 Dumper.CT UE4.23+ main"),
+    SIG_RIP("GNAM_UD2",   AOB_GNAMES_UD2,    AobTarget::GNames, 0, 3, 7, 0, 21, "UD", "UEDumper lea rcx; call; mov r8"),
 
     // Priority 30-40: Medium patterns
     SIG_RIP("GNAM_SF_2",  AOB_GNAMES_SF_2,   AobTarget::GNames, 0, 3, 7, 0, 30, "SF", "SatisfFactory SHL pattern (in Core DLL)"),
@@ -582,6 +616,7 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     SIG_GWORLD_RIP("GWLD_G42_1", AOB_GWORLD_G42_1,  0, 3, 7, 0, 28, false, "G42", "UE4.2 mov+mov rsi+call"),
     SIG_GWORLD_RIP("GWLD_G42_4", AOB_GWORLD_G42_4,  0, 3, 7, 0, 29, false, "G42", "UE4.2 mov rdi+mov rbx"),
     SIG_GWORLD_RIP("GWLD_SAT422_1", AOB_GWORLD_SAT422_1, 0, 3, 7, 0, 29, false, "SAT422", "Satisfactory UE4.22 FMallocLeakReporter"),
+    SIG_GWORLD_RIP("GWLD_SAT425_1", AOB_GWORLD_SAT425_1, 0, 3, 7, 0, 29, false, "SAT425", "Satisfactory UE4.25 UGameEngine::Tick CMP"),
 
     // Priority 30-39: UE 4.27 patterns and wildcard-prefixed TQ2 patterns
     SIG_GWORLD_RIP("GWLD_G427_1", AOB_GWORLD_G427_1, 0, 3, 7, 0, 30, false, "G427", "UE4.27 FEngineLoop::Tick extended"),
@@ -595,15 +630,19 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     { "GWLD_TQ_4", AOB_GWORLD_TQ_4, AobTarget::GWorld, AobResolve::RipBoth,
       3, 3, 7, 0, 36, 0, true, "TQ", "TQ2 ??-prefix write pattern" },
 
-    // Priority 38-39: ES2 UE 5.3 write patterns
+    // Priority 37-39: Write patterns (Satisfactory UE 4.25, ES2 UE 5.3)
+    { "GWLD_SAT425_3", AOB_GWORLD_SAT425_3, AobTarget::GWorld, AobResolve::RipBoth,
+      0, 3, 7, 0, 37, 0, true, "SAT425", "Satisfactory UE4.25 write + R15 context" },
+    { "GWLD_SAT425_2", AOB_GWORLD_SAT425_2, AobTarget::GWorld, AobResolve::RipBoth,
+      0, 3, 7, 0, 38, 0, true, "SAT425", "Satisfactory UE4.25 write + TLS" },
     { "GWLD_ES53_1", AOB_GWORLD_ES53_1, AobTarget::GWorld, AobResolve::RipBoth,
-      0, 3, 7, 0, 38, 0, true, "ES53", "ES2 UE5.3 UGameEngine::Tick MOVAPS write" },
+      0, 3, 7, 0, 39, 0, true, "ES53", "ES2 UE5.3 UGameEngine::Tick MOVAPS write" },
     { "GWLD_ES53_2", AOB_GWORLD_ES53_2, AobTarget::GWorld, AobResolve::RipBoth,
-      0, 3, 7, 0, 39, 0, true, "ES53", "ES2 UE5.3 UGameEngine::Tick RCX write" },
+      0, 3, 7, 0, 40, 0, true, "ES53", "ES2 UE5.3 UGameEngine::Tick RCX write" },
 
-    // Priority 40: Satisfactory UE 4.22 write pattern
+    // Priority 41: Satisfactory UE 4.22 write pattern
     { "GWLD_SAT422_2", AOB_GWORLD_SAT422_2, AobTarget::GWorld, AobResolve::RipBoth,
-      0, 3, 7, 0, 40, 0, true, "SAT422", "Satisfactory UE4.22 SetGlobalWorld RCX write" },
+      0, 3, 7, 0, 41, 0, true, "SAT422", "Satisfactory UE4.22 SetGlobalWorld RCX write" },
 
     // Priority 50: Standard short GWorld patterns
     SIG_GWORLD_RIP("GWLD_V3",    AOB_GWORLD_V3,     0, 3, 7, 0, 50, false, "V", "mov rbx test rbx"),
@@ -625,9 +664,9 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
 // ============================================================
 // Pattern count summary
 // ============================================================
-// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) + 4 (G427) + 1 (ES53) + 1 (SAT422) = 39 patterns + 1 symbol export
-// GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) + 1 (ES53) + 1 (SAT422) = 24 patterns + 3 symbol exports
-// GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) + 5 (G427) + 2 (ES53) + 2 (SAT422) = 36 patterns + 1 symbol export
-// Total:    99 AOB patterns + 5 symbol exports = 104 entries (from 9 sources)
+// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) + 4 (G427) + 1 (ES53) + 1 (SAT422) + 2 (SAT425) = 41 patterns + 1 symbol export
+// GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) + 1 (ES53) + 1 (SAT422) + 3 (SAT425) = 27 patterns + 3 symbol exports
+// GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) + 5 (G427) + 2 (ES53) + 2 (SAT422) + 3 (SAT425) = 39 patterns + 1 symbol export
+// Total:    107 AOB patterns + 5 symbol exports = 112 entries (from 10 sources)
 
 } // namespace Sig

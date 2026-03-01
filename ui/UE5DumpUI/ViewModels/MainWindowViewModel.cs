@@ -25,6 +25,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private bool _collapsePointerNodes;
     [ObservableProperty] private int _arrayLimitExponent = 6; // 2^6 = 64
     [ObservableProperty] private int _dropDownLimitExponent = 9; // 2^9 = 512
+    [ObservableProperty] private int _csxDrilldownDepth; // 0 = flat (dummy), 1+ = real child structures
 
     /// <summary>Computed array element limit: 2^ArrayLimitExponent (2..16384).</summary>
     public int ArrayLimit => 1 << ArrayLimitExponent;
@@ -88,6 +89,11 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(DropDownLimit));
         LiveWalker.DropDownLimit = DropDownLimit;
         InstanceFinder.DropDownLimit = DropDownLimit;
+    }
+
+    partial void OnCsxDrilldownDepthChanged(int value)
+    {
+        LiveWalker.CsxDrilldownDepth = value;
     }
 
     public MainWindowViewModel(
@@ -177,7 +183,10 @@ public partial class MainWindowViewModel : ViewModelBase
                 state.GWorldMethod,
                 state.GObjectsPatternId,
                 state.GNamesPatternId,
-                state.GWorldPatternId);
+                state.GWorldPatternId,
+                state.GObjectsPatternsHit,
+                state.GNamesPatternsHit,
+                state.GWorldPatternsHit);
 
             ObjectTree.SetEngineState(state);
             LiveWalker.SetEngineState(state);

@@ -12,6 +12,11 @@ public sealed class StructSubFieldValue
     public int Offset { get; init; }
     public int Size { get; init; }
     public string Value { get; init; } = "";
+    // Pointer resolution for ObjectProperty/ClassProperty sub-fields
+    public string PtrAddress { get; init; } = "";
+    public string PtrName { get; init; } = "";
+    public string PtrClassName { get; init; } = "";
+    public string PtrClassAddr { get; init; } = "";
 }
 
 /// <summary>
@@ -104,6 +109,9 @@ public sealed class LiveFieldValue
 
     /// <summary>For ObjectProperty: class name of the pointed-to object.</summary>
     public string PtrClassName { get; init; } = "";
+
+    /// <summary>For ObjectProperty: UClass* address of the pointed-to object (for CSX drilldown).</summary>
+    public string PtrClassAddr { get; init; } = "";
 
     /// <summary>For BoolProperty: bit index (0-7) within the byte; -1 = not a bool.</summary>
     public int BoolBitIndex { get; init; } = -1;

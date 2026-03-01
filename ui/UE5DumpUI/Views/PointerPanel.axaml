@@ -40,6 +40,9 @@
                        Foreground="#666" FontFamily="Consolas" Margin="0,2,0,0"
                        IsVisible="{Binding HasGObjectsPatternId}"
                        ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
+            <TextBlock Text="{StaticResource str.Pointers.AobAllFailed}"
+                       Foreground="#E05252" FontSize="11" Margin="0,3,0,0"
+                       IsVisible="{Binding GObjectsAobAllFailed}"/>
             <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0"
                         IsVisible="{Binding ShowGObjectsWarning}">
               <TextBlock Text="{StaticResource str.Pointers.AobFailed}"
@@ -66,6 +69,9 @@
                        Foreground="#666" FontFamily="Consolas" Margin="0,2,0,0"
                        IsVisible="{Binding HasGNamesPatternId}"
                        ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
+            <TextBlock Text="{StaticResource str.Pointers.AobAllFailed}"
+                       Foreground="#E05252" FontSize="11" Margin="0,3,0,0"
+                       IsVisible="{Binding GNamesAobAllFailed}"/>
             <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,3,0,0"
                         IsVisible="{Binding ShowGNamesWarning}">
               <TextBlock Text="{StaticResource str.Pointers.AobFailed}"
@@ -92,6 +98,9 @@
                        Foreground="#666" FontFamily="Consolas" Margin="0,2,0,0"
                        IsVisible="{Binding HasGWorldPatternId}"
                        ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
+            <TextBlock Text="{StaticResource str.Pointers.AobAllFailed}"
+                       Foreground="#E05252" FontSize="11" Margin="0,3,0,0"
+                       IsVisible="{Binding GWorldAobAllFailed}"/>
             <TextBlock Text="{StaticResource str.Pointers.GWorldNotFound}"
                        Foreground="#888" FontSize="11" Margin="0,3,0,0"
                        IsVisible="{Binding ShowGWorldWarning}"/>

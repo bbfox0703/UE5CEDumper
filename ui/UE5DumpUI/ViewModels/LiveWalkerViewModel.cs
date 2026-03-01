@@ -69,6 +69,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
     /// <summary>Max CE DropDownList entries (2^N, default 512). Used during CE XML export.</summary>
     public int DropDownLimit { get; set; } = 512;
 
+    /// <summary>CSX drilldown depth (0 = flat/dummy, 1+ = real child structures for ObjectProperty).</summary>
+    public int CsxDrilldownDepth { get; set; }
+
     // Search
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private int _searchMatchCount;
@@ -977,9 +980,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
             if (string.IsNullOrEmpty(filePath)) return; // user cancelled
 
             IsLoading = true;
-            StatusText = "Resolving struct fields...";
+            StatusText = CsxDrilldownDepth > 0 ? "Resolving struct + pointer fields..." : "Resolving struct fields...";
             var csx = await CsxExportService.GenerateCsxAsync(
-                _dump, structName, Fields, arrayLimit: ArrayLimit);
+                _dump, structName, Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth);
 
             // Write to file (overwrite if exists — user already confirmed via dialog)
             await File.WriteAllTextAsync(filePath, csx);
