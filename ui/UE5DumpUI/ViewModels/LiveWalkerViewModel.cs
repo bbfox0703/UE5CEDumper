@@ -1110,6 +1110,82 @@ public partial class LiveWalkerViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task ExportSdkHeaderAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentAddress) || !HasData) return;
+
+        try
+        {
+            ClearStatus();
+
+            var structName = !string.IsNullOrEmpty(CurrentObjectName)
+                ? $"{CurrentClassName}_{CurrentObjectName}".Replace(" ", "_")
+                : CurrentClassName.Replace(" ", "_");
+            structName = structName.Replace("<", "").Replace(">", "").Replace("\"", "");
+            var safeFileName = string.Join("_",
+                structName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+
+            var filePath = await _platform.ShowSaveFileDialogAsync(
+                safeFileName, "C++ Header (*.h)", ".h");
+            if (string.IsNullOrEmpty(filePath)) return;
+
+            IsLoading = true;
+            StatusText = "Generating SDK header...";
+
+            // Get the superclass name from the first breadcrumb's class info if available
+            var superName = "";
+            if (Breadcrumbs.Count > 0)
+            {
+                var bc = Breadcrumbs[^1];
+                if (!string.IsNullOrEmpty(bc.ClassAddr))
+                {
+                    try
+                    {
+                        var classInfo = await _dump.WalkClassAsync(bc.ClassAddr);
+                        superName = classInfo.SuperName;
+                    }
+                    catch
+                    {
+                        // Non-critical — just emit without super
+                    }
+                }
+            }
+
+            // Estimate properties size from the last field end or use a safe heuristic
+            var propsSize = 0;
+            if (Fields.Count > 0)
+            {
+                var lastField = Fields.OrderByDescending(f => f.Offset + f.Size).First();
+                propsSize = lastField.Offset + lastField.Size;
+            }
+
+            var header = SdkExportService.GenerateClassHeader(
+                CurrentClassName, superName, propsSize, Fields.ToList());
+
+            await File.WriteAllTextAsync(filePath, header);
+
+            StatusText = "";
+            _log.Info($"SDK header exported to {filePath} for {CurrentClassName}");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            StatusText = "";
+            SetError("Cannot write to the selected location — access denied.");
+            _log.Error("SDK header export failed: access denied");
+        }
+        catch (Exception ex)
+        {
+            StatusText = "";
+            SetError(ex);
+            _log.Error("Failed to export SDK header", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
     private async Task RefreshAsync()
     {
         if (string.IsNullOrEmpty(CurrentAddress)) return;

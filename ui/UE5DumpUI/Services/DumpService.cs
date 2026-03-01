@@ -223,6 +223,20 @@ public sealed class DumpService : IDumpService
                     TypeName = fo["type"]?.GetValue<string>() ?? "",
                     Offset = fo["offset"]?.GetValue<int>() ?? 0,
                     Size = fo["size"]?.GetValue<int>() ?? 0,
+                    // Extended type metadata
+                    StructType = fo["struct_type"]?.GetValue<string>() ?? "",
+                    ObjClassName = fo["obj_class"]?.GetValue<string>() ?? "",
+                    InnerType = fo["inner_type"]?.GetValue<string>() ?? "",
+                    InnerStructType = fo["inner_struct_type"]?.GetValue<string>() ?? "",
+                    InnerObjClass = fo["inner_obj_class"]?.GetValue<string>() ?? "",
+                    KeyType = fo["key_type"]?.GetValue<string>() ?? "",
+                    KeyStructType = fo["key_struct_type"]?.GetValue<string>() ?? "",
+                    ValueType = fo["value_type"]?.GetValue<string>() ?? "",
+                    ValueStructType = fo["value_struct_type"]?.GetValue<string>() ?? "",
+                    ElemType = fo["elem_type"]?.GetValue<string>() ?? "",
+                    ElemStructType = fo["elem_struct_type"]?.GetValue<string>() ?? "",
+                    EnumName = fo["enum_name"]?.GetValue<string>() ?? "",
+                    BoolFieldMask = fo["bool_mask"]?.GetValue<int>() ?? 0,
                 });
             }
         }
@@ -632,6 +646,78 @@ public sealed class DumpService : IDumpService
                 Value = obj["v"]?.GetValue<long>() ?? 0,
                 Name = obj["n"]?.GetValue<string>() ?? "",
             });
+        }
+        return result;
+    }
+
+    public async Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+    {
+        var req = new JsonObject { ["cmd"] = "list_enums" };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var result = new List<EnumDefinition>();
+        if (res["enums"] is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                if (item is not JsonObject eo) continue;
+                result.Add(new EnumDefinition
+                {
+                    Address = eo["addr"]?.GetValue<string>() ?? "",
+                    Name = eo["name"]?.GetValue<string>() ?? "",
+                    FullPath = eo["full_path"]?.GetValue<string>() ?? "",
+                    Entries = ParseEnumEntries(eo["entries"]) ?? new(),
+                });
+            }
+        }
+        return result;
+    }
+
+    public async Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "walk_functions",
+            ["addr"] = addr,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var result = new List<FunctionInfoModel>();
+        if (res["functions"] is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                if (item is not JsonObject fo) continue;
+
+                var parms = new List<FunctionParamModel>();
+                if (fo["params"] is JsonArray paramsArr)
+                {
+                    foreach (var pItem in paramsArr)
+                    {
+                        if (pItem is not JsonObject po) continue;
+                        parms.Add(new FunctionParamModel
+                        {
+                            Name = po["name"]?.GetValue<string>() ?? "",
+                            TypeName = po["type"]?.GetValue<string>() ?? "",
+                            Size = po["size"]?.GetValue<int>() ?? 0,
+                            IsOut = po["out"]?.GetValue<bool>() ?? false,
+                            IsReturn = po["ret"]?.GetValue<bool>() ?? false,
+                        });
+                    }
+                }
+
+                result.Add(new FunctionInfoModel
+                {
+                    Name = fo["name"]?.GetValue<string>() ?? "",
+                    FullName = fo["full"]?.GetValue<string>() ?? "",
+                    Address = fo["addr"]?.GetValue<string>() ?? "",
+                    FunctionFlags = fo["flags"]?.GetValue<uint>() ?? 0,
+                    ReturnType = fo["ret"]?.GetValue<string>() ?? "",
+                    Params = parms,
+                });
+            }
         }
         return result;
     }

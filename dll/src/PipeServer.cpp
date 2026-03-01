@@ -375,7 +375,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             if (addrStr.empty()) return PipeProtocol::MakeError(id, "Missing addr").dump();
 
             uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
-            ClassInfo ci = UStructWalker::WalkClass(addr);
+            ClassInfo ci = UStructWalker::WalkClassEx(addr);
 
             json classData;
             classData["name"]       = ci.Name;
@@ -386,18 +386,109 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
             json fields = json::array();
             for (const auto& f : ci.Fields) {
-                fields.push_back({
+                json fj = {
                     {"addr",   PipeProtocol::AddrToStr(f.Address)},
                     {"name",   f.Name},
                     {"type",   f.TypeName},
                     {"offset", f.Offset},
                     {"size",   f.Size}
-                });
+                };
+                // Extended type metadata (only emit non-empty values)
+                if (!f.structType.empty())      fj["struct_type"]       = f.structType;
+                if (!f.objClassName.empty())     fj["obj_class"]         = f.objClassName;
+                if (!f.innerType.empty())        fj["inner_type"]        = f.innerType;
+                if (!f.innerStructType.empty())  fj["inner_struct_type"] = f.innerStructType;
+                if (!f.innerObjClass.empty())    fj["inner_obj_class"]   = f.innerObjClass;
+                if (!f.keyType.empty())          fj["key_type"]          = f.keyType;
+                if (!f.keyStructType.empty())    fj["key_struct_type"]   = f.keyStructType;
+                if (!f.valueType.empty())        fj["value_type"]        = f.valueType;
+                if (!f.valueStructType.empty())  fj["value_struct_type"] = f.valueStructType;
+                if (!f.elemType.empty())         fj["elem_type"]         = f.elemType;
+                if (!f.elemStructType.empty())   fj["elem_struct_type"]  = f.elemStructType;
+                if (!f.enumName.empty())         fj["enum_name"]         = f.enumName;
+                if (f.boolFieldMask != 0)        fj["bool_mask"]         = f.boolFieldMask;
+                fields.push_back(fj);
             }
             classData["fields"] = fields;
 
             json data;
             data["class"] = classData;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // list_enums: enumerate all UEnum objects with their entries
+        if (cmd == PipeProtocol::CMD_LIST_ENUMS) {
+            int total = ObjectArray::GetCount();
+            json enums = json::array();
+
+            for (int i = 0; i < total; ++i) {
+                uintptr_t obj = ObjectArray::GetByIndex(i);
+                if (!obj) continue;
+
+                // Check if this object's class is "Enum" (UEnum inherits UObject)
+                uintptr_t cls = UStructWalker::GetClass(obj);
+                if (!cls) continue;
+                std::string clsName = UStructWalker::GetName(cls);
+                if (clsName != "Enum") continue;
+
+                std::string name = UStructWalker::GetName(obj);
+                if (name.empty()) continue;
+
+                // Read enum entries via cached resolver
+                auto entries = UStructWalker::GetEnumEntries(obj);
+
+                json enumObj;
+                enumObj["addr"]      = PipeProtocol::AddrToStr(obj);
+                enumObj["name"]      = name;
+                enumObj["full_path"] = UStructWalker::GetFullName(obj);
+
+                json entryArr = json::array();
+                for (const auto& e : entries) {
+                    entryArr.push_back({{"n", e.name}, {"v", e.value}});
+                }
+                enumObj["entries"] = entryArr;
+                enums.push_back(enumObj);
+            }
+
+            json data;
+            data["enums"] = enums;
+            data["count"] = static_cast<int>(enums.size());
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        if (cmd == PipeProtocol::CMD_WALK_FUNCTIONS) {
+            std::string addrStr = request.value("addr", "");
+            if (addrStr.empty()) return PipeProtocol::MakeError(id, "Missing addr").dump();
+
+            uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
+            auto funcs = UStructWalker::WalkFunctions(addr);
+
+            json funcArr = json::array();
+            for (const auto& f : funcs) {
+                json fj;
+                fj["name"]    = f.name;
+                fj["full"]    = f.fullName;
+                fj["addr"]    = PipeProtocol::AddrToStr(f.address);
+                fj["flags"]   = f.functionFlags;
+                fj["ret"]     = f.returnType;
+
+                json params = json::array();
+                for (const auto& p : f.params) {
+                    json pj;
+                    pj["name"]  = p.name;
+                    pj["type"]  = p.typeName;
+                    pj["size"]  = p.size;
+                    pj["out"]   = p.isOut;
+                    pj["ret"]   = p.isReturn;
+                    params.push_back(pj);
+                }
+                fj["params"] = params;
+                funcArr.push_back(fj);
+            }
+
+            json data;
+            data["functions"] = funcArr;
+            data["count"]     = static_cast<int>(funcArr.size());
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 

@@ -104,6 +104,29 @@
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
                      VerticalAlignment="Center" MinWidth="15"
                      Margin="4,0"/>
+
+          <!-- Export dropdown -->
+          <Border Margin="12,0,0,0" VerticalAlignment="Center"
+                  IsVisible="{Binding IsConnected}">
+            <DropDownButton Content="{StaticResource str.Toolbar.Export}"
+                            Padding="8,3" FontSize="12">
+              <DropDownButton.Flyout>
+                <MenuFlyout>
+                  <MenuItem Header="{StaticResource str.Export.SymbolsX64dbg}"
+                            Command="{Binding ExportSymbolsX64dbgCommand}"/>
+                  <MenuItem Header="{StaticResource str.Export.SymbolsGhidra}"
+                            Command="{Binding ExportSymbolsGhidraCommand}"/>
+                  <MenuItem Header="{StaticResource str.Export.SymbolsIda}"
+                            Command="{Binding ExportSymbolsIdaCommand}"/>
+                  <Separator/>
+                  <MenuItem Header="{StaticResource str.Export.SdkHeader}"
+                            Command="{Binding ExportFullSdkCommand}"/>
+                  <MenuItem Header="{StaticResource str.Export.Usmap}"
+                            Command="{Binding ExportUsmapCommand}"/>
+                </MenuFlyout>
+              </DropDownButton.Flyout>
+            </DropDownButton>
+          </Border>
         </StackPanel>
       </DockPanel>
     </Border>
