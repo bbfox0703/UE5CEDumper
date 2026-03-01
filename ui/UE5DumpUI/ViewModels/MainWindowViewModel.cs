@@ -65,6 +65,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public HexViewViewModel HexView { get; }
     public LiveWalkerViewModel LiveWalker { get; }
     public InstanceFinderViewModel InstanceFinder { get; }
+    public PropertySearchViewModel PropertySearch { get; }
 
     partial void OnSelectedAddressFormatIndexChanged(int value)
     {
@@ -118,6 +119,7 @@ public partial class MainWindowViewModel : ViewModelBase
         HexView = new HexViewViewModel(dump, pipeClient, log);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform);
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
+        PropertySearch = new PropertySearchViewModel(dump, log);
 
         // Wire cross-VM communication
         // Wrap async lambdas in try/catch to prevent async void from crashing the app
@@ -148,6 +150,34 @@ public partial class MainWindowViewModel : ViewModelBase
             catch (Exception ex)
             {
                 _log.Error("NavigateToLiveWalker handler error", ex);
+            }
+        };
+
+        // Wire PropertySearch -> InstanceFinder (pre-fill class name + switch tab)
+        PropertySearch.NavigateToInstanceFinder += (className) =>
+        {
+            try
+            {
+                SelectedTabIndex = 1; // Switch to Instance Finder tab
+                InstanceFinder.SearchClassName = className;
+            }
+            catch (Exception ex)
+            {
+                _log.Error("NavigateToInstanceFinder handler error", ex);
+            }
+        };
+
+        // Wire PropertySearch -> LiveWalker navigation + tab switch
+        PropertySearch.NavigateToLiveWalker += async (addr) =>
+        {
+            try
+            {
+                SelectedTabIndex = 0; // Switch to Live Walker tab
+                await LiveWalker.NavigateToAddressCommand.ExecuteAsync(addr);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("PropertySearch NavigateToLiveWalker handler error", ex);
             }
         };
 
