@@ -60,7 +60,7 @@ git submodule update --init --recursive
 - **Single Instance**: UI app uses Mutex to ensure only one instance runs
 - **Async everywhere**: All I/O, pipe operations, and alert actions must be async
 - **Platform Abstraction**: Any system/OS-dependent call (P/Invoke, Registry, OS commands) MUST go through an interface in `Core` project. `Core` must NEVER contain direct platform-specific code
-- **Log output**: All logs go to `%LOCALAPPDATA%\UE5CEDumper\Logs`, split by category into per-process subfolders. DLL: 5 files (init, scan, offsets, pipe, walk). UI: 3 files (init, pipe, view). 2-file rotation, 8MB max per file. Root `Logs/` has no loose files — only subfolders
+- **Log output**: All logs go to `%LOCALAPPDATA%\UE5CEDumper\Logs`, split by category into per-process subfolders. DLL: 5 files (init, scan, offsets, pipe, walk). UI: 3 files (init, pipe, view). 4-file rotation, 8MB max per file. Root `Logs/` has no loose files — only subfolders
 - **Magic words management**: All magic strings kept in one file per project with proper comments
 - **UI Strings**: English only. All UI strings in `Resources/Strings/en.axaml`, referenced via `StaticResource` bindings
 - **UE offsets**: All UObject/UStruct offsets must be dynamically verified via OffsetFinder, never hardcoded

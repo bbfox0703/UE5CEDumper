@@ -70,6 +70,15 @@ static const LayoutPreset s_ue4ExtendedPresets[] = {
 };
 static constexpr int NUM_UE4_EXTENDED_PRESETS = sizeof(s_ue4ExtendedPresets) / sizeof(s_ue4ExtendedPresets[0]);
 
+// Flat (non-chunked) FFixedUObjectArray layout.
+// Objects* points directly to FUObjectItem[] (no chunk pointer indirection).
+// Used by early UE4 (4.11-4.22) including Octopath Traveller.
+// Layout: { Objects*(8), MaxElements(4), NumElements(4) } — total 16 bytes before FCriticalSection.
+static const LayoutPreset s_flatPresets[] = {
+    { "Flat", { 0x00, 0x08, 0x0C, -1, -1 } },
+};
+static constexpr int NUM_FLAT_PRESETS = sizeof(s_flatPresets) / sizeof(s_flatPresets[0]);
+
 // Helper: check if a pointer value looks like a valid heap pointer (not code/null/low)
 static bool LooksLikeHeapPtr(uintptr_t ptr) {
     if (!ptr || ptr < 0x10000) return false;
@@ -198,7 +207,21 @@ static bool DetectLayout(uintptr_t addr) {
         }
     }
 
-    // --- Tier 3: RELAXED fallback (preserves current behavior, prevents regression) ---
+    // --- Tier 3: Flat (non-chunked) presets ---
+    // FFixedUObjectArray: Objects* is a direct FUObjectItem[], no chunk pointer table.
+    // ValidateChunkedLayout handles this (hasChunkFields=false skips chunk checks).
+    for (int i = 0; i < NUM_FLAT_PRESETS; ++i) {
+        const auto& preset = s_flatPresets[i];
+        if (ValidateChunkedLayout(addr, preset.layout)) {
+            s_layout = preset.layout;
+            s_isFlat = true;
+            LOG_INFO("ObjectArray: Layout '%s' detected (flat, non-chunked)", preset.name);
+            LogLayoutFields(addr, s_layout, preset.name);
+            return true;
+        }
+    }
+
+    // --- Tier 4: RELAXED fallback (preserves current behavior, prevents regression) ---
     // Some games pass weak checks but fail strict Dumper-7 chunk consistency.
     LOG_INFO("ObjectArray: Strict validation failed for all presets, trying relaxed fallback...");
 
