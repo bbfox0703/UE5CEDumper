@@ -2086,17 +2086,51 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             }
         }
     } else {
-        // UProperty: Next is UField::Next (0x28 standard, 0x30 for CPN)
-        nextOff = DynOff::UFIELD_NEXT;
+        // UProperty (UObject-derived): Probe for UField::Next
+        // Standard UE4: Next at +0x28 (or +0x30 for CPN), but some games have extra
+        // UObject/UField members that push Next further (e.g., DQ XI S has Next at +0x38).
+        // Probe candidate offsets and validate by checking the next item is a *Property UObject.
+        int defaultNext = DynOff::UFIELD_NEXT;  // 0x28 or 0x30
 
-        // Verify: the pointer at childProps + nextOff should be another UObject (or null for last)
-        uintptr_t nextPtr = 0;
-        Mem::ReadSafe(childProps + nextOff, nextPtr);
-        if (nextPtr) {
+        for (int off = 0x20; off <= 0x48; off += 8) {
+            uintptr_t nextPtr = 0;
+            if (!Mem::ReadSafe(childProps + off, nextPtr) || !nextPtr) continue;
+            if (nextPtr < 0x10000 || nextPtr > 0x00007FFFFFFFFFFF) continue;
+
+            // Verify: target must be a UObject whose Class name contains "Property"
             uintptr_t nextCls = 0;
-            if (Mem::ReadSafe(nextPtr + Constants::OFF_UOBJECT_CLASS, nextCls) && nextCls > 0x10000) {
-                Logger::Info("DYNO", "ValidateAndFixOffsets: UField::Next at UObject+0x%02X verified", nextOff);
+            if (!Mem::ReadSafe(nextPtr + Constants::OFF_UOBJECT_CLASS, nextCls) || !nextCls) continue;
+            if (nextCls < 0x10000 || nextCls > 0x00007FFFFFFFFFFF) continue;
+
+            uint32_t nextClsNameIdx = 0;
+            if (!Mem::ReadSafe(nextCls + Constants::OFF_UOBJECT_NAME, nextClsNameIdx)) continue;
+            std::string nextClsName = FNamePool::GetString(nextClsNameIdx);
+            if (nextClsName.find("Property") == std::string::npos) continue;
+
+            // Double-check: read the FName on the next field — must be a valid short name
+            uint32_t nextNameIdx = 0;
+            if (Mem::ReadSafe(nextPtr + nameOff, nextNameIdx) && nextNameIdx > 0) {
+                std::string nextName = FNamePool::GetString(nextNameIdx);
+                if (!nextName.empty() && nextName.length() <= 64) {
+                    nextOff = off;
+                    Logger::Info("DYNO", "ValidateAndFixOffsets: UField::Next at UObject+0x%02X "
+                             "(probed, next='%s', class='%s')", off, nextName.c_str(), nextClsName.c_str());
+                    break;
+                }
             }
+        }
+
+        if (nextOff < 0) {
+            // Fallback: use the default (may fail downstream but at least log it)
+            nextOff = defaultNext;
+            Logger::Warn("DYNO", "ValidateAndFixOffsets: UField::Next probe failed, falling back to +0x%02X", nextOff);
+        }
+
+        // Update the global offset if probing found a non-default value
+        if (nextOff != DynOff::UFIELD_NEXT) {
+            DynOff::UFIELD_NEXT = nextOff;
+            Logger::Info("DYNO", "ValidateAndFixOffsets: Updated UFIELD_NEXT to +0x%02X (was +0x%02X)",
+                     nextOff, defaultNext);
         }
     }
 
@@ -2139,9 +2173,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // Step 8: Probe for Offset_Internal: scan 4-byte aligned offsets
     // Range depends on mode: FProperty starts after FField header (~0x30-0x68),
-    // UProperty starts after UField header (~0x30-0x60)
+    // UProperty starts after UField header (~0x28-0x70).
+    // UProperty range extended to 0x70 for games with expanded UObject/UField
+    // (e.g., DQ XI S has +0x10 extra bytes, shifting all UProperty fields).
     int probeStart = DynOff::bUseFProperty ? 0x30 : 0x28;
-    int probeEnd   = DynOff::bUseFProperty ? 0x68 : 0x60;
+    int probeEnd   = DynOff::bUseFProperty ? 0x68 : 0x70;
     int propOffsetOff = -1;
     int propElemSizeOff = -1;
 

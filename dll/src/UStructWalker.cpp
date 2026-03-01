@@ -287,6 +287,18 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
     return ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
 }
 
+// Read the type name from a UProperty* (UObject subclass, UE4 UProperty mode).
+// UProperty inherits UObject, so its Class at +0x10 is a UClass whose Name is the type.
+static std::string GetUPropertyTypeName(uintptr_t upropAddr) {
+    uintptr_t cls = 0;
+    if (!Mem::ReadSafe(upropAddr + Constants::OFF_UOBJECT_CLASS, cls) || !cls) return "";
+    if (cls < 0x10000 || cls > 0x00007FFFFFFFFFFF) return "";
+
+    uint32_t nameIdx = 0;
+    if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, nameIdx)) return "";
+    return FNamePool::GetString(nameIdx);
+}
+
 // Walk the FField chain starting from the first field (UE4.25+ / UE5)
 static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields) {
     // UE5.3+: ChildProperties may come from an FFieldVariant read — strip tag bit defensively
@@ -1814,6 +1826,83 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         DynOff::FARRAYPROP_INNER, DynOff::FSTRUCTPROP_STRUCT);
                     Logger::Info("WALK:ArrayP", "  hex @+0x%X..+0x%X: %s", dumpStart, dumpStart+64, hexDump);
                 }
+            } else {
+                // UProperty mode (UE4 <4.25): UArrayProperty::Inner is a UProperty* (UObject subclass).
+                // Located at end of UProperty base class = UPROPERTY_OFFSET + 0x2C (standard delta).
+                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
+                bool innerFound = false;
+                for (int delta : kUPropProbeOffsets) {
+                    int tryOff = baseOff + delta;
+                    if (tryOff < 0) continue;
+                    uintptr_t inner = 0;
+                    if (!Mem::ReadSafe(fi.Address + tryOff, inner) || !inner) continue;
+                    if (inner < 0x10000 || inner > 0x00007FFFFFFFFFFF) continue;
+
+                    std::string innerTypeName = GetUPropertyTypeName(inner);
+                    if (!innerTypeName.empty() && innerTypeName.find("Property") != std::string::npos) {
+                        fv.arrayInnerType = innerTypeName;
+                        Mem::ReadSafe<int32_t>(inner + DynOff::UPROPERTY_ELEMSIZE, fv.arrayElemSize);
+
+                        if (innerTypeName == "StructProperty") {
+                            // UStructProperty::Struct at same base offset
+                            uintptr_t innerStruct = 0;
+                            if (Mem::ReadSafe(inner + baseOff, innerStruct) && innerStruct) {
+                                fv.arrayInnerStructType = GetName(innerStruct);
+                                fv.arrayInnerStructAddr = innerStruct;
+                            }
+                        }
+
+                        Logger::Info("WALK:ArrayP", "UArrayProperty::Inner at UProperty+0x%X (delta=%d) for '%s' -> '%s' elemSize=%d",
+                            tryOff, delta, fi.Name.c_str(), innerTypeName.c_str(), fv.arrayElemSize);
+                        fv.arrayInnerFFieldAddr = inner;  // reuse field for UProperty* too
+                        innerFound = true;
+                        break;
+                    }
+                }
+
+                // Phase B-F: same inline element reading as FProperty mode
+                if (innerFound && IsScalarArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
+                    auto elemResult = ReadArrayElements(
+                        instanceAddr, fi.Offset,
+                        fv.arrayInnerFFieldAddr, fv.arrayInnerType,
+                        fv.arrayElemSize, 0, arrayLimit);
+                    if (elemResult.ok && !elemResult.elements.empty()) {
+                        fv.arrayElements = std::move(elemResult.elements);
+                    }
+                }
+                if (innerFound && IsPointerArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
+                    auto ptrResult = ReadPointerArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (ptrResult.ok && !ptrResult.elements.empty()) {
+                        fv.arrayElements = std::move(ptrResult.elements);
+                    }
+                }
+                if (innerFound && IsWeakPointerArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
+                    auto weakResult = ReadWeakObjectArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (weakResult.ok && !weakResult.elements.empty()) {
+                        fv.arrayElements = std::move(weakResult.elements);
+                    }
+                }
+                if (innerFound && IsStructArrayType(fv.arrayInnerType)
+                    && fv.arrayInnerStructAddr != 0
+                    && arr.Data && fv.arrayCount > 0 && fv.arrayElemSize > 0) {
+                    auto structResult = ReadStructArrayElements(
+                        instanceAddr, fi.Offset,
+                        fv.arrayInnerStructAddr, fv.arrayElemSize, 0, arrayLimit);
+                    if (structResult.ok && !structResult.elements.empty()) {
+                        fv.arrayElements = std::move(structResult.elements);
+                    }
+                }
+
+                if (!innerFound) {
+                    Logger::Info("WALK:ArrayP", "UArrayProperty::Inner NOT found for '%s' (UProperty=0x%llX, baseOff=0x%X)",
+                        fi.Name.c_str(), static_cast<unsigned long long>(fi.Address), baseOff);
+                }
             }
 
             result.fields.push_back(std::move(fv));
@@ -1948,6 +2037,112 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         break;
                     }
                 }
+            } else {
+                // UProperty mode (UE4 <4.25): UMapProperty has KeyProp + ValueProp as UProperty*.
+                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
+                for (int delta : kUPropProbeOffsets) {
+                    int tryOff = baseOff + delta;
+                    if (tryOff < 0) continue;
+                    uintptr_t keyProp = 0;
+                    if (!Mem::ReadSafe(fi.Address + tryOff, keyProp) || !keyProp) continue;
+                    if (keyProp < 0x10000 || keyProp > 0x00007FFFFFFFFFFF) continue;
+
+                    std::string keyTypeName = GetUPropertyTypeName(keyProp);
+                    if (keyTypeName.empty() || keyTypeName.find("Property") == std::string::npos) continue;
+
+                    uintptr_t valueProp = 0;
+                    Mem::ReadSafe(fi.Address + tryOff + 8, valueProp);
+                    std::string valueTypeName = (valueProp && valueProp > 0x10000
+                        && valueProp < 0x00007FFFFFFFFFFF) ? GetUPropertyTypeName(valueProp) : "";
+
+                    if (!valueTypeName.empty() && valueTypeName.find("Property") != std::string::npos) {
+                        fv.mapKeyType = keyTypeName;
+                        fv.mapValueType = valueTypeName;
+                        Mem::ReadSafe<int32_t>(keyProp + DynOff::UPROPERTY_ELEMSIZE, fv.mapKeySize);
+                        Mem::ReadSafe<int32_t>(valueProp + DynOff::UPROPERTY_ELEMSIZE, fv.mapValueSize);
+                        Logger::Info("WALK:MapP", "UMapProperty KeyProp='%s'(%d) ValueProp='%s'(%d) at delta=%d for '%s'",
+                            keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
+                            delta, fi.Name.c_str());
+
+                        if (keyTypeName == "StructProperty") {
+                            uintptr_t kStruct = 0;
+                            if (Mem::ReadSafe(keyProp + baseOff, kStruct) && kStruct) {
+                                fv.mapKeyStructAddr = kStruct;
+                                fv.mapKeyStructType = GetName(kStruct);
+                            }
+                        }
+                        if (valueTypeName == "StructProperty") {
+                            uintptr_t vStruct = 0;
+                            if (Mem::ReadSafe(valueProp + baseOff, vStruct) && vStruct) {
+                                fv.mapValueStructAddr = vStruct;
+                                fv.mapValueStructType = GetName(vStruct);
+                            }
+                        }
+
+                        // Read inline element values
+                        if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
+                            int32_t pairSize = fv.mapKeySize + fv.mapValueSize;
+                            int32_t stride = Mem::ComputeSetElementStride(pairSize);
+                            int read = 0;
+                            for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.mapCount && read < arrayLimit; ++idx) {
+                                if (!Mem::IsSparseIndexAllocated(sa, idx)) continue;
+                                uintptr_t elemAddr = sa.Data + static_cast<uintptr_t>(idx) * stride;
+                                LiveFieldValue::ContainerElement ce;
+                                ce.index = idx;
+                                std::vector<uint8_t> keyBuf(fv.mapKeySize);
+                                if (Mem::ReadBytesSafe(elemAddr, keyBuf.data(), fv.mapKeySize)) {
+                                    ce.key = InterpretValue(keyTypeName, keyBuf.data(), fv.mapKeySize);
+                                    std::string kh;
+                                    int klen = (std::min)(fv.mapKeySize, 16);
+                                    for (int h = 0; h < klen; ++h) {
+                                        char hx[3]; snprintf(hx, sizeof(hx), "%02X", keyBuf[h]);
+                                        kh += hx;
+                                    }
+                                    ce.keyHex = kh;
+                                    if (keyTypeName == "ObjectProperty" || keyTypeName == "ClassProperty") {
+                                        uintptr_t ptr = 0;
+                                        memcpy(&ptr, keyBuf.data(), (std::min)(fv.mapKeySize, (int32_t)sizeof(ptr)));
+                                        if (ptr) {
+                                            ce.keyPtrAddr = ptr;
+                                            ce.keyPtrName = GetName(ptr);
+                                            uintptr_t cls = GetClass(ptr);
+                                            if (cls) ce.keyPtrClassName = GetName(cls);
+                                        }
+                                    }
+                                    if (keyTypeName == "NameProperty" && ce.key.empty()) {
+                                        ce.key = ce.keyHex;
+                                    }
+                                }
+                                std::vector<uint8_t> valBuf(fv.mapValueSize);
+                                if (Mem::ReadBytesSafe(elemAddr + fv.mapKeySize, valBuf.data(), fv.mapValueSize)) {
+                                    ce.value = InterpretValue(valueTypeName, valBuf.data(), fv.mapValueSize);
+                                    std::string vh;
+                                    int vlen = (std::min)(fv.mapValueSize, 16);
+                                    for (int h = 0; h < vlen; ++h) {
+                                        char hx[3]; snprintf(hx, sizeof(hx), "%02X", valBuf[h]);
+                                        vh += hx;
+                                    }
+                                    ce.valueHex = vh;
+                                    if (valueTypeName == "ObjectProperty" || valueTypeName == "ClassProperty") {
+                                        uintptr_t ptr = 0;
+                                        memcpy(&ptr, valBuf.data(), (std::min)(fv.mapValueSize, (int32_t)sizeof(ptr)));
+                                        if (ptr) {
+                                            ce.valuePtrAddr = ptr;
+                                            ce.valuePtrName = GetName(ptr);
+                                            uintptr_t cls = GetClass(ptr);
+                                            if (cls) ce.valuePtrClassName = GetName(cls);
+                                        }
+                                    }
+                                }
+                                fv.containerElements.push_back(std::move(ce));
+                                ++read;
+                            }
+                            Logger::Debug("WALK:MapP", "Read %d/%d map entries for '%s'", read, fv.mapCount, fi.Name.c_str());
+                        }
+                        break;
+                    }
+                }
             }
 
             result.fields.push_back(std::move(fv));
@@ -1999,6 +2194,69 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     // Read inline element values if count is manageable
                     if (fv.setCount > 0
                         && sa.Data && fv.setElemSize > 0) {
+                        int32_t stride = Mem::ComputeSetElementStride(fv.setElemSize);
+                        int read = 0;
+                        for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.setCount && read < arrayLimit; ++idx) {
+                            if (!Mem::IsSparseIndexAllocated(sa, idx)) continue;
+                            uintptr_t elemAddr = sa.Data + static_cast<uintptr_t>(idx) * stride;
+                            LiveFieldValue::ContainerElement ce;
+                            ce.index = idx;
+                            std::vector<uint8_t> elemBuf(fv.setElemSize);
+                            if (Mem::ReadBytesSafe(elemAddr, elemBuf.data(), fv.setElemSize)) {
+                                ce.key = InterpretValue(elemTypeName, elemBuf.data(), fv.setElemSize);
+                                std::string eh;
+                                int elen = (std::min)(fv.setElemSize, 16);
+                                for (int h = 0; h < elen; ++h) {
+                                    char hx[3]; snprintf(hx, sizeof(hx), "%02X", elemBuf[h]);
+                                    eh += hx;
+                                }
+                                ce.keyHex = eh;
+                                if (elemTypeName == "ObjectProperty" || elemTypeName == "ClassProperty") {
+                                    uintptr_t ptr = 0;
+                                    memcpy(&ptr, elemBuf.data(), (std::min)(fv.setElemSize, (int32_t)sizeof(ptr)));
+                                    if (ptr) {
+                                        ce.keyPtrAddr = ptr;
+                                        ce.keyPtrName = GetName(ptr);
+                                        uintptr_t cls = GetClass(ptr);
+                                        if (cls) ce.keyPtrClassName = GetName(cls);
+                                    }
+                                }
+                            }
+                            fv.containerElements.push_back(std::move(ce));
+                            ++read;
+                        }
+                        Logger::Debug("WALK:SetP", "Read %d/%d set entries for '%s'", read, fv.setCount, fi.Name.c_str());
+                    }
+                    break;
+                }
+            } else {
+                // UProperty mode (UE4 <4.25): USetProperty::ElementProp is a UProperty*.
+                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
+                for (int delta : kUPropProbeOffsets) {
+                    int tryOff = baseOff + delta;
+                    if (tryOff < 0) continue;
+                    uintptr_t elemProp = 0;
+                    if (!Mem::ReadSafe(fi.Address + tryOff, elemProp) || !elemProp) continue;
+                    if (elemProp < 0x10000 || elemProp > 0x00007FFFFFFFFFFF) continue;
+
+                    std::string elemTypeName = GetUPropertyTypeName(elemProp);
+                    if (elemTypeName.empty() || elemTypeName.find("Property") == std::string::npos) continue;
+
+                    fv.setElemType = elemTypeName;
+                    Mem::ReadSafe<int32_t>(elemProp + DynOff::UPROPERTY_ELEMSIZE, fv.setElemSize);
+                    Logger::Info("WALK:SetP", "USetProperty ElementProp='%s'(%d) at delta=%d for '%s'",
+                        elemTypeName.c_str(), fv.setElemSize, delta, fi.Name.c_str());
+
+                    if (elemTypeName == "StructProperty") {
+                        uintptr_t eStruct = 0;
+                        if (Mem::ReadSafe(elemProp + baseOff, eStruct) && eStruct) {
+                            fv.setElemStructAddr = eStruct;
+                            fv.setElemStructType = GetName(eStruct);
+                        }
+                    }
+
+                    if (fv.setCount > 0 && sa.Data && fv.setElemSize > 0) {
                         int32_t stride = Mem::ComputeSetElementStride(fv.setElemSize);
                         int read = 0;
                         for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.setCount && read < arrayLimit; ++idx) {
