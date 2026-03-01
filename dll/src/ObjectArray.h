@@ -61,6 +61,10 @@ uintptr_t FindByFullName(const std::string& fullName);
 // Get the detected FUObjectItem stride in bytes (16 or 24)
 int GetItemSize();
 
+// Whether the GObjects array is a flat (non-chunked) FFixedUObjectArray.
+// Flat arrays were used in UE4.11-4.20; chunked arrays in UE4.21+ and all UE5.
+bool IsFlat();
+
 // Search objects by partial name (case-insensitive), returns up to maxResults
 struct SearchResult {
     uintptr_t addr;

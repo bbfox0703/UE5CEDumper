@@ -63,9 +63,10 @@ struct LiveFieldValue {
     std::string typedValue;
 
     // For ObjectProperty: pointer to the referenced object
-    uintptr_t   ptrValue  = 0;
-    std::string ptrName;       // Name of the pointed-to object
-    std::string ptrClassName;  // Class name of the pointed-to object
+    uintptr_t   ptrValue     = 0;
+    std::string ptrName;          // Name of the pointed-to object
+    std::string ptrClassName;     // Class name of the pointed-to object
+    uintptr_t   ptrClassAddr = 0; // UClass* of the pointed-to object (for CSX drilldown)
 
     // For BoolProperty: bit field info
     int32_t     boolBitIndex = -1;  // Bit index (0-7) within the byte; -1 = not a bool
@@ -104,6 +105,11 @@ struct LiveFieldValue {
             int32_t     offset = 0;   // relative to element start
             int32_t     size = 0;
             std::string value;        // formatted scalar value
+            // Pointer resolution for ObjectProperty/ClassProperty sub-fields
+            uintptr_t   ptrAddr = 0;      // UObject* value (0 = null or non-pointer)
+            std::string ptrName;          // Object name
+            std::string ptrClassName;     // Class name
+            uintptr_t   ptrClassAddr = 0; // UClass* for CSX drilldown
         };
         std::vector<StructSubField> structFields;
     };

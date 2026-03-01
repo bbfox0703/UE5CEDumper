@@ -310,6 +310,7 @@ public sealed class DumpService : IDumpService
                     PtrAddress = fo["ptr"]?.GetValue<string>() ?? "",
                     PtrName = fo["ptr_name"]?.GetValue<string>() ?? "",
                     PtrClassName = fo["ptr_class"]?.GetValue<string>() ?? "",
+                    PtrClassAddr = fo["ptr_class_addr"]?.GetValue<string>() ?? "",
                     BoolBitIndex = fo["bool_bit"]?.GetValue<int>() ?? -1,
                     BoolFieldMask = fo["bool_mask"]?.GetValue<int>() ?? 0,
                     ArrayCount = fo["count"]?.GetValue<int>() ?? -1,
@@ -582,6 +583,11 @@ public sealed class DumpService : IDumpService
                 Offset = sfObj["o"]?.GetValue<int>() ?? 0,
                 Size = sfObj["s"]?.GetValue<int>() ?? 0,
                 Value = sfObj["v"]?.GetValue<string>() ?? "",
+                // Pointer resolution for ObjectProperty sub-fields
+                PtrAddress = sfObj["pa"]?.GetValue<string>() ?? "",
+                PtrName = sfObj["pn"]?.GetValue<string>() ?? "",
+                PtrClassName = sfObj["pc"]?.GetValue<string>() ?? "",
+                PtrClassAddr = sfObj["pca"]?.GetValue<string>() ?? "",
             });
         }
         return result;

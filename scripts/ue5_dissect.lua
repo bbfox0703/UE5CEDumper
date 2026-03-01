@@ -177,12 +177,13 @@ end
 -- offset base (for StructProperty flattening).
 -- depth: current recursion depth (guards infinite loops).
 -- ----------------------------------------------------------------
-local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, depth)
+local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, depth, maxDepth)
     depth = depth or 0
     offsetBase = offsetBase or 0
     namePrefix = namePrefix or ""
+    maxDepth = maxDepth or MAX_STRUCT_DEPTH
 
-    if depth > MAX_STRUCT_DEPTH then return end
+    if depth > maxDepth then return end
 
     local fields = walkClassFields(classAddr)
 
@@ -200,7 +201,7 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
                 local sName = readString(sBuf, 128, false) or "Struct"
                 deAlloc(sBuf)
                 addFieldsToStruct(ceStruct, innerClass, absOffset,
-                    displayName .. "." , depth + 1)
+                    displayName .. "." , depth + 1, maxDepth)
             else
                 -- Unresolved struct: emit as raw bytes
                 local e = ceStruct.addElement()
@@ -325,7 +326,8 @@ end
 -- If the given address has no FField chain (i.e. it's an instance),
 -- the function auto-resolves via UE5_GetObjectClass.
 -- ----------------------------------------------------------------
-function dissect.createFromClass(classAddr, structName)
+function dissect.createFromClass(classAddr, structName, maxDepth)
+    maxDepth = maxDepth or MAX_STRUCT_DEPTH  -- backward compatible default
     if not classAddr or classAddr == 0 then
         warn("createFromClass: invalid classAddr")
         return nil
@@ -363,7 +365,7 @@ function dissect.createFromClass(classAddr, structName)
     ceStruct.beginUpdate()
 
     -- Walk class fields recursively
-    addFieldsToStruct(ceStruct, classAddr, 0, "", 0)
+    addFieldsToStruct(ceStruct, classAddr, 0, "", 0, maxDepth)
 
     -- Add UObject base fields
     addUObjectHeader(ceStruct)

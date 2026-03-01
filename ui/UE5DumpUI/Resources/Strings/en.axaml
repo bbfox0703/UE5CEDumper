@@ -10,6 +10,7 @@
     <sys:String x:Key="str.Toolbar.ArrayLimit">Array Limit:</sys:String>
     <sys:String x:Key="str.Toolbar.ArrayLimitWarn">⚠ High memory usage — may cause crash</sys:String>
     <sys:String x:Key="str.Toolbar.DropDownLimit">DropDown Limit:</sys:String>
+    <sys:String x:Key="str.Toolbar.CsxDepth">CSX Depth:</sys:String>
 
     <!-- Tabs -->
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>
@@ -88,6 +89,7 @@
     <sys:String x:Key="str.Pointers.AobFailed">&#x26A0; AOB failed — found via</sys:String>
     <sys:String x:Key="str.Pointers.GWorldNotFound">GWorld not found (non-critical)</sys:String>
     <sys:String x:Key="str.Pointers.PatternIdTooltip">AOB pattern ID that matched this pointer</sys:String>
+    <sys:String x:Key="str.Pointers.AobAllFailed">&#x1F534; All AOB patterns failed</sys:String>
 
     <!-- Hex View -->
     <sys:String x:Key="str.HexView.Address">Address (hex or module.exe+offset)</sys:String>
