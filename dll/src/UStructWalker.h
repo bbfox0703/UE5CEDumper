@@ -15,6 +15,21 @@ struct FieldInfo {
     int32_t     Offset;
     int32_t     Size;
     uint64_t    PropertyFlags;
+
+    // === Extended type metadata (populated by WalkClassEx) ===
+    std::string structType;      // StructProperty -> UScriptStruct name
+    std::string objClassName;    // ObjectProperty/ClassProperty -> target UClass name
+    std::string innerType;       // ArrayProperty -> inner FProperty type name
+    std::string innerStructType; // ArrayProperty of struct -> inner struct name
+    std::string innerObjClass;   // ArrayProperty of object -> inner class name
+    std::string keyType;         // MapProperty -> key FProperty type name
+    std::string keyStructType;   // MapProperty key struct name (if StructProperty)
+    std::string valueType;       // MapProperty -> value FProperty type name
+    std::string valueStructType; // MapProperty value struct name (if StructProperty)
+    std::string elemType;        // SetProperty -> element FProperty type name
+    std::string elemStructType;  // SetProperty element struct name (if StructProperty)
+    std::string enumName;        // EnumProperty/ByteProperty -> UEnum name
+    uint8_t     boolFieldMask = 0; // BoolProperty -> FieldMask byte (0 = not resolved)
 };
 
 struct ClassInfo {
@@ -27,10 +42,36 @@ struct ClassInfo {
     std::vector<FieldInfo> Fields;
 };
 
+struct FunctionParam {
+    std::string name;
+    std::string typeName;
+    int32_t     size = 0;
+    bool        isOut = false;
+    bool        isReturn = false;
+};
+
+struct FunctionInfo {
+    std::string name;
+    std::string fullName;
+    uintptr_t   address = 0;
+    uint32_t    functionFlags = 0;
+    std::vector<FunctionParam> params;
+    std::string returnType;  // empty if void
+};
+
 namespace UStructWalker {
 
 // Walk a UClass/UStruct and enumerate all fields (including inherited)
 ClassInfo WalkClass(uintptr_t uclassAddr);
+
+// Walk a UClass/UStruct with extended type metadata per field.
+// Calls WalkClass(), then enriches each FieldInfo with struct types,
+// inner types, enum names, bool masks, etc. by reading FProperty chain.
+ClassInfo WalkClassEx(uintptr_t uclassAddr);
+
+// Walk all UFunctions of a UClass.
+// Iterates the function chain, resolving parameters and return type.
+std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);
 
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);
