@@ -30,6 +30,8 @@ constexpr const char* CMD_FIND_BY_ADDRESS  = "find_by_address";
 constexpr const char* CMD_GET_CE_PTR_INFO  = "get_ce_pointer_info";
 constexpr const char* CMD_GET_OFFSETS      = "get_offsets";
 constexpr const char* CMD_READ_ARRAY_ELEMS = "read_array_elements";
+constexpr const char* CMD_LIST_ENUMS       = "list_enums";
+constexpr const char* CMD_WALK_FUNCTIONS   = "walk_functions";
 constexpr const char* CMD_WATCH            = "watch";
 constexpr const char* CMD_UNWATCH          = "unwatch";
 
