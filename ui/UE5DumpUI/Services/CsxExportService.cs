@@ -15,7 +15,13 @@ namespace UE5DumpUI.Services;
 /// - CSX uses decimal Offset + hex OffsetHex (not address expressions)
 /// - CSX uses Vartype (not VariableType) + Bytesize + DisplayMethod
 /// - CSX supports nested Structure within Element for pointer targets
-/// - Single-layer: StructProperty fields are flattened inline; pointer targets get dummy children
+/// - Single-layer: StructProperty fields are flattened inline; pointer targets have no child (CE native deref)
+///
+/// Drilldown (depth ≥ 1): ObjectProperty targets with valid PtrAddress are walked via
+/// WalkInstanceAsync, producing real child structures with actual field definitions.
+/// Container types (MapProperty, ArrayProperty, SetProperty) expand inline elements into
+/// child structures from pre-fetched element data (MapElements/ArrayElements/SetElements).
+/// Each depth level recursively resolves nested pointers, enabling multi-level expansion.
 /// </summary>
 public static class CsxExportService
 {
@@ -25,16 +31,35 @@ public static class CsxExportService
     /// <summary>
     /// Generate CSX XML from the current Live Walker fields.
     /// StructProperty fields are resolved and flattened inline.
+    /// When drilldownDepth &gt; 0, ObjectProperty targets with valid PtrAddress
+    /// are walked via WalkInstanceAsync to produce real child structures with actual fields.
+    /// Each level decrements depth, enabling multi-level recursive expansion.
     /// </summary>
     public static async Task<string> GenerateCsxAsync(
         IDumpService dump,
         string structName,
         IReadOnlyList<LiveFieldValue> fields,
-        int arrayLimit = 64)
+        int arrayLimit = 64,
+        int drilldownDepth = 0)
     {
         // Resolve StructProperty inner fields via DLL (reuse existing logic)
         var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
             dump, fields, arrayLimit);
+
+        // Pre-resolve pointer target instances for drilldown (recursive up to drilldownDepth)
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>();
+        if (drilldownDepth > 0)
+        {
+            var visited = new HashSet<string>();
+            await ResolvePointerInstancesAsync(dump, fields, resolvedInstances, drilldownDepth, arrayLimit, visited);
+            // Also resolve pointer instances within flattened struct fields
+            foreach (var innerFields in resolvedStructs.Values)
+                await ResolvePointerInstancesAsync(dump, innerFields, resolvedInstances, drilldownDepth, arrayLimit, visited);
+            // Resolve pointer targets within container elements (Map/Array/Set)
+            await ResolveContainerPointerInstancesAsync(dump, fields, resolvedInstances, drilldownDepth, arrayLimit, visited);
+            foreach (var innerFields in resolvedStructs.Values)
+                await ResolveContainerPointerInstancesAsync(dump, innerFields, resolvedInstances, drilldownDepth, arrayLimit, visited);
+        }
 
         var sb = new StringBuilder();
         sb.AppendLine();
@@ -48,11 +73,11 @@ public static class CsxExportService
             if (field.TypeName == "StructProperty")
             {
                 // Flatten struct fields inline with "StructType / FieldName" naming
-                EmitStructPropertyFlattened(sb, field, resolvedStructs);
+                EmitStructPropertyFlattened(sb, field, resolvedStructs, resolvedInstances, drilldownDepth);
             }
             else
             {
-                EmitElement(sb, field.Offset, field.Name, field, "      ");
+                EmitElement(sb, field.Offset, field.Name, field, "      ", resolvedInstances, drilldownDepth);
             }
         }
 
@@ -69,7 +94,9 @@ public static class CsxExportService
     private static void EmitStructPropertyFlattened(
         StringBuilder sb,
         LiveFieldValue structField,
-        Dictionary<int, List<LiveFieldValue>> resolvedStructs)
+        Dictionary<int, List<LiveFieldValue>> resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null,
+        int drilldownDepth = 0)
     {
         var prefix = !string.IsNullOrEmpty(structField.StructTypeName)
             ? structField.StructTypeName
@@ -81,7 +108,7 @@ public static class CsxExportService
             {
                 var absoluteOffset = structField.Offset + inner.Offset;
                 var description = $"{prefix} / {inner.Name}";
-                EmitElement(sb, absoluteOffset, description, inner, "      ");
+                EmitElement(sb, absoluteOffset, description, inner, "      ", resolvedInstances, drilldownDepth);
             }
         }
         else
@@ -95,9 +122,13 @@ public static class CsxExportService
 
     /// <summary>
     /// Emit a single &lt;Element&gt; for a field.
+    /// For ObjectProperty with drilldownDepth &gt; 0, uses resolved live instance data
+    /// to build real child structures with actual fields, decrementing depth for recursion.
     /// </summary>
     private static void EmitElement(StringBuilder sb, int offset, string description,
-        LiveFieldValue field, string indent)
+        LiveFieldValue field, string indent,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null,
+        int drilldownDepth = 0)
     {
         var typeInfo = MapCsxType(field.TypeName, field.Size);
         string? childStructure = null;
@@ -122,19 +153,33 @@ public static class CsxExportService
             case "SoftClassProperty":
             case "LazyObjectProperty":
             case "InterfaceProperty":
-                childStructure = BuildDummyChildStructure(field.PtrAddress ?? field.HexValue);
-                break;
-
-            case "ArrayProperty":
-                childStructure = BuildDummyChildStructure(field.ArrayDataAddr ?? field.HexValue);
+                // Drilldown: use real child structure if instance was resolved
+                if (drilldownDepth > 0
+                    && !string.IsNullOrEmpty(field.PtrAddress)
+                    && field.PtrAddress != "0x0"
+                    && resolvedInstances != null
+                    && resolvedInstances.TryGetValue(field.PtrAddress, out var instanceFields))
+                {
+                    childStructure = BuildLiveChildStructure(
+                        field.PtrClassName, instanceFields, resolvedInstances, drilldownDepth - 1);
+                }
+                // No dummy — CE handles native pointer dereference
                 break;
 
             case "MapProperty":
-                childStructure = BuildDummyChildStructure(field.MapDataAddr ?? field.HexValue);
-                break;
-
+            case "ArrayProperty":
             case "SetProperty":
-                childStructure = BuildDummyChildStructure(field.SetDataAddr ?? field.HexValue);
+                // Drilldown: convert container elements to synthetic fields for child structure
+                if (drilldownDepth > 0
+                    && resolvedInstances != null)
+                {
+                    var containerFields = ConvertContainerElementsToFields(field);
+                    if (containerFields is { Count: > 0 })
+                    {
+                        childStructure = BuildLiveChildStructure(
+                            field.Name, containerFields, resolvedInstances, drilldownDepth - 1);
+                    }
+                }
                 break;
         }
 
@@ -222,22 +267,6 @@ public static class CsxExportService
     }
 
     /// <summary>
-    /// Build a dummy child Structure for pointer elements (ObjectProperty, MapProperty, etc.).
-    /// </summary>
-    private static string BuildDummyChildStructure(string? addr)
-    {
-        var name = FormatStructName(addr);
-        var sb = new StringBuilder();
-        sb.Append("        <Structure Name=\"").Append(EscapeXml(name))
-          .AppendLine("\" AutoFill=\"0\" AutoCreate=\"1\" DefaultHex=\"0\" AutoDestroy=\"0\" DoNotSaveLocal=\"0\" RLECompression=\"1\" AutoCreateStructsize=\"4096\">");
-        sb.AppendLine("          <Elements>");
-        sb.AppendLine("            <Element Offset=\"0\" Vartype=\"4 Bytes\" Bytesize=\"4\" OffsetHex=\"00000000\" Description=\"dummy\" DisplayMethod=\"hexadecimal\"/>");
-        sb.AppendLine("          </Elements>");
-        sb.AppendLine("        </Structure>");
-        return sb.ToString();
-    }
-
-    /// <summary>
     /// Build a child Structure for StrProperty (pointer → Unicode String).
     /// </summary>
     private static string BuildStrChildStructure(string? addr)
@@ -248,6 +277,39 @@ public static class CsxExportService
           .AppendLine("\" AutoFill=\"0\" AutoCreate=\"1\" DefaultHex=\"0\" AutoDestroy=\"0\" DoNotSaveLocal=\"0\" RLECompression=\"1\" AutoCreateStructsize=\"4096\">");
         sb.AppendLine("          <Elements>");
         sb.AppendLine("            <Element Offset=\"0\" Vartype=\"Unicode String\" Bytesize=\"18\" OffsetHex=\"00000000\" DisplayMethod=\"unsigned integer\"/>");
+        sb.AppendLine("          </Elements>");
+        sb.AppendLine("        </Structure>");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Build a real child Structure from resolved live instance fields.
+    /// Each field becomes a CSX Element with proper type mapping, and nested
+    /// ObjectProperty fields can recurse with decremented remainingDepth.
+    /// </summary>
+    private static string BuildLiveChildStructure(
+        string? structName,
+        IReadOnlyList<LiveFieldValue> fields,
+        Dictionary<string, List<LiveFieldValue>> resolvedInstances,
+        int remainingDepth)
+    {
+        var name = !string.IsNullOrEmpty(structName) ? structName : "Unknown";
+
+        var sb = new StringBuilder();
+        sb.Append("        <Structure Name=\"").Append(EscapeXml(name))
+          .AppendLine("\" AutoFill=\"0\" AutoCreate=\"1\" DefaultHex=\"0\" AutoDestroy=\"0\" DoNotSaveLocal=\"0\" RLECompression=\"1\" AutoCreateStructsize=\"4096\">");
+        sb.AppendLine("          <Elements>");
+
+        if (fields.Count > 0)
+        {
+            foreach (var field in fields)
+                EmitElement(sb, field.Offset, field.Name, field, "            ", resolvedInstances, remainingDepth);
+        }
+        else
+        {
+            sb.AppendLine("            <Element Offset=\"0\" Vartype=\"4 Bytes\" Bytesize=\"4\" OffsetHex=\"00000000\" Description=\"empty\" DisplayMethod=\"hexadecimal\"/>");
+        }
+
         sb.AppendLine("          </Elements>");
         sb.AppendLine("        </Structure>");
         return sb.ToString();
@@ -266,6 +328,334 @@ public static class CsxExportService
         clean = clean.TrimStart('0');
         if (clean.Length == 0) clean = "0";
         return $"Autocreated from {clean}";
+    }
+
+    /// <summary>
+    /// Pre-resolve pointer target instances for ObjectProperty drilldown.
+    /// Recursively calls WalkInstanceAsync for each unique PtrAddress found in the fields,
+    /// decrementing remainingDepth at each level. Uses visited set for cycle detection.
+    /// </summary>
+    private static async Task ResolvePointerInstancesAsync(
+        IDumpService dump,
+        IReadOnlyList<LiveFieldValue> fields,
+        Dictionary<string, List<LiveFieldValue>> resolved,
+        int remainingDepth,
+        int arrayLimit,
+        HashSet<string> visited)
+    {
+        if (remainingDepth <= 0) return;
+
+        foreach (var field in fields)
+        {
+            if (!IsObjectPropertyType(field.TypeName)) continue;
+            if (string.IsNullOrEmpty(field.PtrAddress) || field.PtrAddress == "0x0") continue;
+            if (resolved.ContainsKey(field.PtrAddress)) continue;
+            if (!visited.Add(field.PtrAddress)) continue; // cycle detection
+
+            try
+            {
+                var result = await dump.WalkInstanceAsync(field.PtrAddress, field.PtrClassAddr, arrayLimit);
+                if (result.Fields.Count > 0)
+                {
+                    resolved[field.PtrAddress] = result.Fields;
+                    // Recurse deeper for nested pointers
+                    await ResolvePointerInstancesAsync(
+                        dump, result.Fields, resolved, remainingDepth - 1, arrayLimit, visited);
+                }
+            }
+            catch
+            {
+                // Skip on pipe error — pointer will have no child structure
+            }
+        }
+    }
+
+    /// <summary>
+    /// Check if a type name is an object/pointer property that can have a PropertyClass.
+    /// </summary>
+    private static bool IsObjectPropertyType(string typeName) => typeName is
+        "ObjectProperty" or "ClassProperty" or "SoftObjectProperty" or
+        "SoftClassProperty" or "LazyObjectProperty" or "InterfaceProperty";
+
+    /// <summary>
+    /// Resolve pointer targets within container elements (MapProperty, ArrayProperty, SetProperty).
+    /// Container expansion consumes one depth level: map/array elements appear at depth-1,
+    /// then their ObjectProperty targets are resolved at depth-2 via ResolvePointerInstancesAsync.
+    /// </summary>
+    private static async Task ResolveContainerPointerInstancesAsync(
+        IDumpService dump,
+        IReadOnlyList<LiveFieldValue> fields,
+        Dictionary<string, List<LiveFieldValue>> resolved,
+        int remainingDepth,
+        int arrayLimit,
+        HashSet<string> visited)
+    {
+        if (remainingDepth <= 0) return;
+
+        foreach (var field in fields)
+        {
+            var containerFields = ConvertContainerElementsToFields(field);
+            if (containerFields == null || containerFields.Count == 0) continue;
+
+            // Container expansion uses one depth level; resolve inner pointers at depth-1
+            await ResolvePointerInstancesAsync(
+                dump, containerFields, resolved, remainingDepth - 1, arrayLimit, visited);
+        }
+    }
+
+    /// <summary>
+    /// Convert container elements (Map/Array/Set) to synthetic LiveFieldValue list
+    /// for CSX child structure generation. Returns null if the field has no expandable elements.
+    /// Handles all inner types: ObjectProperty (pointers), StructProperty (flattened sub-fields),
+    /// and scalar types (Int, Float, Byte, Enum, etc.).
+    /// </summary>
+    private static List<LiveFieldValue>? ConvertContainerElementsToFields(LiveFieldValue field)
+    {
+        return field.TypeName switch
+        {
+            "MapProperty" when field.MapElements is { Count: > 0 }
+                => ConvertMapElementsToFields(field),
+            "ArrayProperty" when field.ArrayElements is { Count: > 0 }
+                => ConvertArrayElementsToFields(field),
+            "SetProperty" when field.SetElements is { Count: > 0 }
+                => ConvertSetElementsToFields(field),
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Dispatch ArrayProperty element conversion based on inner type.
+    /// </summary>
+    private static List<LiveFieldValue> ConvertArrayElementsToFields(LiveFieldValue arrField)
+    {
+        if (IsObjectPropertyType(arrField.ArrayInnerType))
+            return ConvertArrayPointerElementsToFields(arrField);
+
+        // Struct arrays → flatten sub-fields per element (or raw blocks if no Phase F data)
+        if (arrField.ArrayInnerType == "StructProperty")
+            return ConvertArrayStructElementsToFields(arrField);
+
+        // Scalar/enum/name arrays → one entry per element
+        return ConvertArrayScalarElementsToFields(arrField);
+    }
+
+    /// <summary>
+    /// Dispatch SetProperty element conversion based on element type.
+    /// </summary>
+    private static List<LiveFieldValue> ConvertSetElementsToFields(LiveFieldValue setField)
+    {
+        if (IsObjectPropertyType(setField.SetElemType))
+            return ConvertSetPointerElementsToFields(setField);
+
+        return ConvertSetScalarElementsToFields(setField);
+    }
+
+    /// <summary>
+    /// Convert MapProperty elements to synthetic LiveFieldValue list.
+    /// Each map entry is represented by its VALUE at offset (sparseIndex * stride + keySize).
+    /// TMap.Data is TSparseArray: stride = AlignUp(keySize + valueSize, 4) + 8 (hash overhead).
+    /// </summary>
+    private static List<LiveFieldValue> ConvertMapElementsToFields(LiveFieldValue mapField)
+    {
+        int pairSize = mapField.MapKeySize + mapField.MapValueSize;
+        int stride = ComputeSetElementStride(pairSize);
+        var fields = new List<LiveFieldValue>();
+
+        foreach (var elem in mapField.MapElements!)
+        {
+            var keyDisplay = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
+            var name = $"[{elem.Index}] {keyDisplay}";
+            int offset = elem.Index * stride + mapField.MapKeySize;
+
+            fields.Add(new LiveFieldValue
+            {
+                Name = name,
+                TypeName = mapField.MapValueType,
+                Offset = offset,
+                Size = mapField.MapValueSize,
+                PtrAddress = elem.ValuePtrAddress,
+                PtrName = elem.ValuePtrName,
+                PtrClassName = elem.ValuePtrClassName,
+            });
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// Convert ArrayProperty pointer elements to synthetic LiveFieldValue list.
+    /// Each element is an ObjectProperty pointer at offset (index * elemSize).
+    /// </summary>
+    private static List<LiveFieldValue> ConvertArrayPointerElementsToFields(LiveFieldValue arrField)
+    {
+        int elemSize = arrField.ArrayElemSize > 0 ? arrField.ArrayElemSize : 8;
+        var fields = new List<LiveFieldValue>();
+
+        foreach (var elem in arrField.ArrayElements!)
+        {
+            var name = !string.IsNullOrEmpty(elem.PtrName)
+                ? $"[{elem.Index}] {elem.PtrName}"
+                : $"[{elem.Index}]";
+            int offset = elem.Index * elemSize;
+
+            fields.Add(new LiveFieldValue
+            {
+                Name = name,
+                TypeName = arrField.ArrayInnerType,
+                Offset = offset,
+                Size = elemSize,
+                PtrAddress = elem.PtrAddress,
+                PtrName = elem.PtrName,
+                PtrClassName = elem.PtrClassName,
+            });
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// Convert SetProperty pointer elements to synthetic LiveFieldValue list.
+    /// Each element is at offset (sparseIndex * stride) within the TSparseArray data buffer.
+    /// </summary>
+    private static List<LiveFieldValue> ConvertSetPointerElementsToFields(LiveFieldValue setField)
+    {
+        int stride = ComputeSetElementStride(setField.SetElemSize);
+        var fields = new List<LiveFieldValue>();
+
+        foreach (var elem in setField.SetElements!)
+        {
+            var name = !string.IsNullOrEmpty(elem.KeyPtrName)
+                ? $"[{elem.Index}] {elem.KeyPtrName}"
+                : $"[{elem.Index}]";
+            int offset = elem.Index * stride;
+
+            fields.Add(new LiveFieldValue
+            {
+                Name = name,
+                TypeName = setField.SetElemType,
+                Offset = offset,
+                Size = setField.SetElemSize,
+                PtrAddress = elem.KeyPtrAddress,
+                PtrName = elem.KeyPtrName,
+                PtrClassName = elem.KeyPtrClassName,
+            });
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// Convert ArrayProperty struct elements to flattened synthetic LiveFieldValue list.
+    /// Each element's sub-fields (from Phase F StructSubFieldValue data) are inlined with
+    /// "[index] / SubFieldName" naming and absolute offsets within TArray.Data.
+    /// </summary>
+    private static List<LiveFieldValue> ConvertArrayStructElementsToFields(LiveFieldValue arrField)
+    {
+        int elemSize = arrField.ArrayElemSize > 0 ? arrField.ArrayElemSize : 1;
+        var structType = !string.IsNullOrEmpty(arrField.ArrayStructType)
+            ? arrField.ArrayStructType : "Struct";
+        var fields = new List<LiveFieldValue>();
+
+        foreach (var elem in arrField.ArrayElements!)
+        {
+            if (elem.StructFields is not { Count: > 0 })
+            {
+                // No sub-fields available — emit entire element as raw bytes block
+                fields.Add(new LiveFieldValue
+                {
+                    Name = $"[{elem.Index}] {structType}",
+                    TypeName = structType, // Falls through to Array of byte in MapCsxType
+                    Offset = elem.Index * elemSize,
+                    Size = elemSize,
+                });
+                continue;
+            }
+
+            foreach (var sub in elem.StructFields)
+            {
+                int absoluteOffset = elem.Index * elemSize + sub.Offset;
+                fields.Add(new LiveFieldValue
+                {
+                    Name = $"[{elem.Index}] / {sub.Name}",
+                    TypeName = sub.TypeName,
+                    Offset = absoluteOffset,
+                    Size = sub.Size,
+                    // Propagate pointer info for ObjectProperty sub-fields
+                    PtrAddress = sub.PtrAddress,
+                    PtrName = sub.PtrName,
+                    PtrClassName = sub.PtrClassName,
+                    PtrClassAddr = sub.PtrClassAddr,
+                });
+            }
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// Convert ArrayProperty scalar/enum elements to synthetic LiveFieldValue list.
+    /// Each element is a single typed entry at offset (index × elemSize).
+    /// </summary>
+    private static List<LiveFieldValue> ConvertArrayScalarElementsToFields(LiveFieldValue arrField)
+    {
+        int elemSize = arrField.ArrayElemSize > 0 ? arrField.ArrayElemSize : 1;
+        var fields = new List<LiveFieldValue>();
+
+        foreach (var elem in arrField.ArrayElements!)
+        {
+            // Build descriptive name: prefer enum name, then short value, then bare index
+            var label = !string.IsNullOrEmpty(elem.EnumName) ? elem.EnumName
+                : !string.IsNullOrEmpty(elem.Value) && elem.Value.Length <= 20 ? elem.Value
+                : null;
+            var name = label != null ? $"[{elem.Index}] {label}" : $"[{elem.Index}]";
+
+            fields.Add(new LiveFieldValue
+            {
+                Name = name,
+                TypeName = arrField.ArrayInnerType,
+                Offset = elem.Index * elemSize,
+                Size = elemSize,
+            });
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// Convert SetProperty non-pointer elements to synthetic LiveFieldValue list.
+    /// Each element is at offset (sparseIndex × stride) within the TSparseArray data buffer.
+    /// </summary>
+    private static List<LiveFieldValue> ConvertSetScalarElementsToFields(LiveFieldValue setField)
+    {
+        int stride = ComputeSetElementStride(setField.SetElemSize);
+        var fields = new List<LiveFieldValue>();
+
+        foreach (var elem in setField.SetElements!)
+        {
+            var name = !string.IsNullOrEmpty(elem.Key)
+                ? $"[{elem.Index}] {elem.Key}"
+                : $"[{elem.Index}]";
+
+            fields.Add(new LiveFieldValue
+            {
+                Name = name,
+                TypeName = setField.SetElemType,
+                Offset = elem.Index * stride,
+                Size = setField.SetElemSize,
+            });
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// Compute TSparseArray element stride: AlignUp(elemSize, 4) + 8 (HashNextId + HashIndex).
+    /// Mirrors Mem::ComputeSetElementStride in the DLL.
+    /// </summary>
+    private static int ComputeSetElementStride(int elemSize)
+    {
+        int hashStart = (elemSize + 3) & ~3; // align to 4
+        return hashStart + 8; // + HashNextId(4) + HashIndex(4)
     }
 
     /// <summary>

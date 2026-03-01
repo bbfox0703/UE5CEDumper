@@ -157,6 +157,7 @@ public static class CeXmlExportService
                     PtrAddress = f.PtrAddress,
                     PtrName = f.PtrName,
                     PtrClassName = f.PtrClassName,
+                    PtrClassAddr = f.PtrClassAddr,
                 });
             }
             else
