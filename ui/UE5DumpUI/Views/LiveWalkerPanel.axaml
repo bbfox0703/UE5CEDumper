@@ -65,6 +65,10 @@
               Command="{Binding ExportCsxCommand}"
               IsVisible="{Binding HasData}"
               Padding="8,4"/>
+      <Button Content="{StaticResource str.LiveWalker.ExportHeader}"
+              Command="{Binding ExportSdkHeaderCommand}"
+              IsVisible="{Binding HasData}"
+              Padding="8,4"/>
       <Button Content="{StaticResource str.LiveWalker.GenerateCeAA}"
               Command="{Binding GenerateCeAAScriptCommand}"
               IsVisible="{Binding HasData}"
