@@ -32,6 +32,7 @@
 //   SAT426  : Satisfactory UE 4.26 build analysis (work/SF UE 4.26 AOBs.txt)
 //   SAT52   : Satisfactory UE 5.2 build analysis (work/SF UE 5.21 AOBs.txt)
 //   OT      : Octopath Traveller (UE4, Ghidra + CE analysis, codename "Kingship")
+//   GH      : Ghidra cross-game analysis (aob_export/analysis_report.md)
 // ============================================================
 
 // ============================================================
@@ -224,6 +225,21 @@ constexpr const char* AOB_GOBJECTS_OT_1 = "8B D7 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?
 //   instrOffset=2, opcodeLen=3, totalLen=7 (REX at byte 2 is always 48/4C in x64)
 constexpr const char* AOB_GOBJECTS_OT_2 = "8B ?? ?? 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 85 ?? 7E ?? 01 ?? ?? ?? ?? ?? E8";
 
+// --- Ghidra cross-game analysis patterns (GH series) ---
+
+// GH_1: UObjectBase::AddObject — and eax,-5; mov [rdi+8]; xor r8d; lea rcx,[GUObjectArray]; mov rdx,rdi; call; test ebx; jz
+//   instrOffset=12 (LEA RCX at byte 12), 30 bytes, 22 fixed — cross-game ES/ES2/SAT
+constexpr const char* AOB_GOBJECTS_GH_1 = "BA EB 19 83 E0 FB 89 47 08 45 33 C0 48 8D 0D ?? ?? ?? ?? 48 8B D7 E8 ?? ?? ?? ?? 85 DB 74";
+// GH_2: UnMarkAllObjects — test esi; jle; mov rdx,rdi; lea rcx,[GUObjectArray]; call; add rsp,B8h
+//   instrOffset=12, 31 bytes, 19 fixed — cross-game ES/ES2/SAT
+constexpr const char* AOB_GOBJECTS_GH_2 = "F3 85 F6 0F 8E ?? ?? ?? ?? 48 8B D7 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 81 C4 B8 00 00 00";
+// GH_3: IncrementalPurgeGarbage — mov rax,[bPurgeComplete]; cmp byte[rax],0; jz; lea rcx,[GUObjectArray]; mov byte[flag],1; call
+//   instrOffset=12, 27 bytes, 15 fixed — cross-game ES/ES2/SAT. Extends PS2 with 12-byte leading context.
+constexpr const char* AOB_GOBJECTS_GH_3 = "48 8B 05 ?? ?? ?? ?? 80 38 00 74 ?? 48 8D 0D ?? ?? ?? ?? C6 05 ?? ?? ?? 00 01 E8";
+// GH_4: FWeakObjectPtr::operator= — mov ebx,ecx; test rdx; jz; mov edx,[rdx+0C]; mov [rcx],edx; lea rcx,[GUObjectArray]; call; mov [rbx+4]; add rsp,20
+//   instrOffset=12, 31 bytes, 22 fixed — ES2/SAT
+constexpr const char* AOB_GOBJECTS_GH_4 = "8B D9 48 85 D2 74 ?? 8B 52 0C 89 11 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 89 43 04 48 83 C4 20";
+
 
 // ============================================================
 // GNames / FNamePool
@@ -319,6 +335,16 @@ constexpr const char* AOB_GNAMES_SAT52_1 = "48 8D 15 ?? ?? ?? ?? EB ?? 48 8D 0D 
 // ES53_1: lea rcx,[FNamePool]; call FNamePool::FNamePool; mov rdx,rax; mov byte[],1  — FName::ToString init path
 //   Like V5 but has extra MOV RDX,RAX (48 8B D0) between CALL and MOV byte
 constexpr const char* AOB_GNAMES_ES53_1 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B D0 C6 05 ?? ?? ?? ?? 01";
+
+// --- Ghidra cross-game analysis patterns (GH series) ---
+
+// GH_1: ReserveNameBatch — mov [rsp+18],esi; push rdi; sub rsp,20; shr edx,3; lea rbp,[NamePoolData]; dec edx; mov ebx,ecx; mov rdi,magic_const
+//   instrOffset=12 (LEA RBP at byte 12), 31 bytes, 27 fixed — cross-game ES/ES2/SAT. Best new GNames pattern.
+//   Contains unique integer division constant 0xCCCCCCCCCCCC (compiler-generated magic number).
+constexpr const char* AOB_GNAMES_GH_1 = "89 74 24 18 57 48 83 EC 20 C1 EA 03 48 8D 2D ?? ?? ?? ?? FF CA 8B D9 48 BF CD CC CC CC CC CC";
+// GH_2: FNameEntryId::FromValidEName — sub rsp,20; cmp byte[bInitialized],0; mov rbx,rcx; lea rcx,[NamePoolData]; movsxd rdi,edx; jnz; call
+//   instrOffset=12, 31 bytes, 19 fixed — cross-game ES/ES2/SAT
+constexpr const char* AOB_GNAMES_GH_2 = "EC 20 80 3D ?? ?? ?? 00 00 48 8B D9 48 8D 0D ?? ?? ?? ?? 48 63 FA 75 ?? E8 ?? ?? ?? ?? 48 8B";
 
 
 // ============================================================
@@ -503,6 +529,21 @@ constexpr const char* AOB_GWORLD_SAT52_1 = "48 8B 0D ?? ?? ?? ?? 48 85 C9 74 ?? 
 //   Write pattern: gworldAllowNull=true
 constexpr const char* AOB_GWORLD_SAT52_2 = "48 89 0D ?? ?? ?? ?? 4D 85 ?? 74 ?? 49 8B ?? 49 8B ?? FF 90 ?? ?? 00 00";
 
+// --- Ghidra cross-game analysis patterns (GH series) ---
+
+// GH_1: FMallocLeakReporter::WriteReports — mov [rsp+?],edi; push rbp; mov rbp,rsp; sub rsp,?; mov rax,[GWorld]; mov rbx,rcx; lea rcx,[rbp+10]; mov rdx,[rax+18]
+//   instrOffset=12, 31 bytes, 25 fixed — cross-game ES/ES2/SAT. Best new GWorld pattern.
+constexpr const char* AOB_GWORLD_GH_1 = "89 7C 24 ?? 55 48 8B EC 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 8B D9 48 8D 4D 10 48 8B 50 18 48";
+// GH_2: FUMGViewportClient::GetWorld — mov rax,[rax+30]; test rax; jnz; mov rax,[GWorld]; ret; mov [rsp+10],rbx; push rsi; sub rsp,20
+//   instrOffset=9, 28 bytes, 23 fixed — cross-game ES/ES2/SAT. Extends G42_3 with trailing context.
+constexpr const char* AOB_GWORLD_GH_2 = "48 8B 40 30 48 85 C0 75 ?? 48 8B 05 ?? ?? ?? ?? C3 48 89 5C 24 10 56 48 83 EC 20 48";
+// GH_3: UEngine::GetWorldFromContextObject — call; cmp byte[rsp+58],0; jnz; mov rdi,[GWorld]; mov rbx,[rsp+60]; mov rax,rdi; mov rdi,[rsp+?]
+//   instrOffset=12, 31 bytes, 22 fixed — cross-game ES/ES2/SAT. Extends SF_4/G427_2.
+constexpr const char* AOB_GWORLD_GH_3 = "E8 ?? ?? ?? ?? 80 7C 24 58 00 75 ?? 48 8B 3D ?? ?? ?? ?? 48 8B 5C 24 60 48 8B C7 48 8B 7C 24";
+// GH_4: FEngineLoop::Tick — xorps xmm1,xmm1; ucomiss xmm0,xmm1; jz; mov rbx,[GWorld]; test rbx; jz; mov r8b,1; xor edx
+//   instrOffset=8, 27 bytes, 21 fixed — cross-game ES/ES2/SAT. Unique XORPS+UCOMISS prefix.
+constexpr const char* AOB_GWORLD_GH_4 = "0F 57 C9 0F 2E C1 74 ?? 48 8B 1D ?? ?? ?? ?? 48 85 DB 74 ?? 41 B0 01 33 D2 48 8B";
+
 
 // ============================================================
 // Unified Pattern Arrays (sorted by priority)
@@ -555,13 +596,17 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     SIG_RIP("GOBJ_G42_2", AOB_GOBJECTS_G42_2, AobTarget::GObjects, 0, 3, 7, 0, 20, "G42", "UE4.2 RemoveUObjectDeleteListener"),
     SIG_RIP("GOBJ_G42_3", AOB_GOBJECTS_G42_3, AobTarget::GObjects, 0, 3, 7, 0, 21, "G42", "UE4.2 lea+mov r8d+mov edx"),
     SIG_RIP("GOBJ_G42_1", AOB_GOBJECTS_G42_1, AobTarget::GObjects, 0, 3, 7, 0, 22, "G42", "UE4.2 lea+xor+mov constructor"),
+    SIG_RIP("GOBJ_GH_1", AOB_GOBJECTS_GH_1, AobTarget::GObjects, 12, 3, 7, 0, 23, "GH", "Ghidra UObjectBase::AddObject cross-game"),
+    SIG_RIP("GOBJ_GH_4", AOB_GOBJECTS_GH_4, AobTarget::GObjects, 12, 3, 7, 0, 24, "GH", "Ghidra FWeakObjectPtr::operator= cross-game"),
     { "GOBJ_RE1", AOB_GOBJECTS_RE1, AobTarget::GObjects, AobResolve::RipBoth,
       0, 2, 6, 0, 25, 0, false, "RE", "FF7 Rebirth add+cmp+jge" },
+    SIG_RIP("GOBJ_GH_2", AOB_GOBJECTS_GH_2, AobTarget::GObjects, 12, 3, 7, 0, 30, "GH", "Ghidra UnMarkAllObjects cross-game"),
     SIG_RIP("GOBJ_V4",  AOB_GOBJECTS_V4,  AobTarget::GObjects, 0, 3, 7, 0, 30, "V", "classic UE5 longer context"),
     SIG_RIP("GOBJ_V8",  AOB_GOBJECTS_V8,  AobTarget::GObjects, 0, 3, 7, 0, 32, "V", "bit shift variant"),
     SIG_RIP("GOBJ_V9",  AOB_GOBJECTS_V9,  AobTarget::GObjects, 0, 3, 7, 0, 33, "V", "extended index cdqe"),
     SIG_RIP("GOBJ_V7",  AOB_GOBJECTS_V7,  AobTarget::GObjects, 0, 3, 7, 0, 34, "V", "GSpots cdq movzx"),
     SIG_RIP("GOBJ_UD1", AOB_GOBJECTS_UD1, AobTarget::GObjects, 0, 3, 7, 0, 35, "UD", "UEDumper"),
+    SIG_RIP("GOBJ_GH_3", AOB_GOBJECTS_GH_3, AobTarget::GObjects, 12, 3, 7, 0, 36, "GH", "Ghidra IncrementalPurgeGarbage cross-game"),
     SIG_RIP("GOBJ_G427_1", AOB_GOBJECTS_G427_1, AobTarget::GObjects, 0, 3, 7, 0, 36, "G427", "UE4.27 Objects SAR context"),
     SIG_RIP("GOBJ_G427_3", AOB_GOBJECTS_G427_3, AobTarget::GObjects, 0, 3, 7, 0, 37, "G427", "UE4.27 FGCObject extended context"),
     SIG_RIP("GOBJ_SAT426_1", AOB_GOBJECTS_SAT426_1, AobTarget::GObjects, 0, 3, 7, 0, 38, "SAT426", "Satisfactory UE4.26 RemoveAnnotation lea+call+test"),
@@ -610,9 +655,11 @@ constexpr AobSignature GNAMES_PATTERNS[] = {
     SIG_RIP("GNAM_V8",    AOB_GNAMES_V8,     AobTarget::GNames, 0, 3, 7, 0, 10, "V", "Palworld extended context"),
     SIG_RIP("GNAM_V5",    AOB_GNAMES_V5,     AobTarget::GNames, 0, 3, 7, 0, 12, "V", "lea rcx; call; mov byte[],1 extended"),
     SIG_RIP("GNAM_ES53_1", AOB_GNAMES_ES53_1, AobTarget::GNames, 0, 3, 7, 0, 13, "ES53", "ES2 UE5.3 FNamePool init + MOV RDX,RAX"),
+    SIG_RIP("GNAM_GH_1",  AOB_GNAMES_GH_1,   AobTarget::GNames, 12, 3, 7, 0, 14, "GH", "Ghidra ReserveNameBatch 27-fixed cross-game"),
     SIG_RIP("GNAM_SAT52_1", AOB_GNAMES_SAT52_1, AobTarget::GNames, 0, 3, 7, 0, 14, "SAT52", "Satisfactory UE5.2 dual-LEA NamePoolData"),
     SIG_RIP("GNAM_SAT425_1", AOB_GNAMES_SAT425_1, AobTarget::GNames, 18, 3, 7, 0, 15, "SAT425", "Satisfactory UE4.25 FName::AppendString LEA R8"),
     SIG_RIP("GNAM_SAT425_2", AOB_GNAMES_SAT425_2, AobTarget::GNames, 0, 3, 7, 0, 16, "SAT425", "Satisfactory UE4.25 FName::GetNameEntryMemorySize"),
+    SIG_RIP("GNAM_GH_2",  AOB_GNAMES_GH_2,   AobTarget::GNames, 12, 3, 7, 0, 16, "GH", "Ghidra FNameEntryId::FromValidEName cross-game"),
     SIG_RIP("GNAM_ES2_1", AOB_GNAMES_ES2_1,  AobTarget::GNames, 0, 3, 7, 0, 17, "ES2", "UE5.5 ResolveEntry"),
     SIG_RIP("GNAM_SAT425_3", AOB_GNAMES_SAT425_3, AobTarget::GNames, 0, 3, 7, 0, 18, "SAT425", "Satisfactory UE4.25 GetNumAnsiNames (general V8)"),
     SIG_RIP("GNAM_SF_1",  AOB_GNAMES_SF_1,   AobTarget::GNames, 0, 3, 7, 0, 19, "SF", "SatisfFactory NamePoolData init (in Core DLL)"),
@@ -655,17 +702,21 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     SIG_GWORLD_RIP("GWLD_ES2_4", AOB_GWORLD_ES2_4, 0, 3, 7, 0, 13, false, "ES2", "UE5.5 cmp+and GWorld"),
     SIG_GWORLD_RIP("GWLD_ES2_5", AOB_GWORLD_ES2_5, 0, 3, 7, 0, 14, false, "ES2", "UE5.5 call r12 loop"),
     SIG_GWORLD_RIP("GWLD_ES2_6", AOB_GWORLD_ES2_6, 0, 3, 7, 0, 15, false, "ES2", "UE5.5 cmovne+call rbx"),
+    SIG_GWORLD_RIP("GWLD_GH_1",  AOB_GWORLD_GH_1,  12, 3, 7, 0, 15, false, "GH", "Ghidra FMallocLeakReporter 25-fixed cross-game"),
     SIG_GWORLD_RIP("GWLD_TQ_1",  AOB_GWORLD_TQ_1,  0, 3, 7, 0, 16, false, "TQ", "TQ2 extended V3"),
     SIG_GWORLD_RIP("GWLD_TQ_2",  AOB_GWORLD_TQ_2,  0, 3, 7, 0, 17, false, "TQ", "TQ2 dual mov"),
+    SIG_GWORLD_RIP("GWLD_GH_2",  AOB_GWORLD_GH_2,   9, 3, 7, 0, 17, false, "GH", "Ghidra FUMGViewportClient::GetWorld cross-game"),
     SIG_GWORLD_RIP("GWLD_V7",    AOB_GWORLD_V7,     0, 3, 7, 0, 18, false, "V", "Palworld long context"),
     SIG_GWORLD_RIP("GWLD_V1",    AOB_GWORLD_V1,     0, 3, 7, 0, 19, false, "V", "cmp/cmovz"),
 
-    // Priority 20-30: SatisfFactory DLL patterns
+    // Priority 20-30: SatisfFactory DLL patterns + Ghidra cross-game
+    SIG_GWORLD_RIP("GWLD_GH_3",  AOB_GWORLD_GH_3,  12, 3, 7, 0, 20, false, "GH", "Ghidra GetWorldFromContextObject cross-game"),
     SIG_GWORLD_RIP("GWLD_SF_1",  AOB_GWORLD_SF_1,   0, 3, 7, 0, 20, false, "SF", "Engine DLL UGameEngine::Tick"),
     SIG_GWORLD_RIP("GWLD_SF_2",  AOB_GWORLD_SF_2,   0, 3, 7, 0, 21, false, "SF", "Engine DLL FAudioDeviceManager"),
     SIG_GWORLD_RIP("GWLD_SF_3",  AOB_GWORLD_SF_3,   0, 3, 7, 0, 22, false, "SF", "Engine DLL UWorld::FinishDestroy"),
     SIG_GWORLD_RIP("GWLD_SF_4",  AOB_GWORLD_SF_4,   0, 3, 7, 0, 23, false, "SF", "Engine DLL GetWorldFromContextObject"),
     SIG_GWORLD_RIP("GWLD_SF_5",  AOB_GWORLD_SF_5,   0, 3, 7, 0, 24, false, "SF", "Engine DLL FMallocLeakReporter"),
+    SIG_GWORLD_RIP("GWLD_GH_4",  AOB_GWORLD_GH_4,   8, 3, 7, 0, 24, false, "GH", "Ghidra FEngineLoop::Tick XORPS cross-game"),
 
     // Priority 25-29: UE 4.2 patterns
     SIG_GWORLD_RIP("GWLD_G42_3", AOB_GWORLD_G42_3,  9, 3, 7, 0, 25, false, "G42", "UE4.2 fallback return pattern"),
@@ -728,9 +779,9 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
 // ============================================================
 // Pattern count summary
 // ============================================================
-// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) + 4 (G427) + 1 (ES53) + 1 (SAT422) + 2 (SAT425) + 2 (SAT426) + 2 (SAT52) + 2 (OT) = 47 patterns + 1 symbol export
-// GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) + 1 (ES53) + 1 (SAT422) + 3 (SAT425) + 1 (SAT52) = 28 patterns + 3 symbol exports
-// GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) + 5 (G427) + 2 (ES53) + 2 (SAT422) + 3 (SAT425) + 2 (SAT426) + 2 (SAT52) = 43 patterns + 1 symbol export
-// Total:    118 AOB patterns + 5 symbol exports = 123 entries (from 13 sources)
+// GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) + 4 (G427) + 1 (ES53) + 1 (SAT422) + 2 (SAT425) + 2 (SAT426) + 2 (SAT52) + 2 (OT) + 4 (GH) = 51 patterns + 1 symbol export
+// GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) + 1 (ES53) + 1 (SAT422) + 3 (SAT425) + 1 (SAT52) + 2 (GH) = 30 patterns + 3 symbol exports
+// GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) + 5 (G427) + 2 (ES53) + 2 (SAT422) + 3 (SAT425) + 2 (SAT426) + 2 (SAT52) + 4 (GH) = 47 patterns + 1 symbol export
+// Total:    128 AOB patterns + 5 symbol exports = 133 entries (from 14 sources)
 
 } // namespace Sig
