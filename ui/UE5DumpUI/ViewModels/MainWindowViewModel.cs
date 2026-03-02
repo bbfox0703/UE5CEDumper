@@ -66,6 +66,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public LiveWalkerViewModel LiveWalker { get; }
     public InstanceFinderViewModel InstanceFinder { get; }
     public PropertySearchViewModel PropertySearch { get; }
+    public GameClassFilterViewModel GameClassFilter { get; }
 
     partial void OnSelectedAddressFormatIndexChanged(int value)
     {
@@ -120,6 +121,7 @@ public partial class MainWindowViewModel : ViewModelBase
         LiveWalker = new LiveWalkerViewModel(dump, log, platform);
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
         PropertySearch = new PropertySearchViewModel(dump, log);
+        GameClassFilter = new GameClassFilterViewModel(dump, log);
 
         // Wire cross-VM communication
         // Wrap async lambdas in try/catch to prevent async void from crashing the app
@@ -178,6 +180,48 @@ public partial class MainWindowViewModel : ViewModelBase
             catch (Exception ex)
             {
                 _log.Error("PropertySearch NavigateToLiveWalker handler error", ex);
+            }
+        };
+
+        // Wire GameClassFilter -> InstanceFinder (pre-fill class name + switch tab)
+        GameClassFilter.NavigateToInstanceFinder += (className) =>
+        {
+            try
+            {
+                SelectedTabIndex = 1; // Switch to Instance Finder tab
+                InstanceFinder.SearchClassName = className;
+            }
+            catch (Exception ex)
+            {
+                _log.Error("GameClassFilter NavigateToInstanceFinder handler error", ex);
+            }
+        };
+
+        // Wire GameClassFilter -> LiveWalker navigation + tab switch
+        GameClassFilter.NavigateToLiveWalker += async (addr) =>
+        {
+            try
+            {
+                SelectedTabIndex = 0; // Switch to Live Walker tab
+                await LiveWalker.NavigateToAddressCommand.ExecuteAsync(addr);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("GameClassFilter NavigateToLiveWalker handler error", ex);
+            }
+        };
+
+        // Wire GameClassFilter -> ClassStruct (walk class schema + switch tab)
+        GameClassFilter.NavigateToClassStruct += async (classAddr) =>
+        {
+            try
+            {
+                SelectedTabIndex = 4; // Switch to ClassStruct tab (index shifted by GameClassFilter)
+                await ClassStruct.LoadClassCommand.ExecuteAsync(classAddr);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("GameClassFilter NavigateToClassStruct handler error", ex);
             }
         };
 

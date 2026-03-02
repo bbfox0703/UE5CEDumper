@@ -50,13 +50,14 @@ public sealed class StubDumpService : IDumpService
     public Task WatchAsync(string addr, int size, int intervalMs, CancellationToken ct = default) => throw new NotImplementedException();
     public Task UnwatchAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, int arrayLimit = 64, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<FindInstancesResult> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<FindInstancesResult> FindInstancesAsync(string className, bool exactMatch = false, int limit = 500, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr, string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<PropertySearchResult> SearchPropertiesAsync(string query, string[]? types = null, bool gameOnly = true, int limit = 200, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<ClassListResult> ListClassesAsync(bool gameOnly = true, int limit = 5000, CancellationToken ct = default) => throw new NotImplementedException();
 }
 
 public class CsxExportServiceTests

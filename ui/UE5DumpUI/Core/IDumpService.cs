@@ -23,7 +23,7 @@ public interface IDumpService
     // --- Live Data Walker ---
     Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, int arrayLimit = 64, CancellationToken ct = default);
     Task<WorldWalkResult> WalkWorldAsync(int actorLimit = 200, int arrayLimit = 64, CancellationToken ct = default);
-    Task<FindInstancesResult> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default);
+    Task<FindInstancesResult> FindInstancesAsync(string className, bool exactMatch = false, int limit = 500, CancellationToken ct = default);
     Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default);
 
     // --- Array Element Reading (Phase B) ---
@@ -45,4 +45,8 @@ public interface IDumpService
     Task<PropertySearchResult> SearchPropertiesAsync(
         string query, string[]? types = null, bool gameOnly = true,
         int limit = 200, CancellationToken ct = default);
+
+    // --- Game Class List ---
+    Task<ClassListResult> ListClassesAsync(
+        bool gameOnly = true, int limit = 5000, CancellationToken ct = default);
 }

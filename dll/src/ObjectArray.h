@@ -86,7 +86,7 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200);
 
 // Find all instances whose class name matches (case-insensitive partial match)
 // Returns addr, index, name, className, outer for each instance
-SearchResultSet FindInstancesByClass(const std::string& className, int maxResults = 500);
+SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500);
 
 // Address-to-Instance reverse lookup result
 struct AddressLookupResult {
@@ -135,5 +135,25 @@ PropertySearchResult SearchProperties(
     const std::vector<std::string>& typeFilter,
     bool gameOnly,
     int maxResults = 200);
+
+// === Game Class List ===
+
+struct ClassListEntry {
+    std::string className;
+    uintptr_t   classAddr;
+    std::string classPath;
+    std::string superName;
+    int32_t     propertyCount;
+    int32_t     propertiesSize;
+};
+
+struct ClassListResult {
+    int scannedObjects = 0;
+    int totalClasses = 0;
+    std::vector<ClassListEntry> results;
+};
+
+// List all UClass objects, optionally filtering out engine packages.
+ClassListResult ListClasses(bool gameOnly, int maxResults = 5000);
 
 } // namespace ObjectArray
