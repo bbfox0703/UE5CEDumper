@@ -13,6 +13,9 @@
                x:Name="SearchClassNameInput"
                KeyDown="SearchClassNameInput_KeyDown"
                Width="300" Padding="4,2"/>
+      <CheckBox Content="{StaticResource str.InstanceFinder.ExactMatch}"
+                IsChecked="{Binding ExactMatch}"
+                VerticalAlignment="Center" Margin="0,0,4,0"/>
       <Button Content="{StaticResource str.InstanceFinder.Search}"
               Command="{Binding SearchCommand}"
               Classes="accent" Padding="12,4"/>

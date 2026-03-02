@@ -11,6 +11,7 @@
 
 #include "UStructWalker.h"
 
+#include <algorithm>
 #include <cctype>
 #include <climits>
 #include <unordered_set>
@@ -820,7 +821,7 @@ SearchResultSet SearchByName(const std::string& query, int maxResults) {
     return rset;
 }
 
-SearchResultSet FindInstancesByClass(const std::string& className, int maxResults) {
+SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults) {
     SearchResultSet rset;
 
     // Convert query to lowercase for case-insensitive comparison
@@ -846,11 +847,15 @@ SearchResultSet FindInstancesByClass(const std::string& className, int maxResult
         if (clsName.empty()) continue;
         rset.named++;
 
-        // Case-insensitive partial match on class name
+        // Case-insensitive match: exact (equality) or partial (substring)
         std::string lowerClsName = clsName;
         for (auto& c : lowerClsName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-        if (lowerClsName.find(lowerQuery) == std::string::npos) continue;
+        if (exactMatch) {
+            if (lowerClsName != lowerQuery) continue;
+        } else {
+            if (lowerClsName.find(lowerQuery) == std::string::npos) continue;
+        }
 
         SearchResult sr;
         sr.addr = obj;
@@ -1271,6 +1276,61 @@ PropertySearchResult SearchProperties(
     Logger::Info("PIPE:search", "SearchProperties '%s': %d matches from %d classes (scanned %d objects)",
                  query.c_str(), static_cast<int>(result.results.size()),
                  result.scannedClasses, result.scannedObjects);
+    return result;
+}
+
+ClassListResult ListClasses(bool gameOnly, int maxResults) {
+    ClassListResult result;
+
+    std::unordered_set<uintptr_t> visitedClasses;
+
+    int32_t count = GetCount();
+    result.scannedObjects = count;
+
+    for (int32_t i = 0; i < count && static_cast<int>(result.results.size()) < maxResults; ++i) {
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+
+        // Check if this object IS a UClass (its class name == "Class")
+        uintptr_t cls = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        uint32_t clsNameIdx = 0;
+        if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+
+        std::string metaClassName = FNamePool::GetString(clsNameIdx);
+        if (metaClassName != "Class") continue;
+
+        // Skip if already visited
+        if (!visitedClasses.insert(obj).second) continue;
+
+        // Get class path for game_only filter
+        std::string classPath = UStructWalker::GetFullName(obj);
+        if (gameOnly && IsEnginePackage(classPath)) continue;
+
+        result.totalClasses++;
+
+        // Walk class to get property count and size
+        ClassInfo ci = UStructWalker::WalkClassEx(obj);
+
+        ClassListEntry entry;
+        entry.className      = ci.Name;
+        entry.classAddr      = obj;
+        entry.classPath      = classPath;
+        entry.superName      = ci.SuperName;
+        entry.propertyCount  = static_cast<int32_t>(ci.Fields.size());
+        entry.propertiesSize = ci.PropertiesSize;
+        result.results.push_back(std::move(entry));
+    }
+
+    // Sort alphabetically by class name
+    std::sort(result.results.begin(), result.results.end(),
+        [](const ClassListEntry& a, const ClassListEntry& b) {
+            return a.className < b.className;
+        });
+
+    Logger::Info("PIPE:list", "ListClasses: %d classes (gameOnly=%d, scanned %d objects)",
+                 static_cast<int>(result.results.size()), gameOnly ? 1 : 0, result.scannedObjects);
     return result;
 }
 

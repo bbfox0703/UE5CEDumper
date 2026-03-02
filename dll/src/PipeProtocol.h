@@ -35,6 +35,7 @@ constexpr const char* CMD_WALK_FUNCTIONS   = "walk_functions";
 constexpr const char* CMD_WATCH             = "watch";
 constexpr const char* CMD_UNWATCH           = "unwatch";
 constexpr const char* CMD_SEARCH_PROPERTIES = "search_properties";
+constexpr const char* CMD_LIST_CLASSES      = "list_classes";
 
 // Event types
 constexpr const char* EVT_WATCH            = "watch";

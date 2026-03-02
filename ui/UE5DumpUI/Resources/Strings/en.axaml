@@ -19,6 +19,7 @@
     <sys:String x:Key="str.Tab.LiveWalker">Live Walker</sys:String>
     <sys:String x:Key="str.Tab.InstanceFinder">Instance Finder</sys:String>
     <sys:String x:Key="str.Tab.PropertySearch">Property Search</sys:String>
+    <sys:String x:Key="str.Tab.GameClassFilter">Game Classes</sys:String>
 
     <!-- Object Tree -->
     <sys:String x:Key="str.ObjectTree.Title">Object Tree</sys:String>
@@ -77,6 +78,7 @@
     <sys:String x:Key="str.InstanceFinder.OpenInWalker">Open in Live Walker</sys:String>
     <sys:String x:Key="str.InstanceFinder.AddressHint">Address (hex or module.exe+offset)</sys:String>
     <sys:String x:Key="str.InstanceFinder.Lookup">Lookup</sys:String>
+    <sys:String x:Key="str.InstanceFinder.ExactMatch">Exact match</sys:String>
 
     <!-- Pointer Panel -->
     <sys:String x:Key="str.Pointers.GObjects">GObjects Address</sys:String>
@@ -114,6 +116,18 @@
     <sys:String x:Key="str.PropertySearch.GameOnly">Game classes only</sys:String>
     <sys:String x:Key="str.PropertySearch.FindInstances">Find Instances</sys:String>
     <sys:String x:Key="str.PropertySearch.CopyOffset">Copy Offset</sys:String>
+
+    <!-- Game Class Filter -->
+    <sys:String x:Key="str.GameClassFilter.Load">Load</sys:String>
+    <sys:String x:Key="str.GameClassFilter.GameOnly">Game classes only</sys:String>
+    <sys:String x:Key="str.GameClassFilter.FilterHint">Filter by name...</sys:String>
+    <sys:String x:Key="str.GameClassFilter.FindInstances">Find Instances</sys:String>
+    <sys:String x:Key="str.GameClassFilter.WalkClass">Walk Class</sys:String>
+    <sys:String x:Key="str.GameClassFilter.SuperLabel">Super:</sys:String>
+    <sys:String x:Key="str.GameClassFilter.SuperHint">(All)</sys:String>
+    <sys:String x:Key="str.GameClassFilter.PackageLabel">Package:</sys:String>
+    <sys:String x:Key="str.GameClassFilter.PackageHint">(All)</sys:String>
+    <sys:String x:Key="str.GameClassFilter.Clear">Clear</sys:String>
 
     <!-- Errors -->
     <sys:String x:Key="str.Error.Connection">Failed to connect to pipe server</sys:String>
