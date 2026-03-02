@@ -109,15 +109,24 @@ AddressLookupResult FindByAddress(uintptr_t addr);
 
 struct PropertyMatch {
     std::string className;
-    uintptr_t   classAddr;
+    uintptr_t   classAddr = 0;
     std::string classPath;
     std::string superName;
     std::string propName;
     std::string propType;
-    int32_t     propOffset;
-    int32_t     propSize;
+    int32_t     propOffset = 0;
+    int32_t     propSize   = 0;
     std::string structType;   // StructProperty -> inner struct name
     std::string innerType;    // ArrayProperty -> inner element type
+
+    // Preview support — populated in Phase 2 of SearchProperties
+    std::string preview;           // Inline value preview from a representative instance
+    uintptr_t   fieldAddr   = 0;   // FField/FProperty address (for enum resolve)
+    uint8_t     boolFieldMask  = 0; // BoolProperty: FieldMask byte
+    uint8_t     boolByteOffset = 0; // BoolProperty: ByteOffset within property
+    uintptr_t   enumAddr    = 0;   // EnumProperty: UEnum* for name resolution
+    std::string keyType;           // MapProperty: key type name
+    std::string valueType;         // MapProperty: value type name
 };
 
 struct PropertySearchResult {
