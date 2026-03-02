@@ -2320,6 +2320,179 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     return true;
 }
 
+// ============================================================
+// ExtraScanGObjects — Dumper-7-style .data heuristic
+//
+// Scan the .data section directly at 4-byte granularity and validate
+// each location as a potential FUObjectArray base.  This complements
+// FindGObjectsByDataScan (which follows code RIP-relative refs) by
+// probing addresses that may not be referenced by any code instruction.
+//
+// Two modes per candidate address:
+//   1. Inline:  the FUObjectArray struct lives at &addr itself
+//   2. Pointer: addr holds a pointer to the FUObjectArray struct on the heap
+//
+// Thread-safe: reads game memory only, no global state mutation.
+// ============================================================
+uintptr_t ExtraScanGObjects() {
+    Logger::Info("SCAN:GObj", "ExtraScanGObjects: Starting .data heuristic scan...");
+
+    uintptr_t base = Mem::GetModuleBase(nullptr);
+    if (!base) return 0;
+
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + static_cast<DWORD>(dos->e_lfanew));
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
+
+    // Collect ALL writable, non-exec sections (.data, .bss, etc.)
+    struct SectionRange { uintptr_t start; uintptr_t end; };
+    std::vector<SectionRange> dataSections;
+
+    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (!section->Misc.VirtualSize || !section->VirtualAddress) continue;
+        bool writable = (section->Characteristics & IMAGE_SCN_MEM_WRITE) != 0;
+        bool exec     = (section->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
+        if (writable && !exec) {
+            dataSections.push_back({ base + section->VirtualAddress,
+                                     base + section->VirtualAddress + section->Misc.VirtualSize });
+        }
+    }
+
+    if (dataSections.empty()) {
+        Logger::Warn("SCAN:GObj", "ExtraScanGObjects: No writable sections found");
+        return 0;
+    }
+
+    int candidatesTested = 0;
+    g_validationDbgCount = 0;  // Reset throttle for validators
+
+    for (auto& sec : dataSections) {
+        Logger::Debug("SCAN:GObj", "ExtraScanGObjects: Scanning [0x%llX-0x%llX] (%zu bytes)",
+                  (unsigned long long)sec.start, (unsigned long long)sec.end,
+                  (size_t)(sec.end - sec.start));
+
+        for (uintptr_t addr = sec.start; addr + 0x20 < sec.end; addr += 4) {
+            // Mode 1: Inline — the FUObjectArray struct starts at addr
+            if (ValidateGObjects(addr)) {
+                Logger::Info("SCAN:GObj", "ExtraScanGObjects: Found inline FUObjectArray at 0x%llX (%d candidates tested)",
+                         (unsigned long long)addr, candidatesTested);
+                return addr;
+            }
+
+            // Mode 2: Pointer — addr holds a pointer to FUObjectArray
+            uintptr_t ptrVal = 0;
+            if (Mem::ReadSafe(addr, ptrVal) && ptrVal && LooksLikeDataPtr(ptrVal)) {
+                if (ValidateGObjects(ptrVal)) {
+                    Logger::Info("SCAN:GObj", "ExtraScanGObjects: Found pointed FUObjectArray at 0x%llX (ptr@0x%llX, %d candidates tested)",
+                             (unsigned long long)ptrVal, (unsigned long long)addr, candidatesTested);
+                    return ptrVal;
+                }
+            }
+
+            candidatesTested++;
+            // Suppress excessive debug logging after first 50 failures
+            if (candidatesTested == 50)
+                g_validationDbgCount = kMaxValidationDbgLogs;
+        }
+    }
+
+    Logger::Warn("SCAN:GObj", "ExtraScanGObjects: No valid FUObjectArray found (%d candidates tested)", candidatesTested);
+    return 0;
+}
+
+// ============================================================
+// ExtraScanGWorld — Dumper-7-style instance scan
+//
+// 1. Iterate GObjects to find a UWorld instance (by class name)
+// 2. Scan .data sections for a static pointer holding that instance address
+//
+// Requires ObjectArray + FNamePool to be initialized.
+// Thread-safe: reads game memory and existing ObjectArray/FNamePool statics
+// (immutable after init), no global state mutation.
+// ============================================================
+uintptr_t ExtraScanGWorld() {
+    Logger::Info("SCAN:GWld", "ExtraScanGWorld: Starting instance scan...");
+
+    // Step 1: Find a UWorld instance in GObjects
+    int32_t count = ObjectArray::GetCount();
+    if (count <= 0) {
+        Logger::Warn("SCAN:GWld", "ExtraScanGWorld: ObjectArray not initialized (count=%d)", count);
+        return 0;
+    }
+
+    uintptr_t worldInstance = 0;
+    for (int32_t i = 0; i < count; ++i) {
+        uintptr_t obj = ObjectArray::GetByIndex(i);
+        if (!obj) continue;
+
+        // Read class pointer
+        uintptr_t cls = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        // Read class name
+        uint32_t clsNameIdx = 0;
+        if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+        std::string clsName = FNamePool::GetString(clsNameIdx);
+        if (clsName != "World") continue;
+
+        // Read object name — skip CDOs
+        uint32_t nameIdx = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx)) continue;
+        std::string name = FNamePool::GetString(nameIdx);
+        if (name.empty() || name.find("Default__") != std::string::npos) continue;
+
+        worldInstance = obj;
+        Logger::Info("SCAN:GWld", "ExtraScanGWorld: Found UWorld instance '%s' at 0x%llX (index=%d)",
+                 name.c_str(), (unsigned long long)obj, i);
+        break;
+    }
+
+    if (!worldInstance) {
+        Logger::Warn("SCAN:GWld", "ExtraScanGWorld: No UWorld instance found in GObjects (scanned %d objects)", count);
+        return 0;
+    }
+
+    // Step 2: Scan .data sections for a pointer to this instance
+    uintptr_t base = Mem::GetModuleBase(nullptr);
+    if (!base) return 0;
+
+    auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+    auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + static_cast<DWORD>(dos->e_lfanew));
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
+
+    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (!section->Misc.VirtualSize || !section->VirtualAddress) continue;
+        bool writable = (section->Characteristics & IMAGE_SCN_MEM_WRITE) != 0;
+        bool exec     = (section->Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
+        if (!writable || exec) continue;
+
+        uintptr_t secBase = base + section->VirtualAddress;
+        size_t    secSize = section->Misc.VirtualSize;
+
+        Logger::Debug("SCAN:GWld", "ExtraScanGWorld: Scanning section [0x%llX-0x%llX] for ptr=0x%llX",
+                  (unsigned long long)secBase, (unsigned long long)(secBase + secSize),
+                  (unsigned long long)worldInstance);
+
+        for (size_t off = 0; off + sizeof(uintptr_t) <= secSize; off += sizeof(uintptr_t)) {
+            uintptr_t val = 0;
+            if (!Mem::ReadSafe(secBase + off, val)) continue;
+            if (val == worldInstance) {
+                uintptr_t gworldAddr = secBase + off;
+                Logger::Info("SCAN:GWld", "ExtraScanGWorld: Found GWorld at 0x%llX (contains 0x%llX)",
+                         (unsigned long long)gworldAddr, (unsigned long long)worldInstance);
+                return gworldAddr;
+            }
+        }
+    }
+
+    Logger::Warn("SCAN:GWld", "ExtraScanGWorld: No static pointer to UWorld instance found in .data sections");
+    return 0;
+}
+
 bool FindAll(EnginePointers& out) {
     LOG_INFO("FindAll: Starting global pointer scan...");
 
@@ -2334,14 +2507,12 @@ bool FindAll(EnginePointers& out) {
 
     out.GObjects = FindGObjects();
     if (!out.GObjects) {
-        LOG_ERROR("FindAll: Failed to find GObjects — aborting");
-        return false;
+        LOG_WARN("FindAll: Failed to find GObjects (will continue — Extra Scan may recover)");
     }
 
     out.GNames = FindGNames();
     if (!out.GNames) {
-        LOG_ERROR("FindAll: Failed to find GNames — aborting");
-        return false;
+        LOG_WARN("FindAll: Failed to find GNames (will continue — Extra Scan may recover)");
     }
 
     // Propagate UE4 TNameEntryArray detection state
@@ -2354,15 +2525,17 @@ bool FindAll(EnginePointers& out) {
     out.gnamesMethod   = s_gnamesMethod;
 
     // --- Version inference from detection flags ---
-    // If we detected UE4-specific structures but version says UE5, override.
-    if (out.bUE4NameArray && out.UEVersion >= 500) {
-        LOG_WARN("FindAll: UE4 TNameEntryArray detected but version=%u (>= 500). "
-                 "Overriding to 422 (UE4 pre-4.23)", out.UEVersion);
-        out.UEVersion = 422;
-    } else if (out.fnameEntryHeaderOffset == 4 && out.UEVersion >= 500) {
-        LOG_WARN("FindAll: Hash-prefixed FNameEntry (hdrOff=4) suggests UE4.26 fork, "
-                 "but version=%u. Overriding to 426", out.UEVersion);
-        out.UEVersion = 426;
+    // Only apply if GNames was actually found (these flags are set during GNames scan)
+    if (out.GNames) {
+        if (out.bUE4NameArray && out.UEVersion >= 500) {
+            LOG_WARN("FindAll: UE4 TNameEntryArray detected but version=%u (>= 500). "
+                     "Overriding to 422 (UE4 pre-4.23)", out.UEVersion);
+            out.UEVersion = 422;
+        } else if (out.fnameEntryHeaderOffset == 4 && out.UEVersion >= 500) {
+            LOG_WARN("FindAll: Hash-prefixed FNameEntry (hdrOff=4) suggests UE4.26 fork, "
+                     "but version=%u. Overriding to 426", out.UEVersion);
+            out.UEVersion = 426;
+        }
     }
 
     out.GWorld = FindGWorld();

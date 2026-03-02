@@ -49,4 +49,9 @@ public interface IDumpService
     // --- Game Class List ---
     Task<ClassListResult> ListClassesAsync(
         bool gameOnly = true, int limit = 5000, CancellationToken ct = default);
+
+    // --- Extra Scan (user-triggered aggressive fallback) ---
+    Task<RescanStartResult> StartRescanAsync(CancellationToken ct = default);
+    Task<RescanStatusResult> GetRescanStatusAsync(CancellationToken ct = default);
+    Task<EngineState> ApplyRescanAsync(CancellationToken ct = default);
 }

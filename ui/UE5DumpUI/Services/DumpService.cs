@@ -820,6 +820,51 @@ public sealed class DumpService : IDumpService
         return result;
     }
 
+    // --- Extra Scan (user-triggered aggressive fallback) ---
+
+    public async Task<RescanStartResult> StartRescanAsync(CancellationToken ct = default)
+    {
+        var req = new JsonObject { ["cmd"] = "rescan" };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        return new RescanStartResult
+        {
+            ScanningGObjects = res["scanning_gobjects"]?.GetValue<bool>() ?? false,
+            ScanningGWorld = res["scanning_gworld"]?.GetValue<bool>() ?? false,
+        };
+    }
+
+    public async Task<RescanStatusResult> GetRescanStatusAsync(CancellationToken ct = default)
+    {
+        var req = new JsonObject { ["cmd"] = "rescan_status" };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        return new RescanStatusResult
+        {
+            Running = res["running"]?.GetValue<bool>() ?? false,
+            Phase = res["phase"]?.GetValue<int>() ?? 0,
+            StatusText = res["status_text"]?.GetValue<string>() ?? "",
+            FoundGObjects = res["found_gobjects"]?.GetValue<bool>() ?? false,
+            FoundGWorld = res["found_gworld"]?.GetValue<bool>() ?? false,
+            GObjectsAddr = res["gobjects_addr"]?.GetValue<string>() ?? "",
+            GWorldAddr = res["gworld_addr"]?.GetValue<string>() ?? "",
+            GObjectsMethod = res["gobjects_method"]?.GetValue<string>() ?? "",
+            GWorldMethod = res["gworld_method"]?.GetValue<string>() ?? "",
+        };
+    }
+
+    public async Task<EngineState> ApplyRescanAsync(CancellationToken ct = default)
+    {
+        var req = new JsonObject { ["cmd"] = "apply_rescan" };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        // apply_rescan returns refreshed pointer data — build EngineState from it
+        return BuildEngineState(res);
+    }
+
     private static void CheckResponse(JsonObject res)
     {
         var ok = res["ok"]?.GetValue<bool>() ?? false;
