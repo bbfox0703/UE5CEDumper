@@ -36,6 +36,9 @@ const char* g_cachedGWorldPatternId   = nullptr;
 int         g_cachedGObjectsTried = 0, g_cachedGObjectsHit = 0;
 int         g_cachedGNamesTried   = 0, g_cachedGNamesHit   = 0;
 int         g_cachedGWorldTried   = 0, g_cachedGWorldHit   = 0;
+uintptr_t   g_cachedGObjectsScanAddr = 0;
+uintptr_t   g_cachedGNamesScanAddr   = 0;
+uintptr_t   g_cachedGWorldScanAddr   = 0;
 
 static bool        s_initialized = false;
 static PipeServer  s_pipeServer;
@@ -87,6 +90,9 @@ bool UE5_Init() {
     g_cachedGNamesHit     = ptrs.gnamesPatternsHit;
     g_cachedGWorldTried   = ptrs.gworldPatternsTried;
     g_cachedGWorldHit     = ptrs.gworldPatternsHit;
+    g_cachedGObjectsScanAddr = ptrs.gobjectsScanAddr;
+    g_cachedGNamesScanAddr   = ptrs.gnamesScanAddr;
+    g_cachedGWorldScanAddr   = ptrs.gworldScanAddr;
 
     // Initialize subsystems
     if (ptrs.bUE4NameArray) {

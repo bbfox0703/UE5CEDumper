@@ -264,7 +264,10 @@ public partial class MainWindowViewModel : ViewModelBase
                 state.GWorldPatternId,
                 state.GObjectsPatternsHit,
                 state.GNamesPatternsHit,
-                state.GWorldPatternsHit);
+                state.GWorldPatternsHit,
+                state.GObjectsScanAddr,
+                state.GNamesScanAddr,
+                state.GWorldScanAddr);
 
             _engineState = state;
             ObjectTree.SetEngineState(state);
