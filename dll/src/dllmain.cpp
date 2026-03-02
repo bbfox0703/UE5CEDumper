@@ -19,12 +19,35 @@ std::atomic<bool> g_isCEPlugin{false};
 
 // Forward declaration — defined in ExportAPI.cpp
 extern "C" bool UE5_AutoStart();
+extern "C" bool UE5_StartPipeServer();
 extern "C" void UE5_Shutdown();
+
+#ifdef UE5_PROXY_BUILD
+// Cleanup for proxy DLL — defined in ProxyVersion.cpp
+extern void ProxyVersion_Cleanup();
+#endif
 
 // Handle for the auto-start thread — stored so we can wait for it during DLL unload
 static HANDLE g_hAutoStartThread = nullptr;
 
-// ── Auto-start thread ──────────────────────────────────────────────────────
+#ifdef UE5_PROXY_BUILD
+// ── Proxy DLL auto-start ───────────────────────────────────────────────────
+// In proxy mode, we start the pipe server immediately (no scan).
+// The user triggers scanning later from the UI when the game has loaded.
+// No CE delay needed — proxy DLL is always in the game process.
+static DWORD WINAPI AutoStartThreadProc(LPVOID)
+{
+    LOG_INFO("DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)");
+
+    // Brief delay for game to finish early init (avoid pipe creation during process startup)
+    Sleep(500);
+
+    bool ok = UE5_StartPipeServer();
+    LOG_INFO("DllMain ProxyStart: pipe server %s", ok ? "started" : "FAILED to start");
+    return 0;
+}
+#else
+// ── CE / Manual inject auto-start ──────────────────────────────────────────
 // Spawned on DLL_PROCESS_ATTACH. Waits 1 second to allow CEPlugin_InitializePlugin
 // to run (which sets g_isCEPlugin = true) if CE is loading this as a plugin.
 // If g_isCEPlugin is still false after the delay, we're in a game process and
@@ -48,11 +71,24 @@ static DWORD WINAPI AutoStartThreadProc(LPVOID)
         return 0;
     }
 
+    // Check if another UE5Dumper instance is already running (e.g., proxy DLL)
+    // by trying to open the named pipe. If it exists, skip auto-start.
+    HANDLE testPipe = CreateFileW(
+        L"\\\\.\\pipe\\UE5DumpBfx",
+        GENERIC_READ, 0, nullptr,
+        OPEN_EXISTING, 0, nullptr);
+    if (testPipe != INVALID_HANDLE_VALUE) {
+        CloseHandle(testPipe);
+        LOG_WARN("DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skipping auto-start");
+        return 0;
+    }
+
     LOG_INFO("DllMain AutoStart: game process — calling UE5_AutoStart");
     UE5_AutoStart();
     LOG_INFO("DllMain AutoStart: UE5_AutoStart returned");
     return 0;
 }
+#endif
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     switch (reason) {
@@ -103,6 +139,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         }
         // Stop pipe server and watch threads before logger shutdown
         UE5_Shutdown();
+#ifdef UE5_PROXY_BUILD
+        ProxyVersion_Cleanup();
+#endif
         Logger::Shutdown();
         break;
 

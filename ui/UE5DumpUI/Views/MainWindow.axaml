@@ -32,6 +32,14 @@
                   IsVisible="{Binding IsConnected}"
                   Padding="12,4"/>
 
+          <!-- Start Scan button — visible in proxy DLL mode (connected but not yet scanned) -->
+          <Button Content="{StaticResource str.Toolbar.StartScan}"
+                  Command="{Binding TriggerScanCommand}"
+                  IsVisible="{Binding NeedsScan}"
+                  IsEnabled="{Binding !IsScanning}"
+                  Classes="accent" Padding="12,4"
+                  FontWeight="Bold"/>
+
           <TextBlock Text="{Binding StatusText}"
                      Foreground="#4EC9B0"
                      VerticalAlignment="Center"

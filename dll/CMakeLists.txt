@@ -124,3 +124,74 @@ set_target_properties(UE5Dumper PROPERTIES
     PREFIX ""
     OUTPUT_NAME "UE5Dumper"
 )
+
+# ============================================================
+# Proxy DLL target — builds as version.dll for direct game-folder injection
+# Same source files as UE5Dumper, but:
+#   - Excludes CEPlugin.cpp (no CE SDK dependency)
+#   - Includes ProxyVersion.cpp (version.dll export forwarding)
+#   - Defines UE5_PROXY_BUILD (changes auto-start behavior)
+#   - Output: version.dll
+#
+# Why version.dll? Almost every Windows process loads it (via
+# GetFileVersionInfo calls). dinput8.dll only works for games
+# that use DirectInput8 — most modern UE5 games do not.
+# ============================================================
+option(BUILD_PROXY_DLL "Build the proxy DLL (version.dll) target" OFF)
+
+if(BUILD_PROXY_DLL)
+    add_library(UE5Dumper_Proxy SHARED
+        src/dllmain.cpp
+        src/ProxyVersion.cpp
+        src/Memory.cpp
+        src/Logger.cpp
+        src/OffsetFinder.cpp
+        src/ObjectArray.cpp
+        src/FNamePool.cpp
+        src/UStructWalker.cpp
+        src/ExportAPI.cpp
+        src/PipeServer.cpp
+        src/version.rc
+    )
+
+    target_include_directories(UE5Dumper_Proxy PRIVATE
+        src
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_SOURCE_DIR}/vendor/nlohmann
+    )
+
+    target_compile_definitions(UE5Dumper_Proxy PRIVATE
+        UNICODE
+        _UNICODE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _CRT_SECURE_NO_WARNINGS
+        UE5_PROXY_BUILD
+    )
+
+    if(MSVC)
+        set_property(TARGET UE5Dumper_Proxy PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(UE5Dumper_Proxy PRIVATE
+            /utf-8 /W4 /permissive- /EHa /arch:AVX2 /favor:blend
+        )
+    endif()
+
+    target_link_libraries(UE5Dumper_Proxy PRIVATE
+        ws2_32 Shlwapi Psapi Version delayimp
+    )
+
+    # Delay-load version.dll to avoid circular dependency: the proxy DLL
+    # IS version.dll, so we can't have it in the import table at load time.
+    # MSVC delay-load resolves it at first call → goes through our proxy exports.
+    target_link_options(UE5Dumper_Proxy PRIVATE
+        /DELAYLOAD:version.dll
+        /DEF:${CMAKE_CURRENT_SOURCE_DIR}/src/ProxyVersion.def
+    )
+
+    set_target_properties(UE5Dumper_Proxy PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "version"
+    )
+endif()
