@@ -11,6 +11,7 @@ public class GameClassEntry
     public string SuperName { get; set; } = "";
     public int PropertyCount { get; set; }
     public int PropertiesSize { get; set; }
+    public int Score { get; set; }
 
     /// <summary>Display-friendly properties size as hex.</summary>
     public string SizeHex => $"0x{PropertiesSize:X}";

@@ -142,6 +142,9 @@ public partial class GameClassFilterViewModel : ViewModelBase
         var superF = SuperFilter.Trim();
         var pkgF = PackageFilter.Trim();
 
+        // Collect matching entries first, then sort by score descending
+        var filtered = new List<GameClassEntry>();
+
         foreach (var entry in _allResults)
         {
             // Name filter: substring match on ClassName, SuperName, or ClassPath
@@ -167,6 +170,18 @@ public partial class GameClassFilterViewModel : ViewModelBase
                 continue;
             }
 
+            filtered.Add(entry);
+        }
+
+        // Sort by heuristic score descending (DLL already sorts, but re-sort after filter)
+        filtered.Sort((a, b) =>
+        {
+            int cmp = b.Score.CompareTo(a.Score);
+            return cmp != 0 ? cmp : string.Compare(a.ClassName, b.ClassName, StringComparison.Ordinal);
+        });
+
+        foreach (var entry in filtered)
+        {
             Results.Add(entry);
         }
     }

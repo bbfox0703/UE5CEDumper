@@ -1052,6 +1052,7 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 item["super_name"]      = e.superName;
                 item["property_count"]  = e.propertyCount;
                 item["properties_size"] = e.propertiesSize;
+                item["score"]           = e.heuristicScore;
                 classes.push_back(item);
             }
 

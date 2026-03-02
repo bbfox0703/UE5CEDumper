@@ -145,6 +145,7 @@ struct ClassListEntry {
     std::string superName;
     int32_t     propertyCount;
     int32_t     propertiesSize;
+    int32_t     heuristicScore;   // Auto-ranked suspicion score (higher = more interesting for RE)
 };
 
 struct ClassListResult {

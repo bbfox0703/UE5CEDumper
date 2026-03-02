@@ -67,6 +67,14 @@
               FontSize="12"
               FontFamily="Consolas, Menlo, monospace">
       <DataGrid.Columns>
+        <DataGridTemplateColumn Header="Score" Width="55">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:GameClassEntry">
+              <TextBlock Text="{Binding Score}" Foreground="#E5C07B"
+                         VerticalAlignment="Center" Margin="4,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTextColumn Header="Class"
                             Binding="{Binding ClassName}"
                             Width="220"/>

@@ -1279,6 +1279,84 @@ PropertySearchResult SearchProperties(
     return result;
 }
 
+// --- Heuristic Scorer: auto-rank classes by RE interest ---
+
+static int GetFieldTypeWeight(const std::string& typeName) {
+    // High-value: game stats, collections
+    if (typeName == "FloatProperty" || typeName == "DoubleProperty") return 3;
+    if (typeName == "ArrayProperty") return 3;
+
+    // Medium-value: integers, structs, object refs, maps/sets
+    if (typeName == "IntProperty"   || typeName == "Int8Property"  ||
+        typeName == "Int16Property" || typeName == "Int32Property" ||
+        typeName == "Int64Property" || typeName == "UInt16Property"||
+        typeName == "UInt32Property"|| typeName == "UInt64Property") return 2;
+    if (typeName == "StructProperty") return 2;
+    if (typeName == "ObjectProperty"     || typeName == "ClassProperty"      ||
+        typeName == "WeakObjectProperty" || typeName == "LazyObjectProperty" ||
+        typeName == "SoftObjectProperty" || typeName == "SoftClassProperty"  ||
+        typeName == "InterfaceProperty") return 2;
+    if (typeName == "MapProperty" || typeName == "SetProperty") return 2;
+
+    // Low-value: enums, bools, strings, bytes
+    if (typeName == "EnumProperty") return 1;
+    if (typeName == "BoolProperty") return 1;
+    if (typeName == "StrProperty"  || typeName == "TextProperty" ||
+        typeName == "NameProperty" || typeName == "ByteProperty") return 1;
+
+    return 1; // Unknown types get minimum weight
+}
+
+static int GetSuperClassBonus(const std::string& superName) {
+    if (superName.empty()) return 0;
+
+    // Convert to lowercase for case-insensitive matching
+    std::string lower = superName;
+    for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    // Checked in priority order (most specific first)
+    if (lower.find("character") != std::string::npos || lower.find("pawn") != std::string::npos) return 20;
+    if (lower.find("playercontroller") != std::string::npos ||
+        lower.find("aicontroller")     != std::string::npos ||
+        lower.find("controller")       != std::string::npos) return 15;
+    if (lower.find("playerstate") != std::string::npos ||
+        lower.find("gamestate")   != std::string::npos ||
+        lower.find("gamemode")    != std::string::npos) return 15;
+    if (lower.find("gameinstance") != std::string::npos) return 10;
+    if (lower.find("actor") != std::string::npos) return 10;
+    if (lower.find("actorcomponent") != std::string::npos ||
+        lower.find("scenecomponent") != std::string::npos) return 8;
+    if (lower.find("widget") != std::string::npos || lower.find("userwidget") != std::string::npos) return 5;
+    if (lower.find("animinstance") != std::string::npos) return 5;
+    if (lower.find("dataasset") != std::string::npos) return 5;
+
+    return 0;
+}
+
+static int ComputeHeuristicScore(const ClassInfo& ci) {
+    int score = 0;
+
+    // Sum per-field type weights
+    for (const auto& f : ci.Fields) {
+        score += GetFieldTypeWeight(f.TypeName);
+    }
+
+    // Super class bonus
+    score += GetSuperClassBonus(ci.SuperName);
+
+    // Size bonus
+    if (ci.PropertiesSize > 0x400)       score += 5;
+    else if (ci.PropertiesSize > 0x100)  score += 3;
+    else if (ci.PropertiesSize > 0)      score += 1;
+
+    // Penalty for empty/abstract classes
+    if (ci.Fields.empty()) score -= 5;
+
+    return (score < 0) ? 0 : score;
+}
+
+// --- ListClasses ---
+
 ClassListResult ListClasses(bool gameOnly, int maxResults) {
     ClassListResult result;
 
@@ -1320,12 +1398,15 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
         entry.superName      = ci.SuperName;
         entry.propertyCount  = static_cast<int32_t>(ci.Fields.size());
         entry.propertiesSize = ci.PropertiesSize;
+        entry.heuristicScore = ComputeHeuristicScore(ci);
         result.results.push_back(std::move(entry));
     }
 
-    // Sort alphabetically by class name
+    // Sort by heuristic score descending, then alphabetically for ties
     std::sort(result.results.begin(), result.results.end(),
         [](const ClassListEntry& a, const ClassListEntry& b) {
+            if (a.heuristicScore != b.heuristicScore)
+                return a.heuristicScore > b.heuristicScore;
             return a.className < b.className;
         });
 

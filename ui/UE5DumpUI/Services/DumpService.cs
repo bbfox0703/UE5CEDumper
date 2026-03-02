@@ -809,6 +809,7 @@ public sealed class DumpService : IDumpService
                     SuperName       = obj["super_name"]?.GetValue<string>() ?? "",
                     PropertyCount   = obj["property_count"]?.GetValue<int>() ?? 0,
                     PropertiesSize  = obj["properties_size"]?.GetValue<int>() ?? 0,
+                    Score           = obj["score"]?.GetValue<int>() ?? 0,
                 });
             }
         }
