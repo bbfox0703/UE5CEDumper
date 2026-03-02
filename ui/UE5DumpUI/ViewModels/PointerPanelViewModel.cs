@@ -84,11 +84,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     public bool HasGWorldPatternId => HasData && !string.IsNullOrEmpty(GWorldPatternId);
 
     /// <summary>True when GObjects has a non-zero AOB scan address.</summary>
-    public bool HasGObjectsScanAddr => HasData && !string.IsNullOrEmpty(GObjectsScanAddr) && GObjectsScanAddr != "0";
+    public bool HasGObjectsScanAddr => HasData && IsNonZeroAddr(GObjectsScanAddr);
     /// <summary>True when GNames has a non-zero AOB scan address.</summary>
-    public bool HasGNamesScanAddr => HasData && !string.IsNullOrEmpty(GNamesScanAddr) && GNamesScanAddr != "0";
+    public bool HasGNamesScanAddr => HasData && IsNonZeroAddr(GNamesScanAddr);
     /// <summary>True when GWorld has a non-zero AOB scan address.</summary>
-    public bool HasGWorldScanAddr => HasData && !string.IsNullOrEmpty(GWorldScanAddr) && GWorldScanAddr != "0";
+    public bool HasGWorldScanAddr => HasData && IsNonZeroAddr(GWorldScanAddr);
 
     /// <summary>
     /// True when Extra Scan button should be visible:
@@ -178,6 +178,10 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     private static bool IsPointerMissing(string addr)
         => string.IsNullOrEmpty(addr) || addr == "0x0" || addr == "0x00000000" || addr == "0";
+
+    /// <summary>True when the address string represents a non-zero value (not empty, "0", or "0x0").</summary>
+    private static bool IsNonZeroAddr(string? addr)
+        => !string.IsNullOrEmpty(addr) && addr != "0" && addr != "0x0" && addr != "0x00000000";
 
     /// <summary>Strip leading "0x" or "0X" prefix for clipboard copy.</summary>
     private static string StripHexPrefix(string addr)
