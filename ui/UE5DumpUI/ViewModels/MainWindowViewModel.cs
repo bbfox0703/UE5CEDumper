@@ -116,12 +116,45 @@ public partial class MainWindowViewModel : ViewModelBase
 
         ObjectTree = new ObjectTreeViewModel(dump, log, platform);
         ClassStruct = new ClassStructViewModel(dump, log);
-        Pointers = new PointerPanelViewModel(platform);
+        Pointers = new PointerPanelViewModel(platform, dump, log);
         HexView = new HexViewViewModel(dump, pipeClient, log);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform);
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
         PropertySearch = new PropertySearchViewModel(dump, log);
         GameClassFilter = new GameClassFilterViewModel(dump, log);
+
+        // Wire Pointers Extra Scan -> refresh all panels after rescan results applied
+        Pointers.RescanApplied += async () =>
+        {
+            try
+            {
+                var state = await _dump.GetPointersAsync();
+                _engineState = state;
+
+                Pointers.Update(
+                    state.GObjectsAddr, state.GNamesAddr, state.GWorldAddr,
+                    state.UEVersion, state.VersionDetected, state.ObjectCount,
+                    state.GObjectsMethod, state.GNamesMethod, state.GWorldMethod,
+                    state.GObjectsPatternId, state.GNamesPatternId, state.GWorldPatternId,
+                    state.GObjectsPatternsHit, state.GNamesPatternsHit, state.GWorldPatternsHit,
+                    state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr);
+
+                ObjectTree.SetEngineState(state);
+                LiveWalker.SetEngineState(state);
+                InstanceFinder.SetEngineState(state);
+                HexView.SetEngineState(state);
+
+                StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
+
+                // Re-load objects if tree was empty
+                if (ObjectTree.ObjectCount == 0 && state.ObjectCount > 0)
+                    _ = ObjectTree.LoadCommand.ExecuteAsync(null);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("RescanApplied refresh error", ex);
+            }
+        };
 
         // Wire cross-VM communication
         // Wrap async lambdas in try/catch to prevent async void from crashing the app

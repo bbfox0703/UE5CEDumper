@@ -37,6 +37,12 @@ void PipeServer::Stop() {
     if (!m_running.exchange(false)) return; // Already stopped
     StopAllWatches();
 
+    // Join background rescan thread if running
+    m_rescan.running.store(false);
+    if (m_rescan.scanThread.joinable()) {
+        m_rescan.scanThread.join();
+    }
+
     // Close the pipe to unblock ConnectNamedPipe / ReadFile
     {
         std::lock_guard<std::mutex> lock(m_pipeMutex);
@@ -1220,12 +1226,177 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             return PipeProtocol::MakeResponse(id).dump();
         }
 
+        // === Extra Scan: user-triggered aggressive pointer recovery ===
+
+        if (cmd == PipeProtocol::CMD_RESCAN) {
+            if (m_rescan.running.load()) {
+                return PipeProtocol::MakeError(id, "Rescan already in progress").dump();
+            }
+
+            extern uintptr_t g_cachedGObjects;
+            extern uintptr_t g_cachedGNames;
+            extern uintptr_t g_cachedGWorld;
+
+            bool needGObj = (g_cachedGObjects == 0);
+            bool needGWld = (g_cachedGWorld == 0) && (g_cachedGObjects != 0) && (g_cachedGNames != 0);
+
+            if (!needGObj && !needGWld) {
+                json data;
+                data["scanning_gobjects"] = false;
+                data["scanning_gworld"]   = false;
+                data["message"] = "All scannable pointers already found";
+                return PipeProtocol::MakeResponse(id, data).dump();
+            }
+
+            // Reset state
+            m_rescan.foundGObjects = 0;
+            m_rescan.foundGWorld   = 0;
+            m_rescan.gobjectsMethod = "not_found";
+            m_rescan.gworldMethod   = "not_found";
+            m_rescan.phase.store(0);
+            {
+                std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                m_rescan.statusText = "Starting...";
+            }
+            m_rescan.running.store(true);
+
+            if (m_rescan.scanThread.joinable()) m_rescan.scanThread.join();
+            m_rescan.scanThread = std::thread(&PipeServer::RunRescan, this, needGObj, needGWld);
+
+            json data;
+            data["scanning_gobjects"] = needGObj;
+            data["scanning_gworld"]   = needGWld;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        if (cmd == PipeProtocol::CMD_RESCAN_STATUS) {
+            json data;
+            data["running"] = m_rescan.running.load();
+            data["phase"]   = m_rescan.phase.load();
+            {
+                std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                data["status_text"] = m_rescan.statusText;
+            }
+            // Include results if scan is complete
+            if (!m_rescan.running.load() && m_rescan.phase.load() == 3) {
+                data["found_gobjects"]   = (m_rescan.foundGObjects != 0);
+                data["found_gworld"]     = (m_rescan.foundGWorld != 0);
+                data["gobjects_addr"]    = PipeProtocol::AddrToStr(m_rescan.foundGObjects);
+                data["gworld_addr"]      = PipeProtocol::AddrToStr(m_rescan.foundGWorld);
+                data["gobjects_method"]  = m_rescan.gobjectsMethod;
+                data["gworld_method"]    = m_rescan.gworldMethod;
+            }
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        if (cmd == PipeProtocol::CMD_APPLY_RESCAN) {
+            if (m_rescan.running.load()) {
+                return PipeProtocol::MakeError(id, "Rescan still running").dump();
+            }
+
+            extern uintptr_t   g_cachedGObjects;
+            extern uintptr_t   g_cachedGNames;
+            extern uintptr_t   g_cachedGWorld;
+            extern uint32_t    g_cachedUEVersion;
+            extern const char* g_cachedGObjectsMethod;
+            extern const char* g_cachedGWorldMethod;
+
+            bool applied = false;
+
+            if (m_rescan.foundGObjects && g_cachedGObjects == 0) {
+                g_cachedGObjects = m_rescan.foundGObjects;
+                g_cachedGObjectsMethod = m_rescan.gobjectsMethod;
+                ObjectArray::Init(g_cachedGObjects);
+                Logger::Info("PIPE:cmd", "apply_rescan: Applied GObjects=0x%llX (%s)",
+                         (unsigned long long)g_cachedGObjects, g_cachedGObjectsMethod);
+                applied = true;
+            }
+
+            if (m_rescan.foundGWorld && g_cachedGWorld == 0) {
+                g_cachedGWorld = m_rescan.foundGWorld;
+                g_cachedGWorldMethod = m_rescan.gworldMethod;
+                Logger::Info("PIPE:cmd", "apply_rescan: Applied GWorld=0x%llX (%s)",
+                         (unsigned long long)g_cachedGWorld, g_cachedGWorldMethod);
+                applied = true;
+            }
+
+            // If we now have both GObjects+GNames, run full offset detection
+            if (g_cachedGObjects && g_cachedGNames) {
+                if (!OffsetFinder::ValidateAndFixOffsets(g_cachedUEVersion)) {
+                    Logger::Warn("PIPE:cmd", "apply_rescan: ValidateAndFixOffsets returned false");
+                }
+            }
+
+            json data;
+            data["applied"]      = applied;
+            data["gobjects"]     = PipeProtocol::AddrToStr(g_cachedGObjects);
+            data["gnames"]       = PipeProtocol::AddrToStr(g_cachedGNames);
+            data["gworld"]       = PipeProtocol::AddrToStr(g_cachedGWorld);
+            data["object_count"] = ObjectArray::GetCount();
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
         return PipeProtocol::MakeError(id, "Unknown command: " + cmd).dump();
 
     } catch (const std::exception& e) {
         Logger::Error("PIPE:cmd", "PipeServer: Exception in command '%s': %s", cmd.c_str(), e.what());
         return PipeProtocol::MakeError(id, std::string("Internal error: ") + e.what()).dump();
     }
+}
+
+// ============================================================
+// RunRescan — Background thread for aggressive pointer recovery
+// ============================================================
+void PipeServer::RunRescan(bool scanGObjects, bool scanGWorld) {
+    Logger::Info("PIPE:rescan", "RunRescan: started (GObjects=%d, GWorld=%d)",
+                 scanGObjects, scanGWorld);
+
+    if (scanGObjects) {
+        m_rescan.phase.store(1);
+        {
+            std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+            m_rescan.statusText = "Scanning GObjects (.data heuristic)...";
+        }
+
+        uintptr_t result = OffsetFinder::ExtraScanGObjects();
+        if (result) {
+            m_rescan.foundGObjects = result;
+            m_rescan.gobjectsMethod = "data_heuristic";
+            Logger::Info("PIPE:rescan", "RunRescan: GObjects found at 0x%llX",
+                         static_cast<unsigned long long>(result));
+        } else {
+            Logger::Info("PIPE:rescan", "RunRescan: GObjects not found");
+        }
+    }
+
+    if (scanGWorld) {
+        m_rescan.phase.store(2);
+        {
+            std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+            m_rescan.statusText = "Scanning GWorld (instance scan)...";
+        }
+
+        uintptr_t result = OffsetFinder::ExtraScanGWorld();
+        if (result) {
+            m_rescan.foundGWorld = result;
+            m_rescan.gworldMethod = "instance_scan";
+            Logger::Info("PIPE:rescan", "RunRescan: GWorld found at 0x%llX",
+                         static_cast<unsigned long long>(result));
+        } else {
+            Logger::Info("PIPE:rescan", "RunRescan: GWorld not found");
+        }
+    }
+
+    m_rescan.phase.store(3);
+    {
+        std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+        m_rescan.statusText = "Complete";
+    }
+    m_rescan.running.store(false);
+
+    Logger::Info("PIPE:rescan", "RunRescan: finished (foundGObj=0x%llX, foundGWld=0x%llX)",
+                 static_cast<unsigned long long>(m_rescan.foundGObjects),
+                 static_cast<unsigned long long>(m_rescan.foundGWorld));
 }
 
 void PipeServer::StartWatch(uintptr_t addr, uint32_t size, uint32_t interval_ms) {
