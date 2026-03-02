@@ -1039,6 +1039,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 item["prop_size"]   = m.propSize;
                 item["struct_type"] = m.structType;
                 item["inner_type"]  = m.innerType;
+                if (!m.preview.empty())
+                    item["preview"] = m.preview;
                 matches.push_back(item);
             }
 

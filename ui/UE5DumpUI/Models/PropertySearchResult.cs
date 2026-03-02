@@ -15,6 +15,7 @@ public class PropertySearchMatch
     public int PropSize { get; set; }
     public string StructType { get; set; } = "";
     public string InnerType { get; set; } = "";
+    public string Preview { get; set; } = "";
 
     /// <summary>Display-friendly offset as hex.</summary>
     public string OffsetHex => $"0x{PropOffset:X}";
