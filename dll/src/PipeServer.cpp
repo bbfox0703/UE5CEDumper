@@ -20,6 +20,9 @@
 
 using json = nlohmann::json;
 
+// Forward declare UE5_Init for trigger_scan command (extern "C" must be at global scope)
+extern "C" bool UE5_Init();
+
 bool PipeServer::Start() {
     if (m_running.load()) {
         LOG_WARN("PipeServer: Already running");
@@ -1335,6 +1338,81 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["gnames"]       = PipeProtocol::AddrToStr(g_cachedGNames);
             data["gworld"]       = PipeProtocol::AddrToStr(g_cachedGWorld);
             data["object_count"] = ObjectArray::GetCount();
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // ── trigger_scan: UI-initiated deferred scan (proxy DLL mode) ────────
+        // The proxy DLL starts the pipe server without scanning. The UI sends
+        // this command when the user is ready (game loaded, world active).
+        // Also safe to call in CE/manual inject mode — UE5_Init is idempotent.
+        if (cmd == PipeProtocol::CMD_TRIGGER_SCAN) {
+            extern uintptr_t   g_cachedGObjects;
+            extern uintptr_t   g_cachedGNames;
+            extern uintptr_t   g_cachedGWorld;
+            extern uint32_t    g_cachedUEVersion;
+            extern bool        g_cachedVersionDetected;
+            extern const char* g_cachedGObjectsMethod;
+            extern const char* g_cachedGNamesMethod;
+            extern const char* g_cachedGWorldMethod;
+            extern char        g_cachedPeHash[17];
+            extern const char* g_cachedGObjectsPatternId;
+            extern const char* g_cachedGNamesPatternId;
+            extern const char* g_cachedGWorldPatternId;
+            extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
+            extern int         g_cachedGNamesTried,   g_cachedGNamesHit;
+            extern int         g_cachedGWorldTried,   g_cachedGWorldHit;
+            extern uintptr_t   g_cachedGObjectsScanAddr;
+            extern uintptr_t   g_cachedGNamesScanAddr;
+            extern uintptr_t   g_cachedGWorldScanAddr;
+
+            Logger::Info("PIPE:cmd", "trigger_scan: Starting engine scan...");
+            bool ok = UE5_Init();
+            Logger::Info("PIPE:cmd", "trigger_scan: UE5_Init returned %s", ok ? "true" : "false");
+
+            // Return full pointer state (same shape as get_pointers)
+            json data;
+            data["scanned"]          = true;
+            data["gobjects"]         = PipeProtocol::AddrToStr(g_cachedGObjects);
+            data["gnames"]           = PipeProtocol::AddrToStr(g_cachedGNames);
+            data["gworld"]           = PipeProtocol::AddrToStr(g_cachedGWorld);
+            data["ue_version"]       = g_cachedUEVersion;
+            data["version_detected"] = g_cachedVersionDetected;
+            data["object_count"]     = ObjectArray::GetCount();
+            data["gobjects_method"]  = g_cachedGObjectsMethod;
+            data["gnames_method"]    = g_cachedGNamesMethod;
+            data["gworld_method"]    = g_cachedGWorldMethod;
+            data["pe_hash"]          = g_cachedPeHash;
+            data["gobjects_pattern_id"] = g_cachedGObjectsPatternId ? g_cachedGObjectsPatternId : "";
+            data["gnames_pattern_id"]   = g_cachedGNamesPatternId   ? g_cachedGNamesPatternId   : "";
+            data["gworld_pattern_id"]   = g_cachedGWorldPatternId   ? g_cachedGWorldPatternId   : "";
+            json scanStats;
+            scanStats["gobjects_tried"] = g_cachedGObjectsTried;
+            scanStats["gobjects_hit"]   = g_cachedGObjectsHit;
+            scanStats["gnames_tried"]   = g_cachedGNamesTried;
+            scanStats["gnames_hit"]     = g_cachedGNamesHit;
+            scanStats["gworld_tried"]   = g_cachedGWorldTried;
+            scanStats["gworld_hit"]     = g_cachedGWorldHit;
+            data["scan_stats"]          = scanStats;
+            data["gobjects_scan_addr"]  = PipeProtocol::AddrToStr(g_cachedGObjectsScanAddr);
+            data["gnames_scan_addr"]    = PipeProtocol::AddrToStr(g_cachedGNamesScanAddr);
+            data["gworld_scan_addr"]    = PipeProtocol::AddrToStr(g_cachedGWorldScanAddr);
+
+            uintptr_t moduleBase = Mem::GetModuleBase(nullptr);
+            data["module_base"] = PipeProtocol::AddrToStr(moduleBase);
+            {
+                wchar_t moduleNameW[MAX_PATH] = {};
+                GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
+                std::wstring modulePath(moduleNameW);
+                auto lastSlash = modulePath.find_last_of(L"\\/");
+                std::wstring moduleFileName = (lastSlash != std::wstring::npos)
+                    ? modulePath.substr(lastSlash + 1) : modulePath;
+                std::string moduleName;
+                for (wchar_t wc : moduleFileName) {
+                    moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
+                }
+                data["module_name"] = moduleName;
+            }
+
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
