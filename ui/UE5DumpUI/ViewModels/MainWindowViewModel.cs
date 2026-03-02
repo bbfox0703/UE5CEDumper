@@ -23,6 +23,8 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "Disconnected";
     [ObservableProperty] private string _windowTitle = "UE5 Dump UI";
     [ObservableProperty] private bool _isConnected;
+    [ObservableProperty] private bool _needsScan;       // True when connected but scan not yet done (proxy DLL mode)
+    [ObservableProperty] private bool _isScanning;      // True while trigger_scan is in progress
     [ObservableProperty] private int _selectedTabIndex;
     [ObservableProperty] private int _selectedAddressFormatIndex;
     [ObservableProperty] private bool _collapsePointerNodes;
@@ -281,51 +283,33 @@ public partial class MainWindowViewModel : ViewModelBase
             await _pipeClient.ConnectAsync();
 
             var state = await _dump.InitAsync();
-
-            Pointers.Update(
-                state.GObjectsAddr,
-                state.GNamesAddr,
-                state.GWorldAddr,
-                state.UEVersion,
-                state.VersionDetected,
-                state.ObjectCount,
-                state.GObjectsMethod,
-                state.GNamesMethod,
-                state.GWorldMethod,
-                state.GObjectsPatternId,
-                state.GNamesPatternId,
-                state.GWorldPatternId,
-                state.GObjectsPatternsHit,
-                state.GNamesPatternsHit,
-                state.GWorldPatternsHit,
-                state.GObjectsScanAddr,
-                state.GNamesScanAddr,
-                state.GWorldScanAddr);
-
             _engineState = state;
-            ObjectTree.SetEngineState(state);
-            LiveWalker.SetEngineState(state);
-            InstanceFinder.SetEngineState(state);
-            HexView.SetEngineState(state);
-
-            // Fire-and-forget: persist AOB usage data (failure must not block UI)
-            if (_aobUsage != null)
-                _ = _aobUsage.RecordScanAsync(state);
-
             IsConnected = true;
-            StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
 
-            // Update window title with process name and start per-process mirror log
-            if (!string.IsNullOrEmpty(state.ModuleName))
+            // Detect proxy DLL mode: connected but scan not yet done
+            // (UE version 0 and all pointers at 0x0 / empty)
+            bool notScanned = state.UEVersion == 0
+                && state.ObjectCount == 0
+                && (string.IsNullOrEmpty(state.GObjectsAddr) || state.GObjectsAddr == "0x0");
+
+            if (notScanned)
             {
-                WindowTitle = $"UE5 Dump UI — {state.ModuleName}";
-                _log.StartProcessMirror(state.ModuleName);
+                NeedsScan = true;
+                StatusText = "Connected — waiting for scan (load a save first, then click Start Scan)";
+
+                if (!string.IsNullOrEmpty(state.ModuleName))
+                {
+                    WindowTitle = $"UE5 Dump UI — {state.ModuleName}";
+                    _log.StartProcessMirror(state.ModuleName);
+                }
+
+                _log.Info(Constants.LogCatInit, "Connected (proxy mode — scan not yet triggered)");
             }
-
-            _log.Info(Constants.LogCatInit, $"Connected: UE{state.UEVersion}, {state.ObjectCount} objects, module={state.ModuleName}");
-
-            // Auto-load objects after successful connection
-            _ = ObjectTree.LoadCommand.ExecuteAsync(null);
+            else
+            {
+                NeedsScan = false;
+                ApplyEngineState(state);
+            }
         }
         catch (Exception ex)
         {
@@ -347,6 +331,8 @@ public partial class MainWindowViewModel : ViewModelBase
             StatusText = "Disconnected";
             WindowTitle = "UE5 Dump UI";
             IsConnected = false;
+            NeedsScan = false;
+            IsScanning = false;
         }
         catch (OperationCanceledException)
         {
@@ -366,6 +352,72 @@ public partial class MainWindowViewModel : ViewModelBase
             {
                 SetError(ex);
             }
+        }
+    }
+
+    /// <summary>
+    /// Apply a fully-scanned engine state to all child ViewModels.
+    /// Shared between ConnectAsync (normal mode) and TriggerScanAsync (proxy mode).
+    /// </summary>
+    private void ApplyEngineState(EngineState state)
+    {
+        Pointers.Update(
+            state.GObjectsAddr, state.GNamesAddr, state.GWorldAddr,
+            state.UEVersion, state.VersionDetected, state.ObjectCount,
+            state.GObjectsMethod, state.GNamesMethod, state.GWorldMethod,
+            state.GObjectsPatternId, state.GNamesPatternId, state.GWorldPatternId,
+            state.GObjectsPatternsHit, state.GNamesPatternsHit, state.GWorldPatternsHit,
+            state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr);
+
+        ObjectTree.SetEngineState(state);
+        LiveWalker.SetEngineState(state);
+        InstanceFinder.SetEngineState(state);
+        HexView.SetEngineState(state);
+
+        // Fire-and-forget: persist AOB usage data (failure must not block UI)
+        if (_aobUsage != null)
+            _ = _aobUsage.RecordScanAsync(state);
+
+        StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
+
+        if (!string.IsNullOrEmpty(state.ModuleName))
+        {
+            WindowTitle = $"UE5 Dump UI — {state.ModuleName}";
+            _log.StartProcessMirror(state.ModuleName);
+        }
+
+        _log.Info(Constants.LogCatInit, $"Connected: UE{state.UEVersion}, {state.ObjectCount} objects, module={state.ModuleName}");
+
+        // Auto-load objects
+        _ = ObjectTree.LoadCommand.ExecuteAsync(null);
+    }
+
+    /// <summary>
+    /// Trigger AOB scan from the UI. Used in proxy DLL mode where the DLL starts
+    /// the pipe server without scanning. The user clicks "Start Scan" after the
+    /// game has loaded a save / reached the main world.
+    /// </summary>
+    [RelayCommand]
+    private async Task TriggerScanAsync()
+    {
+        try
+        {
+            ClearError();
+            IsScanning = true;
+            StatusText = "Scanning...";
+
+            var state = await _dump.TriggerScanAsync();
+            _engineState = state;
+            NeedsScan = false;
+            IsScanning = false;
+            ApplyEngineState(state);
+        }
+        catch (Exception ex)
+        {
+            IsScanning = false;
+            StatusText = "Scan failed";
+            SetError(ex);
+            _log.Error(Constants.LogCatInit, "TriggerScan failed", ex);
         }
     }
 

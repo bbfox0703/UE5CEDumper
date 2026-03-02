@@ -38,7 +38,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 | Feature | Description |
 |---|---|
-| **AOB Scanning** | 100 entries (95 patterns + 5 exports) from 8 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. |
+| **AOB Scanning** | 133 patterns from 14 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. |
 | **DynOff (Dynamic Offsets)** | Runtime probing of `FField`, `FProperty`, and `UStruct`. No more manual offset updating after game patches. |
 | **Live Walker** | Inspect instance memory data with real-time value updates. Navigate into pointers (→), inline structs ({}), and containers ([]). Breadcrumb trail for full navigation history. |
 | **Container Drill-Down** | Drill into **Array**, **Map**, and **Set** containers. ObjectProperty elements show resolved names and support click-through navigation. |
@@ -50,14 +50,26 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 ## Architecture & Workflow
 
+### Option A: Cheat Engine (Recommended)
+
 1.  **Inject DLL**: Run Cheat Engine, attach game process, load a save. Make sure game data is loaded first. Open `UE5CEDumper.CT`.
 2.  **Enable Script**: Enable `init <== enable after process attached`, then `Inject DLL + Start Pipe Server`. The DLL locates global engine pointers and detects the UE version/layout automatically.
 3.  **Connect UI**: Wait a few seconds for the scan to finish. Launch **UE5DumpUI.exe** and click **Connect**. Live data streams to the UI via Named Pipes (JSON-RPC).
 4.  **Navigate & Analyze**: Browse the `UObject` hierarchy, find a class, drill into containers, or paste an address from CE to reverse-lookup and export.
 
+### Option B: Proxy DLL (No Cheat Engine Required)
+
+1.  **Place DLL**: Copy `version.dll` (from `build.ps1 -Target ProxyDLL`) into the game's root folder (next to the `.exe`).
+2.  **Launch Game**: Start the game normally. The proxy DLL loads automatically and starts the pipe server.
+3.  **Load a Save**: Reach the main game world so UE objects are populated in memory.
+4.  **Connect + Scan**: Launch **UE5DumpUI.exe**, click **Connect**, then click **Start Scan**. The DLL performs the AOB scan and returns engine data to the UI.
+5.  **Navigate & Analyze**: Same workflow as Option A — browse objects, find instances, export CE structures.
+
+> **Note**: Do not use both methods simultaneously. If the proxy DLL is in the game folder, do not also inject `UE5Dumper.dll` via CE. The DLL detects duplicate instances and skips auto-start to prevent conflicts.
+
 | **Game Process (Injected)** |
 | :---: |
-| DLL + CE Lua Bridge |
+| DLL + CE Lua Bridge (or Proxy DLL) |
 | ⬇️ |
 | **Named Pipe IPC (JSON-RPC Protocol)** |
 | ⬇️ |
@@ -80,7 +92,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 ### Runtime
 
 - Windows 10/11 x64
-- Cheat Engine 7.6+
+- Cheat Engine 7.6+ (for CE injection method) *or* Proxy DLL (no CE required)
 - A running Unreal Engine 4 or 5 game process (x64)
 
 ---
@@ -96,8 +108,8 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
-- **Submitting AOB patterns** — what evidence to provide and how verification works
-- **Reporting detection failures** — what logs and info to include
+- **Reporting detection failures** — what logs and info to include (most helpful!)
+- **Submitting AOB patterns** — for reverse engineers who want to contribute directly
 - **Code contributions** — PR process and code style
 
 ---

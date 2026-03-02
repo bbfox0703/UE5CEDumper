@@ -36,7 +36,7 @@ param(
     [ValidateSet("Debug", "Release", "Publish")]
     [string]$Mode = "Release",
 
-    [ValidateSet("All", "DLL", "UI", "Test")]
+    [ValidateSet("All", "DLL", "ProxyDLL", "UI", "Test")]
     [string]$Target = "All",
 
     [switch]$Clean,
@@ -331,6 +331,63 @@ if ($Target -in "All", "DLL") {
 }
 
 # ============================================================
+# Build Proxy DLL (version.dll)
+# ============================================================
+
+if ($Target -in "All", "ProxyDLL") {
+    Write-Banner "Proxy DLL (version.dll)  |  $CppConfig"
+
+    $proxyBuildDir = Join-Path $ROOT_DIR "build_proxy"
+
+    # Always do a clean build
+    if (Test-Path $proxyBuildDir) {
+        Write-Step "Removing proxy CMake cache for clean build..."
+        Remove-Item $proxyBuildDir -Recurse -Force
+        Write-Ok "Proxy build directory cleaned"
+    }
+
+    Write-Step "Configuring CMake for Proxy DLL (Ninja + MSVC)..."
+    $configOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$proxyBuildDir`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON"
+
+    if (-not $configOk) {
+        Write-Fail "CMake configure failed (Proxy DLL)"
+        $exitCode = 1
+    }
+    else {
+        Write-Ok "CMake configured (Proxy DLL)"
+
+        Write-Step "Building version.dll ($CppConfig)..."
+        $buildOk = Invoke-CmdInVsEnv "cmake --build `"$proxyBuildDir`" --config $CppConfig --target UE5Dumper_Proxy"
+
+        if (-not $buildOk) {
+            Write-Fail "Proxy DLL build failed"
+            $exitCode = 1
+        }
+        else {
+            $proxyDll = Get-ChildItem -Path $proxyBuildDir -Filter "version.dll" -Recurse |
+                        Select-Object -First 1
+
+            if ($proxyDll) {
+                Copy-Item $proxyDll.FullName -Destination $DIST_DIR -Force
+
+                $pdbFile = Get-ChildItem -Path $proxyBuildDir -Filter "version.pdb" -Recurse |
+                           Select-Object -First 1
+                if ($pdbFile) {
+                    Copy-Item $pdbFile.FullName -Destination $DIST_DIR -Force
+                }
+
+                $dllSize = Get-FileSize (Join-Path $DIST_DIR "version.dll")
+                Write-Ok "version.dll ($dllSize)"
+            }
+            else {
+                Write-Fail "version.dll not found in build output"
+                $exitCode = 1
+            }
+        }
+    }
+}
+
+# ============================================================
 # Build C# Avalonia UI
 # ============================================================
 
@@ -493,11 +550,11 @@ if ($Target -in "All", "DLL") {
         Copy-Item $dissectSrc -Destination $DIST_DIR -Force
         Write-Ok "ue5_dissect.lua copied to dist\"
     }
-    # README.md — script documentation for end users
-    $readmeSrc = Join-Path $ROOT_DIR "scripts\README.md"
+    # README.md — deployment guide for end users (covers CE inject + Proxy DLL)
+    $readmeSrc = Join-Path $ROOT_DIR "scripts\DEPLOY_README.md"
     if (Test-Path $readmeSrc) {
-        Copy-Item $readmeSrc -Destination $DIST_DIR -Force
-        Write-Ok "scripts README.md copied to dist\"
+        Copy-Item $readmeSrc -Destination (Join-Path $DIST_DIR "README.md") -Force
+        Write-Ok "deployment README.md copied to dist\"
     }
     # build_number.txt — build version tracking
     $buildNumSrc = Join-Path $ROOT_DIR "build_number.txt"
