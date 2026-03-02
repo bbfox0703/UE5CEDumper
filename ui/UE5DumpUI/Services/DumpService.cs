@@ -866,6 +866,20 @@ public sealed class DumpService : IDumpService
         return BuildEngineState(res);
     }
 
+    public async Task<EngineState> TriggerScanAsync(CancellationToken ct = default)
+    {
+        // trigger_scan may take several seconds (AOB scan + offset detection).
+        // The pipe timeout should be generous.
+        var req = new JsonObject { ["cmd"] = "trigger_scan" };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        // trigger_scan returns full pointer data — same shape as get_pointers
+        var ueVersion = res["ue_version"]?.GetValue<int>() ?? 0;
+        var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
+        return BuildEngineState(res, ueVersion, versionDetected);
+    }
+
     private static void CheckResponse(JsonObject res)
     {
         var ok = res["ok"]?.GetValue<bool>() ?? false;

@@ -359,6 +359,17 @@ int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
 // === Pipe Server ===
 
 bool UE5_StartPipeServer() {
+    // Guard: if another UE5Dumper instance (e.g., proxy DLL) already owns the pipe,
+    // skip starting a competing pipe server to avoid connection failures.
+    HANDLE testPipe = CreateFileW(
+        Constants::PIPE_NAME,
+        GENERIC_READ, 0, nullptr,
+        OPEN_EXISTING, 0, nullptr);
+    if (testPipe != INVALID_HANDLE_VALUE) {
+        CloseHandle(testPipe);
+        LOG_WARN("UE5_StartPipeServer: pipe already exists (another instance running) — skipping");
+        return true;  // return true so CE Lua doesn't treat it as failure
+    }
     return s_pipeServer.Start();
 }
 
