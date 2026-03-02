@@ -40,6 +40,21 @@ private:
     std::unordered_map<uintptr_t, std::unique_ptr<WatchEntry>> m_watches;
     std::mutex m_watchMutex;
 
+    // Extra Scan (user-triggered background rescan for missing pointers)
+    struct RescanState {
+        std::atomic<bool> running{false};
+        std::atomic<int>  phase{0};       // 0=idle, 1=GObjects, 2=GWorld, 3=complete
+        std::string       statusText;
+        std::mutex        statusMutex;
+        uintptr_t         foundGObjects = 0;
+        uintptr_t         foundGWorld   = 0;
+        const char*       gobjectsMethod = "not_found";
+        const char*       gworldMethod   = "not_found";
+        std::thread       scanThread;
+    };
+    RescanState m_rescan;
+    void RunRescan(bool scanGObjects, bool scanGWorld);
+
     void AcceptLoop();
     void HandleClient(HANDLE pipe);
     std::string DispatchCommand(const std::string& jsonLine);
