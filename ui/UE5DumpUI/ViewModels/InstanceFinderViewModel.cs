@@ -46,6 +46,7 @@ public partial class InstanceFinderViewModel : ViewModelBase
 
     // --- Class name search ---
     [ObservableProperty] private string _searchClassName = "";
+    [ObservableProperty] private bool _exactMatch;
     [ObservableProperty] private ObservableCollection<InstanceResult> _instances = new();
     [ObservableProperty] private InstanceResult? _selectedInstance;
     [ObservableProperty] private ObservableCollection<LiveFieldValue> _fields = new();
@@ -91,7 +92,7 @@ public partial class InstanceFinderViewModel : ViewModelBase
             StatusText = "Searching...";
             ShowCeXml = false;
 
-            var result = await _dump.FindInstancesAsync(SearchClassName.Trim());
+            var result = await _dump.FindInstancesAsync(SearchClassName.Trim(), ExactMatch);
 
             Instances.Clear();
             foreach (var r in result.Instances)

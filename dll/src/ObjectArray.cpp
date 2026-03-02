@@ -11,6 +11,7 @@
 
 #include "UStructWalker.h"
 
+#include <algorithm>
 #include <cctype>
 #include <climits>
 #include <unordered_set>
@@ -820,7 +821,7 @@ SearchResultSet SearchByName(const std::string& query, int maxResults) {
     return rset;
 }
 
-SearchResultSet FindInstancesByClass(const std::string& className, int maxResults) {
+SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults) {
     SearchResultSet rset;
 
     // Convert query to lowercase for case-insensitive comparison
@@ -846,11 +847,15 @@ SearchResultSet FindInstancesByClass(const std::string& className, int maxResult
         if (clsName.empty()) continue;
         rset.named++;
 
-        // Case-insensitive partial match on class name
+        // Case-insensitive match: exact (equality) or partial (substring)
         std::string lowerClsName = clsName;
         for (auto& c : lowerClsName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-        if (lowerClsName.find(lowerQuery) == std::string::npos) continue;
+        if (exactMatch) {
+            if (lowerClsName != lowerQuery) continue;
+        } else {
+            if (lowerClsName.find(lowerQuery) == std::string::npos) continue;
+        }
 
         SearchResult sr;
         sr.addr = obj;
@@ -1271,6 +1276,142 @@ PropertySearchResult SearchProperties(
     Logger::Info("PIPE:search", "SearchProperties '%s': %d matches from %d classes (scanned %d objects)",
                  query.c_str(), static_cast<int>(result.results.size()),
                  result.scannedClasses, result.scannedObjects);
+    return result;
+}
+
+// --- Heuristic Scorer: auto-rank classes by RE interest ---
+
+static int GetFieldTypeWeight(const std::string& typeName) {
+    // High-value: game stats, collections
+    if (typeName == "FloatProperty" || typeName == "DoubleProperty") return 3;
+    if (typeName == "ArrayProperty") return 3;
+
+    // Medium-value: integers, structs, object refs, maps/sets
+    if (typeName == "IntProperty"   || typeName == "Int8Property"  ||
+        typeName == "Int16Property" || typeName == "Int32Property" ||
+        typeName == "Int64Property" || typeName == "UInt16Property"||
+        typeName == "UInt32Property"|| typeName == "UInt64Property") return 2;
+    if (typeName == "StructProperty") return 2;
+    if (typeName == "ObjectProperty"     || typeName == "ClassProperty"      ||
+        typeName == "WeakObjectProperty" || typeName == "LazyObjectProperty" ||
+        typeName == "SoftObjectProperty" || typeName == "SoftClassProperty"  ||
+        typeName == "InterfaceProperty") return 2;
+    if (typeName == "MapProperty" || typeName == "SetProperty") return 2;
+
+    // Low-value: enums, bools, strings, bytes
+    if (typeName == "EnumProperty") return 1;
+    if (typeName == "BoolProperty") return 1;
+    if (typeName == "StrProperty"  || typeName == "TextProperty" ||
+        typeName == "NameProperty" || typeName == "ByteProperty") return 1;
+
+    return 1; // Unknown types get minimum weight
+}
+
+static int GetSuperClassBonus(const std::string& superName) {
+    if (superName.empty()) return 0;
+
+    // Convert to lowercase for case-insensitive matching
+    std::string lower = superName;
+    for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    // Checked in priority order (most specific first)
+    if (lower.find("character") != std::string::npos || lower.find("pawn") != std::string::npos) return 20;
+    if (lower.find("playercontroller") != std::string::npos ||
+        lower.find("aicontroller")     != std::string::npos ||
+        lower.find("controller")       != std::string::npos) return 15;
+    if (lower.find("playerstate") != std::string::npos ||
+        lower.find("gamestate")   != std::string::npos ||
+        lower.find("gamemode")    != std::string::npos) return 15;
+    if (lower.find("gameinstance") != std::string::npos) return 10;
+    if (lower.find("actor") != std::string::npos) return 10;
+    if (lower.find("actorcomponent") != std::string::npos ||
+        lower.find("scenecomponent") != std::string::npos) return 8;
+    if (lower.find("widget") != std::string::npos || lower.find("userwidget") != std::string::npos) return 5;
+    if (lower.find("animinstance") != std::string::npos) return 5;
+    if (lower.find("dataasset") != std::string::npos) return 5;
+
+    return 0;
+}
+
+static int ComputeHeuristicScore(const ClassInfo& ci) {
+    int score = 0;
+
+    // Sum per-field type weights
+    for (const auto& f : ci.Fields) {
+        score += GetFieldTypeWeight(f.TypeName);
+    }
+
+    // Super class bonus
+    score += GetSuperClassBonus(ci.SuperName);
+
+    // Size bonus
+    if (ci.PropertiesSize > 0x400)       score += 5;
+    else if (ci.PropertiesSize > 0x100)  score += 3;
+    else if (ci.PropertiesSize > 0)      score += 1;
+
+    // Penalty for empty/abstract classes
+    if (ci.Fields.empty()) score -= 5;
+
+    return (score < 0) ? 0 : score;
+}
+
+// --- ListClasses ---
+
+ClassListResult ListClasses(bool gameOnly, int maxResults) {
+    ClassListResult result;
+
+    std::unordered_set<uintptr_t> visitedClasses;
+
+    int32_t count = GetCount();
+    result.scannedObjects = count;
+
+    for (int32_t i = 0; i < count && static_cast<int>(result.results.size()) < maxResults; ++i) {
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+
+        // Check if this object IS a UClass (its class name == "Class")
+        uintptr_t cls = 0;
+        if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        uint32_t clsNameIdx = 0;
+        if (!Mem::ReadSafe(cls + Constants::OFF_UOBJECT_NAME, clsNameIdx)) continue;
+
+        std::string metaClassName = FNamePool::GetString(clsNameIdx);
+        if (metaClassName != "Class") continue;
+
+        // Skip if already visited
+        if (!visitedClasses.insert(obj).second) continue;
+
+        // Get class path for game_only filter
+        std::string classPath = UStructWalker::GetFullName(obj);
+        if (gameOnly && IsEnginePackage(classPath)) continue;
+
+        result.totalClasses++;
+
+        // Walk class to get property count and size
+        ClassInfo ci = UStructWalker::WalkClassEx(obj);
+
+        ClassListEntry entry;
+        entry.className      = ci.Name;
+        entry.classAddr      = obj;
+        entry.classPath      = classPath;
+        entry.superName      = ci.SuperName;
+        entry.propertyCount  = static_cast<int32_t>(ci.Fields.size());
+        entry.propertiesSize = ci.PropertiesSize;
+        entry.heuristicScore = ComputeHeuristicScore(ci);
+        result.results.push_back(std::move(entry));
+    }
+
+    // Sort by heuristic score descending, then alphabetically for ties
+    std::sort(result.results.begin(), result.results.end(),
+        [](const ClassListEntry& a, const ClassListEntry& b) {
+            if (a.heuristicScore != b.heuristicScore)
+                return a.heuristicScore > b.heuristicScore;
+            return a.className < b.className;
+        });
+
+    Logger::Info("PIPE:list", "ListClasses: %d classes (gameOnly=%d, scanned %d objects)",
+                 static_cast<int>(result.results.size()), gameOnly ? 1 : 0, result.scannedObjects);
     return result;
 }
 
