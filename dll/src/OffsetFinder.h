@@ -32,6 +32,11 @@ struct EnginePointers {
     const char* gnamesPatternId   = nullptr;
     const char* gworldPatternId   = nullptr;
 
+    // AOB scan hit addresses (instruction address where the winning pattern matched)
+    uintptr_t gobjectsScanAddr = 0;
+    uintptr_t gnamesScanAddr   = 0;
+    uintptr_t gworldScanAddr   = 0;
+
     // Per-target scan statistics
     int gobjectsPatternsTried = 0;
     int gobjectsPatternsHit   = 0;

@@ -74,6 +74,9 @@ public sealed class DumpService : IDumpService
             GObjectsPatternId = ptrs["gobjects_pattern_id"]?.GetValue<string>() ?? "",
             GNamesPatternId = ptrs["gnames_pattern_id"]?.GetValue<string>() ?? "",
             GWorldPatternId = ptrs["gworld_pattern_id"]?.GetValue<string>() ?? "",
+            GObjectsScanAddr = ptrs["gobjects_scan_addr"]?.GetValue<string>() ?? "",
+            GNamesScanAddr = ptrs["gnames_scan_addr"]?.GetValue<string>() ?? "",
+            GWorldScanAddr = ptrs["gworld_scan_addr"]?.GetValue<string>() ?? "",
             GObjectsPatternsTried = scanStats?["gobjects_tried"]?.GetValue<int>() ?? 0,
             GObjectsPatternsHit = scanStats?["gobjects_hit"]?.GetValue<int>() ?? 0,
             GNamesPatternsTried = scanStats?["gnames_tried"]?.GetValue<int>() ?? 0,
@@ -422,12 +425,13 @@ public sealed class DumpService : IDumpService
         return result;
     }
 
-    public async Task<FindInstancesResult> FindInstancesAsync(string className, int limit = 500, CancellationToken ct = default)
+    public async Task<FindInstancesResult> FindInstancesAsync(string className, bool exactMatch = false, int limit = 500, CancellationToken ct = default)
     {
         var req = new JsonObject
         {
             ["cmd"] = "find_instances",
             ["class_name"] = className,
+            ["exact_match"] = exactMatch,
             ["limit"] = limit
         };
         var res = await _pipe.SendAsync(req, ct);
@@ -768,6 +772,47 @@ public sealed class DumpService : IDumpService
                     PropSize   = obj["prop_size"]?.GetValue<int>() ?? 0,
                     StructType = obj["struct_type"]?.GetValue<string>() ?? "",
                     InnerType  = obj["inner_type"]?.GetValue<string>() ?? "",
+                });
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<ClassListResult> ListClassesAsync(
+        bool gameOnly = true, int limit = 5000, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "list_classes",
+            ["game_only"] = gameOnly,
+            ["limit"] = limit
+        };
+
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        var result = new ClassListResult
+        {
+            Total = res["total"]?.GetValue<int>() ?? 0,
+            ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
+            TotalClasses = res["total_classes"]?.GetValue<int>() ?? 0,
+        };
+
+        if (res["classes"] is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                if (item is not JsonObject obj) continue;
+                result.Classes.Add(new GameClassEntry
+                {
+                    ClassName       = obj["class_name"]?.GetValue<string>() ?? "",
+                    ClassAddr       = obj["class_addr"]?.GetValue<string>() ?? "",
+                    ClassPath       = obj["class_path"]?.GetValue<string>() ?? "",
+                    SuperName       = obj["super_name"]?.GetValue<string>() ?? "",
+                    PropertyCount   = obj["property_count"]?.GetValue<int>() ?? 0,
+                    PropertiesSize  = obj["properties_size"]?.GetValue<int>() ?? 0,
+                    Score           = obj["score"]?.GetValue<int>() ?? 0,
                 });
             }
         }

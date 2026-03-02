@@ -158,6 +158,9 @@
         <TabItem Header="{StaticResource str.Tab.PropertySearch}">
           <views:PropertySearchPanel DataContext="{Binding PropertySearch}"/>
         </TabItem>
+        <TabItem Header="{StaticResource str.Tab.GameClassFilter}">
+          <views:GameClassFilterPanel DataContext="{Binding GameClassFilter}"/>
+        </TabItem>
         <TabItem Header="{StaticResource str.Tab.ClassStruct}">
           <views:ClassStructPanel DataContext="{Binding ClassStruct}"/>
         </TabItem>

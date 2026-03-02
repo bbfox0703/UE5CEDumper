@@ -225,6 +225,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
             extern int         g_cachedGNamesTried,   g_cachedGNamesHit;
             extern int         g_cachedGWorldTried,   g_cachedGWorldHit;
+            extern uintptr_t   g_cachedGObjectsScanAddr;
+            extern uintptr_t   g_cachedGNamesScanAddr;
+            extern uintptr_t   g_cachedGWorldScanAddr;
 
             json data;
             data["gobjects"]         = PipeProtocol::AddrToStr(g_cachedGObjects);
@@ -250,6 +253,11 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             scanStats["gworld_tried"]   = g_cachedGWorldTried;
             scanStats["gworld_hit"]     = g_cachedGWorldHit;
             data["scan_stats"] = scanStats;
+
+            // AOB scan hit addresses (instruction that references the pointer)
+            data["gobjects_scan_addr"] = PipeProtocol::AddrToStr(g_cachedGObjectsScanAddr);
+            data["gnames_scan_addr"]   = PipeProtocol::AddrToStr(g_cachedGNamesScanAddr);
+            data["gworld_scan_addr"]   = PipeProtocol::AddrToStr(g_cachedGWorldScanAddr);
 
             // Module info for CE address formatting
             uintptr_t moduleBase = Mem::GetModuleBase(nullptr);
@@ -969,10 +977,11 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
         // === find_instances: Search GObjects for instances of a given class ===
         if (cmd == PipeProtocol::CMD_FIND_INSTANCES) {
             std::string className = request.value("class_name", "");
+            bool exactMatch = request.value("exact_match", false);
             int limit = request.value("limit", 500);
             if (className.empty()) return PipeProtocol::MakeError(id, "Missing class_name").dump();
 
-            auto rset = ObjectArray::FindInstancesByClass(className, limit);
+            auto rset = ObjectArray::FindInstancesByClass(className, exactMatch, limit);
 
             json instances = json::array();
             for (const auto& sr : rset.results) {
@@ -1032,6 +1041,34 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["scanned_classes"] = searchResult.scannedClasses;
             data["scanned_objects"] = searchResult.scannedObjects;
             data["results"]         = matches;
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // === list_classes: List all UClass objects (optionally game-only) ===
+        if (cmd == PipeProtocol::CMD_LIST_CLASSES) {
+            bool gameOnly = request.value("game_only", true);
+            int limit = request.value("limit", 5000);
+
+            auto listResult = ObjectArray::ListClasses(gameOnly, limit);
+
+            json classes = json::array();
+            for (const auto& e : listResult.results) {
+                json item;
+                item["class_name"]      = e.className;
+                item["class_addr"]      = PipeProtocol::AddrToStr(e.classAddr);
+                item["class_path"]      = e.classPath;
+                item["super_name"]      = e.superName;
+                item["property_count"]  = e.propertyCount;
+                item["properties_size"] = e.propertiesSize;
+                item["score"]           = e.heuristicScore;
+                classes.push_back(item);
+            }
+
+            json data;
+            data["total"]           = static_cast<int>(listResult.results.size());
+            data["scanned_objects"] = listResult.scannedObjects;
+            data["total_classes"]   = listResult.totalClasses;
+            data["classes"]         = classes;
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 
