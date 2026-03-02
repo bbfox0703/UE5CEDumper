@@ -225,6 +225,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
             extern int         g_cachedGNamesTried,   g_cachedGNamesHit;
             extern int         g_cachedGWorldTried,   g_cachedGWorldHit;
+            extern uintptr_t   g_cachedGObjectsScanAddr;
+            extern uintptr_t   g_cachedGNamesScanAddr;
+            extern uintptr_t   g_cachedGWorldScanAddr;
 
             json data;
             data["gobjects"]         = PipeProtocol::AddrToStr(g_cachedGObjects);
@@ -250,6 +253,11 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             scanStats["gworld_tried"]   = g_cachedGWorldTried;
             scanStats["gworld_hit"]     = g_cachedGWorldHit;
             data["scan_stats"] = scanStats;
+
+            // AOB scan hit addresses (instruction that references the pointer)
+            data["gobjects_scan_addr"] = PipeProtocol::AddrToStr(g_cachedGObjectsScanAddr);
+            data["gnames_scan_addr"]   = PipeProtocol::AddrToStr(g_cachedGNamesScanAddr);
+            data["gworld_scan_addr"]   = PipeProtocol::AddrToStr(g_cachedGWorldScanAddr);
 
             // Module info for CE address formatting
             uintptr_t moduleBase = Mem::GetModuleBase(nullptr);

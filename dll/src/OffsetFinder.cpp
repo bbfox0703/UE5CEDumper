@@ -529,6 +529,7 @@ struct ScanReport {
     const char*                    targetName = "";
     std::vector<PatternScanResult> results;
     uintptr_t                      finalAddress = 0;
+    uintptr_t                      scanAddr     = 0;  // AOB match address (instruction that references the pointer)
     const char*                    winningId    = nullptr;
 };
 
@@ -729,6 +730,7 @@ static uintptr_t ScanForTarget(
                 LOG_INFO("[%s] %s: CallFollow -> 0x%llX",
                          report.targetName, sig->id, (unsigned long long)pr.selected);
                 report.finalAddress = pr.selected;
+                report.scanAddr = matchAddr;
                 report.winningId = sig->id;
                 return pr.selected;
             }
@@ -755,10 +757,12 @@ static uintptr_t ScanForTarget(
 
         // Try to validate each match
         uintptr_t bestResult = 0;
+        uintptr_t bestMatchAddr = 0;
         for (uintptr_t matchAddr : matches) {
             uintptr_t resolved = TryResolveMatch(matchAddr, *sig, validate);
             if (resolved) {
                 bestResult = resolved;
+                bestMatchAddr = matchAddr;
                 break; // Take first validated match
             }
         }
@@ -786,6 +790,7 @@ static uintptr_t ScanForTarget(
                          (unsigned long long)bestResult);
             }
             report.finalAddress = bestResult;
+            report.scanAddr = bestMatchAddr;
             report.winningId = sig->id;
             return bestResult;
         }
@@ -2371,6 +2376,9 @@ bool FindAll(EnginePointers& out) {
     out.gobjectsPatternId = s_gobjectsReport.winningId;
     out.gnamesPatternId   = s_gnamesReport.winningId;
     out.gworldPatternId   = s_gworldReport.winningId;
+    out.gobjectsScanAddr  = s_gobjectsReport.scanAddr;
+    out.gnamesScanAddr    = s_gnamesReport.scanAddr;
+    out.gworldScanAddr    = s_gworldReport.scanAddr;
 
     ExtractScanStats(s_gobjectsReport, out.gobjectsPatternsTried, out.gobjectsPatternsHit);
     ExtractScanStats(s_gnamesReport,   out.gnamesPatternsTried,   out.gnamesPatternsHit);

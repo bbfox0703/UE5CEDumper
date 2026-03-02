@@ -28,6 +28,11 @@ public sealed class EngineState
     public string GNamesPatternId { get; init; } = "";
     public string GWorldPatternId { get; init; } = "";
 
+    /// <summary>AOB scan hit addresses (instruction that references the pointer).</summary>
+    public string GObjectsScanAddr { get; init; } = "";
+    public string GNamesScanAddr { get; init; } = "";
+    public string GWorldScanAddr { get; init; } = "";
+
     /// <summary>Per-target scan statistics.</summary>
     public int GObjectsPatternsTried { get; init; }
     public int GObjectsPatternsHit { get; init; }
