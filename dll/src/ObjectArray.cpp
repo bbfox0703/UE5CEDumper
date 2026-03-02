@@ -1269,7 +1269,47 @@ PropertySearchResult SearchProperties(
             match.propSize   = field.Size;
             match.structType = field.structType;
             match.innerType  = field.innerType;
+            // Preview metadata
+            match.fieldAddr      = field.Address;
+            match.boolFieldMask  = field.boolFieldMask;
+            match.keyType        = field.keyType;
+            match.valueType      = field.valueType;
             result.results.push_back(std::move(match));
+        }
+    }
+
+    // --- Phase 2: Resolve value previews from representative instances ---
+    if (!result.results.empty()) {
+        // 2a. Collect unique classAddr set
+        std::unordered_set<uintptr_t> needClasses;
+        for (const auto& m : result.results)
+            needClasses.insert(m.classAddr);
+
+        // 2b. Scan GObjects to find one instance per class
+        std::unordered_map<uintptr_t, uintptr_t> instanceMap;
+        int32_t cnt = GetCount();
+        for (int32_t i = 0; i < cnt && instanceMap.size() < needClasses.size(); ++i) {
+            uintptr_t obj = GetByIndex(i);
+            if (!obj) continue;
+
+            uintptr_t cls = 0;
+            if (!Mem::ReadSafe(obj + Constants::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+            // Skip if this IS a UClass (we want instances, not the class itself)
+            if (needClasses.count(cls) && !instanceMap.count(cls) && obj != cls) {
+                instanceMap[cls] = obj;
+            }
+        }
+
+        // 2c. Read property values and fill previews
+        if (!instanceMap.empty()) {
+            // Resolve EnumProperty: read UEnum* from FField for matches that need it
+            for (auto& m : result.results) {
+                if (m.propType == "EnumProperty" && m.enumAddr == 0 && m.fieldAddr) {
+                    Mem::ReadSafe(m.fieldAddr + DynOff::FENUMPROP_ENUM, m.enumAddr);
+                }
+            }
+            UStructWalker::ResolvePropertyPreviews(result.results, instanceMap);
         }
     }
 

@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct FieldInfo {
@@ -289,5 +290,22 @@ ReadArrayResult ReadStructArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     uintptr_t innerStructAddr, int32_t elemSize,
     int32_t offset = 0, int32_t limit = 64);
+
+} // namespace UStructWalker
+
+// --- Property Search Preview Resolution ---
+// (Outside UStructWalker namespace because PropertyMatch is in ObjectArray namespace)
+
+namespace ObjectArray { struct PropertyMatch; }
+
+namespace UStructWalker {
+
+// Resolve inline value previews for property search results.
+// For each PropertyMatch, reads the property value from a representative
+// instance of its class and stores the preview string in match.preview.
+// instanceMap: classAddr -> instanceAddr (one representative instance per class)
+void ResolvePropertyPreviews(
+    std::vector<ObjectArray::PropertyMatch>& matches,
+    const std::unordered_map<uintptr_t, uintptr_t>& instanceMap);
 
 } // namespace UStructWalker

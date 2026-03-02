@@ -772,6 +772,7 @@ public sealed class DumpService : IDumpService
                     PropSize   = obj["prop_size"]?.GetValue<int>() ?? 0,
                     StructType = obj["struct_type"]?.GetValue<string>() ?? "",
                     InnerType  = obj["inner_type"]?.GetValue<string>() ?? "",
+                    Preview    = obj["preview"]?.GetValue<string>() ?? "",
                 });
             }
         }
