@@ -419,6 +419,7 @@ FodyWeavers.xsd
 
 # Build output
 build/
+build_proxy/
 dist/
 
 # Claude Code

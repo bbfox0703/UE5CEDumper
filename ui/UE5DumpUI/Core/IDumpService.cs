@@ -54,4 +54,12 @@ public interface IDumpService
     Task<RescanStartResult> StartRescanAsync(CancellationToken ct = default);
     Task<RescanStatusResult> GetRescanStatusAsync(CancellationToken ct = default);
     Task<EngineState> ApplyRescanAsync(CancellationToken ct = default);
+
+    // --- Trigger Scan (proxy DLL deferred scan) ---
+    /// <summary>
+    /// Trigger AOB scan from the UI. Used when proxy DLL starts without scanning
+    /// (pipe server only). Returns full engine state after scan completes.
+    /// Also safe to call in CE/manual mode — UE5_Init is idempotent.
+    /// </summary>
+    Task<EngineState> TriggerScanAsync(CancellationToken ct = default);
 }
