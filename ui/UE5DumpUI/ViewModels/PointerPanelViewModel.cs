@@ -29,6 +29,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _gNamesPatternId = "";
     [ObservableProperty] private string _gWorldPatternId = "";
 
+    // AOB scan hit addresses (instruction that references the pointer)
+    [ObservableProperty] private string _gObjectsScanAddr = "";
+    [ObservableProperty] private string _gNamesScanAddr = "";
+    [ObservableProperty] private string _gWorldScanAddr = "";
+
     // Per-target scan statistics (for red/green indicator)
     [ObservableProperty] private int _gObjectsPatternsHit;
     [ObservableProperty] private int _gNamesPatternsHit;
@@ -70,6 +75,13 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>True when GWorld has a non-empty pattern ID to display.</summary>
     public bool HasGWorldPatternId => HasData && !string.IsNullOrEmpty(GWorldPatternId);
 
+    /// <summary>True when GObjects has a non-zero AOB scan address.</summary>
+    public bool HasGObjectsScanAddr => HasData && !string.IsNullOrEmpty(GObjectsScanAddr) && GObjectsScanAddr != "0";
+    /// <summary>True when GNames has a non-zero AOB scan address.</summary>
+    public bool HasGNamesScanAddr => HasData && !string.IsNullOrEmpty(GNamesScanAddr) && GNamesScanAddr != "0";
+    /// <summary>True when GWorld has a non-zero AOB scan address.</summary>
+    public bool HasGWorldScanAddr => HasData && !string.IsNullOrEmpty(GWorldScanAddr) && GWorldScanAddr != "0";
+
     public PointerPanelViewModel(IPlatformService platform)
     {
         _platform = platform;
@@ -82,7 +94,9 @@ public partial class PointerPanelViewModel : ViewModelBase
                        string gobjectsPatternId = "", string gnamesPatternId = "",
                        string gworldPatternId = "",
                        int gobjectsPatternsHit = 0, int gnamesPatternsHit = 0,
-                       int gworldPatternsHit = 0)
+                       int gworldPatternsHit = 0,
+                       string gobjectsScanAddr = "", string gnamesScanAddr = "",
+                       string gworldScanAddr = "")
     {
         GObjectsAddress = gobjects;
         GNamesAddress = gnames;
@@ -99,6 +113,9 @@ public partial class PointerPanelViewModel : ViewModelBase
         GObjectsPatternsHit = gobjectsPatternsHit;
         GNamesPatternsHit = gnamesPatternsHit;
         GWorldPatternsHit = gworldPatternsHit;
+        GObjectsScanAddr = gobjectsScanAddr;
+        GNamesScanAddr = gnamesScanAddr;
+        GWorldScanAddr = gworldScanAddr;
         HasData = true;
         NotifyComputedProperties();
     }
@@ -117,6 +134,9 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasGObjectsPatternId));
         OnPropertyChanged(nameof(HasGNamesPatternId));
         OnPropertyChanged(nameof(HasGWorldPatternId));
+        OnPropertyChanged(nameof(HasGObjectsScanAddr));
+        OnPropertyChanged(nameof(HasGNamesScanAddr));
+        OnPropertyChanged(nameof(HasGWorldScanAddr));
     }
 
     private static string FormatMethodLabel(string method) => method switch
@@ -151,5 +171,26 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         if (!string.IsNullOrEmpty(GWorldAddress))
             await _platform.CopyToClipboardAsync(StripHexPrefix(GWorldAddress));
+    }
+
+    [RelayCommand]
+    private async Task CopyGObjectsScanAddrAsync()
+    {
+        if (!string.IsNullOrEmpty(GObjectsScanAddr))
+            await _platform.CopyToClipboardAsync(StripHexPrefix(GObjectsScanAddr));
+    }
+
+    [RelayCommand]
+    private async Task CopyGNamesScanAddrAsync()
+    {
+        if (!string.IsNullOrEmpty(GNamesScanAddr))
+            await _platform.CopyToClipboardAsync(StripHexPrefix(GNamesScanAddr));
+    }
+
+    [RelayCommand]
+    private async Task CopyGWorldScanAddrAsync()
+    {
+        if (!string.IsNullOrEmpty(GWorldScanAddr))
+            await _platform.CopyToClipboardAsync(StripHexPrefix(GWorldScanAddr));
     }
 }
