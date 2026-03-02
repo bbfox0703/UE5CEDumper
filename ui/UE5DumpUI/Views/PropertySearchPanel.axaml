@@ -64,6 +64,17 @@
         <DataGridTextColumn Header="Size"
                             Binding="{Binding PropSize}"
                             Width="50"/>
+        <DataGridTemplateColumn Header="Preview" Width="200">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PropertySearchMatch">
+              <TextBlock Text="{Binding Preview}"
+                         Foreground="#E5C07B"
+                         VerticalAlignment="Center"
+                         Margin="4,0"
+                         TextTrimming="CharacterEllipsis"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTemplateColumn Header="" Width="Auto">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PropertySearchMatch">

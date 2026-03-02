@@ -2614,4 +2614,181 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     return result;
 }
 
+// ============================================================
+// ResolvePropertyPreviews — fill PropertyMatch.preview with
+// live values from representative instances (Phase 2 of search).
+// ============================================================
+void ResolvePropertyPreviews(
+    std::vector<ObjectArray::PropertyMatch>& matches,
+    const std::unordered_map<uintptr_t, uintptr_t>& instanceMap)
+{
+    for (auto& m : matches) {
+        auto it = instanceMap.find(m.classAddr);
+        if (it == instanceMap.end()) continue;
+
+        uintptr_t inst = it->second;
+        if (!inst) continue;
+
+        const std::string& t = m.propType;
+        int32_t off = m.propOffset;
+        int32_t sz  = m.propSize;
+
+        // --- Scalar primitives: read bytes + InterpretValue ---
+        if (t == "FloatProperty" || t == "DoubleProperty" ||
+            t == "IntProperty" || t == "UInt32Property" ||
+            t == "Int64Property" || t == "UInt64Property" ||
+            t == "Int16Property" || t == "UInt16Property" ||
+            t == "ByteProperty" || t == "Int8Property" ||
+            t == "NameProperty")
+        {
+            if (sz > 0 && sz <= 64) {
+                uint8_t buf[64] = {};
+                if (Mem::ReadBytesSafe(inst + off, buf, sz)) {
+                    m.preview = InterpretValue(t, buf, sz);
+                }
+            }
+            continue;
+        }
+
+        // --- BoolProperty: bitfield-aware ---
+        if (t == "BoolProperty") {
+            uint8_t rawByte = 0;
+            int readOff = off + m.boolByteOffset;
+            if (Mem::ReadSafe(inst + readOff, rawByte)) {
+                if (m.boolFieldMask != 0) {
+                    m.preview = (rawByte & m.boolFieldMask) ? "true" : "false";
+                } else {
+                    m.preview = rawByte ? "true" : "false";
+                }
+            }
+            continue;
+        }
+
+        // --- StrProperty: read FString ---
+        if (t == "StrProperty") {
+            std::string s = ReadFString(inst, off);
+            if (s.empty()) {
+                m.preview = "(empty)";
+            } else {
+                // Truncate long strings
+                if (s.size() > 50) {
+                    s.resize(50);
+                    s += "\xe2\x80\xa6";  // UTF-8 ellipsis '…'
+                }
+                m.preview = "\"" + s + "\"";
+            }
+            continue;
+        }
+
+        // --- EnumProperty: read raw int + resolve enum name ---
+        if (t == "EnumProperty") {
+            int64_t rawVal = 0;
+            if (sz == 1)      { uint8_t v = 0; Mem::ReadSafe(inst + off, v); rawVal = v; }
+            else if (sz == 2) { int16_t v = 0; Mem::ReadSafe(inst + off, v); rawVal = v; }
+            else if (sz == 4) { int32_t v = 0; Mem::ReadSafe(inst + off, v); rawVal = v; }
+            else if (sz == 8) { int64_t v = 0; Mem::ReadSafe(inst + off, v); rawVal = v; }
+
+            if (m.enumAddr) {
+                std::string enumName = ResolveEnumValue(m.enumAddr, rawVal);
+                if (!enumName.empty()) {
+                    m.preview = enumName;
+                    continue;
+                }
+            }
+            m.preview = std::to_string(rawVal);
+            continue;
+        }
+
+        // --- ObjectProperty / ClassProperty: read pointer, resolve name ---
+        if (t == "ObjectProperty" || t == "ClassProperty" ||
+            t == "WeakObjectProperty" || t == "LazyObjectProperty" ||
+            t == "SoftClassProperty")
+        {
+            uintptr_t ptr = 0;
+            Mem::ReadSafe(inst + off, ptr);
+            if (!ptr) {
+                m.preview = "null";
+            } else {
+                std::string name = GetName(ptr);
+                if (!name.empty()) {
+                    m.preview = name;
+                } else {
+                    char buf[24];
+                    snprintf(buf, sizeof(buf), "0x%llX", static_cast<unsigned long long>(ptr));
+                    m.preview = buf;
+                }
+            }
+            continue;
+        }
+
+        // --- StructProperty: try float hint, fallback to type name ---
+        if (t == "StructProperty") {
+            if (sz > 0 && sz <= 256) {
+                std::vector<uint8_t> buf(sz, 0);
+                if (Mem::ReadBytesSafe(inst + off, buf.data(), sz)) {
+                    std::string hint = InterpretValue(t, buf.data(), sz);
+                    if (!hint.empty()) {
+                        m.preview = hint;
+                        continue;
+                    }
+                }
+            }
+            // Fallback: show struct type name
+            if (!m.structType.empty()) {
+                m.preview = "{" + m.structType + "}";
+            }
+            continue;
+        }
+
+        // --- ArrayProperty: read TArray count ---
+        if (t == "ArrayProperty") {
+            Mem::TArrayView arr;
+            if (Mem::ReadTArray(inst + off, arr) && arr.Count >= 0) {
+                m.preview = "[" + std::to_string(arr.Count) + " x " +
+                            (m.innerType.empty() ? "?" : m.innerType) + "]";
+            }
+            continue;
+        }
+
+        // --- MapProperty: read FScriptMap count ---
+        if (t == "MapProperty") {
+            // FScriptMap layout: FScriptSet { FHashAllocator {SparseArray {Data(8) Count(4) ...}}}
+            // The count is at offset +8 within the FScriptMap (FScriptSet.Elements.Count)
+            int32_t count = 0;
+            Mem::ReadSafe(inst + off + 8, count);
+            if (count >= 0 && count < 1000000) {
+                std::string keyStr = m.keyType.empty() ? "?" : m.keyType;
+                std::string valStr = m.valueType.empty() ? "?" : m.valueType;
+                // Shorten type names: remove "Property" suffix
+                auto shorten = [](const std::string& s) -> std::string {
+                    const std::string suffix = "Property";
+                    if (s.size() > suffix.size() &&
+                        s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0)
+                        return s.substr(0, s.size() - suffix.size());
+                    return s;
+                };
+                m.preview = "{Map: " + std::to_string(count) + ", " +
+                            shorten(keyStr) + "\xe2\x86\x92" + shorten(valStr) + "}";
+            }
+            continue;
+        }
+
+        // --- SetProperty: read count ---
+        if (t == "SetProperty") {
+            int32_t count = 0;
+            Mem::ReadSafe(inst + off + 8, count);
+            if (count >= 0 && count < 1000000) {
+                m.preview = "{Set: " + std::to_string(count) + "}";
+            }
+            continue;
+        }
+
+        // --- TextProperty: just show type ---
+        if (t == "TextProperty") {
+            m.preview = "(FText)";
+            continue;
+        }
+    }
+}
+
 } // namespace UStructWalker
