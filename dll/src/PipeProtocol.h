@@ -36,6 +36,9 @@ constexpr const char* CMD_WATCH             = "watch";
 constexpr const char* CMD_UNWATCH           = "unwatch";
 constexpr const char* CMD_SEARCH_PROPERTIES = "search_properties";
 constexpr const char* CMD_LIST_CLASSES      = "list_classes";
+constexpr const char* CMD_RESCAN            = "rescan";
+constexpr const char* CMD_RESCAN_STATUS     = "rescan_status";
+constexpr const char* CMD_APPLY_RESCAN      = "apply_rescan";
 
 // Event types
 constexpr const char* EVT_WATCH            = "watch";

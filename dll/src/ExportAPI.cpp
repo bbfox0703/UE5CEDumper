@@ -65,10 +65,7 @@ bool UE5_Init() {
     LOG_INFO("UE5_Init: Starting initialization...");
 
     OffsetFinder::EnginePointers ptrs;
-    if (!OffsetFinder::FindAll(ptrs)) {
-        LOG_ERROR("UE5_Init: OffsetFinder::FindAll failed");
-        return false;
-    }
+    OffsetFinder::FindAll(ptrs);  // Always succeeds; partial results are OK
 
     g_cachedGObjects  = ptrs.GObjects;
     g_cachedGNames    = ptrs.GNames;
@@ -94,54 +91,62 @@ bool UE5_Init() {
     g_cachedGNamesScanAddr   = ptrs.gnamesScanAddr;
     g_cachedGWorldScanAddr   = ptrs.gworldScanAddr;
 
-    // Initialize subsystems
-    if (ptrs.bUE4NameArray) {
-        FNamePool::InitUE4(ptrs.GNames, ptrs.ue4StringOffset);
-    } else {
-        FNamePool::Init(ptrs.GNames, ptrs.fnameEntryHeaderOffset);
+    // Initialize subsystems — only when their pointer was found
+    if (ptrs.GNames) {
+        if (ptrs.bUE4NameArray) {
+            FNamePool::InitUE4(ptrs.GNames, ptrs.ue4StringOffset);
+        } else {
+            FNamePool::Init(ptrs.GNames, ptrs.fnameEntryHeaderOffset);
+        }
     }
-    ObjectArray::Init(ptrs.GObjects);
+    if (ptrs.GObjects) {
+        ObjectArray::Init(ptrs.GObjects);
+    }
 
-    // Quick sanity check: verify name resolution works for a few objects
-    {
-        int verified = 0, tested = 0;
-        for (int32_t i = 0; i < ObjectArray::GetCount() && tested < 10; ++i) {
-            uintptr_t obj = ObjectArray::GetByIndex(i);
-            if (!obj) continue;
-            ++tested;
-            uint32_t nameIdx = 0;
-            if (Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx)) {
-                std::string name = FNamePool::GetString(nameIdx);
-                if (!name.empty() && name != "None") {
-                    ++verified;
-                    if (verified <= 3) {
-                        LOG_INFO("UE5_Init: Sanity obj[%d] name='%s' (idx=%u)", i, name.c_str(), nameIdx);
+    // Sanity check + dynamic offset detection — only when BOTH are available
+    if (ptrs.GObjects && ptrs.GNames) {
+        // Quick sanity check: verify name resolution works for a few objects
+        {
+            int verified = 0, tested = 0;
+            for (int32_t i = 0; i < ObjectArray::GetCount() && tested < 10; ++i) {
+                uintptr_t obj = ObjectArray::GetByIndex(i);
+                if (!obj) continue;
+                ++tested;
+                uint32_t nameIdx = 0;
+                if (Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx)) {
+                    std::string name = FNamePool::GetString(nameIdx);
+                    if (!name.empty() && name != "None") {
+                        ++verified;
+                        if (verified <= 3) {
+                            LOG_INFO("UE5_Init: Sanity obj[%d] name='%s' (idx=%u)", i, name.c_str(), nameIdx);
+                        }
                     }
                 }
             }
+            LOG_INFO("UE5_Init: Name sanity: %d/%d objects resolved", verified, tested);
+            if (verified == 0 && tested >= 5) {
+                LOG_WARN("UE5_Init: WARNING — No objects resolved names! Check FUObjectItem size or FNamePool.");
+            }
         }
-        LOG_INFO("UE5_Init: Name sanity: %d/%d objects resolved", verified, tested);
-        if (verified == 0 && tested >= 5) {
-            LOG_WARN("UE5_Init: WARNING — No objects resolved names! Check FUObjectItem size or FNamePool.");
+
+        // Dynamically detect FField/FProperty/UStruct offsets
+        // Must be called AFTER FNamePool + ObjectArray are initialized
+        if (!OffsetFinder::ValidateAndFixOffsets(ptrs.UEVersion)) {
+            LOG_WARN("UE5_Init: Offset validation failed — using default offsets (may be wrong for this UE version)");
         }
-    }
 
-    // Dynamically detect FField/FProperty/UStruct offsets
-    // Must be called AFTER FNamePool + ObjectArray are initialized
-    if (!OffsetFinder::ValidateAndFixOffsets(ptrs.UEVersion)) {
-        LOG_WARN("UE5_Init: Offset validation failed — using default offsets (may be wrong for this UE version)");
-    }
-
-    // Post-DynOff version correction: UProperty mode definitively means UE4 pre-4.25.
-    // If version detection failed or misidentified as UE5, correct it now.
-    // Use flat array detection to narrow down: flat = UE4.11-4.20, chunked = UE4.21-4.24.
-    if (!DynOff::bUseFProperty && ptrs.UEVersion >= 500) {
-        uint32_t corrected = ObjectArray::IsFlat() ? 418 : 424;
-        LOG_WARN("UE5_Init: UProperty mode detected (no FProperty) but version=%u (>= 500). "
-                 "Overriding to %u (flat=%s)", ptrs.UEVersion, corrected,
-                 ObjectArray::IsFlat() ? "yes" : "no");
-        ptrs.UEVersion = corrected;
-        g_cachedUEVersion = ptrs.UEVersion;
+        // Post-DynOff version correction: UProperty mode definitively means UE4 pre-4.25.
+        if (!DynOff::bUseFProperty && ptrs.UEVersion >= 500) {
+            uint32_t corrected = ObjectArray::IsFlat() ? 418 : 424;
+            LOG_WARN("UE5_Init: UProperty mode detected (no FProperty) but version=%u (>= 500). "
+                     "Overriding to %u (flat=%s)", ptrs.UEVersion, corrected,
+                     ObjectArray::IsFlat() ? "yes" : "no");
+            ptrs.UEVersion = corrected;
+            g_cachedUEVersion = ptrs.UEVersion;
+        }
+    } else {
+        LOG_WARN("UE5_Init: Partial init — GObjects=%s GNames=%s — skipping offset validation",
+                 ptrs.GObjects ? "OK" : "MISSING", ptrs.GNames ? "OK" : "MISSING");
     }
 
     s_initialized = true;
@@ -294,10 +299,7 @@ bool UE5_AutoStart() {
     // Called by CEPlugin's InjectDLL after the DLL is loaded into the game.
     // Idempotent: UE5_Init checks s_initialized and skips if already done.
     LOG_INFO("UE5_AutoStart: entry");
-    if (!UE5_Init()) {
-        LOG_ERROR("UE5_AutoStart: UE5_Init failed — aborting pipe server start");
-        return false;
-    }
+    UE5_Init();  // Always succeeds (partial init is OK — Extra Scan can recover)
     bool ok = UE5_StartPipeServer();
     LOG_INFO("UE5_AutoStart: pipe server %s", ok ? "started" : "FAILED to start");
     return ok;

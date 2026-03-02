@@ -74,4 +74,18 @@ bool ValidateAndFixOffsets(uint32_t ueVersion);
 // Sets DynOff::UENUM_NAMES and DynOff::bUEnumNamesDetected on success.
 bool DetectUEnumNames();
 
+// === Extra Scan: user-triggered aggressive fallback techniques ===
+// These are computationally expensive (seconds, not milliseconds) and are designed
+// to be called from a background thread.  They are READ-ONLY — no global state is
+// modified.  The caller is responsible for applying results (ObjectArray::Init, etc.)
+// on the pipe thread.
+
+// Scan .data section for FUObjectArray by validating structure heuristics.
+// Complements FindGObjectsByDataScan (which follows code references instead).
+uintptr_t ExtraScanGObjects();
+
+// Find GWorld by iterating GObjects for UWorld instance, then scanning .data
+// for a static pointer to that instance.  Requires GObjects + GNames already initialized.
+uintptr_t ExtraScanGWorld();
+
 } // namespace OffsetFinder
