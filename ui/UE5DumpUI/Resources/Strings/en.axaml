@@ -133,6 +133,10 @@
     <sys:String x:Key="str.GameClassFilter.PackageHint">(All)</sys:String>
     <sys:String x:Key="str.GameClassFilter.Clear">Clear</sys:String>
 
+    <!-- Proxy DLL / Deferred Scan -->
+    <sys:String x:Key="str.Toolbar.StartScan">Start Scan</sys:String>
+    <sys:String x:Key="str.Toolbar.Scanning">Scanning...</sys:String>
+
     <!-- Errors -->
     <sys:String x:Key="str.Error.Connection">Failed to connect to pipe server</sys:String>
     <sys:String x:Key="str.Error.ReadFailed">Memory read failed</sys:String>
