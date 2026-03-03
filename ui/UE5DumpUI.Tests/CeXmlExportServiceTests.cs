@@ -163,6 +163,53 @@ public class CeXmlExportServiceTests
         Assert.Equal(0x200, result[1].FieldOffset);
     }
 
+    [Fact]
+    public void CleanBreadcrumbs_ContainerView_NotRemovedAsCycle()
+    {
+        // Container breadcrumbs share parent's address (by design: they show TArray elements
+        // of the same object). CleanBreadcrumbs must NOT remove them as cycles.
+        // Path: A -> B(ptr) -> LocalPlayers(container, same addr as B) -> C(ptr, element)
+        var breadcrumbs = new[]
+        {
+            MakeBc("0xA", "GWorld"),
+            MakeBc("0xB", "OwningGameInstance", "OwningGameInstance", isPointer: true, offset: 0x1D8),
+            MakeBc("0xB", "LocalPlayers [1 x ObjectProperty]", "LocalPlayers",
+                isPointer: false, offset: 0x38, isContainerView: true),
+            MakeBc("0xC", "[0] TQ2LocalPlayer", "[0]", isPointer: true, offset: 0),
+        };
+
+        var result = CeXmlExportService.CleanBreadcrumbs(breadcrumbs);
+
+        // All 4 entries must survive — the container view is NOT a cycle
+        Assert.Equal(4, result.Count);
+        Assert.Equal("0xA", result[0].Address);
+        Assert.Equal("0xB", result[1].Address);
+        Assert.True(result[2].IsContainerView);
+        Assert.Equal("0xC", result[3].Address);
+    }
+
+    [Fact]
+    public void CleanBreadcrumbs_ContainerView_RealCycleStillRemoved()
+    {
+        // A real cycle after a container view is still removed.
+        // Path: A -> Container(A) -> B -> A (cycle back to A)
+        var breadcrumbs = new[]
+        {
+            MakeBc("0xA", "Root"),
+            MakeBc("0xA", "Items [3 x ObjectProperty]", "Items",
+                isPointer: false, offset: 0x50, isContainerView: true),
+            MakeBc("0xB", "[0] SomeObj", "[0]", isPointer: true, offset: 0),
+            MakeBc("0xA", "Root", "Outer", isPointer: true, offset: 0),
+        };
+
+        var result = CeXmlExportService.CleanBreadcrumbs(breadcrumbs);
+
+        // Cycle A@0 == A@3 → remove [1..3] → only root remains
+        // (But container at [1] is skipped, so we compare A@0 with A@3 → remove [1..3])
+        Assert.Equal(1, result.Count);
+        Assert.Equal("0xA", result[0].Address);
+    }
+
     // ========================================
     // GenerateHierarchicalXml integration tests
     // ========================================
@@ -1821,6 +1868,101 @@ public class CeXmlExportServiceTests
     }
 
     // ========================================
+    // Container breadcrumb in middle of chain (not last)
+    // Simulates navigating through an ArrayProperty of ObjectProperty
+    // ========================================
+
+    [Fact]
+    public void CleanBreadcrumbs_ContainerViewPreserved_NotRemovedAsCycle()
+    {
+        // GWorld -> OwningGameInstance -> LocalPlayers(container, same addr) -> [0](pointer)
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x100", "GWorld"),
+            MakeBc("0x200", "OwningGameInstance", "OwningGameInstance", isPointer: true, offset: 0x1D8),
+            MakeBc("0x200", "LocalPlayers [1 x ObjectProperty (8B)]", "LocalPlayers",
+                isPointer: false, offset: 0x38, isContainerView: true),
+            MakeBc("0x300", "[0] TQ2LocalPlayer", "[0]", isPointer: true, offset: 0),
+        };
+
+        var result = CeXmlExportService.CleanBreadcrumbs(breadcrumbs);
+
+        Assert.Equal(4, result.Count);
+        Assert.True(result[2].IsContainerView);
+        Assert.Equal("LocalPlayers", result[2].FieldName);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_ContainerBreadcrumb_EmitsPointerDerefForArrayData()
+    {
+        // Simulates: GWorld -> OwningGameInstance(ptr) -> LocalPlayers(container) -> [0](ptr)
+        // The container breadcrumb should emit Offsets=[0] for TArray::Data dereference.
+        // The element breadcrumb [0] should emit Offsets=[0] for ObjectProperty dereference.
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x100", "GWorld"),
+            MakeBc("0x200", "OwningGameInstance", "OwningGameInstance", isPointer: true, offset: 0x1D8),
+            MakeBc("0x200", "LocalPlayers [1 x ObjectProperty (8B)]", "LocalPlayers",
+                isPointer: false, offset: 0x38, isContainerView: true),
+            MakeBc("0x300", "[0] TQ2LocalPlayer", "[0]", isPointer: true, offset: 0),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "PlayerController", TypeName = "ObjectProperty", Offset = 0x30, Size = 8,
+                PtrAddress = "0x400", PtrName = "TQ2PlayerController" },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+100", "GWorld", breadcrumbs, fields);
+
+        // Full chain preserved: GWorld -> OwningGameInstance -> LocalPlayers -> [0] -> PlayerController
+        Assert.Contains("\"GWorld\"", xml);
+        Assert.Contains("\"OwningGameInstance\"", xml);
+        Assert.Contains("LocalPlayers [1 x ObjectProperty (8B)]", xml);
+        Assert.Contains("\"[0]\"", xml);
+        Assert.Contains("\"PlayerController\"", xml);
+
+        // OwningGameInstance: offset 0x1D8 with pointer deref
+        Assert.Contains("<Address>+1D8</Address>", xml);
+
+        // LocalPlayers: offset 0x38 with pointer deref (TArray::Data)
+        Assert.Contains("<Address>+38</Address>", xml);
+
+        // [0]: offset 0x0 with pointer deref (ObjectProperty)
+        Assert.Contains("<Address>+0</Address>", xml);
+
+        // Should have 3 Offset=0 entries: OwningGameInstance, LocalPlayers, [0]
+        Assert.Equal(3, CountOccurrences(xml, "<Offset>0</Offset>"));
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_ContainerBreadcrumb_MapProperty_EmitsDeref()
+    {
+        // Map container breadcrumb should also get Offsets=[0] for TSparseArray::Data
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x100", "Root"),
+            MakeBc("0x200", "Player", "Player", isPointer: true, offset: 0x50),
+            MakeBc("0x200", "Inventory {Map: 5}", "Inventory",
+                isPointer: false, offset: 0xA0, isContainerView: true),
+            MakeBc("0x300", "[2] SomeItem", "[2]", isPointer: true, offset: 0x24),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "ItemName", TypeName = "NameProperty", Offset = 0x10, Size = 8 },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"game.exe\"+100", "Root", breadcrumbs, fields);
+
+        // Inventory breadcrumb should emit Offsets=[0]
+        Assert.Contains("<Address>+A0</Address>", xml);
+        Assert.Contains("Inventory {Map: 5}", xml);
+        // 3 derefs: Player, Inventory (map data), [2] (element pointer)
+        Assert.Equal(3, CountOccurrences(xml, "<Offset>0</Offset>"));
+    }
+
+    // ========================================
     // Helper
 
     private static int CountOccurrences(string text, string pattern)
@@ -1836,7 +1978,8 @@ public class CeXmlExportServiceTests
     }
 
     private static BreadcrumbItem MakeBc(string addr, string label,
-        string fieldName = "", bool isPointer = false, int offset = 0)
+        string fieldName = "", bool isPointer = false, int offset = 0,
+        bool isContainerView = false)
     {
         return new BreadcrumbItem
         {
@@ -1845,6 +1988,7 @@ public class CeXmlExportServiceTests
             FieldName = string.IsNullOrEmpty(fieldName) ? label : fieldName,
             FieldOffset = offset,
             IsPointerDeref = isPointer,
+            IsContainerView = isContainerView,
         };
     }
 }
