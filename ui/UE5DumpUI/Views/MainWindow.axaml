@@ -26,10 +26,12 @@
           <Button Content="{StaticResource str.Connect}"
                   Command="{Binding ConnectCommand}"
                   IsVisible="{Binding !IsConnected}"
+                  ToolTip.Tip="{StaticResource str.Tip.Connect}"
                   Classes="accent" Padding="12,4"/>
           <Button Content="{StaticResource str.Disconnect}"
                   Command="{Binding DisconnectCommand}"
                   IsVisible="{Binding IsConnected}"
+                  ToolTip.Tip="{StaticResource str.Tip.Disconnect}"
                   Padding="12,4"/>
 
           <!-- Start Scan button — visible in proxy DLL mode (connected but not yet scanned) -->
@@ -37,6 +39,7 @@
                   Command="{Binding TriggerScanCommand}"
                   IsVisible="{Binding NeedsScan}"
                   IsEnabled="{Binding !IsScanning}"
+                  ToolTip.Tip="{StaticResource str.Tip.StartScan}"
                   Classes="accent" Padding="12,4"
                   FontWeight="Bold"/>
 
@@ -58,12 +61,14 @@
                      VerticalAlignment="Center" Margin="12,0,4,0"/>
           <ComboBox ItemsSource="{Binding AddressFormatOptions}"
                     SelectedIndex="{Binding SelectedAddressFormatIndex}"
+                    ToolTip.Tip="{StaticResource str.Tip.AddressFormat}"
                     MinWidth="140" Padding="4,2" FontSize="12"
                     VerticalAlignment="Center"/>
 
           <!-- CE XML collapse toggle -->
           <CheckBox Content="{StaticResource str.Toolbar.CollapsePointers}"
                     IsChecked="{Binding CollapsePointerNodes}"
+                    ToolTip.Tip="{StaticResource str.Tip.CollapsePointers}"
                     Foreground="#CCCCCC" FontSize="12"
                     VerticalAlignment="Center" Margin="12,0"/>
 
@@ -75,6 +80,7 @@
                   Minimum="1" Maximum="14"
                   TickFrequency="1" IsSnapToTickEnabled="True"
                   Width="140"
+                  ToolTip.Tip="{StaticResource str.Tip.ArrayLimit}"
                   VerticalAlignment="Center"/>
           <TextBlock Text="{Binding ArrayLimit}"
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
@@ -93,10 +99,26 @@
                   Minimum="6" Maximum="13"
                   TickFrequency="1" IsSnapToTickEnabled="True"
                   Width="100"
+                  ToolTip.Tip="{StaticResource str.Tip.DropDownLimit}"
                   VerticalAlignment="Center"/>
           <TextBlock Text="{Binding DropDownLimit}"
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
                      VerticalAlignment="Center" MinWidth="35"
+                     Margin="4,0"/>
+
+          <!-- Struct preview sub-field limit (0 = no preview, default 2, max 6) -->
+          <TextBlock Text="{StaticResource str.Toolbar.PreviewLimit}"
+                     Foreground="#CCCCCC" FontSize="12"
+                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+          <Slider Value="{Binding PreviewLimit}"
+                  Minimum="0" Maximum="6"
+                  TickFrequency="1" IsSnapToTickEnabled="True"
+                  Width="100"
+                  ToolTip.Tip="{StaticResource str.Tip.PreviewLimit}"
+                  VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding PreviewLimit}"
+                     Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                     VerticalAlignment="Center" MinWidth="15"
                      Margin="4,0"/>
 
           <!-- CSX drilldown depth (0 = flat, 1+ = real child structures) -->
@@ -107,6 +129,7 @@
                   Minimum="0" Maximum="4"
                   TickFrequency="1" IsSnapToTickEnabled="True"
                   Width="80"
+                  ToolTip.Tip="{StaticResource str.Tip.CsxDepth}"
                   VerticalAlignment="Center"/>
           <TextBlock Text="{Binding CsxDrilldownDepth}"
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
@@ -117,6 +140,7 @@
           <Border Margin="12,0,0,0" VerticalAlignment="Center"
                   IsVisible="{Binding IsConnected}">
             <DropDownButton Content="{StaticResource str.Toolbar.Export}"
+                            ToolTip.Tip="{StaticResource str.Tip.Export}"
                             Padding="8,3" FontSize="12">
               <DropDownButton.Flyout>
                 <MenuFlyout>

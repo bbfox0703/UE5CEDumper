@@ -102,12 +102,19 @@ public partial class PointerPanelViewModel : ViewModelBase
         && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found");
 
     // --- AOBMaker button enable state ---
-    /// <summary>Can send GObjects pointer to CE hex view.</summary>
+    /// <summary>Can send GObjects pointer to CE hex view (data address).</summary>
     public bool CanHexGObjects => IsAobMakerAvailable && IsNonZeroAddr(GObjectsAddress);
-    /// <summary>Can send GNames pointer to CE hex view.</summary>
+    /// <summary>Can send GNames pointer to CE hex view (data address).</summary>
     public bool CanHexGNames => IsAobMakerAvailable && IsNonZeroAddr(GNamesAddress);
-    /// <summary>Can send GWorld pointer to CE hex view.</summary>
+    /// <summary>Can send GWorld pointer to CE hex view (data address).</summary>
     public bool CanHexGWorld => IsAobMakerAvailable && IsNonZeroAddr(GWorldAddress);
+
+    /// <summary>Can send GObjects AOB scan hit address to CE disassembler (code address).</summary>
+    public bool CanAsmGObjectsScan => IsAobMakerAvailable && IsNonZeroAddr(GObjectsScanAddr);
+    /// <summary>Can send GNames AOB scan hit address to CE disassembler (code address).</summary>
+    public bool CanAsmGNamesScan => IsAobMakerAvailable && IsNonZeroAddr(GNamesScanAddr);
+    /// <summary>Can send GWorld AOB scan hit address to CE disassembler (code address).</summary>
+    public bool CanAsmGWorldScan => IsAobMakerAvailable && IsNonZeroAddr(GWorldScanAddr);
 
     /// <summary>Fired when rescan results have been applied — MainWindowVM re-fetches state.</summary>
     public event Action? RescanApplied;
@@ -198,6 +205,9 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanHexGObjects));
         OnPropertyChanged(nameof(CanHexGNames));
         OnPropertyChanged(nameof(CanHexGWorld));
+        OnPropertyChanged(nameof(CanAsmGObjectsScan));
+        OnPropertyChanged(nameof(CanAsmGNamesScan));
+        OnPropertyChanged(nameof(CanAsmGWorldScan));
     }
 
     private static string FormatMethodLabel(string method) => method switch
@@ -345,7 +355,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         }
     }
 
-    // --- AOBMaker CE Plugin navigation commands ---
+    // --- AOBMaker CE Plugin: data pointer → hex view (memory dump) ---
 
     [RelayCommand]
     private async Task HexGObjectsAsync()
@@ -366,6 +376,29 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         if (_aobMaker == null || !IsNonZeroAddr(GWorldAddress)) return;
         await _aobMaker.NavigateHexViewAsync(StripHexPrefix(GWorldAddress));
+    }
+
+    // --- AOBMaker CE Plugin: scan address → disassembler (code) ---
+
+    [RelayCommand]
+    private async Task AsmGObjectsScanAsync()
+    {
+        if (_aobMaker == null || !IsNonZeroAddr(GObjectsScanAddr)) return;
+        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GObjectsScanAddr));
+    }
+
+    [RelayCommand]
+    private async Task AsmGNamesScanAsync()
+    {
+        if (_aobMaker == null || !IsNonZeroAddr(GNamesScanAddr)) return;
+        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GNamesScanAddr));
+    }
+
+    [RelayCommand]
+    private async Task AsmGWorldScanAsync()
+    {
+        if (_aobMaker == null || !IsNonZeroAddr(GWorldScanAddr)) return;
+        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GWorldScanAddr));
     }
 
     // --- Clipboard copy commands ---

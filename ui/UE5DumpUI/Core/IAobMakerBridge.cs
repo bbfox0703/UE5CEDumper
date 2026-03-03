@@ -20,4 +20,11 @@ public interface IAobMakerBridge
     /// </summary>
     /// <param name="hexAddress">Bare hex address without 0x prefix (e.g. "7FF769E29110")</param>
     Task<bool> NavigateHexViewAsync(string hexAddress, CancellationToken ct = default);
+
+    /// <summary>
+    /// Navigate CE Memory Viewer disassembler (top pane) to the specified address.
+    /// Sends <c>NavigateDisassembler</c>.
+    /// </summary>
+    /// <param name="hexAddress">Bare hex address without 0x prefix (e.g. "7FF769E29110")</param>
+    Task<bool> NavigateDisassemblerAsync(string hexAddress, CancellationToken ct = default);
 }

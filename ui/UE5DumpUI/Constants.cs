@@ -40,6 +40,9 @@ public static class Constants
     public const int ObjectTreePageSize = 2000;     // Batch size for loading all objects
     public const int ObjectTreeMaxDisplay = 5000;   // Max items shown in FilteredNodes ListBox
 
+    // Live Walker preview
+    public const int DefaultPreviewLimit = 2;       // Struct sub-fields in preview (0-6)
+
     // Live Walker auto-refresh
     public const int DefaultAutoRefreshIntervalSec = 10;
     public const int MinAutoRefreshIntervalSec = 8;

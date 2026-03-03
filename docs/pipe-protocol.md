@@ -59,8 +59,10 @@ Direction: bidirectional — Request/Response + async push Events
 
 // Walk live field values of a UObject instance
 // class_addr is optional (auto-resolved from UObject::ClassPrivate)
+// array_limit: max inline array elements (default 64)
+// preview_limit: max struct sub-fields in preview (0=none, default 2, max 6)
 { "id": 10, "cmd": "walk_instance", "addr": "7FF123456789" }
-{ "id": 10, "cmd": "walk_instance", "addr": "7FF123456789", "class_addr": "7FF..." }
+{ "id": 10, "cmd": "walk_instance", "addr": "7FF123456789", "class_addr": "7FF...", "preview_limit": 2 }
 
 // Walk GWorld → PersistentLevel → Actors
 { "id": 11, "cmd": "walk_world" }

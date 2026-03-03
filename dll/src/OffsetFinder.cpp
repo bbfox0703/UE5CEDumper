@@ -1973,6 +1973,43 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             // chain addresses from multiple classes and probe for Offset_Internal.
             Logger::Info("DYNO", "Phase B: Probing FPROPERTY_OFFSET...");
 
+            // Helper: infer natural alignment from FFieldClass type name.
+            // Pointers/containers = 8, int/float = 4, short = 2, bool/byte = 1.
+            // Returns 0 for unknown types (no alignment penalty applied).
+            auto GetNaturalAlignment = [](uintptr_t ffieldAddr) -> int {
+                uintptr_t fc = 0;
+                if (!Mem::ReadSafe(ffieldAddr + DynOff::FFIELD_CLASS, fc) || !fc) return 0;
+                if (fc < 0x10000 || fc > 0x00007FFFFFFFFFFF) return 0;
+                uint32_t nameIdx = 0;
+                if (!Mem::ReadSafe(fc + DynOff::FFIELDCLASS_NAME, nameIdx)) return 0;
+                std::string tn = FNamePool::GetString(nameIdx);
+                if (tn.empty()) return 0;
+
+                // 8-byte: all pointer/container/64-bit types
+                if (tn.find("ObjectProperty") != std::string::npos ||
+                    tn.find("ClassProperty")  != std::string::npos ||
+                    tn == "ArrayProperty" || tn == "MapProperty" || tn == "SetProperty" ||
+                    tn == "NameProperty"  || tn == "StrProperty"  || tn == "TextProperty" ||
+                    tn == "Int64Property" || tn == "UInt64Property" || tn == "DoubleProperty" ||
+                    tn == "DelegateProperty" || tn == "MulticastDelegateProperty" ||
+                    tn == "MulticastInlineDelegateProperty" || tn == "MulticastSparseDelegateProperty" ||
+                    tn == "WeakObjectProperty"  || tn == "LazyObjectProperty" ||
+                    tn == "SoftObjectProperty"  || tn == "SoftClassProperty" ||
+                    tn == "InterfaceProperty")
+                    return 8;
+                // 4-byte: int/uint32/float/enum
+                if (tn == "IntProperty" || tn == "UInt32Property" || tn == "FloatProperty" ||
+                    tn == "EnumProperty")
+                    return 4;
+                // 2-byte: short
+                if (tn == "UInt16Property" || tn == "Int16Property")
+                    return 2;
+                // 1-byte: bool/byte
+                if (tn == "BoolProperty" || tn == "ByteProperty" || tn == "Int8Property")
+                    return 1;
+                return 0;
+            };
+
             struct FallbackCandidate {
                 uintptr_t classAddr;
                 uintptr_t fAddrs[8];
@@ -2049,6 +2086,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                             if (off > prevOff) hasStrictIncrease = true;
                             if (off >= prevOff) ++score;
                             prevOff = off;
+
+                            // Alignment bonus/penalty: reward correctly aligned offsets
+                            int align = GetNaturalAlignment(c.fAddrs[i]);
+                            if (align > 0 && (off % align) == 0)         score += 2;
+                            else if (align >= 4 && (off % align) != 0)   score -= 1;
                         }
 
                         // Validation: require strict increase AND first offset >= 0x20
@@ -2931,7 +2973,14 @@ bool DetectUEnumNames() {
         Logger::Debug("DYNO:Enum", "  '%s' found but no valid Names offset detected", cand.name);
     }
 
-    Logger::Warn("DYNO:Enum", "DetectUEnumNames: FAILED — no known enums found or validated");
+    // Mark as failed to prevent retry storm.
+    // Without this, every EnumProperty/ByteProperty field triggers a full GObjects scan
+    // (~0.85s each), causing 25-45 second delays for classes with many enum fields.
+    DynOff::bUEnumNamesFailed.store(true, std::memory_order_release);
+    DynOff::bUEnumNamesDetected.store(true, std::memory_order_release);
+
+    Logger::Warn("DYNO:Enum", "DetectUEnumNames: FAILED — no known enums found or validated "
+        "(will not retry; enum names will show as raw values)");
     return false;
 }
 

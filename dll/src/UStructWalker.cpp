@@ -12,6 +12,7 @@
 #include "OffsetFinder.h"
 
 #include <algorithm>
+#include <chrono>
 #include <unordered_map>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -27,6 +28,11 @@ namespace UStructWalker {
 // File-scope enum cache: keyed by UEnum* → vector of (value, name) pairs.
 // Shared between ResolveEnumValue (lookup) and GetEnumEntries (full list export).
 static std::unordered_map<uintptr_t, std::vector<std::pair<int64_t, std::string>>> s_enumCache;
+
+// File-scope GetName cache: keyed by UObject* → resolved name string.
+// Dramatically reduces FNamePool lookups for ObjectProperty fields that
+// reference the same UClass repeatedly (e.g., many fields pointing to the same class).
+static std::unordered_map<uintptr_t, std::string> s_nameCache;
 
 // Read FName from an address and resolve to string
 static std::string ReadFName(uintptr_t fnameAddr) {
@@ -48,11 +54,12 @@ static std::string ReadFName(uintptr_t fnameAddr) {
 static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     if (!enumAddr) return "";
 
-    // Lazy init: trigger DetectUEnumNames on first call
+    // Lazy init: trigger DetectUEnumNames on first call.
+    // bUEnumNamesFailed prevents retry storm (was causing 25-45 second delays).
     if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
         OffsetFinder::DetectUEnumNames();
-    if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
-        return "";  // Detection failed
+    if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
+        return "";  // Detection failed — show raw int values instead
 
     auto it = s_enumCache.find(enumAddr);
     if (it == s_enumCache.end()) {
@@ -231,7 +238,18 @@ uintptr_t GetOuter(uintptr_t uobjectAddr) {
 
 std::string GetName(uintptr_t uobjectAddr) {
     if (!uobjectAddr) return "";
-    return ReadFName(uobjectAddr + Constants::OFF_UOBJECT_NAME);
+
+    // Check name cache first — avoids repeated FNamePool lookups
+    auto it = s_nameCache.find(uobjectAddr);
+    if (it != s_nameCache.end()) return it->second;
+
+    std::string name = ReadFName(uobjectAddr + Constants::OFF_UOBJECT_NAME);
+
+    // Only cache non-empty names (empty could be transient read failure)
+    if (!name.empty())
+        s_nameCache[uobjectAddr] = name;
+
+    return name;
 }
 
 int32_t GetIndex(uintptr_t uobjectAddr) {
@@ -323,6 +341,24 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
         Mem::ReadSafe<int32_t>(current + DynOff::FPROPERTY_ELEMSIZE, fi.Size);
         Mem::ReadSafe<uint64_t>(current + DynOff::FPROPERTY_FLAGS, fi.PropertyFlags);
 
+        // Alignment sanity warning: pointers/containers must be 8-byte, int/float 4-byte aligned
+        if (fi.Offset > 0 && !fi.TypeName.empty()) {
+            bool need8 = fi.TypeName.find("ObjectProperty") != std::string::npos ||
+                         fi.TypeName.find("ClassProperty")  != std::string::npos ||
+                         fi.TypeName == "ArrayProperty" || fi.TypeName == "MapProperty"  ||
+                         fi.TypeName == "SetProperty"   || fi.TypeName == "StrProperty"  ||
+                         fi.TypeName == "NameProperty"  || fi.TypeName == "TextProperty"  ||
+                         fi.TypeName == "DelegateProperty" || fi.TypeName.find("MulticastDelegateProperty") != std::string::npos ||
+                         fi.TypeName == "WeakObjectProperty" || fi.TypeName == "SoftObjectProperty" ||
+                         fi.TypeName == "InterfaceProperty";
+            bool need4 = fi.TypeName == "IntProperty" || fi.TypeName == "UInt32Property" ||
+                         fi.TypeName == "FloatProperty" || fi.TypeName == "EnumProperty";
+            if ((need8 && fi.Offset % 8 != 0) || (need4 && fi.Offset % 4 != 0)) {
+                Logger::Warn("WALK", "Misaligned field '%s' (%s) at offset 0x%X — possible wrong FPROPERTY_OFFSET",
+                    fi.Name.c_str(), fi.TypeName.c_str(), fi.Offset);
+            }
+        }
+
         if (!fi.Name.empty()) {
             fields.push_back(fi);
         }
@@ -370,9 +406,21 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
     }
 }
 
+// Cache for WalkClass results — class/struct field metadata doesn't change at
+// runtime, so we cache by class address to avoid re-reading the FField chain
+// on every WalkInstance call. This dramatically speeds up repeated drilldown/
+// back navigation for large classes (e.g., 182 fields → 0ms vs re-walking).
+static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
+
 ClassInfo WalkClass(uintptr_t uclassAddr) {
     ClassInfo info{};
     if (!uclassAddr) return info;
+
+    // Check cache first
+    auto cacheIt = s_walkClassCache.find(uclassAddr);
+    if (cacheIt != s_walkClassCache.end()) {
+        return cacheIt->second;
+    }
 
     info.Address = uclassAddr;
     info.Name = GetName(uclassAddr);
@@ -407,10 +455,21 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         }
     }
 
-    // Walk inherited fields from SuperStruct chain
+    // Walk inherited fields from SuperStruct chain.
+    // Optimization: if a super class is already cached, reuse its fields
+    // (which already include ITS super chain) instead of re-walking.
     uintptr_t super = info.SuperClass;
     int depth = 0;
     while (super != 0 && depth < 32) {
+        // Check if super is already in cache — if so, use its full field list
+        // (which includes its own supers) and stop walking further.
+        auto superCacheIt = s_walkClassCache.find(super);
+        if (superCacheIt != s_walkClassCache.end()) {
+            const auto& superFields = superCacheIt->second.Fields;
+            info.Fields.insert(info.Fields.begin(), superFields.begin(), superFields.end());
+            break;  // cached super already includes its entire inheritance chain
+        }
+
         if (DynOff::bUseFProperty) {
             uintptr_t superChildProps = 0;
             if (Mem::ReadSafe(super + DynOff::USTRUCT_CHILDPROPS, superChildProps) && superChildProps) {
@@ -438,6 +497,10 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
               [](const FieldInfo& a, const FieldInfo& b) { return a.Offset < b.Offset; });
 
     LOG_INFO("WalkClass: %s — %zu fields", info.Name.c_str(), info.Fields.size());
+
+    // Cache the result for subsequent WalkInstance calls
+    s_walkClassCache[uclassAddr] = info;
+
     return info;
 }
 
@@ -700,6 +763,63 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 }
 
 // --- Live Instance Walking ---
+
+/// Infer the expected element size from a well-known property type name.
+/// Used as a fallback when FPROPERTY_ELEMSIZE reads 0 or garbage (e.g. Inner
+/// FProperty in ArrayProperty where the ELEMSIZE offset doesn't apply).
+static int32_t InferScalarSize(const std::string& typeName) {
+    // Numeric scalars
+    if (typeName == "FloatProperty")  return 4;
+    if (typeName == "IntProperty")    return 4;
+    if (typeName == "UInt32Property") return 4;
+    if (typeName == "DoubleProperty") return 8;
+    if (typeName == "Int64Property")  return 8;
+    if (typeName == "UInt64Property") return 8;
+    if (typeName == "Int16Property")  return 2;
+    if (typeName == "UInt16Property") return 2;
+    if (typeName == "Int8Property")   return 1;
+    if (typeName == "ByteProperty")   return 1;
+    if (typeName == "BoolProperty")   return 1;
+    // Engine types with known fixed sizes
+    if (typeName == "NameProperty")   return 8;  // FName = { ComparisonIndex(4) + Number(4) }
+    if (typeName == "ObjectProperty") return 8;  // UObject* on x64
+    if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
+    if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
+    if (typeName == "LazyObjectProperty")  return 8;  // Also pointer-sized
+    if (typeName == "InterfaceProperty")   return 16; // FScriptInterface = { UObject* + void* }
+    if (typeName == "DelegateProperty")    return 16; // FScriptDelegate = { UObject* + FName }
+    return 0;
+}
+
+/// Validate an element size read from FPROPERTY_ELEMSIZE for ArrayProperty Inner.
+/// The Inner FProperty's ELEMSIZE offset often returns garbage because the inner
+/// property has different metadata layout than top-level FField chain members.
+/// Returns the validated size (overridden for known types, capped for unknown).
+static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeName) {
+    int32_t expected = InferScalarSize(typeName);
+    if (expected > 0) {
+        // For known types, we know the exact size — override if it doesn't match
+        if (readSize != expected) {
+            Logger::Warn("WALK:ArrayP", "elemSize=%d is invalid for '%s' (expected=%d), overriding",
+                readSize, typeName.c_str(), expected);
+            return expected;
+        }
+        return readSize;
+    }
+
+    // For complex types (StructProperty, MapProperty, etc.), sanity-cap.
+    // Legitimate struct sizes can be a few hundred bytes; anything > 65536 is garbage.
+    if (readSize <= 0) {
+        return 0;  // Caller handles zero-size case
+    }
+    if (readSize > 65536) {
+        Logger::Warn("WALK:ArrayP", "elemSize=%d is unreasonably large for '%s', zeroing",
+            readSize, typeName.c_str());
+        return 0;
+    }
+
+    return readSize;
+}
 
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size) {
     if (!data || size <= 0) return "";
@@ -996,8 +1116,11 @@ ReadArrayResult ReadPointerArrayElements(
     ReadArrayResult result;
     result.ok = false;
 
-    // ObjectProperty elements are always 8 bytes (UObject pointer on x64)
-    if (elemSize <= 0) elemSize = 8;
+    // ObjectProperty elements are always 8 bytes (UObject pointer on x64).
+    // Force to 8 regardless of what was passed — garbage elemSize values
+    // (e.g., 524808 from bad FPROPERTY_ELEMSIZE reads) cause massive
+    // address offsets and SEH faults, destroying performance.
+    elemSize = 8;
 
     // Read TArray header
     Mem::TArrayView arr;
@@ -1109,7 +1232,9 @@ ReadArrayResult ReadWeakObjectArrayElements(
     ReadArrayResult result;
     result.ok = false;
 
-    if (elemSize <= 0) elemSize = 8;  // FWeakObjectPtr is 8 bytes
+    // FWeakObjectPtr is always 8 bytes { int32 ObjectIndex, int32 SerialNumber }.
+    // Force to 8 to avoid garbage elemSize from FPROPERTY_ELEMSIZE.
+    elemSize = 8;
 
     // Read TArray header
     Mem::TArrayView arr;
@@ -1296,6 +1421,12 @@ ReadArrayResult ReadStructArrayElements(
 
     int32_t end = (std::min)(offset + limit, arr.Count);
     if (offset >= arr.Count) { result.ok = true; return result; }
+
+    // Reject garbage elemSize early — prevents massive address strides
+    if (elemSize <= 0 || elemSize > 65536) {
+        result.error = "Invalid struct element size";
+        return result;
+    }
 
     // Get cached field layout
     const auto& cachedFields = GetCachedStructFields(innerStructAddr);
@@ -1491,10 +1622,13 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
     // No StructProperty found in this class; will retry on next WalkInstance call
 }
 
-InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int32_t arrayLimit) {
+InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int32_t arrayLimit, int32_t previewLimit) {
     // Clamp arrayLimit to sane range [1, 16384]
     if (arrayLimit < 1) arrayLimit = 1;
     if (arrayLimit > 16384) arrayLimit = 16384;
+    // Clamp previewLimit to sane range [0, 6]
+    if (previewLimit < 0) previewLimit = 0;
+    if (previewLimit > 6) previewLimit = 6;
     InstanceWalkResult result;
     result.addr = instanceAddr;
 
@@ -1539,14 +1673,50 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         }
     }
 
-    // Walk the class to get field layout
+    // Walk the class to get field layout (cached after first call)
+    auto walkClassStart = std::chrono::steady_clock::now();
     ClassInfo ci = WalkClass(classAddr);
+    auto walkClassEnd = std::chrono::steady_clock::now();
+    auto walkClassMs = std::chrono::duration_cast<std::chrono::milliseconds>(walkClassEnd - walkClassStart).count();
 
     // Pre-pass: calibrate subclass extension offsets using StructProperty probe.
     // Must run BEFORE the main loop so ArrayProperty fields use corrected offsets.
     CorrectSubclassOffsets(ci.Fields);
 
+    // Timing: track per-category time for performance diagnostics
+    int64_t tObj = 0, tStruct = 0, tArray = 0, tScalar = 0;
+    int nObj = 0, nStruct = 0, nArray = 0, nScalar = 0;
+    auto loopStart = std::chrono::steady_clock::now();
+
     for (const auto& fi : ci.Fields) {
+        auto fieldStart = std::chrono::steady_clock::now();
+
+        // RAII timer guard: fires on scope exit (including `continue`)
+        // so ALL field handlers are timed, not just the scalar fallthrough.
+        struct FieldTimerGuard {
+            const std::chrono::steady_clock::time_point& start;
+            const FieldInfo& fi;
+            int64_t& tObj; int64_t& tStruct; int64_t& tArray; int64_t& tScalar;
+            int& nObj; int& nStruct; int& nArray; int& nScalar;
+            ~FieldTimerGuard() {
+                auto end = std::chrono::steady_clock::now();
+                auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+                const auto& tn = fi.TypeName;
+                if (tn == "ObjectProperty" || tn == "ClassProperty" || tn == "WeakObjectProperty" ||
+                    tn == "SoftObjectProperty" || tn == "SoftClassProperty" ||
+                    tn == "LazyObjectProperty" || tn == "InterfaceProperty")
+                    { tObj += ms; nObj++; }
+                else if (tn == "StructProperty") { tStruct += ms; nStruct++; }
+                else if (tn == "ArrayProperty" || tn == "MapProperty" || tn == "SetProperty")
+                    { tArray += ms; nArray++; }
+                else { tScalar += ms; nScalar++; }
+                if (ms > 500) {
+                    Logger::Warn("WALK:perf", "Slow field '%s' (%s) took %lldms",
+                        fi.Name.c_str(), tn.c_str(), static_cast<long long>(ms));
+                }
+            }
+        } _fieldTimer{fieldStart, fi, tObj, tStruct, tArray, tScalar, nObj, nStruct, nArray, nScalar};
+
         LiveFieldValue fv;
         fv.name     = fi.Name;
         fv.typeName = fi.TypeName;
@@ -1576,9 +1746,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         }
 
         // Handle ObjectProperty / ClassProperty: read pointer, resolve name/class
+        // Always 8 bytes (pointer) — don't gate on fi.Size which can be garbage.
         if (fi.TypeName == "ObjectProperty" || fi.TypeName == "ClassProperty") {
             uintptr_t ptr = 0;
-            if (fi.Size >= 8 && Mem::ReadSafe(instanceAddr + fi.Offset, ptr) && ptr) {
+            if (Mem::ReadSafe(instanceAddr + fi.Offset, ptr) && ptr) {
                 fv.ptrValue = ptr;
                 fv.ptrName = GetName(ptr);
                 fv.ptrClassName = "";
@@ -1589,11 +1760,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             }
             // Hex of the pointer
-            if (fi.Size >= 8) {
-                char buf[20];
-                snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(ptr));
-                fv.hexValue = buf;
-            }
+            char buf[20];
+            snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(ptr));
+            fv.hexValue = buf;
+            fv.size = 8;
             result.fields.push_back(std::move(fv));
             continue;
         }
@@ -1715,18 +1885,22 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (tryOff < 0) continue;
                     uintptr_t inner = 0;
                     if (!Mem::ReadSafe(fi.Address + tryOff, inner) || !inner) continue;
+                    // Skip obvious garbage addresses to avoid SEH faults
+                    if (inner < 0x10000 || inner > 0x00007FFFFFFFFFFF) continue;
 
                     // Validate: Inner must be an FField with a readable FFieldClass name
                     std::string innerTypeName = GetFieldTypeName(inner);
-                    Logger::Debug("WALK:ArrayP", "  probe delta=%d off=0x%X inner=0x%llX typeName='%s'",
-                        delta, tryOff, static_cast<unsigned long long>(inner), innerTypeName.c_str());
 
                     if (!innerTypeName.empty() && innerTypeName != "Unknown"
                         && innerTypeName.find("Property") != std::string::npos) {
                         fv.arrayInnerType = innerTypeName;
 
-                        // Read element size from Inner FProperty
-                        Mem::ReadSafe<int32_t>(inner + DynOff::FPROPERTY_ELEMSIZE, fv.arrayElemSize);
+                        // Read element size from Inner FProperty and validate.
+                        // Inner FProperty's ELEMSIZE offset often returns garbage because
+                        // the inner property metadata layout differs from top-level FFields.
+                        int32_t rawElemSize = 0;
+                        Mem::ReadSafe<int32_t>(inner + DynOff::FPROPERTY_ELEMSIZE, rawElemSize);
+                        fv.arrayElemSize = ValidateArrayElemSize(rawElemSize, innerTypeName);
 
                         // If inner is StructProperty, also read the UScriptStruct name
                         if (innerTypeName == "StructProperty") {
@@ -1842,7 +2016,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     std::string innerTypeName = GetUPropertyTypeName(inner);
                     if (!innerTypeName.empty() && innerTypeName.find("Property") != std::string::npos) {
                         fv.arrayInnerType = innerTypeName;
-                        Mem::ReadSafe<int32_t>(inner + DynOff::UPROPERTY_ELEMSIZE, fv.arrayElemSize);
+                        // Read element size and validate (same garbage-guard as FProperty mode)
+                        int32_t rawElemSize = 0;
+                        Mem::ReadSafe<int32_t>(inner + DynOff::UPROPERTY_ELEMSIZE, rawElemSize);
+                        fv.arrayElemSize = ValidateArrayElemSize(rawElemSize, innerTypeName);
 
                         if (innerTypeName == "StructProperty") {
                             // UStructProperty::Struct at same base offset
@@ -1933,6 +2110,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (tryOff < 0) continue;
                     uintptr_t keyProp = 0;
                     if (!Mem::ReadSafe(fi.Address + tryOff, keyProp) || !keyProp) continue;
+                    if (keyProp < 0x10000 || keyProp > 0x00007FFFFFFFFFFF) continue;
 
                     std::string keyTypeName = GetFieldTypeName(keyProp);
                     if (keyTypeName.empty() || keyTypeName == "Unknown"
@@ -2172,6 +2350,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (tryOff < 0) continue;
                     uintptr_t elemProp = 0;
                     if (!Mem::ReadSafe(fi.Address + tryOff, elemProp) || !elemProp) continue;
+                    if (elemProp < 0x10000 || elemProp > 0x00007FFFFFFFFFFF) continue;
 
                     std::string elemTypeName = GetFieldTypeName(elemProp);
                     if (elemTypeName.empty() || elemTypeName == "Unknown"
@@ -2308,6 +2487,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 if (tryOffset < 0) continue;
                 uintptr_t candidate = 0;
                 if (!Mem::ReadSafe(fi.Address + tryOffset, candidate) || !candidate) continue;
+                // Skip obvious garbage addresses to avoid SEH faults
+                if (candidate < 0x10000 || candidate > 0x00007FFFFFFFFFFF) continue;
                 // Validate: must be a UScriptStruct (inherits UObject), so GetName should return ASCII
                 std::string sname = GetName(candidate);
                 if (!sname.empty() && sname[0] >= 0x20 && sname[0] < 0x7F) {
@@ -2329,7 +2510,82 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 Logger::Debug("WALK:StructP", "FStructProperty::Struct not found for '%s' (FField=0x%llX, probed 0x%X +/- 16)",
                     fi.Name.c_str(), static_cast<unsigned long long>(fi.Address), DynOff::FSTRUCTPROP_STRUCT);
             }
-            // Fall through to read hex value below
+
+            // Generate field-based preview using cached WalkClass data.
+            // Much more accurate than InterpretValue's "interpret all bytes as floats".
+            // previewLimit controls how many sub-fields to show (0 = skip preview entirely).
+            if (found && fv.structClassAddr && previewLimit > 0) {
+                ClassInfo si = WalkClass(fv.structClassAddr);  // cached — just hash lookup
+                uintptr_t structBase = instanceAddr + fi.Offset;
+                std::string preview;
+                int shown = 0;
+                const int kMaxScanFields    = 20;  // max fields to scan
+                for (size_t idx = 0; idx < si.Fields.size() && static_cast<int>(idx) < kMaxScanFields; ++idx) {
+                    const auto& sf = si.Fields[idx];
+                    if (shown >= previewLimit) {
+                        preview += ", ...";
+                        break;
+                    }
+                    // Read scalar field values for preview
+                    int32_t sfSize = sf.Size;
+                    int32_t expected = InferScalarSize(sf.TypeName);
+                    if (expected > 0 && sfSize != expected) sfSize = expected;
+
+                    std::string val;
+                    if (sf.TypeName == "FloatProperty" && sfSize == 4) {
+                        float v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
+                        char buf[32]; snprintf(buf, sizeof(buf), "%.4g", v);
+                        val = buf;
+                    } else if (sf.TypeName == "DoubleProperty" && sfSize == 8) {
+                        double v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
+                        char buf[32]; snprintf(buf, sizeof(buf), "%.4g", v);
+                        val = buf;
+                    } else if (sf.TypeName == "IntProperty" && sfSize == 4) {
+                        int32_t v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
+                        val = std::to_string(v);
+                    } else if (sf.TypeName == "BoolProperty") {
+                        uint8_t v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
+                        val = v ? "true" : "false";
+                    } else if (sf.TypeName == "ByteProperty" || sf.TypeName == "Int8Property") {
+                        uint8_t v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
+                        val = std::to_string(v);
+                    } else if (sf.TypeName == "NameProperty") {
+                        val = ReadFName(structBase + sf.Offset);
+                        if (val.empty()) val = "None";
+                    } else if (sf.TypeName == "ObjectProperty" || sf.TypeName == "ClassProperty") {
+                        uintptr_t ptr = 0; Mem::ReadSafe(structBase + sf.Offset, ptr);
+                        val = ptr ? GetName(ptr) : "null";
+                    } else {
+                        continue;  // skip non-previewable fields (structs, arrays, etc.)
+                    }
+                    if (!preview.empty()) preview += ", ";
+                    preview += sf.Name + "=" + val;
+                    ++shown;
+                }
+                if (!preview.empty()) {
+                    fv.typedValue = "{" + preview + "}";
+                }
+
+                // Read hex from actual struct size (use PropertiesSize if fi.Size is garbage)
+                int32_t hexSize = fi.Size;
+                if (hexSize <= 0 || hexSize > 256) {
+                    hexSize = si.PropertiesSize;
+                    if (hexSize <= 0 || hexSize > 256) hexSize = 0;
+                }
+                if (hexSize > 0) {
+                    fv.size = hexSize;
+                    std::vector<uint8_t> buf(hexSize, 0);
+                    if (Mem::ReadBytesSafe(structBase, buf.data(), hexSize)) {
+                        std::string hex;
+                        hex.reserve(hexSize * 2);
+                        for (auto b : buf) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", b); hex += hx; }
+                        fv.hexValue = hex;
+                    }
+                }
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+            // Fall through to generic scalar handler if struct not resolved
         }
 
         // BoolProperty: extract FieldMask/ByteOffset for bitfield display
@@ -2396,14 +2652,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             uintptr_t enumPtr = 0;
             Mem::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumPtr);
 
-            // Read raw value based on property size
+            // Validate enum size: FPROPERTY_ELEMSIZE can be garbage for fields in
+            // UScriptStruct layouts. Default to 1 (uint8, most common for BP enums).
+            int32_t enumSize = fi.Size;
+            if (enumSize != 1 && enumSize != 2 && enumSize != 4 && enumSize != 8)
+                enumSize = 1;
+
+            // Read raw value based on validated size
             int64_t rawVal = 0;
-            if (fi.Size == 1) { uint8_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (fi.Size == 2) { int16_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (fi.Size == 4) { int32_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
-            else if (fi.Size == 8) { int64_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            if (enumSize == 1) { uint8_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 2) { int16_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 4) { int32_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
+            else if (enumSize == 8) { int64_t v = 0; Mem::ReadSafe(instanceAddr + fi.Offset, v); rawVal = v; }
 
             fv.enumValue = rawVal;
+            fv.size = enumSize;
             if (enumPtr) {
                 fv.enumName = ResolveEnumValue(enumPtr, rawVal);
                 fv.enumAddr = enumPtr;
@@ -2412,14 +2675,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             fv.typedValue = fv.enumName.empty() ? std::to_string(rawVal) : fv.enumName;
 
             // Populate hex
-            if (fi.Size > 0 && fi.Size <= 8) {
-                uint8_t buf[8] = {};
-                Mem::ReadBytesSafe(instanceAddr + fi.Offset, buf, fi.Size);
-                std::string hex;
-                hex.reserve(fi.Size * 2);
-                for (int i = 0; i < fi.Size; ++i) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", buf[i]); hex += hx; }
-                fv.hexValue = hex;
-            }
+            uint8_t buf[8] = {};
+            Mem::ReadBytesSafe(instanceAddr + fi.Offset, buf, enumSize);
+            std::string hex;
+            hex.reserve(enumSize * 2);
+            for (int i = 0; i < enumSize; ++i) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", buf[i]); hex += hx; }
+            fv.hexValue = hex;
             result.fields.push_back(std::move(fv));
             continue;
         }
@@ -2588,29 +2849,47 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Scalar or struct: read raw bytes and interpret
-        if (fi.Size > 0 && fi.Size <= 256) {
-            std::vector<uint8_t> buf(fi.Size, 0);
-            if (Mem::ReadBytesSafe(instanceAddr + fi.Offset, buf.data(), fi.Size)) {
+        // Scalar or struct: read raw bytes and interpret.
+        // Validate fi.Size against known type sizes: FPROPERTY_ELEMSIZE often returns
+        // garbage (e.g., 1073742336) for fields inside certain UScriptStruct layouts.
+        int32_t readSize = fi.Size;
+        int32_t expectedSize = InferScalarSize(fi.TypeName);
+        if (expectedSize > 0) {
+            if (readSize != expectedSize) {
+                readSize = expectedSize;
+                fv.size = readSize;
+            }
+        } else if (readSize <= 0 || readSize > 256) {
+            // Unknown type with zero/garbage size — skip
+            readSize = 0;
+        }
+        if (readSize > 0 && readSize <= 256) {
+            std::vector<uint8_t> buf(readSize, 0);
+            if (Mem::ReadBytesSafe(instanceAddr + fi.Offset, buf.data(), readSize)) {
                 // Build hex string
                 std::string hex;
-                hex.reserve(fi.Size * 2);
+                hex.reserve(readSize * 2);
                 for (auto b : buf) {
                     char hx[3];
                     snprintf(hx, sizeof(hx), "%02X", b);
                     hex += hx;
                 }
                 fv.hexValue = hex;
-                fv.typedValue = InterpretValue(fi.TypeName, buf.data(), fi.Size);
+                fv.typedValue = InterpretValue(fi.TypeName, buf.data(), readSize);
             }
         }
 
         result.fields.push_back(std::move(fv));
     }
 
-    LOG_DEBUG("WalkInstance: %s (%s) — %zu fields at 0x%llX",
-              result.name.c_str(), result.className.c_str(),
-              result.fields.size(), static_cast<unsigned long long>(instanceAddr));
+    auto loopEnd = std::chrono::steady_clock::now();
+    auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(loopEnd - loopStart).count();
+
+    Logger::Info("WALK:perf", "WalkInstance '%s' (%s): %zu fields in %lldms (WalkClass=%lldms) "
+        "| Obj:%d/%lldms Struct:%d/%lldms Array:%d/%lldms Scalar:%d/%lldms",
+        result.name.c_str(), result.className.c_str(), result.fields.size(), totalMs, walkClassMs,
+        nObj, tObj, nStruct, tStruct, nArray, tArray, nScalar, tScalar);
+
     return result;
 }
 

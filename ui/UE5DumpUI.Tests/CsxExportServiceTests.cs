@@ -23,7 +23,7 @@ public sealed class StubDumpService : IDumpService
         => _classResults[addr] = result;
 
     public Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
-        int arrayLimit = 64, CancellationToken ct = default)
+        int arrayLimit = 64, int previewLimit = 2, CancellationToken ct = default)
     {
         if (_structResults.TryGetValue(addr, out var result))
             return Task.FromResult(result);

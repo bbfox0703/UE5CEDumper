@@ -583,8 +583,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             std::string classAddrStr = request.value("class_addr", "");
             uintptr_t classAddr = classAddrStr.empty() ? 0 : PipeProtocol::StrToAddr(classAddrStr);
             int32_t arrayLimit = request.value("array_limit", 64);
+            int32_t previewLimit = request.value("preview_limit", 2);
 
-            auto result = UStructWalker::WalkInstance(addr, classAddr, arrayLimit);
+            auto result = UStructWalker::WalkInstance(addr, classAddr, arrayLimit, previewLimit);
 
             json data;
             data["addr"]       = PipeProtocol::AddrToStr(result.addr);
@@ -801,6 +802,14 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
 
             if (innerType.empty() || elemSize <= 0)
                 return PipeProtocol::MakeError(id, "missing inner_type or invalid elem_size").dump();
+
+            // Validate elemSize from UI — may have cached garbage from older sessions.
+            // ReadArrayElements already caps at 256, but validate explicitly here too.
+            if (elemSize > 256) {
+                Logger::Warn("PIPE:cmd", "read_array_elements: elemSize=%d too large for '%s', rejecting",
+                    elemSize, innerType.c_str());
+                return PipeProtocol::MakeError(id, "elem_size too large (max 256)").dump();
+            }
 
             auto result = UStructWalker::ReadArrayElements(
                 addr, fieldOffset, innerAddr, innerType, elemSize, offset, limit);

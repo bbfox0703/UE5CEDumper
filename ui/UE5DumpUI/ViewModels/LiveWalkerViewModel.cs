@@ -19,6 +19,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
     private readonly IPlatformService _platform;
+    private readonly IAobMakerBridge? _aobMaker;
 
     // Cached GWorld walk result for back-navigation
     private WorldWalkResult? _cachedWorld;
@@ -66,6 +67,21 @@ public partial class LiveWalkerViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Max struct sub-fields to show in preview (0 = none, default 2, max 6).</summary>
+    private int _previewLimit = 2;
+    public int PreviewLimit
+    {
+        get => _previewLimit;
+        set
+        {
+            if (_previewLimit == value) return;
+            _previewLimit = value;
+            // Auto-refresh current view with new limit
+            if (!string.IsNullOrEmpty(CurrentAddress))
+                RefreshCommand.Execute(null);
+        }
+    }
+
     /// <summary>Max CE DropDownList entries (2^N, default 512). Used during CE XML export.</summary>
     public int DropDownLimit { get; set; } = 512;
 
@@ -76,6 +92,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private int _searchMatchCount;
     [ObservableProperty] private bool _hasSearchResults;
+
+    // AOBMaker CE Plugin integration
+    [ObservableProperty] private bool _isAobMakerAvailable;
 
     // Auto-refresh
     [ObservableProperty] private bool _isAutoRefreshing;
@@ -100,11 +119,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
     public event Action? ScrollToFirstSearchMatch;
     private string _lastScrolledSearchText = "";
 
-    public LiveWalkerViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
+    public LiveWalkerViewModel(IDumpService dump, ILoggingService log, IPlatformService platform,
+                               IAobMakerBridge? aobMaker = null)
     {
         _dump = dump;
         _log = log;
         _platform = platform;
+        _aobMaker = aobMaker;
     }
 
     public void SetEngineState(EngineState state)
@@ -254,7 +275,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             else if (!string.IsNullOrEmpty(field.StructDataAddr) && field.StructDataAddr != "0x0")
             {
                 // StructProperty navigation: walk struct data using its class
-                var result = await _dump.WalkInstanceAsync(field.StructDataAddr, field.StructClassAddr, arrayLimit: ArrayLimit);
+                var result = await _dump.WalkInstanceAsync(field.StructDataAddr, field.StructClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
                 var displayName = !string.IsNullOrEmpty(field.StructTypeName)
                     ? $"{field.Name} ({field.StructTypeName})"
                     : field.Name;
@@ -767,7 +788,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
             // Re-walk this object (pass ClassAddr for StructProperty navigation)
             var classAddr = string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
-            var result = await _dump.WalkInstanceAsync(item.Address, classAddr, arrayLimit: ArrayLimit);
+            var result = await _dump.WalkInstanceAsync(item.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
             UpdateDisplay(result);
 
             if (!string.IsNullOrEmpty(scrollHint))
@@ -816,7 +837,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             }
 
             var classAddr = string.IsNullOrEmpty(prev.ClassAddr) ? null : prev.ClassAddr;
-            var result = await _dump.WalkInstanceAsync(prev.Address, classAddr, arrayLimit: ArrayLimit);
+            var result = await _dump.WalkInstanceAsync(prev.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
             UpdateDisplay(result);
 
             if (!string.IsNullOrEmpty(scrollHint))
@@ -856,7 +877,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 FieldName = "Outer",
             });
 
-            var result = await _dump.WalkInstanceAsync(parentAddr, arrayLimit: ArrayLimit);
+            var result = await _dump.WalkInstanceAsync(parentAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
             UpdateDisplay(result);
         }
         catch (Exception ex)
@@ -1215,7 +1236,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                         parentClassAddr = parentBc.ClassAddr;
                 }
 
-                var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit);
+                var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
                 if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
 
                 // Find the container field by name and offset in the refreshed result
@@ -1251,7 +1272,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                     classAddr = current.ClassAddr;
             }
 
-            var result = await _dump.WalkInstanceAsync(CurrentAddress, classAddr, arrayLimit: ArrayLimit);
+            var result = await _dump.WalkInstanceAsync(CurrentAddress, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
             if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
             UpdateDisplay(result);
         }
@@ -1313,6 +1334,65 @@ public partial class LiveWalkerViewModel : ViewModelBase
         catch (Exception ex)
         {
             _log.Error($"Failed to copy ptr address for {field.Name}", ex);
+        }
+    }
+
+    // --- AOBMaker CE Plugin: hex view navigation ---
+
+    /// <summary>Check AOBMaker availability (called after data load).</summary>
+    public async Task CheckAobMakerAsync()
+    {
+        if (_aobMaker == null) return;
+        try
+        {
+            IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
+        }
+        catch { IsAobMakerAvailable = false; }
+    }
+
+    /// <summary>Strip leading "0x" prefix for AOBMaker hex navigation.</summary>
+    private static string StripHexPrefix(string addr)
+        => addr.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? addr[2..] : addr;
+
+    [RelayCommand]
+    private async Task HexFieldAddressAsync(LiveFieldValue? field)
+    {
+        if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
+        try
+        {
+            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(field.FieldAddress));
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"AOBMaker HEX field failed for {field.Name}", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task HexPtrAddressAsync(LiveFieldValue? field)
+    {
+        if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.PtrAddress)) return;
+        try
+        {
+            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(field.PtrAddress));
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"AOBMaker HEX ptr failed for {field.Name}", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task HexObjectAddressAsync()
+    {
+        if (_aobMaker == null || string.IsNullOrEmpty(CurrentAddress)) return;
+        try
+        {
+            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(CurrentAddress));
+        }
+        catch (Exception ex)
+        {
+            _log.Error("AOBMaker HEX object address failed", ex);
         }
     }
 
@@ -1569,7 +1649,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
     private async Task NavigateToAsync(string addr, string label, int fieldOffset, string fieldName, bool isPointer)
     {
-        var result = await _dump.WalkInstanceAsync(addr, arrayLimit: ArrayLimit);
+        var result = await _dump.WalkInstanceAsync(addr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
 
         var displayName = !string.IsNullOrEmpty(result.Name) ? result.Name : label;
         Breadcrumbs.Add(new BreadcrumbItem
