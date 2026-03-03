@@ -2517,46 +2517,66 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             if (found && fv.structClassAddr && previewLimit > 0) {
                 ClassInfo si = WalkClass(fv.structClassAddr);  // cached — just hash lookup
                 uintptr_t structBase = instanceAddr + fi.Offset;
+
+                // Bulk read struct bytes — single cross-process read for both
+                // preview AND hex display (was N individual ReadSafe calls).
+                int32_t readSize = fi.Size;
+                if (readSize <= 0 || readSize > 1024) {
+                    readSize = si.PropertiesSize;
+                    if (readSize <= 0 || readSize > 1024) readSize = 0;
+                }
+                std::vector<uint8_t> structBuf;
+                bool hasBuf = false;
+                if (readSize > 0) {
+                    structBuf.resize(readSize, 0);
+                    hasBuf = Mem::ReadBytesSafe(structBase, structBuf.data(), readSize);
+                }
+
+                // Preview: interpret sub-fields from local buffer (no per-field ReadSafe)
                 std::string preview;
                 int shown = 0;
-                const int kMaxScanFields    = 20;  // max fields to scan
+                const int kMaxScanFields = 20;
                 for (size_t idx = 0; idx < si.Fields.size() && static_cast<int>(idx) < kMaxScanFields; ++idx) {
                     const auto& sf = si.Fields[idx];
                     if (shown >= previewLimit) {
                         preview += ", ...";
                         break;
                     }
-                    // Read scalar field values for preview
                     int32_t sfSize = sf.Size;
                     int32_t expected = InferScalarSize(sf.TypeName);
                     if (expected > 0 && sfSize != expected) sfSize = expected;
 
                     std::string val;
-                    if (sf.TypeName == "FloatProperty" && sfSize == 4) {
-                        float v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
-                        char buf[32]; snprintf(buf, sizeof(buf), "%.4g", v);
-                        val = buf;
-                    } else if (sf.TypeName == "DoubleProperty" && sfSize == 8) {
-                        double v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
-                        char buf[32]; snprintf(buf, sizeof(buf), "%.4g", v);
-                        val = buf;
-                    } else if (sf.TypeName == "IntProperty" && sfSize == 4) {
-                        int32_t v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
-                        val = std::to_string(v);
-                    } else if (sf.TypeName == "BoolProperty") {
-                        uint8_t v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
-                        val = v ? "true" : "false";
-                    } else if (sf.TypeName == "ByteProperty" || sf.TypeName == "Int8Property") {
-                        uint8_t v = 0; Mem::ReadSafe(structBase + sf.Offset, v);
-                        val = std::to_string(v);
-                    } else if (sf.TypeName == "NameProperty") {
-                        val = ReadFName(structBase + sf.Offset);
-                        if (val.empty()) val = "None";
-                    } else if (sf.TypeName == "ObjectProperty" || sf.TypeName == "ClassProperty") {
-                        uintptr_t ptr = 0; Mem::ReadSafe(structBase + sf.Offset, ptr);
-                        val = ptr ? GetName(ptr) : "null";
+                    // Use bulk-read buffer for scalar fields (zero cross-process reads)
+                    if (hasBuf && sf.Offset >= 0 && sf.Offset + sfSize <= readSize) {
+                        const uint8_t* p = structBuf.data() + sf.Offset;
+                        if (sf.TypeName == "FloatProperty" && sfSize == 4) {
+                            float v; memcpy(&v, p, 4);
+                            char buf[32]; snprintf(buf, sizeof(buf), "%.4g", v);
+                            val = buf;
+                        } else if (sf.TypeName == "DoubleProperty" && sfSize == 8) {
+                            double v; memcpy(&v, p, 8);
+                            char buf[32]; snprintf(buf, sizeof(buf), "%.4g", v);
+                            val = buf;
+                        } else if (sf.TypeName == "IntProperty" && sfSize == 4) {
+                            int32_t v; memcpy(&v, p, 4);
+                            val = std::to_string(v);
+                        } else if (sf.TypeName == "BoolProperty") {
+                            val = p[0] ? "true" : "false";
+                        } else if (sf.TypeName == "ByteProperty" || sf.TypeName == "Int8Property") {
+                            val = std::to_string(p[0]);
+                        } else if (sf.TypeName == "NameProperty" && sfSize >= 4) {
+                            int32_t nameIdx; memcpy(&nameIdx, p, 4);
+                            val = FNamePool::GetString(nameIdx);
+                            if (val.empty()) val = "None";
+                        } else if ((sf.TypeName == "ObjectProperty" || sf.TypeName == "ClassProperty") && sfSize >= 8) {
+                            uintptr_t ptr; memcpy(&ptr, p, 8);
+                            val = ptr ? GetName(ptr) : "null";  // GetName uses name cache
+                        } else {
+                            continue;  // skip non-previewable fields
+                        }
                     } else {
-                        continue;  // skip non-previewable fields (structs, arrays, etc.)
+                        continue;  // field beyond buffer — skip
                     }
                     if (!preview.empty()) preview += ", ";
                     preview += sf.Name + "=" + val;
@@ -2566,21 +2586,17 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     fv.typedValue = "{" + preview + "}";
                 }
 
-                // Read hex from actual struct size (use PropertiesSize if fi.Size is garbage)
-                int32_t hexSize = fi.Size;
-                if (hexSize <= 0 || hexSize > 256) {
-                    hexSize = si.PropertiesSize;
-                    if (hexSize <= 0 || hexSize > 256) hexSize = 0;
-                }
-                if (hexSize > 0) {
+                // Hex display: reuse bulk-read buffer (no second ReadBytesSafe)
+                int32_t hexSize = (readSize <= 256) ? readSize : 0;
+                if (hexSize > 0 && hasBuf) {
                     fv.size = hexSize;
-                    std::vector<uint8_t> buf(hexSize, 0);
-                    if (Mem::ReadBytesSafe(structBase, buf.data(), hexSize)) {
-                        std::string hex;
-                        hex.reserve(hexSize * 2);
-                        for (auto b : buf) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", b); hex += hx; }
-                        fv.hexValue = hex;
+                    std::string hex;
+                    hex.reserve(hexSize * 2);
+                    for (int i = 0; i < hexSize; ++i) {
+                        char hx[3]; snprintf(hx, sizeof(hx), "%02X", structBuf[i]);
+                        hex += hx;
                     }
+                    fv.hexValue = hex;
                 }
                 result.fields.push_back(std::move(fv));
                 continue;
