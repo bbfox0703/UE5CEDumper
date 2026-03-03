@@ -19,6 +19,7 @@ public class App : Application
     private PipeClient? _pipeClient;
     private DumpService? _dumpService;
     private AobUsageService? _aobUsage;
+    private AobMakerBridgeService? _aobMakerBridge;
 
     public override void Initialize()
     {
@@ -49,6 +50,7 @@ public class App : Application
             _pipeClient = new PipeClient(_logging);
             _dumpService = new DumpService(_pipeClient, _logging);
             _aobUsage = new AobUsageService(_platform, _logging);
+            _aobMakerBridge = new AobMakerBridgeService(_logging);
 
             _logging.Info(Constants.LogCatInit, "UE5DumpUI starting...");
             _logging.Info(Constants.LogCatInit, $"Version:   {typeof(App).Assembly.GetName().Version}");
@@ -59,7 +61,7 @@ public class App : Application
 
             // Create main window
             var mainVm = new MainWindowViewModel(
-                _pipeClient, _dumpService, _logging, _platform, _aobUsage);
+                _pipeClient, _dumpService, _logging, _platform, _aobUsage, _aobMakerBridge);
 
             desktop.MainWindow = new MainWindow
             {
@@ -70,6 +72,7 @@ public class App : Application
             {
                 _logging?.Info(Constants.LogCatInit, "UE5DumpUI shutting down...");
                 _pipeClient?.Dispose();
+                _aobMakerBridge?.Dispose();
                 _platform?.Dispose();
                 (_logging as IDisposable)?.Dispose();
             };

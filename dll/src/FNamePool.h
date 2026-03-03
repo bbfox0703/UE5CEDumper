@@ -34,4 +34,9 @@ bool IsInitialized();
 // Check if running in UE4 TNameEntryArray mode
 bool IsUE4Mode();
 
+// Diagnostic: probe a range of ComparisonIndex values and log failure reasons.
+// Logs pool parameters, max valid chunk, and categorizes failures.
+// Call when name resolution ratio is unexpectedly low.
+void LogDiagnostics();
+
 } // namespace FNamePool
