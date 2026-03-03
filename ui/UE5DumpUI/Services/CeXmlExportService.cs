@@ -256,6 +256,8 @@ public static class CeXmlExportService
         // Intermediate breadcrumb levels (navigation path)
         // Each breadcrumb: go to field offset from parent's resolved address.
         // If this field is a pointer, add Offsets=[0] to dereference it.
+        // Container views (Array/Map/Set) also need Offsets=[0] to dereference
+        // TArray::Data / TSparseArray::Data pointer at the field offset.
         // Parent's own Offsets=[0] (if pointer) already resolved the dereference,
         // so children just add their field offset.
         for (int i = 1; i < cleanedBc.Count; i++)
@@ -263,10 +265,15 @@ public static class CeXmlExportService
             var bc = cleanedBc[i];
             var childIndent = indent + new string(' ', i * 2);
 
-            EmitGroupOpen(sb, childIndent, bc.FieldName,
+            // Container breadcrumbs dereference TArray::Data / TSparseArray::Data
+            var needsDeref = bc.IsPointerDeref || bc.IsContainerView;
+            // Use decorated label for containers (includes element count/type info)
+            var desc = bc.IsContainerView ? bc.Label : bc.FieldName;
+
+            EmitGroupOpen(sb, childIndent, desc,
                 $"+{bc.FieldOffset:X}",
-                bc.IsPointerDeref ? new[] { 0 } : null,
-                showAsHex: bc.IsPointerDeref);
+                needsDeref ? new[] { 0 } : null,
+                showAsHex: needsDeref);
             openTags++;
         }
 
@@ -388,6 +395,11 @@ public static class CeXmlExportService
             {
                 for (int j = i + 1; j < result.Count; j++)
                 {
+                    // Container view breadcrumbs (Array/Map/Set) share their parent's address
+                    // by design — they represent TArray::Data / TSparseArray::Data dereference,
+                    // not a navigation cycle. Skip them as cycle endpoints.
+                    if (result[j].IsContainerView) continue;
+
                     if (string.Equals(result[i].Address, result[j].Address, StringComparison.OrdinalIgnoreCase))
                     {
                         // Found cycle from i to j -- remove entries (i+1) through j inclusive.
