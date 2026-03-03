@@ -29,17 +29,20 @@
                 Content="{StaticResource str.ObjectTree.Reload}"
                 Command="{Binding LoadCommand}"
                 IsVisible="{Binding !IsLoading}"
+                ToolTip.Tip="{StaticResource str.Tip.ObjectTree.Reload}"
                 Margin="0,0,4,0" Padding="8,4"/>
         <Button Grid.Column="1"
                 Content="{StaticResource str.ObjectTree.Cancel}"
                 Command="{Binding CancelLoadCommand}"
                 IsVisible="{Binding IsLoading}"
+                ToolTip.Tip="{StaticResource str.Tip.ObjectTree.Cancel}"
                 Margin="0,0,4,0" Padding="8,4"
                 Foreground="#F44747"/>
         <Button Grid.Column="2"
                 Content="&#x1F50D;"
                 Command="{Binding SearchCommand}"
                 IsEnabled="{Binding !IsLoading}"
+                ToolTip.Tip="{StaticResource str.Tip.ObjectTree.Search}"
                 Padding="8,4"/>
       </Grid>
 
@@ -55,6 +58,7 @@
                    Foreground="#888" FontSize="12" VerticalAlignment="Center"/>
         <ComboBox ItemsSource="{Binding ClassFilterOptions}"
                   SelectedIndex="{Binding SelectedClassFilterIndex}"
+                  ToolTip.Tip="{StaticResource str.Tip.ObjectTree.ClassFilter}"
                   MinWidth="140" Padding="4,2" FontSize="12"/>
         <TextBox Watermark="{StaticResource str.ObjectTree.FilterHint}"
                  Text="{Binding FilterText}"

@@ -291,11 +291,12 @@ public sealed class DumpService : IDumpService
 
     // --- Live Data Walker ---
 
-    public async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, int arrayLimit = 64, CancellationToken ct = default)
+    public async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, int arrayLimit = 64, int previewLimit = 2, CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "walk_instance", ["addr"] = addr };
         if (!string.IsNullOrEmpty(classAddr)) req["class_addr"] = classAddr;
         if (arrayLimit != 64) req["array_limit"] = arrayLimit;
+        if (previewLimit != 2) req["preview_limit"] = previewLimit;
 
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);

@@ -15,10 +15,12 @@
                Width="300" Padding="4,2"/>
       <CheckBox Content="{StaticResource str.PropertySearch.GameOnly}"
                 IsChecked="{Binding GameClassesOnly}"
+                ToolTip.Tip="{StaticResource str.Tip.PropertySearch.GameOnly}"
                 Foreground="#CCCCCC" FontSize="12"
                 VerticalAlignment="Center"/>
       <Button Content="{StaticResource str.PropertySearch.Search}"
               Command="{Binding SearchCommand}"
+              ToolTip.Tip="{StaticResource str.Tip.PropertySearch.Search}"
               Classes="accent" Padding="12,4"/>
       <TextBlock Text="{Binding StatusText}"
                  Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
@@ -82,10 +84,12 @@
                 <Button Content="{StaticResource str.PropertySearch.FindInstances}"
                         Command="{Binding $parent[UserControl].((vm:PropertySearchViewModel)DataContext).FindInstancesCommand}"
                         CommandParameter="{Binding}"
+                        ToolTip.Tip="{StaticResource str.Tip.PropertySearch.FindInstances}"
                         Padding="6,2" FontSize="11"/>
                 <Button Content="{StaticResource str.PropertySearch.CopyOffset}"
                         Command="{Binding $parent[UserControl].((vm:PropertySearchViewModel)DataContext).CopyOffsetCommand}"
                         CommandParameter="{Binding}"
+                        ToolTip.Tip="{StaticResource str.Tip.PropertySearch.CopyOffset}"
                         Padding="6,2" FontSize="11"/>
               </StackPanel>
             </DataTemplate>

@@ -185,8 +185,9 @@ public partial class ObjectTreeViewModel : ViewModelBase
             } while (offset < total);
 
             ApplyFilter();
-            StatusText = $"Loaded {_allNodes.Count:N0} named objects (of {total:N0} total)";
-            _log.Info($"Loaded {_allNodes.Count:N0} named objects of {total:N0} total");
+            var loadPct = total > 0 ? 100.0 * _allNodes.Count / total : 0;
+            StatusText = $"Loaded {_allNodes.Count:N0} named objects (of {total:N0} total, {loadPct:F1}%)";
+            _log.Info($"Loaded {_allNodes.Count:N0} named objects of {total:N0} total ({loadPct:F1}%)");
         }
         catch (OperationCanceledException)
         {
@@ -303,7 +304,7 @@ public partial class ObjectTreeViewModel : ViewModelBase
 
         bool hasAnyFilter = !string.IsNullOrEmpty(textFilter) || classFilter != null;
         var totalSuffix = ObjectCount > 0 && ObjectCount != _allNodes.Count
-            ? $" / {ObjectCount:N0} total"
+            ? $" / {ObjectCount:N0} total ({100.0 * _allNodes.Count / ObjectCount:F1}%)"
             : "";
 
         if (hasAnyFilter)
