@@ -41,6 +41,21 @@ public partial class InstanceFinderViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Max struct sub-fields to show in preview (0 = none, default 2, max 6).</summary>
+    private int _previewLimit = 2;
+    public int PreviewLimit
+    {
+        get => _previewLimit;
+        set
+        {
+            if (_previewLimit == value) return;
+            _previewLimit = value;
+            // Auto-refresh selected instance with new limit
+            if (SelectedInstance != null)
+                _ = LoadInstanceFieldsAsync(SelectedInstance);
+        }
+    }
+
     /// <summary>Max CE DropDownList entries (2^N, default 512). Used during CE XML export.</summary>
     public int DropDownLimit { get; set; } = 512;
 
@@ -101,9 +116,15 @@ public partial class InstanceFinderViewModel : ViewModelBase
             }
 
             HasInstances = Instances.Count > 0;
-            StatusText = result.Scanned > 0
-                ? $"Found {Instances.Count} instances (scanned {result.Scanned:N0}, non-null {result.NonNull:N0}, named {result.Named:N0})"
-                : $"Found {Instances.Count} instances";
+            if (result.Scanned > 0)
+            {
+                var pct = result.NonNull > 0 ? 100.0 * result.Named / result.NonNull : 0;
+                StatusText = $"Found {Instances.Count} instances (scanned {result.Scanned:N0}, non-null {result.NonNull:N0}, named {result.Named:N0} ({pct:F1}%))";
+            }
+            else
+            {
+                StatusText = $"Found {Instances.Count} instances";
+            }
             _log.Info($"FindInstances: '{SearchClassName}' -> {Instances.Count} results (scanned={result.Scanned}, nonNull={result.NonNull}, named={result.Named})");
         }
         catch (Exception ex)
@@ -198,7 +219,7 @@ public partial class InstanceFinderViewModel : ViewModelBase
             IsLoadingFields = true;
             ShowCeXml = false;
 
-            var result = await _dump.WalkInstanceAsync(instance.Address, arrayLimit: ArrayLimit);
+            var result = await _dump.WalkInstanceAsync(instance.Address, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
 
             // Compute base address for FieldAddress calculation
             ulong baseAddr = 0;

@@ -15,9 +15,11 @@
                Width="300" Padding="4,2"/>
       <CheckBox Content="{StaticResource str.InstanceFinder.ExactMatch}"
                 IsChecked="{Binding ExactMatch}"
+                ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.ExactMatch}"
                 VerticalAlignment="Center" Margin="0,0,4,0"/>
       <Button Content="{StaticResource str.InstanceFinder.Search}"
               Command="{Binding SearchCommand}"
+              ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.Search}"
               Classes="accent" Padding="12,4"/>
       <TextBlock Text="{Binding StatusText}"
                  Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
@@ -36,6 +38,7 @@
                Width="300" Padding="4,2"/>
       <Button Content="{StaticResource str.InstanceFinder.Lookup}"
               Command="{Binding LookupAddressCommand}"
+              ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.Lookup}"
               Padding="12,4"/>
       <TextBlock Text="{Binding LookupStatusText}"
                  Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
@@ -82,6 +85,7 @@
                 <Button Content="Addr"
                         Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyInstanceAddressCommand}"
                         CommandParameter="{Binding}"
+                        ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.CopyAddr}"
                         Padding="4,2" Margin="2"
                         Foreground="#D4D4D4" Background="Transparent"
                         BorderThickness="1" BorderBrush="#555"
@@ -95,6 +99,7 @@
                 <Button Content="AA"
                         Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).GenerateCeAAScriptCommand}"
                         CommandParameter="{Binding}"
+                        ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.AA}"
                         Padding="4,2" Margin="2"
                         Foreground="#E5C07B" Background="Transparent"
                         BorderThickness="1" BorderBrush="#E5C07B"
@@ -114,9 +119,11 @@
                     Margin="0,4,0,4" IsVisible="{Binding HasFields}">
           <Button Content="{StaticResource str.LiveWalker.ExportCE}"
                   Command="{Binding ExportCeXmlCommand}"
+                  ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.ExportCE}"
                   Padding="8,4"/>
           <Button Content="{StaticResource str.InstanceFinder.OpenInWalker}"
                   Command="{Binding OpenInLiveWalkerCommand}"
+                  ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.OpenWalker}"
                   Padding="8,4"/>
         </StackPanel>
 
@@ -155,6 +162,7 @@
                   <Button Content="Addr"
                           Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyFieldAddressCommand}"
                           CommandParameter="{Binding}"
+                          ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.CopyFieldAddr}"
                           Padding="4,2" Margin="2"
                           Foreground="#D4D4D4" Background="Transparent"
                           BorderThickness="1" BorderBrush="#555"

@@ -31,6 +31,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty] private int _arrayLimitExponent = 6; // 2^6 = 64
     [ObservableProperty] private int _dropDownLimitExponent = 9; // 2^9 = 512
     [ObservableProperty] private int _csxDrilldownDepth; // 0 = flat (dummy), 1+ = real child structures
+    [ObservableProperty] private int _previewLimit = 2; // Struct preview sub-field count (0-6)
 
     /// <summary>Computed array element limit: 2^ArrayLimitExponent (2..16384).</summary>
     public int ArrayLimit => 1 << ArrayLimitExponent;
@@ -103,6 +104,12 @@ public partial class MainWindowViewModel : ViewModelBase
         LiveWalker.CsxDrilldownDepth = value;
     }
 
+    partial void OnPreviewLimitChanged(int value)
+    {
+        LiveWalker.PreviewLimit = value;
+        InstanceFinder.PreviewLimit = value;
+    }
+
     public MainWindowViewModel(
         IPipeClient pipeClient,
         IDumpService dump,
@@ -121,7 +128,7 @@ public partial class MainWindowViewModel : ViewModelBase
         ClassStruct = new ClassStructViewModel(dump, log);
         Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker);
         HexView = new HexViewViewModel(dump, pipeClient, log);
-        LiveWalker = new LiveWalkerViewModel(dump, log, platform);
+        LiveWalker = new LiveWalkerViewModel(dump, log, platform, aobMaker);
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
         PropertySearch = new PropertySearchViewModel(dump, log);
         GameClassFilter = new GameClassFilterViewModel(dump, log);
@@ -146,6 +153,8 @@ public partial class MainWindowViewModel : ViewModelBase
                 LiveWalker.SetEngineState(state);
                 InstanceFinder.SetEngineState(state);
                 HexView.SetEngineState(state);
+
+                _ = LiveWalker.CheckAobMakerAsync();
 
                 StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
 
@@ -374,6 +383,9 @@ public partial class MainWindowViewModel : ViewModelBase
         LiveWalker.SetEngineState(state);
         InstanceFinder.SetEngineState(state);
         HexView.SetEngineState(state);
+
+        // Fire-and-forget: check AOBMaker availability for Live Walker
+        _ = LiveWalker.CheckAobMakerAsync();
 
         // Fire-and-forget: persist AOB usage data (failure must not block UI)
         if (_aobUsage != null)

@@ -115,6 +115,9 @@ inline int UENUM_NAMES          = 0x40;  // UEnum::Names (TArray<TPair<FName,int
 inline int UENUM_ENTRY_SIZE     = 0x10;  // sizeof(TPair<FName,int64>) = 8+8 = 16 bytes
 // bUEnumNamesDetected uses release/acquire like bOffsetsValidated.
 inline std::atomic<bool> bUEnumNamesDetected{false};
+// Set when detection was attempted but FAILED — prevents retry storm and
+// skips enum resolution entirely (raw int values shown instead).
+inline std::atomic<bool> bUEnumNamesFailed{false};
 
 // === Detection state ===
 inline bool bCasePreservingName  = false;  // FName is 0x10 bytes (CompIdx + DisplayIdx + Number + pad)

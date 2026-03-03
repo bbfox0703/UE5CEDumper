@@ -10,6 +10,7 @@
     <sys:String x:Key="str.Toolbar.ArrayLimit">Array Limit:</sys:String>
     <sys:String x:Key="str.Toolbar.ArrayLimitWarn">⚠ High memory usage — may cause crash</sys:String>
     <sys:String x:Key="str.Toolbar.DropDownLimit">DropDown Limit:</sys:String>
+    <sys:String x:Key="str.Toolbar.PreviewLimit">Preview:</sys:String>
     <sys:String x:Key="str.Toolbar.CsxDepth">CSX Depth:</sys:String>
 
     <!-- Tabs -->
@@ -70,6 +71,9 @@
     <sys:String x:Key="str.LiveWalker.AutoRefresh">Auto</sys:String>
     <sys:String x:Key="str.LiveWalker.IntervalSec">sec</sys:String>
     <sys:String x:Key="str.LiveWalker.Copy">Copy</sys:String>
+    <sys:String x:Key="str.LiveWalker.HexFieldTip">Navigate CE hex view to field address (via AOBMaker CE Plugin)</sys:String>
+    <sys:String x:Key="str.LiveWalker.HexPtrTip">Navigate CE hex view to pointer target (via AOBMaker CE Plugin)</sys:String>
+    <sys:String x:Key="str.LiveWalker.HexObjectTip">Navigate CE hex view to current object address (via AOBMaker CE Plugin)</sys:String>
 
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.ClassNameHint">Class name (e.g. PlayerController)</sys:String>
@@ -97,6 +101,8 @@
     <sys:String x:Key="str.Pointers.ExtraScanHint">Some pointers not found. Try aggressive scanning techniques (5-20 seconds).</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerHex">HEX</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerHexTip">Navigate CE hex view to pointer address (via AOBMaker CE Plugin)</sys:String>
+    <sys:String x:Key="str.Pointers.AobMakerAsm">ASM</sys:String>
+    <sys:String x:Key="str.Pointers.AobMakerScanAsmTip">Navigate CE disassembler to AOB scan hit instruction (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScan">Test Extra Scan</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScanHint">Dev test: simulate scan progress UI (does not actually rescan).</sys:String>
 
@@ -143,5 +149,73 @@
     <sys:String x:Key="str.Error.Connection">Failed to connect to pipe server</sys:String>
     <sys:String x:Key="str.Error.ReadFailed">Memory read failed</sys:String>
     <sys:String x:Key="str.Error.AlreadyRunning">Another instance of UE5 Dump UI is already running</sys:String>
+
+    <!-- Tooltips: MainWindow toolbar -->
+    <sys:String x:Key="str.Tip.Connect">Connect to injected DLL via named pipe</sys:String>
+    <sys:String x:Key="str.Tip.Disconnect">Disconnect from DLL pipe server</sys:String>
+    <sys:String x:Key="str.Tip.StartScan">Trigger deferred scan (proxy DLL mode)</sys:String>
+    <sys:String x:Key="str.Tip.AddressFormat">Address display format (absolute / module-relative)</sys:String>
+    <sys:String x:Key="str.Tip.CollapsePointers">Collapse pointer chain nodes in CE XML export</sys:String>
+    <sys:String x:Key="str.Tip.ArrayLimit">Max array elements to read inline (2^N)</sys:String>
+    <sys:String x:Key="str.Tip.DropDownLimit">Max CE DropDownList entries (2^N)</sys:String>
+    <sys:String x:Key="str.Tip.PreviewLimit">Struct sub-fields shown in Value column (0 = no preview)</sys:String>
+    <sys:String x:Key="str.Tip.CsxDepth">CSX drilldown depth for child structures</sys:String>
+    <sys:String x:Key="str.Tip.Export">Export object data in various formats</sys:String>
+
+    <!-- Tooltips: Object Tree -->
+    <sys:String x:Key="str.Tip.ObjectTree.Reload">Reload all objects from game process</sys:String>
+    <sys:String x:Key="str.Tip.ObjectTree.Cancel">Cancel current loading operation</sys:String>
+    <sys:String x:Key="str.Tip.ObjectTree.Search">Search objects by name or class</sys:String>
+    <sys:String x:Key="str.Tip.ObjectTree.ClassFilter">Filter by class type</sys:String>
+    <sys:String x:Key="str.Tip.ObjectTree.TextFilter">Filter loaded objects by text</sys:String>
+
+    <!-- Tooltips: Instance Finder -->
+    <sys:String x:Key="str.Tip.InstanceFinder.Search">Search for instances of the specified class</sys:String>
+    <sys:String x:Key="str.Tip.InstanceFinder.ExactMatch">Match class name exactly (no substring)</sys:String>
+    <sys:String x:Key="str.Tip.InstanceFinder.Lookup">Lookup UObject at the specified address</sys:String>
+    <sys:String x:Key="str.Tip.InstanceFinder.CopyAddr">Copy instance address to clipboard</sys:String>
+    <sys:String x:Key="str.Tip.InstanceFinder.OpenWalker">Open this instance in Live Walker</sys:String>
+    <sys:String x:Key="str.Tip.InstanceFinder.ExportCE">Export instance as CE XML pointer chain</sys:String>
+    <sys:String x:Key="str.Tip.InstanceFinder.CopyFieldAddr">Copy field absolute address</sys:String>
+    <sys:String x:Key="str.Tip.InstanceFinder.AA">Generate CE Auto Assembler script</sys:String>
+
+    <!-- Tooltips: Property Search -->
+    <sys:String x:Key="str.Tip.PropertySearch.Search">Search for properties by name across all classes</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.GameOnly">Show only game-specific classes (exclude engine)</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.FindInstances">Find live instances of this class</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.CopyOffset">Copy property offset to clipboard</sys:String>
+
+    <!-- Tooltips: Game Class Filter -->
+    <sys:String x:Key="str.Tip.GameClassFilter.Load">Load class list from game process</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.GameOnly">Show only game-specific classes (exclude engine)</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.SuperFilter">Filter by super/parent class</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.PackageFilter">Filter by UE package name</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.TextFilter">Filter classes by name substring</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.Clear">Clear all filters</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.FindInstances">Find live instances of this class</sys:String>
+    <sys:String x:Key="str.Tip.GameClassFilter.WalkClass">Open class in Live Walker to inspect fields</sys:String>
+
+    <!-- Tooltips: Live Walker -->
+    <sys:String x:Key="str.Tip.LiveWalker.StartWorld">Navigate to GWorld and list top-level objects</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.Back">Go back to previous object</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.Refresh">Re-read current object fields from memory</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.Go">Navigate to the specified address</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.ExportCE">Copy full CE XML pointer chain to clipboard</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.ExportCEField">Copy CE XML for selected field only</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.ExportCsx">Export CE Structure Dissect script (.csx)</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.ExportHeader">Export C++ SDK header (.h)</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.CeAA">Generate CE Auto Assembler script to clipboard</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.CopyFieldAddr">Copy field absolute address</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.CopyFieldName">Copy field name to clipboard</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.Search">Search fields by name</sys:String>
+
+    <!-- Tooltips: Pointer Panel -->
+    <sys:String x:Key="str.Tip.Pointers.Copy">Copy address to clipboard</sys:String>
+    <sys:String x:Key="str.Tip.Pointers.CopyScan">Copy AOB scan hit address to clipboard</sys:String>
+    <sys:String x:Key="str.Tip.Pointers.ExtraScan">Run aggressive fallback scan for missing pointers</sys:String>
+    <sys:String x:Key="str.Tip.Pointers.TestExtraScan">Simulate scan progress UI (dev testing only)</sys:String>
+
+    <!-- Tooltips: Hex View -->
+    <sys:String x:Key="str.Tip.HexView.Read">Read memory at the specified address</sys:String>
 
 </ResourceDictionary>
