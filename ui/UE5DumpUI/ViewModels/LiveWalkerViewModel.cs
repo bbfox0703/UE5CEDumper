@@ -1329,7 +1329,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         try
         {
-            await _platform.CopyToClipboardAsync(field.PtrAddress);
+            var formatted = AddressHelper.FormatAddress(
+                field.PtrAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+            await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
         {
