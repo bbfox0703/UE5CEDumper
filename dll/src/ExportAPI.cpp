@@ -164,14 +164,23 @@ bool UE5_Init() {
                 static_cast<unsigned long long>(ptrs.GNames),
                 static_cast<unsigned long long>(ptrs.GWorld),
                 ObjectArray::GetCount());
-    LOG_SUMMARY("DynOff: CPN=%s FProp=%s Outer=+0x%02X Super=+0x%02X ChildProps=+0x%02X Name=+0x%02X Offset=+0x%02X validated=%s",
+    LOG_SUMMARY("DynOff: CPN=%s FProp=%s TagFFV=%s Outer=+0x%02X validated=%s",
                 DynOff::bCasePreservingName ? "yes" : "no",
                 DynOff::bUseFProperty ? "yes" : "no",
+                DynOff::bTaggedFFieldVariant ? "yes" : "no",
                 DynOff::UOBJECT_OUTER,
-                DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDPROPS,
-                DynOff::bUseFProperty ? DynOff::FFIELD_NAME : Constants::OFF_UOBJECT_NAME,
-                DynOff::bUseFProperty ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET,
                 DynOff::bOffsetsValidated.load(std::memory_order_acquire) ? "yes" : "no");
+    LOG_SUMMARY("  UStruct: Super=+0x%02X Children=+0x%02X ChildProps=+0x%02X PropsSize=+0x%02X",
+                DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDREN,
+                DynOff::USTRUCT_CHILDPROPS, DynOff::USTRUCT_PROPSSIZE);
+    if (DynOff::bUseFProperty) {
+        LOG_SUMMARY("  FField: Next=+0x%02X Name=+0x%02X | FProp: Offset=+0x%02X ElemSize=+0x%02X StructProp=+0x%02X",
+                    DynOff::FFIELD_NEXT, DynOff::FFIELD_NAME,
+                    DynOff::FPROPERTY_OFFSET, DynOff::FPROPERTY_ELEMSIZE, DynOff::FSTRUCTPROP_STRUCT);
+    } else {
+        LOG_SUMMARY("  UProperty: Next=+0x%02X Offset=+0x%02X ElemSize=+0x%02X",
+                    DynOff::UFIELD_NEXT, DynOff::UPROPERTY_OFFSET, DynOff::UPROPERTY_ELEMSIZE);
+    }
 
     // Switch to Pipe channel — all subsequent runtime logging goes to pipe file
     Logger::SetChannel(LogChannel::Pipe);

@@ -163,15 +163,44 @@ bool PipeServer::WriteLine(HANDLE pipe, const std::string& line) {
 }
 
 void PipeServer::HandleClient(HANDLE pipe) {
+    // Batch-suppress repetitive command logging (e.g. 244 x get_object_list)
+    std::string lastCmd;
+    int repeatCount = 0;
+
+    auto flushRepeat = [&]() {
+        if (repeatCount > 1) {
+            Logger::Debug("PIPE:cmd", "PipeServer: ... repeated %dx: %s", repeatCount, lastCmd.c_str());
+        }
+        repeatCount = 0;
+        lastCmd.clear();
+    };
+
     while (m_running.load()) {
         std::string line = ReadLine(pipe);
-        if (line.empty()) break; // Disconnected
+        if (line.empty()) { flushRepeat(); break; } // Disconnected
 
-        Logger::Debug("PIPE:cmd", "PipeServer: Received: %s", line.c_str());
+        // Extract command name for dedup (fast: find "cmd":" in JSON)
+        std::string cmd;
+        auto pos = line.find("\"cmd\":\"");
+        if (pos != std::string::npos) {
+            auto start = pos + 7;
+            auto end = line.find('"', start);
+            if (end != std::string::npos) cmd = line.substr(start, end - start);
+        }
+
+        if (cmd == lastCmd && !cmd.empty()) {
+            ++repeatCount;
+        } else {
+            flushRepeat();
+            Logger::Debug("PIPE:cmd", "PipeServer: Received: %s", line.c_str());
+            lastCmd = cmd;
+            repeatCount = 1;
+        }
 
         std::string response = DispatchCommand(line);
         if (!response.empty()) {
             if (!WriteLine(pipe, response)) {
+                flushRepeat();
                 Logger::Error("PIPE:cmd", "PipeServer: Failed to write response");
                 break;
             }
@@ -876,11 +905,21 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["world_addr"] = PipeProtocol::AddrToStr(worldAddr);
             data["world_name"] = UStructWalker::GetName(worldAddr);
 
+            // Log DynOff state for diagnostics
+            Logger::Info("PIPE:world", "DynOff: FFIELD_NEXT=0x%02X FFIELD_NAME=0x%02X FPROPERTY_OFFSET=0x%02X "
+                "FPROPERTY_ELEMSIZE=0x%02X FSTRUCTPROP_STRUCT=0x%02X bTaggedFFV=%d",
+                DynOff::FFIELD_NEXT, DynOff::FFIELD_NAME, DynOff::FPROPERTY_OFFSET,
+                DynOff::FPROPERTY_ELEMSIZE, DynOff::FSTRUCTPROP_STRUCT,
+                DynOff::bTaggedFFieldVariant ? 1 : 0);
+
             // Walk UWorld class to find PersistentLevel field offset dynamically
             uintptr_t worldClass = UStructWalker::GetClass(worldAddr);
             if (!worldClass) return PipeProtocol::MakeError(id, "Cannot read UWorld class").dump();
 
             ClassInfo worldCI = UStructWalker::WalkClass(worldClass);
+            Logger::Info("PIPE:world", "UWorld class '%s' at 0x%llX, %zu fields, propsSize=%d",
+                worldCI.Name.c_str(), static_cast<unsigned long long>(worldClass),
+                worldCI.Fields.size(), worldCI.PropertiesSize);
 
             // Find PersistentLevel field (ObjectProperty)
             uintptr_t levelAddr = 0;
@@ -891,11 +930,38 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     foundPersistentLevel = true;
                     persistentLevelOffset = f.Offset;
                     Mem::ReadSafe(worldAddr + f.Offset, levelAddr);
+                    Logger::Info("PIPE:world", "PersistentLevel: offset=%d, levelAddr=0x%llX",
+                        persistentLevelOffset, static_cast<unsigned long long>(levelAddr));
                     break;
                 }
             }
 
             if (!foundPersistentLevel) {
+                // Diagnostic: dump all field names + raw FName data for debugging
+                Logger::Warn("PIPE:world", "PersistentLevel NOT found in %zu UWorld fields. Dumping first 10:",
+                    worldCI.Fields.size());
+                int dumpCount = 0;
+                for (const auto& f : worldCI.Fields) {
+                    if (dumpCount >= 10) break;
+                    Logger::Warn("PIPE:world", "  field[%d]: name='%s' type='%s' off=%d size=%d addr=0x%llX",
+                        dumpCount, f.Name.c_str(), f.TypeName.c_str(), f.Offset, f.Size,
+                        static_cast<unsigned long long>(f.Address));
+                    ++dumpCount;
+                }
+
+                // Diagnostic: try reading FName at alternate offsets (0x20, 0x28, 0x30) on first FField
+                if (!worldCI.Fields.empty()) {
+                    uintptr_t firstFF = worldCI.Fields[0].Address;
+                    for (int probe = 0x18; probe <= 0x38; probe += 4) {
+                        int32_t ci = 0;
+                        if (Mem::ReadSafe(firstFF + probe, ci) && ci > 0 && ci < 0x00FFFFFF) {
+                            std::string probeName = FNamePool::GetString(ci);
+                            Logger::Warn("PIPE:world", "  probe FField+0x%02X: compIdx=%d -> '%s'",
+                                probe, ci, probeName.c_str());
+                        }
+                    }
+                }
+
                 data["error"] = "PersistentLevel field not found in UWorld class (WalkClass returned "
                     + std::to_string(worldCI.Fields.size()) + " fields)";
                 Logger::Warn("PIPE:world", "%s", data["error"].get<std::string>().c_str());
@@ -991,6 +1057,16 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             if (className.empty()) return PipeProtocol::MakeError(id, "Missing class_name").dump();
 
             auto rset = ObjectArray::FindInstancesByClass(className, exactMatch, limit);
+
+            // Diagnostic: if name resolution ratio is low, dump FNamePool state
+            if (rset.nonNull > 1000 && rset.named > 0) {
+                double namedRatio = static_cast<double>(rset.named) / rset.nonNull;
+                if (namedRatio < 0.70) {
+                    Logger::Warn("PIPE:find", "Low name resolution ratio: %.1f%% (%d/%d) — running FNamePool diagnostics",
+                                 namedRatio * 100, rset.named, rset.nonNull);
+                    FNamePool::LogDiagnostics();
+                }
+            }
 
             json instances = json::array();
             for (const auto& sr : rset.results) {

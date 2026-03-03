@@ -108,7 +108,8 @@ public partial class MainWindowViewModel : ViewModelBase
         IDumpService dump,
         ILoggingService log,
         IPlatformService platform,
-        AobUsageService? aobUsage = null)
+        AobUsageService? aobUsage = null,
+        IAobMakerBridge? aobMaker = null)
     {
         _pipeClient = pipeClient;
         _dump = dump;
@@ -118,7 +119,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
         ObjectTree = new ObjectTreeViewModel(dump, log, platform);
         ClassStruct = new ClassStructViewModel(dump, log);
-        Pointers = new PointerPanelViewModel(platform, dump, log);
+        Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker);
         HexView = new HexViewViewModel(dump, pipeClient, log);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform);
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform);

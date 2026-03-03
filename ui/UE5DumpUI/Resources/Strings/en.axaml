@@ -95,6 +95,8 @@
     <sys:String x:Key="str.Pointers.AobAllFailed">&#x1F534; All AOB patterns failed</sys:String>
     <sys:String x:Key="str.Pointers.ExtraScan">Extra Scan</sys:String>
     <sys:String x:Key="str.Pointers.ExtraScanHint">Some pointers not found. Try aggressive scanning techniques (5-20 seconds).</sys:String>
+    <sys:String x:Key="str.Pointers.AobMakerHex">HEX</sys:String>
+    <sys:String x:Key="str.Pointers.AobMakerHexTip">Navigate CE hex view to pointer address (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScan">Test Extra Scan</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScanHint">Dev test: simulate scan progress UI (does not actually rescan).</sys:String>
 

@@ -1872,8 +1872,244 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     uintptr_t vectorStruct = FindStructByName("Vector");
 
     if (!guidStruct && !vectorStruct) {
-        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find Guid or Vector struct, using version-based defaults");
-        // Still mark as validated since CPN and UProperty detection succeeded
+        Logger::Warn("DYNO", "ValidateAndFixOffsets: Cannot find Guid or Vector struct — trying heuristic fallback");
+
+        // ═══════════════════════════════════════════════════════════════════
+        // Heuristic fallback (no Guid/Vector struct to probe against)
+        //
+        // Two-phase approach:
+        //   Phase A: Probe USTRUCT_CHILDPROPS — the default (0x50) may be wrong
+        //            for newer UE versions (e.g. UE 5.7 may have shifted UStruct layout).
+        //            Scans multiple candidate offsets on GObjects classes to find which
+        //            one leads to valid FField chains with resolvable "Property" type names.
+        //   Phase B: Probe FPROPERTY_OFFSET — find Offset_Internal within FProperty
+        //            by checking for strictly increasing sequences bounded by PropertiesSize.
+        // ═══════════════════════════════════════════════════════════════════
+        if (DynOff::bUseFProperty) {
+
+            // ── Phase A: Detect USTRUCT_CHILDPROPS ──────────────────────────
+            // For each candidate offset (0x48 to 0x68, step 8), check if reading
+            // a pointer from GObjects UClass/UStruct objects leads to valid FField
+            // chains whose FFieldClass resolves to a name containing "Property".
+            Logger::Info("DYNO", "Phase A: Probing USTRUCT_CHILDPROPS...");
+
+            int bestChildPropsOff = -1;
+            int bestChildPropsScore = 0;
+
+            for (int cpOff = 0x40; cpOff <= 0x70; cpOff += 8) {
+                int score = 0;
+                int tested = 0;
+                int objLimit = (std::min)(ObjectArray::GetCount(), 80000);
+                for (int32_t i = 0; i < objLimit && tested < 30; ++i) {
+                    uintptr_t obj = ObjectArray::GetByIndex(i);
+                    if (!obj) continue;
+
+                    uintptr_t cp = 0;
+                    if (!Mem::ReadSafe(obj + cpOff, cp) || !cp) continue;
+                    cp = DynOff::StripFFieldTag(cp);
+                    if (cp < 0x10000 || cp > 0x00007FFFFFFFFFFF) continue;
+
+                    // Check FFieldClass* at first FField
+                    uintptr_t fc = 0;
+                    if (!Mem::ReadSafe(cp + DynOff::FFIELD_CLASS, fc) || !fc) continue;
+                    if (fc < 0x10000 || fc > 0x00007FFFFFFFFFFF) continue;
+
+                    // Resolve FFieldClass name — must contain "Property"
+                    uint32_t fcNameIdx = 0;
+                    if (!Mem::ReadSafe(fc + DynOff::FFIELDCLASS_NAME, fcNameIdx)) continue;
+                    std::string fcName = FNamePool::GetString(fcNameIdx);
+                    if (fcName.find("Property") == std::string::npos) continue;
+
+                    // Validate chain has 2+ entries with valid Next pointers
+                    uintptr_t next = 0;
+                    if (!Mem::ReadSafe(cp + DynOff::FFIELD_NEXT, next)) continue;
+                    next = DynOff::StripFFieldTag(next);
+                    if (next && next > 0x10000 && next < 0x00007FFFFFFFFFFF) {
+                        // Second entry also has valid FFieldClass with "Property"?
+                        uintptr_t fc2 = 0;
+                        if (Mem::ReadSafe(next + DynOff::FFIELD_CLASS, fc2) && fc2 > 0x10000) {
+                            uint32_t fc2Idx = 0;
+                            if (Mem::ReadSafe(fc2 + DynOff::FFIELDCLASS_NAME, fc2Idx)) {
+                                std::string fc2Name = FNamePool::GetString(fc2Idx);
+                                if (fc2Name.find("Property") != std::string::npos) {
+                                    score += 2; // Strong match: 2-entry chain with Property types
+                                }
+                            }
+                        }
+                    }
+                    ++score;
+                    ++tested;
+                }
+
+                Logger::Info("DYNO", "  CHILDPROPS probe +0x%02X: score=%d (tested %d objects)", cpOff, score, tested);
+
+                if (score > bestChildPropsScore) {
+                    bestChildPropsScore = score;
+                    bestChildPropsOff = cpOff;
+                }
+            }
+
+            if (bestChildPropsOff >= 0 && bestChildPropsOff != DynOff::USTRUCT_CHILDPROPS) {
+                int oldCP = DynOff::USTRUCT_CHILDPROPS;
+                DynOff::USTRUCT_CHILDPROPS = bestChildPropsOff;
+                // Derive related UStruct offsets (relative positions are stable across UE versions)
+                DynOff::USTRUCT_CHILDREN  = bestChildPropsOff - 0x08;
+                DynOff::USTRUCT_SUPER     = bestChildPropsOff - 0x10;
+                DynOff::USTRUCT_PROPSSIZE = bestChildPropsOff + 0x08;
+                Logger::Info("DYNO", "Phase A: USTRUCT_CHILDPROPS changed 0x%02X -> 0x%02X "
+                    "(score=%d, Super=0x%02X, PropsSize=0x%02X)",
+                    oldCP, bestChildPropsOff, bestChildPropsScore,
+                    DynOff::USTRUCT_SUPER, DynOff::USTRUCT_PROPSSIZE);
+            } else if (bestChildPropsOff >= 0) {
+                Logger::Info("DYNO", "Phase A: USTRUCT_CHILDPROPS confirmed at 0x%02X (score=%d)",
+                    DynOff::USTRUCT_CHILDPROPS, bestChildPropsScore);
+            } else {
+                Logger::Warn("DYNO", "Phase A: No valid CHILDPROPS offset found, keeping default 0x%02X",
+                    DynOff::USTRUCT_CHILDPROPS);
+            }
+
+            // ── Phase B: Detect FPROPERTY_OFFSET ────────────────────────────
+            // Now that USTRUCT_CHILDPROPS is (hopefully) correct, collect FField
+            // chain addresses from multiple classes and probe for Offset_Internal.
+            Logger::Info("DYNO", "Phase B: Probing FPROPERTY_OFFSET...");
+
+            struct FallbackCandidate {
+                uintptr_t classAddr;
+                uintptr_t fAddrs[8];
+                int       nFields;
+                int32_t   propsSize;
+            };
+            FallbackCandidate candidates[5] = {};
+            int nCandidates = 0;
+
+            int limit = (std::min)(ObjectArray::GetCount(), 100000);
+            for (int32_t i = 0; i < limit && nCandidates < 5; ++i) {
+                uintptr_t obj = ObjectArray::GetByIndex(i);
+                if (!obj) continue;
+
+                uintptr_t cp = 0;
+                if (!Mem::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, cp) || !cp) continue;
+                cp = DynOff::StripFFieldTag(cp);
+                if (cp < 0x10000 || cp > 0x00007FFFFFFFFFFF) continue;
+
+                uintptr_t fc = 0;
+                if (!Mem::ReadSafe(cp + DynOff::FFIELD_CLASS, fc) || !fc) continue;
+                if (fc < 0x10000 || fc > 0x00007FFFFFFFFFFF) continue;
+
+                auto& c = candidates[nCandidates];
+                c.classAddr = obj;
+                c.nFields = 0;
+
+                uintptr_t cur = cp;
+                while (cur && c.nFields < 8) {
+                    c.fAddrs[c.nFields++] = cur;
+                    uintptr_t next = 0;
+                    if (!Mem::ReadSafe(cur + DynOff::FFIELD_NEXT, next)) break;
+                    cur = DynOff::StripFFieldTag(next);
+                }
+                if (c.nFields < 4) continue;
+
+                int32_t ps = 0;
+                Mem::ReadSafe(obj + DynOff::USTRUCT_PROPSSIZE, ps);
+                if (ps <= 0 || ps > 0x100000) continue;
+                c.propsSize = ps;
+
+                uint32_t nameIdx = 0;
+                std::string className;
+                if (Mem::ReadSafe(obj + Constants::OFF_UOBJECT_NAME, nameIdx))
+                    className = FNamePool::GetString(nameIdx);
+                Logger::Info("DYNO", "  Phase B candidate[%d]: '%s' at 0x%llX, fields=%d, propsSize=%d",
+                    nCandidates, className.c_str(), (unsigned long long)obj, c.nFields, ps);
+
+                ++nCandidates;
+            }
+
+            if (nCandidates > 0) {
+                int bestProbe = -1;
+                int bestScore = 0;
+
+                for (int probe = 0x30; probe <= 0x78; probe += 4) {
+                    int totalScore = 0;
+                    int classesValid = 0;
+
+                    for (int ci = 0; ci < nCandidates; ++ci) {
+                        auto& c = candidates[ci];
+                        int score = 0;
+                        int32_t prevOff = -1;
+                        int32_t firstOff = -1;
+                        bool valid = true;
+                        bool hasStrictIncrease = false;
+
+                        for (int i = 0; i < c.nFields && valid; ++i) {
+                            int32_t off = -1;
+                            if (!Mem::ReadSafe(c.fAddrs[i] + probe, off)) { valid = false; break; }
+                            if (off < 0 || off >= c.propsSize)            { valid = false; break; }
+                            if (prevOff >= 0 && off < prevOff)            { valid = false; break; }
+                            if (i == 0) firstOff = off;
+                            if (off > prevOff) hasStrictIncrease = true;
+                            if (off >= prevOff) ++score;
+                            prevOff = off;
+                        }
+
+                        // Validation: require strict increase AND first offset >= 0x20
+                        // (real FProperty::Offset_Internal is always >= UObject header size)
+                        if (valid && hasStrictIncrease && firstOff >= 0x20) {
+                            totalScore += score;
+                            ++classesValid;
+                        }
+                    }
+
+                    if (classesValid > 0) {
+                        Logger::Debug("DYNO", "  probe +0x%02X: validClasses=%d, totalScore=%d",
+                            probe, classesValid, totalScore);
+                    }
+
+                    if (classesValid > 0 && totalScore > bestScore) {
+                        bestScore = totalScore;
+                        bestProbe = probe;
+                    }
+                }
+
+                if (bestProbe >= 0 && bestProbe != DynOff::FPROPERTY_OFFSET) {
+                    Logger::Info("DYNO", "Phase B: FPROPERTY_OFFSET changed 0x%02X -> 0x%02X (score=%d)",
+                        DynOff::FPROPERTY_OFFSET, bestProbe, bestScore);
+                    DynOff::FPROPERTY_OFFSET = bestProbe;
+                    DynOff::FPROPERTY_ELEMSIZE = bestProbe - 0x10;
+                    DynOff::FPROPERTY_FLAGS    = bestProbe - 0x0C;
+                    DynOff::FSTRUCTPROP_STRUCT  = bestProbe + 0x2C;
+                    DynOff::FARRAYPROP_INNER   = bestProbe + 0x2C;
+                    DynOff::FBOOLPROP_FIELDSIZE = bestProbe + 0x2C;
+                    DynOff::FENUMPROP_ENUM     = bestProbe + 0x2C;
+                    DynOff::FBYTEPROP_ENUM     = bestProbe + 0x2C;
+                } else if (bestProbe >= 0) {
+                    Logger::Info("DYNO", "Phase B: Confirmed default FPROPERTY_OFFSET=0x%02X", DynOff::FPROPERTY_OFFSET);
+                } else {
+                    Logger::Warn("DYNO", "Phase B: No valid FPROPERTY_OFFSET found — dumping raw probe data");
+                    if (nCandidates > 0) {
+                        auto& c = candidates[0];
+                        for (int probe = 0x30; probe <= 0x78; probe += 4) {
+                            char buf[256];
+                            int pos = snprintf(buf, sizeof(buf), "  raw +0x%02X:", probe);
+                            for (int i = 0; i < c.nFields && i < 6; ++i) {
+                                int32_t val = 0;
+                                Mem::ReadSafe(c.fAddrs[i] + probe, val);
+                                pos += snprintf(buf + pos, sizeof(buf) - pos, " %d", val);
+                            }
+                            Logger::Debug("DYNO", "%s", buf);
+                        }
+                    }
+                }
+            } else {
+                Logger::Warn("DYNO", "Phase B: No class with 4+ fields found for FPROPERTY_OFFSET probing");
+            }
+        }
+
+        // Log final offset state
+        Logger::Info("DYNO", "Heuristic final: USTRUCT_SUPER=0x%02X CHILDPROPS=0x%02X PROPSSIZE=0x%02X "
+            "FFIELD_NEXT=0x%02X FFIELD_NAME=0x%02X FPROPERTY_OFFSET=0x%02X",
+            DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDPROPS, DynOff::USTRUCT_PROPSSIZE,
+            DynOff::FFIELD_NEXT, DynOff::FFIELD_NAME, DynOff::FPROPERTY_OFFSET);
+
         DynOff::bOffsetsValidated.store(true, std::memory_order_release);
         return false;
     }
