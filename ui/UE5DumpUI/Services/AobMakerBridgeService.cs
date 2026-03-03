@@ -77,6 +77,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             timeoutCts.CancelAfter(ResponseTimeoutMs);
 
             var response = await ReadMessageAsync(_pipe!, timeoutCts.Token);
+            CleanupPipe();  // CE Plugin disconnects after each request — release handle immediately
             if (response == null || !response.Success)
             {
                 _log?.Warn(Constants.LogCatInit,
@@ -91,6 +92,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         catch (OperationCanceledException)
         {
             _log?.Warn(Constants.LogCatInit, $"AOBMaker NavigateHexView timed out for {hexAddress}");
+            CleanupPipe();
             return false;
         }
         catch (Exception ex)
@@ -124,6 +126,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             timeoutCts.CancelAfter(ResponseTimeoutMs);
 
             var response = await ReadMessageAsync(_pipe!, timeoutCts.Token);
+            CleanupPipe();  // CE Plugin disconnects after each request — release handle immediately
             if (response == null || !response.Success)
             {
                 _log?.Warn(Constants.LogCatInit,
@@ -138,6 +141,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         catch (OperationCanceledException)
         {
             _log?.Warn(Constants.LogCatInit, $"AOBMaker NavigateDisassembler timed out for {hexAddress}");
+            CleanupPipe();
             return false;
         }
         catch (Exception ex)
