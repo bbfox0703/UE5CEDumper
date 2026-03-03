@@ -288,6 +288,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                     FieldName = field.Name,
                     IsPointerDeref = false,
                 });
+                _log.Info($"NAV→Struct {field.Name} addr={field.StructDataAddr} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
                 UpdateDisplay(result);
             }
         }
@@ -356,6 +357,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             IsContainerView = true,
             ContainerField = field,
         });
+        _log.Info($"NAV→Container {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
         List<ArrayElementValue> elements;
         if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
@@ -401,6 +403,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             IsContainerView = true,
             ContainerField = field,
         });
+        _log.Info($"NAV→MapContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
         PopulateMapContainerFields(field.MapElements!, field);
     }
@@ -420,6 +423,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             IsContainerView = true,
             ContainerField = field,
         });
+        _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
         PopulateSetContainerFields(field.SetElements!, field);
     }
@@ -763,9 +767,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var idx = Breadcrumbs.IndexOf(item);
             if (idx < 0) return;
 
+            var removedCount = Breadcrumbs.Count - idx - 1;
             while (Breadcrumbs.Count > idx + 1)
                 Breadcrumbs.RemoveAt(Breadcrumbs.Count - 1);
 
+            _log.Info($"NAV⇒BC[{idx}] {item.FieldName ?? item.Label} removed={removedCount} | BC={FormatBreadcrumbTrace()}");
             var scrollHint = item.ScrollHintFieldName;
 
             // If navigating back to a container view, re-populate from saved field
@@ -809,9 +815,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
     {
         if (Breadcrumbs.Count < 2) return;
 
+        var removed = Breadcrumbs[^1];
         Breadcrumbs.RemoveAt(Breadcrumbs.Count - 1);
         var prev = Breadcrumbs[^1];
         var scrollHint = prev.ScrollHintFieldName;
+        _log.Info($"NAV←Back removed={removed.FieldName ?? removed.Label} | BC={FormatBreadcrumbTrace()}");
 
         try
         {
@@ -943,6 +951,21 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 ? new List<LiveFieldValue> { lastBc.ContainerField! }
                 : new List<LiveFieldValue>(Fields);
 
+            _log.Info($"CEXML export: containerView={isContainerView} bcCount={breadcrumbsForXml.Count} | BC={FormatBreadcrumbTrace()}");
+
+            // Pre-check CleanBreadcrumbs to log any cycle removals
+            var cleaned = CeXmlExportService.CleanBreadcrumbs(breadcrumbsForXml);
+            if (cleaned.Count != breadcrumbsForXml.Count)
+            {
+                _log.Info($"CEXML CleanBC: {breadcrumbsForXml.Count}→{cleaned.Count} removed={breadcrumbsForXml.Count - cleaned.Count}");
+                for (int i = 0; i < cleaned.Count; i++)
+                {
+                    var bc = cleaned[i];
+                    var flags = bc.IsContainerView ? "C" : bc.IsPointerDeref ? "P" : "S";
+                    _log.Info($"  [{i}] {bc.FieldName ?? bc.Label} ({flags}) off=0x{bc.FieldOffset:X} addr={bc.Address}");
+                }
+            }
+
             // Pre-resolve StructProperty inner fields via DLL
             StatusText = "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
@@ -1057,6 +1080,21 @@ public partial class LiveWalkerViewModel : ViewModelBase
             {
                 breadcrumbsForXml = Breadcrumbs;
                 singleFieldList = new List<LiveFieldValue> { SelectedField };
+            }
+
+            _log.Info($"CEFieldXML export: field={SelectedField.Name} containerView={isContainerView} bcCount={breadcrumbsForXml.Count} | BC={FormatBreadcrumbTrace()}");
+
+            // Pre-check CleanBreadcrumbs to log any cycle removals
+            var cleaned = CeXmlExportService.CleanBreadcrumbs(breadcrumbsForXml);
+            if (cleaned.Count != breadcrumbsForXml.Count)
+            {
+                _log.Info($"CEFieldXML CleanBC: {breadcrumbsForXml.Count}→{cleaned.Count} removed={breadcrumbsForXml.Count - cleaned.Count}");
+                for (int i = 0; i < cleaned.Count; i++)
+                {
+                    var bc = cleaned[i];
+                    var flags = bc.IsContainerView ? "C" : bc.IsPointerDeref ? "P" : "S";
+                    _log.Info($"  [{i}] {bc.FieldName ?? bc.Label} ({flags}) off=0x{bc.FieldOffset:X} addr={bc.Address}");
+                }
             }
 
             // Pre-resolve StructProperty inner fields for the selected field
@@ -1663,7 +1701,21 @@ public partial class LiveWalkerViewModel : ViewModelBase
             IsPointerDeref = isPointer,
         });
 
+        _log.Info($"NAV→ {fieldName} addr={addr} off=0x{fieldOffset:X} ptr={isPointer} | BC={FormatBreadcrumbTrace()}");
         UpdateDisplay(result);
+    }
+
+    /// <summary>Format breadcrumb trail for debug logging.</summary>
+    private string FormatBreadcrumbTrace()
+    {
+        if (Breadcrumbs.Count == 0) return "(empty)";
+        var parts = new List<string>(Breadcrumbs.Count);
+        foreach (var bc in Breadcrumbs)
+        {
+            var flags = bc.IsContainerView ? "C" : bc.IsPointerDeref ? "P" : "S";
+            parts.Add($"{bc.FieldName ?? bc.Label}({flags},0x{bc.FieldOffset:X},{bc.Address?[^4..]})");
+        }
+        return string.Join(" > ", parts);
     }
 
     private void UpdateDisplay(InstanceWalkResult result)
@@ -1680,12 +1732,15 @@ public partial class LiveWalkerViewModel : ViewModelBase
         CurrentOuterClassName = result.OuterClassName;
         HasParent = !string.IsNullOrEmpty(result.OuterAddr) && result.OuterAddr != "0x0";
 
-        // Inline structs are not UObjects — they don't have OuterPrivate.
-        // The DLL reads garbage when walking a struct address as if it were a UObject.
-        // Disable the Parent button and clear Outer info when inside a struct view.
+        // Inline structs are not UObjects — they don't have OuterPrivate or FName at
+        // the UObject::Name offset. The DLL reads garbage when walking a struct address
+        // as if it were a UObject, producing corrupted name strings (亂碼).
+        // Override CurrentObjectName with the breadcrumb label (set from field metadata
+        // during navigation) and disable the Parent button / clear Outer info.
         if (Breadcrumbs.Count > 0 && !Breadcrumbs[^1].IsPointerDeref
             && !string.IsNullOrEmpty(Breadcrumbs[^1].ClassAddr))
         {
+            CurrentObjectName = Breadcrumbs[^1].Label;
             HasParent = false;
             CurrentOuterAddr = "";
             CurrentOuterName = "";
