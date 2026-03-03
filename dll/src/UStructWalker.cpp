@@ -1908,6 +1908,16 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             if (Mem::ReadSafe(inner + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
                                 fv.arrayInnerStructType = GetName(innerStruct);
                                 fv.arrayInnerStructAddr = innerStruct;  // Phase F: store for struct array expansion
+                                // Fallback: FProperty::ElementSize often reads 0 for StructProperty inners.
+                                // Use UScriptStruct::PropertiesSize as the actual element size.
+                                if (fv.arrayElemSize <= 0) {
+                                    int32_t propsSize = 0;
+                                    if (Mem::ReadSafe(innerStruct + DynOff::USTRUCT_PROPSSIZE, propsSize) && propsSize > 0 && propsSize <= 65536) {
+                                        fv.arrayElemSize = propsSize;
+                                        Logger::Info("WALK:ArrayP", "Fallback: used PropertiesSize=%d for '%s' struct '%s'",
+                                            propsSize, fi.Name.c_str(), fv.arrayInnerStructType.c_str());
+                                    }
+                                }
                             }
                         }
 
@@ -2027,6 +2037,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             if (Mem::ReadSafe(inner + baseOff, innerStruct) && innerStruct) {
                                 fv.arrayInnerStructType = GetName(innerStruct);
                                 fv.arrayInnerStructAddr = innerStruct;
+                                // Fallback: use UScriptStruct::PropertiesSize when ElementSize is 0
+                                if (fv.arrayElemSize <= 0) {
+                                    int32_t propsSize = 0;
+                                    if (Mem::ReadSafe(innerStruct + DynOff::USTRUCT_PROPSSIZE, propsSize) && propsSize > 0 && propsSize <= 65536) {
+                                        fv.arrayElemSize = propsSize;
+                                        Logger::Info("WALK:ArrayP", "Fallback: used PropertiesSize=%d for '%s' struct '%s'",
+                                            propsSize, fi.Name.c_str(), fv.arrayInnerStructType.c_str());
+                                    }
+                                }
                             }
                         }
 
@@ -2367,6 +2386,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         if (Mem::ReadSafe(elemProp + DynOff::FSTRUCTPROP_STRUCT, eStruct) && eStruct) {
                             fv.setElemStructAddr = eStruct;
                             fv.setElemStructType = GetName(eStruct);
+                            // Fallback: use UScriptStruct::PropertiesSize when ElementSize is 0
+                            if (fv.setElemSize <= 0) {
+                                int32_t propsSize = 0;
+                                if (Mem::ReadSafe(eStruct + DynOff::USTRUCT_PROPSSIZE, propsSize) && propsSize > 0 && propsSize <= 65536) {
+                                    fv.setElemSize = propsSize;
+                                    Logger::Info("WALK:SetP", "Fallback: used PropertiesSize=%d for '%s' struct '%s'",
+                                        propsSize, fi.Name.c_str(), fv.setElemStructType.c_str());
+                                }
+                            }
                         }
                     }
 
@@ -2432,6 +2460,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         if (Mem::ReadSafe(elemProp + baseOff, eStruct) && eStruct) {
                             fv.setElemStructAddr = eStruct;
                             fv.setElemStructType = GetName(eStruct);
+                            // Fallback: use UScriptStruct::PropertiesSize when ElementSize is 0
+                            if (fv.setElemSize <= 0) {
+                                int32_t propsSize = 0;
+                                if (Mem::ReadSafe(eStruct + DynOff::USTRUCT_PROPSSIZE, propsSize) && propsSize > 0 && propsSize <= 65536) {
+                                    fv.setElemSize = propsSize;
+                                    Logger::Info("WALK:SetP", "Fallback: used PropertiesSize=%d for '%s' struct '%s'",
+                                        propsSize, fi.Name.c_str(), fv.setElemStructType.c_str());
+                                }
+                            }
                         }
                     }
 
