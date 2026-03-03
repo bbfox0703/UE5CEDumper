@@ -20,7 +20,6 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     private const int MaxMessageSize = 10 * 1024 * 1024;
 
     // AOBMaker CE Plugin message types
-    private const string TypeDisassembleRange = "DisassembleRange";
     private const string TypeNavigateHexView = "NavigateHexView";
 
     private readonly ILoggingService? _log;
@@ -53,55 +52,6 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
         IsAvailable = false;
         return false;
-    }
-
-    public async Task<bool> NavigateDisassemblyAsync(string hexAddress, CancellationToken ct = default)
-    {
-        if (!await ReconnectAsync(ct))
-        {
-            IsAvailable = false;
-            return false;
-        }
-
-        try
-        {
-            var request = new AobMakerMessage
-            {
-                Type = TypeDisassembleRange,
-                Address = hexAddress,
-                CountBefore = 0,
-                CountAfter = 0
-            };
-
-            await WriteMessageAsync(_pipe!, request, ct);
-
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(ResponseTimeoutMs);
-
-            var response = await ReadMessageAsync(_pipe!, timeoutCts.Token);
-            if (response == null || !response.Success)
-            {
-                _log?.Warn(Constants.LogCatInit,
-                    $"AOBMaker DisassembleRange failed: {response?.Message ?? "no response"}");
-                return false;
-            }
-
-            IsAvailable = true;
-            _log?.Info(Constants.LogCatInit, $"AOBMaker: navigated disassembly to {hexAddress}");
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            _log?.Warn(Constants.LogCatInit, $"AOBMaker DisassembleRange timed out for {hexAddress}");
-            return false;
-        }
-        catch (Exception ex)
-        {
-            _log?.Warn(Constants.LogCatInit, $"AOBMaker DisassembleRange error: {ex.Message}");
-            IsAvailable = false;
-            CleanupPipe();
-            return false;
-        }
     }
 
     public async Task<bool> NavigateHexViewAsync(string hexAddress, CancellationToken ct = default)

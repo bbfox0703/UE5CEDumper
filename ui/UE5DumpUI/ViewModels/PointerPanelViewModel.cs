@@ -102,12 +102,6 @@ public partial class PointerPanelViewModel : ViewModelBase
         && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found");
 
     // --- AOBMaker button enable state ---
-    /// <summary>Can send GObjects AOB scan address to CE disassembly.</summary>
-    public bool CanAsmGObjects => IsAobMakerAvailable && HasGObjectsScanAddr;
-    /// <summary>Can send GNames AOB scan address to CE disassembly.</summary>
-    public bool CanAsmGNames => IsAobMakerAvailable && HasGNamesScanAddr;
-    /// <summary>Can send GWorld AOB scan address to CE disassembly.</summary>
-    public bool CanAsmGWorld => IsAobMakerAvailable && HasGWorldScanAddr;
     /// <summary>Can send GObjects pointer to CE hex view.</summary>
     public bool CanHexGObjects => IsAobMakerAvailable && IsNonZeroAddr(GObjectsAddress);
     /// <summary>Can send GNames pointer to CE hex view.</summary>
@@ -201,9 +195,6 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     private void NotifyAobMakerProperties()
     {
-        OnPropertyChanged(nameof(CanAsmGObjects));
-        OnPropertyChanged(nameof(CanAsmGNames));
-        OnPropertyChanged(nameof(CanAsmGWorld));
         OnPropertyChanged(nameof(CanHexGObjects));
         OnPropertyChanged(nameof(CanHexGNames));
         OnPropertyChanged(nameof(CanHexGWorld));
@@ -355,27 +346,6 @@ public partial class PointerPanelViewModel : ViewModelBase
     }
 
     // --- AOBMaker CE Plugin navigation commands ---
-
-    [RelayCommand]
-    private async Task AsmGObjectsAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GObjectsScanAddr)) return;
-        await _aobMaker.NavigateDisassemblyAsync(StripHexPrefix(GObjectsScanAddr));
-    }
-
-    [RelayCommand]
-    private async Task AsmGNamesAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GNamesScanAddr)) return;
-        await _aobMaker.NavigateDisassemblyAsync(StripHexPrefix(GNamesScanAddr));
-    }
-
-    [RelayCommand]
-    private async Task AsmGWorldAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GWorldScanAddr)) return;
-        await _aobMaker.NavigateDisassemblyAsync(StripHexPrefix(GWorldScanAddr));
-    }
 
     [RelayCommand]
     private async Task HexGObjectsAsync()

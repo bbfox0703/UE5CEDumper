@@ -62,13 +62,6 @@
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
                       VerticalAlignment="Center">
-            <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
-                    Command="{Binding AsmGObjectsCommand}"
-                    IsEnabled="{Binding CanAsmGObjects}"
-                    ToolTip.Tip="{StaticResource str.Pointers.AobMakerAsmTip}"
-                    Padding="6,4" FontSize="11" FontFamily="Consolas"
-                    Foreground="#E5C07B" Background="Transparent"
-                    BorderThickness="1" BorderBrush="#555"/>
             <Button Content="{StaticResource str.Pointers.AobMakerHex}"
                     Command="{Binding HexGObjectsCommand}"
                     IsEnabled="{Binding CanHexGObjects}"
@@ -117,13 +110,6 @@
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
                       VerticalAlignment="Center">
-            <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
-                    Command="{Binding AsmGNamesCommand}"
-                    IsEnabled="{Binding CanAsmGNames}"
-                    ToolTip.Tip="{StaticResource str.Pointers.AobMakerAsmTip}"
-                    Padding="6,4" FontSize="11" FontFamily="Consolas"
-                    Foreground="#E5C07B" Background="Transparent"
-                    BorderThickness="1" BorderBrush="#555"/>
             <Button Content="{StaticResource str.Pointers.AobMakerHex}"
                     Command="{Binding HexGNamesCommand}"
                     IsEnabled="{Binding CanHexGNames}"
@@ -168,13 +154,6 @@
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
                       VerticalAlignment="Center">
-            <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
-                    Command="{Binding AsmGWorldCommand}"
-                    IsEnabled="{Binding CanAsmGWorld}"
-                    ToolTip.Tip="{StaticResource str.Pointers.AobMakerAsmTip}"
-                    Padding="6,4" FontSize="11" FontFamily="Consolas"
-                    Foreground="#E5C07B" Background="Transparent"
-                    BorderThickness="1" BorderBrush="#555"/>
             <Button Content="{StaticResource str.Pointers.AobMakerHex}"
                     Command="{Binding HexGWorldCommand}"
                     IsEnabled="{Binding CanHexGWorld}"

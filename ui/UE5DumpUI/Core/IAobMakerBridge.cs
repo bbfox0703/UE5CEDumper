@@ -15,13 +15,6 @@ public interface IAobMakerBridge
     Task<bool> CheckAvailabilityAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Navigate CE Memory Viewer disassembly (top pane) to the specified address.
-    /// Sends <c>DisassembleRange</c> with countBefore=0, countAfter=0.
-    /// </summary>
-    /// <param name="hexAddress">Bare hex address without 0x prefix (e.g. "7FF769E29110")</param>
-    Task<bool> NavigateDisassemblyAsync(string hexAddress, CancellationToken ct = default);
-
-    /// <summary>
     /// Navigate CE Memory Viewer hex dump (bottom pane) to the specified address.
     /// Sends <c>NavigateHexView</c>.
     /// </summary>

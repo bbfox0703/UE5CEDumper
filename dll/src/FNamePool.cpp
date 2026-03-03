@@ -78,9 +78,35 @@ static bool TryDecodeNone(uintptr_t entryAddr, int hdrOff) {
     return false;
 }
 
+// Internal GetEntry that works during Init() before s_initialized is set.
+// Only for use within Init() — external callers should use the public GetEntry().
+static uintptr_t GetEntryInternal(int32_t nameIndex) {
+    if (!s_poolAddr) return 0;
+
+    if (s_isUE4Mode) {
+        int32_t chunkIndex = nameIndex / UE4_CHUNK_SIZE;
+        int32_t elemIndex  = nameIndex % UE4_CHUNK_SIZE;
+        if (chunkIndex < 0 || chunkIndex > 256) return 0;
+        uintptr_t chunkPtr = 0;
+        if (!Mem::ReadSafe(s_poolAddr + chunkIndex * sizeof(uintptr_t), chunkPtr) || !chunkPtr) return 0;
+        uintptr_t entryPtr = 0;
+        if (!Mem::ReadSafe(chunkPtr + elemIndex * sizeof(uintptr_t), entryPtr)) return 0;
+        return entryPtr;
+    }
+
+    int32_t chunkIndex  = nameIndex >> s_blockOffsetBits;
+    int32_t chunkOffset = (nameIndex & s_blockOffsetMask) * s_stride;
+    if (chunkIndex < 0 || chunkIndex > 8192) return 0;
+    uintptr_t chunkPtr = 0;
+    uintptr_t chunksBase = s_poolAddr + s_chunksOffset;
+    if (!Mem::ReadSafe(chunksBase + chunkIndex * sizeof(uintptr_t), chunkPtr) || !chunkPtr) return 0;
+    return chunkPtr + chunkOffset;
+}
+
 static void DetectHeaderFormat() {
     // Try to read FNameEntry at index 0 (should be "None", length 4)
-    uintptr_t entry = GetEntry(0);
+    // Use GetEntryInternal since s_initialized is not yet set during Init().
+    uintptr_t entry = GetEntryInternal(0);
     if (!entry) return;
 
     // The header is at entry + s_headerOffset
@@ -452,6 +478,136 @@ bool IsInitialized() {
 
 bool IsUE4Mode() {
     return s_isUE4Mode;
+}
+
+void LogDiagnostics() {
+    // One-shot: only run once per session to avoid flooding logs
+    static std::atomic<bool> s_diagDone{false};
+    if (s_diagDone.exchange(true)) return;
+
+    if (!s_initialized.load(std::memory_order_acquire)) {
+        LOG_WARN("FNamePool::LogDiagnostics: not initialized");
+        s_diagDone = false; // Allow retry
+        return;
+    }
+
+    LOG_INFO("FNamePool Diagnostics:");
+    LOG_INFO("  poolAddr=0x%llX, chunksOffset=0x%X, stride=%d, blockOffsetBits=%d, "
+             "headerOffset=%d, lenShift=%d, lenMask=0x%X, isUE4=%d",
+             (unsigned long long)s_poolAddr, s_chunksOffset, s_stride, s_blockOffsetBits,
+             s_headerOffset, s_lenShift, s_lenMask, s_isUE4Mode ? 1 : 0);
+
+    if (s_isUE4Mode) return;
+
+    // Count valid chunk pointers
+    uintptr_t chunksBase = s_poolAddr + s_chunksOffset;
+    int maxValidChunk = -1;
+    int totalValidChunks = 0;
+    for (int i = 0; i <= 512; ++i) {
+        uintptr_t chunkPtr = 0;
+        if (Mem::ReadSafe(chunksBase + i * sizeof(uintptr_t), chunkPtr) && chunkPtr != 0) {
+            ++totalValidChunks;
+            maxValidChunk = i;
+        }
+    }
+    LOG_INFO("  Chunk scan: %d valid chunks, max index=%d", totalValidChunks, maxValidChunk);
+
+    // Probe sample of entries across different chunks and track failure reasons
+    struct FailStats {
+        int entryNull = 0;        // GetEntry returned 0
+        int headerReadFail = 0;   // Couldn't read header
+        int lenZero = 0;          // Decoded length was 0
+        int lenOverflow = 0;      // Decoded length > 1024
+        int stringReadFail = 0;   // Couldn't read string bytes
+        int emptyResult = 0;      // All non-printable characters
+        int success = 0;
+        int total = 0;
+    } stats;
+
+    // Test entries at various chunk:offset combinations
+    // Generate test indices spanning different chunks
+    std::vector<int32_t> testIndices;
+    for (int chunk = 0; chunk <= maxValidChunk && chunk <= 100; ++chunk) {
+        // Test a few offsets within each chunk
+        for (int off = 1; off < 200; off += 47) {
+            int32_t idx = (chunk << s_blockOffsetBits) | off;
+            testIndices.push_back(idx);
+        }
+    }
+
+    int firstFailures = 0;
+    for (int32_t idx : testIndices) {
+        ++stats.total;
+        uintptr_t entry = GetEntry(idx);
+        if (!entry) { ++stats.entryNull; continue; }
+
+        uint16_t header = 0;
+        if (!Mem::ReadSafe(entry + s_headerOffset, header)) { ++stats.headerReadFail; continue; }
+
+        int len = (header >> s_lenShift) & s_lenMask;
+        if (len <= 0) {
+            ++stats.lenZero;
+            if (firstFailures < 5) {
+                LOG_INFO("  FAIL idx=0x%08X chunk=%d off=%d entry=0x%llX header=0x%04X len=0",
+                         idx, idx >> s_blockOffsetBits, idx & s_blockOffsetMask,
+                         (unsigned long long)entry, header);
+                ++firstFailures;
+            }
+            continue;
+        }
+        if (len > 1024) {
+            ++stats.lenOverflow;
+            if (firstFailures < 5) {
+                LOG_INFO("  FAIL idx=0x%08X chunk=%d off=%d entry=0x%llX header=0x%04X len=%d (overflow)",
+                         idx, idx >> s_blockOffsetBits, idx & s_blockOffsetMask,
+                         (unsigned long long)entry, header, len);
+                ++firstFailures;
+            }
+            continue;
+        }
+
+        char buf[8] = {};
+        int readLen = (len > 7) ? 7 : len;
+        if (!Mem::ReadBytesSafe(entry + s_headerOffset + 2, buf, readLen)) { ++stats.stringReadFail; continue; }
+
+        bool hasValid = false;
+        for (int i = 0; i < readLen; ++i) {
+            auto c = static_cast<unsigned char>(buf[i]);
+            if (c >= 0x20 && c < 0x7F) { hasValid = true; break; }
+        }
+        if (!hasValid) { ++stats.emptyResult; continue; }
+
+        ++stats.success;
+    }
+
+    LOG_INFO("  Probe results (%d tested): success=%d, entryNull=%d, headerFail=%d, "
+             "lenZero=%d, lenOverflow=%d, stringFail=%d, empty=%d",
+             stats.total, stats.success, stats.entryNull, stats.headerReadFail,
+             stats.lenZero, stats.lenOverflow, stats.stringReadFail, stats.emptyResult);
+
+    // Verify a few specific high-value entries (common engine names)
+    for (int32_t testIdx : { 1, 2, 3, 10, 100, 1000 }) {
+        std::string s = GetString(testIdx);
+        LOG_INFO("  FName[%d] = '%s'", testIdx, s.c_str());
+    }
+
+    // Dump first 16 bytes of chunks 0 and 1 for visual inspection
+    for (int c = 0; c <= 1 && c <= maxValidChunk; ++c) {
+        uintptr_t chunkPtr = 0;
+        if (Mem::ReadSafe(chunksBase + c * sizeof(uintptr_t), chunkPtr) && chunkPtr) {
+            uint8_t dump[32] = {};
+            Mem::ReadBytesSafe(chunkPtr, dump, 32);
+            LOG_INFO("  Chunk[%d] @0x%llX: %02X %02X %02X %02X %02X %02X %02X %02X "
+                     "%02X %02X %02X %02X %02X %02X %02X %02X "
+                     "%02X %02X %02X %02X %02X %02X %02X %02X "
+                     "%02X %02X %02X %02X %02X %02X %02X %02X",
+                     c, (unsigned long long)chunkPtr,
+                     dump[0], dump[1], dump[2], dump[3], dump[4], dump[5], dump[6], dump[7],
+                     dump[8], dump[9], dump[10], dump[11], dump[12], dump[13], dump[14], dump[15],
+                     dump[16], dump[17], dump[18], dump[19], dump[20], dump[21], dump[22], dump[23],
+                     dump[24], dump[25], dump[26], dump[27], dump[28], dump[29], dump[30], dump[31]);
+        }
+    }
 }
 
 } // namespace FNamePool

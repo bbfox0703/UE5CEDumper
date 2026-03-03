@@ -5,7 +5,7 @@ namespace UE5DumpUI.Models;
 /// <summary>
 /// Minimal pipe message model for AOBMaker CE Plugin bridge.
 /// Wire format: 4-byte LE uint32 length prefix + UTF-8 JSON payload.
-/// Only includes fields used by UE5DumpUI (NavigateHexView, DisassembleRange).
+/// Only includes fields used by UE5DumpUI (NavigateHexView).
 /// </summary>
 public class AobMakerMessage
 {
@@ -15,14 +15,6 @@ public class AobMakerMessage
     [JsonPropertyName("address")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Address { get; set; }
-
-    [JsonPropertyName("countBefore")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public int CountBefore { get; set; }
-
-    [JsonPropertyName("countAfter")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public int CountAfter { get; set; }
 
     [JsonPropertyName("success")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
