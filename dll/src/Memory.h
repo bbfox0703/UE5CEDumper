@@ -47,14 +47,47 @@ uintptr_t GetModuleBase(const wchar_t* moduleName = nullptr);
 // Get module size
 size_t GetModuleSize(const wchar_t* moduleName = nullptr);
 
+// --- AOB pattern scanning ---
+
+// Parsed pattern: pre-processed bytes/mask for efficient SIMD scanning.
+struct ParsedPattern {
+    std::vector<uint8_t> bytes;
+    std::vector<uint8_t> mask;    // 1 = must match, 0 = wildcard
+    uint8_t  firstByte    = 0;
+    bool     firstIsFixed = false; // true when bytes[0] is a literal
+    int      anchorOffset = -1;   // first non-wildcard byte index (SIMD anchor)
+    uint8_t  anchorByte   = 0;    // value at anchorOffset
+};
+
+// Parse an AOB pattern string into a ParsedPattern.
+// Pattern format: "48 8B 05 ?? ?? ?? ??" where ?? is wildcard.
+bool ParsePattern(const char* patStr, ParsedPattern& out);
+
 // AOB (Array of Bytes) pattern scan in module memory
-// Pattern format: "48 8B 05 ?? ?? ?? ??" where ?? is wildcard
 // Returns first match address, or 0 on failure
 uintptr_t AOBScan(const char* pattern, uintptr_t start = 0, size_t size = 0);
 
 // AOBScanAll: returns ALL match addresses for the given pattern.
 // Scans executable sections of a specific module (moduleBase=0 → main module).
 std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase = 0);
+
+// --- Batched AOB scanning (multi-anchor AVX2) ---
+
+// Per-pattern result from a batched scan.
+struct BatchScanResult {
+    int                     patternIndex;  // Caller-provided index for correlation
+    std::vector<uintptr_t>  matches;       // All match addresses for this pattern
+};
+
+// Batch scan: scan executable sections ONCE for N patterns simultaneously.
+// Each pattern's anchor byte gets its own AVX2 comparison per 32-byte window,
+// sharing the single memory pass across all patterns in the batch.
+// Returns per-pattern match lists. moduleBase=0 → main module.
+std::vector<BatchScanResult> AOBScanBatch(
+    const char* const* patterns,   // Array of N pattern strings
+    const int*         indices,    // Caller-provided indices for correlation
+    int                count,      // Number of patterns in this batch
+    uintptr_t          moduleBase = 0);
 
 // Loaded module info
 struct ModuleInfo {
