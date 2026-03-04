@@ -180,8 +180,8 @@ public class DumpService
         <TabItem Header="Global Pointers">
           <views:PointerPanel DataContext="{Binding Pointers}" />
         </TabItem>
-        <TabItem Header="Hex View">
-          <views:HexViewPanel DataContext="{Binding HexView}" />
+        <TabItem Header="Proxy Deploy">
+          <views:ProxyDeployPanel DataContext="{Binding ProxyDeploy}" />
         </TabItem>
       </TabControl>
     </Grid>
@@ -215,34 +215,12 @@ public class ObjectTreeViewModel : ReactiveObject
 
 -----
 
-## HexViewPanel Key Points
+## ProxyDeployPanel Key Points
 
-```xml
-<!-- Views/HexViewPanel.axaml -->
-<!-- ItemsControl + monospace font for hex dump display -->
-<StackPanel>
-  <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-    <TextBox Watermark="Address (0x...)" Text="{Binding Address}" Width="200"/>
-    <TextBox Watermark="Size" Text="{Binding Size}" Width="80" Margin="8,0"/>
-    <Button Content="Read" Command="{Binding ReadCommand}" />
-    <ToggleButton Content="Live Watch" IsChecked="{Binding IsWatching}"
-                  Command="{Binding ToggleWatchCommand}" Margin="8,0,0,0"/>
-  </StackPanel>
-
-  <!-- Hex + ASCII side-by-side display -->
-  <ScrollViewer>
-    <ItemsControl ItemsSource="{Binding HexRows}" FontFamily="Consolas"
-                  FontSize="13" Foreground="#D4D4D4">
-      <ItemsControl.ItemTemplate>
-        <DataTemplate>
-          <StackPanel Orientation="Horizontal">
-            <TextBlock Text="{Binding Offset}" Foreground="#569CD6" Width="80"/>
-            <TextBlock Text="{Binding HexPart}" Width="350" />
-            <TextBlock Text="{Binding AsciiPart}" Foreground="#6A9955" />
-          </StackPanel>
-        </DataTemplate>
-      </ItemsControl.ItemTemplate>
-    </ItemsControl>
-  </ScrollViewer>
-</StackPanel>
-```
+- **Not pipe-dependent** — works independently of game connection
+- Detects Steam-installed UE games via `libraryfolders.vdf` parsing
+- One-click deploy/undeploy/update of proxy `version.dll`
+- Identifies our proxy DLL via `FileVersionInfo.ProductName == "UE5CEDumper"`
+- If another program's proxy DLL is detected, status shows `OtherProxy` and blocks actions
+- DataGrid with: checkbox select, game name, binaries path, status (color-coded), version, error
+- Bottom action bar: Deploy Selected, Undeploy Selected, Update All, Force Overwrite checkbox
