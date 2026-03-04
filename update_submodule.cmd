@@ -1,19 +1,20 @@
 @echo off
-:: 1. 先同步 URL 設定，避免以後 remote 又更名導致路徑對不上
+:: 1. 萬一有殘留的 lock 檔，先嘗試清掉
+if exist ".git\index.lock" del /f /q ".git\index.lock"
+
+:: 2. 強制同步 URL 並更新所有層級
 git submodule sync --recursive
+git submodule update --init --recursive --remote --merge --force
 
-:: 2. 更新子模組並合併遠端最新的 commit
-git submodule update --remote --merge --recursive
+:: 3. 關鍵一步：進去 RE-UE4SS 把它的子模組指針也 commit 起來
+cd vendor\RE-UE4SS
+git add .
+git commit -m "chore: update nested Unreal submodule" 2>nul
+cd ..\..
 
-:: 3. 檢查是否有變動，避免 "nothing to commit" 的報錯
-git diff --quiet --exit-code
-if %errorlevel% neq 0 (
-    git add .
-    git commit -m "chore: sync all submodules to latest remote commits"
-    
-    :: 4. 推送到遠端
-    git push origin HEAD
-    echo [SUCCESS] Submodules updated and pushed.
-) else (
-    echo [INFO] No submodule updates found. Everything is up-to-date.
-)
+:: 4. 提交主專案的變動
+git add .
+git commit -m "chore: sync all submodules to latest remote commits"
+git push origin HEAD
+
+echo [FINISH] BBFox, everything is clean now.
