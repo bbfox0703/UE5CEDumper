@@ -16,7 +16,7 @@
     <!-- Tabs -->
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>
     <sys:String x:Key="str.Tab.Pointers">Global Pointers</sys:String>
-    <sys:String x:Key="str.Tab.HexView">Hex View</sys:String>
+    <sys:String x:Key="str.Tab.ProxyDeploy">Proxy Deploy</sys:String>
     <sys:String x:Key="str.Tab.LiveWalker">Live Walker</sys:String>
     <sys:String x:Key="str.Tab.InstanceFinder">Instance Finder</sys:String>
     <sys:String x:Key="str.Tab.PropertySearch">Property Search</sys:String>
@@ -106,12 +106,22 @@
     <sys:String x:Key="str.Pointers.TestExtraScan">Test Extra Scan</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScanHint">Dev test: simulate scan progress UI (does not actually rescan).</sys:String>
 
-    <!-- Hex View -->
-    <sys:String x:Key="str.HexView.Address">Address (hex or module.exe+offset)</sys:String>
-    <sys:String x:Key="str.HexView.Size">Size</sys:String>
-    <sys:String x:Key="str.HexView.Read">Read</sys:String>
-    <sys:String x:Key="str.HexView.LiveWatch">Live Watch</sys:String>
-    <sys:String x:Key="str.HexView.Interval">Interval (ms)</sys:String>
+    <!-- Proxy Deploy -->
+    <sys:String x:Key="str.ProxyDeploy.Scan">Scan Steam</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.Refresh">Refresh</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.Deploy">Deploy</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.Undeploy">Undeploy</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.UpdateAll">Update All</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.Force">Force Overwrite</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.SelectAll">All</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.UnselectAll">None</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.InvertSel">Invert</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.SourceDll">Source DLL:</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ColName">Game</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ColPath">Binaries Path</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ColStatus">Status</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ColVersion">Version</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ColError">Error</sys:String>
 
     <!-- Export -->
     <sys:String x:Key="str.Toolbar.Export">Export</sys:String>
@@ -215,7 +225,12 @@
     <sys:String x:Key="str.Tip.Pointers.ExtraScan">Run aggressive fallback scan for missing pointers</sys:String>
     <sys:String x:Key="str.Tip.Pointers.TestExtraScan">Simulate scan progress UI (dev testing only)</sys:String>
 
-    <!-- Tooltips: Hex View -->
-    <sys:String x:Key="str.Tip.HexView.Read">Read memory at the specified address</sys:String>
+    <!-- Tooltips: Proxy Deploy -->
+    <sys:String x:Key="str.Tip.ProxyDeploy.Scan">Detect Steam-installed UE games</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.Refresh">Refresh deploy status for detected games</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.Deploy">Deploy proxy DLL to selected games</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.Undeploy">Remove proxy DLL from selected games</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.UpdateAll">Update all deployed games to latest version</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.Force">Overwrite even if same version or other proxy detected</sys:String>
 
 </ResourceDictionary>

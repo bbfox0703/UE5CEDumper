@@ -199,8 +199,8 @@
         <TabItem Header="{StaticResource str.Tab.Pointers}">
           <views:PointerPanel DataContext="{Binding Pointers}"/>
         </TabItem>
-        <TabItem Header="{StaticResource str.Tab.HexView}">
-          <views:HexViewPanel DataContext="{Binding HexView}"/>
+        <TabItem Header="{StaticResource str.Tab.ProxyDeploy}">
+          <views:ProxyDeployPanel DataContext="{Binding ProxyDeploy}"/>
         </TabItem>
       </TabControl>
     </Grid>

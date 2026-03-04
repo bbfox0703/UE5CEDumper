@@ -33,8 +33,6 @@ public static class Constants
     // Pipe Communication
     public const int PipeConnectTimeoutMs = 5000;
     public const int DefaultPageSize = 200;
-    public const int DefaultHexViewSize = 256;
-    public const int DefaultWatchIntervalMs = 500;
 
     // Object Tree
     public const int ObjectTreePageSize = 2000;     // Batch size for loading all objects
@@ -55,4 +53,13 @@ public static class Constants
     public const int DefaultWindowWidth = 1400;
     public const int DefaultWindowHeight = 900;
     public const int TreePanelWidth = 350;
+
+    // Proxy DLL Deploy
+    public const string ProxyDllName = "version.dll";
+    public const string ProxyProductName = "UE5CEDumper";
+    public const string SteamRegistryPath = @"SOFTWARE\WOW6432Node\Valve\Steam";
+    public const string SteamRegistryKey = "InstallPath";
+    public const string SteamDefaultPath = @"C:\Program Files (x86)\Steam";
+    public const string SteamLibraryFoldersVdf = @"config\libraryfolders.vdf";
+    public const string SteamAppsCommon = @"steamapps\common";
 }

@@ -107,7 +107,7 @@ Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects
 |      +-- PointerPanel        <- GObjects/GNames addr |
 |      +-- LiveWalkerPanel     <- Instance drill-down  |
 |      +-- InstanceFinderPanel <- Class instance search|
-|      +-- HexViewPanel        <- Live Memory Hex View |
+|      +-- ProxyDeployPanel   <- Proxy DLL management |
 |      +-- CeXmlExport        <- CE XML pointer chains |
 |      +-- CsxExport          <- CE Structure Dissect  |
 +------------------------------------------------------+

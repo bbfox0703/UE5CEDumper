@@ -75,19 +75,6 @@ public class ModelTests
     }
 
     [Fact]
-    public void HexViewRow_InitProperties()
-    {
-        var row = new HexViewRow
-        {
-            Offset = "00000100",
-            HexPart = "48 65 6C 6C 6F",
-            AsciiPart = "Hello",
-        };
-
-        Assert.Equal("00000100", row.Offset);
-    }
-
-    [Fact]
     public void ObjectListResult_DefaultObjectsList()
     {
         var result = new ObjectListResult();
