@@ -69,17 +69,9 @@ size_t GetModuleSize(const wchar_t* moduleName) {
 // AOBScan internals
 // ============================================================
 
-// Parsed pattern: uint8_t mask avoids bit-packing overhead of std::vector<bool>.
-struct ParsedPattern {
-    std::vector<uint8_t> bytes;
-    std::vector<uint8_t> mask;    // 1 = must match, 0 = wildcard
-    uint8_t  firstByte    = 0;
-    bool     firstIsFixed = false; // true when bytes[0] is a literal
-    int      anchorOffset = -1;   // first non-wildcard byte index (SIMD anchor)
-    uint8_t  anchorByte   = 0;    // value at anchorOffset
-};
+// ParsedPattern struct is declared in Memory.h (public).
 
-static bool ParsePattern(const char* patStr, ParsedPattern& out) {
+bool ParsePattern(const char* patStr, ParsedPattern& out) {
     out.bytes.clear();
     out.mask.clear();
 
@@ -511,6 +503,212 @@ std::vector<uintptr_t> AOBScanAllModules(const char* pattern) {
     }
 
     return allResults;
+}
+
+// ============================================================
+// Internal: ScanRegionBatch — multi-anchor AVX2 scan
+// ============================================================
+// Scans a single memory region for N patterns simultaneously.
+// Each pattern uses its own anchor byte/offset for SIMD comparison.
+// One _mm256_cmpeq_epi8 per pattern per 32-byte stride, sharing
+// the single memory pass across all patterns.
+
+struct BatchEntry {
+    ParsedPattern parsed;
+    int           resultIndex;  // index into the results vector
+};
+
+static void ScanRegionBatch(
+    const uint8_t*                scanStart,
+    size_t                        regionSize,
+    const std::vector<BatchEntry>& entries,
+    std::vector<std::vector<uintptr_t>>& results)
+{
+    if (entries.empty()) return;
+
+    // Find max pattern length for maxStart calculation
+    size_t maxPatLen = 0;
+    for (const auto& e : entries)
+        if (e.parsed.bytes.size() > maxPatLen) maxPatLen = e.parsed.bytes.size();
+    if (regionSize < maxPatLen) return;
+
+    const size_t maxStart = regionSize - maxPatLen;
+
+    // Separate SIMD-capable patterns from all-wildcard (scalar-only) patterns
+    struct SIMDEntry {
+        __m256i needle;
+        int     anchorOffset;
+        size_t  patLen;
+        int     entryIdx;     // index into entries[]
+    };
+
+    std::vector<SIMDEntry> simdEntries;
+    std::vector<int> scalarOnlyIndices;
+
+    for (int k = 0; k < static_cast<int>(entries.size()); ++k) {
+        const auto& pat = entries[k].parsed;
+        if (pat.anchorOffset < 0) {
+            scalarOnlyIndices.push_back(k);
+            continue;
+        }
+        SIMDEntry se;
+        se.needle       = _mm256_set1_epi8(static_cast<char>(pat.anchorByte));
+        se.anchorOffset = pat.anchorOffset;
+        se.patLen       = pat.bytes.size();
+        se.entryIdx     = k;
+        simdEntries.push_back(se);
+    }
+
+    // ── SIMD phase: 32-byte stride, all patterns per stride ────────
+    size_t i = 0;
+    for (; i + 32 <= regionSize; i += 32) {
+        for (const auto& se : simdEntries) {
+            // Check bounds: anchor offset must fit within the loaded window
+            if (i + se.anchorOffset + 32 > regionSize) continue;
+
+            __m256i chunk = _mm256_loadu_si256(
+                reinterpret_cast<const __m256i*>(scanStart + i + se.anchorOffset));
+            __m256i cmp  = _mm256_cmpeq_epi8(chunk, se.needle);
+            uint32_t bits = static_cast<uint32_t>(_mm256_movemask_epi8(cmp));
+
+            while (bits) {
+                unsigned long bitPos;
+                _BitScanForward(&bitPos, bits);
+                const size_t candidate = i + bitPos;
+
+                if (candidate <= maxStart) {
+                    // Scalar verify full pattern
+                    const auto& pat = entries[se.entryIdx].parsed;
+                    const uint8_t* p = scanStart + candidate;
+                    bool matched = true;
+                    for (size_t j = 0; j < pat.bytes.size(); ++j) {
+                        if (pat.mask[j] && p[j] != pat.bytes[j]) {
+                            matched = false;
+                            break;
+                        }
+                    }
+                    if (matched) {
+                        results[entries[se.entryIdx].resultIndex].push_back(
+                            reinterpret_cast<uintptr_t>(p));
+                    }
+                }
+
+                bits &= bits - 1;
+            }
+        }
+    }
+
+    // ── Scalar tail for SIMD patterns (last < 32 bytes) ──────────
+    for (const auto& se : simdEntries) {
+        const auto& pat = entries[se.entryIdx].parsed;
+        for (size_t pos = i; pos <= maxStart; ++pos) {
+            bool matched = true;
+            for (size_t j = 0; j < pat.bytes.size(); ++j) {
+                if (pat.mask[j] && scanStart[pos + j] != pat.bytes[j]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                results[entries[se.entryIdx].resultIndex].push_back(
+                    reinterpret_cast<uintptr_t>(scanStart + pos));
+            }
+        }
+    }
+
+    // ── Full scalar scan for all-wildcard patterns ───────────────
+    for (int k : scalarOnlyIndices) {
+        const auto& pat = entries[k].parsed;
+        for (size_t pos = 0; pos <= maxStart; ++pos) {
+            bool matched = true;
+            for (size_t j = 0; j < pat.bytes.size(); ++j) {
+                if (pat.mask[j] && scanStart[pos + j] != pat.bytes[j]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) {
+                results[entries[k].resultIndex].push_back(
+                    reinterpret_cast<uintptr_t>(scanStart + pos));
+            }
+        }
+    }
+}
+
+// ============================================================
+// Public: AOBScanBatch — batch scan N patterns in one pass
+// ============================================================
+
+std::vector<BatchScanResult> AOBScanBatch(
+    const char* const* patterns,
+    const int*         indices,
+    int                count,
+    uintptr_t          moduleBase)
+{
+    std::vector<BatchScanResult> results(count);
+    for (int k = 0; k < count; ++k) {
+        results[k].patternIndex = indices[k];
+    }
+
+    if (count <= 0) return results;
+
+    // Parse all patterns
+    std::vector<BatchEntry> entries;
+    entries.reserve(count);
+    int validCount = 0;
+    for (int k = 0; k < count; ++k) {
+        BatchEntry be;
+        be.resultIndex = k;
+        if (!ParsePattern(patterns[k], be.parsed)) {
+            LOG_ERROR("AOBScanBatch: Failed to parse pattern[%d] [%s]", k, patterns[k]);
+            continue;
+        }
+        entries.push_back(std::move(be));
+        ++validCount;
+    }
+
+    if (entries.empty()) return results;
+
+    // Get module and executable sections
+    if (!moduleBase) moduleBase = GetModuleBase(nullptr);
+    if (!moduleBase) {
+        LOG_ERROR("AOBScanBatch: Cannot get module base");
+        return results;
+    }
+
+    auto sections = GetExecutableSections(moduleBase);
+
+    // Intermediate per-pattern match lists (indexed by result position)
+    std::vector<std::vector<uintptr_t>> matchLists(count);
+
+    if (sections.empty()) {
+        // Fallback: scan whole module
+        MODULEINFO mi{};
+        if (GetModuleInformation(GetCurrentProcess(),
+                                 reinterpret_cast<HMODULE>(moduleBase), &mi, sizeof(mi))) {
+            ScanRegionBatch(reinterpret_cast<const uint8_t*>(moduleBase),
+                            mi.SizeOfImage, entries, matchLists);
+        }
+    } else {
+        // Log total exec bytes for diagnostics
+        size_t totalExecBytes = 0;
+        for (auto& [b, s] : sections) totalExecBytes += s;
+        LOG_DEBUG("AOBScanBatch: %d patterns, %zu exec bytes across %zu section(s)",
+                  validCount, totalExecBytes, sections.size());
+
+        for (auto& [secBase, secSize] : sections) {
+            ScanRegionBatch(reinterpret_cast<const uint8_t*>(secBase),
+                            secSize, entries, matchLists);
+        }
+    }
+
+    // Transfer matches into results
+    for (int k = 0; k < count; ++k) {
+        results[k].matches = std::move(matchLists[k]);
+    }
+
+    LOG_DEBUG("AOBScanBatch: completed (%d patterns)", validCount);
+    return results;
 }
 
 } // namespace Mem
