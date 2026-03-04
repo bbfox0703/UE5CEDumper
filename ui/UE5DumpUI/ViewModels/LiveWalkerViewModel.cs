@@ -41,6 +41,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private string _currentOuterName = "";
     [ObservableProperty] private string _currentOuterClassName = "";
     [ObservableProperty] private bool _hasParent;
+    // UFunction display
+    [ObservableProperty] private ObservableCollection<FunctionInfoModel> _functions = new();
+    [ObservableProperty] private bool _hasFunctions;
+    [ObservableProperty] private FunctionInfoModel? _selectedFunction;
+    private string _currentClassAddr = "";
+
     // CE XML output (kept for possible future use but no longer shown in panel)
     [ObservableProperty] private string _ceXmlOutput = "";
     [ObservableProperty] private bool _showCeXml;
@@ -1718,6 +1724,40 @@ public partial class LiveWalkerViewModel : ViewModelBase
         return string.Join(" > ", parts);
     }
 
+    [RelayCommand]
+    private async Task GenerateInvokeScriptAsync(FunctionInfoModel? func)
+    {
+        if (func == null || string.IsNullOrEmpty(CurrentClassName)) return;
+
+        try
+        {
+            ClearStatus();
+            var script = InvokeScriptGenerator.Generate(CurrentClassName, func.Name, func);
+            var description = $"Invoke: {CurrentClassName}::{func.Name}";
+
+            // Try AOBMaker CE Plugin first, fallback to clipboard
+            if (_aobMaker != null)
+            {
+                var sent = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                if (sent)
+                {
+                    _log.Info($"Invoke script sent to CE: {description}");
+                    StatusText = $"Invoke script created in CE: {func.Name}";
+                    return;
+                }
+            }
+
+            await _platform.CopyToClipboardAsync(script);
+            StatusText = $"Invoke script copied to clipboard: {func.Name}";
+            _log.Info($"Invoke script copied to clipboard: {description}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"Failed to generate invoke script for {func.Name}", ex);
+        }
+    }
+
     private void UpdateDisplay(InstanceWalkResult result)
     {
         CurrentObjectName = result.Name;
@@ -1779,6 +1819,34 @@ public partial class LiveWalkerViewModel : ViewModelBase
             Fields.Clear();
             foreach (var f in newFields)
                 Fields.Add(f);
+        }
+
+        // Store class address and load functions asynchronously
+        _currentClassAddr = result.ClassAddr;
+        _ = LoadFunctionsAsync(result.ClassAddr);
+    }
+
+    private async Task LoadFunctionsAsync(string classAddr)
+    {
+        if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
+        {
+            Functions.Clear();
+            HasFunctions = false;
+            return;
+        }
+
+        try
+        {
+            var funcs = await _dump.WalkFunctionsAsync(classAddr);
+            Functions.Clear();
+            foreach (var f in funcs)
+                Functions.Add(f);
+            HasFunctions = funcs.Count > 0;
+        }
+        catch
+        {
+            Functions.Clear();
+            HasFunctions = false;
         }
     }
 }
