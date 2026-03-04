@@ -15,6 +15,7 @@
 #include <cstring>
 #include <vector>
 #include <algorithm>  // std::sort
+#include <chrono>     // AOBScanBatch timing
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
 #include <Psapi.h>    // EnumProcessModules
 
@@ -664,6 +665,12 @@ static uintptr_t TryResolveMatch(uintptr_t matchAddr, const AobSignature& sig, V
     return 0;
 }
 
+// Batch size for multi-anchor AOBScanBatch. 8 patterns per batch means
+// at most 8 AVX2 cmpeq operations per 32-byte window — negligible overhead
+// compared to the massive memory bandwidth savings from scanning .text once
+// per batch instead of once per pattern.
+static constexpr int kBatchSize = 8;
+
 static uintptr_t ScanForTarget(
     const AobSignature* patterns, size_t count,
     ValidatorFn validate, ScanReport& report,
@@ -676,8 +683,14 @@ static uintptr_t ScanForTarget(
     std::sort(sorted.begin(), sorted.end(),
               [](const AobSignature* a, const AobSignature* b) { return a->priority < b->priority; });
 
+    // ── Phase 1: Handle non-AOB patterns sequentially (unchanged) ────
+    // Symbol exports, CallFollow, etc. are rare (priority 0-5) and don't
+    // benefit from batching. Process them first with immediate early exit.
+    std::vector<const AobSignature*> aobPatterns;
+    aobPatterns.reserve(sorted.size());
+
     for (const AobSignature* sig : sorted) {
-        g_validationDbgCount = 0;  // Reset throttle per pattern
+        g_validationDbgCount = 0;
 
         PatternScanResult pr;
         pr.id = sig->id;
@@ -737,69 +750,187 @@ static uintptr_t ScanForTarget(
             continue;
         }
 
-        // ── AOB pattern (RipDirect / RipDeref / RipBoth) ────
-        // Phase 1: Scan main module
-        std::vector<uintptr_t> matches = Mem::AOBScanAll(sig->pattern);
-
-        // Phase 2: If no matches in main module and multi-module enabled, scan all
-        bool usedMultiModule = false;
-        if (matches.empty() && tryMultiModule) {
-            matches = Mem::AOBScanAllModules(sig->pattern);
-            usedMultiModule = !matches.empty();
-        }
-
-        pr.hitCount = static_cast<int>(matches.size());
-
-        if (matches.empty()) {
-            report.results.push_back(pr);
-            continue;
-        }
-
-        // Try to validate each match
-        uintptr_t bestResult = 0;
-        uintptr_t bestMatchAddr = 0;
-        for (uintptr_t matchAddr : matches) {
-            uintptr_t resolved = TryResolveMatch(matchAddr, *sig, validate);
-            if (resolved) {
-                bestResult = resolved;
-                bestMatchAddr = matchAddr;
-                break; // Take first validated match
-            }
-        }
-
-        // Log suppression summary if validation debug output was throttled
-        if (g_validationDbgCount > kMaxValidationDbgLogs) {
-            LOG_INFO("[%s] %s: Validation debug output throttled (%d entries, showed first %d)",
-                     report.targetName, sig->id, g_validationDbgCount, kMaxValidationDbgLogs);
-        }
-
-        pr.selected = bestResult;
-        pr.validated = (bestResult != 0);
-        report.results.push_back(pr);
-
-        if (bestResult) {
-            if (pr.hitCount > 1) {
-                LOG_INFO("[%s] %s: %d matches%s, validated -> 0x%llX",
-                         report.targetName, sig->id, pr.hitCount,
-                         usedMultiModule ? " (multi-module)" : "",
-                         (unsigned long long)bestResult);
-            } else {
-                LOG_INFO("[%s] %s: Unique match%s -> 0x%llX",
-                         report.targetName, sig->id,
-                         usedMultiModule ? " (multi-module)" : "",
-                         (unsigned long long)bestResult);
-            }
-            report.finalAddress = bestResult;
-            report.scanAddr = bestMatchAddr;
-            report.winningId = sig->id;
-            return bestResult;
-        }
-
-        // Log non-zero hitCount with no validation
-        LOG_INFO("[%s] %s: %d match(es)%s, none validated",
-                 report.targetName, sig->id, pr.hitCount,
-                 usedMultiModule ? " (multi-module)" : "");
+        // Collect AOB patterns for batched scanning
+        aobPatterns.push_back(sig);
     }
+
+    // ── Phase 2: Batched AOB scanning ────────────────────────────────
+    // Process AOB patterns in batches of kBatchSize. Each batch scans
+    // .text ONCE for all patterns in the batch (multi-anchor AVX2).
+    const int totalAob = static_cast<int>(aobPatterns.size());
+    const int totalBatches = (totalAob + kBatchSize - 1) / kBatchSize;
+
+    auto batchT0 = std::chrono::high_resolution_clock::now();
+
+    for (int batchIdx = 0; batchIdx < totalBatches; ++batchIdx) {
+        const int batchStart = batchIdx * kBatchSize;
+        const int batchEnd   = (std::min)(batchStart + kBatchSize, totalAob);
+        const int batchCount = batchEnd - batchStart;
+
+        // Build pattern string array + index mapping for AOBScanBatch
+        std::vector<const char*> patStrings(batchCount);
+        std::vector<int>         patIndices(batchCount);
+        for (int j = 0; j < batchCount; ++j) {
+            patStrings[j] = aobPatterns[batchStart + j]->pattern;
+            patIndices[j] = j;
+        }
+
+        auto t0 = std::chrono::high_resolution_clock::now();
+        auto batchResults = Mem::AOBScanBatch(
+            patStrings.data(), patIndices.data(), batchCount);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        auto batchUs = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+
+        LOG_INFO("[%s] Batch %d/%d (%d patterns): scanned in %lld us",
+                 report.targetName, batchIdx + 1, totalBatches, batchCount,
+                 static_cast<long long>(batchUs));
+
+        // ── Two-pass validation within each batch ──────────────────────
+        // Pass 1: Validate patterns that got batch hits (no extra I/O).
+        //         If a winner is found here, multi-module fallback for
+        //         zero-hit patterns is skipped entirely.
+        // Pass 2: Multi-module fallback for zero-hit patterns (expensive,
+        //         only runs when pass 1 finds no winner).
+
+        // Pass 1: batch-hit patterns in priority order
+        for (int j = 0; j < batchCount; ++j) {
+            if (batchResults[j].matches.empty()) continue;
+
+            const AobSignature* sig = aobPatterns[batchStart + j];
+            g_validationDbgCount = 0;
+
+            PatternScanResult pr;
+            pr.id = sig->id;
+            pr.hitCount = static_cast<int>(batchResults[j].matches.size());
+
+            // Try to validate each match
+            uintptr_t bestResult = 0;
+            uintptr_t bestMatchAddr = 0;
+            for (uintptr_t matchAddr : batchResults[j].matches) {
+                uintptr_t resolved = TryResolveMatch(matchAddr, *sig, validate);
+                if (resolved) {
+                    bestResult = resolved;
+                    bestMatchAddr = matchAddr;
+                    break; // Take first validated match
+                }
+            }
+
+            if (g_validationDbgCount > kMaxValidationDbgLogs) {
+                LOG_INFO("[%s] %s: Validation debug output throttled (%d entries, showed first %d)",
+                         report.targetName, sig->id, g_validationDbgCount, kMaxValidationDbgLogs);
+            }
+
+            pr.selected = bestResult;
+            pr.validated = (bestResult != 0);
+            report.results.push_back(pr);
+
+            if (bestResult) {
+                if (pr.hitCount > 1) {
+                    LOG_INFO("[%s] %s: %d matches, validated -> 0x%llX",
+                             report.targetName, sig->id, pr.hitCount,
+                             (unsigned long long)bestResult);
+                } else {
+                    LOG_INFO("[%s] %s: Unique match -> 0x%llX",
+                             report.targetName, sig->id,
+                             (unsigned long long)bestResult);
+                }
+
+                auto totalUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::high_resolution_clock::now() - batchT0).count();
+                LOG_INFO("[%s] AOB scan total: %lld us (%d batches, winner in batch %d)",
+                         report.targetName, static_cast<long long>(totalUs),
+                         batchIdx + 1, batchIdx + 1);
+
+                report.finalAddress = bestResult;
+                report.scanAddr = bestMatchAddr;
+                report.winningId = sig->id;
+                return bestResult;
+            }
+
+            LOG_INFO("[%s] %s: %d match(es), none validated",
+                     report.targetName, sig->id, pr.hitCount);
+        }
+
+        // Pass 2: multi-module fallback for zero-hit patterns
+        if (tryMultiModule) {
+            for (int j = 0; j < batchCount; ++j) {
+                if (!batchResults[j].matches.empty()) continue; // processed in pass 1
+
+                const AobSignature* sig = aobPatterns[batchStart + j];
+                g_validationDbgCount = 0;
+
+                auto multiMatches = Mem::AOBScanAllModules(sig->pattern);
+
+                PatternScanResult pr;
+                pr.id = sig->id;
+                pr.hitCount = static_cast<int>(multiMatches.size());
+
+                if (multiMatches.empty()) {
+                    report.results.push_back(pr);
+                    continue;
+                }
+
+                uintptr_t bestResult = 0;
+                uintptr_t bestMatchAddr = 0;
+                for (uintptr_t matchAddr : multiMatches) {
+                    uintptr_t resolved = TryResolveMatch(matchAddr, *sig, validate);
+                    if (resolved) {
+                        bestResult = resolved;
+                        bestMatchAddr = matchAddr;
+                        break;
+                    }
+                }
+
+                if (g_validationDbgCount > kMaxValidationDbgLogs) {
+                    LOG_INFO("[%s] %s: Validation debug output throttled (%d entries, showed first %d)",
+                             report.targetName, sig->id, g_validationDbgCount, kMaxValidationDbgLogs);
+                }
+
+                pr.selected = bestResult;
+                pr.validated = (bestResult != 0);
+                report.results.push_back(pr);
+
+                if (bestResult) {
+                    if (pr.hitCount > 1) {
+                        LOG_INFO("[%s] %s: %d matches (multi-module), validated -> 0x%llX",
+                                 report.targetName, sig->id, pr.hitCount,
+                                 (unsigned long long)bestResult);
+                    } else {
+                        LOG_INFO("[%s] %s: Unique match (multi-module) -> 0x%llX",
+                                 report.targetName, sig->id,
+                                 (unsigned long long)bestResult);
+                    }
+
+                    auto totalUs = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::high_resolution_clock::now() - batchT0).count();
+                    LOG_INFO("[%s] AOB scan total: %lld us (%d batches, winner in batch %d, multi-module)",
+                             report.targetName, static_cast<long long>(totalUs),
+                             batchIdx + 1, batchIdx + 1);
+
+                    report.finalAddress = bestResult;
+                    report.scanAddr = bestMatchAddr;
+                    report.winningId = sig->id;
+                    return bestResult;
+                }
+
+                LOG_INFO("[%s] %s: %d match(es) (multi-module), none validated",
+                         report.targetName, sig->id, pr.hitCount);
+            }
+        } else {
+            // Record zero-hit patterns for report (no multi-module)
+            for (int j = 0; j < batchCount; ++j) {
+                if (!batchResults[j].matches.empty()) continue;
+                PatternScanResult pr;
+                pr.id = aobPatterns[batchStart + j]->id;
+                report.results.push_back(pr);
+            }
+        }
+    }
+
+    auto totalUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::high_resolution_clock::now() - batchT0).count();
+    LOG_INFO("[%s] AOB scan exhausted: %lld us (%d patterns in %d batches, no winner)",
+             report.targetName, static_cast<long long>(totalUs), totalAob, totalBatches);
 
     return 0;
 }
