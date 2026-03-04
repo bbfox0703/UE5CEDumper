@@ -436,3 +436,5 @@ _build_result.txt
 _rebuild.bat
 _rebuild2.bat
 build_now.bat
+vendor/Dumper-7/
+vendor/RE-UE4SS/
