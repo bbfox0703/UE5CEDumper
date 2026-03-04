@@ -156,7 +156,12 @@ function Invoke-CmdInVsEnv([string]$Commands) {
         if (-not $line) { continue }
 
         Write-Info "  > $line"
-        Invoke-Expression $line 2>&1 | Write-Host
+        # Temporarily relax error preference to prevent native command stderr
+        # (e.g., git warnings) from becoming terminating PowerShell errors.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try { Invoke-Expression $line 2>&1 | Write-Host }
+        finally { $ErrorActionPreference = $prevEAP }
         if ($LASTEXITCODE -ne 0) { return $false }
     }
     return $true
@@ -266,6 +271,22 @@ if ($Clean) {
 # Create output directories
 New-Item -ItemType Directory -Path $DIST_DIR  -Force | Out-Null
 New-Item -ItemType Directory -Path $BUILD_DIR -Force | Out-Null
+
+# ============================================================
+# Increment build number (once per build invocation)
+# CMake and MSBuild both READ this file; only build.ps1 increments.
+# ============================================================
+$buildNumFile = Join-Path $ROOT_DIR "build_number.txt"
+if (Test-Path $buildNumFile) {
+    $buildNum = [int](Get-Content $buildNumFile -Raw).Trim()
+}
+else {
+    $buildNum = 0
+}
+$buildNum++
+# Write with LF line ending to match CMake's original format (avoids git CRLF warning)
+[System.IO.File]::WriteAllText($buildNumFile, "$buildNum`n")
+Write-Info "Build#: $buildNum"
 
 $exitCode = 0
 

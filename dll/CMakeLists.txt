@@ -8,8 +8,10 @@ set(VER_MINOR 0)
 set(VER_PATCH 0)
 
 # ============================================================
-# Auto-increment build number (4th digit) — persisted in file
-# Incremented on every cmake configure (i.e. every build)
+# Build number (4th digit) — read from shared file
+# Incremented by build.ps1 once per build, NOT by CMake.
+# Both DLL and ProxyDLL configure share this file, so incrementing
+# here would cause the DLL to get N and ProxyDLL to get N+1.
 # ============================================================
 set(BUILD_NUMBER_FILE "${CMAKE_SOURCE_DIR}/build_number.txt")
 if(EXISTS "${BUILD_NUMBER_FILE}")
@@ -18,8 +20,6 @@ if(EXISTS "${BUILD_NUMBER_FILE}")
 else()
     set(VER_BUILD 0)
 endif()
-math(EXPR VER_BUILD "${VER_BUILD} + 1")
-file(WRITE "${BUILD_NUMBER_FILE}" "${VER_BUILD}\n")
 message(STATUS "Version: ${VER_MAJOR}.${VER_MINOR}.${VER_PATCH}.${VER_BUILD}")
 
 # ============================================================
@@ -43,6 +43,7 @@ execute_process(
     COMMAND git diff --quiet HEAD
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     RESULT_VARIABLE GIT_DIRTY_RESULT
+    ERROR_QUIET
 )
 if(GIT_DIRTY_RESULT EQUAL 0)
     set(GIT_IS_DIRTY 0)
