@@ -37,6 +37,23 @@ static HANDLE g_hAutoStartThread = nullptr;
 // No CE delay needed — proxy DLL is always in the game process.
 static DWORD WINAPI AutoStartThreadProc(LPVOID)
 {
+    // Guard: if this DLL was accidentally loaded by UE5DumpUI.exe (e.g. both
+    // files in the same directory), skip all initialization to avoid the UI
+    // connecting to its own in-process pipe server.
+    {
+        wchar_t procName[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, procName, MAX_PATH);
+        std::wstring path(procName);
+        auto slash = path.find_last_of(L"\\/");
+        std::wstring exe = (slash != std::wstring::npos) ? path.substr(slash + 1) : path;
+        // Case-insensitive compare
+        for (auto& c : exe) c = towlower(c);
+        if (exe == L"ue5dumpui.exe") {
+            LOG_WARN("DllMain ProxyStart: loaded by UE5DumpUI.exe — skipping proxy init");
+            return 0;
+        }
+    }
+
     LOG_INFO("DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)");
 
     // Brief delay for game to finish early init (avoid pipe creation during process startup)

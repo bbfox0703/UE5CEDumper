@@ -180,6 +180,13 @@
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
                       VerticalAlignment="Center">
+            <Button Content="{StaticResource str.Pointers.RegisterSymbol}"
+                    Command="{Binding RegisterGWorldSymbolCommand}"
+                    IsEnabled="{Binding CanRegisterGWorldSymbol}"
+                    ToolTip.Tip="{StaticResource str.Pointers.RegisterSymbolTip}"
+                    Padding="6,4" FontSize="11" FontFamily="Consolas"
+                    Foreground="#C586C0" Background="Transparent"
+                    BorderThickness="1" BorderBrush="#555"/>
             <Button Content="{StaticResource str.Pointers.AobMakerHex}"
                     Command="{Binding HexGWorldCommand}"
                     IsEnabled="{Binding CanHexGWorld}"

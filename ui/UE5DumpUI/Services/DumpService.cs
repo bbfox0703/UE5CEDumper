@@ -83,6 +83,10 @@ public sealed class DumpService : IDumpService
             GNamesPatternsHit = scanStats?["gnames_hit"]?.GetValue<int>() ?? 0,
             GWorldPatternsTried = scanStats?["gworld_tried"]?.GetValue<int>() ?? 0,
             GWorldPatternsHit = scanStats?["gworld_hit"]?.GetValue<int>() ?? 0,
+            // GWorld AOB metadata (for CE symbol registration)
+            GWorldAob = ptrs["gworld_aob"]?.GetValue<string>() ?? "",
+            GWorldAobPos = ptrs["gworld_aob_pos"]?.GetValue<int>() ?? 0,
+            GWorldAobLen = ptrs["gworld_aob_len"]?.GetValue<int>() ?? 0,
         };
     }
 

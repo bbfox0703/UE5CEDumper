@@ -37,11 +37,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
         try
         {
-            // Locate source DLL next to the UI executable.
-            // Environment.ProcessPath returns the real exe path even for single-file publish
-            // (AppContext.BaseDirectory returns the temp extraction dir for single-file apps).
+            // Locate source DLL in the proxy/ subdirectory next to the UI executable.
+            // Kept separate to prevent Windows DLL search order from loading our
+            // version.dll into the UI process itself.
             var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-            var dllPath = Path.Combine(exeDir, Constants.ProxyDllName);
+            var dllPath = Path.Combine(exeDir, "proxy", Constants.ProxyDllName);
             SourceDllPath = dllPath;
             SourceDllVersion = File.Exists(dllPath)
                 ? _deploy.GetDllVersion(dllPath)
@@ -205,14 +205,18 @@ public partial class ProxyDeployViewModel : ViewModelBase
             return;
         }
 
-        // Update all games that have our outdated DLL
+        // Update all games that have our outdated DLL (ignores selection)
         var outdated = Games.Where(g =>
-            g.Status == ProxyDeployStatus.DeployedOutdated
-            || g.Status == ProxyDeployStatus.DeployedCurrent).ToList();
+            g.Status == ProxyDeployStatus.DeployedOutdated).ToList();
 
         if (outdated.Count == 0)
         {
-            LastOperationResult = "No deployed games to update";
+            // Show why nothing happened
+            int currentCount = Games.Count(g => g.Status == ProxyDeployStatus.DeployedCurrent);
+            if (currentCount > 0)
+                LastOperationResult = $"All {currentCount} deployed game(s) already up-to-date";
+            else
+                LastOperationResult = "No deployed games to update";
             return;
         }
 

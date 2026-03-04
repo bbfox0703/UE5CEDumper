@@ -389,16 +389,21 @@ if ($Target -in "All", "ProxyDLL") {
                         Select-Object -First 1
 
             if ($proxyDll) {
-                Copy-Item $proxyDll.FullName -Destination $DIST_DIR -Force
+                # Place proxy DLL in a subdirectory to prevent UE5DumpUI.exe
+                # from accidentally loading it (Windows DLL search order).
+                $proxyOutDir = Join-Path $DIST_DIR "proxy"
+                if (-not (Test-Path $proxyOutDir)) { New-Item -Path $proxyOutDir -ItemType Directory | Out-Null }
+
+                Copy-Item $proxyDll.FullName -Destination $proxyOutDir -Force
 
                 $pdbFile = Get-ChildItem -Path $proxyBuildDir -Filter "version.pdb" -Recurse |
                            Select-Object -First 1
                 if ($pdbFile) {
-                    Copy-Item $pdbFile.FullName -Destination $DIST_DIR -Force
+                    Copy-Item $pdbFile.FullName -Destination $proxyOutDir -Force
                 }
 
-                $dllSize = Get-FileSize (Join-Path $DIST_DIR "version.dll")
-                Write-Ok "version.dll ($dllSize)"
+                $dllSize = Get-FileSize (Join-Path $proxyOutDir "version.dll")
+                Write-Ok "version.dll ($dllSize) -> dist\proxy\"
             }
             else {
                 Write-Fail "version.dll not found in build output"

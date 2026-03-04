@@ -39,6 +39,9 @@ int         g_cachedGWorldTried   = 0, g_cachedGWorldHit   = 0;
 uintptr_t   g_cachedGObjectsScanAddr = 0;
 uintptr_t   g_cachedGNamesScanAddr   = 0;
 uintptr_t   g_cachedGWorldScanAddr   = 0;
+const char* g_cachedGWorldAob    = nullptr;
+int         g_cachedGWorldAobPos = 0;
+int         g_cachedGWorldAobLen = 0;
 
 static bool        s_initialized = false;
 static PipeServer  s_pipeServer;
@@ -90,6 +93,9 @@ bool UE5_Init() {
     g_cachedGObjectsScanAddr = ptrs.gobjectsScanAddr;
     g_cachedGNamesScanAddr   = ptrs.gnamesScanAddr;
     g_cachedGWorldScanAddr   = ptrs.gworldScanAddr;
+    g_cachedGWorldAob    = ptrs.gworldAob;
+    g_cachedGWorldAobPos = ptrs.gworldAobPos;
+    g_cachedGWorldAobLen = ptrs.gworldAobLen;
 
     // Initialize subsystems — only when their pointer was found
     if (ptrs.GNames) {

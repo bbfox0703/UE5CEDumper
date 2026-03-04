@@ -150,7 +150,9 @@ public partial class MainWindowViewModel : ViewModelBase
                     state.GObjectsMethod, state.GNamesMethod, state.GWorldMethod,
                     state.GObjectsPatternId, state.GNamesPatternId, state.GWorldPatternId,
                     state.GObjectsPatternsHit, state.GNamesPatternsHit, state.GWorldPatternsHit,
-                    state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr);
+                    state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr,
+                    state.GWorldAob, state.GWorldAobPos, state.GWorldAobLen,
+                    state.ModuleName);
 
                 ObjectTree.SetEngineState(state);
                 LiveWalker.SetEngineState(state);
@@ -375,7 +377,9 @@ public partial class MainWindowViewModel : ViewModelBase
             state.GObjectsMethod, state.GNamesMethod, state.GWorldMethod,
             state.GObjectsPatternId, state.GNamesPatternId, state.GWorldPatternId,
             state.GObjectsPatternsHit, state.GNamesPatternsHit, state.GWorldPatternsHit,
-            state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr);
+            state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr,
+            state.GWorldAob, state.GWorldAobPos, state.GWorldAobLen,
+            state.ModuleName);
 
         ObjectTree.SetEngineState(state);
         LiveWalker.SetEngineState(state);

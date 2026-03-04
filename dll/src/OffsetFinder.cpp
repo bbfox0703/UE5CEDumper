@@ -532,6 +532,7 @@ struct ScanReport {
     uintptr_t                      finalAddress = 0;
     uintptr_t                      scanAddr     = 0;  // AOB match address (instruction that references the pointer)
     const char*                    winningId    = nullptr;
+    const AobSignature*            winningSig   = nullptr;  // Winning pattern (for AOB metadata)
 };
 
 // Try to resolve a symbol export from any loaded module.
@@ -707,6 +708,7 @@ static uintptr_t ScanForTarget(
                          report.targetName, sig->id, (unsigned long long)result);
                 report.finalAddress = result;
                 report.winningId = sig->id;
+                report.winningSig = sig;
                 return result;
             }
             continue;
@@ -724,6 +726,7 @@ static uintptr_t ScanForTarget(
                          report.targetName, sig->id, (unsigned long long)result);
                 report.finalAddress = result;
                 report.winningId = sig->id;
+                report.winningSig = sig;
                 return result;
             }
             continue;
@@ -745,6 +748,7 @@ static uintptr_t ScanForTarget(
                 report.finalAddress = pr.selected;
                 report.scanAddr = matchAddr;
                 report.winningId = sig->id;
+                report.winningSig = sig;
                 return pr.selected;
             }
             continue;
@@ -844,6 +848,7 @@ static uintptr_t ScanForTarget(
                 report.finalAddress = bestResult;
                 report.scanAddr = bestMatchAddr;
                 report.winningId = sig->id;
+                report.winningSig = sig;
                 return bestResult;
             }
 
@@ -910,6 +915,7 @@ static uintptr_t ScanForTarget(
                     report.finalAddress = bestResult;
                     report.scanAddr = bestMatchAddr;
                     report.winningId = sig->id;
+                    report.winningSig = sig;
                     return bestResult;
                 }
 
@@ -2965,6 +2971,13 @@ bool FindAll(EnginePointers& out) {
     ExtractScanStats(s_gobjectsReport, out.gobjectsPatternsTried, out.gobjectsPatternsHit);
     ExtractScanStats(s_gnamesReport,   out.gnamesPatternsTried,   out.gnamesPatternsHit);
     ExtractScanStats(s_gworldReport,   out.gworldPatternsTried,   out.gworldPatternsHit);
+
+    // GWorld winning pattern AOB metadata (for CE symbol registration via CreateSymbolScript)
+    if (auto* ws = s_gworldReport.winningSig) {
+        out.gworldAob    = ws->pattern;
+        out.gworldAobPos = ws->instrOffset + ws->opcodeLen;
+        out.gworldAobLen = ws->instrOffset + ws->totalLen;
+    }
 
     LOG_INFO("FindAll: Complete — GObjects=0x%llX (%s), GNames=0x%llX (%s), GWorld=0x%llX (%s), UE=%u, UE4Names=%s, hdrOff=%d",
              static_cast<unsigned long long>(out.GObjects), out.gobjectsMethod,

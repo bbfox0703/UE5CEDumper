@@ -40,4 +40,12 @@ public sealed class EngineState
     public int GNamesPatternsHit { get; init; }
     public int GWorldPatternsTried { get; init; }
     public int GWorldPatternsHit { get; init; }
+
+    // --- GWorld AOB metadata (for CE symbol registration via CreateSymbolScript) ---
+    /// <summary>Winning GWorld AOB pattern string (e.g. "48 8B 1D ?? ?? ?? ??").</summary>
+    public string GWorldAob { get; init; } = "";
+    /// <summary>Position of RIP displacement within AOB match (instrOffset + opcodeLen).</summary>
+    public int GWorldAobPos { get; init; }
+    /// <summary>Instruction end relative to AOB match (instrOffset + totalLen, for RIP calculation).</summary>
+    public int GWorldAobLen { get; init; }
 }
