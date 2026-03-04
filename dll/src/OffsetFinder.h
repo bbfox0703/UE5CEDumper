@@ -44,6 +44,11 @@ struct EnginePointers {
     int gnamesPatternsHit     = 0;
     int gworldPatternsTried   = 0;
     int gworldPatternsHit     = 0;
+
+    // GWorld winning pattern AOB metadata (for CreateSymbolScript)
+    const char* gworldAob    = nullptr;  // AOB pattern string (e.g. "48 8B 1D ?? ?? ?? ??")
+    int         gworldAobPos = 0;        // instrOffset + opcodeLen: displacement offset within match
+    int         gworldAobLen = 0;        // instrOffset + totalLen: instruction end for RIP calculation
 };
 
 // Scan and cache all global pointers

@@ -55,15 +55,15 @@
           <Button Content="{StaticResource str.ProxyDeploy.Deploy}"
                   Command="{Binding DeploySelectedCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Deploy}"
-                  Classes="accent" Padding="12,4"/>
+                  ClickMode="Press" Classes="accent" Padding="12,4"/>
           <Button Content="{StaticResource str.ProxyDeploy.Undeploy}"
                   Command="{Binding UndeploySelectedCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Undeploy}"
-                  Padding="12,4"/>
+                  ClickMode="Press" Padding="12,4"/>
           <Button Content="{StaticResource str.ProxyDeploy.UpdateAll}"
                   Command="{Binding UpdateAllCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.UpdateAll}"
-                  Padding="12,4"/>
+                  ClickMode="Press" Padding="12,4"/>
           <CheckBox Content="{StaticResource str.ProxyDeploy.Force}"
                     IsChecked="{Binding ForceOverwrite}"
                     ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Force}"
@@ -91,6 +91,7 @@
               CanUserResizeColumns="True"
               CanUserSortColumns="True"
               IsReadOnly="True"
+              Focusable="False"
               GridLinesVisibility="Horizontal"
               HeadersVisibility="Column"
               BorderThickness="0"
@@ -103,6 +104,7 @@
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:DetectedGame">
               <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                        Focusable="False"
                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
