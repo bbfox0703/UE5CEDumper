@@ -65,11 +65,11 @@ public partial class MainWindowViewModel : ViewModelBase
     public ObjectTreeViewModel ObjectTree { get; }
     public ClassStructViewModel ClassStruct { get; }
     public PointerPanelViewModel Pointers { get; }
-    public HexViewViewModel HexView { get; }
     public LiveWalkerViewModel LiveWalker { get; }
     public InstanceFinderViewModel InstanceFinder { get; }
     public PropertySearchViewModel PropertySearch { get; }
     public GameClassFilterViewModel GameClassFilter { get; }
+    public ProxyDeployViewModel? ProxyDeploy { get; }
 
     partial void OnSelectedAddressFormatIndexChanged(int value)
     {
@@ -116,7 +116,8 @@ public partial class MainWindowViewModel : ViewModelBase
         ILoggingService log,
         IPlatformService platform,
         AobUsageService? aobUsage = null,
-        IAobMakerBridge? aobMaker = null)
+        IAobMakerBridge? aobMaker = null,
+        IProxyDeployService? proxyDeploy = null)
     {
         _pipeClient = pipeClient;
         _dump = dump;
@@ -127,11 +128,13 @@ public partial class MainWindowViewModel : ViewModelBase
         ObjectTree = new ObjectTreeViewModel(dump, log, platform);
         ClassStruct = new ClassStructViewModel(dump, log);
         Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker);
-        HexView = new HexViewViewModel(dump, pipeClient, log);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform, aobMaker);
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
         PropertySearch = new PropertySearchViewModel(dump, log);
         GameClassFilter = new GameClassFilterViewModel(dump, log);
+
+        if (proxyDeploy != null)
+            ProxyDeploy = new ProxyDeployViewModel(proxyDeploy, log);
 
         // Wire Pointers Extra Scan -> refresh all panels after rescan results applied
         Pointers.RescanApplied += async () =>
@@ -152,7 +155,6 @@ public partial class MainWindowViewModel : ViewModelBase
                 ObjectTree.SetEngineState(state);
                 LiveWalker.SetEngineState(state);
                 InstanceFinder.SetEngineState(state);
-                HexView.SetEngineState(state);
 
                 _ = LiveWalker.CheckAobMakerAsync();
 
@@ -175,10 +177,6 @@ public partial class MainWindowViewModel : ViewModelBase
             try
             {
                 await ClassStruct.OnObjectSelected(node);
-                if (node != null)
-                {
-                    HexView.SetAddress(node.Address);
-                }
             }
             catch (Exception ex)
             {
@@ -382,7 +380,6 @@ public partial class MainWindowViewModel : ViewModelBase
         ObjectTree.SetEngineState(state);
         LiveWalker.SetEngineState(state);
         InstanceFinder.SetEngineState(state);
-        HexView.SetEngineState(state);
 
         // Fire-and-forget: check AOBMaker availability for Live Walker
         _ = LiveWalker.CheckAobMakerAsync();

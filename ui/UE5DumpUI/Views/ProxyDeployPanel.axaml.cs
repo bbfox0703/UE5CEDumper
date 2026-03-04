@@ -2,9 +2,9 @@ using Avalonia.Controls;
 
 namespace UE5DumpUI.Views;
 
-public partial class HexViewPanel : UserControl
+public partial class ProxyDeployPanel : UserControl
 {
-    public HexViewPanel()
+    public ProxyDeployPanel()
     {
         InitializeComponent();
     }

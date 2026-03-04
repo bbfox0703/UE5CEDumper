@@ -1,0 +1,139 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UE5DumpUI.ViewModels"
+             xmlns:m="using:UE5DumpUI.Models"
+             x:Class="UE5DumpUI.Views.ProxyDeployPanel"
+             x:DataType="vm:ProxyDeployViewModel">
+
+  <DockPanel Margin="8">
+    <!-- Top: Scan + Status -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+      <Button Content="{StaticResource str.ProxyDeploy.Scan}"
+              Command="{Binding ScanCommand}"
+              ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Scan}"
+              Classes="accent" Padding="12,4"/>
+      <Button Content="{StaticResource str.ProxyDeploy.Refresh}"
+              Command="{Binding RefreshCommand}"
+              ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Refresh}"
+              Padding="12,4"/>
+
+      <!-- Selection buttons — separated visually from scan/refresh -->
+      <Border Width="1" Background="#444" Margin="4,2"/>
+      <Button Content="{StaticResource str.ProxyDeploy.SelectAll}"
+              Command="{Binding SelectAllCommand}"
+              Padding="8,4" FontSize="11"/>
+      <Button Content="{StaticResource str.ProxyDeploy.UnselectAll}"
+              Command="{Binding UnselectAllCommand}"
+              Padding="8,4" FontSize="11"/>
+      <Button Content="{StaticResource str.ProxyDeploy.InvertSel}"
+              Command="{Binding InvertSelectionCommand}"
+              Padding="8,4" FontSize="11"/>
+
+      <TextBlock Text="{Binding StatusText}"
+                 Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
+    </StackPanel>
+
+    <!-- Scanning progress -->
+    <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
+                 IsVisible="{Binding IsScanning}" Height="2" Margin="0,0,0,4"/>
+
+    <!-- Bottom: Action buttons -->
+    <Border DockPanel.Dock="Bottom" Background="#2D2D2D" Padding="8" Margin="0,8,0,0"
+            CornerRadius="4">
+      <DockPanel>
+        <!-- Right: source DLL info -->
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"
+                    VerticalAlignment="Center">
+          <TextBlock Text="{StaticResource str.ProxyDeploy.SourceDll}"
+                     Foreground="#888" FontSize="11"/>
+          <TextBlock Text="{Binding SourceDllVersion, StringFormat='v{0}', FallbackValue='N/A'}"
+                     Foreground="#D4D4D4" FontSize="11" FontWeight="Bold"/>
+        </StackPanel>
+
+        <!-- Left: buttons + force checkbox -->
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <Button Content="{StaticResource str.ProxyDeploy.Deploy}"
+                  Command="{Binding DeploySelectedCommand}"
+                  ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Deploy}"
+                  Classes="accent" Padding="12,4"/>
+          <Button Content="{StaticResource str.ProxyDeploy.Undeploy}"
+                  Command="{Binding UndeploySelectedCommand}"
+                  ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Undeploy}"
+                  Padding="12,4"/>
+          <Button Content="{StaticResource str.ProxyDeploy.UpdateAll}"
+                  Command="{Binding UpdateAllCommand}"
+                  ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.UpdateAll}"
+                  Padding="12,4"/>
+          <CheckBox Content="{StaticResource str.ProxyDeploy.Force}"
+                    IsChecked="{Binding ForceOverwrite}"
+                    ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Force}"
+                    Foreground="#CCCCCC" VerticalAlignment="Center" Margin="8,0"/>
+          <TextBlock Text="{Binding LastOperationResult}"
+                     Foreground="#4EC9B0" VerticalAlignment="Center" FontSize="11"
+                     Margin="8,0"
+                     IsVisible="{Binding LastOperationResult, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <!-- Error display -->
+    <TextBlock DockPanel.Dock="Bottom"
+               Text="{Binding ErrorMessage}"
+               Foreground="#F44747" FontSize="12" Margin="0,4"
+               IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+    <!-- Main: Game list DataGrid
+         IsReadOnly=True: matches all other DataGrids in the app.
+         CheckBox in template column still responds to clicks. -->
+    <DataGrid ItemsSource="{Binding Games}"
+              AutoGenerateColumns="False"
+              CanUserReorderColumns="False"
+              CanUserResizeColumns="True"
+              CanUserSortColumns="True"
+              IsReadOnly="True"
+              GridLinesVisibility="Horizontal"
+              HeadersVisibility="Column"
+              BorderThickness="0"
+              Background="#1E1E1E"
+              Foreground="#D4D4D4"
+              FontSize="12">
+      <DataGrid.Columns>
+        <!-- Select checkbox -->
+        <DataGridTemplateColumn Header="" Width="40" CanUserResize="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:DetectedGame">
+              <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Game Name -->
+        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColName}"
+                            Binding="{Binding Name}" Width="*"/>
+
+        <!-- BinariesDir (path) -->
+        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColPath}"
+                            Binding="{Binding BinariesDir}" Width="2*"/>
+
+        <!-- Status -->
+        <DataGridTemplateColumn Header="{StaticResource str.ProxyDeploy.ColStatus}" Width="160">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:DetectedGame">
+              <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Margin="4,0"
+                         FontWeight="SemiBold" Foreground="#888888"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+
+        <!-- Installed Version -->
+        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColVersion}"
+                            Binding="{Binding InstalledVersion}" Width="120"/>
+
+        <!-- Error Message -->
+        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColError}"
+                            Binding="{Binding ErrorMessage}" Width="200"/>
+      </DataGrid.Columns>
+    </DataGrid>
+  </DockPanel>
+</UserControl>

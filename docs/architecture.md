@@ -52,7 +52,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (42 tests)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (193 tests)
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj
 │       ├── Program.cs              ← Avalonia entry point
@@ -73,7 +73,7 @@ UE5CEDumper/
 │       │   ├── AddressLookupResult.cs
 │       │   ├── CePointerInfo.cs
 │       │   ├── EngineState.cs
-│       │   ├── HexViewRow.cs
+│       │   ├── DetectedGame.cs     ← Proxy DLL deploy model + status enum
 │       │   ├── InstanceResult.cs
 │       │   └── ObjectDetail.cs
 │       │
@@ -82,7 +82,9 @@ UE5CEDumper/
 │       │   ├── DumpService.cs      ← All pipe request/response helpers
 │       │   ├── CeXmlExportService.cs ← CE XML generation (Phase A–C arrays)
 │       │   ├── LoggingService.cs   ← Serilog setup (3 loggers: init/pipe/view)
-│       │   └── WindowsPlatformService.cs ← Registry, env vars (platform abstraction)
+│       │   ├── WindowsPlatformService.cs ← Registry, env vars (platform abstraction)
+│       │   ├── VdfParser.cs         ← Valve VDF format parser (Steam library detection)
+│       │   └── ProxyDeployService.cs ← Proxy DLL deploy/undeploy/detect
 │       │
 │       ├── ViewModels/             ← ReactiveUI ViewModels
 │       │   ├── ViewModelBase.cs
@@ -91,7 +93,7 @@ UE5CEDumper/
 │       │   ├── LiveWalkerViewModel.cs
 │       │   ├── InstanceFinderViewModel.cs
 │       │   ├── ClassStructViewModel.cs
-│       │   ├── HexViewViewModel.cs
+│       │   ├── ProxyDeployViewModel.cs ← Proxy DLL deploy tab ViewModel
 │       │   └── PointerPanelViewModel.cs
 │       │
 │       ├── Views/                  ← Avalonia AXAML + code-behind
@@ -100,7 +102,7 @@ UE5CEDumper/
 │       │   ├── ObjectTreePanel.axaml / .cs
 │       │   ├── InstanceFinderPanel.axaml / .cs
 │       │   ├── ClassStructPanel.axaml / .cs
-│       │   ├── HexViewPanel.axaml / .cs
+│       │   ├── ProxyDeployPanel.axaml / .cs ← Proxy DLL deploy/undeploy UI
 │       │   └── PointerPanel.axaml / .cs
 │       │
 │       ├── Core/                   ← Platform abstraction interfaces
