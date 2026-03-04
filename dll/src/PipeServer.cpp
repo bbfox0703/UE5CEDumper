@@ -524,16 +524,20 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 fj["full"]    = f.fullName;
                 fj["addr"]    = PipeProtocol::AddrToStr(f.address);
                 fj["flags"]   = f.functionFlags;
+                fj["num_parms"]  = f.numParms;
+                fj["parms_size"] = f.parmsSize;
+                fj["ret_offset"] = f.returnValueOffset;
                 fj["ret"]     = f.returnType;
 
                 json params = json::array();
                 for (const auto& p : f.params) {
                     json pj;
-                    pj["name"]  = p.name;
-                    pj["type"]  = p.typeName;
-                    pj["size"]  = p.size;
-                    pj["out"]   = p.isOut;
-                    pj["ret"]   = p.isReturn;
+                    pj["name"]   = p.name;
+                    pj["type"]   = p.typeName;
+                    pj["size"]   = p.size;
+                    pj["offset"] = p.offset;
+                    pj["out"]    = p.isOut;
+                    pj["ret"]    = p.isReturn;
                     params.push_back(pj);
                 }
                 fj["params"] = params;

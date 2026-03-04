@@ -676,12 +676,27 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 
                 // Read FunctionFlags (UFunction::FunctionFlags)
                 // Heuristic: try several common offsets for different UE versions
+                // RE-UE4SS templates confirm: 0x88 (4.18-4.20), 0x98 (4.22-4.24), 0xB0 (4.25+/UE5)
                 uint32_t funcFlags = 0;
-                for (int tryOff : { 0xB0, 0xC0, 0x88, 0xA8, 0xB8 }) {
-                    if (Mem::ReadSafe<uint32_t>(child + tryOff, funcFlags) && funcFlags != 0)
+                int funcFlagsOff = -1;
+                for (int tryOff : { 0xB0, 0xC0, 0x88, 0x98, 0xA8, 0xB8 }) {
+                    if (Mem::ReadSafe<uint32_t>(child + tryOff, funcFlags) && funcFlags != 0) {
+                        funcFlagsOff = tryOff;
                         break;
+                    }
                 }
                 fi.functionFlags = funcFlags;
+
+                // NumParms, ParmsSize, ReturnValueOffset are at fixed offsets
+                // relative to FunctionFlags (stable across all UE versions):
+                //   +0x04 = NumParms (uint8)
+                //   +0x06 = ParmsSize (uint16)
+                //   +0x08 = ReturnValueOffset (uint16)
+                if (funcFlagsOff >= 0) {
+                    Mem::ReadSafe<uint8_t> (child + funcFlagsOff + 0x04, fi.numParms);
+                    Mem::ReadSafe<uint16_t>(child + funcFlagsOff + 0x06, fi.parmsSize);
+                    Mem::ReadSafe<uint16_t>(child + funcFlagsOff + 0x08, fi.returnValueOffset);
+                }
 
                 // Walk the UFunction's own property chain (its parameters)
                 // UFunction inherits UStruct, so ChildProperties is at USTRUCT_CHILDPROPS
@@ -697,6 +712,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             param.name = ReadFName(cur + DynOff::FFIELD_NAME);
                             param.typeName = GetFieldTypeName(cur);
                             Mem::ReadSafe<int32_t>(cur + DynOff::FPROPERTY_ELEMSIZE, param.size);
+                            Mem::ReadSafe<int32_t>(cur + DynOff::FPROPERTY_OFFSET, param.offset);
 
                             uint64_t propFlags = 0;
                             Mem::ReadSafe<uint64_t>(cur + DynOff::FPROPERTY_FLAGS, propFlags);
@@ -730,6 +746,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                 param.typeName = ReadFName(paramCls + Constants::OFF_UOBJECT_NAME);
 
                             Mem::ReadSafe<int32_t>(cur + DynOff::UPROPERTY_ELEMSIZE, param.size);
+                            Mem::ReadSafe<int32_t>(cur + DynOff::UPROPERTY_OFFSET, param.offset);
 
                             uint64_t propFlags = 0;
                             Mem::ReadSafe<uint64_t>(cur + DynOff::UPROPERTY_FLAGS, propFlags);

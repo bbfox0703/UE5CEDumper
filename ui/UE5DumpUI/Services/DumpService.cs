@@ -711,6 +711,7 @@ public sealed class DumpService : IDumpService
                             Name = po["name"]?.GetValue<string>() ?? "",
                             TypeName = po["type"]?.GetValue<string>() ?? "",
                             Size = po["size"]?.GetValue<int>() ?? 0,
+                            Offset = po["offset"]?.GetValue<int>() ?? -1,
                             IsOut = po["out"]?.GetValue<bool>() ?? false,
                             IsReturn = po["ret"]?.GetValue<bool>() ?? false,
                         });
@@ -723,6 +724,9 @@ public sealed class DumpService : IDumpService
                     FullName = fo["full"]?.GetValue<string>() ?? "",
                     Address = fo["addr"]?.GetValue<string>() ?? "",
                     FunctionFlags = fo["flags"]?.GetValue<uint>() ?? 0,
+                    NumParms = fo["num_parms"]?.GetValue<byte>() ?? 0,
+                    ParmsSize = fo["parms_size"]?.GetValue<ushort>() ?? 0,
+                    ReturnValueOffset = fo["ret_offset"]?.GetValue<ushort>() ?? 0xFFFF,
                     ReturnType = fo["ret"]?.GetValue<string>() ?? "",
                     Params = parms,
                 });

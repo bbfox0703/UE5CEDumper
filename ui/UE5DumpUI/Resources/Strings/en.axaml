@@ -207,6 +207,11 @@
     <sys:String x:Key="str.Tip.GameClassFilter.FindInstances">Find live instances of this class</sys:String>
     <sys:String x:Key="str.Tip.GameClassFilter.WalkClass">Open class in Live Walker to inspect fields</sys:String>
 
+    <!-- Live Walker: Functions -->
+    <sys:String x:Key="str.LiveWalker.Functions">Functions</sys:String>
+    <sys:String x:Key="str.LiveWalker.FuncGenScript">INV</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FuncGenScript">Generate CE invoke script for this UFunction</sys:String>
+
     <!-- Tooltips: Live Walker -->
     <sys:String x:Key="str.Tip.LiveWalker.StartWorld">Navigate to GWorld and list top-level objects</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Back">Go back to previous object</sys:String>
