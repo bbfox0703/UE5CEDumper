@@ -25,11 +25,11 @@ public class InvokeScriptTests
     [Fact]
     public void DecodeFunctionFlags_MultipleFlags_ReturnsAll()
     {
-        // Native | BlueprintCallable | Const
-        var result = FunctionInfoModel.DecodeFunctionFlags(0x0400_4400);
+        // Native(0x400) | BlueprintCallable(0x4000000) | Static(0x2000)
+        var result = FunctionInfoModel.DecodeFunctionFlags(0x0400_2400);
         Assert.Contains("Native", result);
         Assert.Contains("BlueprintCallable", result);
-        Assert.Contains("Const", result);
+        Assert.Contains("Static", result);
     }
 
     [Fact]
