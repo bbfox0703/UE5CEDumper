@@ -1,9 +1,3 @@
 [submodule "docs/private"]
 	path = docs/private
 	url = https://github.com/bbfox0703/CE-Handwire-Private.git
-[submodule "vendor/Dumper-7"]
-	path = vendor/Dumper-7
-	url = https://github.com/Encryqed/Dumper-7.git
-[submodule "vendor/RE-UE4SS"]
-	path = vendor/RE-UE4SS
-	url = https://github.com/UE4SS-RE/RE-UE4SS.git
