@@ -22,6 +22,8 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     // AOBMaker CE Plugin message types
     private const string TypeNavigateHexView = "NavigateHexView";
     private const string TypeNavigateDisassembler = "NavigateDisassembler";
+    private const string TypeCreateAAScript = "CreateAAScript";
+    private const string TypeCreateSymbolScript = "CreateSymbolScript";
 
     private readonly ILoggingService? _log;
     private NamedPipeClientStream? _pipe;
@@ -147,6 +149,115 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         catch (Exception ex)
         {
             _log?.Warn(Constants.LogCatInit, $"AOBMaker NavigateDisassembler error: {ex.Message}");
+            IsAvailable = false;
+            CleanupPipe();
+            return false;
+        }
+    }
+
+    public async Task<bool> CreateAAScriptAsync(string description, string script,
+        bool autoActivate = true, CancellationToken ct = default)
+    {
+        if (!await ReconnectAsync(ct))
+        {
+            IsAvailable = false;
+            return false;
+        }
+
+        try
+        {
+            var request = new AobMakerMessage
+            {
+                Type = TypeCreateAAScript,
+                Description = description,
+                Script = script,
+                AutoActivate = autoActivate
+            };
+
+            await WriteMessageAsync(_pipe!, request, ct);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(ResponseTimeoutMs);
+
+            var response = await ReadMessageAsync(_pipe!, timeoutCts.Token);
+            CleanupPipe();
+            if (response == null || !response.Success)
+            {
+                _log?.Warn(Constants.LogCatInit,
+                    $"AOBMaker CreateAAScript failed: {response?.Message ?? "no response"}");
+                return false;
+            }
+
+            IsAvailable = true;
+            _log?.Info(Constants.LogCatInit, $"AOBMaker: created AA script '{description}'");
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            _log?.Warn(Constants.LogCatInit, $"AOBMaker CreateAAScript timed out for '{description}'");
+            CleanupPipe();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn(Constants.LogCatInit, $"AOBMaker CreateAAScript error: {ex.Message}");
+            IsAvailable = false;
+            CleanupPipe();
+            return false;
+        }
+    }
+
+    public async Task<bool> CreateSymbolScriptAsync(string name, string aob, int pos, int aoblen,
+        string symbol, string module, bool autoActivate = true, CancellationToken ct = default)
+    {
+        if (!await ReconnectAsync(ct))
+        {
+            IsAvailable = false;
+            return false;
+        }
+
+        try
+        {
+            var request = new AobMakerMessage
+            {
+                Type = TypeCreateSymbolScript,
+                Name = name,
+                Aob = aob,
+                Pos = pos,
+                AobLen = aoblen,
+                Symbol = symbol,
+                Module = module,
+                AutoActivate = autoActivate
+            };
+
+            await WriteMessageAsync(_pipe!, request, ct);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(ResponseTimeoutMs);
+
+            var response = await ReadMessageAsync(_pipe!, timeoutCts.Token);
+            CleanupPipe();
+            if (response == null || !response.Success)
+            {
+                _log?.Warn(Constants.LogCatInit,
+                    $"AOBMaker CreateSymbolScript failed: {response?.Message ?? "no response"}");
+                return false;
+            }
+
+            IsAvailable = true;
+            _log?.Info(Constants.LogCatInit,
+                $"AOBMaker: created symbol script '{name}' → {symbol} (AOB: {aob})");
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            _log?.Warn(Constants.LogCatInit, $"AOBMaker CreateSymbolScript timed out for '{name}'");
+            CleanupPipe();
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn(Constants.LogCatInit, $"AOBMaker CreateSymbolScript error: {ex.Message}");
             IsAvailable = false;
             CleanupPipe();
             return false;

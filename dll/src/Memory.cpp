@@ -526,13 +526,11 @@ static void ScanRegionBatch(
 {
     if (entries.empty()) return;
 
-    // Find max pattern length for maxStart calculation
-    size_t maxPatLen = 0;
+    // Find min pattern length to check if the region can hold any pattern at all
+    size_t minPatLen = SIZE_MAX;
     for (const auto& e : entries)
-        if (e.parsed.bytes.size() > maxPatLen) maxPatLen = e.parsed.bytes.size();
-    if (regionSize < maxPatLen) return;
-
-    const size_t maxStart = regionSize - maxPatLen;
+        if (e.parsed.bytes.size() < minPatLen) minPatLen = e.parsed.bytes.size();
+    if (regionSize < minPatLen) return;
 
     // Separate SIMD-capable patterns from all-wildcard (scalar-only) patterns
     struct SIMDEntry {
@@ -576,7 +574,8 @@ static void ScanRegionBatch(
                 _BitScanForward(&bitPos, bits);
                 const size_t candidate = i + bitPos;
 
-                if (candidate <= maxStart) {
+                // Per-pattern bounds: candidate + patLen must fit in region
+                if (candidate + se.patLen <= regionSize) {
                     // Scalar verify full pattern
                     const auto& pat = entries[se.entryIdx].parsed;
                     const uint8_t* p = scanStart + candidate;
@@ -598,10 +597,28 @@ static void ScanRegionBatch(
         }
     }
 
-    // ── Scalar tail for SIMD patterns (last < 32 bytes) ──────────
+    // ── Scalar tail for SIMD patterns ────────────────────────────
+    // Each pattern has its own max-start position (regionSize - patLen).
+    // Also covers positions skipped during SIMD phase when anchorOffset > 0
+    // pushed the SIMD window past regionSize for that pattern.
     for (const auto& se : simdEntries) {
         const auto& pat = entries[se.entryIdx].parsed;
-        for (size_t pos = i; pos <= maxStart; ++pos) {
+        const size_t patMaxStart = regionSize - pat.bytes.size();
+
+        // Calculate the first uncovered position for this pattern.
+        // SIMD covered positions where the anchor window fit:
+        //   i + anchorOffset + 32 <= regionSize
+        // The last valid SIMD `i` for this pattern was the largest
+        // multiple of 32 satisfying that condition.
+        size_t scalarStart;
+        if (regionSize >= static_cast<size_t>(se.anchorOffset) + 32) {
+            size_t lastValidI = ((regionSize - se.anchorOffset - 32) / 32) * 32;
+            scalarStart = lastValidI + 32; // First position after last SIMD window
+        } else {
+            scalarStart = 0; // SIMD never ran for this pattern
+        }
+
+        for (size_t pos = scalarStart; pos <= patMaxStart; ++pos) {
             bool matched = true;
             for (size_t j = 0; j < pat.bytes.size(); ++j) {
                 if (pat.mask[j] && scanStart[pos + j] != pat.bytes[j]) {
@@ -619,7 +636,8 @@ static void ScanRegionBatch(
     // ── Full scalar scan for all-wildcard patterns ───────────────
     for (int k : scalarOnlyIndices) {
         const auto& pat = entries[k].parsed;
-        for (size_t pos = 0; pos <= maxStart; ++pos) {
+        const size_t patMaxStart = regionSize - pat.bytes.size();
+        for (size_t pos = 0; pos <= patMaxStart; ++pos) {
             bool matched = true;
             for (size_t j = 0; j < pat.bytes.size(); ++j) {
                 if (pat.mask[j] && scanStart[pos + j] != pat.bytes[j]) {

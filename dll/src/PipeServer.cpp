@@ -266,6 +266,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             extern uintptr_t   g_cachedGObjectsScanAddr;
             extern uintptr_t   g_cachedGNamesScanAddr;
             extern uintptr_t   g_cachedGWorldScanAddr;
+            extern const char* g_cachedGWorldAob;
+            extern int         g_cachedGWorldAobPos;
+            extern int         g_cachedGWorldAobLen;
 
             json data;
             data["gobjects"]         = PipeProtocol::AddrToStr(g_cachedGObjects);
@@ -296,6 +299,11 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["gobjects_scan_addr"] = PipeProtocol::AddrToStr(g_cachedGObjectsScanAddr);
             data["gnames_scan_addr"]   = PipeProtocol::AddrToStr(g_cachedGNamesScanAddr);
             data["gworld_scan_addr"]   = PipeProtocol::AddrToStr(g_cachedGWorldScanAddr);
+
+            // GWorld winning pattern AOB metadata (for CE symbol registration)
+            data["gworld_aob"]     = g_cachedGWorldAob ? g_cachedGWorldAob : "";
+            data["gworld_aob_pos"] = g_cachedGWorldAobPos;
+            data["gworld_aob_len"] = g_cachedGWorldAobLen;
 
             // Module info for CE address formatting
             uintptr_t moduleBase = Mem::GetModuleBase(nullptr);
@@ -1449,6 +1457,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             extern uintptr_t   g_cachedGObjectsScanAddr;
             extern uintptr_t   g_cachedGNamesScanAddr;
             extern uintptr_t   g_cachedGWorldScanAddr;
+            extern const char* g_cachedGWorldAob;
+            extern int         g_cachedGWorldAobPos;
+            extern int         g_cachedGWorldAobLen;
 
             Logger::Info("PIPE:cmd", "trigger_scan: Starting engine scan...");
             bool ok = UE5_Init();
@@ -1481,6 +1492,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["gobjects_scan_addr"]  = PipeProtocol::AddrToStr(g_cachedGObjectsScanAddr);
             data["gnames_scan_addr"]    = PipeProtocol::AddrToStr(g_cachedGNamesScanAddr);
             data["gworld_scan_addr"]    = PipeProtocol::AddrToStr(g_cachedGWorldScanAddr);
+            data["gworld_aob"]          = g_cachedGWorldAob ? g_cachedGWorldAob : "";
+            data["gworld_aob_pos"]      = g_cachedGWorldAobPos;
+            data["gworld_aob_len"]      = g_cachedGWorldAobLen;
 
             uintptr_t moduleBase = Mem::GetModuleBase(nullptr);
             data["module_base"] = PipeProtocol::AddrToStr(moduleBase);

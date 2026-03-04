@@ -42,6 +42,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private int _gNamesPatternsHit;
     [ObservableProperty] private int _gWorldPatternsHit;
 
+    // --- GWorld AOB metadata (for CreateSymbolScript) ---
+    private string _gworldAob = "";
+    private int _gworldAobPos;
+    private int _gworldAobLen;
+    private string _moduleName = "";
+
     // --- AOBMaker CE Plugin bridge ---
     [ObservableProperty] private bool _isAobMakerAvailable;
 
@@ -102,6 +108,10 @@ public partial class PointerPanelViewModel : ViewModelBase
         && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found");
 
     // --- AOBMaker button enable state ---
+    /// <summary>Can register GWorld address as CE symbol via CreateSymbolScript (requires AOB data).</summary>
+    public bool CanRegisterGWorldSymbol => IsAobMakerAvailable
+        && IsNonZeroAddr(GWorldAddress) && !string.IsNullOrEmpty(_gworldAob);
+
     /// <summary>Can send GObjects pointer to CE hex view (data address).</summary>
     public bool CanHexGObjects => IsAobMakerAvailable && IsNonZeroAddr(GObjectsAddress);
     /// <summary>Can send GNames pointer to CE hex view (data address).</summary>
@@ -137,7 +147,9 @@ public partial class PointerPanelViewModel : ViewModelBase
                        int gobjectsPatternsHit = 0, int gnamesPatternsHit = 0,
                        int gworldPatternsHit = 0,
                        string gobjectsScanAddr = "", string gnamesScanAddr = "",
-                       string gworldScanAddr = "")
+                       string gworldScanAddr = "",
+                       string gworldAob = "", int gworldAobPos = 0, int gworldAobLen = 0,
+                       string moduleName = "")
     {
         GObjectsAddress = gobjects;
         GNamesAddress = gnames;
@@ -157,6 +169,10 @@ public partial class PointerPanelViewModel : ViewModelBase
         GObjectsScanAddr = gobjectsScanAddr;
         GNamesScanAddr = gnamesScanAddr;
         GWorldScanAddr = gworldScanAddr;
+        _gworldAob = gworldAob;
+        _gworldAobPos = gworldAobPos;
+        _gworldAobLen = gworldAobLen;
+        _moduleName = moduleName;
         HasData = true;
         // Reset scan state on fresh update
         IsScanning = false;
@@ -208,6 +224,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanAsmGObjectsScan));
         OnPropertyChanged(nameof(CanAsmGNamesScan));
         OnPropertyChanged(nameof(CanAsmGWorldScan));
+        OnPropertyChanged(nameof(CanRegisterGWorldSymbol));
     }
 
     private static string FormatMethodLabel(string method) => method switch
@@ -399,6 +416,37 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         if (_aobMaker == null || !IsNonZeroAddr(GWorldScanAddr)) return;
         await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GWorldScanAddr));
+    }
+
+    // --- AOBMaker CE Plugin: register GWorld as AOB-scan-based CE symbol ---
+
+    [RelayCommand]
+    private async Task RegisterGWorldSymbolAsync()
+    {
+        if (_aobMaker == null || string.IsNullOrEmpty(_gworldAob)) return;
+
+        string symbolName = "gworld_addr";
+        string module = !string.IsNullOrEmpty(_moduleName) ? _moduleName : "game.exe";
+
+        // Send CreateSymbolScript — the CE Plugin's BuildSymbolScanScript() generates
+        // a full AA script that: AOBScanModule for the pattern, reads the RIP-relative
+        // displacement at 'pos', calculates final address using 'aoblen', and registers
+        // it as a CE symbol. This survives game restarts (re-scans on enable).
+        bool success = await _aobMaker.CreateSymbolScriptAsync(
+            name: $"GWorld → {symbolName}",
+            aob: _gworldAob,
+            pos: _gworldAobPos,
+            aoblen: _gworldAobLen,
+            symbol: symbolName,
+            module: module,
+            autoActivate: true);
+
+        if (success)
+            _log?.Info(Constants.LogCatInit,
+                $"Created CE symbol script '{symbolName}' (AOB: {_gworldAob}, pos={_gworldAobPos}, len={_gworldAobLen})");
+        else
+            _log?.Warn(Constants.LogCatInit,
+                $"Failed to create CE symbol script '{symbolName}'");
     }
 
     // --- Clipboard copy commands ---

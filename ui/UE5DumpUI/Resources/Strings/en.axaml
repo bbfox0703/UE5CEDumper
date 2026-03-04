@@ -103,6 +103,8 @@
     <sys:String x:Key="str.Pointers.AobMakerHexTip">Navigate CE hex view to pointer address (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerAsm">ASM</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerScanAsmTip">Navigate CE disassembler to AOB scan hit instruction (via AOBMaker CE Plugin)</sys:String>
+    <sys:String x:Key="str.Pointers.RegisterSymbol">SYM</sys:String>
+    <sys:String x:Key="str.Pointers.RegisterSymbolTip">Create CE AA Script that registers GWorld address as 'gworld_addr' symbol (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScan">Test Extra Scan</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScanHint">Dev test: simulate scan progress UI (does not actually rescan).</sys:String>
 
