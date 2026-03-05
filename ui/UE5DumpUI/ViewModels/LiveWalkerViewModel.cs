@@ -46,6 +46,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private bool _hasFunctions;
     [ObservableProperty] private FunctionInfoModel? _selectedFunction;
     private string _currentClassAddr = "";
+    private bool _isDefinitionView;  // True when displaying a class/struct definition (no live data)
 
     // CE XML output (kept for possible future use but no longer shown in panel)
     [ObservableProperty] private string _ceXmlOutput = "";
@@ -195,6 +196,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
         HasData = true;
         ShowCeXml = false;
         HasParent = false;
+        _isDefinitionView = false;
         CurrentOuterAddr = "";
         CurrentOuterName = "";
         CurrentOuterClassName = "";
@@ -1832,6 +1834,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
             CurrentOuterName = "";
             CurrentOuterClassName = "";
         }
+
+        // Track whether this is a definition view (schema-only, no live values)
+        _isDefinitionView = result.IsDefinition;
 
         // Compute absolute field addresses
         ulong baseAddr = 0;

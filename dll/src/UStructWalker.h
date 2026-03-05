@@ -232,6 +232,7 @@ struct InstanceWalkResult {
     uintptr_t   outerAddr = 0;    // OuterPrivate — parent UObject
     std::string outerName;         // Name of the outer object
     std::string outerClassName;    // Class name of the outer object
+    bool        isDefinition = false;  // True when viewing a class/struct definition (not a live instance)
     std::vector<LiveFieldValue> fields;
 };
 

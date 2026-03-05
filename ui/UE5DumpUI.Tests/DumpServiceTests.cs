@@ -486,6 +486,102 @@ public class DumpServiceTests
         Assert.Empty(param.StructFields);
     }
 
+    // --- WalkInstanceAsync: definition object (ScriptStruct/Class) ---
+
+    [Fact]
+    public async Task WalkInstanceAsync_DefinitionObject_ParsesFieldsCorrectly()
+    {
+        // Simulates walk_instance response when instanceAddr is a UScriptStruct definition.
+        // DLL detects className="ScriptStruct" and returns field definitions via WalkClassEx.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x7FF12345",
+            ["name"] = "JackDataTableCoinShop",
+            ["class"] = "ScriptStruct",
+            ["class_addr"] = "0x7FF00100",
+            ["outer"] = "0x7FF00200",
+            ["outer_name"] = "CoinShopPackage",
+            ["outer_class"] = "Package",
+            ["is_definition"] = true,
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "ItemID",
+                    ["type"] = "IntProperty",
+                    ["offset"] = 0,
+                    ["size"] = 4,
+                    // No hex or value — definition only
+                },
+                new JsonObject
+                {
+                    ["name"] = "Price",
+                    ["type"] = "FloatProperty",
+                    ["offset"] = 4,
+                    ["size"] = 4,
+                    ["value"] = "",
+                },
+                new JsonObject
+                {
+                    ["name"] = "ItemClass",
+                    ["type"] = "ObjectProperty",
+                    ["offset"] = 8,
+                    ["size"] = 8,
+                    ["value"] = "\u2192 ItemBase",
+                },
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x7FF12345");
+
+        Assert.Equal("JackDataTableCoinShop", result.Name);
+        Assert.Equal("ScriptStruct", result.ClassName);
+        Assert.True(result.IsDefinition);
+        Assert.Equal(3, result.Fields.Count);
+
+        Assert.Equal("ItemID", result.Fields[0].Name);
+        Assert.Equal("IntProperty", result.Fields[0].TypeName);
+        Assert.Equal(0, result.Fields[0].Offset);
+        Assert.Equal(4, result.Fields[0].Size);
+
+        Assert.Equal("Price", result.Fields[1].Name);
+        Assert.Equal("FloatProperty", result.Fields[1].TypeName);
+        Assert.Equal(4, result.Fields[1].Offset);
+
+        Assert.Equal("ItemClass", result.Fields[2].Name);
+        Assert.Equal("ObjectProperty", result.Fields[2].TypeName);
+        Assert.Equal("\u2192 ItemBase", result.Fields[2].TypedValue);
+    }
+
+    [Fact]
+    public async Task WalkInstanceAsync_DefinitionObject_EmptyFields()
+    {
+        // UScriptStruct with no properties → empty field list
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x7FF12345",
+            ["name"] = "EmptyStruct",
+            ["class"] = "ScriptStruct",
+            ["class_addr"] = "0x7FF00100",
+            ["outer"] = "0x0",
+            ["outer_name"] = "",
+            ["outer_class"] = "",
+            ["fields"] = new JsonArray()
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x7FF12345");
+
+        Assert.Equal("EmptyStruct", result.Name);
+        Assert.Equal("ScriptStruct", result.ClassName);
+        // Backward compat: no is_definition key → false
+        Assert.False(result.IsDefinition);
+        Assert.Empty(result.Fields);
+    }
+
     [Fact]
     public async Task ReadArrayElementsAsync_ParsesResponse()
     {

@@ -1745,6 +1745,64 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         }
     }
 
+    // Detect class/struct definition objects — show their field definitions
+    // instead of trying to read live instance data from the metaclass layout.
+    // E.g., DataTable RowStruct (ObjectProperty) points to a UScriptStruct definition;
+    // GetClass() returns the "ScriptStruct" metaclass, whose fields are empty/useless.
+    // Instead, treat instanceAddr as the class definition and walk its own FField chain.
+    if (result.className == "ScriptStruct" || result.className == "Class" ||
+        result.className == "BlueprintGeneratedClass" ||
+        result.className == "WidgetBlueprintGeneratedClass") {
+        result.isDefinition = true;
+        ClassInfo ci = WalkClassEx(instanceAddr);
+        if (!ci.Name.empty()) result.name = ci.Name;
+
+        for (const auto& fi : ci.Fields) {
+            LiveFieldValue fv;
+            fv.name     = fi.Name;
+            fv.typeName = fi.TypeName;
+            fv.offset   = fi.Offset;
+            fv.size     = fi.Size;
+
+            // Read raw bytes first — needed for both Hex column and value decoding.
+            int32_t readSize = fi.Size;
+            int32_t expectedSize = InferScalarSize(fi.TypeName);
+            if (expectedSize > 0) readSize = expectedSize;
+
+            std::vector<uint8_t> byteBuf;
+            bool bytesOk = false;
+            if (readSize > 0 && readSize <= 256) {
+                byteBuf.resize(readSize, 0);
+                bytesOk = Mem::ReadBytesSafe(instanceAddr + fi.Offset, byteBuf.data(), readSize);
+                if (bytesOk) {
+                    std::string hex;
+                    hex.reserve(readSize * 2);
+                    for (auto b : byteBuf) {
+                        char hx[3];
+                        snprintf(hx, sizeof(hx), "%02X", b);
+                        hex += hx;
+                    }
+                    fv.hexValue = hex;
+                }
+            }
+
+            // Show extended type info for compound types, decode actual value for scalars
+            if (!fi.structType.empty())
+                fv.typedValue = fi.structType;
+            else if (!fi.objClassName.empty())
+                fv.typedValue = "\xE2\x86\x92 " + fi.objClassName;  // "→ ClassName"
+            else if (!fi.enumName.empty())
+                fv.typedValue = fi.enumName;
+            else if (bytesOk && readSize > 0) {
+                // Decode actual value from memory using InterpretValue
+                fv.typedValue = InterpretValue(fi.TypeName, byteBuf.data(), readSize);
+            }
+
+            result.fields.push_back(fv);
+        }
+        return result;
+    }
+
     // Walk the class to get field layout (cached after first call)
     auto walkClassStart = std::chrono::steady_clock::now();
     ClassInfo ci = WalkClass(classAddr);
