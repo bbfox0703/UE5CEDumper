@@ -65,6 +65,31 @@ configure_file(
     @ONLY
 )
 
+# ============================================================
+# MinHook — inline hooking library (MIT, vendor submodule)
+# Built as a separate static C library to avoid C/C++ linkage
+# issues (MSVC /TP forces C++ on .c files in C++ targets).
+# ============================================================
+enable_language(C)
+
+add_library(minhook STATIC
+    ${CMAKE_SOURCE_DIR}/vendor/minhook/src/buffer.c
+    ${CMAKE_SOURCE_DIR}/vendor/minhook/src/hook.c
+    ${CMAKE_SOURCE_DIR}/vendor/minhook/src/trampoline.c
+    ${CMAKE_SOURCE_DIR}/vendor/minhook/src/hde/hde64.c
+)
+
+target_include_directories(minhook PUBLIC
+    ${CMAKE_SOURCE_DIR}/vendor/minhook/include
+)
+
+if(MSVC)
+    set_property(TARGET minhook PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    )
+    target_compile_options(minhook PRIVATE /W3 /utf-8)
+endif()
+
 add_library(UE5Dumper SHARED
     src/dllmain.cpp
     src/CEPlugin.cpp
@@ -76,6 +101,7 @@ add_library(UE5Dumper SHARED
     src/UStructWalker.cpp
     src/ExportAPI.cpp
     src/PipeServer.cpp
+    src/GameThreadDispatch.cpp
     src/version.rc
 )
 
@@ -118,6 +144,7 @@ target_link_libraries(UE5Dumper PRIVATE
     Shlwapi
     Psapi
     Version   # GetFileVersionInfoW / VerQueryValueW for PE VERSIONINFO
+    minhook
 )
 
 # Output name without lib prefix
@@ -152,6 +179,7 @@ if(BUILD_PROXY_DLL)
         src/UStructWalker.cpp
         src/ExportAPI.cpp
         src/PipeServer.cpp
+        src/GameThreadDispatch.cpp
         src/version.rc
     )
 
@@ -180,7 +208,7 @@ if(BUILD_PROXY_DLL)
     endif()
 
     target_link_libraries(UE5Dumper_Proxy PRIVATE
-        ws2_32 Shlwapi Psapi Version delayimp
+        ws2_32 Shlwapi Psapi Version delayimp minhook
     )
 
     # Delay-load version.dll to avoid circular dependency: the proxy DLL

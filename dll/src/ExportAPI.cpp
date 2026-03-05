@@ -13,6 +13,7 @@
 #include "FNamePool.h"
 #include "UStructWalker.h"
 #include "PipeServer.h"
+#include "GameThreadDispatch.h"
 
 #include <string>
 #include <cstring>
@@ -197,6 +198,7 @@ bool UE5_Init() {
 
 void UE5_Shutdown() {
     LOG_INFO("UE5_Shutdown: Cleaning up...");
+    GameThreadDispatch::RemoveHook();
     s_pipeServer.Stop();
     s_initialized = false;
 }
@@ -513,14 +515,70 @@ static int DetectProcessEventVTableOffset() {
 
 static int s_processEventOffset = -2;  // -2 = not yet detected
 
+/// Resolve the actual ProcessEvent function address from any valid UObject's vtable.
+/// Used both for direct calls and for installing the game-thread hook.
+static uintptr_t ResolveProcessEventAddr() {
+    if (s_processEventOffset == -2) {
+        s_processEventOffset = DetectProcessEventVTableOffset();
+    }
+    if (s_processEventOffset < 0) return 0;
+
+    // Find any valid UObject to read its vtable
+    uintptr_t testObj = 0;
+    for (int idx = 1; idx < 100; idx++) {
+        auto* item = ObjectArray::GetItem(idx);
+        if (item && item->Object) { testObj = item->Object; break; }
+    }
+    if (!testObj) return 0;
+
+    uintptr_t vtable = 0;
+    if (!Mem::ReadSafe(testObj, vtable) || !vtable) return 0;
+
+    uintptr_t peAddr = 0;
+    if (!Mem::ReadSafe(vtable + s_processEventOffset, peAddr) || !peAddr) return 0;
+
+    return peAddr;
+}
+
+/// Try to install the game-thread ProcessEvent hook.
+/// Called lazily on first UE5_CallProcessEvent invocation.
+static void TryInstallGameThreadHook() {
+    static bool s_hookAttempted = false;
+    if (s_hookAttempted) return;
+    s_hookAttempted = true;
+
+    uintptr_t peAddr = ResolveProcessEventAddr();
+    if (!peAddr) {
+        LOG_WARN("GameThreadDispatch: cannot resolve ProcessEvent address for hooking");
+        return;
+    }
+
+    if (GameThreadDispatch::InstallHook(peAddr)) {
+        LOG_INFO("GameThreadDispatch: hook installed, invoke will use game-thread dispatch");
+    } else {
+        LOG_WARN("GameThreadDispatch: hook install failed, invoke will use direct call (unsafe)");
+    }
+}
+
 int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
     if (!instance || !ufunc) return -1;
 
     // Lazy detection
     if (s_processEventOffset == -2) {
         s_processEventOffset = DetectProcessEventVTableOffset();
+        TryInstallGameThreadHook();
     }
     if (s_processEventOffset < 0) return -3;
+
+    // Prefer game-thread dispatch via hook
+    if (GameThreadDispatch::IsHookActive()) {
+        LOG_INFO("UE5_CallProcessEvent: dispatching to game thread inst=0x%llX func=0x%llX",
+                 (unsigned long long)instance, (unsigned long long)ufunc);
+        return GameThreadDispatch::EnqueueInvoke(instance, ufunc, params);
+    }
+
+    // Fallback: direct call from current thread (unsafe for state-changing functions)
+    LOG_WARN("UE5_CallProcessEvent: hook not active, using direct call (unsafe)");
 
     // Read vtable from the target instance
     uintptr_t vtable = 0;
@@ -529,25 +587,23 @@ int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t para
     uintptr_t peAddr = 0;
     if (!Mem::ReadSafe(vtable + s_processEventOffset, peAddr) || !peAddr) return -3;
 
-    // void UObject::ProcessEvent(UFunction* Function, void* Parms)
-    // x64 __thiscall: RCX=this, RDX=UFunction*, R8=Parms
     typedef void (__fastcall *FnProcessEvent)(void*, void*, void*);
     auto pProcessEvent = reinterpret_cast<FnProcessEvent>(peAddr);
 
-    LOG_INFO("UE5_CallProcessEvent: inst=0x%llX func=0x%llX params=0x%llX pe=0x%llX",
+    LOG_INFO("UE5_CallProcessEvent: direct call inst=0x%llX func=0x%llX pe=0x%llX",
              (unsigned long long)instance, (unsigned long long)ufunc,
-             (unsigned long long)params, (unsigned long long)peAddr);
+             (unsigned long long)peAddr);
 
     __try {
         pProcessEvent(reinterpret_cast<void*>(instance),
                       reinterpret_cast<void*>(ufunc),
                       reinterpret_cast<void*>(params));
     } __except(EXCEPTION_EXECUTE_HANDLER) {
-        LOG_ERROR("UE5_CallProcessEvent: EXCEPTION during ProcessEvent call!");
+        LOG_ERROR("UE5_CallProcessEvent: EXCEPTION during direct ProcessEvent call!");
         return -4;
     }
 
-    LOG_INFO("UE5_CallProcessEvent: success");
+    LOG_INFO("UE5_CallProcessEvent: direct call success (warn: not game-thread)");
     return 0;
 }
 
