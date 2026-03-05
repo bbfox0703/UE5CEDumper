@@ -38,13 +38,18 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 | Feature | Description |
 |---|---|
-| **AOB Scanning** | 133 patterns from 14 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. |
+| **AOB Scanning** | 128 AOB patterns + 5 symbol exports from 14 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. |
 | **DynOff (Dynamic Offsets)** | Runtime probing of `FField`, `FProperty`, and `UStruct`. No more manual offset updating after game patches. |
-| **Live Walker** | Inspect instance memory data with real-time value updates. Navigate into pointers (→), inline structs ({}), and containers ([]). Breadcrumb trail for full navigation history. |
+| **Live Walker** | Inspect instance memory data with real-time value updates. Navigate into pointers (→), inline structs ({}), and containers ([]). Breadcrumb trail for full navigation history. Auto-refresh with configurable interval. |
+| **Definition View** | Drill into UScriptStruct/UClass definitions to see field layouts, types, and live hex values. Works seamlessly with CE XML export for pointer chain navigation. |
 | **Container Drill-Down** | Drill into **Array**, **Map**, and **Set** containers. ObjectProperty elements show resolved names and support click-through navigation. |
+| **UFunction Invoker** | Call game functions via `ProcessEvent` directly from the UI. Game-thread safe dispatch via MinHook hook. Supports ScriptStruct parameters — 12 known engine structs (FVector, FRotator, FColor, etc.) + dynamic struct layout discovery. |
 | **Instance Finder** | Locate all active objects of a class instantly. One-click to open in Live Walker. |
-| **One-Click CE Export** | Generate CE XML address records — scalars, bitfields, structs, arrays, **Map/Set**, and **UEnum DropDownLists**. Paste directly into your address list. |
-| **Modern UI** | External **Avalonia UI** connected via high-speed Named Pipe. Keep your game performance smooth. |
+| **Property Search** | Search across all classes for specific property names. Find where a field is defined without browsing the full object hierarchy. |
+| **Class Structure** | Browse class definitions with full field layouts, types, offsets, and inheritance chains. |
+| **Multi-Format CE Export** | **CE XML** (pointer chain address records), **CSX** (CE Structure Dissect), **SDK Header** (.h), **CE Field** (single field), **CE AA Script** (Auto Assembler). Supports scalars, bitfields, structs, arrays, Map/Set, and UEnum DropDownLists. |
+| **Proxy DLL** | `version.dll` proxy injection — no Cheat Engine required. Place next to the game exe, launch, and connect the UI. |
+| **Modern UI** | External **Avalonia UI** connected via high-speed Named Pipe (29 JSON-RPC commands). Native AOT published. Keep your game performance smooth. |
 
 ---
 
