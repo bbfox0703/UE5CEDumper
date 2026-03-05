@@ -131,3 +131,4 @@ Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects
 | [docs/ue4ss-analysis.md](docs/ue4ss-analysis.md) | UE4SS/Dumper-7/UEDumper analysis: CasePreservingName, GNames patterns |
 | [docs/simd-scanning-notes.md](docs/simd-scanning-notes.md) | AOBMaker SIMD scanning research: AVX2 anchor technique |
 | [docs/CE-Bugs-Minesweeper.md](docs/CE-Bugs-Minesweeper.md) | CE-specific quirks and undocumented API behaviors |
+| [docs/export-formats.md](docs/export-formats.md) | CE XML, CSX, SDK Header export rules, pointer chain model, type mappings |

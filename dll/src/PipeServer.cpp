@@ -625,6 +625,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["outer"]      = PipeProtocol::AddrToStr(result.outerAddr);
             data["outer_name"] = result.outerName;
             data["outer_class"]= result.outerClassName;
+            if (result.isDefinition)
+                data["is_definition"] = true;
 
             json fields = json::array();
             for (const auto& fv : result.fields) {
