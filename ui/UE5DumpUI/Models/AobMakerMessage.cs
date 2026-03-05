@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json.Serialization;
 
 namespace UE5DumpUI.Models;
@@ -68,9 +69,26 @@ public class AobMakerMessage
 
 /// <summary>
 /// System.Text.Json source generator context for AOBMaker bridge messages (Native AOT compatible).
+/// Provides a <see cref="Relaxed"/> instance with <see cref="JavaScriptEncoder.UnsafeRelaxedJsonEscaping"/>
+/// to avoid \uXXXX encoding of single quotes, angle brackets, and non-ASCII characters —
+/// CE Plugin's Lua JSON parser doesn't handle \uXXXX escapes properly.
 /// </summary>
 [JsonSerializable(typeof(AobMakerMessage))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-internal partial class AobMakerJsonContext : JsonSerializerContext;
+internal partial class AobMakerJsonContext : JsonSerializerContext
+{
+    private static AobMakerJsonContext? _relaxed;
+
+    /// <summary>
+    /// Context instance using UnsafeRelaxedJsonEscaping — avoids \uXXXX for characters
+    /// like single quotes, angle brackets, and non-ASCII. Use for script content transmission.
+    /// </summary>
+    public static AobMakerJsonContext Relaxed => _relaxed ??= new(new System.Text.Json.JsonSerializerOptions
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    });
+}

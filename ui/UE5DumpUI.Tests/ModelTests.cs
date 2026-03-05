@@ -178,4 +178,57 @@ public class ModelTests
         // Struct arrays don't have inline elements in Phase B
         Assert.Equal("[3 x FVector (12B)]", field.DisplayValue);
     }
+
+    // --- InvokeFunctionResult ---
+
+    [Fact]
+    public void InvokeFunctionResult_DefaultValues()
+    {
+        var result = new InvokeFunctionResult();
+
+        Assert.Equal(0, result.Result);
+        Assert.Equal("", result.InstanceAddr);
+        Assert.Equal("", result.FuncAddr);
+        Assert.Equal(0, result.ParmsSize);
+        Assert.Equal("", result.ResultHex);
+        Assert.Equal("", result.Message);
+        Assert.Equal("", result.Error);
+        Assert.True(result.Success);  // Result=0 and Error=""
+    }
+
+    [Fact]
+    public void InvokeFunctionResult_Success_WhenResultIsZero()
+    {
+        var result = new InvokeFunctionResult
+        {
+            Result = 0,
+            Message = "ProcessEvent OK",
+        };
+
+        Assert.True(result.Success);
+    }
+
+    [Fact]
+    public void InvokeFunctionResult_NotSuccess_WhenResultNonZero()
+    {
+        var result = new InvokeFunctionResult
+        {
+            Result = -2,
+            Error = "vtable read failed",
+        };
+
+        Assert.False(result.Success);
+    }
+
+    [Fact]
+    public void InvokeFunctionResult_NotSuccess_WhenErrorSet()
+    {
+        var result = new InvokeFunctionResult
+        {
+            Result = 0,
+            Error = "Something went wrong",
+        };
+
+        Assert.False(result.Success);
+    }
 }

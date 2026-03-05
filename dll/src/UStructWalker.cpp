@@ -390,6 +390,15 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
             fi.TypeName = "Unknown";
         }
 
+        // UE4 Children chain includes non-property UField types (UFunction, UEnum, etc.).
+        // Skip them — they don't have UProperty layout (Offset/Size/Flags are garbage).
+        if (fi.TypeName.find("Property") == std::string::npos) {
+            uintptr_t next = 0;
+            if (!Mem::ReadSafe(current + DynOff::UFIELD_NEXT, next)) break;
+            current = next;
+            continue;
+        }
+
         // Read UProperty-specific fields
         Mem::ReadSafe<int32_t>(current + DynOff::UPROPERTY_OFFSET, fi.Offset);
         Mem::ReadSafe<int32_t>(current + DynOff::UPROPERTY_ELEMSIZE, fi.Size);
@@ -675,14 +684,33 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                 fi.address = child;
 
                 // Read FunctionFlags (UFunction::FunctionFlags)
-                // Heuristic: try several common offsets for different UE versions
-                // RE-UE4SS templates confirm: 0x88 (4.18-4.20), 0x98 (4.22-4.24), 0xB0 (4.25+/UE5)
+                // Version-aware probing: try the most likely offset first.
+                // RE-UE4SS templates confirm offsets:
+                //   0x88 = UE 4.18-4.20
+                //   0x98 = UE 4.21-4.24
+                //   0xB0 = UE 4.25-4.27 / UE5.0-5.4
+                //   0xC0 = UE 5.5+
                 uint32_t funcFlags = 0;
                 int funcFlagsOff = -1;
-                for (int tryOff : { 0xB0, 0xC0, 0x88, 0x98, 0xA8, 0xB8 }) {
-                    if (Mem::ReadSafe<uint32_t>(child + tryOff, funcFlags) && funcFlags != 0) {
-                        funcFlagsOff = tryOff;
-                        break;
+
+                // Determine primary offset based on detected UE version
+                int primary;
+                if (g_cachedUEVersion >= 550)      primary = 0xC0;
+                else if (g_cachedUEVersion >= 425) primary = 0xB0;
+                else if (g_cachedUEVersion >= 421) primary = 0x98;
+                else                               primary = 0x88;
+
+                // Try primary offset first
+                if (Mem::ReadSafe<uint32_t>(child + primary, funcFlags) && funcFlags != 0) {
+                    funcFlagsOff = primary;
+                } else {
+                    // Fallback: try all known offsets (skip primary, already tried)
+                    for (int tryOff : { 0xB0, 0xC0, 0x88, 0x98, 0xA8, 0xB8 }) {
+                        if (tryOff == primary) continue;
+                        if (Mem::ReadSafe<uint32_t>(child + tryOff, funcFlags) && funcFlags != 0) {
+                            funcFlagsOff = tryOff;
+                            break;
+                        }
                     }
                 }
                 fi.functionFlags = funcFlags;
@@ -2187,9 +2215,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             int32_t pairSize = fv.mapKeySize + fv.mapValueSize;
                             int32_t stride = Mem::ComputeSetElementStride(pairSize);
+                            Logger::Debug("WALK:MapP", "Reading %d map entries for '%s': Data=0x%llX KeySz=%d ValSz=%d Stride=%d MaxIdx=%d NumBits=%d",
+                                fv.mapCount, fi.Name.c_str(), (unsigned long long)sa.Data,
+                                fv.mapKeySize, fv.mapValueSize, stride, sa.MaxIndex, sa.numBits);
                             int read = 0;
+                            int skipped = 0;
                             for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.mapCount && read < arrayLimit; ++idx) {
-                                if (!Mem::IsSparseIndexAllocated(sa, idx)) continue;
+                                if (!Mem::IsSparseIndexAllocated(sa, idx)) { skipped++; continue; }
                                 uintptr_t elemAddr = sa.Data + static_cast<uintptr_t>(idx) * stride;
                                 LiveFieldValue::ContainerElement ce;
                                 ce.index = idx;
@@ -2246,7 +2278,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 fv.containerElements.push_back(std::move(ce));
                                 ++read;
                             }
-                            Logger::Debug("WALK:MapP", "Read %d/%d map entries for '%s'", read, fv.mapCount, fi.Name.c_str());
+                            Logger::Debug("WALK:MapP", "Read %d/%d map entries for '%s' (skipped %d unallocated)", read, fv.mapCount, fi.Name.c_str(), skipped);
+                        } else {
+                            Logger::Warn("WALK:MapP", "Cannot read map elements for '%s': count=%d Data=0x%llX KeySz=%d ValSz=%d",
+                                fi.Name.c_str(), fv.mapCount, (unsigned long long)sa.Data, fv.mapKeySize, fv.mapValueSize);
                         }
                         break;
                     }

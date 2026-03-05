@@ -71,6 +71,18 @@ __declspec(dllexport) uintptr_t UE5_GetFieldPropertyClass(uintptr_t fieldAddr);
 // Returns the PropertiesSize of a UClass/UStruct (total struct byte size).
 __declspec(dllexport) int32_t   UE5_GetClassPropsSize(uintptr_t classAddr);
 
+// === UFunction Invocation ===
+// Find first non-CDO instance of a class by name. Returns UObject* address or 0.
+__declspec(dllexport) uintptr_t UE5_FindInstanceOfClass(const char* className);
+
+// Find a UFunction by name on a UClass. Returns UFunction* address or 0.
+__declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName);
+
+// Call UObject::ProcessEvent(ufunc, params). Returns 0 on success, negative on error.
+// params must point to a buffer of at least UFunction::ParmsSize bytes.
+// Error codes: -1=bad args, -2=vtable read fail, -3=ProcessEvent not found, -4=exception.
+__declspec(dllexport) int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
+
 // === Pipe Server ===
 __declspec(dllexport) bool      UE5_StartPipeServer();
 __declspec(dllexport) void      UE5_StopPipeServer();

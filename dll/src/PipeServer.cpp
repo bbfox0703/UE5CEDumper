@@ -20,8 +20,12 @@
 
 using json = nlohmann::json;
 
-// Forward declare UE5_Init for trigger_scan command (extern "C" must be at global scope)
-extern "C" bool UE5_Init();
+// Forward declare ExportAPI functions (extern "C" must be at global scope)
+extern "C" bool      UE5_Init();
+extern "C" uintptr_t UE5_FindInstanceOfClass(const char* className);
+extern "C" uintptr_t UE5_GetObjectClass(uintptr_t obj);
+extern "C" uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName);
+extern "C" int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
 bool PipeServer::Start() {
     if (m_running.load()) {
@@ -1514,6 +1518,101 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
                 }
                 data["module_name"] = moduleName;
+            }
+
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // ── invoke_function: Call ProcessEvent via pipe (bypasses CE executeCodeEx) ──
+        if (cmd == PipeProtocol::CMD_INVOKE_FUNCTION) {
+            std::string className   = request.value("class_name", "");
+            std::string funcName    = request.value("func_name", "");
+            std::string instAddrStr = request.value("instance_addr", "");
+            std::string paramsHex   = request.value("params_hex", "");
+            int parmsSize           = request.value("parms_size", 0);
+
+            if (funcName.empty()) {
+                return PipeProtocol::MakeError(id, "func_name is required").dump();
+            }
+
+            // Resolve instance address
+            uintptr_t instanceAddr = 0;
+            if (!instAddrStr.empty()) {
+                instanceAddr = PipeProtocol::StrToAddr(instAddrStr);
+                if (instanceAddr == 0) {
+                    return PipeProtocol::MakeError(id, "Invalid instance_addr").dump();
+                }
+            } else if (!className.empty()) {
+                instanceAddr = UE5_FindInstanceOfClass(className.c_str());
+                if (instanceAddr == 0) {
+                    return PipeProtocol::MakeError(id,
+                        "No instance found for class: " + className).dump();
+                }
+            } else {
+                return PipeProtocol::MakeError(id,
+                    "Either instance_addr or class_name is required").dump();
+            }
+
+            // Get class address from instance
+            uintptr_t classAddr = UE5_GetObjectClass(instanceAddr);
+            if (classAddr == 0) {
+                return PipeProtocol::MakeError(id,
+                    "Failed to read class from instance " + PipeProtocol::AddrToStr(instanceAddr)).dump();
+            }
+
+            // Resolve UFunction
+            uintptr_t ufuncAddr = UE5_FindFunctionByName(classAddr, funcName.c_str());
+            if (ufuncAddr == 0) {
+                return PipeProtocol::MakeError(id,
+                    "Function not found: " + funcName).dump();
+            }
+
+            // Build parameter buffer (zero-filled, then overlay hex bytes)
+            size_t bufSize = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
+            std::vector<uint8_t> paramBuf(bufSize, 0);
+
+            if (!paramsHex.empty()) {
+                auto hexBytes = PipeProtocol::HexToBytes(paramsHex);
+                size_t copyLen = (std::min)(hexBytes.size(), paramBuf.size());
+                if (copyLen > 0) {
+                    memcpy(paramBuf.data(), hexBytes.data(), copyLen);
+                }
+            }
+
+            uintptr_t paramPtr = bufSize > 0
+                ? reinterpret_cast<uintptr_t>(paramBuf.data())
+                : 0;
+
+            Logger::Info("PIPE:cmd", "invoke_function: %s::%s inst=%s func=%s parms=%d",
+                         className.c_str(), funcName.c_str(),
+                         PipeProtocol::AddrToStr(instanceAddr).c_str(),
+                         PipeProtocol::AddrToStr(ufuncAddr).c_str(),
+                         (int)bufSize);
+
+            // Call ProcessEvent
+            int32_t callResult = UE5_CallProcessEvent(instanceAddr, ufuncAddr, paramPtr);
+
+            // Build response
+            json data;
+            data["result"]        = callResult;
+            data["instance_addr"] = PipeProtocol::AddrToStr(instanceAddr);
+            data["func_addr"]     = PipeProtocol::AddrToStr(ufuncAddr);
+            data["parms_size"]    = (int)bufSize;
+
+            // Return post-call buffer (may contain out-param values)
+            if (bufSize > 0) {
+                data["result_hex"] = PipeProtocol::BytesToHex(paramBuf.data(), bufSize);
+            }
+
+            if (callResult == 0) {
+                data["message"] = "ProcessEvent OK";
+            } else {
+                std::string errMsg = "ProcessEvent error code " + std::to_string(callResult);
+                if (callResult == -1)      errMsg += " (invalid args)";
+                else if (callResult == -2) errMsg += " (vtable read failed)";
+                else if (callResult == -3) errMsg += " (ProcessEvent offset not found)";
+                else if (callResult == -4) errMsg += " (exception during call)";
+                data["error"] = errMsg;
             }
 
             return PipeProtocol::MakeResponse(id, data).dump();

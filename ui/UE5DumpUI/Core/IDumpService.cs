@@ -62,4 +62,24 @@ public interface IDumpService
     /// Also safe to call in CE/manual mode — UE5_Init is idempotent.
     /// </summary>
     Task<EngineState> TriggerScanAsync(CancellationToken ct = default);
+
+    // --- UFunction Invocation via Pipe ---
+
+    /// <summary>
+    /// Invoke a UFunction via ProcessEvent through the pipe.
+    /// The DLL executes ProcessEvent in-process, bypassing CE's executeCodeEx.
+    /// Works even when games block CreateRemoteThread.
+    /// </summary>
+    /// <param name="funcName">UFunction name to invoke.</param>
+    /// <param name="instanceAddr">Hex address of target UObject instance (optional if className provided).</param>
+    /// <param name="className">Class name to auto-resolve instance (optional if instanceAddr provided).</param>
+    /// <param name="parmsSize">Total parameter buffer size from UFunction.</param>
+    /// <param name="paramsHex">Hex-encoded param bytes (optional).</param>
+    Task<InvokeFunctionResult> InvokeFunctionAsync(
+        string funcName,
+        string? instanceAddr = null,
+        string? className = null,
+        int parmsSize = 0,
+        string? paramsHex = null,
+        CancellationToken ct = default);
 }

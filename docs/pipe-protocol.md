@@ -110,6 +110,13 @@ Direction: bidirectional — Request/Response + async push Events
 { "id": 18, "cmd": "get_ce_pointer_info", "addr": "7FF123456789", "class_addr": "7FF..." }
 ```
 
+### UFunction Invocation
+
+```jsonc
+// Invoke ProcessEvent via pipe (bypasses CE executeCodeEx)
+{ "id": 42, "cmd": "invoke_function", "func_name": "Attack", "instance_addr": "0x7FF...", "parms_size": 16, "params_hex": "3F800000" }
+```
+
 -----
 
 ## Responses (DLL → UI)
@@ -447,6 +454,45 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
 // write_mem response
 { "id": 15, "ok": true }
 ```
+
+### invoke_function
+
+Invoke a UFunction via ProcessEvent. The DLL executes in-process, bypassing CE's
+`executeCodeEx` (which uses `CreateRemoteThread` and is blocked by some games).
+
+```jsonc
+// Request
+{
+  "id": 42,
+  "cmd": "invoke_function",
+  "func_name": "Attack",           // required
+  "instance_addr": "0x7FF6AA000",  // optional (one of instance_addr / class_name required)
+  "class_name": "BP_Player_C",     // optional
+  "parms_size": 16,                // optional (default 0)
+  "params_hex": "3F800000"         // optional (hex param bytes)
+}
+
+// Response (success)
+{
+  "id": 42, "ok": true,
+  "result": 0,
+  "instance_addr": "0x7FF6AA000",
+  "func_addr": "0x7FF123ABC",
+  "parms_size": 16,
+  "result_hex": "3F80000000000000...",  // post-call buffer (out-params)
+  "message": "ProcessEvent OK"
+}
+
+// Response (ProcessEvent error)
+{
+  "id": 42, "ok": true,
+  "result": -2,
+  "instance_addr": "0x7FF6AA000",
+  "error": "ProcessEvent error code -2 (vtable read failed)"
+}
+```
+
+Error codes: 0=success, -1=invalid args, -2=vtable read, -3=offset not found, -4=exception.
 
 ### Error response (any command)
 
