@@ -1,4 +1,5 @@
 using UE5DumpUI.Models;
+using UE5DumpUI.Services;
 using UE5DumpUI.Views;
 using Xunit;
 
@@ -163,5 +164,90 @@ public class InvokeParamDialogTests
         var buf = new byte[] { 0xAA, 0xBB, 0xCC };
         var p = new FunctionParamModel { Name = "X", TypeName = "StructProperty", Size = 3, Offset = 0 };
         Assert.Equal("AA-BB-CC", InvokeParamDialog.DecodeParamValue(buf, p));
+    }
+
+    // --- DecodeStructParamValue ---
+
+    [Fact]
+    public void DecodeStructParamValue_FVector_UE4_ShowsXYZ()
+    {
+        var layout = KnownStructLayouts.GetLayout("Vector", ueVersion: 427)!;
+        // float 1.0 = 0000803F, float 2.0 = 00000040, float 3.0 = 00004040
+        var buf = new byte[]
+        {
+            0x00, 0x00, 0x80, 0x3F,  // X = 1.0
+            0x00, 0x00, 0x00, 0x40,  // Y = 2.0
+            0x00, 0x00, 0x40, 0x40,  // Z = 3.0
+        };
+        var p = new FunctionParamModel
+        {
+            Name = "Location", TypeName = "StructProperty", StructName = "Vector",
+            Size = 12, Offset = 0,
+        };
+
+        var result = InvokeParamDialog.DecodeStructParamValue(buf, p, layout);
+
+        Assert.Equal("X=1, Y=2, Z=3", result);
+    }
+
+    [Fact]
+    public void DecodeStructParamValue_FVector_UE5_ShowsXYZ()
+    {
+        var layout = KnownStructLayouts.GetLayout("Vector", ueVersion: 505)!;
+        // double 100.0 = 0x4059000000000000 → LE: 0000000000005940
+        // double 200.0 = 0x4069000000000000 → LE: 0000000000006940
+        // double 300.0 = 0x4072C00000000000 → LE: 000000000000C27240 wait...
+        // Let's be precise:
+        // double 100.0 LE bytes
+        var buf = new byte[24];
+        BitConverter.TryWriteBytes(buf.AsSpan(0), 100.0);
+        BitConverter.TryWriteBytes(buf.AsSpan(8), 200.0);
+        BitConverter.TryWriteBytes(buf.AsSpan(16), 300.0);
+
+        var p = new FunctionParamModel
+        {
+            Name = "Location", TypeName = "StructProperty", StructName = "Vector",
+            Size = 24, Offset = 0,
+        };
+
+        var result = InvokeParamDialog.DecodeStructParamValue(buf, p, layout);
+
+        Assert.Equal("X=100, Y=200, Z=300", result);
+    }
+
+    [Fact]
+    public void DecodeStructParamValue_FColor_ShowsBGRA()
+    {
+        var layout = KnownStructLayouts.GetLayout("Color", ueVersion: 505)!;
+        var buf = new byte[] { 0, 128, 255, 200 };
+        var p = new FunctionParamModel
+        {
+            Name = "Col", TypeName = "StructProperty", StructName = "Color",
+            Size = 4, Offset = 0,
+        };
+
+        var result = InvokeParamDialog.DecodeStructParamValue(buf, p, layout);
+
+        Assert.Equal("B=0, G=128, R=255, A=200", result);
+    }
+
+    [Fact]
+    public void DecodeStructParamValue_WithOffset()
+    {
+        var layout = KnownStructLayouts.GetLayout("IntPoint", ueVersion: 505)!;
+        // 8 bytes padding + IntPoint(X=10, Y=20)
+        var buf = new byte[16];
+        BitConverter.TryWriteBytes(buf.AsSpan(8), 10);
+        BitConverter.TryWriteBytes(buf.AsSpan(12), 20);
+
+        var p = new FunctionParamModel
+        {
+            Name = "Pos", TypeName = "StructProperty", StructName = "IntPoint",
+            Size = 8, Offset = 8,
+        };
+
+        var result = InvokeParamDialog.DecodeStructParamValue(buf, p, layout);
+
+        Assert.Equal("X=10, Y=20", result);
     }
 }

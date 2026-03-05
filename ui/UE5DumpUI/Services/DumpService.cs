@@ -714,6 +714,7 @@ public sealed class DumpService : IDumpService
                             Offset = po["offset"]?.GetValue<int>() ?? -1,
                             IsOut = po["out"]?.GetValue<bool>() ?? false,
                             IsReturn = po["ret"]?.GetValue<bool>() ?? false,
+                            StructName = po["struct_type"]?.GetValue<string>() ?? "",
                         });
                     }
                 }

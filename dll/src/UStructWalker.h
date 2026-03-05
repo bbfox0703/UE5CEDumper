@@ -50,6 +50,7 @@ struct FunctionParam {
     int32_t     offset = -1;  // Offset_Internal within param buffer (-1 = unknown)
     bool        isOut = false;
     bool        isReturn = false;
+    std::string structType;     // UScriptStruct name for StructProperty params (empty otherwise)
 };
 
 struct FunctionInfo {

@@ -49,4 +49,6 @@ public sealed class FunctionParamModel
     public int Offset { get; init; } = -1;
     public bool IsOut { get; init; }
     public bool IsReturn { get; init; }
+    /// <summary>UScriptStruct name for StructProperty params (e.g. "Vector", "Rotator"). Empty for non-struct types.</summary>
+    public string StructName { get; init; } = "";
 }

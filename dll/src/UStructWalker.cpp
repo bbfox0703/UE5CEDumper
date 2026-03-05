@@ -748,6 +748,10 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
 
+                            // StructProperty -> read UScriptStruct name
+                            if (param.typeName == "StructProperty")
+                                param.structType = ReadSubclassTypeName(cur);
+
                             if (param.isReturn)
                                 fi.returnType = param.typeName;
 
@@ -781,6 +785,17 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
+
+                            // UE4 StructProperty -> read UScriptStruct name
+                            if (param.typeName == "StructProperty") {
+                                uintptr_t structPtr = 0;
+                                // UStructProperty::Struct is at UPROPERTY subclass extension offset
+                                if (Mem::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, structPtr) && structPtr) {
+                                    std::string sn = GetName(structPtr);
+                                    if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
+                                        param.structType = sn;
+                                }
+                            }
 
                             if (param.isReturn) fi.returnType = param.typeName;
                             if (!param.name.empty()) fi.params.push_back(param);

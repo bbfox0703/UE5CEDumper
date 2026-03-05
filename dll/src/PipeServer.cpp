@@ -542,6 +542,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     pj["offset"] = p.offset;
                     pj["out"]    = p.isOut;
                     pj["ret"]    = p.isReturn;
+                    if (!p.structType.empty())
+                        pj["struct_type"] = p.structType;
                     params.push_back(pj);
                 }
                 fj["params"] = params;
@@ -1612,6 +1614,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 else if (callResult == -2) errMsg += " (vtable read failed)";
                 else if (callResult == -3) errMsg += " (ProcessEvent offset not found)";
                 else if (callResult == -4) errMsg += " (exception during call)";
+                else if (callResult == -5) errMsg += " (game-thread dispatch timeout)";
+                else if (callResult == -7) errMsg += " (hook not active, direct call used)";
                 data["error"] = errMsg;
             }
 

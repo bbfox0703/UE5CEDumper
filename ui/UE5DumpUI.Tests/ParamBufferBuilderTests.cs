@@ -194,6 +194,71 @@ public class ParamBufferBuilderTests
         Assert.Equal(expected, ParamBufferBuilder.ShortTypeName(typeName));
     }
 
+    // --- WriteStructParam ---
+
+    [Fact]
+    public void WriteStructParam_FVector_UE4_WritesThreeFloats()
+    {
+        var layout = KnownStructLayouts.GetLayout("Vector", ueVersion: 427)!;
+        var buf = new byte[12];
+        var values = new[] { "1.0", "2.0", "3.0" };
+
+        ParamBufferBuilder.WriteStructParam(buf, 0, layout.Fields, values);
+
+        // float 1.0 = 0x3F800000 → LE: 0000803F
+        Assert.Equal("0000803F00000040", Convert.ToHexString(buf[..8]));
+        // float 3.0 = 0x40400000 → LE: 00004040
+        Assert.Equal("00004040", Convert.ToHexString(buf[8..]));
+    }
+
+    [Fact]
+    public void WriteStructParam_FVector_UE5_WritesThreeDoubles()
+    {
+        var layout = KnownStructLayouts.GetLayout("Vector", ueVersion: 505)!;
+        var buf = new byte[24];
+        var values = new[] { "1.0", "2.0", "3.0" };
+
+        ParamBufferBuilder.WriteStructParam(buf, 0, layout.Fields, values);
+
+        // double 1.0 = 000000000000F03F (LE)
+        Assert.Equal("000000000000F03F", Convert.ToHexString(buf[..8]));
+        // double 2.0 = 0000000000000040 (LE)
+        Assert.Equal("0000000000000040", Convert.ToHexString(buf[8..16]));
+        // double 3.0 = 0000000000000840 (LE)
+        Assert.Equal("0000000000000840", Convert.ToHexString(buf[16..]));
+    }
+
+    [Fact]
+    public void WriteStructParam_FColor_WritesBGRA()
+    {
+        var layout = KnownStructLayouts.GetLayout("Color", ueVersion: 505)!;
+        var buf = new byte[4];
+        // B=0, G=128, R=255, A=200
+        var values = new[] { "0", "128", "255", "200" };
+
+        ParamBufferBuilder.WriteStructParam(buf, 0, layout.Fields, values);
+
+        Assert.Equal(0, buf[0]);   // B
+        Assert.Equal(128, buf[1]); // G
+        Assert.Equal(255, buf[2]); // R
+        Assert.Equal(200, buf[3]); // A
+    }
+
+    [Fact]
+    public void WriteStructParam_WithBaseOffset()
+    {
+        var layout = KnownStructLayouts.GetLayout("IntPoint", ueVersion: 505)!;
+        var buf = new byte[16]; // IntPoint at offset 8
+        var values = new[] { "10", "20" };
+
+        ParamBufferBuilder.WriteStructParam(buf, 8, layout.Fields, values);
+
+        // First 8 bytes should be zero
+        Assert.Equal("0000000000000000", Convert.ToHexString(buf[..8]));
+        // int32 10 at offset 8, int32 20 at offset 12
+        Assert.Equal("0A00000014000000", Convert.ToHexString(buf[8..]));
+    }
+
     // --- GetDefaultValue ---
 
     [Theory]

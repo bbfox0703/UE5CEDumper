@@ -1786,7 +1786,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             // - Returns "ok" on Close, null on Cancel
             var dialog = new Views.InvokeParamDialog(
                 CurrentClassName, func.Name, inputParams, func.Params, func.ParmsSize,
-                CurrentAddress, _dump);
+                CurrentAddress, _dump, _engineState?.UEVersion ?? 0);
 
             var dialogResult = await dialog.ShowDialog<string?>(owner);
 

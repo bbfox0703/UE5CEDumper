@@ -80,7 +80,24 @@ public static class ParamBufferBuilder
         };
     }
 
-    private static void WriteParam(byte[] buf, int offset, string typeName, int size, string text)
+    /// <summary>
+    /// Write a known struct's sub-field values into the buffer at the param's base offset.
+    /// </summary>
+    public static void WriteStructParam(
+        byte[] buf, int paramOffset,
+        IReadOnlyList<KnownStructLayouts.StructSubField> subFields,
+        IReadOnlyList<string> subValues)
+    {
+        for (int i = 0; i < subFields.Count && i < subValues.Count; i++)
+        {
+            var sf = subFields[i];
+            int absOffset = paramOffset + sf.Offset;
+            if (absOffset < 0 || absOffset >= buf.Length) continue;
+            WriteParam(buf, absOffset, sf.TypeName, sf.Size, subValues[i].Trim());
+        }
+    }
+
+    internal static void WriteParam(byte[] buf, int offset, string typeName, int size, string text)
     {
         int available = buf.Length - offset;
         if (available <= 0) return;
