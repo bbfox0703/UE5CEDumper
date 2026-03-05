@@ -460,6 +460,12 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
 Invoke a UFunction via ProcessEvent. The DLL executes in-process, bypassing CE's
 `executeCodeEx` (which uses `CreateRemoteThread` and is blocked by some games).
 
+**Game-thread dispatch:** When available, the DLL hooks ProcessEvent with MinHook
+and dispatches invocations to the game thread via a queue. This ensures correct
+thread context for state-changing functions (UI, rendering, spawning). If the hook
+is not available, falls back to direct call from the pipe handler thread (risky for
+state-changing operations but works for simple getters).
+
 ```jsonc
 // Request
 {
@@ -492,7 +498,14 @@ Invoke a UFunction via ProcessEvent. The DLL executes in-process, bypassing CE's
 }
 ```
 
-Error codes: 0=success, -1=invalid args, -2=vtable read, -3=offset not found, -4=exception.
+Error codes:
+- `0` = success
+- `-1` = invalid args
+- `-2` = vtable read failed
+- `-3` = ProcessEvent offset not found
+- `-4` = SEH exception during call
+- `-5` = game-thread dispatch timeout (5s) — game may be paused or unresponsive
+- `-7` = hook not active, fell back to direct call (may have succeeded but on wrong thread)
 
 ### Error response (any command)
 
