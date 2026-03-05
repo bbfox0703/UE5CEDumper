@@ -1,7 +1,7 @@
 # UFunction Invoker — Implementation Roadmap
 
 > **Goal**: Browse UFunctions in LiveWalker → see parameters → generate CE invoke scripts automatically.
-> Inspired by GH UE Dumper's `UE_InvokeActorEvent` workflow, but integrated into our UI with no Lua debugging needed.
+> Integrated into our UI with no Lua debugging needed. Supports dual-path: CE Lua script generation + pipe-based in-process invocation.
 
 ---
 
@@ -268,8 +268,8 @@ Phase II (In-Process Invocation — future, complex)
 
 ## Dependencies
 
-- Phase I requires: GH UE Dumper CE plugin (for `UE_InvokeActorEvent` at runtime)
-- Phase II removes GH dependency: our DLL calls ProcessEvent directly
+- Phase I: CE Lua scripts use `UE_InvokeActorEvent` (CE built-in UE tools) or our DLL exports
+- Phase II: our DLL calls ProcessEvent directly via pipe — no CE Lua dependency
 - AOBMaker CE bridge (existing) used for CreateAAScript delivery in Phase I
 
 ## Notes
