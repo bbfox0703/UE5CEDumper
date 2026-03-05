@@ -41,6 +41,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private string _currentOuterName = "";
     [ObservableProperty] private string _currentOuterClassName = "";
     [ObservableProperty] private bool _hasParent;
+    // UFunction display
+    [ObservableProperty] private ObservableCollection<FunctionInfoModel> _functions = new();
+    [ObservableProperty] private bool _hasFunctions;
+    [ObservableProperty] private FunctionInfoModel? _selectedFunction;
+    private string _currentClassAddr = "";
+
     // CE XML output (kept for possible future use but no longer shown in panel)
     [ObservableProperty] private string _ceXmlOutput = "";
     [ObservableProperty] private bool _showCeXml;
@@ -321,11 +327,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
             {
                 await NavigateToArrayContainerAsync(field);
             }
-            else if (field.MapCount > 0 && field.MapElements is { Count: > 0 })
+            else if (field.MapCount > 0 && !string.IsNullOrEmpty(field.MapKeyType))
             {
                 NavigateToMapContainer(field);
             }
-            else if (field.SetCount > 0 && field.SetElements is { Count: > 0 })
+            else if (field.SetCount > 0 && !string.IsNullOrEmpty(field.SetElemType))
             {
                 NavigateToSetContainer(field);
             }
@@ -405,7 +411,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
         });
         _log.Info($"NAV→MapContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
-        PopulateMapContainerFields(field.MapElements!, field);
+        PopulateMapContainerFields(field.MapElements ?? new(), field);
     }
 
     private void NavigateToSetContainer(LiveFieldValue field)
@@ -425,7 +431,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
         });
         _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
-        PopulateSetContainerFields(field.SetElements!, field);
+        PopulateSetContainerFields(field.SetElements ?? new(), field);
     }
 
     private void PopulateArrayContainerFields(List<ArrayElementValue> elements, LiveFieldValue sourceField)
@@ -512,6 +518,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
             && !string.IsNullOrEmpty(sourceField.MapValueStructAddr);
 
         Fields.Clear();
+        if (elements.Count == 0)
+        {
+            // Show metadata summary when element data couldn't be read
+            StatusText = $"Map has {sourceField.MapCount} entries but element data could not be read (key={keyLabel} sz={sourceField.MapKeySize}, val={valLabel} sz={sourceField.MapValueSize})";
+        }
         foreach (var elem in elements)
         {
             var keyDisplay = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
@@ -554,13 +565,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             PopulateArrayContainerFields(containerField.ArrayElements ?? new(), containerField);
         }
-        else if (containerField.MapCount > 0 && containerField.MapElements is { Count: > 0 })
+        else if (containerField.MapCount > 0 && !string.IsNullOrEmpty(containerField.MapKeyType))
         {
-            PopulateMapContainerFields(containerField.MapElements, containerField);
+            PopulateMapContainerFields(containerField.MapElements ?? new(), containerField);
         }
-        else if (containerField.SetCount > 0 && containerField.SetElements is { Count: > 0 })
+        else if (containerField.SetCount > 0 && !string.IsNullOrEmpty(containerField.SetElemType))
         {
-            PopulateSetContainerFields(containerField.SetElements, containerField);
+            PopulateSetContainerFields(containerField.SetElements ?? new(), containerField);
         }
     }
 
@@ -1718,6 +1729,81 @@ public partial class LiveWalkerViewModel : ViewModelBase
         return string.Join(" > ", parts);
     }
 
+    [RelayCommand]
+    private async Task GenerateInvokeScriptAsync(FunctionInfoModel? func)
+    {
+        if (func == null || string.IsNullOrEmpty(CurrentClassName)) return;
+
+        try
+        {
+            ClearStatus();
+            var script = InvokeScriptGenerator.Generate(CurrentClassName, func.Name, func);
+            var description = $"Invoke: {CurrentClassName}::{func.Name}";
+
+            // Try AOBMaker CE Plugin first, fallback to clipboard
+            if (_aobMaker != null)
+            {
+                var sent = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+                if (sent)
+                {
+                    _log.Info($"Invoke script sent to CE: {description}");
+                    StatusText = $"Invoke script created in CE: {func.Name}";
+                    return;
+                }
+            }
+
+            await _platform.CopyToClipboardAsync(script);
+            StatusText = $"Invoke script copied to clipboard: {func.Name}";
+            _log.Info($"Invoke script copied to clipboard: {description}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"Failed to generate invoke script for {func.Name}", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task InvokeViaPipeAsync(FunctionInfoModel? func)
+    {
+        if (func == null || string.IsNullOrEmpty(CurrentAddress)) return;
+
+        try
+        {
+            ClearStatus();
+
+            if (Avalonia.Application.Current?.ApplicationLifetime is not
+                Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+                || desktop.MainWindow is not { } owner)
+                return;
+
+            var inputParams = func.Params.Where(p => !p.IsReturn).ToList();
+
+            // Dialog owns the entire invoke lifecycle:
+            // - Shows input fields (or "no params" message)
+            // - FIRE button calls InvokeFunctionAsync internally
+            // - Decoded results shown inline (return values, out params)
+            // - Returns "ok" on Close, null on Cancel
+            var dialog = new Views.InvokeParamDialog(
+                CurrentClassName, func.Name, inputParams, func.Params, func.ParmsSize,
+                CurrentAddress, _dump);
+
+            var dialogResult = await dialog.ShowDialog<string?>(owner);
+
+            StatusText = dialogResult == "ok"
+                ? $"Invoke dialog closed: {CurrentClassName}::{func.Name}"
+                : $"Invoke cancelled: {func.Name}";
+
+            _log.Info($"Pipe invoke dialog {(dialogResult == "ok" ? "completed" : "cancelled")}: " +
+                      $"{CurrentClassName}::{func.Name} inst={CurrentAddress}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"Failed to invoke {func?.Name} via pipe", ex);
+        }
+    }
+
     private void UpdateDisplay(InstanceWalkResult result)
     {
         CurrentObjectName = result.Name;
@@ -1779,6 +1865,34 @@ public partial class LiveWalkerViewModel : ViewModelBase
             Fields.Clear();
             foreach (var f in newFields)
                 Fields.Add(f);
+        }
+
+        // Store class address and load functions asynchronously
+        _currentClassAddr = result.ClassAddr;
+        _ = LoadFunctionsAsync(result.ClassAddr);
+    }
+
+    private async Task LoadFunctionsAsync(string classAddr)
+    {
+        if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
+        {
+            Functions.Clear();
+            HasFunctions = false;
+            return;
+        }
+
+        try
+        {
+            var funcs = await _dump.WalkFunctionsAsync(classAddr);
+            Functions.Clear();
+            foreach (var f in funcs)
+                Functions.Add(f);
+            HasFunctions = funcs.Count > 0;
+        }
+        catch
+        {
+            Functions.Clear();
+            HasFunctions = false;
         }
     }
 }

@@ -711,6 +711,7 @@ public sealed class DumpService : IDumpService
                             Name = po["name"]?.GetValue<string>() ?? "",
                             TypeName = po["type"]?.GetValue<string>() ?? "",
                             Size = po["size"]?.GetValue<int>() ?? 0,
+                            Offset = po["offset"]?.GetValue<int>() ?? -1,
                             IsOut = po["out"]?.GetValue<bool>() ?? false,
                             IsReturn = po["ret"]?.GetValue<bool>() ?? false,
                         });
@@ -723,6 +724,9 @@ public sealed class DumpService : IDumpService
                     FullName = fo["full"]?.GetValue<string>() ?? "",
                     Address = fo["addr"]?.GetValue<string>() ?? "",
                     FunctionFlags = fo["flags"]?.GetValue<uint>() ?? 0,
+                    NumParms = fo["num_parms"]?.GetValue<byte>() ?? 0,
+                    ParmsSize = fo["parms_size"]?.GetValue<ushort>() ?? 0,
+                    ReturnValueOffset = fo["ret_offset"]?.GetValue<ushort>() ?? 0xFFFF,
                     ReturnType = fo["ret"]?.GetValue<string>() ?? "",
                     Params = parms,
                 });
@@ -883,6 +887,47 @@ public sealed class DumpService : IDumpService
         var ueVersion = res["ue_version"]?.GetValue<int>() ?? 0;
         var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
         return BuildEngineState(res, ueVersion, versionDetected);
+    }
+
+    public async Task<InvokeFunctionResult> InvokeFunctionAsync(
+        string funcName,
+        string? instanceAddr = null,
+        string? className = null,
+        int parmsSize = 0,
+        string? paramsHex = null,
+        CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "invoke_function",
+            ["func_name"] = funcName,
+        };
+
+        if (!string.IsNullOrEmpty(instanceAddr))
+            req["instance_addr"] = instanceAddr;
+
+        if (!string.IsNullOrEmpty(className))
+            req["class_name"] = className;
+
+        if (parmsSize > 0)
+            req["parms_size"] = parmsSize;
+
+        if (!string.IsNullOrEmpty(paramsHex))
+            req["params_hex"] = paramsHex;
+
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        return new InvokeFunctionResult
+        {
+            Result       = res["result"]?.GetValue<int>() ?? -999,
+            InstanceAddr = res["instance_addr"]?.GetValue<string>() ?? "",
+            FuncAddr     = res["func_addr"]?.GetValue<string>() ?? "",
+            ParmsSize    = res["parms_size"]?.GetValue<int>() ?? 0,
+            ResultHex    = res["result_hex"]?.GetValue<string>() ?? "",
+            Message      = res["message"]?.GetValue<string>() ?? "",
+            Error        = res["error"]?.GetValue<string>() ?? "",
+        };
     }
 
     private static void CheckResponse(JsonObject res)

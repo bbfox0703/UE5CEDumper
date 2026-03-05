@@ -62,6 +62,7 @@ public sealed class StubDumpService : IDumpService
     public Task<RescanStatusResult> GetRescanStatusAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<EngineState> ApplyRescanAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<EngineState> TriggerScanAsync(CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<InvokeFunctionResult> InvokeFunctionAsync(string funcName, string? instanceAddr = null, string? className = null, int parmsSize = 0, string? paramsHex = null, CancellationToken ct = default) => throw new NotImplementedException();
 }
 
 public class CsxExportServiceTests

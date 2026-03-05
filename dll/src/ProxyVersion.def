@@ -4,10 +4,15 @@
 ; Maps exported names to internal Proxy_* implementations.
 ; This avoids compile-time conflicts with winver.h declarations
 ; while still exporting the correct symbols for DLL hijacking.
+;
+; UE5_* exports are listed explicitly so the /DEF: linker flag
+; does not suppress them from the export table.  Without these
+; entries, CE's getAddress() cannot resolve the DLL functions.
 ; ============================================================
 
 LIBRARY version
 EXPORTS
+    ; --- Windows version.dll forwarding ---
     GetFileVersionInfoA         = Proxy_GetFileVersionInfoA
     GetFileVersionInfoW         = Proxy_GetFileVersionInfoW
     GetFileVersionInfoSizeA     = Proxy_GetFileVersionInfoSizeA
@@ -25,3 +30,34 @@ EXPORTS
     VerInstallFileW             = Proxy_VerInstallFileW
     VerLanguageNameA            = Proxy_VerLanguageNameA
     VerLanguageNameW            = Proxy_VerLanguageNameW
+
+    ; --- UE5 Dumper C ABI exports (for CE Lua getAddress) ---
+    UE5_Init
+    UE5_Shutdown
+    UE5_GetVersion
+    UE5_AutoStart
+    UE5_GetGObjectsAddr
+    UE5_GetGNamesAddr
+    UE5_GetObjectCount
+    UE5_GetObjectByIndex
+    UE5_GetObjectName
+    UE5_GetObjectFullName
+    UE5_GetObjectClass
+    UE5_GetObjectOuter
+    UE5_FindObject
+    UE5_FindClass
+    UE5_WalkClassBegin
+    UE5_WalkClassGetField
+    UE5_WalkClassEnd
+    UE5_ResolveFName
+    UE5_SetObjectDecryption
+    UE5_GetFieldBoolMask
+    UE5_GetFieldStructClass
+    UE5_GetFieldPropertyClass
+    UE5_GetClassPropsSize
+    UE5_FindInstanceOfClass
+    UE5_FindFunctionByName
+    UE5_CallProcessEvent
+    UE5_StartPipeServer
+    UE5_StopPipeServer
+    UE5_IsPipeConnected
