@@ -51,6 +51,15 @@ struct FunctionParam {
     bool        isOut = false;
     bool        isReturn = false;
     std::string structType;     // UScriptStruct name for StructProperty params (empty otherwise)
+
+    // Phase B: sub-field layout for StructProperty params (dynamic discovery)
+    struct StructSubField {
+        std::string name;
+        std::string typeName;
+        int32_t     offset = 0;
+        int32_t     size = 0;
+    };
+    std::vector<StructSubField> structFields;
 };
 
 struct FunctionInfo {

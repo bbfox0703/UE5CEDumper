@@ -544,6 +544,18 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     pj["ret"]    = p.isReturn;
                     if (!p.structType.empty())
                         pj["struct_type"] = p.structType;
+                    if (!p.structFields.empty()) {
+                        json sfArr = json::array();
+                        for (const auto& sf : p.structFields) {
+                            json sfj;
+                            sfj["name"]   = sf.name;
+                            sfj["type"]   = sf.typeName;
+                            sfj["offset"] = sf.offset;
+                            sfj["size"]   = sf.size;
+                            sfArr.push_back(sfj);
+                        }
+                        pj["struct_fields"] = sfArr;
+                    }
                     params.push_back(pj);
                 }
                 fj["params"] = params;

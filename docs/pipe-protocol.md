@@ -57,6 +57,9 @@ Direction: bidirectional — Request/Response + async push Events
 // Walk all FFields of a UClass (static schema, no instance required)
 { "id": 9, "cmd": "walk_class", "addr": "7FF123456789" }
 
+// Walk all UFunctions of a UClass (returns signatures + struct sub-field layouts)
+{ "id": 20, "cmd": "walk_functions", "addr": "7FF123456789" }
+
 // Walk live field values of a UObject instance
 // class_addr is optional (auto-resolved from UObject::ClassPrivate)
 // array_limit: max inline array elements (default 64)
@@ -454,6 +457,55 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
 // write_mem response
 { "id": 15, "ok": true }
 ```
+
+### walk_functions
+
+Walk all UFunctions of a UClass. Returns function signatures with parameters,
+including StructProperty sub-field layouts discovered by walking the UScriptStruct.
+
+```jsonc
+// Request
+{ "id": 20, "cmd": "walk_functions", "addr": "7FF123456789" }
+
+// Response
+{
+  "id": 20, "ok": true,
+  "count": 1,
+  "functions": [
+    {
+      "name": "SetAttribute",
+      "full": "Function /Script/Game.Character.SetAttribute",
+      "addr": "0x7FF601234500",
+      "flags": 67109120,
+      "num_parms": 1,
+      "parms_size": 8,
+      "ret_offset": 65535,
+      "ret": "",
+      "params": [
+        {
+          "name": "NewValue",
+          "type": "StructProperty",
+          "size": 8,
+          "offset": 0,
+          "out": false,
+          "ret": false,
+          "struct_type": "GameplayAttributeData",
+          "struct_fields": [
+            { "name": "BaseValue", "type": "FloatProperty", "offset": 0, "size": 4 },
+            { "name": "CurrentValue", "type": "FloatProperty", "offset": 4, "size": 4 }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**`struct_fields`** (optional): Present only for `StructProperty` params where the DLL
+successfully walked the UScriptStruct's FField chain. Used by the UI as fallback when
+`KnownStructLayouts` has no hardcoded definition for the struct type. Each sub-field
+includes name, type, byte offset within the struct, and size. Nested StructProperty
+sub-fields are not recursively expanded (Phase B scope).
 
 ### invoke_function
 

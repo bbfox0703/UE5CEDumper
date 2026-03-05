@@ -29,7 +29,8 @@ public sealed class InvokeParamDialog : Window
     private readonly int _ueVersion;
 
     // Struct expansion: param index → list of (sub-field, TextBox) pairs
-    private readonly Dictionary<int, List<(KnownStructLayouts.StructSubField sf, TextBox edit)>> _structEdits = new();
+    // Uses DynamicStructField as unified type for both known and DLL-discovered layouts.
+    private readonly Dictionary<int, List<(DynamicStructField sf, TextBox edit)>> _structEdits = new();
 
     private TextBlock _resultLabel = null!;
     private Button _btnFire = null!;
@@ -153,10 +154,35 @@ public sealed class InvokeParamDialog : Window
                     ? KnownStructLayouts.GetLayout(p.StructName, _ueVersion)
                     : null;
 
+                // Build a unified sub-field list from known layout or DLL-discovered fields
+                IReadOnlyList<DynamicStructField>? expandFields = null;
+                string expandSource;
                 if (structLayout != null)
                 {
-                    // Expand struct into sub-fields
-                    var structLabel = $"{p.Name}  [F{p.StructName}, {p.Size}B, off={p.Offset}{(p.IsOut ? ", out" : "")}]";
+                    // Known engine struct (version-aware LWC)
+                    expandFields = structLayout.Fields
+                        .Select(sf => new DynamicStructField(sf.Name, sf.TypeName, sf.Offset, sf.Size))
+                        .ToList();
+                    expandSource = "known";
+                }
+                else if (p.TypeName == "StructProperty" && p.StructFields.Count > 0)
+                {
+                    // Phase B: DLL-discovered dynamic struct layout
+                    expandFields = p.StructFields;
+                    expandSource = "dynamic";
+                }
+                else
+                {
+                    expandFields = null;
+                    expandSource = "";
+                }
+
+                if (expandFields != null && expandFields.Count > 0)
+                {
+                    // Expand struct into sub-fields (works for both known and dynamic)
+                    var structName = !string.IsNullOrEmpty(p.StructName) ? p.StructName : "struct";
+                    var sourceTag = expandSource == "dynamic" ? " ⚡" : "";
+                    var structLabel = $"{p.Name}  [F{structName}{sourceTag}, {p.Size}B, off={p.Offset}{(p.IsOut ? ", out" : "")}]";
                     paramPanel.Children.Add(new TextBlock
                     {
                         Text = structLabel,
@@ -169,8 +195,8 @@ public sealed class InvokeParamDialog : Window
                     // Placeholder in _edits (not used for structs — _structEdits handles them)
                     _edits.Add(null!);
 
-                    var subEdits = new List<(KnownStructLayouts.StructSubField, TextBox)>();
-                    foreach (var sf in structLayout.Fields)
+                    var subEdits = new List<(DynamicStructField, TextBox)>();
+                    foreach (var sf in expandFields)
                     {
                         var sfShortType = ParamBufferBuilder.ShortTypeName(sf.TypeName);
                         var sfLabel = $"  .{sf.Name}  [{sfShortType}]";
@@ -283,10 +309,11 @@ public sealed class InvokeParamDialog : Window
 
                     if (_structEdits.TryGetValue(i, out var subEdits))
                     {
-                        // Struct param: write each sub-field
-                        var subFields = subEdits.Select(se => se.sf).ToList();
-                        var subValues = subEdits.Select(se => se.edit.Text ?? "0").ToList();
-                        ParamBufferBuilder.WriteStructParam(buf, param.Offset, subFields, subValues);
+                        // Struct param: write each sub-field (DynamicStructField overload)
+                        var subFields = subEdits.Select(se => se.sf).ToArray();
+                        var subValues = subEdits.Select(se => se.edit.Text ?? "0").ToArray();
+                        ParamBufferBuilder.WriteStructParam(buf, param.Offset,
+                            (IReadOnlyList<DynamicStructField>)subFields, subValues);
                     }
                     else
                     {
@@ -352,13 +379,15 @@ public sealed class InvokeParamDialog : Window
 
                 foreach (var p in _allParams)
                 {
-                    // Use struct-aware decoding for known structs
+                    // Use struct-aware decoding for known structs, then dynamic, then scalar
                     string decoded;
                     var structLayout = (p.TypeName == "StructProperty" && !string.IsNullOrEmpty(p.StructName))
                         ? KnownStructLayouts.GetLayout(p.StructName, _ueVersion)
                         : null;
                     if (structLayout != null)
                         decoded = DecodeStructParamValue(bytes, p, structLayout);
+                    else if (p.TypeName == "StructProperty" && p.StructFields.Count > 0)
+                        decoded = DecodeDynamicStructParamValue(bytes, p);
                     else
                         decoded = DecodeParamValue(bytes, p);
 
@@ -425,6 +454,27 @@ public sealed class InvokeParamDialog : Window
                 _ => BitConverter.ToString(buf, p.Offset, Math.Min(p.Size, available)),
             },
         };
+    }
+
+    /// <summary>Decode a struct param using DLL-discovered dynamic sub-fields. Returns "FieldA=val, FieldB=val" style.</summary>
+    internal static string DecodeDynamicStructParamValue(byte[] buf, FunctionParamModel p)
+    {
+        if (p.StructFields.Count == 0) return DecodeParamValue(buf, p);
+
+        var parts = new List<string>(p.StructFields.Count);
+        foreach (var sf in p.StructFields)
+        {
+            var subParam = new FunctionParamModel
+            {
+                Name = sf.Name,
+                TypeName = sf.TypeName,
+                Size = sf.Size,
+                Offset = p.Offset + sf.Offset,
+            };
+            var val = DecodeParamValue(buf, subParam);
+            parts.Add($"{sf.Name}={val}");
+        }
+        return string.Join(", ", parts);
     }
 
     /// <summary>Decode a struct param using known sub-field layout. Returns "X=1.0, Y=2.0, Z=3.0" style.</summary>

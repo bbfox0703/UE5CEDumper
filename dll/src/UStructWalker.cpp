@@ -748,9 +748,17 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
 
-                            // StructProperty -> read UScriptStruct name
-                            if (param.typeName == "StructProperty")
+                            // StructProperty -> read UScriptStruct name + sub-field layout
+                            if (param.typeName == "StructProperty") {
                                 param.structType = ReadSubclassTypeName(cur);
+                                // Phase B: walk the UScriptStruct to discover sub-fields
+                                uintptr_t structPtr = 0;
+                                if (Mem::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr) && structPtr) {
+                                    ClassInfo structInfo = WalkClass(structPtr);
+                                    for (const auto& sf : structInfo.Fields)
+                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
+                                }
+                            }
 
                             if (param.isReturn)
                                 fi.returnType = param.typeName;
@@ -786,7 +794,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
 
-                            // UE4 StructProperty -> read UScriptStruct name
+                            // UE4 StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
                                 uintptr_t structPtr = 0;
                                 // UStructProperty::Struct is at UPROPERTY subclass extension offset
@@ -794,6 +802,10 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                     std::string sn = GetName(structPtr);
                                     if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
                                         param.structType = sn;
+                                    // Phase B: walk the UScriptStruct to discover sub-fields
+                                    ClassInfo structInfo = WalkClass(structPtr);
+                                    for (const auto& sf : structInfo.Fields)
+                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
                                 }
                             }
 

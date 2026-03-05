@@ -166,6 +166,96 @@ public class InvokeParamDialogTests
         Assert.Equal("AA-BB-CC", InvokeParamDialog.DecodeParamValue(buf, p));
     }
 
+    // --- DecodeDynamicStructParamValue ---
+
+    [Fact]
+    public void DecodeDynamicStructParamValue_CustomStruct()
+    {
+        // GameplayAttributeData: BaseValue(float,0), CurrentValue(float,4)
+        var buf = new byte[8];
+        BitConverter.TryWriteBytes(buf.AsSpan(0), 100.0f);  // BaseValue = 100
+        BitConverter.TryWriteBytes(buf.AsSpan(4), 200.0f);  // CurrentValue = 200
+
+        var p = new FunctionParamModel
+        {
+            Name = "NewValue", TypeName = "StructProperty", StructName = "GameplayAttributeData",
+            Size = 8, Offset = 0,
+            StructFields = new List<DynamicStructField>
+            {
+                new("BaseValue", "FloatProperty", 0, 4),
+                new("CurrentValue", "FloatProperty", 4, 4),
+            },
+        };
+
+        var result = InvokeParamDialog.DecodeDynamicStructParamValue(buf, p);
+        Assert.Equal("BaseValue=100, CurrentValue=200", result);
+    }
+
+    [Fact]
+    public void DecodeDynamicStructParamValue_EmptyFields_FallsBackToScalar()
+    {
+        var buf = new byte[] { 0x2A, 0x00, 0x00, 0x00 };
+        var p = new FunctionParamModel
+        {
+            Name = "X", TypeName = "StructProperty",
+            Size = 4, Offset = 0,
+            StructFields = new List<DynamicStructField>(),
+        };
+
+        // Empty StructFields → falls back to DecodeParamValue (scalar)
+        var result = InvokeParamDialog.DecodeDynamicStructParamValue(buf, p);
+        // StructProperty with size 4, unknown type → fallback to int32 by size
+        Assert.Equal("42", result);
+    }
+
+    [Fact]
+    public void DecodeDynamicStructParamValue_WithOffset()
+    {
+        // 4 bytes padding + struct at offset 4
+        var buf = new byte[12];
+        BitConverter.TryWriteBytes(buf.AsSpan(4), 42);    // X = 42
+        BitConverter.TryWriteBytes(buf.AsSpan(8), 99);    // Y = 99
+
+        var p = new FunctionParamModel
+        {
+            Name = "Pos", TypeName = "StructProperty", StructName = "MyPoint",
+            Size = 8, Offset = 4,
+            StructFields = new List<DynamicStructField>
+            {
+                new("X", "IntProperty", 0, 4),
+                new("Y", "IntProperty", 4, 4),
+            },
+        };
+
+        var result = InvokeParamDialog.DecodeDynamicStructParamValue(buf, p);
+        Assert.Equal("X=42, Y=99", result);
+    }
+
+    [Fact]
+    public void DecodeDynamicStructParamValue_MixedTypes()
+    {
+        // Struct with float, bool, int32
+        var buf = new byte[12];
+        BitConverter.TryWriteBytes(buf.AsSpan(0), 3.14f);  // Value = 3.14
+        buf[4] = 1;                                         // Active = true
+        BitConverter.TryWriteBytes(buf.AsSpan(8), 7);       // Count = 7
+
+        var p = new FunctionParamModel
+        {
+            Name = "Data", TypeName = "StructProperty", StructName = "CustomData",
+            Size = 12, Offset = 0,
+            StructFields = new List<DynamicStructField>
+            {
+                new("Value", "FloatProperty", 0, 4),
+                new("Active", "BoolProperty", 4, 1),
+                new("Count", "IntProperty", 8, 4),
+            },
+        };
+
+        var result = InvokeParamDialog.DecodeDynamicStructParamValue(buf, p);
+        Assert.Equal("Value=3.14, Active=true, Count=7", result);
+    }
+
     // --- DecodeStructParamValue ---
 
     [Fact]

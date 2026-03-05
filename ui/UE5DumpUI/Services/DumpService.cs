@@ -706,6 +706,21 @@ public sealed class DumpService : IDumpService
                     foreach (var pItem in paramsArr)
                     {
                         if (pItem is not JsonObject po) continue;
+                        // Phase B: parse optional struct_fields array
+                        var structFields = new List<DynamicStructField>();
+                        if (po["struct_fields"] is JsonArray sfArr)
+                        {
+                            foreach (var sfItem in sfArr)
+                            {
+                                if (sfItem is not JsonObject sfo) continue;
+                                structFields.Add(new DynamicStructField(
+                                    sfo["name"]?.GetValue<string>() ?? "",
+                                    sfo["type"]?.GetValue<string>() ?? "",
+                                    sfo["offset"]?.GetValue<int>() ?? 0,
+                                    sfo["size"]?.GetValue<int>() ?? 0));
+                            }
+                        }
+
                         parms.Add(new FunctionParamModel
                         {
                             Name = po["name"]?.GetValue<string>() ?? "",
@@ -715,6 +730,7 @@ public sealed class DumpService : IDumpService
                             IsOut = po["out"]?.GetValue<bool>() ?? false,
                             IsReturn = po["ret"]?.GetValue<bool>() ?? false,
                             StructName = po["struct_type"]?.GetValue<string>() ?? "",
+                            StructFields = structFields,
                         });
                     }
                 }
