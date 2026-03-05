@@ -74,6 +74,7 @@ UE5CEDumper/
 │       │   ├── CePointerInfo.cs
 │       │   ├── EngineState.cs
 │       │   ├── DetectedGame.cs     ← Proxy DLL deploy model + status enum
+│       │   ├── InvokeFunctionResult.cs ← Pipe invoke result model
 │       │   ├── InstanceResult.cs
 │       │   └── ObjectDetail.cs
 │       │
@@ -84,7 +85,9 @@ UE5CEDumper/
 │       │   ├── LoggingService.cs   ← Serilog setup (3 loggers: init/pipe/view)
 │       │   ├── WindowsPlatformService.cs ← Registry, env vars (platform abstraction)
 │       │   ├── VdfParser.cs         ← Valve VDF format parser (Steam library detection)
-│       │   └── ProxyDeployService.cs ← Proxy DLL deploy/undeploy/detect
+│       │   ├── ProxyDeployService.cs ← Proxy DLL deploy/undeploy/detect
+│       │   ├── InvokeScriptGenerator.cs ← CE Lua invoke script generation
+│       │   └── ParamBufferBuilder.cs ← ProcessEvent param buffer hex builder
 │       │
 │       ├── ViewModels/             ← ReactiveUI ViewModels
 │       │   ├── ViewModelBase.cs
@@ -103,6 +106,7 @@ UE5CEDumper/
 │       │   ├── InstanceFinderPanel.axaml / .cs
 │       │   ├── ClassStructPanel.axaml / .cs
 │       │   ├── ProxyDeployPanel.axaml / .cs ← Proxy DLL deploy/undeploy UI
+│       │   ├── InvokeParamDialog.cs  ← Parameter input dialog for pipe invoke
 │       │   └── PointerPanel.axaml / .cs
 │       │
 │       ├── Core/                   ← Platform abstraction interfaces

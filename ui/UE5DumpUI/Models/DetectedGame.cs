@@ -56,4 +56,17 @@ public sealed partial class DetectedGame : ObservableObject
 
     /// <summary>Whether this game is selected for batch operations.</summary>
     [ObservableProperty] private bool _isSelected;
+
+    /// <summary>
+    /// Re-raise PropertyChanged for mutable properties on the current (UI) thread.
+    /// Service methods modify these properties on a background thread (Task.Run),
+    /// so the DataGrid may not see those notifications.  Call this after awaiting
+    /// service methods to ensure the UI is synchronized.
+    /// </summary>
+    public void NotifyAllChanged()
+    {
+        OnPropertyChanged(nameof(Status));
+        OnPropertyChanged(nameof(InstalledVersion));
+        OnPropertyChanged(nameof(ErrorMessage));
+    }
 }

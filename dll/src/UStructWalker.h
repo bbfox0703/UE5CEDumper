@@ -47,6 +47,7 @@ struct FunctionParam {
     std::string name;
     std::string typeName;
     int32_t     size = 0;
+    int32_t     offset = -1;  // Offset_Internal within param buffer (-1 = unknown)
     bool        isOut = false;
     bool        isReturn = false;
 };
@@ -56,6 +57,9 @@ struct FunctionInfo {
     std::string fullName;
     uintptr_t   address = 0;
     uint32_t    functionFlags = 0;
+    uint8_t     numParms = 0;       // UFunction::NumParms (includes return param)
+    uint16_t    parmsSize = 0;      // UFunction::ParmsSize (total param buffer bytes)
+    uint16_t    returnValueOffset = 0xFFFF; // UFunction::ReturnValueOffset (0xFFFF = void)
     std::vector<FunctionParam> params;
     std::string returnType;  // empty if void
 };

@@ -59,22 +59,19 @@ Generate CE Lua invoke scripts from UFunction metadata. User activates script in
 ### Task 1.1 — DLL: Extract parameter offsets + ParmsSize
 **Files**: `UStructWalker.cpp`, `UStructWalker.h`
 
-- [ ] Add `offset` field to `FunctionParam` struct
-- [ ] Read each FProperty's `Offset_Internal` (same offset used for class properties)
-- [ ] Add `parmsSize` field to `FunctionInfo` struct
-- [ ] Read UFunction's `ParmsSize` field (heuristic probe like FunctionFlags)
-  - Common offsets for ParmsSize: `0xCC`, `0xDC`, `0x90`, `0xB4`
-  - Validate: ParmsSize should be ≥ sum of param sizes, ≤ 0x1000
-- [ ] Add `numParms` field to `FunctionInfo` (from UFunction header, cross-validate with param count)
+- [x] Add `offset` field to `FunctionParam` struct
+- [x] Read each FProperty's `Offset_Internal` (same offset used for class properties)
+- [x] Add `parmsSize`, `numParms`, `returnValueOffset` fields to `FunctionInfo` struct
+- [x] Read UFunction fields at fixed relative offsets from FunctionFlags (+4, +6, +8)
+  - Confirmed stable across UE 4.18–5.07 via RE-UE4SS MemberVarLayoutTemplates
 
 **Estimated**: ~40 LOC
 
 ### Task 1.2 — DLL: Pipe protocol update
 **Files**: `PipeServer.cpp`
 
-- [ ] Add `offset` to each param in `walk_functions` response
-- [ ] Add `parms_size` to each function in response
-- [ ] Add `num_parms` to response
+- [x] Add `offset` to each param in `walk_functions` response
+- [x] Add `parms_size`, `num_parms`, `ret_offset` to each function in response
 
 Updated response format:
 ```json
@@ -100,42 +97,30 @@ Updated response format:
 ### Task 1.3 — UI: Update models + service
 **Files**: `FunctionInfoModel.cs`, `DumpService.cs`
 
-- [ ] Add `Offset` to `FunctionParamModel`
-- [ ] Add `ParmsSize`, `NumParms` to `FunctionInfoModel`
-- [ ] Update `WalkFunctionsAsync` JSON deserialization
-- [ ] Add `FunctionFlagsHelper` static class to decode flags to readable strings
-  - `FUNC_Native`, `FUNC_Event`, `FUNC_BlueprintCallable`, `FUNC_Exec`, etc.
+- [x] Add `Offset` to `FunctionParamModel`
+- [x] Add `ParmsSize`, `NumParms`, `ReturnValueOffset` to `FunctionInfoModel`
+- [x] Update `WalkFunctionsAsync` JSON deserialization
+- [x] Add `DecodeFunctionFlags()` static method on `FunctionInfoModel`
 
 **Estimated**: ~50 LOC
 
 ### Task 1.4 — UI: LiveWalker function display
 **Files**: `LiveWalkerViewModel.cs`, `LiveWalkerPanel.axaml`
 
-- [ ] After loading class properties, call `WalkFunctionsAsync` for current class
-- [ ] Add function nodes to tree under a "Functions" group
-- [ ] Each function node shows: name, return type, param summary
-- [ ] Expandable: shows individual params with type, size, offset, in/out
-- [ ] Display decoded FunctionFlags as tags (Native, Event, BlueprintCallable)
+- [x] After `UpdateDisplay()`, call `LoadFunctionsAsync(classAddr)` to load functions
+- [x] Collapsible Expander with DataGrid showing: Name, Return, Params (count + size), Address
+- [x] INV button per function to generate invoke script
 
 **Estimated**: ~80 LOC
 
 ### Task 1.5 — Core: CE Lua Script Template Engine
 **Files**: NEW `Services/InvokeScriptGenerator.cs`
 
-- [ ] `GenerateInvokeScript(className, funcName, params, invokeMethod)` → string
-- [ ] Template sections:
-  1. UE Dumper connection check (reuse existing pattern)
-  2. Instance resolver: `UE_GetAllObjectsOfClass` → skip CDOs → fallback to subclasses
-  3. UFunction resolver: `UE_GetFunctionsOfObject` → name match → case-insensitive fallback
-  4. GUI form builder (if params exist):
-     - Label + Edit for each param
-     - Type-aware defaults: `0` for int/float, `false` for bool, `0x0` for pointers
-     - Size-to-CE-type mapping: 1B→szByte, 2B→szWord, 4B→szDword, 8B→szQword
-  5. Fire button: build param table → invoke → show result
-  6. Cancel + cleanup
-- [ ] Support two invoke methods:
-  - `UE_InvokeActorEvent` — for AActor subclasses
-  - `UE_InvokeObjectEventSafe` — for general UObject
+- [x] `InvokeScriptGenerator.Generate(className, funcName, func)` → complete CE AA script
+- [x] Connection check, instance resolver (skip CDOs, subclass fallback), function resolver
+- [x] GUI form builder for params: type-aware labels, defaults, CE size constants
+- [x] Fire button with `UE_InvokeActorEvent` invocation
+- [x] Hex-aware parsing for pointer/FName types, floor for integers, direct for floats
 
 **Type-to-CE mapping table**:
 | UE Property Type | CE Size Constant | Default | Input Parse |
@@ -161,24 +146,17 @@ Updated response format:
 ### Task 1.6 — UI: Generate Script Button + AOBMaker Integration
 **Files**: `LiveWalkerViewModel.cs`, `LiveWalkerPanel.axaml`
 
-- [ ] Add "Generate Invoke Script" context action on UFunction nodes
-- [ ] On click:
-  1. Call `InvokeScriptGenerator.GenerateInvokeScript()`
-  2. If AOBMaker available: `CreateAAScriptAsync(description, script, autoActivate: false)`
-  3. Fallback: copy script to clipboard with notification
-- [ ] Script description format: `"Invoke: {ClassName}::{FunctionName}"`
-- [ ] Add string resources for button labels and tooltips
+- [x] INV button in Functions DataGrid calls `GenerateInvokeScriptCommand`
+- [x] AOBMaker `CreateAAScriptAsync` → fallback to clipboard
+- [x] String resources for button labels and tooltips in `en.axaml`
 
 **Estimated**: ~60 LOC
 
 ### Task 1.7 — Strings + Tests
 **Files**: `en.axaml`, `UE5DumpUI.Tests/`
 
-- [ ] Add UI strings: function display labels, button text, tooltips, status messages
-- [ ] Tests:
-  - InvokeScriptGenerator: no-param function, multi-param with types, out-param marking
-  - FunctionFlagsHelper: decode known flag combinations
-  - FunctionParamModel: offset + size serialization
+- [x] UI strings in `en.axaml`
+- [x] 11 tests in `InvokeScriptTests.cs`: DecodeFunctionFlags, Generate (no-param, with-params, return-param, pointer-param, float-param, special chars), InputParams filtering
 
 **Estimated**: ~80 LOC
 
