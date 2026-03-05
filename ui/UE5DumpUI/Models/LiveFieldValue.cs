@@ -244,8 +244,8 @@ public sealed class LiveFieldValue
     /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set with data).</summary>
     public bool IsContainerNavigable =>
         (ArrayCount > 0 && !string.IsNullOrEmpty(ArrayInnerType)) ||
-        (MapCount > 0 && MapElements is { Count: > 0 }) ||
-        (SetCount > 0 && SetElements is { Count: > 0 });
+        (MapCount > 0 && !string.IsNullOrEmpty(MapKeyType)) ||
+        (SetCount > 0 && !string.IsNullOrEmpty(SetElemType));
 
     /// <summary>Whether this field is a clickable pointer to another object.</summary>
     public bool IsNavigable =>

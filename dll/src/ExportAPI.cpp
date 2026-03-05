@@ -17,6 +17,7 @@
 #include <string>
 #include <cstring>
 #include <mutex>
+#include <algorithm>
 
 // Global cached state (also accessed by PipeServer)
 uintptr_t   g_cachedGObjects  = 0;
@@ -369,6 +370,185 @@ int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
     int32_t propsSize = 0;
     Mem::ReadSafe(classAddr + DynOff::USTRUCT_PROPSSIZE, propsSize);
     return propsSize;
+}
+
+// === UFunction Invocation ===
+
+uintptr_t UE5_FindInstanceOfClass(const char* className) {
+    if (!className || !className[0]) return 0;
+
+    auto rset = ObjectArray::FindInstancesByClass(className, false, 100);
+
+    // Prefer non-CDO instance
+    for (const auto& r : rset.results) {
+        if (r.addr && r.name.find("Default__") == std::string::npos) {
+            LOG_INFO("UE5_FindInstanceOfClass: '%s' -> 0x%llX (%s)",
+                     className, (unsigned long long)r.addr, r.name.c_str());
+            return r.addr;
+        }
+    }
+
+    // Fallback: return first result even if CDO
+    if (!rset.results.empty() && rset.results[0].addr) {
+        LOG_WARN("UE5_FindInstanceOfClass: '%s' -> only CDO: 0x%llX (%s)",
+                 className, (unsigned long long)rset.results[0].addr,
+                 rset.results[0].name.c_str());
+        return rset.results[0].addr;
+    }
+
+    LOG_WARN("UE5_FindInstanceOfClass: '%s' -> not found (scanned=%d)",
+             className, rset.scanned);
+    return 0;
+}
+
+uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName) {
+    if (!classAddr || !funcName || !funcName[0]) return 0;
+
+    auto funcs = UStructWalker::WalkFunctions(classAddr);
+
+    // Exact match
+    for (const auto& f : funcs) {
+        if (f.name == funcName) {
+            LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (exact match)",
+                     funcName, (unsigned long long)f.address);
+            return f.address;
+        }
+    }
+
+    // Case-insensitive fallback
+    std::string lower(funcName);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const auto& f : funcs) {
+        std::string fl = f.name;
+        std::transform(fl.begin(), fl.end(), fl.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (fl == lower) {
+            LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (case-insensitive)",
+                     funcName, (unsigned long long)f.address);
+            return f.address;
+        }
+    }
+
+    LOG_WARN("UE5_FindFunctionByName: '%s' not found (%d functions walked)",
+             funcName, (int)funcs.size());
+    return 0;
+}
+
+// ProcessEvent vtable detection — version-based with ±2 probing
+static int DetectProcessEventVTableOffset() {
+    // Empirical vtable byte offsets for UObject::ProcessEvent (Shipping builds, MSVC x64)
+    //   UE 4.18-4.19: 0x208 (index 65)
+    //   UE 4.20-4.24: 0x210 (index 66)
+    //   UE 4.25-4.27: 0x218 (index 67)
+    //   UE 5.0-5.4:   0x220 (index 68)
+    //   UE 5.5+:      0x228 (index 69)
+    int primary;
+    if (g_cachedUEVersion >= 550)      primary = 0x228;
+    else if (g_cachedUEVersion >= 500) primary = 0x220;
+    else if (g_cachedUEVersion >= 425) primary = 0x218;
+    else if (g_cachedUEVersion >= 420) primary = 0x210;
+    else                               primary = 0x208;
+
+    // Find any valid UObject to read vtable from
+    uintptr_t testObj = 0;
+    for (int i = 0; i < ObjectArray::GetCount() && i < 200; ++i) {
+        testObj = ObjectArray::GetByIndex(i);
+        if (testObj) break;
+    }
+    if (!testObj) {
+        LOG_ERROR("DetectProcessEvent: no valid UObject in GObjects");
+        return -1;
+    }
+
+    uintptr_t vtable = 0;
+    if (!Mem::ReadSafe(testObj, vtable) || !vtable) {
+        LOG_ERROR("DetectProcessEvent: cannot read vtable from obj 0x%llX",
+                  (unsigned long long)testObj);
+        return -1;
+    }
+
+    // Log nearby vtable entries for debugging
+    LOG_INFO("DetectProcessEvent: UE=%u primary=0x%X vtable=0x%llX",
+             g_cachedUEVersion, primary, (unsigned long long)vtable);
+    for (int delta = -16; delta <= 16; delta += 8) {
+        int off = primary + delta;
+        if (off < 0) continue;
+        uintptr_t addr = 0;
+        Mem::ReadSafe(vtable + off, addr);
+        LOG_INFO("  vtable+0x%03X = 0x%llX%s",
+                 off, (unsigned long long)addr,
+                 delta == 0 ? "  <-- primary" : "");
+    }
+
+    // Validate primary: must point to readable code
+    uintptr_t funcAddr = 0;
+    if (Mem::ReadSafe(vtable + primary, funcAddr) && funcAddr) {
+        uint8_t test = 0;
+        if (Mem::ReadBytesSafe(funcAddr, &test, 1)) {
+            LOG_INFO("DetectProcessEvent: using primary 0x%X -> 0x%llX",
+                     primary, (unsigned long long)funcAddr);
+            return primary;
+        }
+    }
+
+    // Probe ±8, ±16
+    for (int d : { 8, -8, 16, -16 }) {
+        int off = primary + d;
+        if (off < 0) continue;
+        funcAddr = 0;
+        if (Mem::ReadSafe(vtable + off, funcAddr) && funcAddr) {
+            uint8_t test = 0;
+            if (Mem::ReadBytesSafe(funcAddr, &test, 1)) {
+                LOG_WARN("DetectProcessEvent: primary 0x%X failed, using 0x%X -> 0x%llX",
+                         primary, off, (unsigned long long)funcAddr);
+                return off;
+            }
+        }
+    }
+
+    LOG_ERROR("DetectProcessEvent: all probes failed");
+    return -1;
+}
+
+static int s_processEventOffset = -2;  // -2 = not yet detected
+
+int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
+    if (!instance || !ufunc) return -1;
+
+    // Lazy detection
+    if (s_processEventOffset == -2) {
+        s_processEventOffset = DetectProcessEventVTableOffset();
+    }
+    if (s_processEventOffset < 0) return -3;
+
+    // Read vtable from the target instance
+    uintptr_t vtable = 0;
+    if (!Mem::ReadSafe(instance, vtable) || !vtable) return -2;
+
+    uintptr_t peAddr = 0;
+    if (!Mem::ReadSafe(vtable + s_processEventOffset, peAddr) || !peAddr) return -3;
+
+    // void UObject::ProcessEvent(UFunction* Function, void* Parms)
+    // x64 __thiscall: RCX=this, RDX=UFunction*, R8=Parms
+    typedef void (__fastcall *FnProcessEvent)(void*, void*, void*);
+    auto pProcessEvent = reinterpret_cast<FnProcessEvent>(peAddr);
+
+    LOG_INFO("UE5_CallProcessEvent: inst=0x%llX func=0x%llX params=0x%llX pe=0x%llX",
+             (unsigned long long)instance, (unsigned long long)ufunc,
+             (unsigned long long)params, (unsigned long long)peAddr);
+
+    __try {
+        pProcessEvent(reinterpret_cast<void*>(instance),
+                      reinterpret_cast<void*>(ufunc),
+                      reinterpret_cast<void*>(params));
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        LOG_ERROR("UE5_CallProcessEvent: EXCEPTION during ProcessEvent call!");
+        return -4;
+    }
+
+    LOG_INFO("UE5_CallProcessEvent: success");
+    return 0;
 }
 
 // === Pipe Server ===

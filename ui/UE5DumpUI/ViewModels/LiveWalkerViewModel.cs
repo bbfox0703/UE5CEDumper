@@ -327,11 +327,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
             {
                 await NavigateToArrayContainerAsync(field);
             }
-            else if (field.MapCount > 0 && field.MapElements is { Count: > 0 })
+            else if (field.MapCount > 0 && !string.IsNullOrEmpty(field.MapKeyType))
             {
                 NavigateToMapContainer(field);
             }
-            else if (field.SetCount > 0 && field.SetElements is { Count: > 0 })
+            else if (field.SetCount > 0 && !string.IsNullOrEmpty(field.SetElemType))
             {
                 NavigateToSetContainer(field);
             }
@@ -411,7 +411,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
         });
         _log.Info($"NAV→MapContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
-        PopulateMapContainerFields(field.MapElements!, field);
+        PopulateMapContainerFields(field.MapElements ?? new(), field);
     }
 
     private void NavigateToSetContainer(LiveFieldValue field)
@@ -431,7 +431,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
         });
         _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
-        PopulateSetContainerFields(field.SetElements!, field);
+        PopulateSetContainerFields(field.SetElements ?? new(), field);
     }
 
     private void PopulateArrayContainerFields(List<ArrayElementValue> elements, LiveFieldValue sourceField)
@@ -518,6 +518,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
             && !string.IsNullOrEmpty(sourceField.MapValueStructAddr);
 
         Fields.Clear();
+        if (elements.Count == 0)
+        {
+            // Show metadata summary when element data couldn't be read
+            StatusText = $"Map has {sourceField.MapCount} entries but element data could not be read (key={keyLabel} sz={sourceField.MapKeySize}, val={valLabel} sz={sourceField.MapValueSize})";
+        }
         foreach (var elem in elements)
         {
             var keyDisplay = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
@@ -560,13 +565,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             PopulateArrayContainerFields(containerField.ArrayElements ?? new(), containerField);
         }
-        else if (containerField.MapCount > 0 && containerField.MapElements is { Count: > 0 })
+        else if (containerField.MapCount > 0 && !string.IsNullOrEmpty(containerField.MapKeyType))
         {
-            PopulateMapContainerFields(containerField.MapElements, containerField);
+            PopulateMapContainerFields(containerField.MapElements ?? new(), containerField);
         }
-        else if (containerField.SetCount > 0 && containerField.SetElements is { Count: > 0 })
+        else if (containerField.SetCount > 0 && !string.IsNullOrEmpty(containerField.SetElemType))
         {
-            PopulateSetContainerFields(containerField.SetElements, containerField);
+            PopulateSetContainerFields(containerField.SetElements ?? new(), containerField);
         }
     }
 
@@ -1755,6 +1760,47 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             SetError(ex);
             _log.Error($"Failed to generate invoke script for {func.Name}", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task InvokeViaPipeAsync(FunctionInfoModel? func)
+    {
+        if (func == null || string.IsNullOrEmpty(CurrentAddress)) return;
+
+        try
+        {
+            ClearStatus();
+
+            if (Avalonia.Application.Current?.ApplicationLifetime is not
+                Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+                || desktop.MainWindow is not { } owner)
+                return;
+
+            var inputParams = func.Params.Where(p => !p.IsReturn).ToList();
+
+            // Dialog owns the entire invoke lifecycle:
+            // - Shows input fields (or "no params" message)
+            // - FIRE button calls InvokeFunctionAsync internally
+            // - Decoded results shown inline (return values, out params)
+            // - Returns "ok" on Close, null on Cancel
+            var dialog = new Views.InvokeParamDialog(
+                CurrentClassName, func.Name, inputParams, func.Params, func.ParmsSize,
+                CurrentAddress, _dump);
+
+            var dialogResult = await dialog.ShowDialog<string?>(owner);
+
+            StatusText = dialogResult == "ok"
+                ? $"Invoke dialog closed: {CurrentClassName}::{func.Name}"
+                : $"Invoke cancelled: {func.Name}";
+
+            _log.Info($"Pipe invoke dialog {(dialogResult == "ok" ? "completed" : "cancelled")}: " +
+                      $"{CurrentClassName}::{func.Name} inst={CurrentAddress}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"Failed to invoke {func?.Name} via pipe", ex);
         }
     }
 

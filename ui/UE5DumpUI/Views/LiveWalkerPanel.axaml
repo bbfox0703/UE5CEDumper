@@ -361,18 +361,29 @@
             </DataGridTextColumn.Binding>
           </DataGridTextColumn>
           <DataGridTextColumn Header="Address" Binding="{Binding Address}" Width="140"/>
-          <DataGridTemplateColumn Header="" Width="50">
+          <DataGridTemplateColumn Header="" Width="100">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate x:DataType="m:FunctionInfoModel">
-                <Button Content="{StaticResource str.LiveWalker.FuncGenScript}"
-                        Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).GenerateInvokeScriptCommand}"
-                        CommandParameter="{Binding}"
-                        Padding="6,2" Margin="2"
-                        Foreground="#DCDCAA" Background="Transparent"
-                        BorderThickness="1" BorderBrush="#DCDCAA"
-                        Cursor="Hand" FontWeight="Bold" FontSize="11"
-                        ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncGenScript}"
-                        ClickMode="Press"/>
+                <StackPanel Orientation="Horizontal" Spacing="2">
+                  <Button Content="{StaticResource str.LiveWalker.FuncGenScript}"
+                          Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).GenerateInvokeScriptCommand}"
+                          CommandParameter="{Binding}"
+                          Padding="6,2" Margin="2,2,0,2"
+                          Foreground="#DCDCAA" Background="Transparent"
+                          BorderThickness="1" BorderBrush="#DCDCAA"
+                          Cursor="Hand" FontWeight="Bold" FontSize="11"
+                          ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncGenScript}"
+                          ClickMode="Press"/>
+                  <Button Content="{StaticResource str.LiveWalker.FuncPipeInvoke}"
+                          Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).InvokeViaPipeCommand}"
+                          CommandParameter="{Binding}"
+                          Padding="6,2" Margin="0,2,2,2"
+                          Foreground="#4EC9B0" Background="Transparent"
+                          BorderThickness="1" BorderBrush="#4EC9B0"
+                          Cursor="Hand" FontWeight="Bold" FontSize="11"
+                          ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncPipeInvoke}"
+                          ClickMode="Press"/>
+                </StackPanel>
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>

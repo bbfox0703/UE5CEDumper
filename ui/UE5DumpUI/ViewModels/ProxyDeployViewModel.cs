@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -24,8 +23,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [ObservableProperty] private string? _sourceDllVersion;
     [ObservableProperty] private bool _forceOverwrite;
     [ObservableProperty] private string? _lastOperationResult;
-
-    public ObservableCollection<DetectedGame> Games { get; } = new();
+    [ObservableProperty] private ObservableCollection<DetectedGame> _games = new();
 
     /// <summary>Whether any games are selected for batch operations.</summary>
     public bool HasSelection => Games.Any(g => g.IsSelected);
@@ -79,14 +77,14 @@ public partial class ProxyDeployViewModel : ViewModelBase
             StatusText = $"Scanning {libraries.Count} library folder(s)...";
             var found = await _deploy.FindUeGamesAsync(libraries, ct);
 
-            Games.Clear();
-            foreach (var game in found)
-                Games.Add(game);
+            Games = new ObservableCollection<DetectedGame>(found);
 
             if (Games.Count > 0 && File.Exists(SourceDllPath))
             {
                 StatusText = "Checking deploy status...";
                 await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+                // Service runs on background thread — swap collection to force UI rebuild
+                RefreshAllGameProperties();
             }
 
             StatusText = $"Found {Games.Count} UE game(s)";
@@ -125,6 +123,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 : null;
 
             await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+            RefreshAllGameProperties();
             StatusText = $"{Games.Count} game(s) — status refreshed";
         }
         catch (Exception ex)
@@ -137,6 +136,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [RelayCommand]
     private async Task DeploySelectedAsync(CancellationToken ct)
     {
+        if (IsScanning) { LastOperationResult = "Wait for scan to finish"; return; }
+
         if (!File.Exists(SourceDllPath))
         {
             SetError($"Source DLL not found: {SourceDllPath}");
@@ -163,6 +164,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
             else fail++;
         }
 
+        // Refresh status from disk to ensure DataGrid reflects actual state
+        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+        RefreshAllGameProperties();
+
         LastOperationResult = $"Deployed: {ok} success, {fail} failed";
         StatusText = LastOperationResult;
         _log.Info("ProxyDeploy", LastOperationResult);
@@ -171,6 +176,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [RelayCommand]
     private async Task UndeploySelectedAsync(CancellationToken ct)
     {
+        if (IsScanning) { LastOperationResult = "Wait for scan to finish"; return; }
+
         var selected = Games.Where(g => g.IsSelected).ToList();
         if (selected.Count == 0)
         {
@@ -191,6 +198,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
             else fail++;
         }
 
+        // Refresh status from disk to ensure DataGrid reflects actual state
+        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+        RefreshAllGameProperties();
+
         LastOperationResult = $"Removed: {ok} success, {fail} failed";
         StatusText = LastOperationResult;
         _log.Info("ProxyDeploy", LastOperationResult);
@@ -199,6 +210,12 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [RelayCommand]
     private async Task UpdateAllAsync(CancellationToken ct)
     {
+        if (IsScanning)
+        {
+            LastOperationResult = "Wait for scan to finish";
+            return;
+        }
+
         if (!File.Exists(SourceDllPath))
         {
             SetError($"Source DLL not found: {SourceDllPath}");
@@ -232,6 +249,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
             if (success) ok++;
             else fail++;
         }
+
+        // Refresh status from disk to ensure DataGrid reflects actual state
+        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+        RefreshAllGameProperties();
 
         LastOperationResult = $"Updated: {ok} success, {fail} failed";
         StatusText = LastOperationResult;
@@ -268,6 +289,26 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// </summary>
     public void NotifySelectionChanged()
     {
+        OnPropertyChanged(nameof(HasSelection));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // UI refresh helper
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Force the DataGrid to completely rebuild all rows.
+    /// Service methods (Task.Run) modify game properties on a background thread,
+    /// firing PropertyChanged there. The DataGrid caches the new values but skips
+    /// the visual repaint (cross-thread notification). Subsequent UI-thread
+    /// notifications with the same value are treated as "no change".
+    /// Replacing the entire collection reference changes the ItemsSource binding,
+    /// which forces Avalonia to destroy all old rows and create new ones from
+    /// scratch — no stale-cache comparison possible.
+    /// </summary>
+    private void RefreshAllGameProperties()
+    {
+        Games = new ObservableCollection<DetectedGame>(Games);
         OnPropertyChanged(nameof(HasSelection));
     }
 }

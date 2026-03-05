@@ -889,6 +889,47 @@ public sealed class DumpService : IDumpService
         return BuildEngineState(res, ueVersion, versionDetected);
     }
 
+    public async Task<InvokeFunctionResult> InvokeFunctionAsync(
+        string funcName,
+        string? instanceAddr = null,
+        string? className = null,
+        int parmsSize = 0,
+        string? paramsHex = null,
+        CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "invoke_function",
+            ["func_name"] = funcName,
+        };
+
+        if (!string.IsNullOrEmpty(instanceAddr))
+            req["instance_addr"] = instanceAddr;
+
+        if (!string.IsNullOrEmpty(className))
+            req["class_name"] = className;
+
+        if (parmsSize > 0)
+            req["parms_size"] = parmsSize;
+
+        if (!string.IsNullOrEmpty(paramsHex))
+            req["params_hex"] = paramsHex;
+
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        return new InvokeFunctionResult
+        {
+            Result       = res["result"]?.GetValue<int>() ?? -999,
+            InstanceAddr = res["instance_addr"]?.GetValue<string>() ?? "",
+            FuncAddr     = res["func_addr"]?.GetValue<string>() ?? "",
+            ParmsSize    = res["parms_size"]?.GetValue<int>() ?? 0,
+            ResultHex    = res["result_hex"]?.GetValue<string>() ?? "",
+            Message      = res["message"]?.GetValue<string>() ?? "",
+            Error        = res["error"]?.GetValue<string>() ?? "",
+        };
+    }
+
     private static void CheckResponse(JsonObject res)
     {
         var ok = res["ok"]?.GetValue<bool>() ?? false;

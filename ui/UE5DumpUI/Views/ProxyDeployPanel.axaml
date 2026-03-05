@@ -55,15 +55,15 @@
           <Button Content="{StaticResource str.ProxyDeploy.Deploy}"
                   Command="{Binding DeploySelectedCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Deploy}"
-                  ClickMode="Press" Classes="accent" Padding="12,4"/>
+                  Classes="accent" Padding="12,4"/>
           <Button Content="{StaticResource str.ProxyDeploy.Undeploy}"
                   Command="{Binding UndeploySelectedCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Undeploy}"
-                  ClickMode="Press" Padding="12,4"/>
+                  Padding="12,4"/>
           <Button Content="{StaticResource str.ProxyDeploy.UpdateAll}"
                   Command="{Binding UpdateAllCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.UpdateAll}"
-                  ClickMode="Press" Padding="12,4"/>
+                  Padding="12,4"/>
           <CheckBox Content="{StaticResource str.ProxyDeploy.Force}"
                     IsChecked="{Binding ForceOverwrite}"
                     ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Force}"

@@ -304,7 +304,9 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
     private static async Task WriteMessageAsync(Stream stream, AobMakerMessage message, CancellationToken ct)
     {
-        var json = JsonSerializer.Serialize(message, AobMakerJsonContext.Default.AobMakerMessage);
+        // Use Relaxed encoder to avoid \uXXXX escaping of single quotes and non-ASCII
+        // — CE Plugin's Lua JSON parser doesn't handle \uXXXX sequences
+        var json = JsonSerializer.Serialize(message, AobMakerJsonContext.Relaxed.AobMakerMessage);
         var payload = Encoding.UTF8.GetBytes(json);
         var lengthBuf = BitConverter.GetBytes((uint)payload.Length);
 
