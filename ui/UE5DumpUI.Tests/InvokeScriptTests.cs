@@ -39,7 +39,7 @@ public class InvokeScriptTests
         Assert.Equal("", result);
     }
 
-    // --- InvokeScriptGenerator: Dual-path support ---
+    // --- InvokeScriptGenerator: Mailbox-based scripts ---
 
     [Fact]
     public void Generate_NoParams_ProducesDirectInvoke()
@@ -57,12 +57,14 @@ public class InvokeScriptTests
         Assert.Contains("OWNER_CLASS", script);
         Assert.Contains("'ShopKeeper_C'", script);
         Assert.Contains("'openShop'", script);
-        // DLL path
-        Assert.Contains("UE5_CallProcessEvent", script);
-        // CE UE fallback path
-        Assert.Contains("UE_InvokeActorEvent", script);
+        // Mailbox-based invocation
+        Assert.Contains("g_invokeMailbox", script);
+        Assert.Contains("waitDone", script);
         // No form creation for zero-param functions
         Assert.DoesNotContain("createForm", script);
+        // No executeCodeEx (mailbox uses ReadProcessMemory/WriteProcessMemory)
+        Assert.DoesNotContain("executeCodeEx", script);
+        Assert.DoesNotContain("dllCall", script);
     }
 
     [Fact]
@@ -87,12 +89,9 @@ public class InvokeScriptTests
         Assert.Contains("'Amount", script);
         Assert.Contains("'SkipCounting", script);
         Assert.Contains("'Success", script);
-        // CE path uses size types
-        Assert.Contains("szDword", script);
-        Assert.Contains("szByte", script);
-        // DLL path uses memory writes
-        Assert.Contains("writeInteger(pBuf +", script);
-        Assert.Contains("writeBytes(pBuf +", script);
+        // Mailbox param writes use PD (params_data base)
+        Assert.Contains("writeInteger(PD +", script);
+        Assert.Contains("writeBytes(PD +", script);
         Assert.Contains("FIRE", script);
     }
 
@@ -111,9 +110,9 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("TestClass", "getValue", func);
 
-        // Return param should not appear in form or param table
+        // Return param should not appear in form — treated as no-param direct invoke
         Assert.DoesNotContain("createForm", script);
-        Assert.Contains("params = {}", script); // CE path: empty params
+        Assert.Contains("waitDone", script);
     }
 
     [Fact]
@@ -131,8 +130,7 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("AI_C", "setTarget", func);
 
-        Assert.Contains("szQword", script);   // CE path
-        Assert.Contains("writeQword", script); // DLL path
+        Assert.Contains("writeQword", script); // 8-byte pointer write
         Assert.Contains("0x0", script);        // default for pointer
     }
 
@@ -151,8 +149,7 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("Character_C", "setSpeed", func);
 
-        Assert.Contains("szFloat", script);    // CE path
-        Assert.Contains("writeFloat", script); // DLL path
+        Assert.Contains("writeFloat", script); // float write
         Assert.Contains("0.0", script);        // default for float
     }
 
@@ -219,10 +216,10 @@ public class InvokeScriptTests
         Assert.DoesNotContain("\"openShop\"", script);
     }
 
-    // --- Dual-path specific tests ---
+    // --- Mailbox-specific tests ---
 
     [Fact]
-    public void Generate_ContainsDllMethodDetection()
+    public void Generate_UsesMailboxApproach()
     {
         var func = new FunctionInfoModel
         {
@@ -232,19 +229,25 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("TestClass", "test", func);
 
-        // Should contain DLL detection logic
-        Assert.Contains("USE_DLL", script);
-        Assert.Contains("getAddress('UE5_FindInstanceOfClass')", script);
-        // Should contain both dllCall (int return) and dllCallPtr (pointer return)
-        Assert.Contains("dllCall(", script);
-        Assert.Contains("dllCallPtr(", script);
-        // Should contain CE fallback
-        Assert.Contains("UseUE", script);
-        Assert.Contains("UE_IsConnected", script);
+        // Should find mailbox symbol
+        Assert.Contains("g_invokeMailbox", script);
+        // Should use mailbox helpers
+        Assert.Contains("writeMbStr", script);
+        Assert.Contains("waitDone", script);
+        Assert.Contains("readErr", script);
+        // Should NOT use executeCodeEx or DLL call helpers
+        Assert.DoesNotContain("executeCodeEx", script);
+        Assert.DoesNotContain("dllCall", script);
+        Assert.DoesNotContain("dllCallPtr", script);
+        Assert.DoesNotContain("cstr(", script);
+        // Should NOT contain third-party CE plugin references
+        Assert.DoesNotContain("UE_InvokeActorEvent", script);
+        Assert.DoesNotContain("UE_GetAllObjectsOfClass", script);
+        Assert.DoesNotContain("UE_GetFunctionsOfObject", script);
     }
 
     [Fact]
-    public void Generate_DllPath_UsesProcessEvent()
+    public void Generate_MailboxCommands_CorrectSequence()
     {
         var func = new FunctionInfoModel
         {
@@ -254,45 +257,35 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("ShopKeeper_C", "openShop", func);
 
-        // DLL path uses our exports (pointer returns via dllCallPtr)
-        Assert.Contains("dllCallPtr('UE5_FindInstanceOfClass'", script);
-        Assert.Contains("dllCallPtr('UE5_GetObjectClass'", script);
-        Assert.Contains("dllCallPtr('UE5_FindFunctionByName'", script);
-        Assert.Contains("dllCall('UE5_CallProcessEvent'", script);  // int32 return
-        // Auto-init: if DLL loaded but not initialized, call UE5_Init
-        Assert.Contains("UE5_Init", script);
-        Assert.Contains("DLL not initialized", script);
-        // executeCodeEx canary in method detection — auto-fallback to CE UE tools
-        Assert.Contains("UE5_GetVersion", script);
-        Assert.Contains("executeCodeEx returns nil", script);
-        Assert.Contains("use PIPE button in DumperUI instead", script);
-        // Helper functions
-        Assert.Contains("dllCallPtr", script);
-        Assert.Contains("cstr", script);
-        // Null-terminator safety
-        Assert.Contains("writeBytes(buf + #s, {0})", script);
+        // CMD_FIND_INSTANCE = 2
+        Assert.Contains("writeInteger(mb + 0x000, 2)", script);
+        // CMD_FIND_FUNCTION = 3
+        Assert.Contains("writeInteger(mb + 0x000, 3)", script);
+        // CMD_INVOKE = 1
+        Assert.Contains("writeInteger(mb + 0x000, 1)", script);
+        // Reads instance + function addresses from mailbox
+        Assert.Contains("readQword(mb + 0x010)", script);  // instanceAddr
+        Assert.Contains("readQword(mb + 0x018)", script);  // ufuncPtr
+        // Reads result code
+        Assert.Contains("readInteger(mb + 0x008)", script); // result
     }
 
     [Fact]
-    public void Generate_ParamBuffer_IncludesParmsSize()
+    public void Generate_NoExecuteCodeEx()
     {
         var func = new FunctionInfoModel
         {
-            Name = "addMoney",
-            ParmsSize = 42,
-            Params = new List<FunctionParamModel>
-            {
-                new() { Name = "Amount", TypeName = "IntProperty", Size = 4, Offset = 0 },
-            },
+            Name = "openShop",
+            Params = new(),
         };
 
-        var script = InvokeScriptGenerator.Generate("TestClass", "addMoney", func);
+        var script = InvokeScriptGenerator.Generate("ShopKeeper_C", "openShop", func);
 
-        // PARMS_SIZE embedded in script
-        Assert.Contains("PARMS_SIZE   = 42", script);
-        // DLL path allocates buffer
-        Assert.Contains("allocateMemory(42)", script);
-        Assert.Contains("deAlloc(pBuf)", script);
+        // The whole point of mailbox: no executeCodeEx / CreateRemoteThread
+        Assert.DoesNotContain("executeCodeEx", script);
+        Assert.DoesNotContain("CreateRemoteThread", script);
+        // Comment explains this
+        Assert.Contains("shared memory mailbox", script);
     }
 
     [Fact]
@@ -313,12 +306,33 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("TestClass", "doThing", func);
 
-        // DLL path should write params at correct offsets (Return param excluded)
-        Assert.Contains("writeInteger(pBuf + 0,", script);
-        Assert.Contains("writeFloat(pBuf + 4,", script);
-        Assert.Contains("writeBytes(pBuf + 8,", script);
+        // Should write params at correct offsets via PD (params_data base)
+        Assert.Contains("writeInteger(PD + 0,", script);
+        Assert.Contains("writeFloat(PD + 4,", script);
+        Assert.Contains("writeBytes(PD + 8,", script);
         // Return param should NOT be written
-        Assert.DoesNotContain("pBuf + 9", script);
+        Assert.DoesNotContain("PD + 9", script);
+    }
+
+    [Fact]
+    public void Generate_ParamBuffer_IncludesParmsSize()
+    {
+        var func = new FunctionInfoModel
+        {
+            Name = "addMoney",
+            ParmsSize = 42,
+            Params = new List<FunctionParamModel>
+            {
+                new() { Name = "Amount", TypeName = "IntProperty", Size = 4, Offset = 0 },
+            },
+        };
+
+        var script = InvokeScriptGenerator.Generate("TestClass", "addMoney", func);
+
+        // PARMS_SIZE embedded in script
+        Assert.Contains("PARMS_SIZE   = 42", script);
+        // Mailbox zero-fill uses PD base
+        Assert.Contains("PD + i, 0", script);
     }
 
     // --- InputParams property ---

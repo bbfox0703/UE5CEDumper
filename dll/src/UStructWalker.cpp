@@ -1764,39 +1764,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             fv.offset   = fi.Offset;
             fv.size     = fi.Size;
 
-            // Read raw bytes first — needed for both Hex column and value decoding.
-            int32_t readSize = fi.Size;
-            int32_t expectedSize = InferScalarSize(fi.TypeName);
-            if (expectedSize > 0) readSize = expectedSize;
+            // Definition view: show field metadata only — do NOT read values
+            // from the definition object's memory.  The field offsets describe
+            // the data layout for *instances* of this struct, not the
+            // UScriptStruct/UClass C++ object itself (which has a completely
+            // different memory layout).
 
-            std::vector<uint8_t> byteBuf;
-            bool bytesOk = false;
-            if (readSize > 0 && readSize <= 256) {
-                byteBuf.resize(readSize, 0);
-                bytesOk = Mem::ReadBytesSafe(instanceAddr + fi.Offset, byteBuf.data(), readSize);
-                if (bytesOk) {
-                    std::string hex;
-                    hex.reserve(readSize * 2);
-                    for (auto b : byteBuf) {
-                        char hx[3];
-                        snprintf(hx, sizeof(hx), "%02X", b);
-                        hex += hx;
-                    }
-                    fv.hexValue = hex;
-                }
-            }
-
-            // Show extended type info for compound types, decode actual value for scalars
+            // Show extended type info for compound types
             if (!fi.structType.empty())
                 fv.typedValue = fi.structType;
             else if (!fi.objClassName.empty())
                 fv.typedValue = "\xE2\x86\x92 " + fi.objClassName;  // "→ ClassName"
             else if (!fi.enumName.empty())
                 fv.typedValue = fi.enumName;
-            else if (bytesOk && readSize > 0) {
-                // Decode actual value from memory using InterpretValue
-                fv.typedValue = InterpretValue(fi.TypeName, byteBuf.data(), readSize);
-            }
 
             result.fields.push_back(fv);
         }
