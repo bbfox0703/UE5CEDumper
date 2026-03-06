@@ -38,7 +38,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 | Feature | Description |
 |---|---|
-| **AOB Scanning** | 128 AOB patterns + 5 symbol exports from 14 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. |
+| **AOB Scanning** | 132 AOB patterns + 5 symbol exports from 14 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. **Scan Hint Cache** remembers winning patterns per game for 3× faster repeat scans, with UI buttons to clear/reset the cache. |
 | **DynOff (Dynamic Offsets)** | Runtime probing of `FField`, `FProperty`, and `UStruct`. No more manual offset updating after game patches. |
 | **Live Walker** | Inspect instance memory data with real-time value updates. Navigate into pointers (→), inline structs ({}), and containers ([]). Breadcrumb trail for full navigation history. Auto-refresh with configurable interval. |
 | **Definition View** | Drill into UScriptStruct/UClass definitions to see field layouts, types, and live hex values. Works seamlessly with CE XML export for pointer chain navigation. |
@@ -49,7 +49,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 | **Class Structure** | Browse class definitions with full field layouts, types, offsets, and inheritance chains. |
 | **Multi-Format CE Export** | **CE XML** (pointer chain address records), **CSX** (CE Structure Dissect), **SDK Header** (.h), **CE Field** (single field), **CE AA Script** (Auto Assembler). Supports scalars, bitfields, structs, arrays, Map/Set, and UEnum DropDownLists. |
 | **Proxy DLL** | `version.dll` proxy injection — no Cheat Engine required. Place next to the game exe, launch, and connect the UI. |
-| **Modern UI** | External **Avalonia UI** connected via high-speed Named Pipe (29 JSON-RPC commands). Native AOT published. Keep your game performance smooth. |
+| **Modern UI** | External **Avalonia UI** connected via high-speed Named Pipe (30 JSON-RPC commands). Native AOT published. Keep your game performance smooth. |
 
 ---
 
@@ -105,7 +105,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 ## Important Notes
 
 * **Custom Data Structures**: In games like *FF7 Rebirth*, some critical data (e.g., HP) is stored in custom structures outside standard `UObjects`. The Live Walker can help investigate these regions, but direct discovery is not possible.
-* **GWorld Connectivity**: `GWorld` traversal works in ~60% of tested games. For others, use the **Object Tree** or **Instance Finder** as the primary entry point.
+* **GWorld Connectivity**: `GWorld` traversal works in ~95% of tested games (19 of 20). For the remainder, use the **Object Tree** or **Instance Finder** as the primary entry point.
 * **Container Limits**: Array/Map/Set element reading respects a configurable limit to avoid excessive memory reads. Adjust the **Array Limit** slider in the Live Walker when working with large containers.
 
 ---

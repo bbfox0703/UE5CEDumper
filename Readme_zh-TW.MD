@@ -38,7 +38,7 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 
 | 功能 | 說明 |
 |---|---|
-| **AOB 掃描** | 整合來自 14 個來源的 128 組 AOB 特徵碼 + 5 組符號匯出。支援 `FChunkedFixed` 與 `FFixed` 物件陣列，並可偵測加密 GObjects 與預設佈局。 |
+| **AOB 掃描** | 整合來自 14 個來源的 132 組 AOB 特徵碼 + 5 組符號匯出。支援 `FChunkedFixed` 與 `FFixed` 物件陣列，並可偵測加密 GObjects 與預設佈局。**掃描提示快取 (Scan Hint Cache)** 記憶每款遊戲的中選特徵碼，重複掃描速度提升 3 倍，並提供 UI 按鈕清除/重設快取。 |
 | **DynOff (動態偏移量)** | 執行時自動探測 `FField`、`FProperty` 與 `UStruct`。遊戲改版後不再需要手動更新偏移量。 |
 | **Live Walker (即時檢視)** | 即時檢查實例的記憶體數據，數值變動一目瞭然。支援指標導航 (→)、內嵌結構展開 ({})、容器深入 ([])。瀏覽軌跡 (Breadcrumb) 完整記錄導航歷程。可設定自動重新整理間隔。 |
 | **定義檢視 (Definition View)** | 深入 UScriptStruct/UClass 定義以查看欄位佈局、類型及即時 Hex 數值。與 CE XML 匯出無縫整合，支援指標鏈導航。 |
@@ -49,7 +49,7 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 | **類別結構 (Class Structure)** | 瀏覽類別定義的完整欄位佈局、類型、偏移量及繼承鏈。 |
 | **多格式 CE 匯出** | **CE XML** (指標鏈位址紀錄)、**CSX** (CE Structure Dissect)、**SDK Header** (.h)、**CE Field** (單一欄位)、**CE AA Script** (Auto Assembler)。支援純量、位元欄位、結構、陣列、Map/Set、及 UEnum 下拉選單。 |
 | **Proxy DLL** | `version.dll` 代理注入 — 不需要 Cheat Engine。將檔案放在遊戲 exe 旁，啟動遊戲後連接 UI 即可使用。 |
-| **現代化 UI** | 外部 **Avalonia UI** 透過高速具名管道連線 (29 組 JSON-RPC 指令)。以 Native AOT 發佈。確保遊戲執行效能不受影響。 |
+| **現代化 UI** | 外部 **Avalonia UI** 透過高速具名管道連線 (30 組 JSON-RPC 指令)。以 Native AOT 發佈。確保遊戲執行效能不受影響。 |
 
 ---
 
@@ -104,7 +104,7 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 ## 重要注意事項 (Important Notes)
 
 * **自定義數據結構**: 在如《FF7 Rebirth》等遊戲中，部分關鍵數據（如 HP）存儲在標準 `UObject` 之外的自定義結構中。Live Walker 可協助探查這些區域，但無法直接自動發現。
-* **GWorld 連通性**: `GWorld` 遍歷在約 60% 的實測遊戲中可正常運作。若無法運作，請改用 **Object Tree** 或 **Instance Finder** 作為主要進入點。
+* **GWorld 連通性**: `GWorld` 遍歷在約 95% 的實測遊戲中可正常運作（20 款中有 19 款）。若無法運作，請改用 **Object Tree** 或 **Instance Finder** 作為主要進入點。
 * **容器元素限制**: Array/Map/Set 的元素讀取受可調限制值控制，避免過度記憶體存取。如需處理大型容器，請在 Live Walker 中調整 **Array Limit** 滑桿。
 
 ---
