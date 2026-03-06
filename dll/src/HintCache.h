@@ -13,6 +13,7 @@
 // ============================================================
 
 #include <string>
+#include <cstdint>
 
 // Forward declare to avoid pulling OffsetFinder.h
 namespace OffsetFinder { struct EnginePointers; }
@@ -20,10 +21,17 @@ namespace OffsetFinder { struct EnginePointers; }
 namespace HintCache {
 
 /// Per-target hint: pattern ID to try first (empty = no hint).
+/// Also carries cached UE version to skip the slow DetectVersion scan.
 struct ScanHints {
     std::string gobjectsPatternId;
     std::string gnamesPatternId;
     std::string gworldPatternId;
+
+    // Cached UE version from previous scan (0 = no cached version).
+    // Only valid when hasVersionHint == true.
+    uint32_t    ueVersion        = 0;
+    bool        versionDetected  = false;  // true = version was reliably detected last time
+    bool        hasVersionHint   = false;  // true = ueVersion/versionDetected are populated
 };
 
 /// Load hints for a given PE hash from the cache file.

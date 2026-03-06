@@ -107,6 +107,9 @@
     <sys:String x:Key="str.Pointers.RegisterSymbolTip">Create CE AA Script that registers GWorld address as 'gworld_addr' symbol (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScan">Test Extra Scan</sys:String>
     <sys:String x:Key="str.Pointers.TestExtraScanHint">Dev test: simulate scan progress UI (does not actually rescan).</sys:String>
+    <sys:String x:Key="str.Pointers.ClearGameCache">Clear This Game</sys:String>
+    <sys:String x:Key="str.Pointers.ResetAllCache">Reset All</sys:String>
+    <sys:String x:Key="str.Pointers.CacheHint">Scan hint cache — clear cached patterns to force a full re-scan.</sys:String>
 
     <!-- Proxy Deploy -->
     <sys:String x:Key="str.ProxyDeploy.Scan">Scan Steam</sys:String>
@@ -233,6 +236,8 @@
     <sys:String x:Key="str.Tip.Pointers.CopyScan">Copy AOB scan hit address to clipboard</sys:String>
     <sys:String x:Key="str.Tip.Pointers.ExtraScan">Run aggressive fallback scan for missing pointers</sys:String>
     <sys:String x:Key="str.Tip.Pointers.TestExtraScan">Simulate scan progress UI (dev testing only)</sys:String>
+    <sys:String x:Key="str.Tip.Pointers.ClearGameCache">Remove cached scan hints for the current game (next scan will try all patterns)</sys:String>
+    <sys:String x:Key="str.Tip.Pointers.ResetAllCache">Rename the entire cache file with a numbered backup (.001-.010) and start fresh</sys:String>
 
     <!-- Tooltips: Proxy Deploy -->
     <sys:String x:Key="str.Tip.ProxyDeploy.Scan">Detect Steam-installed UE games</sys:String>

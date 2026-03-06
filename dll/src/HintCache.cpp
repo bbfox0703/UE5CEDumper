@@ -112,16 +112,23 @@ ScanHints LoadHints(const char* peHash) {
         if (gnIt != rec.end()) hints.gnamesPatternId   = ExtractHint(*gnIt);
         if (gwIt != rec.end()) hints.gworldPatternId    = ExtractHint(*gwIt);
 
-        if (!hints.gobjectsPatternId.empty() || !hints.gnamesPatternId.empty() ||
-            !hints.gworldPatternId.empty()) {
-            LOG_INFO("HintCache: Loaded hints for PE=%s (GObj=%s, GNam=%s, GWld=%s)",
-                     peHash,
-                     hints.gobjectsPatternId.empty() ? "-" : hints.gobjectsPatternId.c_str(),
-                     hints.gnamesPatternId.empty()   ? "-" : hints.gnamesPatternId.c_str(),
-                     hints.gworldPatternId.empty()    ? "-" : hints.gworldPatternId.c_str());
-        } else {
-            LOG_INFO("HintCache: No AOB hints for PE=%s (methods were non-AOB or no record)", peHash);
+        // Extract cached UE version (skip expensive DetectVersion on repeat scans)
+        auto uvIt = rec.find("ueVersion");
+        auto vdIt = rec.find("versionDetected");
+        if (uvIt != rec.end() && uvIt->is_number_integer()) {
+            hints.ueVersion = uvIt->get<uint32_t>();
+            hints.versionDetected = (vdIt != rec.end() && vdIt->is_boolean())
+                                    ? vdIt->get<bool>() : false;
+            hints.hasVersionHint = true;
         }
+
+        LOG_INFO("HintCache: Loaded hints for PE=%s (GObj=%s, GNam=%s, GWld=%s, UE=%u%s)",
+                 peHash,
+                 hints.gobjectsPatternId.empty() ? "-" : hints.gobjectsPatternId.c_str(),
+                 hints.gnamesPatternId.empty()   ? "-" : hints.gnamesPatternId.c_str(),
+                 hints.gworldPatternId.empty()    ? "-" : hints.gworldPatternId.c_str(),
+                 hints.ueVersion,
+                 hints.hasVersionHint ? (hints.versionDetected ? " detected" : " inferred") : " none");
 
     } catch (const std::exception& ex) {
         LOG_WARN("HintCache: Failed to load hints: %s", ex.what());

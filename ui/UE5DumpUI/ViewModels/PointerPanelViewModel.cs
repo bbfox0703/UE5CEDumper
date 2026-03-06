@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
+using UE5DumpUI.Services;
 
 namespace UE5DumpUI.ViewModels;
 
@@ -13,6 +14,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     private readonly IDumpService? _dump;
     private readonly ILoggingService? _log;
     private readonly IAobMakerBridge? _aobMaker;
+    private readonly AobUsageService? _aobUsage;
 
     [ObservableProperty] private string _gObjectsAddress = "";
     [ObservableProperty] private string _gNamesAddress = "";
@@ -56,6 +58,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _scanStatusText = "";
     [ObservableProperty] private bool _scanComplete;
     [ObservableProperty] private string _scanResultText = "";
+
+    // --- Cache management ---
+    private string _peHash = "";
+    [ObservableProperty] private string _cacheStatusText = "";
 
     /// <summary>True when version detection failed — shows warning in UI.</summary>
     public bool ShowVersionWarning => HasData && !VersionDetected;
@@ -126,16 +132,24 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>Can send GWorld AOB scan hit address to CE disassembler (code address).</summary>
     public bool CanAsmGWorldScan => IsAobMakerAvailable && IsNonZeroAddr(GWorldScanAddr);
 
+    /// <summary>True when cache management buttons should be shown (connected + has AobUsageService).</summary>
+    public bool CanManageCache => HasData && _aobUsage != null;
+
+    /// <summary>True when the clear-this-game button should be enabled (has PE hash).</summary>
+    public bool CanClearGameCache => CanManageCache && !string.IsNullOrEmpty(_peHash);
+
     /// <summary>Fired when rescan results have been applied — MainWindowVM re-fetches state.</summary>
     public event Action? RescanApplied;
 
     public PointerPanelViewModel(IPlatformService platform, IDumpService? dump = null,
-                                ILoggingService? log = null, IAobMakerBridge? aobMaker = null)
+                                ILoggingService? log = null, IAobMakerBridge? aobMaker = null,
+                                AobUsageService? aobUsage = null)
     {
         _platform = platform;
         _dump = dump;
         _log = log;
         _aobMaker = aobMaker;
+        _aobUsage = aobUsage;
     }
 
     public void Update(string gobjects, string gnames, string gworld,
@@ -149,7 +163,8 @@ public partial class PointerPanelViewModel : ViewModelBase
                        string gobjectsScanAddr = "", string gnamesScanAddr = "",
                        string gworldScanAddr = "",
                        string gworldAob = "", int gworldAobPos = 0, int gworldAobLen = 0,
-                       string moduleName = "")
+                       string moduleName = "",
+                       string peHash = "")
     {
         GObjectsAddress = gobjects;
         GNamesAddress = gnames;
@@ -173,12 +188,14 @@ public partial class PointerPanelViewModel : ViewModelBase
         _gworldAobPos = gworldAobPos;
         _gworldAobLen = gworldAobLen;
         _moduleName = moduleName;
+        _peHash = peHash;
         HasData = true;
         // Reset scan state on fresh update
         IsScanning = false;
         ScanComplete = false;
         ScanStatusText = "";
         ScanResultText = "";
+        CacheStatusText = "";
         NotifyComputedProperties();
         // Check AOBMaker availability in background (fire-and-forget)
         _ = CheckAobMakerAsync();
@@ -214,6 +231,8 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasGNamesScanAddr));
         OnPropertyChanged(nameof(HasGWorldScanAddr));
         OnPropertyChanged(nameof(CanExtraScan));
+        OnPropertyChanged(nameof(CanManageCache));
+        OnPropertyChanged(nameof(CanClearGameCache));
         NotifyAobMakerProperties();
     }
 
@@ -448,6 +467,48 @@ public partial class PointerPanelViewModel : ViewModelBase
         else
             _log?.Warn(Constants.LogCatInit,
                 $"Failed to create CE symbol script '{symbolName}'");
+    }
+
+    // --- Cache management ---
+
+    [RelayCommand]
+    private async Task ClearGameCacheAsync()
+    {
+        if (_aobUsage == null || string.IsNullOrEmpty(_peHash)) return;
+
+        try
+        {
+            var removed = await _aobUsage.DeleteGameAsync(_peHash);
+            CacheStatusText = removed
+                ? "Cache cleared for this game. Next scan will do a full search."
+                : "No cache entry found for this game.";
+            _log?.Info(Constants.LogCatInit, $"ClearGameCache: PE={_peHash}, removed={removed}");
+        }
+        catch (Exception ex)
+        {
+            CacheStatusText = $"Error: {ex.Message}";
+            _log?.Error(Constants.LogCatInit, "ClearGameCache failed", ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task ResetAllCacheAsync()
+    {
+        if (_aobUsage == null) return;
+
+        try
+        {
+            var success = await _aobUsage.ResetAllAsync();
+            CacheStatusText = success
+                ? "All cache data reset. Backup saved as .001 file."
+                : "Failed to reset cache — check logs.";
+            _log?.Info(Constants.LogCatInit, $"ResetAllCache: success={success}");
+        }
+        catch (Exception ex)
+        {
+            CacheStatusText = $"Error: {ex.Message}";
+            _log?.Error(Constants.LogCatInit, "ResetAllCache failed", ex);
+        }
     }
 
     // --- Clipboard copy commands ---

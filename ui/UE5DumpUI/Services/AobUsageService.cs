@@ -127,6 +127,89 @@ public sealed class AobUsageService
         entry.PatternsHit = hit;
     }
 
+    /// <summary>
+    /// Delete a single game's cache entry by PE hash.
+    /// Returns true if the entry was found and removed, false otherwise.
+    /// </summary>
+    public async Task<bool> DeleteGameAsync(string peHash)
+    {
+        if (string.IsNullOrEmpty(peHash)) return false;
+
+        await _lock.WaitAsync();
+        try
+        {
+            var file = await LoadFileAsync();
+            if (!file.Games.Remove(peHash))
+            {
+                _log.Debug(Constants.LogCatInit, $"AobUsageService: PE={peHash} not in cache — nothing to delete");
+                return false;
+            }
+
+            await SaveFileAsync(file);
+            _log.Info(Constants.LogCatInit, $"AobUsageService: Deleted cache for PE={peHash}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Error(Constants.LogCatInit, "AobUsageService: Failed to delete game cache", ex);
+            return false;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Reset all cache data by renaming the JSON file with numbered backup extensions
+    /// (.001 through .010). Uses queue-purge: oldest backup is discarded when limit is reached.
+    /// Returns true if the reset succeeded (or file didn't exist), false on error.
+    /// </summary>
+    public async Task<bool> ResetAllAsync()
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            if (!File.Exists(_filePath))
+            {
+                _log.Debug(Constants.LogCatInit, "AobUsageService: No cache file to reset");
+                return true;
+            }
+
+            // Rotate backups: .010 is deleted, .009 → .010, ... .001 → .002, current → .001
+            const int maxBackups = 10;
+
+            // Delete the oldest backup if it exists
+            var oldest = $"{_filePath}.{maxBackups:D3}";
+            if (File.Exists(oldest))
+                File.Delete(oldest);
+
+            // Shift existing backups up by one
+            for (int i = maxBackups - 1; i >= 1; i--)
+            {
+                var src = $"{_filePath}.{i:D3}";
+                var dst = $"{_filePath}.{(i + 1):D3}";
+                if (File.Exists(src))
+                    File.Move(src, dst);
+            }
+
+            // Move current file to .001
+            File.Move(_filePath, $"{_filePath}.001");
+
+            _log.Info(Constants.LogCatInit, $"AobUsageService: Cache reset — backed up to {_filePath}.001");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Error(Constants.LogCatInit, "AobUsageService: Failed to reset cache", ex);
+            return false;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     /// <summary>File path for testing/diagnostics.</summary>
     public string FilePath => _filePath;
 }
