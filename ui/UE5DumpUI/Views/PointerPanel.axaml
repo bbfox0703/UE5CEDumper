@@ -4,6 +4,7 @@
              x:Class="UE5DumpUI.Views.PointerPanel"
              x:DataType="vm:PointerPanelViewModel">
 
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel Margin="16" Spacing="16">
     <!-- Not connected message -->
     <TextBlock Text="{StaticResource str.Pointers.NotConnected}"
@@ -258,6 +259,35 @@
         </StackPanel>
       </Border>
 
+      <!-- Cache Management — visible when connected and AobUsageService is available -->
+      <Border Background="#2D2D30" CornerRadius="4" Padding="16,12"
+              BorderBrush="#555" BorderThickness="1"
+              IsVisible="{Binding CanManageCache}">
+        <StackPanel Spacing="6">
+          <TextBlock Text="{StaticResource str.Pointers.CacheHint}"
+                     Foreground="#666" FontSize="11" TextWrapping="Wrap"/>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="{StaticResource str.Pointers.ClearGameCache}"
+                    Command="{Binding ClearGameCacheCommand}"
+                    IsEnabled="{Binding CanClearGameCache}"
+                    ToolTip.Tip="{StaticResource str.Tip.Pointers.ClearGameCache}"
+                    Padding="8,4" FontSize="11" Foreground="#E6A817"
+                    Background="Transparent" BorderThickness="1" BorderBrush="#555"
+                    Cursor="Hand"/>
+            <Button Content="{StaticResource str.Pointers.ResetAllCache}"
+                    Command="{Binding ResetAllCacheCommand}"
+                    ToolTip.Tip="{StaticResource str.Tip.Pointers.ResetAllCache}"
+                    Padding="8,4" FontSize="11" Foreground="#E05252"
+                    Background="Transparent" BorderThickness="1" BorderBrush="#555"
+                    Cursor="Hand"/>
+          </StackPanel>
+          <TextBlock Text="{Binding CacheStatusText}" Foreground="#4EC9B0"
+                     FontSize="11" TextWrapping="Wrap"
+                     IsVisible="{Binding CacheStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+        </StackPanel>
+      </Border>
+
     </StackPanel>
   </StackPanel>
+  </ScrollViewer>
 </UserControl>

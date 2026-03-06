@@ -147,7 +147,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
         ObjectTree = new ObjectTreeViewModel(dump, log, platform);
         ClassStruct = new ClassStructViewModel(dump, log);
-        Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker);
+        Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker, aobUsage);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform, aobMaker);
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
         PropertySearch = new PropertySearchViewModel(dump, log);
@@ -172,7 +172,8 @@ public partial class MainWindowViewModel : ViewModelBase
                     state.GObjectsPatternsHit, state.GNamesPatternsHit, state.GWorldPatternsHit,
                     state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr,
                     state.GWorldAob, state.GWorldAobPos, state.GWorldAobLen,
-                    state.ModuleName);
+                    state.ModuleName,
+                    state.PeHash);
 
                 ObjectTree.SetEngineState(state);
                 LiveWalker.SetEngineState(state);
@@ -399,7 +400,8 @@ public partial class MainWindowViewModel : ViewModelBase
             state.GObjectsPatternsHit, state.GNamesPatternsHit, state.GWorldPatternsHit,
             state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr,
             state.GWorldAob, state.GWorldAobPos, state.GWorldAobLen,
-            state.ModuleName);
+            state.ModuleName,
+            state.PeHash);
 
         ObjectTree.SetEngineState(state);
         LiveWalker.SetEngineState(state);
