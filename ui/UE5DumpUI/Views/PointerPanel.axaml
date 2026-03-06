@@ -4,6 +4,7 @@
              x:Class="UE5DumpUI.Views.PointerPanel"
              x:DataType="vm:PointerPanelViewModel">
 
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel Margin="16" Spacing="16">
     <!-- Not connected message -->
     <TextBlock Text="{StaticResource str.Pointers.NotConnected}"
@@ -288,4 +289,5 @@
 
     </StackPanel>
   </StackPanel>
+  </ScrollViewer>
 </UserControl>
