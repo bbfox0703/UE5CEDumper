@@ -418,13 +418,28 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             ClearError();
             IsScanning = true;
-            StatusText = "Scanning...";
+            StatusText = "Starting scan...";
 
-            var state = await _dump.TriggerScanAsync();
-            _engineState = state;
-            NeedsScan = false;
-            IsScanning = false;
-            ApplyEngineState(state);
+            // trigger_scan now returns immediately — scan runs in background
+            await _dump.TriggerScanAsync();
+
+            // Poll scan_status every 500ms until complete
+            while (true)
+            {
+                await Task.Delay(500);
+
+                var status = await _dump.GetScanStatusAsync();
+                StatusText = $"Scanning... {status.StatusText}";
+
+                if (!status.Running && status.Phase >= 7 && status.EngineState != null)
+                {
+                    _engineState = status.EngineState;
+                    NeedsScan = false;
+                    IsScanning = false;
+                    ApplyEngineState(status.EngineState);
+                    return;
+                }
+            }
         }
         catch (Exception ex)
         {

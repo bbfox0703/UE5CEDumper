@@ -951,18 +951,40 @@ public sealed class DumpService : IDumpService
         return BuildEngineState(res);
     }
 
-    public async Task<EngineState> TriggerScanAsync(CancellationToken ct = default)
+    public async Task TriggerScanAsync(CancellationToken ct = default)
     {
-        // trigger_scan may take several seconds (AOB scan + offset detection).
-        // The pipe timeout should be generous.
+        // trigger_scan now starts an async background scan and returns immediately.
         var req = new JsonObject { ["cmd"] = "trigger_scan" };
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
+    }
 
-        // trigger_scan returns full pointer data — same shape as get_pointers
-        var ueVersion = res["ue_version"]?.GetValue<int>() ?? 0;
-        var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
-        return BuildEngineState(res, ueVersion, versionDetected);
+    public async Task<ScanStatusResult> GetScanStatusAsync(CancellationToken ct = default)
+    {
+        var req = new JsonObject { ["cmd"] = "scan_status" };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        bool running = res["running"]?.GetValue<bool>() ?? false;
+        int phase = res["phase"]?.GetValue<int>() ?? 0;
+        string statusText = res["status_text"]?.GetValue<string>() ?? "";
+
+        // When complete, scan_status includes full pointer data
+        EngineState? engineState = null;
+        if (!running && res["scanned"]?.GetValue<bool>() == true)
+        {
+            var ueVersion = res["ue_version"]?.GetValue<int>() ?? 0;
+            var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
+            engineState = BuildEngineState(res, ueVersion, versionDetected);
+        }
+
+        return new ScanStatusResult
+        {
+            Running = running,
+            Phase = phase,
+            StatusText = statusText,
+            EngineState = engineState,
+        };
     }
 
     public async Task<InvokeFunctionResult> InvokeFunctionAsync(

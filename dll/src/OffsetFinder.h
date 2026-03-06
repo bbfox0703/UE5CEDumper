@@ -5,8 +5,13 @@
 // ============================================================
 
 #include <cstdint>
+#include <functional>
 
 namespace OffsetFinder {
+
+// Callback for reporting scan progress (phase 0-7, status text).
+// Phase: 0=idle, 1=version, 2=GObjects, 3=GNames, 4=GWorld, 5=init, 6=dynoff, 7=complete
+using ScanProgressFn = std::function<void(int phase, const char* text)>;
 
 struct EnginePointers {
     uintptr_t GObjects  = 0;   // FUObjectArray*
@@ -53,7 +58,8 @@ struct EnginePointers {
 
 // Scan and cache all global pointers
 // Returns false on failure, error details logged
-bool FindAll(EnginePointers& out);
+// progress: optional callback for UI progress reporting (phase 0-7)
+bool FindAll(EnginePointers& out, ScanProgressFn progress = nullptr);
 
 // Find GObjects (FUObjectArray) address
 uintptr_t FindGObjects();

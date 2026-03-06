@@ -40,6 +40,18 @@ private:
     std::unordered_map<uintptr_t, std::unique_ptr<WatchEntry>> m_watches;
     std::mutex m_watchMutex;
 
+    // Initial Scan (async trigger_scan for proxy DLL mode)
+    struct ScanState {
+        std::atomic<bool> running{false};
+        std::atomic<int>  phase{0};       // 0=idle, 1..6=scanning, 7=complete
+        std::string       statusText;
+        std::mutex        statusMutex;
+        std::thread       scanThread;
+        bool              completed = false;
+    };
+    ScanState m_scan;
+    void RunScan();
+
     // Extra Scan (user-triggered background rescan for missing pointers)
     struct RescanState {
         std::atomic<bool> running{false};

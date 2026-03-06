@@ -51,6 +51,23 @@ static PipeServer  s_pipeServer;
 static std::mutex  s_walkMutex;
 static ClassInfo   s_walkCache;
 
+// Global scan progress for UI polling (updated by UE5_Init, read by scan_status)
+namespace ScanProgress {
+    std::atomic<int>  phase{0};
+    std::string       statusText;
+    std::mutex        statusMutex;
+
+    void Set(int p, const char* text) {
+        phase.store(p, std::memory_order_release);
+        std::lock_guard<std::mutex> lock(statusMutex);
+        statusText = text;
+    }
+    std::string GetStatusText() {
+        std::lock_guard<std::mutex> lock(statusMutex);
+        return statusText;
+    }
+}
+
 // Helper: copy string to buffer safely
 static bool CopyToBuffer(const std::string& src, char* buf, int32_t bufLen) {
     if (!buf || bufLen <= 0) return false;
@@ -71,7 +88,9 @@ bool UE5_Init() {
     LOG_INFO("UE5_Init: Starting initialization...");
 
     OffsetFinder::EnginePointers ptrs;
-    OffsetFinder::FindAll(ptrs);  // Always succeeds; partial results are OK
+    OffsetFinder::FindAll(ptrs, [](int phase, const char* text) {
+        ScanProgress::Set(phase, text);
+    });
 
     g_cachedGObjects  = ptrs.GObjects;
     g_cachedGNames    = ptrs.GNames;
@@ -101,6 +120,7 @@ bool UE5_Init() {
     g_cachedGWorldAobLen = ptrs.gworldAobLen;
 
     // Initialize subsystems — only when their pointer was found
+    ScanProgress::Set(5, "Initializing subsystems...");
     if (ptrs.GNames) {
         if (ptrs.bUE4NameArray) {
             FNamePool::InitUE4(ptrs.GNames, ptrs.ue4StringOffset);
@@ -113,6 +133,7 @@ bool UE5_Init() {
     }
 
     // Sanity check + dynamic offset detection — only when BOTH are available
+    ScanProgress::Set(6, "Validating offsets...");
     if (ptrs.GObjects && ptrs.GNames) {
         // Quick sanity check: verify name resolution works for a few objects
         {
@@ -190,6 +211,8 @@ bool UE5_Init() {
         LOG_SUMMARY("  UProperty: Next=+0x%02X Offset=+0x%02X ElemSize=+0x%02X",
                     DynOff::UFIELD_NEXT, DynOff::UPROPERTY_OFFSET, DynOff::UPROPERTY_ELEMSIZE);
     }
+
+    ScanProgress::Set(7, "Complete");
 
     // Switch to Pipe channel — all subsequent runtime logging goes to pipe file
     Logger::SetChannel(LogChannel::Pipe);

@@ -2908,9 +2908,10 @@ uintptr_t ExtraScanGWorld() {
     return 0;
 }
 
-bool FindAll(EnginePointers& out) {
+bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     LOG_INFO("FindAll: Starting global pointer scan...");
 
+    if (progress) progress(1, "Detecting UE version...");
     out.UEVersion = DetectVersion();
     out.bVersionDetected = (out.UEVersion != 0);
     if (out.UEVersion == 0) {
@@ -2920,11 +2921,13 @@ bool FindAll(EnginePointers& out) {
     LOG_INFO("FindAll: UE Version = %u (detected=%s)", out.UEVersion,
              out.bVersionDetected ? "yes" : "no");
 
+    if (progress) progress(2, "Scanning GObjects...");
     out.GObjects = FindGObjects();
     if (!out.GObjects) {
         LOG_WARN("FindAll: Failed to find GObjects (will continue — Extra Scan may recover)");
     }
 
+    if (progress) progress(3, "Scanning GNames...");
     out.GNames = FindGNames();
     if (!out.GNames) {
         LOG_WARN("FindAll: Failed to find GNames (will continue — Extra Scan may recover)");
@@ -2953,6 +2956,7 @@ bool FindAll(EnginePointers& out) {
         }
     }
 
+    if (progress) progress(4, "Scanning GWorld...");
     out.GWorld = FindGWorld();
     out.gworldMethod = s_gworldMethod;
     // GWorld is non-critical, just log

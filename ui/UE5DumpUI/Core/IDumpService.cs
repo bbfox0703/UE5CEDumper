@@ -60,11 +60,17 @@ public interface IDumpService
 
     // --- Trigger Scan (proxy DLL deferred scan) ---
     /// <summary>
-    /// Trigger AOB scan from the UI. Used when proxy DLL starts without scanning
-    /// (pipe server only). Returns full engine state after scan completes.
+    /// Start async AOB scan. Used when proxy DLL starts without scanning.
+    /// Returns immediately — poll progress with GetScanStatusAsync().
     /// Also safe to call in CE/manual mode — UE5_Init is idempotent.
     /// </summary>
-    Task<EngineState> TriggerScanAsync(CancellationToken ct = default);
+    Task TriggerScanAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Poll scan progress after TriggerScanAsync(). Returns phase, status text,
+    /// and full EngineState when scan is complete (phase >= 7).
+    /// </summary>
+    Task<ScanStatusResult> GetScanStatusAsync(CancellationToken ct = default);
 
     // --- UFunction Invocation via Pipe ---
 
