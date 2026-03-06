@@ -164,16 +164,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 var state = await _dump.GetPointersAsync();
                 _engineState = state;
 
-                Pointers.Update(
-                    state.GObjectsAddr, state.GNamesAddr, state.GWorldAddr,
-                    state.UEVersion, state.VersionDetected, state.ObjectCount,
-                    state.GObjectsMethod, state.GNamesMethod, state.GWorldMethod,
-                    state.GObjectsPatternId, state.GNamesPatternId, state.GWorldPatternId,
-                    state.GObjectsPatternsHit, state.GNamesPatternsHit, state.GWorldPatternsHit,
-                    state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr,
-                    state.GWorldAob, state.GWorldAobPos, state.GWorldAobLen,
-                    state.ModuleName,
-                    state.PeHash);
+                Pointers.Update(state);
 
                 ObjectTree.SetEngineState(state);
                 LiveWalker.SetEngineState(state);
@@ -392,16 +383,7 @@ public partial class MainWindowViewModel : ViewModelBase
     /// </summary>
     private void ApplyEngineState(EngineState state)
     {
-        Pointers.Update(
-            state.GObjectsAddr, state.GNamesAddr, state.GWorldAddr,
-            state.UEVersion, state.VersionDetected, state.ObjectCount,
-            state.GObjectsMethod, state.GNamesMethod, state.GWorldMethod,
-            state.GObjectsPatternId, state.GNamesPatternId, state.GWorldPatternId,
-            state.GObjectsPatternsHit, state.GNamesPatternsHit, state.GWorldPatternsHit,
-            state.GObjectsScanAddr, state.GNamesScanAddr, state.GWorldScanAddr,
-            state.GWorldAob, state.GWorldAobPos, state.GWorldAobLen,
-            state.ModuleName,
-            state.PeHash);
+        Pointers.Update(state);
 
         ObjectTree.SetEngineState(state);
         LiveWalker.SetEngineState(state);

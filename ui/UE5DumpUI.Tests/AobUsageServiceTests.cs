@@ -166,4 +166,154 @@ public class AobUsageServiceTests : IDisposable
         Assert.Contains("TEST-MACHINE", svc.FilePath);
         Assert.Contains(Constants.AobUsageFilePrefix, svc.FilePath);
     }
+
+    // --- DeleteGameAsync tests ---
+
+    [Fact]
+    public async Task DeleteGame_RemovesExistingEntry()
+    {
+        var svc = CreateService();
+        await svc.RecordScanAsync(MakeState("AAAA0000BBBB1111", "Game1.exe"));
+        await svc.RecordScanAsync(MakeState("CCCC2222DDDD3333", "Game2.exe"));
+
+        var result = await svc.DeleteGameAsync("AAAA0000BBBB1111");
+
+        Assert.True(result);
+        var file = await svc.LoadFileAsync();
+        Assert.Single(file.Games);
+        Assert.False(file.Games.ContainsKey("AAAA0000BBBB1111"));
+        Assert.True(file.Games.ContainsKey("CCCC2222DDDD3333"));
+    }
+
+    [Fact]
+    public async Task DeleteGame_ReturnsFalseForMissingHash()
+    {
+        var svc = CreateService();
+        await svc.RecordScanAsync(MakeState());
+
+        var result = await svc.DeleteGameAsync("NONEXISTENT_HASH");
+
+        Assert.False(result);
+        // Original entry still intact
+        var file = await svc.LoadFileAsync();
+        Assert.Single(file.Games);
+    }
+
+    [Fact]
+    public async Task DeleteGame_ReturnsFalseForEmptyHash()
+    {
+        var svc = CreateService();
+        Assert.False(await svc.DeleteGameAsync(""));
+        Assert.False(await svc.DeleteGameAsync(null!));
+    }
+
+    [Fact]
+    public async Task DeleteGame_WorksWhenNoFileExists()
+    {
+        var svc = CreateService();
+        // File doesn't exist yet — LoadFileAsync returns empty AobUsageFile
+        var result = await svc.DeleteGameAsync("AAAA0000BBBB1111");
+        Assert.False(result);
+    }
+
+    // --- ResetAllAsync tests ---
+
+    [Fact]
+    public async Task ResetAll_RenamesFileToBackup001()
+    {
+        var svc = CreateService();
+        await svc.RecordScanAsync(MakeState());
+        Assert.True(File.Exists(svc.FilePath));
+
+        var result = await svc.ResetAllAsync();
+
+        Assert.True(result);
+        Assert.False(File.Exists(svc.FilePath));
+        Assert.True(File.Exists($"{svc.FilePath}.001"));
+    }
+
+    [Fact]
+    public async Task ResetAll_ReturnsTrueWhenNoFileExists()
+    {
+        var svc = CreateService();
+        Assert.False(File.Exists(svc.FilePath));
+
+        var result = await svc.ResetAllAsync();
+        Assert.True(result);
+    }
+
+    [Fact]
+    public async Task ResetAll_RotatesMultipleBackups()
+    {
+        var svc = CreateService();
+
+        // First scan + reset → .001
+        await svc.RecordScanAsync(MakeState("AAAA", "Game1.exe"));
+        await svc.ResetAllAsync();
+        Assert.True(File.Exists($"{svc.FilePath}.001"));
+
+        // Second scan + reset → old .001 → .002, new → .001
+        await svc.RecordScanAsync(MakeState("BBBB", "Game2.exe"));
+        await svc.ResetAllAsync();
+        Assert.True(File.Exists($"{svc.FilePath}.001"));
+        Assert.True(File.Exists($"{svc.FilePath}.002"));
+
+        // Verify content: .001 should be Game2, .002 should be Game1
+        var json1 = await File.ReadAllTextAsync($"{svc.FilePath}.001");
+        var json2 = await File.ReadAllTextAsync($"{svc.FilePath}.002");
+        Assert.Contains("BBBB", json1);
+        Assert.Contains("AAAA", json2);
+    }
+
+    [Fact]
+    public async Task ResetAll_PurgesOldestAtLimit()
+    {
+        var svc = CreateService();
+
+        // Create 10 backups manually (.001 through .010)
+        var dir = Path.GetDirectoryName(svc.FilePath)!;
+        Directory.CreateDirectory(dir);
+        for (int i = 1; i <= 10; i++)
+            await File.WriteAllTextAsync($"{svc.FilePath}.{i:D3}", $"backup-{i}");
+
+        // Create current file
+        await svc.RecordScanAsync(MakeState("NEWEST", "NewGame.exe"));
+
+        // Reset — should delete .010, shift .009→.010 ... .001→.002, current→.001
+        var result = await svc.ResetAllAsync();
+        Assert.True(result);
+
+        // .001 should be the newest (just-moved current file)
+        Assert.True(File.Exists($"{svc.FilePath}.001"));
+        var json1 = await File.ReadAllTextAsync($"{svc.FilePath}.001");
+        Assert.Contains("NEWEST", json1);
+
+        // .010 should be the old .009 content ("backup-9")
+        Assert.True(File.Exists($"{svc.FilePath}.010"));
+        var json10 = await File.ReadAllTextAsync($"{svc.FilePath}.010");
+        Assert.Equal("backup-9", json10);
+
+        // Original .010 ("backup-10") should be gone — purged
+        Assert.DoesNotContain("backup-10", json10);
+    }
+
+    [Fact]
+    public async Task ResetAll_NewRecordWritesAfterReset()
+    {
+        var svc = CreateService();
+        await svc.RecordScanAsync(MakeState("OLD_HASH", "OldGame.exe"));
+        await svc.ResetAllAsync();
+
+        // New scan after reset should create fresh file
+        await svc.RecordScanAsync(MakeState("NEW_HASH", "NewGame.exe"));
+
+        Assert.True(File.Exists(svc.FilePath));
+        var file = await svc.LoadFileAsync();
+        Assert.Single(file.Games);
+        Assert.True(file.Games.ContainsKey("NEW_HASH"));
+        Assert.False(file.Games.ContainsKey("OLD_HASH"));
+
+        // Backup should still exist
+        Assert.True(File.Exists($"{svc.FilePath}.001"));
+    }
 }

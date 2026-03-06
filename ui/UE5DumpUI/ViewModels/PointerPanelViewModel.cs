@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
+using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 
 namespace UE5DumpUI.ViewModels;
@@ -152,43 +153,31 @@ public partial class PointerPanelViewModel : ViewModelBase
         _aobUsage = aobUsage;
     }
 
-    public void Update(string gobjects, string gnames, string gworld,
-                       int ueVersion, bool versionDetected, int totalObjects,
-                       string gobjectsMethod = "aob", string gnamesMethod = "aob",
-                       string gworldMethod = "aob",
-                       string gobjectsPatternId = "", string gnamesPatternId = "",
-                       string gworldPatternId = "",
-                       int gobjectsPatternsHit = 0, int gnamesPatternsHit = 0,
-                       int gworldPatternsHit = 0,
-                       string gobjectsScanAddr = "", string gnamesScanAddr = "",
-                       string gworldScanAddr = "",
-                       string gworldAob = "", int gworldAobPos = 0, int gworldAobLen = 0,
-                       string moduleName = "",
-                       string peHash = "")
+    public void Update(EngineState state)
     {
-        GObjectsAddress = gobjects;
-        GNamesAddress = gnames;
-        GWorldAddress = gworld;
-        UeVersion = ueVersion;
-        VersionDetected = versionDetected;
-        TotalObjects = totalObjects;
-        GObjectsMethod = gobjectsMethod;
-        GNamesMethod = gnamesMethod;
-        GWorldMethod = gworldMethod;
-        GObjectsPatternId = gobjectsPatternId;
-        GNamesPatternId = gnamesPatternId;
-        GWorldPatternId = gworldPatternId;
-        GObjectsPatternsHit = gobjectsPatternsHit;
-        GNamesPatternsHit = gnamesPatternsHit;
-        GWorldPatternsHit = gworldPatternsHit;
-        GObjectsScanAddr = gobjectsScanAddr;
-        GNamesScanAddr = gnamesScanAddr;
-        GWorldScanAddr = gworldScanAddr;
-        _gworldAob = gworldAob;
-        _gworldAobPos = gworldAobPos;
-        _gworldAobLen = gworldAobLen;
-        _moduleName = moduleName;
-        _peHash = peHash;
+        GObjectsAddress = state.GObjectsAddr;
+        GNamesAddress = state.GNamesAddr;
+        GWorldAddress = state.GWorldAddr;
+        UeVersion = state.UEVersion;
+        VersionDetected = state.VersionDetected;
+        TotalObjects = state.ObjectCount;
+        GObjectsMethod = state.GObjectsMethod;
+        GNamesMethod = state.GNamesMethod;
+        GWorldMethod = state.GWorldMethod;
+        GObjectsPatternId = state.GObjectsPatternId;
+        GNamesPatternId = state.GNamesPatternId;
+        GWorldPatternId = state.GWorldPatternId;
+        GObjectsPatternsHit = state.GObjectsPatternsHit;
+        GNamesPatternsHit = state.GNamesPatternsHit;
+        GWorldPatternsHit = state.GWorldPatternsHit;
+        GObjectsScanAddr = state.GObjectsScanAddr;
+        GNamesScanAddr = state.GNamesScanAddr;
+        GWorldScanAddr = state.GWorldScanAddr;
+        _gworldAob = state.GWorldAob;
+        _gworldAobPos = state.GWorldAobPos;
+        _gworldAobLen = state.GWorldAobLen;
+        _moduleName = state.ModuleName;
+        _peHash = state.PeHash;
         HasData = true;
         // Reset scan state on fresh update
         IsScanning = false;
