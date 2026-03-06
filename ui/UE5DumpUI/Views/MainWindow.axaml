@@ -10,19 +10,13 @@
         MinWidth="800" MinHeight="500">
 
   <DockPanel>
-    <!-- Top Toolbar -->
-    <Border DockPanel.Dock="Top" Background="#2D2D2D" Height="44" Padding="8,0">
-      <DockPanel VerticalAlignment="Center">
-        <!-- Version label — right-aligned -->
-        <TextBlock DockPanel.Dock="Right"
-                   Text="{Binding AppVersion}"
-                   Foreground="#808080"
-                   FontSize="11"
-                   VerticalAlignment="Center"
-                   Margin="8,0"/>
+    <!-- Top Toolbar (WrapPanel for adaptive layout) -->
+    <Border DockPanel.Dock="Top" Background="#2D2D2D" Padding="8,4">
+      <WrapPanel Orientation="Horizontal">
 
-        <!-- Left content: buttons + status + error -->
-        <StackPanel Orientation="Horizontal" Spacing="8">
+        <!-- Connection buttons + status -->
+        <StackPanel Orientation="Horizontal" Spacing="8"
+                    VerticalAlignment="Center" Margin="0,2">
           <Button Content="{StaticResource str.Connect}"
                   Command="{Binding ConnectCommand}"
                   IsVisible="{Binding !IsConnected}"
@@ -33,8 +27,6 @@
                   IsVisible="{Binding IsConnected}"
                   ToolTip.Tip="{StaticResource str.Tip.Disconnect}"
                   Padding="12,4"/>
-
-          <!-- Start Scan button — visible in proxy DLL mode (connected but not yet scanned) -->
           <Button Content="{StaticResource str.Toolbar.StartScan}"
                   Command="{Binding TriggerScanCommand}"
                   IsVisible="{Binding NeedsScan}"
@@ -42,40 +34,42 @@
                   ToolTip.Tip="{StaticResource str.Tip.StartScan}"
                   Classes="accent" Padding="12,4"
                   FontWeight="Bold"/>
-
           <TextBlock Text="{Binding StatusText}"
                      Foreground="#4EC9B0"
                      VerticalAlignment="Center"
-                     Margin="12,0"/>
-
-          <!-- Error display -->
+                     Margin="4,0"/>
           <TextBlock Text="{Binding ErrorMessage}"
                      Foreground="#F44747"
                      VerticalAlignment="Center"
-                     Margin="12,0"
                      IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+        </StackPanel>
 
-          <!-- Address format selector -->
+        <!-- Address format selector -->
+        <StackPanel Orientation="Horizontal" Spacing="4"
+                    VerticalAlignment="Center" Margin="8,2">
           <TextBlock Text="{StaticResource str.Toolbar.AddressFormat}"
                      Foreground="#CCCCCC" FontSize="12"
-                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+                     VerticalAlignment="Center"/>
           <ComboBox ItemsSource="{Binding AddressFormatOptions}"
                     SelectedIndex="{Binding SelectedAddressFormatIndex}"
                     ToolTip.Tip="{StaticResource str.Tip.AddressFormat}"
                     MinWidth="140" Padding="4,2" FontSize="12"
                     VerticalAlignment="Center"/>
+        </StackPanel>
 
-          <!-- CE XML collapse toggle -->
-          <CheckBox Content="{StaticResource str.Toolbar.CollapsePointers}"
-                    IsChecked="{Binding CollapsePointerNodes}"
-                    ToolTip.Tip="{StaticResource str.Tip.CollapsePointers}"
-                    Foreground="#CCCCCC" FontSize="12"
-                    VerticalAlignment="Center" Margin="12,0"/>
+        <!-- CE XML collapse toggle -->
+        <CheckBox Content="{StaticResource str.Toolbar.CollapsePointers}"
+                  IsChecked="{Binding CollapsePointerNodes}"
+                  ToolTip.Tip="{StaticResource str.Tip.CollapsePointers}"
+                  Foreground="#CCCCCC" FontSize="12"
+                  VerticalAlignment="Center" Margin="8,2"/>
 
-          <!-- Array element limit slider (2^N steps: 2..16384) -->
+        <!-- Array Limit slider group -->
+        <StackPanel Orientation="Horizontal" Spacing="4"
+                    VerticalAlignment="Center" Margin="8,2">
           <TextBlock Text="{StaticResource str.Toolbar.ArrayLimit}"
                      Foreground="#CCCCCC" FontSize="12"
-                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+                     VerticalAlignment="Center"/>
           <Slider Value="{Binding ArrayLimitExponent}"
                   Minimum="1" Maximum="14"
                   TickFrequency="1" IsSnapToTickEnabled="True"
@@ -84,17 +78,19 @@
                   VerticalAlignment="Center"/>
           <TextBlock Text="{Binding ArrayLimit}"
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
-                     VerticalAlignment="Center" MinWidth="35"
-                     Margin="4,0"/>
+                     VerticalAlignment="Center" MinWidth="35"/>
           <TextBlock Text="{StaticResource str.Toolbar.ArrayLimitWarn}"
                      Foreground="#F4A747" FontSize="11"
-                     VerticalAlignment="Center" Margin="4,0"
+                     VerticalAlignment="Center"
                      IsVisible="{Binding ShowArrayLimitWarning}"/>
+        </StackPanel>
 
-          <!-- CE DropDownList max entries slider (2^N steps: 64..8192) -->
+        <!-- DropDown Limit slider group -->
+        <StackPanel Orientation="Horizontal" Spacing="4"
+                    VerticalAlignment="Center" Margin="8,2">
           <TextBlock Text="{StaticResource str.Toolbar.DropDownLimit}"
                      Foreground="#CCCCCC" FontSize="12"
-                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+                     VerticalAlignment="Center"/>
           <Slider Value="{Binding DropDownLimitExponent}"
                   Minimum="6" Maximum="13"
                   TickFrequency="1" IsSnapToTickEnabled="True"
@@ -103,13 +99,15 @@
                   VerticalAlignment="Center"/>
           <TextBlock Text="{Binding DropDownLimit}"
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
-                     VerticalAlignment="Center" MinWidth="35"
-                     Margin="4,0"/>
+                     VerticalAlignment="Center" MinWidth="35"/>
+        </StackPanel>
 
-          <!-- Struct preview sub-field limit (0 = no preview, default 2, max 6) -->
+        <!-- Preview limit slider group -->
+        <StackPanel Orientation="Horizontal" Spacing="4"
+                    VerticalAlignment="Center" Margin="8,2">
           <TextBlock Text="{StaticResource str.Toolbar.PreviewLimit}"
                      Foreground="#CCCCCC" FontSize="12"
-                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+                     VerticalAlignment="Center"/>
           <Slider Value="{Binding PreviewLimit}"
                   Minimum="0" Maximum="6"
                   TickFrequency="1" IsSnapToTickEnabled="True"
@@ -118,13 +116,15 @@
                   VerticalAlignment="Center"/>
           <TextBlock Text="{Binding PreviewLimit}"
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
-                     VerticalAlignment="Center" MinWidth="15"
-                     Margin="4,0"/>
+                     VerticalAlignment="Center" MinWidth="15"/>
+        </StackPanel>
 
-          <!-- CSX drilldown depth (0 = flat, 1+ = real child structures) -->
+        <!-- CSX Depth slider group -->
+        <StackPanel Orientation="Horizontal" Spacing="4"
+                    VerticalAlignment="Center" Margin="8,2">
           <TextBlock Text="{StaticResource str.Toolbar.CsxDepth}"
                      Foreground="#CCCCCC" FontSize="12"
-                     VerticalAlignment="Center" Margin="12,0,4,0"/>
+                     VerticalAlignment="Center"/>
           <Slider Value="{Binding CsxDrilldownDepth}"
                   Minimum="0" Maximum="4"
                   TickFrequency="1" IsSnapToTickEnabled="True"
@@ -133,34 +133,38 @@
                   VerticalAlignment="Center"/>
           <TextBlock Text="{Binding CsxDrilldownDepth}"
                      Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
-                     VerticalAlignment="Center" MinWidth="15"
-                     Margin="4,0"/>
-
-          <!-- Export dropdown -->
-          <Border Margin="12,0,0,0" VerticalAlignment="Center"
-                  IsVisible="{Binding IsConnected}">
-            <DropDownButton Content="{StaticResource str.Toolbar.Export}"
-                            ToolTip.Tip="{StaticResource str.Tip.Export}"
-                            Padding="8,3" FontSize="12">
-              <DropDownButton.Flyout>
-                <MenuFlyout>
-                  <MenuItem Header="{StaticResource str.Export.SymbolsX64dbg}"
-                            Command="{Binding ExportSymbolsX64dbgCommand}"/>
-                  <MenuItem Header="{StaticResource str.Export.SymbolsGhidra}"
-                            Command="{Binding ExportSymbolsGhidraCommand}"/>
-                  <MenuItem Header="{StaticResource str.Export.SymbolsIda}"
-                            Command="{Binding ExportSymbolsIdaCommand}"/>
-                  <Separator/>
-                  <MenuItem Header="{StaticResource str.Export.SdkHeader}"
-                            Command="{Binding ExportFullSdkCommand}"/>
-                  <MenuItem Header="{StaticResource str.Export.Usmap}"
-                            Command="{Binding ExportUsmapCommand}"/>
-                </MenuFlyout>
-              </DropDownButton.Flyout>
-            </DropDownButton>
-          </Border>
+                     VerticalAlignment="Center" MinWidth="15"/>
         </StackPanel>
-      </DockPanel>
+
+        <!-- Export dropdown -->
+        <Border Margin="8,2" VerticalAlignment="Center"
+                IsVisible="{Binding IsConnected}">
+          <DropDownButton Content="{StaticResource str.Toolbar.Export}"
+                          ToolTip.Tip="{StaticResource str.Tip.Export}"
+                          Padding="8,3" FontSize="12">
+            <DropDownButton.Flyout>
+              <MenuFlyout>
+                <MenuItem Header="{StaticResource str.Export.SymbolsX64dbg}"
+                          Command="{Binding ExportSymbolsX64dbgCommand}"/>
+                <MenuItem Header="{StaticResource str.Export.SymbolsGhidra}"
+                          Command="{Binding ExportSymbolsGhidraCommand}"/>
+                <MenuItem Header="{StaticResource str.Export.SymbolsIda}"
+                          Command="{Binding ExportSymbolsIdaCommand}"/>
+                <Separator/>
+                <MenuItem Header="{StaticResource str.Export.SdkHeader}"
+                          Command="{Binding ExportFullSdkCommand}"/>
+                <MenuItem Header="{StaticResource str.Export.Usmap}"
+                          Command="{Binding ExportUsmapCommand}"/>
+              </MenuFlyout>
+            </DropDownButton.Flyout>
+          </DropDownButton>
+        </Border>
+
+        <!-- Version label -->
+        <TextBlock Text="{Binding AppVersion}"
+                   Foreground="#808080" FontSize="11"
+                   VerticalAlignment="Center" Margin="8,2"/>
+      </WrapPanel>
     </Border>
 
     <!-- Main Content: Left Tree + Right Tabs -->
