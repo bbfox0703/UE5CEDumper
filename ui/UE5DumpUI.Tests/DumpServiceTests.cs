@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using UE5DumpUI.Core;
+using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
 
@@ -333,6 +334,252 @@ public class DumpServiceTests
         var field = result.Fields[0];
         Assert.Equal(500, field.ArrayCount);
         Assert.Null(field.ArrayElements);
+    }
+
+    // --- WalkFunctionsAsync: struct_fields parsing ---
+
+    [Fact]
+    public async Task WalkFunctionsAsync_ParsesStructFields()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["count"] = 1,
+            ["functions"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "SetAttribute",
+                    ["full"] = "Function SetAttribute",
+                    ["addr"] = "0x100",
+                    ["flags"] = (uint)0,
+                    ["num_parms"] = (byte)1,
+                    ["parms_size"] = (ushort)8,
+                    ["ret_offset"] = (ushort)0xFFFF,
+                    ["ret"] = "",
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["name"] = "NewValue",
+                            ["type"] = "StructProperty",
+                            ["size"] = 8,
+                            ["offset"] = 0,
+                            ["out"] = false,
+                            ["ret"] = false,
+                            ["struct_type"] = "GameplayAttributeData",
+                            ["struct_fields"] = new JsonArray
+                            {
+                                new JsonObject { ["name"] = "BaseValue", ["type"] = "FloatProperty", ["offset"] = 0, ["size"] = 4 },
+                                new JsonObject { ["name"] = "CurrentValue", ["type"] = "FloatProperty", ["offset"] = 4, ["size"] = 4 },
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000");
+
+        Assert.Single(funcs);
+        Assert.Single(funcs[0].Params);
+        var param = funcs[0].Params[0];
+        Assert.Equal("StructProperty", param.TypeName);
+        Assert.Equal("GameplayAttributeData", param.StructName);
+        Assert.Equal(2, param.StructFields.Count);
+        Assert.Equal("BaseValue", param.StructFields[0].Name);
+        Assert.Equal("FloatProperty", param.StructFields[0].TypeName);
+        Assert.Equal(0, param.StructFields[0].Offset);
+        Assert.Equal(4, param.StructFields[0].Size);
+        Assert.Equal("CurrentValue", param.StructFields[1].Name);
+        Assert.Equal(4, param.StructFields[1].Offset);
+    }
+
+    [Fact]
+    public async Task WalkFunctionsAsync_MissingStructFields_EmptyList()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["count"] = 1,
+            ["functions"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "OldFunc",
+                    ["full"] = "Function OldFunc",
+                    ["addr"] = "0x100",
+                    ["flags"] = (uint)0,
+                    ["num_parms"] = (byte)1,
+                    ["parms_size"] = (ushort)4,
+                    ["ret_offset"] = (ushort)0xFFFF,
+                    ["ret"] = "",
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["name"] = "Amount",
+                            ["type"] = "IntProperty",
+                            ["size"] = 4,
+                            ["offset"] = 0,
+                            ["out"] = false,
+                            ["ret"] = false,
+                            // No struct_fields key — backward compat
+                        }
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000");
+
+        Assert.Single(funcs);
+        var param = funcs[0].Params[0];
+        Assert.Empty(param.StructFields);
+    }
+
+    [Fact]
+    public async Task WalkFunctionsAsync_StructParamNoFields_EmptyList()
+    {
+        // StructProperty with struct_type but no struct_fields (DLL couldn't resolve)
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["count"] = 1,
+            ["functions"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "DoThing",
+                    ["full"] = "Function DoThing",
+                    ["addr"] = "0x100",
+                    ["flags"] = (uint)0,
+                    ["num_parms"] = (byte)1,
+                    ["parms_size"] = (ushort)16,
+                    ["ret_offset"] = (ushort)0xFFFF,
+                    ["ret"] = "",
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["name"] = "Data",
+                            ["type"] = "StructProperty",
+                            ["size"] = 16,
+                            ["offset"] = 0,
+                            ["out"] = false,
+                            ["ret"] = false,
+                            ["struct_type"] = "CustomStruct",
+                            // No struct_fields
+                        }
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000");
+
+        var param = funcs[0].Params[0];
+        Assert.Equal("CustomStruct", param.StructName);
+        Assert.Empty(param.StructFields);
+    }
+
+    // --- WalkInstanceAsync: definition object (ScriptStruct/Class) ---
+
+    [Fact]
+    public async Task WalkInstanceAsync_DefinitionObject_ParsesFieldsCorrectly()
+    {
+        // Simulates walk_instance response when instanceAddr is a UScriptStruct definition.
+        // DLL detects className="ScriptStruct" and returns field definitions via WalkClassEx.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x7FF12345",
+            ["name"] = "JackDataTableCoinShop",
+            ["class"] = "ScriptStruct",
+            ["class_addr"] = "0x7FF00100",
+            ["outer"] = "0x7FF00200",
+            ["outer_name"] = "CoinShopPackage",
+            ["outer_class"] = "Package",
+            ["is_definition"] = true,
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "ItemID",
+                    ["type"] = "IntProperty",
+                    ["offset"] = 0,
+                    ["size"] = 4,
+                    // No hex or value — definition only
+                },
+                new JsonObject
+                {
+                    ["name"] = "Price",
+                    ["type"] = "FloatProperty",
+                    ["offset"] = 4,
+                    ["size"] = 4,
+                    ["value"] = "",
+                },
+                new JsonObject
+                {
+                    ["name"] = "ItemClass",
+                    ["type"] = "ObjectProperty",
+                    ["offset"] = 8,
+                    ["size"] = 8,
+                    ["value"] = "\u2192 ItemBase",
+                },
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x7FF12345");
+
+        Assert.Equal("JackDataTableCoinShop", result.Name);
+        Assert.Equal("ScriptStruct", result.ClassName);
+        Assert.True(result.IsDefinition);
+        Assert.Equal(3, result.Fields.Count);
+
+        Assert.Equal("ItemID", result.Fields[0].Name);
+        Assert.Equal("IntProperty", result.Fields[0].TypeName);
+        Assert.Equal(0, result.Fields[0].Offset);
+        Assert.Equal(4, result.Fields[0].Size);
+
+        Assert.Equal("Price", result.Fields[1].Name);
+        Assert.Equal("FloatProperty", result.Fields[1].TypeName);
+        Assert.Equal(4, result.Fields[1].Offset);
+
+        Assert.Equal("ItemClass", result.Fields[2].Name);
+        Assert.Equal("ObjectProperty", result.Fields[2].TypeName);
+        Assert.Equal("\u2192 ItemBase", result.Fields[2].TypedValue);
+    }
+
+    [Fact]
+    public async Task WalkInstanceAsync_DefinitionObject_EmptyFields()
+    {
+        // UScriptStruct with no properties → empty field list
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x7FF12345",
+            ["name"] = "EmptyStruct",
+            ["class"] = "ScriptStruct",
+            ["class_addr"] = "0x7FF00100",
+            ["outer"] = "0x0",
+            ["outer_name"] = "",
+            ["outer_class"] = "",
+            ["fields"] = new JsonArray()
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x7FF12345");
+
+        Assert.Equal("EmptyStruct", result.Name);
+        Assert.Equal("ScriptStruct", result.ClassName);
+        // Backward compat: no is_definition key → false
+        Assert.False(result.IsDefinition);
+        Assert.Empty(result.Fields);
     }
 
     [Fact]

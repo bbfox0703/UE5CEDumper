@@ -227,6 +227,24 @@ public sealed class LiveFieldValue
     /// <summary>For StrProperty: decoded UTF-8 string value.</summary>
     public string StrValue { get; init; } = "";
 
+    /// <summary>For DataTable RowMap: number of rows (-1 = not a DataTable).</summary>
+    public int DataTableRowCount { get; init; } = -1;
+
+    /// <summary>For DataTable RowMap: row struct name (e.g., "JackDataTableRecipeBook").</summary>
+    public string DataTableStructName { get; init; } = "";
+
+    /// <summary>For DataTable RowMap: FName size in bytes (8 or 16 with CasePreservingName).</summary>
+    public int DataTableFNameSize { get; init; }
+
+    /// <summary>For DataTable RowMap: TSparseArray element stride (for CE XML offset calculation).</summary>
+    public int DataTableStride { get; init; }
+
+    /// <summary>For DataTable RowMap: UScriptStruct* address for row struct definition.</summary>
+    public string DataTableRowStructAddr { get; init; } = "";
+
+    /// <summary>For DataTable RowMap: row data for CE XML / CSX export (from WalkDataTableRowsAsync).</summary>
+    public List<DataTableRowInfo>? DataTableRowData { get; init; }
+
     /// <summary>Display-friendly value string.</summary>
     public string DisplayValue =>
         !string.IsNullOrEmpty(TypedValue) ? TypedValue :
@@ -237,15 +255,17 @@ public sealed class LiveFieldValue
             : ArrayCount >= 0 ? $"[{ArrayCount} elements]" :
         MapCount >= 0 ? FormatMapDisplay() :
         SetCount >= 0 ? FormatSetDisplay() :
+        DataTableRowCount >= 0 ? $"{{DataTable: {DataTableRowCount} rows, {DataTableStructName}}}" :
         !string.IsNullOrEmpty(StrValue) ? $"\"{StrValue}\"" :
         !string.IsNullOrEmpty(HexValue) ? HexValue :
         "";
 
-    /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set with data).</summary>
+    /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set/DataTable with data).</summary>
     public bool IsContainerNavigable =>
         (ArrayCount > 0 && !string.IsNullOrEmpty(ArrayInnerType)) ||
         (MapCount > 0 && !string.IsNullOrEmpty(MapKeyType)) ||
-        (SetCount > 0 && !string.IsNullOrEmpty(SetElemType));
+        (SetCount > 0 && !string.IsNullOrEmpty(SetElemType)) ||
+        DataTableRowCount > 0;
 
     /// <summary>Whether this field is a clickable pointer to another object.</summary>
     public bool IsNavigable =>

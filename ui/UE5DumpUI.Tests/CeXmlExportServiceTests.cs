@@ -1977,6 +1977,224 @@ public class CeXmlExportServiceTests
         return count;
     }
 
+    // ========================================
+    // DataTable CE XML tests
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_DataTableRows_Emits2LevelDerefChain()
+    {
+        // DataTable RowMap with 2 rows, stride=24, fnameSize=8
+        // Row 0: sparseIndex=0, row ptr at offset 0*24+8=8
+        // Row 1: sparseIndex=2, row ptr at offset 2*24+8=56=0x38
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 0,
+                DataTableRowCount = 2, DataTableStructName = "RecipeRow",
+                DataTableFNameSize = 8, DataTableStride = 24,
+                DataTableRowStructAddr = "0xABC",
+                DataTableRowData = new List<DataTableRowInfo>
+                {
+                    new()
+                    {
+                        SparseIndex = 0, RowName = "Recipe_Sword", DataAddr = "0x1000",
+                        Fields = new List<LiveFieldValue>
+                        {
+                            new() { Name = "Damage", TypeName = "FloatProperty", Offset = 0x0, Size = 4, TypedValue = "25.0" },
+                            new() { Name = "Level", TypeName = "IntProperty", Offset = 0x4, Size = 4, TypedValue = "5" },
+                        }
+                    },
+                    new()
+                    {
+                        SparseIndex = 2, RowName = "Recipe_Shield", DataAddr = "0x2000",
+                        Fields = new List<LiveFieldValue>
+                        {
+                            new() { Name = "Damage", TypeName = "FloatProperty", Offset = 0x0, Size = 4, TypedValue = "10.0" },
+                            new() { Name = "Level", TypeName = "IntProperty", Offset = 0x4, Size = 4, TypedValue = "3" },
+                        }
+                    },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "DT_Recipes", "UDataTable", fields);
+
+        // Level 1: RowMap group at +B0 with Offsets=[0] (deref TSparseArray.Data)
+        Assert.Contains("<Address>+B0</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        Assert.Contains("DataTable: 2 x RecipeRow", xml);
+
+        // Level 2: Row 0 at +8 (0*24+8) with Offsets=[0] (deref uint8*)
+        Assert.Contains("<Address>+8</Address>", xml);
+        Assert.Contains("[0] Recipe_Sword", xml);
+
+        // Level 2: Row 2 at +38 (2*24+8=56=0x38) with Offsets=[0] (deref uint8*)
+        Assert.Contains("<Address>+38</Address>", xml);
+        Assert.Contains("[2] Recipe_Shield", xml);
+
+        // Level 3: Field leaves inside rows
+        Assert.Contains("Damage", xml);
+        Assert.Contains("Level", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+
+        // Each row group should have Offsets=[0] for uint8* deref
+        // Count total Offset elements: Level 1 (1) + Row 0 (1) + Row 2 (1) = 3
+        var offsetCount = CountOccurrences(xml, "<Offset>0</Offset>");
+        Assert.Equal(3, offsetCount);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_DataTableRows_EmptyRows_EmitsPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 0,
+                DataTableRowCount = 5, DataTableStructName = "TestRow",
+                DataTableFNameSize = 0, DataTableStride = 0,
+                // No row data — placeholder expected
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "DT_Test", "UDataTable", fields);
+
+        // Should emit as placeholder (GroupHeader without children)
+        Assert.Contains("<Address>+B0</Address>", xml);
+        Assert.Contains("GroupHeader", xml);
+        // Should NOT have Offsets (placeholder has no deref)
+        Assert.DoesNotContain("<Offset>0</Offset>", xml);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_DataTableRowDrillIn_2LevelPointerChain()
+    {
+        // Simulate drill-in: DataTable → RowMap container → Row struct
+        // BC[0]: DataTable instance (pointer deref)
+        // BC[1]: RowMap container (container view, offset=0xB0)
+        // BC[2]: Row data (pointer deref for uint8*, offset=0x38)
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x7FF6AA000", "DT_Recipes", isPointer: true),
+            MakeBc("0x7FF6AA000", "RowMap [2 x RecipeRow]", "RowMap", offset: 0xB0, isContainerView: true),
+            MakeBc("0x1234000", "[2] Recipe_Shield (RecipeRow)", "[2] Recipe_Shield", isPointer: true, offset: 0x38),
+        };
+
+        var rowFields = new List<LiveFieldValue>
+        {
+            new() { Name = "Damage", TypeName = "FloatProperty", Offset = 0x0, Size = 4 },
+            new() { Name = "Level", TypeName = "IntProperty", Offset = 0x4, Size = 4 },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml(
+            "\"Game.exe\"+5000", "DT_Recipes", breadcrumbs, rowFields);
+
+        // Root: absolute address
+        Assert.Contains("\"Game.exe\"+5000", xml);
+
+        // BC[1] (RowMap container): +B0 with Offsets=[0] (deref Data)
+        Assert.Contains("<Address>+B0</Address>", xml);
+
+        // BC[2] (Row): +38 with Offsets=[0] (deref uint8*)
+        Assert.Contains("<Address>+38</Address>", xml);
+
+        // Leaf fields: +0 (Damage), +4 (Level)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+4</Address>", xml);
+
+        // 2-level deref: BC[1] and BC[2] each have Offsets=[0]
+        var offsetCount = CountOccurrences(xml, "<Offset>0</Offset>");
+        Assert.Equal(2, offsetCount);
+
+        // Field types present
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_DataTableRows_RowWithStrProperty_EmitsUnicodeString()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 0,
+                DataTableRowCount = 1, DataTableStructName = "ItemRow",
+                DataTableFNameSize = 8, DataTableStride = 24,
+                DataTableRowStructAddr = "0xABC",
+                DataTableRowData = new List<DataTableRowInfo>
+                {
+                    new()
+                    {
+                        SparseIndex = 0, RowName = "Item_Potion", DataAddr = "0x3000",
+                        Fields = new List<LiveFieldValue>
+                        {
+                            new() { Name = "DisplayName", TypeName = "StrProperty", Offset = 0x0, Size = 16 },
+                            new() { Name = "Price", TypeName = "IntProperty", Offset = 0x10, Size = 4 },
+                        }
+                    },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "DT_Items", "UDataTable", fields);
+
+        // StrProperty should emit as String type with Unicode
+        Assert.Contains("<VariableType>String</VariableType>", xml);
+        Assert.Contains("<Unicode>1</Unicode>", xml);
+        Assert.Contains("DisplayName", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_DataTableRows_RowWithEnumField_EmitsDropDown()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 0,
+                DataTableRowCount = 1, DataTableStructName = "ItemRow",
+                DataTableFNameSize = 8, DataTableStride = 24,
+                DataTableRowStructAddr = "0xABC",
+                DataTableRowData = new List<DataTableRowInfo>
+                {
+                    new()
+                    {
+                        SparseIndex = 0, RowName = "Item_Sword", DataAddr = "0x3000",
+                        Fields = new List<LiveFieldValue>
+                        {
+                            new()
+                            {
+                                Name = "ItemType", TypeName = "EnumProperty", Offset = 0x0, Size = 4,
+                                EnumName = "Weapon", EnumValue = 1, EnumAddr = "0xE001",
+                                EnumEntries = new List<EnumEntryValue>
+                                {
+                                    new() { Value = 0, Name = "None" },
+                                    new() { Value = 1, Name = "Weapon" },
+                                    new() { Value = 2, Name = "Armor" },
+                                }
+                            },
+                        }
+                    },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "DT_Items", "UDataTable", fields);
+
+        // EnumProperty in row should have DropDownList
+        Assert.Contains("DropDownList", xml);
+        Assert.Contains("Weapon", xml);
+        Assert.Contains("Armor", xml);
+    }
+
     private static BreadcrumbItem MakeBc(string addr, string label,
         string fieldName = "", bool isPointer = false, int offset = 0,
         bool isContainerView = false)

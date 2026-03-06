@@ -748,9 +748,17 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
 
-                            // StructProperty -> read UScriptStruct name
-                            if (param.typeName == "StructProperty")
+                            // StructProperty -> read UScriptStruct name + sub-field layout
+                            if (param.typeName == "StructProperty") {
                                 param.structType = ReadSubclassTypeName(cur);
+                                // Phase B: walk the UScriptStruct to discover sub-fields
+                                uintptr_t structPtr = 0;
+                                if (Mem::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr) && structPtr) {
+                                    ClassInfo structInfo = WalkClass(structPtr);
+                                    for (const auto& sf : structInfo.Fields)
+                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
+                                }
+                            }
 
                             if (param.isReturn)
                                 fi.returnType = param.typeName;
@@ -786,7 +794,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
 
-                            // UE4 StructProperty -> read UScriptStruct name
+                            // UE4 StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
                                 uintptr_t structPtr = 0;
                                 // UStructProperty::Struct is at UPROPERTY subclass extension offset
@@ -794,6 +802,10 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                     std::string sn = GetName(structPtr);
                                     if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
                                         param.structType = sn;
+                                    // Phase B: walk the UScriptStruct to discover sub-fields
+                                    ClassInfo structInfo = WalkClass(structPtr);
+                                    for (const auto& sf : structInfo.Fields)
+                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
                                 }
                             }
 
@@ -1731,6 +1743,44 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             uintptr_t outerClass  = GetClass(outerAddr);
             result.outerClassName = outerClass ? GetName(outerClass) : "";
         }
+    }
+
+    // Detect class/struct definition objects — show their field definitions
+    // instead of trying to read live instance data from the metaclass layout.
+    // E.g., DataTable RowStruct (ObjectProperty) points to a UScriptStruct definition;
+    // GetClass() returns the "ScriptStruct" metaclass, whose fields are empty/useless.
+    // Instead, treat instanceAddr as the class definition and walk its own FField chain.
+    if (result.className == "ScriptStruct" || result.className == "Class" ||
+        result.className == "BlueprintGeneratedClass" ||
+        result.className == "WidgetBlueprintGeneratedClass") {
+        result.isDefinition = true;
+        ClassInfo ci = WalkClassEx(instanceAddr);
+        if (!ci.Name.empty()) result.name = ci.Name;
+
+        for (const auto& fi : ci.Fields) {
+            LiveFieldValue fv;
+            fv.name     = fi.Name;
+            fv.typeName = fi.TypeName;
+            fv.offset   = fi.Offset;
+            fv.size     = fi.Size;
+
+            // Definition view: show field metadata only — do NOT read values
+            // from the definition object's memory.  The field offsets describe
+            // the data layout for *instances* of this struct, not the
+            // UScriptStruct/UClass C++ object itself (which has a completely
+            // different memory layout).
+
+            // Show extended type info for compound types
+            if (!fi.structType.empty())
+                fv.typedValue = fi.structType;
+            else if (!fi.objClassName.empty())
+                fv.typedValue = "\xE2\x86\x92 " + fi.objClassName;  // "→ ClassName"
+            else if (!fi.enumName.empty())
+                fv.typedValue = fi.enumName;
+
+            result.fields.push_back(fv);
+        }
+        return result;
     }
 
     // Walk the class to get field layout (cached after first call)
@@ -3188,6 +3238,280 @@ void ResolvePropertyPreviews(
             continue;
         }
     }
+}
+
+// ============================================================
+// DataTable Row Browsing
+// ============================================================
+
+// Probe for RowMap offset within a DataTable instance.
+// RowMap (TMap<FName, uint8*>) is NOT reflected — must scan memory.
+// Returns the byte offset of the TSparseArray within the DataTable, or -1 if not found.
+static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
+    // Find end of reflected data to start scanning from there
+    int32_t endReflected = 0;
+    for (const auto& fi : ci.Fields) {
+        int32_t fieldEnd = fi.Offset + fi.Size;
+        if (fieldEnd > endReflected)
+            endReflected = fieldEnd;
+    }
+    // Ensure 8-byte alignment
+    endReflected = (endReflected + 7) & ~7;
+
+    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int pairSize  = fnameSize + 8;  // FName + uint8*
+    int stride    = Mem::ComputeSetElementStride(pairSize);
+
+    // Scan forward from end of reflected properties, up to +256 bytes
+    for (int32_t delta = 0; delta <= 256; delta += 8) {
+        int32_t candidate = endReflected + delta;
+        Mem::TSparseArrayView sa;
+        if (!Mem::ReadTSparseArray(dataTableAddr + candidate, sa))
+            continue;
+
+        // Basic sanity
+        if (sa.Data == 0 || sa.MaxIndex <= 0)
+            continue;
+        if (sa.NumFreeIndices < 0 || sa.NumFreeIndices > sa.MaxIndex)
+            continue;
+        int32_t count = sa.MaxIndex - sa.NumFreeIndices;
+        if (count <= 0)
+            continue;
+
+        // Validate Data pointer range
+        if (sa.Data < 0x10000 || sa.Data > 0x7FFFFFFFFFFF)
+            continue;
+
+        // Extra validation: read first allocated element
+        bool validated = false;
+        for (int32_t idx = 0; idx < sa.MaxIndex && idx < 32; ++idx) {
+            if (!Mem::IsSparseIndexAllocated(sa, idx))
+                continue;
+
+            uintptr_t elemAddr = sa.Data + (idx * stride);
+
+            // Read FName key
+            int32_t compIndex = 0;
+            if (!Mem::ReadSafe(elemAddr, compIndex))
+                break;
+            std::string keyName = FNamePool::GetString(compIndex);
+            if (keyName.empty() || keyName == "None")
+                break;  // Legit RowMap entries have non-None row names
+
+            // Read uint8* value pointer
+            uintptr_t rowPtr = 0;
+            if (!Mem::ReadSafe(elemAddr + fnameSize, rowPtr))
+                break;
+            if (rowPtr < 0x10000 || rowPtr > 0x7FFFFFFFFFFF)
+                break;
+
+            validated = true;
+            break;
+        }
+
+        if (validated) {
+            Logger::Info("WALK", "ProbeRowMapOffset: found RowMap at DataTable+0x%X "
+                         "(count=%d, stride=%d)", candidate, count, stride);
+            return candidate;
+        }
+    }
+
+    Logger::Warn("WALK", "ProbeRowMapOffset: could not find RowMap (endReflected=0x%X)",
+                 endReflected);
+    return -1;
+}
+
+DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, int32_t limit) {
+    DataTableWalkResult result;
+    if (!dataTableAddr) {
+        result.error = "null address";
+        return result;
+    }
+
+    // Verify this is a DataTable
+    uintptr_t classAddr = GetClass(dataTableAddr);
+    std::string className = classAddr ? GetName(classAddr) : "";
+    if (className != "DataTable") {
+        result.error = "not a DataTable (class=" + className + ")";
+        return result;
+    }
+
+    // Walk the DataTable's class to find RowStruct field
+    ClassInfo ci = WalkClassEx(classAddr);
+    if (ci.Fields.empty()) {
+        result.error = "DataTable class has no reflected fields";
+        return result;
+    }
+
+    // Find RowStruct ObjectProperty and read its pointer value
+    uintptr_t rowStructAddr = 0;
+    for (const auto& fi : ci.Fields) {
+        if (fi.Name == "RowStruct" && (fi.TypeName == "ObjectProperty" || fi.TypeName == "ClassProperty")) {
+            Mem::ReadSafe(dataTableAddr + fi.Offset, rowStructAddr);
+            break;
+        }
+    }
+    if (!rowStructAddr) {
+        result.error = "RowStruct not found or null";
+        return result;
+    }
+
+    result.rowStructAddr = rowStructAddr;
+    result.rowStructName = GetName(rowStructAddr);
+
+    // Get field layout from RowStruct
+    ClassInfo rowCI = WalkClassEx(rowStructAddr);
+    if (rowCI.Fields.empty()) {
+        result.error = "RowStruct has no fields (name=" + result.rowStructName + ")";
+        return result;
+    }
+
+    // Probe for RowMap offset
+    int32_t rowMapOffset = ProbeRowMapOffset(dataTableAddr, ci);
+    if (rowMapOffset < 0) {
+        result.error = "RowMap not found by probing";
+        return result;
+    }
+    result.rowMapOffset = rowMapOffset;
+
+    // Read TSparseArray
+    Mem::TSparseArrayView sa;
+    if (!Mem::ReadTSparseArray(dataTableAddr + rowMapOffset, sa)) {
+        result.error = "Failed to read TSparseArray at RowMap offset";
+        return result;
+    }
+
+    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int pairSize  = fnameSize + 8;
+    int stride    = Mem::ComputeSetElementStride(pairSize);
+
+    result.fnameSize = fnameSize;
+    result.stride    = stride;
+    result.rowCount  = sa.MaxIndex - sa.NumFreeIndices;
+
+    // Iterate rows
+    int32_t read = 0;
+    int32_t skipped = 0;
+    for (int32_t idx = 0; idx < sa.MaxIndex && read < limit; ++idx) {
+        if (!Mem::IsSparseIndexAllocated(sa, idx))
+            continue;
+        // Skip entries before 'offset'
+        if (skipped < offset) { ++skipped; continue; }
+
+        uintptr_t elemAddr = sa.Data + (idx * stride);
+
+        DataTableRow row;
+        row.sparseIndex = idx;
+
+        // Read FName key
+        row.rowName = ReadFName(elemAddr);
+        if (row.rowName.empty()) row.rowName = "(unnamed)";
+
+        // Read uint8* value pointer (row data address)
+        uintptr_t rowPtr = 0;
+        if (!Mem::ReadSafe(elemAddr + fnameSize, rowPtr) || !rowPtr) {
+            row.rowName += " (null)";
+            result.rows.push_back(std::move(row));
+            ++read;
+            continue;
+        }
+        row.rowDataAddr = rowPtr;
+
+        // Bulk-read row data buffer (limited to 4KB)
+        int32_t rowSize = rowCI.PropertiesSize;
+        if (rowSize <= 0 || rowSize > 4096) rowSize = 256;  // fallback
+        std::vector<uint8_t> rowBuf(rowSize, 0);
+        bool rowBufOk = Mem::ReadBytesSafe(rowPtr, rowBuf.data(), rowSize);
+
+        // Read fields using RowStruct layout
+        for (const auto& fi : rowCI.Fields) {
+            LiveFieldValue fv;
+            fv.name     = fi.Name;
+            fv.typeName = fi.TypeName;
+            fv.offset   = fi.Offset;
+            fv.size     = fi.Size;
+
+            // Extended type info
+            if (!fi.structType.empty())
+                fv.structTypeName = fi.structType;
+
+            int32_t readSize = fi.Size;
+            int32_t expectedSize = InferScalarSize(fi.TypeName);
+            if (expectedSize > 0) readSize = expectedSize;
+
+            // Read from bulk buffer for scalar fields
+            if (rowBufOk && fi.Offset >= 0 && fi.Offset + readSize <= rowSize) {
+                const uint8_t* p = rowBuf.data() + fi.Offset;
+
+                // Hex value
+                std::string hex;
+                hex.reserve(readSize * 2);
+                for (int i = 0; i < readSize; ++i) {
+                    char hx[3];
+                    snprintf(hx, sizeof(hx), "%02X", p[i]);
+                    hex += hx;
+                }
+                fv.hexValue = hex;
+
+                // Typed value
+                fv.typedValue = InterpretValue(fi.TypeName, p, readSize);
+
+                // ObjectProperty: resolve pointer name
+                if ((fi.TypeName == "ObjectProperty" || fi.TypeName == "ClassProperty") && readSize >= 8) {
+                    uintptr_t ptr = 0;
+                    memcpy(&ptr, p, 8);
+                    if (ptr) {
+                        fv.ptrValue = ptr;
+                        fv.ptrName = GetName(ptr);
+                        uintptr_t cls = GetClass(ptr);
+                        if (cls) {
+                            fv.ptrClassName = GetName(cls);
+                            fv.ptrClassAddr = cls;
+                        }
+                    }
+                }
+
+                // StructProperty: set struct metadata for navigation
+                if (fi.TypeName == "StructProperty" && !fi.structType.empty()) {
+                    fv.structDataAddr = rowPtr + fi.Offset;
+                    // Read UScriptStruct* from the FProperty
+                    uintptr_t structClass = 0;
+                    if (Mem::ReadSafe(fi.Address + DynOff::FSTRUCTPROP_STRUCT, structClass) && structClass)
+                        fv.structClassAddr = structClass;
+                }
+
+                // StrProperty: decode FString value
+                if (fi.TypeName == "StrProperty") {
+                    fv.strValue = ReadFString(rowPtr, fi.Offset);
+                }
+
+                // EnumProperty: resolve enum name
+                if (fi.TypeName == "EnumProperty" || (fi.TypeName == "ByteProperty" && !fi.enumName.empty())) {
+                    int64_t rawVal = 0;
+                    if (readSize == 1) { uint8_t v = 0; memcpy(&v, p, 1); rawVal = v; }
+                    else if (readSize == 4) { int32_t v = 0; memcpy(&v, p, 4); rawVal = v; }
+                    else if (readSize == 8) { int64_t v = 0; memcpy(&v, p, 8); rawVal = v; }
+                    fv.enumValue = rawVal;
+                    // Resolve enum address and name
+                    uintptr_t enumAddr = 0;
+                    if (Mem::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumAddr) && enumAddr) {
+                        fv.enumAddr = enumAddr;
+                        fv.enumName = ResolveEnumValue(enumAddr, rawVal);
+                    }
+                }
+            }
+
+            row.fields.push_back(std::move(fv));
+        }
+
+        result.rows.push_back(std::move(row));
+        ++read;
+    }
+
+    result.ok = true;
+    Logger::Info("WALK", "WalkDataTableRows: %s — %d rows read (total=%d, offset=%d, stride=%d, RowMap=+0x%X)",
+                 result.rowStructName.c_str(), read, result.rowCount, offset, stride, rowMapOffset);
+    return result;
 }
 
 } // namespace UStructWalker

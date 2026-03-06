@@ -461,6 +461,13 @@ public static class CeXmlExportService
                 continue;
             }
 
+            // DataTableRows: emit as 2-level deref group (TSparseArray.Data → uint8* row → fields)
+            if (field.TypeName == "DataTableRows" && field.DataTableRowCount > 0)
+            {
+                EmitDataTableRowsProperty(sb, indent, field);
+                continue;
+            }
+
             // StrProperty: emit as Unicode string with pointer dereference to wchar_t* Data
             if (field.TypeName == "StrProperty")
             {
@@ -934,6 +941,96 @@ public static class CeXmlExportService
                     : $"[{elem.Index}]";
 
             EmitLeaf(sb, childIndent, elemDesc, ceElem, $"+{elemByteOffset:X}", null);
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// Emit DataTable RowMap as a CE group with 2-level pointer dereference.
+    ///
+    /// DataTable RowMap addressing (2-level deref):
+    /// - Level 1: Address=+{RowMapOffset}, Offsets=[0] → dereferences TSparseArray.Data pointer
+    /// - Level 2: Address=+{sparseIndex*stride+fnameSize}, Offsets=[0] → dereferences uint8* row data pointer
+    /// - Level 3: Address=+{fieldOffset} → inline field within the row data buffer
+    ///
+    /// Unlike TMap where values are inline (no second deref), DataTable RowMap stores uint8*
+    /// pointers that must be dereferenced to reach the actual row data.
+    /// </summary>
+    private static void EmitDataTableRowsProperty(StringBuilder sb, string indent,
+        LiveFieldValue field)
+    {
+        var structName = !string.IsNullOrEmpty(field.DataTableStructName)
+            ? field.DataTableStructName : "Row";
+        var desc = $"{field.Name} [DataTable: {field.DataTableRowCount} x {structName}]";
+
+        // Need row data for addressable CE entries
+        if (field.DataTableRowData == null || field.DataTableRowData.Count == 0
+            || field.DataTableStride <= 0 || field.DataTableFNameSize <= 0)
+        {
+            EmitGroupPlaceholder(sb, indent, desc, $"+{field.Offset:X}", null);
+            return;
+        }
+
+        // Level 1: RowMap group — deref TSparseArray.Data
+        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        var rowIndent = indent + "  ";
+
+        foreach (var row in field.DataTableRowData)
+        {
+            // Level 2: Row — deref uint8* at sparseIndex*stride+fnameSize
+            int rowPtrOffset = row.SparseIndex * field.DataTableStride + field.DataTableFNameSize;
+            var rowDesc = $"[{row.SparseIndex}] {row.RowName}";
+
+            if (row.Fields.Count == 0)
+            {
+                EmitGroupPlaceholder(sb, rowIndent, rowDesc, $"+{rowPtrOffset:X}", new[] { 0 });
+                continue;
+            }
+
+            EmitGroupOpen(sb, rowIndent, rowDesc, $"+{rowPtrOffset:X}", new[] { 0 });
+            var fieldIndent = rowIndent + "  ";
+
+            // Level 3: Fields — inline offset within dereferenced row data
+            foreach (var rowField in row.Fields)
+            {
+                // StrProperty within row: Unicode string with pointer deref
+                if (rowField.TypeName == "StrProperty")
+                {
+                    EmitStringLeaf(sb, fieldIndent, rowField.Name, $"+{rowField.Offset:X}",
+                        offsets: [0], unicode: true);
+                    continue;
+                }
+
+                var ceField = MapCeField(rowField);
+                if (ceField != null)
+                {
+                    var ddLink = TryGetEnumDropDown(rowField);
+                    EmitLeaf(sb, fieldIndent, ddLink.desc ?? rowField.Name, ceField,
+                        $"+{rowField.Offset:X}", null,
+                        dropDownContent: ddLink.content,
+                        dropDownListLink: ddLink.link);
+                }
+                else if (rowField.IsNavigable)
+                {
+                    EmitNavigableField(sb, fieldIndent, rowField,
+                        $"+{rowField.Offset:X}", null);
+                }
+                else if (rowField.TypeName == "ArrayProperty" && rowField.ArrayCount >= 0)
+                {
+                    EmitArrayProperty(sb, fieldIndent, rowField);
+                }
+                else if (rowField.TypeName == "MapProperty" && rowField.MapCount >= 0)
+                {
+                    EmitMapProperty(sb, fieldIndent, rowField);
+                }
+                else if (rowField.TypeName == "SetProperty" && rowField.SetCount >= 0)
+                {
+                    EmitSetProperty(sb, fieldIndent, rowField);
+                }
+            }
+
+            EmitGroupClose(sb, rowIndent);
         }
 
         EmitGroupClose(sb, indent);

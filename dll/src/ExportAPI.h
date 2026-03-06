@@ -83,6 +83,11 @@ __declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, cons
 // Error codes: -1=bad args, -2=vtable read fail, -3=ProcessEvent not found, -4=exception.
 __declspec(dllexport) int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
+// === Mailbox (CE Lua shared memory interface) ===
+// Returns the address of the g_invokeMailbox buffer.
+// CE Lua can also use getAddress("g_invokeMailbox") directly.
+__declspec(dllexport) uintptr_t UE5_GetMailboxAddr();
+
 // === Pipe Server ===
 __declspec(dllexport) bool      UE5_StartPipeServer();
 __declspec(dllexport) void      UE5_StopPipeServer();

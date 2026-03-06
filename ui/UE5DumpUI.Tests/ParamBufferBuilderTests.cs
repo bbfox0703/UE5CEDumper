@@ -259,6 +259,62 @@ public class ParamBufferBuilderTests
         Assert.Equal("0A00000014000000", Convert.ToHexString(buf[8..]));
     }
 
+    // --- WriteStructParam with DynamicStructField ---
+
+    [Fact]
+    public void WriteStructParam_DynamicStructField_WritesCorrectly()
+    {
+        var fields = new List<DynamicStructField>
+        {
+            new("BaseValue", "FloatProperty", 0, 4),
+            new("CurrentValue", "FloatProperty", 4, 4),
+        };
+        var buf = new byte[8];
+        var values = new[] { "1.0", "2.5" };
+
+        ParamBufferBuilder.WriteStructParam(buf, 0, fields, values);
+
+        // float 1.0 = 0000803F, float 2.5 = 00002040
+        Assert.Equal("0000803F00002040", Convert.ToHexString(buf));
+    }
+
+    [Fact]
+    public void WriteStructParam_DynamicStructField_WithBaseOffset()
+    {
+        var fields = new List<DynamicStructField>
+        {
+            new("X", "IntProperty", 0, 4),
+            new("Y", "IntProperty", 4, 4),
+        };
+        var buf = new byte[16]; // struct at offset 8
+        var values = new[] { "10", "20" };
+
+        ParamBufferBuilder.WriteStructParam(buf, 8, fields, values);
+
+        // First 8 bytes should be zero
+        Assert.Equal("0000000000000000", Convert.ToHexString(buf[..8]));
+        // int32 10 at offset 8, int32 20 at offset 12
+        Assert.Equal("0A00000014000000", Convert.ToHexString(buf[8..]));
+    }
+
+    [Fact]
+    public void WriteStructParam_DynamicStructField_MixedTypes()
+    {
+        var fields = new List<DynamicStructField>
+        {
+            new("Health", "FloatProperty", 0, 4),
+            new("IsAlive", "BoolProperty", 4, 1),
+        };
+        var buf = new byte[8];
+        var values = new[] { "100.0", "1" };
+
+        ParamBufferBuilder.WriteStructParam(buf, 0, fields, values);
+
+        // float 100.0 = 0000C842
+        Assert.Equal("0000C842", Convert.ToHexString(buf[..4]));
+        Assert.Equal(1, buf[4]); // bool true
+    }
+
     // --- GetDefaultValue ---
 
     [Theory]

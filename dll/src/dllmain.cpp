@@ -22,6 +22,9 @@ extern "C" bool UE5_AutoStart();
 extern "C" bool UE5_StartPipeServer();
 extern "C" void UE5_Shutdown();
 
+// Mailbox — shared memory interface for CE Lua
+#include "Mailbox.h"
+
 #ifdef UE5_PROXY_BUILD
 // Cleanup for proxy DLL — defined in ProxyVersion.cpp
 extern void ProxyVersion_Cleanup();
@@ -134,6 +137,10 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             // Initialize per-process mirror log subfolder
             Logger::InitProcessMirror(fileName);
         }
+        // Start mailbox polling thread (CE Lua shared memory interface).
+        // Runs in both proxy and inject modes — handles auto-init on first command.
+        Mailbox::StartThread();
+
         // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
         // is set true by CEPlugin_InitializePlugin within 1 second.
         // Store the handle so DLL_PROCESS_DETACH can wait for it to finish.

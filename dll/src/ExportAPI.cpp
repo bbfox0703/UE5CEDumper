@@ -14,6 +14,7 @@
 #include "UStructWalker.h"
 #include "PipeServer.h"
 #include "GameThreadDispatch.h"
+#include "Mailbox.h"
 
 #include <string>
 #include <cstring>
@@ -198,6 +199,7 @@ bool UE5_Init() {
 
 void UE5_Shutdown() {
     LOG_INFO("UE5_Shutdown: Cleaning up...");
+    Mailbox::StopThread();
     GameThreadDispatch::RemoveHook();
     s_pipeServer.Stop();
     s_initialized = false;
@@ -605,6 +607,12 @@ int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t para
 
     LOG_INFO("UE5_CallProcessEvent: direct call success (warn: not game-thread)");
     return 0;
+}
+
+// === Mailbox ===
+
+uintptr_t UE5_GetMailboxAddr() {
+    return Mailbox::GetAddress();
 }
 
 // === Pipe Server ===

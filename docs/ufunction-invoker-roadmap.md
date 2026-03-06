@@ -119,7 +119,7 @@ Updated response format:
 - [x] `InvokeScriptGenerator.Generate(className, funcName, func)` → complete CE AA script
 - [x] Connection check, instance resolver (skip CDOs, subclass fallback), function resolver
 - [x] GUI form builder for params: type-aware labels, defaults, CE size constants
-- [x] Fire button with `UE_InvokeActorEvent` invocation
+- [x] Fire button with `UE5_CallProcessEvent` invocation
 - [x] Hex-aware parsing for pointer/FName types, floor for integers, direct for floats
 
 **Type-to-CE mapping table**:
@@ -268,13 +268,13 @@ Phase II (In-Process Invocation — future, complex)
 
 ## Dependencies
 
-- Phase I: CE Lua scripts use `UE_InvokeActorEvent` (CE built-in UE tools) or our DLL exports
+- Phase I: CE Lua scripts use our DLL exports (`UE5_CallProcessEvent`, `UE5_FindInstanceOfClass`, etc.)
 - Phase II: our DLL calls ProcessEvent directly via pipe — no CE Lua dependency
 - AOBMaker CE bridge (existing) used for CreateAAScript delivery in Phase I
 
 ## Notes
 
 - Phase I scripts are **self-contained** — they resolve by class/function name, survive game restarts
-- Phase I generated scripts work with any CE UE Dumper that exposes invoke APIs
+- Phase I generated scripts work with UE5Dumper DLL (Proxy or CE inject)
 - Phase II is optional — Phase I alone provides full invoke capability via CE
 - FunctionFlags decoding uses UE's `EFunctionFlags` enum (stable across versions)

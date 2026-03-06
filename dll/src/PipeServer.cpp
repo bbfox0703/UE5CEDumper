@@ -223,6 +223,195 @@ void PipeServer::PushEvent(const std::string& jsonLine) {
     WriteLine(pipe, jsonLine);
 }
 
+// ============================================================
+// SerializeField — Convert a LiveFieldValue to JSON.
+// Shared by walk_instance and walk_datatable_rows handlers.
+// ============================================================
+static json SerializeField(const UStructWalker::LiveFieldValue& fv) {
+    json fj;
+    fj["name"]   = fv.name;
+    fj["type"]   = fv.typeName;
+    fj["offset"] = fv.offset;
+    fj["size"]   = fv.size;
+
+    if (!fv.hexValue.empty())   fj["hex"]   = fv.hexValue;
+    if (!fv.typedValue.empty())  fj["value"] = fv.typedValue;
+
+    // ObjectProperty: pointer info
+    if (fv.ptrValue != 0) {
+        fj["ptr"]       = PipeProtocol::AddrToStr(fv.ptrValue);
+        fj["ptr_name"]  = fv.ptrName;
+        fj["ptr_class"] = fv.ptrClassName;
+        if (fv.ptrClassAddr)
+            fj["ptr_class_addr"] = PipeProtocol::AddrToStr(fv.ptrClassAddr);
+    }
+
+    // BoolProperty: bit field info
+    if (fv.boolBitIndex >= 0) {
+        fj["bool_bit"] = fv.boolBitIndex;
+        fj["bool_mask"] = fv.boolFieldMask;
+        fj["bool_byte_offset"] = fv.boolByteOffset;
+    }
+
+    // ArrayProperty: element count + inner type info + inline elements
+    if (fv.arrayCount >= 0) {
+        fj["count"] = fv.arrayCount;
+        if (fv.arrayDataAddr != 0)
+            fj["array_data_addr"] = PipeProtocol::AddrToStr(fv.arrayDataAddr);
+        if (!fv.arrayInnerType.empty()) {
+            fj["array_inner_type"] = fv.arrayInnerType;
+            if (fv.arrayElemSize > 0)
+                fj["array_elem_size"] = fv.arrayElemSize;
+            if (!fv.arrayInnerStructType.empty())
+                fj["array_struct_type"] = fv.arrayInnerStructType;
+            if (fv.arrayInnerStructAddr != 0)
+                fj["array_struct_class_addr"] = PipeProtocol::AddrToStr(fv.arrayInnerStructAddr);
+        }
+        if (fv.arrayInnerFFieldAddr != 0)
+            fj["array_inner_addr"] = PipeProtocol::AddrToStr(fv.arrayInnerFFieldAddr);
+        // Phase B/D: inline element values (scalar or pointer)
+        if (!fv.arrayElements.empty()) {
+            json elems = json::array();
+            for (const auto& e : fv.arrayElements) {
+                json ej;
+                ej["i"] = e.index;
+                ej["v"] = e.value;
+                ej["h"] = e.hex;
+                if (!e.enumName.empty())
+                    ej["en"] = e.enumName;
+                if (e.rawIntValue != 0 || !e.enumName.empty())
+                    ej["rv"] = e.rawIntValue;
+                // Phase D: pointer element fields
+                if (e.ptrAddr != 0) {
+                    ej["pa"] = PipeProtocol::AddrToStr(e.ptrAddr);
+                    ej["pn"] = e.ptrName;
+                    ej["pc"] = e.ptrClassName;
+                }
+                // Phase F: struct sub-fields
+                if (!e.structFields.empty()) {
+                    json sfs = json::array();
+                    for (const auto& sf : e.structFields) {
+                        json sfj = {{"n", sf.name}, {"t", sf.typeName},
+                                    {"o", sf.offset}, {"s", sf.size}, {"v", sf.value}};
+                        // Pointer resolution for ObjectProperty sub-fields
+                        if (sf.ptrAddr != 0) {
+                            sfj["pa"] = PipeProtocol::AddrToStr(sf.ptrAddr);
+                            sfj["pn"] = sf.ptrName;
+                            sfj["pc"] = sf.ptrClassName;
+                            sfj["pca"] = PipeProtocol::AddrToStr(sf.ptrClassAddr);
+                        }
+                        sfs.push_back(sfj);
+                    }
+                    ej["sf"] = sfs;
+                }
+                elems.push_back(ej);
+            }
+            fj["elements"] = elems;
+        }
+
+        // CE DropDownList: full enum entries for this array field
+        if (fv.arrayEnumAddr != 0 && !fv.arrayEnumEntries.empty()) {
+            fj["enum_addr"] = PipeProtocol::AddrToStr(fv.arrayEnumAddr);
+            json entries = json::array();
+            for (const auto& ee : fv.arrayEnumEntries)
+                entries.push_back({{"v", ee.value}, {"n", ee.name}});
+            fj["enum_entries"] = entries;
+        }
+    }
+
+    // MapProperty: key/value type info + inline elements
+    if (fv.mapCount >= 0) {
+        fj["map_count"]      = fv.mapCount;
+        fj["map_key_type"]   = fv.mapKeyType;
+        fj["map_value_type"] = fv.mapValueType;
+        fj["map_key_size"]   = fv.mapKeySize;
+        fj["map_value_size"] = fv.mapValueSize;
+        if (fv.mapDataAddr != 0)
+            fj["map_data_addr"] = PipeProtocol::AddrToStr(fv.mapDataAddr);
+        if (fv.mapKeyStructAddr != 0) {
+            fj["map_key_struct_addr"] = PipeProtocol::AddrToStr(fv.mapKeyStructAddr);
+            fj["map_key_struct_type"] = fv.mapKeyStructType;
+        }
+        if (fv.mapValueStructAddr != 0) {
+            fj["map_value_struct_addr"] = PipeProtocol::AddrToStr(fv.mapValueStructAddr);
+            fj["map_value_struct_type"] = fv.mapValueStructType;
+        }
+        if (!fv.containerElements.empty()) {
+            json elems = json::array();
+            for (const auto& e : fv.containerElements) {
+                json ej;
+                ej["i"] = e.index;
+                ej["k"] = e.key;
+                ej["v"] = e.value;
+                if (!e.keyHex.empty())   ej["kh"] = e.keyHex;
+                if (!e.valueHex.empty()) ej["vh"] = e.valueHex;
+                if (!e.keyPtrName.empty())   ej["kn"] = e.keyPtrName;
+                if (e.keyPtrAddr != 0)       ej["ka"] = PipeProtocol::AddrToStr(e.keyPtrAddr);
+                if (!e.keyPtrClassName.empty()) ej["kc"] = e.keyPtrClassName;
+                if (!e.valuePtrName.empty()) ej["vn"] = e.valuePtrName;
+                if (e.valuePtrAddr != 0)     ej["va"] = PipeProtocol::AddrToStr(e.valuePtrAddr);
+                if (!e.valuePtrClassName.empty()) ej["vc"] = e.valuePtrClassName;
+                elems.push_back(ej);
+            }
+            fj["map_elements"] = elems;
+        }
+    }
+
+    // SetProperty: element type info + inline elements
+    if (fv.setCount >= 0) {
+        fj["set_count"]     = fv.setCount;
+        fj["set_elem_type"] = fv.setElemType;
+        fj["set_elem_size"] = fv.setElemSize;
+        if (fv.setDataAddr != 0)
+            fj["set_data_addr"] = PipeProtocol::AddrToStr(fv.setDataAddr);
+        if (fv.setElemStructAddr != 0) {
+            fj["set_elem_struct_addr"] = PipeProtocol::AddrToStr(fv.setElemStructAddr);
+            fj["set_elem_struct_type"] = fv.setElemStructType;
+        }
+        if (!fv.containerElements.empty()) {
+            json elems = json::array();
+            for (const auto& e : fv.containerElements) {
+                json ej;
+                ej["i"] = e.index;
+                ej["k"] = e.key;
+                if (!e.keyHex.empty()) ej["kh"] = e.keyHex;
+                if (!e.keyPtrName.empty()) ej["kn"] = e.keyPtrName;
+                if (e.keyPtrAddr != 0)    ej["ka"] = PipeProtocol::AddrToStr(e.keyPtrAddr);
+                if (!e.keyPtrClassName.empty()) ej["kc"] = e.keyPtrClassName;
+                elems.push_back(ej);
+            }
+            fj["set_elements"] = elems;
+        }
+    }
+
+    // StructProperty: inner struct info
+    if (fv.structDataAddr != 0) {
+        fj["struct_data_addr"]  = PipeProtocol::AddrToStr(fv.structDataAddr);
+        fj["struct_class_addr"] = PipeProtocol::AddrToStr(fv.structClassAddr);
+        fj["struct_type"]       = fv.structTypeName;
+    }
+
+    // EnumProperty / ByteProperty-with-enum: resolved name, value, and full entries
+    if (!fv.enumName.empty()) {
+        fj["enum_name"]  = fv.enumName;
+        fj["enum_value"] = fv.enumValue;
+    }
+    if (fv.enumAddr != 0 && !fv.enumEntries.empty()) {
+        fj["enum_addr"] = PipeProtocol::AddrToStr(fv.enumAddr);
+        json enumEntries = json::array();
+        for (const auto& ee : fv.enumEntries)
+            enumEntries.push_back({{"v", ee.value}, {"n", ee.name}});
+        fj["enum_entries"] = enumEntries;
+    }
+
+    // StrProperty: decoded string value
+    if (!fv.strValue.empty()) {
+        fj["str_value"] = fv.strValue;
+    }
+
+    return fj;
+}
+
 std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
     json request;
     try {
@@ -544,6 +733,18 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                     pj["ret"]    = p.isReturn;
                     if (!p.structType.empty())
                         pj["struct_type"] = p.structType;
+                    if (!p.structFields.empty()) {
+                        json sfArr = json::array();
+                        for (const auto& sf : p.structFields) {
+                            json sfj;
+                            sfj["name"]   = sf.name;
+                            sfj["type"]   = sf.typeName;
+                            sfj["offset"] = sf.offset;
+                            sfj["size"]   = sf.size;
+                            sfArr.push_back(sfj);
+                        }
+                        pj["struct_fields"] = sfArr;
+                    }
                     params.push_back(pj);
                 }
                 fj["params"] = params;
@@ -613,191 +814,12 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["outer"]      = PipeProtocol::AddrToStr(result.outerAddr);
             data["outer_name"] = result.outerName;
             data["outer_class"]= result.outerClassName;
+            if (result.isDefinition)
+                data["is_definition"] = true;
 
             json fields = json::array();
             for (const auto& fv : result.fields) {
-                json fj;
-                fj["name"]   = fv.name;
-                fj["type"]   = fv.typeName;
-                fj["offset"] = fv.offset;
-                fj["size"]   = fv.size;
-
-                if (!fv.hexValue.empty())   fj["hex"]   = fv.hexValue;
-                if (!fv.typedValue.empty())  fj["value"] = fv.typedValue;
-
-                // ObjectProperty: pointer info
-                if (fv.ptrValue != 0) {
-                    fj["ptr"]       = PipeProtocol::AddrToStr(fv.ptrValue);
-                    fj["ptr_name"]  = fv.ptrName;
-                    fj["ptr_class"] = fv.ptrClassName;
-                    if (fv.ptrClassAddr)
-                        fj["ptr_class_addr"] = PipeProtocol::AddrToStr(fv.ptrClassAddr);
-                }
-
-                // BoolProperty: bit field info
-                if (fv.boolBitIndex >= 0) {
-                    fj["bool_bit"] = fv.boolBitIndex;
-                    fj["bool_mask"] = fv.boolFieldMask;
-                    fj["bool_byte_offset"] = fv.boolByteOffset;
-                }
-
-                // ArrayProperty: element count + inner type info + inline elements
-                if (fv.arrayCount >= 0) {
-                    fj["count"] = fv.arrayCount;
-                    if (fv.arrayDataAddr != 0)
-                        fj["array_data_addr"] = PipeProtocol::AddrToStr(fv.arrayDataAddr);
-                    if (!fv.arrayInnerType.empty()) {
-                        fj["array_inner_type"] = fv.arrayInnerType;
-                        if (fv.arrayElemSize > 0)
-                            fj["array_elem_size"] = fv.arrayElemSize;
-                        if (!fv.arrayInnerStructType.empty())
-                            fj["array_struct_type"] = fv.arrayInnerStructType;
-                        if (fv.arrayInnerStructAddr != 0)
-                            fj["array_struct_class_addr"] = PipeProtocol::AddrToStr(fv.arrayInnerStructAddr);
-                    }
-                    if (fv.arrayInnerFFieldAddr != 0)
-                        fj["array_inner_addr"] = PipeProtocol::AddrToStr(fv.arrayInnerFFieldAddr);
-                    // Phase B/D: inline element values (scalar or pointer)
-                    if (!fv.arrayElements.empty()) {
-                        json elems = json::array();
-                        for (const auto& e : fv.arrayElements) {
-                            json ej;
-                            ej["i"] = e.index;
-                            ej["v"] = e.value;
-                            ej["h"] = e.hex;
-                            if (!e.enumName.empty())
-                                ej["en"] = e.enumName;
-                            if (e.rawIntValue != 0 || !e.enumName.empty())
-                                ej["rv"] = e.rawIntValue;
-                            // Phase D: pointer element fields
-                            if (e.ptrAddr != 0) {
-                                ej["pa"] = PipeProtocol::AddrToStr(e.ptrAddr);
-                                ej["pn"] = e.ptrName;
-                                ej["pc"] = e.ptrClassName;
-                            }
-                            // Phase F: struct sub-fields
-                            if (!e.structFields.empty()) {
-                                json sfs = json::array();
-                                for (const auto& sf : e.structFields) {
-                                    json sfj = {{"n", sf.name}, {"t", sf.typeName},
-                                                {"o", sf.offset}, {"s", sf.size}, {"v", sf.value}};
-                                    // Pointer resolution for ObjectProperty sub-fields
-                                    if (sf.ptrAddr != 0) {
-                                        sfj["pa"] = PipeProtocol::AddrToStr(sf.ptrAddr);
-                                        sfj["pn"] = sf.ptrName;
-                                        sfj["pc"] = sf.ptrClassName;
-                                        sfj["pca"] = PipeProtocol::AddrToStr(sf.ptrClassAddr);
-                                    }
-                                    sfs.push_back(sfj);
-                                }
-                                ej["sf"] = sfs;
-                            }
-                            elems.push_back(ej);
-                        }
-                        fj["elements"] = elems;
-                    }
-
-                    // CE DropDownList: full enum entries for this array field
-                    if (fv.arrayEnumAddr != 0 && !fv.arrayEnumEntries.empty()) {
-                        fj["enum_addr"] = PipeProtocol::AddrToStr(fv.arrayEnumAddr);
-                        json entries = json::array();
-                        for (const auto& ee : fv.arrayEnumEntries)
-                            entries.push_back({{"v", ee.value}, {"n", ee.name}});
-                        fj["enum_entries"] = entries;
-                    }
-                }
-
-                // MapProperty: key/value type info + inline elements
-                if (fv.mapCount >= 0) {
-                    fj["map_count"]      = fv.mapCount;
-                    fj["map_key_type"]   = fv.mapKeyType;
-                    fj["map_value_type"] = fv.mapValueType;
-                    fj["map_key_size"]   = fv.mapKeySize;
-                    fj["map_value_size"] = fv.mapValueSize;
-                    if (fv.mapDataAddr != 0)
-                        fj["map_data_addr"] = PipeProtocol::AddrToStr(fv.mapDataAddr);
-                    if (fv.mapKeyStructAddr != 0) {
-                        fj["map_key_struct_addr"] = PipeProtocol::AddrToStr(fv.mapKeyStructAddr);
-                        fj["map_key_struct_type"] = fv.mapKeyStructType;
-                    }
-                    if (fv.mapValueStructAddr != 0) {
-                        fj["map_value_struct_addr"] = PipeProtocol::AddrToStr(fv.mapValueStructAddr);
-                        fj["map_value_struct_type"] = fv.mapValueStructType;
-                    }
-                    if (!fv.containerElements.empty()) {
-                        json elems = json::array();
-                        for (const auto& e : fv.containerElements) {
-                            json ej;
-                            ej["i"] = e.index;
-                            ej["k"] = e.key;
-                            ej["v"] = e.value;
-                            if (!e.keyHex.empty())   ej["kh"] = e.keyHex;
-                            if (!e.valueHex.empty()) ej["vh"] = e.valueHex;
-                            if (!e.keyPtrName.empty())   ej["kn"] = e.keyPtrName;
-                            if (e.keyPtrAddr != 0)       ej["ka"] = PipeProtocol::AddrToStr(e.keyPtrAddr);
-                            if (!e.keyPtrClassName.empty()) ej["kc"] = e.keyPtrClassName;
-                            if (!e.valuePtrName.empty()) ej["vn"] = e.valuePtrName;
-                            if (e.valuePtrAddr != 0)     ej["va"] = PipeProtocol::AddrToStr(e.valuePtrAddr);
-                            if (!e.valuePtrClassName.empty()) ej["vc"] = e.valuePtrClassName;
-                            elems.push_back(ej);
-                        }
-                        fj["map_elements"] = elems;
-                    }
-                }
-
-                // SetProperty: element type info + inline elements
-                if (fv.setCount >= 0) {
-                    fj["set_count"]     = fv.setCount;
-                    fj["set_elem_type"] = fv.setElemType;
-                    fj["set_elem_size"] = fv.setElemSize;
-                    if (fv.setDataAddr != 0)
-                        fj["set_data_addr"] = PipeProtocol::AddrToStr(fv.setDataAddr);
-                    if (fv.setElemStructAddr != 0) {
-                        fj["set_elem_struct_addr"] = PipeProtocol::AddrToStr(fv.setElemStructAddr);
-                        fj["set_elem_struct_type"] = fv.setElemStructType;
-                    }
-                    if (!fv.containerElements.empty()) {
-                        json elems = json::array();
-                        for (const auto& e : fv.containerElements) {
-                            json ej;
-                            ej["i"] = e.index;
-                            ej["k"] = e.key;
-                            if (!e.keyHex.empty()) ej["kh"] = e.keyHex;
-                            if (!e.keyPtrName.empty()) ej["kn"] = e.keyPtrName;
-                            if (e.keyPtrAddr != 0)    ej["ka"] = PipeProtocol::AddrToStr(e.keyPtrAddr);
-                            if (!e.keyPtrClassName.empty()) ej["kc"] = e.keyPtrClassName;
-                            elems.push_back(ej);
-                        }
-                        fj["set_elements"] = elems;
-                    }
-                }
-
-                // StructProperty: inner struct info
-                if (fv.structDataAddr != 0) {
-                    fj["struct_data_addr"]  = PipeProtocol::AddrToStr(fv.structDataAddr);
-                    fj["struct_class_addr"] = PipeProtocol::AddrToStr(fv.structClassAddr);
-                    fj["struct_type"]       = fv.structTypeName;
-                }
-
-                // EnumProperty / ByteProperty-with-enum: resolved name, value, and full entries
-                if (!fv.enumName.empty()) {
-                    fj["enum_name"]  = fv.enumName;
-                    fj["enum_value"] = fv.enumValue;
-                }
-                if (fv.enumAddr != 0 && !fv.enumEntries.empty()) {
-                    fj["enum_addr"] = PipeProtocol::AddrToStr(fv.enumAddr);
-                    json enumEntries = json::array();
-                    for (const auto& ee : fv.enumEntries)
-                        enumEntries.push_back({{"v", ee.value}, {"n", ee.name}});
-                    fj["enum_entries"] = enumEntries;
-                }
-
-                // StrProperty: decoded string value
-                if (!fv.strValue.empty()) {
-                    fj["str_value"] = fv.strValue;
-                }
-
-                fields.push_back(fj);
+                fields.push_back(SerializeField(fv));
             }
             data["fields"] = fields;
             return PipeProtocol::MakeResponse(id, data).dump();
@@ -1522,6 +1544,46 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
                 data["module_name"] = moduleName;
             }
 
+            return PipeProtocol::MakeResponse(id, data).dump();
+        }
+
+        // === walk_datatable_rows: Browse DataTable RowMap entries ===
+        if (cmd == PipeProtocol::CMD_WALK_DATATABLE_ROWS) {
+            std::string addrStr = request.value("addr", "");
+            if (addrStr.empty()) return PipeProtocol::MakeError(id, "Missing addr").dump();
+
+            uintptr_t addr = PipeProtocol::StrToAddr(addrStr);
+            int32_t offset = request.value("offset", 0);
+            int32_t limit  = request.value("limit", 64);
+
+            auto result = UStructWalker::WalkDataTableRows(addr, offset, limit);
+
+            if (!result.ok)
+                return PipeProtocol::MakeError(id, result.error).dump();
+
+            json data;
+            data["row_count"]       = result.rowCount;
+            data["row_map_offset"]  = result.rowMapOffset;
+            data["row_struct_addr"] = PipeProtocol::AddrToStr(result.rowStructAddr);
+            data["row_struct_name"] = result.rowStructName;
+            data["fname_size"]      = result.fnameSize;
+            data["stride"]          = result.stride;
+
+            json rows = json::array();
+            for (const auto& row : result.rows) {
+                json rj;
+                rj["sparse_index"] = row.sparseIndex;
+                rj["row_name"]     = row.rowName;
+                rj["data_addr"]    = PipeProtocol::AddrToStr(row.rowDataAddr);
+
+                json rowFields = json::array();
+                for (const auto& fv : row.fields) {
+                    rowFields.push_back(SerializeField(fv));
+                }
+                rj["fields"] = rowFields;
+                rows.push_back(rj);
+            }
+            data["rows"] = rows;
             return PipeProtocol::MakeResponse(id, data).dump();
         }
 

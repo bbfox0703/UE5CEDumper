@@ -46,6 +46,8 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private bool _hasFunctions;
     [ObservableProperty] private FunctionInfoModel? _selectedFunction;
     private string _currentClassAddr = "";
+    private bool _isDefinitionView;  // True when displaying a class/struct definition (no live data)
+    private DataTableWalkResult? _cachedDataTableRows;  // Cached DataTable row data
 
     // CE XML output (kept for possible future use but no longer shown in panel)
     [ObservableProperty] private string _ceXmlOutput = "";
@@ -195,6 +197,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
         HasData = true;
         ShowCeXml = false;
         HasParent = false;
+        _isDefinitionView = false;
         CurrentOuterAddr = "";
         CurrentOuterName = "";
         CurrentOuterClassName = "";
@@ -285,6 +288,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 var displayName = !string.IsNullOrEmpty(field.StructTypeName)
                     ? $"{field.Name} ({field.StructTypeName})"
                     : field.Name;
+
+                // DataTable row navigation: the uint8* is a pointer that needs dereference,
+                // not an inline struct. Set IsPointerDeref=true for correct CE XML pointer chain.
+                var isDataTableRow = Breadcrumbs.Count > 0 && Breadcrumbs[^1].IsDataTableView;
+
                 Breadcrumbs.Add(new BreadcrumbItem
                 {
                     Address = field.StructDataAddr,
@@ -292,9 +300,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
                     ClassAddr = field.StructClassAddr,
                     FieldOffset = field.Offset,
                     FieldName = field.Name,
-                    IsPointerDeref = false,
+                    IsPointerDeref = isDataTableRow,
                 });
-                _log.Info($"NAV→Struct {field.Name} addr={field.StructDataAddr} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
+                _log.Info($"NAV→Struct {field.Name} addr={field.StructDataAddr} off=0x{field.Offset:X} dtRow={isDataTableRow} | BC={FormatBreadcrumbTrace()}");
                 UpdateDisplay(result);
             }
         }
@@ -323,7 +331,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
             if (Breadcrumbs.Count > 0)
                 Breadcrumbs[^1].ScrollHintFieldName = field.Name;
 
-            if (field.ArrayCount > 0 && !string.IsNullOrEmpty(field.ArrayInnerType))
+            if (field.DataTableRowCount > 0 && _cachedDataTableRows != null)
+            {
+                NavigateToDataTableContainer(field, _cachedDataTableRows);
+            }
+            else if (field.ArrayCount > 0 && !string.IsNullOrEmpty(field.ArrayInnerType))
             {
                 await NavigateToArrayContainerAsync(field);
             }
@@ -432,6 +444,85 @@ public partial class LiveWalkerViewModel : ViewModelBase
         _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
         PopulateSetContainerFields(field.SetElements ?? new(), field);
+    }
+
+    private void NavigateToDataTableContainer(LiveFieldValue field, DataTableWalkResult dtResult)
+    {
+        var label = $"RowMap [{dtResult.RowCount} x {dtResult.RowStructName}]";
+
+        Breadcrumbs.Add(new BreadcrumbItem
+        {
+            Address = CurrentAddress,
+            Label = label,
+            FieldOffset = dtResult.RowMapOffset,
+            FieldName = field.Name,
+            IsPointerDeref = false,
+            IsContainerView = true,
+            IsDataTableView = true,
+            ContainerField = field,
+            DataTableData = dtResult,
+        });
+        _log.Info($"NAV\u2192DataTable {field.Name} addr={CurrentAddress} rows={dtResult.RowCount} struct={dtResult.RowStructName} | BC={FormatBreadcrumbTrace()}");
+
+        PopulateDataTableRowFields(dtResult);
+    }
+
+    private void PopulateDataTableRowFields(DataTableWalkResult dtResult)
+    {
+        CurrentObjectName = "RowMap";
+        CurrentClassName = $"DataTable<{dtResult.RowStructName}>";
+        HasData = true;
+        ShowCeXml = false;
+        HasParent = false;
+        CurrentOuterAddr = "";
+        CurrentOuterName = "";
+        CurrentOuterClassName = "";
+
+        Fields.Clear();
+        foreach (var row in dtResult.Rows)
+        {
+            // Build preview from first 2 scalar fields
+            var preview = "";
+            var previewParts = new List<string>();
+            foreach (var fv in row.Fields)
+            {
+                if (previewParts.Count >= 2) break;
+                if (!string.IsNullOrEmpty(fv.TypedValue) && fv.TypedValue != "0" && fv.TypedValue != "0.0"
+                    && fv.TypeName != "ObjectProperty" && fv.TypeName != "ClassProperty")
+                {
+                    previewParts.Add($"{fv.Name}={fv.TypedValue}");
+                }
+                else if (!string.IsNullOrEmpty(fv.StrValue))
+                {
+                    var s = fv.StrValue.Length > 30 ? fv.StrValue[..30] + "..." : fv.StrValue;
+                    previewParts.Add($"{fv.Name}=\"{s}\"");
+                }
+                else if (!string.IsNullOrEmpty(fv.PtrName))
+                {
+                    previewParts.Add($"{fv.Name}={fv.PtrName}");
+                }
+            }
+            if (previewParts.Count > 0)
+                preview = " | " + string.Join(", ", previewParts);
+
+            // Actual byte offset of the uint8* pointer within TSparseArray data
+            int rowPtrOffset = row.SparseIndex * dtResult.Stride + dtResult.FNameSize;
+            var f = new LiveFieldValue
+            {
+                Name = $"[{row.SparseIndex}] {row.RowName}",
+                TypeName = "StructProperty",
+                Offset = rowPtrOffset,
+                Size = 0,
+                TypedValue = $"{{{dtResult.RowStructName}}}{preview}",
+                // Enable struct navigation to drill into the row data
+                StructDataAddr = row.DataAddr,
+                StructClassAddr = dtResult.RowStructAddr,
+                StructTypeName = dtResult.RowStructName,
+            };
+            if (!string.IsNullOrEmpty(row.DataAddr))
+                f.FieldAddress = row.DataAddr;
+            Fields.Add(f);
+        }
     }
 
     private void PopulateArrayContainerFields(List<ArrayElementValue> elements, LiveFieldValue sourceField)
@@ -559,9 +650,14 @@ public partial class LiveWalkerViewModel : ViewModelBase
     /// Re-populate the container view from a (potentially refreshed) container field.
     /// Dispatches to the appropriate populate helper based on container type.
     /// </summary>
-    private void RepopulateContainerView(LiveFieldValue containerField)
+    private void RepopulateContainerView(LiveFieldValue containerField, BreadcrumbItem? bc = null)
     {
-        if (containerField.ArrayCount > 0 && !string.IsNullOrEmpty(containerField.ArrayInnerType))
+        // DataTable rows: use cached DataTableWalkResult from breadcrumb
+        if (bc is { IsDataTableView: true, DataTableData: not null })
+        {
+            PopulateDataTableRowFields(bc.DataTableData);
+        }
+        else if (containerField.ArrayCount > 0 && !string.IsNullOrEmpty(containerField.ArrayInnerType))
         {
             PopulateArrayContainerFields(containerField.ArrayElements ?? new(), containerField);
         }
@@ -639,6 +735,24 @@ public partial class LiveWalkerViewModel : ViewModelBase
     {
         var sparseIndex = ParseSparseIndex(selectedField.Name);
         if (!sparseIndex.HasValue) return containerField;
+
+        if (containerField.DataTableRowCount > 0 && containerField.DataTableRowData != null)
+        {
+            return new LiveFieldValue
+            {
+                Name = containerField.Name,
+                TypeName = containerField.TypeName,
+                Offset = containerField.Offset,
+                Size = containerField.Size,
+                DataTableRowCount = containerField.DataTableRowCount,
+                DataTableStructName = containerField.DataTableStructName,
+                DataTableFNameSize = containerField.DataTableFNameSize,
+                DataTableStride = containerField.DataTableStride,
+                DataTableRowStructAddr = containerField.DataTableRowStructAddr,
+                DataTableRowData = containerField.DataTableRowData
+                    .Where(r => r.SparseIndex == sparseIndex.Value).ToList(),
+            };
+        }
 
         if (containerField.MapCount > 0 && containerField.MapElements != null)
         {
@@ -788,7 +902,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             // If navigating back to a container view, re-populate from saved field
             if (item.IsContainerView && item.ContainerField != null)
             {
-                RepopulateContainerView(item.ContainerField);
+                RepopulateContainerView(item.ContainerField, item);
                 if (!string.IsNullOrEmpty(scrollHint))
                     ScrollToFieldRequested?.Invoke(scrollHint);
                 return;
@@ -840,7 +954,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             // If going back to a container view, re-populate from saved field
             if (prev.IsContainerView && prev.ContainerField != null)
             {
-                RepopulateContainerView(prev.ContainerField);
+                RepopulateContainerView(prev.ContainerField, prev);
                 if (!string.IsNullOrEmpty(scrollHint))
                     ScrollToFieldRequested?.Invoke(scrollHint);
                 return;
@@ -1274,6 +1388,17 @@ public partial class LiveWalkerViewModel : ViewModelBase
             if (Breadcrumbs.Count > 0 && Breadcrumbs[^1].IsContainerView && Breadcrumbs[^1].ContainerField != null)
             {
                 var containerBc = Breadcrumbs[^1];
+
+                // DataTable container: re-fetch rows directly
+                if (containerBc.IsDataTableView)
+                {
+                    var dtResult = await _dump.WalkDataTableRowsAsync(containerBc.Address);
+                    if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
+                    containerBc.DataTableData = dtResult;
+                    PopulateDataTableRowFields(dtResult);
+                    return;
+                }
+
                 var containerField = containerBc.ContainerField!;
 
                 // Re-walk the parent instance to get fresh container data
@@ -1833,6 +1958,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
             CurrentOuterClassName = "";
         }
 
+        // Track whether this is a definition view (schema-only, no live values)
+        _isDefinitionView = result.IsDefinition;
+
         // Compute absolute field addresses
         ulong baseAddr = 0;
         try
@@ -1870,6 +1998,47 @@ public partial class LiveWalkerViewModel : ViewModelBase
         // Store class address and load functions asynchronously
         _currentClassAddr = result.ClassAddr;
         _ = LoadFunctionsAsync(result.ClassAddr);
+
+        // DataTable detection: if this is a DataTable, fetch rows and inject synthetic RowMap field
+        _cachedDataTableRows = null;
+        if (result.ClassName == "DataTable" && !string.IsNullOrEmpty(result.Address))
+            _ = TryLoadDataTableRowsAsync(result.Address);
+    }
+
+    /// <summary>
+    /// Detect DataTable and inject a synthetic RowMap field for container navigation.
+    /// Called fire-and-forget from UpdateDisplay to avoid blocking the UI.
+    /// </summary>
+    private async Task TryLoadDataTableRowsAsync(string dataTableAddr)
+    {
+        try
+        {
+            var dtResult = await _dump.WalkDataTableRowsAsync(dataTableAddr);
+            _cachedDataTableRows = dtResult;
+
+            // Inject a synthetic "RowMap" field at the end of the field list
+            var syntheticField = new LiveFieldValue
+            {
+                Name = "RowMap",
+                TypeName = "DataTableRows",
+                Offset = dtResult.RowMapOffset,
+                Size = 0,
+                TypedValue = $"{{DataTable: {dtResult.RowCount} rows, {dtResult.RowStructName}}}",
+                DataTableRowCount = dtResult.RowCount,
+                DataTableStructName = dtResult.RowStructName,
+                DataTableFNameSize = dtResult.FNameSize,
+                DataTableStride = dtResult.Stride,
+                DataTableRowStructAddr = dtResult.RowStructAddr,
+                DataTableRowData = dtResult.Rows,
+            };
+
+            // Add on UI thread
+            await Dispatcher.UIThread.InvokeAsync(() => Fields.Add(syntheticField));
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"Failed to load DataTable rows for {dataTableAddr}", ex);
+        }
     }
 
     private async Task LoadFunctionsAsync(string classAddr)
@@ -1918,9 +2087,15 @@ public sealed class BreadcrumbItem
     /// <summary>Field name the user was looking at before drilling in. Used to restore scroll position on Back.</summary>
     public string? ScrollHintFieldName { get; set; }
 
-    /// <summary>True if this breadcrumb represents a container element view (Array/Map/Set).</summary>
+    /// <summary>True if this breadcrumb represents a container element view (Array/Map/Set/DataTable).</summary>
     public bool IsContainerView { get; init; }
 
     /// <summary>The source container field (for refreshing container views).</summary>
     public LiveFieldValue? ContainerField { get; init; }
+
+    /// <summary>True if this breadcrumb represents a DataTable row container view.</summary>
+    public bool IsDataTableView { get; init; }
+
+    /// <summary>Cached DataTable walk result (for refreshing DataTable row views).</summary>
+    public DataTableWalkResult? DataTableData { get; set; }
 }

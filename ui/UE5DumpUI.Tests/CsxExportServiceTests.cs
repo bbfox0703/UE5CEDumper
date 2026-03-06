@@ -63,6 +63,7 @@ public sealed class StubDumpService : IDumpService
     public Task<EngineState> ApplyRescanAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<EngineState> TriggerScanAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<InvokeFunctionResult> InvokeFunctionAsync(string funcName, string? instanceAddr = null, string? className = null, int parmsSize = 0, string? paramsHex = null, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<DataTableWalkResult> WalkDataTableRowsAsync(string addr, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
 }
 
 public class CsxExportServiceTests
@@ -879,5 +880,110 @@ public class CsxExportServiceTests
         Assert.Contains("Description=\"TitleText\"", csx);
         Assert.Contains("Description=\"Cargo\"", csx);
         Assert.Contains("Description=\"bRespectStackLimits\"", csx);
+    }
+
+    // --- DataTable CSX tests ---
+
+    [Fact]
+    public async Task GenerateCsx_DataTableRows_DrilldownOne_ShowsRowsAsPointers()
+    {
+        // DataTable RowMap with 2 rows. Each row is a uint8* pointer to struct data.
+        // With drilldown=1, container expands to show rows as ObjectProperty pointers.
+        // stride=24, fnameSize=8:
+        //   Row 0: offset = 0*24+8 = 8
+        //   Row 1: offset = 1*24+8 = 32
+        // Note: depth 1 expands the container but doesn't resolve row pointers (needs depth 2).
+
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 8,
+                     DataTableRowCount = 2, DataTableStructName = "RecipeRow",
+                     DataTableFNameSize = 8, DataTableStride = 24,
+                     DataTableRowStructAddr = "0xCLASS_RECIPE",
+                     DataTableRowData = new List<DataTableRowInfo>
+                     {
+                         new() { SparseIndex = 0, RowName = "Recipe_Sword", DataAddr = "0x5000" },
+                         new() { SparseIndex = 1, RowName = "Recipe_Shield", DataAddr = "0x6000" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "DataTable_Recipes", fields, drilldownDepth: 1);
+
+        // Child structure for the RowMap container
+        Assert.Contains("Name=\"RowMap\"", csx);
+        // Row entries with descriptive names
+        Assert.Contains("Description=\"[0] Recipe_Sword\"", csx);
+        Assert.Contains("Description=\"[1] Recipe_Shield\"", csx);
+
+        // Offset calculation: sparseIndex * stride + fnameSize
+        // Row 0: 0*24+8 = 8
+        Assert.Contains("Offset=\"8\"", csx);
+        // Row 1: 1*24+8 = 32
+        Assert.Contains("Offset=\"32\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_DataTableRows_DrilldownTwo_ResolvesRowFields()
+    {
+        // With drilldown=2, container expands (depth 1) AND row pointers resolve (depth 2).
+        // Register row instance for drilldown resolution.
+        _dump.RegisterStruct("0x5000", new InstanceWalkResult
+        {
+            ClassName = "RecipeRow",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Damage", TypeName = "FloatProperty", Offset = 0, Size = 4 },
+                new() { Name = "CraftTime", TypeName = "IntProperty", Offset = 4, Size = 4 },
+            }
+        });
+
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 8,
+                     DataTableRowCount = 1, DataTableStructName = "RecipeRow",
+                     DataTableFNameSize = 8, DataTableStride = 24,
+                     DataTableRowStructAddr = "0xCLASS_RECIPE",
+                     DataTableRowData = new List<DataTableRowInfo>
+                     {
+                         new() { SparseIndex = 0, RowName = "Recipe_Sword", DataAddr = "0x5000" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "DataTable_Recipes", fields, drilldownDepth: 2);
+
+        // Resolved child structure for the row pointer target
+        Assert.Contains("Name=\"RecipeRow\"", csx);
+        Assert.Contains("Description=\"Damage\"", csx);
+        Assert.Contains("Description=\"CraftTime\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_DataTableRows_NoDrilldown_EmitsPointerNoExpansion()
+    {
+        // With drilldown=0, DataTable RowMap is emitted as a bare Pointer entry
+        // without container expansion or child structures.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 8,
+                     DataTableRowCount = 1, DataTableStructName = "ItemRow",
+                     DataTableFNameSize = 8, DataTableStride = 24,
+                     DataTableRowStructAddr = "0xCLASS_ITEM",
+                     DataTableRowData = new List<DataTableRowInfo>
+                     {
+                         new() { SparseIndex = 0, RowName = "Item_Potion", DataAddr = "0x7000" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "DataTable_Items", fields, drilldownDepth: 0);
+
+        // Should emit as Pointer type
+        Assert.Contains("Vartype=\"Pointer\"", csx);
+        Assert.Contains("Description=\"RowMap\"", csx);
+        // At depth 0, no container expansion — row names not visible
+        Assert.DoesNotContain("Item_Potion", csx);
+        Assert.DoesNotContain("Name=\"ItemRow\"", csx);
     }
 }

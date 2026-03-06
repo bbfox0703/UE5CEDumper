@@ -26,6 +26,9 @@ public interface IDumpService
     Task<FindInstancesResult> FindInstancesAsync(string className, bool exactMatch = false, int limit = 500, CancellationToken ct = default);
     Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default);
 
+    // --- DataTable Row Browsing ---
+    Task<DataTableWalkResult> WalkDataTableRowsAsync(string addr, int offset = 0, int limit = 64, CancellationToken ct = default);
+
     // --- Array Element Reading (Phase B) ---
     Task<ArrayElementsResult> ReadArrayElementsAsync(
         string instanceAddr, int fieldOffset,

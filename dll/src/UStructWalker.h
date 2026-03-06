@@ -51,6 +51,15 @@ struct FunctionParam {
     bool        isOut = false;
     bool        isReturn = false;
     std::string structType;     // UScriptStruct name for StructProperty params (empty otherwise)
+
+    // Phase B: sub-field layout for StructProperty params (dynamic discovery)
+    struct StructSubField {
+        std::string name;
+        std::string typeName;
+        int32_t     offset = 0;
+        int32_t     size = 0;
+    };
+    std::vector<StructSubField> structFields;
 };
 
 struct FunctionInfo {
@@ -223,6 +232,7 @@ struct InstanceWalkResult {
     uintptr_t   outerAddr = 0;    // OuterPrivate — parent UObject
     std::string outerName;         // Name of the outer object
     std::string outerClassName;    // Class name of the outer object
+    bool        isDefinition = false;  // True when viewing a class/struct definition (not a live instance)
     std::vector<LiveFieldValue> fields;
 };
 
@@ -231,6 +241,33 @@ struct InstanceWalkResult {
 // arrayLimit: max array element count for inline reading (default 64, max 16384).
 // previewLimit: max sub-fields to show in StructProperty preview (0 = none, default 2, max 6).
 InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr = 0, int32_t arrayLimit = 64, int32_t previewLimit = 2);
+
+// --- DataTable Row Browsing ---
+
+// A single row from a DataTable's RowMap
+struct DataTableRow {
+    int32_t     sparseIndex  = 0;   // TSparseArray element index
+    std::string rowName;             // FName key resolved to string
+    uintptr_t   rowDataAddr  = 0;   // Dereferenced uint8* (row data buffer)
+    std::vector<LiveFieldValue> fields;  // Row fields using RowStruct layout
+};
+
+// Result of walking DataTable rows
+struct DataTableWalkResult {
+    bool        ok           = false;
+    std::string error;
+    int32_t     rowCount     = 0;   // Total rows in RowMap
+    int32_t     rowMapOffset = 0;   // Detected RowMap offset within DataTable
+    uintptr_t   rowStructAddr = 0;  // UScriptStruct* for row layout
+    std::string rowStructName;       // Name of the row struct type
+    int32_t     fnameSize    = 0;   // FName size (8 or 16) for pointer chain
+    int32_t     stride       = 0;   // TMap element stride for pointer chain
+    std::vector<DataTableRow> rows;
+};
+
+// Walk DataTable rows: probe for RowMap, iterate entries, read row field values.
+// offset: starting row index (for pagination), limit: max rows to return.
+DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset = 0, int32_t limit = 64);
 
 // Interpret raw bytes as a typed value string based on the field type name
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size);

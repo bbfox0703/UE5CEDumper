@@ -169,6 +169,7 @@ public static class CsxExportService
             case "MapProperty":
             case "ArrayProperty":
             case "SetProperty":
+            case "DataTableRows":
                 // Drilldown: convert container elements to synthetic fields for child structure
                 if (drilldownDepth > 0
                     && resolvedInstances != null)
@@ -250,6 +251,7 @@ public static class CsxExportService
             "ArrayProperty"         => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
             "MapProperty"           => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
             "SetProperty"           => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
+            "DataTableRows"         => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
 
             // Opaque types
             "TextProperty"         => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
@@ -419,6 +421,8 @@ public static class CsxExportService
                 => ConvertArrayElementsToFields(field),
             "SetProperty" when field.SetElements is { Count: > 0 }
                 => ConvertSetElementsToFields(field),
+            "DataTableRows" when field.DataTableRowData is { Count: > 0 }
+                => ConvertDataTableRowsToFields(field),
             _ => null,
         };
     }
@@ -642,6 +646,35 @@ public static class CsxExportService
                 TypeName = setField.SetElemType,
                 Offset = elem.Index * stride,
                 Size = setField.SetElemSize,
+            });
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// Convert DataTable RowMap rows to synthetic LiveFieldValue list for CSX drilldown.
+    /// Each row is represented as a pointer (uint8*) at offset (sparseIndex * stride + fnameSize)
+    /// within the TSparseArray data buffer. CSX drilldown walks each row's data buffer as a struct.
+    /// </summary>
+    private static List<LiveFieldValue> ConvertDataTableRowsToFields(LiveFieldValue field)
+    {
+        var fields = new List<LiveFieldValue>();
+
+        foreach (var row in field.DataTableRowData!)
+        {
+            int offset = row.SparseIndex * field.DataTableStride + field.DataTableFNameSize;
+
+            fields.Add(new LiveFieldValue
+            {
+                Name = $"[{row.SparseIndex}] {row.RowName}",
+                TypeName = "ObjectProperty", // treated as pointer for CSX drilldown
+                Offset = offset,
+                Size = 8,
+                PtrAddress = row.DataAddr,
+                PtrName = row.RowName,
+                PtrClassName = field.DataTableStructName,
+                PtrClassAddr = field.DataTableRowStructAddr,
             });
         }
 
