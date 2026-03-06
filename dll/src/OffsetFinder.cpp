@@ -2991,17 +2991,19 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // Load hint cache: previously-winning pattern IDs for this game version
     auto hints = HintCache::LoadHints(out.peHash);
 
-    // UE version detection — use cached version if available (skips slow binary scan)
+    // UE version detection — use cached version only when it was reliably detected.
     // DetectVersion() can take 5+ seconds on large games that lack standard UE version strings.
     // The version is NOT used during AOB scanning (completely version-agnostic), only post-scan
     // for DynOff offset selection. Structural findings (UE4 TNameEntryArray, hash-prefixed headers)
     // will override the version later anyway, so a cached value is safe.
+    // NOTE: Only skip DetectVersion when versionDetected==true (PE resource matched).
+    // When versionDetected==false (inferred/fallback), re-run to avoid amplifying misdetections.
     if (progress) progress(1, "Detecting UE version...");
-    if (hints.hasVersionHint && hints.ueVersion != 0) {
+    if (hints.hasVersionHint && hints.ueVersion != 0 && hints.versionDetected) {
         out.UEVersion = hints.ueVersion;
-        out.bVersionDetected = hints.versionDetected;
-        LOG_INFO("FindAll: UE Version = %u (cached, detected=%s) — skipped DetectVersion",
-                 out.UEVersion, out.bVersionDetected ? "yes" : "no");
+        out.bVersionDetected = true;
+        LOG_INFO("FindAll: UE Version = %u (cached, detected) — skipped DetectVersion",
+                 out.UEVersion);
     } else {
         out.UEVersion = DetectVersion();
         out.bVersionDetected = (out.UEVersion != 0);

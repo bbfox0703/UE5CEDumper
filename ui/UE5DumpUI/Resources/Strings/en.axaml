@@ -110,6 +110,32 @@
     <sys:String x:Key="str.Pointers.ClearGameCache">Clear This Game</sys:String>
     <sys:String x:Key="str.Pointers.ResetAllCache">Reset All</sys:String>
     <sys:String x:Key="str.Pointers.CacheHint">Scan hint cache — clear cached patterns to force a full re-scan.</sys:String>
+    <sys:String x:Key="str.Pointers.AobLabel">AOB:</sys:String>
+    <sys:String x:Key="str.Pointers.CopyScanAddr">Copy</sys:String>
+
+    <!-- Pointer Panel: Extra Scan status messages (code-behind via Res.Get) -->
+    <sys:String x:Key="str.Pointers.Scan.Starting">Starting scan...</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.NothingToScan">Nothing to scan — all pointers found.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.Applying">Applying results...</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.Applied">Scan complete — results applied.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.NoResults">No additional pointers found.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.CompleteNoResults">Scan complete — no results.</sys:String>
+    <sys:String x:Key="str.Pointers.Scan.Error">Scan error: {0}</sys:String>
+
+    <!-- Pointer Panel: Test Extra Scan status messages (code-behind via Res.Get) -->
+    <sys:String x:Key="str.Pointers.TestScan.Starting">Starting test scan...</sys:String>
+    <sys:String x:Key="str.Pointers.TestScan.GObjects">Scanning GObjects (.data heuristic)...</sys:String>
+    <sys:String x:Key="str.Pointers.TestScan.GWorld">Scanning GWorld (instance scan)...</sys:String>
+    <sys:String x:Key="str.Pointers.TestScan.Complete">Test scan complete.</sys:String>
+    <sys:String x:Key="str.Pointers.TestScan.Result">Test: scan simulation finished (no actual rescan — all pointers are already found).</sys:String>
+    <sys:String x:Key="str.Pointers.TestScan.Error">Test scan error: {0}</sys:String>
+
+    <!-- Pointer Panel: Cache management status messages (code-behind via Res.Get) -->
+    <sys:String x:Key="str.Pointers.Cache.GameCleared">Cache cleared for this game. Next scan will do a full search.</sys:String>
+    <sys:String x:Key="str.Pointers.Cache.GameNotFound">No cache entry found for this game.</sys:String>
+    <sys:String x:Key="str.Pointers.Cache.AllReset">All cache data reset. Backup saved as .001 file.</sys:String>
+    <sys:String x:Key="str.Pointers.Cache.ResetFailed">Failed to reset cache — check logs.</sys:String>
+    <sys:String x:Key="str.Pointers.Cache.Error">Error: {0}</sys:String>
 
     <!-- Proxy Deploy -->
     <sys:String x:Key="str.ProxyDeploy.Scan">Scan Steam</sys:String>

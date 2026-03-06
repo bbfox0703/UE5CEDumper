@@ -46,10 +46,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private int _gWorldPatternsHit;
 
     // --- GWorld AOB metadata (for CreateSymbolScript) ---
-    private string _gworldAob = "";
-    private int _gworldAobPos;
-    private int _gworldAobLen;
-    private string _moduleName = "";
+    [ObservableProperty] private string _gworldAob = "";
+    [ObservableProperty] private int _gworldAobPos;
+    [ObservableProperty] private int _gworldAobLen;
+    [ObservableProperty] private string _moduleName = "";
 
     // --- AOBMaker CE Plugin bridge ---
     [ObservableProperty] private bool _isAobMakerAvailable;
@@ -61,7 +61,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _scanResultText = "";
 
     // --- Cache management ---
-    private string _peHash = "";
+    [ObservableProperty] private string _peHash = "";
     [ObservableProperty] private string _cacheStatusText = "";
 
     /// <summary>True when version detection failed — shows warning in UI.</summary>
@@ -117,7 +117,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     // --- AOBMaker button enable state ---
     /// <summary>Can register GWorld address as CE symbol via CreateSymbolScript (requires AOB data).</summary>
     public bool CanRegisterGWorldSymbol => IsAobMakerAvailable
-        && IsNonZeroAddr(GWorldAddress) && !string.IsNullOrEmpty(_gworldAob);
+        && IsNonZeroAddr(GWorldAddress) && !string.IsNullOrEmpty(GworldAob);
 
     /// <summary>Can send GObjects pointer to CE hex view (data address).</summary>
     public bool CanHexGObjects => IsAobMakerAvailable && IsNonZeroAddr(GObjectsAddress);
@@ -137,7 +137,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     public bool CanManageCache => HasData && _aobUsage != null;
 
     /// <summary>True when the clear-this-game button should be enabled (has PE hash).</summary>
-    public bool CanClearGameCache => CanManageCache && !string.IsNullOrEmpty(_peHash);
+    public bool CanClearGameCache => CanManageCache && !string.IsNullOrEmpty(PeHash);
 
     /// <summary>Fired when rescan results have been applied — MainWindowVM re-fetches state.</summary>
     public event Action? RescanApplied;
@@ -173,11 +173,11 @@ public partial class PointerPanelViewModel : ViewModelBase
         GObjectsScanAddr = state.GObjectsScanAddr;
         GNamesScanAddr = state.GNamesScanAddr;
         GWorldScanAddr = state.GWorldScanAddr;
-        _gworldAob = state.GWorldAob;
-        _gworldAobPos = state.GWorldAobPos;
-        _gworldAobLen = state.GWorldAobLen;
-        _moduleName = state.ModuleName;
-        _peHash = state.PeHash;
+        GworldAob = state.GWorldAob;
+        GworldAobPos = state.GWorldAobPos;
+        GworldAobLen = state.GWorldAobLen;
+        ModuleName = state.ModuleName;
+        PeHash = state.PeHash;
         HasData = true;
         // Reset scan state on fresh update
         IsScanning = false;
@@ -270,7 +270,7 @@ public partial class PointerPanelViewModel : ViewModelBase
             ClearError();
             IsScanning = true;
             ScanComplete = false;
-            ScanStatusText = "Starting scan...";
+            ScanStatusText = Res.Get("str.Pointers.Scan.Starting");
             ScanResultText = "";
             OnPropertyChanged(nameof(CanExtraScan));
 
@@ -278,7 +278,7 @@ public partial class PointerPanelViewModel : ViewModelBase
 
             if (!startResult.ScanningGObjects && !startResult.ScanningGWorld)
             {
-                ScanStatusText = "Nothing to scan — all pointers found.";
+                ScanStatusText = Res.Get("str.Pointers.Scan.NothingToScan");
                 IsScanning = false;
                 OnPropertyChanged(nameof(CanExtraScan));
                 return;
@@ -302,14 +302,14 @@ public partial class PointerPanelViewModel : ViewModelBase
 
                     if (status.FoundGObjects || status.FoundGWorld)
                     {
-                        ScanStatusText = "Applying results...";
+                        ScanStatusText = Res.Get("str.Pointers.Scan.Applying");
                         var newState = await _dump.ApplyRescanAsync();
 
                         var parts = new List<string>();
                         if (status.FoundGObjects) parts.Add($"GObjects: {status.GObjectsAddr}");
                         if (status.FoundGWorld) parts.Add($"GWorld: {status.GWorldAddr}");
                         ScanResultText = $"Found: {string.Join(", ", parts)}";
-                        ScanStatusText = "Scan complete — results applied.";
+                        ScanStatusText = Res.Get("str.Pointers.Scan.Applied");
 
                         _log?.Info(Constants.LogCatInit, $"Extra Scan complete: {ScanResultText}");
 
@@ -318,8 +318,8 @@ public partial class PointerPanelViewModel : ViewModelBase
                     }
                     else
                     {
-                        ScanResultText = "No additional pointers found.";
-                        ScanStatusText = "Scan complete — no results.";
+                        ScanResultText = Res.Get("str.Pointers.Scan.NoResults");
+                        ScanStatusText = Res.Get("str.Pointers.Scan.CompleteNoResults");
                         _log?.Info(Constants.LogCatInit, "Extra Scan complete: no results");
                     }
                     break;
@@ -328,7 +328,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            ScanStatusText = $"Scan error: {ex.Message}";
+            ScanStatusText = Res.Format("str.Pointers.Scan.Error", ex.Message);
             SetError(ex);
             _log?.Error(Constants.LogCatInit, "Extra Scan failed", ex);
         }
@@ -351,27 +351,27 @@ public partial class PointerPanelViewModel : ViewModelBase
             ClearError();
             IsScanning = true;
             ScanComplete = false;
-            ScanStatusText = "Starting test scan...";
+            ScanStatusText = Res.Get("str.Pointers.TestScan.Starting");
             ScanResultText = "";
             OnPropertyChanged(nameof(CanExtraScan));
 
             // Simulate scan phases with delays
-            ScanStatusText = "Scanning GObjects (.data heuristic)...";
+            ScanStatusText = Res.Get("str.Pointers.TestScan.GObjects");
             await Task.Delay(2000);
 
-            ScanStatusText = "Scanning GWorld (instance scan)...";
+            ScanStatusText = Res.Get("str.Pointers.TestScan.GWorld");
             await Task.Delay(2000);
 
             // After simulation, do a real get_pointers to show current state
             ScanComplete = true;
-            ScanStatusText = "Test scan complete.";
-            ScanResultText = "Test: scan simulation finished (no actual rescan — all pointers are already found).";
+            ScanStatusText = Res.Get("str.Pointers.TestScan.Complete");
+            ScanResultText = Res.Get("str.Pointers.TestScan.Result");
 
             _log?.Info(Constants.LogCatInit, "Test Extra Scan simulation complete");
         }
         catch (Exception ex)
         {
-            ScanStatusText = $"Test scan error: {ex.Message}";
+            ScanStatusText = Res.Format("str.Pointers.TestScan.Error", ex.Message);
             SetError(ex);
         }
         finally
@@ -432,10 +432,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     [RelayCommand]
     private async Task RegisterGWorldSymbolAsync()
     {
-        if (_aobMaker == null || string.IsNullOrEmpty(_gworldAob)) return;
+        if (_aobMaker == null || string.IsNullOrEmpty(GworldAob)) return;
 
         string symbolName = "gworld_addr";
-        string module = !string.IsNullOrEmpty(_moduleName) ? _moduleName : "game.exe";
+        string module = !string.IsNullOrEmpty(ModuleName) ? ModuleName : "game.exe";
 
         // Send CreateSymbolScript — the CE Plugin's BuildSymbolScanScript() generates
         // a full AA script that: AOBScanModule for the pattern, reads the RIP-relative
@@ -443,16 +443,16 @@ public partial class PointerPanelViewModel : ViewModelBase
         // it as a CE symbol. This survives game restarts (re-scans on enable).
         bool success = await _aobMaker.CreateSymbolScriptAsync(
             name: $"GWorld → {symbolName}",
-            aob: _gworldAob,
-            pos: _gworldAobPos,
-            aoblen: _gworldAobLen,
+            aob: GworldAob,
+            pos: GworldAobPos,
+            aoblen: GworldAobLen,
             symbol: symbolName,
             module: module,
             autoActivate: true);
 
         if (success)
             _log?.Info(Constants.LogCatInit,
-                $"Created CE symbol script '{symbolName}' (AOB: {_gworldAob}, pos={_gworldAobPos}, len={_gworldAobLen})");
+                $"Created CE symbol script '{symbolName}' (AOB: {GworldAob}, pos={GworldAobPos}, len={GworldAobLen})");
         else
             _log?.Warn(Constants.LogCatInit,
                 $"Failed to create CE symbol script '{symbolName}'");
@@ -463,19 +463,19 @@ public partial class PointerPanelViewModel : ViewModelBase
     [RelayCommand]
     private async Task ClearGameCacheAsync()
     {
-        if (_aobUsage == null || string.IsNullOrEmpty(_peHash)) return;
+        if (_aobUsage == null || string.IsNullOrEmpty(PeHash)) return;
 
         try
         {
-            var removed = await _aobUsage.DeleteGameAsync(_peHash);
+            var removed = await _aobUsage.DeleteGameAsync(PeHash);
             CacheStatusText = removed
-                ? "Cache cleared for this game. Next scan will do a full search."
-                : "No cache entry found for this game.";
-            _log?.Info(Constants.LogCatInit, $"ClearGameCache: PE={_peHash}, removed={removed}");
+                ? Res.Get("str.Pointers.Cache.GameCleared")
+                : Res.Get("str.Pointers.Cache.GameNotFound");
+            _log?.Info(Constants.LogCatInit, $"ClearGameCache: PE={PeHash}, removed={removed}");
         }
         catch (Exception ex)
         {
-            CacheStatusText = $"Error: {ex.Message}";
+            CacheStatusText = Res.Format("str.Pointers.Cache.Error", ex.Message);
             _log?.Error(Constants.LogCatInit, "ClearGameCache failed", ex);
         }
     }
@@ -489,13 +489,13 @@ public partial class PointerPanelViewModel : ViewModelBase
         {
             var success = await _aobUsage.ResetAllAsync();
             CacheStatusText = success
-                ? "All cache data reset. Backup saved as .001 file."
-                : "Failed to reset cache — check logs.";
+                ? Res.Get("str.Pointers.Cache.AllReset")
+                : Res.Get("str.Pointers.Cache.ResetFailed");
             _log?.Info(Constants.LogCatInit, $"ResetAllCache: success={success}");
         }
         catch (Exception ex)
         {
-            CacheStatusText = $"Error: {ex.Message}";
+            CacheStatusText = Res.Format("str.Pointers.Cache.Error", ex.Message);
             _log?.Error(Constants.LogCatInit, "ResetAllCache failed", ex);
         }
     }

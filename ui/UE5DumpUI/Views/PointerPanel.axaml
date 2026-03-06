@@ -43,7 +43,7 @@
                        ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
             <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0"
                         IsVisible="{Binding HasGObjectsScanAddr}">
-              <TextBlock Text="AOB:" Foreground="#888" FontSize="10"/>
+              <TextBlock Text="{StaticResource str.Pointers.AobLabel}" Foreground="#888" FontSize="10"/>
               <TextBlock Text="{Binding GObjectsScanAddr}" FontSize="10"
                          Foreground="#E5C07B" FontFamily="Consolas"/>
               <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
@@ -53,7 +53,7 @@
                       Padding="4,1" FontSize="9" FontFamily="Consolas"
                       Foreground="#E5C07B" Background="Transparent"
                       BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
-              <Button Content="Copy" Command="{Binding CopyGObjectsScanAddrCommand}"
+              <Button Content="{StaticResource str.Pointers.CopyScanAddr}" Command="{Binding CopyGObjectsScanAddrCommand}"
                       ToolTip.Tip="{StaticResource str.Tip.Pointers.CopyScan}"
                       Padding="4,1" FontSize="9" Foreground="#AAA" Background="Transparent"
                       BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
@@ -100,7 +100,7 @@
                        ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
             <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0"
                         IsVisible="{Binding HasGNamesScanAddr}">
-              <TextBlock Text="AOB:" Foreground="#888" FontSize="10"/>
+              <TextBlock Text="{StaticResource str.Pointers.AobLabel}" Foreground="#888" FontSize="10"/>
               <TextBlock Text="{Binding GNamesScanAddr}" FontSize="10"
                          Foreground="#E5C07B" FontFamily="Consolas"/>
               <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
@@ -110,7 +110,7 @@
                       Padding="4,1" FontSize="9" FontFamily="Consolas"
                       Foreground="#E5C07B" Background="Transparent"
                       BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
-              <Button Content="Copy" Command="{Binding CopyGNamesScanAddrCommand}"
+              <Button Content="{StaticResource str.Pointers.CopyScanAddr}" Command="{Binding CopyGNamesScanAddrCommand}"
                       ToolTip.Tip="{StaticResource str.Tip.Pointers.CopyScan}"
                       Padding="4,1" FontSize="9" Foreground="#AAA" Background="Transparent"
                       BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
@@ -157,7 +157,7 @@
                        ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
             <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0"
                         IsVisible="{Binding HasGWorldScanAddr}">
-              <TextBlock Text="AOB:" Foreground="#888" FontSize="10"/>
+              <TextBlock Text="{StaticResource str.Pointers.AobLabel}" Foreground="#888" FontSize="10"/>
               <TextBlock Text="{Binding GWorldScanAddr}" FontSize="10"
                          Foreground="#E5C07B" FontFamily="Consolas"/>
               <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
@@ -167,7 +167,7 @@
                       Padding="4,1" FontSize="9" FontFamily="Consolas"
                       Foreground="#E5C07B" Background="Transparent"
                       BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
-              <Button Content="Copy" Command="{Binding CopyGWorldScanAddrCommand}"
+              <Button Content="{StaticResource str.Pointers.CopyScanAddr}" Command="{Binding CopyGWorldScanAddrCommand}"
                       ToolTip.Tip="{StaticResource str.Tip.Pointers.CopyScan}"
                       Padding="4,1" FontSize="9" Foreground="#AAA" Background="Transparent"
                       BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
