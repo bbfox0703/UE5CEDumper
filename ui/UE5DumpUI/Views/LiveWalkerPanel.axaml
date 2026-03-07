@@ -67,6 +67,13 @@
               IsVisible="{Binding SelectedField, Converter={x:Static ObjectConverters.IsNotNull}}"
               ToolTip.Tip="{StaticResource str.Tip.LiveWalker.ExportCEField}"
               Padding="8,4"/>
+      <CheckBox Content="{StaticResource str.LiveWalker.AobToggle}"
+                IsChecked="{Binding UseAobSymbol}"
+                IsEnabled="{Binding IsAobSymbolAvailable}"
+                IsVisible="{Binding HasData}"
+                ToolTip.Tip="{StaticResource str.Tip.LiveWalker.AobToggle}"
+                Padding="4,2" FontSize="11" Foreground="#9CDCFE"
+                VerticalAlignment="Center"/>
       <Button Content="{StaticResource str.LiveWalker.ExportCsx}"
               Command="{Binding ExportCsxCommand}"
               IsVisible="{Binding HasData}"
@@ -206,6 +213,7 @@
               BorderThickness="0"
               Background="#1E1E1E"
               FontFamily="Consolas" FontSize="12"
+              HorizontalScrollBarVisibility="Auto"
               LoadingRow="FieldGrid_LoadingRow"
               BeginningEdit="FieldGrid_BeginningEdit"
               CellEditEnded="FieldGrid_CellEditEnded">
@@ -215,12 +223,12 @@
                             Width="75" IsReadOnly="True"/>
         <DataGridTextColumn Header="{StaticResource str.ClassStruct.Name}"
                             Binding="{Binding Name}"
-                            Width="1*" MinWidth="140" IsReadOnly="True"/>
+                            Width="220" MinWidth="140" IsReadOnly="True"/>
         <DataGridTextColumn Header="{StaticResource str.ClassStruct.Type}"
                             Binding="{Binding TypeName}"
                             Width="115" IsReadOnly="True"/>
         <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.Value}"
-                                Width="1*" MinWidth="100">
+                                Width="200" MinWidth="100">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
               <TextBlock Text="{Binding DisplayValue}"

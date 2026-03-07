@@ -2195,6 +2195,175 @@ public class CeXmlExportServiceTests
         Assert.Contains("Armor", xml);
     }
 
+    // ========================================
+    // GenerateAobWrappedXml tests
+    // ========================================
+
+    [Fact]
+    public void GenerateAobWrappedXml_ContainsAAScript()
+    {
+        var breadcrumbs = new[]
+        {
+            MakeBc("0x12A37FFB5A0", "World"),
+            MakeBc("0x12A38001000", "Level", "PersistentLevel", isPointer: true, offset: 0x30),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 },
+        };
+
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D ?? ?? ?? ??", aobPos: 3, aobLen: 7,
+            moduleName: "Game.exe");
+
+        Assert.Contains("Auto Assembler Script", xml);
+        Assert.Contains("AOBScanModule", xml);
+        Assert.Contains("registerSymbol", xml);
+        Assert.Contains("unregisterSymbol", xml);
+        Assert.Contains("\"base\"", xml);
+        Assert.Contains("48 8B 1D ?? ?? ?? ??", xml);
+        Assert.Contains("Health", xml);
+    }
+
+    [Fact]
+    public void GenerateAobWrappedXml_SymbolHas6HexSuffix()
+    {
+        var breadcrumbs = new[] { MakeBc("0xA", "World") };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4 },
+        };
+
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D", aobPos: 3, aobLen: 7,
+            moduleName: "Test.exe");
+
+        // Symbol name pattern: gworld_addr_XXXXXX (6 hex chars)
+        Assert.Matches(@"gworld_addr_[0-9A-F]{6}", xml);
+    }
+
+    [Fact]
+    public void GenerateAobWrappedXml_BaseEntryDereferencesSymbol()
+    {
+        var breadcrumbs = new[] { MakeBc("0xA", "World") };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "HP", TypeName = "IntProperty", Offset = 0x10, Size = 4 },
+        };
+
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D", aobPos: 3, aobLen: 7,
+            moduleName: "Test.exe");
+
+        // base entry has Offset 0 for pointer dereference
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // base entry uses symbol as address
+        Assert.Matches(@"<Address>gworld_addr_[0-9A-F]{6}</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateAobWrappedXml_RootOnlyBreadcrumb_FieldsUnderBase()
+    {
+        var breadcrumbs = new[] { MakeBc("0xA", "World") };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Score", TypeName = "IntProperty", Offset = 0x20, Size = 4 },
+        };
+
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D", aobPos: 3, aobLen: 7,
+            moduleName: "Test.exe");
+
+        Assert.Contains("Score", xml);
+        // Verify XML is well-formed (has closing tags)
+        Assert.Contains("</CheatTable>", xml);
+    }
+
+    [Fact]
+    public void GenerateAobWrappedXml_DisableSection_ContainsUnregister()
+    {
+        var breadcrumbs = new[] { MakeBc("0xA", "World") };
+        var fields = new List<LiveFieldValue>();
+
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D", aobPos: 3, aobLen: 7,
+            moduleName: "Test.exe");
+
+        Assert.Contains("[DISABLE]", xml);
+        Assert.Contains("unregisterSymbol", xml);
+    }
+
+    [Fact]
+    public void GenerateAobWrappedXml_MultipleBreadcrumbs_EmitsIntermediateGroups()
+    {
+        var breadcrumbs = new[]
+        {
+            MakeBc("0xA", "World"),
+            MakeBc("0xB", "GameInstance", "OwningGameInstance", isPointer: true, offset: 0x158),
+            MakeBc("0xC", "Player", "GamePlayer", isPointer: true, offset: 0x128),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "HP", TypeName = "IntProperty", Offset = 0x7C, Size = 4 },
+        };
+
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D ?? ?? ?? ??", aobPos: 3, aobLen: 7,
+            moduleName: "Game.exe");
+
+        Assert.Contains("OwningGameInstance", xml);
+        Assert.Contains("GamePlayer", xml);
+        Assert.Contains("+158", xml);
+        Assert.Contains("+128", xml);
+        Assert.Contains("HP", xml);
+    }
+
+    [Fact]
+    public void GenerateAobWrappedXml_UniqueSymbolsAcrossCalls()
+    {
+        var breadcrumbs = new[] { MakeBc("0xA", "World") };
+        var fields = new List<LiveFieldValue>();
+
+        var xml1 = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D", aobPos: 3, aobLen: 7,
+            moduleName: "Test.exe");
+        var xml2 = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D", aobPos: 3, aobLen: 7,
+            moduleName: "Test.exe");
+
+        // Extract symbol names — should differ between calls (with very high probability)
+        var match1 = System.Text.RegularExpressions.Regex.Match(xml1, @"gworld_addr_([0-9A-F]{6})");
+        var match2 = System.Text.RegularExpressions.Regex.Match(xml2, @"gworld_addr_([0-9A-F]{6})");
+        Assert.True(match1.Success);
+        Assert.True(match2.Success);
+        // Probability of collision: 1/~15M — effectively impossible
+        Assert.NotEqual(match1.Groups[1].Value, match2.Groups[1].Value);
+    }
+
+    [Fact]
+    public void GenerateAobWrappedXml_OptionsHideChildren()
+    {
+        var breadcrumbs = new[] { MakeBc("0xA", "World") };
+        var fields = new List<LiveFieldValue>();
+
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "World", breadcrumbs, fields,
+            aob: "48 8B 1D", aobPos: 3, aobLen: 7,
+            moduleName: "Test.exe");
+
+        // AA Script root entry should have moHideChildren
+        Assert.Contains("moHideChildren=\"1\"", xml);
+        Assert.Contains("moDeactivateChildrenAsWell=\"1\"", xml);
+    }
+
     private static BreadcrumbItem MakeBc(string addr, string label,
         string fieldName = "", bool isPointer = false, int offset = 0,
         bool isContainerView = false)

@@ -104,6 +104,14 @@ public partial class LiveWalkerViewModel : ViewModelBase
     // AOBMaker CE Plugin integration
     [ObservableProperty] private bool _isAobMakerAvailable;
 
+    // AOB Symbol toggle for CE XML export
+    [ObservableProperty] private bool _useAobSymbol;
+    [ObservableProperty] private bool _isAobSymbolAvailable;
+
+    // AOBMaker CE Plugin detection cooldown (avoids spamming pipe connect on rapid navigation)
+    private DateTime _lastAobMakerCheck = DateTime.MinValue;
+    private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
+
     // Auto-refresh
     [ObservableProperty] private bool _isAutoRefreshing;
     [ObservableProperty] private int _autoRefreshIntervalSec = Constants.DefaultAutoRefreshIntervalSec;
@@ -140,6 +148,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
+        IsAobSymbolAvailable = !string.IsNullOrEmpty(state?.GWorldAob);
+    }
+
+    partial void OnIsAobSymbolAvailableChanged(bool value)
+    {
+        if (!value)
+            UseAobSymbol = false;
     }
 
     /// <summary>Clear both error message and status text (e.g., container limit warnings).</summary>
@@ -267,6 +282,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private async Task NavigateToFieldAsync(LiveFieldValue? field)
     {
         if (field == null || !field.IsNavigable) return;
+
+        // Re-check AOBMaker CE Plugin availability (detects CE start/close, cooldown-throttled)
+        TryCheckAobMaker();
 
         try
         {
@@ -941,6 +959,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
     {
         if (Breadcrumbs.Count < 2) return;
 
+        // Re-check AOBMaker CE Plugin availability (detects CE start/close, cooldown-throttled)
+        TryCheckAobMaker();
+
         var removed = Breadcrumbs[^1];
         Breadcrumbs.RemoveAt(Breadcrumbs.Count - 1);
         var prev = Breadcrumbs[^1];
@@ -1097,21 +1118,34 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, fieldsForXml, arrayLimit: ArrayLimit);
 
-            // Compute root address in user-selected format
             var rootBc = breadcrumbsForXml[0];
-            var rootAddress = AddressHelper.FormatAddress(
-                rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
             StatusText = "Generating CE XML...";
-            var xml = CeXmlExportService.GenerateHierarchicalXml(
-                rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
-                collapsePointerNodes: CollapsePointerNodes,
-                maxDropDownEntries: DropDownLimit);
+            string xml;
+            if (UseAobSymbol && !string.IsNullOrEmpty(_engineState?.GWorldAob))
+            {
+                xml = CeXmlExportService.GenerateAobWrappedXml(
+                    rootBc.Label, breadcrumbsForXml, fieldsForXml,
+                    _engineState.GWorldAob, _engineState.GWorldAobPos, _engineState.GWorldAobLen,
+                    _engineState.ModuleName,
+                    resolvedStructs,
+                    collapsePointerNodes: CollapsePointerNodes,
+                    maxDropDownEntries: DropDownLimit);
+            }
+            else
+            {
+                var rootAddress = AddressHelper.FormatAddress(
+                    rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                xml = CeXmlExportService.GenerateHierarchicalXml(
+                    rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
+                    collapsePointerNodes: CollapsePointerNodes,
+                    maxDropDownEntries: DropDownLimit);
+            }
 
             await _platform.CopyToClipboardAsync(xml);
             var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
             StatusText = limitWarn ?? "";
-            _log.Info($"CE XML copied to clipboard for {CurrentClassName} ({resolvedStructs.Count} structs resolved)");
+            _log.Info($"CE XML copied to clipboard for {CurrentClassName} (AOB={UseAobSymbol}, {resolvedStructs.Count} structs resolved)");
         }
         catch (Exception ex)
         {
@@ -1228,21 +1262,34 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, singleFieldList, arrayLimit: ArrayLimit);
 
-            // Compute root address in user-selected format
             var rootBc = breadcrumbsForXml[0];
-            var rootAddress = AddressHelper.FormatAddress(
-                rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
 
             StatusText = "Generating CE Field XML...";
-            var xml = CeXmlExportService.GenerateHierarchicalXml(
-                rootAddress, rootBc.Label, breadcrumbsForXml, singleFieldList, resolvedStructs,
-                collapsePointerNodes: CollapsePointerNodes,
-                maxDropDownEntries: DropDownLimit);
+            string xml;
+            if (UseAobSymbol && !string.IsNullOrEmpty(_engineState?.GWorldAob))
+            {
+                xml = CeXmlExportService.GenerateAobWrappedXml(
+                    rootBc.Label, breadcrumbsForXml, singleFieldList,
+                    _engineState.GWorldAob, _engineState.GWorldAobPos, _engineState.GWorldAobLen,
+                    _engineState.ModuleName,
+                    resolvedStructs,
+                    collapsePointerNodes: CollapsePointerNodes,
+                    maxDropDownEntries: DropDownLimit);
+            }
+            else
+            {
+                var rootAddress = AddressHelper.FormatAddress(
+                    rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                xml = CeXmlExportService.GenerateHierarchicalXml(
+                    rootAddress, rootBc.Label, breadcrumbsForXml, singleFieldList, resolvedStructs,
+                    collapsePointerNodes: CollapsePointerNodes,
+                    maxDropDownEntries: DropDownLimit);
+            }
 
             await _platform.CopyToClipboardAsync(xml);
             var limitWarn = BuildContainerLimitWarning(singleFieldList, ArrayLimit);
             StatusText = limitWarn ?? "";
-            _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName})");
+            _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName}, AOB={UseAobSymbol})");
         }
         catch (Exception ex)
         {
@@ -1374,6 +1421,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private async Task RefreshAsync()
     {
         if (string.IsNullOrEmpty(CurrentAddress)) return;
+
+        // Re-check AOBMaker CE Plugin availability (detects CE start/close, cooldown-throttled)
+        TryCheckAobMaker();
 
         // Snapshot address before async call — if user navigates while we're awaiting,
         // CurrentAddress will differ and we discard the stale result.
@@ -1520,11 +1570,25 @@ public partial class LiveWalkerViewModel : ViewModelBase
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) return;
+        _lastAobMakerCheck = DateTime.UtcNow;
         try
         {
             IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
         }
         catch { IsAobMakerAvailable = false; }
+    }
+
+    /// <summary>
+    /// Fire-and-forget AOBMaker availability check with cooldown.
+    /// Detects both CE starting (buttons enable) and CE closing (buttons disable).
+    /// Skips if last check was within <see cref="AobMakerCheckCooldown"/> to avoid
+    /// spamming pipe connects on rapid navigation (2s timeout when CE not running).
+    /// </summary>
+    private void TryCheckAobMaker()
+    {
+        if (_aobMaker == null) return;
+        if (DateTime.UtcNow - _lastAobMakerCheck < AobMakerCheckCooldown) return;
+        _ = CheckAobMakerAsync();
     }
 
     /// <summary>Strip leading "0x" prefix for AOBMaker hex navigation.</summary>

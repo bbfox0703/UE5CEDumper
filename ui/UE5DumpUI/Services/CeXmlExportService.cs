@@ -366,6 +366,209 @@ public static class CeXmlExportService
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Generate CE XML with an AOB-scanning AA script root instead of a hardcoded address.
+    /// The script scans for the GWorld AOB pattern at runtime, registers a unique CE symbol,
+    /// and a "base" pointer entry dereferences it. All breadcrumb/field children nest under base.
+    /// This format survives game restarts (re-scans AOB on script activation).
+    /// </summary>
+    public static string GenerateAobWrappedXml(
+        string rootName,
+        IReadOnlyList<BreadcrumbItem> breadcrumbs,
+        IReadOnlyList<LiveFieldValue> currentFields,
+        string aob, int aobPos, int aobLen, string moduleName,
+        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        bool collapsePointerNodes = false,
+        int maxDropDownEntries = 512)
+    {
+        var cleanedBc = CleanBreadcrumbs(breadcrumbs);
+
+        _nextId = 100;
+        _collapsePointerNodes = collapsePointerNodes;
+        _maxDropDownEntries = maxDropDownEntries;
+        _dropDownOwners = new Dictionary<string, string>();
+        _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
+
+        // Generate unique symbol name to avoid CE overwrite on repeated copies
+        var suffix = Random.Shared.Next(0x100000, 0xFFFFFF).ToString("X6");
+        var symbolName = $"gworld_addr_{suffix}";
+
+        var sb = new StringBuilder();
+        sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+        sb.AppendLine("<CheatTable>");
+        sb.AppendLine("  <CheatEntries>");
+
+        // ---- Outer: AA Script entry ----
+        var indent = "    ";
+        sb.AppendLine($"{indent}<CheatEntry>");
+        sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
+        sb.AppendLine($"{indent}  <Description>\"GWorld \u2192 {symbolName}\"</Description>");
+        sb.AppendLine($"{indent}  <Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>");
+        sb.AppendLine($"{indent}  <LastState/>");
+        sb.AppendLine($"{indent}  <VariableType>Auto Assembler Script</VariableType>");
+        sb.AppendLine($"{indent}  <AssemblerScript>");
+        BuildAobAssemblerScript(sb, symbolName, aob, aobPos, aobLen);
+        sb.AppendLine($"{indent}  </AssemblerScript>");
+        sb.AppendLine($"{indent}  <CheatEntries>");
+
+        // ---- "base" pointer entry: dereferences the symbol ----
+        var baseIndent = indent + "    ";
+        sb.AppendLine($"{baseIndent}<CheatEntry>");
+        sb.AppendLine($"{baseIndent}  <ID>{_nextId++}</ID>");
+        sb.AppendLine($"{baseIndent}  <Description>\"base\"</Description>");
+        sb.AppendLine($"{baseIndent}  <ShowAsHex>1</ShowAsHex>");
+        sb.AppendLine($"{baseIndent}  <ShowAsSigned>0</ShowAsSigned>");
+        sb.AppendLine($"{baseIndent}  <VariableType>8 Bytes</VariableType>");
+        sb.AppendLine($"{baseIndent}  <Address>{symbolName}</Address>");
+        sb.AppendLine($"{baseIndent}  <Offsets>");
+        sb.AppendLine($"{baseIndent}    <Offset>0</Offset>");
+        sb.AppendLine($"{baseIndent}  </Offsets>");
+        sb.AppendLine($"{baseIndent}  <CheatEntries>");
+
+        // ---- Inner breadcrumb chain (skip root at index 0, base replaces it) ----
+        var innerOpenTags = 0;
+        for (int i = 1; i < cleanedBc.Count; i++)
+        {
+            var bc = cleanedBc[i];
+            var childIndent = baseIndent + "    " + new string(' ', (i - 1) * 2);
+            var needsDeref = bc.IsPointerDeref || bc.IsContainerView;
+            var desc = bc.IsContainerView ? bc.Label : bc.FieldName;
+
+            EmitGroupOpen(sb, childIndent, desc,
+                $"+{bc.FieldOffset:X}",
+                needsDeref ? new[] { 0 } : null,
+                showAsHex: needsDeref);
+            innerOpenTags++;
+        }
+
+        // ---- Leaf fields ----
+        var bcDepth = Math.Max(0, cleanedBc.Count - 1);
+        var leafIndent = baseIndent + "    " + new string(' ', bcDepth * 2);
+        EmitFields(sb, leafIndent, currentFields, resolvedStructs);
+
+        // ---- Close inner breadcrumb groups ----
+        for (int i = innerOpenTags - 1; i >= 0; i--)
+        {
+            var closeIndent = baseIndent + "    " + new string(' ', i * 2);
+            EmitGroupClose(sb, closeIndent);
+        }
+
+        // ---- Close "base" ----
+        sb.AppendLine($"{baseIndent}  </CheatEntries>");
+        sb.AppendLine($"{baseIndent}</CheatEntry>");
+
+        // ---- Close AA Script entry ----
+        sb.AppendLine($"{indent}  </CheatEntries>");
+        sb.AppendLine($"{indent}</CheatEntry>");
+
+        sb.AppendLine("  </CheatEntries>");
+        sb.AppendLine("</CheatTable>");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Build the AA script body that scans for an AOB pattern and registers a CE symbol.
+    /// Matches the format produced by the CEPlugin's BuildSymbolScanScript.
+    /// </summary>
+    private static void BuildAobAssemblerScript(StringBuilder sb, string symbolName,
+        string aob, int aobPos, int aobLen)
+    {
+        sb.AppendLine("[ENABLE]");
+        sb.AppendLine("{$lua}");
+        sb.AppendLine("if syntaxcheck then return end");
+        sb.AppendLine();
+
+        // AOBScanModule helper (idempotent — won't redefine if already loaded)
+        sb.AppendLine("if not AOBScanModule then");
+        sb.AppendLine("  function AOBScanModule(moduleName, signature)");
+        sb.AppendLine("    local baseAddr = nil");
+        sb.AppendLine("    local maxAddr = 0");
+        sb.AppendLine("    local modList");
+        sb.AppendLine("    synchronize(function()");
+        sb.AppendLine("      modList = enumModules()");
+        sb.AppendLine("    end)");
+        sb.AppendLine("    for _, mod in ipairs(modList) do");
+        sb.AppendLine("      if string.lower(mod.Name) == string.lower(moduleName) then");
+        sb.AppendLine("        baseAddr = mod.Address");
+        sb.AppendLine("        maxAddr = baseAddr + mod.Size");
+        sb.AppendLine("        break");
+        sb.AppendLine("      end");
+        sb.AppendLine("    end");
+        sb.AppendLine("    if not baseAddr then return nil end");
+        sb.AppendLine("    local ms = createMemScan()");
+        sb.AppendLine("    synchronize(function()");
+        sb.AppendLine("      ms.firstScan(soExactValue, vtByteArray, nil, signature,");
+        sb.AppendLine("        nil, baseAddr, maxAddr, '+X-C-W', fsmNotAligned, '1', true, true, false, false)");
+        sb.AppendLine("    end)");
+        sb.AppendLine("    ms.waitTillDone()");
+        sb.AppendLine("    local results = createFoundList(ms)");
+        sb.AppendLine("    results.initialize()");
+        sb.AppendLine("    local addr");
+        sb.AppendLine("    synchronize(function()");
+        sb.AppendLine("      if results.getCount() &gt; 0 then");
+        sb.AppendLine("        addr = results[0]");
+        sb.AppendLine("      end");
+        sb.AppendLine("    end)");
+        sb.AppendLine("    results.destroy()");
+        sb.AppendLine("    ms.destroy()");
+        sb.AppendLine("    return addr");
+        sb.AppendLine("  end");
+        sb.AppendLine("end");
+        sb.AppendLine();
+
+        // Close lua engine log helper (idempotent)
+        sb.AppendLine("if not closeLuaEngine then");
+        sb.AppendLine("  function closeLuaEngine()");
+        sb.AppendLine("    synchronize(function()");
+        sb.AppendLine("      getLuaEngine().Close()");
+        sb.AppendLine("    end)");
+        sb.AppendLine("  end");
+        sb.AppendLine("end");
+        sb.AppendLine("registerLuaFunctionHighlight('closeLuaEngine')");
+        sb.AppendLine();
+
+        // AOB entries table
+        sb.AppendLine("local AOBs = {");
+        sb.AppendLine($"  {{name='GWorld \u2192 {symbolName}', aob='{aob}', pos={aobPos}, aoblen={aobLen}, symbol='{symbolName}'}},");
+        sb.AppendLine("}");
+        sb.AppendLine();
+
+        // Use CE global 'process' for the attached process module name
+        sb.AppendLine("local module_name = process");
+        sb.AppendLine();
+
+        // Scan and register loop
+        sb.AppendLine("for _, entry in ipairs(AOBs) do");
+        sb.AppendLine("  local aob_addr_str = AOBScanModule(module_name, entry.aob)");
+        sb.AppendLine("  if aob_addr_str then");
+        sb.AppendLine("    local aob_addr_val = tonumber(aob_addr_str, 16)");
+        sb.AppendLine("    local offset_addr = aob_addr_val + entry.pos");
+        sb.AppendLine("    local relative_offset = readInteger(offset_addr, true)");
+        sb.AppendLine("    local final_addr = relative_offset + aob_addr_val + entry.aoblen");
+        sb.AppendLine("    synchronize(function()");
+        sb.AppendLine("      unregisterSymbol(entry.symbol)");
+        sb.AppendLine("      registerSymbol(entry.symbol, final_addr)");
+        sb.AppendLine("    end)");
+        sb.AppendLine("    print(string.format('[SymbolScanner] %s registered at: %X', entry.name, final_addr))");
+        sb.AppendLine("  else");
+        sb.AppendLine("    print(string.format('[SymbolScanner] WARNING: AOB scan failed for %s', entry.name))");
+        sb.AppendLine("  end");
+        sb.AppendLine("end");
+        sb.AppendLine();
+        sb.AppendLine("closeLuaEngine()");
+        sb.AppendLine("{$asm}");
+        sb.AppendLine();
+
+        // DISABLE section
+        sb.AppendLine("[DISABLE]");
+        sb.AppendLine("{$lua}");
+        sb.AppendLine("if syntaxcheck then return end");
+        sb.AppendLine($"unregisterSymbol('{symbolName}')");
+        sb.AppendLine("closeLuaEngine()");
+        sb.AppendLine("{$asm}");
+    }
+
     // ========================================
     // Breadcrumb cleaning
     // ========================================
