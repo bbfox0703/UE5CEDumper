@@ -108,6 +108,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [ObservableProperty] private bool _useAobSymbol;
     [ObservableProperty] private bool _isAobSymbolAvailable;
 
+    // Guess What toggle: fill gaps between known fields with heuristic guesses
+    [ObservableProperty] private bool _fillGaps;
+
     // AOBMaker CE Plugin detection cooldown (avoids spamming pipe connect on rapid navigation)
     private DateTime _lastAobMakerCheck = DateTime.MinValue;
     private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
@@ -155,6 +158,13 @@ public partial class LiveWalkerViewModel : ViewModelBase
     {
         if (!value)
             UseAobSymbol = false;
+    }
+
+    partial void OnFillGapsChanged(bool value)
+    {
+        // Toggle triggers refresh to rebuild field list with/without guessed fields
+        if (!string.IsNullOrEmpty(CurrentAddress))
+            RefreshCommand.Execute(null);
     }
 
     /// <summary>Clear both error message and status text (e.g., container limit warnings).</summary>
@@ -303,7 +313,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             else if (!string.IsNullOrEmpty(field.StructDataAddr) && field.StructDataAddr != "0x0")
             {
                 // StructProperty navigation: walk struct data using its class
-                var result = await _dump.WalkInstanceAsync(field.StructDataAddr, field.StructClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+                var result = await _dump.WalkInstanceAsync(field.StructDataAddr, field.StructClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
                 var displayName = !string.IsNullOrEmpty(field.StructTypeName)
                     ? $"{field.Name} ({field.StructTypeName})"
                     : field.Name;
@@ -938,7 +948,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
             // Re-walk this object (pass ClassAddr for StructProperty navigation)
             var classAddr = string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
-            var result = await _dump.WalkInstanceAsync(item.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+            var result = await _dump.WalkInstanceAsync(item.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
             UpdateDisplay(result);
 
             if (!string.IsNullOrEmpty(scrollHint))
@@ -992,7 +1002,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             }
 
             var classAddr = string.IsNullOrEmpty(prev.ClassAddr) ? null : prev.ClassAddr;
-            var result = await _dump.WalkInstanceAsync(prev.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+            var result = await _dump.WalkInstanceAsync(prev.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
             UpdateDisplay(result);
 
             if (!string.IsNullOrEmpty(scrollHint))
@@ -1032,7 +1042,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 FieldName = "Outer",
             });
 
-            var result = await _dump.WalkInstanceAsync(parentAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+            var result = await _dump.WalkInstanceAsync(parentAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
             UpdateDisplay(result);
         }
         catch (Exception ex)
@@ -1461,7 +1471,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                         parentClassAddr = parentBc.ClassAddr;
                 }
 
-                var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+                var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
                 if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
 
                 // Find the container field by name and offset in the refreshed result
@@ -1497,7 +1507,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                     classAddr = current.ClassAddr;
             }
 
-            var result = await _dump.WalkInstanceAsync(CurrentAddress, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+            var result = await _dump.WalkInstanceAsync(CurrentAddress, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
             if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
             UpdateDisplay(result);
         }
@@ -1965,7 +1975,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
     private async Task NavigateToAsync(string addr, string label, int fieldOffset, string fieldName, bool isPointer)
     {
-        var result = await _dump.WalkInstanceAsync(addr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+        var result = await _dump.WalkInstanceAsync(addr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
 
         var displayName = !string.IsNullOrEmpty(result.Name) ? result.Name : label;
         Breadcrumbs.Add(new BreadcrumbItem

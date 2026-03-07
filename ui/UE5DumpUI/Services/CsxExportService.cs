@@ -70,6 +70,8 @@ public static class CsxExportService
 
         foreach (var field in fields)
         {
+            if (field.IsGuessed) continue;
+
             if (field.TypeName == "StructProperty")
             {
                 // Flatten struct fields inline with "StructType / FieldName" naming

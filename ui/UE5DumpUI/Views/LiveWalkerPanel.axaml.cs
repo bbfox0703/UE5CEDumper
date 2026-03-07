@@ -73,11 +73,15 @@ public partial class LiveWalkerPanel : UserControl
         }
     }
 
+    private static readonly IBrush GuessedForeground = new SolidColorBrush(Color.Parse("#666666"));
+    private static readonly IBrush NormalForeground = new SolidColorBrush(Color.Parse("#D4D4D4"));
+
     private void FieldGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
         if (e.Row.DataContext is LiveFieldValue field)
         {
             e.Row.Background = field.IsSearchMatch ? HighlightBrush : Brushes.Transparent;
+            e.Row.Foreground = field.IsGuessed ? GuessedForeground : NormalForeground;
         }
     }
 
