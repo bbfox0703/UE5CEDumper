@@ -62,6 +62,7 @@
     <sys:String x:Key="str.LiveWalker.Go">Go</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCE">Copy CE XML</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCEField">Copy CE Field</sys:String>
+    <sys:String x:Key="str.LiveWalker.AobToggle">AOB</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCsx">Export CSX</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyAddress">Addr</sys:String>
@@ -250,6 +251,7 @@
     <sys:String x:Key="str.Tip.LiveWalker.Go">Navigate to the specified address</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCE">Copy full CE XML pointer chain to clipboard</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCEField">Copy CE XML for selected field only</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.AobToggle">Use AOB-scanned GWorld symbol instead of hardcoded address (survives game restarts)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCsx">Export CE Structure Dissect script (.csx)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportHeader">Export C++ SDK header (.h)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CeAA">Generate CE Auto Assembler script to clipboard</sys:String>
