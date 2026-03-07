@@ -244,6 +244,7 @@ static json SerializeField(const UStructWalker::LiveFieldValue& fv) {
 
     if (!fv.hexValue.empty())   fj["hex"]   = fv.hexValue;
     if (!fv.typedValue.empty())  fj["value"] = fv.typedValue;
+    if (fv.guessed)              fj["guessed"] = true;
 
     // ObjectProperty: pointer info
     if (fv.ptrValue != 0) {
@@ -811,8 +812,9 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             uintptr_t classAddr = classAddrStr.empty() ? 0 : PipeProtocol::StrToAddr(classAddrStr);
             int32_t arrayLimit = request.value("array_limit", 64);
             int32_t previewLimit = request.value("preview_limit", 2);
+            bool fillGaps = request.value("fill_gaps", false);
 
-            auto result = UStructWalker::WalkInstance(addr, classAddr, arrayLimit, previewLimit);
+            auto result = UStructWalker::WalkInstance(addr, classAddr, arrayLimit, previewLimit, fillGaps);
 
             json data;
             data["addr"]       = PipeProtocol::AddrToStr(result.addr);

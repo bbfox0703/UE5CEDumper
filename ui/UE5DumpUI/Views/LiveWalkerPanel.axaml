@@ -74,6 +74,12 @@
                 ToolTip.Tip="{StaticResource str.Tip.LiveWalker.AobToggle}"
                 Padding="4,2" FontSize="11" Foreground="#9CDCFE"
                 VerticalAlignment="Center"/>
+      <CheckBox Content="{StaticResource str.LiveWalker.GuessWhat}"
+                IsChecked="{Binding FillGaps}"
+                IsVisible="{Binding HasData}"
+                ToolTip.Tip="{StaticResource str.Tip.LiveWalker.GuessWhat}"
+                Padding="4,2" FontSize="11" Foreground="#CE9178"
+                VerticalAlignment="Center"/>
       <Button Content="{StaticResource str.LiveWalker.ExportCsx}"
               Command="{Binding ExportCsxCommand}"
               IsVisible="{Binding HasData}"

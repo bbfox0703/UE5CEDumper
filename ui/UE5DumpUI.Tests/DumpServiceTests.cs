@@ -582,6 +582,136 @@ public class DumpServiceTests
         Assert.Empty(result.Fields);
     }
 
+    // --- WalkInstanceAsync: Guess What (fill_gaps / guessed flag) ---
+
+    [Fact]
+    public async Task WalkInstanceAsync_ParsesGuessedFlag()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["addr"] = "0x100",
+            ["name"] = "TestObj",
+            ["class"] = "TestClass",
+            ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "Health",
+                    ["type"] = "FloatProperty",
+                    ["offset"] = 0x90,
+                    ["size"] = 4,
+                    ["value"] = "100",
+                    ["hex"] = "0000C842",
+                },
+                new JsonObject
+                {
+                    ["name"] = "?0xC0_i32",
+                    ["type"] = "Int32?",
+                    ["offset"] = 0xC0,
+                    ["size"] = 4,
+                    ["value"] = "171",
+                    ["hex"] = "AB000000",
+                    ["guessed"] = true,
+                },
+            }
+        });
+
+        var svc = CreateService();
+        var result = await svc.WalkInstanceAsync("0x100");
+
+        Assert.Equal(2, result.Fields.Count);
+        Assert.False(result.Fields[0].IsGuessed);
+        Assert.True(result.Fields[1].IsGuessed);
+        Assert.Equal("?0xC0_i32", result.Fields[1].Name);
+        Assert.Equal("Int32?", result.Fields[1].TypeName);
+    }
+
+    [Fact]
+    public async Task WalkInstanceAsync_FillGapsParam_SentWhenTrue()
+    {
+        JsonObject? capturedRequest = null;
+        _pipe.SetHandler(req =>
+        {
+            capturedRequest = req;
+            return new JsonObject
+            {
+                ["ok"] = true,
+                ["addr"] = "0x100",
+                ["name"] = "TestObj",
+                ["class"] = "TestClass",
+                ["fields"] = new JsonArray()
+            };
+        });
+
+        var svc = CreateService();
+        await svc.WalkInstanceAsync("0x100", fillGaps: true);
+
+        Assert.NotNull(capturedRequest);
+        Assert.True(capturedRequest!["fill_gaps"]?.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task WalkInstanceAsync_FillGapsParam_NotSentWhenFalse()
+    {
+        JsonObject? capturedRequest = null;
+        _pipe.SetHandler(req =>
+        {
+            capturedRequest = req;
+            return new JsonObject
+            {
+                ["ok"] = true,
+                ["addr"] = "0x100",
+                ["name"] = "TestObj",
+                ["class"] = "TestClass",
+                ["fields"] = new JsonArray()
+            };
+        });
+
+        var svc = CreateService();
+        await svc.WalkInstanceAsync("0x100", fillGaps: false);
+
+        Assert.NotNull(capturedRequest);
+        Assert.Null(capturedRequest!["fill_gaps"]);
+    }
+
+    [Fact]
+    public void GuessedField_IsNotEditable()
+    {
+        var field = new LiveFieldValue
+        {
+            Name = "?0xC0_i32",
+            TypeName = "Int32?",
+            Offset = 0xC0,
+            Size = 4,
+            TypedValue = "171",
+            HexValue = "AB000000",
+            IsGuessed = true,
+        };
+        field.FieldAddress = "0x1000C0";
+
+        Assert.False(field.IsEditable);
+    }
+
+    [Fact]
+    public void GuessedField_IsNotNavigable()
+    {
+        var field = new LiveFieldValue
+        {
+            Name = "?0xC0_ptr",
+            TypeName = "Pointer?",
+            Offset = 0xC0,
+            Size = 8,
+            TypedValue = "0x7FF12345",
+            HexValue = "4523F17F00000000",
+            PtrAddress = "0x7FF12345",
+            IsGuessed = true,
+        };
+
+        Assert.False(field.IsNavigable);
+        Assert.False(field.IsContainerNavigable);
+    }
+
     [Fact]
     public async Task ReadArrayElementsAsync_ParsesResponse()
     {

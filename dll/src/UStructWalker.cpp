@@ -1694,7 +1694,279 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
     // No StructProperty found in this class; will retry on next WalkInstance call
 }
 
-InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int32_t arrayLimit, int32_t previewLimit) {
+// ============================================================
+// Guess What — Gap detection + heuristic type guessing
+// ============================================================
+
+// Format name for guessed fields: "?0xCC_ptr", "?0xD0_float", etc.
+static std::string FormatGuessedName(int32_t offset, const char* hint) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "?0x%X_%s", offset, hint);
+    return buf;
+}
+
+// Pointer validation: address in userspace range AND target is readable
+static bool IsLikelyPointer(uint64_t val) {
+    if (val < 0x10000 || val > 0x00007FFFFFFFFFFF) return false;
+    uint8_t probe = 0;
+    return Mem::ReadSafe(static_cast<uintptr_t>(val), probe);
+}
+
+// "Clean" float: fractional part is exactly .0 or .5 (common in game data)
+static bool IsCleanFloat(float fVal) {
+    float absVal = fVal < 0 ? -fVal : fVal;
+    if (absVal > 1e8f) return false; // avoid int overflow in cast
+    float frac = absVal - static_cast<float>(static_cast<int>(absVal));
+    return frac == 0.0f || frac == 0.5f;
+}
+
+// Float validation: improved IEEE 754 check.
+// Key improvement over CE: prefer int32 over float for small integer values.
+// Returns 0 = not float, 1 = normal confidence (Float?), 2 = high confidence (Float)
+static int IsLikelyFloat(float fVal, int32_t iVal) {
+    if (fVal == 0.0f) return 0;
+
+    uint32_t bits = 0;
+    memcpy(&bits, &fVal, 4);
+    uint32_t exponent = (bits >> 23) & 0xFF;
+
+    // Exponent 0 = denormalized, 255 = Inf/NaN — reject
+    if (exponent == 0 || exponent == 255) return 0;
+
+    // Exponent range [100, 170] covers ~1e-8 to ~1e13
+    if (exponent < 100 || exponent > 170) return 0;
+
+    float absVal = fVal < 0 ? -fVal : fVal;
+
+    // High confidence: clean float (.0 or .5) in reasonable game range
+    if (IsCleanFloat(fVal) && absVal <= 1000.0f) return 2;
+
+    // If int interpretation is "human readable", prefer int
+    bool humanInt = (iVal >= -10000 && iVal <= 10000) || (iVal != 0 && iVal % 100 == 0);
+    if (humanInt) return 0;
+
+    // Normal confidence: magnitude in [0.001, 1e6]
+    if (absVal >= 0.001f && absVal <= 1e6f) return 1;
+
+    return 0;
+}
+
+// Double validation: similar to float but for 8-byte values.
+// Returns 0 = not double, 1 = normal (Double?), 2 = high confidence (Double)
+static int IsLikelyDouble(double dVal) {
+    if (dVal == 0.0) return 0;
+
+    uint64_t bits = 0;
+    memcpy(&bits, &dVal, 8);
+    uint64_t exponent = (bits >> 52) & 0x7FF;
+
+    if (exponent == 0 || exponent == 2047) return 0;
+
+    // Bias 1023. Range [950, 1100] covers ~1e-22 to ~1e23
+    if (exponent < 950 || exponent > 1100) return 0;
+
+    double absVal = dVal < 0 ? -dVal : dVal;
+
+    // High confidence: clean (.0 or .5) in reasonable range
+    if (absVal <= 1e8 && absVal <= 1000.0) {
+        double frac = absVal - static_cast<double>(static_cast<int64_t>(absVal));
+        if (frac == 0.0 || frac == 0.5) return 2;
+    }
+
+    // Check if same bytes as int64 are small — prefer int
+    int64_t iVal = 0;
+    memcpy(&iVal, &dVal, 8);
+    if (iVal >= -10000 && iVal <= 10000) return 0;
+
+    if (absVal >= 0.001 && absVal <= 1e12) return 1;
+
+    return 0;
+}
+
+// Guess types for a gap region and append results to outFields
+static void GuessGapTypes(uintptr_t baseAddr, int32_t gapStart, int32_t gapEnd,
+                          std::vector<LiveFieldValue>& outFields)
+{
+    int32_t pos = gapStart;
+
+    while (pos < gapEnd) {
+        int32_t remaining = gapEnd - pos;
+
+        // Read up to 8 bytes for analysis
+        uint8_t buf[8] = {};
+        int32_t readLen = std::min(remaining, static_cast<int32_t>(8));
+        if (!Mem::ReadBytesSafe(baseAddr + pos, buf, readLen)) {
+            pos++;
+            continue;
+        }
+
+        // --- Priority 1: All-zeros check (padding) ---
+        if (remaining >= 4 && (pos % 4) == 0) {
+            bool allZero = true;
+            for (int i = 0; i < readLen; i++) {
+                if (buf[i] != 0) { allZero = false; break; }
+            }
+            if (allZero) {
+                // Count consecutive zero bytes from pos, aligned to 4
+                int32_t zeroRun = 0;
+                for (int32_t probe = pos; probe < gapEnd && zeroRun < 256; probe++) {
+                    uint8_t b = 0;
+                    if (!Mem::ReadSafe<uint8_t>(baseAddr + probe, b) || b != 0) break;
+                    zeroRun++;
+                }
+                if (zeroRun >= 4) {
+                    zeroRun = zeroRun & ~3; // align to 4-byte
+                    LiveFieldValue fv;
+                    fv.name = FormatGuessedName(pos, "padding");
+                    fv.typeName = "Padding";
+                    fv.offset = pos;
+                    fv.size = zeroRun;
+                    fv.hexValue = std::string(std::min(zeroRun * 2, 32), '0');
+                    if (zeroRun > 16) fv.hexValue += "...";
+                    fv.guessed = true;
+                    outFields.push_back(std::move(fv));
+                    pos += zeroRun;
+                    continue;
+                }
+            }
+        }
+
+        // --- Priority 2: Pointer (8 bytes, 8-byte aligned) ---
+        if (remaining >= 8 && (pos % 8) == 0) {
+            uint64_t val = 0;
+            memcpy(&val, buf, 8);
+            if (val != 0 && IsLikelyPointer(val)) {
+                LiveFieldValue fv;
+                fv.name = FormatGuessedName(pos, "ptr");
+                fv.typeName = "Pointer?";
+                fv.offset = pos;
+                fv.size = 8;
+                char hexBuf[20];
+                snprintf(hexBuf, sizeof(hexBuf), "%016llX",
+                    static_cast<unsigned long long>(val));
+                fv.hexValue = hexBuf;
+                char addrBuf[24];
+                snprintf(addrBuf, sizeof(addrBuf), "0x%llX",
+                    static_cast<unsigned long long>(val));
+                fv.typedValue = addrBuf;
+                fv.guessed = true;
+                outFields.push_back(std::move(fv));
+                pos += 8;
+                continue;
+            }
+        }
+
+        // --- Priority 3: Float (4 bytes, 4-byte aligned) ---
+        if (remaining >= 4 && (pos % 4) == 0) {
+            float fVal = 0;
+            int32_t iVal = 0;
+            memcpy(&fVal, buf, 4);
+            memcpy(&iVal, buf, 4);
+
+            int floatConf = IsLikelyFloat(fVal, iVal);
+            if (floatConf > 0) {
+                LiveFieldValue fv;
+                fv.name = FormatGuessedName(pos, "float");
+                fv.typeName = (floatConf == 2) ? "Float" : "Float?";
+                fv.offset = pos;
+                fv.size = 4;
+                char hexBuf[12];
+                snprintf(hexBuf, sizeof(hexBuf), "%02X%02X%02X%02X",
+                    buf[0], buf[1], buf[2], buf[3]);
+                fv.hexValue = hexBuf;
+                char valBuf[64];
+                snprintf(valBuf, sizeof(valBuf), "%.6g", fVal);
+                fv.typedValue = valBuf;
+                fv.guessed = true;
+                outFields.push_back(std::move(fv));
+                pos += 4;
+                continue;
+            }
+        }
+
+        // --- Priority 4: Double (8 bytes, 8-byte aligned, only if not pointer) ---
+        if (remaining >= 8 && (pos % 8) == 0) {
+            double dVal = 0;
+            memcpy(&dVal, buf, 8);
+            int dblConf = IsLikelyDouble(dVal);
+            if (dblConf > 0) {
+                LiveFieldValue fv;
+                fv.name = FormatGuessedName(pos, "double");
+                fv.typeName = (dblConf == 2) ? "Double" : "Double?";
+                fv.offset = pos;
+                fv.size = 8;
+                char hexBuf[20];
+                for (int i = 0; i < 8; i++)
+                    snprintf(hexBuf + i * 2, 3, "%02X", buf[i]);
+                fv.hexValue = hexBuf;
+                char valBuf[80];
+                snprintf(valBuf, sizeof(valBuf), "%.10g", dVal);
+                fv.typedValue = valBuf;
+                fv.guessed = true;
+                outFields.push_back(std::move(fv));
+                pos += 8;
+                continue;
+            }
+        }
+
+        // --- Priority 5: Int32 (4 bytes, 4-byte aligned) ---
+        if (remaining >= 4 && (pos % 4) == 0) {
+            int32_t val = 0;
+            memcpy(&val, buf, 4);
+            LiveFieldValue fv;
+            fv.name = FormatGuessedName(pos, "i32");
+            fv.typeName = "Int32?";
+            fv.offset = pos;
+            fv.size = 4;
+            char hexBuf[12];
+            snprintf(hexBuf, sizeof(hexBuf), "%02X%02X%02X%02X",
+                buf[0], buf[1], buf[2], buf[3]);
+            fv.hexValue = hexBuf;
+            fv.typedValue = std::to_string(val);
+            fv.guessed = true;
+            outFields.push_back(std::move(fv));
+            pos += 4;
+            continue;
+        }
+
+        // --- Priority 6: Int16 (2 bytes, 2-byte aligned) ---
+        if (remaining >= 2 && (pos % 2) == 0) {
+            int16_t val = 0;
+            memcpy(&val, buf, 2);
+            LiveFieldValue fv;
+            fv.name = FormatGuessedName(pos, "i16");
+            fv.typeName = "Int16?";
+            fv.offset = pos;
+            fv.size = 2;
+            char hexBuf[6];
+            snprintf(hexBuf, sizeof(hexBuf), "%02X%02X", buf[0], buf[1]);
+            fv.hexValue = hexBuf;
+            fv.typedValue = std::to_string(val);
+            fv.guessed = true;
+            outFields.push_back(std::move(fv));
+            pos += 2;
+            continue;
+        }
+
+        // --- Priority 7: Byte (1 byte, fallback) ---
+        {
+            LiveFieldValue fv;
+            fv.name = FormatGuessedName(pos, "byte");
+            fv.typeName = "Byte?";
+            fv.offset = pos;
+            fv.size = 1;
+            char hexBuf[4];
+            snprintf(hexBuf, sizeof(hexBuf), "%02X", buf[0]);
+            fv.hexValue = hexBuf;
+            fv.typedValue = std::to_string(buf[0]);
+            fv.guessed = true;
+            outFields.push_back(std::move(fv));
+            pos += 1;
+        }
+    }
+}
+
+InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int32_t arrayLimit, int32_t previewLimit, bool fillGaps) {
     // Clamp arrayLimit to sane range [1, 16384]
     if (arrayLimit < 1) arrayLimit = 1;
     if (arrayLimit > 16384) arrayLimit = 16384;
@@ -3050,6 +3322,57 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         }
 
         result.fields.push_back(std::move(fv));
+    }
+
+    // --- Guess What: fill gaps between known fields ---
+    if (fillGaps && !result.isDefinition && !result.fields.empty() && ci.PropertiesSize > 0) {
+        // Determine scan boundaries
+        int32_t headerEnd = isRawStruct ? 0 : (DynOff::UOBJECT_OUTER + 8);
+        int32_t scanEnd = ci.PropertiesSize;
+
+        // Collect known field intervals
+        struct Interval { int32_t start; int32_t end; };
+        std::vector<Interval> occupied;
+        for (const auto& f : result.fields) {
+            int32_t fEnd = f.offset + (f.size > 0 ? f.size : 1);
+            occupied.push_back({f.offset, fEnd});
+        }
+        std::sort(occupied.begin(), occupied.end(),
+            [](const Interval& a, const Interval& b) { return a.start < b.start; });
+
+        // Merge overlapping intervals
+        std::vector<Interval> merged;
+        for (const auto& iv : occupied) {
+            if (!merged.empty() && iv.start <= merged.back().end)
+                merged.back().end = std::max(merged.back().end, iv.end);
+            else
+                merged.push_back(iv);
+        }
+
+        // Compute gaps
+        std::vector<Interval> gaps;
+        int32_t cursor = headerEnd;
+        for (const auto& iv : merged) {
+            if (iv.start > cursor)
+                gaps.push_back({cursor, iv.start});
+            cursor = std::max(cursor, iv.end);
+        }
+        if (cursor < scanEnd)
+            gaps.push_back({cursor, scanEnd});
+
+        // Fill each gap with guessed types
+        size_t beforeCount = result.fields.size();
+        for (const auto& gap : gaps) {
+            GuessGapTypes(instanceAddr, gap.start, gap.end, result.fields);
+        }
+
+        // Sort all fields by offset
+        if (result.fields.size() > beforeCount) {
+            std::sort(result.fields.begin(), result.fields.end(),
+                [](const LiveFieldValue& a, const LiveFieldValue& b) {
+                    return a.offset < b.offset;
+                });
+        }
     }
 
     auto loopEnd = std::chrono::steady_clock::now();

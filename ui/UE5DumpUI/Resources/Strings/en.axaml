@@ -244,6 +244,8 @@
     <sys:String x:Key="str.LiveWalker.FuncPipeInvoke">PIPE</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.FuncPipeInvoke">Invoke this function via pipe (DLL executes ProcessEvent in-process, bypasses CE)</sys:String>
 
+    <sys:String x:Key="str.LiveWalker.GuessWhat">Guess?</sys:String>
+
     <!-- Tooltips: Live Walker -->
     <sys:String x:Key="str.Tip.LiveWalker.StartWorld">Navigate to GWorld and list top-level objects</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Back">Go back to previous object</sys:String>
@@ -255,6 +257,7 @@
     <sys:String x:Key="str.Tip.LiveWalker.ExportCsx">Export CE Structure Dissect script (.csx)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportHeader">Export C++ SDK header (.h)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CeAA">Generate CE Auto Assembler script to clipboard</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.GuessWhat">Fill gaps between known fields with guessed data types (pointer, float, int, etc.)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CopyFieldAddr">Copy field absolute address</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CopyFieldName">Copy field name to clipboard</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Search">Search fields by name</sys:String>

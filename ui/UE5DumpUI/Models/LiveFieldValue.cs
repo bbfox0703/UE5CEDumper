@@ -96,6 +96,9 @@ public sealed class LiveFieldValue
     public int Offset { get; init; }
     public int Size { get; init; }
 
+    /// <summary>True if this field was heuristically guessed (not from UE reflection).</summary>
+    public bool IsGuessed { get; init; }
+
     /// <summary>Raw hex value (always populated for readable fields).</summary>
     public string HexValue { get; init; } = "";
 
@@ -266,15 +269,17 @@ public sealed class LiveFieldValue
 
     /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set/DataTable with data).</summary>
     public bool IsContainerNavigable =>
-        (ArrayCount > 0 && !string.IsNullOrEmpty(ArrayInnerType)) ||
+        !IsGuessed &&
+        ((ArrayCount > 0 && !string.IsNullOrEmpty(ArrayInnerType)) ||
         (MapCount > 0 && !string.IsNullOrEmpty(MapKeyType)) ||
         (SetCount > 0 && !string.IsNullOrEmpty(SetElemType)) ||
-        DataTableRowCount > 0;
+        DataTableRowCount > 0);
 
     /// <summary>Whether this field is a clickable pointer to another object.</summary>
     public bool IsNavigable =>
-        (!string.IsNullOrEmpty(PtrAddress) && PtrAddress != "0x0") ||
-        (!string.IsNullOrEmpty(StructDataAddr) && StructDataAddr != "0x0");
+        !IsGuessed &&
+        ((!string.IsNullOrEmpty(PtrAddress) && PtrAddress != "0x0") ||
+        (!string.IsNullOrEmpty(StructDataAddr) && StructDataAddr != "0x0"));
 
     /// <summary>Whether this field is a pointer navigation (true) or struct navigation (false).</summary>
     public bool IsPointerNavigation =>
@@ -292,6 +297,7 @@ public sealed class LiveFieldValue
 
     /// <summary>Whether this field's value can be edited inline (scalar numeric/bool/enum types only).</summary>
     public bool IsEditable =>
+        !IsGuessed &&
         !string.IsNullOrEmpty(FieldAddress) &&
         FieldValueConverter.IsEditableType(TypeName);
 

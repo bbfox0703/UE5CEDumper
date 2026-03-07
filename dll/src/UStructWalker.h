@@ -221,6 +221,9 @@ struct LiveFieldValue {
 
     // For StrProperty: decoded FString value
     std::string strValue;            // UTF-8 string from FString (wchar→UTF-8)
+
+    // Guess What: true if this field was heuristically guessed (not from UE reflection)
+    bool guessed = false;
 };
 
 // Result of walking a live instance
@@ -240,7 +243,7 @@ struct InstanceWalkResult {
 // If classAddr == 0, reads ClassPrivate from the instance itself.
 // arrayLimit: max array element count for inline reading (default 64, max 16384).
 // previewLimit: max sub-fields to show in StructProperty preview (0 = none, default 2, max 6).
-InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr = 0, int32_t arrayLimit = 64, int32_t previewLimit = 2);
+InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr = 0, int32_t arrayLimit = 64, int32_t previewLimit = 2, bool fillGaps = false);
 
 // --- DataTable Row Browsing ---
 

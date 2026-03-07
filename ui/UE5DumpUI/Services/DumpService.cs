@@ -295,12 +295,13 @@ public sealed class DumpService : IDumpService
 
     // --- Live Data Walker ---
 
-    public async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, int arrayLimit = 64, int previewLimit = 2, CancellationToken ct = default)
+    public async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null, int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "walk_instance", ["addr"] = addr };
         if (!string.IsNullOrEmpty(classAddr)) req["class_addr"] = classAddr;
         if (arrayLimit != 64) req["array_limit"] = arrayLimit;
         if (previewLimit != 2) req["preview_limit"] = previewLimit;
+        if (fillGaps) req["fill_gaps"] = true;
 
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
@@ -579,6 +580,7 @@ public sealed class DumpService : IDumpService
             Size = fo["size"]?.GetValue<int>() ?? 0,
             HexValue = fo["hex"]?.GetValue<string>() ?? "",
             TypedValue = fo["value"]?.GetValue<string>() ?? "",
+            IsGuessed = fo["guessed"]?.GetValue<bool>() ?? false,
             PtrAddress = fo["ptr"]?.GetValue<string>() ?? "",
             PtrName = fo["ptr_name"]?.GetValue<string>() ?? "",
             PtrClassName = fo["ptr_class"]?.GetValue<string>() ?? "",
