@@ -123,14 +123,14 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 | 專案 | 用途 |
 |---|---|
 | [Encryqed/Dumper-7](https://github.com/Encryqed/Dumper-7) | 動態偏移量偵測模式、FField/FProperty 探測策略 |
-| [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) | 即時編輯器 UI 架構參考 |
 | [UE4SS-RE/RE-UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) | UE5 執行時反射機制參考 |
-| [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | GObjects/GNames 的額外 AOB 特徵碼 |
-| [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | 額外的 AOB 掃描模式 |
-| UE4 Dumper.CT | Cake-san 的 Cheat Table — 額外的 AOB 特徵碼 |
+| [Spuckwaffel/UEDumper](https://github.com/Spuckwaffel/UEDumper) | UI 架構參考 |
+| [trumank/patternsleuth](https://github.com/trumank/patternsleuth) | AOB 特徵碼 |
+| [Do0ks/GSpots](https://github.com/Do0ks/GSpots) | GObjects/GNames 的 AOB 特徵碼 |
 | [nlohmann/json](https://github.com/nlohmann/json) | DLL 使用的 JSON 函式庫 |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua 腳本 API 參考 |
-| **AOBMaker (內部工具)** | AOB 特徵碼產生工具 |
+| **AOBMaker (內部工具)** | AOB 特徵碼產生工具，AA 腳本產生工具、快速 CE-goto 功能 (非必備) |
+| UE4 Dumper.CT | Cake-san 的 Cheat Table — 額外的 UE4 AOB 特徵碼 |
 
 ---
 
