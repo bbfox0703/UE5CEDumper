@@ -93,5 +93,4 @@
 - **FF7R (Remake Intergrade) is UE4.18**: Uses FProperty mode but `FUObjectArray` has ObjObjects at +0x10 (needs -0x10 adjustment from GUObjectArray pattern)
 - **DQ I&II HD-2D Remake is UE5.05**: Standard FNamePool, stride 24, works with no special handling. GWorld=0 is common.
 - **Phase B scalar-only design is correct**: ArrayProperty Phase B reads inline element values only for scalar types. ObjectProperty and StructProperty arrays intentionally show only type info — those are Phase D/E scope.
-- **AOB patterns are cheap insurance**: 51 patterns + 4 symbol exports from 6 sources (original, patternsleuth, RE-UE4SS, Dumper-7, UE4 Dumper.CT, UEDumper) provide ~90–95% coverage.
 - **MSVC C2360**: Variable declarations inside `case` require wrapping `{}` braces.
