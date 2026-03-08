@@ -102,7 +102,7 @@ namespace OffsetFinder {
 
 ### AOB Scan Strategy
 
-Scans game module **executable sections only** (`.text`). Pattern handlers try both direct and deref variants, then validate via `ValidateGObjects()` / `ValidateGNames()`:
+Scans game module **executable sections only** (`.text`). 128 AOB patterns + 5 symbol exports from 14 sources cover UE4.18–UE5.7+. Pattern handlers try both direct and deref variants, then validate via `ValidateGObjects()` / `ValidateGNames()`:
 
 ```cpp
 // RIP-relative resolution pattern
@@ -112,7 +112,7 @@ uintptr_t target = Mem::ResolveRIP(match + opcodeLen, opcodeLen, instrLen);
 // Try offset: ValidateGObjects(target - 0x10)   ← for V12/RE2 GUObjectArray patterns
 ```
 
-`FindGNames` fallback when all 17 AOB patterns fail: scans `.data` section for 8-byte-aligned pointers whose dereference matches a `"None"` FNameEntry (`00 01 4E 6F 6E 65`). Used on UE5.5+ / UE4.27 games (EverSpace 2, Hogwarts Legacy).
+`FindGNames` fallback when all 30 GNames AOB patterns fail: scans `.data` section for 8-byte-aligned pointers whose dereference matches a `"None"` FNameEntry (`00 01 4E 6F 6E 65`). Used on UE5.5+ / UE4.27 games (EverSpace 2, Hogwarts Legacy).
 
 -----
 
@@ -442,7 +442,7 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr);
 
 -----
 
-## ExportAPI.h — C ABI Exports
+## ExportAPI.h — C ABI Exports (30 functions)
 
 ```cpp
 #pragma once
@@ -451,17 +451,17 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr);
 
 extern "C" {
 
-    // === Initialization ===
+    // === Initialization (4) ===
     __declspec(dllexport) bool     UE5_Init();          // AOB scan + subsystem init
     __declspec(dllexport) bool     UE5_AutoStart();     // Init + StartPipeServer (called by AutoStartThreadProc)
     __declspec(dllexport) void     UE5_Shutdown();
     __declspec(dllexport) uint32_t UE5_GetVersion();    // e.g. 507, 427, 422
 
-    // === Global Pointers ===
+    // === Global Pointers (2) ===
     __declspec(dllexport) uintptr_t UE5_GetGObjectsAddr();
     __declspec(dllexport) uintptr_t UE5_GetGNamesAddr();
 
-    // === Object Queries ===
+    // === Object Queries (6) ===
     __declspec(dllexport) int32_t   UE5_GetObjectCount();
     __declspec(dllexport) uintptr_t UE5_GetObjectByIndex(int32_t index);
     __declspec(dllexport) bool      UE5_GetObjectName(uintptr_t obj, char* buf, int32_t bufLen);
@@ -469,12 +469,12 @@ extern "C" {
     __declspec(dllexport) uintptr_t UE5_GetObjectClass(uintptr_t obj);
     __declspec(dllexport) uintptr_t UE5_GetObjectOuter(uintptr_t obj);
 
-    // === Search ===
+    // === Search (2) ===
     __declspec(dllexport) uintptr_t UE5_FindObject(const char* fullPath);
     __declspec(dllexport) uintptr_t UE5_FindClass(const char* className);
 
-    // === WalkClass batch mode (avoids callback across DLL boundary) ===
-    __declspec(dllexport) int32_t   UE5_WalkClassBegin(uintptr_t uclassAddr); // returns field count
+    // === WalkClass batch mode (3) ===
+    __declspec(dllexport) int32_t   UE5_WalkClassBegin(uintptr_t uclassAddr);
     __declspec(dllexport) bool      UE5_WalkClassGetField(int32_t index,
                                         uintptr_t* outAddr,
                                         char* nameOut,  int32_t nameBufLen,
@@ -483,10 +483,28 @@ extern "C" {
                                         int32_t* sizeOut);
     __declspec(dllexport) void      UE5_WalkClassEnd();
 
-    // === FName Resolution ===
+    // === FName Resolution (1) ===
     __declspec(dllexport) bool      UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen);
 
-    // === Pipe Server ===
+    // === Object Decryption (1) ===
+    __declspec(dllexport) void      UE5_SetObjectDecryption(/* callback */);
+
+    // === Property Detail Queries (4) ===
+    __declspec(dllexport) uint8_t   UE5_GetFieldBoolMask(uintptr_t fieldAddr);
+    __declspec(dllexport) uintptr_t UE5_GetFieldStructClass(uintptr_t fieldAddr);
+    __declspec(dllexport) uintptr_t UE5_GetFieldPropertyClass(uintptr_t fieldAddr);
+    __declspec(dllexport) int32_t   UE5_GetClassPropsSize(uintptr_t classAddr);
+
+    // === UFunction Invocation (3) ===
+    __declspec(dllexport) uintptr_t UE5_FindInstanceOfClass(const char* className);
+    __declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName);
+    __declspec(dllexport) int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr_t func,
+                                        void* params, int32_t paramsSize);
+
+    // === Mailbox (1) ===
+    __declspec(dllexport) uintptr_t UE5_GetMailboxAddr();  // shared memory for CE Lua invocation
+
+    // === Pipe Server (3) ===
     __declspec(dllexport) bool      UE5_StartPipeServer();
     __declspec(dllexport) void      UE5_StopPipeServer();
     __declspec(dllexport) bool      UE5_IsPipeConnected();

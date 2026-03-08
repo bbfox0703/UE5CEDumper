@@ -87,9 +87,9 @@ Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects
 |      |  loadLibrary / callFunction (28 C ABI exports)|
 |      v                                               |
 |  UE5Dumper.dll  [injected]                           |
-|      +-- ExportAPI       <- C ABI for CE Lua         |
-|      +-- PipeServer      <- Named Pipe IPC (15 cmds) |
-|      +-- Signatures      <- 99 AOB + 5 exports       |
+|      +-- ExportAPI       <- 30 C ABI for CE Lua      |
+|      +-- PipeServer      <- Named Pipe IPC (30 cmds) |
+|      +-- Signatures      <- 128 AOB + 5 exports      |
 |      +-- OffsetFinder    <- GObjects/GNames/GWorld   |
 |      +-- ObjectArray     <- Chunked + Flat arrays    |
 |      +-- FNamePool       <- UE5 Pool / UE4 TNameEntry|
@@ -119,16 +119,13 @@ Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects
 
 | Document | Contents |
 |----------|----------|
-| [docs/dev-log.md](docs/dev-log.md) | Implementation status, 60+ features, known challenges & fixes, next steps |
+| [docs/architecture.md](docs/architecture.md) | Directory structure (28 DLL files, 79 UI files), git submodules, build environment |
+| [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface: 30 C ABI exports, offset tables, CE Lua bridge |
+| [docs/pipe-protocol.md](docs/pipe-protocol.md) | Named Pipe JSON IPC protocol (30 commands, Request/Response/Event) |
+| [docs/ui-spec.md](docs/ui-spec.md) | Avalonia UI tech stack, AOT compatibility, component specs |
+| [docs/export-formats.md](docs/export-formats.md) | CE XML, CSX, SDK Header, USMAP export rules, pointer chain model, type mappings |
+| [docs/technical-notes.md](docs/technical-notes.md) | UE version differences, FField vs UProperty, FNamePool, DynOff detection flow |
 | [docs/lessons-learned.md](docs/lessons-learned.md) | Hard-won lessons from cross-game debugging (20 games) |
 | [docs/test-games.md](docs/test-games.md) | 20 test games with UE versions, GWorld status, stride info |
-| [docs/technical-notes.md](docs/technical-notes.md) | UE version differences, FField vs UProperty, FNamePool, DynOff detection flow |
-| [docs/architecture.md](docs/architecture.md) | Directory structure, git submodules, build environment |
-| [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface, offset tables, CE Lua bridge exports |
-| [docs/pipe-protocol.md](docs/pipe-protocol.md) | Named Pipe JSON IPC protocol (15 commands, Request/Response/Event) |
-| [docs/ui-spec.md](docs/ui-spec.md) | Avalonia UI tech stack, AOT compatibility, component specs |
-| [docs/references.md](docs/references.md) | Reference projects (Dumper-7, UEDumper, UE4SS), future ideas |
-| [docs/ue4ss-analysis.md](docs/ue4ss-analysis.md) | UE4SS/Dumper-7/UEDumper analysis: CasePreservingName, GNames patterns |
 | [docs/simd-scanning-notes.md](docs/simd-scanning-notes.md) | AOBMaker SIMD scanning research: AVX2 anchor technique |
 | [docs/CE-Bugs-Minesweeper.md](docs/CE-Bugs-Minesweeper.md) | CE-specific quirks and undocumented API behaviors |
-| [docs/export-formats.md](docs/export-formats.md) | CE XML, CSX, SDK Header export rules, pointer chain model, type mappings |

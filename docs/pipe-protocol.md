@@ -3,6 +3,7 @@
 Named pipe: `\\.\pipe\UE5DumpBfx`
 Format: JSON, newline-delimited (one message per `\n`)
 Direction: bidirectional — Request/Response + async push Events
+Total commands: 30
 
 -----
 
@@ -104,6 +105,48 @@ Direction: bidirectional — Request/Response + async push Events
 
 // Unsubscribe
 { "id": 17, "cmd": "unwatch", "addr": "7FF123456789" }
+```
+
+### Search & Enumeration
+
+```jsonc
+// Multi-pattern object search (substring match on name/class/path)
+{ "id": 19, "cmd": "search_objects", "query": "Player", "limit": 200 }
+
+// Search properties by name across all classes
+{ "id": 20, "cmd": "search_properties", "query": "Health", "limit": 100 }
+
+// List all classes (UClass objects)
+{ "id": 21, "cmd": "list_classes", "limit": 500 }
+
+// List all enum definitions
+{ "id": 22, "cmd": "list_enums" }
+```
+
+### DataTable
+
+```jsonc
+// Walk DataTable rows (RowMap probe, returns row keys + addresses)
+{ "id": 23, "cmd": "walk_datatable_rows", "addr": "7FF123456789" }
+```
+
+### Rescan & Scan Control
+
+```jsonc
+// Trigger background rescan of global pointers (non-blocking)
+{ "id": 24, "cmd": "rescan" }
+
+// Query rescan progress
+{ "id": 25, "cmd": "rescan_status" }
+
+// Apply rescanned pointers (replaces current GObjects/GNames/GWorld)
+{ "id": 26, "cmd": "apply_rescan" }
+
+// Trigger full re-initialization (proxy DLL deferred scan)
+{ "id": 27, "cmd": "trigger_scan" }
+
+// Query scan progress feedback
+{ "id": 28, "cmd": "scan_status" }
 ```
 
 ### CE Export

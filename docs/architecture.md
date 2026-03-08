@@ -20,7 +20,7 @@ UE5CEDumper/
 │       ├── dllmain.cpp             ← DLL_PROCESS_ATTACH, AutoStartThreadProc
 │       ├── CEPlugin.cpp            ← CE plugin Type 5 main menu, g_isCEPlugin flag
 │       ├── Constants.h             ← Magic strings, pipe name, UObject offsets, DynOff namespace
-│       ├── Signatures.h            ← 51 AOB patterns + 4 symbol exports (6 sources)
+│       ├── Signatures.h            ← 128 AOB patterns + 5 symbol exports (14 sources)
 │       ├── BuildInfo.h.in          ← Template → BuildInfo.h (version, git hash)
 │       ├── version.rc              ← Win32 PE VERSIONINFO resource
 │       │
@@ -30,21 +30,24 @@ UE5CEDumper/
 │       ├── ObjectArray.cpp / .h    ← Chunked + flat UObject array, stride detection
 │       ├── FNamePool.cpp / .h      ← UE5 FNamePool + UE4 TNameEntryArray + hash-prefixed mode
 │       ├── UStructWalker.cpp / .h  ← FField/UProperty chain, WalkInstance, array phases
+│       ├── GameThreadDispatch.cpp/.h ← MinHook ProcessEvent hook, game-thread queue
+│       ├── Mailbox.cpp / .h        ← Shared memory mailbox for CE Lua invocation
+│       ├── HintCache.cpp / .h      ← Scan hint cache for faster repeat scans
+│       ├── ProxyVersion.cpp / .def ← version.dll proxy DLL forwarding
 │       │
-│       ├── ExportAPI.cpp / .h      ← C ABI exports (UE5_Init, UE5_AutoStart, WalkClass, ...)
-│       ├── PipeServer.cpp / .h     ← Named pipe IPC server, JSON dispatch
+│       ├── ExportAPI.cpp / .h      ← C ABI exports (30 exports for CE Lua bridge)
+│       ├── PipeServer.cpp / .h     ← Named pipe IPC server, JSON dispatch (30 commands)
 │       └── PipeProtocol.h          ← Shared JSON command/field name constants
 │
 ├── docs/                           ← Documentation
 │   ├── architecture.md             ← This file
-│   ├── dev-log.md                  ← Implementation status, 20 known challenges, next steps
 │   ├── dll-spec.md                 ← C++ header definitions, offset tables, CE Lua bridge
-│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol
+│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (30 commands)
 │   ├── ui-spec.md                  ← Avalonia UI tech stack, component skeletons
+│   ├── export-formats.md           ← CE XML, CSX, SDK Header, USMAP export rules
 │   ├── technical-notes.md          ← UE version diffs, FField vs UProperty, FNamePool internals
-│   ├── lessons-learned.md          ← Hard-won debugging lessons
-│   ├── test-games.md               ← Recommended test games with UE version + status
-│   ├── references.md               ← Reference projects, future ideas
+│   ├── lessons-learned.md          ← Hard-won debugging lessons (20 games)
+│   ├── test-games.md               ← 20 test games with UE version + status
 │   ├── ue4ss-analysis.md           ← UE4SS/Dumper-7/UEDumper analysis
 │   ├── simd-scanning-notes.md      ← AOBMaker SIMD scanning research
 │   ├── CE-Bugs-Minesweeper.md      ← CE-specific bug notes
@@ -52,7 +55,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (193 tests)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (348 tests, 15 files)
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj
 │       ├── Program.cs              ← Avalonia entry point
@@ -61,53 +64,65 @@ UE5CEDumper/
 │       ├── ViewLocator.cs
 │       ├── Constants.cs            ← UI magic strings
 │       │
-│       ├── Models/                 ← IPC response models + UI data models
+│       ├── Models/                 ← IPC response models + UI data models (25 files)
 │       │   ├── UObjectNode.cs
 │       │   ├── LiveFieldValue.cs   ← Rich field value (typed, hex, arrays, enums)
 │       │   ├── InstanceWalkResult.cs
-│       │   ├── ClassInfoModel.cs
-│       │   ├── FieldInfoModel.cs
-│       │   ├── ObjectListResult.cs
-│       │   ├── FindInstancesResult.cs
-│       │   ├── WorldWalkResult.cs
-│       │   ├── AddressLookupResult.cs
-│       │   ├── CePointerInfo.cs
-│       │   ├── EngineState.cs
+│       │   ├── ClassInfoModel.cs, ClassListResult.cs
+│       │   ├── FieldInfoModel.cs, FunctionInfoModel.cs
+│       │   ├── ObjectListResult.cs, ObjectDetail.cs
+│       │   ├── FindInstancesResult.cs, InstanceResult.cs
+│       │   ├── WorldWalkResult.cs, DataTableWalkResult.cs
+│       │   ├── AddressLookupResult.cs, PropertySearchResult.cs
+│       │   ├── CePointerInfo.cs, EngineState.cs
 │       │   ├── DetectedGame.cs     ← Proxy DLL deploy model + status enum
-│       │   ├── InvokeFunctionResult.cs ← Pipe invoke result model
-│       │   ├── InstanceResult.cs
-│       │   └── ObjectDetail.cs
+│       │   ├── InvokeFunctionResult.cs
+│       │   ├── RescanModels.cs, ScanStatusResult.cs
+│       │   ├── AobMakerMessage.cs, AobUsageRecord.cs
+│       │   ├── EnumDefinition.cs, SymbolEntry.cs
+│       │   └── ...
 │       │
-│       ├── Services/               ← Business logic + IPC
+│       ├── Services/               ← Business logic + IPC (16 files)
 │       │   ├── PipeClient.cs       ← Async named pipe client
 │       │   ├── DumpService.cs      ← All pipe request/response helpers
-│       │   ├── CeXmlExportService.cs ← CE XML generation (Phase A–C arrays)
+│       │   ├── CeXmlExportService.cs ← CE XML generation (Phase A–F arrays)
+│       │   ├── CsxExportService.cs  ← CE Structure Dissect export
+│       │   ├── SdkExportService.cs  ← SDK C++ header export
+│       │   ├── SymbolExportService.cs ← x64dbg/Ghidra/IDA symbol export
+│       │   ├── UsmapExportService.cs ← USMAP export
 │       │   ├── LoggingService.cs   ← Serilog setup (3 loggers: init/pipe/view)
 │       │   ├── WindowsPlatformService.cs ← Registry, env vars (platform abstraction)
 │       │   ├── VdfParser.cs         ← Valve VDF format parser (Steam library detection)
 │       │   ├── ProxyDeployService.cs ← Proxy DLL deploy/undeploy/detect
+│       │   ├── AobMakerBridgeService.cs ← CE AOBMaker plugin bridge
+│       │   ├── AobUsageService.cs   ← AOB pattern usage tracking
+│       │   ├── KnownStructLayouts.cs ← Hardcoded UE struct layouts for invoke dialog
 │       │   ├── InvokeScriptGenerator.cs ← CE Lua invoke script generation
 │       │   └── ParamBufferBuilder.cs ← ProcessEvent param buffer hex builder
 │       │
-│       ├── ViewModels/             ← ReactiveUI ViewModels
+│       ├── ViewModels/             ← ReactiveUI ViewModels (10 files)
 │       │   ├── ViewModelBase.cs
 │       │   ├── MainWindowViewModel.cs
 │       │   ├── ObjectTreeViewModel.cs
 │       │   ├── LiveWalkerViewModel.cs
 │       │   ├── InstanceFinderViewModel.cs
 │       │   ├── ClassStructViewModel.cs
-│       │   ├── ProxyDeployViewModel.cs ← Proxy DLL deploy tab ViewModel
-│       │   └── PointerPanelViewModel.cs
+│       │   ├── PointerPanelViewModel.cs
+│       │   ├── ProxyDeployViewModel.cs
+│       │   ├── PropertySearchViewModel.cs ← Property name search across classes
+│       │   └── GameClassFilterViewModel.cs ← Game class filtering for Object Tree
 │       │
-│       ├── Views/                  ← Avalonia AXAML + code-behind
+│       ├── Views/                  ← Avalonia AXAML + code-behind (10 files)
 │       │   ├── MainWindow.axaml / .cs
 │       │   ├── LiveWalkerPanel.axaml / .cs
 │       │   ├── ObjectTreePanel.axaml / .cs
 │       │   ├── InstanceFinderPanel.axaml / .cs
 │       │   ├── ClassStructPanel.axaml / .cs
-│       │   ├── ProxyDeployPanel.axaml / .cs ← Proxy DLL deploy/undeploy UI
-│       │   ├── InvokeParamDialog.cs  ← Parameter input dialog for pipe invoke
-│       │   └── PointerPanel.axaml / .cs
+│       │   ├── PointerPanel.axaml / .cs
+│       │   ├── ProxyDeployPanel.axaml / .cs
+│       │   ├── PropertySearchPanel.axaml / .cs
+│       │   ├── GameClassFilterPanel.axaml / .cs
+│       │   └── InvokeParamDialog.cs  ← Parameter input dialog for UFunction invoke
 │       │
 │       ├── Core/                   ← Platform abstraction interfaces
 │       ├── Converters/             ← Avalonia value converters
@@ -117,15 +132,19 @@ UE5CEDumper/
 │               └── en.axaml       ← All UI strings (English only)
 │
 ├── scripts/
-│   ├── UE5CEDumper.CT              ← Cheat Engine table (injectDLL + countdown)
-│   ├── ue5dump.lua                 ← CE Lua injection script
-│   ├── utils.lua                   ← Lua helpers
+│   ├── UE5CEDumper.CT              ← Cheat Engine table (injectDLL + init)
+│   ├── ue5_dissect.lua             ← CE Structure Dissect builder
+│   ├── ue5_invoke.lua              ← CE Lua UFunction invocation helper
+│   ├── ue5dump.lua                 ← Legacy standalone loader (superseded by CT)
+│   ├── utils.lua                   ← Legacy helpers (superseded by CT)
 │   └── test_pipe.ps1               ← PowerShell pipe test client
 │
-└── vendor/                         ← Git submodules (reference only, not built)
-    ├── Dumper-7/
-    ├── GSpots/
-    └── UEDumper/
+└── vendor/                         ← Git submodules
+    ├── Dumper-7/                   ← Reference: AOB patterns, offset detection
+    ├── RE-UE4SS/                   ← Reference: CustomGameConfigs, UE4 patterns
+    ├── minhook/                    ← MinHook inline hooking library (built)
+    ├── nlohmann/                   ← nlohmann/json (header-only)
+    └── UnrealEngine/               ← UE source reference headers
 ```
 
 -----
@@ -142,40 +161,9 @@ UE5CEDumper/
 | Compiler flags | `/utf-8 /W4 /permissive- /EHa` |
 | Build system | CMake 3.25+ with Ninja generator |
 | Toolchain discovery | `vswhere -latest` — never hardcoded paths |
-| Dependencies | `nlohmann/json` (header-only, vendor/), `ws2_32`, `Shlwapi`, `Psapi`, `Version` |
+| Dependencies | `nlohmann/json` (header-only), `MinHook` (inline hooking), `ws2_32`, `Shlwapi`, `Psapi`, `Version` |
 
 **Versioning:** Version `1.0.0.x` where `x` is auto-incremented per build and stored in `build_number.txt`. Git commit hash and dirty-state are embedded via `BuildInfo.h` (generated from `BuildInfo.h.in` at CMake configure time).
-
-**Root CMakeLists.txt:**
-```cmake
-cmake_minimum_required(VERSION 3.25)
-project(UE5CEDumper LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-add_subdirectory(dll)
-```
-
-**dll/CMakeLists.txt source list:**
-```cmake
-add_library(UE5Dumper SHARED
-    dll/src/dllmain.cpp
-    dll/src/CEPlugin.cpp
-    dll/src/Memory.cpp
-    dll/src/Logger.cpp
-    dll/src/OffsetFinder.cpp
-    dll/src/ObjectArray.cpp
-    dll/src/FNamePool.cpp
-    dll/src/UStructWalker.cpp
-    dll/src/PipeServer.cpp
-    dll/src/ExportAPI.cpp
-    dll/src/version.rc
-)
-target_include_directories(UE5Dumper PRIVATE dll/src vendor/nlohmann)
-target_compile_definitions(UE5Dumper PRIVATE UNICODE _UNICODE)
-target_link_libraries(UE5Dumper PRIVATE ws2_32 Shlwapi Psapi Version)
-```
 
 ### UI App (C# Avalonia)
 
@@ -183,7 +171,7 @@ target_link_libraries(UE5Dumper PRIVATE ws2_32 Shlwapi Psapi Version)
 |----------|-------|
 | .NET | 10 |
 | Avalonia | 11.3.12+ |
-| UI pattern | ReactiveUI + ReactiveUI.Fody (auto property notification) |
+| UI pattern | ReactiveUI + CommunityToolkit.Mvvm (source generators) |
 | Publish | Single-file self-contained (`PublishSingleFile=true`, ~60–80 MB) |
 | Runtime | `win-x64` |
 
@@ -193,24 +181,28 @@ target_link_libraries(UE5Dumper PRIVATE ws2_32 Shlwapi Psapi Version)
 
 ```
 Game Process
-  └── UE5Dumper.dll (injected via CE Lua injectDLL())
+  └── UE5Dumper.dll (injected via CE Lua injectDLL() or version.dll proxy)
         ├── AutoStartThreadProc — 1s delay, detects CE plugin vs game
-        ├── OffsetFinder       — AOB scan GObjects / GNames / GWorld
-        ├── FNamePool          — string resolution
-        ├── ObjectArray        — UObject enumeration
+        ├── OffsetFinder       — 133 AOB patterns, GObjects / GNames / GWorld
+        ├── FNamePool          — string resolution (3 modes)
+        ├── ObjectArray        — UObject enumeration (chunked + flat)
         ├── UStructWalker      — FField chain traversal + live reads
-        └── PipeServer         — JSON-line IPC on \\.\pipe\UE5DumpBfx
-                                        ↕ TCP-like named pipe
+        ├── GameThreadDispatch — MinHook ProcessEvent hook, game-thread queue
+        ├── HintCache          — Scan hint caching for repeat scans
+        └── PipeServer         — 30 JSON commands on \\.\pipe\UE5DumpBfx
+                                        ↕ Named pipe (JSON newline-delimited)
 CE Lua (UE5CEDumper.CT)               UE5DumpUI.exe (Avalonia)
-  └── injectDLL() only                  ├── PipeClient   — async connect/send/recv
-                                        ├── DumpService  — request helpers
-                                        ├── CeXmlExportService
-                                        └── ViewModels → Views (MVVM)
+  ├── injectDLL()                      ├── PipeClient       — async connect/send/recv
+  └── ue5_dissect.lua (optional)       ├── DumpService      — request helpers
+                                       ├── CeXmlExportService / CsxExportService
+                                       ├── SdkExportService / SymbolExportService
+                                       ├── UsmapExportService
+                                       └── ViewModels → Views (MVVM)
 ```
 
 ### Startup Sequence
 
-1. User opens game → opens CT in CE → CE Lua calls `injectDLL(DLL_PATH)`
+1. User opens game → opens CT in CE → CE Lua calls `injectDLL(DLL_PATH)` (or proxy `version.dll` auto-loads)
 2. `DLL_PROCESS_ATTACH` → spawns `AutoStartThreadProc` (1 second delay)
 3. `AutoStartThreadProc` → checks `g_isCEPlugin` (suppresses if loaded into CE.exe)
 4. `UE5_Init()`: `FindGObjects()` → `FindGNames()` → `DetectVersion()` → `FNamePool::Init()` → `ObjectArray::Init()` → `ValidateAndFixOffsets()`
@@ -229,4 +221,4 @@ All logs written to `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\`:
 | `pipe-*.log` | Pipe | JSON command dispatch, responses |
 | `walk-*.log` | Walk | UStructWalker field reads |
 
-2-file rotation per category, 5 MB cap. UI mirrors to `ui-init`, `ui-pipe`, `ui-view` prefixed files.
+4-file rotation per category, 8 MB max per file. UI mirrors to `ui-init`, `ui-pipe`, `ui-view` prefixed files.

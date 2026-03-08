@@ -172,10 +172,22 @@ public class DumpService
 
       <GridSplitter Grid.Column="1" Background="#3C3C3C" />
 
-      <!-- Right: Tab panels -->
+      <!-- Right: Tab panels (8 tabs) -->
       <TabControl Grid.Column="2" Background="#1E1E1E">
         <TabItem Header="Class Structure">
           <views:ClassStructPanel DataContext="{Binding ClassStruct}" />
+        </TabItem>
+        <TabItem Header="Live Walker">
+          <views:LiveWalkerPanel DataContext="{Binding LiveWalker}" />
+        </TabItem>
+        <TabItem Header="Instance Finder">
+          <views:InstanceFinderPanel DataContext="{Binding InstanceFinder}" />
+        </TabItem>
+        <TabItem Header="Property Search">
+          <views:PropertySearchPanel DataContext="{Binding PropertySearch}" />
+        </TabItem>
+        <TabItem Header="Game Classes">
+          <views:GameClassFilterPanel DataContext="{Binding GameClassFilter}" />
         </TabItem>
         <TabItem Header="Global Pointers">
           <views:PointerPanel DataContext="{Binding Pointers}" />
