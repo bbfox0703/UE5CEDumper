@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using UE5DumpUI.Core;
 
@@ -264,8 +265,9 @@ public sealed class LiveFieldValue
         SetCount >= 0 ? FormatSetDisplay() :
         DataTableRowCount >= 0 ? $"{{DataTable: {DataTableRowCount} rows, {DataTableStructName}}}" :
         !string.IsNullOrEmpty(StrValue) ? $"\"{StrValue}\"" :
-        !string.IsNullOrEmpty(HexValue) ? HexValue :
-        "";
+        DecodeHexAsNumeric(TypeName, HexValue) ??
+        (!string.IsNullOrEmpty(HexValue) ? HexValue :
+        "");
 
     /// <summary>Whether this field is a container that can be drilled into (Array/Map/Set/DataTable with data).</summary>
     public bool IsContainerNavigable =>
@@ -321,7 +323,10 @@ public sealed class LiveFieldValue
             }
             if (TypeName == "EnumProperty" && !string.IsNullOrEmpty(EnumName))
                 return EnumName;
-            // For numeric types, return TypedValue (already a clean number string)
+            // For numeric types, return TypedValue (already a clean number string).
+            // Fallback: if DLL didn't send a typed value, try decoding hex bytes.
+            if (string.IsNullOrEmpty(TypedValue))
+                return DecodeHexAsNumeric(TypeName, HexValue) ?? TypedValue;
             return TypedValue;
         }
         set => _editableValue = value;
@@ -405,5 +410,64 @@ public sealed class LiveFieldValue
             joined += ", ...";
 
         return $"{header} = {{{joined}}}";
+    }
+
+    /// <summary>
+    /// Decode hex bytes into a numeric display string for known scalar property types.
+    /// Returns null if the type is not a known numeric type or if hex is empty/malformed.
+    /// Used as a defensive fallback when the DLL doesn't populate TypedValue (e.g., memory read edge cases).
+    /// </summary>
+    internal static string? DecodeHexAsNumeric(string typeName, string hexValue)
+    {
+        if (string.IsNullOrEmpty(hexValue) || string.IsNullOrEmpty(typeName))
+            return null;
+
+        try
+        {
+            var bytes = Convert.FromHexString(hexValue.Replace("...", "").TrimEnd());
+            return typeName switch
+            {
+                "FloatProperty" when bytes.Length >= 4 =>
+                    FormatFloat(BitConverter.ToSingle(bytes, 0)),
+                "DoubleProperty" when bytes.Length >= 8 =>
+                    FormatDouble(BitConverter.ToDouble(bytes, 0)),
+                "IntProperty" when bytes.Length >= 4 =>
+                    BitConverter.ToInt32(bytes, 0).ToString(),
+                "UInt32Property" when bytes.Length >= 4 =>
+                    BitConverter.ToUInt32(bytes, 0).ToString(),
+                "Int64Property" when bytes.Length >= 8 =>
+                    BitConverter.ToInt64(bytes, 0).ToString(),
+                "UInt64Property" when bytes.Length >= 8 =>
+                    BitConverter.ToUInt64(bytes, 0).ToString(),
+                "Int16Property" when bytes.Length >= 2 =>
+                    BitConverter.ToInt16(bytes, 0).ToString(),
+                "UInt16Property" when bytes.Length >= 2 =>
+                    BitConverter.ToUInt16(bytes, 0).ToString(),
+                "ByteProperty" when bytes.Length >= 1 =>
+                    bytes[0].ToString(),
+                "Int8Property" when bytes.Length >= 1 =>
+                    ((sbyte)bytes[0]).ToString(),
+                _ => null,
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatFloat(float v)
+    {
+        // Match DLL format: integer display when fractional part is zero
+        if (v == (int)v && !float.IsInfinity(v) && !float.IsNaN(v))
+            return ((int)v).ToString();
+        return v.ToString("G10");
+    }
+
+    private static string FormatDouble(double v)
+    {
+        if (v == (long)v && !double.IsInfinity(v) && !double.IsNaN(v))
+            return ((long)v).ToString();
+        return v.ToString("G15");
     }
 }

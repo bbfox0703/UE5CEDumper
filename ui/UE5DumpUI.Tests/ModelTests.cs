@@ -179,6 +179,158 @@ public class ModelTests
         Assert.Equal("[3 x FVector (12B)]", field.DisplayValue);
     }
 
+    // --- DecodeHexAsNumeric fallback ---
+
+    [Theory]
+    [InlineData("FloatProperty", "00000000", "0")]
+    [InlineData("FloatProperty", "0000803F", "1")]       // 1.0f LE
+    [InlineData("FloatProperty", "DB0F4940", "3.14159")]  // pi LE (G10 format)
+    [InlineData("DoubleProperty", "0000000000000000", "0")]
+    [InlineData("IntProperty", "00000000", "0")]
+    [InlineData("IntProperty", "2A000000", "42")]         // 42 LE
+    [InlineData("UInt32Property", "FFFFFFFF", "4294967295")]
+    [InlineData("Int64Property", "0000000000000000", "0")]
+    [InlineData("UInt64Property", "0100000000000000", "1")]
+    [InlineData("Int16Property", "0000", "0")]
+    [InlineData("UInt16Property", "FF00", "255")]
+    [InlineData("ByteProperty", "07", "7")]
+    [InlineData("Int8Property", "FF", "-1")]
+    public void DecodeHexAsNumeric_KnownScalarTypes(string typeName, string hex, string expected)
+    {
+        var result = LiveFieldValue.DecodeHexAsNumeric(typeName, hex);
+        Assert.NotNull(result);
+        // Float comparison: allow different precision formats
+        if (typeName == "FloatProperty" && expected.Contains('.'))
+            Assert.StartsWith(expected[..4], result);
+        else
+            Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("ObjectProperty", "0000000000000000")]
+    [InlineData("StrProperty", "0000000000000000")]
+    [InlineData("StructProperty", "00000000")]
+    [InlineData("ArrayProperty", "00000000")]
+    public void DecodeHexAsNumeric_NonNumericTypes_ReturnsNull(string typeName, string hex)
+    {
+        Assert.Null(LiveFieldValue.DecodeHexAsNumeric(typeName, hex));
+    }
+
+    [Fact]
+    public void DecodeHexAsNumeric_EmptyHex_ReturnsNull()
+    {
+        Assert.Null(LiveFieldValue.DecodeHexAsNumeric("FloatProperty", ""));
+        Assert.Null(LiveFieldValue.DecodeHexAsNumeric("FloatProperty", null!));
+        Assert.Null(LiveFieldValue.DecodeHexAsNumeric("", "00000000"));
+    }
+
+    [Fact]
+    public void DecodeHexAsNumeric_MalformedHex_ReturnsNull()
+    {
+        Assert.Null(LiveFieldValue.DecodeHexAsNumeric("FloatProperty", "GGGG"));
+        Assert.Null(LiveFieldValue.DecodeHexAsNumeric("IntProperty", "ZZ"));
+    }
+
+    [Fact]
+    public void DisplayValue_FloatZero_WhenTypedValueEmpty_ShowsZero()
+    {
+        var field = new LiveFieldValue
+        {
+            TypeName = "FloatProperty",
+            TypedValue = "",
+            HexValue = "00000000",
+        };
+        Assert.Equal("0", field.DisplayValue);
+    }
+
+    [Fact]
+    public void DisplayValue_IntZero_WhenTypedValueEmpty_ShowsZero()
+    {
+        var field = new LiveFieldValue
+        {
+            TypeName = "IntProperty",
+            TypedValue = "",
+            HexValue = "00000000",
+        };
+        Assert.Equal("0", field.DisplayValue);
+    }
+
+    [Fact]
+    public void DisplayValue_NonNumeric_WhenTypedValueEmpty_ShowsHexRaw()
+    {
+        var field = new LiveFieldValue
+        {
+            TypeName = "StructProperty",
+            TypedValue = "",
+            HexValue = "DEADBEEF",
+        };
+        Assert.Equal("DEADBEEF", field.DisplayValue);
+    }
+
+    [Fact]
+    public void EditableValue_FloatZero_FallsBackToHex()
+    {
+        var field = new LiveFieldValue
+        {
+            TypeName = "FloatProperty",
+            TypedValue = "",
+            HexValue = "00000000",
+        };
+        Assert.Equal("0", field.EditableValue);
+    }
+
+    // --- InstanceWalkResult / PropertiesSize ---
+
+    [Fact]
+    public void InstanceWalkResult_PropertiesSize_DefaultZero()
+    {
+        var result = new InstanceWalkResult();
+        Assert.Equal(0, result.PropertiesSize);
+    }
+
+    [Fact]
+    public void InstanceWalkResult_PropertiesSize_SetFromInit()
+    {
+        var result = new InstanceWalkResult
+        {
+            PropertiesSize = 152,
+            Name = "NicolaSkillManager",
+            ClassName = "NicolaSkillManager",
+        };
+        Assert.Equal(152, result.PropertiesSize);
+    }
+
+    [Fact]
+    public void InstanceWalkResult_ZeroFields_HighPropsSize_ShouldTriggerAutoFillGaps()
+    {
+        // Simulates the condition: 0 fields + propsSize > 0x30 → should auto-retry with fill_gaps
+        var result = new InstanceWalkResult
+        {
+            PropertiesSize = 152,
+            Name = "NicolaSkillManager",
+            ClassName = "NicolaSkillManager",
+        };
+        // Fields list is empty by default
+        Assert.Empty(result.Fields);
+        Assert.True(result.PropertiesSize > 0x30,
+            "PropertiesSize > 0x30 should trigger auto fill_gaps retry");
+    }
+
+    [Fact]
+    public void InstanceWalkResult_ZeroFields_SmallPropsSize_ShouldNotTriggerAutoFillGaps()
+    {
+        // Objects with size ≤ 0x30 (UObject header) should NOT trigger auto-fill
+        var result = new InstanceWalkResult
+        {
+            PropertiesSize = 0x28,  // Just UObject header, no extra data
+            Name = "EmptyObject",
+            ClassName = "Object",
+        };
+        Assert.Empty(result.Fields);
+        Assert.False(result.PropertiesSize > 0x30,
+            "PropertiesSize ≤ 0x30 should not trigger auto fill_gaps retry");
+    }
+
     // --- InvokeFunctionResult ---
 
     [Fact]

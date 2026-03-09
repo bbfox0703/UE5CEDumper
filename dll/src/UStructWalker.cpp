@@ -2061,6 +2061,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     auto walkClassEnd = std::chrono::steady_clock::now();
     auto walkClassMs = std::chrono::duration_cast<std::chrono::milliseconds>(walkClassEnd - walkClassStart).count();
 
+    result.propsSize = ci.PropertiesSize;
+
     // Pre-pass: calibrate subclass extension offsets using StructProperty probe.
     // Must run BEFORE the main loop so ArrayProperty fields use corrected offsets.
     CorrectSubclassOffsets(ci.Fields);
@@ -3325,7 +3327,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     }
 
     // --- Guess What: fill gaps between known fields ---
-    if (fillGaps && !result.isDefinition && !result.fields.empty() && ci.PropertiesSize > 0) {
+    // Note: works with 0-field classes too — the entire [headerEnd, propsSize] becomes one gap.
+    if (fillGaps && !result.isDefinition && ci.PropertiesSize > 0) {
         // Determine scan boundaries
         int32_t headerEnd = isRawStruct ? 0 : (DynOff::UOBJECT_OUTER + 8);
         int32_t scanEnd = ci.PropertiesSize;

@@ -316,6 +316,7 @@ public sealed class DumpService : IDumpService
             OuterName = res["outer_name"]?.GetValue<string>() ?? "",
             OuterClassName = res["outer_class"]?.GetValue<string>() ?? "",
             IsDefinition = res["is_definition"]?.GetValue<bool>() ?? false,
+            PropertiesSize = res["props_size"]?.GetValue<int>() ?? 0,
         };
 
         if (res["fields"] is JsonArray fields)

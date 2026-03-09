@@ -236,6 +236,7 @@ struct InstanceWalkResult {
     std::string outerName;         // Name of the outer object
     std::string outerClassName;    // Class name of the outer object
     bool        isDefinition = false;  // True when viewing a class/struct definition (not a live instance)
+    int32_t     propsSize = 0;     // UStruct::PropertiesSize — total struct/class size in bytes
     std::vector<LiveFieldValue> fields;
 };
 

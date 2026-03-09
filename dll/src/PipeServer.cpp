@@ -826,6 +826,8 @@ std::string PipeServer::DispatchCommand(const std::string& jsonLine) {
             data["outer_class"]= result.outerClassName;
             if (result.isDefinition)
                 data["is_definition"] = true;
+            if (result.propsSize > 0)
+                data["props_size"] = result.propsSize;
 
             json fields = json::array();
             for (const auto& fv : result.fields) {

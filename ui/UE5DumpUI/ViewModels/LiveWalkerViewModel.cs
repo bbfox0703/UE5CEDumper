@@ -314,6 +314,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             {
                 // StructProperty navigation: walk struct data using its class
                 var result = await _dump.WalkInstanceAsync(field.StructDataAddr, field.StructClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+                result = await AutoFillGapsRetryAsync(result, field.StructDataAddr, field.StructClassAddr);
                 var displayName = !string.IsNullOrEmpty(field.StructTypeName)
                     ? $"{field.Name} ({field.StructTypeName})"
                     : field.Name;
@@ -949,6 +950,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             // Re-walk this object (pass ClassAddr for StructProperty navigation)
             var classAddr = string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
             var result = await _dump.WalkInstanceAsync(item.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+            result = await AutoFillGapsRetryAsync(result, item.Address, classAddr);
             UpdateDisplay(result);
 
             if (!string.IsNullOrEmpty(scrollHint))
@@ -1003,6 +1005,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
             var classAddr = string.IsNullOrEmpty(prev.ClassAddr) ? null : prev.ClassAddr;
             var result = await _dump.WalkInstanceAsync(prev.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+            result = await AutoFillGapsRetryAsync(result, prev.Address, classAddr);
             UpdateDisplay(result);
 
             if (!string.IsNullOrEmpty(scrollHint))
@@ -1043,6 +1046,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             });
 
             var result = await _dump.WalkInstanceAsync(parentAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+            result = await AutoFillGapsRetryAsync(result, parentAddr);
             UpdateDisplay(result);
         }
         catch (Exception ex)
@@ -1508,6 +1512,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             }
 
             var result = await _dump.WalkInstanceAsync(CurrentAddress, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+            result = await AutoFillGapsRetryAsync(result, CurrentAddress, classAddr);
             if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
             UpdateDisplay(result);
         }
@@ -1976,6 +1981,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private async Task NavigateToAsync(string addr, string label, int fieldOffset, string fieldName, bool isPointer)
     {
         var result = await _dump.WalkInstanceAsync(addr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+        result = await AutoFillGapsRetryAsync(result, addr);
 
         var displayName = !string.IsNullOrEmpty(result.Name) ? result.Name : label;
         Breadcrumbs.Add(new BreadcrumbItem
@@ -1989,6 +1995,23 @@ public partial class LiveWalkerViewModel : ViewModelBase
 
         _log.Info($"NAV→ {fieldName} addr={addr} off=0x{fieldOffset:X} ptr={isPointer} | BC={FormatBreadcrumbTrace()}");
         UpdateDisplay(result);
+    }
+
+    /// <summary>
+    /// Auto-retry with fill_gaps when a walk returns 0 fields but PropertiesSize indicates data exists.
+    /// This gives users raw byte analysis instead of an empty panel for classes with no UPROPERTY fields.
+    /// Only triggers when FillGaps toggle is off (avoids double-fill_gaps).
+    /// </summary>
+    private async Task<InstanceWalkResult> AutoFillGapsRetryAsync(
+        InstanceWalkResult result, string addr, string? classAddr = null)
+    {
+        if (result.Fields.Count == 0 && result.PropertiesSize > 0x30 && !FillGaps)
+        {
+            _log.Info($"Auto fill_gaps: 0 fields but propsSize={result.PropertiesSize}, retrying with fill_gaps for {addr}");
+            result = await _dump.WalkInstanceAsync(addr, classAddr,
+                arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: true);
+        }
+        return result;
     }
 
     /// <summary>Format breadcrumb trail for debug logging.</summary>
