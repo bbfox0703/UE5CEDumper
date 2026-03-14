@@ -410,18 +410,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
             ? field.ArrayStructType : field.ArrayInnerType;
         var label = $"{field.Name} [{field.ArrayCount} x {typeLabel}]";
 
-        Breadcrumbs.Add(new BreadcrumbItem
-        {
-            Address = CurrentAddress,
-            Label = label,
-            FieldOffset = field.Offset,
-            FieldName = field.Name,
-            IsPointerDeref = false,
-            IsContainerView = true,
-            ContainerField = field,
-        });
-        _log.Info($"NAV→Container {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
-
+        // Fetch elements BEFORE adding breadcrumb — if the DLL call fails,
+        // we must not leave a stale breadcrumb that causes repeated entries.
+        var parentAddr = CurrentAddress;
         List<ArrayElementValue> elements;
         if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
         {
@@ -434,11 +425,11 @@ public partial class LiveWalkerViewModel : ViewModelBase
             // read_array_elements is scalar-only and cannot resolve pointer names.
             elements = field.ArrayElements;
         }
-        else if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(CurrentAddress))
+        else if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
         {
             // Scalar arrays: fetch full element list from DLL (Phase B)
             var result = await _dump.ReadArrayElementsAsync(
-                CurrentAddress, field.Offset, field.ArrayInnerAddr,
+                parentAddr, field.Offset, field.ArrayInnerAddr,
                 field.ArrayInnerType, field.ArrayElemSize, 0, field.ArrayCount);
             elements = result.Elements;
         }
@@ -446,6 +437,19 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             elements = field.ArrayElements ?? new();
         }
+
+        // Only add breadcrumb after successful element retrieval
+        Breadcrumbs.Add(new BreadcrumbItem
+        {
+            Address = parentAddr,
+            Label = label,
+            FieldOffset = field.Offset,
+            FieldName = field.Name,
+            IsPointerDeref = false,
+            IsContainerView = true,
+            ContainerField = field,
+        });
+        _log.Info($"NAV→Container {field.Name} addr={parentAddr} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
         PopulateArrayContainerFields(elements, field);
     }
