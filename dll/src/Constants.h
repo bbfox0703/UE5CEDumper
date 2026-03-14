@@ -99,6 +99,13 @@ inline int FARRAYPROP_INNER   = 0x78;
 // Same offset as FSTRUCTPROP_STRUCT for most builds.
 inline int FBOOLPROP_FIELDSIZE = 0x78;
 
+// === UE4 UBoolProperty layout (subclass of UProperty) ===
+// Same 4 bytes: FieldSize, ByteOffset, ByteMask, FieldMask
+// Offset from UBoolProperty base differs from FBoolProperty because
+// UProperty (UObject-derived) has a larger base than FProperty (FField-derived).
+// Typical UE4.22: 0x70, may vary ±0x08 by version.
+inline int UBOOLPROP_FIELDSIZE = 0x70;
+
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
 // UField::Next is at UObject_TotalSize (0x28 or 0x30 for CPN).

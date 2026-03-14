@@ -127,6 +127,15 @@ public partial class LiveWalkerViewModel : ViewModelBase
     private bool _isAutoRefreshing_InProgress; // Guard against overlapping refreshes
     private bool _isEditing; // True while a cell is being edited (suppresses auto-refresh)
 
+    // Bookmark slots (4 fixed slots)
+    [ObservableProperty] private ObservableCollection<BookmarkSlot> _bookmarkSlots = new();
+    [ObservableProperty] private bool _isBookmarkSaveMode;  // True while waiting for user to pick a slot
+
+    // Pre-bookmark navigation state (for Back-after-bookmark)
+    private List<BreadcrumbItem>? _preBookmarkBreadcrumbs;
+    private string _preBookmarkAddress = "";
+    private WorldWalkResult? _preBookmarkCachedWorld;
+
     /// <summary>
     /// Raised when the View should scroll the DataGrid to a specific field name.
     /// The View subscribes to this and calls ScrollIntoView on the DataGrid.
@@ -146,6 +155,10 @@ public partial class LiveWalkerViewModel : ViewModelBase
         _log = log;
         _platform = platform;
         _aobMaker = aobMaker;
+
+        // Initialize 4 empty bookmark slots
+        for (int i = 0; i < 4; i++)
+            BookmarkSlots.Add(new BookmarkSlot { SlotIndex = i });
     }
 
     public void SetEngineState(EngineState state)
@@ -182,6 +195,8 @@ public partial class LiveWalkerViewModel : ViewModelBase
             ClearStatus();
             IsLoading = true;
             StopAutoRefreshTimer();
+            _preBookmarkBreadcrumbs = null;
+            IsBookmarkSaveMode = false;
 
             var world = await _dump.WalkWorldAsync(500, arrayLimit: ArrayLimit);
             _cachedWorld = world;
@@ -969,6 +984,63 @@ public partial class LiveWalkerViewModel : ViewModelBase
     [RelayCommand]
     private async Task GoBackAsync()
     {
+        // Cancel bookmark save mode on any navigation
+        IsBookmarkSaveMode = false;
+
+        // If at root breadcrumb and we have pre-bookmark state, restore it
+        if (Breadcrumbs.Count < 2 && _preBookmarkBreadcrumbs != null)
+        {
+            try
+            {
+                ClearStatus();
+                IsLoading = true;
+
+                var savedBreadcrumbs = _preBookmarkBreadcrumbs;
+                var savedCachedWorld = _preBookmarkCachedWorld;
+                _preBookmarkBreadcrumbs = null;
+                _preBookmarkAddress = "";
+                _preBookmarkCachedWorld = null;
+
+                Breadcrumbs.Clear();
+                foreach (var bc in savedBreadcrumbs)
+                    Breadcrumbs.Add(bc);
+                _cachedWorld = savedCachedWorld;
+
+                var lastBc = Breadcrumbs.LastOrDefault();
+                if (lastBc != null)
+                {
+                    if (lastBc.IsContainerView && lastBc.ContainerField != null)
+                    {
+                        RepopulateContainerView(lastBc.ContainerField, lastBc);
+                        return;
+                    }
+                    if (_cachedWorld != null && lastBc.Address == _cachedWorld.WorldAddr)
+                    {
+                        PopulateFromWorld(_cachedWorld);
+                        return;
+                    }
+                    var classAddr = string.IsNullOrEmpty(lastBc.ClassAddr) ? null : lastBc.ClassAddr;
+                    var result = await _dump.WalkInstanceAsync(
+                        lastBc.Address, classAddr,
+                        arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+                    result = await AutoFillGapsRetryAsync(result, lastBc.Address, classAddr);
+                    UpdateDisplay(result);
+                }
+
+                StatusText = "Returned to pre-bookmark view";
+                _log.Info("NAV←Back restored pre-bookmark state");
+            }
+            catch (Exception ex)
+            {
+                SetError(ex);
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+            return;
+        }
+
         if (Breadcrumbs.Count < 2) return;
 
         // Re-check AOBMaker CE Plugin availability (detects CE start/close, cooldown-throttled)
@@ -1070,6 +1142,8 @@ public partial class LiveWalkerViewModel : ViewModelBase
             ClearStatus();
             IsLoading = true;
             StopAutoRefreshTimer();
+            _preBookmarkBreadcrumbs = null;
+            IsBookmarkSaveMode = false;
             Breadcrumbs.Clear();
 
             // Normalize address: supports CE formats like "module.exe"+offset,
@@ -1087,6 +1161,144 @@ public partial class LiveWalkerViewModel : ViewModelBase
         {
             IsLoading = false;
         }
+    }
+
+    [RelayCommand]
+    private void SaveBookmarkToSlot(BookmarkSlot? slot)
+    {
+        IsBookmarkSaveMode = false;
+        if (slot == null || Breadcrumbs.Count == 0 || string.IsNullOrEmpty(CurrentAddress)) return;
+
+        slot.SavedBreadcrumbs = Breadcrumbs.ToList();
+        slot.SavedAddress = CurrentAddress;
+        slot.SavedObjectName = CurrentObjectName;
+        slot.SavedClassName = CurrentClassName;
+        slot.SavedClassAddr = _currentClassAddr;
+        slot.SavedCachedWorld = _cachedWorld;
+
+        // Truncate label for button display
+        var label = !string.IsNullOrEmpty(CurrentObjectName) ? CurrentObjectName : CurrentClassName;
+        if (label.Length > 14) label = label[..14] + "..";
+        slot.Label = label;
+        slot.TooltipText = $"{CurrentClassName} :: {CurrentObjectName}\n{CurrentAddress}";
+        slot.IsOccupied = true;
+
+        StatusText = $"Bookmark {slot.DisplayNumber} saved";
+        _log.Info($"Bookmark saved slot={slot.SlotIndex} addr={CurrentAddress} name={CurrentObjectName}");
+    }
+
+    [RelayCommand]
+    private void ToggleBookmarkSaveMode()
+    {
+        if (Breadcrumbs.Count == 0 || string.IsNullOrEmpty(CurrentAddress))
+            return;
+        IsBookmarkSaveMode = !IsBookmarkSaveMode;
+    }
+
+    [RelayCommand]
+    private void CancelBookmarkSave()
+    {
+        IsBookmarkSaveMode = false;
+    }
+
+    [RelayCommand]
+    private async Task LoadBookmarkAsync(BookmarkSlot? slot)
+    {
+        if (slot == null) return;
+
+        // If in save mode, redirect to save instead of loading
+        if (IsBookmarkSaveMode)
+        {
+            SaveBookmarkToSlot(slot);
+            return;
+        }
+
+        if (!slot.IsOccupied) return;
+
+        try
+        {
+            ClearStatus();
+            IsLoading = true;
+            StopAutoRefreshTimer();
+
+            // Save current state for Back-after-bookmark
+            if (Breadcrumbs.Count > 0)
+            {
+                _preBookmarkBreadcrumbs = Breadcrumbs.ToList();
+                _preBookmarkAddress = CurrentAddress;
+                _preBookmarkCachedWorld = _cachedWorld;
+            }
+
+            // Restore breadcrumbs
+            Breadcrumbs.Clear();
+            foreach (var bc in slot.SavedBreadcrumbs)
+                Breadcrumbs.Add(bc);
+
+            _cachedWorld = slot.SavedCachedWorld;
+
+            // Re-walk the saved address to get fresh field data
+            var lastBc = Breadcrumbs.LastOrDefault();
+            if (lastBc != null)
+            {
+                if (lastBc.IsContainerView && lastBc.ContainerField != null)
+                {
+                    RepopulateContainerView(lastBc.ContainerField, lastBc);
+                    StatusText = $"Bookmark {slot.DisplayNumber} loaded";
+                    return;
+                }
+                if (_cachedWorld != null && lastBc.Address == _cachedWorld.WorldAddr)
+                {
+                    PopulateFromWorld(_cachedWorld);
+                    StatusText = $"Bookmark {slot.DisplayNumber} loaded";
+                    return;
+                }
+                var classAddr = string.IsNullOrEmpty(lastBc.ClassAddr) ? null : lastBc.ClassAddr;
+                var result = await _dump.WalkInstanceAsync(
+                    lastBc.Address, classAddr,
+                    arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+                result = await AutoFillGapsRetryAsync(result, lastBc.Address, classAddr);
+                UpdateDisplay(result);
+            }
+
+            StatusText = $"Bookmark {slot.DisplayNumber} loaded";
+            _log.Info($"Bookmark loaded slot={slot.SlotIndex} addr={slot.SavedAddress}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            StatusText = $"Bookmark {slot.DisplayNumber} invalid — address may no longer be valid";
+            _log.Error($"Bookmark load failed slot={slot.SlotIndex}", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private void ClearBookmark(BookmarkSlot? slot)
+    {
+        if (slot == null) return;
+        slot.IsOccupied = false;
+        slot.Label = "";
+        slot.TooltipText = "";
+        slot.SavedBreadcrumbs.Clear();
+        slot.SavedAddress = "";
+        slot.SavedObjectName = "";
+        slot.SavedClassName = "";
+        slot.SavedClassAddr = "";
+        slot.SavedCachedWorld = null;
+    }
+
+    /// <summary>Clear all bookmark slots (called on disconnect).</summary>
+    public void ClearAllBookmarks()
+    {
+        foreach (var slot in BookmarkSlots)
+            ClearBookmark(slot);
+        _preBookmarkBreadcrumbs = null;
+        _preBookmarkAddress = "";
+        _preBookmarkCachedWorld = null;
+        IsBookmarkSaveMode = false;
     }
 
     [RelayCommand]
@@ -2271,4 +2483,32 @@ public sealed class BreadcrumbItem
 
     /// <summary>Cached DataTable walk result (for refreshing DataTable row views).</summary>
     public DataTableWalkResult? DataTableData { get; set; }
+}
+
+/// <summary>
+/// A saved bookmark slot capturing LiveWalker navigation state.
+/// </summary>
+public sealed class BookmarkSlot : ObservableObject
+{
+    public int SlotIndex { get; init; }
+
+    /// <summary>1-based display number for UI binding.</summary>
+    public int DisplayNumber => SlotIndex + 1;
+
+    private bool _isOccupied;
+    public bool IsOccupied { get => _isOccupied; set => SetProperty(ref _isOccupied, value); }
+
+    private string _label = "";
+    public string Label { get => _label; set => SetProperty(ref _label, value); }
+
+    private string _tooltipText = "";
+    public string TooltipText { get => _tooltipText; set => SetProperty(ref _tooltipText, value); }
+
+    // Saved navigation state
+    public List<BreadcrumbItem> SavedBreadcrumbs { get; set; } = new();
+    public string SavedAddress { get; set; } = "";
+    public string SavedObjectName { get; set; } = "";
+    public string SavedClassName { get; set; } = "";
+    public string SavedClassAddr { get; set; } = "";
+    public WorldWalkResult? SavedCachedWorld { get; set; }
 }

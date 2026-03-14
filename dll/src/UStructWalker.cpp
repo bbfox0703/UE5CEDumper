@@ -404,6 +404,23 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
         Mem::ReadSafe<int32_t>(current + DynOff::UPROPERTY_ELEMSIZE, fi.Size);
         Mem::ReadSafe<uint64_t>(current + DynOff::UPROPERTY_FLAGS, fi.PropertyFlags);
 
+        // UE4 UBoolProperty -> FieldMask byte
+        if (fi.TypeName == "BoolProperty") {
+            uint8_t boolBytes[4] = {};
+            for (int tryOff : { DynOff::UBOOLPROP_FIELDSIZE, DynOff::UBOOLPROP_FIELDSIZE - 4,
+                                DynOff::UBOOLPROP_FIELDSIZE + 4, DynOff::UBOOLPROP_FIELDSIZE + 8,
+                                DynOff::UBOOLPROP_FIELDSIZE - 8 }) {
+                if (tryOff < 0) continue;
+                if (!Mem::ReadBytesSafe(current + tryOff, boolBytes, 4)) continue;
+                uint8_t fieldSize = boolBytes[0];
+                uint8_t fieldMask = boolBytes[3];
+                if (fieldSize == 1 && fieldMask != 0 && (fieldMask & (fieldMask - 1)) == 0) {
+                    fi.boolFieldMask = fieldMask;
+                    break;
+                }
+            }
+        }
+
         if (!fi.Name.empty()) {
             fields.push_back(fi);
         }
@@ -637,8 +654,8 @@ ClassInfo WalkClassEx(uintptr_t uclassAddr) {
         // BoolProperty -> FieldMask byte
         else if (tn == "BoolProperty") {
             uint8_t boolBytes[4] = {};
-            for (int tryOff : { DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBOOLPROP_FIELDSIZE - 4,
-                                DynOff::FBOOLPROP_FIELDSIZE + 4, DynOff::FBOOLPROP_FIELDSIZE + 8 }) {
+            int baseOff = DynOff::bUseFProperty ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+            for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
                 if (tryOff < 0) continue;
                 if (!Mem::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
                 uint8_t fieldSize = boolBytes[0];
@@ -1426,11 +1443,11 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
         cf.offset   = fi.Offset;
         cf.size     = fi.Size;
 
-        // BoolProperty: read FieldMask from FBoolProperty FField
+        // BoolProperty: read FieldMask from FBoolProperty/UBoolProperty
         if (fi.TypeName == "BoolProperty" && fi.Address) {
             uint8_t boolBytes[4] = {};
-            for (int tryOff : { DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBOOLPROP_FIELDSIZE - 4,
-                                DynOff::FBOOLPROP_FIELDSIZE + 4, DynOff::FBOOLPROP_FIELDSIZE + 8 }) {
+            int baseOff = DynOff::bUseFProperty ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+            for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
                 if (tryOff < 0) continue;
                 if (!Mem::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
                 uint8_t fieldSize = boolBytes[0];
@@ -3034,14 +3051,16 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // BoolProperty: extract FieldMask/ByteOffset for bitfield display
         if (fi.TypeName == "BoolProperty") {
-            // FBoolProperty layout after FProperty base:
+            // FBoolProperty/UBoolProperty layout:
             //   uint8 FieldSize, ByteOffset, ByteMask, FieldMask
-            // Try known offset first, then probe nearby if needed
+            // FProperty (UE4.25+/UE5): at FBOOLPROP_FIELDSIZE (~0x78)
+            // UProperty (UE4 <4.25):   at UBOOLPROP_FIELDSIZE (~0x70)
             uint8_t boolBytes[4] = {};
             bool boolInfoRead = false;
 
-            for (int tryOff : { DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBOOLPROP_FIELDSIZE - 4,
-                                DynOff::FBOOLPROP_FIELDSIZE + 4, DynOff::FBOOLPROP_FIELDSIZE + 8 }) {
+            // Build probe list: try version-specific offset first, then nearby
+            int baseOff = DynOff::bUseFProperty ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+            for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
                 if (tryOff < 0) continue;
                 if (!Mem::ReadBytesSafe(fi.Address + tryOff, boolBytes, 4)) continue;
 
