@@ -270,9 +270,11 @@ public static class CeXmlExportService
             // Use decorated label for containers (includes element count/type info)
             var desc = bc.IsContainerView ? bc.Label : bc.FieldName;
 
+            var offsets = needsDeref ? new[] { 0 } : null;
+
             EmitGroupOpen(sb, childIndent, desc,
                 $"+{bc.FieldOffset:X}",
-                needsDeref ? new[] { 0 } : null,
+                offsets,
                 showAsHex: needsDeref);
             openTags++;
         }
@@ -434,9 +436,11 @@ public static class CeXmlExportService
             var needsDeref = bc.IsPointerDeref || bc.IsContainerView;
             var desc = bc.IsContainerView ? bc.Label : bc.FieldName;
 
+            var offsets = needsDeref ? new[] { 0 } : null;
+
             EmitGroupOpen(sb, childIndent, desc,
                 $"+{bc.FieldOffset:X}",
-                needsDeref ? new[] { 0 } : null,
+                offsets,
                 showAsHex: needsDeref);
             innerOpenTags++;
         }
@@ -1035,8 +1039,8 @@ public static class CeXmlExportService
     /// <summary>
     /// Emit a MapProperty as a CE group with per-element children.
     /// TMap uses TSparseArray internally. Data pointer is at +0x00 (same as TArray).
-    /// Element stride = ComputeSetElementStride(keySize + valueSize).
-    /// Each allocated element: key at +0, value at +keySize within the element.
+    /// Element stride = ComputeSetElementStride(valOffset + valueSize), where valOffset is aligned.
+    /// Each allocated element: key at +0, value at +valOffset (aligned) within the element.
     ///
     /// TSparseArray addressing:
     /// - Group header: Address=+{fieldOffset}, Offsets=[0] → dereferences TSparseArray.Data pointer
@@ -1066,7 +1070,9 @@ public static class CeXmlExportService
             return;
         }
 
-        int pairSize = field.MapKeySize + field.MapValueSize;
+        // Use aligned value offset if available; fall back to key size
+        int valOffset = field.MapValueOffset > 0 ? field.MapValueOffset : field.MapKeySize;
+        int pairSize = valOffset + field.MapValueSize;
         int stride = ComputeSetElementStride(pairSize);
 
         // Map group: Address=+{fieldOffset}, Offsets=[0] (deref TSparseArray.Data)
@@ -1090,9 +1096,9 @@ public static class CeXmlExportService
             var keyDesc = !string.IsNullOrEmpty(elem.Key) ? $"Key: {elem.Key}" : "Key";
             EmitLeaf(sb, fieldIndent, keyDesc, ceKey, "+0", null);
 
-            // Value at +keySize
+            // Value at +valOffset (aligned within TPair)
             var valDesc = !string.IsNullOrEmpty(elem.Value) ? $"Value: {elem.Value}" : "Value";
-            EmitLeaf(sb, fieldIndent, valDesc, ceVal, $"+{field.MapKeySize:X}", null);
+            EmitLeaf(sb, fieldIndent, valDesc, ceVal, $"+{valOffset:X}", null);
 
             EmitGroupClose(sb, elemIndent);
         }
