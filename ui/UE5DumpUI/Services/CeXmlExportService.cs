@@ -245,6 +245,9 @@ public static class CeXmlExportService
         sb.AppendLine("<CheatTable>");
         sb.AppendLine("  <CheatEntries>");
 
+        // Flatten deep pointer chains (> 3 levels) into multi-offset CE pointers
+        var (flatBc, flatOffsets) = FlattenPointerChain(cleanedBc);
+
         // Build the nested structure recursively via indentation tracking
         var indent = "    ";
         var openTags = 0;
@@ -260,9 +263,12 @@ public static class CeXmlExportService
         // TArray::Data / TSparseArray::Data pointer at the field offset.
         // Parent's own Offsets=[0] (if pointer) already resolved the dereference,
         // so children just add their field offset.
-        for (int i = 1; i < cleanedBc.Count; i++)
+        //
+        // When flatOffsets is set, the first pointer breadcrumb (i=1) uses multi-offset
+        // instead of single [0], collapsing intermediate pointer nodes.
+        for (int i = 1; i < flatBc.Count; i++)
         {
-            var bc = cleanedBc[i];
+            var bc = flatBc[i];
             var childIndent = indent + new string(' ', i * 2);
 
             // Container breadcrumbs dereference TArray::Data / TSparseArray::Data
@@ -270,9 +276,14 @@ public static class CeXmlExportService
             // Use decorated label for containers (includes element count/type info)
             var desc = bc.IsContainerView ? bc.Label : bc.FieldName;
 
+            // Use flat offsets for the first pointer node when chain was flattened
+            var offsets = (i == 1 && flatOffsets != null)
+                ? flatOffsets
+                : (needsDeref ? new[] { 0 } : null);
+
             EmitGroupOpen(sb, childIndent, desc,
                 $"+{bc.FieldOffset:X}",
-                needsDeref ? new[] { 0 } : null,
+                offsets,
                 showAsHex: needsDeref);
             openTags++;
         }
@@ -280,7 +291,7 @@ public static class CeXmlExportService
         // Leaf fields at the deepest level
         // Parent breadcrumb (if any) already handled pointer dereference via Offsets=[0],
         // so all leaf fields simply use Address=+{field.Offset}.
-        var leafIndent = indent + new string(' ', cleanedBc.Count * 2);
+        var leafIndent = indent + new string(' ', flatBc.Count * 2);
         EmitFields(sb, leafIndent, currentFields, resolvedStructs);
 
         // Close all nested levels (innermost first)
@@ -426,23 +437,31 @@ public static class CeXmlExportService
         sb.AppendLine($"{baseIndent}  <CheatEntries>");
 
         // ---- Inner breadcrumb chain (skip root at index 0, base replaces it) ----
+        // Flatten deep pointer chains (> 3 levels) into multi-offset CE pointers
+        var (flatBc, flatOffsets) = FlattenPointerChain(cleanedBc);
+
         var innerOpenTags = 0;
-        for (int i = 1; i < cleanedBc.Count; i++)
+        for (int i = 1; i < flatBc.Count; i++)
         {
-            var bc = cleanedBc[i];
+            var bc = flatBc[i];
             var childIndent = baseIndent + "    " + new string(' ', (i - 1) * 2);
             var needsDeref = bc.IsPointerDeref || bc.IsContainerView;
             var desc = bc.IsContainerView ? bc.Label : bc.FieldName;
 
+            // Use flat offsets for the first pointer node when chain was flattened
+            var offsets = (i == 1 && flatOffsets != null)
+                ? flatOffsets
+                : (needsDeref ? new[] { 0 } : null);
+
             EmitGroupOpen(sb, childIndent, desc,
                 $"+{bc.FieldOffset:X}",
-                needsDeref ? new[] { 0 } : null,
+                offsets,
                 showAsHex: needsDeref);
             innerOpenTags++;
         }
 
         // ---- Leaf fields ----
-        var bcDepth = Math.Max(0, cleanedBc.Count - 1);
+        var bcDepth = Math.Max(0, flatBc.Count - 1);
         var leafIndent = baseIndent + "    " + new string(' ', bcDepth * 2);
         EmitFields(sb, leafIndent, currentFields, resolvedStructs);
 
@@ -616,6 +635,63 @@ public static class CeXmlExportService
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Flatten deep pointer chains by collapsing intermediate pointer breadcrumbs.
+    /// When the breadcrumb chain has more than 3 levels (root + intermediates + last),
+    /// intermediate pointer nodes are merged into the first pointer node's offset array.
+    ///
+    /// Before: GWorld → A(+228,[0]) → B(+38,[0]) → C(+0,[0]) → D(+30,[0]) → E(+258,[0]) → fields
+    /// After:  GWorld → A(+228,[0,+30,+0,+38]) → E(+258,[0]) → fields
+    ///
+    /// CE multi-level pointer format: offsets are stored outermost-first in XML.
+    /// The Address field is the outermost value (added last by CE).
+    /// Intermediate breadcrumb offsets are reversed and prepended with 0 (the original deref).
+    /// </summary>
+    internal static (IReadOnlyList<BreadcrumbItem> breadcrumbs, int[]? firstPointerOffsets)
+        FlattenPointerChain(IReadOnlyList<BreadcrumbItem> cleanedBc)
+    {
+        if (cleanedBc.Count <= 3)
+            return (cleanedBc, null);
+
+        // Collect breadcrumbs that need pointer dereference (IsPointerDeref OR IsContainerView).
+        // Container views (Array/Map/Set) also dereference TArray::Data pointer, so they
+        // must be included in the flattened offset chain.
+        var pointerIndices = new List<int>();
+        for (int i = 1; i < cleanedBc.Count; i++)
+        {
+            if (cleanedBc[i].IsPointerDeref || cleanedBc[i].IsContainerView)
+                pointerIndices.Add(i);
+        }
+
+        // Need at least 3 pointer nodes to collapse (first + middle + last)
+        if (pointerIndices.Count <= 2)
+            return (cleanedBc, null);
+
+        var firstIdx = pointerIndices[0];
+        var lastIdx = pointerIndices[^1];
+
+        // Collect intermediate pointer offsets (between first and last pointer nodes)
+        // These are the breadcrumbs that get collapsed into the first node's offset array
+        var middleOffsets = new List<int>();
+        for (int i = pointerIndices.Count - 2; i >= 1; i--)
+            middleOffsets.Add(cleanedBc[pointerIndices[i]].FieldOffset);
+
+        // Build flat offsets: [0 (original deref)] + [reversed intermediate offsets]
+        var flatOffsets = new int[1 + middleOffsets.Count];
+        flatOffsets[0] = 0;
+        for (int i = 0; i < middleOffsets.Count; i++)
+            flatOffsets[i + 1] = middleOffsets[i];
+
+        // Build flattened breadcrumb list: root, first pointer (with flat offsets), last pointer
+        // Also include any non-pointer breadcrumbs that appear before firstIdx or after lastIdx
+        var flatBc = new List<BreadcrumbItem>();
+        for (int i = 0; i <= firstIdx; i++)
+            flatBc.Add(cleanedBc[i]);
+        flatBc.Add(cleanedBc[lastIdx]);
+
+        return (flatBc, flatOffsets);
     }
 
     // ========================================
@@ -1359,14 +1435,22 @@ public static class CeXmlExportService
         sb.AppendLine($"{indent}</CheatEntry>");
     }
 
-    /// <summary>Emit Offsets block if offsets are provided.</summary>
+    /// <summary>
+    /// Emit Offsets block if offsets are provided.
+    /// CE format: first (outermost) offset has no prefix; all subsequent offsets use '+' prefix.
+    /// Example: [0, 840, 310, 30, 0, 38] → &lt;Offset&gt;0, +840, +310, +30, +0, +38
+    /// </summary>
     private static void EmitOffsets(StringBuilder sb, string indent, int[]? offsets)
     {
         if (offsets != null && offsets.Length > 0)
         {
             sb.AppendLine($"{indent}  <Offsets>");
-            foreach (var o in offsets)
-                sb.AppendLine($"{indent}    <Offset>{o:X}</Offset>");
+            for (int i = 0; i < offsets.Length; i++)
+            {
+                // First offset (outermost) has no prefix; remaining offsets use '+' prefix
+                var formatted = (i == 0) ? $"{offsets[i]:X}" : $"+{offsets[i]:X}";
+                sb.AppendLine($"{indent}    <Offset>{formatted}</Offset>");
+            }
             sb.AppendLine($"{indent}  </Offsets>");
         }
     }

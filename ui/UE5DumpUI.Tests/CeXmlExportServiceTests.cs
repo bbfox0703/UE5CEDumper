@@ -211,6 +211,209 @@ public class CeXmlExportServiceTests
     }
 
     // ========================================
+    // FlattenPointerChain tests
+    // ========================================
+
+    [Fact]
+    public void FlattenPointerChain_ThreeOrFewerLevels_NoFlattening()
+    {
+        // root → A → B (3 levels, no flattening needed)
+        var bcs = new[]
+        {
+            MakeBc("0xA", "GWorld"),
+            MakeBc("0xB", "Field1", "m_pField1", isPointer: true, offset: 0x228),
+            MakeBc("0xC", "Field2", "m_pField2", isPointer: true, offset: 0x100),
+        };
+
+        var (result, offsets) = CeXmlExportService.FlattenPointerChain(bcs);
+
+        Assert.Equal(3, result.Count);
+        Assert.Null(offsets);
+    }
+
+    [Fact]
+    public void FlattenPointerChain_FourLevels_CollapsesMiddle()
+    {
+        // root → A → B → C (4 levels → collapse B into A)
+        var bcs = new[]
+        {
+            MakeBc("0x1000", "GWorld"),
+            MakeBc("0xA", "OGI", "OwningGameInstance", isPointer: true, offset: 0x228),
+            MakeBc("0xB", "LP", "LocalPlayers", isPointer: true, offset: 0x38),
+            MakeBc("0xC", "Target", "m_pTarget", isPointer: true, offset: 0x100),
+        };
+
+        var (result, offsets) = CeXmlExportService.FlattenPointerChain(bcs);
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal("0x1000", result[0].Address); // root
+        Assert.Equal("OGI", result[1].Label);       // first pointer (kept)
+        Assert.Equal("Target", result[2].Label);     // last pointer (kept)
+
+        // Offsets: [0 (original deref)] + [reversed middle offsets (just LP=0x38)]
+        Assert.NotNull(offsets);
+        Assert.Equal(2, offsets!.Length);
+        Assert.Equal(0, offsets[0]);    // original deref
+        Assert.Equal(0x38, offsets[1]); // LP offset
+    }
+
+    [Fact]
+    public void FlattenPointerChain_SevenPointers_CollapsesAllMiddle()
+    {
+        // Matches the TQ2 example: GWorld → OGI → LP → [0] → PC → Char → Stats → AttrSetHealth
+        var bcs = new[]
+        {
+            MakeBc("0x1000", "GWorld"),
+            MakeBc("0xA", "OGI", "OwningGameInstance", isPointer: true, offset: 0x228),
+            MakeBc("0xB", "LP", "LocalPlayers", isPointer: true, offset: 0x38),
+            MakeBc("0xC", "[0]", "[0]", isPointer: true, offset: 0x0),
+            MakeBc("0xD", "PC", "PlayerController", isPointer: true, offset: 0x30),
+            MakeBc("0xE", "Char", "Character", isPointer: true, offset: 0x310),
+            MakeBc("0xF", "Stats", "m_pStatsComponent", isPointer: true, offset: 0x840),
+            MakeBc("0x10", "AttrSet", "m_pAttributeSetHealth", isPointer: true, offset: 0x258),
+        };
+
+        var (result, offsets) = CeXmlExportService.FlattenPointerChain(bcs);
+
+        // Should flatten to: root → OGI (collapsed) → AttrSetHealth
+        Assert.Equal(3, result.Count);
+        Assert.Equal("0x1000", result[0].Address);
+        Assert.Equal("OGI", result[1].Label);
+        Assert.Equal("AttrSet", result[2].Label);
+
+        // Offsets: [0] + [Stats=0x840, Char=0x310, PC=0x30, [0]=0x0, LP=0x38]
+        Assert.NotNull(offsets);
+        Assert.Equal(6, offsets!.Length);
+        Assert.Equal(0, offsets[0]);      // original deref
+        Assert.Equal(0x840, offsets[1]);  // Stats (reversed order)
+        Assert.Equal(0x310, offsets[2]);  // Char
+        Assert.Equal(0x30, offsets[3]);   // PC
+        Assert.Equal(0x0, offsets[4]);    // [0]
+        Assert.Equal(0x38, offsets[5]);   // LP
+    }
+
+    [Fact]
+    public void FlattenPointerChain_ContainerViewInMiddle_IncludesContainerOffset()
+    {
+        // Real-world: container views (LocalPlayers) have IsContainerView=true, IsPointerDeref=false
+        // They must still be included in the flattened offset chain
+        var bcs = new[]
+        {
+            MakeBc("0x1000", "GWorld"),
+            MakeBc("0xA", "OGI", "OwningGameInstance", isPointer: true, offset: 0x228),
+            MakeBc("0xB", "LP", "LocalPlayers [1 x ObjectProperty]", isContainerView: true, offset: 0x38),
+            MakeBc("0xC", "[0]", "[0]", isPointer: true, offset: 0x0),
+            MakeBc("0xD", "PC", "PlayerController", isPointer: true, offset: 0x30),
+            MakeBc("0xE", "Target", "m_pTarget", isPointer: true, offset: 0x100),
+        };
+
+        var (result, offsets) = CeXmlExportService.FlattenPointerChain(bcs);
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal("OGI", result[1].Label);
+        Assert.Equal("Target", result[2].Label);
+
+        // LP container (offset=0x38) must appear in flattened offsets
+        Assert.NotNull(offsets);
+        Assert.Equal(4, offsets!.Length);
+        Assert.Equal(0, offsets[0]);      // original deref
+        Assert.Equal(0x30, offsets[1]);   // PC
+        Assert.Equal(0x0, offsets[2]);    // [0]
+        Assert.Equal(0x38, offsets[3]);   // LP container
+    }
+
+    [Fact]
+    public void FlattenPointerChain_OnlyTwoPointers_NoFlattening()
+    {
+        // root → A → B (only 2 pointer nodes, need at least 3 to collapse)
+        var bcs = new[]
+        {
+            MakeBc("0x1000", "GWorld"),
+            MakeBc("0xA", "OGI", "OwningGameInstance", isPointer: true, offset: 0x228),
+            MakeBc("0xB", "Target", "m_pTarget", isPointer: true, offset: 0x100),
+        };
+
+        var (result, offsets) = CeXmlExportService.FlattenPointerChain(bcs);
+
+        Assert.Equal(3, result.Count);
+        Assert.Null(offsets);
+    }
+
+    [Fact]
+    public void FlattenPointerChain_SingleBreadcrumb_NoFlattening()
+    {
+        var bcs = new[] { MakeBc("0x1000", "GWorld") };
+        var (result, offsets) = CeXmlExportService.FlattenPointerChain(bcs);
+        Assert.Single(result);
+        Assert.Null(offsets);
+    }
+
+    [Fact]
+    public void GenerateHierarchicalXml_DeepChain_ProducesFlattenedOffsets()
+    {
+        // 5 breadcrumbs: root → A → B → C → D → fields
+        var bcs = new[]
+        {
+            MakeBc("0x1000", "GWorld"),
+            MakeBc("0xA", "OGI", "OwningGameInstance", isPointer: true, offset: 0x228),
+            MakeBc("0xB", "LP", "LocalPlayers", isPointer: true, offset: 0x38),
+            MakeBc("0xC", "PC", "PlayerController", isPointer: true, offset: 0x30),
+            MakeBc("0xD", "Target", "m_pTarget", isPointer: true, offset: 0x100),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x10 },
+        };
+
+        var xml = CeXmlExportService.GenerateHierarchicalXml("0x1000", "GWorld", bcs, fields);
+
+        // The flattened OwningGameInstance should have multi-offset: [0, +30, +38]
+        // CE format: first offset has no prefix, subsequent offsets use '+' prefix
+        Assert.Contains("<Offset>0</Offset>", xml);
+        Assert.Contains("<Offset>+30</Offset>", xml);
+        Assert.Contains("<Offset>+38</Offset>", xml);
+
+        // Should only have 3 group levels (GWorld, OGI collapsed, Target)
+        // not 5 separate group levels
+        Assert.Contains("\"OwningGameInstance\"", xml);
+        Assert.Contains("\"m_pTarget\"", xml);
+        // Intermediate nodes should NOT appear
+        Assert.DoesNotContain("\"LocalPlayers\"", xml);
+        Assert.DoesNotContain("\"PlayerController\"", xml);
+    }
+
+    [Fact]
+    public void GenerateAobWrappedXml_DeepChain_ProducesFlattenedOffsets()
+    {
+        var bcs = new[]
+        {
+            MakeBc("0x1000", "GWorld"),
+            MakeBc("0xA", "OGI", "OwningGameInstance", isPointer: true, offset: 0x228),
+            MakeBc("0xB", "LP", "LocalPlayers", isPointer: true, offset: 0x38),
+            MakeBc("0xC", "PC", "PlayerController", isPointer: true, offset: 0x30),
+            MakeBc("0xD", "Target", "m_pTarget", isPointer: true, offset: 0x100),
+        };
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x10 },
+        };
+
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "GWorld", bcs, fields,
+            "48 89 ?? ?? ?? 48 8B", aobPos: 3, aobLen: 7, moduleName: "Game.exe");
+
+        // Same flattening check: multi-offset for first pointer node
+        // CE format: first offset has no prefix, subsequent offsets use '+' prefix
+        Assert.Contains("<Offset>0</Offset>", xml);
+        Assert.Contains("<Offset>+30</Offset>", xml);
+        Assert.Contains("<Offset>+38</Offset>", xml);
+        Assert.Contains("\"OwningGameInstance\"", xml);
+        Assert.Contains("\"m_pTarget\"", xml);
+        Assert.DoesNotContain("\"LocalPlayers\"", xml);
+        Assert.DoesNotContain("\"PlayerController\"", xml);
+    }
+
+    // ========================================
     // GenerateHierarchicalXml integration tests
     // ========================================
 
@@ -1896,8 +2099,8 @@ public class CeXmlExportServiceTests
     public void GenerateHierarchicalXml_ContainerBreadcrumb_EmitsPointerDerefForArrayData()
     {
         // Simulates: GWorld -> OwningGameInstance(ptr) -> LocalPlayers(container) -> [0](ptr)
-        // The container breadcrumb should emit Offsets=[0] for TArray::Data dereference.
-        // The element breadcrumb [0] should emit Offsets=[0] for ObjectProperty dereference.
+        // With flattening: LocalPlayers container gets collapsed into OGI's offset chain.
+        // Result: GWorld -> OGI(+1D8, offsets=[0, +38]) -> [0](+0, offsets=[0]) -> fields
         var breadcrumbs = new[]
         {
             MakeBc("0x100", "GWorld"),
@@ -1915,30 +2118,32 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateHierarchicalXml(
             "\"game.exe\"+100", "GWorld", breadcrumbs, fields);
 
-        // Full chain preserved: GWorld -> OwningGameInstance -> LocalPlayers -> [0] -> PlayerController
+        // Flattened: GWorld -> OGI (collapsed LP) -> [0] -> PlayerController
         Assert.Contains("\"GWorld\"", xml);
         Assert.Contains("\"OwningGameInstance\"", xml);
-        Assert.Contains("LocalPlayers [1 x ObjectProperty (8B)]", xml);
         Assert.Contains("\"[0]\"", xml);
         Assert.Contains("\"PlayerController\"", xml);
 
-        // OwningGameInstance: offset 0x1D8 with pointer deref
+        // LocalPlayers collapsed into OGI, should NOT appear as separate node
+        Assert.DoesNotContain("LocalPlayers [1 x ObjectProperty (8B)]", xml);
+
+        // OGI: Address=+1D8 with multi-offset [0, +38] (LP offset collapsed in)
         Assert.Contains("<Address>+1D8</Address>", xml);
+        Assert.Contains("<Offset>+38</Offset>", xml);
 
-        // LocalPlayers: offset 0x38 with pointer deref (TArray::Data)
-        Assert.Contains("<Address>+38</Address>", xml);
-
-        // [0]: offset 0x0 with pointer deref (ObjectProperty)
+        // [0]: offset 0x0 with pointer deref
         Assert.Contains("<Address>+0</Address>", xml);
 
-        // Should have 3 Offset=0 entries: OwningGameInstance, LocalPlayers, [0]
-        Assert.Equal(3, CountOccurrences(xml, "<Offset>0</Offset>"));
+        // 2 Offset=0 entries: OGI outermost deref + [0] deref
+        Assert.Equal(2, CountOccurrences(xml, "<Offset>0</Offset>"));
     }
 
     [Fact]
     public void GenerateHierarchicalXml_ContainerBreadcrumb_MapProperty_EmitsDeref()
     {
-        // Map container breadcrumb should also get Offsets=[0] for TSparseArray::Data
+        // Map container breadcrumb should also get Offsets=[0] for TSparseArray::Data.
+        // With flattening: Inventory container gets collapsed into Player's offset chain.
+        // Result: Root -> Player(+50, offsets=[0, +A0]) -> [2](+24, offsets=[0]) -> fields
         var breadcrumbs = new[]
         {
             MakeBc("0x100", "Root"),
@@ -1955,11 +2160,12 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateHierarchicalXml(
             "\"game.exe\"+100", "Root", breadcrumbs, fields);
 
-        // Inventory breadcrumb should emit Offsets=[0]
-        Assert.Contains("<Address>+A0</Address>", xml);
-        Assert.Contains("Inventory {Map: 5}", xml);
-        // 3 derefs: Player, Inventory (map data), [2] (element pointer)
-        Assert.Equal(3, CountOccurrences(xml, "<Offset>0</Offset>"));
+        // Flattened: Inventory collapsed into Player's offset chain
+        Assert.Contains("<Address>+50</Address>", xml);
+        Assert.Contains("<Offset>+A0</Offset>", xml);
+        Assert.DoesNotContain("Inventory {Map: 5}", xml);
+        // 2 derefs: Player outermost + [2] deref
+        Assert.Equal(2, CountOccurrences(xml, "<Offset>0</Offset>"));
     }
 
     // ========================================
