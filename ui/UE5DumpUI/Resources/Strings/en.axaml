@@ -76,6 +76,13 @@
     <sys:String x:Key="str.LiveWalker.HexPtrTip">Navigate CE hex view to pointer target (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.LiveWalker.HexObjectTip">Navigate CE hex view to current object address (via AOBMaker CE Plugin)</sys:String>
 
+    <!-- Live Walker: Bookmarks -->
+    <sys:String x:Key="str.LiveWalker.BookmarkSave">&#x2605;</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.BookmarkSave">Save current view to a bookmark slot</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.BookmarkSaveActive">Click a bookmark slot to save, or click &#x2605; again to cancel</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.BookmarkClear">Clear this bookmark</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.BookmarkEmpty">Empty bookmark slot</sys:String>
+
     <!-- Instance Finder -->
     <sys:String x:Key="str.InstanceFinder.ClassNameHint">Class name (e.g. PlayerController)</sys:String>
     <sys:String x:Key="str.InstanceFinder.Search">Search</sys:String>

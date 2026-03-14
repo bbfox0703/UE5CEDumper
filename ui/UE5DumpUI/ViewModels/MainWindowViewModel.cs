@@ -301,6 +301,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             ClearError();
             StatusText = "Connecting...";
+            LiveWalker.ClearAllBookmarks();
 
             await _pipeClient.ConnectAsync();
 
@@ -374,6 +375,10 @@ public partial class MainWindowViewModel : ViewModelBase
             {
                 SetError(ex);
             }
+        }
+        finally
+        {
+            LiveWalker.ClearAllBookmarks();
         }
     }
 

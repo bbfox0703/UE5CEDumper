@@ -44,6 +44,57 @@
       <TextBlock Text="{Binding AutoRefreshStatusText}"
                  Foreground="#888" VerticalAlignment="Center" FontSize="11"
                  IsVisible="{Binding HasData}"/>
+
+      <!-- Bookmark controls (inline, after auto-refresh) -->
+      <Border BorderBrush="#444" BorderThickness="1,0,0,0" Margin="8,0,0,0" Padding="8,0,0,0"
+              IsVisible="{Binding HasData}">
+        <StackPanel Orientation="Horizontal" Spacing="4">
+          <!-- Save bookmark toggle (★) — yellow when active, grey when idle -->
+          <Panel>
+            <Button Content="{StaticResource str.LiveWalker.BookmarkSave}"
+                    Command="{Binding ToggleBookmarkSaveModeCommand}"
+                    ToolTip.Tip="{StaticResource str.Tip.LiveWalker.BookmarkSave}"
+                    Padding="6,4" FontSize="13" MinWidth="28"
+                    Cursor="Hand" Background="Transparent" BorderThickness="0"
+                    Foreground="#888"
+                    IsVisible="{Binding !IsBookmarkSaveMode}"/>
+            <Button Content="{StaticResource str.LiveWalker.BookmarkSave}"
+                    Command="{Binding ToggleBookmarkSaveModeCommand}"
+                    ToolTip.Tip="{StaticResource str.Tip.LiveWalker.BookmarkSaveActive}"
+                    Padding="6,4" FontSize="13" MinWidth="28"
+                    Cursor="Hand" Background="Transparent" BorderThickness="0"
+                    Foreground="#DCDCAA"
+                    IsVisible="{Binding IsBookmarkSaveMode}"/>
+          </Panel>
+          <!-- Bookmark slots -->
+          <ItemsControl ItemsSource="{Binding BookmarkSlots}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Orientation="Horizontal" Spacing="2"/>
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:BookmarkSlot">
+                <Button Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).LoadBookmarkCommand}"
+                        CommandParameter="{Binding}"
+                        ToolTip.Tip="{Binding TooltipText}"
+                        Padding="5,3" MinWidth="30" FontSize="11"
+                        Background="Transparent" BorderThickness="1" BorderBrush="#555"
+                        Cursor="Hand">
+                  <Panel>
+                    <TextBlock Text="{Binding Label}"
+                               IsVisible="{Binding IsOccupied}"
+                               Foreground="#4EC9B0"/>
+                    <TextBlock Text="{Binding DisplayNumber}"
+                               IsVisible="{Binding !IsOccupied}"
+                               Foreground="#555"/>
+                  </Panel>
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
     </StackPanel>
 
     <!-- Top toolbar row 2: Address + Export -->

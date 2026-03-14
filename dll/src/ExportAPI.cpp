@@ -352,10 +352,11 @@ bool UE5_AutoStart() {
 
 int32_t UE5_GetFieldBoolMask(uintptr_t fieldAddr) {
     if (!fieldAddr) return 0;
-    // FBoolProperty: { FieldSize(1), ByteOffset(1), ByteMask(1), FieldMask(1) }
-    // at DynOff::FBOOLPROP_FIELDSIZE. Probe nearby offsets for version variance.
-    for (int tryOff : { DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBOOLPROP_FIELDSIZE - 4,
-                        DynOff::FBOOLPROP_FIELDSIZE + 4, DynOff::FBOOLPROP_FIELDSIZE + 8 }) {
+    // FBoolProperty/UBoolProperty: { FieldSize(1), ByteOffset(1), ByteMask(1), FieldMask(1) }
+    // FProperty (UE4.25+/UE5): at FBOOLPROP_FIELDSIZE (~0x78)
+    // UProperty (UE4 <4.25):   at UBOOLPROP_FIELDSIZE (~0x70)
+    int baseOff = DynOff::bUseFProperty ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+    for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
         if (tryOff < 0) continue;
         uint8_t boolBytes[4] = {};
         if (Mem::ReadBytesSafe(fieldAddr + tryOff, boolBytes, 4)) {
