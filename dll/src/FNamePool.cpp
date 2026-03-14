@@ -438,13 +438,25 @@ std::string GetString(int32_t nameIndex, int32_t number) {
     std::string result;
 
     if (isWide) {
-        // Wide character name
+        // Wide character name — convert UTF-16 (wchar_t on Windows) to UTF-8.
+        // UE FNames can store localized display names (e.g., Japanese) in wide format.
         std::vector<wchar_t> wbuf(len + 1, 0);
         if (!Mem::ReadBytesSafe(entry + strStart, wbuf.data(), len * sizeof(wchar_t))) return "";
-        // Convert wide to narrow (simple ASCII conversion)
-        result.resize(len);
+        result.reserve(len * 3); // worst case: 3 bytes per BMP char
         for (int i = 0; i < len; ++i) {
-            result[i] = (wbuf[i] < 128) ? static_cast<char>(wbuf[i]) : '?';
+            auto ch = static_cast<uint32_t>(wbuf[i]);
+            if (ch == 0) break;
+            if (ch < 0x80) {
+                result += static_cast<char>(ch);
+            } else if (ch < 0x800) {
+                result += static_cast<char>(0xC0 | (ch >> 6));
+                result += static_cast<char>(0x80 | (ch & 0x3F));
+            } else {
+                // BMP character (0x800..0xFFFF) — covers CJK, etc.
+                result += static_cast<char>(0xE0 | (ch >> 12));
+                result += static_cast<char>(0x80 | ((ch >> 6) & 0x3F));
+                result += static_cast<char>(0x80 | (ch & 0x3F));
+            }
         }
     } else {
         // ANSI name — sanitize non-ASCII bytes to produce valid UTF-8.

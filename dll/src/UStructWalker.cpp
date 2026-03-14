@@ -2569,11 +2569,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         // Read inline element values if count is manageable
                         if (fv.mapCount > 0
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
-                            int32_t pairSize = fv.mapKeySize + fv.mapValueSize;
+                            int32_t valOffset = Mem::ComputeMapValueOffset(fv.mapKeySize, fv.mapValueSize);
+                            int32_t pairSize = valOffset + fv.mapValueSize;
                             int32_t stride = Mem::ComputeSetElementStride(pairSize);
-                            Logger::Debug("WALK:MapP", "Reading %d map entries for '%s': Data=0x%llX KeySz=%d ValSz=%d Stride=%d MaxIdx=%d NumBits=%d",
+                            fv.mapValueOffset = valOffset;
+                            Logger::Debug("WALK:MapP", "Reading %d map entries for '%s': Data=0x%llX KeySz=%d ValSz=%d ValOff=%d Stride=%d MaxIdx=%d NumBits=%d",
                                 fv.mapCount, fi.Name.c_str(), (unsigned long long)sa.Data,
-                                fv.mapKeySize, fv.mapValueSize, stride, sa.MaxIndex, sa.numBits);
+                                fv.mapKeySize, fv.mapValueSize, valOffset, stride, sa.MaxIndex, sa.numBits);
                             int read = 0;
                             int skipped = 0;
                             for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.mapCount && read < arrayLimit; ++idx) {
@@ -2609,9 +2611,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                         ce.key = ce.keyHex;  // fallback
                                     }
                                 }
-                                // Read value bytes
+                                // Read value bytes (at aligned offset within pair)
                                 std::vector<uint8_t> valBuf(fv.mapValueSize);
-                                if (Mem::ReadBytesSafe(elemAddr + fv.mapKeySize, valBuf.data(), fv.mapValueSize)) {
+                                if (Mem::ReadBytesSafe(elemAddr + valOffset, valBuf.data(), fv.mapValueSize)) {
                                     ce.value = InterpretValue(valueTypeName, valBuf.data(), fv.mapValueSize);
                                     std::string vh;
                                     int vlen = (std::min)(fv.mapValueSize, 16);
@@ -2687,8 +2689,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                         // Read inline element values
                         if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
-                            int32_t pairSize = fv.mapKeySize + fv.mapValueSize;
+                            int32_t valOffset = Mem::ComputeMapValueOffset(fv.mapKeySize, fv.mapValueSize);
+                            int32_t pairSize = valOffset + fv.mapValueSize;
                             int32_t stride = Mem::ComputeSetElementStride(pairSize);
+                            fv.mapValueOffset = valOffset;
                             int read = 0;
                             for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.mapCount && read < arrayLimit; ++idx) {
                                 if (!Mem::IsSparseIndexAllocated(sa, idx)) continue;
@@ -2720,7 +2724,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                     }
                                 }
                                 std::vector<uint8_t> valBuf(fv.mapValueSize);
-                                if (Mem::ReadBytesSafe(elemAddr + fv.mapKeySize, valBuf.data(), fv.mapValueSize)) {
+                                if (Mem::ReadBytesSafe(elemAddr + valOffset, valBuf.data(), fv.mapValueSize)) {
                                     ce.value = InterpretValue(valueTypeName, valBuf.data(), fv.mapValueSize);
                                     std::string vh;
                                     int vlen = (std::min)(fv.mapValueSize, 16);

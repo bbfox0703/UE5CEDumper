@@ -335,6 +335,8 @@ static json SerializeField(const UStructWalker::LiveFieldValue& fv) {
         fj["map_value_type"] = fv.mapValueType;
         fj["map_key_size"]   = fv.mapKeySize;
         fj["map_value_size"] = fv.mapValueSize;
+        if (fv.mapValueOffset != 0)
+            fj["map_value_offset"] = fv.mapValueOffset;
         if (fv.mapDataAddr != 0)
             fj["map_data_addr"] = PipeProtocol::AddrToStr(fv.mapDataAddr);
         if (fv.mapKeyStructAddr != 0) {

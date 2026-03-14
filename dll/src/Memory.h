@@ -206,4 +206,16 @@ inline int32_t ComputeSetElementStride(int32_t elemSize) {
     return hashStart + 8;  // + HashNextId(4) + HashIndex(4)
 }
 
+// Compute the aligned byte offset of Value within a TMap TPair<Key, Value>.
+// UE aligns Value to its natural alignment within the pair struct.
+// E.g., TPair<uint8, FStruct80> → value starts at offset 8 (not 1).
+inline int32_t ComputeMapValueOffset(int32_t keySize, int32_t valueSize) {
+    // Guess value alignment from its size (power-of-2, capped at 8)
+    int32_t valAlign = 1;
+    if (valueSize >= 8) valAlign = 8;
+    else if (valueSize >= 4) valAlign = 4;
+    else if (valueSize >= 2) valAlign = 2;
+    return (keySize + valAlign - 1) & ~(valAlign - 1);
+}
+
 } // namespace Mem

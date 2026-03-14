@@ -187,6 +187,9 @@ public sealed class LiveFieldValue
     /// <summary>For MapProperty: struct name for value.</summary>
     public string MapValueStructType { get; init; } = "";
 
+    /// <summary>For MapProperty: aligned byte offset of value within TPair (may differ from MapKeySize due to alignment).</summary>
+    public int MapValueOffset { get; init; }
+
     /// <summary>For MapProperty: inline element preview.</summary>
     public List<ContainerElementValue>? MapElements { get; init; }
 
