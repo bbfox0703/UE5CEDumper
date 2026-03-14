@@ -650,7 +650,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
         if (!string.IsNullOrEmpty(sourceField.MapDataAddr))
             ulong.TryParse(sourceField.MapDataAddr.Replace("0x", "").Replace("0X", ""),
                 System.Globalization.NumberStyles.HexNumber, null, out dataBase);
-        int pairSize = sourceField.MapKeySize + sourceField.MapValueSize;
+        // Use aligned value offset if available (DLL computes alignment); fall back to key size
+        int valOffset = sourceField.MapValueOffset > 0 ? sourceField.MapValueOffset : sourceField.MapKeySize;
+        int pairSize = valOffset + sourceField.MapValueSize;
         int stride = ComputeSetElementStride(pairSize);
 
         // Check if value type is StructProperty with navigation metadata
@@ -668,9 +670,9 @@ public partial class LiveWalkerViewModel : ViewModelBase
             var keyDisplay = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
             var valDisplay = !string.IsNullOrEmpty(elem.ValuePtrName) ? elem.ValuePtrName : elem.Value;
 
-            // Compute value struct address: entry start + keySize
+            // Compute value struct address: entry start + aligned value offset
             var valStructAddr = (isStructValue && dataBase != 0 && stride > 0)
-                ? $"0x{dataBase + (ulong)(elem.Index * stride) + (ulong)sourceField.MapKeySize:X}" : "";
+                ? $"0x{dataBase + (ulong)(elem.Index * stride) + (ulong)valOffset:X}" : "";
 
             var f = new LiveFieldValue
             {

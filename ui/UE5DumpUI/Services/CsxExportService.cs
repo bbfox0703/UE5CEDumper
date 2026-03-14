@@ -458,12 +458,15 @@ public static class CsxExportService
 
     /// <summary>
     /// Convert MapProperty elements to synthetic LiveFieldValue list.
-    /// Each map entry is represented by its VALUE at offset (sparseIndex * stride + keySize).
-    /// TMap.Data is TSparseArray: stride = AlignUp(keySize + valueSize, 4) + 8 (hash overhead).
+    /// Each map entry is represented by its VALUE at offset (sparseIndex * stride + valOffset).
+    /// TMap.Data is TSparseArray: stride = AlignUp(valOffset + valueSize, 4) + 8 (hash overhead).
+    /// valOffset = aligned byte offset of value within TPair (may differ from keySize).
     /// </summary>
     private static List<LiveFieldValue> ConvertMapElementsToFields(LiveFieldValue mapField)
     {
-        int pairSize = mapField.MapKeySize + mapField.MapValueSize;
+        // Use aligned value offset if available; fall back to key size
+        int valOffset = mapField.MapValueOffset > 0 ? mapField.MapValueOffset : mapField.MapKeySize;
+        int pairSize = valOffset + mapField.MapValueSize;
         int stride = ComputeSetElementStride(pairSize);
         var fields = new List<LiveFieldValue>();
 
@@ -471,7 +474,7 @@ public static class CsxExportService
         {
             var keyDisplay = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
             var name = $"[{elem.Index}] {keyDisplay}";
-            int offset = elem.Index * stride + mapField.MapKeySize;
+            int offset = elem.Index * stride + valOffset;
 
             fields.Add(new LiveFieldValue
             {

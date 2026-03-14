@@ -182,6 +182,7 @@ struct LiveFieldValue {
     std::string mapKeyStructType;        // Struct name for key (e.g. "FVector")
     uintptr_t   mapValueStructAddr = 0; // UScriptStruct* if value is StructProperty
     std::string mapValueStructType;      // Struct name for value
+    int32_t     mapValueOffset = 0;      // Aligned byte offset of value within TPair (may differ from mapKeySize)
 
     // For SetProperty: TSet header info
     int32_t     setCount = -1;       // -1 = not a set; ≥0 = actual entry count

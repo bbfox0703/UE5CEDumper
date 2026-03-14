@@ -609,6 +609,7 @@ public sealed class DumpService : IDumpService
             MapKeyStructType = fo["map_key_struct_type"]?.GetValue<string>() ?? "",
             MapValueStructAddr = fo["map_value_struct_addr"]?.GetValue<string>() ?? "",
             MapValueStructType = fo["map_value_struct_type"]?.GetValue<string>() ?? "",
+            MapValueOffset = fo["map_value_offset"]?.GetValue<int>() ?? 0,
             MapElements = ParseContainerElements(fo["map_elements"]),
             SetCount = fo["set_count"]?.GetValue<int>() ?? -1,
             SetElemType = fo["set_elem_type"]?.GetValue<string>() ?? "",
