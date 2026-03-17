@@ -55,14 +55,14 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 ## Architecture & Workflow
 
-### Option A: Cheat Engine (Recommended)
+### Option A: Cheat Engine DLL injection
 
 1.  **Inject DLL**: Run Cheat Engine, attach game process, load a save. Make sure game data is loaded first. Open `UE5CEDumper.CT`.
 2.  **Enable Script**: Enable `init <== enable after process attached`, then `Inject DLL + Start Pipe Server`. The DLL locates global engine pointers and detects the UE version/layout automatically.
 3.  **Connect UI**: Wait a few seconds for the scan to finish. Launch **UE5DumpUI.exe** and click **Connect**. Live data streams to the UI via Named Pipes (JSON-RPC).
 4.  **Navigate & Analyze**: Browse the `UObject` hierarchy, find a class, drill into containers, or paste an address from CE to reverse-lookup and export.
 
-### Option B: Proxy DLL (No Cheat Engine Required)
+### Option B: Proxy DLL (Recommended)
 
 1.  **Place DLL**: Copy `version.dll` (from `build.ps1 -Target ProxyDLL`) into the game's root folder (next to the `.exe`).
 2.  **Launch Game**: Start the game normally. The proxy DLL loads automatically and starts the pipe server.
@@ -79,7 +79,20 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 | **Named Pipe IPC (JSON-RPC Protocol)** |
 | ⬇️ |
 | **External GUI (Avalonia UI App)** |
+
 ---
+
+### Optional: integration with AOBMaker CE DLL plugin
+
+AOBMaker is a tool used to generate AOB patterns and CE Auto Assembler scripts. It has a CE DLL plugin that can communicate with UE5CEDumper to share detected patterns and offsets. If you have AOBMaker, you can enable the integration with UE5CEDumper UI:
+- Direct browse memory region or code in CE by one-click in UI.
+- Generate CE AA scripts with dynamic GWorld AOB AA scripts directly.
+- Generate CE memory records for UE types and fields.
+- Generate dissect data for UE structs to use with CE Structure Dissect.
+
+Note: AOBMaker integration is optional and not required to use UE5CEDumper. The core features of UE5CEDumper work independently of AOBMaker.
+
+Download AOBMaker here (register is required): https://opencheattables.com/viewtopic.php?t=1788
 
 ## Requirements
 
