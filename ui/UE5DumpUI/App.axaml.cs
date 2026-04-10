@@ -1,8 +1,5 @@
-using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
 using UE5DumpUI.Core;
 using UE5DumpUI.Services;
@@ -29,10 +26,6 @@ public class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // Remove DataAnnotations validator to avoid duplicate validation with CommunityToolkit.Mvvm.
-        // Safe because compiled bindings are enabled (AvaloniaUseCompiledBindingsByDefault=true).
-        DisableAvaloniaDataAnnotationValidation();
-
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             // Single instance check
@@ -84,18 +77,4 @@ public class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    // BindingPlugins.DataValidators carries [RequiresUnreferencedCode].
-    // Compiled bindings are already enabled project-wide, so removing the
-    // DataAnnotations plugin here is safe — the trimmer won't pull in extra reflection paths.
-    [UnconditionalSuppressMessage(
-        "TrimAnalysis", "IL2026",
-        Justification = "AvaloniaUseCompiledBindingsByDefault=true; only removing unused DataAnnotations validators.")]
-    private static void DisableAvaloniaDataAnnotationValidation()
-    {
-        var toRemove = BindingPlugins.DataValidators
-            .OfType<DataAnnotationsValidationPlugin>()
-            .ToArray();
-        foreach (var plugin in toRemove)
-            BindingPlugins.DataValidators.Remove(plugin);
-    }
 }
