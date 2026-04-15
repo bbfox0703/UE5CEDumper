@@ -1765,7 +1765,7 @@ uint32_t DetectVersion() {
 
     // Version string patterns to match (ordered by priority — newest first)
     struct { const char* needle; uint32_t value; } patterns[] = {
-        { "5.7.", 507 }, { "5.6.", 506 }, { "5.5.", 505 },
+        { "5.8.", 508 }, { "5.7.", 507 }, { "5.6.", 506 }, { "5.5.", 505 },
         { "5.4.", 504 }, { "5.3.", 503 }, { "5.2.", 502 },
         { "5.1.", 501 }, { "5.0.", 500 },
         { "4.27.", 427 }, { "4.26.", 426 }, { "4.25.", 425 },
