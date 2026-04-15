@@ -11,7 +11,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 ---
 [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D4)](https://www.microsoft.com/windows)
-[![UE Version](https://img.shields.io/badge/UE-4.18--5.7-orange)](https://www.unrealengine.com/)
+[![UE Version](https://img.shields.io/badge/UE-4.18--5.8-orange)](https://www.unrealengine.com/)
 [![.NET](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![C++](https://img.shields.io/badge/C++-23-00599C)](https://isocpp.org/)
 [![Avalonia](https://img.shields.io/badge/Avalonia-UI-8B5CF6)](https://avaloniaui.net/)

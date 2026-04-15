@@ -15,7 +15,7 @@
 
 ## AOB Pattern 貢獻
 
-AOB（Array of Bytes）Pattern 是定位引擎全域指標（GObjects、GNames、GWorld）的核心機制。目前 `dll/src/Signatures.h` 中有來自 **14 個來源共 133 組 Pattern**，涵蓋 UE4.18 至 UE5.7+，已在 20 款以上遊戲中驗證。
+AOB（Array of Bytes）Pattern 是定位引擎全域指標（GObjects、GNames、GWorld）的核心機制。目前 `dll/src/Signatures.h` 中有來自 **14 個來源共 133 組 Pattern**，涵蓋 UE4.18 至 UE5.8+，已在 20 款以上遊戲中驗證。
 
 ### 最有幫助的方式：回報偵測失敗
 
