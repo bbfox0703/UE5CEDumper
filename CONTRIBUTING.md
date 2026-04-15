@@ -15,7 +15,7 @@ Thank you for your interest in contributing! This document explains how to submi
 
 ## AOB Pattern Contributions
 
-AOB (Array of Bytes) patterns are the core mechanism for locating engine globals (GObjects, GNames, GWorld). We currently have **133 patterns from 14 sources** in `dll/src/Signatures.h`, covering UE4.18 through UE5.7+ across 20+ tested games.
+AOB (Array of Bytes) patterns are the core mechanism for locating engine globals (GObjects, GNames, GWorld). We currently have **133 patterns from 14 sources** in `dll/src/Signatures.h`, covering UE4.18 through UE5.8+ across 20+ tested games.
 
 ### Most Helpful: Report Detection Failures
 

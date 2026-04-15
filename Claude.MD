@@ -96,7 +96,7 @@ git submodule update --init --recursive
 ## Project Goal
 
 Develop a **C++ DLL + Cheat Engine Lua Bridge** Unreal Engine Dumper.
-Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.7+), find global pointers (GObjects / GNames / GWorld), build complete object/struct hierarchy, integrate with CE. Despite the "UE5" name, UE4 games are a priority target — many popular games use UE4, and RE-UE4SS demonstrates broad UE4 support is achievable.
+Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.8+), find global pointers (GObjects / GNames / GWorld), build complete object/struct hierarchy, integrate with CE. Despite the "UE5" name, UE4 games are a priority target — many popular games use UE4, and RE-UE4SS demonstrates broad UE4 support is achievable.
 
 -----
 

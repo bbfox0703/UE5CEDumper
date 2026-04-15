@@ -1,6 +1,6 @@
 # UE5CEDumper — Quick Start
 
-UE5CEDumper is a live inspector for Unreal Engine games (UE4.18 – UE5.7).
+UE5CEDumper is a live inspector for Unreal Engine games (UE4.18 – UE5.8).
 It injects a DLL into the game process, then communicates with a standalone UI via Named Pipe.
 
 ---

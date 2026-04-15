@@ -102,7 +102,7 @@ namespace OffsetFinder {
 
 ### AOB Scan Strategy
 
-Scans game module **executable sections only** (`.text`). 128 AOB patterns + 5 symbol exports from 14 sources cover UE4.18–UE5.7+. Pattern handlers try both direct and deref variants, then validate via `ValidateGObjects()` / `ValidateGNames()`:
+Scans game module **executable sections only** (`.text`). 128 AOB patterns + 5 symbol exports from 14 sources cover UE4.18–UE5.8+. Pattern handlers try both direct and deref variants, then validate via `ValidateGObjects()` / `ValidateGNames()`:
 
 ```cpp
 // RIP-relative resolution pattern
