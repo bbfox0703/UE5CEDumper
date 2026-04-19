@@ -23,7 +23,13 @@ namespace Stark {
 bool InstallHook(uintptr_t processEventAddr);
 
 /// Remove the hook and clean up. Safe to call even if not installed.
+/// Does NOT call MH_Uninitialize — use Shutdown() at DLL unload instead.
 void RemoveHook();
+
+/// Full teardown: remove hook AND uninitialize MinHook globally.
+/// Call ONLY from DLL_PROCESS_DETACH (via UE5_Shutdown). After this,
+/// InstallHook() can no longer be used unless MinHook is re-initialized.
+void Shutdown();
 
 /// @return true if the ProcessEvent hook is active
 bool IsHookActive();

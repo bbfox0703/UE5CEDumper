@@ -187,8 +187,39 @@ void RemoveHook() {
     LOG_INFO("GameThreadDispatch: hook removed");
 
     // Note: we intentionally do NOT call MH_Uninitialize() here.
-    // MH_Uninitialize removes ALL hooks, which could interfere if other
-    // components also use MinHook. Safe to leave initialized.
+    // RemoveHook may be called at runtime (e.g. reinstallation), and
+    // MH_Uninitialize is a global teardown — use Shutdown() at DLL unload.
+}
+
+void Shutdown() {
+    // Ensure the hook is gone first (idempotent).
+    RemoveHook();
+
+    // Drop any pending queued invokes so waiting pipe threads get a result
+    // instead of blocking on a promise no one will ever fulfill.
+    {
+        std::lock_guard<std::mutex> lock(s_queueMutex);
+        while (!s_invokeQueue.empty()) {
+            auto req = std::move(s_invokeQueue.front());
+            s_invokeQueue.pop();
+            try {
+                req->promise.set_value(-7); // hook not active
+            } catch (...) {
+                // promise already satisfied — ignore
+            }
+        }
+    }
+
+    if (s_mhInitialized.load()) {
+        MH_STATUS status = MH_Uninitialize();
+        if (status != MH_OK) {
+            LOG_WARN("GameThreadDispatch: MH_Uninitialize failed: %s",
+                     MH_StatusToString(status));
+        } else {
+            LOG_INFO("GameThreadDispatch: MinHook uninitialized");
+        }
+        s_mhInitialized.store(false);
+    }
 }
 
 bool IsHookActive() {

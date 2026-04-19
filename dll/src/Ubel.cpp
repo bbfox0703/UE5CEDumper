@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <unordered_map>
+#include <unordered_set>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -323,8 +324,18 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
     // UE5.3+: ChildProperties may come from an FFieldVariant read — strip tag bit defensively
     uintptr_t current = DynOff::StripFFieldTag(firstField);
     int safetyLimit = 4096;
+    // Cycle detection: a destroyed class with recycled memory can form a chain
+    // that loops back on itself. The counter alone would still iterate 4096x
+    // reading garbage; the seen-set short-circuits the moment we revisit a node.
+    std::unordered_set<uintptr_t> seen;
+    seen.reserve(64);
 
     while (current != 0 && safetyLimit-- > 0) {
+        if (!seen.insert(current).second) {
+            Sein::Warn("WALK:safe", "WalkFFieldChain: cycle detected at 0x%llx, aborting",
+                (unsigned long long)current);
+            break;
+        }
         // UE5.3+: if tag bit indicates UObject rather than FField, skip this entry
         if (DynOff::IsFFieldVariantUObject(current)) break;
 
@@ -375,8 +386,16 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
 static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fields) {
     uintptr_t current = firstField;
     int safetyLimit = 4096;
+    // Cycle detection — see WalkFFieldChain rationale.
+    std::unordered_set<uintptr_t> seen;
+    seen.reserve(64);
 
     while (current != 0 && safetyLimit-- > 0) {
+        if (!seen.insert(current).second) {
+            Sein::Warn("WALK:safe", "WalkUPropertyChain: cycle detected at 0x%llx, aborting",
+                (unsigned long long)current);
+            break;
+        }
         FieldInfo fi{};
         fi.Address = current;
 
@@ -689,7 +708,14 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
         return funcs;
 
     int safetyLimit = 4096;
+    std::unordered_set<uintptr_t> seenChildren;
+    seenChildren.reserve(64);
     while (child != 0 && safetyLimit-- > 0) {
+        if (!seenChildren.insert(child).second) {
+            Sein::Warn("WALK:safe", "WalkFunctions: Children cycle at 0x%llx, aborting",
+                (unsigned long long)child);
+            break;
+        }
         // Check if this child is a UFunction by reading its class name
         uintptr_t childClass = 0;
         if (Macht::ReadSafe(child + Grimoire::OFF_UOBJECT_CLASS, childClass) && childClass) {
@@ -751,7 +777,12 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                     if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDPROPS, paramChain) && paramChain) {
                         uintptr_t cur = DynOff::StripFFieldTag(paramChain);
                         int paramLimit = 256;
+                        std::unordered_set<uintptr_t> seenParams;
                         while (cur != 0 && paramLimit-- > 0) {
+                            if (!seenParams.insert(cur).second) {
+                                Sein::Warn("WALK:safe", "WalkFunctions: param FField cycle at 0x%llx", (unsigned long long)cur);
+                                break;
+                            }
                             if (DynOff::IsFFieldVariantUObject(cur)) break;
 
                             FunctionParam param{};
@@ -795,7 +826,12 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                     if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDREN, paramChain) && paramChain) {
                         uintptr_t cur = paramChain;
                         int paramLimit = 256;
+                        std::unordered_set<uintptr_t> seenParams;
                         while (cur != 0 && paramLimit-- > 0) {
+                            if (!seenParams.insert(cur).second) {
+                                Sein::Warn("WALK:safe", "WalkFunctions: param UProperty cycle at 0x%llx", (unsigned long long)cur);
+                                break;
+                            }
                             FunctionParam param{};
                             param.name = ReadFName(cur + Grimoire::OFF_UOBJECT_NAME);
 
@@ -1995,6 +2031,19 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
     result.addr = instanceAddr;
 
     if (!instanceAddr) return result;
+
+    // Guard against already-freed objects: if the instance memory is no longer
+    // committed/readable, bail out immediately. Without this, a walk on an
+    // object that has since been destroyed (e.g. UMG Text widget refreshed
+    // after removal) can follow recycled memory into garbage FField/FName
+    // chains — ReadSafe catches AVs but infinite loops on valid-looking trash
+    // still hang the pipe worker and the UI with it.
+    if (!Macht::IsAddrReadable(instanceAddr, Grimoire::OFF_UOBJECT_CLASS + sizeof(uintptr_t))) {
+        Sein::Warn("WALK:safe",
+            "WalkInstance: instance 0x%llx not readable (freed?), skipping",
+            (unsigned long long)instanceAddr);
+        return result;
+    }
 
     if (!classAddr)
         classAddr = GetClass(instanceAddr);
