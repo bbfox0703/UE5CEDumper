@@ -1,6 +1,8 @@
+using System;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -1678,6 +1680,12 @@ public partial class LiveWalkerViewModel : ViewModelBase
         var addressAtStart = CurrentAddress;
         var breadcrumbCountAtStart = Breadcrumbs.Count;
 
+        // Hard deadline: if the DLL hangs walking a recycled/destroyed object,
+        // cancel the pipe request instead of leaving IsLoading stuck forever.
+        using var timeoutCts = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(Constants.LiveWalkerRefreshTimeoutMs));
+        var ct = timeoutCts.Token;
+
         try
         {
             ClearStatus();
@@ -1691,7 +1699,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                 // DataTable container: re-fetch rows directly
                 if (containerBc.IsDataTableView)
                 {
-                    var dtResult = await _dump.WalkDataTableRowsAsync(containerBc.Address);
+                    var dtResult = await _dump.WalkDataTableRowsAsync(containerBc.Address, ct: ct);
                     if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
                     containerBc.DataTableData = dtResult;
                     PopulateDataTableRowFields(dtResult);
@@ -1709,7 +1717,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
                         parentClassAddr = parentBc.ClassAddr;
                 }
 
-                var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+                var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps, ct: ct);
                 if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
 
                 // Find the container field by name and offset in the refreshed result
@@ -1728,7 +1736,7 @@ public partial class LiveWalkerViewModel : ViewModelBase
             if (_cachedWorld != null && CurrentAddress == _cachedWorld.WorldAddr
                 && Breadcrumbs.Count == 1)
             {
-                var world = await _dump.WalkWorldAsync(500, arrayLimit: ArrayLimit);
+                var world = await _dump.WalkWorldAsync(500, arrayLimit: ArrayLimit, ct: ct);
                 if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
                 _cachedWorld = world;
                 PopulateFromWorld(world);
@@ -1745,10 +1753,16 @@ public partial class LiveWalkerViewModel : ViewModelBase
                     classAddr = current.ClassAddr;
             }
 
-            var result = await _dump.WalkInstanceAsync(CurrentAddress, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
+            var result = await _dump.WalkInstanceAsync(CurrentAddress, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps, ct: ct);
             result = await AutoFillGapsRetryAsync(result, CurrentAddress, classAddr);
             if (CurrentAddress != addressAtStart || Breadcrumbs.Count != breadcrumbCountAtStart) return;
             UpdateDisplay(result);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            SetError(new TimeoutException(
+                $"Refresh timed out after {Constants.LiveWalkerRefreshTimeoutMs / 1000}s — " +
+                "the target object may have been destroyed in-game."));
         }
         catch (Exception ex)
         {

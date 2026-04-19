@@ -224,7 +224,10 @@ bool UE5_Init() {
 void UE5_Shutdown() {
     LOG_INFO("UE5_Shutdown: Cleaning up...");
     Mimic::StopThread();
-    Stark::RemoveHook();
+    // Full teardown: RemoveHook + MH_Uninitialize + drain pending invoke queue.
+    // Pipe server is stopped after Shutdown() so any in-flight pipe thread
+    // blocked on EnqueueInvoke receives its -7 result and unwinds cleanly.
+    Stark::Shutdown();
     s_pipeServer.Stop();
     s_initialized = false;
 }

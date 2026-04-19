@@ -34,6 +34,11 @@ public static class Constants
     public const int PipeConnectTimeoutMs = 5000;
     public const int DefaultPageSize = 200;
 
+    // Hard timeout for Live Walker refresh / walk calls. If the DLL hangs on a
+    // destroyed object (e.g. garbage FField chain from recycled memory), this
+    // guarantees the UI unblocks instead of spinning IsLoading forever.
+    public const int LiveWalkerRefreshTimeoutMs = 10000;
+
     // Object Tree
     public const int ObjectTreePageSize = 2000;     // Batch size for loading all objects
     public const int ObjectTreeMaxDisplay = 5000;   // Max items shown in FilteredNodes ListBox
