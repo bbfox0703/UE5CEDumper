@@ -39,6 +39,12 @@ inline bool ReadSafe(uintptr_t addr, T& out) {
 // Safe memory copy with SEH protection
 bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size);
 
+// Check if an address is in committed, readable memory via VirtualQuery.
+// Useful as a cheap pre-flight before walking potentially freed objects —
+// ReadSafe catches AVs but cannot protect walk loops from garbage-induced
+// infinite traversal when memory has been reused for valid-looking data.
+bool IsAddrReadable(uintptr_t addr, size_t size = sizeof(uintptr_t));
+
 // Write bytes to memory
 bool WriteBytes(uintptr_t addr, const void* buf, size_t size);
 

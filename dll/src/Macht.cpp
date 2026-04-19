@@ -30,6 +30,29 @@ bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size) {
     }
 }
 
+bool IsAddrReadable(uintptr_t addr, size_t size) {
+    if (!addr || size == 0) return false;
+    // Reject obviously bogus user-mode addresses early
+    if (addr < 0x10000 || addr > 0x00007FFFFFFFFFFF) return false;
+
+    MEMORY_BASIC_INFORMATION mbi{};
+    uintptr_t cur = addr;
+    uintptr_t end = addr + size;
+    while (cur < end) {
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(cur), &mbi, sizeof(mbi)) == 0)
+            return false;
+        if (mbi.State != MEM_COMMIT) return false;
+        const DWORD readMask = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                               PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+        if ((mbi.Protect & readMask) == 0) return false;
+        if (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) return false;
+        uintptr_t regionEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        if (regionEnd <= cur) return false; // defensive, shouldn't happen
+        cur = regionEnd;
+    }
+    return true;
+}
+
 bool WriteBytes(uintptr_t addr, const void* buf, size_t size) {
     DWORD oldProtect = 0;
     if (!VirtualProtect(reinterpret_cast<void*>(addr), size, PAGE_READWRITE, &oldProtect))
