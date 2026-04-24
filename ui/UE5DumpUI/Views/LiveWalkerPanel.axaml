@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:UE5DumpUI.ViewModels"
              xmlns:m="using:UE5DumpUI.Models"
+             xmlns:conv="using:UE5DumpUI.Converters"
              x:Class="UE5DumpUI.Views.LiveWalkerPanel"
              x:DataType="vm:LiveWalkerViewModel">
 
@@ -259,7 +260,8 @@
 
     <!-- Field list + Functions split -->
     <Grid RowDefinitions="*,Auto">
-    <DataGrid x:Name="FieldGrid" Grid.Row="0"
+    <Panel Grid.Row="0">
+    <DataGrid x:Name="FieldGrid"
               ItemsSource="{Binding Fields}"
               SelectedItem="{Binding SelectedField}"
               SelectionMode="Single"
@@ -427,6 +429,18 @@
         </DataGridTemplateColumn>
       </DataGrid.Columns>
     </DataGrid>
+
+    <!-- Empty-state logo: shown when DataGrid has no data -->
+    <Image Source="/Assets/UE5CEDumper.jpg"
+           IsVisible="{Binding !HasData}"
+           IsHitTestVisible="False"
+           Opacity="0.8"
+           Stretch="Uniform"
+           HorizontalAlignment="Center"
+           VerticalAlignment="Center"
+           MaxWidth="{Binding $parent[Panel].Bounds.Width, Converter={x:Static conv:MultiplyConverter.Instance}, ConverterParameter=0.75}"
+           MaxHeight="{Binding $parent[Panel].Bounds.Height, Converter={x:Static conv:MultiplyConverter.Instance}, ConverterParameter=0.75}"/>
+    </Panel>
 
     <!-- Functions section (collapsible) -->
     <Expander Grid.Row="1" IsVisible="{Binding HasFunctions}"
