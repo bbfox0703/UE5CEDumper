@@ -95,7 +95,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var state = await svc.InitAsync();
+        var state = await svc.InitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(504, state.UEVersion);
         Assert.True(state.VersionDetected);  // Default when field absent
@@ -137,7 +137,7 @@ public class DumpServiceTests
         _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["count"] = 12345 });
 
         var svc = CreateService();
-        var count = await svc.GetObjectCountAsync();
+        var count = await svc.GetObjectCountAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(12345, count);
     }

@@ -17,7 +17,7 @@
 
       <Grid ColumnDefinitions="*,Auto,Auto,Auto">
         <AutoCompleteBox Grid.Column="0"
-                 Watermark="{StaticResource str.ObjectTree.Search}"
+                 PlaceholderText="{StaticResource str.ObjectTree.Search}"
                  Text="{Binding SearchText}"
                  FilterMode="Contains"
                  ItemsSource="{Binding SearchSuggestions}"
@@ -60,7 +60,7 @@
                   SelectedIndex="{Binding SelectedClassFilterIndex}"
                   ToolTip.Tip="{StaticResource str.Tip.ObjectTree.ClassFilter}"
                   MinWidth="140" Padding="4,2" FontSize="12"/>
-        <TextBox Watermark="{StaticResource str.ObjectTree.FilterHint}"
+        <TextBox PlaceholderText="{StaticResource str.ObjectTree.FilterHint}"
                  Text="{Binding FilterText}"
                  Padding="4,2" FontSize="12"
                  MinWidth="160"/>
