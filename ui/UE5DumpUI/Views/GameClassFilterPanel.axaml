@@ -25,7 +25,7 @@
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="0,0,0,8">
       <TextBlock Text="{StaticResource str.GameClassFilter.SuperLabel}"
                  Foreground="#AAA" VerticalAlignment="Center" FontSize="12"/>
-      <AutoCompleteBox Watermark="{StaticResource str.GameClassFilter.SuperHint}"
+      <AutoCompleteBox PlaceholderText="{StaticResource str.GameClassFilter.SuperHint}"
                        Text="{Binding SuperFilter}"
                        FilterMode="Contains"
                        ItemsSource="{Binding SuperSuggestions}"
@@ -34,14 +34,14 @@
                        Width="180" Padding="4,2" FontSize="12"/>
       <TextBlock Text="{StaticResource str.GameClassFilter.PackageLabel}"
                  Foreground="#AAA" VerticalAlignment="Center" FontSize="12"/>
-      <AutoCompleteBox Watermark="{StaticResource str.GameClassFilter.PackageHint}"
+      <AutoCompleteBox PlaceholderText="{StaticResource str.GameClassFilter.PackageHint}"
                        Text="{Binding PackageFilter}"
                        FilterMode="Contains"
                        ItemsSource="{Binding PackageSuggestions}"
                        MinimumPrefixLength="0"
                        ToolTip.Tip="{StaticResource str.Tip.GameClassFilter.PackageFilter}"
                        Width="180" Padding="4,2" FontSize="12"/>
-      <TextBox Watermark="{StaticResource str.GameClassFilter.FilterHint}"
+      <TextBox PlaceholderText="{StaticResource str.GameClassFilter.FilterHint}"
                Text="{Binding FilterText}"
                Width="200" Padding="4,2"/>
       <Button Content="{StaticResource str.GameClassFilter.Clear}"

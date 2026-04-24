@@ -100,7 +100,7 @@
 
     <!-- Top toolbar row 2: Address + Export -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-      <TextBox Watermark="{StaticResource str.LiveWalker.AddressHint}"
+      <TextBox PlaceholderText="{StaticResource str.LiveWalker.AddressHint}"
                x:Name="AddressInput"
                KeyDown="AddressInput_KeyDown"
                Width="280" Padding="4,2"/>
@@ -243,7 +243,7 @@
     <!-- Search bar -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
                 IsVisible="{Binding HasData}">
-      <TextBox Watermark="{StaticResource str.LiveWalker.SearchHint}"
+      <TextBox PlaceholderText="{StaticResource str.LiveWalker.SearchHint}"
                Text="{Binding SearchText, Mode=TwoWay}"
                Width="250" Padding="4,2" FontSize="12"/>
       <TextBlock Text="{Binding SearchMatchCount, StringFormat='{}{0} matches'}"
@@ -434,7 +434,7 @@
     <Image Source="/Assets/UE5CEDumper.jpg"
            IsVisible="{Binding !HasData}"
            IsHitTestVisible="False"
-           Opacity="0.8"
+           Opacity="0.6"
            Stretch="Uniform"
            HorizontalAlignment="Center"
            VerticalAlignment="Center"
