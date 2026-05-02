@@ -831,7 +831,7 @@ public sealed class DumpService : IDumpService
         if (types is { Length: > 0 })
         {
             var arr = new JsonArray();
-            foreach (var t in types) arr.Add(t);
+            foreach (var t in types) arr.Add((JsonNode?)JsonValue.Create(t));
             req["types"] = arr;
         }
 

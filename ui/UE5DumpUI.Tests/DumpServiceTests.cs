@@ -125,7 +125,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var state = await svc.InitAsync();
+        var state = await svc.InitAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(504, state.UEVersion);
         Assert.False(state.VersionDetected);
@@ -170,7 +170,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var ci = await svc.WalkClassAsync("0x7FF000");
+        var ci = await svc.WalkClassAsync("0x7FF000", TestContext.Current.CancellationToken);
 
         Assert.Equal("BP_Player_C", ci.Name);
         Assert.Equal(1024, ci.PropertiesSize);
@@ -185,7 +185,7 @@ public class DumpServiceTests
         _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["bytes"] = "48656C6C6F" });
 
         var svc = CreateService();
-        var data = await svc.ReadMemAsync("0x100", 5);
+        var data = await svc.ReadMemAsync("0x100", 5, TestContext.Current.CancellationToken);
 
         Assert.Equal(5, data.Length);
         Assert.Equal((byte)'H', data[0]);
@@ -199,7 +199,7 @@ public class DumpServiceTests
 
         var svc = CreateService();
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => svc.FindObjectAsync("/Game/Missing"));
+            () => svc.FindObjectAsync("/Game/Missing", TestContext.Current.CancellationToken));
 
         Assert.Contains("Object not found", ex.Message);
     }
@@ -240,7 +240,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var result = await svc.WalkInstanceAsync("0x100");
+        var result = await svc.WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
 
         Assert.Single(result.Fields);
         var field = result.Fields[0];
@@ -292,7 +292,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var result = await svc.WalkInstanceAsync("0x100");
+        var result = await svc.WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
 
         var field = result.Fields[0];
         Assert.NotNull(field.ArrayElements);
@@ -329,7 +329,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var result = await svc.WalkInstanceAsync("0x100");
+        var result = await svc.WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
 
         var field = result.Fields[0];
         Assert.Equal(500, field.ArrayCount);
@@ -380,7 +380,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var funcs = await svc.WalkFunctionsAsync("0x7FF000");
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000", TestContext.Current.CancellationToken);
 
         Assert.Single(funcs);
         Assert.Single(funcs[0].Params);
@@ -433,7 +433,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var funcs = await svc.WalkFunctionsAsync("0x7FF000");
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000", TestContext.Current.CancellationToken);
 
         Assert.Single(funcs);
         var param = funcs[0].Params[0];
@@ -479,7 +479,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var funcs = await svc.WalkFunctionsAsync("0x7FF000");
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000", TestContext.Current.CancellationToken);
 
         var param = funcs[0].Params[0];
         Assert.Equal("CustomStruct", param.StructName);
@@ -534,7 +534,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var result = await svc.WalkInstanceAsync("0x7FF12345");
+        var result = await svc.WalkInstanceAsync("0x7FF12345", ct: TestContext.Current.CancellationToken);
 
         Assert.Equal("JackDataTableCoinShop", result.Name);
         Assert.Equal("ScriptStruct", result.ClassName);
@@ -573,7 +573,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var result = await svc.WalkInstanceAsync("0x7FF12345");
+        var result = await svc.WalkInstanceAsync("0x7FF12345", ct: TestContext.Current.CancellationToken);
 
         Assert.Equal("EmptyStruct", result.Name);
         Assert.Equal("ScriptStruct", result.ClassName);
@@ -618,7 +618,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var result = await svc.WalkInstanceAsync("0x100");
+        var result = await svc.WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
 
         Assert.Equal(2, result.Fields.Count);
         Assert.False(result.Fields[0].IsGuessed);
@@ -645,7 +645,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        await svc.WalkInstanceAsync("0x100", fillGaps: true);
+        await svc.WalkInstanceAsync("0x100", fillGaps: true, ct: TestContext.Current.CancellationToken);
 
         Assert.NotNull(capturedRequest);
         Assert.True(capturedRequest!["fill_gaps"]?.GetValue<bool>());
@@ -669,7 +669,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        await svc.WalkInstanceAsync("0x100", fillGaps: false);
+        await svc.WalkInstanceAsync("0x100", fillGaps: false, ct: TestContext.Current.CancellationToken);
 
         Assert.NotNull(capturedRequest);
         Assert.Null(capturedRequest!["fill_gaps"]);
@@ -731,7 +731,7 @@ public class DumpServiceTests
         });
 
         var svc = CreateService();
-        var result = await svc.ReadArrayElementsAsync("0x100", 256, "0x200", "IntProperty", 4);
+        var result = await svc.ReadArrayElementsAsync("0x100", 256, "0x200", "IntProperty", 4, ct: TestContext.Current.CancellationToken);
 
         Assert.Equal(128, result.TotalCount);
         Assert.Equal(3, result.ReadCount);

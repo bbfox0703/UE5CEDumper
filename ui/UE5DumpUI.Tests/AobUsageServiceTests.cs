@@ -85,7 +85,7 @@ public class AobUsageServiceTests : IDisposable
 
         Assert.True(File.Exists(svc.FilePath));
 
-        var json = await File.ReadAllTextAsync(svc.FilePath);
+        var json = await File.ReadAllTextAsync(svc.FilePath, TestContext.Current.CancellationToken);
         var file = JsonSerializer.Deserialize(json, AobUsageJsonContext.Default.AobUsageFile);
 
         Assert.NotNull(file);
@@ -149,7 +149,7 @@ public class AobUsageServiceTests : IDisposable
         // Write corrupt JSON to the file
         var dir = Path.GetDirectoryName(svc.FilePath)!;
         Directory.CreateDirectory(dir);
-        await File.WriteAllTextAsync(svc.FilePath, "{ corrupt json !!!");
+        await File.WriteAllTextAsync(svc.FilePath, "{ corrupt json !!!", TestContext.Current.CancellationToken);
 
         // Should not throw — recovers by starting fresh
         await svc.RecordScanAsync(MakeState());
@@ -259,8 +259,8 @@ public class AobUsageServiceTests : IDisposable
         Assert.True(File.Exists($"{svc.FilePath}.002"));
 
         // Verify content: .001 should be Game2, .002 should be Game1
-        var json1 = await File.ReadAllTextAsync($"{svc.FilePath}.001");
-        var json2 = await File.ReadAllTextAsync($"{svc.FilePath}.002");
+        var json1 = await File.ReadAllTextAsync($"{svc.FilePath}.001", TestContext.Current.CancellationToken);
+        var json2 = await File.ReadAllTextAsync($"{svc.FilePath}.002", TestContext.Current.CancellationToken);
         Assert.Contains("BBBB", json1);
         Assert.Contains("AAAA", json2);
     }
@@ -274,7 +274,7 @@ public class AobUsageServiceTests : IDisposable
         var dir = Path.GetDirectoryName(svc.FilePath)!;
         Directory.CreateDirectory(dir);
         for (int i = 1; i <= 10; i++)
-            await File.WriteAllTextAsync($"{svc.FilePath}.{i:D3}", $"backup-{i}");
+            await File.WriteAllTextAsync($"{svc.FilePath}.{i:D3}", $"backup-{i}", TestContext.Current.CancellationToken);
 
         // Create current file
         await svc.RecordScanAsync(MakeState("NEWEST", "NewGame.exe"));
@@ -285,12 +285,12 @@ public class AobUsageServiceTests : IDisposable
 
         // .001 should be the newest (just-moved current file)
         Assert.True(File.Exists($"{svc.FilePath}.001"));
-        var json1 = await File.ReadAllTextAsync($"{svc.FilePath}.001");
+        var json1 = await File.ReadAllTextAsync($"{svc.FilePath}.001", TestContext.Current.CancellationToken);
         Assert.Contains("NEWEST", json1);
 
         // .010 should be the old .009 content ("backup-9")
         Assert.True(File.Exists($"{svc.FilePath}.010"));
-        var json10 = await File.ReadAllTextAsync($"{svc.FilePath}.010");
+        var json10 = await File.ReadAllTextAsync($"{svc.FilePath}.010", TestContext.Current.CancellationToken);
         Assert.Equal("backup-9", json10);
 
         // Original .010 ("backup-10") should be gone — purged
