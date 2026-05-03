@@ -83,7 +83,7 @@ public static class SymbolExportService
         foreach (var sym in symbols)
         {
             var relHex = sym.ModuleRelative.Replace("0x", "").Replace("0X", "");
-            labels.Add(new JsonObject
+            labels.Add((JsonNode)new JsonObject
             {
                 ["module"] = moduleName,
                 ["address"] = relHex,
@@ -94,7 +94,7 @@ public static class SymbolExportService
             // Add class name as comment for non-generic objects
             if (!string.IsNullOrEmpty(sym.ClassName) && sym.Category != "Object")
             {
-                comments.Add(new JsonObject
+                comments.Add((JsonNode)new JsonObject
                 {
                     ["module"] = moduleName,
                     ["address"] = relHex,

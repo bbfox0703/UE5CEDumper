@@ -206,7 +206,7 @@ public class CeXmlExportServiceTests
 
         // Cycle A@0 == A@3 → remove [1..3] → only root remains
         // (But container at [1] is skipped, so we compare A@0 with A@3 → remove [1..3])
-        Assert.Equal(1, result.Count);
+        Assert.Single(result);
         Assert.Equal("0xA", result[0].Address);
     }
 
