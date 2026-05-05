@@ -23,7 +23,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [ObservableProperty] private string? _sourceDllVersion;
     [ObservableProperty] private bool _forceOverwrite;
     [ObservableProperty] private string? _lastOperationResult;
-    [ObservableProperty] private ObservableCollection<DetectedGame> _games = new();
+
+    /// <summary>
+    /// Detected games. Non-replaceable: items are added/removed in place so that
+    /// per-row PropertyChanged notifications from the DataGrid keep working.
+    /// Replacing the collection (the previous approach) caused stale visuals
+    /// because new ItemsSource swaps don't re-bind row containers reliably when
+    /// the underlying items are the same instances.
+    /// </summary>
+    public ObservableCollection<DetectedGame> Games { get; } = new();
 
     /// <summary>Whether any games are selected for batch operations.</summary>
     public bool HasSelection => Games.Any(g => g.IsSelected);
@@ -77,14 +85,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
             StatusText = $"Scanning {libraries.Count} library folder(s)...";
             var found = await _deploy.FindUeGamesAsync(libraries, ct);
 
-            Games = new ObservableCollection<DetectedGame>(found);
+            Games.Clear();
+            foreach (var g in found) Games.Add(g);
 
             if (Games.Count > 0 && File.Exists(SourceDllPath))
             {
                 StatusText = "Checking deploy status...";
                 await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
-                // Service runs on background thread — swap collection to force UI rebuild
-                RefreshAllGameProperties();
             }
 
             StatusText = $"Found {Games.Count} UE game(s)";
@@ -123,7 +130,6 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 : null;
 
             await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
-            RefreshAllGameProperties();
             StatusText = $"{Games.Count} game(s) — status refreshed";
         }
         catch (Exception ex)
@@ -166,7 +172,6 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
         // Refresh status from disk to ensure DataGrid reflects actual state
         await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
-        RefreshAllGameProperties();
 
         LastOperationResult = $"Deployed: {ok} success, {fail} failed";
         StatusText = LastOperationResult;
@@ -200,7 +205,6 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
         // Refresh status from disk to ensure DataGrid reflects actual state
         await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
-        RefreshAllGameProperties();
 
         LastOperationResult = $"Removed: {ok} success, {fail} failed";
         StatusText = LastOperationResult;
@@ -252,7 +256,6 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
         // Refresh status from disk to ensure DataGrid reflects actual state
         await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
-        RefreshAllGameProperties();
 
         LastOperationResult = $"Updated: {ok} success, {fail} failed";
         StatusText = LastOperationResult;
@@ -292,23 +295,4 @@ public partial class ProxyDeployViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasSelection));
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // UI refresh helper
-    // ────────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Force the DataGrid to completely rebuild all rows.
-    /// Service methods (Task.Run) modify game properties on a background thread,
-    /// firing PropertyChanged there. The DataGrid caches the new values but skips
-    /// the visual repaint (cross-thread notification). Subsequent UI-thread
-    /// notifications with the same value are treated as "no change".
-    /// Replacing the entire collection reference changes the ItemsSource binding,
-    /// which forces Avalonia to destroy all old rows and create new ones from
-    /// scratch — no stale-cache comparison possible.
-    /// </summary>
-    private void RefreshAllGameProperties()
-    {
-        Games = new ObservableCollection<DetectedGame>(Games);
-        OnPropertyChanged(nameof(HasSelection));
-    }
 }
