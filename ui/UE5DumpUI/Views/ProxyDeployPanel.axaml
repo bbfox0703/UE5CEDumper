@@ -83,15 +83,17 @@
                IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
     <!-- Main: Game list DataGrid
-         IsReadOnly=True: matches all other DataGrids in the app.
-         CheckBox in template column still responds to clicks. -->
+         IsReadOnly is set per-column (with the checkbox column editable)
+         instead of on the grid itself. Marking the whole grid IsReadOnly=True
+         caused row visuals to lag behind item PropertyChanged events from the
+         background-thread Refresh, requiring a second click to repaint. -->
     <DataGrid ItemsSource="{Binding Games}"
               AutoGenerateColumns="False"
               CanUserReorderColumns="False"
               CanUserResizeColumns="True"
               CanUserSortColumns="True"
-              IsReadOnly="True"
-              Focusable="False"
+              IsReadOnly="False"
+              SelectionMode="Extended"
               GridLinesVisibility="Horizontal"
               HeadersVisibility="Column"
               BorderThickness="0"
@@ -100,11 +102,10 @@
               FontSize="12">
       <DataGrid.Columns>
         <!-- Select checkbox -->
-        <DataGridTemplateColumn Header="" Width="40" CanUserResize="False">
+        <DataGridTemplateColumn Header="" Width="40" CanUserResize="False" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:DetectedGame">
               <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                        Focusable="False"
                         HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
@@ -112,29 +113,23 @@
 
         <!-- Game Name -->
         <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColName}"
-                            Binding="{Binding Name}" Width="*"/>
+                            Binding="{Binding Name}" Width="*" IsReadOnly="True"/>
 
         <!-- BinariesDir (path) -->
         <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColPath}"
-                            Binding="{Binding BinariesDir}" Width="2*"/>
+                            Binding="{Binding BinariesDir}" Width="2*" IsReadOnly="True"/>
 
         <!-- Status -->
-        <DataGridTemplateColumn Header="{StaticResource str.ProxyDeploy.ColStatus}" Width="160">
-          <DataGridTemplateColumn.CellTemplate>
-            <DataTemplate x:DataType="m:DetectedGame">
-              <TextBlock Text="{Binding Status}" VerticalAlignment="Center" Margin="4,0"
-                         FontWeight="SemiBold" Foreground="#888888"/>
-            </DataTemplate>
-          </DataGridTemplateColumn.CellTemplate>
-        </DataGridTemplateColumn>
+        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColStatus}"
+                            Binding="{Binding Status}" Width="160" IsReadOnly="True"/>
 
         <!-- Installed Version -->
         <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColVersion}"
-                            Binding="{Binding InstalledVersion}" Width="120"/>
+                            Binding="{Binding InstalledVersion}" Width="120" IsReadOnly="True"/>
 
         <!-- Error Message -->
         <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColError}"
-                            Binding="{Binding ErrorMessage}" Width="200"/>
+                            Binding="{Binding ErrorMessage}" Width="200" IsReadOnly="True"/>
       </DataGrid.Columns>
     </DataGrid>
   </DockPanel>
