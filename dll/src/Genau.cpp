@@ -185,6 +185,7 @@ static bool ValidateGObjects(uintptr_t addr) {
         { 0x18, 0x00, 0x14, 0x10, 0x04, "MindsEye" },
         { 0x10, 0x18, 0x1C, 0x20, 0x24, "UE4-Extended" },
         { 0x10, 0x20, 0x24, 0x28, 0x2C, "UE5-Extended" },  // GC prefix + PreAllocatedObjects ptr
+        { 0x00, 0x0C, 0x08, 0x14, 0x10, "UE5.8" },          // 5.8 dev: cache-locality reorder, PreAllocatedObjects @+0x18
         { 0x00, 0x08, 0x0C,   -1,   -1, "Flat" },           // FFixedUObjectArray: no chunks (OT / early UE4)
     };
 
@@ -244,6 +245,7 @@ static bool ValidateGObjects(uintptr_t addr) {
         { 0x04, 0x10, false, "B"   },
         { 0x1C, 0x10, false, "D"   },
         { 0x24, 0x10, false, "E"   },    // UE5-Extended: GC prefix + PreAllocatedObjects
+        { 0x08, 0x00, false, "F"   },    // UE5.8: cache-locality reorder
         { 0x0C, 0x00, true,  "Flat" },   // FFixedUObjectArray: no chunks (OT / early UE4)
     };
 
