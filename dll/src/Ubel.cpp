@@ -915,10 +915,10 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "LazyObjectProperty")  return 0x20;
     // FScriptInterface = { UObject* + void* } — fixed 16
     if (typeName == "InterfaceProperty")   return 16;
-    if (typeName == "DelegateProperty")    return 16; // FScriptDelegate = { UObject* + FName }
-    // NOTE: TSoftObjectPtr / TSoftClassPtr size varies by UE version
-    // (FName is 8 or 16B with CasePreservingName; FSoftObjectPath layout differs in UE5.1+).
-    // Do NOT override here — let readSize prevail; fall back inside the array reader.
+    // NOTE: FScriptDelegate ({ FWeakObjectPtr(8) + FName }) is 16 or 24 depending on
+    // CasePreservingName. TSoftObjectPtr / TSoftClassPtr also vary by UE version.
+    // Do NOT override these here — let readSize prevail; the array readers force
+    // their own correct stride.
     return 0;
 }
 
@@ -2036,6 +2036,230 @@ ReadArrayResult ReadInterfaceArrayElements(
 }
 
 // ============================================================
+// Phase J: IsDelegateArrayType — TArray<FScriptDelegate>.
+// Element layout: { FWeakObjectPtr(8B) + FName(8B|16B) } = 16 or 24
+// ============================================================
+bool IsDelegateArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "DelegateProperty";
+}
+
+// ============================================================
+// Phase J: ReadDelegateArrayElements — read FScriptDelegate elements.
+// Each element exposes the bound UObject* + FName (function), and the
+// ptrAddr is set so CE XML / Live Walker can drill into the target.
+// ============================================================
+ReadArrayResult ReadDelegateArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t /*elemSize*/, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // FScriptDelegate stride depends on FName width (CasePreservingName)
+    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int32_t elemSize = 8 + fnameSize;
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > 4096) end = offset + 4096;
+
+    result.elements.reserve(end - offset);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+
+        // Hex of the full FScriptDelegate bytes
+        std::vector<uint8_t> rawBuf(elemSize, 0);
+        if (Macht::ReadBytesSafe(elemAddr, rawBuf.data(), elemSize)) {
+            std::string hex;
+            hex.reserve(elemSize * 2);
+            for (auto b : rawBuf) {
+                char hx[3];
+                snprintf(hx, sizeof(hx), "%02X", b);
+                hex += hx;
+            }
+            elem.hex = std::move(hex);
+        }
+
+        // Resolve target via FWeakObjectPtr
+        int32_t objIdx = 0, serial = 0;
+        Macht::ReadSafe(elemAddr, objIdx);
+        Macht::ReadSafe(elemAddr + 4, serial);
+        uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
+
+        std::string funcName = ReadFName(elemAddr + 8);
+
+        if (target) {
+            elem.ptrAddr = target;
+            elem.ptrName = GetName(target);
+            uintptr_t cls = GetClass(target);
+            if (cls) elem.ptrClassName = GetName(cls);
+        }
+
+        // Display: "TargetName::FunctionName"
+        if (target && !funcName.empty()) {
+            elem.value = (elem.ptrName.empty() ? std::string("?") : elem.ptrName)
+                + "::" + funcName;
+        } else if (!funcName.empty()) {
+            elem.value = "(stale)::" + funcName;
+        } else if (objIdx > 0) {
+            elem.value = "(stale)";
+        } else {
+            elem.value = "(unbound)";
+        }
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
+// Phase K: IsMulticastDelegateArrayType — TArray<FMulticastScriptDelegate>.
+// Each element is itself a TArray<FScriptDelegate> header (16 bytes).
+// We can show binding count + a short preview of target::function names,
+// but cannot drill further (each element would need its own container view).
+// ============================================================
+bool IsMulticastDelegateArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "MulticastDelegateProperty"
+        || innerTypeName == "MulticastInlineDelegateProperty";
+}
+
+ReadArrayResult ReadMulticastDelegateArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t /*elemSize*/, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // Each element: FMulticastScriptDelegate { TArray<FScriptDelegate> } = 16 bytes
+    constexpr int32_t elemSize = 16;
+    int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+    int32_t innerStride = 8 + fnameSize;
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > 4096) end = offset + 4096;
+
+    result.elements.reserve(end - offset);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+
+        // Read inner TArray<FScriptDelegate> header { Data*, Count, Max }
+        uintptr_t innerData = 0;
+        int32_t   innerCount = 0;
+        Macht::ReadSafe(elemAddr,     innerData);
+        Macht::ReadSafe(elemAddr + 8, innerCount);
+        if (innerCount < 0 || innerCount > 4096) innerCount = 0;  // sanity clamp
+
+        // Hex: 16-byte TArray header
+        uint8_t headerBuf[16] = {};
+        if (Macht::ReadBytesSafe(elemAddr, headerBuf, 16)) {
+            std::string hex;
+            hex.reserve(32);
+            for (int b = 0; b < 16; ++b) {
+                char hx[3];
+                snprintf(hx, sizeof(hx), "%02X", headerBuf[b]);
+                hex += hx;
+            }
+            elem.hex = std::move(hex);
+        }
+
+        // Build display: "(N bindings) [Target1::Fn1, Target2::Fn2, ...]"
+        std::string display;
+        if (innerCount == 0 || !innerData) {
+            display = "(0 bindings)";
+        } else {
+            display = "(" + std::to_string(innerCount)
+                + " binding" + (innerCount > 1 ? "s" : "") + ")";
+
+            int previewCount = (std::min)(innerCount, 4);
+            std::vector<std::string> bindings;
+            bindings.reserve(previewCount);
+            for (int j = 0; j < previewCount; ++j) {
+                uintptr_t bindAddr = innerData + static_cast<int64_t>(j) * innerStride;
+                int32_t bobjIdx = 0, bserial = 0;
+                if (!Macht::ReadSafe(bindAddr,     bobjIdx)) continue;
+                if (!Macht::ReadSafe(bindAddr + 4, bserial)) continue;
+                uintptr_t btarget = ResolveWeakObjectPtr(bobjIdx, bserial);
+                std::string bfunc = ReadFName(bindAddr + 8);
+
+                if (btarget && !bfunc.empty()) {
+                    bindings.push_back(GetName(btarget) + "::" + bfunc);
+                } else if (!bfunc.empty()) {
+                    bindings.push_back("(stale)::" + bfunc);
+                }
+            }
+
+            if (!bindings.empty()) {
+                display += " [";
+                for (size_t k = 0; k < bindings.size(); ++k) {
+                    if (k > 0) display += ", ";
+                    display += bindings[k];
+                }
+                if (innerCount > previewCount) display += ", ...";
+                display += "]";
+            }
+        }
+
+        elem.value = std::move(display);
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
 // CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
 // and related subclass extension offsets.
 //
@@ -2818,6 +3042,30 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
+                // Phase J: TArray<FScriptDelegate>
+                if (innerFound && IsDelegateArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto delResult = ReadDelegateArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (delResult.ok && !delResult.elements.empty()) {
+                        fv.arrayElements = std::move(delResult.elements);
+                        Sein::Debug("WALK:ArrayP", "Delegate elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
+                // Phase K: TArray<FMulticastScriptDelegate>
+                if (innerFound && IsMulticastDelegateArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto mcastResult = ReadMulticastDelegateArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (mcastResult.ok && !mcastResult.elements.empty()) {
+                        fv.arrayElements = std::move(mcastResult.elements);
+                        Sein::Debug("WALK:ArrayP", "Multicast elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
                 if (!innerFound) {
                     // Diagnostic: hex dump around FARRAYPROP_INNER to help identify correct offset
                     uint8_t dumpBuf[64] = {};
@@ -2941,6 +3189,24 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
                     if (ifaceResult.ok && !ifaceResult.elements.empty()) {
                         fv.arrayElements = std::move(ifaceResult.elements);
+                    }
+                }
+                // Phase J: Delegate arrays (UProperty mode)
+                if (innerFound && IsDelegateArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto delResult = ReadDelegateArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (delResult.ok && !delResult.elements.empty()) {
+                        fv.arrayElements = std::move(delResult.elements);
+                    }
+                }
+                // Phase K: Multicast delegate arrays (UProperty mode)
+                if (innerFound && IsMulticastDelegateArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto mcastResult = ReadMulticastDelegateArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (mcastResult.ok && !mcastResult.elements.empty()) {
+                        fv.arrayElements = std::move(mcastResult.elements);
                     }
                 }
 

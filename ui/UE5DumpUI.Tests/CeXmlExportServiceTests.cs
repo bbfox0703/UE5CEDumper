@@ -2510,6 +2510,113 @@ public class CeXmlExportServiceTests
         Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
     }
 
+    // ========================================
+    // Delegate / Multicast ArrayProperty tests (Phase J/K)
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_DelegateArray_EmitsGroupWithBindings()
+    {
+        // TArray<FScriptDelegate> — element stride is 16 (no CasePreservingName)
+        // Each element resolves to "Target::FunctionName" with PtrAddress for drilldown.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "OnDeathHandlers", TypeName = "ArrayProperty", Offset = 0xA0, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "PlayerActor::OnPlayerDeath",
+                            Hex = "0000020C12340000ABCDEFAB12345678",
+                            PtrAddress = "0x20C12340000",
+                            PtrName = "PlayerActor", PtrClassName = "BP_Player_C" },
+                    new() { Index = 1, Value = "(unbound)",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("OnDeathHandlers [2 x DelegateProperty (16B)]", xml);
+        Assert.Contains("<Address>+A0</Address>", xml);
+        // Bound element shows resolved name; unbound shows just [N]
+        Assert.Contains("[0] PlayerActor (BP_Player_C)", xml);
+        // Stride 16: [0] at +0, [1] at +10 (hex)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_DelegateArrayCasePreserving_StrideIs24()
+    {
+        // With CasePreservingName, FName is 16B, so FScriptDelegate = 8 + 16 = 24 (0x18)
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Handlers", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 24,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "Actor1::OnHit",
+                            Hex = "0000020CAA000000AABBCCDDEEFF11221234567812345678",
+                            PtrAddress = "0x20CAA000000",
+                            PtrName = "Actor1", PtrClassName = "BP_Enemy_C" },
+                    new() { Index = 1, Value = "Actor2::OnHit",
+                            Hex = "0000020CBB00000033445566778899AA1234567812345678",
+                            PtrAddress = "0x20CBB000000",
+                            PtrName = "Actor2", PtrClassName = "BP_Enemy_C" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Stride 24 (0x18): [0] at +0, [1] at +18 (hex)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+18</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_MulticastInlineDelegateArray_EmitsGroup()
+    {
+        // TArray<FMulticastScriptDelegate> — each element is 16B (TArray header)
+        // Display value is "(N bindings) [...]" preview, no per-binding drill.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Events", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "MulticastInlineDelegateProperty", ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "(2 bindings) [Actor1::Tick, Actor2::Tick]",
+                            Hex = "0000020CFF000000020000000200000" },
+                    new() { Index = 1, Value = "(0 bindings)",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("Events [2 x MulticastInlineDelegateProperty (16B)]", xml);
+        Assert.Contains("<Address>+60</Address>", xml);
+        // Stride 16: [0] at +0, [1] at +10 (hex)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        // 8 Bytes hex (FMulticastScriptDelegate.InvocationList::Data)
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
     [Fact]
     public void GenerateInstanceXml_SoftObjectArrayEmpty_EmitsPlaceholder()
     {

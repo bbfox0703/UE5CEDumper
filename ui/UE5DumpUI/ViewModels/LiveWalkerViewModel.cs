@@ -894,6 +894,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             or "SoftObjectProperty" or "SoftClassProperty"
             or "LazyObjectProperty"
             or "InterfaceProperty"
+            or "DelegateProperty"
+            or "MulticastDelegateProperty" or "MulticastInlineDelegateProperty"
             or "StructProperty";
 
     /// <summary>

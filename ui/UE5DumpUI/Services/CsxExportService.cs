@@ -376,10 +376,13 @@ public static class CsxExportService
 
     /// <summary>
     /// Check if a type name is an object/pointer property that can have a PropertyClass.
+    /// DelegateProperty also exposes a single bound UObject* (the FWeakObjectPtr target),
+    /// so it gets the same pointer-style treatment in array element conversion.
     /// </summary>
     private static bool IsObjectPropertyType(string typeName) => typeName is
         "ObjectProperty" or "ClassProperty" or "SoftObjectProperty" or
-        "SoftClassProperty" or "LazyObjectProperty" or "InterfaceProperty";
+        "SoftClassProperty" or "LazyObjectProperty" or "InterfaceProperty" or
+        "DelegateProperty";
 
     /// <summary>
     /// Resolve pointer targets within container elements (MapProperty, ArrayProperty, SetProperty).

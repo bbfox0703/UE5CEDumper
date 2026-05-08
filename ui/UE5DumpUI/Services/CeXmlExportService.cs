@@ -1537,6 +1537,16 @@ public static class CeXmlExportService
             // Phase I: TScriptInterface — first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
+            // Phase J: FScriptDelegate — first 8 bytes is FWeakObjectPtr (target).
+            // Element stride uses ArrayElemSize so consecutive elements stay aligned
+            // (16 without CasePreservingName, 24 with).
+            "DelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Phase K: FMulticastScriptDelegate — first 8 bytes is the inner
+            // TArray<FScriptDelegate>::Data pointer; element stride is 16.
+            "MulticastDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "MulticastInlineDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
             _ => null // Non-scalar (StructProperty, etc.)
         };
     }

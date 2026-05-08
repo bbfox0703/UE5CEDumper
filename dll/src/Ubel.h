@@ -359,6 +359,20 @@ ReadArrayResult ReadInterfaceArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
+// Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
+// Stride derives from CasePreservingName: 16 (8B FName) or 24 (16B FName).
+bool IsDelegateArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadDelegateArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase K: TArray<FMulticastScriptDelegate> — preview only (each element is
+// a TArray<FScriptDelegate>; no per-binding drill-down at this depth).
+bool IsMulticastDelegateArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadMulticastDelegateArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
 } // namespace Ubel
 
 // --- Property Search Preview Resolution ---
