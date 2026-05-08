@@ -12,11 +12,12 @@ namespace UE5DumpUI.ViewModels;
 /// Client-side filter searches the full cache; UI displays at most
 /// <see cref="Constants.ObjectTreeMaxDisplay"/> items via virtualized ListBox.
 /// </summary>
-public partial class ObjectTreeViewModel : ViewModelBase
+public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
 {
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
     private readonly IPlatformService _platform;
+    private bool _disposed;
 
     // Engine state for address formatting
     private EngineState? _engineState;
@@ -88,12 +89,34 @@ public partial class ObjectTreeViewModel : ViewModelBase
 
     partial void OnFilterTextChanged(string value)
     {
+        if (_disposed) return;
         // Debounce filter to avoid per-keystroke scanning of large caches (486K+ items).
         // 200ms delay allows typing to complete before filtering starts.
         _filterDebounce?.Dispose();
         _filterDebounce = new System.Threading.Timer(
             _ => Avalonia.Threading.Dispatcher.UIThread.Post(ApplyFilter),
             null, 200, Timeout.Infinite);
+    }
+
+    /// <summary>
+    /// Audit fix #16: dispose the debounce Timer and any in-flight load CTS
+    /// when the VM is destroyed. Without this, a Timer callback fires after
+    /// the VM is GC-eligible (Timer holds a strong root via the lambda),
+    /// keeping the whole VM alive and potentially racing with finalization.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        _filterDebounce?.Dispose();
+        _filterDebounce = null;
+
+        try { _loadCts?.Cancel(); } catch { /* already disposed */ }
+        _loadCts?.Dispose();
+        _loadCts = null;
+
+        GC.SuppressFinalize(this);
     }
 
     partial void OnSelectedClassFilterIndexChanged(int value)
