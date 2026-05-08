@@ -63,6 +63,7 @@ static const LayoutPreset s_chunkedPresets[] = {
     { "Back4Blood",  { 0x10, 0x00, 0x04, 0x08, 0x0C } },  // Objects at end
     { "Multiversus", { 0x18, 0x10, 0x00, 0x14, 0x20 } },  // NumElements first
     { "MindsEye",    { 0x18, 0x00, 0x14, 0x10, 0x04 } },  // MaxElements first
+    { "UE5.8",       { 0x00, 0x0C, 0x08, 0x14, 0x10 } },  // 5.8 dev: FUObjectArray fields reordered for cache locality, PreAllocatedObjects moved to end
 };
 static constexpr int NUM_CHUNKED_PRESETS = sizeof(s_chunkedPresets) / sizeof(s_chunkedPresets[0]);
 
