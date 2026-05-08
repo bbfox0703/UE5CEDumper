@@ -511,6 +511,7 @@ public sealed class DumpService : IDumpService
         {
             Found = true,
             MatchType = res["match_type"]?.GetValue<string>() ?? "",
+            MatchKind = res["match_kind"]?.GetValue<string>() ?? "",
             Address = res["addr"]?.GetValue<string>() ?? "",
             Index = res["index"]?.GetValue<int>() ?? -1,
             Name = res["name"]?.GetValue<string>() ?? "",

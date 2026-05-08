@@ -953,16 +953,41 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
 }
 
 // ============================================================
+// ResolveInnerSize — internal helper. Given an inner FProperty* + its
+// type name, returns the authoritative per-element size:
+//   1. Fixed sizes via InferScalarSize
+//   2. FPROPERTY_ELEMSIZE validated by ValidateArrayElemSize
+//   3. For StructProperty: UScriptStruct::PropertiesSize
+// Returns 0 when undetermined.
+// ============================================================
+static int32_t ResolveInnerSize(uintptr_t innerProp, const std::string& innerTn) {
+    int32_t es = InferScalarSize(innerTn);
+    if (es > 0) return es;
+
+    int32_t rawElemSize = 0;
+    Macht::ReadSafe<int32_t>(innerProp + DynOff::FPROPERTY_ELEMSIZE, rawElemSize);
+    es = ValidateArrayElemSize(rawElemSize, innerTn);
+    if (es > 0) return es;
+
+    if (innerTn == "StructProperty") {
+        uintptr_t innerStruct = 0;
+        if (Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
+            int32_t ps = 0;
+            if (Macht::ReadSafe(innerStruct + DynOff::USTRUCT_PROPSSIZE, ps)
+                && ps > 0 && ps <= 65536)
+                return ps;
+        }
+    }
+    return 0;
+}
+
+// ============================================================
 // GetArrayInnerElemSize — public helper used by container-aware
 // Address Finder (Aura::FindInContainers).
 //
 // Probes the FArrayProperty's Inner FProperty at FARRAYPROP_INNER + delta
 // (matching WalkInstance's probe list), validates the inner type, then
-// resolves an authoritative element size:
-//   1. Known fixed-size types via InferScalarSize (Object/Class/Weak/
-//      Interface/Lazy/scalars)
-//   2. Inner FProperty's ELEMSIZE validated by ValidateArrayElemSize
-//   3. For StructProperty inners, UScriptStruct::PropertiesSize
+// resolves an authoritative element size.
 // Returns 0 when the size cannot be determined.
 // ============================================================
 int32_t GetArrayInnerElemSize(uintptr_t fieldAddr) {
@@ -971,22 +996,61 @@ int32_t GetArrayInnerElemSize(uintptr_t fieldAddr) {
     auto [inner, innerTn] = ProbeInnerProperty(fieldAddr, DynOff::FARRAYPROP_INNER);
     if (!inner) return 0;
 
-    int32_t es = InferScalarSize(innerTn);
-    if (es > 0) return es;
+    return ResolveInnerSize(inner, innerTn);
+}
 
-    int32_t rawElemSize = 0;
-    Macht::ReadSafe<int32_t>(inner + DynOff::FPROPERTY_ELEMSIZE, rawElemSize);
-    es = ValidateArrayElemSize(rawElemSize, innerTn);
-    if (es > 0) return es;
+// ============================================================
+// GetSetElementStride — per-element stride within an FSetProperty's
+// TSparseArray.Data buffer (used by container-aware Address Finder).
+// stride = ComputeSetElementStride(elemSize)
+// Returns 0 when the inner element size cannot be determined.
+// ============================================================
+int32_t GetSetElementStride(uintptr_t fieldAddr) {
+    if (!fieldAddr || !DynOff::bUseFProperty) return 0;
 
-    if (innerTn == "StructProperty") {
-        uintptr_t innerStruct = 0;
-        if (Macht::ReadSafe(inner + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
-            int32_t ps = 0;
-            if (Macht::ReadSafe(innerStruct + DynOff::USTRUCT_PROPSSIZE, ps)
-                && ps > 0 && ps <= 65536)
-                return ps;
-        }
+    auto [inner, innerTn] = ProbeInnerProperty(fieldAddr, DynOff::FARRAYPROP_INNER);
+    if (!inner) return 0;
+
+    int32_t es = ResolveInnerSize(inner, innerTn);
+    if (es <= 0) return 0;
+    return Macht::ComputeSetElementStride(es);
+}
+
+// ============================================================
+// GetMapPairStride — per-pair stride within an FMapProperty's
+// TSparseArray.Data buffer (used by container-aware Address Finder).
+// pair_size = ComputeMapValueOffset(keySize, valueSize) + valueSize
+// stride    = ComputeSetElementStride(pair_size)
+// Returns 0 when key or value size cannot be determined.
+// ============================================================
+int32_t GetMapPairStride(uintptr_t fieldAddr) {
+    if (!fieldAddr || !DynOff::bUseFProperty) return 0;
+
+    // Probe KeyProp (same offset as ArrayProperty Inner) — mirrors WalkInstance.
+    static const int kProbeDeltas[] = { 0, 8, 4, 0xC, -4, -8, 0x10, -0x10 };
+    for (int delta : kProbeDeltas) {
+        int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
+        if (tryOff < 0) continue;
+        uintptr_t keyProp = 0;
+        if (!Macht::ReadSafe(fieldAddr + tryOff, keyProp) || !keyProp) continue;
+        if (keyProp < 0x10000 || keyProp > 0x00007FFFFFFFFFFF) continue;
+
+        std::string keyTn = GetFieldTypeName(keyProp);
+        if (keyTn.empty() || keyTn.find("Property") == std::string::npos) continue;
+
+        // ValueProp follows at +8 within the FMapProperty's tail.
+        uintptr_t valueProp = 0;
+        if (!Macht::ReadSafe(fieldAddr + tryOff + 8, valueProp) || !valueProp) continue;
+        std::string valTn = GetFieldTypeName(valueProp);
+        if (valTn.empty() || valTn.find("Property") == std::string::npos) continue;
+
+        int32_t keySize = ResolveInnerSize(keyProp, keyTn);
+        int32_t valSize = ResolveInnerSize(valueProp, valTn);
+        if (keySize <= 0 || valSize <= 0) return 0;
+
+        int32_t valOffset = Macht::ComputeMapValueOffset(keySize, valSize);
+        int32_t pairSize  = valOffset + valSize;
+        return Macht::ComputeSetElementStride(pairSize);
     }
     return 0;
 }

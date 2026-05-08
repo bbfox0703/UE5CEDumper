@@ -89,10 +89,20 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200);
 // Returns addr, index, name, className, outer for each instance
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500);
 
-// Address-to-Instance reverse lookup result
+// Address-to-Instance reverse lookup result.
+//
+// Confidence levels (worst to best):
+//   exact      — addr IS a UObject pointer (highest confidence)
+//   contains   — addr is within UObject + PropertiesSize (high)
+//   backward   — backward memory scan found a UObject header (medium —
+//                addr is past a NewObject<>'d sub-object not in GObjects)
+//   nearest    — closest GObjects entry below addr; addr is BEYOND its
+//                PropertiesSize so this is just a "best guess" hint, not a
+//                real containment (low — frequently misleading)
 struct AddressLookupResult {
     bool        found         = false;
     bool        exactMatch    = false;  // true = addr is a UObject, false = addr is inside a UObject
+    std::string matchKind;              // "exact" / "contains" / "backward" / "nearest"
     uintptr_t   objectAddr    = 0;      // The owning UObject address
     int32_t     index         = -1;     // InternalIndex in GObjects
     std::string name;
@@ -109,7 +119,7 @@ AddressLookupResult FindByAddress(uintptr_t addr);
 // === Container-Aware Address Lookup ===
 
 // One match for an address that falls inside a UObject field's
-// heap-allocated container buffer (TArray::Data, etc.).
+// heap-allocated container buffer (TArray::Data / TSparseArray::Data).
 struct ContainerMatch {
     uintptr_t   ownerObj      = 0;      // UObject that owns the container field
     int32_t     ownerIndex    = -1;     // GObjects index of owner
@@ -117,21 +127,21 @@ struct ContainerMatch {
     std::string ownerClassName;
     int32_t     fieldOffset   = 0;      // Field offset within owner UObject
     std::string fieldName;
-    std::string fieldType;              // "ArrayProperty" (Map/Set future)
-    std::string innerType;              // Inner element FProperty type
-    int32_t     elementIndex  = 0;      // (addr - dataAddr) / elementSize
-    int32_t     elementSize   = 0;
+    std::string fieldType;              // "ArrayProperty" / "SetProperty" / "MapProperty"
+    std::string innerType;              // Inner type label (Set: elem; Map: "K → V")
+    int32_t     elementIndex  = 0;      // (addr - dataAddr) / stride (sparse index for Map/Set)
+    int32_t     elementSize   = 0;      // Per-element / per-pair stride
     int32_t     intraOffset   = 0;      // (addr - elementStart) within element
-    uintptr_t   dataAddr      = 0;      // TArray::Data base
-    int32_t     count         = 0;      // TArray::Count
+    uintptr_t   dataAddr      = 0;      // TArray::Data / TSparseArray::Data base
+    int32_t     count         = 0;      // Logical element count (allocated only for Map/Set)
 };
 
-// Scan all UObjects' ArrayProperty fields for `addr`. Returns matches
-// where addr falls in [Data, Data + Count*ElemSize). Iteration 1 only
-// covers ArrayProperty (MapProperty/SetProperty deferred). Has an
-// internal time deadline (~5s) and per-class field cache; performance
-// improves on subsequent calls because the cache persists for the DLL
-// lifetime.
+// Scan all UObjects' container fields for `addr`. Returns matches where
+// addr falls in [Data, Data + bound). Covers ArrayProperty (TArray.Data),
+// SetProperty (TSparseArray.Data, allocated slots only), and MapProperty
+// (TSparseArray.Data of TPair, allocated slots only). Has an internal
+// time deadline (~5s) and per-class field cache; performance improves on
+// subsequent calls because the cache persists for the DLL lifetime.
 std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults = 16);
 
 // === Property Keyword Search ===

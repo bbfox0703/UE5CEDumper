@@ -187,11 +187,19 @@ public partial class InstanceFinderViewModel : ViewModelBase
                 HasInstances = true;
                 SelectedInstance = instance;  // Auto-select to trigger field loading
 
-                var matchInfo = result.MatchType == "exact"
-                    ? "Exact UObject match"
-                    : $"Inside {result.Name} (offset +0x{result.OffsetFromBase:X})";
+                // Be honest about confidence — "nearest" / "backward" mean addr
+                // is BEYOND the UObject's PropertiesSize, often misleading
+                // (especially for heap-allocated container data).
+                var matchInfo = result.MatchKind switch
+                {
+                    "exact"    => "Exact UObject match",
+                    "contains" => $"Inside {result.Name} (offset +0x{result.OffsetFromBase:X})",
+                    "backward" => $"Past {result.Name} (offset +0x{result.OffsetFromBase:X}) — backward scan",
+                    "nearest"  => $"Nearest UObject is {result.Name} (offset +0x{result.OffsetFromBase:X}, beyond bounds — likely heap data)",
+                    _          => $"Match: {result.Name} (offset +0x{result.OffsetFromBase:X})",
+                };
                 if (HasContainerMatches)
-                    matchInfo += $" — also found in {ContainerMatches.Count} container(s)";
+                    matchInfo += $" — found in {ContainerMatches.Count} container(s) below";
                 LookupStatusText = matchInfo;
                 _log.Info($"FindByAddress: '{addrStr}' -> {matchInfo}");
             }

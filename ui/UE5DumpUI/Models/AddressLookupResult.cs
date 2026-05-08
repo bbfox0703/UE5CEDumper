@@ -59,6 +59,17 @@ public sealed class AddressLookupResult
     /// <summary>"exact" if the address is a UObject itself, "contains" if it falls inside one.</summary>
     public string MatchType { get; init; } = "";
 
+    /// <summary>
+    /// More precise confidence kind: "exact" / "contains" / "backward" / "nearest".
+    /// "nearest" is a low-confidence fallback (addr is BEYOND PropertiesSize of the
+    /// closest UObject) and should be presented as a hint rather than containment.
+    /// Empty for older DLLs.
+    /// </summary>
+    public string MatchKind { get; init; } = "";
+
+    /// <summary>True when the match is a real containment / exact (high confidence).</summary>
+    public bool IsHighConfidence => MatchKind is "exact" or "contains";
+
     /// <summary>The owning UObject address.</summary>
     public string Address { get; init; } = "";
 

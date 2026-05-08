@@ -91,6 +91,15 @@ ClassInfo WalkClassEx(uintptr_t uclassAddr);
 // Used by container-aware Address Finder to compute element index.
 int32_t GetArrayInnerElemSize(uintptr_t fieldAddr);
 
+// Per-element stride within an FSetProperty's TSparseArray.Data buffer.
+// Returns 0 when the inner element size is undetermined.
+int32_t GetSetElementStride(uintptr_t fieldAddr);
+
+// Per-pair stride within an FMapProperty's TSparseArray.Data buffer
+// (TPair<K,V> aligned + TSetElement hash overhead).
+// Returns 0 when key or value size is undetermined.
+int32_t GetMapPairStride(uintptr_t fieldAddr);
+
 // Walk all UFunctions of a UClass.
 // Iterates the function chain, resolving parameters and return type.
 std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);

@@ -1252,7 +1252,14 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             data["found"] = lookupResult.found;
 
             if (lookupResult.found) {
+                // match_type: legacy "exact" / "contains" string for back-compat.
+                // match_kind: more precise — "exact" / "contains" / "backward" / "nearest".
+                // Clients should prefer match_kind to distinguish low-confidence
+                // "nearest" fallbacks (addr beyond PropertiesSize) from real containment.
                 data["match_type"]       = lookupResult.exactMatch ? "exact" : "contains";
+                data["match_kind"]       = lookupResult.matchKind.empty()
+                                              ? (lookupResult.exactMatch ? "exact" : "contains")
+                                              : lookupResult.matchKind;
                 data["addr"]             = Renge::AddrToStr(lookupResult.objectAddr);
                 data["index"]            = lookupResult.index;
                 data["name"]             = lookupResult.name;

@@ -884,11 +884,14 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
     return rset;
 }
 
-// Helper: populate an AddressLookupResult from a UObject pointer
+// Helper: populate an AddressLookupResult from a UObject pointer.
+// `kind` distinguishes confidence levels — see AddressLookupResult comment.
 static void FillLookupResult(AddressLookupResult& out, uintptr_t obj, int32_t index,
-                             int32_t offsetFromBase, bool exact) {
+                             int32_t offsetFromBase, bool exact,
+                             const char* kind = nullptr) {
     out.found = true;
     out.exactMatch = exact;
+    out.matchKind = kind ? kind : (exact ? "exact" : "contains");
     out.objectAddr = obj;
     out.index = index;
     out.offsetFromBase = offsetFromBase;
@@ -1114,12 +1117,14 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
     if (bestScanObj) {
         // Backward scan found a UObject — use it if no GObjects candidates,
-        // or if it's closer than the best GObjects candidate
+        // or if it's closer than the best GObjects candidate.
+        // Match kind = "backward" (medium confidence — the UObject was found
+        // by memory pattern, not by GObjects, so addr is past its bounds).
         bool useBackward = (numCandidates == 0) ||
                            (bestScanDist < candidates[0].dist);
         if (useBackward) {
             FillLookupResult(result, bestScanObj, -1,
-                             static_cast<int32_t>(bestScanDist), false);
+                             static_cast<int32_t>(bestScanDist), false, "backward");
             LOG_INFO("FindByAddress: Backward scan match: %s at 0x%llX, offset +0x%X",
                      result.name.c_str(),
                      static_cast<unsigned long long>(bestScanObj),
@@ -1130,10 +1135,13 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
     if (numCandidates > 0) {
         // --- Fallback: Return closest GObjects object as "nearest" ---
+        // Low confidence: addr is past this UObject's PropertiesSize, so we
+        // are NOT actually inside it. Surfaced as a hint only — frequently
+        // misleading when the address is heap-allocated container data.
         FillLookupResult(result, candidates[0].obj, candidates[0].idx,
-                         static_cast<int32_t>(candidates[0].dist), false);
+                         static_cast<int32_t>(candidates[0].dist), false, "nearest");
         result.exactMatch = false;
-        LOG_INFO("FindByAddress: Nearest GObjects fallback: %s at 0x%llX, offset +0x%X",
+        LOG_INFO("FindByAddress: Nearest GObjects fallback: %s at 0x%llX, offset +0x%X (likely outside bounds)",
                  result.name.c_str(),
                  static_cast<unsigned long long>(candidates[0].obj),
                  result.offsetFromBase);
@@ -1148,16 +1156,23 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
 // === Container-Aware Address Lookup ===
 //
-// Persistent per-class cache of ArrayProperty fields and their resolved
-// inner element sizes. Built lazily on first encounter via WalkClassEx.
-// Empty entries (classes with no usable ArrayProperty fields) are stored
-// so we don't re-walk them on subsequent queries.
+// Persistent per-class cache of container fields (ArrayProperty / MapProperty
+// / SetProperty) and their resolved per-element strides. Built lazily on
+// first encounter via WalkClassEx. Empty entries (classes with no usable
+// container fields) are stored so we don't re-walk them on subsequent queries.
+
+enum class ContainerKind {
+    Array,   // TArray.Data buffer, stride = inner element size
+    Set,     // TSparseArray.Data buffer, stride = ComputeSetElementStride
+    Map,     // TSparseArray.Data buffer, stride = ComputeSetElementStride(pair)
+};
 
 struct ContainerCacheEntry {
-    int32_t     offset;     // Field offset within UObject
-    std::string name;
-    std::string innerType;
-    int32_t     elemSize;
+    int32_t       offset;       // Field offset within UObject
+    std::string   name;
+    std::string   innerType;    // ArrayProperty: inner; Set: elem; Map: "K → V"
+    int32_t       stride;       // Bytes per element/pair within Data buffer
+    ContainerKind kind;
 };
 
 static std::unordered_map<uintptr_t, std::vector<ContainerCacheEntry>> s_classContainerCache;
@@ -1175,16 +1190,61 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     std::vector<ContainerCacheEntry> entries;
     auto ci = Ubel::WalkClassEx(cls);
     for (const auto& f : ci.Fields) {
-        if (f.TypeName != "ArrayProperty") continue;
         if (!f.Address) continue;
-        int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
-        if (es <= 0) continue;  // Inner type unresolved — skip rather than guess
-        entries.push_back({ f.Offset, f.Name, f.innerType, es });
+
+        if (f.TypeName == "ArrayProperty") {
+            int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
+            if (es <= 0) continue;
+            entries.push_back({ f.Offset, f.Name, f.innerType, es, ContainerKind::Array });
+        }
+        else if (f.TypeName == "SetProperty") {
+            int32_t st = Ubel::GetSetElementStride(f.Address);
+            if (st <= 0) continue;
+            entries.push_back({ f.Offset, f.Name, f.elemType, st, ContainerKind::Set });
+        }
+        else if (f.TypeName == "MapProperty") {
+            int32_t st = Ubel::GetMapPairStride(f.Address);
+            if (st <= 0) continue;
+            std::string innerLabel = f.keyType + " → " + f.valueType;
+            entries.push_back({ f.Offset, f.Name, innerLabel, st, ContainerKind::Map });
+        }
     }
 
     std::lock_guard<std::mutex> lk(s_classContainerMutex);
     auto [ins, _] = s_classContainerCache.emplace(cls, std::move(entries));
     return ins->second;
+}
+
+// Helper: emit one ContainerMatch given a resolved hit. Reads owner name +
+// class name lazily so we only pay that cost when a match is actually found.
+static ContainerMatch BuildMatch(uintptr_t obj, int32_t ownerIndex, uintptr_t cls,
+                                  const ContainerCacheEntry& cfe,
+                                  uintptr_t dataAddr, int32_t count,
+                                  int32_t elementIndex, int32_t intraOffset) {
+    ContainerMatch m;
+    m.ownerObj     = obj;
+    m.ownerIndex   = ownerIndex;
+
+    uint32_t nameIdx = 0;
+    if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx))
+        m.ownerName = Serie::GetString(nameIdx);
+
+    uint32_t clsNameIdx = 0;
+    if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, clsNameIdx))
+        m.ownerClassName = Serie::GetString(clsNameIdx);
+
+    m.fieldOffset  = cfe.offset;
+    m.fieldName    = cfe.name;
+    m.fieldType    = (cfe.kind == ContainerKind::Array) ? "ArrayProperty"
+                   : (cfe.kind == ContainerKind::Set)   ? "SetProperty"
+                                                        : "MapProperty";
+    m.innerType    = cfe.innerType;
+    m.elementSize  = cfe.stride;
+    m.elementIndex = elementIndex;
+    m.intraOffset  = intraOffset;
+    m.dataAddr     = dataAddr;
+    m.count        = count;
+    return m;
 }
 
 std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults) {
@@ -1220,51 +1280,56 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults)
         uintptr_t cls = 0;
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
 
-        // Fetch (and lazily build) container metadata for this class
         const auto& containers = GetClassContainers(cls);
         if (containers.empty()) continue;
         ++classesWalked;
 
         for (const auto& cfe : containers) {
-            Macht::TArrayView arr;
-            if (!Macht::ReadTArray(obj + cfe.offset, arr)) continue;
-            if (arr.Count <= 0 || !arr.Data) continue;
+            uintptr_t fieldAddr = obj + cfe.offset;
 
-            // Use Count rather than Max so we only flag elements that are
-            // logically populated (Max can include uninitialised slack).
-            uintptr_t bufEnd = arr.Data + static_cast<int64_t>(arr.Count) * cfe.elemSize;
-            if (addr < arr.Data || addr >= bufEnd) continue;
+            if (cfe.kind == ContainerKind::Array) {
+                Macht::TArrayView arr;
+                if (!Macht::ReadTArray(fieldAddr, arr)) continue;
+                if (arr.Count <= 0 || !arr.Data) continue;
 
-            int32_t intraTotal = static_cast<int32_t>(addr - arr.Data);
-            ContainerMatch m;
-            m.ownerObj      = obj;
-            m.ownerIndex    = i;
+                uintptr_t bufEnd = arr.Data + static_cast<int64_t>(arr.Count) * cfe.stride;
+                if (addr < arr.Data || addr >= bufEnd) continue;
 
-            uint32_t nameIdx = 0;
-            if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx))
-                m.ownerName = Serie::GetString(nameIdx);
+                int32_t intraTotal = static_cast<int32_t>(addr - arr.Data);
+                auto m = BuildMatch(obj, i, cls, cfe, arr.Data, arr.Count,
+                                    intraTotal / cfe.stride, intraTotal % cfe.stride);
+                LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (Array, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(),
+                         m.elementIndex, m.intraOffset,
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                matches.push_back(std::move(m));
+            }
+            else { // Set or Map — both use TSparseArray
+                Macht::TSparseArrayView sa;
+                if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
+                if (sa.MaxIndex <= 0 || !sa.Data) continue;
 
-            uint32_t clsNameIdx = 0;
-            if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, clsNameIdx))
-                m.ownerClassName = Serie::GetString(clsNameIdx);
+                uintptr_t bufEnd = sa.Data + static_cast<int64_t>(sa.MaxIndex) * cfe.stride;
+                if (addr < sa.Data || addr >= bufEnd) continue;
 
-            m.fieldOffset   = cfe.offset;
-            m.fieldName     = cfe.name;
-            m.fieldType     = "ArrayProperty";
-            m.innerType     = cfe.innerType;
-            m.elementSize   = cfe.elemSize;
-            m.elementIndex  = intraTotal / cfe.elemSize;
-            m.intraOffset   = intraTotal % cfe.elemSize;
-            m.dataAddr      = arr.Data;
-            m.count         = arr.Count;
+                int32_t intraTotal = static_cast<int32_t>(addr - sa.Data);
+                int32_t sparseIdx  = intraTotal / cfe.stride;
+                // Skip if the slot is in the free list (contains stale data only)
+                if (!Macht::IsSparseIndexAllocated(sa, sparseIdx)) continue;
 
-            LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (owner=0x%llX, %s)",
-                     m.ownerName.c_str(), m.fieldName.c_str(),
-                     m.elementIndex, m.intraOffset,
-                     static_cast<unsigned long long>(obj),
-                     m.ownerClassName.c_str());
+                int32_t logicalCount = sa.MaxIndex - sa.NumFreeIndices;
+                auto m = BuildMatch(obj, i, cls, cfe, sa.Data, logicalCount,
+                                    sparseIdx, intraTotal % cfe.stride);
+                LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (%s, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(),
+                         m.elementIndex, m.intraOffset,
+                         m.fieldType.c_str(),
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                matches.push_back(std::move(m));
+            }
 
-            matches.push_back(std::move(m));
             if (static_cast<int>(matches.size()) >= maxResults) break;
         }
     }
