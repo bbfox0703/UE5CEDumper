@@ -2,9 +2,9 @@
 // Lugner — 呂格納 (偽裝專家 — Master of Disguise)
 // ProxyVersion: version.dll forwarding proxy
 //
-// This file is only compiled for the Proxy DLL build target
-// (UE5_PROXY_BUILD). It loads the real version.dll from
-// System32 and forwards all 17 exports to it.
+// This file is only compiled for the version.dll proxy build
+// target (UE5_PROXY_VERSION_BUILD). It loads the real
+// version.dll from System32 and forwards all 17 exports to it.
 //
 // Exports are defined via ProxyVersion.def (module definition
 // file) to avoid name conflicts with winver.h declarations.
@@ -22,7 +22,7 @@
 //        auto-start thread starts the pipe server.
 // ============================================================
 
-#ifdef UE5_PROXY_BUILD
+#ifdef UE5_PROXY_VERSION_BUILD
 
 #include <Windows.h>
 #define LOG_CAT "PROXY"
@@ -228,4 +228,4 @@ void ProxyVersion_Cleanup()
     }
 }
 
-#endif // UE5_PROXY_BUILD
+#endif // UE5_PROXY_VERSION_BUILD

@@ -26,13 +26,25 @@ extern "C" void UE5_Shutdown();
 // Mailbox — shared memory interface for CE Lua
 #include "Mimic.h"
 
-#ifdef UE5_PROXY_BUILD
-// Cleanup for proxy DLL — defined in ProxyVersion.cpp
+#ifdef UE5_PROXY_VERSION_BUILD
+// Cleanup for version.dll proxy — defined in Lugner.cpp
 extern void ProxyVersion_Cleanup();
 #endif
 
 // Handle for the auto-start thread — stored so we can wait for it during DLL unload
 static HANDLE g_hAutoStartThread = nullptr;
+
+#ifdef UE5_PROXY_BUILD
+// ── Proxy mutual exclusion ─────────────────────────────────────────────────
+// When the user has both proxy DLLs (version.dll + dinput8.dll) sitting in
+// the game folder, both will be loaded by the OS. Only the first to attach
+// runs full init (pipe server, mailbox, AOB scan); the second becomes a
+// passive forwarder — its OS-API stubs still work, but it skips all
+// UE5CEDumper-side init so we don't get duplicate pipe servers, log files,
+// or background threads.
+static HANDLE g_primaryProxyMutex = nullptr;
+static bool   g_isPassiveProxy    = false;
+#endif
 
 #ifdef UE5_PROXY_BUILD
 // ── Proxy DLL auto-start ───────────────────────────────────────────────────
@@ -116,6 +128,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     case DLL_PROCESS_ATTACH: {
         g_hDllModule = hModule;
         DisableThreadLibraryCalls(hModule);
+
+#ifdef UE5_PROXY_BUILD
+        // First-loaded-wins: if another UE5CEDumper proxy DLL has already
+        // claimed the global mutex, become a passive forwarder. We MUST do
+        // this before Sein::Init() so the second instance doesn't open log
+        // files in the same per-process subfolder as the first.
+        g_primaryProxyMutex = CreateMutexW(nullptr, FALSE,
+            L"Global\\UE5CEDumper_PrimaryProxy");
+        if (g_primaryProxyMutex != nullptr &&
+            GetLastError() == ERROR_ALREADY_EXISTS) {
+            g_isPassiveProxy = true;
+            // No logging — Sein not initialized in passive mode.
+            return TRUE;
+        }
+#endif
+
         Sein::Init();
         {
             // Log which process loaded this DLL — distinguishes CE plugin
@@ -155,6 +183,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     }
 
     case DLL_PROCESS_DETACH:
+#ifdef UE5_PROXY_BUILD
+        // Passive proxy: nothing was initialized, nothing to tear down.
+        // The OS reclaims the mutex handle automatically on process exit.
+        if (g_isPassiveProxy) {
+            break;
+        }
+#endif
         LOG_INFO("UE5Dumper DLL unloading (DLL_PROCESS_DETACH)");
         // Wait for auto-start thread to finish (max 5s) before tearing down
         if (g_hAutoStartThread) {
@@ -164,7 +199,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         }
         // Stop pipe server and watch threads before logger shutdown
         UE5_Shutdown();
-#ifdef UE5_PROXY_BUILD
+#ifdef UE5_PROXY_VERSION_BUILD
         ProxyVersion_Cleanup();
 #endif
         Sein::Shutdown();
