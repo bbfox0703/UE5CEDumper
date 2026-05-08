@@ -49,9 +49,14 @@
                  Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
     </StackPanel>
 
-    <!-- Scanning progress -->
-    <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
-                 IsVisible="{Binding IsScanning}" Height="2" Margin="0,0,0,4"/>
+    <!-- Scanning progress.
+         IsIndeterminate is bound to IsScanning so the indeterminate animation
+         does not keep ticking (and invalidating layout) while the bar is
+         collapsed — this caused neighbouring Buttons to flicker on hover. -->
+    <ProgressBar DockPanel.Dock="Top"
+                 IsIndeterminate="{Binding IsScanning}"
+                 IsVisible="{Binding IsScanning}"
+                 Height="2" Margin="0,0,0,4"/>
 
     <!-- Bottom: Action buttons -->
     <Border DockPanel.Dock="Bottom" Background="#2D2D2D" Padding="8" Margin="0,8,0,0"

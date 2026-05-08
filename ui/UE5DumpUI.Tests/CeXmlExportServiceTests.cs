@@ -2618,6 +2618,54 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
+    public void GenerateInstanceXml_SingleMulticastDelegate_EmitsAsImplicitArray()
+    {
+        // A single FMulticastScriptDelegate field is exposed as an implicit
+        // DelegateProperty array (TypeName=Multicast, ArrayInnerType=Delegate).
+        // CE XML should emit it as an ArrayProperty group so users can copy
+        // each binding's address chain.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "m_OnPlayerPawnSetBlueprint",
+                TypeName = "MulticastInlineDelegateProperty",
+                Offset = 0x338, Size = 16,
+                // Implicit array fields populated by DLL handler:
+                ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 16,
+                TypedValue = "(2 bindings) [BP1::OnPawnSet, BP2::OnPawnSet]",
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "BP1::OnPawnSet",
+                            Hex = "0000020CAA000000ABCDEFAB12345678",
+                            PtrAddress = "0x20CAA000000",
+                            PtrName = "BP1", PtrClassName = "BP_Test_C" },
+                    new() { Index = 1, Value = "BP2::OnPawnSet",
+                            Hex = "0000020CBB00000033445566778899AA",
+                            PtrAddress = "0x20CBB000000",
+                            PtrName = "BP2", PtrClassName = "BP_Test_C" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Group description shows binding count via the array header
+        Assert.Contains("m_OnPlayerPawnSetBlueprint [2 x DelegateProperty (16B)]", xml);
+        // Group at field offset, Offsets=[0] derefs InvocationList::Data
+        Assert.Contains("<Address>+338</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Per-binding leaf: stride 16, resolved BP name shown in description
+        Assert.Contains("[0] BP1 (BP_Test_C)", xml);
+        Assert.Contains("[1] BP2 (BP_Test_C)", xml);
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
     public void GenerateInstanceXml_SoftObjectArrayEmpty_EmitsPlaceholder()
     {
         var fields = new[]

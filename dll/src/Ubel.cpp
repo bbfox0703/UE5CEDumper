@@ -3968,10 +3968,14 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         // Handle MulticastInlineDelegateProperty / MulticastDelegateProperty:
         // FMulticastScriptDelegate = { TArray<FScriptDelegate> InvocationList (16B) }
         // FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
+        //
+        // Exposes the multicast as an implicit DelegateProperty array so the UI
+        // can drill in and CE XML / CSX can emit the bindings. Layout matches
+        // Phase J (TArray<FScriptDelegate>) — Offsets=[0] derefs InvocationList.
         if (fi.TypeName == "MulticastInlineDelegateProperty" ||
             fi.TypeName == "MulticastDelegateProperty") {
             int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
-            int delegateElemSize = 8 + fnameSize;  // FWeakObjectPtr + FName
+            int32_t delegateElemSize = 8 + fnameSize;  // FWeakObjectPtr + FName
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
 
             // Read TArray<FScriptDelegate> header
@@ -3980,40 +3984,81 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             Macht::ReadSafe(fieldAddr, data);
             Macht::ReadSafe(fieldAddr + 8, count);
 
-            if (count < 0 || count > 256) count = 0;  // Sanity clamp
+            if (count < 0 || count > 4096) count = 0;  // Sanity clamp (was 256)
 
+            // Expose as implicit DelegateProperty array — drives drill-down,
+            // CE XML / CSX export, and IsContainerNavigable in the UI.
+            fv.arrayCount = count;
+            fv.arrayInnerType = "DelegateProperty";
+            fv.arrayElemSize = delegateElemSize;
+            fv.arrayDataAddr = data;
+
+            // Read every binding (up to arrayLimit) into ArrayElements.
+            // Each element: ptrAddr/ptrName/ptrClassName + display "Target::Func".
+            int32_t readMax = (std::min)(count, arrayLimit);
+            std::vector<std::string> previewNames;
+            for (int32_t i = 0; data && i < readMax; ++i) {
+                uintptr_t elemAddr = data + static_cast<int64_t>(i) * delegateElemSize;
+
+                LiveFieldValue::ArrayElement elem;
+                elem.index = i;
+
+                // Hex of full FScriptDelegate
+                std::vector<uint8_t> rawBuf(delegateElemSize, 0);
+                if (Macht::ReadBytesSafe(elemAddr, rawBuf.data(), delegateElemSize)) {
+                    std::string hex;
+                    hex.reserve(delegateElemSize * 2);
+                    for (auto b : rawBuf) {
+                        char hx[3];
+                        snprintf(hx, sizeof(hx), "%02X", b);
+                        hex += hx;
+                    }
+                    elem.hex = std::move(hex);
+                }
+
+                int32_t objIdx = 0, serial = 0;
+                Macht::ReadSafe(elemAddr,     objIdx);
+                Macht::ReadSafe(elemAddr + 4, serial);
+                uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
+                std::string funcName = ReadFName(elemAddr + 8);
+
+                if (target) {
+                    elem.ptrAddr = target;
+                    elem.ptrName = GetName(target);
+                    uintptr_t cls = GetClass(target);
+                    if (cls) elem.ptrClassName = GetName(cls);
+                }
+
+                if (target && !funcName.empty()) {
+                    elem.value = (elem.ptrName.empty() ? std::string("?") : elem.ptrName)
+                        + "::" + funcName;
+                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
+                } else if (!funcName.empty()) {
+                    elem.value = "(stale)::" + funcName;
+                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
+                } else if (objIdx > 0) {
+                    elem.value = "(stale)";
+                } else {
+                    elem.value = "(unbound)";
+                }
+
+                fv.arrayElements.push_back(std::move(elem));
+            }
+
+            // Build summary string from preview names
             std::string display;
             if (count == 0) {
                 display = "(0 bindings)";
             } else {
-                display = "(" + std::to_string(count) + " binding" + (count > 1 ? "s" : "") + ")";
-
-                // Read up to 8 binding target names for preview
-                int previewCount = (std::min)(count, (int32_t)8);
-                std::vector<std::string> bindings;
-                for (int i = 0; i < previewCount; ++i) {
-                    uintptr_t elemAddr = data + static_cast<int64_t>(i) * delegateElemSize;
-                    int32_t objIdx = 0, serial = 0;
-                    if (!Macht::ReadSafe(elemAddr, objIdx) || !Macht::ReadSafe(elemAddr + 4, serial))
-                        continue;
-
-                    uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
-                    std::string funcName = ReadFName(elemAddr + 8);
-
-                    if (target && !funcName.empty()) {
-                        bindings.push_back(GetName(target) + "::" + funcName);
-                    } else if (!funcName.empty()) {
-                        bindings.push_back("(stale)::" + funcName);
-                    }
-                }
-
-                if (!bindings.empty()) {
+                display = "(" + std::to_string(count)
+                    + " binding" + (count > 1 ? "s" : "") + ")";
+                if (!previewNames.empty()) {
                     display += " [";
-                    for (size_t i = 0; i < bindings.size(); ++i) {
+                    for (size_t i = 0; i < previewNames.size(); ++i) {
                         if (i > 0) display += ", ";
-                        display += bindings[i];
+                        display += previewNames[i];
                     }
-                    if (count > previewCount) display += ", ...";
+                    if (count > static_cast<int32_t>(previewNames.size())) display += ", ...";
                     display += "]";
                 }
             }

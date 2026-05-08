@@ -647,8 +647,14 @@ public static class CeXmlExportService
                 continue;
             }
 
-            // ArrayProperty: emit as group with element children (Phase C)
-            if (field.TypeName == "ArrayProperty" && field.ArrayCount >= 0)
+            // ArrayProperty: emit as group with element children (Phase C).
+            // Multicast delegates are exposed as implicit DelegateProperty arrays
+            // (the field's first 8 bytes are the InvocationList::Data pointer,
+            // matching TArray addressing — Offsets=[0] derefs it correctly).
+            if (field.ArrayCount >= 0
+                && (field.TypeName == "ArrayProperty"
+                    || field.TypeName == "MulticastInlineDelegateProperty"
+                    || field.TypeName == "MulticastDelegateProperty"))
             {
                 EmitArrayProperty(sb, indent, field);
                 continue;
@@ -777,9 +783,13 @@ public static class CeXmlExportService
                 EmitGroupPlaceholder(sb, childIndent, child.Name,
                     $"+{child.Offset:X}", null, showAsHex: true);
             }
-            else if (child.TypeName == "ArrayProperty" && child.ArrayCount >= 0)
+            else if (child.ArrayCount >= 0
+                && (child.TypeName == "ArrayProperty"
+                    || child.TypeName == "MulticastInlineDelegateProperty"
+                    || child.TypeName == "MulticastDelegateProperty"))
             {
-                // Array inside struct — full expansion if element data is available
+                // Array inside struct — full expansion if element data is available.
+                // Multicast delegates expose an implicit array via ArrayCount/Inner.
                 EmitArrayProperty(sb, childIndent, child);
             }
             else if (child.TypeName == "MapProperty" && child.MapCount >= 0)

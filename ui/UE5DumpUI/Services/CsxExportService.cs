@@ -172,6 +172,10 @@ public static class CsxExportService
             case "ArrayProperty":
             case "SetProperty":
             case "DataTableRows":
+            // Multicast delegates expose an implicit DelegateProperty array
+            // via ArrayCount/Inner; treat them like ArrayProperty for drill-down.
+            case "MulticastInlineDelegateProperty":
+            case "MulticastDelegateProperty":
                 // Drilldown: convert container elements to synthetic fields for child structure
                 if (drilldownDepth > 0
                     && resolvedInstances != null)
@@ -423,6 +427,11 @@ public static class CsxExportService
             "MapProperty" when field.MapElements is { Count: > 0 }
                 => ConvertMapElementsToFields(field),
             "ArrayProperty" when field.ArrayElements is { Count: > 0 }
+                => ConvertArrayElementsToFields(field),
+            // Multicast delegate fields are exposed as implicit DelegateProperty arrays
+            "MulticastInlineDelegateProperty" when field.ArrayElements is { Count: > 0 }
+                => ConvertArrayElementsToFields(field),
+            "MulticastDelegateProperty" when field.ArrayElements is { Count: > 0 }
                 => ConvertArrayElementsToFields(field),
             "SetProperty" when field.SetElements is { Count: > 0 }
                 => ConvertSetElementsToFields(field),
