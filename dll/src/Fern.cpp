@@ -59,6 +59,16 @@ void Fern::Stop() {
         m_rescan.scanThread.join();
     }
 
+    // Audit fix #3: join the initial-scan thread too. Previously this was
+    // missed, so destructing the static s_pipeServer with a still-joinable
+    // m_scan.scanThread would call ~thread → std::terminate. RunScan() runs
+    // UE5_Init (a bounded AOB scan, typically 2-8s) and exits naturally;
+    // we have no signal to abort it mid-flight, so just wait for it.
+    m_scan.running.store(false);
+    if (m_scan.scanThread.joinable()) {
+        m_scan.scanThread.join();
+    }
+
     // Close the pipe to unblock ConnectNamedPipe / ReadFile
     {
         std::lock_guard<std::mutex> lock(m_pipeMutex);
@@ -1839,25 +1849,48 @@ void Fern::StartWatch(uintptr_t addr, uint32_t size, uint32_t interval_ms) {
 }
 
 void Fern::StopWatch(uintptr_t addr) {
-    std::lock_guard<std::mutex> lock(m_watchMutex);
-    auto it = m_watches.find(addr);
-    if (it != m_watches.end()) {
+    // Audit fix #4: extract the entry under m_watchMutex but join the thread
+    // OUTSIDE the lock. The watch thread calls PushEvent → m_pipeMutex /
+    // m_writeMutex; if we held m_watchMutex while joining and another
+    // thread tried to take both locks in the opposite order, we'd deadlock.
+    // Safer to release m_watchMutex before the blocking join.
+    std::unique_ptr<WatchEntry> entry;
+    {
+        std::lock_guard<std::mutex> lock(m_watchMutex);
+        auto it = m_watches.find(addr);
+        if (it == m_watches.end()) return;
         it->second->active = false;
-        if (it->second->watchThread.joinable()) {
-            it->second->watchThread.join();
-        }
+        entry = std::move(it->second);
         m_watches.erase(it);
-        Sein::Info("PIPE:watch", "PipeServer: Watch stopped on 0x%llX", static_cast<unsigned long long>(addr));
     }
+
+    if (entry && entry->watchThread.joinable()) {
+        entry->watchThread.join();
+    }
+    Sein::Info("PIPE:watch", "PipeServer: Watch stopped on 0x%llX",
+             static_cast<unsigned long long>(addr));
 }
 
 void Fern::StopAllWatches() {
-    std::lock_guard<std::mutex> lock(m_watchMutex);
-    for (auto& [addr, entry] : m_watches) {
-        entry->active = false;
-        if (entry->watchThread.joinable()) {
+    // Audit fix #4: same pattern as StopWatch — extract under lock, join
+    // afterwards. Set every entry's active=false first so all watch threads
+    // start exiting in parallel; then drain the map and join each.
+    std::vector<std::unique_ptr<WatchEntry>> toJoin;
+    {
+        std::lock_guard<std::mutex> lock(m_watchMutex);
+        toJoin.reserve(m_watches.size());
+        for (auto& [addr, entry] : m_watches) {
+            entry->active = false;
+        }
+        for (auto& [addr, entry] : m_watches) {
+            toJoin.push_back(std::move(entry));
+        }
+        m_watches.clear();
+    }
+
+    for (auto& entry : toJoin) {
+        if (entry && entry->watchThread.joinable()) {
             entry->watchThread.join();
         }
     }
-    m_watches.clear();
 }

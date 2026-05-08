@@ -20,6 +20,13 @@ if not ok then
         log = function(fmt, ...) print(string.format("[UE5Dump] " .. fmt, ...)) end,
         logError = function(fmt, ...) print(string.format("[UE5Dump ERROR] " .. fmt, ...)) end,
         addrToHex = function(addr) return string.format("0x%X", addr) end,
+        isAlreadyLoaded = function()
+            local okGet, addr = pcall(getAddress, "UE5_Init")
+            if okGet and addr and addr ~= 0 then
+                return true, "(unknown module)", nil
+            end
+            return false, nil, nil
+        end,
     }
 end
 
@@ -29,6 +36,21 @@ local DLL_PATH = getCheatEngineDir() .. "ue5dumper\\UE5Dumper.dll"
 local function main()
     utils.log("Starting UE5 Dumper...")
     utils.log("DLL path: %s", DLL_PATH)
+
+    -- 0. Skip injection if our DLL (proxy or previously-injected) is already
+    -- present in the target process. Without this check, a second inject
+    -- would map a duplicate copy into VA before the runtime pipe-existence
+    -- guard (Heiter.cpp) bails. The proxy-then-inject path is the realistic
+    -- one; the inverse (inject-then-proxy) is impossible since proxy DLLs
+    -- only load at process start.
+    if utils.isAlreadyLoaded then
+        local present, modName = utils.isAlreadyLoaded()
+        if present then
+            utils.log("Already loaded as '%s' — skipping inject.", modName or "?")
+            utils.log("Launch UE5DumpUI.exe and click Connect.")
+            return
+        end
+    end
 
     -- 1. Inject DLL into the target process
     local result = loadLibrary(DLL_PATH)

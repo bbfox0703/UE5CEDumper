@@ -1,0 +1,52 @@
+; ============================================================
+; ProxyDinput8.def — Module definition for dinput8.dll proxy
+;
+; Maps the 5 dinput8 exports to internal Proxy_* implementations,
+; and re-exports the UE5 C ABI so CE Lua's getAddress() can
+; resolve the dumper functions through the proxy DLL.
+;
+; The /DEF: linker flag suppresses default exports, so UE5_*
+; entries must be listed explicitly here.
+; ============================================================
+
+LIBRARY dinput8
+EXPORTS
+    ; --- Windows dinput8.dll forwarding ---
+    DirectInput8Create  = Proxy_DirectInput8Create
+    DllCanUnloadNow     = Proxy_DllCanUnloadNow
+    DllGetClassObject   = Proxy_DllGetClassObject
+    DllRegisterServer   = Proxy_DllRegisterServer
+    DllUnregisterServer = Proxy_DllUnregisterServer
+
+    ; --- UE5 Dumper C ABI exports (for CE Lua getAddress) ---
+    UE5_Init
+    UE5_Shutdown
+    UE5_GetVersion
+    UE5_AutoStart
+    UE5_GetGObjectsAddr
+    UE5_GetGNamesAddr
+    UE5_GetObjectCount
+    UE5_GetObjectByIndex
+    UE5_GetObjectName
+    UE5_GetObjectFullName
+    UE5_GetObjectClass
+    UE5_GetObjectOuter
+    UE5_FindObject
+    UE5_FindClass
+    UE5_WalkClassBegin
+    UE5_WalkClassGetField
+    UE5_WalkClassEnd
+    UE5_ResolveFName
+    UE5_SetObjectDecryption
+    UE5_GetFieldBoolMask
+    UE5_GetFieldStructClass
+    UE5_GetFieldPropertyClass
+    UE5_GetClassPropsSize
+    UE5_FindInstanceOfClass
+    UE5_FindFunctionByName
+    UE5_CallProcessEvent
+    UE5_GetMailboxAddr
+    g_invokeMailbox DATA
+    UE5_StartPipeServer
+    UE5_StopPipeServer
+    UE5_IsPipeConnected

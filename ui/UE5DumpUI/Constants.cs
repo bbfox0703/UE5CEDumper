@@ -60,7 +60,12 @@ public static class Constants
     public const int TreePanelWidth = 350;
 
     // Proxy DLL Deploy
+    // Two proxy DLL options — user picks one via the UI RadioButton.
+    // ProxyDllName is kept as the legacy "default" name for backward
+    // compatibility with existing tests; the canonical lookup goes through
+    // ProxyType.GetDllName() (Models/ProxyType.cs).
     public const string ProxyDllName = "version.dll";
+    public const string ProxyDllNameDinput8 = "dinput8.dll";
     public const string ProxyProductName = "UE5CEDumper";
     public const string SteamRegistryPath = @"SOFTWARE\WOW6432Node\Valve\Steam";
     public const string SteamRegistryKey = "InstallPath";

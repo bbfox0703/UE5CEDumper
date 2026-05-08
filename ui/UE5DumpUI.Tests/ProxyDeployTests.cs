@@ -264,11 +264,48 @@ public class ProxyDeployTests
     public void Constants_ProxyDeploy_Defined()
     {
         Assert.Equal("version.dll", Constants.ProxyDllName);
+        Assert.Equal("dinput8.dll", Constants.ProxyDllNameDinput8);
         Assert.Equal("UE5CEDumper", Constants.ProxyProductName);
         Assert.False(string.IsNullOrEmpty(Constants.SteamRegistryPath));
         Assert.False(string.IsNullOrEmpty(Constants.SteamRegistryKey));
         Assert.False(string.IsNullOrEmpty(Constants.SteamDefaultPath));
         Assert.False(string.IsNullOrEmpty(Constants.SteamLibraryFoldersVdf));
         Assert.False(string.IsNullOrEmpty(Constants.SteamAppsCommon));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // ProxyType
+    // ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ProxyType_Version_MapsToVersionDll()
+    {
+        Assert.Equal("version.dll", ProxyType.Version.GetDllName());
+        Assert.Equal("version.dll", ProxyType.Version.GetDisplayName());
+    }
+
+    [Fact]
+    public void ProxyType_Dinput8_MapsToDinput8Dll()
+    {
+        Assert.Equal("dinput8.dll", ProxyType.Dinput8.GetDllName());
+        Assert.Equal("dinput8.dll", ProxyType.Dinput8.GetDisplayName());
+    }
+
+    [Fact]
+    public void ProxyType_AllValuesHaveMappings()
+    {
+        // Guard against silently breaking the switch when a new enum value is
+        // added — every defined ProxyType must yield a non-empty DLL name.
+        foreach (ProxyType type in Enum.GetValues<ProxyType>())
+        {
+            Assert.False(string.IsNullOrEmpty(type.GetDllName()));
+            Assert.False(string.IsNullOrEmpty(type.GetDisplayName()));
+        }
+    }
+
+    [Fact]
+    public void ProxyType_VersionAndDinput8_HaveDistinctDllNames()
+    {
+        Assert.NotEqual(ProxyType.Version.GetDllName(), ProxyType.Dinput8.GetDllName());
     }
 }

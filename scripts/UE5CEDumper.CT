@@ -140,6 +140,42 @@ end
 -- DLL call wrapper  (executeCodeEx: retType 0=void, 1=integer)
 -- ============================================================
 
+-- ============================================================
+-- ue5_isAlreadyLoaded()
+-- Detect if our DLL or proxy DLL is already in the target process,
+-- so we can skip a redundant (and potentially harmful) inject.
+-- Returns: present (bool), moduleName (string|nil), modulePath (string|nil)
+-- ============================================================
+
+function ue5_isAlreadyLoaded()
+    -- Fast path: any UE5_* export resolvable means our code is already in.
+    local okGet, addr = pcall(getAddress, "UE5_Init")
+    if not (okGet and addr and addr ~= 0) then
+        return false, nil, nil
+    end
+
+    -- Confirmed loaded — figure out which module for the message.
+    local okEnum, mods = pcall(enumModules)
+    if okEnum and type(mods) == "table" then
+        for _, mod in ipairs(mods) do
+            local nm = string.lower(mod.Name or "")
+            if nm == "ue5dumper.dll" then
+                return true, mod.Name, mod.PathToFile
+            end
+            if nm == "version.dll" or nm == "winmm.dll" then
+                local path = string.lower(mod.PathToFile or "")
+                -- Skip System32/SysWOW64 — that's the genuine Windows copy
+                if path ~= "" and not path:find("\\system32\\", 1, true)
+                              and not path:find("\\syswow64\\", 1, true) then
+                    return true, mod.Name, mod.PathToFile
+                end
+            end
+        end
+    end
+
+    return true, "(unknown module)", nil
+end
+
 function ue5_callDLL(funcName, retType, ...)
     local fn = getAddress(funcName)
     if fn == nil or fn == 0 then
@@ -179,6 +215,22 @@ function ue5_inject()
         return
     end
     ue5_log("Target process PID: %d", pid)
+
+    -- 0.5. Skip injection if our DLL or proxy DLL is already loaded.
+    -- Common case: user has version.dll deployed in the game folder, then
+    -- tries to inject via CE — without this guard we'd map a duplicate
+    -- copy into VA before Heiter.cpp's runtime pipe-existence guard bails.
+    local present, modName, modPath = ue5_isAlreadyLoaded()
+    if present then
+        ue5_log("UE5CEDumper already loaded as '%s' (path: %s) — skipping inject.",
+                modName or "?", modPath or "?")
+        local msg = "UE5CEDumper is already loaded in this process as '"
+                 .. (modName or "?") .. "'.\n\n"
+                 .. "No injection needed — just launch UE5DumpUI.exe and click Connect.\n"
+                 .. "Pipe: \\\\.\\pipe\\UE5DumpBfx"
+        showMessage(msg)
+        return
+    end
 
     -- 1. Inject DLL into the target process.
     -- The DLL auto-start thread handles UE5_Init (AOBScan) + UE5_StartPipeServer

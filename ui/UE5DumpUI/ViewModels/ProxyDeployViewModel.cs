@@ -25,6 +25,26 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [ObservableProperty] private string? _lastOperationResult;
 
     /// <summary>
+    /// Which proxy DLL the user wants to deploy. Bound to the RadioButtons
+    /// at the top of the panel. Changing this triggers a status refresh so
+    /// the DataGrid reflects the deploy state of the newly-selected DLL.
+    /// </summary>
+    [ObservableProperty] private ProxyType _selectedProxyType = ProxyType.Version;
+
+    // Two-way bindings for radio button state — Avalonia RadioButtons bind
+    // to bool, so we expose convenience properties that mirror SelectedProxyType.
+    public bool IsVersionSelected
+    {
+        get => SelectedProxyType == ProxyType.Version;
+        set { if (value) SelectedProxyType = ProxyType.Version; }
+    }
+    public bool IsDinput8Selected
+    {
+        get => SelectedProxyType == ProxyType.Dinput8;
+        set { if (value) SelectedProxyType = ProxyType.Dinput8; }
+    }
+
+    /// <summary>
     /// Detected games. Non-replaceable: items are added/removed in place so that
     /// per-row PropertyChanged notifications from the DataGrid keep working.
     /// Replacing the collection (the previous approach) caused stale visuals
@@ -41,26 +61,67 @@ public partial class ProxyDeployViewModel : ViewModelBase
         _deploy = deploy;
         _log = log;
 
+        UpdateSourceDllInfo();
+    }
+
+    /// <summary>
+    /// Locate the source DLL for the currently-selected proxy type.
+    /// The proxy/ subdirectory next to the UI executable is kept separate
+    /// so Windows DLL search order doesn't load our version.dll into the
+    /// UI process itself.
+    /// </summary>
+    private void UpdateSourceDllInfo()
+    {
         try
         {
-            // Locate source DLL in the proxy/ subdirectory next to the UI executable.
-            // Kept separate to prevent Windows DLL search order from loading our
-            // version.dll into the UI process itself.
             var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-            var dllPath = Path.Combine(exeDir, "proxy", Constants.ProxyDllName);
+            var dllName = SelectedProxyType.GetDllName();
+            var dllPath = Path.Combine(exeDir, "proxy", dllName);
             SourceDllPath = dllPath;
             SourceDllVersion = File.Exists(dllPath)
                 ? _deploy.GetDllVersion(dllPath)
                 : null;
 
             StatusText = File.Exists(dllPath)
-                ? $"Source: {Constants.ProxyDllName} v{SourceDllVersion ?? "?"}"
+                ? $"Source: {dllName} v{SourceDllVersion ?? "?"}"
                 : $"Source DLL not found: {dllPath}";
         }
         catch (Exception ex)
         {
             StatusText = $"Init error: {ex.Message}";
             _log.Error("ProxyDeploy", $"ViewModel init failed: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// Triggered by the source-generated SelectedProxyType setter
+    /// (from [ObservableProperty]). Re-resolves the source DLL path for
+    /// the new proxy type and refreshes deploy status of detected games.
+    /// </summary>
+    partial void OnSelectedProxyTypeChanged(ProxyType value)
+    {
+        UpdateSourceDllInfo();
+        // Notify radio button mirror properties so XAML stays in sync.
+        OnPropertyChanged(nameof(IsVersionSelected));
+        OnPropertyChanged(nameof(IsDinput8Selected));
+
+        // If we already have games, re-evaluate their deploy status against
+        // the new proxy type. Fire-and-forget — UI doesn't block on toggle.
+        if (Games.Count > 0 && File.Exists(SourceDllPath))
+        {
+            _ = RefreshAfterTypeChangeAsync();
+        }
+    }
+
+    private async Task RefreshAfterTypeChangeAsync()
+    {
+        try
+        {
+            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType);
+        }
+        catch (Exception ex)
+        {
+            _log.Warn("ProxyDeploy", $"Refresh after type change failed: {ex.Message}");
         }
     }
 
@@ -91,7 +152,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             if (Games.Count > 0 && File.Exists(SourceDllPath))
             {
                 StatusText = "Checking deploy status...";
-                await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+                await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, ct);
             }
 
             StatusText = $"Found {Games.Count} UE game(s)";
@@ -129,7 +190,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 ? _deploy.GetDllVersion(SourceDllPath)
                 : null;
 
-            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, ct);
             StatusText = $"{Games.Count} game(s) — status refreshed";
         }
         catch (Exception ex)
@@ -165,13 +226,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
             ct.ThrowIfCancellationRequested();
             StatusText = $"Deploying to {game.Name}...";
 
-            bool success = await _deploy.DeployAsync(SourceDllPath, game, ForceOverwrite, ct);
+            bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType, ForceOverwrite, ct);
             if (success) ok++;
             else fail++;
         }
 
         // Refresh status from disk to ensure DataGrid reflects actual state
-        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, ct);
 
         LastOperationResult = $"Deployed: {ok} success, {fail} failed";
         StatusText = LastOperationResult;
@@ -198,13 +259,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
             ct.ThrowIfCancellationRequested();
             StatusText = $"Removing from {game.Name}...";
 
-            bool success = await _deploy.UndeployAsync(game, ct);
+            bool success = await _deploy.UndeployAsync(game, SelectedProxyType, ct);
             if (success) ok++;
             else fail++;
         }
 
         // Refresh status from disk to ensure DataGrid reflects actual state
-        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, ct);
 
         LastOperationResult = $"Removed: {ok} success, {fail} failed";
         StatusText = LastOperationResult;
@@ -249,13 +310,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
             ct.ThrowIfCancellationRequested();
             StatusText = $"Updating {game.Name}...";
 
-            bool success = await _deploy.DeployAsync(SourceDllPath, game, force: true, ct);
+            bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType, force: true, ct: ct);
             if (success) ok++;
             else fail++;
         }
 
         // Refresh status from disk to ensure DataGrid reflects actual state
-        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, ct);
+        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, ct);
 
         LastOperationResult = $"Updated: {ok} success, {fail} failed";
         StatusText = LastOperationResult;

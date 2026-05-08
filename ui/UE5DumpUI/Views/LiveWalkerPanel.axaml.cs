@@ -13,18 +13,46 @@ public partial class LiveWalkerPanel : UserControl
 {
     private static readonly IBrush HighlightBrush = new SolidColorBrush(Color.FromArgb(60, 255, 200, 0));
 
+    // Audit fix #18: track the currently-subscribed VM so we can `-=` from
+    // it before re-subscribing to a new one. Without this, every
+    // DataContext reassignment leaves a stale handler on the previous VM
+    // (keeping it alive) and adds a duplicate handler on the new one
+    // (firing the scroll callback N times per event).
+    private LiveWalkerViewModel? _subscribedVm;
+
     public LiveWalkerPanel()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        DetachedFromVisualTree += OnDetached;
     }
 
     private void OnDataContextChanged(object? sender, System.EventArgs e)
     {
+        // Unsubscribe from previous VM first (if any)
+        if (_subscribedVm != null)
+        {
+            _subscribedVm.ScrollToFieldRequested -= OnScrollToFieldRequested;
+            _subscribedVm.ScrollToFirstSearchMatch -= OnScrollToFirstSearchMatch;
+            _subscribedVm = null;
+        }
+
         if (DataContext is LiveWalkerViewModel vm)
         {
             vm.ScrollToFieldRequested += OnScrollToFieldRequested;
             vm.ScrollToFirstSearchMatch += OnScrollToFirstSearchMatch;
+            _subscribedVm = vm;
+        }
+    }
+
+    private void OnDetached(object? sender, Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        // Final cleanup when the panel leaves the visual tree.
+        if (_subscribedVm != null)
+        {
+            _subscribedVm.ScrollToFieldRequested -= OnScrollToFieldRequested;
+            _subscribedVm.ScrollToFirstSearchMatch -= OnScrollToFirstSearchMatch;
+            _subscribedVm = null;
         }
     }
 

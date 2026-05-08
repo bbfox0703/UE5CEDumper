@@ -11,8 +11,9 @@ namespace UE5DumpUI.ViewModels;
 /// <summary>
 /// Main window ViewModel — orchestrates connection and child ViewModels.
 /// </summary>
-public partial class MainWindowViewModel : ViewModelBase
+public partial class MainWindowViewModel : ViewModelBase, IDisposable
 {
+    private bool _disposed;
     private readonly IPipeClient _pipeClient;
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
@@ -292,6 +293,25 @@ public partial class MainWindowViewModel : ViewModelBase
                 if (!connected) WindowTitle = "UE5 Dump UI";
             });
         };
+    }
+
+    /// <summary>
+    /// Audit fixes #16/#17: dispose owned child VMs that hold timers /
+    /// CancellationTokenSources. Called from MainWindow.Closed so timer
+    /// callbacks don't fire after the window is gone.
+    /// Other child VMs (PointerPanel, ClassStruct, InstanceFinder, etc.)
+    /// don't currently own disposable resources; they're skipped here.
+    /// If they grow IDisposable in the future, add them to this list.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        ObjectTree.Dispose();
+        LiveWalker.Dispose();
+
+        GC.SuppressFinalize(this);
     }
 
     [RelayCommand]

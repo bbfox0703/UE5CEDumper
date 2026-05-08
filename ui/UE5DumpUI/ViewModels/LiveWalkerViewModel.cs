@@ -16,12 +16,13 @@ namespace UE5DumpUI.ViewModels;
 /// ViewModel for the Live Data Walker panel.
 /// Browse GWorld hierarchy and navigate into any UObject by clicking pointers.
 /// </summary>
-public partial class LiveWalkerViewModel : ViewModelBase
+public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 {
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
     private readonly IPlatformService _platform;
     private readonly IAobMakerBridge? _aobMaker;
+    private bool _disposed;
 
     // Cached GWorld walk result for back-navigation
     private WorldWalkResult? _cachedWorld;
@@ -2126,6 +2127,24 @@ public partial class LiveWalkerViewModel : ViewModelBase
         AutoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
         _isAutoRefreshBenchmarked = false;
         AutoRefreshStatusText = "sec";
+    }
+
+    /// <summary>
+    /// Audit fix #17: stop both DispatcherTimers when the VM is destroyed.
+    /// Without this, a still-registered Tick handler keeps the VM rooted by
+    /// the Avalonia dispatcher, so the timer fires post-disposal — at best
+    /// wasting work, at worst crashing on stale state.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        // StopAutoRefreshTimer already handles both _autoRefreshTimer and
+        // _countdownTimer (via StopCountdownTimer) — single call covers it.
+        StopAutoRefreshTimer();
+
+        GC.SuppressFinalize(this);
     }
 
     private async void OnAutoRefreshTick(object? sender, EventArgs e)

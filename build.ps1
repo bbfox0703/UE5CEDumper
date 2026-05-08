@@ -36,7 +36,7 @@ param(
     [ValidateSet("Debug", "Release", "Publish")]
     [string]$Mode = "Release",
 
-    [ValidateSet("All", "DLL", "ProxyDLL", "UI", "Test")]
+    [ValidateSet("All", "DLL", "ProxyDLL", "ProxyDinput8", "UI", "Test")]
     [string]$Target = "All",
 
     [switch]$Clean,
@@ -407,6 +407,68 @@ if ($Target -in "All", "ProxyDLL") {
             }
             else {
                 Write-Fail "version.dll not found in build output"
+                $exitCode = 1
+            }
+        }
+    }
+}
+
+# ============================================================
+# Build Proxy DLL (dinput8.dll) — alternative to version.dll
+# ============================================================
+
+if ($Target -in "All", "ProxyDinput8") {
+    Write-Banner "Proxy DLL (dinput8.dll)  |  $CppConfig"
+
+    $proxyDi8BuildDir = Join-Path $ROOT_DIR "build_proxy_dinput8"
+
+    # Always do a clean build
+    if (Test-Path $proxyDi8BuildDir) {
+        Write-Step "Removing dinput8 proxy CMake cache for clean build..."
+        Remove-Item $proxyDi8BuildDir -Recurse -Force
+        Write-Ok "dinput8 proxy build directory cleaned"
+    }
+
+    Write-Step "Configuring CMake for dinput8 Proxy DLL (Ninja + MSVC)..."
+    $configOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$proxyDi8BuildDir`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DINPUT8=ON"
+
+    if (-not $configOk) {
+        Write-Fail "CMake configure failed (dinput8 Proxy DLL)"
+        $exitCode = 1
+    }
+    else {
+        Write-Ok "CMake configured (dinput8 Proxy DLL)"
+
+        Write-Step "Building dinput8.dll ($CppConfig)..."
+        $buildOk = Invoke-CmdInVsEnv "cmake --build `"$proxyDi8BuildDir`" --config $CppConfig --target UE5Dumper_ProxyDinput8"
+
+        if (-not $buildOk) {
+            Write-Fail "dinput8 Proxy DLL build failed"
+            $exitCode = 1
+        }
+        else {
+            $proxyDll = Get-ChildItem -Path $proxyDi8BuildDir -Filter "dinput8.dll" -Recurse |
+                        Select-Object -First 1
+
+            if ($proxyDll) {
+                # Place proxy DLL in a subdirectory to prevent UE5DumpUI.exe
+                # from accidentally loading it (Windows DLL search order).
+                $proxyOutDir = Join-Path $DIST_DIR "proxy"
+                if (-not (Test-Path $proxyOutDir)) { New-Item -Path $proxyOutDir -ItemType Directory | Out-Null }
+
+                Copy-Item $proxyDll.FullName -Destination $proxyOutDir -Force
+
+                $pdbFile = Get-ChildItem -Path $proxyDi8BuildDir -Filter "dinput8.pdb" -Recurse |
+                           Select-Object -First 1
+                if ($pdbFile) {
+                    Copy-Item $pdbFile.FullName -Destination $proxyOutDir -Force
+                }
+
+                $dllSize = Get-FileSize (Join-Path $proxyOutDir "dinput8.dll")
+                Write-Ok "dinput8.dll ($dllSize) -> dist\proxy\"
+            }
+            else {
+                Write-Fail "dinput8.dll not found in build output"
                 $exitCode = 1
             }
         }

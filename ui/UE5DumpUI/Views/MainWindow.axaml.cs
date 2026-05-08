@@ -1,3 +1,4 @@
+using System;
 using Avalonia.Controls;
 using UE5DumpUI.ViewModels;
 
@@ -8,6 +9,15 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // Audit fixes #16 / #17: dispose timer-owning child VMs when the
+        // window closes, so background DispatcherTimers and Threading.Timer
+        // callbacks don't fire post-close on torn-down state.
+        Closed += OnClosed;
+    }
+
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        if (DataContext is IDisposable d) d.Dispose();
     }
 
     /// <summary>
