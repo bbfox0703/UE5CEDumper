@@ -2778,13 +2778,41 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle SoftObjectProperty / SoftClassProperty: read FSoftObjectPath asset path
+        // Handle SoftObjectProperty / SoftClassProperty: read FSoftObjectPath asset path.
         // TSoftObjectPtr layout: +0x00 FWeakObjectPtr(8B), +0x08 Tag(4B), +0x0C pad(4B), +0x10 FSoftObjectPath
+        // When the asset is currently loaded the embedded FWeakObjectPtr resolves
+        // to the live UObject*; expose it via ptrValue so the UI can drill in
+        // and the Address Finder can route through soft references.
         if (fi.TypeName == "SoftObjectProperty" || fi.TypeName == "SoftClassProperty") {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
             std::string assetPath = ReadSoftObjectPath(fieldAddr + 0x10);
             fv.strValue = assetPath;
-            fv.typedValue = assetPath.empty() ? "(none)" : assetPath;
+
+            // Resolve embedded FWeakObjectPtr at +0x00 → live UObject* (when loaded)
+            int32_t objIdx = 0, serial = 0;
+            Macht::ReadSafe(fieldAddr,     objIdx);
+            Macht::ReadSafe(fieldAddr + 4, serial);
+            uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
+            if (target) {
+                fv.ptrValue = target;
+                fv.ptrName = GetName(target);
+                uintptr_t cls = GetClass(target);
+                if (cls) {
+                    fv.ptrClassName = GetName(cls);
+                    fv.ptrClassAddr = cls;
+                }
+            }
+
+            // Display: prefer asset path; fall back to resolved name when loaded
+            if (!assetPath.empty()) {
+                fv.typedValue = assetPath;
+            } else if (target && !fv.ptrName.empty()) {
+                fv.typedValue = fv.ptrClassName.empty()
+                    ? fv.ptrName
+                    : fv.ptrName + " (" + fv.ptrClassName + ")";
+            } else {
+                fv.typedValue = "(none)";
+            }
 
             // Hex from raw bytes (cap at 32 bytes)
             int showBytes = (fi.Size > 0 && fi.Size <= 64) ? (std::min)(fi.Size, (int32_t)32) : 0;
@@ -2806,10 +2834,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle LazyObjectProperty: read FUniqueObjectGuid (FGuid = 4 x uint32)
+        // Handle LazyObjectProperty: read FUniqueObjectGuid (FGuid = 4 x uint32).
         // TLazyObjectPtr layout: +0x00 FWeakObjectPtr(8B), +0x08 Tag(4B), +0x0C pad(4B), +0x10 FGuid(16B)
+        // Mirror Soft path: resolve embedded FWeakObjectPtr when the lazy ptr
+        // is currently bound to a live UObject.
         if (fi.TypeName == "LazyObjectProperty") {
-            uintptr_t guidAddr = instanceAddr + fi.Offset + 0x10;
+            uintptr_t fieldAddr = instanceAddr + fi.Offset;
+            uintptr_t guidAddr = fieldAddr + 0x10;
             uint32_t a = 0, b = 0, c = 0, d = 0;
             Macht::ReadSafe(guidAddr + 0, a);
             Macht::ReadSafe(guidAddr + 4, b);
@@ -2818,14 +2849,37 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
             char guidStr[48];
             snprintf(guidStr, sizeof(guidStr), "{%08X-%08X-%08X-%08X}", a, b, c, d);
-            fv.typedValue = guidStr;
             fv.strValue = guidStr;
+
+            // Resolve embedded FWeakObjectPtr at +0x00 → live UObject* (when loaded)
+            int32_t objIdx = 0, serial = 0;
+            Macht::ReadSafe(fieldAddr,     objIdx);
+            Macht::ReadSafe(fieldAddr + 4, serial);
+            uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
+            if (target) {
+                fv.ptrValue = target;
+                fv.ptrName = GetName(target);
+                uintptr_t cls = GetClass(target);
+                if (cls) {
+                    fv.ptrClassName = GetName(cls);
+                    fv.ptrClassAddr = cls;
+                }
+            }
+
+            // Display: GUID + resolved name when loaded
+            if (target && !fv.ptrName.empty()) {
+                fv.typedValue = std::string(guidStr) + " " + fv.ptrName;
+                if (!fv.ptrClassName.empty())
+                    fv.typedValue += " (" + fv.ptrClassName + ")";
+            } else {
+                fv.typedValue = guidStr;
+            }
 
             // Hex from raw bytes
             int showBytes = (fi.Size > 0 && fi.Size <= 64) ? (std::min)(fi.Size, (int32_t)32) : 0;
             if (showBytes > 0) {
                 std::vector<uint8_t> rawBuf(showBytes, 0);
-                if (Macht::ReadBytesSafe(instanceAddr + fi.Offset, rawBuf.data(), showBytes)) {
+                if (Macht::ReadBytesSafe(fieldAddr, rawBuf.data(), showBytes)) {
                     std::string hex;
                     hex.reserve(showBytes * 2);
                     for (int i = 0; i < showBytes; ++i) {
