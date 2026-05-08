@@ -144,6 +144,121 @@ All DLL code uses `DynOff::*` namespace (mutable `inline int` values), never har
 
 -----
 
+## Property Type Layouts (Drill-Down Reference)
+
+Single-value handlers and array element readers (Phase B–K in `Ubel.cpp`) are
+driven by these on-disk layouts. `fnameSize` = 8 (default) or 16 (when
+`bCasePreservingName` is set).
+
+### Pointer-shaped properties (8 bytes each)
+
+| Property | Layout | Notes |
+|----------|--------|-------|
+| `ObjectProperty` / `ClassProperty` | `UObject*` (8B) | Phase D |
+| `WeakObjectProperty` | `{ int32 ObjectIndex, int32 SerialNumber }` (8B) | Phase E — resolve via `ResolveWeakObjectPtr` |
+
+### Smart pointers (TPersistentObjectPtr family)
+
+```
+TSoftObjectPtr<T> / TSoftClassPtr<T>      // Phase G
++0x00 FWeakObjectPtr (8B)
++0x08 Tag (4B) + pad (4B)
++0x10 FSoftObjectPath
+        UE4 / UE5.0:  FName AssetPathName + FString SubPathString
+        UE5.1+:       FName PackageName + FName AssetName + FString SubPathString
+total: 0x28 (UE4 default) ... 0x48 (UE5.1+ with CasePreservingName)
+```
+
+```
+TLazyObjectPtr<T>                          // Phase H
++0x00 FWeakObjectPtr (8B)
++0x08 Tag (4B) + pad (4B)
++0x10 FUniqueObjectGuid (FGuid = 4 x uint32, 16B)
+total: 0x20 (fixed)
+```
+
+Both expose the embedded `FWeakObjectPtr` so when the asset is currently
+loaded the live `UObject*` resolves and is set on `fv.ptrValue` — Live
+Walker drill / Address Finder / CSX export all pick this up.
+
+### Interface
+
+```
+FScriptInterface (InterfaceProperty)       // Phase I
++0x00 UObject* ObjectPointer  (8B)
++0x08 void*    InterfacePointer (8B)
+total: 16 (fixed)
+```
+
+### Delegates
+
+```
+FScriptDelegate (DelegateProperty)         // Phase J
++0x00 FWeakObjectPtr (8B)  -> bound UObject*
++0x08 FName FunctionName (8B or 16B)
+total: 16 or 24 depending on CasePreservingName
+```
+
+```
+FMulticastScriptDelegate                   // Phase K (single-value AND array)
++0x00 TArray<FScriptDelegate> InvocationList
+        Data*  (8B)
+        Count  (4B)
+        Max    (4B)
+total: 16 (fixed)
+```
+
+A **single** `MulticastInlineDelegateProperty` field is exposed by
+`WalkInstance` as an *implicit* `DelegateProperty` array (`ArrayCount`,
+`ArrayInnerType="DelegateProperty"`, `ArrayElemSize`, `ArrayElements`
+populated). This makes `IsContainerNavigable=true` so the UI / CE XML /
+CSX export reuse the standard array drill path. CE XML's `Offsets=[0]`
+correctly dereferences `InvocationList::Data`.
+
+`MulticastSparseDelegateProperty` has a different layout (sparse delegate
+ID + names) and is **not** currently exposed for drill-down.
+
+### Validating element stride
+
+Inner FProperty `ELEMSIZE` reads frequently return garbage. Each Phase
+reader picks one of three strategies:
+
+- **Force a fixed value** when the layout is invariant: Object/Weak (8),
+  Interface (16), Lazy (0x20), Delegate-via-CasePreservingName (16 or 24)
+- **Sanity-clamp + fallback** when version-dependent: Soft (0x28..0x48),
+  with fallback formula `0x10 + (isTopLevelAssetPath ? 2*fnameSize : fnameSize) + 0x10`
+- **Trust the read** when the inner has a real size: Struct (use
+  `UScriptStruct::PropertiesSize`), Scalar (4/8/etc.)
+
+`InferScalarSize` only declares known fixed sizes; variable-stride types
+(`SoftObjectProperty`, `SoftClassProperty`, `DelegateProperty`) are
+deliberately left out so `ValidateArrayElemSize` does not force a wrong
+override — the readers self-correct.
+
+-----
+
+## Array Element Reader Phases
+
+| Phase | Inner type(s) | Element size | Notes |
+|-------|---------------|--------------|-------|
+| B | scalar (Float/Int/Bool/Byte/Name/Enum) | 1..8 | `ReadArrayElements` — pageable via `read_array_elements` pipe cmd |
+| D | `ObjectProperty` / `ClassProperty` | 8 (forced) | `ReadPointerArrayElements` — resolves `UObject*` name + class |
+| E | `WeakObjectProperty` | 8 (forced) | `ReadWeakObjectArrayElements` — verify SerialNumber |
+| F | `StructProperty` | `PropertiesSize` of inner UScriptStruct | `ReadStructArrayElements` — populates `StructSubField[]` |
+| G | `SoftObjectProperty` / `SoftClassProperty` | 0x28..0x48 (validated/derived) | `ReadSoftObjectArrayElements` — asset path + resolved live `UObject*` |
+| H | `LazyObjectProperty` | 0x20 (forced) | `ReadLazyObjectArrayElements` — FGuid + resolved live `UObject*` |
+| I | `InterfaceProperty` | 16 (forced) | `ReadInterfaceArrayElements` — UObject* exposed |
+| J | `DelegateProperty` | 16 or 24 | `ReadDelegateArrayElements` — Target::FunctionName + drill-into-target |
+| K | `MulticastDelegateProperty` / `MulticastInlineDelegateProperty` | 16 (forced) | `ReadMulticastDelegateArrayElements` — preview only ("(N bindings) [...]"), no per-binding drill |
+
+All readers cap at 4096 elements per request; `WalkInstance` further
+constrains to `arrayLimit` (default 64, configurable in UI). Each Phase
+is dispatched twice in the WalkInstance ArrayProperty handler — once in
+the FProperty branch (UE4.25+/UE5) and once in the UProperty fallback
+branch (UE4.18–4.24).
+
+-----
+
 ## Implementation Phases
 
 ### Phase 1 — DLL Core
