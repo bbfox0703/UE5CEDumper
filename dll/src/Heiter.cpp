@@ -26,12 +26,8 @@ extern "C" void UE5_Shutdown();
 // Mailbox — shared memory interface for CE Lua
 #include "Mimic.h"
 
-#ifdef UE5_PROXY_VERSION_BUILD
-// Cleanup for version.dll proxy — defined in Lugner.cpp
-extern void ProxyVersion_Cleanup();
-#endif
-
-// Handle for the auto-start thread — stored so we can wait for it during DLL unload
+// Handle for the auto-start thread — stored so we can wait for it during
+// active shutdown (UE5_Shutdown, not DLL_PROCESS_DETACH, see below).
 static HANDLE g_hAutoStartThread = nullptr;
 
 #ifdef UE5_PROXY_BUILD
@@ -42,8 +38,10 @@ static HANDLE g_hAutoStartThread = nullptr;
 // passive forwarder — its OS-API stubs still work, but it skips all
 // UE5CEDumper-side init so we don't get duplicate pipe servers, log files,
 // or background threads.
+//
+// The mutex handle is intentionally never closed — its lifetime spans the
+// whole process. The OS reclaims it on process exit.
 static HANDLE g_primaryProxyMutex = nullptr;
-static bool   g_isPassiveProxy    = false;
 #endif
 
 #ifdef UE5_PROXY_BUILD
@@ -134,11 +132,14 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
         // claimed the global mutex, become a passive forwarder. We MUST do
         // this before Sein::Init() so the second instance doesn't open log
         // files in the same per-process subfolder as the first.
+        //
+        // Returning TRUE here skips Sein::Init / Mimic::StartThread / the
+        // auto-start thread; the only thing this DLL still does is service
+        // its OS-API export forwarders (Lugner.cpp / Lugner_Dinput8.cpp).
         g_primaryProxyMutex = CreateMutexW(nullptr, FALSE,
             L"Global\\UE5CEDumper_PrimaryProxy");
         if (g_primaryProxyMutex != nullptr &&
             GetLastError() == ERROR_ALREADY_EXISTS) {
-            g_isPassiveProxy = true;
             // No logging — Sein not initialized in passive mode.
             return TRUE;
         }
@@ -183,26 +184,19 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
     }
 
     case DLL_PROCESS_DETACH:
-#ifdef UE5_PROXY_BUILD
-        // Passive proxy: nothing was initialized, nothing to tear down.
-        // The OS reclaims the mutex handle automatically on process exit.
-        if (g_isPassiveProxy) {
-            break;
-        }
-#endif
-        LOG_INFO("UE5Dumper DLL unloading (DLL_PROCESS_DETACH)");
-        // Wait for auto-start thread to finish (max 5s) before tearing down
-        if (g_hAutoStartThread) {
-            WaitForSingleObject(g_hAutoStartThread, 5000);
-            CloseHandle(g_hAutoStartThread);
-            g_hAutoStartThread = nullptr;
-        }
-        // Stop pipe server and watch threads before logger shutdown
-        UE5_Shutdown();
-#ifdef UE5_PROXY_VERSION_BUILD
-        ProxyVersion_Cleanup();
-#endif
-        Sein::Shutdown();
+        // Audit findings #1, #2, #14: heavy work in DLL_PROCESS_DETACH
+        // (thread joins, MinHook teardown, FreeLibrary, log file flushes)
+        // risks loader-lock deadlocks because joined threads or unhooked
+        // code may take the loader lock that DllMain already holds.
+        //
+        // The OS terminates all threads and reclaims handles, file
+        // descriptors, loaded modules, and memory automatically when the
+        // process exits — that's the right place for this teardown.
+        //
+        // Active shutdowns still go through the full UE5_Shutdown path:
+        //   - CE Lua "Disable" → ue5_callDLL("UE5_Shutdown")
+        //   - Future hooks for proxy-mode graceful exit
+        // Only the implicit process-exit DETACH is a no-op.
         break;
 
     default:

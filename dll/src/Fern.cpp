@@ -59,6 +59,16 @@ void Fern::Stop() {
         m_rescan.scanThread.join();
     }
 
+    // Audit fix #3: join the initial-scan thread too. Previously this was
+    // missed, so destructing the static s_pipeServer with a still-joinable
+    // m_scan.scanThread would call ~thread → std::terminate. RunScan() runs
+    // UE5_Init (a bounded AOB scan, typically 2-8s) and exits naturally;
+    // we have no signal to abort it mid-flight, so just wait for it.
+    m_scan.running.store(false);
+    if (m_scan.scanThread.joinable()) {
+        m_scan.scanThread.join();
+    }
+
     // Close the pipe to unblock ConnectNamedPipe / ReadFile
     {
         std::lock_guard<std::mutex> lock(m_pipeMutex);
