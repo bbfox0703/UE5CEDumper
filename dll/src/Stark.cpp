@@ -133,6 +133,17 @@ bool InstallHook(uintptr_t processEventAddr) {
         return false;
     }
 
+    // Audit fix #13: re-enable after soft disable. RemoveHook only flips
+    // s_hookActive to false (the physical hook stays installed to avoid
+    // an in-flight unhook race), so a second InstallHook on the same
+    // address just flips the flag back on. No MinHook calls needed.
+    if (s_hookedAddr == processEventAddr && s_originalPE != nullptr) {
+        s_hookActive.store(true);
+        LOG_INFO("GameThreadDispatch: re-enabled existing hook at 0x%llX",
+                 (unsigned long long)processEventAddr);
+        return true;
+    }
+
     // Initialize MinHook (once)
     if (!s_mhInitialized.load()) {
         MH_STATUS status = MH_Initialize();
@@ -175,24 +186,32 @@ bool InstallHook(uintptr_t processEventAddr) {
 void RemoveHook() {
     if (!s_hookActive.load()) return;
 
-    if (s_hookedAddr) {
-        MH_DisableHook(reinterpret_cast<LPVOID>(s_hookedAddr));
-        MH_RemoveHook(reinterpret_cast<LPVOID>(s_hookedAddr));
-    }
-
+    // Audit fix #13: do NOT call MH_DisableHook + MH_RemoveHook. They patch
+    // the original code page back and free the trampoline — but a game
+    // thread may be executing INSIDE the trampoline at this exact moment,
+    // and MinHook does not synchronize with in-flight calls. Unhooking
+    // under it is a guaranteed crash.
+    //
+    // Soft disable: just flip the active flag. EnqueueInvoke now returns
+    // -7 immediately, so no new requests reach the queue. HookedProcessEvent
+    // remains the entry point — with an empty queue (drained by Shutdown
+    // for a clean stop), it just forwards to s_originalPE. The few KB of
+    // trampoline memory persists until process exit, where the OS reclaims
+    // it.
+    //
+    // s_originalPE / s_hookedAddr are intentionally NOT cleared so that
+    // (a) HookedProcessEvent can still forward to the original PE for any
+    //     game thread still inside our trampoline at this moment, and
+    // (b) a subsequent InstallHook on the same address can fast-path
+    //     re-enable via the s_hookedAddr / s_originalPE check above.
     s_hookActive.store(false);
-    s_originalPE = nullptr;
-    s_hookedAddr = 0;
 
-    LOG_INFO("GameThreadDispatch: hook removed");
-
-    // Note: we intentionally do NOT call MH_Uninitialize() here.
-    // RemoveHook may be called at runtime (e.g. reinstallation), and
-    // MH_Uninitialize is a global teardown — use Shutdown() at DLL unload.
+    LOG_INFO("GameThreadDispatch: hook flag cleared (physical hook retained "
+             "to avoid in-flight unhook race)");
 }
 
 void Shutdown() {
-    // Ensure the hook is gone first (idempotent).
+    // Soft-disable the hook (audit fix #13).
     RemoveHook();
 
     // Drop any pending queued invokes so waiting pipe threads get a result
@@ -210,16 +229,14 @@ void Shutdown() {
         }
     }
 
-    if (s_mhInitialized.load()) {
-        MH_STATUS status = MH_Uninitialize();
-        if (status != MH_OK) {
-            LOG_WARN("GameThreadDispatch: MH_Uninitialize failed: %s",
-                     MH_StatusToString(status));
-        } else {
-            LOG_INFO("GameThreadDispatch: MinHook uninitialized");
-        }
-        s_mhInitialized.store(false);
-    }
+    // Audit fix #14: do NOT call MH_Uninitialize. It patches every hooked
+    // module's code page back and frees all trampolines — same in-flight
+    // crash risk as MH_RemoveHook. MinHook's tables stay in memory; the
+    // OS reclaims them on process exit.
+    //
+    // s_mhInitialized intentionally remains true so that a future re-init
+    // path (currently not exercised) would skip MH_Initialize and reuse
+    // existing state.
 }
 
 bool IsHookActive() {

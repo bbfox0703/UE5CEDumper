@@ -41,6 +41,14 @@ namespace Mimic {
 static std::atomic<bool> s_running{false};
 static HANDLE s_hThread = nullptr;
 
+// Audit fix #10: depth counter for compound multi-step operations
+// (HandleInvokeByName chains three sub-handlers). When > 0, sub-handlers'
+// SetDone/SetError write `result` and `errorMsg` only — they do NOT touch
+// `status` or `cmd`, which would prematurely signal completion to CE
+// between sub-steps. The outer compound op publishes the final state via
+// CompoundOpGuard's destructor.
+static int s_compoundDepth = 0;
+
 // Forward declarations
 static void HandleFindInstance();
 static void HandleFindFunction();
@@ -51,11 +59,33 @@ static void SetError(int32_t code, const char* msg);
 static void SetDone(int32_t resultCode);
 static bool EnsureInitialized();
 
+// RAII guard for compound operations — increments s_compoundDepth on entry,
+// decrements on exit. When the outermost guard destructs (depth back to 0)
+// it publishes status=DONE / cmd=IDLE based on whatever `result` was last
+// written. Catches all return paths (success, early error, exception).
+struct CompoundOpGuard {
+    CompoundOpGuard() { ++s_compoundDepth; }
+    ~CompoundOpGuard() {
+        --s_compoundDepth;
+        if (s_compoundDepth == 0) {
+            g_invokeMailbox.status = STATUS_DONE;
+            g_invokeMailbox.cmd    = CMD_IDLE;
+        }
+    }
+};
+
 // ---- Polling thread ----
 
 static DWORD WINAPI PollingThreadProc(LPVOID /*param*/) {
     LOG_INFO("Mailbox: polling thread started");
 
+    // Audit doc #8: g_invokeMailbox is a plain struct (no atomics). Reads
+    // are correct here under the assumption that the writer (CE Lua) uses
+    // WriteProcessMemory, which kernel-serializes on x86/x64 with the
+    // platform's strong memory model — so cross-process writes become
+    // visible without explicit fences. `volatile`-style access prevents
+    // compiler reordering. If we ever switch the writer to in-process,
+    // the cmd/status fields must become std::atomic<int32_t>.
     while (s_running.load(std::memory_order_acquire)) {
         int32_t cmd = g_invokeMailbox.cmd;
 
@@ -320,23 +350,18 @@ static void HandleInvoke() {
 static void HandleInvokeByName() {
     LOG_INFO("Mailbox: INVOKE_BY_NAME starting...");
 
-    // Step 1: Find instance
+    // Audit fix #10: chain three sub-handlers without leaking intermediate
+    // status=DONE / cmd=IDLE writes to CE. The guard suppresses those
+    // publishes inside the inner SetDone/SetError calls; on destruction
+    // (any return path) it publishes the final state once.
+    CompoundOpGuard guard;
+
     HandleFindInstance();
-    if (g_invokeMailbox.result != 0) return;  // Error already set
+    if (g_invokeMailbox.result != 0) return;
 
-    // Reset for next step
-    g_invokeMailbox.cmd = CMD_FIND_FUNCTION;  // Prevent re-trigger
-    g_invokeMailbox.status = STATUS_PROCESSING;
-
-    // Step 2: Find function
     HandleFindFunction();
-    if (g_invokeMailbox.result != 0) return;  // Error already set
+    if (g_invokeMailbox.result != 0) return;
 
-    // Reset for invoke
-    g_invokeMailbox.cmd = CMD_INVOKE;
-    g_invokeMailbox.status = STATUS_PROCESSING;
-
-    // Step 3: Invoke
     HandleInvoke();
 
     LOG_INFO("Mailbox: INVOKE_BY_NAME complete, result=%d", g_invokeMailbox.result);
@@ -459,6 +484,11 @@ static void SetError(int32_t code, const char* msg) {
     }
     LOG_WARN("Mailbox: error=%d msg='%s'", code, msg ? msg : "");
 
+    // Audit fix #10: inside a compound op (HandleInvokeByName), the outer
+    // CompoundOpGuard publishes status/cmd; suppress the intermediate
+    // signal here so CE doesn't see a transient DONE between sub-steps.
+    if (s_compoundDepth > 0) return;
+
     // Signal completion — MUST write status BEFORE clearing cmd
     g_invokeMailbox.status = STATUS_DONE;
     g_invokeMailbox.cmd = CMD_IDLE;
@@ -466,6 +496,9 @@ static void SetError(int32_t code, const char* msg) {
 
 static void SetDone(int32_t resultCode) {
     g_invokeMailbox.result = resultCode;
+
+    // Audit fix #10: see SetError comment.
+    if (s_compoundDepth > 0) return;
 
     // Signal completion — MUST write status BEFORE clearing cmd
     g_invokeMailbox.status = STATUS_DONE;
