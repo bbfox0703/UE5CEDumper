@@ -85,6 +85,12 @@ ClassInfo WalkClass(uintptr_t uclassAddr);
 // inner types, enum names, bool masks, etc. by reading FProperty chain.
 ClassInfo WalkClassEx(uintptr_t uclassAddr);
 
+// Resolve the per-element size of an ArrayProperty's Inner FProperty.
+// Returns 0 if the size cannot be determined (rare: unknown inner type
+// without a usable FPROPERTY_ELEMSIZE or PropertiesSize).
+// Used by container-aware Address Finder to compute element index.
+int32_t GetArrayInnerElemSize(uintptr_t fieldAddr);
+
 // Walk all UFunctions of a UClass.
 // Iterates the function chain, resolving parameters and return type.
 std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);

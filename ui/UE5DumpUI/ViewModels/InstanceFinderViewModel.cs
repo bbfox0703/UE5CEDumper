@@ -78,6 +78,11 @@ public partial class InstanceFinderViewModel : ViewModelBase
     [ObservableProperty] private string _lookupStatusText = "";
     [ObservableProperty] private bool _isLookingUp;
 
+    // Container-aware results: addresses that fall inside an ArrayProperty
+    // heap buffer rather than within a UObject's PropertiesSize.
+    [ObservableProperty] private ObservableCollection<ContainerMatch> _containerMatches = new();
+    [ObservableProperty] private bool _hasContainerMatches;
+
     /// <summary>
     /// Event raised when user wants to navigate to an address in the Live Walker.
     /// </summary>
@@ -158,6 +163,15 @@ public partial class InstanceFinderViewModel : ViewModelBase
             Instances.Clear();
             Fields.Clear();
             HasFields = false;
+            ContainerMatches.Clear();
+
+            // Container matches: address falls inside a UObject's TArray heap buffer.
+            // The DLL always runs this scan when scan_containers=true, so we can
+            // surface them even when the standard UObject containment check
+            // already produced a match (the container path is more specific).
+            foreach (var cm in result.ContainerMatches)
+                ContainerMatches.Add(cm);
+            HasContainerMatches = ContainerMatches.Count > 0;
 
             if (result.Found)
             {
@@ -176,8 +190,16 @@ public partial class InstanceFinderViewModel : ViewModelBase
                 var matchInfo = result.MatchType == "exact"
                     ? "Exact UObject match"
                     : $"Inside {result.Name} (offset +0x{result.OffsetFromBase:X})";
+                if (HasContainerMatches)
+                    matchInfo += $" — also found in {ContainerMatches.Count} container(s)";
                 LookupStatusText = matchInfo;
                 _log.Info($"FindByAddress: '{addrStr}' -> {matchInfo}");
+            }
+            else if (HasContainerMatches)
+            {
+                HasInstances = false;
+                LookupStatusText = $"Inside {ContainerMatches.Count} container(s) — see list below";
+                _log.Info($"FindByAddress: '{addrStr}' -> {ContainerMatches.Count} container matches only");
             }
             else
             {
@@ -196,6 +218,17 @@ public partial class InstanceFinderViewModel : ViewModelBase
         {
             IsLookingUp = false;
         }
+    }
+
+    [RelayCommand]
+    private void OpenContainerOwner(ContainerMatch? match)
+    {
+        if (match == null || string.IsNullOrEmpty(match.OwnerAddress)) return;
+        // Live Walker doesn't yet auto-drill into the array element; opening
+        // the owner UObject lets the user click into the field manually.
+        // Pass a hint string in status so they know what to look for.
+        LookupStatusText = $"Opened {match.DisplayPath} — drill into '{match.FieldName}' in Live Walker";
+        NavigateToLiveWalker?.Invoke(match.OwnerAddress);
     }
 
     partial void OnSelectedInstanceChanged(InstanceResult? value)

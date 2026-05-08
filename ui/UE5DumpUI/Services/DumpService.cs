@@ -457,21 +457,53 @@ public sealed class DumpService : IDumpService
 
     public async Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default)
     {
+        // Always opt in to the container scan so users can find addresses
+        // that fall inside heap-allocated TArray buffers (rather than only
+        // within UObject bounds). The DLL has a 5s deadline + per-class
+        // cache so this stays interactive even for ~500K-object games.
         var req = new JsonObject
         {
             ["cmd"] = "find_by_address",
-            ["addr"] = addr
+            ["addr"] = addr,
+            ["scan_containers"] = true,
         };
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
         var found = res["found"]?.GetValue<bool>() ?? false;
+
+        var containerMatches = new List<ContainerMatch>();
+        if (res["container_matches"] is JsonArray cmArr)
+        {
+            foreach (var node in cmArr)
+            {
+                if (node is not JsonObject m) continue;
+                containerMatches.Add(new ContainerMatch
+                {
+                    OwnerAddress   = m["owner_addr"]?.GetValue<string>() ?? "",
+                    OwnerIndex     = m["owner_index"]?.GetValue<int>() ?? -1,
+                    OwnerName      = m["owner_name"]?.GetValue<string>() ?? "",
+                    OwnerClassName = m["owner_class"]?.GetValue<string>() ?? "",
+                    FieldOffset    = m["field_offset"]?.GetValue<int>() ?? 0,
+                    FieldName      = m["field_name"]?.GetValue<string>() ?? "",
+                    FieldType      = m["field_type"]?.GetValue<string>() ?? "",
+                    InnerType      = m["inner_type"]?.GetValue<string>() ?? "",
+                    ElementIndex   = m["element_index"]?.GetValue<int>() ?? 0,
+                    ElementSize    = m["element_size"]?.GetValue<int>() ?? 0,
+                    IntraOffset    = m["intra_offset"]?.GetValue<int>() ?? 0,
+                    DataAddress    = m["data_addr"]?.GetValue<string>() ?? "",
+                    Count          = m["count"]?.GetValue<int>() ?? 0,
+                });
+            }
+        }
+
         if (!found)
         {
             return new AddressLookupResult
             {
                 Found = false,
                 QueryAddress = addr,
+                ContainerMatches = containerMatches,
             };
         }
 
@@ -486,6 +518,7 @@ public sealed class DumpService : IDumpService
             OuterAddr = res["outer"]?.GetValue<string>() ?? "",
             OffsetFromBase = res["offset_from_base"]?.GetValue<int>() ?? 0,
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
+            ContainerMatches = containerMatches,
         };
     }
 

@@ -1234,12 +1234,19 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
         }
 
         // === find_by_address: Reverse lookup — address to UObject instance ===
+        // Always runs the standard FindByAddress (UObject containment + backward
+        // memory scan). Additionally runs container-aware FindInContainers when:
+        //   - request includes "scan_containers": true (UI opt-in), OR
+        //   - the standard search returned no exact/containment match
+        // Container matches let the UI surface "this address is element [N] of
+        // ObjA.SomeArray" so the user can jump straight into that element.
         if (cmd == Renge::CMD_FIND_BY_ADDRESS) {
             std::string addrStr = request.value("addr", "");
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
 
             uintptr_t queryAddr = Renge::StrToAddr(addrStr);
             auto lookupResult = Aura::FindByAddress(queryAddr);
+            bool requestedContainerScan = request.value("scan_containers", false);
 
             json data;
             data["found"] = lookupResult.found;
@@ -1253,6 +1260,33 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
                 data["outer"]            = Renge::AddrToStr(lookupResult.outer);
                 data["offset_from_base"] = lookupResult.offsetFromBase;
                 data["query_addr"]       = addrStr;
+            }
+
+            // Container scan: opt-in, or fallback when nothing else hit.
+            // Heap-allocated TArray data buffers don't fall inside any
+            // UObject's PropertiesSize, so this is the only way to attribute
+            // those addresses to an owner.
+            if (requestedContainerScan || !lookupResult.found) {
+                auto containerMatches = Aura::FindInContainers(queryAddr, 16);
+                json arr = json::array();
+                for (const auto& m : containerMatches) {
+                    json mj;
+                    mj["owner_addr"]    = Renge::AddrToStr(m.ownerObj);
+                    mj["owner_index"]   = m.ownerIndex;
+                    mj["owner_name"]    = m.ownerName;
+                    mj["owner_class"]   = m.ownerClassName;
+                    mj["field_offset"]  = m.fieldOffset;
+                    mj["field_name"]    = m.fieldName;
+                    mj["field_type"]    = m.fieldType;
+                    mj["inner_type"]    = m.innerType;
+                    mj["element_index"] = m.elementIndex;
+                    mj["element_size"]  = m.elementSize;
+                    mj["intra_offset"]  = m.intraOffset;
+                    mj["data_addr"]     = Renge::AddrToStr(m.dataAddr);
+                    mj["count"]         = m.count;
+                    arr.push_back(mj);
+                }
+                data["container_matches"] = arr;
             }
 
             return Renge::MakeResponse(id, data).dump();

@@ -44,9 +44,63 @@
                  Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
     </StackPanel>
 
-    <!-- Loading (address lookup) -->
-    <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
-                 IsVisible="{Binding IsLookingUp}" Height="2" Margin="0,0,0,4"/>
+    <!-- Loading (address lookup). IsIndeterminate is bound so the animation
+         only runs while visible — avoids the hover-flicker pattern documented
+         in the ProxyDeploy panel. -->
+    <ProgressBar DockPanel.Dock="Top"
+                 IsIndeterminate="{Binding IsLookingUp}"
+                 IsVisible="{Binding IsLookingUp}"
+                 Height="2" Margin="0,0,0,4"/>
+
+    <!-- Container matches: address fell inside a UObject's TArray heap buffer.
+         Surfaced separately because the address typically isn't a UObject and
+         won't appear in the regular Instances grid. -->
+    <Border DockPanel.Dock="Top" Background="#252526" CornerRadius="4"
+            Padding="6" Margin="0,0,0,8"
+            IsVisible="{Binding HasContainerMatches}">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top"
+                   Text="{StaticResource str.InstanceFinder.ContainerMatches}"
+                   Foreground="#CE9178" FontWeight="Bold" FontSize="12"
+                   Margin="0,0,0,4"/>
+        <DataGrid ItemsSource="{Binding ContainerMatches}"
+                  IsReadOnly="True"
+                  CanUserResizeColumns="True"
+                  GridLinesVisibility="Horizontal"
+                  HeadersVisibility="Column"
+                  BorderThickness="0"
+                  Background="#1E1E1E"
+                  Foreground="#D4D4D4"
+                  FontFamily="Consolas" FontSize="11"
+                  MaxHeight="160">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Path"
+                                Binding="{Binding DisplayPath}"
+                                Width="2*"/>
+            <DataGridTextColumn Header="Owner Class"
+                                Binding="{Binding OwnerClassName}"
+                                Width="*"/>
+            <DataGridTextColumn Header="Inner"
+                                Binding="{Binding InnerType}"
+                                Width="120"/>
+            <DataGridTextColumn Header="Owner Addr"
+                                Binding="{Binding OwnerAddress}"
+                                Width="140"/>
+            <DataGridTemplateColumn Header="" Width="80" CanUserResize="False">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate x:DataType="m:ContainerMatch">
+                  <Button Content="Open"
+                          Command="{Binding $parent[DataGrid].((vm:InstanceFinderViewModel)DataContext).OpenContainerOwnerCommand}"
+                          CommandParameter="{Binding}"
+                          Padding="6,2" FontSize="11"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+          </DataGrid.Columns>
+        </DataGrid>
+      </DockPanel>
+    </Border>
 
     <!-- Main content: instances list (top) + field values (bottom) -->
     <Grid>

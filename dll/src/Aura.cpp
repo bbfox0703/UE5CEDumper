@@ -14,7 +14,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <climits>
+#include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -1141,6 +1144,136 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
     LOG_INFO("FindByAddress: No match found for 0x%llX (no candidates, no backward scan hit)",
              static_cast<unsigned long long>(addr));
     return result;
+}
+
+// === Container-Aware Address Lookup ===
+//
+// Persistent per-class cache of ArrayProperty fields and their resolved
+// inner element sizes. Built lazily on first encounter via WalkClassEx.
+// Empty entries (classes with no usable ArrayProperty fields) are stored
+// so we don't re-walk them on subsequent queries.
+
+struct ContainerCacheEntry {
+    int32_t     offset;     // Field offset within UObject
+    std::string name;
+    std::string innerType;
+    int32_t     elemSize;
+};
+
+static std::unordered_map<uintptr_t, std::vector<ContainerCacheEntry>> s_classContainerCache;
+static std::mutex s_classContainerMutex;
+
+static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls) {
+    {
+        std::lock_guard<std::mutex> lk(s_classContainerMutex);
+        auto it = s_classContainerCache.find(cls);
+        if (it != s_classContainerCache.end()) return it->second;
+    }
+
+    // Build outside the lock — WalkClassEx is non-trivial and may itself
+    // touch caches. Insert under lock at the end.
+    std::vector<ContainerCacheEntry> entries;
+    auto ci = Ubel::WalkClassEx(cls);
+    for (const auto& f : ci.Fields) {
+        if (f.TypeName != "ArrayProperty") continue;
+        if (!f.Address) continue;
+        int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
+        if (es <= 0) continue;  // Inner type unresolved — skip rather than guess
+        entries.push_back({ f.Offset, f.Name, f.innerType, es });
+    }
+
+    std::lock_guard<std::mutex> lk(s_classContainerMutex);
+    auto [ins, _] = s_classContainerCache.emplace(cls, std::move(entries));
+    return ins->second;
+}
+
+std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults) {
+    std::vector<ContainerMatch> matches;
+    if (!addr || !s_arrayAddr) return matches;
+    if (maxResults <= 0) maxResults = 16;
+
+    int32_t count = GetCount();
+    if (count <= 0) return matches;
+
+    LOG_INFO("FindInContainers: scanning %d objects for addr 0x%llX",
+             count, static_cast<unsigned long long>(addr));
+
+    // Per-call deadline so a slow / huge-class game doesn't hang the UI.
+    constexpr int kDeadlineMs = 5000;
+    auto t0 = std::chrono::steady_clock::now();
+    int32_t classesWalked = 0;
+
+    for (int32_t i = 0; i < count && static_cast<int>(matches.size()) < maxResults; ++i) {
+        if ((i & 0x3FF) == 0) {
+            auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - t0).count();
+            if (dt > kDeadlineMs) {
+                LOG_INFO("FindInContainers: deadline reached after %d objects (%lld ms)",
+                         i, static_cast<long long>(dt));
+                break;
+            }
+        }
+
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        // Fetch (and lazily build) container metadata for this class
+        const auto& containers = GetClassContainers(cls);
+        if (containers.empty()) continue;
+        ++classesWalked;
+
+        for (const auto& cfe : containers) {
+            Macht::TArrayView arr;
+            if (!Macht::ReadTArray(obj + cfe.offset, arr)) continue;
+            if (arr.Count <= 0 || !arr.Data) continue;
+
+            // Use Count rather than Max so we only flag elements that are
+            // logically populated (Max can include uninitialised slack).
+            uintptr_t bufEnd = arr.Data + static_cast<int64_t>(arr.Count) * cfe.elemSize;
+            if (addr < arr.Data || addr >= bufEnd) continue;
+
+            int32_t intraTotal = static_cast<int32_t>(addr - arr.Data);
+            ContainerMatch m;
+            m.ownerObj      = obj;
+            m.ownerIndex    = i;
+
+            uint32_t nameIdx = 0;
+            if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx))
+                m.ownerName = Serie::GetString(nameIdx);
+
+            uint32_t clsNameIdx = 0;
+            if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, clsNameIdx))
+                m.ownerClassName = Serie::GetString(clsNameIdx);
+
+            m.fieldOffset   = cfe.offset;
+            m.fieldName     = cfe.name;
+            m.fieldType     = "ArrayProperty";
+            m.innerType     = cfe.innerType;
+            m.elementSize   = cfe.elemSize;
+            m.elementIndex  = intraTotal / cfe.elemSize;
+            m.intraOffset   = intraTotal % cfe.elemSize;
+            m.dataAddr      = arr.Data;
+            m.count         = arr.Count;
+
+            LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (owner=0x%llX, %s)",
+                     m.ownerName.c_str(), m.fieldName.c_str(),
+                     m.elementIndex, m.intraOffset,
+                     static_cast<unsigned long long>(obj),
+                     m.ownerClassName.c_str());
+
+            matches.push_back(std::move(m));
+            if (static_cast<int>(matches.size()) >= maxResults) break;
+        }
+    }
+
+    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - t0).count();
+    LOG_INFO("FindInContainers: found %d matches in %lld ms (cached %d non-empty classes)",
+             static_cast<int>(matches.size()), static_cast<long long>(dt), classesWalked);
+    return matches;
 }
 
 // === Property Keyword Search ===

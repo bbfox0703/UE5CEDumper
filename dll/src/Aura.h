@@ -106,6 +106,34 @@ struct AddressLookupResult {
 // (is this address inside a UObject's property data?).
 AddressLookupResult FindByAddress(uintptr_t addr);
 
+// === Container-Aware Address Lookup ===
+
+// One match for an address that falls inside a UObject field's
+// heap-allocated container buffer (TArray::Data, etc.).
+struct ContainerMatch {
+    uintptr_t   ownerObj      = 0;      // UObject that owns the container field
+    int32_t     ownerIndex    = -1;     // GObjects index of owner
+    std::string ownerName;
+    std::string ownerClassName;
+    int32_t     fieldOffset   = 0;      // Field offset within owner UObject
+    std::string fieldName;
+    std::string fieldType;              // "ArrayProperty" (Map/Set future)
+    std::string innerType;              // Inner element FProperty type
+    int32_t     elementIndex  = 0;      // (addr - dataAddr) / elementSize
+    int32_t     elementSize   = 0;
+    int32_t     intraOffset   = 0;      // (addr - elementStart) within element
+    uintptr_t   dataAddr      = 0;      // TArray::Data base
+    int32_t     count         = 0;      // TArray::Count
+};
+
+// Scan all UObjects' ArrayProperty fields for `addr`. Returns matches
+// where addr falls in [Data, Data + Count*ElemSize). Iteration 1 only
+// covers ArrayProperty (MapProperty/SetProperty deferred). Has an
+// internal time deadline (~5s) and per-class field cache; performance
+// improves on subsequent calls because the cache persists for the DLL
+// lifetime.
+std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults = 16);
+
 // === Property Keyword Search ===
 
 struct PropertyMatch {

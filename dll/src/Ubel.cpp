@@ -952,6 +952,45 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
     return readSize;
 }
 
+// ============================================================
+// GetArrayInnerElemSize — public helper used by container-aware
+// Address Finder (Aura::FindInContainers).
+//
+// Probes the FArrayProperty's Inner FProperty at FARRAYPROP_INNER + delta
+// (matching WalkInstance's probe list), validates the inner type, then
+// resolves an authoritative element size:
+//   1. Known fixed-size types via InferScalarSize (Object/Class/Weak/
+//      Interface/Lazy/scalars)
+//   2. Inner FProperty's ELEMSIZE validated by ValidateArrayElemSize
+//   3. For StructProperty inners, UScriptStruct::PropertiesSize
+// Returns 0 when the size cannot be determined.
+// ============================================================
+int32_t GetArrayInnerElemSize(uintptr_t fieldAddr) {
+    if (!fieldAddr || !DynOff::bUseFProperty) return 0;
+
+    auto [inner, innerTn] = ProbeInnerProperty(fieldAddr, DynOff::FARRAYPROP_INNER);
+    if (!inner) return 0;
+
+    int32_t es = InferScalarSize(innerTn);
+    if (es > 0) return es;
+
+    int32_t rawElemSize = 0;
+    Macht::ReadSafe<int32_t>(inner + DynOff::FPROPERTY_ELEMSIZE, rawElemSize);
+    es = ValidateArrayElemSize(rawElemSize, innerTn);
+    if (es > 0) return es;
+
+    if (innerTn == "StructProperty") {
+        uintptr_t innerStruct = 0;
+        if (Macht::ReadSafe(inner + DynOff::FSTRUCTPROP_STRUCT, innerStruct) && innerStruct) {
+            int32_t ps = 0;
+            if (Macht::ReadSafe(innerStruct + DynOff::USTRUCT_PROPSSIZE, ps)
+                && ps > 0 && ps <= 65536)
+                return ps;
+        }
+    }
+    return 0;
+}
+
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size) {
     if (!data || size <= 0) return "";
 
