@@ -2364,6 +2364,172 @@ public class CeXmlExportServiceTests
         Assert.Contains("moDeactivateChildrenAsWell=\"1\"", xml);
     }
 
+    // ========================================
+    // Soft/Lazy/Interface ArrayProperty tests (Phase G/H/I)
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArray_EmitsGroupWithElements()
+    {
+        // TArray<TSoftObjectPtr<UDataAsset>> — element stride is 0x28 (UE4/UE5.0 default)
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "AssetRefs", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/Items/IT_Potion.IT_Potion",
+                            Hex = "00000000000000000000000000000000" },
+                    new() { Index = 1, Value = "/Game/Items/IT_Sword.IT_Sword",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Group header with array description
+        Assert.Contains("AssetRefs [2 x SoftObjectProperty (40B)]", xml);
+        // Array group: Address=+100, Offsets=[0] (deref TArray.Data)
+        Assert.Contains("<Address>+100</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Element entries at +0 and +28 (40 = 0x28 stride)
+        Assert.Contains("[0]", xml);
+        Assert.Contains("[1]", xml);
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+28</Address>", xml);
+        // Per-element type: 8 Bytes hex (FWeakObjectPtr at element start)
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftClassArray_EmitsGroupWithElements()
+    {
+        // TArray<TSoftClassPtr<UClass>> — same shape as SoftObjectProperty
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ClassRefs", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftClassProperty", ArrayElemSize = 0x28,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/AI/BP_Boss.BP_Boss_C",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("ClassRefs [1 x SoftClassProperty (40B)]", xml);
+        Assert.Contains("<Address>+80</Address>", xml);
+        Assert.Contains("[0]", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_LazyObjectArray_EmitsGroupWithElements()
+    {
+        // TArray<TLazyObjectPtr<AActor>> — element stride is 0x20
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "LazyRefs", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "LazyObjectProperty", ArrayElemSize = 0x20,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "{12345678-9ABCDEF0-AABBCCDD-EEFF0011}",
+                            Hex = "00000000000000000000000000000000" },
+                    new() { Index = 1, Value = "{00000000-00000000-00000000-00000000}",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("LazyRefs [2 x LazyObjectProperty (32B)]", xml);
+        Assert.Contains("<Address>+40</Address>", xml);
+        // Stride 0x20: [0] at +0, [1] at +20
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+20</Address>", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_InterfaceArray_EmitsGroupWithPointers()
+    {
+        // TArray<TScriptInterface<IDamageable>> — 16-byte elements: { UObject*, void* }
+        // Description should show resolved UObject names for non-null entries
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "DamageHandlers", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "InterfaceProperty", ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "PlayerActor (BP_Player_C)",
+                            Hex = "0000020C12340000ABCDEFAB12345678",
+                            PtrAddress = "0x20C12340000",
+                            PtrName = "PlayerActor", PtrClassName = "BP_Player_C" },
+                    new() { Index = 1, Value = "Enemy_01 (BP_Enemy_C)",
+                            Hex = "0000020C56780000FFEEDDCC11223344",
+                            PtrAddress = "0x20C56780000",
+                            PtrName = "Enemy_01", PtrClassName = "BP_Enemy_C" },
+                    new() { Index = 2, Value = "null",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("DamageHandlers [3 x InterfaceProperty (16B)]", xml);
+        Assert.Contains("<Address>+60</Address>", xml);
+        // Resolved names appear in element descriptions
+        Assert.Contains("[0] PlayerActor (BP_Player_C)", xml);
+        Assert.Contains("[1] Enemy_01 (BP_Enemy_C)", xml);
+        // Stride 16: [0] at +0, [1] at +10 (hex), [2] at +20 (hex)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<Address>+20</Address>", xml);
+        // Pointer type: 8 Bytes hex (UObject* at element start)
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArrayEmpty_EmitsPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "EmptySoft", TypeName = "ArrayProperty", Offset = 0x10, Size = 16,
+                ArrayCount = 0, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Empty array → placeholder (no element entries)
+        Assert.Contains("EmptySoft", xml);
+        Assert.DoesNotContain("[0]", xml);
+    }
+
     private static BreadcrumbItem MakeBc(string addr, string label,
         string fieldName = "", bool isPointer = false, int offset = 0,
         bool isContainerView = false)

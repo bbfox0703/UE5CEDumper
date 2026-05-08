@@ -890,7 +890,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private static bool IsPointerOrStructArrayType(string innerType)
         => innerType is "ObjectProperty" or "ClassProperty"
-            or "WeakObjectProperty" or "SoftObjectProperty" or "LazyObjectProperty"
+            or "WeakObjectProperty"
+            or "SoftObjectProperty" or "SoftClassProperty"
+            or "LazyObjectProperty"
+            or "InterfaceProperty"
             or "StructProperty";
 
     /// <summary>

@@ -911,9 +911,14 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
-    if (typeName == "LazyObjectProperty")  return 8;  // Also pointer-sized
-    if (typeName == "InterfaceProperty")   return 16; // FScriptInterface = { UObject* + void* }
+    // TLazyObjectPtr = FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FGuid(16B) — fixed 0x20
+    if (typeName == "LazyObjectProperty")  return 0x20;
+    // FScriptInterface = { UObject* + void* } — fixed 16
+    if (typeName == "InterfaceProperty")   return 16;
     if (typeName == "DelegateProperty")    return 16; // FScriptDelegate = { UObject* + FName }
+    // NOTE: TSoftObjectPtr / TSoftClassPtr size varies by UE version
+    // (FName is 8 or 16B with CasePreservingName; FSoftObjectPath layout differs in UE5.1+).
+    // Do NOT override here — let readSize prevail; fall back inside the array reader.
     return 0;
 }
 
@@ -1701,6 +1706,336 @@ ReadArrayResult ReadStructArrayElements(
 }
 
 // ============================================================
+// Phase G: IsSoftObjectArrayType — TSoftObjectPtr / TSoftClassPtr arrays.
+// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FSoftObjectPath
+// Stride varies by UE version; reader falls back to 0x28 when elemSize is
+// invalid. Per-element data resolves to the asset path string and (when
+// loaded) the live UObject* via the embedded FWeakObjectPtr.
+// ============================================================
+bool IsSoftObjectArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "SoftObjectProperty"
+        || innerTypeName == "SoftClassProperty";
+}
+
+// ============================================================
+// Phase G: ReadSoftObjectArrayElements — read TSoftObjectPtr elements.
+// For each element resolves the FSoftObjectPath asset name (UI display)
+// and the embedded FWeakObjectPtr to a live UObject* when the asset is
+// currently loaded (so CE / Address Finder can navigate to it).
+// ============================================================
+ReadArrayResult ReadSoftObjectArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // Validate stride. TSoftObjectPtr layout:
+    //   FWeakObjectPtr(8) + Tag(4) + pad(4) + FSoftObjectPath
+    // FSoftObjectPath spans:
+    //   UE4 / UE5.0: FName + FString(16)         → 8|16 + 16 = 24 or 32
+    //   UE5.1+:      FName x2 + FString(16)      → 16|32 + 16 = 32 or 48
+    // Combined element size ranges 0x28 .. 0x48 across versions.
+    // When FPROPERTY_ELEMSIZE returned garbage, derive a plausible fallback.
+    if (elemSize < 0x18 || elemSize > 0x80) {
+        int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+        bool isTopLevelAssetPath = (g_cachedUEVersion >= 501);
+        int pathSize = (isTopLevelAssetPath ? 2 * fnameSize : fnameSize) + 0x10; // + FString
+        int derived = 0x10 + pathSize;
+        Sein::Warn("WALK:ArrayG", "Invalid SoftObject elemSize=%d, defaulting to 0x%X",
+            elemSize, derived);
+        elemSize = derived;
+    }
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > 4096) end = offset + 4096;
+
+    result.elements.reserve(end - offset);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+
+        // Asset path string (display value)
+        std::string assetPath = ReadSoftObjectPath(elemAddr + 0x10);
+
+        // Hex of the first 16 bytes (FWeakObjectPtr + Tag)
+        uint8_t headerBuf[16] = {};
+        if (Macht::ReadBytesSafe(elemAddr, headerBuf, 16)) {
+            std::string hex;
+            hex.reserve(32);
+            for (int b = 0; b < 16; ++b) {
+                char hx[3];
+                snprintf(hx, sizeof(hx), "%02X", headerBuf[b]);
+                hex += hx;
+            }
+            elem.hex = std::move(hex);
+        }
+
+        // Try resolving the embedded FWeakObjectPtr to a live UObject*.
+        // TPersistentObjectPtr stores a FWeakObjectPtr at +0x00.
+        int32_t objIdx = 0, serial = 0;
+        if (Macht::ReadSafe(elemAddr, objIdx) && Macht::ReadSafe(elemAddr + 4, serial)) {
+            uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
+            if (resolved) {
+                elem.ptrAddr = resolved;
+                elem.ptrName = GetName(resolved);
+                uintptr_t cls = GetClass(resolved);
+                if (cls) elem.ptrClassName = GetName(cls);
+            }
+        }
+
+        // Display: prefer asset path; fall back to "(unloaded)" / "(none)"
+        if (!assetPath.empty()) {
+            elem.value = assetPath;
+        } else if (elem.ptrAddr) {
+            elem.value = !elem.ptrName.empty()
+                ? (elem.ptrClassName.empty() ? elem.ptrName
+                                              : elem.ptrName + " (" + elem.ptrClassName + ")")
+                : "(loaded)";
+        } else {
+            elem.value = "(none)";
+        }
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
+// Phase H: IsLazyObjectArrayType — TLazyObjectPtr arrays.
+// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FGuid(16B) = 0x20
+// ============================================================
+bool IsLazyObjectArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "LazyObjectProperty";
+}
+
+// ============================================================
+// Phase H: ReadLazyObjectArrayElements — read TLazyObjectPtr elements.
+// Display value is the formatted FGuid; when the lazy ptr is currently
+// resolved, the embedded FWeakObjectPtr yields a live UObject*.
+// ============================================================
+ReadArrayResult ReadLazyObjectArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // TLazyObjectPtr is fixed 0x20 — match ReadPointerArrayElements pattern
+    // and force the stride to avoid garbage from FPROPERTY_ELEMSIZE.
+    elemSize = 0x20;
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > 4096) end = offset + 4096;
+
+    result.elements.reserve(end - offset);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+
+        // FGuid at +0x10 (4 x uint32)
+        uint32_t a = 0, b = 0, c = 0, d = 0;
+        Macht::ReadSafe(elemAddr + 0x10 + 0,  a);
+        Macht::ReadSafe(elemAddr + 0x10 + 4,  b);
+        Macht::ReadSafe(elemAddr + 0x10 + 8,  c);
+        Macht::ReadSafe(elemAddr + 0x10 + 12, d);
+
+        char guidStr[48];
+        snprintf(guidStr, sizeof(guidStr), "{%08X-%08X-%08X-%08X}", a, b, c, d);
+
+        // Hex: full 0x20 element bytes (cap header at 16)
+        uint8_t headerBuf[16] = {};
+        if (Macht::ReadBytesSafe(elemAddr, headerBuf, 16)) {
+            std::string hex;
+            hex.reserve(32);
+            for (int bi = 0; bi < 16; ++bi) {
+                char hx[3];
+                snprintf(hx, sizeof(hx), "%02X", headerBuf[bi]);
+                hex += hx;
+            }
+            elem.hex = std::move(hex);
+        }
+
+        // Resolve FWeakObjectPtr to UObject* if loaded
+        int32_t objIdx = 0, serial = 0;
+        if (Macht::ReadSafe(elemAddr, objIdx) && Macht::ReadSafe(elemAddr + 4, serial)) {
+            uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
+            if (resolved) {
+                elem.ptrAddr = resolved;
+                elem.ptrName = GetName(resolved);
+                uintptr_t cls = GetClass(resolved);
+                if (cls) elem.ptrClassName = GetName(cls);
+            }
+        }
+
+        // Display: GUID + resolved name when loaded
+        if (elem.ptrAddr && !elem.ptrName.empty()) {
+            elem.value = std::string(guidStr) + " " + elem.ptrName;
+            if (!elem.ptrClassName.empty())
+                elem.value += " (" + elem.ptrClassName + ")";
+        } else {
+            elem.value = guidStr;
+        }
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
+// Phase I: IsInterfaceArrayType — TScriptInterface arrays.
+// Element layout: FScriptInterface = { UObject* +0x00, void* +0x08 } = 16
+// ============================================================
+bool IsInterfaceArrayType(const std::string& innerTypeName) {
+    return innerTypeName == "InterfaceProperty";
+}
+
+// ============================================================
+// Phase I: ReadInterfaceArrayElements — read TScriptInterface elements.
+// Each element exposes the underlying UObject* directly — same display
+// shape as Phase D so CE XML / CSX export can treat it identically.
+// ============================================================
+ReadArrayResult ReadInterfaceArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset, int32_t limit)
+{
+    ReadArrayResult result;
+    result.ok = false;
+
+    // FScriptInterface is fixed 16 bytes
+    elemSize = 16;
+
+    Macht::TArrayView arr;
+    if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
+        result.error = "TArray read failed";
+        return result;
+    }
+    result.totalCount = arr.Count;
+
+    if (arr.Count <= 0 || !arr.Data) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+
+    if (offset < 0) offset = 0;
+    if (offset >= arr.Count) {
+        result.ok = true;
+        result.readCount = 0;
+        return result;
+    }
+    int32_t end = offset + limit;
+    if (end > arr.Count) end = arr.Count;
+    if (end - offset > 4096) end = offset + 4096;
+
+    result.elements.reserve(end - offset);
+
+    for (int32_t i = offset; i < end; ++i) {
+        LiveFieldValue::ArrayElement elem;
+        elem.index = i;
+
+        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
+
+        uintptr_t objPtr = 0;
+        uintptr_t ifacePtr = 0;
+        bool okObj = Macht::ReadSafe(elemAddr,     objPtr);
+        bool okIfc = Macht::ReadSafe(elemAddr + 8, ifacePtr);
+        if (!okObj || !okIfc) {
+            elem.value = "???";
+            elem.hex = "????????????????????????????????";
+            result.elements.push_back(std::move(elem));
+            continue;
+        }
+
+        char hexBuf[40];
+        snprintf(hexBuf, sizeof(hexBuf), "%016llX%016llX",
+            static_cast<unsigned long long>(objPtr),
+            static_cast<unsigned long long>(ifacePtr));
+        elem.hex = hexBuf;
+        elem.ptrAddr = objPtr;
+
+        if (objPtr) {
+            elem.ptrName = GetName(objPtr);
+            uintptr_t cls = GetClass(objPtr);
+            if (cls) {
+                elem.ptrClassName = GetName(cls);
+            }
+
+            if (!elem.ptrName.empty()) {
+                elem.value = elem.ptrName;
+                if (!elem.ptrClassName.empty())
+                    elem.value += " (" + elem.ptrClassName + ")";
+            } else {
+                char ptrHex[20];
+                snprintf(ptrHex, sizeof(ptrHex), "%016llX",
+                    static_cast<unsigned long long>(objPtr));
+                elem.value = ptrHex;
+            }
+        } else {
+            elem.value = "null";
+        }
+
+        result.elements.push_back(std::move(elem));
+    }
+
+    result.ok = true;
+    result.readCount = static_cast<int32_t>(result.elements.size());
+    return result;
+}
+
+// ============================================================
 // CorrectSubclassOffsets — one-time calibration of FSTRUCTPROP_STRUCT
 // and related subclass extension offsets.
 //
@@ -2447,6 +2782,42 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
 
+                // Phase G: TSoftObjectPtr / TSoftClassPtr arrays
+                if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto softResult = ReadSoftObjectArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (softResult.ok && !softResult.elements.empty()) {
+                        fv.arrayElements = std::move(softResult.elements);
+                        Sein::Debug("WALK:ArrayP", "Soft elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
+                // Phase H: TLazyObjectPtr arrays
+                if (innerFound && IsLazyObjectArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto lazyResult = ReadLazyObjectArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (lazyResult.ok && !lazyResult.elements.empty()) {
+                        fv.arrayElements = std::move(lazyResult.elements);
+                        Sein::Debug("WALK:ArrayP", "Lazy elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
+                // Phase I: TScriptInterface arrays
+                if (innerFound && IsInterfaceArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto ifaceResult = ReadInterfaceArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (ifaceResult.ok && !ifaceResult.elements.empty()) {
+                        fv.arrayElements = std::move(ifaceResult.elements);
+                        Sein::Debug("WALK:ArrayP", "Interface elements: %d read for '%s'",
+                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                    }
+                }
+
                 if (!innerFound) {
                     // Diagnostic: hex dump around FARRAYPROP_INNER to help identify correct offset
                     uint8_t dumpBuf[64] = {};
@@ -2543,6 +2914,33 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.arrayInnerStructAddr, fv.arrayElemSize, 0, arrayLimit);
                     if (structResult.ok && !structResult.elements.empty()) {
                         fv.arrayElements = std::move(structResult.elements);
+                    }
+                }
+                // Phase G: Soft object arrays (UProperty mode)
+                if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto softResult = ReadSoftObjectArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (softResult.ok && !softResult.elements.empty()) {
+                        fv.arrayElements = std::move(softResult.elements);
+                    }
+                }
+                // Phase H: Lazy object arrays (UProperty mode)
+                if (innerFound && IsLazyObjectArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto lazyResult = ReadLazyObjectArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (lazyResult.ok && !lazyResult.elements.empty()) {
+                        fv.arrayElements = std::move(lazyResult.elements);
+                    }
+                }
+                // Phase I: Interface arrays (UProperty mode)
+                if (innerFound && IsInterfaceArrayType(fv.arrayInnerType)
+                    && arr.Data && fv.arrayCount > 0) {
+                    auto ifaceResult = ReadInterfaceArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                    if (ifaceResult.ok && !ifaceResult.elements.empty()) {
+                        fv.arrayElements = std::move(ifaceResult.elements);
                     }
                 }
 

@@ -1525,10 +1525,19 @@ public static class CeXmlExportService
             // Phase E: weak object pointer — 8 bytes (ObjectIndex + SerialNumber)
             "WeakObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Interface: first 8 bytes is UObject*, show as pointer
+            // Phase G: TSoftObjectPtr / TSoftClassPtr — first 8 bytes is FWeakObjectPtr
+            // (ObjectIndex + SerialNumber). Element stride uses ArrayElemSize so
+            // consecutive elements remain aligned to TPersistentObjectPtr layout.
+            "SoftObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "SoftClassProperty"  => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Phase H: TLazyObjectPtr — first 8 bytes is FWeakObjectPtr
+            "LazyObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Phase I: TScriptInterface — first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            _ => null // Non-scalar (StructProperty, SoftObjectProperty, etc.)
+            _ => null // Non-scalar (StructProperty, etc.)
         };
     }
 }

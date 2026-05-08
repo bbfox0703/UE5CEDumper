@@ -340,6 +340,25 @@ ReadArrayResult ReadStructArrayElements(
     uintptr_t innerStructAddr, int32_t elemSize,
     int32_t offset = 0, int32_t limit = 64);
 
+// Phase G: TSoftObjectPtr / TSoftClassPtr arrays — resolves FSoftObjectPath
+// asset name and embedded FWeakObjectPtr (when loaded) per element.
+bool IsSoftObjectArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadSoftObjectArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase H: TLazyObjectPtr arrays — resolves FGuid + embedded FWeakObjectPtr.
+bool IsLazyObjectArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadLazyObjectArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase I: TScriptInterface arrays — exposes underlying UObject* + iface ptr.
+bool IsInterfaceArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadInterfaceArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
 } // namespace Ubel
 
 // --- Property Search Preview Resolution ---

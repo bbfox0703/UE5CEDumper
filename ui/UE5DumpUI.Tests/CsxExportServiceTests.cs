@@ -987,4 +987,91 @@ public class CsxExportServiceTests
         Assert.DoesNotContain("Item_Potion", csx);
         Assert.DoesNotContain("Name=\"ItemRow\"", csx);
     }
+
+    // --- Phase G/H/I: Soft/Lazy/Interface array drilldown tests ---
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_SoftObjectInner_DrilldownOne_ShowsAssetPaths()
+    {
+        // TArray<TSoftObjectPtr<UDataAsset>> — 0x28 stride, asset path display values
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "AssetRefs", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+                     ArrayDataAddr = "0x9000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "/Game/Items/IT_Potion.IT_Potion" },
+                         new() { Index = 1, Value = "/Game/Items/IT_Sword.IT_Sword" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        // Child structure for the soft array
+        Assert.Contains("Name=\"AssetRefs\"", csx);
+        // Element offsets: index * 0x28 (40)
+        Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*40 = 0
+        Assert.Contains("Offset=\"40\"", csx);   // [1]: 1*40 = 40
+        // SoftObjectProperty maps to Pointer in CSX
+        Assert.Contains("Vartype=\"Pointer\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_LazyObjectInner_DrilldownOne_ShowsGuids()
+    {
+        // TArray<TLazyObjectPtr<AActor>> — 0x20 stride, GUID display values
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "LazyRefs", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "LazyObjectProperty", ArrayElemSize = 0x20,
+                     ArrayDataAddr = "0xA000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "{12345678-9ABCDEF0-AABBCCDD-EEFF0011}" },
+                         new() { Index = 1, Value = "{00000000-00000000-00000000-00000000}" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        Assert.Contains("Name=\"LazyRefs\"", csx);
+        // Sequential offsets: index * 0x20 (32)
+        Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*32 = 0
+        Assert.Contains("Offset=\"32\"", csx);   // [1]: 1*32 = 32
+        // LazyObjectProperty maps to Pointer
+        Assert.Contains("Vartype=\"Pointer\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_InterfaceInner_DrilldownOne_ShowsPointerElements()
+    {
+        // TArray<TScriptInterface<I>> — 16-byte stride, UObject* drives drilldown
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "DamageHandlers", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "InterfaceProperty", ArrayElemSize = 16,
+                     ArrayDataAddr = "0xB000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, PtrAddress = "0xD01", PtrName = "PlayerActor", PtrClassName = "BP_Player_C" },
+                         new() { Index = 1, PtrAddress = "0xD02", PtrName = "Enemy_01", PtrClassName = "BP_Enemy_C" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        Assert.Contains("Name=\"DamageHandlers\"", csx);
+        // Resolved names appear in element descriptions
+        Assert.Contains("Description=\"[0] PlayerActor\"", csx);
+        Assert.Contains("Description=\"[1] Enemy_01\"", csx);
+        // Sequential offsets: index * 16
+        Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*16 = 0
+        Assert.Contains("Offset=\"16\"", csx);   // [1]: 1*16 = 16
+        // InterfaceProperty maps to Pointer
+        Assert.Contains("Vartype=\"Pointer\"", csx);
+    }
 }
