@@ -14,8 +14,10 @@
 // ============================================================
 
 #include <Windows.h>
+#include <Psapi.h>   // EnumProcessModulesEx, GetModuleFileNameExA
 #include <cstddef>   // offsetof
 #include <cstring>
+#include <string>
 #include <atomic>
 #define LOG_CAT "CEP"
 #include "Sein.h"
@@ -102,6 +104,68 @@ static char g_PluginName[]   = "UE5CEDumper";
 static char g_MenuName[]     = "UE5CEDumper: Inject && Connect";
 static char g_AutoStartFn[]  = "UE5_AutoStart";
 
+// ── Helper: detect if UE5CEDumper is already present in the target process ───
+//
+// Catches two cases that would otherwise cause a redundant inject:
+//   1. UE5Dumper.dll already injected (e.g. user clicked menu twice)
+//   2. Proxy DLL (version.dll / winmm.dll) hijacked from the game folder
+//      — distinguished from the genuine Windows DLL by checking the load path
+//      is NOT under System32 / SysWOW64.
+//
+// CE has already attached to the target process by the time the menu callback
+// runs, so we use the OpenedProcessHandle to enumerate its modules.
+static bool IsAlreadyLoadedInTarget(HANDLE hProcess, std::string& outName,
+                                    std::string& outPath)
+{
+    if (!hProcess) return false;
+
+    // System directory prefix — used to exclude the genuine Windows copy of
+    // version.dll / winmm.dll from the proxy detection.
+    char sysDir[MAX_PATH] = {};
+    GetSystemDirectoryA(sysDir, MAX_PATH);
+    const size_t sysDirLen = strlen(sysDir);
+
+    HMODULE modules[1024];
+    DWORD cbNeeded = 0;
+    if (!EnumProcessModulesEx(hProcess, modules, sizeof(modules),
+                              &cbNeeded, LIST_MODULES_ALL)) {
+        LOG_WARN("CEPlugin: EnumProcessModulesEx failed (err=%lu)", GetLastError());
+        return false;
+    }
+
+    DWORD count = cbNeeded / sizeof(HMODULE);
+    if (count > _countof(modules)) count = _countof(modules);
+
+    for (DWORD i = 0; i < count; ++i) {
+        char modPath[MAX_PATH] = {};
+        if (!GetModuleFileNameExA(hProcess, modules[i], modPath, MAX_PATH))
+            continue;
+
+        const char* slash = strrchr(modPath, '\\');
+        const char* fileName = slash ? slash + 1 : modPath;
+
+        // Case 1: our injected DLL — match anywhere
+        if (_stricmp(fileName, "UE5Dumper.dll") == 0) {
+            outName = fileName;
+            outPath = modPath;
+            return true;
+        }
+
+        // Case 2: proxy DLL — only count if NOT loaded from System32/SysWOW64
+        if (_stricmp(fileName, "version.dll") == 0 ||
+            _stricmp(fileName, "winmm.dll")   == 0) {
+            if (sysDirLen == 0 ||
+                _strnicmp(modPath, sysDir, sysDirLen) != 0) {
+                outName = fileName;
+                outPath = modPath;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 // ── Type 5 callback: runs on CE's main thread when the user clicks the menu item
 static void __stdcall OnInjectAndConnect()
 {
@@ -116,6 +180,29 @@ static void __stdcall OnInjectAndConnect()
     }
 
     ULONG pid = *g_CE.OpenedProcessID;
+
+    // 1.5. Check if UE5CEDumper is already loaded in the target process.
+    // Common scenario: user has version.dll proxy in the game folder and
+    // then clicks the inject menu — we should bail out before mapping a
+    // duplicate copy. Heiter.cpp's pipe-existence guard is a fallback;
+    // detecting here avoids loading the DLL into VA at all.
+    HANDLE hTarget = g_CE.OpenedProcessHandle ? *g_CE.OpenedProcessHandle : nullptr;
+    {
+        std::string presentName, presentPath;
+        if (IsAlreadyLoadedInTarget(hTarget, presentName, presentPath)) {
+            LOG_INFO("CEPlugin: Already loaded as '%s' (path=%s) — skipping inject",
+                     presentName.c_str(), presentPath.c_str());
+            char msg[1024];
+            snprintf(msg, sizeof(msg),
+                "UE5CEDumper is already loaded in this process as '%s'.\n\n"
+                "Path: %s\n\n"
+                "No injection needed — just launch UE5DumpUI.exe and click Connect.\n"
+                "Pipe: \\\\.\\pipe\\UE5DumpBfx",
+                presentName.c_str(), presentPath.c_str());
+            g_CE.ShowMessage(msg);
+            return;
+        }
+    }
 
     // 2. Get the full path of this DLL (running in CE's process)
     char dllPath[MAX_PATH] = {};
