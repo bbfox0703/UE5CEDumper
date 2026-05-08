@@ -23,26 +23,32 @@ public interface IProxyDeployService
         IReadOnlyList<string> libraryPaths, CancellationToken ct = default);
 
     /// <summary>
-    /// Check deployment status for each game and update Status/InstalledVersion fields.
+    /// Check deployment status for each game (for the given proxy type) and
+    /// update Status / InstalledVersion / ErrorMessage. Also detects when
+    /// the OTHER proxy type is deployed in the same folder and surfaces a
+    /// conflict warning via ErrorMessage.
     /// </summary>
     Task RefreshDeployStatusAsync(
-        IList<DetectedGame> games, string sourceDllPath, CancellationToken ct = default);
-
-    /// <summary>
-    /// Deploy version.dll to a game's Binaries directory.
-    /// Returns true on success, false on failure (sets game.ErrorMessage).
-    /// </summary>
-    Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, bool force = false,
+        IList<DetectedGame> games, string sourceDllPath, ProxyType proxyType,
         CancellationToken ct = default);
 
     /// <summary>
-    /// Undeploy (delete) version.dll from a game's Binaries directory.
-    /// Only removes our DLL (checks ProductName). Returns true on success.
+    /// Deploy the proxy DLL of the given type to a game's Binaries directory.
+    /// Returns true on success, false on failure (sets game.ErrorMessage).
     /// </summary>
-    Task<bool> UndeployAsync(DetectedGame game, CancellationToken ct = default);
+    Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
+        bool force = false, CancellationToken ct = default);
 
     /// <summary>
-    /// Check if a version.dll at the given path is ours (ProductName == "UE5CEDumper").
+    /// Undeploy (delete) the proxy DLL of the given type from a game's
+    /// Binaries directory. Only removes our DLL (checks ProductName).
+    /// Returns true on success.
+    /// </summary>
+    Task<bool> UndeployAsync(DetectedGame game, ProxyType proxyType,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Check if a DLL at the given path is ours (ProductName == "UE5CEDumper").
     /// </summary>
     bool IsOurProxyDll(string dllPath);
 

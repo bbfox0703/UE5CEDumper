@@ -6,7 +6,23 @@
              x:DataType="vm:ProxyDeployViewModel">
 
   <DockPanel Margin="8">
-    <!-- Top: Scan + Status -->
+    <!-- Top: Proxy DLL type selector -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="12" Margin="0,0,0,8">
+      <TextBlock Text="{StaticResource str.ProxyDeploy.ProxyType}"
+                 Foreground="#CCCCCC" VerticalAlignment="Center" FontWeight="Bold"/>
+      <RadioButton GroupName="ProxyType"
+                   Content="{StaticResource str.ProxyDeploy.Type.Version}"
+                   IsChecked="{Binding IsVersionSelected, Mode=TwoWay}"
+                   ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Type.Version}"
+                   Foreground="#D4D4D4" VerticalAlignment="Center"/>
+      <RadioButton GroupName="ProxyType"
+                   Content="{StaticResource str.ProxyDeploy.Type.Dinput8}"
+                   IsChecked="{Binding IsDinput8Selected, Mode=TwoWay}"
+                   ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Type.Dinput8}"
+                   Foreground="#D4D4D4" VerticalAlignment="Center"/>
+    </StackPanel>
+
+    <!-- Toolbar: Scan / Refresh / Selection helpers -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
       <Button Content="{StaticResource str.ProxyDeploy.Scan}"
               Command="{Binding ScanCommand}"

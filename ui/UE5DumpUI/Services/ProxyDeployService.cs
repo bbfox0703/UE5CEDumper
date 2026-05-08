@@ -249,32 +249,36 @@ public sealed class ProxyDeployService : IProxyDeployService
     // ────────────────────────────────────────────────────────────────
 
     public Task RefreshDeployStatusAsync(
-        IList<DetectedGame> games, string sourceDllPath, CancellationToken ct = default)
+        IList<DetectedGame> games, string sourceDllPath, ProxyType proxyType,
+        CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
             string? sourceVersion = GetDllVersion(sourceDllPath);
 
+            string selectedDllName = proxyType.GetDllName();
+            ProxyType otherType = proxyType == ProxyType.Version
+                                  ? ProxyType.Dinput8 : ProxyType.Version;
+            string otherDllName = otherType.GetDllName();
+
             foreach (var game in games)
             {
                 ct.ThrowIfCancellationRequested();
 
-                string targetDll = Path.Combine(game.BinariesDir, Constants.ProxyDllName);
+                string targetDll = Path.Combine(game.BinariesDir, selectedDllName);
+                string otherDll  = Path.Combine(game.BinariesDir, otherDllName);
                 game.ErrorMessage = null;
 
+                // Status reflects the SELECTED proxy type's state ────────────
                 if (!File.Exists(targetDll))
                 {
                     game.Status = ProxyDeployStatus.NotDeployed;
                     game.InstalledVersion = null;
-                    continue;
                 }
-
-                if (!IsOurProxyDll(targetDll))
+                else if (!IsOurProxyDll(targetDll))
                 {
                     game.Status = ProxyDeployStatus.OtherProxy;
                     game.InstalledVersion = null;
-
-                    // Try to identify what it is
                     try
                     {
                         var info = FileVersionInfo.GetVersionInfo(targetDll);
@@ -284,17 +288,27 @@ public sealed class ProxyDeployService : IProxyDeployService
                     {
                         game.ErrorMessage = "Other proxy DLL detected";
                     }
-                    continue;
+                }
+                else
+                {
+                    string? installedVersion = GetDllVersion(targetDll);
+                    game.InstalledVersion = installedVersion;
+                    game.Status = (sourceVersion != null && installedVersion == sourceVersion)
+                                  ? ProxyDeployStatus.DeployedCurrent
+                                  : ProxyDeployStatus.DeployedOutdated;
                 }
 
-                // It's our DLL — check version
-                string? installedVersion = GetDllVersion(targetDll);
-                game.InstalledVersion = installedVersion;
-
-                if (sourceVersion != null && installedVersion == sourceVersion)
-                    game.Status = ProxyDeployStatus.DeployedCurrent;
-                else
-                    game.Status = ProxyDeployStatus.DeployedOutdated;
+                // Conflict detection: also our OTHER proxy in the same folder.
+                // Surface as ErrorMessage so the user sees it without forcing
+                // a separate column. Runtime mutex (Heiter.cpp) ensures only
+                // one activates, but better to flag the redundancy.
+                if (File.Exists(otherDll) && IsOurProxyDll(otherDll))
+                {
+                    string conflictMsg = $"Both {selectedDllName} and {otherDllName} are deployed — only one will activate at runtime";
+                    game.ErrorMessage = string.IsNullOrEmpty(game.ErrorMessage)
+                                        ? conflictMsg
+                                        : $"{game.ErrorMessage}; {conflictMsg}";
+                }
             }
         }, ct);
     }
@@ -303,14 +317,14 @@ public sealed class ProxyDeployService : IProxyDeployService
     // Deploy / Undeploy
     // ────────────────────────────────────────────────────────────────
 
-    public Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, bool force = false,
-        CancellationToken ct = default)
+    public Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
+        bool force = false, CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
             try
             {
-                string targetDll = Path.Combine(game.BinariesDir, Constants.ProxyDllName);
+                string targetDll = Path.Combine(game.BinariesDir, proxyType.GetDllName());
 
                 // Refuse to overwrite another program's proxy DLL
                 if (File.Exists(targetDll) && !IsOurProxyDll(targetDll) && !force)
@@ -336,7 +350,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 game.Status = ProxyDeployStatus.DeployedCurrent;
                 game.InstalledVersion = GetDllVersion(targetDll);
                 game.ErrorMessage = null;
-                _log.Info("ProxyDeploy", $"Deployed to {game.Name}: {targetDll}");
+                _log.Info("ProxyDeploy", $"Deployed {proxyType.GetDisplayName()} to {game.Name}: {targetDll}");
                 return true;
             }
             catch (IOException ex) when (ex.HResult == unchecked((int)0x80070020) /* SHARING_VIOLATION */
@@ -357,13 +371,14 @@ public sealed class ProxyDeployService : IProxyDeployService
         }, ct);
     }
 
-    public Task<bool> UndeployAsync(DetectedGame game, CancellationToken ct = default)
+    public Task<bool> UndeployAsync(DetectedGame game, ProxyType proxyType,
+        CancellationToken ct = default)
     {
         return Task.Run(() =>
         {
             try
             {
-                string targetDll = Path.Combine(game.BinariesDir, Constants.ProxyDllName);
+                string targetDll = Path.Combine(game.BinariesDir, proxyType.GetDllName());
 
                 if (!File.Exists(targetDll))
                 {
@@ -384,7 +399,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 game.Status = ProxyDeployStatus.NotDeployed;
                 game.InstalledVersion = null;
                 game.ErrorMessage = null;
-                _log.Info("ProxyDeploy", $"Undeployed from {game.Name}: {targetDll}");
+                _log.Info("ProxyDeploy", $"Undeployed {proxyType.GetDisplayName()} from {game.Name}: {targetDll}");
                 return true;
             }
             catch (IOException ex) when (ex.Message.Contains("being used", StringComparison.OrdinalIgnoreCase))
