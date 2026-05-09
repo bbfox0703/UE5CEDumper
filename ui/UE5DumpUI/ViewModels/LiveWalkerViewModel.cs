@@ -1159,6 +1159,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private bool _hasReferences;
     [ObservableProperty] private string _referencesHeader = "";
 
+    // Optional scroll-to hint applied once the next WalkInstance result
+    // populates the Fields collection. Used by Open-from-references so the
+    // user lands directly on the field that holds the pointer.
+    private string? _pendingScrollFieldName;
+
     [RelayCommand]
     private async Task FindReferencesAsync()
     {
@@ -1222,6 +1227,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task OpenReferenceOwnerAsync(ReferenceMatch? match)
     {
         if (match == null || string.IsNullOrEmpty(match.OwnerAddress)) return;
+
+        // Pre-arm the scroll hint so when the new owner's Fields list
+        // populates we auto-select the field that held the pointer. For
+        // dotted paths (e.g. "Stats.Equipment") only the first segment
+        // is a top-level field — user can drill into the struct from
+        // there. Element index is NOT auto-drilled (would require a
+        // second navigation step into the container view).
+        var firstSegment = (match.FieldName ?? "").Split('.')[0];
+        _pendingScrollFieldName = string.IsNullOrEmpty(firstSegment) ? null : firstSegment;
+
         // Append a status hint so the user knows where to look on the new
         // page (the field that's holding the pointer).
         StatusText = $"Opened {match.OwnerName} — held the previous object in '{match.FieldName}'"
@@ -2526,6 +2541,26 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             Fields.Clear();
             foreach (var f in newFields)
                 Fields.Add(f);
+        }
+
+        // Apply pending scroll-to-field hint (e.g. set by OpenReferenceOwner).
+        // The DataGrid binds SelectedItem -> SelectedField and auto-scrolls
+        // the row into view when the selection changes, so we just need to
+        // assign the matching LiveFieldValue.
+        if (!string.IsNullOrEmpty(_pendingScrollFieldName))
+        {
+            var hint = _pendingScrollFieldName;
+            _pendingScrollFieldName = null;
+            var hit = Fields.FirstOrDefault(f => f.Name == hint);
+            if (hit != null)
+            {
+                SelectedField = hit;
+                _log.Info($"UpdateDisplay: auto-scrolled to '{hint}' (pending scroll hint)");
+            }
+            else
+            {
+                _log.Info($"UpdateDisplay: pending scroll hint '{hint}' not found in field list");
+            }
         }
 
         // Store class address and load functions asynchronously
