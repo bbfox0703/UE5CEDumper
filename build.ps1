@@ -601,6 +601,39 @@ if ($Target -in "All", "UI") {
 if ($Target -in "All", "Test") {
     Write-Banner "Unit Tests"
 
+    # ----- C++ Utf8Helpers self-test -----
+    # Build + run before the C# tests so a regression in the surrogate /
+    # UTF-8 logic surfaces immediately rather than being masked by a
+    # downstream pipe / serialization failure. Always trigger a cmake
+    # build of the test target — Ninja is a no-op when the source is
+    # unchanged, and re-runs the compilation when Utf8Helpers.h or the
+    # test cpp is touched.
+    $utf8TestExe = $null
+    if (Test-Path $BUILD_DIR) {
+        Write-Step "Building utf8_helpers_test (C++ self-test)..."
+        $utf8BuildOk = Invoke-CmdInVsEnv "cmake --build `"$BUILD_DIR`" --config $CppConfig --target utf8_helpers_test"
+        if ($utf8BuildOk) {
+            $utf8TestExe = Get-ChildItem -Path $BUILD_DIR -Filter "utf8_helpers_test.exe" -Recurse -ErrorAction SilentlyContinue |
+                           Select-Object -First 1
+        }
+    }
+
+    if ($utf8TestExe) {
+        Write-Step "Running utf8_helpers_test..."
+        & $utf8TestExe.FullName
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "utf8_helpers_test failed ($LASTEXITCODE assertion(s))"
+            $exitCode = 1
+        }
+        else {
+            Write-Ok "utf8_helpers_test passed"
+        }
+    }
+    else {
+        Write-Info "utf8_helpers_test.exe not available (skip — run -Target DLL or All first)"
+    }
+
+    # ----- C# tests -----
     if (-not (Test-Path $TEST_PROJ)) {
         Write-Info "Test project not found, skipping"
     }
