@@ -89,10 +89,20 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200);
 // Returns addr, index, name, className, outer for each instance
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500);
 
-// Address-to-Instance reverse lookup result
+// Address-to-Instance reverse lookup result.
+//
+// Confidence levels (worst to best):
+//   exact      — addr IS a UObject pointer (highest confidence)
+//   contains   — addr is within UObject + PropertiesSize (high)
+//   backward   — backward memory scan found a UObject header (medium —
+//                addr is past a NewObject<>'d sub-object not in GObjects)
+//   nearest    — closest GObjects entry below addr; addr is BEYOND its
+//                PropertiesSize so this is just a "best guess" hint, not a
+//                real containment (low — frequently misleading)
 struct AddressLookupResult {
     bool        found         = false;
     bool        exactMatch    = false;  // true = addr is a UObject, false = addr is inside a UObject
+    std::string matchKind;              // "exact" / "contains" / "backward" / "nearest"
     uintptr_t   objectAddr    = 0;      // The owning UObject address
     int32_t     index         = -1;     // InternalIndex in GObjects
     std::string name;
@@ -105,6 +115,112 @@ struct AddressLookupResult {
 // First tries exact match (is this address a UObject?), then containment
 // (is this address inside a UObject's property data?).
 AddressLookupResult FindByAddress(uintptr_t addr);
+
+// === Container-Aware Address Lookup ===
+
+// One match for an address that falls inside a UObject field's
+// heap-allocated container buffer (TArray::Data / TSparseArray::Data).
+struct ContainerMatch {
+    uintptr_t   ownerObj      = 0;      // UObject that owns the container field
+    int32_t     ownerIndex    = -1;     // GObjects index of owner
+    std::string ownerName;
+    std::string ownerClassName;
+    int32_t     fieldOffset   = 0;      // Field offset within owner UObject
+    std::string fieldName;
+    std::string fieldType;              // "ArrayProperty" / "SetProperty" / "MapProperty"
+    std::string innerType;              // Inner type label (Set: elem; Map: "K → V")
+    int32_t     elementIndex  = 0;      // (addr - dataAddr) / stride (sparse index for Map/Set)
+    int32_t     elementSize   = 0;      // Per-element / per-pair stride
+    int32_t     intraOffset   = 0;      // (addr - elementStart) within element
+    uintptr_t   dataAddr      = 0;      // TArray::Data / TSparseArray::Data base
+    int32_t     count         = 0;      // Logical element count (allocated only for Map/Set)
+    // Diagnostic note about match confidence:
+    //   ""       — solid hit (within Count, allocated slot)
+    //   "slack"  — Array index is in [Count, Max) — uninitialised / freed slack
+    //   "freed"  — Map/Set slot is on the free list (stale data, may still match)
+    std::string note;
+};
+
+// Diagnostic stats from a container scan — surfaced through the pipe so
+// the UI can tell the user whether a "not found" was a complete scan
+// or got cut off by the deadline.
+struct ContainerScanStats {
+    int32_t objectsScanned   = 0;   // UObjects iterated
+    int32_t objectsTotal     = 0;   // Total in GObjects
+    int32_t classesPrimed    = 0;   // Unique classes touched (cache built)
+    int64_t durationMs       = 0;
+    bool    deadlineHit      = false;
+};
+
+// Scan all UObjects' container fields for `addr`. Returns matches where
+// addr falls in [Data, Data + bound). Covers ArrayProperty (TArray.Data,
+// including slack slots), SetProperty (TSparseArray.Data, including freed
+// slots), and MapProperty (TSparseArray.Data of TPair). Has an internal
+// time deadline and per-class field cache; cache persists for the DLL
+// lifetime so subsequent calls are much faster.
+//
+// `stats` (optional out param) receives diagnostic counters; if non-null
+// the caller can detect a truncated scan via `deadlineHit`.
+std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults = 16,
+                                              ContainerScanStats* stats = nullptr);
+
+// === Reverse Reference Search (logical-parent navigation) ===
+//
+// One match for a UObject that holds a pointer to the target UObject.
+// Used to answer "what owns this Item?" — UE's `OuterPrivate` is a
+// naming-hierarchy parent (often `/Engine/Transient` for runtime objects)
+// rather than the logical gameplay parent. Reverse-scanning all UObjects'
+// pointer fields and Object array elements gives the actual owner.
+struct ReferenceMatch {
+    uintptr_t   ownerObj      = 0;
+    int32_t     ownerIndex    = -1;
+    std::string ownerName;
+    std::string ownerClassName;
+    int32_t     fieldOffset   = 0;        // Absolute field offset within owner
+    std::string fieldName;                // Dotted path (e.g. "Stats.Equipment");
+                                          // Map matches append ".Key" / ".Value"
+    std::string fieldType;                // "ObjectProperty" / "ClassProperty" /
+                                          // "InterfaceProperty" / "WeakObjectProperty" /
+                                          // "SoftObjectProperty" / "SoftClassProperty" /
+                                          // "LazyObjectProperty" / "OptionalProperty" /
+                                          // "DelegateProperty" /
+                                          // "MulticastInlineDelegateProperty" /
+                                          // "MulticastDelegateProperty" /
+                                          // "ArrayProperty" / "MapProperty" / "SetProperty"
+    std::string innerType;                // For Array: inner element type;
+                                          // For Set: element type;
+                                          // For Map: "<keyType> → <valueType>"
+    int32_t     elementIndex  = -1;       // -1 for direct field, >=0 for array/
+                                          // map/set element (sparse index for
+                                          // Map/Set)
+};
+
+// Find UObjects that hold a pointer to `target`. Walks every UObject's:
+//   - ObjectProperty / ClassProperty / InterfaceProperty (8B raw pointer)
+//   - WeakObjectProperty / SoftObject{Class}Property / LazyObjectProperty
+//     (resolves embedded FWeakObjectPtr; only matches when bound to live
+//     UObject)
+//   - OptionalProperty<T> for pointer-shaped T (Object/Class/Interface/
+//     Weak/Soft/Lazy) — same comparison as the bare T at field+0
+//   - DelegateProperty (single FScriptDelegate — FWeakObjectPtr target at
+//     field+0 — surfaces "X is bound to a delegate on Y" relationships)
+//   - MulticastInlineDelegateProperty / MulticastDelegateProperty
+//     (FMulticastScriptDelegate := TArray<FScriptDelegate>; walks each
+//     binding's FWeakObjectPtr target). MulticastSparseDelegateProperty
+//     deliberately NOT covered — bindings live in FSparseDelegateStorage
+//     and require a separate AOB + storage walk.
+//   - TArray of any single-pointer type above (incl. TArray<FScriptDelegate>)
+//   - TMap with Object/Class key and/or value (allocated slots only)
+//   - TSet with Object/Class element (allocated slots only)
+// Walks include fields nested inside StructProperty (depth 3).
+//
+// Has its own per-class metadata cache (separate from container cache);
+// first call primes, subsequent calls are fast.
+//
+// `stats` mirrors ContainerScanStats — duration and deadline indication.
+std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
+                                                     int32_t maxResults = 32,
+                                                     ContainerScanStats* stats = nullptr);
 
 // === Property Keyword Search ===
 

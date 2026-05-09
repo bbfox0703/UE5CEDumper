@@ -67,6 +67,32 @@ public static class CeXmlExportService
     [ThreadStatic]
     private static bool _collapsePointerNodes;
 
+    /// <summary>
+    /// Path-based cycle detection for drilled pointer emit. Holds the PtrAddresses
+    /// currently on the emit stack — we push on entry into EmitDrilledPointer and
+    /// pop on exit. If a target appears in this set, the pointer is a back-edge
+    /// (e.g. UWorld -&gt; PersistentLevel -&gt; OwningWorld) and must NOT be re-emitted
+    /// as a group, otherwise the StringBuilder explodes (observed: 2GB capacity
+    /// hit on DQ I&amp;II HD-2D with Drill Depth = 2).
+    ///
+    /// ResolvePointerInstancesAsync's visited set protects the *resolve* phase;
+    /// the *emit* phase is independent and needs its own protection.
+    /// </summary>
+    [ThreadStatic]
+    private static HashSet<string>? _emitPath;
+
+    /// <summary>
+    /// Hard ceiling on EmitDrilledPointer recursion depth — covers the rare case
+    /// where ResolvePointerInstancesAsync produced a long but acyclic chain that
+    /// would still trigger an XML blow-up. Set generously so legitimate trees
+    /// (depth 4 + cascade) fit comfortably; the cycle protection above is the
+    /// primary line of defence.
+    /// </summary>
+    private const int MaxEmitPointerDepth = 16;
+
+    [ThreadStatic]
+    private static int _emitPointerDepth;
+
     /// <summary>CE field metadata for XML generation.</summary>
     private record CeFieldInfo(
         string VariableType,
@@ -91,35 +117,153 @@ public static class CeXmlExportService
     ///        LiveFieldValue { Name="StructB.Y", Offset=0x14 },
     ///      ]
     /// </summary>
-    public static async Task<Dictionary<int, List<LiveFieldValue>>> ResolveStructFieldsAsync(
-        IDumpService dump, IReadOnlyList<LiveFieldValue> fields, int arrayLimit = 64)
+    /// <summary>
+    /// Pre-resolve ObjectProperty / ClassProperty / WeakObjectProperty / Soft* / Lazy* /
+    /// Interface* targets so the CE XML emitter can drop GroupHeader+Offsets=[0] children
+    /// onto the pointer leaf, mirroring the same drilldown the CSX exporter ships
+    /// (CsxExportService.ResolvePointerInstancesAsync). The result is keyed by PtrAddress
+    /// so the emit-time lookup is O(1) per field.
+    ///
+    /// Cascades StructProperty resolution into <paramref name="resolvedStructs"/> for
+    /// every drilled target's fields too — without that, drilled children with
+    /// StructProperty (e.g. <c>PrimaryComponentTick (ActorComponentTickFunction)</c>
+    /// inside a UComponent) would render as empty GroupHeader placeholders even
+    /// though the user asked for full drill-down.
+    ///
+    /// Recurses into resolved targets up to <paramref name="depth"/>; uses a
+    /// shared visited set for cycle detection. Returns empty when depth &lt;= 0.
+    /// </summary>
+    public static async Task<Dictionary<string, List<LiveFieldValue>>> ResolvePointerInstancesAsync(
+        IDumpService dump,
+        IReadOnlyList<LiveFieldValue> fields,
+        int depth,
+        int arrayLimit = 64,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs = null)
     {
-        var result = new Dictionary<int, List<LiveFieldValue>>();
+        var resolved = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
+        if (depth <= 0) return resolved;
+
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        await ResolvePointerInstancesRecursiveAsync(
+            dump, fields, resolved, depth, arrayLimit, visited, resolvedStructs);
+        return resolved;
+    }
+
+    private static async Task ResolvePointerInstancesRecursiveAsync(
+        IDumpService dump,
+        IReadOnlyList<LiveFieldValue> fields,
+        Dictionary<string, List<LiveFieldValue>> resolved,
+        int remainingDepth,
+        int arrayLimit,
+        HashSet<string> visited,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs)
+    {
+        if (remainingDepth <= 0) return;
 
         foreach (var field in fields)
         {
-            if (field.TypeName != "StructProperty"
+            if (!IsObjectPropertyType(field.TypeName)) continue;
+            if (string.IsNullOrEmpty(field.PtrAddress) || field.PtrAddress == "0x0") continue;
+            if (resolved.ContainsKey(field.PtrAddress)) continue;
+            if (!visited.Add(field.PtrAddress)) continue; // cycle protection
+
+            try
+            {
+                var result = await dump.WalkInstanceAsync(field.PtrAddress, field.PtrClassAddr, arrayLimit);
+                if (result.Fields.Count > 0)
+                {
+                    resolved[field.PtrAddress] = result.Fields;
+
+                    // Cascade struct resolution so the drilled target's
+                    // StructProperty children expand to real sub-fields,
+                    // not empty GroupHeader placeholders.
+                    if (resolvedStructs != null)
+                    {
+                        await ResolveStructFieldsIntoAsync(
+                            dump, result.Fields, resolvedStructs, arrayLimit);
+                    }
+
+                    // Recurse one level deeper for nested pointers in the resolved target
+                    await ResolvePointerInstancesRecursiveAsync(
+                        dump, result.Fields, resolved, remainingDepth - 1,
+                        arrayLimit, visited, resolvedStructs);
+                }
+            }
+            catch
+            {
+                // Pipe error / target reclaimed — skip this branch quietly,
+                // pointer falls back to a flat 8 Bytes hex leaf in the emit step.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Object/Class pointer family — same set CsxExportService treats as drilldown-eligible.
+    /// </summary>
+    private static bool IsObjectPropertyType(string typeName) => typeName is
+        "ObjectProperty" or "ClassProperty" or "WeakObjectProperty" or
+        "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty" or
+        "InterfaceProperty";
+
+    /// <summary>
+    /// Pre-resolve all StructProperty fields in <paramref name="fields"/> by walking
+    /// each one's inner UScriptStruct via the DLL.
+    ///
+    /// Result is keyed by <see cref="LiveFieldValue.StructDataAddr"/> (the absolute
+    /// memory address of the struct data) — NOT by field.Offset — so the same
+    /// dictionary can hold struct fields from multiple drilled-pointer instances
+    /// without offset-based key collisions (e.g. two different objects each have
+    /// a StructProperty at offset 0x30, but their StructDataAddr differs).
+    /// </summary>
+    public static async Task<Dictionary<string, List<LiveFieldValue>>> ResolveStructFieldsAsync(
+        IDumpService dump, IReadOnlyList<LiveFieldValue> fields, int arrayLimit = 64)
+    {
+        var result = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
+        await ResolveStructFieldsIntoAsync(dump, fields, result, arrayLimit);
+        return result;
+    }
+
+    /// <summary>
+    /// Walk <paramref name="fields"/>'s StructProperty entries and add their
+    /// resolved sub-fields into <paramref name="resolved"/> (keyed by
+    /// StructDataAddr). Used both for top-level resolution and for cascading
+    /// into drilled pointer targets — letting one dict cover the whole tree.
+    /// </summary>
+    private static async Task ResolveStructFieldsIntoAsync(
+        IDumpService dump,
+        IReadOnlyList<LiveFieldValue> fields,
+        Dictionary<string, List<LiveFieldValue>> resolved,
+        int arrayLimit)
+    {
+        foreach (var field in fields)
+        {
+            // Both StructProperty and OptionalProperty<Struct> have the same
+            // {StructClassAddr, StructDataAddr, StructTypeName} triple stamped
+            // by the walker when the value is set, so the resolver treats
+            // them uniformly — the emit-time branch decides how to render.
+            var isStruct = field.TypeName == "StructProperty"
+                        || field.TypeName == "OptionalProperty";
+            if (!isStruct
                 || string.IsNullOrEmpty(field.StructClassAddr)
                 || string.IsNullOrEmpty(field.StructDataAddr)
                 || field.StructDataAddr == "0x0")
                 continue;
+            if (resolved.ContainsKey(field.StructDataAddr)) continue;
 
-            var resolved = new List<LiveFieldValue>();
+            var subResolved = new List<LiveFieldValue>();
             try
             {
                 await ResolveStructRecursiveAsync(dump, field.StructDataAddr, field.StructClassAddr,
-                    "", 0, resolved, 0, arrayLimit);
+                    "", 0, subResolved, 0, arrayLimit);
             }
             catch
             {
                 // If resolution fails (pipe error, etc.), leave empty — will fall back to placeholder
             }
 
-            if (resolved.Count > 0)
-                result[field.Offset] = resolved;
+            if (subResolved.Count > 0)
+                resolved[field.StructDataAddr] = subResolved;
         }
-
-        return result;
     }
 
     private static async Task ResolveStructRecursiveAsync(
@@ -181,6 +325,8 @@ public static class CeXmlExportService
                     ArrayDataAddr = f.ArrayDataAddr,
                     ArrayEnumAddr = f.ArrayEnumAddr,
                     ArrayEnumEntries = f.ArrayEnumEntries,
+                    SoftArrayFNameSize = f.SoftArrayFNameSize,
+                    SoftArrayIsTopLevelAssetPath = f.SoftArrayIsTopLevelAssetPath,
                     EnumName = f.EnumName,
                     EnumValue = f.EnumValue,
                     EnumAddr = f.EnumAddr,
@@ -227,9 +373,10 @@ public static class CeXmlExportService
         string rootName,
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         IReadOnlyList<LiveFieldValue> currentFields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
-        int maxDropDownEntries = 512)
+        int maxDropDownEntries = 512,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         // Clean breadcrumbs: remove navigation cycles (e.g., Child->Parent->Child)
         // before generating XML to avoid deeply nested duplicate pointer chains.
@@ -240,6 +387,8 @@ public static class CeXmlExportService
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
         _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
+        _emitPath = new HashSet<string>(StringComparer.Ordinal);
+        _emitPointerDepth = 0;
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
@@ -283,7 +432,7 @@ public static class CeXmlExportService
         // Parent breadcrumb (if any) already handled pointer dereference via Offsets=[0],
         // so all leaf fields simply use Address=+{field.Offset}.
         var leafIndent = indent + new string(' ', cleanedBc.Count * 2);
-        EmitFields(sb, leafIndent, currentFields, resolvedStructs);
+        EmitFields(sb, leafIndent, currentFields, resolvedStructs, resolvedInstances);
 
         // Close all nested levels (innermost first)
         for (int i = openTags - 1; i >= 0; i--)
@@ -307,15 +456,18 @@ public static class CeXmlExportService
         string rootName,
         string className,
         IReadOnlyList<LiveFieldValue> fields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
-        int maxDropDownEntries = 512)
+        int maxDropDownEntries = 512,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         _nextId = 100;
         _collapsePointerNodes = collapsePointerNodes;
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
         _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
+        _emitPath = new HashSet<string>(StringComparer.Ordinal);
+        _emitPointerDepth = 0;
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
@@ -326,7 +478,7 @@ public static class CeXmlExportService
             showAsHex: true, varType: "8 Bytes");
 
         var leafIndent = indent + "  ";
-        EmitFields(sb, leafIndent, fields, resolvedStructs);
+        EmitFields(sb, leafIndent, fields, resolvedStructs, resolvedInstances);
 
         EmitGroupClose(sb, indent);
 
@@ -379,9 +531,10 @@ public static class CeXmlExportService
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         IReadOnlyList<LiveFieldValue> currentFields,
         string aob, int aobPos, int aobLen, string moduleName,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
-        int maxDropDownEntries = 512)
+        int maxDropDownEntries = 512,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
 
@@ -448,7 +601,7 @@ public static class CeXmlExportService
         // ---- Leaf fields ----
         var bcDepth = Math.Max(0, cleanedBc.Count - 1);
         var leafIndent = baseIndent + "    " + new string(' ', bcDepth * 2);
-        EmitFields(sb, leafIndent, currentFields, resolvedStructs);
+        EmitFields(sb, leafIndent, currentFields, resolvedStructs, resolvedInstances);
 
         // ---- Close inner breadcrumb groups ----
         for (int i = innerOpenTags - 1; i >= 0; i--)
@@ -633,22 +786,83 @@ public static class CeXmlExportService
     /// </summary>
     private static void EmitFields(StringBuilder sb, string indent,
         IReadOnlyList<LiveFieldValue> fields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs)
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         foreach (var field in fields)
         {
-            // Check if this StructProperty has pre-resolved children
+            // Check if this StructProperty has pre-resolved children. Key is
+            // StructDataAddr (absolute address) — unique across instances, so
+            // the same dict can serve nested struct fields inside drilled
+            // pointer targets without offset-collision.
             if (field.TypeName == "StructProperty"
                 && resolvedStructs != null
-                && resolvedStructs.TryGetValue(field.Offset, out var structChildren)
+                && !string.IsNullOrEmpty(field.StructDataAddr)
+                && resolvedStructs.TryGetValue(field.StructDataAddr, out var structChildren)
                 && structChildren.Count > 0)
             {
                 EmitResolvedStruct(sb, indent, field, structChildren);
                 continue;
             }
 
-            // ArrayProperty: emit as group with element children (Phase C)
-            if (field.TypeName == "ArrayProperty" && field.ArrayCount >= 0)
+            // Pointer drill-down: ObjectProperty / ClassProperty / Weak/Soft/Lazy/Interface
+            // with a pre-resolved target → emit GroupHeader+Offsets=[0] and recurse into
+            // the target's fields. CE will dereference *(parent + field.Offset) and lay
+            // the children out at their natural offsets within the target.
+            //
+            // Lookup is by PtrAddress so two fields pointing to the same instance share
+            // the same resolved field list (this is also what enables cycle protection
+            // from ResolvePointerInstancesAsync).
+            if (resolvedInstances != null
+                && IsObjectPropertyType(field.TypeName)
+                && !string.IsNullOrEmpty(field.PtrAddress)
+                && field.PtrAddress != "0x0"
+                && resolvedInstances.TryGetValue(field.PtrAddress, out var ptrChildren)
+                && ptrChildren.Count > 0)
+            {
+                EmitDrilledPointer(sb, indent, field, ptrChildren, resolvedStructs, resolvedInstances);
+                continue;
+            }
+
+            // OptionalProperty: TOptional<T> wraps an inner value at field+0.
+            // - TOptional<Struct>: walker stamps StructDataAddr/StructClassAddr
+            //   when set, so we can render the struct sub-fields inline (no
+            //   pointer dereference; struct lives directly at field+0).
+            // - All other inner shapes (scalar / pointer / weak / etc): emit
+            //   as a flat 8-byte hex leaf so the user has a watchable address
+            //   for the value slot. The trailing bIsSet byte (when present)
+            //   isn't surfaced separately — UE intrusively encodes it for
+            //   FString / FName / FText / pointer types, and the byte's
+            //   location for non-intrusive scalars depends on inner T size
+            //   that's not exposed to the C# emitter.
+            if (field.TypeName == "OptionalProperty")
+            {
+                if (resolvedStructs != null
+                    && !string.IsNullOrEmpty(field.StructDataAddr)
+                    && resolvedStructs.TryGetValue(field.StructDataAddr, out var optStructChildren)
+                    && optStructChildren.Count > 0)
+                {
+                    EmitResolvedStruct(sb, indent, field, optStructChildren);
+                }
+                else
+                {
+                    // Flat leaf — at minimum CE shows the first 8 bytes of
+                    // the optional slot so the user can poke at the value.
+                    EmitLeaf(sb, indent, field.Name,
+                        new CeFieldInfo("8 Bytes", ShowAsHex: true),
+                        $"+{field.Offset:X}", null);
+                }
+                continue;
+            }
+
+            // ArrayProperty: emit as group with element children (Phase C).
+            // Multicast delegates are exposed as implicit DelegateProperty arrays
+            // (the field's first 8 bytes are the InvocationList::Data pointer,
+            // matching TArray addressing — Offsets=[0] derefs it correctly).
+            if (field.ArrayCount >= 0
+                && (field.TypeName == "ArrayProperty"
+                    || field.TypeName == "MulticastInlineDelegateProperty"
+                    || field.TypeName == "MulticastDelegateProperty"))
             {
                 EmitArrayProperty(sb, indent, field);
                 continue;
@@ -737,6 +951,76 @@ public static class CeXmlExportService
     /// Children are flattened (nested structs already expanded with dot-prefixed names).
     /// Each child's Offset is relative to the struct start.
     /// </summary>
+    /// <summary>
+    /// Emit an ObjectProperty / Class / Weak / Soft / Lazy / Interface field whose
+    /// pointer target was pre-resolved by ResolvePointerInstancesAsync. The leaf
+    /// becomes a GroupHeader with Address=+{fieldOffset}, Offsets=[0] (CE
+    /// dereferences *(parent + fieldOffset)) and the resolved target's fields as
+    /// children at their natural offsets within the target instance.
+    ///
+    /// Reuses the standard EmitFields recursion so nested struct flattening,
+    /// container expansion, enum DropDownLists, and further pointer drill-downs
+    /// all work uniformly inside the target — depth was already capped during
+    /// the resolve phase, so this loop terminates.
+    /// </summary>
+    private static void EmitDrilledPointer(StringBuilder sb, string indent,
+        LiveFieldValue field,
+        List<LiveFieldValue> children,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>> resolvedInstances)
+    {
+        // ---- Cycle / depth guards ----
+        // ResolvePointerInstancesAsync caches resolved[X] keyed by PtrAddress, so
+        // back-pointers (UWorld -> PersistentLevel -> OwningWorld) are still
+        // populated in the dictionary. Without an emit-side path check, drilling
+        // would oscillate between A's and B's child lists indefinitely.
+        _emitPath ??= new HashSet<string>(StringComparer.Ordinal);
+        bool alreadyOnPath = !string.IsNullOrEmpty(field.PtrAddress)
+                             && _emitPath.Contains(field.PtrAddress);
+        bool depthExceeded = _emitPointerDepth >= MaxEmitPointerDepth;
+
+        if (alreadyOnPath || depthExceeded)
+        {
+            // Emit a flat 8-byte hex leaf so the user keeps a watchable address
+            // for the pointer, instead of nothing or an unbounded group. The
+            // description tags the reason so it's not mysterious in CE.
+            var reason = alreadyOnPath ? " (cycle elided)" : " (max drill depth reached)";
+            var classTag = !string.IsNullOrEmpty(field.PtrClassName)
+                ? $" ({field.PtrClassName})" : "";
+            EmitLeaf(sb, indent, field.Name + classTag + reason,
+                new CeFieldInfo("8 Bytes", ShowAsHex: true),
+                $"+{field.Offset:X}", null);
+            return;
+        }
+
+        // Description: include the resolved class name when known so the user
+        // can tell BP_X (UCharacter) from BP_X (UPawn) without expanding.
+        var description = !string.IsNullOrEmpty(field.PtrClassName)
+            ? $"{field.Name} ({field.PtrClassName})"
+            : field.Name;
+
+        // Address=+{fieldOffset}, Offsets=[0] — CE dereferences the pointer
+        // and treats children's +{N} as offsets from the resolved target.
+        EmitGroupOpen(sb, indent, description, $"+{field.Offset:X}", new[] { 0 },
+            showAsHex: true);
+
+        // Push self onto the path before recursing; pop on exit (try/finally
+        // is overkill — EmitFields doesn't throw under normal use, and a
+        // missing pop just makes the SAME pointer non-drillable next time
+        // within this call, which is benign).
+        bool pushed = !string.IsNullOrEmpty(field.PtrAddress)
+                      && _emitPath.Add(field.PtrAddress);
+        _emitPointerDepth++;
+
+        var childIndent = indent + "  ";
+        EmitFields(sb, childIndent, children, resolvedStructs, resolvedInstances);
+
+        _emitPointerDepth--;
+        if (pushed) _emitPath.Remove(field.PtrAddress);
+
+        EmitGroupClose(sb, indent);
+    }
+
     private static void EmitResolvedStruct(StringBuilder sb, string indent,
         LiveFieldValue structField, List<LiveFieldValue> children)
     {
@@ -777,9 +1061,13 @@ public static class CeXmlExportService
                 EmitGroupPlaceholder(sb, childIndent, child.Name,
                     $"+{child.Offset:X}", null, showAsHex: true);
             }
-            else if (child.TypeName == "ArrayProperty" && child.ArrayCount >= 0)
+            else if (child.ArrayCount >= 0
+                && (child.TypeName == "ArrayProperty"
+                    || child.TypeName == "MulticastInlineDelegateProperty"
+                    || child.TypeName == "MulticastDelegateProperty"))
             {
-                // Array inside struct — full expansion if element data is available
+                // Array inside struct — full expansion if element data is available.
+                // Multicast delegates expose an implicit array via ArrayCount/Inner.
                 EmitArrayProperty(sb, childIndent, child);
             }
             else if (child.TypeName == "MapProperty" && child.MapCount >= 0)
@@ -845,6 +1133,22 @@ public static class CeXmlExportService
             }
 
             EmitGroupClose(sb, indent);
+            return;
+        }
+
+        // Phase G: TArray<TSoftObjectPtr/TSoftClassPtr> — emit per-element
+        // struct group with WeakPtr leaf at +0 + FName leaf(s) at +0x10 (and
+        // +0x10+fnameSize for UE5.1+'s FTopLevelAssetPath layout). Without
+        // this, the inner element collapses to a single 8B WeakPtr hex blob
+        // and the FSoftObjectPath::AssetPathName / PackageName is invisible.
+        // Soft array layout metadata (fnameSize + FTopLevelAssetPath flag)
+        // comes from the DLL — see Ubel.cpp Phase G handler.
+        if ((field.ArrayInnerType == "SoftObjectProperty"
+             || field.ArrayInnerType == "SoftClassProperty")
+            && field.SoftArrayFNameSize > 0
+            && field.ArrayCount > 0 && field.ArrayElemSize > 0)
+        {
+            EmitSoftObjectArrayProperty(sb, indent, field, desc);
             return;
         }
 
@@ -987,6 +1291,101 @@ public static class CeXmlExportService
                 EmitLeaf(sb, childIndent, elemDesc, ceElem,
                     $"+{elemByteOffset:X}", null);
             }
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// Phase G: Emit a TArray&lt;TSoftObjectPtr|TSoftClassPtr&gt; with per-element
+    /// struct groups so the FName leaf(s) at the FSoftObjectPath sub-offset
+    /// are addressable in CE — instead of a single 8B WeakPtr hex blob.
+    ///
+    /// Element layout (DLL-provided fname size + FTopLevelAssetPath flag):
+    ///   +0x00 FWeakObjectPtr (8B: int32 ObjectIndex + int32 SerialNumber)
+    ///   +0x08 Tag (4B) + pad (4B)
+    ///   +0x10 FName AssetPathName  (UE4 / UE5.0)         — single FName
+    ///         OR FName PackageName (UE5.1+ FTopLevelAssetPath)
+    ///   +0x10+fnameSize  FName AssetName (UE5.1+ only)
+    ///
+    /// FName CE rendering: ComparisonIndex (uint32) at field+0 — emitted as
+    /// a "4 Bytes" leaf with a deduplicated DropDownList built from the live
+    /// elements so users see the resolved asset path text in CE's Value column.
+    ///
+    /// Array group: Address=+{fieldOffset}, Offsets=[0] (deref TArray.Data)
+    /// Element group: Address=+{N*elemSize}, no Offsets (inline within Data)
+    /// Leaves: Address=+{subOffset} (relative to element start)
+    /// </summary>
+    private static void EmitSoftObjectArrayProperty(StringBuilder sb, string indent,
+        LiveFieldValue field, string desc)
+    {
+        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        var elemIndent = indent + "  ";
+
+        // Build a shared DropDownList for the AssetPath/PackageName FName from
+        // the live element values. Each elem.RawIntValue is the FName
+        // ComparisonIndex (set by ReadSoftObjectArrayElements when the path
+        // resolves); fall back to no DropDown if values are missing.
+        var maxDd = _maxDropDownEntries > 0 ? _maxDropDownEntries : 512;
+        string? sharedDropDown = null;
+        if (field.ArrayElements is { Count: > 0 } && field.ArrayElements.Count <= maxDd)
+        {
+            var seen = new HashSet<long>();
+            var pairs = new List<(long, string)>();
+            foreach (var e in field.ArrayElements)
+            {
+                if (e.RawIntValue == 0 || string.IsNullOrEmpty(e.Value)) continue;
+                if (seen.Add(e.RawIntValue))
+                    pairs.Add((e.RawIntValue, e.Value));
+            }
+            if (pairs.Count > 0)
+                sharedDropDown = BuildDropDownContent(pairs);
+        }
+
+        var ceWeakPtr  = new CeFieldInfo("8 Bytes", ShowAsHex: true);
+        var ceFNameIdx = new CeFieldInfo("4 Bytes");
+
+        foreach (var elem in field.ArrayElements ?? new List<ArrayElementValue>())
+        {
+            int elemByteOffset = elem.Index * field.ArrayElemSize;
+            string elemDesc = !string.IsNullOrEmpty(elem.Value)
+                ? $"[{elem.Index}] {elem.Value}"
+                : $"[{elem.Index}]";
+
+            EmitGroupOpen(sb, elemIndent, elemDesc, $"+{elemByteOffset:X}", null);
+            var fieldIndent = elemIndent + "  ";
+
+            // FWeakObjectPtr at +0 — useful when the asset is currently loaded
+            // (8 bytes packing ObjectIndex + SerialNumber).
+            EmitLeaf(sb, fieldIndent, "WeakPtr", ceWeakPtr, "+0", null);
+
+            // FName ComparisonIndex (and Number at +4) for the
+            // AssetPathName / PackageName at +0x10.
+            string firstFNameLabel = field.SoftArrayIsTopLevelAssetPath
+                ? "PackageName"
+                : "AssetPath";
+            if (sharedDropDown != null)
+            {
+                EmitLeaf(sb, fieldIndent, firstFNameLabel, ceFNameIdx,
+                    "+10", null, dropDownContent: sharedDropDown);
+            }
+            else
+            {
+                EmitLeaf(sb, fieldIndent, firstFNameLabel, ceFNameIdx,
+                    "+10", null);
+            }
+
+            // UE5.1+: FTopLevelAssetPath has a second FName (AssetName) right
+            // after PackageName. Stride is the same fnameSize used by the
+            // backing FName.
+            if (field.SoftArrayIsTopLevelAssetPath)
+            {
+                int assetNameOffset = 0x10 + field.SoftArrayFNameSize;
+                EmitLeaf(sb, fieldIndent, "AssetName", ceFNameIdx,
+                    $"+{assetNameOffset:X}", null);
+            }
+
+            EmitGroupClose(sb, elemIndent);
         }
 
         EmitGroupClose(sb, indent);
@@ -1472,6 +1871,18 @@ public static class CeXmlExportService
             // TextProperty: FText internal pointer chain — CE can't resolve, show as hex
             "TextProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
+            // Pointer-shaped property types — single field is a raw 8B pointer.
+            // Without these, MapCeField returns null and EmitFields falls through
+            // to EmitNavigableField -> EmitGroupPlaceholder, which emits a
+            // <GroupHeader>1</GroupHeader> entry with NO <VariableType> — CE
+            // shows it as an empty folder rather than a readable pointer.
+            // Listing them here promotes them to a proper "8 Bytes / ShowAsHex"
+            // leaf so Copy CE Field / Copy CE XML for an ObjectProperty selection
+            // produces a usable pointer entry CE can actually display.
+            "ObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "ClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "WeakObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
             // Soft/Lazy object: FName-based — CE can't resolve, show as hex
             "SoftObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "SoftClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
@@ -1480,7 +1891,7 @@ public static class CeXmlExportService
             // Interface: first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            _ => null // Unknown -- not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
+            _ => null // Unknown -- not a scalar (StructProperty, ArrayProperty, etc.)
         };
     }
 
@@ -1525,10 +1936,29 @@ public static class CeXmlExportService
             // Phase E: weak object pointer — 8 bytes (ObjectIndex + SerialNumber)
             "WeakObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            // Interface: first 8 bytes is UObject*, show as pointer
+            // Phase G: TSoftObjectPtr / TSoftClassPtr — first 8 bytes is FWeakObjectPtr
+            // (ObjectIndex + SerialNumber). Element stride uses ArrayElemSize so
+            // consecutive elements remain aligned to TPersistentObjectPtr layout.
+            "SoftObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "SoftClassProperty"  => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Phase H: TLazyObjectPtr — first 8 bytes is FWeakObjectPtr
+            "LazyObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Phase I: TScriptInterface — first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            _ => null // Non-scalar (StructProperty, SoftObjectProperty, etc.)
+            // Phase J: FScriptDelegate — first 8 bytes is FWeakObjectPtr (target).
+            // Element stride uses ArrayElemSize so consecutive elements stay aligned
+            // (16 without CasePreservingName, 24 with).
+            "DelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // Phase K: FMulticastScriptDelegate — first 8 bytes is the inner
+            // TArray<FScriptDelegate>::Data pointer; element stride is 16.
+            "MulticastDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "MulticastInlineDelegateProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            _ => null // Non-scalar (StructProperty, etc.)
         };
     }
 }

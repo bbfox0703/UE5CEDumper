@@ -1,6 +1,6 @@
 # Architecture & Build Environment
 
-> For build commands, see [CLAUDE.md](../CLAUDE.md). For DLL/UI interface details, see [dll-spec.md](dll-spec.md) and [ui-spec.md](ui-spec.md).
+> For build commands, see [CLAUDE.md](../CLAUDE.md). For DLL/UI interface details, see [dll-spec.md](dll-spec.md) and [ui-spec.md](ui-spec.md). For the rationale behind the Frieren-themed C++ file/namespace names, see [naming-convention.md](naming-convention.md).
 
 -----
 
@@ -16,57 +16,66 @@ UE5CEDumper/
 │
 ├── dll/                            ← C++ DLL (injected into game process)
 │   ├── CMakeLists.txt              ← DLL build config (versioning, git hash, deps)
-│   └── src/
-│       ├── dllmain.cpp             ← DLL_PROCESS_ATTACH, AutoStartThreadProc
-│       ├── CEPlugin.cpp            ← CE plugin Type 5 main menu, g_isCEPlugin flag
-│       ├── Constants.h             ← Magic strings, pipe name, UObject offsets, DynOff namespace
-│       ├── Signatures.h            ← 128 AOB patterns + 5 symbol exports (14 sources)
+│   └── src/                        ← 15 .cpp + 14 .h (Frieren-themed; see naming-convention.md)
+│       ├── Heiter.cpp              ← dllmain — DLL_PROCESS_ATTACH, AutoStartThreadProc
+│       ├── Methode.cpp             ← CEPlugin — CE plugin Type 5 main menu
+│       ├── Grimoire.h              ← Constants — magic strings, pipe name, UObject offsets, DynOff namespace
+│       ├── Himmel.h                ← Signatures — 128 AOB patterns + 5 symbol exports (14 sources)
 │       ├── BuildInfo.h.in          ← Template → BuildInfo.h (version, git hash)
 │       ├── version.rc              ← Win32 PE VERSIONINFO resource
 │       │
-│       ├── Memory.cpp / .h         ← AOBScan, ResolveRIP, ReadSafe (SEH), TArrayView
-│       ├── Logger.cpp / .h         ← Category-routed logging (5 files: init/scan/offsets/pipe/walk)
-│       ├── OffsetFinder.cpp / .h   ← GObjects/GNames/GWorld scan, DynOff detection
-│       ├── ObjectArray.cpp / .h    ← Chunked + flat UObject array, stride detection
-│       ├── FNamePool.cpp / .h      ← UE5 FNamePool + UE4 TNameEntryArray + hash-prefixed mode
-│       ├── UStructWalker.cpp / .h  ← FField/UProperty chain, WalkInstance, array phases
-│       ├── GameThreadDispatch.cpp/.h ← MinHook ProcessEvent hook, game-thread queue
-│       ├── Mailbox.cpp / .h        ← Shared memory mailbox for CE Lua invocation
-│       ├── HintCache.cpp / .h      ← Scan hint cache for faster repeat scans
-│       ├── ProxyVersion.cpp / .def ← version.dll proxy DLL forwarding
+│       ├── Macht.cpp / .h          ← Memory — AOBScan, ResolveRIP, ReadSafe (SEH), TArrayView
+│       ├── Sein.cpp / .h           ← Logger — category-routed logging (5 files: init/scan/offsets/pipe/walk)
+│       ├── Genau.cpp / .h          ← OffsetFinder — GObjects/GNames/GWorld scan, DynOff detection
+│       ├── Aura.cpp / .h           ← ObjectArray — chunked + flat UObject array, stride detection,
+│       │                              FindByAddress / FindInContainers / FindReferencesToUObject (Find Refs v3)
+│       ├── Serie.cpp / .h          ← FNamePool — UE5 FNamePool + UE4 TNameEntryArray + hash-prefixed mode
+│       ├── Ubel.cpp / .h           ← UStructWalker — FField/UProperty chain, WalkInstance, array Phases B-K,
+│       │                              OptionalProperty (intrusive + non-intrusive)
+│       ├── Stark.cpp / .h          ← GameThreadDispatch — MinHook ProcessEvent hook, game-thread queue
+│       ├── Mimic.cpp / .h          ← Mailbox — shared memory mailbox for CE Lua invocation
+│       ├── Flamme.cpp / .h         ← HintCache — scan hint cache for faster repeat scans
+│       ├── Lugner.cpp              ← ProxyVersion — version.dll proxy DLL forwarding
+│       ├── Lugner_Dinput8.cpp      ← dinput8.dll proxy variant
+│       ├── ProxyVersion.def        ← version.dll export forwarding
+│       ├── ProxyDinput8.def        ← dinput8.dll export forwarding
 │       │
-│       ├── ExportAPI.cpp / .h      ← C ABI exports (30 exports for CE Lua bridge)
-│       ├── PipeServer.cpp / .h     ← Named pipe IPC server, JSON dispatch (30 commands)
-│       └── PipeProtocol.h          ← Shared JSON command/field name constants
+│       ├── Frieren.cpp / .h        ← ExportAPI — 30 C ABI exports for CE Lua bridge
+│       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (31 commands)
+│       └── Renge.h                 ← PipeProtocol — shared JSON command/field name constants
 │
 ├── docs/                           ← Documentation
 │   ├── architecture.md             ← This file
+│   ├── dev-log.md                  ← Running milestone log + capability matrix + gaps (read first)
 │   ├── dll-spec.md                 ← C++ header definitions, offset tables, CE Lua bridge
-│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (30 commands)
+│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (31 commands)
 │   ├── ui-spec.md                  ← Avalonia UI tech stack, component skeletons
 │   ├── export-formats.md           ← CE XML, CSX, SDK Header, USMAP export rules
-│   ├── technical-notes.md          ← UE version diffs, FField vs UProperty, FNamePool internals
-│   ├── lessons-learned.md          ← Hard-won debugging lessons (20 games)
+│   ├── technical-notes.md          ← UE version diffs, FField vs UProperty, FNamePool internals,
+│   │                                  Property Type Layouts (Phases B-K), Address Finder layered lookup
+│   ├── lessons-learned.md          ← Hard-won debugging lessons (20+ games)
 │   ├── test-games.md               ← 20 test games with UE version + status
-│   ├── ue4ss-analysis.md           ← UE4SS/Dumper-7/UEDumper analysis
-│   ├── simd-scanning-notes.md      ← AOBMaker SIMD scanning research
-│   ├── CE-Bugs-Minesweeper.md      ← CE-specific bug notes
-│   └── private/                    ← Private/scratch notes
+│   ├── naming-convention.md        ← Frieren-themed file / namespace mapping
+│   ├── aobmaker-integration.md     ← AOBMaker CE Plugin pipe bridge spec
+│   ├── simd-scanning-notes.md      ← AOBMaker SIMD scanning research (reference)
+│   ├── CE-Bugs-Minesweeper.md      ← CE-specific bug notes (evergreen)
+│   ├── archive/                    ← Outdated design docs preserved for history
+│   └── private/                    ← Private/scratch notes (gitignored if listed in .gitignore)
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (348 tests, 15 files)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (16 .cs test files, 496 tests)
 │   └── UE5DumpUI/
-│       ├── UE5DumpUI.csproj
+│       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.0.2, Native AOT
 │       ├── Program.cs              ← Avalonia entry point
-│       ├── App.axaml / .cs
+│       ├── App.axaml / .cs         ← Service creation + DI (incl. AobMakerBridgeService)
 │       ├── app.manifest
 │       ├── ViewLocator.cs
 │       ├── Constants.cs            ← UI magic strings
 │       │
-│       ├── Models/                 ← IPC response models + UI data models (25 files)
+│       ├── Models/                 ← IPC response models + UI data models (27 files)
 │       │   ├── UObjectNode.cs
-│       │   ├── LiveFieldValue.cs   ← Rich field value (typed, hex, arrays, enums)
+│       │   ├── LiveFieldValue.cs   ← Rich field value (typed, hex, arrays, enums, struct sub-fields)
 │       │   ├── InstanceWalkResult.cs
 │       │   ├── ClassInfoModel.cs, ClassListResult.cs
 │       │   ├── FieldInfoModel.cs, FunctionInfoModel.cs
@@ -84,7 +93,7 @@ UE5CEDumper/
 │       │
 │       ├── Services/               ← Business logic + IPC (16 files)
 │       │   ├── PipeClient.cs       ← Async named pipe client
-│       │   ├── DumpService.cs      ← All pipe request/response helpers
+│       │   ├── DumpService.cs      ← All pipe request/response helpers (incl. find_refs_to_uobject)
 │       │   ├── CeXmlExportService.cs ← CE XML generation (Phase A–F arrays)
 │       │   ├── CsxExportService.cs  ← CE Structure Dissect export
 │       │   ├── SdkExportService.cs  ← SDK C++ header export
@@ -104,15 +113,15 @@ UE5CEDumper/
 │       │   ├── ViewModelBase.cs
 │       │   ├── MainWindowViewModel.cs
 │       │   ├── ObjectTreeViewModel.cs
-│       │   ├── LiveWalkerViewModel.cs
+│       │   ├── LiveWalkerViewModel.cs   ← Find Refs reverse Open auto-scroll
 │       │   ├── InstanceFinderViewModel.cs
-│       │   ├── ClassStructViewModel.cs
+│       │   ├── ClassStructViewModel.cs  ← class-like routing + null-fire dedupe
 │       │   ├── PointerPanelViewModel.cs
 │       │   ├── ProxyDeployViewModel.cs
-│       │   ├── PropertySearchViewModel.cs ← Property name search across classes
-│       │   └── GameClassFilterViewModel.cs ← Game class filtering for Object Tree
+│       │   ├── PropertySearchViewModel.cs ← Type filter + autocomplete + client-side result filter
+│       │   └── GameClassFilterViewModel.cs ← Package column + auto-run Find Instances
 │       │
-│       ├── Views/                  ← Avalonia AXAML + code-behind (10 files)
+│       ├── Views/                  ← Avalonia AXAML + code-behind (9 axaml + 10 cs)
 │       │   ├── MainWindow.axaml / .cs
 │       │   ├── LiveWalkerPanel.axaml / .cs
 │       │   ├── ObjectTreePanel.axaml / .cs
@@ -122,9 +131,9 @@ UE5CEDumper/
 │       │   ├── ProxyDeployPanel.axaml / .cs
 │       │   ├── PropertySearchPanel.axaml / .cs
 │       │   ├── GameClassFilterPanel.axaml / .cs
-│       │   └── InvokeParamDialog.cs  ← Parameter input dialog for UFunction invoke
+│       │   └── InvokeParamDialog.cs  ← Parameter input dialog for UFunction invoke (no .axaml — code-only)
 │       │
-│       ├── Core/                   ← Platform abstraction interfaces
+│       ├── Core/                   ← Platform abstraction interfaces (incl. IAobMakerBridge)
 │       ├── Converters/             ← Avalonia value converters
 │       ├── Assets/
 │       └── Resources/
@@ -163,16 +172,17 @@ UE5CEDumper/
 | Toolchain discovery | `vswhere -latest` — never hardcoded paths |
 | Dependencies | `nlohmann/json` (header-only), `MinHook` (inline hooking), `ws2_32`, `Shlwapi`, `Psapi`, `Version` |
 
-**Versioning:** Version `1.0.0.x` where `x` is auto-incremented per build and stored in `build_number.txt`. Git commit hash and dirty-state are embedded via `BuildInfo.h` (generated from `BuildInfo.h.in` at CMake configure time).
+**Versioning:** Version `1.0.0.x` where `x` is auto-incremented per build and stored in `build_number.txt` (currently 547). Git commit hash and dirty-state are embedded via `BuildInfo.h` (generated from `BuildInfo.h.in` at CMake configure time).
 
 ### UI App (C# Avalonia)
 
 | Property | Value |
 |----------|-------|
-| .NET | 10 |
-| Avalonia | 11.3.12+ |
-| UI pattern | ReactiveUI + CommunityToolkit.Mvvm (source generators) |
-| Publish | Single-file self-contained (`PublishSingleFile=true`, ~60–80 MB) |
+| .NET | 10.0 (windows) |
+| Avalonia | 12.0.2 (Themes.Fluent + Controls.DataGrid 12.0.0) |
+| UI pattern | ReactiveUI + CommunityToolkit.Mvvm 8.* (source generators) |
+| Logging | Serilog 4.3.1 (file + console sinks) |
+| Publish | Single-file self-contained / Native AOT trimmed (`PublishSingleFile=true`) |
 | Runtime | `win-x64` |
 
 -----
@@ -183,17 +193,18 @@ UE5CEDumper/
 Game Process
   └── UE5Dumper.dll (injected via CE Lua injectDLL() or version.dll proxy)
         ├── AutoStartThreadProc — 1s delay, detects CE plugin vs game
-        ├── OffsetFinder       — 133 AOB patterns, GObjects / GNames / GWorld
-        ├── FNamePool          — string resolution (3 modes)
-        ├── ObjectArray        — UObject enumeration (chunked + flat)
-        ├── UStructWalker      — FField chain traversal + live reads
-        ├── GameThreadDispatch — MinHook ProcessEvent hook, game-thread queue
-        ├── HintCache          — Scan hint caching for repeat scans
-        └── PipeServer         — 30 JSON commands on \\.\pipe\UE5DumpBfx
+        ├── Genau (OffsetFinder)    — 128 AOB patterns + 5 symbol exports, GObjects / GNames / GWorld
+        ├── Serie (FNamePool)       — string resolution (3 modes)
+        ├── Aura (ObjectArray)      — UObject enumeration (chunked + flat) + Find Refs / FindInContainers / FindByAddress
+        ├── Ubel (UStructWalker)    — FField chain traversal + live reads (Phases B-K, OptionalProperty, MulticastDelegate)
+        ├── Stark (GameThreadDispatch) — MinHook ProcessEvent hook, game-thread queue
+        ├── Flamme (HintCache)      — scan hint caching for repeat scans
+        └── Fern (PipeServer)       — 31 JSON commands on \\.\pipe\UE5DumpBfx
                                         ↕ Named pipe (JSON newline-delimited)
 CE Lua (UE5CEDumper.CT)               UE5DumpUI.exe (Avalonia)
   ├── injectDLL()                      ├── PipeClient       — async connect/send/recv
   └── ue5_dissect.lua (optional)       ├── DumpService      — request helpers
+                                       ├── AobMakerBridgeService — \\.\pipe\AOBMakerCEBridge (optional)
                                        ├── CeXmlExportService / CsxExportService
                                        ├── SdkExportService / SymbolExportService
                                        ├── UsmapExportService
@@ -203,10 +214,10 @@ CE Lua (UE5CEDumper.CT)               UE5DumpUI.exe (Avalonia)
 ### Startup Sequence
 
 1. User opens game → opens CT in CE → CE Lua calls `injectDLL(DLL_PATH)` (or proxy `version.dll` auto-loads)
-2. `DLL_PROCESS_ATTACH` → spawns `AutoStartThreadProc` (1 second delay)
+2. `DLL_PROCESS_ATTACH` (Heiter.cpp) → spawns `AutoStartThreadProc` (1 second delay)
 3. `AutoStartThreadProc` → checks `g_isCEPlugin` (suppresses if loaded into CE.exe)
-4. `UE5_Init()`: `FindGObjects()` → `FindGNames()` → `DetectVersion()` → `FNamePool::Init()` → `ObjectArray::Init()` → `ValidateAndFixOffsets()`
-5. `PipeServer::Start()` → listens on `\\.\pipe\UE5DumpBfx`
+4. `UE5_Init()`: `Genau::FindGObjects()` → `Genau::FindGNames()` → `Genau::DetectVersion()` → `Serie::Init()` → `Aura::Init()` → `Genau::ValidateAndFixOffsets()`
+5. `Fern::PipeServer::Start()` → listens on `\\.\pipe\UE5DumpBfx`
 6. User launches `UE5DumpUI.exe` → `PipeClient` connects → UI populated
 
 ### Logging

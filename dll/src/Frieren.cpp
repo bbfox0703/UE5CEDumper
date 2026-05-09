@@ -28,6 +28,9 @@ uintptr_t   g_cachedGNames    = 0;
 uintptr_t   g_cachedGWorld    = 0;
 uint32_t    g_cachedUEVersion = 0;
 bool        g_cachedVersionDetected = true;  // false if UE version detection failed (PE + memory scan)
+bool        g_cachedIsUserOverride  = false; // true = ueVersion came from a user-set persistent override
+bool        g_cachedIsLowConfidence = false; // true = Tier 3 bare-pattern OR publisher-bias fallback
+const char* g_cachedPublisherThumbprint = nullptr;  // e.g. "SQUARE_ENIX" (nullptr if no match)
 const char* g_cachedGObjectsMethod = "not_found";  // "aob", "data_scan", "not_found"
 const char* g_cachedGNamesMethod   = "not_found";  // "aob", "string_ref", "pointer_scan", "not_found"
 const char* g_cachedGWorldMethod   = "not_found";  // "aob", "not_found"
@@ -98,6 +101,9 @@ bool UE5_Init() {
     g_cachedGWorld    = ptrs.GWorld;
     g_cachedUEVersion = ptrs.UEVersion;
     g_cachedVersionDetected = ptrs.bVersionDetected;
+    g_cachedIsUserOverride  = ptrs.bUserOverride;
+    g_cachedIsLowConfidence = ptrs.bLowConfidence;
+    g_cachedPublisherThumbprint = ptrs.publisherThumbprint;
     g_cachedGObjectsMethod  = ptrs.gobjectsMethod;
     g_cachedGNamesMethod    = ptrs.gnamesMethod;
     g_cachedGWorldMethod    = ptrs.gworldMethod;
@@ -167,13 +173,24 @@ bool UE5_Init() {
         }
 
         // Post-DynOff version correction: UProperty mode definitively means UE4 pre-4.25.
+        // Structural detection beats user input here — wrong offsets break exports far worse
+        // than a wrong label, so we override even when bUserOverride is set (and log loudly
+        // so the UI / log triage notices).
         if (!DynOff::bUseFProperty && ptrs.UEVersion >= 500) {
             uint32_t corrected = Aura::IsFlat() ? 418 : 424;
-            LOG_WARN("UE5_Init: UProperty mode detected (no FProperty) but version=%u (>= 500). "
-                     "Overriding to %u (flat=%s)", ptrs.UEVersion, corrected,
-                     Aura::IsFlat() ? "yes" : "no");
+            if (ptrs.bUserOverride) {
+                LOG_WARN("UE5_Init: User override = %u but UProperty mode detected — "
+                         "structural correction wins, overriding to %u (flat=%s). "
+                         "Update your UE Version override to UE4 if this game is misclassified.",
+                         ptrs.UEVersion, corrected, Aura::IsFlat() ? "yes" : "no");
+            } else {
+                LOG_WARN("UE5_Init: UProperty mode detected (no FProperty) but version=%u (>= 500). "
+                         "Overriding to %u (flat=%s)", ptrs.UEVersion, corrected,
+                         Aura::IsFlat() ? "yes" : "no");
+            }
             ptrs.UEVersion = corrected;
             g_cachedUEVersion = ptrs.UEVersion;
+            g_cachedIsLowConfidence = true; // post-correction, user shouldn't blindly trust label
         }
     } else {
         LOG_WARN("UE5_Init: Partial init — GObjects=%s GNames=%s — skipping offset validation",

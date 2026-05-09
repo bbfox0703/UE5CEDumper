@@ -40,6 +40,7 @@ public sealed class StubDumpService : IDumpService
     // Unused stubs — throw NotImplementedException to catch unexpected calls
     public Task<EngineState> InitAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<EngineState> GetPointersAsync(CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<int> GetObjectCountAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
@@ -54,6 +55,7 @@ public sealed class StubDumpService : IDumpService
     public Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr, string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<FindReferencesResult> FindReferencesToUObjectAsync(string addr, int maxResults = 32, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<PropertySearchResult> SearchPropertiesAsync(string query, string[]? types = null, bool gameOnly = true, int limit = 200, CancellationToken ct = default) => throw new NotImplementedException();
@@ -986,5 +988,178 @@ public class CsxExportServiceTests
         // At depth 0, no container expansion — row names not visible
         Assert.DoesNotContain("Item_Potion", csx);
         Assert.DoesNotContain("Name=\"ItemRow\"", csx);
+    }
+
+    // --- Phase G/H/I: Soft/Lazy/Interface array drilldown tests ---
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_SoftObjectInner_DrilldownOne_ShowsAssetPaths()
+    {
+        // TArray<TSoftObjectPtr<UDataAsset>> — 0x28 stride, asset path display values
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "AssetRefs", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+                     ArrayDataAddr = "0x9000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "/Game/Items/IT_Potion.IT_Potion" },
+                         new() { Index = 1, Value = "/Game/Items/IT_Sword.IT_Sword" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        // Child structure for the soft array
+        Assert.Contains("Name=\"AssetRefs\"", csx);
+        // Element offsets: index * 0x28 (40)
+        Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*40 = 0
+        Assert.Contains("Offset=\"40\"", csx);   // [1]: 1*40 = 40
+        // SoftObjectProperty maps to Pointer in CSX
+        Assert.Contains("Vartype=\"Pointer\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_LazyObjectInner_DrilldownOne_ShowsGuids()
+    {
+        // TArray<TLazyObjectPtr<AActor>> — 0x20 stride, GUID display values
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "LazyRefs", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "LazyObjectProperty", ArrayElemSize = 0x20,
+                     ArrayDataAddr = "0xA000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "{12345678-9ABCDEF0-AABBCCDD-EEFF0011}" },
+                         new() { Index = 1, Value = "{00000000-00000000-00000000-00000000}" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        Assert.Contains("Name=\"LazyRefs\"", csx);
+        // Sequential offsets: index * 0x20 (32)
+        Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*32 = 0
+        Assert.Contains("Offset=\"32\"", csx);   // [1]: 1*32 = 32
+        // LazyObjectProperty maps to Pointer
+        Assert.Contains("Vartype=\"Pointer\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_DelegateInner_DrilldownOne_ShowsTargets()
+    {
+        // TArray<FScriptDelegate> — each element binds a UObject* + FName.
+        // Pointer-style conversion propagates PtrAddress so target drilldown works.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Handlers", TypeName = "ArrayProperty", Offset = 0xA0, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 16,
+                     ArrayDataAddr = "0xC000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, PtrAddress = "0xE01", PtrName = "PlayerActor",
+                                 PtrClassName = "BP_Player_C" },
+                         new() { Index = 1, PtrAddress = "0xE02", PtrName = "EnemyActor",
+                                 PtrClassName = "BP_Enemy_C" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        Assert.Contains("Name=\"Handlers\"", csx);
+        // Resolved target names appear in element descriptions (pointer-style)
+        Assert.Contains("Description=\"[0] PlayerActor\"", csx);
+        Assert.Contains("Description=\"[1] EnemyActor\"", csx);
+        // Sequential offsets: index * 16
+        Assert.Contains("Offset=\"0\"", csx);
+        Assert.Contains("Offset=\"16\"", csx);
+        // DelegateProperty maps to 8 Bytes hex in CSX (Vartype="8 Bytes")
+        Assert.Contains("Vartype=\"8 Bytes\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_DelegateInnerCasePreserving_StrideIs24()
+    {
+        // With CasePreservingName, stride is 24
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Handlers", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 24,
+                     ArrayDataAddr = "0xD000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, PtrAddress = "0xE10", PtrName = "Actor1", PtrClassName = "BP_A_C" },
+                         new() { Index = 1, PtrAddress = "0xE11", PtrName = "Actor2", PtrClassName = "BP_A_C" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        // Stride 24: [0] at 0, [1] at 24
+        Assert.Contains("Offset=\"0\"", csx);
+        Assert.Contains("Offset=\"24\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_MulticastDelegateInner_DrilldownOne_ScalarStyle()
+    {
+        // TArray<FMulticastScriptDelegate> — scalar-style emission (no per-element pointer drill).
+        // Display preview text appears in element name when short enough.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Events", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "MulticastInlineDelegateProperty",
+                     ArrayElemSize = 16,
+                     ArrayDataAddr = "0xE000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "(0 bindings)" },
+                         new() { Index = 1, Value = "(1 binding)" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        Assert.Contains("Name=\"Events\"", csx);
+        // Sequential offsets: index * 16
+        Assert.Contains("Offset=\"0\"", csx);
+        Assert.Contains("Offset=\"16\"", csx);
+        // MulticastInlineDelegateProperty maps to "Array of byte" in CSX
+        Assert.Contains("Vartype=\"Array of byte\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_InterfaceInner_DrilldownOne_ShowsPointerElements()
+    {
+        // TArray<TScriptInterface<I>> — 16-byte stride, UObject* drives drilldown
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "DamageHandlers", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "InterfaceProperty", ArrayElemSize = 16,
+                     ArrayDataAddr = "0xB000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, PtrAddress = "0xD01", PtrName = "PlayerActor", PtrClassName = "BP_Player_C" },
+                         new() { Index = 1, PtrAddress = "0xD02", PtrName = "Enemy_01", PtrClassName = "BP_Enemy_C" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1);
+
+        Assert.Contains("Name=\"DamageHandlers\"", csx);
+        // Resolved names appear in element descriptions
+        Assert.Contains("Description=\"[0] PlayerActor\"", csx);
+        Assert.Contains("Description=\"[1] Enemy_01\"", csx);
+        // Sequential offsets: index * 16
+        Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*16 = 0
+        Assert.Contains("Offset=\"16\"", csx);   // [1]: 1*16 = 16
+        // InterfaceProperty maps to Pointer
+        Assert.Contains("Vartype=\"Pointer\"", csx);
     }
 }

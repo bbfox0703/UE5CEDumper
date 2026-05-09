@@ -1,17 +1,25 @@
 # Avalonia UI App Specification
 
-> Moved from CLAUDE.md. Contains UI tech stack, component skeletons, and layout definitions.
+> Tech stack, component skeletons, and layout definitions for the
+> `UE5DumpUI.exe` Avalonia app.
+>
+> **Where to look for current truth, not skeleton code:**
+> - Recent UX milestones / bug-fix history → [dev-log.md](dev-log.md)
+> - AOBMaker CE Plugin pipe bridge (PointerPanel + LiveWalker buttons) → [aobmaker-integration.md](aobmaker-integration.md)
+> - CE export shapes (CE XML / CSX / SDK header) → [export-formats.md](export-formats.md)
+> - Live AXAML / ViewModels in `ui/UE5DumpUI/` are authoritative for behavior
 
 -----
 
 ## Tech Stack
 
-- **.NET 10** + **Avalonia 11.3.12** or higher compatible version. Can use VS 2026 IDE (.sln file)
-- **ReactiveUI + ReactiveUI.Fody** (ViewModel property auto-notification)
-- **Theme**: `FluentTheme` Dark mode
-- **Publish**: `PublishSingleFile` Native AoT, single exe
-- **Testing**: Minimum versions: `xunit.v3 3.2.2`, `Application Insights 3.0`, `Microsoft.Testing.Platform 2.1.0`
-- **Other**: Minimum versions: `SkiaSharp 3.119.2`, `MicroCom.Runtime 0.11.3`, `SeriLog 4.3.1`, `Tmds.DBus.Protocol 0.90.3`
+- **.NET 10** (`net10.0-windows`) + **Avalonia 12.0.2** (Themes.Fluent + Controls.DataGrid 12.0.0). Can use VS 2026 IDE (.sln file)
+- **ReactiveUI + CommunityToolkit.Mvvm 8.\*** (source-generator `[ObservableProperty]`, no reflection)
+- **Theme**: `FluentTheme` Dark mode (`FluentAvaloniaTheme` — see `App.axaml`)
+- **Publish**: `PublishSingleFile` Native AOT trimmed, single exe
+- **Logging**: `Serilog 4.3.1` + `Serilog.Sinks.File 7.0.0` + `Serilog.Sinks.Console 6.*`
+- **Testing**: `xunit.v3 3.2.2+`, `Microsoft.Testing.Platform`, **496 tests across 16 files**
+- **Other**: `MicroCom.Runtime 0.11.6`, `Tmds.DBus.Protocol 0.93.0`, `HarfBuzzSharp 8.3.1.3`
 
 See "Rules" section in [CLAUDE.md](../CLAUDE.md) for language, i18n, logging, platform abstraction, and other constraints.
 
@@ -21,11 +29,14 @@ See "Rules" section in [CLAUDE.md](../CLAUDE.md) for language, i18n, logging, pl
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| CommunityToolkit.Mvvm | ?? | Source generators, no reflection |
-| Serilog (Console/File) | ?? | Basic sinks compatible |
-| Avalonia Compiled Bindings | ?? | `AvaloniaUseCompiledBindingsByDefault=true` |
-| LibraryImport (P/Invoke) | ?? | Designed for AOT |
-| ViewLocator | ?? | Changed to explicit type mapping, no reflection |
+| CommunityToolkit.Mvvm | ✅ | Source generators, no reflection |
+| Serilog (Console/File) | ✅ | Basic sinks compatible |
+| Avalonia Compiled Bindings | ✅ | `AvaloniaUseCompiledBindingsByDefault=true` |
+| `LibraryImport` (P/Invoke) | ✅ | Designed for AOT |
+| ViewLocator | ✅ | Explicit type mapping, no reflection |
+| `[JsonSerializable]` source-gen contexts | ✅ | All pipe + AOBMaker JSON uses generated contexts (no `JsonSerializer.Serialize<T>` reflection) |
+| `Avalonia` / `MicroCom` reflection paths | Trimmer-rooted | Listed via `TrimmerRootAssembly` in `UE5DumpUI.csproj` to survive AOT trimming |
+| IL3053 (third-party AOT warnings) | Suppressed | Avalonia/MicroCom infrastructure is preserved via `TrimmerRootAssembly` |
 
 -----
 
@@ -172,7 +183,7 @@ public class DumpService
 
       <GridSplitter Grid.Column="1" Background="#3C3C3C" />
 
-      <!-- Right: Tab panels (8 tabs) -->
+      <!-- Right: Tab panels (7 tabs) -->
       <TabControl Grid.Column="2" Background="#1E1E1E">
         <TabItem Header="Class Structure">
           <views:ClassStructPanel DataContext="{Binding ClassStruct}" />

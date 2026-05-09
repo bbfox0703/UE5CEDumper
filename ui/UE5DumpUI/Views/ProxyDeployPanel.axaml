@@ -49,13 +49,33 @@
                  Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
     </StackPanel>
 
-    <!-- Scanning progress -->
-    <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
-                 IsVisible="{Binding IsScanning}" Height="2" Margin="0,0,0,4"/>
+    <!-- Scanning progress.
+         IsIndeterminate is bound to IsScanning so the indeterminate animation
+         does not keep ticking (and invalidating layout) while the bar is
+         collapsed — this caused neighbouring Buttons to flicker on hover. -->
+    <ProgressBar DockPanel.Dock="Top"
+                 IsIndeterminate="{Binding IsScanning}"
+                 IsVisible="{Binding IsScanning}"
+                 Height="2" Margin="0,0,0,4"/>
 
-    <!-- Bottom: Action buttons -->
+    <!-- Bottom: Action buttons.
+         Force ToolTip placement to "Top" for every Button/CheckBox inside.
+         Default placement ("Pointer") at the bottom of the window has to flip
+         upward and lands on the cursor — cursor leaves the control, hover
+         ends, tooltip dismisses, then cursor re-enters, repeat. Visible as
+         hover-state flicker until the tooltip stabilises. -->
     <Border DockPanel.Dock="Bottom" Background="#2D2D2D" Padding="8" Margin="0,8,0,0"
             CornerRadius="4">
+      <Border.Styles>
+        <Style Selector="Button">
+          <Setter Property="ToolTip.Placement" Value="Top"/>
+          <Setter Property="ToolTip.VerticalOffset" Value="-4"/>
+        </Style>
+        <Style Selector="CheckBox">
+          <Setter Property="ToolTip.Placement" Value="Top"/>
+          <Setter Property="ToolTip.VerticalOffset" Value="-4"/>
+        </Style>
+      </Border.Styles>
       <DockPanel>
         <!-- Right: source DLL info -->
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8"

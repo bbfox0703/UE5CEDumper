@@ -38,6 +38,16 @@ public sealed class AobUsageRecord
     /// <summary>Whether UE version was detected from PE resources.</summary>
     public bool VersionDetected { get; set; }
 
+    /// <summary>
+    /// User-set persistent UE version override (0 / unset = no override).
+    /// Written by the DLL via the set_ue_version_override pipe cmd.
+    /// AobUsageService preserves this on round-trip — RecordScanAsync MUST NOT touch it.
+    /// </summary>
+    public int UEVersionUserOverride { get; set; }
+
+    /// <summary>UTC timestamp the override was last set (ISO 8601). Empty when not set.</summary>
+    public string UEVersionUserOverrideAt { get; set; } = "";
+
     /// <summary>Scan results for each target.</summary>
     public AobScanEntry GObjects { get; set; } = new();
     public AobScanEntry GNames { get; set; } = new();

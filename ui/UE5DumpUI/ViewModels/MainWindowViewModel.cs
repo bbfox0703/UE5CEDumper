@@ -213,13 +213,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // Wire PropertySearch -> InstanceFinder (pre-fill class name + switch tab)
-        PropertySearch.NavigateToInstanceFinder += (className) =>
+        // Wire PropertySearch -> InstanceFinder (pre-fill class name +
+        // switch tab + auto-run the search). Pre-fill alone left the user
+        // having to click Search again, which they correctly flagged as
+        // friction — the whole point of "Find Instances" is to see live
+        // instances of that class, so trigger the query immediately.
+        PropertySearch.NavigateToInstanceFinder += async (className) =>
         {
             try
             {
                 SelectedTabIndex = 1; // Switch to Instance Finder tab
                 InstanceFinder.SearchClassName = className;
+                if (InstanceFinder.SearchCommand.CanExecute(null))
+                    await InstanceFinder.SearchCommand.ExecuteAsync(null);
             }
             catch (Exception ex)
             {
@@ -241,13 +247,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // Wire GameClassFilter -> InstanceFinder (pre-fill class name + switch tab)
-        GameClassFilter.NavigateToInstanceFinder += (className) =>
+        // Wire GameClassFilter -> InstanceFinder (pre-fill class name +
+        // switch tab + auto-run the search). Same rationale as the
+        // PropertySearch wiring above — clicking "Find Instances" should
+        // produce instances on screen without an extra Search click.
+        GameClassFilter.NavigateToInstanceFinder += async (className) =>
         {
             try
             {
                 SelectedTabIndex = 1; // Switch to Instance Finder tab
                 InstanceFinder.SearchClassName = className;
+                if (InstanceFinder.SearchCommand.CanExecute(null))
+                    await InstanceFinder.SearchCommand.ExecuteAsync(null);
             }
             catch (Exception ex)
             {

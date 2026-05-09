@@ -22,6 +22,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _gWorldAddress = "";
     [ObservableProperty] private int _ueVersion;
     [ObservableProperty] private bool _versionDetected = true;
+    [ObservableProperty] private bool _isUserOverride;
+    [ObservableProperty] private bool _isLowConfidence;
+    [ObservableProperty] private string _publisherThumbprint = "";
+    [ObservableProperty] private string _selectedUeVersionOverride = "Auto";
+    [ObservableProperty] private bool _isApplyingOverride;
     [ObservableProperty] private int _totalObjects;
     [ObservableProperty] private bool _hasData;
 
@@ -64,8 +69,41 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _peHash = "";
     [ObservableProperty] private string _cacheStatusText = "";
 
-    /// <summary>True when version detection failed — shows warning in UI.</summary>
-    public bool ShowVersionWarning => HasData && !VersionDetected;
+    /// <summary>
+    /// Legacy warning binding (kept for compatibility with existing axaml). True when
+    /// version detection failed AND no user override is active. The new 3-state badge
+    /// uses ShowLowConfidenceWarning / ShowUserOverrideBadge instead.
+    /// </summary>
+    public bool ShowVersionWarning => HasData && !VersionDetected && !IsUserOverride;
+
+    /// <summary>True when ueVersion came from a user-set persistent override.</summary>
+    public bool ShowUserOverrideBadge => HasData && IsUserOverride;
+
+    /// <summary>True when detection succeeded but used the low-confidence Tier 3 / publisher-bias path.</summary>
+    public bool ShowLowConfidenceWarning => HasData && IsLowConfidence && !IsUserOverride;
+
+    /// <summary>True when version was detected with high confidence and no override is in effect.</summary>
+    public bool ShowVersionDetectedBadge => HasData && VersionDetected && !IsUserOverride && !IsLowConfidence;
+
+    /// <summary>True when a SquareEnix (or future) publisher thumbprint was matched.</summary>
+    public bool ShowPublisherHint => HasData && !string.IsNullOrEmpty(PublisherThumbprint);
+
+    /// <summary>Human-readable publisher label (e.g. "SQUARE_ENIX" → "Square Enix").</summary>
+    public string PublisherLabel => PublisherThumbprint switch
+    {
+        "SQUARE_ENIX" => "Square Enix",
+        _ => PublisherThumbprint,
+    };
+
+    /// <summary>List of override choices for the ComboBox (display strings).</summary>
+    public static System.Collections.Generic.IReadOnlyList<string> UeVersionOverrideOptions { get; } = new[]
+    {
+        "Auto",
+        "UE 4.18", "UE 4.19", "UE 4.20", "UE 4.21", "UE 4.22", "UE 4.23",
+        "UE 4.24", "UE 4.25", "UE 4.26", "UE 4.27",
+        "UE 5.0", "UE 5.1", "UE 5.2", "UE 5.3", "UE 5.4",
+        "UE 5.5", "UE 5.6", "UE 5.7", "UE 5.8",
+    };
 
     /// <summary>True when GObjects was found via fallback (not AOB).</summary>
     public bool ShowGObjectsWarning => HasData && GObjectsMethod != "aob";
@@ -160,6 +198,15 @@ public partial class PointerPanelViewModel : ViewModelBase
         GWorldAddress = state.GWorldAddr;
         UeVersion = state.UEVersion;
         VersionDetected = state.VersionDetected;
+        IsUserOverride = state.IsUserOverride;
+        IsLowConfidence = state.IsLowConfidence;
+        PublisherThumbprint = state.PublisherThumbprint;
+        // Re-sync the ComboBox selection to whatever the DLL actually has (override or auto).
+        // _suppressOverrideSelectionEvent gates the partial method so this assignment doesn't
+        // re-trigger the apply path.
+        _suppressOverrideSelectionEvent = true;
+        SelectedUeVersionOverride = state.IsUserOverride ? VersionToLabel(state.UEVersion) : "Auto";
+        _suppressOverrideSelectionEvent = false;
         TotalObjects = state.ObjectCount;
         GObjectsMethod = state.GObjectsMethod;
         GNamesMethod = state.GNamesMethod;
@@ -205,6 +252,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     private void NotifyComputedProperties()
     {
         OnPropertyChanged(nameof(ShowVersionWarning));
+        OnPropertyChanged(nameof(ShowUserOverrideBadge));
+        OnPropertyChanged(nameof(ShowLowConfidenceWarning));
+        OnPropertyChanged(nameof(ShowVersionDetectedBadge));
+        OnPropertyChanged(nameof(ShowPublisherHint));
+        OnPropertyChanged(nameof(PublisherLabel));
         OnPropertyChanged(nameof(ShowGObjectsWarning));
         OnPropertyChanged(nameof(ShowGNamesWarning));
         OnPropertyChanged(nameof(ShowGWorldWarning));
@@ -234,6 +286,67 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanAsmGNamesScan));
         OnPropertyChanged(nameof(CanAsmGWorldScan));
         OnPropertyChanged(nameof(CanRegisterGWorldSymbol));
+    }
+
+    private bool _suppressOverrideSelectionEvent;
+
+    /// <summary>
+    /// Auto-fired by [ObservableProperty] when SelectedUeVersionOverride changes.
+    /// Sends the new value over the pipe; on success, the DLL re-fetch updates everything.
+    /// </summary>
+    partial void OnSelectedUeVersionOverrideChanged(string value)
+    {
+        if (_suppressOverrideSelectionEvent) return;
+        if (_dump == null) return;
+        if (!HasData) return;
+        // Fire-and-forget — the apply command itself awaits the pipe round-trip.
+        _ = ApplyOverrideAsync(value);
+    }
+
+    private async Task ApplyOverrideAsync(string label)
+    {
+        if (_dump == null) return;
+        try
+        {
+            ClearError();
+            IsApplyingOverride = true;
+            int version = LabelToVersion(label);  // 0 = Auto (clear)
+            var newState = await _dump.SetUeVersionOverrideAsync(version, persist: true);
+            Update(newState);
+            RescanApplied?.Invoke();   // tell MainWindowVM to refresh other panels
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log?.Error(Constants.LogCatInit, "Failed to apply UE version override", ex);
+        }
+        finally
+        {
+            IsApplyingOverride = false;
+        }
+    }
+
+    /// <summary>"UE 4.27" → 427, "UE 5.4" → 504, "Auto" → 0.</summary>
+    private static int LabelToVersion(string label)
+    {
+        if (string.IsNullOrEmpty(label) || label == "Auto") return 0;
+        // Format: "UE M.N"  (M = 4 or 5, N = 0..27)
+        var span = label.AsSpan().TrimStart();
+        if (span.StartsWith("UE ")) span = span.Slice(3);
+        int dot = span.IndexOf('.');
+        if (dot <= 0) return 0;
+        if (!int.TryParse(span.Slice(0, dot), out int major)) return 0;
+        if (!int.TryParse(span.Slice(dot + 1), out int minor)) return 0;
+        return major * 100 + minor;
+    }
+
+    /// <summary>504 → "UE 5.4", 427 → "UE 4.27", 0 → "Auto".</summary>
+    private static string VersionToLabel(int version)
+    {
+        if (version <= 0) return "Auto";
+        int major = version / 100;
+        int minor = version % 100;
+        return $"UE {major}.{minor}";
     }
 
     private static string FormatMethodLabel(string method) => method switch

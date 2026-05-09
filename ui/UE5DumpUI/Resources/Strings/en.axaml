@@ -11,7 +11,7 @@
     <sys:String x:Key="str.Toolbar.ArrayLimitWarn">⚠ High memory usage — may cause crash</sys:String>
     <sys:String x:Key="str.Toolbar.DropDownLimit">DropDown Limit:</sys:String>
     <sys:String x:Key="str.Toolbar.PreviewLimit">Preview:</sys:String>
-    <sys:String x:Key="str.Toolbar.CsxDepth">CSX Depth:</sys:String>
+    <sys:String x:Key="str.Toolbar.CsxDepth">Drill Depth:</sys:String>
 
     <!-- Tabs -->
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>
@@ -57,6 +57,7 @@
     <sys:String x:Key="str.LiveWalker.StartWorld">Start from GWorld</sys:String>
     <sys:String x:Key="str.LiveWalker.Back">Back</sys:String>
     <sys:String x:Key="str.LiveWalker.Parent">Parent &#x2191;</sys:String>
+    <sys:String x:Key="str.LiveWalker.FindRefs">Find Refs</sys:String>
     <sys:String x:Key="str.LiveWalker.Refresh">Refresh</sys:String>
     <sys:String x:Key="str.LiveWalker.AddressHint">Address (hex or module.exe+offset)</sys:String>
     <sys:String x:Key="str.LiveWalker.Go">Go</sys:String>
@@ -91,6 +92,7 @@
     <sys:String x:Key="str.InstanceFinder.AddressHint">Address (hex or module.exe+offset)</sys:String>
     <sys:String x:Key="str.InstanceFinder.Lookup">Lookup</sys:String>
     <sys:String x:Key="str.InstanceFinder.ExactMatch">Exact match</sys:String>
+    <sys:String x:Key="str.InstanceFinder.ContainerMatches">Container matches (address falls inside a TArray buffer):</sys:String>
 
     <!-- Pointer Panel -->
     <sys:String x:Key="str.Pointers.GObjects">GObjects Address</sys:String>
@@ -101,6 +103,14 @@
     <sys:String x:Key="str.Pointers.Copy">Copy</sys:String>
     <sys:String x:Key="str.Pointers.NotConnected">Not connected — connect to view pointers</sys:String>
     <sys:String x:Key="str.Pointers.VersionWarning">&#x26A0; Version not detected — inferred from engine analysis (custom UE build?)</sys:String>
+    <sys:String x:Key="str.Pointers.VersionDetectedBadge">&#x2713; Detected</sys:String>
+    <sys:String x:Key="str.Pointers.VersionUserOverrideBadge">&#x1F527; User Override</sys:String>
+    <sys:String x:Key="str.Pointers.VersionUserOverrideTooltip">UE version was set manually. The override is saved per-game and reapplied on every launch.</sys:String>
+    <sys:String x:Key="str.Pointers.VersionLowConfidenceBadge">&#x26A0; Low Confidence</sys:String>
+    <sys:String x:Key="str.Pointers.VersionLowConfidenceText">Detected via fragile fallback path — bare pattern match or publisher bias. If exports look wrong, set the correct UE version using the Override ComboBox below.</sys:String>
+    <sys:String x:Key="str.Pointers.VersionOverrideLabel">Override:</sys:String>
+    <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Force a specific UE version for this game. Saved per-game and reapplied on every launch. Choose Auto to revert to auto-detection.</sys:String>
+    <sys:String x:Key="str.Pointers.PublisherLabel">Publisher:</sys:String>
     <sys:String x:Key="str.Pointers.AobFailed">&#x26A0; AOB failed — found via</sys:String>
     <sys:String x:Key="str.Pointers.GWorldNotFound">GWorld not found (non-critical)</sys:String>
     <sys:String x:Key="str.Pointers.PatternIdTooltip">AOB pattern ID that matched this pointer</sys:String>
@@ -176,6 +186,9 @@
 
     <!-- Property Search -->
     <sys:String x:Key="str.PropertySearch.QueryHint">Property name (e.g. Health, Mana, Gold)</sys:String>
+    <sys:String x:Key="str.PropertySearch.TypeHint">Type filter (start typing — e.g. opt, weak)</sys:String>
+    <sys:String x:Key="str.PropertySearch.ResultFilterLabel">Filter results:</sys:String>
+    <sys:String x:Key="str.PropertySearch.ResultFilterHint">Refine current results (no re-query)</sys:String>
     <sys:String x:Key="str.PropertySearch.Search">Search</sys:String>
     <sys:String x:Key="str.PropertySearch.GameOnly">Game classes only</sys:String>
     <sys:String x:Key="str.PropertySearch.FindInstances">Find Instances</sys:String>
@@ -211,7 +224,7 @@
     <sys:String x:Key="str.Tip.ArrayLimit">Max array elements to read inline (2^N)</sys:String>
     <sys:String x:Key="str.Tip.DropDownLimit">Max CE DropDownList entries (2^N)</sys:String>
     <sys:String x:Key="str.Tip.PreviewLimit">Struct sub-fields shown in Value column (0 = no preview)</sys:String>
-    <sys:String x:Key="str.Tip.CsxDepth">CSX drilldown depth for child structures</sys:String>
+    <sys:String x:Key="str.Tip.CsxDepth">Pointer drill-down depth (0 = flat). Applies to both CSX export and CE XML / CE Field copy.</sys:String>
     <sys:String x:Key="str.Tip.Export">Export object data in various formats</sys:String>
 
     <!-- Tooltips: Object Tree -->
@@ -232,7 +245,9 @@
     <sys:String x:Key="str.Tip.InstanceFinder.AA">Generate CE Auto Assembler script</sys:String>
 
     <!-- Tooltips: Property Search -->
-    <sys:String x:Key="str.Tip.PropertySearch.Search">Search for properties by name across all classes</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.Search">Search across all classes. Either Name or Type must be set; comma-separate multiple types.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.TypeFilter">Restrict by FProperty type. Type a few characters to filter the suggestion dropdown (e.g. 'opt' → OptionalProperty). Comma-separated for OR.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.ResultFilter">Filter the current result list locally (case-insensitive substring across Class / Property / Type / Super / Preview). No DLL roundtrip.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.GameOnly">Show only game-specific classes (exclude engine)</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.FindInstances">Find live instances of this class</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.CopyOffset">Copy property offset to clipboard</sys:String>
@@ -260,6 +275,7 @@
     <sys:String x:Key="str.Tip.LiveWalker.StartWorld">Navigate to GWorld and list top-level objects</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Back">Go back to previous object</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Refresh">Re-read current object fields from memory</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FindRefs">Find UObjects that hold a pointer to this one (true logical owner — Outer/Parent often only gives the naming-hierarchy package)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Go">Navigate to the specified address</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCE">Copy full CE XML pointer chain to clipboard</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCEField">Copy CE XML for selected field only</sys:String>

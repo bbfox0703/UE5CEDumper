@@ -633,6 +633,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * sourceField.ArrayElemSize):X}";
             Fields.Add(f);
         }
+        ApplyPendingElementScroll();
     }
 
     private void PopulateMapContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
@@ -698,6 +699,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
             Fields.Add(f);
         }
+        ApplyPendingElementScroll();
     }
 
     /// <summary>
@@ -777,6 +779,39 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (dataBase != 0 && stride > 0)
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
             Fields.Add(f);
+        }
+        ApplyPendingElementScroll();
+    }
+
+    /// <summary>
+    /// Apply a pending "[N]" scroll hint left over after Open-from-Find-Refs's
+    /// auto-drill chain. The first scroll hint (container field name) was
+    /// consumed by UpdateDisplay; UpdateDisplay re-armed
+    /// _pendingScrollFieldName with "[N]" before triggering NavigateToContainer
+    /// so the freshly-built container Fields list scrolls to the matching
+    /// element entry. Map elements use the "[N] keyDisplay" naming pattern, so
+    /// we accept either an exact match or a "[N] " prefix.
+    /// </summary>
+    private void ApplyPendingElementScroll()
+    {
+        if (string.IsNullOrEmpty(_pendingScrollFieldName)) return;
+        var hint = _pendingScrollFieldName;
+        // Only intercept "[N]" element hints here — non-bracket hints belong
+        // to the UpdateDisplay scroll path (object-instance fields).
+        if (hint.Length < 3 || hint[0] != '[' || !hint.EndsWith("]")) return;
+
+        _pendingScrollFieldName = null;
+        var hit = Fields.FirstOrDefault(f =>
+            f.Name == hint || f.Name.StartsWith(hint + " ", StringComparison.Ordinal));
+        if (hit != null)
+        {
+            SelectedField = hit;
+            ScrollToFieldRequested?.Invoke(hit.Name);
+            _log.Info($"PopulateContainer: auto-scrolled to '{hit.Name}' (element hint '{hint}')");
+        }
+        else
+        {
+            _log.Info($"PopulateContainer: element hint '{hint}' not found");
         }
     }
 
@@ -863,6 +898,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 ArrayInnerAddr = containerField.ArrayInnerAddr,
                 ArrayDataAddr = containerField.ArrayDataAddr,
                 ArrayStructClassAddr = containerField.ArrayStructClassAddr,
+                SoftArrayFNameSize = containerField.SoftArrayFNameSize,
+                SoftArrayIsTopLevelAssetPath = containerField.SoftArrayIsTopLevelAssetPath,
                 ArrayElements = containerField.ArrayElements.Where(e => e.Index == sparseIndex.Value).ToList(),
                 ArrayEnumAddr = containerField.ArrayEnumAddr,
                 ArrayEnumEntries = containerField.ArrayEnumEntries,
@@ -890,7 +927,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private static bool IsPointerOrStructArrayType(string innerType)
         => innerType is "ObjectProperty" or "ClassProperty"
-            or "WeakObjectProperty" or "SoftObjectProperty" or "LazyObjectProperty"
+            or "WeakObjectProperty"
+            or "SoftObjectProperty" or "SoftClassProperty"
+            or "LazyObjectProperty"
+            or "InterfaceProperty"
+            or "DelegateProperty"
+            or "MulticastDelegateProperty" or "MulticastInlineDelegateProperty"
             or "StructProperty";
 
     /// <summary>
@@ -1141,10 +1183,135 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    // === Find References (reverse pointer scan) ===
+    //
+    // OuterPrivate / Parent gives the naming-hierarchy parent (often
+    // /Engine/Transient for runtime-spawned objects), not the logical
+    // gameplay owner. Find References reverse-scans every UObject for
+    // pointers to the current one, surfacing answers like "this Item is
+    // PlayerInventory.Items[3]". Results render in a panel above the
+    // field grid; user clicks Open to navigate to that owner.
+
+    [ObservableProperty] private ObservableCollection<ReferenceMatch> _references = new();
+    [ObservableProperty] private bool _hasReferences;
+    [ObservableProperty] private string _referencesHeader = "";
+
+    // Optional scroll-to hint applied once the next WalkInstance result
+    // populates the Fields collection. Used by Open-from-references so the
+    // user lands directly on the field that holds the pointer.
+    private string? _pendingScrollFieldName;
+
+    // Optional auto-drill index applied alongside _pendingScrollFieldName.
+    // When >= 0 and the resolved field is container-navigable, the post-
+    // load handler navigates into the container view AND sets a follow-up
+    // scroll hint for the element entry "[N]" so Open-from-Find-Refs lands
+    // directly on the matched element instead of stopping at the container.
+    private int _pendingDrillElementIndex = -1;
+
+    [RelayCommand]
+    private async Task FindReferencesAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentAddress) || CurrentAddress == "0x0") return;
+
+        try
+        {
+            ClearStatus();
+            IsLoading = true;
+            StatusText = "Searching for references…";
+
+            var result = await _dump.FindReferencesToUObjectAsync(CurrentAddress);
+
+            References.Clear();
+            foreach (var r in result.References)
+                References.Add(r);
+            HasReferences = References.Count > 0;
+
+            string scanSuffix = "";
+            if (result.Scan is { } cs && cs.ObjectsTotal > 0)
+            {
+                scanSuffix = cs.DeadlineHit
+                    ? $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms — DEADLINE HIT, retry to continue]"
+                    : $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms]";
+            }
+
+            if (HasReferences)
+            {
+                ReferencesHeader = $"References to {CurrentObjectName} ({References.Count})" + scanSuffix;
+                StatusText = $"Found {References.Count} reference(s)" + scanSuffix;
+                _log.Info($"FindReferences: {CurrentAddress} -> {References.Count} matches{scanSuffix}");
+            }
+            else
+            {
+                ReferencesHeader = $"References to {CurrentObjectName} (none found)" + scanSuffix;
+                HasReferences = true;  // Show empty panel so user sees scan completed
+                StatusText = "No references found — likely held by a non-reflected pointer (TUniquePtr / raw pointer / non-UObject struct)" + scanSuffix;
+                _log.Info($"FindReferences: {CurrentAddress} -> 0 matches{scanSuffix}");
+            }
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"FindReferences failed for {CurrentAddress}", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private void ClearReferences()
+    {
+        References.Clear();
+        HasReferences = false;
+        ReferencesHeader = "";
+    }
+
+    [RelayCommand]
+    private async Task OpenReferenceOwnerAsync(ReferenceMatch? match)
+    {
+        if (match == null || string.IsNullOrEmpty(match.OwnerAddress)) return;
+
+        // Pre-arm the scroll hint so when the new owner's Fields list
+        // populates we auto-select the field that held the pointer.
+        var firstSegment = (match.FieldName ?? "").Split('.')[0];
+        _pendingScrollFieldName = string.IsNullOrEmpty(firstSegment) ? null : firstSegment;
+
+        // Container hits (Array/Map/Set element) — pre-arm the drill index
+        // so the post-load handler also navigates into the container view
+        // and lands on element "[N]". Only auto-drill when the FieldName
+        // refers DIRECTLY to the container (or "<Container>.Key" /
+        // "<Container>.Value" for map-side hits) — nested struct paths
+        // like "Stats.Equipment" require a manual struct drill the user
+        // has to do themselves, so we don't auto-drill those.
+        var fieldName = match.FieldName ?? "";
+        var canAutoDrill = match.ElementIndex >= 0
+            && !string.IsNullOrEmpty(firstSegment)
+            && (fieldName == firstSegment
+                || fieldName == firstSegment + ".Key"
+                || fieldName == firstSegment + ".Value");
+        _pendingDrillElementIndex = canAutoDrill ? match.ElementIndex : -1;
+
+        // Append a status hint so the user knows where to look on the new
+        // page (the field that's holding the pointer).
+        StatusText = $"Opened {match.OwnerName} — held the previous object in '{match.FieldName}'"
+            + (match.ElementIndex >= 0 ? $"[{match.ElementIndex}]" : "");
+        await NavigateToAddressAsync(match.OwnerAddress);
+    }
+
     [RelayCommand]
     private async Task NavigateToAddressAsync(string? addr)
     {
         if (string.IsNullOrEmpty(addr)) return;
+
+        // Drop stale Find Refs auto-drill state if a different navigation
+        // path takes over before the chained drill kicks in. Guarded:
+        // OpenReferenceOwnerAsync sets _pendingDrillElementIndex *before*
+        // calling NavigateToAddressAsync, so we mustn't clobber it on the
+        // call this command receives from that method. Detection: the
+        // pending hint set by OpenReferenceOwnerAsync is non-empty.
+        if (string.IsNullOrEmpty(_pendingScrollFieldName))
+            _pendingDrillElementIndex = -1;
 
         try
         {
@@ -1154,6 +1321,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             _preBookmarkBreadcrumbs = null;
             IsBookmarkSaveMode = false;
             Breadcrumbs.Clear();
+            // Stale references panel from a previous lookup target shouldn't
+            // hang around when we navigate elsewhere — references are
+            // about the now-current UObject, not the new one.
+            References.Clear();
+            HasReferences = false;
 
             // Normalize address: supports CE formats like "module.exe"+offset,
             // quoted module names ("module.exe"+offset), and plain hex
@@ -1348,10 +1520,23 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 }
             }
 
-            // Pre-resolve StructProperty inner fields via DLL
-            StatusText = "Resolving struct fields...";
+            // Pre-resolve StructProperty inner fields via DLL (top-level only at this stage —
+            // the pointer drill-down step below cascades struct resolution into each
+            // drilled target so nested StructProperty fields also expand).
+            StatusText = CsxDrilldownDepth > 0
+                ? "Resolving struct + pointer fields..."
+                : "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, fieldsForXml, arrayLimit: ArrayLimit);
+
+            // Pointer drill-down: walk ObjectProperty / Class / Weak / Soft / Lazy /
+            // Interface targets so the emitter can drop GroupHeader+Offsets=[0] children
+            // in for each pointer leaf. Pass resolvedStructs so the resolver also
+            // walks struct fields inside each drilled target — without that,
+            // drilled children with StructProperty render as empty placeholders.
+            var resolvedInstances = await CeXmlExportService.ResolvePointerInstancesAsync(
+                _dump, fieldsForXml, depth: CsxDrilldownDepth, arrayLimit: ArrayLimit,
+                resolvedStructs: resolvedStructs);
 
             var rootBc = breadcrumbsForXml[0];
 
@@ -1373,7 +1558,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     _engineState.ModuleName,
                     resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
-                    maxDropDownEntries: DropDownLimit);
+                    maxDropDownEntries: DropDownLimit,
+                    resolvedInstances: resolvedInstances);
             }
             else
             {
@@ -1382,14 +1568,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
-                    maxDropDownEntries: DropDownLimit);
+                    maxDropDownEntries: DropDownLimit,
+                    resolvedInstances: resolvedInstances);
             }
 
             await _platform.CopyToClipboardAsync(xml);
             var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             StatusText = aobFallbackWarn ?? limitWarn ?? "";
-            _log.Info($"CE XML copied to clipboard for {CurrentClassName} (AOB={useAob}, {resolvedStructs.Count} structs resolved)");
+            _log.Info($"CE XML copied to clipboard for {CurrentClassName} (AOB={useAob}, " +
+                $"{resolvedStructs.Count} structs / {resolvedInstances.Count} pointers resolved, depth={CsxDrilldownDepth})");
         }
         catch (Exception ex)
         {
@@ -1502,9 +1690,19 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
 
             // Pre-resolve StructProperty inner fields for the selected field
-            StatusText = "Resolving struct fields...";
+            StatusText = CsxDrilldownDepth > 0
+                ? "Resolving struct + pointer fields..."
+                : "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, singleFieldList, arrayLimit: ArrayLimit);
+
+            // Pointer drill-down for the selected field (and its target's nested
+            // pointers) up to CsxDrilldownDepth — same toolbar slider used by CSX.
+            // Cascades struct resolution into each drilled target's fields so
+            // nested StructProperty children expand too.
+            var resolvedInstances = await CeXmlExportService.ResolvePointerInstancesAsync(
+                _dump, singleFieldList, depth: CsxDrilldownDepth, arrayLimit: ArrayLimit,
+                resolvedStructs: resolvedStructs);
 
             var rootBc = breadcrumbsForXml[0];
 
@@ -1524,7 +1722,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     _engineState.ModuleName,
                     resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
-                    maxDropDownEntries: DropDownLimit);
+                    maxDropDownEntries: DropDownLimit,
+                    resolvedInstances: resolvedInstances);
             }
             else
             {
@@ -1533,14 +1732,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, singleFieldList, resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
-                    maxDropDownEntries: DropDownLimit);
+                    maxDropDownEntries: DropDownLimit,
+                    resolvedInstances: resolvedInstances);
             }
 
             await _platform.CopyToClipboardAsync(xml);
             var limitWarn = BuildContainerLimitWarning(singleFieldList, ArrayLimit);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             StatusText = aobFallbackWarn ?? limitWarn ?? "";
-            _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName}, AOB={useAob})");
+            _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName}, AOB={useAob}, " +
+                $"{resolvedInstances.Count} pointer targets resolved at depth={CsxDrilldownDepth})");
         }
         catch (Exception ex)
         {
@@ -2433,6 +2634,55 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             Fields.Clear();
             foreach (var f in newFields)
                 Fields.Add(f);
+        }
+
+        // Apply pending scroll-to-field hint (e.g. set by OpenReferenceOwner).
+        // Setting SelectedField alone does NOT scroll the DataGrid — Avalonia's
+        // DataGrid only auto-scrolls on user-driven selection. Raise the
+        // ScrollToFieldRequested event so the View calls ScrollIntoView, the
+        // same path used by edit-commit and inline drill navigation.
+        if (!string.IsNullOrEmpty(_pendingScrollFieldName))
+        {
+            var hint = _pendingScrollFieldName;
+            _pendingScrollFieldName = null;
+            var hit = Fields.FirstOrDefault(f => f.Name == hint);
+            if (hit != null)
+            {
+                SelectedField = hit;
+                ScrollToFieldRequested?.Invoke(hint);
+                _log.Info($"UpdateDisplay: auto-scrolled to '{hint}' (pending scroll hint)");
+
+                // Find Refs auto-drill: if the matched field is container-
+                // navigable AND we have a pending element index, chain into
+                // the container view + leave a follow-up scroll hint for
+                // the element entry "[N]". Lets Open-from-Find-Refs land
+                // directly on the array/map/set element that held the
+                // pointer instead of stopping at the container row.
+                if (_pendingDrillElementIndex >= 0)
+                {
+                    var elemIndex = _pendingDrillElementIndex;
+                    _pendingDrillElementIndex = -1;
+                    if (hit.IsContainerNavigable)
+                    {
+                        // Stage the element scroll hint so PopulateContainerFields
+                        // (called by NavigateToContainerAsync) picks it up.
+                        _pendingScrollFieldName = $"[{elemIndex}]";
+                        _log.Info($"UpdateDisplay: auto-drill into container '{hint}' element [{elemIndex}]");
+                        _ = NavigateToContainerAsync(hit);
+                    }
+                    else
+                    {
+                        _log.Info($"UpdateDisplay: skipped auto-drill — '{hint}' is not container-navigable");
+                    }
+                }
+            }
+            else
+            {
+                _log.Info($"UpdateDisplay: pending scroll hint '{hint}' not found in field list");
+                // Drop the drill hint too — without the container field we
+                // have nothing to drill into.
+                _pendingDrillElementIndex = -1;
+            }
         }
 
         // Store class address and load functions asynchronously

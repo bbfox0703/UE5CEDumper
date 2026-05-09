@@ -84,6 +84,8 @@ public partial class GameClassFilterViewModel : ViewModelBase
 
     /// <summary>
     /// Extract distinct Super names and Package prefixes from loaded results.
+    /// Package prefix logic lives on <see cref="GameClassEntry"/> (so the
+    /// new Package column in the DataGrid sees the same value).
     /// </summary>
     private void RebuildSuggestions()
     {
@@ -98,41 +100,12 @@ public partial class GameClassFilterViewModel : ViewModelBase
 
         // Distinct package prefixes (first 2 path segments, e.g. "/Script/Engine", "/Game")
         var packages = _allResults
-            .Select(e => ExtractPackagePrefix(e.ClassPath))
+            .Select(e => e.Package)
             .Where(s => !string.IsNullOrEmpty(s))
             .Distinct(StringComparer.Ordinal)
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToList();
         PackageSuggestions = packages;
-    }
-
-    /// <summary>
-    /// Extract a package prefix from a class path.
-    /// e.g. "/Script/Engine.Actor" -> "/Script/Engine"
-    ///      "/Game/BP_Player.BP_Player_C" -> "/Game"
-    /// Takes first 2 slash-separated segments (or up to the first dot).
-    /// </summary>
-    private static string ExtractPackagePrefix(string classPath)
-    {
-        if (string.IsNullOrEmpty(classPath)) return "";
-
-        // Strip everything after the first dot (package.class)
-        int dotIdx = classPath.IndexOf('.');
-        string pkg = dotIdx >= 0 ? classPath[..dotIdx] : classPath;
-
-        // Take first 2 segments: e.g. "/Script/Engine" from "/Script/Engine"
-        // or "/Game" from "/Game/Maps/Level1"
-        int slashCount = 0;
-        for (int i = 0; i < pkg.Length; i++)
-        {
-            if (pkg[i] == '/')
-            {
-                slashCount++;
-                if (slashCount == 3)
-                    return pkg[..i];
-            }
-        }
-        return pkg;
     }
 
     private void ApplyFilter()
@@ -163,9 +136,12 @@ public partial class GameClassFilterViewModel : ViewModelBase
                 continue;
             }
 
-            // Package filter: prefix match on ClassPath
+            // Package filter: prefix match on the Package column. Using
+            // the derived prefix (rather than the full ClassPath) means
+            // typing "/Game" matches /Game/* without false-matching paths
+            // that happen to start with /Game-as-substring of something.
             if (!string.IsNullOrEmpty(pkgF)
-                && !entry.ClassPath.StartsWith(pkgF, StringComparison.OrdinalIgnoreCase))
+                && !entry.Package.StartsWith(pkgF, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }

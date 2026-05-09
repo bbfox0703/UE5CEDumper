@@ -78,6 +78,11 @@ public partial class InstanceFinderViewModel : ViewModelBase
     [ObservableProperty] private string _lookupStatusText = "";
     [ObservableProperty] private bool _isLookingUp;
 
+    // Container-aware results: addresses that fall inside an ArrayProperty
+    // heap buffer rather than within a UObject's PropertiesSize.
+    [ObservableProperty] private ObservableCollection<ContainerMatch> _containerMatches = new();
+    [ObservableProperty] private bool _hasContainerMatches;
+
     /// <summary>
     /// Event raised when user wants to navigate to an address in the Live Walker.
     /// </summary>
@@ -158,6 +163,27 @@ public partial class InstanceFinderViewModel : ViewModelBase
             Instances.Clear();
             Fields.Clear();
             HasFields = false;
+            ContainerMatches.Clear();
+
+            // Container matches: address falls inside a UObject's TArray heap buffer.
+            // The DLL always runs this scan when scan_containers=true, so we can
+            // surface them even when the standard UObject containment check
+            // already produced a match (the container path is more specific).
+            foreach (var cm in result.ContainerMatches)
+                ContainerMatches.Add(cm);
+            HasContainerMatches = ContainerMatches.Count > 0;
+
+            // Build a "[scanned X/Y in Zms]" suffix so the user can tell a
+            // clean miss from a deadline-truncated scan — important when
+            // testing on big games (FF7 Rebirth ~430K objects).
+            string scanSuffix = "";
+            if (result.ContainerScan is { } cs && cs.ObjectsTotal > 0)
+            {
+                if (cs.DeadlineHit)
+                    scanSuffix = $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms — DEADLINE HIT, retry to continue]";
+                else
+                    scanSuffix = $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms]";
+            }
 
             if (result.Found)
             {
@@ -173,17 +199,33 @@ public partial class InstanceFinderViewModel : ViewModelBase
                 HasInstances = true;
                 SelectedInstance = instance;  // Auto-select to trigger field loading
 
-                var matchInfo = result.MatchType == "exact"
-                    ? "Exact UObject match"
-                    : $"Inside {result.Name} (offset +0x{result.OffsetFromBase:X})";
-                LookupStatusText = matchInfo;
-                _log.Info($"FindByAddress: '{addrStr}' -> {matchInfo}");
+                // Be honest about confidence — "nearest" / "backward" mean addr
+                // is BEYOND the UObject's PropertiesSize, often misleading
+                // (especially for heap-allocated container data).
+                var matchInfo = result.MatchKind switch
+                {
+                    "exact"    => "Exact UObject match",
+                    "contains" => $"Inside {result.Name} (offset +0x{result.OffsetFromBase:X})",
+                    "backward" => $"Past {result.Name} (offset +0x{result.OffsetFromBase:X}) — backward scan",
+                    "nearest"  => $"Nearest UObject is {result.Name} (offset +0x{result.OffsetFromBase:X}, beyond bounds — likely heap data)",
+                    _          => $"Match: {result.Name} (offset +0x{result.OffsetFromBase:X})",
+                };
+                if (HasContainerMatches)
+                    matchInfo += $" — found in {ContainerMatches.Count} container(s) below";
+                LookupStatusText = matchInfo + scanSuffix;
+                _log.Info($"FindByAddress: '{addrStr}' -> {matchInfo}{scanSuffix}");
+            }
+            else if (HasContainerMatches)
+            {
+                HasInstances = false;
+                LookupStatusText = $"Inside {ContainerMatches.Count} container(s) — see list below" + scanSuffix;
+                _log.Info($"FindByAddress: '{addrStr}' -> {ContainerMatches.Count} container matches only{scanSuffix}");
             }
             else
             {
                 HasInstances = false;
-                LookupStatusText = "No UObject found at this address";
-                _log.Info($"FindByAddress: '{addrStr}' -> not found");
+                LookupStatusText = "No UObject found at this address" + scanSuffix;
+                _log.Info($"FindByAddress: '{addrStr}' -> not found{scanSuffix}");
             }
         }
         catch (Exception ex)
@@ -196,6 +238,17 @@ public partial class InstanceFinderViewModel : ViewModelBase
         {
             IsLookingUp = false;
         }
+    }
+
+    [RelayCommand]
+    private void OpenContainerOwner(ContainerMatch? match)
+    {
+        if (match == null || string.IsNullOrEmpty(match.OwnerAddress)) return;
+        // Live Walker doesn't yet auto-drill into the array element; opening
+        // the owner UObject lets the user click into the field manually.
+        // Pass a hint string in status so they know what to look for.
+        LookupStatusText = $"Opened {match.DisplayPath} — drill into '{match.FieldName}' in Live Walker";
+        NavigateToLiveWalker?.Invoke(match.OwnerAddress);
     }
 
     partial void OnSelectedInstanceChanged(InstanceResult? value)

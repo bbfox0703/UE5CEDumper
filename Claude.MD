@@ -112,15 +112,16 @@ Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.8+), find global pointers (GObjects
 |      |  loadLibrary / callFunction (28 C ABI exports)|
 |      v                                               |
 |  UE5Dumper.dll  [injected]                           |
-|      +-- ExportAPI       <- 30 C ABI for CE Lua      |
-|      +-- PipeServer      <- Named Pipe IPC (30 cmds) |
-|      +-- Signatures      <- 128 AOB + 5 exports      |
-|      +-- OffsetFinder    <- GObjects/GNames/GWorld   |
-|      +-- ObjectArray     <- Chunked + Flat arrays    |
-|      +-- FNamePool       <- UE5 Pool / UE4 TNameEntry|
-|      +-- UStructWalker   <- FField + UProperty chains|
-|      +-- Memory          <- AOBScan + SEH read/write |
-|      +-- Logger          <- 5-category per-process   |
+|      +-- Frieren  (ExportAPI)     <- 30 C ABI for CE Lua      |
+|      +-- Fern     (PipeServer)    <- Named Pipe IPC (31 cmds) |
+|      +-- Himmel   (Signatures)    <- 128 AOB + symbol exports |
+|      +-- Genau    (OffsetFinder)  <- GObjects/GNames/GWorld   |
+|      +-- Aura     (ObjectArray)   <- Chunked + Flat arrays + Find Refs/Containers |
+|      +-- Serie    (FNamePool)     <- UE5 Pool / UE4 TNameEntry|
+|      +-- Ubel     (UStructWalker) <- FField + UProperty + Phases B-K + Optional |
+|      +-- Macht    (Memory)        <- AOBScan + SEH read/write |
+|      +-- Sein     (Logger)        <- 5-category per-process   |
+|      +-- Stark    (GameThreadDispatch) <- MinHook ProcessEvent hook |
 +----------------------+-------------------------------+
                        | Named Pipe: \\.\pipe\UE5DumpBfx
                        | JSON over pipe (newline-delimited)
@@ -144,13 +145,17 @@ Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.8+), find global pointers (GObjects
 
 | Document | Contents |
 |----------|----------|
-| [docs/architecture.md](docs/architecture.md) | Directory structure (28 DLL files, 79 UI files), git submodules, build environment |
-| [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface: 30 C ABI exports, offset tables, CE Lua bridge |
-| [docs/pipe-protocol.md](docs/pipe-protocol.md) | Named Pipe JSON IPC protocol (30 commands, Request/Response/Event) |
-| [docs/ui-spec.md](docs/ui-spec.md) | Avalonia UI tech stack, AOT compatibility, component specs |
+| [docs/dev-log.md](docs/dev-log.md) | Recent milestone work, capability matrix, remaining drill-down / Find Refs gaps — **read first** |
+| [docs/architecture.md](docs/architecture.md) | Directory structure (15 .cpp + 14 .h DLL files, 92 UI .cs/.axaml files), git submodules, build environment |
+| [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface: 30 C ABI exports, offset tables, CE Lua bridge (Frieren-themed file/namespace names) |
+| [docs/pipe-protocol.md](docs/pipe-protocol.md) | Named Pipe JSON IPC protocol (31 commands, Request/Response/Event) |
+| [docs/ui-spec.md](docs/ui-spec.md) | Avalonia UI tech stack (Avalonia 12.0.2 / .NET 10), AOT compatibility, component specs |
 | [docs/export-formats.md](docs/export-formats.md) | CE XML, CSX, SDK Header, USMAP export rules, pointer chain model, type mappings |
-| [docs/technical-notes.md](docs/technical-notes.md) | UE version differences, FField vs UProperty, FNamePool, DynOff detection flow |
-| [docs/lessons-learned.md](docs/lessons-learned.md) | Hard-won lessons from cross-game debugging (20 games) |
+| [docs/technical-notes.md](docs/technical-notes.md) | UE version differences, FField vs UProperty, FNamePool, DynOff, Property Type Layouts (Phases B-K), Address Finder layered lookup |
+| [docs/lessons-learned.md](docs/lessons-learned.md) | Hard-won lessons from cross-game debugging (20+ games) |
 | [docs/test-games.md](docs/test-games.md) | 20 test games with UE versions, GWorld status, stride info |
-| [docs/simd-scanning-notes.md](docs/simd-scanning-notes.md) | AOBMaker SIMD scanning research: AVX2 anchor technique |
+| [docs/naming-convention.md](docs/naming-convention.md) | Frieren-themed C++ file / namespace mapping (Macht/Genau/Aura/Serie/Ubel/Frieren/Fern/...) |
+| [docs/aobmaker-integration.md](docs/aobmaker-integration.md) | AOBMaker CE Plugin pipe bridge (HEX / ASM / SYM / CreateAAScript) |
+| [docs/simd-scanning-notes.md](docs/simd-scanning-notes.md) | AOBMaker SIMD scanning research: AVX2 anchor technique (reference) |
 | [docs/CE-Bugs-Minesweeper.md](docs/CE-Bugs-Minesweeper.md) | CE-specific quirks and undocumented API behaviors |
+| [docs/archive/](docs/archive/) | Outdated design docs preserved for history (UX spec, UFunction roadmap) |

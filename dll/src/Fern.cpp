@@ -13,6 +13,7 @@
 #include "Aura.h"
 #include "Serie.h"
 #include "Ubel.h"
+#include "Flamme.h"
 #include "BuildInfo.h"
 
 #include <json.hpp>
@@ -286,6 +287,12 @@ static json SerializeField(const Ubel::LiveFieldValue& fv) {
                 fj["array_struct_type"] = fv.arrayInnerStructType;
             if (fv.arrayInnerStructAddr != 0)
                 fj["array_struct_class_addr"] = Renge::AddrToStr(fv.arrayInnerStructAddr);
+            // Phase G layout metadata for soft arrays — lets exporters lay out
+            // per-element FName leaves at FSoftObjectPath sub-offsets.
+            if (fv.softArrayFNameSize > 0) {
+                fj["soft_fname_size"] = fv.softArrayFNameSize;
+                fj["soft_top_level_asset_path"] = fv.softArrayIsTopLevelAssetPath;
+            }
         }
         if (fv.arrayInnerFFieldAddr != 0)
             fj["array_inner_addr"] = Renge::AddrToStr(fv.arrayInnerFFieldAddr);
@@ -450,13 +457,85 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
         if (cmd == Renge::CMD_INIT) {
             extern uint32_t g_cachedUEVersion;
             extern bool     g_cachedVersionDetected;
+            extern bool     g_cachedIsUserOverride;
+            extern bool     g_cachedIsLowConfidence;
+            extern const char* g_cachedPublisherThumbprint;
             json data;
             data["ue_version"]       = g_cachedUEVersion;
             data["version_detected"] = g_cachedVersionDetected;
+            data["is_user_override"] = g_cachedIsUserOverride;
+            data["is_low_confidence"] = g_cachedIsLowConfidence;
+            data["publisher_thumbprint"] = g_cachedPublisherThumbprint
+                ? g_cachedPublisherThumbprint : "";
             data["build_git"]  = BUILD_GIT_SHORT;
             data["build_hash"] = BUILD_GIT_HASH;
             data["build_time"] = BUILD_TIMESTAMP;
             data["build_info"] = BUILD_VERSION_STRING;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // set_ue_version_override { version: int, persist: bool }
+        //   version == 0  → clear the override (revert to auto-detect on next launch)
+        //   version != 0  → record as the persistent override for this game
+        //   persist=false → only update the in-process cached version (no disk write)
+        //
+        // Updates g_cachedUEVersion immediately so version-dependent code paths
+        // (Soft array CE XML layout, FProperty offset selection, etc.) start
+        // using the new value on the next request — no re-init / re-scan needed.
+        // ─────────────────────────────────────────────────────────────────
+        if (cmd == Renge::CMD_SET_UE_VERSION_OVERRIDE) {
+            extern uint32_t    g_cachedUEVersion;
+            extern bool        g_cachedVersionDetected;
+            extern bool        g_cachedIsUserOverride;
+            extern bool        g_cachedIsLowConfidence;
+            extern char        g_cachedPeHash[17];
+
+            int     newVersion = request.value("version", 0);
+            bool    persist    = request.value("persist", true);
+
+            // Defensive bounds — UE 4.18 .. 5.9 plus 0 (clear).
+            if (newVersion != 0 && (newVersion < 418 || newVersion > 509)) {
+                return Renge::MakeError(id,
+                    "version out of supported range (418..509 or 0 to clear)").dump();
+            }
+
+            if (persist) {
+                // Resolve a process name for the JSON record's gameName.
+                wchar_t exeW[MAX_PATH] = {};
+                GetModuleFileNameW(nullptr, exeW, MAX_PATH);
+                std::wstring exePath(exeW);
+                auto lastSlash = exePath.find_last_of(L"\\/");
+                std::wstring fileName = (lastSlash != std::wstring::npos)
+                    ? exePath.substr(lastSlash + 1) : exePath;
+                std::string nameUtf8;
+                int sz = WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
+                                             nullptr, 0, nullptr, nullptr);
+                if (sz > 0) {
+                    nameUtf8.resize(sz - 1);
+                    WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
+                                        nameUtf8.data(), sz, nullptr, nullptr);
+                }
+                Flamme::SaveUserOverride(g_cachedPeHash,
+                                         static_cast<uint32_t>(newVersion),
+                                         nameUtf8.c_str());
+            }
+
+            if (newVersion == 0) {
+                // Clear: don't change the in-process version (would require re-init);
+                // just clear the override flag so UI shows "auto-detected" branding.
+                g_cachedIsUserOverride = false;
+            } else {
+                g_cachedUEVersion       = static_cast<uint32_t>(newVersion);
+                g_cachedVersionDetected = true;
+                g_cachedIsUserOverride  = true;
+                g_cachedIsLowConfidence = false;
+            }
+
+            json data;
+            data["ue_version"]       = g_cachedUEVersion;
+            data["is_user_override"] = g_cachedIsUserOverride;
+            data["persisted"]        = persist;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -485,12 +564,20 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             extern int         g_cachedGWorldAobPos;
             extern int         g_cachedGWorldAobLen;
 
+            extern bool        g_cachedIsUserOverride;
+            extern bool        g_cachedIsLowConfidence;
+            extern const char* g_cachedPublisherThumbprint;
+
             json data;
             data["gobjects"]         = Renge::AddrToStr(g_cachedGObjects);
             data["gnames"]           = Renge::AddrToStr(g_cachedGNames);
             data["gworld"]           = Renge::AddrToStr(g_cachedGWorld);
             data["ue_version"]       = g_cachedUEVersion;
             data["version_detected"] = g_cachedVersionDetected;
+            data["is_user_override"] = g_cachedIsUserOverride;
+            data["is_low_confidence"] = g_cachedIsLowConfidence;
+            data["publisher_thumbprint"] = g_cachedPublisherThumbprint
+                ? g_cachedPublisherThumbprint : "";
             data["object_count"]     = Aura::GetCount();
             data["gobjects_method"]  = g_cachedGObjectsMethod;
             data["gnames_method"]    = g_cachedGNamesMethod;
@@ -1167,7 +1254,6 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             std::string query = request.value("query", "");
             bool gameOnly = request.value("game_only", true);
             int limit = request.value("limit", 200);
-            if (query.empty()) return Renge::MakeError(id, "Missing query").dump();
 
             // Parse optional type filter
             std::vector<std::string> typeFilter;
@@ -1175,6 +1261,14 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
                 for (const auto& t : request["types"]) {
                     if (t.is_string()) typeFilter.push_back(t.get<std::string>());
                 }
+            }
+
+            // Either query or typeFilter must constrain the search — empty
+            // both would scan every property in every class. SearchProperties
+            // tolerates an empty query (substring-find returns 0 on empty
+            // pattern), so allow it when typeFilter is non-empty.
+            if (query.empty() && typeFilter.empty()) {
+                return Renge::MakeError(id, "Missing query or type filter").dump();
             }
 
             auto searchResult = Aura::SearchProperties(query, typeFilter, gameOnly, limit);
@@ -1234,18 +1328,32 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
         }
 
         // === find_by_address: Reverse lookup — address to UObject instance ===
+        // Always runs the standard FindByAddress (UObject containment + backward
+        // memory scan). Additionally runs container-aware FindInContainers when:
+        //   - request includes "scan_containers": true (UI opt-in), OR
+        //   - the standard search returned no exact/containment match
+        // Container matches let the UI surface "this address is element [N] of
+        // ObjA.SomeArray" so the user can jump straight into that element.
         if (cmd == Renge::CMD_FIND_BY_ADDRESS) {
             std::string addrStr = request.value("addr", "");
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
 
             uintptr_t queryAddr = Renge::StrToAddr(addrStr);
             auto lookupResult = Aura::FindByAddress(queryAddr);
+            bool requestedContainerScan = request.value("scan_containers", false);
 
             json data;
             data["found"] = lookupResult.found;
 
             if (lookupResult.found) {
+                // match_type: legacy "exact" / "contains" string for back-compat.
+                // match_kind: more precise — "exact" / "contains" / "backward" / "nearest".
+                // Clients should prefer match_kind to distinguish low-confidence
+                // "nearest" fallbacks (addr beyond PropertiesSize) from real containment.
                 data["match_type"]       = lookupResult.exactMatch ? "exact" : "contains";
+                data["match_kind"]       = lookupResult.matchKind.empty()
+                                              ? (lookupResult.exactMatch ? "exact" : "contains")
+                                              : lookupResult.matchKind;
                 data["addr"]             = Renge::AddrToStr(lookupResult.objectAddr);
                 data["index"]            = lookupResult.index;
                 data["name"]             = lookupResult.name;
@@ -1255,6 +1363,92 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
                 data["query_addr"]       = addrStr;
             }
 
+            // Container scan: opt-in, or fallback when nothing else hit.
+            // Heap-allocated TArray data buffers don't fall inside any
+            // UObject's PropertiesSize, so this is the only way to attribute
+            // those addresses to an owner.
+            if (requestedContainerScan || !lookupResult.found) {
+                Aura::ContainerScanStats stats;
+                auto containerMatches = Aura::FindInContainers(queryAddr, 16, &stats);
+
+                // Surface scan stats so the UI can distinguish "really not in
+                // any container" from "scan got cut off by the deadline".
+                json scanInfo;
+                scanInfo["objects_scanned"] = stats.objectsScanned;
+                scanInfo["objects_total"]   = stats.objectsTotal;
+                scanInfo["classes_primed"]  = stats.classesPrimed;
+                scanInfo["duration_ms"]     = stats.durationMs;
+                scanInfo["deadline_hit"]    = stats.deadlineHit;
+                data["container_scan"]      = scanInfo;
+
+                json arr = json::array();
+                for (const auto& m : containerMatches) {
+                    json mj;
+                    mj["owner_addr"]    = Renge::AddrToStr(m.ownerObj);
+                    mj["owner_index"]   = m.ownerIndex;
+                    mj["owner_name"]    = m.ownerName;
+                    mj["owner_class"]   = m.ownerClassName;
+                    mj["field_offset"]  = m.fieldOffset;
+                    mj["field_name"]    = m.fieldName;
+                    mj["field_type"]    = m.fieldType;
+                    mj["inner_type"]    = m.innerType;
+                    mj["element_index"] = m.elementIndex;
+                    mj["element_size"]  = m.elementSize;
+                    mj["intra_offset"]  = m.intraOffset;
+                    mj["data_addr"]     = Renge::AddrToStr(m.dataAddr);
+                    mj["count"]         = m.count;
+                    if (!m.note.empty())
+                        mj["note"]      = m.note;
+                    arr.push_back(mj);
+                }
+                data["container_matches"] = arr;
+            }
+
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // === find_refs_to_uobject: reverse pointer search ===
+        // Given a UObject's address, find every other UObject that holds a
+        // pointer to it (direct ObjectProperty/ClassProperty fields,
+        // TArray<UObject*> elements, including nested in StructProperty).
+        // Resolves the "logical owner" question that UE's OuterPrivate
+        // doesn't answer for runtime-spawned objects.
+        if (cmd == Renge::CMD_FIND_REFS_TO_UOBJ) {
+            std::string addrStr = request.value("addr", "");
+            if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
+            uintptr_t target = Renge::StrToAddr(addrStr);
+            int32_t maxResults = request.value("max_results", 32);
+
+            Aura::ContainerScanStats stats;
+            auto refs = Aura::FindReferencesToUObject(target, maxResults, &stats);
+
+            json data;
+            data["query_addr"] = addrStr;
+
+            json scanInfo;
+            scanInfo["objects_scanned"] = stats.objectsScanned;
+            scanInfo["objects_total"]   = stats.objectsTotal;
+            scanInfo["classes_primed"]  = stats.classesPrimed;
+            scanInfo["duration_ms"]     = stats.durationMs;
+            scanInfo["deadline_hit"]    = stats.deadlineHit;
+            data["scan"] = scanInfo;
+
+            json arr = json::array();
+            for (const auto& r : refs) {
+                json rj;
+                rj["owner_addr"]    = Renge::AddrToStr(r.ownerObj);
+                rj["owner_index"]   = r.ownerIndex;
+                rj["owner_name"]    = r.ownerName;
+                rj["owner_class"]   = r.ownerClassName;
+                rj["field_offset"]  = r.fieldOffset;
+                rj["field_name"]    = r.fieldName;
+                rj["field_type"]    = r.fieldType;
+                if (!r.innerType.empty())
+                    rj["inner_type"] = r.innerType;
+                rj["element_index"] = r.elementIndex;
+                arr.push_back(rj);
+            }
+            data["references"] = arr;
             return Renge::MakeResponse(id, data).dump();
         }
 

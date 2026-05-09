@@ -14,7 +14,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <climits>
+#include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -881,11 +884,14 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
     return rset;
 }
 
-// Helper: populate an AddressLookupResult from a UObject pointer
+// Helper: populate an AddressLookupResult from a UObject pointer.
+// `kind` distinguishes confidence levels — see AddressLookupResult comment.
 static void FillLookupResult(AddressLookupResult& out, uintptr_t obj, int32_t index,
-                             int32_t offsetFromBase, bool exact) {
+                             int32_t offsetFromBase, bool exact,
+                             const char* kind = nullptr) {
     out.found = true;
     out.exactMatch = exact;
+    out.matchKind = kind ? kind : (exact ? "exact" : "contains");
     out.objectAddr = obj;
     out.index = index;
     out.offsetFromBase = offsetFromBase;
@@ -1111,12 +1117,14 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
     if (bestScanObj) {
         // Backward scan found a UObject — use it if no GObjects candidates,
-        // or if it's closer than the best GObjects candidate
+        // or if it's closer than the best GObjects candidate.
+        // Match kind = "backward" (medium confidence — the UObject was found
+        // by memory pattern, not by GObjects, so addr is past its bounds).
         bool useBackward = (numCandidates == 0) ||
                            (bestScanDist < candidates[0].dist);
         if (useBackward) {
             FillLookupResult(result, bestScanObj, -1,
-                             static_cast<int32_t>(bestScanDist), false);
+                             static_cast<int32_t>(bestScanDist), false, "backward");
             LOG_INFO("FindByAddress: Backward scan match: %s at 0x%llX, offset +0x%X",
                      result.name.c_str(),
                      static_cast<unsigned long long>(bestScanObj),
@@ -1127,10 +1135,13 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
     if (numCandidates > 0) {
         // --- Fallback: Return closest GObjects object as "nearest" ---
+        // Low confidence: addr is past this UObject's PropertiesSize, so we
+        // are NOT actually inside it. Surfaced as a hint only — frequently
+        // misleading when the address is heap-allocated container data.
         FillLookupResult(result, candidates[0].obj, candidates[0].idx,
-                         static_cast<int32_t>(candidates[0].dist), false);
+                         static_cast<int32_t>(candidates[0].dist), false, "nearest");
         result.exactMatch = false;
-        LOG_INFO("FindByAddress: Nearest GObjects fallback: %s at 0x%llX, offset +0x%X",
+        LOG_INFO("FindByAddress: Nearest GObjects fallback: %s at 0x%llX, offset +0x%X (likely outside bounds)",
                  result.name.c_str(),
                  static_cast<unsigned long long>(candidates[0].obj),
                  result.offsetFromBase);
@@ -1141,6 +1152,895 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
     LOG_INFO("FindByAddress: No match found for 0x%llX (no candidates, no backward scan hit)",
              static_cast<unsigned long long>(addr));
     return result;
+}
+
+// === Container-Aware Address Lookup ===
+//
+// Persistent per-class cache of container fields (ArrayProperty / MapProperty
+// / SetProperty) and their resolved per-element strides. Built lazily on
+// first encounter via WalkClassEx. Empty entries (classes with no usable
+// container fields) are stored so we don't re-walk them on subsequent queries.
+//
+// Nested struct support: many UE games store gameplay arrays inside a
+// USTRUCT() rather than as direct UPROPERTY() arrays of the UObject —
+// e.g. UPlayerInfo { FCharacterStats Stats; } where Stats has a TArray<int>
+// Levels member. The cache builder recurses into StructProperty fields
+// (depth-capped) and registers nested arrays/maps/sets with their absolute
+// offset (parent struct offset + child field offset) and a dotted name
+// like "Stats.Levels".
+
+enum class ContainerKind {
+    Array,   // TArray.Data buffer, stride = inner element size
+    Set,     // TSparseArray.Data buffer, stride = ComputeSetElementStride
+    Map,     // TSparseArray.Data buffer, stride = ComputeSetElementStride(pair)
+};
+
+struct ContainerCacheEntry {
+    int32_t       offset;       // Absolute byte offset within owner UObject
+    std::string   name;         // Dotted name (e.g. "Stats.Levels")
+    std::string   innerType;    // ArrayProperty: inner; Set: elem; Map: "K → V"
+    int32_t       stride;       // Bytes per element/pair within Data buffer
+    ContainerKind kind;
+};
+
+static std::unordered_map<uintptr_t, std::vector<ContainerCacheEntry>> s_classContainerCache;
+static std::mutex s_classContainerMutex;
+
+// Recursive collector — walks `structAddr` (a UClass* or UScriptStruct*)
+// and emits one ContainerCacheEntry for each ArrayProperty/MapProperty/
+// SetProperty found, INCLUDING those nested inside StructProperty fields.
+// Depth-capped to avoid pathological cyclic struct definitions.
+static void CollectContainersRecursive(
+    uintptr_t structAddr,
+    int32_t baseOffset,
+    const std::string& namePrefix,
+    std::vector<ContainerCacheEntry>& out,
+    int depth)
+{
+    // Reasonable cap: most UE games nest at most 1–2 levels (UObject →
+    // FStruct → TArray). Depth 3 covers struct-of-struct-of-struct.
+    constexpr int kMaxDepth = 3;
+    if (depth > kMaxDepth) return;
+
+    auto ci = Ubel::WalkClassEx(structAddr);
+    for (const auto& f : ci.Fields) {
+        if (!f.Address) continue;
+
+        std::string fullName = namePrefix.empty()
+            ? f.Name
+            : (namePrefix + "." + f.Name);
+        int32_t absOffset = baseOffset + f.Offset;
+
+        if (f.TypeName == "ArrayProperty") {
+            int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
+            if (es <= 0) continue;
+            out.push_back({ absOffset, fullName, f.innerType, es, ContainerKind::Array });
+        }
+        else if (f.TypeName == "SetProperty") {
+            int32_t st = Ubel::GetSetElementStride(f.Address);
+            if (st <= 0) continue;
+            out.push_back({ absOffset, fullName, f.elemType, st, ContainerKind::Set });
+        }
+        else if (f.TypeName == "MapProperty") {
+            int32_t st = Ubel::GetMapPairStride(f.Address);
+            if (st <= 0) continue;
+            std::string innerLabel = f.keyType + " → " + f.valueType;
+            out.push_back({ absOffset, fullName, innerLabel, st, ContainerKind::Map });
+        }
+        else if (f.TypeName == "StructProperty") {
+            // Descend into the nested UScriptStruct, accumulating offset
+            // and dotted name. Inner UScriptStruct address lives at the
+            // FProperty's subclass-extension offset.
+            uintptr_t innerStruct = 0;
+            if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+                && innerStruct) {
+                CollectContainersRecursive(innerStruct, absOffset, fullName,
+                                           out, depth + 1);
+            }
+        }
+        else if (f.TypeName == "OptionalProperty"
+                 && f.innerType == "StructProperty") {
+            // TOptional<FStruct> non-intrusive layout: { T value; uint8 bIsSet; }.
+            // Value lives at field+0, so offset accumulation is identical to
+            // a bare StructProperty. We can't tell at cache-build time which
+            // instances are set vs unset, but a container scan that hits an
+            // unset slot just sees zeros and naturally fails its address
+            // comparison.
+            uintptr_t innerProp = 0;
+            uintptr_t innerStruct = 0;
+            // Probe inner FProperty* (same offset as ArrayProperty::Inner).
+            if (Macht::ReadSafe(f.Address + DynOff::FARRAYPROP_INNER, innerProp)
+                && innerProp
+                && Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+                && innerStruct) {
+                CollectContainersRecursive(innerStruct, absOffset, fullName,
+                                           out, depth + 1);
+            }
+        }
+    }
+}
+
+static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls) {
+    {
+        std::lock_guard<std::mutex> lk(s_classContainerMutex);
+        auto it = s_classContainerCache.find(cls);
+        if (it != s_classContainerCache.end()) return it->second;
+    }
+
+    // Build outside the lock — WalkClassEx is non-trivial and may itself
+    // touch caches. Insert under lock at the end.
+    std::vector<ContainerCacheEntry> entries;
+    CollectContainersRecursive(cls, /*baseOffset*/ 0, /*namePrefix*/ "",
+                               entries, /*depth*/ 0);
+
+    std::lock_guard<std::mutex> lk(s_classContainerMutex);
+    auto [ins, _] = s_classContainerCache.emplace(cls, std::move(entries));
+    return ins->second;
+}
+
+// Helper: emit one ContainerMatch given a resolved hit. Reads owner name +
+// class name lazily so we only pay that cost when a match is actually found.
+static ContainerMatch BuildMatch(uintptr_t obj, int32_t ownerIndex, uintptr_t cls,
+                                  const ContainerCacheEntry& cfe,
+                                  uintptr_t dataAddr, int32_t count,
+                                  int32_t elementIndex, int32_t intraOffset,
+                                  const char* note = "") {
+    ContainerMatch m;
+    m.ownerObj     = obj;
+    m.ownerIndex   = ownerIndex;
+
+    uint32_t nameIdx = 0;
+    if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx))
+        m.ownerName = Serie::GetString(nameIdx);
+
+    uint32_t clsNameIdx = 0;
+    if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, clsNameIdx))
+        m.ownerClassName = Serie::GetString(clsNameIdx);
+
+    m.fieldOffset  = cfe.offset;
+    m.fieldName    = cfe.name;
+    m.fieldType    = (cfe.kind == ContainerKind::Array) ? "ArrayProperty"
+                   : (cfe.kind == ContainerKind::Set)   ? "SetProperty"
+                                                        : "MapProperty";
+    m.innerType    = cfe.innerType;
+    m.elementSize  = cfe.stride;
+    m.elementIndex = elementIndex;
+    m.intraOffset  = intraOffset;
+    m.dataAddr     = dataAddr;
+    m.count        = count;
+    m.note         = note ? note : "";
+    return m;
+}
+
+std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
+                                              ContainerScanStats* stats) {
+    std::vector<ContainerMatch> matches;
+    if (stats) *stats = {};
+    if (!addr || !s_arrayAddr) return matches;
+    if (maxResults <= 0) maxResults = 16;
+
+    int32_t count = GetCount();
+    if (count <= 0) return matches;
+    if (stats) stats->objectsTotal = count;
+
+    LOG_INFO("FindInContainers: scanning %d objects for addr 0x%llX",
+             count, static_cast<unsigned long long>(addr));
+
+    // Per-call deadline so a slow / huge-class game doesn't hang the UI.
+    // 15s is comfortable on first scan even for 400K-object games (FF7
+    // Rebirth) — first scan primes the per-class cache, subsequent scans
+    // finish in ~1s. 5s was too tight for first-scan on big games.
+    constexpr int kDeadlineMs = 15000;
+    auto t0 = std::chrono::steady_clock::now();
+    int32_t classesWalked = 0;
+    int32_t scanned = 0;
+    bool deadlineHit = false;
+
+    for (int32_t i = 0; i < count && static_cast<int>(matches.size()) < maxResults; ++i) {
+        if ((i & 0x3FF) == 0) {
+            auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - t0).count();
+            if (dt > kDeadlineMs) {
+                LOG_INFO("FindInContainers: deadline reached after %d objects (%lld ms)",
+                         i, static_cast<long long>(dt));
+                deadlineHit = true;
+                break;
+            }
+        }
+        scanned = i + 1;
+
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        const auto& containers = GetClassContainers(cls);
+        if (containers.empty()) continue;
+        ++classesWalked;
+
+        for (const auto& cfe : containers) {
+            uintptr_t fieldAddr = obj + cfe.offset;
+
+            if (cfe.kind == ContainerKind::Array) {
+                Macht::TArrayView arr;
+                if (!Macht::ReadTArray(fieldAddr, arr)) continue;
+                if (arr.Max <= 0 || !arr.Data) continue;
+                // ReadTArray sanity-caps Count at 1M but not Max. A corrupted
+                // Max would project a huge buffer span and dilute results.
+                // Apply the same cap defensively.
+                if (arr.Max > 0x100000) continue;
+
+                // Use Max (allocated capacity) rather than Count so we also
+                // catch addresses landing in the array's slack region — when
+                // a value comes from a previously-shrunk array element the
+                // memory often still holds the last-written game value.
+                uintptr_t bufEnd = arr.Data + static_cast<int64_t>(arr.Max) * cfe.stride;
+                if (addr < arr.Data || addr >= bufEnd) continue;
+
+                int32_t intraTotal = static_cast<int32_t>(addr - arr.Data);
+                int32_t elemIdx    = intraTotal / cfe.stride;
+                const char* note   = (elemIdx >= arr.Count) ? "slack" : "";
+
+                auto m = BuildMatch(obj, i, cls, cfe, arr.Data, arr.Count,
+                                    elemIdx, intraTotal % cfe.stride, note);
+                LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (Array%s, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(),
+                         m.elementIndex, m.intraOffset,
+                         note[0] ? "/slack" : "",
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                matches.push_back(std::move(m));
+            }
+            else { // Set or Map — both use TSparseArray
+                Macht::TSparseArrayView sa;
+                if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
+                if (sa.MaxCapacity <= 0 || !sa.Data) continue;
+                // Defensive cap — same rationale as Array.Max above.
+                if (sa.MaxCapacity > 0x100000) continue;
+
+                // TSparseArray frees slots without overwriting them, so an
+                // address landing on a free-list slot may still hold the
+                // last-written value. Don't filter — surface them with a
+                // "freed" note so the user can judge.
+                uintptr_t bufEnd = sa.Data + static_cast<int64_t>(sa.MaxCapacity) * cfe.stride;
+                if (addr < sa.Data || addr >= bufEnd) continue;
+
+                int32_t intraTotal = static_cast<int32_t>(addr - sa.Data);
+                int32_t sparseIdx  = intraTotal / cfe.stride;
+                bool allocated = Macht::IsSparseIndexAllocated(sa, sparseIdx);
+                const char* note = allocated ? "" : "freed";
+
+                int32_t logicalCount = sa.MaxIndex - sa.NumFreeIndices;
+                auto m = BuildMatch(obj, i, cls, cfe, sa.Data, logicalCount,
+                                    sparseIdx, intraTotal % cfe.stride, note);
+                LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (%s%s, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(),
+                         m.elementIndex, m.intraOffset,
+                         m.fieldType.c_str(),
+                         note[0] ? "/freed" : "",
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                matches.push_back(std::move(m));
+            }
+
+            if (static_cast<int>(matches.size()) >= maxResults) break;
+        }
+    }
+
+    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - t0).count();
+    if (stats) {
+        stats->objectsScanned = scanned;
+        stats->classesPrimed  = classesWalked;
+        stats->durationMs     = static_cast<int64_t>(dt);
+        stats->deadlineHit    = deadlineHit;
+    }
+    LOG_INFO("FindInContainers: found %d matches in %lld ms (scanned %d/%d, %d non-empty classes%s)",
+             static_cast<int>(matches.size()), static_cast<long long>(dt),
+             scanned, count, classesWalked, deadlineHit ? ", DEADLINE HIT" : "");
+    return matches;
+}
+
+// === Reverse Reference Search ===
+//
+// Per-class cache of pointer-shaped fields and Object array fields.
+// Built lazily, mirrors the container cache pattern.
+//
+// Coverage (v2 + v3):
+//   - Direct ObjectProperty / ClassProperty / InterfaceProperty
+//     (8-byte UObject* read directly at field+0)
+//   - Direct WeakObjectProperty / SoftObjectProperty / SoftClassProperty /
+//     LazyObjectProperty (FWeakObjectPtr at field+0 → resolved via
+//     ResolveWeakObjectPtr; only matches when the ref is currently bound
+//     to a live UObject)
+//   - DelegateProperty (single FScriptDelegate — FWeakObjectPtr target at
+//     field+0; same resolution path)
+//   - MulticastInlineDelegateProperty / MulticastDelegateProperty
+//     (FMulticastScriptDelegate is just TArray<FScriptDelegate> at
+//     field+0; each element's FWeakObjectPtr is the binding target).
+//     MulticastSparseDelegateProperty deliberately NOT covered — bindings
+//     live in FSparseDelegateStorage rather than at the field.
+//   - OptionalProperty<T> for pointer-shaped T — bucketed alongside its
+//     bare T because the intrusive layout is identical at field+0.
+//   - TArray<UObject*> / TArray<UClass*> (8-byte stride)
+//   - TArray<FScriptInterface> (16-byte stride, ptr at elem+0)
+//   - TArray<FWeakObjectPtr> / TArray<FSoftObjectPtr> /
+//     TArray<FLazyObjectPtr> / TArray<FScriptDelegate> (variable stride,
+//     FWeakObjectPtr at elem+0)
+//   - TMap<UObject*,V> / TMap<K,UObject*> (TSparseArray walk, allocated
+//     slots only — frees aren't real references)
+//   - TSet<UObject*> (TSparseArray walk, allocated slots only)
+//
+// Each entry's `offset` is absolute within the owner UObject (parent
+// struct offsets pre-summed for nested fields, depth-capped at 3).
+
+struct DirectPointerEntry {
+    int32_t     offset;
+    std::string name;
+    std::string typeName;     // "ObjectProperty" / "ClassProperty" / "InterfaceProperty"
+};
+
+// FWeakObjectPtr-shaped single field: { int32 ObjectIndex, int32 Serial }
+// at field+0. Soft/Lazy place this same struct at the head of a richer
+// envelope (FSoftObjectPath / FGuid follows) but the resolution path is
+// identical — the embedded weak ptr is what reveals the live UObject.
+struct WeakLikePointerEntry {
+    int32_t     offset;
+    std::string name;
+    std::string typeName;     // "WeakObjectProperty" / "SoftObjectProperty"
+                              // / "SoftClassProperty" / "LazyObjectProperty"
+};
+
+struct ObjectArrayEntry {
+    int32_t     offset;
+    std::string name;
+    std::string innerType;    // "ObjectProperty" / "ClassProperty"
+};
+
+// TArray<FScriptInterface>: 16-byte elements, UObject* at elem+0.
+struct InterfaceArrayEntry {
+    int32_t     offset;
+    std::string name;
+};
+
+// TArray<FWeakObjectPtr>/<FSoftObjectPtr>/<FLazyObjectPtr>: variable
+// per-element stride, FWeakObjectPtr at elem+0 in every case.
+struct WeakLikeArrayEntry {
+    int32_t     offset;
+    std::string name;
+    std::string innerType;    // Same vocabulary as WeakLikePointerEntry::typeName
+    int32_t     elemStride;   // From Ubel::GetArrayInnerElemSize
+};
+
+// TMap with at least one Object/Class side. Both flags can be true for a
+// TMap<UObject*, UObject*> — scan emits one match per matching side.
+struct ObjectMapEntry {
+    int32_t     offset;
+    std::string name;
+    int32_t     pairStride;
+    int32_t     valueOffset;  // Within each pair
+    bool        keyIsObject;
+    bool        valueIsObject;
+    std::string keyTypeName;    // "ObjectProperty" / "ClassProperty" (for matched side)
+    std::string valueTypeName;
+    std::string innerLabel;     // "<keyType> → <valueType>" for UI
+};
+
+// TSet with Object/Class element type.
+struct ObjectSetEntry {
+    int32_t     offset;
+    std::string name;
+    int32_t     elemStride;
+    std::string elemTypeName;   // "ObjectProperty" / "ClassProperty"
+};
+
+struct ClassReferenceMeta {
+    std::vector<DirectPointerEntry>     directPointers;
+    std::vector<WeakLikePointerEntry>   weakLikePointers;
+    std::vector<ObjectArrayEntry>       objectArrays;
+    std::vector<InterfaceArrayEntry>    interfaceArrays;
+    std::vector<WeakLikeArrayEntry>     weakLikeArrays;
+    std::vector<ObjectMapEntry>         objectMaps;
+    std::vector<ObjectSetEntry>         objectSets;
+
+    bool empty() const {
+        return directPointers.empty() && weakLikePointers.empty()
+            && objectArrays.empty() && interfaceArrays.empty()
+            && weakLikeArrays.empty() && objectMaps.empty()
+            && objectSets.empty();
+    }
+};
+
+static bool IsWeakLikeProp(const std::string& tn) {
+    return tn == "WeakObjectProperty" || tn == "SoftObjectProperty"
+        || tn == "SoftClassProperty"  || tn == "LazyObjectProperty";
+}
+static bool IsDirectObjectProp(const std::string& tn) {
+    return tn == "ObjectProperty" || tn == "ClassProperty";
+}
+
+static std::unordered_map<uintptr_t, ClassReferenceMeta> s_classRefCache;
+static std::mutex s_classRefMutex;
+
+// Recursive walker — descends through StructProperty (depth-capped) and
+// emits one cache entry for each pointer-shaped field, pointer-array
+// field, ObjectMap, or ObjectSet found. Mirrors CollectContainersRecursive.
+static void CollectRefMetaRecursive(uintptr_t structAddr,
+                                     int32_t baseOffset,
+                                     const std::string& namePrefix,
+                                     ClassReferenceMeta& out,
+                                     int depth)
+{
+    constexpr int kMaxDepth = 3;
+    if (depth > kMaxDepth) return;
+
+    auto ci = Ubel::WalkClassEx(structAddr);
+    for (const auto& f : ci.Fields) {
+        if (!f.Address) continue;
+
+        std::string fullName = namePrefix.empty()
+            ? f.Name
+            : (namePrefix + "." + f.Name);
+        int32_t absOffset = baseOffset + f.Offset;
+
+        // --- Single pointer fields ---
+        if (IsDirectObjectProp(f.TypeName) || f.TypeName == "InterfaceProperty") {
+            // All three layouts hold a UObject* at field+0 (FScriptInterface
+            // also has ifacePtr at +8, but we ignore that — only objPtr is
+            // the resolvable reference).
+            out.directPointers.push_back({ absOffset, fullName, f.TypeName });
+        }
+        else if (IsWeakLikeProp(f.TypeName)) {
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+        }
+        // --- TOptional<T> wrapping a pointer-shaped T ---
+        // For pointer-shaped T, FOptionalProperty stores T directly at
+        // field+0; "unset" is encoded as null/zero. So the comparison logic
+        // is identical to the bare pointer/weak-like field — only the
+        // type-name label changes (so the user can see it was reached via
+        // an Optional). innerType comes from WalkClassEx.
+        else if (f.TypeName == "OptionalProperty"
+              && (IsDirectObjectProp(f.innerType)
+                  || f.innerType == "InterfaceProperty")) {
+            out.directPointers.push_back({ absOffset, fullName, f.TypeName });
+        }
+        else if (f.TypeName == "OptionalProperty"
+              && IsWeakLikeProp(f.innerType)) {
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+        }
+        // --- DelegateProperty (single FScriptDelegate) ---
+        // Layout: { FWeakObjectPtr Target(8B), FName FunctionName(8/16B) }.
+        // The FWeakObjectPtr at field+0 is the binding's target — same
+        // resolution path as WeakObjectProperty, so reuse weakLikePointers.
+        // typeName is preserved so the user sees this was reached via a
+        // delegate (a "register on click" bind, not a property reference).
+        else if (f.TypeName == "DelegateProperty") {
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+        }
+        // --- MulticastInline / MulticastDelegate (single field) ---
+        // FMulticastScriptDelegate := TArray<FScriptDelegate> at field+0.
+        // Each binding has FWeakObjectPtr at elem+0 — same scan logic as
+        // weakLikeArrays, just with a delegate-specific stride. (Sparse
+        // multicast deliberately excluded: bindings live in
+        // FSparseDelegateStorage, not at the field.)
+        else if (f.TypeName == "MulticastInlineDelegateProperty"
+              || f.TypeName == "MulticastDelegateProperty") {
+            int32_t fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int32_t stride    = 8 + fnameSize;
+            out.weakLikeArrays.push_back({ absOffset, fullName,
+                                            f.TypeName, stride });
+        }
+        // --- Array of pointer-shaped types ---
+        else if (f.TypeName == "ArrayProperty") {
+            if (IsDirectObjectProp(f.innerType)) {
+                out.objectArrays.push_back({ absOffset, fullName, f.innerType });
+            }
+            else if (f.innerType == "InterfaceProperty") {
+                out.interfaceArrays.push_back({ absOffset, fullName });
+            }
+            else if (IsWeakLikeProp(f.innerType)) {
+                int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
+                if (es > 0) {
+                    out.weakLikeArrays.push_back({ absOffset, fullName,
+                                                    f.innerType, es });
+                }
+            }
+            else if (f.innerType == "DelegateProperty") {
+                // TArray<FScriptDelegate> — element layout matches the
+                // multicast bindings list. Stride is FName-size dependent.
+                int32_t fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                int32_t stride    = 8 + fnameSize;
+                out.weakLikeArrays.push_back({ absOffset, fullName,
+                                                f.innerType, stride });
+            }
+        }
+        // --- Map with pointer-shaped key and/or value ---
+        else if (f.TypeName == "MapProperty") {
+            bool keyIsObj = IsDirectObjectProp(f.keyType);
+            bool valIsObj = IsDirectObjectProp(f.valueType);
+            if (keyIsObj || valIsObj) {
+                Ubel::MapPairLayout layout;
+                if (Ubel::GetMapPairLayout(f.Address, layout)
+                    && layout.pairStride > 0) {
+                    ObjectMapEntry e;
+                    e.offset        = absOffset;
+                    e.name          = fullName;
+                    e.pairStride    = layout.pairStride;
+                    e.valueOffset   = layout.valueOffset;
+                    e.keyIsObject   = keyIsObj;
+                    e.valueIsObject = valIsObj;
+                    e.keyTypeName   = f.keyType;
+                    e.valueTypeName = f.valueType;
+                    e.innerLabel    = f.keyType + " → " + f.valueType;
+                    out.objectMaps.push_back(std::move(e));
+                }
+            }
+        }
+        // --- Set with pointer-shaped element ---
+        else if (f.TypeName == "SetProperty") {
+            if (IsDirectObjectProp(f.elemType)) {
+                int32_t st = Ubel::GetSetElementStride(f.Address);
+                if (st > 0) {
+                    out.objectSets.push_back({ absOffset, fullName,
+                                                st, f.elemType });
+                }
+            }
+        }
+        // --- Recurse into nested structs ---
+        else if (f.TypeName == "StructProperty") {
+            uintptr_t innerStruct = 0;
+            if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+                && innerStruct) {
+                CollectRefMetaRecursive(innerStruct, absOffset, fullName,
+                                         out, depth + 1);
+            }
+        }
+        else if (f.TypeName == "OptionalProperty"
+                 && f.innerType == "StructProperty") {
+            // TOptional<FStruct>: { T value; uint8 bIsSet; } — value at field+0,
+            // so absOffset is unchanged for sub-fields. The bIsSet trailing
+            // byte doesn't matter for reverse scan: an unset slot is zero
+            // and naturally fails pointer comparisons.
+            uintptr_t innerProp = 0;
+            uintptr_t innerStruct = 0;
+            if (Macht::ReadSafe(f.Address + DynOff::FARRAYPROP_INNER, innerProp)
+                && innerProp
+                && Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+                && innerStruct) {
+                CollectRefMetaRecursive(innerStruct, absOffset, fullName,
+                                         out, depth + 1);
+            }
+        }
+    }
+}
+
+static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
+    {
+        std::lock_guard<std::mutex> lk(s_classRefMutex);
+        auto it = s_classRefCache.find(cls);
+        if (it != s_classRefCache.end()) return it->second;
+    }
+
+    ClassReferenceMeta meta;
+    CollectRefMetaRecursive(cls, 0, "", meta, 0);
+
+    std::lock_guard<std::mutex> lk(s_classRefMutex);
+    auto [ins, _] = s_classRefCache.emplace(cls, std::move(meta));
+    return ins->second;
+}
+
+static void FillRefMatchOwner(ReferenceMatch& m, uintptr_t obj, int32_t idx, uintptr_t cls) {
+    m.ownerObj   = obj;
+    m.ownerIndex = idx;
+    uint32_t nameIdx = 0;
+    if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx))
+        m.ownerName = Serie::GetString(nameIdx);
+    uint32_t clsNameIdx = 0;
+    if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, clsNameIdx))
+        m.ownerClassName = Serie::GetString(clsNameIdx);
+}
+
+// Resolve FWeakObjectPtr at `addr` (8 bytes: int32 idx + int32 serial) to
+// a live UObject* — same logic Ubel uses, inlined here so the scan loop
+// stays self-contained.
+static uintptr_t ResolveWeakAt(uintptr_t addr) {
+    int32_t objIdx = 0, serial = 0;
+    if (!Macht::ReadSafe(addr,     objIdx))  return 0;
+    if (!Macht::ReadSafe(addr + 4, serial))  return 0;
+    return Ubel::ResolveWeakObjectPtr(objIdx, serial);
+}
+
+std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
+                                                     int32_t maxResults,
+                                                     ContainerScanStats* stats)
+{
+    std::vector<ReferenceMatch> matches;
+    if (stats) *stats = {};
+    if (!target || !s_arrayAddr) return matches;
+    if (maxResults <= 0) maxResults = 32;
+
+    int32_t count = GetCount();
+    if (count <= 0) return matches;
+    if (stats) stats->objectsTotal = count;
+
+    LOG_INFO("FindReferencesToUObject: scanning %d objects for ref to 0x%llX",
+             count, static_cast<unsigned long long>(target));
+
+    // Reference search is more expensive than container scan (each UObject
+    // checked has up to N pointer fields + array elements). Bump deadline
+    // to 30s so first-pass cache prime can complete on huge games.
+    constexpr int kDeadlineMs = 30000;
+    auto t0 = std::chrono::steady_clock::now();
+    int32_t classesPrimed = 0;
+    int32_t scanned = 0;
+    bool deadlineHit = false;
+
+    auto pushMatch = [&](ReferenceMatch&& m) -> bool {
+        matches.push_back(std::move(m));
+        return static_cast<int>(matches.size()) >= maxResults;
+    };
+
+    for (int32_t i = 0; i < count && static_cast<int>(matches.size()) < maxResults; ++i) {
+        if ((i & 0x3FF) == 0) {
+            auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - t0).count();
+            if (dt > kDeadlineMs) {
+                LOG_INFO("FindReferencesToUObject: deadline reached after %d objects (%lld ms)",
+                         i, static_cast<long long>(dt));
+                deadlineHit = true;
+                break;
+            }
+        }
+        scanned = i + 1;
+
+        uintptr_t obj = GetByIndex(i);
+        if (!obj || obj == target) continue;  // Don't report self-reference
+
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        const auto& meta = GetClassRefMeta(cls);
+        if (meta.empty()) continue;
+        ++classesPrimed;
+
+        bool hitMaxThisObj = false;
+
+        // --- Direct ObjectProperty / ClassProperty / InterfaceProperty ---
+        for (const auto& pfe : meta.directPointers) {
+            uintptr_t ptr = 0;
+            if (!Macht::ReadSafe(obj + pfe.offset, ptr)) continue;
+            if (ptr != target) continue;
+
+            ReferenceMatch m;
+            FillRefMatchOwner(m, obj, i, cls);
+            m.fieldOffset  = pfe.offset;
+            m.fieldName    = pfe.name;
+            m.fieldType    = pfe.typeName;
+            m.elementIndex = -1;
+
+            LOG_INFO("FindReferencesToUObject: hit %s.%s (%s, owner=0x%llX, %s)",
+                     m.ownerName.c_str(), m.fieldName.c_str(),
+                     pfe.typeName.c_str(),
+                     static_cast<unsigned long long>(obj),
+                     m.ownerClassName.c_str());
+            if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+        }
+        if (hitMaxThisObj) break;
+
+        // --- Weak/Soft/Lazy single fields (FWeakObjectPtr at field+0) ---
+        for (const auto& wpe : meta.weakLikePointers) {
+            uintptr_t resolved = ResolveWeakAt(obj + wpe.offset);
+            if (resolved != target) continue;
+
+            ReferenceMatch m;
+            FillRefMatchOwner(m, obj, i, cls);
+            m.fieldOffset  = wpe.offset;
+            m.fieldName    = wpe.name;
+            m.fieldType    = wpe.typeName;
+            m.elementIndex = -1;
+
+            LOG_INFO("FindReferencesToUObject: hit %s.%s (%s, owner=0x%llX, %s)",
+                     m.ownerName.c_str(), m.fieldName.c_str(),
+                     wpe.typeName.c_str(),
+                     static_cast<unsigned long long>(obj),
+                     m.ownerClassName.c_str());
+            if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TArray<UObject*> / TArray<UClass*> (8-byte stride) ---
+        for (const auto& oae : meta.objectArrays) {
+            Macht::TArrayView arr;
+            if (!Macht::ReadTArray(obj + oae.offset, arr)) continue;
+            if (arr.Count <= 0 || !arr.Data) continue;
+
+            // Bulk-read the TArray's data buffer once and scan in-memory.
+            constexpr int32_t kElemBytes = 8;
+            std::vector<uintptr_t> buf(arr.Count, 0);
+            if (!Macht::ReadBytesSafe(arr.Data, buf.data(),
+                                       arr.Count * kElemBytes))
+                continue;
+
+            for (int32_t e = 0; e < arr.Count; ++e) {
+                if (buf[e] != target) continue;
+
+                ReferenceMatch m;
+                FillRefMatchOwner(m, obj, i, cls);
+                m.fieldOffset  = oae.offset;
+                m.fieldName    = oae.name;
+                m.fieldType    = "ArrayProperty";
+                m.innerType    = oae.innerType;
+                m.elementIndex = e;
+
+                LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] (Array<%s>, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(), e,
+                         oae.innerType.c_str(),
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TArray<FScriptInterface> (16-byte stride, ptr at elem+0) ---
+        for (const auto& iae : meta.interfaceArrays) {
+            Macht::TArrayView arr;
+            if (!Macht::ReadTArray(obj + iae.offset, arr)) continue;
+            if (arr.Count <= 0 || !arr.Data) continue;
+
+            constexpr int32_t kElemBytes = 16;
+            for (int32_t e = 0; e < arr.Count; ++e) {
+                uintptr_t ptr = 0;
+                if (!Macht::ReadSafe(arr.Data + static_cast<int64_t>(e) * kElemBytes, ptr))
+                    continue;
+                if (ptr != target) continue;
+
+                ReferenceMatch m;
+                FillRefMatchOwner(m, obj, i, cls);
+                m.fieldOffset  = iae.offset;
+                m.fieldName    = iae.name;
+                m.fieldType    = "ArrayProperty";
+                m.innerType    = "InterfaceProperty";
+                m.elementIndex = e;
+
+                LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] (Array<InterfaceProperty>, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(), e,
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TArray<FWeak/Soft/Lazy ObjectPtr> (FWeakObjectPtr at elem+0) ---
+        for (const auto& wae : meta.weakLikeArrays) {
+            Macht::TArrayView arr;
+            if (!Macht::ReadTArray(obj + wae.offset, arr)) continue;
+            if (arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
+
+            for (int32_t e = 0; e < arr.Count; ++e) {
+                uintptr_t resolved = ResolveWeakAt(
+                    arr.Data + static_cast<int64_t>(e) * wae.elemStride);
+                if (resolved != target) continue;
+
+                ReferenceMatch m;
+                FillRefMatchOwner(m, obj, i, cls);
+                m.fieldOffset  = wae.offset;
+                m.fieldName    = wae.name;
+                m.fieldType    = "ArrayProperty";
+                m.innerType    = wae.innerType;
+                m.elementIndex = e;
+
+                LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] (Array<%s>, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(), e,
+                         wae.innerType.c_str(),
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TMap<UObject*, V> / TMap<K, UObject*> (allocated slots only) ---
+        for (const auto& ome : meta.objectMaps) {
+            Macht::TSparseArrayView sa;
+            if (!Macht::ReadTSparseArray(obj + ome.offset, sa)) continue;
+            if (sa.MaxIndex <= 0 || !sa.Data || ome.pairStride <= 0) continue;
+
+            for (int32_t e = 0; e < sa.MaxIndex; ++e) {
+                if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
+                uintptr_t pair = sa.Data + static_cast<int64_t>(e) * ome.pairStride;
+
+                if (ome.keyIsObject) {
+                    uintptr_t kp = 0;
+                    if (Macht::ReadSafe(pair, kp) && kp == target) {
+                        ReferenceMatch m;
+                        FillRefMatchOwner(m, obj, i, cls);
+                        m.fieldOffset  = ome.offset;
+                        m.fieldName    = ome.name + ".Key";
+                        m.fieldType    = "MapProperty";
+                        m.innerType    = ome.innerLabel;
+                        m.elementIndex = e;
+                        LOG_INFO("FindReferencesToUObject: hit %s.%s.Key[%d] (Map<%s>, owner=0x%llX, %s)",
+                                 m.ownerName.c_str(), ome.name.c_str(), e,
+                                 ome.innerLabel.c_str(),
+                                 static_cast<unsigned long long>(obj),
+                                 m.ownerClassName.c_str());
+                        if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+                    }
+                }
+                if (ome.valueIsObject) {
+                    uintptr_t vp = 0;
+                    if (Macht::ReadSafe(pair + ome.valueOffset, vp) && vp == target) {
+                        ReferenceMatch m;
+                        FillRefMatchOwner(m, obj, i, cls);
+                        m.fieldOffset  = ome.offset;
+                        m.fieldName    = ome.name + ".Value";
+                        m.fieldType    = "MapProperty";
+                        m.innerType    = ome.innerLabel;
+                        m.elementIndex = e;
+                        LOG_INFO("FindReferencesToUObject: hit %s.%s.Value[%d] (Map<%s>, owner=0x%llX, %s)",
+                                 m.ownerName.c_str(), ome.name.c_str(), e,
+                                 ome.innerLabel.c_str(),
+                                 static_cast<unsigned long long>(obj),
+                                 m.ownerClassName.c_str());
+                        if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+                    }
+                }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TSet<UObject*> (allocated slots only) ---
+        for (const auto& ose : meta.objectSets) {
+            Macht::TSparseArrayView sa;
+            if (!Macht::ReadTSparseArray(obj + ose.offset, sa)) continue;
+            if (sa.MaxIndex <= 0 || !sa.Data || ose.elemStride <= 0) continue;
+
+            for (int32_t e = 0; e < sa.MaxIndex; ++e) {
+                if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
+                uintptr_t elem = sa.Data + static_cast<int64_t>(e) * ose.elemStride;
+                uintptr_t ptr = 0;
+                if (!Macht::ReadSafe(elem, ptr)) continue;
+                if (ptr != target) continue;
+
+                ReferenceMatch m;
+                FillRefMatchOwner(m, obj, i, cls);
+                m.fieldOffset  = ose.offset;
+                m.fieldName    = ose.name;
+                m.fieldType    = "SetProperty";
+                m.innerType    = ose.elemTypeName;
+                m.elementIndex = e;
+
+                LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] (Set<%s>, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(), e,
+                         ose.elemTypeName.c_str(),
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
+    }
+
+    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - t0).count();
+    if (stats) {
+        stats->objectsScanned = scanned;
+        stats->classesPrimed  = classesPrimed;
+        stats->durationMs     = static_cast<int64_t>(dt);
+        stats->deadlineHit    = deadlineHit;
+    }
+    LOG_INFO("FindReferencesToUObject: found %d matches in %lld ms (scanned %d/%d, %d classes with refs%s)",
+             static_cast<int>(matches.size()), static_cast<long long>(dt),
+             scanned, count, classesPrimed, deadlineHit ? ", DEADLINE HIT" : "");
+    return matches;
 }
 
 // === Property Keyword Search ===

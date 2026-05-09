@@ -23,6 +23,19 @@
               Padding="8,4"
               Foreground="#C586C0"
               ToolTip.Tip="Navigate to parent (OuterPrivate)"/>
+      <!-- Find References: reverse-scan all UObjects for ones that point to
+           the current UObject (direct ObjectProperty fields + TArray<UObject*>
+           elements, including nested in StructProperty). Resolves the
+           "logical owner" question that OuterPrivate doesn't answer for
+           runtime-spawned objects (e.g. an Item created by a player's
+           Inventory — Outer is /Engine/Transient, but Find References
+           returns the actual PlayerInventory.Items[N]). -->
+      <Button Content="{StaticResource str.LiveWalker.FindRefs}"
+              Command="{Binding FindReferencesCommand}"
+              IsVisible="{Binding HasData}"
+              Padding="8,4"
+              Foreground="#4EC9B0"
+              ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FindRefs}"/>
       <Button Content="{StaticResource str.LiveWalker.Refresh}"
               Command="{Binding RefreshCommand}"
               ToolTip.Tip="{StaticResource str.Tip.LiveWalker.Refresh}"
@@ -238,6 +251,64 @@
                   ToolTip.Tip="Copy Outer CE address"/>
         </StackPanel>
       </StackPanel>
+    </Border>
+
+    <!-- Reverse references panel: appears after Find References completes.
+         Shows every UObject found to point at the current UObject (direct
+         field or array element). Click "Open" to navigate to that owner —
+         this is the "logical parent" the OuterPrivate Parent button
+         frequently can't surface for runtime-spawned objects. -->
+    <Border DockPanel.Dock="Top" Background="#252526" CornerRadius="4"
+            Padding="6" Margin="0,0,0,4"
+            IsVisible="{Binding HasReferences}">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+          <TextBlock Text="{Binding ReferencesHeader}"
+                     Foreground="#4EC9B0" FontWeight="Bold" FontSize="12"
+                     VerticalAlignment="Center"/>
+          <Button Content="✕" Command="{Binding ClearReferencesCommand}"
+                  Padding="4,0" FontSize="11"
+                  Background="Transparent" BorderThickness="0"
+                  Foreground="#888" Cursor="Hand"
+                  ToolTip.Tip="Hide references list"/>
+        </StackPanel>
+        <DataGrid ItemsSource="{Binding References}"
+                  IsReadOnly="True"
+                  CanUserResizeColumns="True"
+                  GridLinesVisibility="Horizontal"
+                  HeadersVisibility="Column"
+                  BorderThickness="0"
+                  Background="#1E1E1E"
+                  Foreground="#D4D4D4"
+                  FontFamily="Consolas" FontSize="11"
+                  MaxHeight="160">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Reference Path"
+                                Binding="{Binding DisplayPath}"
+                                Width="2*"/>
+            <DataGridTextColumn Header="Owner Class"
+                                Binding="{Binding OwnerClassName}"
+                                Width="*"/>
+            <DataGridTextColumn Header="Field Type"
+                                Binding="{Binding FieldType}"
+                                Width="120"/>
+            <DataGridTextColumn Header="Owner Addr"
+                                Binding="{Binding OwnerAddress}"
+                                Width="140"/>
+            <DataGridTemplateColumn Header="" Width="80" CanUserResize="False">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate x:DataType="m:ReferenceMatch">
+                  <Button Content="Open"
+                          Command="{Binding $parent[DataGrid].((vm:LiveWalkerViewModel)DataContext).OpenReferenceOwnerCommand}"
+                          CommandParameter="{Binding}"
+                          Padding="6,2" FontSize="11"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+          </DataGrid.Columns>
+        </DataGrid>
+      </DockPanel>
     </Border>
 
     <!-- Search bar -->

@@ -439,19 +439,52 @@ std::string GetString(int32_t nameIndex, int32_t number) {
     if (isWide) {
         // Wide character name — convert UTF-16 (wchar_t on Windows) to UTF-8.
         // UE FNames can store localized display names (e.g., Japanese) in wide format.
+        //
+        // Surrogate handling is critical: nlohmann::json strict-validates UTF-8 and
+        // rejects 3-byte sequences that encode surrogate codepoints (CESU-8). Squad
+        // logs at build 488 showed 13 "invalid UTF-8 byte at index 1: 0xA0" failures
+        // on get_object_list — that 0xA0 is the second byte of 0xED 0xA0 0x80 = U+D800
+        // (high surrogate), produced when the previous code path naively encoded a
+        // lone surrogate as a 3-byte BMP character.
         std::vector<wchar_t> wbuf(len + 1, 0);
         if (!Macht::ReadBytesSafe(entry + strStart, wbuf.data(), len * sizeof(wchar_t))) return "";
         result.reserve(len * 3); // worst case: 3 bytes per BMP char
         for (int i = 0; i < len; ++i) {
-            auto ch = static_cast<uint32_t>(wbuf[i]);
+            uint32_t ch = static_cast<uint32_t>(static_cast<uint16_t>(wbuf[i]));
             if (ch == 0) break;
+
+            // Detect a well-formed UTF-16 surrogate pair (high then low) and combine
+            // it into the corresponding U+10000+ codepoint, emitted as a 4-byte UTF-8.
+            // This is required for emoji and supplementary-plane characters, which
+            // some games (UE5 + custom Asian fonts) embed in display names.
+            if (ch >= 0xD800 && ch <= 0xDBFF && i + 1 < len) {
+                uint32_t low = static_cast<uint32_t>(static_cast<uint16_t>(wbuf[i + 1]));
+                if (low >= 0xDC00 && low <= 0xDFFF) {
+                    uint32_t cp = 0x10000u + ((ch - 0xD800u) << 10) + (low - 0xDC00u);
+                    result += static_cast<char>(0xF0 | (cp >> 18));
+                    result += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+                    result += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                    result += static_cast<char>(0x80 | (cp & 0x3F));
+                    ++i; // consume low surrogate
+                    continue;
+                }
+            }
+
+            // Lone surrogate (high without low, low without high) — encode as '?'.
+            // The previous code emitted these as ill-formed CESU-8 which broke JSON
+            // serialization downstream.
+            if (ch >= 0xD800 && ch <= 0xDFFF) {
+                result += '?';
+                continue;
+            }
+
             if (ch < 0x80) {
                 result += static_cast<char>(ch);
             } else if (ch < 0x800) {
                 result += static_cast<char>(0xC0 | (ch >> 6));
                 result += static_cast<char>(0x80 | (ch & 0x3F));
             } else {
-                // BMP character (0x800..0xFFFF) — covers CJK, etc.
+                // BMP character (0x800..0xFFFF, surrogate range already filtered).
                 result += static_cast<char>(0xE0 | (ch >> 12));
                 result += static_cast<char>(0x80 | ((ch >> 6) & 0x3F));
                 result += static_cast<char>(0x80 | (ch & 0x3F));

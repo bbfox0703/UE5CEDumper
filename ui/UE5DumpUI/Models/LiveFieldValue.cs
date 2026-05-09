@@ -148,6 +148,12 @@ public sealed class LiveFieldValue
     /// <summary>For ArrayProperty (struct arrays): UScriptStruct* address for struct element navigation.</summary>
     public string ArrayStructClassAddr { get; init; } = "";
 
+    /// <summary>For ArrayProperty (Phase G soft arrays): FName size in bytes (8 normal, 16 with CasePreservingName). 0 = not a soft array.</summary>
+    public int SoftArrayFNameSize { get; init; }
+
+    /// <summary>For ArrayProperty (Phase G soft arrays): true when FSoftObjectPath uses FTopLevelAssetPath (UE >= 5.1) — two FNames at +0x10 / +0x10+fnameSize. False = single FName AssetPathName at +0x10 (UE4 / UE5.0).</summary>
+    public bool SoftArrayIsTopLevelAssetPath { get; init; }
+
     /// <summary>For ArrayProperty Phase B: inline scalar element values (up to 64).</summary>
     public List<ArrayElementValue>? ArrayElements { get; init; }
 

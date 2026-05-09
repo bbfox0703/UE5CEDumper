@@ -160,6 +160,50 @@ public class AobUsageServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RecordScan_PreservesUserOverrideAcrossRoundTrip()
+    {
+        // Simulate Flamme (DLL side) writing the override field to the JSON,
+        // then AobUsageService doing a routine read-modify-write — the override
+        // must NOT be silently dropped, otherwise the user's per-game setting
+        // disappears the next time the DLL records a scan.
+        var svc = CreateService();
+        const string peHash = "5F3A1B2CCDD40000";
+
+        // Step 1: pretend Flamme wrote a record with the override field present.
+        Directory.CreateDirectory(Path.GetDirectoryName(svc.FilePath)!);
+        var seed = new AobUsageFile
+        {
+            MachineName = "TEST-MACHINE",
+            Games = new()
+            {
+                [peHash] = new AobUsageRecord
+                {
+                    PeHash = peHash,
+                    GameName = "TestGame.exe",
+                    UEVersion = 504,
+                    VersionDetected = true,
+                    UEVersionUserOverride = 427,
+                    UEVersionUserOverrideAt = "2026-05-09T12:00:00Z",
+                    ScanCount = 5,
+                },
+            },
+        };
+        await File.WriteAllTextAsync(svc.FilePath,
+            JsonSerializer.Serialize(seed, AobUsageJsonContext.Default.AobUsageFile),
+            TestContext.Current.CancellationToken);
+
+        // Step 2: a fresh scan happens, AobUsageService updates the record.
+        await svc.RecordScanAsync(MakeState(peHash));
+
+        // Step 3: the override field must still be intact.
+        var file = await svc.LoadFileAsync();
+        var record = file.Games[peHash];
+        Assert.Equal(427, record.UEVersionUserOverride);
+        Assert.Equal("2026-05-09T12:00:00Z", record.UEVersionUserOverrideAt);
+        Assert.Equal(6, record.ScanCount);  // sanity: scan increment still happened
+    }
+
+    [Fact]
     public void FilePath_ContainsMachineName()
     {
         var svc = CreateService();

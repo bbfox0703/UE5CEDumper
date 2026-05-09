@@ -85,6 +85,31 @@ ClassInfo WalkClass(uintptr_t uclassAddr);
 // inner types, enum names, bool masks, etc. by reading FProperty chain.
 ClassInfo WalkClassEx(uintptr_t uclassAddr);
 
+// Resolve the per-element size of an ArrayProperty's Inner FProperty.
+// Returns 0 if the size cannot be determined (rare: unknown inner type
+// without a usable FPROPERTY_ELEMSIZE or PropertiesSize).
+// Used by container-aware Address Finder to compute element index.
+int32_t GetArrayInnerElemSize(uintptr_t fieldAddr);
+
+// Per-element stride within an FSetProperty's TSparseArray.Data buffer.
+// Returns 0 when the inner element size is undetermined.
+int32_t GetSetElementStride(uintptr_t fieldAddr);
+
+// Per-pair stride within an FMapProperty's TSparseArray.Data buffer
+// (TPair<K,V> aligned + TSetElement hash overhead).
+// Returns 0 when key or value size is undetermined.
+int32_t GetMapPairStride(uintptr_t fieldAddr);
+
+// Full TMap pair layout — used by reverse-reference scan to extract the
+// pointer side(s) of a TMap<K, V> when either is an Object/Class property.
+struct MapPairLayout {
+    int32_t keySize     = 0;
+    int32_t valueSize   = 0;
+    int32_t valueOffset = 0;  // ComputeMapValueOffset(keySize, valueSize)
+    int32_t pairStride  = 0;  // ComputeSetElementStride(valueOffset + valueSize)
+};
+bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out);
+
 // Walk all UFunctions of a UClass.
 // Iterates the function chain, resolving parameters and return type.
 std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);
@@ -137,6 +162,15 @@ struct LiveFieldValue {
     int32_t     arrayElemSize = 0;     // Element size in bytes
     uintptr_t   arrayInnerFFieldAddr = 0;  // Inner FProperty* (for read_array_elements command)
     uintptr_t   arrayInnerStructAddr = 0;  // UScriptStruct* for struct arrays (Phase F)
+    // Phase G layout metadata for TArray<TSoftObjectPtr/TSoftClassPtr>.
+    // Lets the CE XML / CSX exporter emit per-element struct groups with
+    // FName leaf(s) at the FSoftObjectPath sub-offset (+0x10) instead of
+    // a single 8B WeakPtr-only hex. 0 means "not a soft array".
+    //   FSoftObjectPtr layout per UE version:
+    //     UE4 / UE5.0: { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FString(16) }
+    //     UE5.1+:      { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FName(8|16) + FString(16) }
+    int32_t     softArrayFNameSize = 0;          // 8 (normal) or 16 (CasePreservingName)
+    bool        softArrayIsTopLevelAssetPath = false;  // true for UE >= 5.1 (FTopLevelAssetPath layout)
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList
@@ -339,6 +373,39 @@ ReadArrayResult ReadStructArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
     uintptr_t innerStructAddr, int32_t elemSize,
     int32_t offset = 0, int32_t limit = 64);
+
+// Phase G: TSoftObjectPtr / TSoftClassPtr arrays — resolves FSoftObjectPath
+// asset name and embedded FWeakObjectPtr (when loaded) per element.
+bool IsSoftObjectArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadSoftObjectArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase H: TLazyObjectPtr arrays — resolves FGuid + embedded FWeakObjectPtr.
+bool IsLazyObjectArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadLazyObjectArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase I: TScriptInterface arrays — exposes underlying UObject* + iface ptr.
+bool IsInterfaceArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadInterfaceArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase J: TArray<FScriptDelegate> — resolves bound UObject* + FName.
+// Stride derives from CasePreservingName: 16 (8B FName) or 24 (16B FName).
+bool IsDelegateArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadDelegateArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+
+// Phase K: TArray<FMulticastScriptDelegate> — preview only (each element is
+// a TArray<FScriptDelegate>; no per-binding drill-down at this depth).
+bool IsMulticastDelegateArrayType(const std::string& innerTypeName);
+ReadArrayResult ReadMulticastDelegateArrayElements(
+    uintptr_t instanceAddr, int32_t fieldOffset,
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
 
 } // namespace Ubel
 

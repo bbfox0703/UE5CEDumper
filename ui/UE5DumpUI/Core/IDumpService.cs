@@ -9,6 +9,14 @@ public interface IDumpService
 {
     Task<EngineState> InitAsync(CancellationToken ct = default);
     Task<EngineState> GetPointersAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Set or clear the user UE version override for the current game.
+    /// version=0 clears the override; non-zero sets it. The override persists in the
+    /// HintCache JSON file (per game) and survives game restarts. Returns the updated
+    /// EngineState (re-fetched after the override took effect).
+    /// </summary>
+    Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default);
     Task<int> GetObjectCountAsync(CancellationToken ct = default);
     Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default);
     Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default);
@@ -37,6 +45,10 @@ public interface IDumpService
 
     // --- Address-to-Instance Reverse Lookup ---
     Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default);
+
+    // --- Reverse Reference Search (logical-owner navigation) ---
+    Task<FindReferencesResult> FindReferencesToUObjectAsync(
+        string addr, int maxResults = 32, CancellationToken ct = default);
 
     // --- Enum Enumeration ---
     Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default);

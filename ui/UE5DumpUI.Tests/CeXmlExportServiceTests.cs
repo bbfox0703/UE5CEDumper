@@ -283,9 +283,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x20] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "BaseValue", TypeName = "FloatProperty", Offset = 0x8, Size = 4 },
                 new LiveFieldValue { Name = "CurrentValue", TypeName = "FloatProperty", Offset = 0xC, Size = 4 },
@@ -319,9 +319,9 @@ public class CeXmlExportServiceTests
         };
 
         // Flattened: FTransform has Location (FVector) with X, Y, Z
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x100] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "Location.X", TypeName = "FloatProperty", Offset = 0x0, Size = 4 },
                 new LiveFieldValue { Name = "Location.Y", TypeName = "FloatProperty", Offset = 0x4, Size = 4 },
@@ -354,9 +354,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x50] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "bIsActive", TypeName = "BoolProperty", Offset = 0x0, Size = 1, BoolBitIndex = 0 },
                 new LiveFieldValue { Name = "bIsVisible", TypeName = "BoolProperty", Offset = 0x0, Size = 1, BoolBitIndex = 1 },
@@ -388,9 +388,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x30] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "Value", TypeName = "IntProperty", Offset = 0x0, Size = 4 },
                 new LiveFieldValue
@@ -432,6 +432,396 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
+    public void GenerateInstanceXml_ObjectProperty_EmitsLeafWith8BytesNotGroupHeader()
+    {
+        // Regression: a single ObjectProperty field used to fall through to
+        // EmitNavigableField -> EmitGroupPlaceholder, producing a useless
+        // <GroupHeader>1</GroupHeader> entry with NO <VariableType> — CE
+        // rendered it as an empty folder. Now it must emit as a proper
+        // 8-byte ShowAsHex leaf so CE can read the pointer value.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ScalabilityModifiers", TypeName = "ObjectProperty",
+                Offset = 0x2C8, Size = 8,
+                PtrAddress = "0x7FF453509278",
+                PtrName = "ScalabilityModifiers",
+                PtrClassName = "MapScalabilityModifierComponent",
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Outer wrapper for the instance is still a GroupHeader, but the
+        // ScalabilityModifiers entry itself must be a leaf — extract just
+        // its <CheatEntry> block to assert against.
+        var scStart = xml.IndexOf("\"ScalabilityModifiers\"", StringComparison.Ordinal);
+        Assert.True(scStart >= 0, "ScalabilityModifiers entry missing from XML");
+        var leafEnd = xml.IndexOf("</CheatEntry>", scStart, StringComparison.Ordinal);
+        var leafBlock = xml.Substring(scStart, leafEnd - scStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", leafBlock);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", leafBlock);
+        Assert.Contains("<Address>+2C8</Address>", leafBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", leafBlock);
+        Assert.DoesNotContain("<CheatEntries>", leafBlock); // leaf has no children
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ClassProperty_EmitsLeafWith8BytesNotGroupHeader()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "DefaultPawnClass", TypeName = "ClassProperty",
+                Offset = 0x40, Size = 8,
+                PtrAddress = "0x7FF000123456",
+                PtrName = "Pawn",
+                PtrClassName = "Class",
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var scStart = xml.IndexOf("\"DefaultPawnClass\"", StringComparison.Ordinal);
+        Assert.True(scStart >= 0);
+        var leafEnd = xml.IndexOf("</CheatEntry>", scStart, StringComparison.Ordinal);
+        var leafBlock = xml.Substring(scStart, leafEnd - scStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", leafBlock);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", leafBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", leafBlock);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_WeakObjectProperty_EmitsLeafWith8BytesNotGroupHeader()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "WeakOwner", TypeName = "WeakObjectProperty",
+                Offset = 0x18, Size = 8,
+                PtrAddress = "0x7FF000ABCDEF",
+                PtrName = "OwnerActor",
+                PtrClassName = "Actor",
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var scStart = xml.IndexOf("\"WeakOwner\"", StringComparison.Ordinal);
+        Assert.True(scStart >= 0);
+        var leafEnd = xml.IndexOf("</CheatEntry>", scStart, StringComparison.Ordinal);
+        var leafBlock = xml.Substring(scStart, leafEnd - scStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", leafBlock);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", leafBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", leafBlock);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ObjectProperty_WithResolvedInstance_EmitsGroupHeaderWithChildren()
+    {
+        // ObjectProperty pre-resolved by ResolvePointerInstancesAsync should emit
+        // as GroupHeader + Offsets=[0] + the target's fields as children — so CE
+        // dereferences *(parent + 0x2C8) and lays the children out at their
+        // natural offsets within MapScalabilityModifierComponent.
+        const string ptrAddr = "0x7FF453509278";
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ScalabilityModifiers", TypeName = "ObjectProperty",
+                Offset = 0x2C8, Size = 8,
+                PtrAddress = ptrAddr,
+                PtrName = "ScalabilityModifiers",
+                PtrClassName = "MapScalabilityModifierComponent",
+            },
+        };
+
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [ptrAddr] = new()
+            {
+                new LiveFieldValue { Name = "Health", TypeName = "FloatProperty", Offset = 0x40, Size = 4 },
+                new LiveFieldValue { Name = "TickInterval", TypeName = "FloatProperty", Offset = 0xA0, Size = 4 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedInstances: resolvedInstances);
+
+        // Locate the ScalabilityModifiers entry block
+        var scStart = xml.IndexOf("\"ScalabilityModifiers (MapScalabilityModifierComponent)\"",
+            StringComparison.Ordinal);
+        Assert.True(scStart >= 0, "Drilled ScalabilityModifiers entry missing");
+
+        // The drilled entry must be a GroupHeader with Offsets=[0]
+        var headerEnd = xml.IndexOf("<CheatEntries>", scStart, StringComparison.Ordinal);
+        Assert.True(headerEnd > scStart, "Drilled entry must open <CheatEntries>");
+        var headerBlock = xml.Substring(scStart, headerEnd - scStart);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", headerBlock);
+        Assert.Contains("<Address>+2C8</Address>", headerBlock);
+        Assert.Contains("<Offset>0</Offset>", headerBlock);
+
+        // Children should appear with their natural offsets relative to the
+        // dereferenced target (NOT the parent instance + 0x2C8). Use scalar
+        // fields the leaf emitter knows how to render.
+        Assert.Contains("\"Health\"", xml);
+        Assert.Contains("<Address>+40</Address>", xml);
+        Assert.Contains("\"TickInterval\"", xml);
+        Assert.Contains("<Address>+A0</Address>", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ObjectProperty_NoMatchingResolvedInstance_FallsBackToFlatLeaf()
+    {
+        // resolvedInstances has different PtrAddress → no match → should fall
+        // through to the standard 8 Bytes leaf path (after the build 534 fix).
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Lookup", TypeName = "ObjectProperty",
+                Offset = 0x100, Size = 8,
+                PtrAddress = "0x7FF000000000",
+                PtrName = "Target",
+                PtrClassName = "UTarget",
+            },
+        };
+
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>
+        {
+            ["0x7FFDEADBEEF0"] = new() // mismatched address
+            {
+                new LiveFieldValue { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedInstances: resolvedInstances);
+
+        var entryStart = xml.IndexOf("\"Lookup\"", StringComparison.Ordinal);
+        var entryEnd = xml.IndexOf("</CheatEntry>", entryStart, StringComparison.Ordinal);
+        var entryBlock = xml.Substring(entryStart, entryEnd - entryStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", entryBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", entryBlock);
+        Assert.DoesNotContain("<CheatEntries>", entryBlock);
+        // The mismatched-address entry should NOT have leaked in
+        Assert.DoesNotContain("\"X\"", entryBlock);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ObjectProperty_ResolvedInstance_PreservesScalarLeafShape()
+    {
+        // Drilled-pointer children of common scalar types must still emit as
+        // proper leaves (with VariableType, no GroupHeader) — this is the
+        // most common shape inside any UObject target.
+        const string ptrAddr = "0x7FF000000000";
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Comp", TypeName = "ObjectProperty",
+                Offset = 0x40, Size = 8,
+                PtrAddress = ptrAddr, PtrClassName = "UComponent",
+            },
+        };
+
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [ptrAddr] = new()
+            {
+                new LiveFieldValue { Name = "Health", TypeName = "FloatProperty", Offset = 0x10, Size = 4 },
+                new LiveFieldValue { Name = "Mana", TypeName = "IntProperty", Offset = 0x14, Size = 4 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedInstances: resolvedInstances);
+
+        Assert.Contains("\"Health\"", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("\"Mana\"", xml);
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+        Assert.Contains("<Address>+14</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_DrilledPointer_NestedStructProperty_ExpandsViaResolvedStructsCascade()
+    {
+        // Reproduces the build-541 regression: drilling into ScalabilityModifiers
+        // (ObjectProperty -> MapScalabilityModifierComponent) the inner
+        // PrimaryComponentTick (StructProperty) used to render as an empty
+        // GroupHeader placeholder because resolvedStructs was keyed by Offset
+        // and only built for the root instance's struct fields. With the
+        // cascade fix, struct fields inside drilled targets share the same
+        // dict (keyed by StructDataAddr) and expand to real sub-fields.
+        const string ptrAddr = "0x7FF453509278";
+        const string structDataAddr = "0x7FF4535092A8"; // PrimaryComponentTick within the target
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ScalabilityModifiers", TypeName = "ObjectProperty",
+                Offset = 0x2C8, Size = 8,
+                PtrAddress = ptrAddr,
+                PtrClassName = "MapScalabilityModifierComponent",
+            },
+        };
+
+        // Drilled target's children include a StructProperty
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [ptrAddr] = new()
+            {
+                new LiveFieldValue
+                {
+                    Name = "PrimaryComponentTick", TypeName = "StructProperty",
+                    Offset = 0x30, Size = 0x30,
+                    StructDataAddr = structDataAddr,
+                    StructClassAddr = "0xDEADBEEF",
+                    StructTypeName = "ActorComponentTickFunction",
+                },
+            },
+        };
+
+        // resolvedStructs has the cascaded entry for the inner StructProperty.
+        // Without this, the StructProperty would render as a placeholder.
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [structDataAddr] = new()
+            {
+                new LiveFieldValue { Name = "TickGroup", TypeName = "ByteProperty", Offset = 0x8, Size = 1 },
+                new LiveFieldValue { Name = "TickInterval", TypeName = "FloatProperty", Offset = 0xC, Size = 4 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedStructs: resolvedStructs,
+            resolvedInstances: resolvedInstances);
+
+        // Drilled pointer group exists
+        Assert.Contains("ScalabilityModifiers (MapScalabilityModifierComponent)", xml);
+        // Inner struct group exists with the struct type name in its description
+        Assert.Contains("PrimaryComponentTick (ActorComponentTickFunction)", xml);
+        // Inner struct's sub-fields rendered as real leaves (regression: would
+        // have been a GroupHeader placeholder without the cascade fix)
+        Assert.Contains("\"TickGroup\"", xml);
+        Assert.Contains("\"TickInterval\"", xml);
+        Assert.Contains("<VariableType>Byte</VariableType>", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_OptionalProperty_NoStructInner_EmitsFlatLeaf()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "OptionalScalar", TypeName = "OptionalProperty",
+                Offset = 0xA0, Size = 8,
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var entryStart = xml.IndexOf("\"OptionalScalar\"", StringComparison.Ordinal);
+        Assert.True(entryStart >= 0);
+        var entryEnd = xml.IndexOf("</CheatEntry>", entryStart, StringComparison.Ordinal);
+        var block = xml.Substring(entryStart, entryEnd - entryStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", block);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", block);
+        Assert.Contains("<Address>+A0</Address>", block);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", block);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_OptionalProperty_StructInner_ExpandsToStructGroup()
+    {
+        // OptionalProperty<FBox> with structDataAddr/structClassAddr stamped
+        // by the walker — should render as the struct's sub-fields, NOT the
+        // 8-byte hex fallback.
+        const string structDataAddr = "0x7FF400000A0";
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "CellBounds", TypeName = "OptionalProperty",
+                Offset = 0x88, Size = 0x40,
+                StructDataAddr = structDataAddr,
+                StructClassAddr = "0xDEAD",
+                StructTypeName = "Box",
+            },
+        };
+
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [structDataAddr] = new()
+            {
+                new LiveFieldValue { Name = "Min.X", TypeName = "DoubleProperty", Offset = 0, Size = 8 },
+                new LiveFieldValue { Name = "Min.Y", TypeName = "DoubleProperty", Offset = 8, Size = 8 },
+                new LiveFieldValue { Name = "IsValid", TypeName = "BoolProperty", Offset = 0x30, Size = 1 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedStructs: resolvedStructs);
+
+        Assert.Contains("CellBounds (Box)", xml);
+        Assert.Contains("\"Min.X\"", xml);
+        Assert.Contains("\"Min.Y\"", xml);
+        Assert.Contains("\"IsValid\"", xml);
+        Assert.Contains("<VariableType>Double</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_NullObjectProperty_StillEmitsLeaf()
+    {
+        // ObjectProperty with no resolved target (null pointer) — IsNavigable
+        // is false, but the field still needs an addressable entry so the
+        // user can watch the pointer slot fill in later.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "OptionalRef", TypeName = "ObjectProperty",
+                Offset = 0x80, Size = 8,
+                // No PtrAddress -> IsNavigable = false in the old code path
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var scStart = xml.IndexOf("\"OptionalRef\"", StringComparison.Ordinal);
+        Assert.True(scStart >= 0, "OptionalRef entry missing from XML");
+        var leafEnd = xml.IndexOf("</CheatEntry>", scStart, StringComparison.Ordinal);
+        var leafBlock = xml.Substring(scStart, leafEnd - scStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", leafBlock);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", leafBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", leafBlock);
+    }
+
+    [Fact]
     public void GenerateHierarchicalXml_WithResolvedStruct_UnderPointerParent()
     {
         var breadcrumbs = new[]
@@ -449,9 +839,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x20] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "HP", TypeName = "FloatProperty", Offset = 0x0, Size = 4 },
                 new LiveFieldValue { Name = "MP", TypeName = "FloatProperty", Offset = 0x4, Size = 4 },
@@ -1088,9 +1478,9 @@ public class CeXmlExportServiceTests
         };
 
         // Resolved struct has a scalar field + an ArrayProperty with inline elements
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x100] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "CurrentRank", TypeName = "IntProperty", Offset = 0x0, Size = 4 },
                 new LiveFieldValue
@@ -1139,9 +1529,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x50] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue
                 {
@@ -2362,6 +2752,447 @@ public class CeXmlExportServiceTests
         // AA Script root entry should have moHideChildren
         Assert.Contains("moHideChildren=\"1\"", xml);
         Assert.Contains("moDeactivateChildrenAsWell=\"1\"", xml);
+    }
+
+    // ========================================
+    // Soft/Lazy/Interface ArrayProperty tests (Phase G/H/I)
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArray_UE4Layout_EmitsPerElementGroupWithFNameLeaf()
+    {
+        // TArray<TSoftObjectPtr<UDataAsset>> on UE4 / UE5.0:
+        //   element layout = WeakPtr(8) + Tag(8) + FName AssetPathName(8) + FString(16) = 0x28
+        //   SoftArrayIsTopLevelAssetPath=false → single FName at +0x10
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "AssetRefs", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+                SoftArrayFNameSize = 8, SoftArrayIsTopLevelAssetPath = false,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/Items/IT_Potion.IT_Potion",
+                            RawIntValue = 1234,
+                            Hex = "00000000000000000000000000000000" },
+                    new() { Index = 1, Value = "/Game/Items/IT_Sword.IT_Sword",
+                            RawIntValue = 5678,
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Outer array group header (Address=+100, Offsets=[0] derefs TArray.Data)
+        Assert.Contains("AssetRefs [2 x SoftObjectProperty (40B)]", xml);
+        Assert.Contains("<Address>+100</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+
+        // Per-element group descriptions include the resolved asset path
+        Assert.Contains("[0] /Game/Items/IT_Potion.IT_Potion", xml);
+        Assert.Contains("[1] /Game/Items/IT_Sword.IT_Sword", xml);
+
+        // Element groups at stride boundaries (0x28 = 40)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+28</Address>", xml);
+
+        // Per-element WeakPtr leaf (8 Bytes hex at +0)
+        Assert.Contains("\"WeakPtr\"", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+
+        // Per-element FName AssetPath leaf at +10 (4 Bytes ComparisonIndex)
+        Assert.Contains("\"AssetPath\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+
+        // Shared DropDownList built from the resolved asset paths (FName index → name)
+        Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
+        Assert.Contains("1234:/Game/Items/IT_Potion.IT_Potion", xml);
+        Assert.Contains("5678:/Game/Items/IT_Sword.IT_Sword", xml);
+
+        // No AssetName leaf in UE4 layout (only one FName)
+        Assert.DoesNotContain("\"AssetName\"", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArray_UE51Layout_EmitsPackageNameAndAssetName()
+    {
+        // TArray<TSoftObjectPtr<UDataAsset>> on UE5.1+:
+        //   element layout = WeakPtr(8) + Tag(8) + FName PackageName(8) + FName AssetName(8)
+        //                   + FString(16) = 0x30
+        //   SoftArrayIsTopLevelAssetPath=true → TWO FNames at +0x10 / +0x18 (fnameSize=8)
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Assets", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x30,
+                SoftArrayFNameSize = 8, SoftArrayIsTopLevelAssetPath = true,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/Boss.BossActor",
+                            RawIntValue = 9999,
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("Assets [1 x SoftObjectProperty (48B)]", xml);
+        Assert.Contains("[0] /Game/Boss.BossActor", xml);
+
+        // Both FName leaves: PackageName at +10, AssetName at +18 (fnameSize=8)
+        Assert.Contains("\"PackageName\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("\"AssetName\"", xml);
+        Assert.Contains("<Address>+18</Address>", xml);
+
+        // No "AssetPath" label in UE5.1+ layout (split into Package + Asset)
+        Assert.DoesNotContain("\"AssetPath\"", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArray_CasePreservingName_AssetNameAt20()
+    {
+        // UE5.5+ CasePreservingName: fnameSize=16, so AssetName is at +0x20.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Assets", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x40,
+                SoftArrayFNameSize = 16, SoftArrayIsTopLevelAssetPath = true,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/A.A", RawIntValue = 1, Hex = "" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("\"PackageName\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("\"AssetName\"", xml);
+        Assert.Contains("<Address>+20</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftClassArray_EmitsPerElementGroup()
+    {
+        // TArray<TSoftClassPtr<UClass>> — same shape as SoftObjectProperty
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ClassRefs", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftClassProperty", ArrayElemSize = 0x28,
+                SoftArrayFNameSize = 8, SoftArrayIsTopLevelAssetPath = false,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/AI/BP_Boss.BP_Boss_C",
+                            RawIntValue = 4242,
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("ClassRefs [1 x SoftClassProperty (40B)]", xml);
+        Assert.Contains("[0] /Game/AI/BP_Boss.BP_Boss_C", xml);
+        Assert.Contains("\"WeakPtr\"", xml);
+        Assert.Contains("\"AssetPath\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArray_NoMetadata_FallsBackTo8ByteHex()
+    {
+        // Backwards-compat: legacy DLLs that don't emit SoftArrayFNameSize
+        // should still produce an exportable XML — falls through to the old
+        // single 8B-hex-per-element path via MapInnerTypeToCeField.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Legacy", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+                // Intentionally no SoftArrayFNameSize / SoftArrayIsTopLevelAssetPath
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/A.A", Hex = "" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("Legacy [1 x SoftObjectProperty (40B)]", xml);
+        // No per-element group; the 8B leaf path still produces a usable entry
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+        Assert.DoesNotContain("\"WeakPtr\"", xml);
+        Assert.DoesNotContain("\"AssetPath\"", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_LazyObjectArray_EmitsGroupWithElements()
+    {
+        // TArray<TLazyObjectPtr<AActor>> — element stride is 0x20
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "LazyRefs", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "LazyObjectProperty", ArrayElemSize = 0x20,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "{12345678-9ABCDEF0-AABBCCDD-EEFF0011}",
+                            Hex = "00000000000000000000000000000000" },
+                    new() { Index = 1, Value = "{00000000-00000000-00000000-00000000}",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("LazyRefs [2 x LazyObjectProperty (32B)]", xml);
+        Assert.Contains("<Address>+40</Address>", xml);
+        // Stride 0x20: [0] at +0, [1] at +20
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+20</Address>", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_InterfaceArray_EmitsGroupWithPointers()
+    {
+        // TArray<TScriptInterface<IDamageable>> — 16-byte elements: { UObject*, void* }
+        // Description should show resolved UObject names for non-null entries
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "DamageHandlers", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "InterfaceProperty", ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "PlayerActor (BP_Player_C)",
+                            Hex = "0000020C12340000ABCDEFAB12345678",
+                            PtrAddress = "0x20C12340000",
+                            PtrName = "PlayerActor", PtrClassName = "BP_Player_C" },
+                    new() { Index = 1, Value = "Enemy_01 (BP_Enemy_C)",
+                            Hex = "0000020C56780000FFEEDDCC11223344",
+                            PtrAddress = "0x20C56780000",
+                            PtrName = "Enemy_01", PtrClassName = "BP_Enemy_C" },
+                    new() { Index = 2, Value = "null",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("DamageHandlers [3 x InterfaceProperty (16B)]", xml);
+        Assert.Contains("<Address>+60</Address>", xml);
+        // Resolved names appear in element descriptions
+        Assert.Contains("[0] PlayerActor (BP_Player_C)", xml);
+        Assert.Contains("[1] Enemy_01 (BP_Enemy_C)", xml);
+        // Stride 16: [0] at +0, [1] at +10 (hex), [2] at +20 (hex)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<Address>+20</Address>", xml);
+        // Pointer type: 8 Bytes hex (UObject* at element start)
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    // ========================================
+    // Delegate / Multicast ArrayProperty tests (Phase J/K)
+    // ========================================
+
+    [Fact]
+    public void GenerateInstanceXml_DelegateArray_EmitsGroupWithBindings()
+    {
+        // TArray<FScriptDelegate> — element stride is 16 (no CasePreservingName)
+        // Each element resolves to "Target::FunctionName" with PtrAddress for drilldown.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "OnDeathHandlers", TypeName = "ArrayProperty", Offset = 0xA0, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "PlayerActor::OnPlayerDeath",
+                            Hex = "0000020C12340000ABCDEFAB12345678",
+                            PtrAddress = "0x20C12340000",
+                            PtrName = "PlayerActor", PtrClassName = "BP_Player_C" },
+                    new() { Index = 1, Value = "(unbound)",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("OnDeathHandlers [2 x DelegateProperty (16B)]", xml);
+        Assert.Contains("<Address>+A0</Address>", xml);
+        // Bound element shows resolved name; unbound shows just [N]
+        Assert.Contains("[0] PlayerActor (BP_Player_C)", xml);
+        // Stride 16: [0] at +0, [1] at +10 (hex)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_DelegateArrayCasePreserving_StrideIs24()
+    {
+        // With CasePreservingName, FName is 16B, so FScriptDelegate = 8 + 16 = 24 (0x18)
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Handlers", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 24,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "Actor1::OnHit",
+                            Hex = "0000020CAA000000AABBCCDDEEFF11221234567812345678",
+                            PtrAddress = "0x20CAA000000",
+                            PtrName = "Actor1", PtrClassName = "BP_Enemy_C" },
+                    new() { Index = 1, Value = "Actor2::OnHit",
+                            Hex = "0000020CBB00000033445566778899AA1234567812345678",
+                            PtrAddress = "0x20CBB000000",
+                            PtrName = "Actor2", PtrClassName = "BP_Enemy_C" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Stride 24 (0x18): [0] at +0, [1] at +18 (hex)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+18</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_MulticastInlineDelegateArray_EmitsGroup()
+    {
+        // TArray<FMulticastScriptDelegate> — each element is 16B (TArray header)
+        // Display value is "(N bindings) [...]" preview, no per-binding drill.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Events", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "MulticastInlineDelegateProperty", ArrayElemSize = 16,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "(2 bindings) [Actor1::Tick, Actor2::Tick]",
+                            Hex = "0000020CFF000000020000000200000" },
+                    new() { Index = 1, Value = "(0 bindings)",
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("Events [2 x MulticastInlineDelegateProperty (16B)]", xml);
+        Assert.Contains("<Address>+60</Address>", xml);
+        // Stride 16: [0] at +0, [1] at +10 (hex)
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        // 8 Bytes hex (FMulticastScriptDelegate.InvocationList::Data)
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SingleMulticastDelegate_EmitsAsImplicitArray()
+    {
+        // A single FMulticastScriptDelegate field is exposed as an implicit
+        // DelegateProperty array (TypeName=Multicast, ArrayInnerType=Delegate).
+        // CE XML should emit it as an ArrayProperty group so users can copy
+        // each binding's address chain.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "m_OnPlayerPawnSetBlueprint",
+                TypeName = "MulticastInlineDelegateProperty",
+                Offset = 0x338, Size = 16,
+                // Implicit array fields populated by DLL handler:
+                ArrayCount = 2, ArrayInnerType = "DelegateProperty", ArrayElemSize = 16,
+                TypedValue = "(2 bindings) [BP1::OnPawnSet, BP2::OnPawnSet]",
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "BP1::OnPawnSet",
+                            Hex = "0000020CAA000000ABCDEFAB12345678",
+                            PtrAddress = "0x20CAA000000",
+                            PtrName = "BP1", PtrClassName = "BP_Test_C" },
+                    new() { Index = 1, Value = "BP2::OnPawnSet",
+                            Hex = "0000020CBB00000033445566778899AA",
+                            PtrAddress = "0x20CBB000000",
+                            PtrName = "BP2", PtrClassName = "BP_Test_C" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Group description shows binding count via the array header
+        Assert.Contains("m_OnPlayerPawnSetBlueprint [2 x DelegateProperty (16B)]", xml);
+        // Group at field offset, Offsets=[0] derefs InvocationList::Data
+        Assert.Contains("<Address>+338</Address>", xml);
+        Assert.Contains("<Offset>0</Offset>", xml);
+        // Per-binding leaf: stride 16, resolved BP name shown in description
+        Assert.Contains("[0] BP1 (BP_Test_C)", xml);
+        Assert.Contains("[1] BP2 (BP_Test_C)", xml);
+        Assert.Contains("<Address>+0</Address>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArrayEmpty_EmitsPlaceholder()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "EmptySoft", TypeName = "ArrayProperty", Offset = 0x10, Size = 16,
+                ArrayCount = 0, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Empty array → placeholder (no element entries)
+        Assert.Contains("EmptySoft", xml);
+        Assert.DoesNotContain("[0]", xml);
     }
 
     private static BreadcrumbItem MakeBc(string addr, string label,

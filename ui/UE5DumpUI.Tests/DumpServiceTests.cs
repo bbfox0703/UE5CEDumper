@@ -105,6 +105,155 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task InitAsync_ParsesUserOverrideAndLowConfidence()
+    {
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "init")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 427,
+                    ["version_detected"] = true,
+                    ["is_user_override"] = true,
+                    ["is_low_confidence"] = false,
+                    ["publisher_thumbprint"] = "SQUARE_ENIX",
+                };
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x7FF600A12340",
+                    ["gnames"] = "0x7FF600B56780",
+                    ["object_count"] = 1024,
+                    ["ue_version"] = 427,
+                    ["is_user_override"] = true,
+                    ["publisher_thumbprint"] = "SQUARE_ENIX",
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var svc = CreateService();
+        var state = await svc.InitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(427, state.UEVersion);
+        Assert.True(state.IsUserOverride);
+        Assert.False(state.IsLowConfidence);
+        Assert.Equal("SQUARE_ENIX", state.PublisherThumbprint);
+    }
+
+    [Fact]
+    public async Task InitAsync_ParsesLowConfidenceFlag()
+    {
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "init")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 504,
+                    ["version_detected"] = true,
+                    ["is_user_override"] = false,
+                    ["is_low_confidence"] = true,
+                };
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x1",
+                    ["gnames"] = "0x2",
+                    ["object_count"] = 0,
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var svc = CreateService();
+        var state = await svc.InitAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(state.IsLowConfidence);
+        Assert.False(state.IsUserOverride);
+    }
+
+    [Fact]
+    public async Task SetUeVersionOverrideAsync_SendsCorrectPayloadAndRefetches()
+    {
+        JsonObject? lastOverrideReq = null;
+        int getPointersCount = 0;
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "set_ue_version_override")
+            {
+                lastOverrideReq = req;
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 427,
+                    ["is_user_override"] = true,
+                    ["persisted"] = true,
+                };
+            }
+            if (cmd == "get_pointers")
+            {
+                getPointersCount++;
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x10",
+                    ["gnames"] = "0x20",
+                    ["object_count"] = 5,
+                    ["ue_version"] = 427,
+                    ["is_user_override"] = true,
+                };
+            }
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var svc = CreateService();
+        var state = await svc.SetUeVersionOverrideAsync(427, persist: true, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastOverrideReq);
+        Assert.Equal(427, lastOverrideReq!["version"]?.GetValue<int>());
+        Assert.True(lastOverrideReq["persist"]?.GetValue<bool>());
+        Assert.Equal(427, state.UEVersion);
+        Assert.True(state.IsUserOverride);
+        Assert.Equal(1, getPointersCount);   // SetUeVersionOverride re-fetches state once
+    }
+
+    [Fact]
+    public async Task SetUeVersionOverrideAsync_ZeroClearsOverride()
+    {
+        JsonObject? lastReq = null;
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "set_ue_version_override")
+            {
+                lastReq = req;
+                return new JsonObject { ["ok"] = true, ["is_user_override"] = false };
+            }
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x10",
+                    ["gnames"] = "0x20",
+                    ["object_count"] = 0,
+                    ["is_user_override"] = false,
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var svc = CreateService();
+        var state = await svc.SetUeVersionOverrideAsync(0, persist: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, lastReq!["version"]?.GetValue<int>());
+        Assert.False(state.IsUserOverride);
+    }
+
+    [Fact]
     public async Task InitAsync_ParsesVersionDetectedFalse()
     {
         _pipe.SetHandler(req =>

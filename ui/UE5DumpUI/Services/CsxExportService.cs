@@ -96,7 +96,7 @@ public static class CsxExportService
     private static void EmitStructPropertyFlattened(
         StringBuilder sb,
         LiveFieldValue structField,
-        Dictionary<int, List<LiveFieldValue>> resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>> resolvedStructs,
         Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null,
         int drilldownDepth = 0)
     {
@@ -104,7 +104,12 @@ public static class CsxExportService
             ? structField.StructTypeName
             : structField.Name;
 
-        if (resolvedStructs.TryGetValue(structField.Offset, out var innerFields) && innerFields.Count > 0)
+        // Lookup by StructDataAddr (matches CeXmlExportService.ResolveStructFieldsAsync's
+        // string-keyed result — unique across instances so the same dict can serve
+        // nested struct fields inside drilled targets).
+        if (!string.IsNullOrEmpty(structField.StructDataAddr)
+            && resolvedStructs.TryGetValue(structField.StructDataAddr, out var innerFields)
+            && innerFields.Count > 0)
         {
             foreach (var inner in innerFields)
             {
@@ -172,6 +177,10 @@ public static class CsxExportService
             case "ArrayProperty":
             case "SetProperty":
             case "DataTableRows":
+            // Multicast delegates expose an implicit DelegateProperty array
+            // via ArrayCount/Inner; treat them like ArrayProperty for drill-down.
+            case "MulticastInlineDelegateProperty":
+            case "MulticastDelegateProperty":
                 // Drilldown: convert container elements to synthetic fields for child structure
                 if (drilldownDepth > 0
                     && resolvedInstances != null)
@@ -376,10 +385,13 @@ public static class CsxExportService
 
     /// <summary>
     /// Check if a type name is an object/pointer property that can have a PropertyClass.
+    /// DelegateProperty also exposes a single bound UObject* (the FWeakObjectPtr target),
+    /// so it gets the same pointer-style treatment in array element conversion.
     /// </summary>
     private static bool IsObjectPropertyType(string typeName) => typeName is
         "ObjectProperty" or "ClassProperty" or "SoftObjectProperty" or
-        "SoftClassProperty" or "LazyObjectProperty" or "InterfaceProperty";
+        "SoftClassProperty" or "LazyObjectProperty" or "InterfaceProperty" or
+        "DelegateProperty";
 
     /// <summary>
     /// Resolve pointer targets within container elements (MapProperty, ArrayProperty, SetProperty).
@@ -420,6 +432,11 @@ public static class CsxExportService
             "MapProperty" when field.MapElements is { Count: > 0 }
                 => ConvertMapElementsToFields(field),
             "ArrayProperty" when field.ArrayElements is { Count: > 0 }
+                => ConvertArrayElementsToFields(field),
+            // Multicast delegate fields are exposed as implicit DelegateProperty arrays
+            "MulticastInlineDelegateProperty" when field.ArrayElements is { Count: > 0 }
+                => ConvertArrayElementsToFields(field),
+            "MulticastDelegateProperty" when field.ArrayElements is { Count: > 0 }
                 => ConvertArrayElementsToFields(field),
             "SetProperty" when field.SetElements is { Count: > 0 }
                 => ConvertSetElementsToFields(field),

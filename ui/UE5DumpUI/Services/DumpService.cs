@@ -36,8 +36,13 @@ public sealed class DumpService : IDumpService
 
         // version_detected: true if PE/memory scan succeeded, false if using default/inferred
         var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
+        // is_user_override / is_low_confidence: prefer init response (more authoritative), fall back to ptrs.
+        var isUserOverride  = res["is_user_override"]?.GetValue<bool>()
+                              ?? ptrs["is_user_override"]?.GetValue<bool>() ?? false;
+        var isLowConfidence = res["is_low_confidence"]?.GetValue<bool>()
+                              ?? ptrs["is_low_confidence"]?.GetValue<bool>() ?? false;
 
-        return BuildEngineState(ptrs, ueVersion, versionDetected);
+        return BuildEngineState(ptrs, ueVersion, versionDetected, isUserOverride, isLowConfidence);
     }
 
     public async Task<EngineState> GetPointersAsync(CancellationToken ct = default)
@@ -48,8 +53,27 @@ public sealed class DumpService : IDumpService
         return BuildEngineState(res);
     }
 
+    public async Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "set_ue_version_override",
+            ["version"] = version,
+            ["persist"] = persist,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+        _log.Info(Constants.LogCatInit,
+            version == 0
+                ? $"UE version override cleared (persisted={persist})"
+                : $"UE version override set to {version} (persisted={persist})");
+        // Re-fetch full state so the caller can update all panels with one ApplyState() call.
+        return await GetPointersAsync(ct);
+    }
+
     /// <summary>Build EngineState from a get_pointers response, with optional overrides from init.</summary>
-    private static EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool versionDetected = true)
+    private static EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool versionDetected = true,
+                                                 bool? isUserOverride = null, bool? isLowConfidence = null)
     {
         if (ueVersion == 0)
             ueVersion = ptrs["ue_version"]?.GetValue<int>() ?? 0;
@@ -60,6 +84,9 @@ public sealed class DumpService : IDumpService
         {
             UEVersion = ueVersion,
             VersionDetected = versionDetected,
+            IsUserOverride = isUserOverride ?? ptrs["is_user_override"]?.GetValue<bool>() ?? false,
+            IsLowConfidence = isLowConfidence ?? ptrs["is_low_confidence"]?.GetValue<bool>() ?? false,
+            PublisherThumbprint = ptrs["publisher_thumbprint"]?.GetValue<string>() ?? "",
             GObjectsAddr = ptrs["gobjects"]?.GetValue<string>() ?? "",
             GNamesAddr = ptrs["gnames"]?.GetValue<string>() ?? "",
             GWorldAddr = ptrs["gworld"]?.GetValue<string>() ?? "",
@@ -457,21 +484,68 @@ public sealed class DumpService : IDumpService
 
     public async Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default)
     {
+        // Always opt in to the container scan so users can find addresses
+        // that fall inside heap-allocated TArray buffers (rather than only
+        // within UObject bounds). The DLL has a 5s deadline + per-class
+        // cache so this stays interactive even for ~500K-object games.
         var req = new JsonObject
         {
             ["cmd"] = "find_by_address",
-            ["addr"] = addr
+            ["addr"] = addr,
+            ["scan_containers"] = true,
         };
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
         var found = res["found"]?.GetValue<bool>() ?? false;
+
+        ContainerScanStats? scanStats = null;
+        if (res["container_scan"] is JsonObject scanNode)
+        {
+            scanStats = new ContainerScanStats
+            {
+                ObjectsScanned = scanNode["objects_scanned"]?.GetValue<int>() ?? 0,
+                ObjectsTotal   = scanNode["objects_total"]?.GetValue<int>() ?? 0,
+                ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
+                DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
+                DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+            };
+        }
+
+        var containerMatches = new List<ContainerMatch>();
+        if (res["container_matches"] is JsonArray cmArr)
+        {
+            foreach (var node in cmArr)
+            {
+                if (node is not JsonObject m) continue;
+                containerMatches.Add(new ContainerMatch
+                {
+                    OwnerAddress   = m["owner_addr"]?.GetValue<string>() ?? "",
+                    OwnerIndex     = m["owner_index"]?.GetValue<int>() ?? -1,
+                    OwnerName      = m["owner_name"]?.GetValue<string>() ?? "",
+                    OwnerClassName = m["owner_class"]?.GetValue<string>() ?? "",
+                    FieldOffset    = m["field_offset"]?.GetValue<int>() ?? 0,
+                    FieldName      = m["field_name"]?.GetValue<string>() ?? "",
+                    FieldType      = m["field_type"]?.GetValue<string>() ?? "",
+                    InnerType      = m["inner_type"]?.GetValue<string>() ?? "",
+                    ElementIndex   = m["element_index"]?.GetValue<int>() ?? 0,
+                    ElementSize    = m["element_size"]?.GetValue<int>() ?? 0,
+                    IntraOffset    = m["intra_offset"]?.GetValue<int>() ?? 0,
+                    DataAddress    = m["data_addr"]?.GetValue<string>() ?? "",
+                    Count          = m["count"]?.GetValue<int>() ?? 0,
+                    Note           = m["note"]?.GetValue<string>() ?? "",
+                });
+            }
+        }
+
         if (!found)
         {
             return new AddressLookupResult
             {
                 Found = false,
                 QueryAddress = addr,
+                ContainerMatches = containerMatches,
+                ContainerScan = scanStats,
             };
         }
 
@@ -479,6 +553,7 @@ public sealed class DumpService : IDumpService
         {
             Found = true,
             MatchType = res["match_type"]?.GetValue<string>() ?? "",
+            MatchKind = res["match_kind"]?.GetValue<string>() ?? "",
             Address = res["addr"]?.GetValue<string>() ?? "",
             Index = res["index"]?.GetValue<int>() ?? -1,
             Name = res["name"]?.GetValue<string>() ?? "",
@@ -486,6 +561,62 @@ public sealed class DumpService : IDumpService
             OuterAddr = res["outer"]?.GetValue<string>() ?? "",
             OffsetFromBase = res["offset_from_base"]?.GetValue<int>() ?? 0,
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
+            ContainerMatches = containerMatches,
+            ContainerScan = scanStats,
+        };
+    }
+
+    public async Task<FindReferencesResult> FindReferencesToUObjectAsync(
+        string addr, int maxResults = 32, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "find_refs_to_uobject",
+            ["addr"] = addr,
+            ["max_results"] = maxResults,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        ContainerScanStats? scanStats = null;
+        if (res["scan"] is JsonObject scanNode)
+        {
+            scanStats = new ContainerScanStats
+            {
+                ObjectsScanned = scanNode["objects_scanned"]?.GetValue<int>() ?? 0,
+                ObjectsTotal   = scanNode["objects_total"]?.GetValue<int>() ?? 0,
+                ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
+                DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
+                DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+            };
+        }
+
+        var refs = new List<ReferenceMatch>();
+        if (res["references"] is JsonArray refsArr)
+        {
+            foreach (var node in refsArr)
+            {
+                if (node is not JsonObject r) continue;
+                refs.Add(new ReferenceMatch
+                {
+                    OwnerAddress   = r["owner_addr"]?.GetValue<string>() ?? "",
+                    OwnerIndex     = r["owner_index"]?.GetValue<int>() ?? -1,
+                    OwnerName      = r["owner_name"]?.GetValue<string>() ?? "",
+                    OwnerClassName = r["owner_class"]?.GetValue<string>() ?? "",
+                    FieldOffset    = r["field_offset"]?.GetValue<int>() ?? 0,
+                    FieldName      = r["field_name"]?.GetValue<string>() ?? "",
+                    FieldType      = r["field_type"]?.GetValue<string>() ?? "",
+                    InnerType      = r["inner_type"]?.GetValue<string>() ?? "",
+                    ElementIndex   = r["element_index"]?.GetValue<int>() ?? -1,
+                });
+            }
+        }
+
+        return new FindReferencesResult
+        {
+            QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
+            References   = refs,
+            Scan         = scanStats,
         };
     }
 
@@ -596,6 +727,8 @@ public sealed class DumpService : IDumpService
             ArrayInnerAddr = fo["array_inner_addr"]?.GetValue<string>() ?? "",
             ArrayDataAddr = fo["array_data_addr"]?.GetValue<string>() ?? "",
             ArrayStructClassAddr = fo["array_struct_class_addr"]?.GetValue<string>() ?? "",
+            SoftArrayFNameSize = fo["soft_fname_size"]?.GetValue<int>() ?? 0,
+            SoftArrayIsTopLevelAssetPath = fo["soft_top_level_asset_path"]?.GetValue<bool>() ?? false,
             ArrayElements = ParseArrayElements(fo["elements"]),
             ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
             ArrayEnumEntries = ParseEnumEntries(fo["enum_entries"]),

@@ -1,6 +1,79 @@
 namespace UE5DumpUI.Models;
 
 /// <summary>
+/// One container-aware match: the address falls inside a UObject's
+/// ArrayProperty heap buffer (TArray::Data), pinpointing element index
+/// and intra-element offset.
+/// </summary>
+public sealed class ContainerMatch
+{
+    public string OwnerAddress { get; init; } = "";
+    public int OwnerIndex { get; init; }
+    public string OwnerName { get; init; } = "";
+    public string OwnerClassName { get; init; } = "";
+
+    /// <summary>Field offset within the owner UObject.</summary>
+    public int FieldOffset { get; init; }
+    public string FieldName { get; init; } = "";
+
+    /// <summary>"ArrayProperty" (Map/Set future).</summary>
+    public string FieldType { get; init; } = "";
+
+    /// <summary>Inner element FProperty type (e.g., "ObjectProperty", "StructProperty").</summary>
+    public string InnerType { get; init; } = "";
+
+    public int ElementIndex { get; init; }
+    public int ElementSize { get; init; }
+
+    /// <summary>Byte offset within the element (addr - elementStart).</summary>
+    public int IntraOffset { get; init; }
+
+    /// <summary>TArray::Data base address (where the element buffer lives).</summary>
+    public string DataAddress { get; init; } = "";
+
+    /// <summary>TArray::Count (logical element count).</summary>
+    public int Count { get; init; }
+
+    /// <summary>
+    /// Diagnostic note: empty for solid hits, "slack" for Array indices in
+    /// [Count, Max), "freed" for Map/Set free-list slots. Lower-confidence
+    /// matches — the memory still holds plausible data but the slot is
+    /// formally unallocated.
+    /// </summary>
+    public string Note { get; init; } = "";
+
+    /// <summary>Display path: "OwnerName.FieldName[N]+0xK (note)".</summary>
+    public string DisplayPath
+    {
+        get
+        {
+            var path = $"{OwnerName}.{FieldName}[{ElementIndex}]";
+            if (IntraOffset > 0)
+                path += $"+0x{IntraOffset:X}";
+            if (!string.IsNullOrEmpty(Note))
+                path += $" ({Note})";
+            return path;
+        }
+    }
+}
+
+/// <summary>
+/// Diagnostic counters for the container scan portion of a reverse-address
+/// lookup. Lets callers tell whether a "no matches" result reflects a real
+/// negative or a truncated scan that hit the time deadline.
+/// </summary>
+public sealed class ContainerScanStats
+{
+    public int ObjectsScanned { get; init; }
+    public int ObjectsTotal { get; init; }
+    public int ClassesPrimed { get; init; }
+    public long DurationMs { get; init; }
+    public bool DeadlineHit { get; init; }
+
+    public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal;
+}
+
+/// <summary>
 /// Result of a reverse address lookup — given an arbitrary address,
 /// find which UObject (if any) it belongs to.
 /// </summary>
@@ -11,6 +84,17 @@ public sealed class AddressLookupResult
 
     /// <summary>"exact" if the address is a UObject itself, "contains" if it falls inside one.</summary>
     public string MatchType { get; init; } = "";
+
+    /// <summary>
+    /// More precise confidence kind: "exact" / "contains" / "backward" / "nearest".
+    /// "nearest" is a low-confidence fallback (addr is BEYOND PropertiesSize of the
+    /// closest UObject) and should be presented as a hint rather than containment.
+    /// Empty for older DLLs.
+    /// </summary>
+    public string MatchKind { get; init; } = "";
+
+    /// <summary>True when the match is a real containment / exact (high confidence).</summary>
+    public bool IsHighConfidence => MatchKind is "exact" or "contains";
 
     /// <summary>The owning UObject address.</summary>
     public string Address { get; init; } = "";
@@ -32,4 +116,18 @@ public sealed class AddressLookupResult
 
     /// <summary>The original query address.</summary>
     public string QueryAddress { get; init; } = "";
+
+    /// <summary>
+    /// Container-aware matches — when the address falls inside a UObject's
+    /// ArrayProperty heap buffer rather than within the UObject itself.
+    /// Empty list when the standard match was sufficient and container
+    /// scan was not requested / produced no hits.
+    /// </summary>
+    public List<ContainerMatch> ContainerMatches { get; init; } = new();
+
+    /// <summary>
+    /// Diagnostic stats from the container scan; null when scan wasn't run.
+    /// Inspect ContainerScan?.DeadlineHit to detect a truncated scan.
+    /// </summary>
+    public ContainerScanStats? ContainerScan { get; init; }
 }

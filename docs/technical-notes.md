@@ -144,6 +144,254 @@ All DLL code uses `DynOff::*` namespace (mutable `inline int` values), never har
 
 -----
 
+## Property Type Layouts (Drill-Down Reference)
+
+Single-value handlers and array element readers (Phase B–K in `Ubel.cpp`) are
+driven by these on-disk layouts. `fnameSize` = 8 (default) or 16 (when
+`bCasePreservingName` is set).
+
+### Pointer-shaped properties (8 bytes each)
+
+| Property | Layout | Notes |
+|----------|--------|-------|
+| `ObjectProperty` / `ClassProperty` | `UObject*` (8B) | Phase D |
+| `WeakObjectProperty` | `{ int32 ObjectIndex, int32 SerialNumber }` (8B) | Phase E — resolve via `ResolveWeakObjectPtr` |
+
+### Smart pointers (TPersistentObjectPtr family)
+
+```
+TSoftObjectPtr<T> / TSoftClassPtr<T>      // Phase G
++0x00 FWeakObjectPtr (8B)
++0x08 Tag (4B) + pad (4B)
++0x10 FSoftObjectPath
+        UE4 / UE5.0:  FName AssetPathName + FString SubPathString
+        UE5.1+:       FName PackageName + FName AssetName + FString SubPathString
+total: 0x28 (UE4 default) ... 0x48 (UE5.1+ with CasePreservingName)
+```
+
+```
+TLazyObjectPtr<T>                          // Phase H
++0x00 FWeakObjectPtr (8B)
++0x08 Tag (4B) + pad (4B)
++0x10 FUniqueObjectGuid (FGuid = 4 x uint32, 16B)
+total: 0x20 (fixed)
+```
+
+Both expose the embedded `FWeakObjectPtr` so when the asset is currently
+loaded the live `UObject*` resolves and is set on `fv.ptrValue` — Live
+Walker drill / Address Finder / CSX export all pick this up.
+
+### Interface
+
+```
+FScriptInterface (InterfaceProperty)       // Phase I
++0x00 UObject* ObjectPointer  (8B)
++0x08 void*    InterfacePointer (8B)
+total: 16 (fixed)
+```
+
+### Delegates
+
+```
+FScriptDelegate (DelegateProperty)         // Phase J
++0x00 FWeakObjectPtr (8B)  -> bound UObject*
++0x08 FName FunctionName (8B or 16B)
+total: 16 or 24 depending on CasePreservingName
+```
+
+```
+FMulticastScriptDelegate                   // Phase K (single-value AND array)
++0x00 TArray<FScriptDelegate> InvocationList
+        Data*  (8B)
+        Count  (4B)
+        Max    (4B)
+total: 16 (fixed)
+```
+
+A **single** `MulticastInlineDelegateProperty` field is exposed by
+`WalkInstance` as an *implicit* `DelegateProperty` array (`ArrayCount`,
+`ArrayInnerType="DelegateProperty"`, `ArrayElemSize`, `ArrayElements`
+populated). This makes `IsContainerNavigable=true` so the UI / CE XML /
+CSX export reuse the standard array drill path. CE XML's `Offsets=[0]`
+correctly dereferences `InvocationList::Data`.
+
+Find Refs v3 piggybacks on the same shape: `DelegateProperty` (single)
+goes through `weakLikePointers` because its `FWeakObjectPtr` target sits
+at field+0; `MulticastInlineDelegateProperty` /
+`MulticastDelegateProperty` go through `weakLikeArrays` because the
+field IS already a `TArray<FScriptDelegate>` at field+0, and each
+binding has `FWeakObjectPtr` at element+0. Stride is `8 + sizeof(FName)`
+(16 with normal FName, 24 with case-preserving). This surfaces "X is
+bound to a delegate on Y" relationships that property-only scans miss.
+
+`MulticastSparseDelegateProperty` stores only an `FSparseDelegate { uint8
+bIsBound }` flag at the field address. The actual `FScriptDelegate`
+bindings live in CoreUObject's global `FSparseDelegateStorage` (a
+`TMap<FObjectKey, TMap<FName, TSharedPtr<FMulticastScriptDelegate>>>`),
+keyed by the owning UObject and the delegate's FName. `WalkInstance`
+surfaces the bound flag as `(sparse, bound — bindings in
+FSparseDelegateStorage)` or `(sparse, unbound)`. Drill-down into the
+bindings list is **not** wired up — it would require a new AOB
+signature to locate the static storage map. Find Refs v2 likewise can't
+follow sparse-delegate target pointers without the storage walk.
+
+### OptionalProperty (UE 5.2+)
+
+`FOptionalProperty` wraps `TOptional<T>` and is laid out as
+`FProperty + FProperty* ValueProperty` — the same shape as
+`FArrayProperty`, so `WalkClassEx` reuses the `FARRAYPROP_INNER` probe
+to populate `innerType`. Two storage layouts exist depending on `T`:
+
+- **Intrusive** (UE 5.4+ for pointer types `Object/Class/Interface` and
+  the FWeakObjectPtr-shaped `Weak/Soft/Lazy`): `T` occupies the field
+  directly; "unset" is encoded as null/zero (or `{ idx=0, serial=0 }`
+  for weak-like). `sizeof(TOptional<T>) == sizeof(T)`.
+- **Intrusive via `FIntrusiveUnsetOptionalState` specialization** for
+  heap-backed types — the unset flag lives *inside* T's normal fields
+  rather than as a trailing byte. The DLL hand-codes the sentinel checks
+  (which mirror each type's `UEOpEquals(FIntrusiveUnsetOptionalState)`):
+
+  | Inner type     | Sentinel              | Field offset (within `T`) | UE source |
+  |----------------|------------------------|---------------------------|-----------|
+  | `StrProperty`  | `int32 Max == -1`     | +12 (FString.Max)         | UnrealString.h.inl |
+  | `NameProperty` | `uint32 ComparisonIndex == 0xFFFFFFFF` | +0 | NameTypes.h |
+  | `TextProperty` | `uintptr_t TextData == nullptr` | +0 | Internationalization/Text.h |
+
+  For these, `sizeof(TOptional<T>) == sizeof(T)` (no trailing flag) and
+  reading `bIsSet` past `T` would land on the next UPROPERTY's memory —
+  source of subtle false positives until the sentinel paths shipped.
+- **Non-intrusive** (older + non-pointer T like Int/Float/Bool/Byte/Enum
+  and StructProperty): `{ T value; uint8 bIsSet; }` with the trailing
+  flag at `field + sizeof(T)`.
+
+`WalkInstance` dispatches by inner type: pointer-shaped innners use the
+null-sentinel test, scalars/structs read the trailing `bIsSet` byte at
+`field + ResolveInnerSize(inner)`. The display string is `(unset)` when
+not set, otherwise the rendered inner value (resolved UObject*, scalar
+text, etc.). Drill-down into struct-typed Optional is not yet wired —
+the inner struct fields aren't surfaced.
+
+Find Refs v2 covers `OptionalProperty<Object/Class/Interface>` (treated
+as direct pointers) and `OptionalProperty<Weak/Soft/Lazy>` (resolved
+through the embedded FWeakObjectPtr). For UE 5.2–5.3 non-intrusive
+pointer optionals, an unset slot's value is typically zero so it
+trivially fails the comparison; the rare uninitialized-memory false
+positive isn't filtered out (would require caching the inner size
+alongside the cache entry).
+
+### Validating element stride
+
+Inner FProperty `ELEMSIZE` reads frequently return garbage. Each Phase
+reader picks one of three strategies:
+
+- **Force a fixed value** when the layout is invariant: Object/Weak (8),
+  Interface (16), Lazy (0x20), Delegate-via-CasePreservingName (16 or 24)
+- **Sanity-clamp + fallback** when version-dependent: Soft (0x28..0x48),
+  with fallback formula `0x10 + (isTopLevelAssetPath ? 2*fnameSize : fnameSize) + 0x10`
+- **Trust the read** when the inner has a real size: Struct (use
+  `UScriptStruct::PropertiesSize`), Scalar (4/8/etc.)
+
+`InferScalarSize` only declares known fixed sizes; variable-stride types
+(`SoftObjectProperty`, `SoftClassProperty`, `DelegateProperty`) are
+deliberately left out so `ValidateArrayElemSize` does not force a wrong
+override — the readers self-correct.
+
+-----
+
+## Array Element Reader Phases
+
+| Phase | Inner type(s) | Element size | Notes |
+|-------|---------------|--------------|-------|
+| B | scalar (Float/Int/Bool/Byte/Name/Enum) | 1..8 | `ReadArrayElements` — pageable via `read_array_elements` pipe cmd |
+| D | `ObjectProperty` / `ClassProperty` | 8 (forced) | `ReadPointerArrayElements` — resolves `UObject*` name + class |
+| E | `WeakObjectProperty` | 8 (forced) | `ReadWeakObjectArrayElements` — verify SerialNumber |
+| F | `StructProperty` | `PropertiesSize` of inner UScriptStruct | `ReadStructArrayElements` — populates `StructSubField[]` |
+| G | `SoftObjectProperty` / `SoftClassProperty` | 0x28..0x48 (validated/derived) | `ReadSoftObjectArrayElements` — asset path + resolved live `UObject*` |
+| H | `LazyObjectProperty` | 0x20 (forced) | `ReadLazyObjectArrayElements` — FGuid + resolved live `UObject*` |
+| I | `InterfaceProperty` | 16 (forced) | `ReadInterfaceArrayElements` — UObject* exposed |
+| J | `DelegateProperty` | 16 or 24 | `ReadDelegateArrayElements` — Target::FunctionName + drill-into-target |
+| K | `MulticastDelegateProperty` / `MulticastInlineDelegateProperty` | 16 (forced) | `ReadMulticastDelegateArrayElements` — preview only ("(N bindings) [...]"), no per-binding drill |
+
+All readers cap at 4096 elements per request; `WalkInstance` further
+constrains to `arrayLimit` (default 64, configurable in UI). Each Phase
+is dispatched twice in the WalkInstance ArrayProperty handler — once in
+the FProperty branch (UE4.25+/UE5) and once in the UProperty fallback
+branch (UE4.18–4.24).
+
+-----
+
+## Address Finder — Layered Lookup
+
+`Aura::FindByAddress(addr)` produces a single best UObject hit. The full
+flow descends through these strategies (high→low confidence) and reports
+the kind via `match_kind`:
+
+| match_kind | Strategy | Confidence |
+|------------|----------|-----------|
+| `exact`    | `addr` IS a UObject pointer (matches GObjects entry) | highest |
+| `contains` | `addr` ∈ [obj, obj + obj.PropertiesSize) for some GObjects entry | high |
+| `backward` | Backward 64KB memory scan finds a UObject header pattern; `addr` is past its bounds | medium — typically a `NewObject<>`'d sub-object not registered in GObjects |
+| `nearest`  | Closest GObjects entry below `addr` within 256KB; `addr` is BEYOND its PropertiesSize | low — frequently misleading, surfaced as a hint only |
+
+`Aura::FindInContainers(addr)` is a parallel container-aware scan: for
+every UObject in GObjects, walk its container fields and report any whose
+`[Data, Data + bound)` range contains `addr`.
+
+### Nested struct support
+
+The cache builder (`CollectContainersRecursive` in `Aura.cpp`) recurses
+through `StructProperty` fields up to depth 3, so nested arrays/maps/sets
+inside USTRUCT() fields are detected. Common pattern:
+
+```cpp
+USTRUCT() struct FCharStats { TArray<int32> Levels; };
+UCLASS()  class  UPlayerInfo : public UObject {
+    UPROPERTY() FCharStats Stats;
+};
+```
+
+A hit on `UPlayerInfo.Stats.Levels[3]` reports field name `"Stats.Levels"`
+with absolute offset `Stats.Offset + Levels.Offset`. Cycle protection is
+via the depth cap (no `visited` set, allowing the same struct type to be
+visited via different paths with different offsets).
+
+### Match confidence notes
+
+Each container match also carries a `note` string:
+- `""`     — solid hit (within Count, allocated slot)
+- `"slack"` — Array index ∈ [Count, Max); the slot is allocated capacity
+              but not currently in use. Memory often retains the last-
+              written value, so the match is plausible but lower confidence.
+- `"freed"` — Map/Set sparse slot is on the free list; same caveat.
+
+### Reflection limits
+
+Container scan only finds addresses inside reflected memory:
+- UObjects registered in GObjects
+- Their `UPROPERTY()`-marked container Data buffers (incl. nested)
+
+Game data stored in the following won't be found:
+- Custom allocators bypassing `FMemory` (common in Square Enix titles —
+  FF7 Rebirth Cloud HP and DQ I&II HD-2D character stats both fall here)
+- `TUniquePtr<FCustomData>` / raw `void*` C++ fields not wrapped in a
+  `UPROPERTY()` — invisible to UE reflection
+- Save-game serialization buffers (`FArchive`, `FBufferArchive`)
+- Anti-tamper shadow regions
+
+For these the right tool is CE's "Find what accesses this address" /
+pointer-scan workflow, then drill into the exposed pointer chain.
+
+### Performance
+
+| Concern | Mitigation |
+|---------|-----------|
+| Scan time on huge games (~430K UObjects) | 15s deadline (was 5s); response carries `container_scan` stats so UI can flag truncated scans and prompt retry |
+| Repeated scans | Per-class `s_classContainerCache` persists for DLL lifetime; second call typically finishes in ~70ms once cache is warm |
+| Corrupt TArray::Max projecting huge buffer span | Defensive 1M cap on Max / MaxCapacity (matches Count's existing cap) |
+| Element-count limits | 1M cap on `Count` / `MaxIndex` — well above any realistic game data (6 chars / 30 attrs / 600 items all fit comfortably) |
+
+-----
+
 ## Implementation Phases
 
 ### Phase 1 — DLL Core

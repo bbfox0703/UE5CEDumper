@@ -7,6 +7,15 @@ public sealed class EngineState
 {
     public int UEVersion { get; init; }
     public bool VersionDetected { get; init; } = true;
+
+    /// <summary>True when ueVersion came from a user-set persistent override (UI-driven, kept in HintCache).</summary>
+    public bool IsUserOverride { get; init; }
+
+    /// <summary>True when ueVersion came from Tier 3 bare-pattern OR publisher-bias fallback — UI surfaces a warning.</summary>
+    public bool IsLowConfidence { get; init; }
+
+    /// <summary>Publisher thumbprint key (e.g. "SQUARE_ENIX") detected from PE VERSIONINFO — empty if no match.</summary>
+    public string PublisherThumbprint { get; init; } = "";
     public string GObjectsAddr { get; init; } = "";
     public string GNamesAddr { get; init; } = "";
     public string GWorldAddr { get; init; } = "";
