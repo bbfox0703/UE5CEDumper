@@ -1908,6 +1908,16 @@ ReadArrayResult ReadSoftObjectArrayElements(
         // Asset path string (display value)
         std::string assetPath = ReadSoftObjectPath(elemAddr + 0x10);
 
+        // Surface the AssetPathName / PackageName ComparisonIndex so the CE XML
+        // exporter can build a shared DropDownList for the FName leaf at +0x10.
+        // 0 maps to "None" — leave rawIntValue=0 for those so the DropDown
+        // dedup naturally drops them.
+        uint32_t pathFNameIdx = 0;
+        if (Macht::ReadSafe(elemAddr + 0x10, pathFNameIdx) && pathFNameIdx != 0
+            && pathFNameIdx != 0xFFFFFFFFu) {
+            elem.rawIntValue = static_cast<int64_t>(pathFNameIdx);
+        }
+
         // Hex of the first 16 bytes (FWeakObjectPtr + Tag)
         uint8_t headerBuf[16] = {};
         if (Macht::ReadBytesSafe(elemAddr, headerBuf, 16)) {
@@ -3188,14 +3198,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
 
                 // Phase G: TSoftObjectPtr / TSoftClassPtr arrays
-                if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)
-                    && arr.Data && fv.arrayCount > 0) {
-                    auto softResult = ReadSoftObjectArrayElements(
-                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
-                    if (softResult.ok && !softResult.elements.empty()) {
-                        fv.arrayElements = std::move(softResult.elements);
-                        Sein::Debug("WALK:ArrayP", "Soft elements: %d read for '%s'",
-                            static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
+                    // Stamp soft-array layout metadata even when arr is empty
+                    // — the CE XML / CSX exporter needs it to lay out the
+                    // per-element FName leaf(s) at +0x10 / +0x10+fnameSize.
+                    fv.softArrayFNameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                    fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+
+                    if (arr.Data && fv.arrayCount > 0) {
+                        auto softResult = ReadSoftObjectArrayElements(
+                            instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                        if (softResult.ok && !softResult.elements.empty()) {
+                            fv.arrayElements = std::move(softResult.elements);
+                            Sein::Debug("WALK:ArrayP", "Soft elements: %d read for '%s'",
+                                static_cast<int>(fv.arrayElements.size()), fi.Name.c_str());
+                        }
                     }
                 }
 
@@ -3346,12 +3363,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
                 // Phase G: Soft object arrays (UProperty mode)
-                if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)
-                    && arr.Data && fv.arrayCount > 0) {
-                    auto softResult = ReadSoftObjectArrayElements(
-                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
-                    if (softResult.ok && !softResult.elements.empty()) {
-                        fv.arrayElements = std::move(softResult.elements);
+                if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
+                    fv.softArrayFNameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                    fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    if (arr.Data && fv.arrayCount > 0) {
+                        auto softResult = ReadSoftObjectArrayElements(
+                            instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit);
+                        if (softResult.ok && !softResult.elements.empty()) {
+                            fv.arrayElements = std::move(softResult.elements);
+                        }
                     }
                 }
                 // Phase H: Lazy object arrays (UProperty mode)

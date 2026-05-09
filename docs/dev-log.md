@@ -6,7 +6,71 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
-## 2026-05-09 (latest) — OptionalProperty\<String/Name/Text\> intrusive specialization fix
+## 2026-05-09 (latest) — Soft array CE XML: per-element FName leaf emission
+
+`feat(export): TArray<TSoftObjectPtr> per-element CE XML group with FName leaf`
+([`Ubel.cpp`](../dll/src/Ubel.cpp) Phase G, [`Fern.cpp`](../dll/src/Fern.cpp) array
+JSON, [`CeXmlExportService.cs`](../ui/UE5DumpUI/Services/CeXmlExportService.cs),
+build 532+)
+
+Soft arrays (`TArray<TSoftObjectPtr>` / `TArray<TSoftClassPtr>`) used to
+collapse to a single `8 Bytes` hex leaf per element in CE XML — only
+`FWeakObjectPtr.ObjectIndex + SerialNumber` was addressable, and the
+asset path FName at `+0x10` was invisible. Practical result: users had
+to manually re-poke offsets in CE every time they wanted to read the
+asset reference.
+
+**Element layout the new emission writes** (DLL-provided `fnameSize` +
+`isTopLevelAssetPath` flag let the exporter pick the right offsets per
+UE version / CasePreservingName):
+
+```
++0x00  WeakPtr   (8 Bytes hex)        — FWeakObjectPtr {ObjectIndex, Serial}
++0x10  AssetPath (4 Bytes, FName index) — UE4 / UE5.0
+       PackageName (4 Bytes)            — UE5.1+ FTopLevelAssetPath
++0x10 + fnameSize  AssetName (4 Bytes)  — UE5.1+ only
+```
+
+Wire-up:
+- **`Ubel.h`** gains two LiveFieldValue fields: `softArrayFNameSize`
+  (8 normal / 16 case-preserving) and `softArrayIsTopLevelAssetPath`
+  (true for UE >= 5.1). Stamped by both Phase G call sites (FProperty
+  and UProperty fallback) so the metadata is present even when the
+  array is empty.
+- **`Ubel.cpp` Phase G reader** also writes
+  `elem.rawIntValue = AssetPathName.ComparisonIndex` so the CE XML
+  exporter can build a shared `<DropDownList>` mapping the FName index
+  to the resolved asset path string (CE shows the path text in the
+  Value column rather than a bare uint32).
+- **`Fern.cpp`** serializes the two new fields as `soft_fname_size` and
+  `soft_top_level_asset_path` on each ArrayProperty JSON object.
+- **`DumpService.cs` + `LiveFieldValue.cs`** parse them into
+  `SoftArrayFNameSize` / `SoftArrayIsTopLevelAssetPath`. The container
+  navigation clone in `LiveWalkerViewModel` and the flatten clone in
+  `CeXmlExportService.ResolveStructFieldsAsync` both forward the new
+  fields so they survive the in-UI copies.
+- **`CeXmlExportService.EmitSoftObjectArrayProperty`** is the new
+  per-element emission. The outer array group keeps
+  `Address=+{fieldOffset}, Offsets=[0]` (deref `TArray.Data`), each
+  element becomes a sub-group at `+{N * elemSize}` containing the
+  WeakPtr leaf, the AssetPath/PackageName FName leaf (with shared
+  DropDownList), and on UE5.1+ also the AssetName leaf at
+  `+0x10 + fnameSize`. Element description includes the resolved path
+  (`[0] /Game/Items/IT_Potion.IT_Potion`).
+
+Backwards-compat: when `SoftArrayFNameSize == 0` (legacy DLL or
+deserialized payload without the new fields), the emission falls
+through to the original 8-byte-hex path so older CE XML exports stay
+readable.
+
+**Tests:** 4 new + 1 backwards-compat case in
+`CeXmlExportServiceTests.cs` covering UE4/UE5.0, UE5.1+ TopLevelAsset,
+UE5.5+ CasePreservingName, SoftClassProperty, and the legacy fallback.
+**486 tests passing** (was 483).
+
+-----
+
+## 2026-05-09 (mid) — OptionalProperty\<String/Name/Text\> intrusive specialization fix
 
 `fix(walker): OptionalProperty intrusive isSet detection + value surfacing`
 ([`Ubel.cpp`](../dll/src/Ubel.cpp), build 530+)
@@ -307,7 +371,7 @@ binding and the filter logic share one implementation.
 
 -----
 
-## Capability matrix (current — build 530)
+## Capability matrix (current — build 532)
 
 | Layer | Drill-down | Find Refs |
 |-------|-----------|-----------|
@@ -345,14 +409,11 @@ binding and the filter logic share one implementation.
    auto-scrolls to the container field, but the user has to click drill
    manually to reach the specific element.
 
-4. **Soft array CE XML enhancement** — per-element group with FName leaf
-   at +0x10 instead of just 8B hex.
+4. **`FieldPathProperty`** — rare, low priority.
 
-5. **`FieldPathProperty`** — rare, low priority.
+5. **GWorld**: Star Wars Jedi untested, Satisfactory fails.
 
-6. **GWorld**: Star Wars Jedi untested, Satisfactory fails.
-
-7. **UE version misdetection** on some UE4 games (DQ I&II,
+6. **UE version misdetection** on some UE4 games (DQ I&II,
    Ghostwire: Tokyo show UE505 incorrectly).
 
 ## Tested games (last verified 2026-05-09)

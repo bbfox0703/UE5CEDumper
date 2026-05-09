@@ -863,6 +863,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 ArrayInnerAddr = containerField.ArrayInnerAddr,
                 ArrayDataAddr = containerField.ArrayDataAddr,
                 ArrayStructClassAddr = containerField.ArrayStructClassAddr,
+                SoftArrayFNameSize = containerField.SoftArrayFNameSize,
+                SoftArrayIsTopLevelAssetPath = containerField.SoftArrayIsTopLevelAssetPath,
                 ArrayElements = containerField.ArrayElements.Where(e => e.Index == sparseIndex.Value).ToList(),
                 ArrayEnumAddr = containerField.ArrayEnumAddr,
                 ArrayEnumEntries = containerField.ArrayEnumEntries,

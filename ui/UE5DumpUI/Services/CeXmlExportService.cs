@@ -181,6 +181,8 @@ public static class CeXmlExportService
                     ArrayDataAddr = f.ArrayDataAddr,
                     ArrayEnumAddr = f.ArrayEnumAddr,
                     ArrayEnumEntries = f.ArrayEnumEntries,
+                    SoftArrayFNameSize = f.SoftArrayFNameSize,
+                    SoftArrayIsTopLevelAssetPath = f.SoftArrayIsTopLevelAssetPath,
                     EnumName = f.EnumName,
                     EnumValue = f.EnumValue,
                     EnumAddr = f.EnumAddr,
@@ -858,6 +860,22 @@ public static class CeXmlExportService
             return;
         }
 
+        // Phase G: TArray<TSoftObjectPtr/TSoftClassPtr> — emit per-element
+        // struct group with WeakPtr leaf at +0 + FName leaf(s) at +0x10 (and
+        // +0x10+fnameSize for UE5.1+'s FTopLevelAssetPath layout). Without
+        // this, the inner element collapses to a single 8B WeakPtr hex blob
+        // and the FSoftObjectPath::AssetPathName / PackageName is invisible.
+        // Soft array layout metadata (fnameSize + FTopLevelAssetPath flag)
+        // comes from the DLL — see Ubel.cpp Phase G handler.
+        if ((field.ArrayInnerType == "SoftObjectProperty"
+             || field.ArrayInnerType == "SoftClassProperty")
+            && field.SoftArrayFNameSize > 0
+            && field.ArrayCount > 0 && field.ArrayElemSize > 0)
+        {
+            EmitSoftObjectArrayProperty(sb, indent, field, desc);
+            return;
+        }
+
         // Map inner type to CE type
         var ceElem = MapInnerTypeToCeField(field.ArrayInnerType);
 
@@ -997,6 +1015,101 @@ public static class CeXmlExportService
                 EmitLeaf(sb, childIndent, elemDesc, ceElem,
                     $"+{elemByteOffset:X}", null);
             }
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// Phase G: Emit a TArray&lt;TSoftObjectPtr|TSoftClassPtr&gt; with per-element
+    /// struct groups so the FName leaf(s) at the FSoftObjectPath sub-offset
+    /// are addressable in CE — instead of a single 8B WeakPtr hex blob.
+    ///
+    /// Element layout (DLL-provided fname size + FTopLevelAssetPath flag):
+    ///   +0x00 FWeakObjectPtr (8B: int32 ObjectIndex + int32 SerialNumber)
+    ///   +0x08 Tag (4B) + pad (4B)
+    ///   +0x10 FName AssetPathName  (UE4 / UE5.0)         — single FName
+    ///         OR FName PackageName (UE5.1+ FTopLevelAssetPath)
+    ///   +0x10+fnameSize  FName AssetName (UE5.1+ only)
+    ///
+    /// FName CE rendering: ComparisonIndex (uint32) at field+0 — emitted as
+    /// a "4 Bytes" leaf with a deduplicated DropDownList built from the live
+    /// elements so users see the resolved asset path text in CE's Value column.
+    ///
+    /// Array group: Address=+{fieldOffset}, Offsets=[0] (deref TArray.Data)
+    /// Element group: Address=+{N*elemSize}, no Offsets (inline within Data)
+    /// Leaves: Address=+{subOffset} (relative to element start)
+    /// </summary>
+    private static void EmitSoftObjectArrayProperty(StringBuilder sb, string indent,
+        LiveFieldValue field, string desc)
+    {
+        EmitGroupOpen(sb, indent, desc, $"+{field.Offset:X}", new[] { 0 });
+        var elemIndent = indent + "  ";
+
+        // Build a shared DropDownList for the AssetPath/PackageName FName from
+        // the live element values. Each elem.RawIntValue is the FName
+        // ComparisonIndex (set by ReadSoftObjectArrayElements when the path
+        // resolves); fall back to no DropDown if values are missing.
+        var maxDd = _maxDropDownEntries > 0 ? _maxDropDownEntries : 512;
+        string? sharedDropDown = null;
+        if (field.ArrayElements is { Count: > 0 } && field.ArrayElements.Count <= maxDd)
+        {
+            var seen = new HashSet<long>();
+            var pairs = new List<(long, string)>();
+            foreach (var e in field.ArrayElements)
+            {
+                if (e.RawIntValue == 0 || string.IsNullOrEmpty(e.Value)) continue;
+                if (seen.Add(e.RawIntValue))
+                    pairs.Add((e.RawIntValue, e.Value));
+            }
+            if (pairs.Count > 0)
+                sharedDropDown = BuildDropDownContent(pairs);
+        }
+
+        var ceWeakPtr  = new CeFieldInfo("8 Bytes", ShowAsHex: true);
+        var ceFNameIdx = new CeFieldInfo("4 Bytes");
+
+        foreach (var elem in field.ArrayElements ?? new List<ArrayElementValue>())
+        {
+            int elemByteOffset = elem.Index * field.ArrayElemSize;
+            string elemDesc = !string.IsNullOrEmpty(elem.Value)
+                ? $"[{elem.Index}] {elem.Value}"
+                : $"[{elem.Index}]";
+
+            EmitGroupOpen(sb, elemIndent, elemDesc, $"+{elemByteOffset:X}", null);
+            var fieldIndent = elemIndent + "  ";
+
+            // FWeakObjectPtr at +0 — useful when the asset is currently loaded
+            // (8 bytes packing ObjectIndex + SerialNumber).
+            EmitLeaf(sb, fieldIndent, "WeakPtr", ceWeakPtr, "+0", null);
+
+            // FName ComparisonIndex (and Number at +4) for the
+            // AssetPathName / PackageName at +0x10.
+            string firstFNameLabel = field.SoftArrayIsTopLevelAssetPath
+                ? "PackageName"
+                : "AssetPath";
+            if (sharedDropDown != null)
+            {
+                EmitLeaf(sb, fieldIndent, firstFNameLabel, ceFNameIdx,
+                    "+10", null, dropDownContent: sharedDropDown);
+            }
+            else
+            {
+                EmitLeaf(sb, fieldIndent, firstFNameLabel, ceFNameIdx,
+                    "+10", null);
+            }
+
+            // UE5.1+: FTopLevelAssetPath has a second FName (AssetName) right
+            // after PackageName. Stride is the same fnameSize used by the
+            // backing FName.
+            if (field.SoftArrayIsTopLevelAssetPath)
+            {
+                int assetNameOffset = 0x10 + field.SoftArrayFNameSize;
+                EmitLeaf(sb, fieldIndent, "AssetName", ceFNameIdx,
+                    $"+{assetNameOffset:X}", null);
+            }
+
+            EmitGroupClose(sb, elemIndent);
         }
 
         EmitGroupClose(sb, indent);

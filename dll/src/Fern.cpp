@@ -286,6 +286,12 @@ static json SerializeField(const Ubel::LiveFieldValue& fv) {
                 fj["array_struct_type"] = fv.arrayInnerStructType;
             if (fv.arrayInnerStructAddr != 0)
                 fj["array_struct_class_addr"] = Renge::AddrToStr(fv.arrayInnerStructAddr);
+            // Phase G layout metadata for soft arrays — lets exporters lay out
+            // per-element FName leaves at FSoftObjectPath sub-offsets.
+            if (fv.softArrayFNameSize > 0) {
+                fj["soft_fname_size"] = fv.softArrayFNameSize;
+                fj["soft_top_level_asset_path"] = fv.softArrayIsTopLevelAssetPath;
+            }
         }
         if (fv.arrayInnerFFieldAddr != 0)
             fj["array_inner_addr"] = Renge::AddrToStr(fv.arrayInnerFFieldAddr);

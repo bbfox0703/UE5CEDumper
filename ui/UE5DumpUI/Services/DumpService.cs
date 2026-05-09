@@ -700,6 +700,8 @@ public sealed class DumpService : IDumpService
             ArrayInnerAddr = fo["array_inner_addr"]?.GetValue<string>() ?? "",
             ArrayDataAddr = fo["array_data_addr"]?.GetValue<string>() ?? "",
             ArrayStructClassAddr = fo["array_struct_class_addr"]?.GetValue<string>() ?? "",
+            SoftArrayFNameSize = fo["soft_fname_size"]?.GetValue<int>() ?? 0,
+            SoftArrayIsTopLevelAssetPath = fo["soft_top_level_asset_path"]?.GetValue<bool>() ?? false,
             ArrayElements = ParseArrayElements(fo["elements"]),
             ArrayEnumAddr = fo["enum_addr"]?.GetValue<string>() ?? "",
             ArrayEnumEntries = ParseEnumEntries(fo["enum_entries"]),

@@ -162,6 +162,15 @@ struct LiveFieldValue {
     int32_t     arrayElemSize = 0;     // Element size in bytes
     uintptr_t   arrayInnerFFieldAddr = 0;  // Inner FProperty* (for read_array_elements command)
     uintptr_t   arrayInnerStructAddr = 0;  // UScriptStruct* for struct arrays (Phase F)
+    // Phase G layout metadata for TArray<TSoftObjectPtr/TSoftClassPtr>.
+    // Lets the CE XML / CSX exporter emit per-element struct groups with
+    // FName leaf(s) at the FSoftObjectPath sub-offset (+0x10) instead of
+    // a single 8B WeakPtr-only hex. 0 means "not a soft array".
+    //   FSoftObjectPtr layout per UE version:
+    //     UE4 / UE5.0: { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FString(16) }
+    //     UE5.1+:      { FWeakObjectPtr(8) + Tag(4) + pad(4) + FName(8|16) + FName(8|16) + FString(16) }
+    int32_t     softArrayFNameSize = 0;          // 8 (normal) or 16 (CasePreservingName)
+    bool        softArrayIsTopLevelAssetPath = false;  // true for UE >= 5.1 (FTopLevelAssetPath layout)
     uintptr_t   arrayEnumAddr = 0;        // UEnum* for CE DropDownList sharing key
     struct EnumEntry { int64_t value; std::string name; };
     std::vector<EnumEntry> arrayEnumEntries;  // Full UEnum entries for CE DropDownList

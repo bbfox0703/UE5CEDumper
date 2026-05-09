@@ -2369,20 +2369,25 @@ public class CeXmlExportServiceTests
     // ========================================
 
     [Fact]
-    public void GenerateInstanceXml_SoftObjectArray_EmitsGroupWithElements()
+    public void GenerateInstanceXml_SoftObjectArray_UE4Layout_EmitsPerElementGroupWithFNameLeaf()
     {
-        // TArray<TSoftObjectPtr<UDataAsset>> — element stride is 0x28 (UE4/UE5.0 default)
+        // TArray<TSoftObjectPtr<UDataAsset>> on UE4 / UE5.0:
+        //   element layout = WeakPtr(8) + Tag(8) + FName AssetPathName(8) + FString(16) = 0x28
+        //   SoftArrayIsTopLevelAssetPath=false → single FName at +0x10
         var fields = new[]
         {
             new LiveFieldValue
             {
                 Name = "AssetRefs", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
                 ArrayCount = 2, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+                SoftArrayFNameSize = 8, SoftArrayIsTopLevelAssetPath = false,
                 ArrayElements = new List<ArrayElementValue>
                 {
                     new() { Index = 0, Value = "/Game/Items/IT_Potion.IT_Potion",
+                            RawIntValue = 1234,
                             Hex = "00000000000000000000000000000000" },
                     new() { Index = 1, Value = "/Game/Items/IT_Sword.IT_Sword",
+                            RawIntValue = 5678,
                             Hex = "00000000000000000000000000000000" },
                 }
             },
@@ -2391,23 +2396,105 @@ public class CeXmlExportServiceTests
         var xml = CeXmlExportService.GenerateInstanceXml(
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
-        // Group header with array description
+        // Outer array group header (Address=+100, Offsets=[0] derefs TArray.Data)
         Assert.Contains("AssetRefs [2 x SoftObjectProperty (40B)]", xml);
-        // Array group: Address=+100, Offsets=[0] (deref TArray.Data)
         Assert.Contains("<Address>+100</Address>", xml);
         Assert.Contains("<Offset>0</Offset>", xml);
-        // Element entries at +0 and +28 (40 = 0x28 stride)
-        Assert.Contains("[0]", xml);
-        Assert.Contains("[1]", xml);
+
+        // Per-element group descriptions include the resolved asset path
+        Assert.Contains("[0] /Game/Items/IT_Potion.IT_Potion", xml);
+        Assert.Contains("[1] /Game/Items/IT_Sword.IT_Sword", xml);
+
+        // Element groups at stride boundaries (0x28 = 40)
         Assert.Contains("<Address>+0</Address>", xml);
         Assert.Contains("<Address>+28</Address>", xml);
-        // Per-element type: 8 Bytes hex (FWeakObjectPtr at element start)
+
+        // Per-element WeakPtr leaf (8 Bytes hex at +0)
+        Assert.Contains("\"WeakPtr\"", xml);
         Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
-        Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+
+        // Per-element FName AssetPath leaf at +10 (4 Bytes ComparisonIndex)
+        Assert.Contains("\"AssetPath\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+
+        // Shared DropDownList built from the resolved asset paths (FName index → name)
+        Assert.Contains("<DropDownList DisplayValueAsItem=\"1\">", xml);
+        Assert.Contains("1234:/Game/Items/IT_Potion.IT_Potion", xml);
+        Assert.Contains("5678:/Game/Items/IT_Sword.IT_Sword", xml);
+
+        // No AssetName leaf in UE4 layout (only one FName)
+        Assert.DoesNotContain("\"AssetName\"", xml);
     }
 
     [Fact]
-    public void GenerateInstanceXml_SoftClassArray_EmitsGroupWithElements()
+    public void GenerateInstanceXml_SoftObjectArray_UE51Layout_EmitsPackageNameAndAssetName()
+    {
+        // TArray<TSoftObjectPtr<UDataAsset>> on UE5.1+:
+        //   element layout = WeakPtr(8) + Tag(8) + FName PackageName(8) + FName AssetName(8)
+        //                   + FString(16) = 0x30
+        //   SoftArrayIsTopLevelAssetPath=true → TWO FNames at +0x10 / +0x18 (fnameSize=8)
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Assets", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x30,
+                SoftArrayFNameSize = 8, SoftArrayIsTopLevelAssetPath = true,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/Boss.BossActor",
+                            RawIntValue = 9999,
+                            Hex = "00000000000000000000000000000000" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("Assets [1 x SoftObjectProperty (48B)]", xml);
+        Assert.Contains("[0] /Game/Boss.BossActor", xml);
+
+        // Both FName leaves: PackageName at +10, AssetName at +18 (fnameSize=8)
+        Assert.Contains("\"PackageName\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("\"AssetName\"", xml);
+        Assert.Contains("<Address>+18</Address>", xml);
+
+        // No "AssetPath" label in UE5.1+ layout (split into Package + Asset)
+        Assert.DoesNotContain("\"AssetPath\"", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArray_CasePreservingName_AssetNameAt20()
+    {
+        // UE5.5+ CasePreservingName: fnameSize=16, so AssetName is at +0x20.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Assets", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x40,
+                SoftArrayFNameSize = 16, SoftArrayIsTopLevelAssetPath = true,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/A.A", RawIntValue = 1, Hex = "" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("\"PackageName\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("\"AssetName\"", xml);
+        Assert.Contains("<Address>+20</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftClassArray_EmitsPerElementGroup()
     {
         // TArray<TSoftClassPtr<UClass>> — same shape as SoftObjectProperty
         var fields = new[]
@@ -2416,9 +2503,11 @@ public class CeXmlExportServiceTests
             {
                 Name = "ClassRefs", TypeName = "ArrayProperty", Offset = 0x80, Size = 16,
                 ArrayCount = 1, ArrayInnerType = "SoftClassProperty", ArrayElemSize = 0x28,
+                SoftArrayFNameSize = 8, SoftArrayIsTopLevelAssetPath = false,
                 ArrayElements = new List<ArrayElementValue>
                 {
                     new() { Index = 0, Value = "/Game/AI/BP_Boss.BP_Boss_C",
+                            RawIntValue = 4242,
                             Hex = "00000000000000000000000000000000" },
                 }
             },
@@ -2428,10 +2517,41 @@ public class CeXmlExportServiceTests
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
 
         Assert.Contains("ClassRefs [1 x SoftClassProperty (40B)]", xml);
-        Assert.Contains("<Address>+80</Address>", xml);
-        Assert.Contains("[0]", xml);
+        Assert.Contains("[0] /Game/AI/BP_Boss.BP_Boss_C", xml);
+        Assert.Contains("\"WeakPtr\"", xml);
+        Assert.Contains("\"AssetPath\"", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_SoftObjectArray_NoMetadata_FallsBackTo8ByteHex()
+    {
+        // Backwards-compat: legacy DLLs that don't emit SoftArrayFNameSize
+        // should still produce an exportable XML — falls through to the old
+        // single 8B-hex-per-element path via MapInnerTypeToCeField.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Legacy", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "SoftObjectProperty", ArrayElemSize = 0x28,
+                // Intentionally no SoftArrayFNameSize / SoftArrayIsTopLevelAssetPath
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/A.A", Hex = "" },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("Legacy [1 x SoftObjectProperty (40B)]", xml);
+        // No per-element group; the 8B leaf path still produces a usable entry
         Assert.Contains("<VariableType>8 Bytes</VariableType>", xml);
         Assert.Contains("<ShowAsHex>1</ShowAsHex>", xml);
+        Assert.DoesNotContain("\"WeakPtr\"", xml);
+        Assert.DoesNotContain("\"AssetPath\"", xml);
     }
 
     [Fact]
