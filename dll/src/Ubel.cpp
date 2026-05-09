@@ -4478,19 +4478,23 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle MulticastSparseDelegateProperty:
         // Field stores only `FSparseDelegate { uint8 bIsBound; }` — actual
-        // FScriptDelegate bindings live in CoreUObject's FSparseDelegateStorage,
-        // a global TMap<FObjectKey, TMap<FName, TSharedPtr<FMulticastScriptDelegate>>>.
-        // Without an AOB for that static, we can only surface the bound flag.
-        // Bindings enumeration is a known follow-up (would need a new signature
-        // to locate FSparseDelegateStorage::SparseDelegates).
+        // FScriptDelegate bindings live in CoreUObject's static
+        //   FSparseDelegateStorage::SparseDelegates :
+        //     TMap<UObjectBase*, TMap<FName, TSharedPtr<FMulticastScriptDelegate>>>
+        //
+        // When the AOB resolver finds the static (Genau::FindSparseDelegateStorage),
+        // we walk it via Aura::WalkSparseDelegateBindings and surface the
+        // bindings using the same implicit-DelegateProperty-array layout as
+        // MulticastInline/MulticastDelegate so drill-down + CE XML / CSX export
+        // work uniformly. Falls back to the bound-flag-only string when:
+        //   - bIsBound = 0 (nothing to look up)
+        //   - AOB scan failed (older / unsupported builds)
+        //   - UE version < 5.0 (walker uses raw-pointer outer key; UE 4.23-4.27
+        //     uses FObjectKey, not yet supported)
         if (fi.TypeName == "MulticastSparseDelegateProperty") {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
             uint8_t bIsBound = 0;
             Macht::ReadSafe(fieldAddr, bIsBound);
-
-            fv.typedValue = bIsBound
-                ? "(sparse, bound — bindings in FSparseDelegateStorage)"
-                : "(sparse, unbound)";
 
             // Hex over the property's reported size (typically 1, sometimes
             // padded to 4 or 8). Cap defensively so a garbage size doesn't
@@ -4507,9 +4511,90 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
                 fv.hexValue = hex;
             }
-            // No inline bindings to drill into — leave arrayCount = 0 so
-            // IsContainerNavigable stays false. arrayInnerType is left empty
-            // for the same reason.
+
+            if (!bIsBound) {
+                fv.typedValue = "(sparse, unbound)";
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+
+            // Try to walk the storage. arrayLimit caps how many bindings we
+            // load inline; the implicit array stays drillable past that limit
+            // via the standard read_array_elements pipe path.
+            Aura::SparseDelegateResult sr = Aura::WalkSparseDelegateBindings(
+                instanceAddr, fi.Name, arrayLimit);
+
+            if (!sr.resolved || !sr.supported || !sr.ownerFound || !sr.nameFound) {
+                // Couldn't resolve — surface the original bound-flag string so
+                // the user still knows the field is bound, just opaque.
+                if (!sr.supported) {
+                    fv.typedValue = "(sparse, bound — UE < 5.0 unsupported)";
+                } else if (!sr.resolved) {
+                    fv.typedValue = "(sparse, bound — FSparseDelegateStorage AOB not found)";
+                } else if (!sr.ownerFound) {
+                    fv.typedValue = "(sparse, bound — owner not in storage)";
+                } else {
+                    fv.typedValue = "(sparse, bound — function name not in storage)";
+                }
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
+
+            // Walker succeeded. Expose as implicit DelegateProperty array.
+            int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int32_t delegateElemSize = 8 + fnameSize;
+            int32_t bindingCount = static_cast<int32_t>(sr.bindings.size());
+
+            fv.arrayCount = bindingCount;
+            fv.arrayInnerType = "DelegateProperty";
+            fv.arrayElemSize = delegateElemSize;
+            // arrayDataAddr left at 0: bindings live in a TArray inside
+            // FMulticastScriptDelegate inside a TSharedPtr inside the inner
+            // TMap value — not a simple field offset, so read_array_elements
+            // can't re-fetch them. Inline arrayElements is the source of truth.
+
+            std::vector<std::string> previewNames;
+            for (const auto& b : sr.bindings) {
+                LiveFieldValue::ArrayElement elem;
+                elem.index = static_cast<int32_t>(fv.arrayElements.size());
+                if (b.targetObj) {
+                    elem.ptrAddr      = b.targetObj;
+                    elem.ptrName      = b.targetName;
+                    elem.ptrClassName = b.targetClassName;
+                }
+                if (b.targetObj && !b.functionName.empty()) {
+                    elem.value = (b.targetName.empty() ? std::string("?") : b.targetName)
+                        + "::" + b.functionName;
+                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
+                } else if (!b.functionName.empty()) {
+                    elem.value = "(stale)::" + b.functionName;
+                    if (previewNames.size() < 8) previewNames.push_back(elem.value);
+                } else if (b.objectIndex > 0) {
+                    elem.value = "(stale)";
+                } else {
+                    elem.value = "(unbound)";
+                }
+                fv.arrayElements.push_back(std::move(elem));
+            }
+
+            std::string display;
+            if (bindingCount == 0) {
+                display = "(0 bindings, sparse)";
+            } else {
+                display = "(" + std::to_string(bindingCount)
+                    + " sparse binding" + (bindingCount > 1 ? "s" : "") + ")";
+                if (!previewNames.empty()) {
+                    display += " [";
+                    for (size_t i = 0; i < previewNames.size(); ++i) {
+                        if (i > 0) display += ", ";
+                        display += previewNames[i];
+                    }
+                    if (bindingCount > static_cast<int32_t>(previewNames.size())) display += ", ...";
+                    display += "]";
+                }
+            }
+            fv.typedValue = display;
+
             result.fields.push_back(std::move(fv));
             continue;
         }
