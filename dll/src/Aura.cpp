@@ -1428,17 +1428,27 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
 // Per-class cache of pointer-shaped fields and Object array fields.
 // Built lazily, mirrors the container cache pattern.
 //
-// v2 (this revision) covers:
+// Coverage (v2 + v3):
 //   - Direct ObjectProperty / ClassProperty / InterfaceProperty
 //     (8-byte UObject* read directly at field+0)
 //   - Direct WeakObjectProperty / SoftObjectProperty / SoftClassProperty /
 //     LazyObjectProperty (FWeakObjectPtr at field+0 → resolved via
-//     ResolveWeakObjectPtr; only matches when the soft/lazy ref is
-//     currently bound to a live UObject)
+//     ResolveWeakObjectPtr; only matches when the ref is currently bound
+//     to a live UObject)
+//   - DelegateProperty (single FScriptDelegate — FWeakObjectPtr target at
+//     field+0; same resolution path)
+//   - MulticastInlineDelegateProperty / MulticastDelegateProperty
+//     (FMulticastScriptDelegate is just TArray<FScriptDelegate> at
+//     field+0; each element's FWeakObjectPtr is the binding target).
+//     MulticastSparseDelegateProperty deliberately NOT covered — bindings
+//     live in FSparseDelegateStorage rather than at the field.
+//   - OptionalProperty<T> for pointer-shaped T — bucketed alongside its
+//     bare T because the intrusive layout is identical at field+0.
 //   - TArray<UObject*> / TArray<UClass*> (8-byte stride)
 //   - TArray<FScriptInterface> (16-byte stride, ptr at elem+0)
 //   - TArray<FWeakObjectPtr> / TArray<FSoftObjectPtr> /
-//     TArray<FLazyObjectPtr> (variable stride, FWeakObjectPtr at elem+0)
+//     TArray<FLazyObjectPtr> / TArray<FScriptDelegate> (variable stride,
+//     FWeakObjectPtr at elem+0)
 //   - TMap<UObject*,V> / TMap<K,UObject*> (TSparseArray walk, allocated
 //     slots only — frees aren't real references)
 //   - TSet<UObject*> (TSparseArray walk, allocated slots only)
@@ -1580,6 +1590,28 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
               && IsWeakLikeProp(f.innerType)) {
             out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
         }
+        // --- DelegateProperty (single FScriptDelegate) ---
+        // Layout: { FWeakObjectPtr Target(8B), FName FunctionName(8/16B) }.
+        // The FWeakObjectPtr at field+0 is the binding's target — same
+        // resolution path as WeakObjectProperty, so reuse weakLikePointers.
+        // typeName is preserved so the user sees this was reached via a
+        // delegate (a "register on click" bind, not a property reference).
+        else if (f.TypeName == "DelegateProperty") {
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+        }
+        // --- MulticastInline / MulticastDelegate (single field) ---
+        // FMulticastScriptDelegate := TArray<FScriptDelegate> at field+0.
+        // Each binding has FWeakObjectPtr at elem+0 — same scan logic as
+        // weakLikeArrays, just with a delegate-specific stride. (Sparse
+        // multicast deliberately excluded: bindings live in
+        // FSparseDelegateStorage, not at the field.)
+        else if (f.TypeName == "MulticastInlineDelegateProperty"
+              || f.TypeName == "MulticastDelegateProperty") {
+            int32_t fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+            int32_t stride    = 8 + fnameSize;
+            out.weakLikeArrays.push_back({ absOffset, fullName,
+                                            f.TypeName, stride });
+        }
         // --- Array of pointer-shaped types ---
         else if (f.TypeName == "ArrayProperty") {
             if (IsDirectObjectProp(f.innerType)) {
@@ -1594,6 +1626,14 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                     out.weakLikeArrays.push_back({ absOffset, fullName,
                                                     f.innerType, es });
                 }
+            }
+            else if (f.innerType == "DelegateProperty") {
+                // TArray<FScriptDelegate> — element layout matches the
+                // multicast bindings list. Stride is FName-size dependent.
+                int32_t fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                int32_t stride    = 8 + fnameSize;
+                out.weakLikeArrays.push_back({ absOffset, fullName,
+                                                f.innerType, stride });
             }
         }
         // --- Map with pointer-shaped key and/or value ---

@@ -183,6 +183,9 @@ struct ReferenceMatch {
                                           // "InterfaceProperty" / "WeakObjectProperty" /
                                           // "SoftObjectProperty" / "SoftClassProperty" /
                                           // "LazyObjectProperty" / "OptionalProperty" /
+                                          // "DelegateProperty" /
+                                          // "MulticastInlineDelegateProperty" /
+                                          // "MulticastDelegateProperty" /
                                           // "ArrayProperty" / "MapProperty" / "SetProperty"
     std::string innerType;                // For Array: inner element type;
                                           // For Set: element type;
@@ -199,7 +202,14 @@ struct ReferenceMatch {
 //     UObject)
 //   - OptionalProperty<T> for pointer-shaped T (Object/Class/Interface/
 //     Weak/Soft/Lazy) — same comparison as the bare T at field+0
-//   - TArray of any of the above (single-pointer types)
+//   - DelegateProperty (single FScriptDelegate — FWeakObjectPtr target at
+//     field+0 — surfaces "X is bound to a delegate on Y" relationships)
+//   - MulticastInlineDelegateProperty / MulticastDelegateProperty
+//     (FMulticastScriptDelegate := TArray<FScriptDelegate>; walks each
+//     binding's FWeakObjectPtr target). MulticastSparseDelegateProperty
+//     deliberately NOT covered — bindings live in FSparseDelegateStorage
+//     and require a separate AOB + storage walk.
+//   - TArray of any single-pointer type above (incl. TArray<FScriptDelegate>)
 //   - TMap with Object/Class key and/or value (allocated slots only)
 //   - TSet with Object/Class element (allocated slots only)
 // Walks include fields nested inside StructProperty (depth 3).

@@ -215,6 +215,15 @@ populated). This makes `IsContainerNavigable=true` so the UI / CE XML /
 CSX export reuse the standard array drill path. CE XML's `Offsets=[0]`
 correctly dereferences `InvocationList::Data`.
 
+Find Refs v3 piggybacks on the same shape: `DelegateProperty` (single)
+goes through `weakLikePointers` because its `FWeakObjectPtr` target sits
+at field+0; `MulticastInlineDelegateProperty` /
+`MulticastDelegateProperty` go through `weakLikeArrays` because the
+field IS already a `TArray<FScriptDelegate>` at field+0, and each
+binding has `FWeakObjectPtr` at element+0. Stride is `8 + sizeof(FName)`
+(16 with normal FName, 24 with case-preserving). This surfaces "X is
+bound to a delegate on Y" relationships that property-only scans miss.
+
 `MulticastSparseDelegateProperty` stores only an `FSparseDelegate { uint8
 bIsBound }` flag at the field address. The actual `FScriptDelegate`
 bindings live in CoreUObject's global `FSparseDelegateStorage` (a
