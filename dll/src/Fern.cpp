@@ -1167,7 +1167,6 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             std::string query = request.value("query", "");
             bool gameOnly = request.value("game_only", true);
             int limit = request.value("limit", 200);
-            if (query.empty()) return Renge::MakeError(id, "Missing query").dump();
 
             // Parse optional type filter
             std::vector<std::string> typeFilter;
@@ -1175,6 +1174,14 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
                 for (const auto& t : request["types"]) {
                     if (t.is_string()) typeFilter.push_back(t.get<std::string>());
                 }
+            }
+
+            // Either query or typeFilter must constrain the search — empty
+            // both would scan every property in every class. SearchProperties
+            // tolerates an empty query (substring-find returns 0 on empty
+            // pattern), so allow it when typeFilter is non-empty.
+            if (query.empty() && typeFilter.empty()) {
+                return Renge::MakeError(id, "Missing query or type filter").dump();
             }
 
             auto searchResult = Aura::SearchProperties(query, typeFilter, gameOnly, limit);

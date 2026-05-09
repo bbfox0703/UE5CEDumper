@@ -17,6 +17,7 @@ public partial class PropertySearchViewModel : ViewModelBase
     private readonly ILoggingService _log;
 
     [ObservableProperty] private string _searchQuery = "";
+    [ObservableProperty] private string _typeFilter = "";
     [ObservableProperty] private bool _gameClassesOnly = true;
     [ObservableProperty] private bool _isSearching;
     [ObservableProperty] private string _statusText = "";
@@ -42,7 +43,17 @@ public partial class PropertySearchViewModel : ViewModelBase
     [RelayCommand]
     private async Task SearchAsync()
     {
-        if (string.IsNullOrWhiteSpace(SearchQuery)) return;
+        var trimmedQuery = (SearchQuery ?? "").Trim();
+        // Parse comma-separated type filter; whitespace-only entries dropped.
+        var types = (TypeFilter ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        // DLL requires at least one constraint — name OR type.
+        if (string.IsNullOrEmpty(trimmedQuery) && types.Length == 0)
+        {
+            StatusText = "Enter a property name or type filter";
+            return;
+        }
 
         try
         {
@@ -51,7 +62,8 @@ public partial class PropertySearchViewModel : ViewModelBase
             StatusText = "Searching...";
 
             var result = await _dump.SearchPropertiesAsync(
-                SearchQuery.Trim(),
+                trimmedQuery,
+                types: types.Length > 0 ? types : null,
                 gameOnly: GameClassesOnly);
 
             Results.Clear();
@@ -60,8 +72,9 @@ public partial class PropertySearchViewModel : ViewModelBase
                 Results.Add(m);
             }
 
+            var typeSuffix = types.Length > 0 ? $" [types: {string.Join(",", types)}]" : "";
             StatusText = $"Found {result.Total} properties in {result.ScannedClasses:N0} classes (scanned {result.ScannedObjects:N0} objects)";
-            _log.Info($"SearchProperties: '{SearchQuery}' -> {result.Total} results (classes={result.ScannedClasses}, objects={result.ScannedObjects})");
+            _log.Info($"SearchProperties: '{trimmedQuery}'{typeSuffix} -> {result.Total} results (classes={result.ScannedClasses}, objects={result.ScannedObjects})");
         }
         catch (Exception ex)
         {

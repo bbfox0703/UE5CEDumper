@@ -178,6 +178,7 @@
 
     <!-- Property Search -->
     <sys:String x:Key="str.PropertySearch.QueryHint">Property name (e.g. Health, Mana, Gold)</sys:String>
+    <sys:String x:Key="str.PropertySearch.TypeHint">Type filter (e.g. OptionalProperty)</sys:String>
     <sys:String x:Key="str.PropertySearch.Search">Search</sys:String>
     <sys:String x:Key="str.PropertySearch.GameOnly">Game classes only</sys:String>
     <sys:String x:Key="str.PropertySearch.FindInstances">Find Instances</sys:String>
@@ -234,7 +235,8 @@
     <sys:String x:Key="str.Tip.InstanceFinder.AA">Generate CE Auto Assembler script</sys:String>
 
     <!-- Tooltips: Property Search -->
-    <sys:String x:Key="str.Tip.PropertySearch.Search">Search for properties by name across all classes</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.Search">Search across all classes. Either Name or Type must be set; comma-separate multiple types.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.TypeFilter">Restrict by FProperty type (e.g. OptionalProperty, DelegateProperty). Comma-separated for OR.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.GameOnly">Show only game-specific classes (exclude engine)</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.FindInstances">Find live instances of this class</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.CopyOffset">Copy property offset to clipboard</sys:String>

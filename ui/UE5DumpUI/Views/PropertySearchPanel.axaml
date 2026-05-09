@@ -12,7 +12,13 @@
                Text="{Binding SearchQuery}"
                x:Name="SearchQueryInput"
                KeyDown="SearchQueryInput_KeyDown"
-               Width="300" Padding="4,2"/>
+               Width="260" Padding="4,2"/>
+      <TextBox PlaceholderText="{StaticResource str.PropertySearch.TypeHint}"
+               Text="{Binding TypeFilter}"
+               x:Name="TypeFilterInput"
+               KeyDown="SearchQueryInput_KeyDown"
+               ToolTip.Tip="{StaticResource str.Tip.PropertySearch.TypeFilter}"
+               Width="220" Padding="4,2"/>
       <CheckBox Content="{StaticResource str.PropertySearch.GameOnly}"
                 IsChecked="{Binding GameClassesOnly}"
                 ToolTip.Tip="{StaticResource str.Tip.PropertySearch.GameOnly}"
