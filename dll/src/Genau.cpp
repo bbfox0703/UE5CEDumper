@@ -17,6 +17,7 @@
 #include <cstring>
 #include <vector>
 #include <algorithm>  // std::sort
+#include <atomic>     // FindSparseDelegateStorage cache
 #include <chrono>     // AOBScanBatch timing
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
 #include <Psapi.h>    // EnumProcessModules
@@ -1692,6 +1693,73 @@ uintptr_t FindGWorld(const char* hintPatternId) {
     } else {
         Sein::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)");
     }
+    return result;
+}
+
+// ============================================================
+// FindSparseDelegateStorage — lazy resolver for FSparseDelegateStorage::SparseDelegates
+//
+// Called on-demand by Aura::WalkSparseDelegateBindings when the user drills
+// into a MulticastSparseDelegateProperty. NOT part of FindAll boot — most
+// sessions never touch a sparse delegate so the AOB scan would be wasted.
+//
+// Caches the result in a process-local atomic; thread-safe via double-checked
+// locking. Returns 0 if AOB scan fails (caller falls back to bIsBound flag).
+//
+// Validator: TMap header sanity. The static is a default-constructed TMap
+// whose initial state has FirstFreeIndex == -1 and AllocationFlags.MaxBits
+// == 0x80 (TInlineAllocator<4> initial). After live use either may change,
+// so the validator only checks pointer-shape sanity (readable + low bytes
+// don't look like code/heap garbage).
+// ============================================================
+static bool ValidateSparseDelegates(uintptr_t addr) {
+    if (!addr) return false;
+    // The TMap object lives in writable .data / .bss. Read the first 0x40
+    // bytes; reject if the read fails. All-zero is acceptable (storage may
+    // be empty if no sparse delegate is bound yet at scan time).
+    uintptr_t firstWord = 0;
+    if (!Macht::ReadSafe(addr, firstWord)) return false;
+    int32_t arrayMax = 0;
+    if (!Macht::ReadSafe(addr + 0x0C, arrayMax)) return false;
+    int32_t allocMaxBits = 0;
+    if (!Macht::ReadSafe(addr + 0x2C, allocMaxBits)) return false;
+    // Sanity: ArrayMax shouldn't be negative or absurdly large. MaxBits
+    // is a power of 2; default 0x80, grows by doubling.
+    if (arrayMax < 0 || arrayMax > 0x100000) return false;
+    if (allocMaxBits < 0 || allocMaxBits > 0x100000) return false;
+    return true;
+}
+
+static std::atomic<uintptr_t> s_sparseDelegatesCache{0};
+static std::atomic<bool>      s_sparseDelegatesScanned{false};
+
+uintptr_t FindSparseDelegateStorage() {
+    // Fast path: already resolved (or already failed).
+    if (s_sparseDelegatesScanned.load(std::memory_order_acquire))
+        return s_sparseDelegatesCache.load(std::memory_order_relaxed);
+
+    Sein::Info("SCAN:Sparse", "FindSparseDelegateStorage: Scanning for FSparseDelegateStorage::SparseDelegates...");
+
+    static ScanReport s_sparseReport;
+    s_sparseReport = ScanReport{};
+    s_sparseReport.targetName = "SparseDelegates";
+
+    uintptr_t result = ScanForTarget(
+        Sig::SPARSE_PATTERNS, std::size(Sig::SPARSE_PATTERNS),
+        ValidateSparseDelegates, s_sparseReport, /*tryMultiModule=*/true,
+        /*hintPatternId=*/nullptr);
+
+    LogScanReport(s_sparseReport);
+
+    if (result) {
+        Sein::Info("SCAN:Sparse", "FindSparseDelegateStorage: Found at 0x%llX",
+                   static_cast<unsigned long long>(result));
+    } else {
+        Sein::Warn("SCAN:Sparse", "FindSparseDelegateStorage: All patterns failed (non-critical, sparse drill-down disabled)");
+    }
+
+    s_sparseDelegatesCache.store(result, std::memory_order_relaxed);
+    s_sparseDelegatesScanned.store(true, std::memory_order_release);
     return result;
 }
 

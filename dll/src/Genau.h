@@ -77,6 +77,13 @@ uintptr_t FindGNames(const char* hintPatternId = nullptr);
 // hintPatternId: optional cached winning pattern ID to try first (from HintCache)
 uintptr_t FindGWorld(const char* hintPatternId = nullptr);
 
+// Lazily resolve FSparseDelegateStorage::SparseDelegates (UE 4.23+).
+// Cached for the DLL lifetime; first call scans, subsequent calls are O(1).
+// Returns 0 if no AOB pattern matched (caller should fall back to bIsBound).
+// Currently only supports UE 5.0+ (outer key is raw UObjectBase*); UE 4.23-4.27
+// uses FObjectKey and is NOT supported (caller should version-gate).
+uintptr_t FindSparseDelegateStorage();
+
 // Detect UE version from memory or PE resources
 uint32_t DetectVersion();
 
