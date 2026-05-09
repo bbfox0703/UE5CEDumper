@@ -259,6 +259,78 @@ branch (UE4.18–4.24).
 
 -----
 
+## Address Finder — Layered Lookup
+
+`Aura::FindByAddress(addr)` produces a single best UObject hit. The full
+flow descends through these strategies (high→low confidence) and reports
+the kind via `match_kind`:
+
+| match_kind | Strategy | Confidence |
+|------------|----------|-----------|
+| `exact`    | `addr` IS a UObject pointer (matches GObjects entry) | highest |
+| `contains` | `addr` ∈ [obj, obj + obj.PropertiesSize) for some GObjects entry | high |
+| `backward` | Backward 64KB memory scan finds a UObject header pattern; `addr` is past its bounds | medium — typically a `NewObject<>`'d sub-object not registered in GObjects |
+| `nearest`  | Closest GObjects entry below `addr` within 256KB; `addr` is BEYOND its PropertiesSize | low — frequently misleading, surfaced as a hint only |
+
+`Aura::FindInContainers(addr)` is a parallel container-aware scan: for
+every UObject in GObjects, walk its container fields and report any whose
+`[Data, Data + bound)` range contains `addr`.
+
+### Nested struct support
+
+The cache builder (`CollectContainersRecursive` in `Aura.cpp`) recurses
+through `StructProperty` fields up to depth 3, so nested arrays/maps/sets
+inside USTRUCT() fields are detected. Common pattern:
+
+```cpp
+USTRUCT() struct FCharStats { TArray<int32> Levels; };
+UCLASS()  class  UPlayerInfo : public UObject {
+    UPROPERTY() FCharStats Stats;
+};
+```
+
+A hit on `UPlayerInfo.Stats.Levels[3]` reports field name `"Stats.Levels"`
+with absolute offset `Stats.Offset + Levels.Offset`. Cycle protection is
+via the depth cap (no `visited` set, allowing the same struct type to be
+visited via different paths with different offsets).
+
+### Match confidence notes
+
+Each container match also carries a `note` string:
+- `""`     — solid hit (within Count, allocated slot)
+- `"slack"` — Array index ∈ [Count, Max); the slot is allocated capacity
+              but not currently in use. Memory often retains the last-
+              written value, so the match is plausible but lower confidence.
+- `"freed"` — Map/Set sparse slot is on the free list; same caveat.
+
+### Reflection limits
+
+Container scan only finds addresses inside reflected memory:
+- UObjects registered in GObjects
+- Their `UPROPERTY()`-marked container Data buffers (incl. nested)
+
+Game data stored in the following won't be found:
+- Custom allocators bypassing `FMemory` (common in Square Enix titles —
+  FF7 Rebirth Cloud HP and DQ I&II HD-2D character stats both fall here)
+- `TUniquePtr<FCustomData>` / raw `void*` C++ fields not wrapped in a
+  `UPROPERTY()` — invisible to UE reflection
+- Save-game serialization buffers (`FArchive`, `FBufferArchive`)
+- Anti-tamper shadow regions
+
+For these the right tool is CE's "Find what accesses this address" /
+pointer-scan workflow, then drill into the exposed pointer chain.
+
+### Performance
+
+| Concern | Mitigation |
+|---------|-----------|
+| Scan time on huge games (~430K UObjects) | 15s deadline (was 5s); response carries `container_scan` stats so UI can flag truncated scans and prompt retry |
+| Repeated scans | Per-class `s_classContainerCache` persists for DLL lifetime; second call typically finishes in ~70ms once cache is warm |
+| Corrupt TArray::Max projecting huge buffer span | Defensive 1M cap on Max / MaxCapacity (matches Count's existing cap) |
+| Element-count limits | 1M cap on `Count` / `MaxIndex` — well above any realistic game data (6 chars / 30 attrs / 600 items all fit comfortably) |
+
+-----
+
 ## Implementation Phases
 
 ### Phase 1 — DLL Core

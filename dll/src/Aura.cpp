@@ -1160,6 +1160,14 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 // / SetProperty) and their resolved per-element strides. Built lazily on
 // first encounter via WalkClassEx. Empty entries (classes with no usable
 // container fields) are stored so we don't re-walk them on subsequent queries.
+//
+// Nested struct support: many UE games store gameplay arrays inside a
+// USTRUCT() rather than as direct UPROPERTY() arrays of the UObject —
+// e.g. UPlayerInfo { FCharacterStats Stats; } where Stats has a TArray<int>
+// Levels member. The cache builder recurses into StructProperty fields
+// (depth-capped) and registers nested arrays/maps/sets with their absolute
+// offset (parent struct offset + child field offset) and a dotted name
+// like "Stats.Levels".
 
 enum class ContainerKind {
     Array,   // TArray.Data buffer, stride = inner element size
@@ -1168,8 +1176,8 @@ enum class ContainerKind {
 };
 
 struct ContainerCacheEntry {
-    int32_t       offset;       // Field offset within UObject
-    std::string   name;
+    int32_t       offset;       // Absolute byte offset within owner UObject
+    std::string   name;         // Dotted name (e.g. "Stats.Levels")
     std::string   innerType;    // ArrayProperty: inner; Set: elem; Map: "K → V"
     int32_t       stride;       // Bytes per element/pair within Data buffer
     ContainerKind kind;
@@ -1177,6 +1185,61 @@ struct ContainerCacheEntry {
 
 static std::unordered_map<uintptr_t, std::vector<ContainerCacheEntry>> s_classContainerCache;
 static std::mutex s_classContainerMutex;
+
+// Recursive collector — walks `structAddr` (a UClass* or UScriptStruct*)
+// and emits one ContainerCacheEntry for each ArrayProperty/MapProperty/
+// SetProperty found, INCLUDING those nested inside StructProperty fields.
+// Depth-capped to avoid pathological cyclic struct definitions.
+static void CollectContainersRecursive(
+    uintptr_t structAddr,
+    int32_t baseOffset,
+    const std::string& namePrefix,
+    std::vector<ContainerCacheEntry>& out,
+    int depth)
+{
+    // Reasonable cap: most UE games nest at most 1–2 levels (UObject →
+    // FStruct → TArray). Depth 3 covers struct-of-struct-of-struct.
+    constexpr int kMaxDepth = 3;
+    if (depth > kMaxDepth) return;
+
+    auto ci = Ubel::WalkClassEx(structAddr);
+    for (const auto& f : ci.Fields) {
+        if (!f.Address) continue;
+
+        std::string fullName = namePrefix.empty()
+            ? f.Name
+            : (namePrefix + "." + f.Name);
+        int32_t absOffset = baseOffset + f.Offset;
+
+        if (f.TypeName == "ArrayProperty") {
+            int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
+            if (es <= 0) continue;
+            out.push_back({ absOffset, fullName, f.innerType, es, ContainerKind::Array });
+        }
+        else if (f.TypeName == "SetProperty") {
+            int32_t st = Ubel::GetSetElementStride(f.Address);
+            if (st <= 0) continue;
+            out.push_back({ absOffset, fullName, f.elemType, st, ContainerKind::Set });
+        }
+        else if (f.TypeName == "MapProperty") {
+            int32_t st = Ubel::GetMapPairStride(f.Address);
+            if (st <= 0) continue;
+            std::string innerLabel = f.keyType + " → " + f.valueType;
+            out.push_back({ absOffset, fullName, innerLabel, st, ContainerKind::Map });
+        }
+        else if (f.TypeName == "StructProperty") {
+            // Descend into the nested UScriptStruct, accumulating offset
+            // and dotted name. Inner UScriptStruct address lives at the
+            // FProperty's subclass-extension offset.
+            uintptr_t innerStruct = 0;
+            if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+                && innerStruct) {
+                CollectContainersRecursive(innerStruct, absOffset, fullName,
+                                           out, depth + 1);
+            }
+        }
+    }
+}
 
 static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls) {
     {
@@ -1188,27 +1251,8 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     // Build outside the lock — WalkClassEx is non-trivial and may itself
     // touch caches. Insert under lock at the end.
     std::vector<ContainerCacheEntry> entries;
-    auto ci = Ubel::WalkClassEx(cls);
-    for (const auto& f : ci.Fields) {
-        if (!f.Address) continue;
-
-        if (f.TypeName == "ArrayProperty") {
-            int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
-            if (es <= 0) continue;
-            entries.push_back({ f.Offset, f.Name, f.innerType, es, ContainerKind::Array });
-        }
-        else if (f.TypeName == "SetProperty") {
-            int32_t st = Ubel::GetSetElementStride(f.Address);
-            if (st <= 0) continue;
-            entries.push_back({ f.Offset, f.Name, f.elemType, st, ContainerKind::Set });
-        }
-        else if (f.TypeName == "MapProperty") {
-            int32_t st = Ubel::GetMapPairStride(f.Address);
-            if (st <= 0) continue;
-            std::string innerLabel = f.keyType + " → " + f.valueType;
-            entries.push_back({ f.Offset, f.Name, innerLabel, st, ContainerKind::Map });
-        }
-    }
+    CollectContainersRecursive(cls, /*baseOffset*/ 0, /*namePrefix*/ "",
+                               entries, /*depth*/ 0);
 
     std::lock_guard<std::mutex> lk(s_classContainerMutex);
     auto [ins, _] = s_classContainerCache.emplace(cls, std::move(entries));
