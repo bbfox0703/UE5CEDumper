@@ -1023,8 +1023,9 @@ int32_t GetSetElementStride(uintptr_t fieldAddr) {
 // stride    = ComputeSetElementStride(pair_size)
 // Returns 0 when key or value size cannot be determined.
 // ============================================================
-int32_t GetMapPairStride(uintptr_t fieldAddr) {
-    if (!fieldAddr || !DynOff::bUseFProperty) return 0;
+bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out) {
+    out = {};
+    if (!fieldAddr || !DynOff::bUseFProperty) return false;
 
     // Probe KeyProp (same offset as ArrayProperty Inner) — mirrors WalkInstance.
     static const int kProbeDeltas[] = { 0, 8, 4, 0xC, -4, -8, 0x10, -0x10 };
@@ -1046,13 +1047,22 @@ int32_t GetMapPairStride(uintptr_t fieldAddr) {
 
         int32_t keySize = ResolveInnerSize(keyProp, keyTn);
         int32_t valSize = ResolveInnerSize(valueProp, valTn);
-        if (keySize <= 0 || valSize <= 0) return 0;
+        if (keySize <= 0 || valSize <= 0) return false;
 
         int32_t valOffset = Macht::ComputeMapValueOffset(keySize, valSize);
         int32_t pairSize  = valOffset + valSize;
-        return Macht::ComputeSetElementStride(pairSize);
+        out.keySize     = keySize;
+        out.valueSize   = valSize;
+        out.valueOffset = valOffset;
+        out.pairStride  = Macht::ComputeSetElementStride(pairSize);
+        return true;
     }
-    return 0;
+    return false;
+}
+
+int32_t GetMapPairStride(uintptr_t fieldAddr) {
+    MapPairLayout layout;
+    return GetMapPairLayout(fieldAddr, layout) ? layout.pairStride : 0;
 }
 
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size) {

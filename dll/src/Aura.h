@@ -177,16 +177,30 @@ struct ReferenceMatch {
     std::string ownerName;
     std::string ownerClassName;
     int32_t     fieldOffset   = 0;        // Absolute field offset within owner
-    std::string fieldName;                // Dotted path (e.g. "Stats.Equipment")
-    std::string fieldType;                // "ObjectProperty" / "ClassProperty" / "ArrayProperty"
-    std::string innerType;                // For arrays: inner element type
-    int32_t     elementIndex  = -1;       // -1 for direct field, >=0 for array element
+    std::string fieldName;                // Dotted path (e.g. "Stats.Equipment");
+                                          // Map matches append ".Key" / ".Value"
+    std::string fieldType;                // "ObjectProperty" / "ClassProperty" /
+                                          // "InterfaceProperty" / "WeakObjectProperty" /
+                                          // "SoftObjectProperty" / "SoftClassProperty" /
+                                          // "LazyObjectProperty" / "ArrayProperty" /
+                                          // "MapProperty" / "SetProperty"
+    std::string innerType;                // For Array: inner element type;
+                                          // For Set: element type;
+                                          // For Map: "<keyType> → <valueType>"
+    int32_t     elementIndex  = -1;       // -1 for direct field, >=0 for array/
+                                          // map/set element (sparse index for
+                                          // Map/Set)
 };
 
-// Find UObjects that hold a pointer to `target`. Walks every UObject's
-// ObjectProperty/ClassProperty fields (incl. nested in StructProperty,
-// depth 3) and TArray<UObject*> elements, comparing values to target.
-// Map/Set/Weak/Soft/Lazy/Interface support deferred to a later iteration.
+// Find UObjects that hold a pointer to `target`. Walks every UObject's:
+//   - ObjectProperty / ClassProperty / InterfaceProperty (8B raw pointer)
+//   - WeakObjectProperty / SoftObject{Class}Property / LazyObjectProperty
+//     (resolves embedded FWeakObjectPtr; only matches when bound to live
+//     UObject)
+//   - TArray of any of the above
+//   - TMap with Object/Class key and/or value (allocated slots only)
+//   - TSet with Object/Class element (allocated slots only)
+// Walks include fields nested inside StructProperty (depth 3).
 //
 // Has its own per-class metadata cache (separate from container cache);
 // first call primes, subsequent calls are fast.

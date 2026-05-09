@@ -15,16 +15,28 @@ public sealed class ReferenceMatch
     /// <summary>Absolute field offset within the owner UObject.</summary>
     public int FieldOffset { get; init; }
 
-    /// <summary>Dotted field path (e.g. "Stats.Equipment").</summary>
+    /// <summary>
+    /// Dotted field path (e.g. "Stats.Equipment").
+    /// Map matches append ".Key" or ".Value" so the side that held the
+    /// pointer is visible in the path (e.g. "ItemTable.Value").
+    /// </summary>
     public string FieldName { get; init; } = "";
 
-    /// <summary>"ObjectProperty" / "ClassProperty" / "ArrayProperty".</summary>
+    /// <summary>
+    /// One of: "ObjectProperty", "ClassProperty", "InterfaceProperty",
+    /// "WeakObjectProperty", "SoftObjectProperty", "SoftClassProperty",
+    /// "LazyObjectProperty", "ArrayProperty", "MapProperty", "SetProperty".
+    /// </summary>
     public string FieldType { get; init; } = "";
 
-    /// <summary>For arrays: inner element type ("ObjectProperty" / "ClassProperty"). Empty otherwise.</summary>
+    /// <summary>
+    /// Element type for Array / Set; "<keyType> → <valueType>" for Map.
+    /// Empty for direct (non-container) fields.
+    /// </summary>
     public string InnerType { get; init; } = "";
 
-    /// <summary>-1 for direct field; >=0 for array element index.</summary>
+    /// <summary>-1 for direct field; >=0 for array/map/set element index
+    /// (sparse-array index for Map/Set).</summary>
     public int ElementIndex { get; init; } = -1;
 
     /// <summary>Display path: "OwnerName.FieldName" or "OwnerName.FieldName[N]".</summary>

@@ -1426,17 +1426,41 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
 // === Reverse Reference Search ===
 //
 // Per-class cache of pointer-shaped fields and Object array fields.
-// Built lazily, mirrors the container cache pattern. ObjectProperty and
-// ClassProperty are stored together (both 8-byte UObject*); WeakObject /
-// SoftObject / LazyObject / Interface are deferred to later iterations.
+// Built lazily, mirrors the container cache pattern.
+//
+// v2 (this revision) covers:
+//   - Direct ObjectProperty / ClassProperty / InterfaceProperty
+//     (8-byte UObject* read directly at field+0)
+//   - Direct WeakObjectProperty / SoftObjectProperty / SoftClassProperty /
+//     LazyObjectProperty (FWeakObjectPtr at field+0 → resolved via
+//     ResolveWeakObjectPtr; only matches when the soft/lazy ref is
+//     currently bound to a live UObject)
+//   - TArray<UObject*> / TArray<UClass*> (8-byte stride)
+//   - TArray<FScriptInterface> (16-byte stride, ptr at elem+0)
+//   - TArray<FWeakObjectPtr> / TArray<FSoftObjectPtr> /
+//     TArray<FLazyObjectPtr> (variable stride, FWeakObjectPtr at elem+0)
+//   - TMap<UObject*,V> / TMap<K,UObject*> (TSparseArray walk, allocated
+//     slots only — frees aren't real references)
+//   - TSet<UObject*> (TSparseArray walk, allocated slots only)
 //
 // Each entry's `offset` is absolute within the owner UObject (parent
-// struct offsets pre-summed for nested fields).
+// struct offsets pre-summed for nested fields, depth-capped at 3).
 
 struct DirectPointerEntry {
     int32_t     offset;
     std::string name;
-    std::string typeName;     // "ObjectProperty" / "ClassProperty"
+    std::string typeName;     // "ObjectProperty" / "ClassProperty" / "InterfaceProperty"
+};
+
+// FWeakObjectPtr-shaped single field: { int32 ObjectIndex, int32 Serial }
+// at field+0. Soft/Lazy place this same struct at the head of a richer
+// envelope (FSoftObjectPath / FGuid follows) but the resolution path is
+// identical — the embedded weak ptr is what reveals the live UObject.
+struct WeakLikePointerEntry {
+    int32_t     offset;
+    std::string name;
+    std::string typeName;     // "WeakObjectProperty" / "SoftObjectProperty"
+                              // / "SoftClassProperty" / "LazyObjectProperty"
 };
 
 struct ObjectArrayEntry {
@@ -1445,17 +1469,74 @@ struct ObjectArrayEntry {
     std::string innerType;    // "ObjectProperty" / "ClassProperty"
 };
 
-struct ClassReferenceMeta {
-    std::vector<DirectPointerEntry> directPointers;
-    std::vector<ObjectArrayEntry>   objectArrays;
+// TArray<FScriptInterface>: 16-byte elements, UObject* at elem+0.
+struct InterfaceArrayEntry {
+    int32_t     offset;
+    std::string name;
 };
+
+// TArray<FWeakObjectPtr>/<FSoftObjectPtr>/<FLazyObjectPtr>: variable
+// per-element stride, FWeakObjectPtr at elem+0 in every case.
+struct WeakLikeArrayEntry {
+    int32_t     offset;
+    std::string name;
+    std::string innerType;    // Same vocabulary as WeakLikePointerEntry::typeName
+    int32_t     elemStride;   // From Ubel::GetArrayInnerElemSize
+};
+
+// TMap with at least one Object/Class side. Both flags can be true for a
+// TMap<UObject*, UObject*> — scan emits one match per matching side.
+struct ObjectMapEntry {
+    int32_t     offset;
+    std::string name;
+    int32_t     pairStride;
+    int32_t     valueOffset;  // Within each pair
+    bool        keyIsObject;
+    bool        valueIsObject;
+    std::string keyTypeName;    // "ObjectProperty" / "ClassProperty" (for matched side)
+    std::string valueTypeName;
+    std::string innerLabel;     // "<keyType> → <valueType>" for UI
+};
+
+// TSet with Object/Class element type.
+struct ObjectSetEntry {
+    int32_t     offset;
+    std::string name;
+    int32_t     elemStride;
+    std::string elemTypeName;   // "ObjectProperty" / "ClassProperty"
+};
+
+struct ClassReferenceMeta {
+    std::vector<DirectPointerEntry>     directPointers;
+    std::vector<WeakLikePointerEntry>   weakLikePointers;
+    std::vector<ObjectArrayEntry>       objectArrays;
+    std::vector<InterfaceArrayEntry>    interfaceArrays;
+    std::vector<WeakLikeArrayEntry>     weakLikeArrays;
+    std::vector<ObjectMapEntry>         objectMaps;
+    std::vector<ObjectSetEntry>         objectSets;
+
+    bool empty() const {
+        return directPointers.empty() && weakLikePointers.empty()
+            && objectArrays.empty() && interfaceArrays.empty()
+            && weakLikeArrays.empty() && objectMaps.empty()
+            && objectSets.empty();
+    }
+};
+
+static bool IsWeakLikeProp(const std::string& tn) {
+    return tn == "WeakObjectProperty" || tn == "SoftObjectProperty"
+        || tn == "SoftClassProperty"  || tn == "LazyObjectProperty";
+}
+static bool IsDirectObjectProp(const std::string& tn) {
+    return tn == "ObjectProperty" || tn == "ClassProperty";
+}
 
 static std::unordered_map<uintptr_t, ClassReferenceMeta> s_classRefCache;
 static std::mutex s_classRefMutex;
 
 // Recursive walker — descends through StructProperty (depth-capped) and
-// emits one entry per ObjectProperty/ClassProperty field and per
-// ArrayProperty<Object>. Mirrors CollectContainersRecursive's structure.
+// emits one cache entry for each pointer-shaped field, pointer-array
+// field, ObjectMap, or ObjectSet found. Mirrors CollectContainersRecursive.
 static void CollectRefMetaRecursive(uintptr_t structAddr,
                                      int32_t baseOffset,
                                      const std::string& namePrefix,
@@ -1474,13 +1555,65 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             : (namePrefix + "." + f.Name);
         int32_t absOffset = baseOffset + f.Offset;
 
-        if (f.TypeName == "ObjectProperty" || f.TypeName == "ClassProperty") {
+        // --- Single pointer fields ---
+        if (IsDirectObjectProp(f.TypeName) || f.TypeName == "InterfaceProperty") {
+            // All three layouts hold a UObject* at field+0 (FScriptInterface
+            // also has ifacePtr at +8, but we ignore that — only objPtr is
+            // the resolvable reference).
             out.directPointers.push_back({ absOffset, fullName, f.TypeName });
         }
-        else if (f.TypeName == "ArrayProperty"
-            && (f.innerType == "ObjectProperty" || f.innerType == "ClassProperty")) {
-            out.objectArrays.push_back({ absOffset, fullName, f.innerType });
+        else if (IsWeakLikeProp(f.TypeName)) {
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
         }
+        // --- Array of pointer-shaped types ---
+        else if (f.TypeName == "ArrayProperty") {
+            if (IsDirectObjectProp(f.innerType)) {
+                out.objectArrays.push_back({ absOffset, fullName, f.innerType });
+            }
+            else if (f.innerType == "InterfaceProperty") {
+                out.interfaceArrays.push_back({ absOffset, fullName });
+            }
+            else if (IsWeakLikeProp(f.innerType)) {
+                int32_t es = Ubel::GetArrayInnerElemSize(f.Address);
+                if (es > 0) {
+                    out.weakLikeArrays.push_back({ absOffset, fullName,
+                                                    f.innerType, es });
+                }
+            }
+        }
+        // --- Map with pointer-shaped key and/or value ---
+        else if (f.TypeName == "MapProperty") {
+            bool keyIsObj = IsDirectObjectProp(f.keyType);
+            bool valIsObj = IsDirectObjectProp(f.valueType);
+            if (keyIsObj || valIsObj) {
+                Ubel::MapPairLayout layout;
+                if (Ubel::GetMapPairLayout(f.Address, layout)
+                    && layout.pairStride > 0) {
+                    ObjectMapEntry e;
+                    e.offset        = absOffset;
+                    e.name          = fullName;
+                    e.pairStride    = layout.pairStride;
+                    e.valueOffset   = layout.valueOffset;
+                    e.keyIsObject   = keyIsObj;
+                    e.valueIsObject = valIsObj;
+                    e.keyTypeName   = f.keyType;
+                    e.valueTypeName = f.valueType;
+                    e.innerLabel    = f.keyType + " → " + f.valueType;
+                    out.objectMaps.push_back(std::move(e));
+                }
+            }
+        }
+        // --- Set with pointer-shaped element ---
+        else if (f.TypeName == "SetProperty") {
+            if (IsDirectObjectProp(f.elemType)) {
+                int32_t st = Ubel::GetSetElementStride(f.Address);
+                if (st > 0) {
+                    out.objectSets.push_back({ absOffset, fullName,
+                                                st, f.elemType });
+                }
+            }
+        }
+        // --- Recurse into nested structs ---
         else if (f.TypeName == "StructProperty") {
             uintptr_t innerStruct = 0;
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
@@ -1518,6 +1651,16 @@ static void FillRefMatchOwner(ReferenceMatch& m, uintptr_t obj, int32_t idx, uin
         m.ownerClassName = Serie::GetString(clsNameIdx);
 }
 
+// Resolve FWeakObjectPtr at `addr` (8 bytes: int32 idx + int32 serial) to
+// a live UObject* — same logic Ubel uses, inlined here so the scan loop
+// stays self-contained.
+static uintptr_t ResolveWeakAt(uintptr_t addr) {
+    int32_t objIdx = 0, serial = 0;
+    if (!Macht::ReadSafe(addr,     objIdx))  return 0;
+    if (!Macht::ReadSafe(addr + 4, serial))  return 0;
+    return Ubel::ResolveWeakObjectPtr(objIdx, serial);
+}
+
 std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                                                      int32_t maxResults,
                                                      ContainerScanStats* stats)
@@ -1543,6 +1686,11 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     int32_t scanned = 0;
     bool deadlineHit = false;
 
+    auto pushMatch = [&](ReferenceMatch&& m) -> bool {
+        matches.push_back(std::move(m));
+        return static_cast<int>(matches.size()) >= maxResults;
+    };
+
     for (int32_t i = 0; i < count && static_cast<int>(matches.size()) < maxResults; ++i) {
         if ((i & 0x3FF) == 0) {
             auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1563,10 +1711,12 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
 
         const auto& meta = GetClassRefMeta(cls);
-        if (meta.directPointers.empty() && meta.objectArrays.empty()) continue;
+        if (meta.empty()) continue;
         ++classesPrimed;
 
-        // --- Direct pointer fields ---
+        bool hitMaxThisObj = false;
+
+        // --- Direct ObjectProperty / ClassProperty / InterfaceProperty ---
         for (const auto& pfe : meta.directPointers) {
             uintptr_t ptr = 0;
             if (!Macht::ReadSafe(obj + pfe.offset, ptr)) continue;
@@ -1584,23 +1734,42 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                      pfe.typeName.c_str(),
                      static_cast<unsigned long long>(obj),
                      m.ownerClassName.c_str());
-            matches.push_back(std::move(m));
-            if (static_cast<int>(matches.size()) >= maxResults) break;
+            if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
         }
-        if (static_cast<int>(matches.size()) >= maxResults) break;
+        if (hitMaxThisObj) break;
 
-        // --- TArray<UObject*> elements ---
+        // --- Weak/Soft/Lazy single fields (FWeakObjectPtr at field+0) ---
+        for (const auto& wpe : meta.weakLikePointers) {
+            uintptr_t resolved = ResolveWeakAt(obj + wpe.offset);
+            if (resolved != target) continue;
+
+            ReferenceMatch m;
+            FillRefMatchOwner(m, obj, i, cls);
+            m.fieldOffset  = wpe.offset;
+            m.fieldName    = wpe.name;
+            m.fieldType    = wpe.typeName;
+            m.elementIndex = -1;
+
+            LOG_INFO("FindReferencesToUObject: hit %s.%s (%s, owner=0x%llX, %s)",
+                     m.ownerName.c_str(), m.fieldName.c_str(),
+                     wpe.typeName.c_str(),
+                     static_cast<unsigned long long>(obj),
+                     m.ownerClassName.c_str());
+            if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TArray<UObject*> / TArray<UClass*> (8-byte stride) ---
         for (const auto& oae : meta.objectArrays) {
             Macht::TArrayView arr;
             if (!Macht::ReadTArray(obj + oae.offset, arr)) continue;
             if (arr.Count <= 0 || !arr.Data) continue;
 
             // Bulk-read the TArray's data buffer once and scan in-memory.
-            // Object/Class arrays are always 8-byte stride.
-            constexpr int32_t kArrayElemBytes = 8;
+            constexpr int32_t kElemBytes = 8;
             std::vector<uintptr_t> buf(arr.Count, 0);
             if (!Macht::ReadBytesSafe(arr.Data, buf.data(),
-                                       arr.Count * kArrayElemBytes))
+                                       arr.Count * kElemBytes))
                 continue;
 
             for (int32_t e = 0; e < arr.Count; ++e) {
@@ -1619,11 +1788,155 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                          oae.innerType.c_str(),
                          static_cast<unsigned long long>(obj),
                          m.ownerClassName.c_str());
-                matches.push_back(std::move(m));
-                if (static_cast<int>(matches.size()) >= maxResults) break;
+                if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
             }
-            if (static_cast<int>(matches.size()) >= maxResults) break;
+            if (hitMaxThisObj) break;
         }
+        if (hitMaxThisObj) break;
+
+        // --- TArray<FScriptInterface> (16-byte stride, ptr at elem+0) ---
+        for (const auto& iae : meta.interfaceArrays) {
+            Macht::TArrayView arr;
+            if (!Macht::ReadTArray(obj + iae.offset, arr)) continue;
+            if (arr.Count <= 0 || !arr.Data) continue;
+
+            constexpr int32_t kElemBytes = 16;
+            for (int32_t e = 0; e < arr.Count; ++e) {
+                uintptr_t ptr = 0;
+                if (!Macht::ReadSafe(arr.Data + static_cast<int64_t>(e) * kElemBytes, ptr))
+                    continue;
+                if (ptr != target) continue;
+
+                ReferenceMatch m;
+                FillRefMatchOwner(m, obj, i, cls);
+                m.fieldOffset  = iae.offset;
+                m.fieldName    = iae.name;
+                m.fieldType    = "ArrayProperty";
+                m.innerType    = "InterfaceProperty";
+                m.elementIndex = e;
+
+                LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] (Array<InterfaceProperty>, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(), e,
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TArray<FWeak/Soft/Lazy ObjectPtr> (FWeakObjectPtr at elem+0) ---
+        for (const auto& wae : meta.weakLikeArrays) {
+            Macht::TArrayView arr;
+            if (!Macht::ReadTArray(obj + wae.offset, arr)) continue;
+            if (arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
+
+            for (int32_t e = 0; e < arr.Count; ++e) {
+                uintptr_t resolved = ResolveWeakAt(
+                    arr.Data + static_cast<int64_t>(e) * wae.elemStride);
+                if (resolved != target) continue;
+
+                ReferenceMatch m;
+                FillRefMatchOwner(m, obj, i, cls);
+                m.fieldOffset  = wae.offset;
+                m.fieldName    = wae.name;
+                m.fieldType    = "ArrayProperty";
+                m.innerType    = wae.innerType;
+                m.elementIndex = e;
+
+                LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] (Array<%s>, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(), e,
+                         wae.innerType.c_str(),
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TMap<UObject*, V> / TMap<K, UObject*> (allocated slots only) ---
+        for (const auto& ome : meta.objectMaps) {
+            Macht::TSparseArrayView sa;
+            if (!Macht::ReadTSparseArray(obj + ome.offset, sa)) continue;
+            if (sa.MaxIndex <= 0 || !sa.Data || ome.pairStride <= 0) continue;
+
+            for (int32_t e = 0; e < sa.MaxIndex; ++e) {
+                if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
+                uintptr_t pair = sa.Data + static_cast<int64_t>(e) * ome.pairStride;
+
+                if (ome.keyIsObject) {
+                    uintptr_t kp = 0;
+                    if (Macht::ReadSafe(pair, kp) && kp == target) {
+                        ReferenceMatch m;
+                        FillRefMatchOwner(m, obj, i, cls);
+                        m.fieldOffset  = ome.offset;
+                        m.fieldName    = ome.name + ".Key";
+                        m.fieldType    = "MapProperty";
+                        m.innerType    = ome.innerLabel;
+                        m.elementIndex = e;
+                        LOG_INFO("FindReferencesToUObject: hit %s.%s.Key[%d] (Map<%s>, owner=0x%llX, %s)",
+                                 m.ownerName.c_str(), ome.name.c_str(), e,
+                                 ome.innerLabel.c_str(),
+                                 static_cast<unsigned long long>(obj),
+                                 m.ownerClassName.c_str());
+                        if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+                    }
+                }
+                if (ome.valueIsObject) {
+                    uintptr_t vp = 0;
+                    if (Macht::ReadSafe(pair + ome.valueOffset, vp) && vp == target) {
+                        ReferenceMatch m;
+                        FillRefMatchOwner(m, obj, i, cls);
+                        m.fieldOffset  = ome.offset;
+                        m.fieldName    = ome.name + ".Value";
+                        m.fieldType    = "MapProperty";
+                        m.innerType    = ome.innerLabel;
+                        m.elementIndex = e;
+                        LOG_INFO("FindReferencesToUObject: hit %s.%s.Value[%d] (Map<%s>, owner=0x%llX, %s)",
+                                 m.ownerName.c_str(), ome.name.c_str(), e,
+                                 ome.innerLabel.c_str(),
+                                 static_cast<unsigned long long>(obj),
+                                 m.ownerClassName.c_str());
+                        if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+                    }
+                }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
+
+        // --- TSet<UObject*> (allocated slots only) ---
+        for (const auto& ose : meta.objectSets) {
+            Macht::TSparseArrayView sa;
+            if (!Macht::ReadTSparseArray(obj + ose.offset, sa)) continue;
+            if (sa.MaxIndex <= 0 || !sa.Data || ose.elemStride <= 0) continue;
+
+            for (int32_t e = 0; e < sa.MaxIndex; ++e) {
+                if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
+                uintptr_t elem = sa.Data + static_cast<int64_t>(e) * ose.elemStride;
+                uintptr_t ptr = 0;
+                if (!Macht::ReadSafe(elem, ptr)) continue;
+                if (ptr != target) continue;
+
+                ReferenceMatch m;
+                FillRefMatchOwner(m, obj, i, cls);
+                m.fieldOffset  = ose.offset;
+                m.fieldName    = ose.name;
+                m.fieldType    = "SetProperty";
+                m.innerType    = ose.elemTypeName;
+                m.elementIndex = e;
+
+                LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] (Set<%s>, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(), e,
+                         ose.elemTypeName.c_str(),
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                if (pushMatch(std::move(m))) { hitMaxThisObj = true; break; }
+            }
+            if (hitMaxThisObj) break;
+        }
+        if (hitMaxThisObj) break;
     }
 
     auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(

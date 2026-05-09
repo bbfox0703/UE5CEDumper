@@ -100,6 +100,16 @@ int32_t GetSetElementStride(uintptr_t fieldAddr);
 // Returns 0 when key or value size is undetermined.
 int32_t GetMapPairStride(uintptr_t fieldAddr);
 
+// Full TMap pair layout — used by reverse-reference scan to extract the
+// pointer side(s) of a TMap<K, V> when either is an Object/Class property.
+struct MapPairLayout {
+    int32_t keySize     = 0;
+    int32_t valueSize   = 0;
+    int32_t valueOffset = 0;  // ComputeMapValueOffset(keySize, valueSize)
+    int32_t pairStride  = 0;  // ComputeSetElementStride(valueOffset + valueSize)
+};
+bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out);
+
 // Walk all UFunctions of a UClass.
 // Iterates the function chain, resolving parameters and return type.
 std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr);
