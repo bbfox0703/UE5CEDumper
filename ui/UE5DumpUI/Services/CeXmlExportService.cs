@@ -98,6 +98,12 @@ public static class CeXmlExportService
     /// (CsxExportService.ResolvePointerInstancesAsync). The result is keyed by PtrAddress
     /// so the emit-time lookup is O(1) per field.
     ///
+    /// Cascades StructProperty resolution into <paramref name="resolvedStructs"/> for
+    /// every drilled target's fields too — without that, drilled children with
+    /// StructProperty (e.g. <c>PrimaryComponentTick (ActorComponentTickFunction)</c>
+    /// inside a UComponent) would render as empty GroupHeader placeholders even
+    /// though the user asked for full drill-down.
+    ///
     /// Recurses into resolved targets up to <paramref name="depth"/>; uses a
     /// shared visited set for cycle detection. Returns empty when depth &lt;= 0.
     /// </summary>
@@ -105,13 +111,15 @@ public static class CeXmlExportService
         IDumpService dump,
         IReadOnlyList<LiveFieldValue> fields,
         int depth,
-        int arrayLimit = 64)
+        int arrayLimit = 64,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs = null)
     {
         var resolved = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
         if (depth <= 0) return resolved;
 
         var visited = new HashSet<string>(StringComparer.Ordinal);
-        await ResolvePointerInstancesRecursiveAsync(dump, fields, resolved, depth, arrayLimit, visited);
+        await ResolvePointerInstancesRecursiveAsync(
+            dump, fields, resolved, depth, arrayLimit, visited, resolvedStructs);
         return resolved;
     }
 
@@ -121,7 +129,8 @@ public static class CeXmlExportService
         Dictionary<string, List<LiveFieldValue>> resolved,
         int remainingDepth,
         int arrayLimit,
-        HashSet<string> visited)
+        HashSet<string> visited,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs)
     {
         if (remainingDepth <= 0) return;
 
@@ -138,9 +147,20 @@ public static class CeXmlExportService
                 if (result.Fields.Count > 0)
                 {
                     resolved[field.PtrAddress] = result.Fields;
+
+                    // Cascade struct resolution so the drilled target's
+                    // StructProperty children expand to real sub-fields,
+                    // not empty GroupHeader placeholders.
+                    if (resolvedStructs != null)
+                    {
+                        await ResolveStructFieldsIntoAsync(
+                            dump, result.Fields, resolvedStructs, arrayLimit);
+                    }
+
                     // Recurse one level deeper for nested pointers in the resolved target
                     await ResolvePointerInstancesRecursiveAsync(
-                        dump, result.Fields, resolved, remainingDepth - 1, arrayLimit, visited);
+                        dump, result.Fields, resolved, remainingDepth - 1,
+                        arrayLimit, visited, resolvedStructs);
                 }
             }
             catch
@@ -159,35 +179,65 @@ public static class CeXmlExportService
         "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty" or
         "InterfaceProperty";
 
-    public static async Task<Dictionary<int, List<LiveFieldValue>>> ResolveStructFieldsAsync(
+    /// <summary>
+    /// Pre-resolve all StructProperty fields in <paramref name="fields"/> by walking
+    /// each one's inner UScriptStruct via the DLL.
+    ///
+    /// Result is keyed by <see cref="LiveFieldValue.StructDataAddr"/> (the absolute
+    /// memory address of the struct data) — NOT by field.Offset — so the same
+    /// dictionary can hold struct fields from multiple drilled-pointer instances
+    /// without offset-based key collisions (e.g. two different objects each have
+    /// a StructProperty at offset 0x30, but their StructDataAddr differs).
+    /// </summary>
+    public static async Task<Dictionary<string, List<LiveFieldValue>>> ResolveStructFieldsAsync(
         IDumpService dump, IReadOnlyList<LiveFieldValue> fields, int arrayLimit = 64)
     {
-        var result = new Dictionary<int, List<LiveFieldValue>>();
+        var result = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
+        await ResolveStructFieldsIntoAsync(dump, fields, result, arrayLimit);
+        return result;
+    }
 
+    /// <summary>
+    /// Walk <paramref name="fields"/>'s StructProperty entries and add their
+    /// resolved sub-fields into <paramref name="resolved"/> (keyed by
+    /// StructDataAddr). Used both for top-level resolution and for cascading
+    /// into drilled pointer targets — letting one dict cover the whole tree.
+    /// </summary>
+    private static async Task ResolveStructFieldsIntoAsync(
+        IDumpService dump,
+        IReadOnlyList<LiveFieldValue> fields,
+        Dictionary<string, List<LiveFieldValue>> resolved,
+        int arrayLimit)
+    {
         foreach (var field in fields)
         {
-            if (field.TypeName != "StructProperty"
+            // Both StructProperty and OptionalProperty<Struct> have the same
+            // {StructClassAddr, StructDataAddr, StructTypeName} triple stamped
+            // by the walker when the value is set, so the resolver treats
+            // them uniformly — the emit-time branch decides how to render.
+            var isStruct = field.TypeName == "StructProperty"
+                        || field.TypeName == "OptionalProperty";
+            if (!isStruct
                 || string.IsNullOrEmpty(field.StructClassAddr)
                 || string.IsNullOrEmpty(field.StructDataAddr)
                 || field.StructDataAddr == "0x0")
                 continue;
+            if (resolved.ContainsKey(field.StructDataAddr)) continue;
 
-            var resolved = new List<LiveFieldValue>();
+            var subResolved = new List<LiveFieldValue>();
             try
             {
                 await ResolveStructRecursiveAsync(dump, field.StructDataAddr, field.StructClassAddr,
-                    "", 0, resolved, 0, arrayLimit);
+                    "", 0, subResolved, 0, arrayLimit);
             }
             catch
             {
                 // If resolution fails (pipe error, etc.), leave empty — will fall back to placeholder
             }
 
-            if (resolved.Count > 0)
-                result[field.Offset] = resolved;
+            if (subResolved.Count > 0)
+                resolved[field.StructDataAddr] = subResolved;
         }
-
-        return result;
     }
 
     private static async Task ResolveStructRecursiveAsync(
@@ -297,7 +347,7 @@ public static class CeXmlExportService
         string rootName,
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         IReadOnlyList<LiveFieldValue> currentFields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
         int maxDropDownEntries = 512,
         Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
@@ -378,7 +428,7 @@ public static class CeXmlExportService
         string rootName,
         string className,
         IReadOnlyList<LiveFieldValue> fields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
         int maxDropDownEntries = 512,
         Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
@@ -451,7 +501,7 @@ public static class CeXmlExportService
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         IReadOnlyList<LiveFieldValue> currentFields,
         string aob, int aobPos, int aobLen, string moduleName,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
         int maxDropDownEntries = 512,
         Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
@@ -706,15 +756,19 @@ public static class CeXmlExportService
     /// </summary>
     private static void EmitFields(StringBuilder sb, string indent,
         IReadOnlyList<LiveFieldValue> fields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs,
         Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         foreach (var field in fields)
         {
-            // Check if this StructProperty has pre-resolved children
+            // Check if this StructProperty has pre-resolved children. Key is
+            // StructDataAddr (absolute address) — unique across instances, so
+            // the same dict can serve nested struct fields inside drilled
+            // pointer targets without offset-collision.
             if (field.TypeName == "StructProperty"
                 && resolvedStructs != null
-                && resolvedStructs.TryGetValue(field.Offset, out var structChildren)
+                && !string.IsNullOrEmpty(field.StructDataAddr)
+                && resolvedStructs.TryGetValue(field.StructDataAddr, out var structChildren)
                 && structChildren.Count > 0)
             {
                 EmitResolvedStruct(sb, indent, field, structChildren);
@@ -737,6 +791,37 @@ public static class CeXmlExportService
                 && ptrChildren.Count > 0)
             {
                 EmitDrilledPointer(sb, indent, field, ptrChildren, resolvedStructs, resolvedInstances);
+                continue;
+            }
+
+            // OptionalProperty: TOptional<T> wraps an inner value at field+0.
+            // - TOptional<Struct>: walker stamps StructDataAddr/StructClassAddr
+            //   when set, so we can render the struct sub-fields inline (no
+            //   pointer dereference; struct lives directly at field+0).
+            // - All other inner shapes (scalar / pointer / weak / etc): emit
+            //   as a flat 8-byte hex leaf so the user has a watchable address
+            //   for the value slot. The trailing bIsSet byte (when present)
+            //   isn't surfaced separately — UE intrusively encodes it for
+            //   FString / FName / FText / pointer types, and the byte's
+            //   location for non-intrusive scalars depends on inner T size
+            //   that's not exposed to the C# emitter.
+            if (field.TypeName == "OptionalProperty")
+            {
+                if (resolvedStructs != null
+                    && !string.IsNullOrEmpty(field.StructDataAddr)
+                    && resolvedStructs.TryGetValue(field.StructDataAddr, out var optStructChildren)
+                    && optStructChildren.Count > 0)
+                {
+                    EmitResolvedStruct(sb, indent, field, optStructChildren);
+                }
+                else
+                {
+                    // Flat leaf — at minimum CE shows the first 8 bytes of
+                    // the optional slot so the user can poke at the value.
+                    EmitLeaf(sb, indent, field.Name,
+                        new CeFieldInfo("8 Bytes", ShowAsHex: true),
+                        $"+{field.Offset:X}", null);
+                }
                 continue;
             }
 
@@ -851,7 +936,7 @@ public static class CeXmlExportService
     private static void EmitDrilledPointer(StringBuilder sb, string indent,
         LiveFieldValue field,
         List<LiveFieldValue> children,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>>? resolvedStructs,
         Dictionary<string, List<LiveFieldValue>> resolvedInstances)
     {
         // Description: include the resolved class name when known so the user

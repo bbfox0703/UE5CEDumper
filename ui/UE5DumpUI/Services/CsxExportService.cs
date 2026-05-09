@@ -96,7 +96,7 @@ public static class CsxExportService
     private static void EmitStructPropertyFlattened(
         StringBuilder sb,
         LiveFieldValue structField,
-        Dictionary<int, List<LiveFieldValue>> resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>> resolvedStructs,
         Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null,
         int drilldownDepth = 0)
     {
@@ -104,7 +104,12 @@ public static class CsxExportService
             ? structField.StructTypeName
             : structField.Name;
 
-        if (resolvedStructs.TryGetValue(structField.Offset, out var innerFields) && innerFields.Count > 0)
+        // Lookup by StructDataAddr (matches CeXmlExportService.ResolveStructFieldsAsync's
+        // string-keyed result — unique across instances so the same dict can serve
+        // nested struct fields inside drilled targets).
+        if (!string.IsNullOrEmpty(structField.StructDataAddr)
+            && resolvedStructs.TryGetValue(structField.StructDataAddr, out var innerFields)
+            && innerFields.Count > 0)
         {
             foreach (var inner in innerFields)
             {

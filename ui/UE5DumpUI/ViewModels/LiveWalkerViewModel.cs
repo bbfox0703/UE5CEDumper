@@ -1458,7 +1458,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 }
             }
 
-            // Pre-resolve StructProperty inner fields via DLL
+            // Pre-resolve StructProperty inner fields via DLL (top-level only at this stage —
+            // the pointer drill-down step below cascades struct resolution into each
+            // drilled target so nested StructProperty fields also expand).
             StatusText = CsxDrilldownDepth > 0
                 ? "Resolving struct + pointer fields..."
                 : "Resolving struct fields...";
@@ -1467,10 +1469,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             // Pointer drill-down: walk ObjectProperty / Class / Weak / Soft / Lazy /
             // Interface targets so the emitter can drop GroupHeader+Offsets=[0] children
-            // in for each pointer leaf. Depth comes from the existing toolbar slider
-            // (originally CSX-only); empty dict when depth=0.
+            // in for each pointer leaf. Pass resolvedStructs so the resolver also
+            // walks struct fields inside each drilled target — without that,
+            // drilled children with StructProperty render as empty placeholders.
             var resolvedInstances = await CeXmlExportService.ResolvePointerInstancesAsync(
-                _dump, fieldsForXml, depth: CsxDrilldownDepth, arrayLimit: ArrayLimit);
+                _dump, fieldsForXml, depth: CsxDrilldownDepth, arrayLimit: ArrayLimit,
+                resolvedStructs: resolvedStructs);
 
             var rootBc = breadcrumbsForXml[0];
 
@@ -1632,8 +1636,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             // Pointer drill-down for the selected field (and its target's nested
             // pointers) up to CsxDrilldownDepth — same toolbar slider used by CSX.
+            // Cascades struct resolution into each drilled target's fields so
+            // nested StructProperty children expand too.
             var resolvedInstances = await CeXmlExportService.ResolvePointerInstancesAsync(
-                _dump, singleFieldList, depth: CsxDrilldownDepth, arrayLimit: ArrayLimit);
+                _dump, singleFieldList, depth: CsxDrilldownDepth, arrayLimit: ArrayLimit,
+                resolvedStructs: resolvedStructs);
 
             var rootBc = breadcrumbsForXml[0];
 

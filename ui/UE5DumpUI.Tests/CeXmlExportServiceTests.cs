@@ -283,9 +283,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x20] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "BaseValue", TypeName = "FloatProperty", Offset = 0x8, Size = 4 },
                 new LiveFieldValue { Name = "CurrentValue", TypeName = "FloatProperty", Offset = 0xC, Size = 4 },
@@ -319,9 +319,9 @@ public class CeXmlExportServiceTests
         };
 
         // Flattened: FTransform has Location (FVector) with X, Y, Z
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x100] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "Location.X", TypeName = "FloatProperty", Offset = 0x0, Size = 4 },
                 new LiveFieldValue { Name = "Location.Y", TypeName = "FloatProperty", Offset = 0x4, Size = 4 },
@@ -354,9 +354,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x50] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "bIsActive", TypeName = "BoolProperty", Offset = 0x0, Size = 1, BoolBitIndex = 0 },
                 new LiveFieldValue { Name = "bIsVisible", TypeName = "BoolProperty", Offset = 0x0, Size = 1, BoolBitIndex = 1 },
@@ -388,9 +388,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x30] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "Value", TypeName = "IntProperty", Offset = 0x0, Size = 4 },
                 new LiveFieldValue
@@ -660,6 +660,139 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
+    public void GenerateInstanceXml_DrilledPointer_NestedStructProperty_ExpandsViaResolvedStructsCascade()
+    {
+        // Reproduces the build-541 regression: drilling into ScalabilityModifiers
+        // (ObjectProperty -> MapScalabilityModifierComponent) the inner
+        // PrimaryComponentTick (StructProperty) used to render as an empty
+        // GroupHeader placeholder because resolvedStructs was keyed by Offset
+        // and only built for the root instance's struct fields. With the
+        // cascade fix, struct fields inside drilled targets share the same
+        // dict (keyed by StructDataAddr) and expand to real sub-fields.
+        const string ptrAddr = "0x7FF453509278";
+        const string structDataAddr = "0x7FF4535092A8"; // PrimaryComponentTick within the target
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ScalabilityModifiers", TypeName = "ObjectProperty",
+                Offset = 0x2C8, Size = 8,
+                PtrAddress = ptrAddr,
+                PtrClassName = "MapScalabilityModifierComponent",
+            },
+        };
+
+        // Drilled target's children include a StructProperty
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [ptrAddr] = new()
+            {
+                new LiveFieldValue
+                {
+                    Name = "PrimaryComponentTick", TypeName = "StructProperty",
+                    Offset = 0x30, Size = 0x30,
+                    StructDataAddr = structDataAddr,
+                    StructClassAddr = "0xDEADBEEF",
+                    StructTypeName = "ActorComponentTickFunction",
+                },
+            },
+        };
+
+        // resolvedStructs has the cascaded entry for the inner StructProperty.
+        // Without this, the StructProperty would render as a placeholder.
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [structDataAddr] = new()
+            {
+                new LiveFieldValue { Name = "TickGroup", TypeName = "ByteProperty", Offset = 0x8, Size = 1 },
+                new LiveFieldValue { Name = "TickInterval", TypeName = "FloatProperty", Offset = 0xC, Size = 4 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedStructs: resolvedStructs,
+            resolvedInstances: resolvedInstances);
+
+        // Drilled pointer group exists
+        Assert.Contains("ScalabilityModifiers (MapScalabilityModifierComponent)", xml);
+        // Inner struct group exists with the struct type name in its description
+        Assert.Contains("PrimaryComponentTick (ActorComponentTickFunction)", xml);
+        // Inner struct's sub-fields rendered as real leaves (regression: would
+        // have been a GroupHeader placeholder without the cascade fix)
+        Assert.Contains("\"TickGroup\"", xml);
+        Assert.Contains("\"TickInterval\"", xml);
+        Assert.Contains("<VariableType>Byte</VariableType>", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_OptionalProperty_NoStructInner_EmitsFlatLeaf()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "OptionalScalar", TypeName = "OptionalProperty",
+                Offset = 0xA0, Size = 8,
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var entryStart = xml.IndexOf("\"OptionalScalar\"", StringComparison.Ordinal);
+        Assert.True(entryStart >= 0);
+        var entryEnd = xml.IndexOf("</CheatEntry>", entryStart, StringComparison.Ordinal);
+        var block = xml.Substring(entryStart, entryEnd - entryStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", block);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", block);
+        Assert.Contains("<Address>+A0</Address>", block);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", block);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_OptionalProperty_StructInner_ExpandsToStructGroup()
+    {
+        // OptionalProperty<FBox> with structDataAddr/structClassAddr stamped
+        // by the walker — should render as the struct's sub-fields, NOT the
+        // 8-byte hex fallback.
+        const string structDataAddr = "0x7FF400000A0";
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "CellBounds", TypeName = "OptionalProperty",
+                Offset = 0x88, Size = 0x40,
+                StructDataAddr = structDataAddr,
+                StructClassAddr = "0xDEAD",
+                StructTypeName = "Box",
+            },
+        };
+
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [structDataAddr] = new()
+            {
+                new LiveFieldValue { Name = "Min.X", TypeName = "DoubleProperty", Offset = 0, Size = 8 },
+                new LiveFieldValue { Name = "Min.Y", TypeName = "DoubleProperty", Offset = 8, Size = 8 },
+                new LiveFieldValue { Name = "IsValid", TypeName = "BoolProperty", Offset = 0x30, Size = 1 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedStructs: resolvedStructs);
+
+        Assert.Contains("CellBounds (Box)", xml);
+        Assert.Contains("\"Min.X\"", xml);
+        Assert.Contains("\"Min.Y\"", xml);
+        Assert.Contains("\"IsValid\"", xml);
+        Assert.Contains("<VariableType>Double</VariableType>", xml);
+    }
+
+    [Fact]
     public void GenerateInstanceXml_NullObjectProperty_StillEmitsLeaf()
     {
         // ObjectProperty with no resolved target (null pointer) — IsNavigable
@@ -706,9 +839,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x20] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "HP", TypeName = "FloatProperty", Offset = 0x0, Size = 4 },
                 new LiveFieldValue { Name = "MP", TypeName = "FloatProperty", Offset = 0x4, Size = 4 },
@@ -1345,9 +1478,9 @@ public class CeXmlExportServiceTests
         };
 
         // Resolved struct has a scalar field + an ArrayProperty with inline elements
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x100] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue { Name = "CurrentRank", TypeName = "IntProperty", Offset = 0x0, Size = 4 },
                 new LiveFieldValue
@@ -1396,9 +1529,9 @@ public class CeXmlExportServiceTests
             },
         };
 
-        var resolvedStructs = new Dictionary<int, List<LiveFieldValue>>
+        var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>
         {
-            [0x50] = new()
+            ["0xABC"] = new()
             {
                 new LiveFieldValue
                 {

@@ -6,7 +6,87 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
-## 2026-05-09 (latest) — CE XML pointer drill-down + Property Search scroll restore
+## 2026-05-09 (latest) — CE XML drill-down: cascade struct resolution + OptionalProperty handler
+
+`fix(export): nested StructProperty inside drilled pointer targets +
+OptionalProperty CE XML emit`
+([`CeXmlExportService.cs`](../ui/UE5DumpUI/Services/CeXmlExportService.cs),
+[`CsxExportService.cs`](../ui/UE5DumpUI/Services/CsxExportService.cs),
+build 544+)
+
+Two follow-up issues from build 541:
+
+1. **StructProperty inside drilled pointer targets renders as empty
+   `<GroupHeader>` placeholder.** Selecting `ScalabilityModifiers`
+   (ObjectProperty) and Copy CE Field with Drill Depth=4 correctly
+   drilled into `MapScalabilityModifierComponent`, but the inner
+   `PrimaryComponentTick (ActorComponentTickFunction)` (StructProperty)
+   came out as a group header with no children — same with
+   `ComponentTags` / `AssetUserData` (ArrayProperty placeholders).
+   The OLD CE XML output (without drill-down) used to expand
+   `PrimaryActorTick` fully because it was top-level and got picked up
+   by `ResolveStructFieldsAsync`; the new drill-down code path missed
+   the cascade entirely.
+2. **OptionalProperty fields silently vanished from CE XML.** Falling
+   through `EmitFields` they hit no handler and got dropped. ES2's
+   `MapScalabilityModifierComponent.VolumetricFogOverrides` (an
+   `OptionalProperty<FBox>`) and the test fixtures all disappeared
+   from the export.
+
+### Root cause
+
+`resolvedStructs` was keyed by `int field.Offset` and only built for
+the root instance's struct fields. When the drill-down resolver
+returned a target's children, those children carried their own struct
+fields (with their own offsets within the drilled target) — but the
+dict had no entry for them, so `EmitFields` fell through to the
+navigable-placeholder path. Worse, the offset key collides across
+instances (offset 0x30 in object A vs object B).
+
+### Fix
+
+- **`resolvedStructs` re-keyed `int -> string`**: the new key is
+  `LiveFieldValue.StructDataAddr` (absolute address of the struct
+  data — unique across instances). One dict can now serve struct
+  fields anywhere in the drilled tree without collisions.
+- **`ResolveStructFieldsAsync`** now writes into a passed dict via a
+  new `ResolveStructFieldsIntoAsync` private helper. The public
+  signature returns the new string-keyed dict.
+- **`ResolvePointerInstancesAsync`** gained an optional
+  `resolvedStructs:` parameter — when provided, every drilled
+  target's fields are also walked for `StructProperty` and the
+  results merged into the same dict. So drilling into A → finds
+  StructProperty B inside A → walks B → adds B's sub-fields keyed by
+  B's StructDataAddr → emit-time lookup finds them.
+- **OptionalProperty handler** added to `EmitFields`:
+  - When `StructDataAddr` is stamped (Optional&lt;Struct&gt; when
+    set, walker populates the same `{StructDataAddr, StructClassAddr,
+    StructTypeName}` triple as bare StructProperty), goes through
+    `EmitResolvedStruct` → struct sub-fields rendered inline.
+  - Otherwise falls through to a flat 8-byte hex leaf (at minimum CE
+    has a watchable address for the optional slot).
+  - The cascade resolver also picks up Optional&lt;Struct&gt; fields
+    (treats them as StructProperty for resolution purposes).
+- **`CsxExportService.EmitStructPropertyFlattened`** adapted to the
+  new string-keyed dict (CSX shares `ResolveStructFieldsAsync`).
+- **LiveWalkerViewModel** passes `resolvedStructs:` through to
+  `ResolvePointerInstancesAsync` for both `ExportCeXmlAsync` and
+  `ExportCeFieldXmlAsync`.
+
+### Tests
+
+7 existing tests re-keyed (`Dictionary<int, ...>` → `Dictionary<string, ...>`
+with `"0xABC"` matching `StructDataAddr`). 3 new:
+- `DrilledPointer_NestedStructProperty_ExpandsViaResolvedStructsCascade`
+  — regression coverage for the headline bug
+- `OptionalProperty_NoStructInner_EmitsFlatLeaf`
+- `OptionalProperty_StructInner_ExpandsToStructGroup`
+
+**Build #544, 496 tests passing** (was 493).
+
+-----
+
+## 2026-05-09 (mid-late) — CE XML pointer drill-down + Property Search scroll restore
 
 `feat(export): CE XML/CE Field N-level ObjectProperty drill-down (depth slider)`
 ([`CeXmlExportService.cs`](../ui/UE5DumpUI/Services/CeXmlExportService.cs),
@@ -516,7 +596,7 @@ binding and the filter logic share one implementation.
 
 -----
 
-## Capability matrix (current — build 541)
+## Capability matrix (current — build 544)
 
 | Layer | Drill-down | Find Refs |
 |-------|-----------|-----------|
