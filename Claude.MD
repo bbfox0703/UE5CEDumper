@@ -144,6 +144,7 @@ Target: Support UE4 (4.18+) and UE5 (5.0 ~ 5.8+), find global pointers (GObjects
 
 | Document | Contents |
 |----------|----------|
+| [docs/dev-log.md](docs/dev-log.md) | Recent milestone work, capability matrix, remaining drill-down / Find Refs gaps |
 | [docs/architecture.md](docs/architecture.md) | Directory structure (28 DLL files, 79 UI files), git submodules, build environment |
 | [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface: 30 C ABI exports, offset tables, CE Lua bridge |
 | [docs/pipe-protocol.md](docs/pipe-protocol.md) | Named Pipe JSON IPC protocol (30 commands, Request/Response/Event) |
