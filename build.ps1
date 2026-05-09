@@ -28,7 +28,7 @@
     .\build.ps1 -Mode Publish -Clean    # Clean + publish
     .\build.ps1 -Target DLL             # Build only the C++ DLL
     .\build.ps1 -Target UI -Mode Debug  # Debug build UI only
-    .\build.ps1 -Target Test            # Build + run tests
+    .\build.ps1 -Target Test            # Build + run tests (also republishes UI to dist/)
 #>
 
 [CmdletBinding()]
@@ -479,7 +479,7 @@ if ($Target -in "All", "ProxyDinput8") {
 # Build C# Avalonia UI
 # ============================================================
 
-if ($Target -in "All", "UI") {
+if ($Target -in "All", "UI", "Test") {
     Write-Banner "C# Avalonia UI  |  $CSharpConfig ($Mode)"
 
     # Always do a clean build — remove bin/obj to force full recompile
