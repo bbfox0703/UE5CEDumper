@@ -186,6 +186,7 @@ struct ReferenceMatch {
                                           // "DelegateProperty" /
                                           // "MulticastInlineDelegateProperty" /
                                           // "MulticastDelegateProperty" /
+                                          // "MulticastSparseDelegateProperty" /
                                           // "ArrayProperty" / "MapProperty" / "SetProperty"
     std::string innerType;                // For Array: inner element type;
                                           // For Set: element type;
@@ -206,9 +207,11 @@ struct ReferenceMatch {
 //     field+0 — surfaces "X is bound to a delegate on Y" relationships)
 //   - MulticastInlineDelegateProperty / MulticastDelegateProperty
 //     (FMulticastScriptDelegate := TArray<FScriptDelegate>; walks each
-//     binding's FWeakObjectPtr target). MulticastSparseDelegateProperty
-//     deliberately NOT covered — bindings live in FSparseDelegateStorage
-//     and require a separate AOB + storage walk.
+//     binding's FWeakObjectPtr target).
+//   - MulticastSparseDelegateProperty (UE 5.0+ only) — global pass after
+//     the per-object loop walks FSparseDelegateStorage::SparseDelegates
+//     once and checks every binding's FWeakObjectPtr against `target`.
+//     Skipped silently when AOB scan failed or UE < 5.0.
 //   - TArray of any single-pointer type above (incl. TArray<FScriptDelegate>)
 //   - TMap with Object/Class key and/or value (allocated slots only)
 //   - TSet with Object/Class element (allocated slots only)
@@ -282,5 +285,44 @@ struct ClassListResult {
 
 // List all UClass objects, optionally filtering out engine packages.
 ClassListResult ListClasses(bool gameOnly, int maxResults = 5000);
+
+// === Sparse Delegate Storage Walker ===
+//
+// Resolves bindings for a MulticastSparseDelegateProperty. The field on a
+// UObject only stores `FSparseDelegate { uint8 bIsBound; }` — actual binding
+// list lives in CoreUObject's static
+//   FSparseDelegateStorage::SparseDelegates :
+//     TMap<UObjectBase*, TMap<FName, TSharedPtr<TMulticastScriptDelegate>>>
+//
+// This walker locates the static via Genau::FindSparseDelegateStorage(),
+// linearly scans the outer TSparseArray for the matching owner key, then
+// scans the inner TSparseArray for the matching FName key, derefs the
+// TSharedPtr, and walks the InvocationList.
+//
+// Version support: UE 5.0+ only. UE 4.23-4.27 used FObjectKey as outer
+// key (different layout); walker returns supported=false on those.
+struct SparseDelegateBinding {
+    int32_t     objectIndex    = 0;   // raw FWeakObjectPtr.ObjectIndex
+    int32_t     serialNumber   = 0;   // raw FWeakObjectPtr.SerialNumber
+    uintptr_t   targetObj      = 0;   // resolved live UObject* (0 if stale)
+    std::string targetName;           // resolved target name (empty if stale)
+    std::string targetClassName;      // resolved target class name (empty if stale)
+    std::string functionName;         // FName of bound function
+};
+
+struct SparseDelegateResult {
+    bool resolved   = false;     // AOB worked + walker ran (may have 0 bindings)
+    bool supported  = true;      // false = current UE version not supported
+    bool ownerFound = false;     // outer key matched
+    bool nameFound  = false;     // inner key matched
+    std::vector<SparseDelegateBinding> bindings;
+};
+
+// Walk FSparseDelegateStorage to enumerate bindings for `fieldName` on
+// `ownerObj`. Returns immediately if the AOB resolver hasn't found the
+// static (resolved=false) or if UE version isn't supported.
+SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
+                                                 const std::string& fieldName,
+                                                 int32_t maxBindings = 64);
 
 } // namespace Aura

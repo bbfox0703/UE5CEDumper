@@ -19,6 +19,10 @@ public sealed class EngineState
     public string GObjectsAddr { get; init; } = "";
     public string GNamesAddr { get; init; } = "";
     public string GWorldAddr { get; init; } = "";
+
+    /// <summary>FSparseDelegateStorage::SparseDelegates address (UE 5.0+, optional — empty/0 when scan failed or version unsupported).</summary>
+    public string SparseDelegatesAddr { get; init; } = "";
+
     public int ObjectCount { get; init; }
     public string ModuleName { get; init; } = "";
     public string ModuleBase { get; init; } = "";
@@ -27,6 +31,7 @@ public sealed class EngineState
     public string GObjectsMethod { get; init; } = "aob";
     public string GNamesMethod { get; init; } = "aob";
     public string GWorldMethod { get; init; } = "aob";
+    public string SparseDelegatesMethod { get; init; } = "not_found";
 
     // --- AOB Usage Tracking ---
     /// <summary>PE hash: TimeDateStamp + SizeOfImage (16 hex chars). Unique per game build.</summary>
@@ -36,11 +41,13 @@ public sealed class EngineState
     public string GObjectsPatternId { get; init; } = "";
     public string GNamesPatternId { get; init; } = "";
     public string GWorldPatternId { get; init; } = "";
+    public string SparseDelegatesPatternId { get; init; } = "";
 
     /// <summary>AOB scan hit addresses (instruction that references the pointer).</summary>
     public string GObjectsScanAddr { get; init; } = "";
     public string GNamesScanAddr { get; init; } = "";
     public string GWorldScanAddr { get; init; } = "";
+    public string SparseDelegatesScanAddr { get; init; } = "";
 
     /// <summary>Per-target scan statistics.</summary>
     public int GObjectsPatternsTried { get; init; }

@@ -27,6 +27,7 @@ public sealed class ReferenceMatch
     /// "WeakObjectProperty", "SoftObjectProperty", "SoftClassProperty",
     /// "LazyObjectProperty", "OptionalProperty", "DelegateProperty",
     /// "MulticastInlineDelegateProperty", "MulticastDelegateProperty",
+    /// "MulticastSparseDelegateProperty",
     /// "ArrayProperty", "MapProperty", "SetProperty".
     /// </summary>
     public string FieldType { get; init; } = "";

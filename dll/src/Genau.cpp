@@ -17,6 +17,7 @@
 #include <cstring>
 #include <vector>
 #include <algorithm>  // std::sort
+#include <atomic>     // FindSparseDelegateStorage cache
 #include <chrono>     // AOBScanBatch timing
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
 #include <Psapi.h>    // EnumProcessModules
@@ -1066,14 +1067,16 @@ static void LogScanReport(const ScanReport& report) {
 // ============================================================
 // Scan method tracking — set by each Find function, read by FindAll()
 // ============================================================
-static const char* s_gobjectsMethod = "not_found";
-static const char* s_gnamesMethod   = "not_found";
-static const char* s_gworldMethod   = "not_found";
+static const char* s_gobjectsMethod        = "not_found";
+static const char* s_gnamesMethod           = "not_found";
+static const char* s_gworldMethod           = "not_found";
+static const char* s_sparseDelegatesMethod  = "not_found";
 
 // File-scope ScanReports — promoted from local so FindAll() can read winningId + stats
 static ScanReport s_gobjectsReport;
 static ScanReport s_gnamesReport;
 static ScanReport s_gworldReport;
+static ScanReport s_sparseReport;
 
 // ============================================================
 // FindGObjects — unified scan + data-section fallback
@@ -1692,6 +1695,74 @@ uintptr_t FindGWorld(const char* hintPatternId) {
     } else {
         Sein::Warn("SCAN:GWld", "FindGWorld: All patterns failed (non-critical)");
     }
+    return result;
+}
+
+// ============================================================
+// FindSparseDelegateStorage — lazy resolver for FSparseDelegateStorage::SparseDelegates
+//
+// Called on-demand by Aura::WalkSparseDelegateBindings when the user drills
+// into a MulticastSparseDelegateProperty. NOT part of FindAll boot — most
+// sessions never touch a sparse delegate so the AOB scan would be wasted.
+//
+// Caches the result in a process-local atomic; thread-safe via double-checked
+// locking. Returns 0 if AOB scan fails (caller falls back to bIsBound flag).
+//
+// Validator: TMap header sanity. The static is a default-constructed TMap
+// whose initial state has FirstFreeIndex == -1 and AllocationFlags.MaxBits
+// == 0x80 (TInlineAllocator<4> initial). After live use either may change,
+// so the validator only checks pointer-shape sanity (readable + low bytes
+// don't look like code/heap garbage).
+// ============================================================
+static bool ValidateSparseDelegates(uintptr_t addr) {
+    if (!addr) return false;
+    // The TMap object lives in writable .data / .bss. Read the first 0x40
+    // bytes; reject if the read fails. All-zero is acceptable (storage may
+    // be empty if no sparse delegate is bound yet at scan time).
+    uintptr_t firstWord = 0;
+    if (!Macht::ReadSafe(addr, firstWord)) return false;
+    int32_t arrayMax = 0;
+    if (!Macht::ReadSafe(addr + 0x0C, arrayMax)) return false;
+    int32_t allocMaxBits = 0;
+    if (!Macht::ReadSafe(addr + 0x2C, allocMaxBits)) return false;
+    // Sanity: ArrayMax shouldn't be negative or absurdly large. MaxBits
+    // is a power of 2; default 0x80, grows by doubling.
+    if (arrayMax < 0 || arrayMax > 0x100000) return false;
+    if (allocMaxBits < 0 || allocMaxBits > 0x100000) return false;
+    return true;
+}
+
+static std::atomic<uintptr_t> s_sparseDelegatesCache{0};
+static std::atomic<bool>      s_sparseDelegatesScanned{false};
+
+uintptr_t FindSparseDelegateStorage() {
+    // Fast path: already resolved (or already failed).
+    if (s_sparseDelegatesScanned.load(std::memory_order_acquire))
+        return s_sparseDelegatesCache.load(std::memory_order_relaxed);
+
+    Sein::Info("SCAN:Sparse", "FindSparseDelegateStorage: Scanning for FSparseDelegateStorage::SparseDelegates...");
+
+    s_sparseReport = ScanReport{};
+    s_sparseReport.targetName = "SparseDelegates";
+    s_sparseDelegatesMethod = "not_found";
+
+    uintptr_t result = ScanForTarget(
+        Sig::SPARSE_PATTERNS, std::size(Sig::SPARSE_PATTERNS),
+        ValidateSparseDelegates, s_sparseReport, /*tryMultiModule=*/true,
+        /*hintPatternId=*/nullptr);
+
+    LogScanReport(s_sparseReport);
+
+    if (result) {
+        s_sparseDelegatesMethod = "aob";
+        Sein::Info("SCAN:Sparse", "FindSparseDelegateStorage: Found at 0x%llX",
+                   static_cast<unsigned long long>(result));
+    } else {
+        Sein::Warn("SCAN:Sparse", "FindSparseDelegateStorage: All patterns failed (non-critical, sparse drill-down disabled)");
+    }
+
+    s_sparseDelegatesCache.store(result, std::memory_order_relaxed);
+    s_sparseDelegatesScanned.store(true, std::memory_order_release);
     return result;
 }
 
@@ -3293,13 +3364,25 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     out.gworldMethod = s_gworldMethod;
     // GWorld is non-critical, just log
 
+    // FSparseDelegateStorage::SparseDelegates — UE 5.0+ only. Eagerly scanned
+    // here (instead of lazy-on-first-drill-down) so the Pointer panel can
+    // display it. Cache is the same one used by Aura::WalkSparseDelegateBindings,
+    // so first drill-down is O(1).
+    if (out.UEVersion >= 500) {
+        if (progress) progress(4, "Scanning FSparseDelegateStorage...");
+        out.SparseDelegates = FindSparseDelegateStorage();
+        out.sparseDelegatesMethod = s_sparseDelegatesMethod;
+    }
+
     // --- AOB Usage Tracking: propagate scan stats ---
-    out.gobjectsPatternId = s_gobjectsReport.winningId;
-    out.gnamesPatternId   = s_gnamesReport.winningId;
-    out.gworldPatternId   = s_gworldReport.winningId;
-    out.gobjectsScanAddr  = s_gobjectsReport.scanAddr;
-    out.gnamesScanAddr    = s_gnamesReport.scanAddr;
-    out.gworldScanAddr    = s_gworldReport.scanAddr;
+    out.gobjectsPatternId        = s_gobjectsReport.winningId;
+    out.gnamesPatternId          = s_gnamesReport.winningId;
+    out.gworldPatternId          = s_gworldReport.winningId;
+    out.sparseDelegatesPatternId = s_sparseReport.winningId;
+    out.gobjectsScanAddr         = s_gobjectsReport.scanAddr;
+    out.gnamesScanAddr           = s_gnamesReport.scanAddr;
+    out.gworldScanAddr           = s_gworldReport.scanAddr;
+    out.sparseDelegatesScanAddr  = s_sparseReport.scanAddr;
 
     ExtractScanStats(s_gobjectsReport, out.gobjectsPatternsTried, out.gobjectsPatternsHit);
     ExtractScanStats(s_gnamesReport,   out.gnamesPatternsTried,   out.gnamesPatternsHit);
@@ -3312,10 +3395,11 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         out.gworldAobLen = ws->instrOffset + ws->totalLen;
     }
 
-    LOG_INFO("FindAll: Complete — GObjects=0x%llX (%s), GNames=0x%llX (%s), GWorld=0x%llX (%s), UE=%u, UE4Names=%s, hdrOff=%d",
+    LOG_INFO("FindAll: Complete — GObjects=0x%llX (%s), GNames=0x%llX (%s), GWorld=0x%llX (%s), Sparse=0x%llX (%s), UE=%u, UE4Names=%s, hdrOff=%d",
              static_cast<unsigned long long>(out.GObjects), out.gobjectsMethod,
              static_cast<unsigned long long>(out.GNames), out.gnamesMethod,
              static_cast<unsigned long long>(out.GWorld), out.gworldMethod,
+             static_cast<unsigned long long>(out.SparseDelegates), out.sparseDelegatesMethod,
              out.UEVersion,
              out.bUE4NameArray ? "yes" : "no",
              out.fnameEntryHeaderOffset);

@@ -249,6 +249,53 @@
         </Grid>
       </Border>
 
+      <!-- FSparseDelegateStorage::SparseDelegates (Optional, UE 5.0+) -->
+      <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel>
+            <TextBlock Text="{StaticResource str.Pointers.SparseDelegates}"
+                       Foreground="#888" FontSize="12"/>
+            <TextBlock Text="{Binding SparseDelegatesAddress}" FontSize="16"
+                       Foreground="#569CD6" FontFamily="Consolas"
+                       IsVisible="{Binding IsSparseDelegatesFound}"/>
+            <TextBlock Text="{Binding SparseDelegatesPatternId}" FontSize="10"
+                       Foreground="#666" FontFamily="Consolas" Margin="0,2,0,0"
+                       IsVisible="{Binding HasSparseDelegatesPatternId}"
+                       ToolTip.Tip="{StaticResource str.Pointers.PatternIdTooltip}"/>
+            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0"
+                        IsVisible="{Binding HasSparseDelegatesScanAddr}">
+              <TextBlock Text="{StaticResource str.Pointers.AobLabel}" Foreground="#888" FontSize="10"/>
+              <TextBlock Text="{Binding SparseDelegatesScanAddr}" FontSize="10"
+                         Foreground="#E5C07B" FontFamily="Consolas"/>
+              <Button Content="{StaticResource str.Pointers.CopyScanAddr}"
+                      Command="{Binding CopySparseDelegatesScanAddrCommand}"
+                      ToolTip.Tip="{StaticResource str.Tip.Pointers.CopyScan}"
+                      Padding="4,1" FontSize="9" Foreground="#AAA" Background="Transparent"
+                      BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
+            </StackPanel>
+            <TextBlock Text="{StaticResource str.Pointers.SparseDelegatesOptional}"
+                       Foreground="#666" FontSize="10" Margin="0,2,0,0"
+                       TextWrapping="Wrap"/>
+            <TextBlock Text="{StaticResource str.Pointers.SparseDelegatesNotFound}"
+                       Foreground="#E5C07B" FontSize="11" Margin="0,3,0,0"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding IsSparseDelegatesNotFound}"/>
+            <TextBlock Text="{StaticResource str.Pointers.SparseDelegatesUnsupported}"
+                       Foreground="#888" FontSize="11" Margin="0,3,0,0"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding IsSparseDelegatesUnsupported}"/>
+          </StackPanel>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
+                      VerticalAlignment="Center">
+            <Button Content="{StaticResource str.Pointers.Copy}"
+                    Command="{Binding CopySparseDelegatesCommand}"
+                    IsEnabled="{Binding IsSparseDelegatesFound}"
+                    ToolTip.Tip="{StaticResource str.Tip.Pointers.Copy}"
+                    Padding="8,4"/>
+          </StackPanel>
+        </Grid>
+      </Border>
+
       <!-- Total Objects -->
       <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
         <StackPanel>

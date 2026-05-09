@@ -41,9 +41,10 @@
 // ============================================================
 
 enum class AobTarget : uint8_t {
-    GObjects = 0,
-    GNames   = 1,
-    GWorld   = 2,
+    GObjects        = 0,
+    GNames          = 1,
+    GWorld          = 2,
+    SparseDelegates = 3,  // FSparseDelegateStorage::SparseDelegates (UE 4.23+)
 };
 
 // How to resolve the AOB match address into a final pointer
@@ -547,6 +548,35 @@ constexpr const char* AOB_GWORLD_GH_4 = "0F 57 C9 0F 2E C1 74 ?? 48 8B 1D ?? ?? 
 
 
 // ============================================================
+// FSparseDelegateStorage::SparseDelegates (UE 4.23+)
+// ============================================================
+// The static TMap<UObjectBase*, TMap<FName, TSharedPtr<TMulticastScriptDelegate>>>
+// that backs every MulticastSparseDelegateProperty. Field on a UObject only
+// stores `FSparseDelegate { uint8 bIsBound; }` (1-8 bytes); actual binding
+// list lives in this global. Resolving its address lets the walker enumerate
+// per-(owner, propertyName) FScriptDelegate bindings.
+//
+// Cross-version availability: UE 4.23 introduced sparse delegates; layout
+// of the outer TMap is stable from UE 5.0 onwards (UE 4.23-4.27 used
+// FObjectKey as the outer key instead of a raw pointer — currently NOT
+// supported, walker should validate version before resolving).
+
+// ES2_1: NotifyUObjectDeleted middle — lea rcx,[crit]; call [EnterCriticalSection];
+//        mov rdx,r??; lea rcx,[SparseDelegates]; call TSet::Remove; mov eax,[SparseDelegates+8]
+//        Twin-reference (lea+mov of same static) makes false-positives near-zero.
+//        instrOffset=16, 29 bytes; the `?? ?? ??` after critical-section call
+//        is the 3-byte mov rdx,rXX (param register varies by build).
+//
+//        Cross-version validated:
+//          ES2 (UE 5.4, bCasePreservingName=false) → SparseDelegates @ +9AA5F10
+//          TQ2 (UE 5.7, bCasePreservingName=true ) → SparseDelegates @ +D46D170
+//        Effectively universal across UE 5.x — same pattern, different layout
+//        branches handled by Aura::WalkSparseDelegateBindings (FName=8 vs 16).
+constexpr const char* AOB_SPARSE_ES2_1 =
+    "48 8D 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 48 8B ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 05";
+
+
+// ============================================================
 // Unified Pattern Arrays (sorted by priority)
 // ============================================================
 // Priority scheme:
@@ -770,6 +800,15 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
       0, 3, 7, 0, 56, 0, true, "V", "write: mov [rip],rbx; call" },
 };
 
+// ── SparseDelegates (FSparseDelegateStorage::SparseDelegates) ────────────
+// Lazily resolved on first MulticastSparseDelegateProperty drill-down — NOT
+// part of the FindAll boot sequence. Resolves directly to the TMap value.
+constexpr AobSignature SPARSE_PATTERNS[] = {
+    SIG_RIP_DIRECT("SPARSE_ES2_1", AOB_SPARSE_ES2_1, AobTarget::SparseDelegates,
+                   16, 3, 7, 0, 20,
+                   "ES2", "ES2 UE5.4 NotifyUObjectDeleted middle (twin-ref)"),
+};
+
 #undef SIG_RIP
 #undef SIG_RIP_DIRECT
 #undef SIG_EXPORT
@@ -783,6 +822,7 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
 // GObjects: 27 (original) + 2 (ES2, SF) + 4 (G42) + 4 (G427) + 1 (ES53) + 1 (SAT422) + 2 (SAT425) + 2 (SAT426) + 2 (SAT52) + 2 (OT) + 4 (GH) = 51 patterns + 1 symbol export
 // GNames:   17 (original) + 4 (ES2, SF) + 1 (G42) + 1 (ES53) + 1 (SAT422) + 3 (SAT425) + 1 (SAT52) + 2 (GH) = 30 patterns + 3 symbol exports
 // GWorld:    7 (original) + 15 (ES2, SF, TQ) + 5 (G42) + 5 (G427) + 2 (ES53) + 2 (SAT422) + 3 (SAT425) + 2 (SAT426) + 2 (SAT52) + 4 (GH) = 47 patterns + 1 symbol export
-// Total:    128 AOB patterns + 5 symbol exports = 133 entries (from 14 sources)
+// SparseDelegates: 1 (ES2) — lazily resolved
+// Total:    129 AOB patterns + 5 symbol exports = 134 entries (from 14 sources)
 
 } // namespace Sig

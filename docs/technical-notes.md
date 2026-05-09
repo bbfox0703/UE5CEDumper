@@ -226,14 +226,49 @@ bound to a delegate on Y" relationships that property-only scans miss.
 
 `MulticastSparseDelegateProperty` stores only an `FSparseDelegate { uint8
 bIsBound }` flag at the field address. The actual `FScriptDelegate`
-bindings live in CoreUObject's global `FSparseDelegateStorage` (a
-`TMap<FObjectKey, TMap<FName, TSharedPtr<FMulticastScriptDelegate>>>`),
-keyed by the owning UObject and the delegate's FName. `WalkInstance`
-surfaces the bound flag as `(sparse, bound — bindings in
-FSparseDelegateStorage)` or `(sparse, unbound)`. Drill-down into the
-bindings list is **not** wired up — it would require a new AOB
-signature to locate the static storage map. Find Refs v2 likewise can't
-follow sparse-delegate target pointers without the storage walk.
+bindings live in CoreUObject's global `FSparseDelegateStorage`. **UE 5.0+
+layout** (validated against ES2 5.4 PDB + TQ2 5.7):
+
+```
+TMap<UObjectBase const*,
+     TMap<FName, TSharedPtr<TMulticastScriptDelegate, ThreadSafe>>>
+```
+
+(UE 4.23-4.27 used `FObjectKey { FWeakObjectPtr, int32 }` as outer key;
+walker returns `supported=false` for those — see "Drill-down gaps" in
+the dev log.)
+
+`Aura::WalkSparseDelegateBindings(owner, fname, max)` (build 561+) is
+the read-side path. Three phases:
+
+1. AOB-resolve the static via `Genau::FindSparseDelegateStorage`
+   (signature `SPARSE_ES2_1` in `Himmel.h`, anchored on
+   `NotifyUObjectDeleted` middle with twin-reference to the same static
+   8 bytes apart for false-positive resistance).
+2. Linear-scan outer TSparseArray for `key == owner`. Stride 0x60 =
+   `TSetElement<TPair<UObjectBase*, TMap[0x50]>>`. Allocation bits
+   come from inline buffer (≤128 bits) or heap-secondary at TMap+0x20.
+3. Linear-scan inner TSparseArray for FName key match. Stride 0x20
+   (FName=8) or 0x28 (`bCasePreservingName`, FName=16). Deref the
+   matched `TSharedPtr` (16 B: `Object*` + `RefCount*`) to reach
+   `FMulticastScriptDelegate`, then walk
+   `InvocationList: TArray<FScriptDelegate>` and resolve each
+   `FWeakObjectPtr` via `Ubel::ResolveWeakObjectPtr`.
+
+`WalkInstance`'s sparse handler exposes the result as an implicit
+DelegateProperty array (same shape as MulticastInline), so drill-down,
+CE XML / CSX export, and Find Refs target navigation reuse existing
+wiring. `Aura::FindReferencesToUObject` adds a global pass over
+`FSparseDelegateStorage` (after the per-UObject loop) that surfaces
+multicast-sparse bindings whose target matches the search address —
+closing the v3 gap that previously left this category invisible.
+
+Fallback strings when the walker can't deliver:
+`(sparse, bound — UE < 5.0 unsupported)`,
+`(sparse, bound — FSparseDelegateStorage AOB not found)`,
+`(sparse, bound — owner not in storage)`,
+`(sparse, bound — function name not in storage)`. The bare
+`(sparse, unbound)` continues to mean `bIsBound == 0`.
 
 ### OptionalProperty (UE 5.2+)
 

@@ -20,6 +20,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _gObjectsAddress = "";
     [ObservableProperty] private string _gNamesAddress = "";
     [ObservableProperty] private string _gWorldAddress = "";
+    [ObservableProperty] private string _sparseDelegatesAddress = "";
     [ObservableProperty] private int _ueVersion;
     [ObservableProperty] private bool _versionDetected = true;
     [ObservableProperty] private bool _isUserOverride;
@@ -34,16 +35,19 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _gObjectsMethod = "aob";
     [ObservableProperty] private string _gNamesMethod = "aob";
     [ObservableProperty] private string _gWorldMethod = "aob";
+    [ObservableProperty] private string _sparseDelegatesMethod = "not_found";
 
     // Pattern IDs: which AOB pattern won the scan (e.g. "GOBJ_V1")
     [ObservableProperty] private string _gObjectsPatternId = "";
     [ObservableProperty] private string _gNamesPatternId = "";
     [ObservableProperty] private string _gWorldPatternId = "";
+    [ObservableProperty] private string _sparseDelegatesPatternId = "";
 
     // AOB scan hit addresses (instruction that references the pointer)
     [ObservableProperty] private string _gObjectsScanAddr = "";
     [ObservableProperty] private string _gNamesScanAddr = "";
     [ObservableProperty] private string _gWorldScanAddr = "";
+    [ObservableProperty] private string _sparseDelegatesScanAddr = "";
 
     // Per-target scan statistics (for red/green indicator)
     [ObservableProperty] private int _gObjectsPatternsHit;
@@ -145,6 +149,18 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>True when GWorld has a non-zero AOB scan address.</summary>
     public bool HasGWorldScanAddr => HasData && IsNonZeroAddr(GWorldScanAddr);
 
+    /// <summary>True when SparseDelegates has a non-empty pattern ID to display.</summary>
+    public bool HasSparseDelegatesPatternId => HasData && !string.IsNullOrEmpty(SparseDelegatesPatternId);
+    /// <summary>True when SparseDelegates has a non-zero AOB scan address.</summary>
+    public bool HasSparseDelegatesScanAddr => HasData && IsNonZeroAddr(SparseDelegatesScanAddr);
+    /// <summary>True when SparseDelegates was successfully resolved (UE 5.0+ + AOB hit).</summary>
+    public bool IsSparseDelegatesFound => HasData && IsNonZeroAddr(SparseDelegatesAddress);
+    /// <summary>True when UE &lt; 5.0 — walker doesn't support this version yet.</summary>
+    public bool IsSparseDelegatesUnsupported => HasData && UeVersion > 0 && UeVersion < 500;
+    /// <summary>True when UE 5.0+ but AOB scan didn't find the static (warning state).</summary>
+    public bool IsSparseDelegatesNotFound => HasData && UeVersion >= 500
+        && SparseDelegatesMethod == "not_found";
+
     /// <summary>
     /// True when Extra Scan button should be visible:
     /// connected, not already scanning, and some pointer is missing.
@@ -196,6 +212,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         GObjectsAddress = state.GObjectsAddr;
         GNamesAddress = state.GNamesAddr;
         GWorldAddress = state.GWorldAddr;
+        SparseDelegatesAddress = state.SparseDelegatesAddr;
         UeVersion = state.UEVersion;
         VersionDetected = state.VersionDetected;
         IsUserOverride = state.IsUserOverride;
@@ -211,15 +228,18 @@ public partial class PointerPanelViewModel : ViewModelBase
         GObjectsMethod = state.GObjectsMethod;
         GNamesMethod = state.GNamesMethod;
         GWorldMethod = state.GWorldMethod;
+        SparseDelegatesMethod = state.SparseDelegatesMethod;
         GObjectsPatternId = state.GObjectsPatternId;
         GNamesPatternId = state.GNamesPatternId;
         GWorldPatternId = state.GWorldPatternId;
+        SparseDelegatesPatternId = state.SparseDelegatesPatternId;
         GObjectsPatternsHit = state.GObjectsPatternsHit;
         GNamesPatternsHit = state.GNamesPatternsHit;
         GWorldPatternsHit = state.GWorldPatternsHit;
         GObjectsScanAddr = state.GObjectsScanAddr;
         GNamesScanAddr = state.GNamesScanAddr;
         GWorldScanAddr = state.GWorldScanAddr;
+        SparseDelegatesScanAddr = state.SparseDelegatesScanAddr;
         GworldAob = state.GWorldAob;
         GworldAobPos = state.GWorldAobPos;
         GworldAobLen = state.GWorldAobLen;
@@ -271,6 +291,11 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasGObjectsScanAddr));
         OnPropertyChanged(nameof(HasGNamesScanAddr));
         OnPropertyChanged(nameof(HasGWorldScanAddr));
+        OnPropertyChanged(nameof(HasSparseDelegatesPatternId));
+        OnPropertyChanged(nameof(HasSparseDelegatesScanAddr));
+        OnPropertyChanged(nameof(IsSparseDelegatesFound));
+        OnPropertyChanged(nameof(IsSparseDelegatesUnsupported));
+        OnPropertyChanged(nameof(IsSparseDelegatesNotFound));
         OnPropertyChanged(nameof(CanExtraScan));
         OnPropertyChanged(nameof(CanManageCache));
         OnPropertyChanged(nameof(CanClearGameCache));
@@ -655,5 +680,19 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         if (!string.IsNullOrEmpty(GWorldScanAddr))
             await _platform.CopyToClipboardAsync(StripHexPrefix(GWorldScanAddr));
+    }
+
+    [RelayCommand]
+    private async Task CopySparseDelegatesAsync()
+    {
+        if (!string.IsNullOrEmpty(SparseDelegatesAddress))
+            await _platform.CopyToClipboardAsync(StripHexPrefix(SparseDelegatesAddress));
+    }
+
+    [RelayCommand]
+    private async Task CopySparseDelegatesScanAddrAsync()
+    {
+        if (!string.IsNullOrEmpty(SparseDelegatesScanAddr))
+            await _platform.CopyToClipboardAsync(StripHexPrefix(SparseDelegatesScanAddr));
     }
 }
