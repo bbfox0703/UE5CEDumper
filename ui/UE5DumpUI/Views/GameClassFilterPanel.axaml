@@ -82,13 +82,16 @@
         </DataGridTemplateColumn>
         <DataGridTextColumn Header="Class"
                             Binding="{Binding ClassName}"
-                            Width="220"/>
+                            Width="200"/>
         <DataGridTextColumn Header="Super"
                             Binding="{Binding SuperName}"
-                            Width="160"/>
+                            Width="140"/>
+        <DataGridTextColumn Header="Package"
+                            Binding="{Binding Package}"
+                            Width="140"/>
         <DataGridTextColumn Header="Path"
                             Binding="{Binding ClassPath}"
-                            Width="280"/>
+                            Width="220"/>
         <DataGridTextColumn Header="Props"
                             Binding="{Binding PropertyCount}"
                             Width="60"/>

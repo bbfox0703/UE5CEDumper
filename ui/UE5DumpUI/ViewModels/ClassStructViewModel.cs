@@ -75,10 +75,19 @@ public partial class ClassStructViewModel : ViewModelBase
     /// <summary>
     /// Called when a UObject is selected in the ObjectTree — loads its class.
     ///
+    /// Disposition:
+    ///   - If the clicked node IS a class-like UObject (UClass /
+    ///     UScriptStruct / UEnum / UFunction or any subclass thereof),
+    ///     walk its address DIRECTLY. Going through GetObjectAsync would
+    ///     return its metaclass (UClass-of-Class, UClass-of-ScriptStruct,
+    ///     etc.) whose FProperty chain is empty in UE — that produced the
+    ///     "shows /Script/CoreUObject/Class with 0 fields" bug the user
+    ///     reported on LocalPlayer.
+    ///   - Otherwise it's an instance — fetch its UClass via get_object.
+    ///
     /// A null `node` does NOT blank the panel: Avalonia's ListBox raises
     /// SelectionChanged with null whenever its ItemsSource collection
-    /// changes (filter typing, a fresh load, suggestion auto-selection),
-    /// and the user reported the resulting flash-then-blank as a bug.
+    /// changes (filter typing, a fresh load, suggestion auto-selection).
     /// We keep the last successfully-loaded class visible until another
     /// real selection arrives.
     ///
@@ -94,15 +103,24 @@ public partial class ClassStructViewModel : ViewModelBase
         try
         {
             ClearError();
-            // First get the object's UClass address via get_object
-            var detail = await _dump.GetObjectAsync(node.Address);
-            var classAddr = detail.ClassAddr;
-            if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
+
+            string classAddr;
+            if (IsClassLikeNode(node.ClassName))
             {
-                // If no class addr, try using the object address directly
-                // (it might already be a UClass)
+                // The clicked object is itself a UClass / UScriptStruct /
+                // UEnum / UFunction — walk it directly.
                 classAddr = node.Address;
             }
+            else
+            {
+                // Instance: walk its UClass. Fall back to the object
+                // address only if the metaclass lookup fails.
+                var detail = await _dump.GetObjectAsync(node.Address);
+                classAddr = detail.ClassAddr;
+                if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
+                    classAddr = node.Address;
+            }
+
             _lastLoadedNodeAddress = node.Address;
             await LoadClassCommand.ExecuteAsync(classAddr);
         }
@@ -111,5 +129,25 @@ public partial class ClassStructViewModel : ViewModelBase
             SetError(ex);
             _log.Error($"Failed to load class for object at {node.Address}", ex);
         }
+    }
+
+    /// <summary>
+    /// True when the node's class name indicates the node IS itself a
+    /// walkable type definition (UClass family, UScriptStruct family,
+    /// UEnum family, UFunction family) rather than a runtime instance.
+    /// </summary>
+    private static bool IsClassLikeNode(string className)
+    {
+        if (string.IsNullOrEmpty(className)) return false;
+        // Any UClass-derived: Class, BlueprintGeneratedClass,
+        // WidgetBlueprintGeneratedClass, AnimBlueprintGeneratedClass, etc.
+        if (className.EndsWith("Class", StringComparison.Ordinal)) return true;
+        return className switch
+        {
+            "ScriptStruct" or "UserDefinedStruct" => true,
+            "Enum" or "UserDefinedEnum" => true,
+            "Function" or "DelegateFunction" => true,
+            _ => false,
+        };
     }
 }
