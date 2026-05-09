@@ -8,7 +8,7 @@
 > for the full mapping. The interfaces below show the **logical** shape of each
 > module; the headers in `dll/src/` are the ground truth and have grown beyond
 > what is reproduced here. Bullet points and counts are kept in sync with
-> build 525.
+> build 547.
 >
 > For the JSON pipe protocol (31 commands), see [pipe-protocol.md](pipe-protocol.md).
 > For drill-down phase / Find Refs / OptionalProperty layout details, see

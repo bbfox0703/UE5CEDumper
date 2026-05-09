@@ -64,7 +64,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (16 .cs test files, 483 tests)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (16 .cs test files, 496 tests)
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.0.2, Native AOT
 │       ├── Program.cs              ← Avalonia entry point
@@ -172,7 +172,7 @@ UE5CEDumper/
 | Toolchain discovery | `vswhere -latest` — never hardcoded paths |
 | Dependencies | `nlohmann/json` (header-only), `MinHook` (inline hooking), `ws2_32`, `Shlwapi`, `Psapi`, `Version` |
 
-**Versioning:** Version `1.0.0.x` where `x` is auto-incremented per build and stored in `build_number.txt` (currently 525). Git commit hash and dirty-state are embedded via `BuildInfo.h` (generated from `BuildInfo.h.in` at CMake configure time).
+**Versioning:** Version `1.0.0.x` where `x` is auto-incremented per build and stored in `build_number.txt` (currently 547). Git commit hash and dirty-state are embedded via `BuildInfo.h` (generated from `BuildInfo.h.in` at CMake configure time).
 
 ### UI App (C# Avalonia)
 
