@@ -6,7 +6,167 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
-## 2026-05-09 (latest, release 560) — Utf8Helpers extraction + 31-case C++ self-test
+## 2026-05-09 (latest, dev branch, build 561-577) — MulticastSparseDelegateProperty: walker + Find Refs v4 sparse + Pointer panel
+
+`feat(walker)` + `feat(refs)` + `feat(panel)` series — closes the
+`MulticastSparseDelegateProperty` drill-down gap that had been parked
+since the multicast-inline path landed. Six feature commits + three
+bumps + one cross-version validation note + one build-script fix on
+`dev`, awaiting next PR to `main`.
+
+### The problem
+
+`MulticastSparseDelegateProperty` is unique among delegate flavours:
+the field on a UObject only stores `FSparseDelegate { uint8 bIsBound; }`
+(1 byte). The actual binding list lives in CoreUObject's static
+`FSparseDelegateStorage::SparseDelegates` — a nested
+`TMap<UObjectBase*, TMap<FName, TSharedPtr<FMulticastScriptDelegate>>>`.
+Without locating that static, the walker could only surface the bound
+flag, leaving the user staring at "(sparse, bound)" with no way to see
+which functions were attached.
+
+### Phase A — walker (build 561-563)
+
+[`Himmel.h`](../dll/src/Himmel.h) gains
+`AobTarget::SparseDelegates = 3` and `SPARSE_PATTERNS[]` containing
+`SPARSE_ES2_1`, captured from PDB-loaded ES2 Ghidra disasm via
+`FSparseDelegateStorage::FObjectListener::NotifyUObjectDeleted` middle:
+
+```
+48 8D 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 48 8B ??     ; lea rcx,[crit]; call [EnterCrit]; mov rdx,rXX
+48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ??                  ; lea rcx,[SparseDelegates]; call TSet::Remove
+8B 05                                                 ; mov eax,[SparseDelegates+8]
+```
+
+The trailing `8B 05` is critical — it gives a "twin reference" to the
+same static 8 bytes apart, which collapses false-positive count to
+near zero. CE confirms exactly one match in ES2's 125 MB `.text`.
+
+[`Genau.cpp`](../dll/src/Genau.cpp) `FindSparseDelegateStorage()`
+runs the AOB scan with a TMap-header validator (sanity-checks
+`ArrayMax` and `AllocationFlags.MaxBits` at +0x0C and +0x2C). Resolved
+address is atomic-cached for the DLL lifetime. Originally lazy-on-first-
+drill-down; promoted to eager FindAll phase 5 in Phase C so the panel
+can show it.
+
+[`Aura.cpp`](../dll/src/Aura.cpp) `WalkSparseDelegateBindings(owner, fname, max)`
+is a 3-phase reader:
+
+1. Linear-scan **outer** TSparseArray slots (stride 0x60) for a slot
+   whose key matches `owner`. Allocation bits read from inline (≤128
+   bits) or heap-secondary; each slot has TSetElement layout
+   `{ K, V, HashNextId, HashIndex }`.
+2. Linear-scan **inner** TSparseArray slots (stride 0x20 for FName=8,
+   0x28 for case-preserving FName=16) for FName key match.
+3. Deref `TSharedPtr<FMulticastScriptDelegate>` (16B: `Object*` +
+   `RefCount*`), read `InvocationList: TArray<FScriptDelegate>`, walk
+   each `{ FWeakObjectPtr, FName }`, resolve weak ptr to live UObject*
+   via `Ubel::ResolveWeakObjectPtr`.
+
+Version-gated to UE 5.0+ (UE 4.23-4.27 used `FObjectKey` outer key,
+different stride and key-comparison; walker returns
+`supported=false`).
+
+[`Ubel.cpp`](../dll/src/Ubel.cpp) MulticastSparseDelegate handler now
+calls the walker on `bIsBound == 1` and exposes results as an implicit
+DelegateProperty array (same shape as MulticastInline), so drill-down,
+CE XML / CSX export, and Find Refs target navigation all reuse
+existing wiring with zero new UI plumbing.
+
+### Phase B — Find Refs v4 sparse coverage (build 565)
+
+Added a global pass to
+[`Aura::FindReferencesToUObject`](../dll/src/Aura.cpp) that, after the
+per-object loop, walks `FSparseDelegateStorage` once and checks every
+binding's `FWeakObjectPtr` against the search target. Hits surface as
+`ReferenceMatch` with `fieldType="MulticastSparseDelegateProperty"`
+and `elementIndex` = position in InvocationList. Owner metadata read
+directly from the owner UObject header (no GObjects linear-scan).
+
+The shared TMap header / bit-array helpers (`ReadTMapHeader`,
+`TMapBitSet`, `ResolveTMapBitArrayBase`) and layout doc were lifted
+above `FindReferencesToUObject` so both readers share the same
+primitives.
+
+### Phase C — Pointer panel surfacing (build 567-574)
+
+To verify cross-game without digging through `scan*.log`, the resolved
+sparse address now displays in the Global Pointers tab. New
+`FSparseDelegateStorage` row mirrors the GWorld layout (address +
+pattern ID + AOB hit address + Copy buttons) with three states:
+
+- **Found** (UE 5.0+ + AOB hit): blue address text with pattern ID
+- **Not Found** (UE 5.0+, scan failed): amber warning row
+- **Unsupported** (UE < 5.0): grey "walker not supported on this
+  version" note
+
+Wiring spans
+[`Genau::EnginePointers`](../dll/src/Genau.h) (new fields),
+[`Frieren.cpp`](../dll/src/Frieren.cpp) (cached globals),
+[`Fern.cpp`](../dll/src/Fern.cpp) (`CMD_GET_POINTERS` and
+`CMD_SCAN_STATUS` payloads), and a chain of UI files
+([`EngineState.cs`](../ui/UE5DumpUI/Models/EngineState.cs),
+[`DumpService.cs`](../ui/UE5DumpUI/Services/DumpService.cs),
+[`PointerPanelViewModel.cs`](../ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs),
+[`PointerPanel.axaml`](../ui/UE5DumpUI/Views/PointerPanel.axaml),
+[`en.axaml`](../ui/UE5DumpUI/Resources/Strings/en.axaml)).
+
+### Bug caught during integration
+
+First panel iteration only added the new fields to `CMD_GET_POINTERS`
+response. But after `trigger_scan`, the UI applies the **completion
+payload from `CMD_SCAN_STATUS`** to refresh pointer state — that
+payload was a separate code path and didn't include sparse fields,
+so the panel always rendered "AOB not found" while the DLL log proved
+the scan succeeded. Caught via pipe-trace log diff. Fix: mirror the
+full pointer payload in `CMD_SCAN_STATUS` complete branch.
+
+### Build infrastructure fix
+
+`build.ps1 -Target Test` previously rebuilt the C# test project + ran
+tests but did NOT republish `UE5DumpUI.exe` to `dist/`. After fast
+"tweak UI binding, run tests, relaunch from dist/" cycles, users got
+stale UI binaries — exactly what bit the sparse panel testing for ~30
+minutes. `Test` is now in the same gate as `All`/`UI`, so the test
+cycle always refreshes the dist/ exe.
+
+### Cross-version validation
+
+| Game | UE | bCasePreservingName | SparseDelegates RVA | Pattern hit |
+|------|----|----|----|----|
+| Everspace 2 | 5.4 | false (FName=8, inner stride 0x20) | `+9AA5F10` | SPARSE_ES2_1 |
+| Titan Quest II | 5.7 | **true** (FName=16, inner stride 0x28) | `+D46D170` | SPARSE_ES2_1 |
+
+Same pattern hits both games. The walker's `DynOff::bCasePreservingName`
+branch absorbs the inner-TMap stride and FScriptDelegate-size
+difference, so a single AOB covers UE 5.x. The TQ2 hit was the
+critical test — it's the first game with case-preserving FName that
+exercised the alternate stride; previously untested.
+
+### What's covered now
+
+- Drill into any `MulticastSparseDelegateProperty` field → see
+  bindings as `Owner::Func` per row, navigable to target via Open
+- Find Refs target hits surface multicast-sparse references
+  (closes the v3 gap noted as "deliberately NOT covered")
+- Pointer panel shows resolved storage address per session
+
+### What's still pending
+
+- **UE 4.23-4.27 sparse**: outer key is `FObjectKey { FWeakObjectPtr,
+  int32 SerialNumber }` (16B + pad) instead of raw `UObjectBase*`.
+  Stride changes ~0x60 → ~0x68 and key matching needs to reconstruct
+  `FObjectKey` from `(owner, GetSerialNumber(InternalIndex))`. Walker
+  returns `supported=false` for UE < 5.0 to make this gap explicit.
+- **FieldPathProperty** (rare): still the only remaining drill-down
+  type that has no specialized handler.
+
+**Build #577, 532 tests passing (31 C++ + 501 C#).** 13 commits ahead
+of `origin/main` on `dev`.
+
+-----
+
+## 2026-05-09 (release 560) — Utf8Helpers extraction + 31-case C++ self-test
 
 `test(utf8): extract Utf8Helpers + add 31-case C++ self-test target`
 ([`Utf8Helpers.h`](../dll/src/Utf8Helpers.h),
