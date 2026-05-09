@@ -290,3 +290,37 @@ if(BUILD_PROXY_DINPUT8)
         OUTPUT_NAME "dinput8"
     )
 endif()
+
+# ============================================================
+# Unit test target — Utf8Helpers self-test
+#
+# Stand-alone executable, no GoogleTest dependency. Builds only when the
+# main UE5Dumper target builds (skipped for proxy-only configures since
+# proxy builds use a different binary directory). build.ps1 -Target Test
+# runs the executable before C# tests; non-zero exit fails the test
+# phase.
+#
+# Why a separate target instead of folding into UE5Dumper? The DLL
+# requires Win32 / MinHook / nlohmann linkage that the test logic
+# doesn't need. Keeping the test minimal (just <cstdio> + the
+# header-only Utf8Helpers.h) means a regression in DLL build doesn't
+# block the test from running.
+# ============================================================
+if(NOT BUILD_PROXY_DLL AND NOT BUILD_PROXY_DINPUT8)
+    add_executable(utf8_helpers_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/utf8_helpers_test.cpp
+    )
+
+    target_include_directories(utf8_helpers_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    if(MSVC)
+        set_property(TARGET utf8_helpers_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(utf8_helpers_test PRIVATE
+            /utf-8 /W4 /permissive- /EHa
+        )
+    endif()
+endif()
