@@ -118,9 +118,58 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
 }
 
 // ============================================================
+// SanitizeUtf8 — walk a candidate UTF-8 byte sequence and replace any malformed
+// run with '?'. Defends against the historical "invalid UTF-8 byte 0xA0"
+// nlohmann::json failure: even when the source path looks sound (e.g.
+// WideCharToMultiByte(CP_UTF8) over a wchar_t buffer), corrupt game memory
+// containing lone surrogates can pass through as ill-formed UTF-8 (CESU-8-like
+// 3-byte surrogate encodings) which nlohmann strict-validates and throws on.
+// Cheap O(N) — only invoked on values that head into JSON.
+static std::string SanitizeUtf8(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    size_t i = 0;
+    while (i < in.size()) {
+        unsigned char b0 = static_cast<unsigned char>(in[i]);
+        if (b0 < 0x80) {
+            // ASCII — pass through, but reject control bytes other than \t/\n/\r
+            // because some sit in the same range as XML/JSON-illegal codepoints.
+            if (b0 < 0x20 && b0 != '\t' && b0 != '\n' && b0 != '\r') out += '?';
+            else out += static_cast<char>(b0);
+            ++i;
+            continue;
+        }
+        // Decode multi-byte sequence, validate strictly, reject surrogates and overlongs.
+        int extra = 0;
+        uint32_t cp = 0;
+        uint32_t minCp = 0;
+        if ((b0 & 0xE0) == 0xC0) { extra = 1; cp = b0 & 0x1F; minCp = 0x80; }
+        else if ((b0 & 0xF0) == 0xE0) { extra = 2; cp = b0 & 0x0F; minCp = 0x800; }
+        else if ((b0 & 0xF8) == 0xF0) { extra = 3; cp = b0 & 0x07; minCp = 0x10000; }
+        else { out += '?'; ++i; continue; }
+
+        if (i + extra >= in.size()) { out += '?'; ++i; continue; }
+
+        bool ok = true;
+        for (int k = 1; k <= extra; ++k) {
+            unsigned char bk = static_cast<unsigned char>(in[i + k]);
+            if ((bk & 0xC0) != 0x80) { ok = false; break; }
+            cp = (cp << 6) | (bk & 0x3F);
+        }
+        if (!ok || cp < minCp || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+            out += '?'; ++i; continue;
+        }
+        for (int k = 0; k <= extra; ++k) out += in[i + k];
+        i += extra + 1;
+    }
+    return out;
+}
+
 // ReadFString — read an FString (TArray<wchar_t>) from a live
 // instance and convert UTF-16 → UTF-8.
 // Returns empty string on failure or if string is empty/too long.
+// Output passes through SanitizeUtf8 so JSON serialization downstream
+// can never trip on game-memory corruption.
 // ============================================================
 static std::string ReadFString(uintptr_t instanceAddr, int32_t offset) {
     // FString = TArray<wchar_t> = { wchar_t* Data (8B), int32 Count (4B), int32 Max (4B) }
@@ -139,12 +188,28 @@ static std::string ReadFString(uintptr_t instanceAddr, int32_t offset) {
     // Ensure null termination
     wbuf.back() = 0;
 
-    // UTF-16 → UTF-8 via WideCharToMultiByte
-    int needed = WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), -1, nullptr, 0, nullptr, nullptr);
+    // UTF-16 → UTF-8 via WideCharToMultiByte. WC_ERR_INVALID_CHARS makes the
+    // call fail (instead of silently producing CESU-8) when the source has
+    // lone surrogates, which is the most common upstream cause of
+    // nlohmann::json's "invalid UTF-8 byte" exception. On failure we retry
+    // without the strict flag and pipe through SanitizeUtf8 to scrub leftovers.
+    int needed = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                                     wbuf.data(), -1, nullptr, 0, nullptr, nullptr);
+    if (needed > 0) {
+        std::string result(needed - 1, '\0');
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+                            wbuf.data(), -1, result.data(), needed, nullptr, nullptr);
+        return SanitizeUtf8(result);
+    }
+
+    // Fallback: lossy conversion, then sanitize
+    needed = WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), -1,
+                                 nullptr, 0, nullptr, nullptr);
     if (needed <= 0) return "";
-    std::string result(needed - 1, '\0');  // -1 to exclude null terminator
-    WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), -1, result.data(), needed, nullptr, nullptr);
-    return result;
+    std::string result(needed - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), -1,
+                        result.data(), needed, nullptr, nullptr);
+    return SanitizeUtf8(result);
 }
 
 // ============================================================
