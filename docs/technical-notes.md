@@ -246,8 +246,23 @@ to populate `innerType`. Two storage layouts exist depending on `T`:
   the FWeakObjectPtr-shaped `Weak/Soft/Lazy`): `T` occupies the field
   directly; "unset" is encoded as null/zero (or `{ idx=0, serial=0 }`
   for weak-like). `sizeof(TOptional<T>) == sizeof(T)`.
-- **Non-intrusive** (older + non-pointer T): `{ T value; uint8 bIsSet; }`
-  with the trailing flag at `field + sizeof(T)`.
+- **Intrusive via `FIntrusiveUnsetOptionalState` specialization** for
+  heap-backed types — the unset flag lives *inside* T's normal fields
+  rather than as a trailing byte. The DLL hand-codes the sentinel checks
+  (which mirror each type's `UEOpEquals(FIntrusiveUnsetOptionalState)`):
+
+  | Inner type     | Sentinel              | Field offset (within `T`) | UE source |
+  |----------------|------------------------|---------------------------|-----------|
+  | `StrProperty`  | `int32 Max == -1`     | +12 (FString.Max)         | UnrealString.h.inl |
+  | `NameProperty` | `uint32 ComparisonIndex == 0xFFFFFFFF` | +0 | NameTypes.h |
+  | `TextProperty` | `uintptr_t TextData == nullptr` | +0 | Internationalization/Text.h |
+
+  For these, `sizeof(TOptional<T>) == sizeof(T)` (no trailing flag) and
+  reading `bIsSet` past `T` would land on the next UPROPERTY's memory —
+  source of subtle false positives until the sentinel paths shipped.
+- **Non-intrusive** (older + non-pointer T like Int/Float/Bool/Byte/Enum
+  and StructProperty): `{ T value; uint8 bIsSet; }` with the trailing
+  flag at `field + sizeof(T)`.
 
 `WalkInstance` dispatches by inner type: pointer-shaped innners use the
 null-sentinel test, scalars/structs read the trailing `bIsSet` byte at

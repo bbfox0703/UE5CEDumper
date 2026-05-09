@@ -6,6 +6,61 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
+## 2026-05-09 (latest) — OptionalProperty\<String/Name/Text\> intrusive specialization fix
+
+`fix(walker): OptionalProperty intrusive isSet detection + value surfacing`
+([`Ubel.cpp`](../dll/src/Ubel.cpp), build 530+)
+
+Surface-tested OptionalProperty\<Struct\> on ES2 and noticed
+`OptionalText` showing `(set)` despite the hex dump being all zeros,
+while `OptionalString` neighbour with `Max=-1` correctly showed
+`(unset)`. Investigation:
+
+The `bIsSet` trailing-byte read at `field + sizeof(T)` is wrong for
+heap-backed types — UE specializes `TOptional<T>` via
+`FIntrusiveUnsetOptionalState` (see
+[Misc/Optional.h `FOptional::IsSet`](../vendor/UnrealEngine/Engine/Source/Runtime/Core/Public/Misc/Optional.h#L26-L37))
+so the "set" flag lives *inside* T's normal fields rather than as a
+trailing byte. Reading past T lands on the next UPROPERTY's memory and
+produces both false positives and false negatives depending on neighbour
+layout. The 4 ES2 `OptionalPropertyTestObject` test fields all aliased
+each other:
+
+| Field        | innerSize used | bIsSet read addr   | Lands on...                                |
+|--------------|---------------:|--------------------|--------------------------------------------|
+| OptionalString @0x28 | 16 | 0x38 (next field start) | OptionalText TextData byte 0 = 00 ✓ unset |
+| OptionalText @0x38   | 16 | 0x48 (next field start) | OptionalName ComparisonIndex = 0xFF ❌ false-positive set |
+| OptionalName @0x48   | 8  | 0x50 (next field start) | OptionalInt int byte 0 = 00 ✓ unset |
+| OptionalInt @0x50    | 4  | 0x54 (4 bytes in)       | trailing pad = 00 ✓ unset |
+
+Fix: dispatch by inner type *before* the trailing-bIsSet fallback, with
+sentinel checks lifted directly from each type's
+`UEOpEquals(FIntrusiveUnsetOptionalState)`:
+
+| Inner type      | Sentinel check                                | Source ref |
+|-----------------|-----------------------------------------------|------------|
+| `StrProperty`   | `int32` at field+12 (`FString::Max`) == `-1`  | [UnrealString.h.inl:212](../vendor/UnrealEngine/Engine/Source/Runtime/Core/Public/Containers/UnrealString.h.inl#L212) |
+| `NameProperty`  | `uint32` at field+0 (`FName::ComparisonIndex`) == `0xFFFFFFFF` | [NameTypes.h:76](../vendor/UnrealEngine/Engine/Source/Runtime/Core/Public/UObject/NameTypes.h#L76) |
+| `TextProperty`  | `uintptr_t` at field+0 (`FText::TextData`) == `nullptr`       | [Internationalization/Text.h:837](../vendor/UnrealEngine/Engine/Source/Runtime/Core/Public/Internationalization/Text.h#L837) |
+
+When set, the resolved contents are surfaced via the existing
+`ReadFString` / `ReadFName` helpers and rendered as `"FooBar"` / `Bar`
+instead of the placeholder `(set)`. `fv.strValue` is already wired
+through `Fern.cpp::str_value` JSON, so the UI picks up the new field
+without changes.
+
+Other primitive scalar inners (Int/Float/Bool/Byte/Enum) don't have
+intrusive specializations and stay on the trailing-bIsSet path —
+that path is correct because those types leave at least one trailing
+byte for the flag (e.g. `TOptional<int32>` is 8B).
+
+`fi.Size` for these intrusive Optionals is reported as `sizeof(T)` (no
+trailing flag), so the 64B hex cap stays correct without tweaking.
+
+**Build / tests:** clean build #530, 483 tests passing.
+
+-----
+
 ## 2026-05-09 (later) — OptionalProperty\<Struct\> drill-down + Find Refs descent
 
 `feat(walker): OptionalProperty<Struct> inner sub-field surfacing`
@@ -252,7 +307,7 @@ binding and the filter logic share one implementation.
 
 -----
 
-## Capability matrix (current — build 528)
+## Capability matrix (current — build 530)
 
 | Layer | Drill-down | Find Refs |
 |-------|-----------|-----------|
@@ -264,7 +319,9 @@ binding and the filter logic share one implementation.
 | MulticastInline / MulticastDelegate | ✅ | ✅ (v3) |
 | TArray<FScriptDelegate> | ✅ | ✅ (v3) |
 | MulticastSparseDelegate | ⚠️ bound flag only | ❌ (needs FSparseDelegateStorage AOB + walk) |
-| OptionalProperty\<pointer / weak / scalar\> | ✅ | ✅ |
+| OptionalProperty\<pointer / weak\> | ✅ | ✅ |
+| OptionalProperty\<scalar Int/Float/Bool/Byte/Enum\> | ✅ trailing-bIsSet | — |
+| OptionalProperty\<String / Name / Text\> | ✅ intrusive sentinel + value (build 530) | — |
 | OptionalProperty\<Struct\> | ✅ (build 528) | ✅ depth-3 descent through inner struct (build 528) |
 | FieldPathProperty | ❌ | ❌ |
 | TMap / TSet with weak-like inner sides | — | ❌ (v4 candidate) |

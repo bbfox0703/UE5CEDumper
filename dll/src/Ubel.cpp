@@ -4170,6 +4170,30 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                    || innerTn == "SoftObjectProperty"
                                    || innerTn == "SoftClassProperty"
                                    || innerTn == "LazyObjectProperty";
+            // Heap-backed types whose UE definitions specialize TOptional via
+            // FIntrusiveUnsetOptionalState (see Misc/Optional.h ::IsSet) — the
+            // "set" flag is stored *inside* T's normal fields rather than as a
+            // trailing byte. Reading bIsSet at field+sizeof(T) lands on the
+            // next UPROPERTY's memory and produces both false positives (e.g.
+            // OptionalText hex all zeros yet flagged set) and false negatives
+            // depending on neighbour layout.
+            //
+            //   FString  : Data backing TArray uses Max == -1 as sentinel
+            //              (UnrealString.h.inl line ~212). Layout
+            //              { TCHAR* Data(8B), int32 Num(4B), int32 Max(4B) }
+            //              → check int32 at field+12.
+            //   FName    : ComparisonIndex == 0xFFFFFFFF when unset
+            //              (NameTypes.h line ~76). Layout
+            //              { uint32 ComparisonIndex(4B), uint32 Number(4B) }
+            //              → check uint32 at field+0.
+            //   FText    : TextData (TSharedPtr-shaped pointer) == nullptr
+            //              when unset (Internationalization/Text.h line ~837).
+            //              Layout starts with the pointer → check uintptr at
+            //              field+0.
+            const bool isStrInner   = (innerTn == "StrProperty");
+            const bool isNameInner  = (innerTn == "NameProperty");
+            const bool isTextInner  = (innerTn == "TextProperty");
+            const bool isIntrusiveScalar = isStrInner || isNameInner || isTextInner;
 
             bool isSet = false;
 
@@ -4202,8 +4226,40 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         fv.ptrClassAddr = cls;
                     }
                 }
+            } else if (isStrInner) {
+                int32_t arrayMax = 0;
+                Macht::ReadSafe(fieldAddr + 12, arrayMax);
+                isSet = (arrayMax != -1);
+                if (isSet) {
+                    std::string s = ReadFString(fieldAddr, 0);
+                    if (!s.empty()) fv.strValue = std::move(s);
+                }
+            } else if (isNameInner) {
+                uint32_t compIdx = 0;
+                Macht::ReadSafe(fieldAddr, compIdx);
+                isSet = (compIdx != 0xFFFFFFFFu);
+                if (isSet) {
+                    std::string n = ReadFName(fieldAddr);
+                    if (!n.empty()) fv.strValue = std::move(n);
+                }
+            } else if (isTextInner) {
+                uintptr_t textData = 0;
+                Macht::ReadSafe(fieldAddr, textData);
+                isSet = (textData != 0);
+                // FText display: read embedded FString at +0x10 (same path
+                // the StrProperty display reuses), guarded by the pointer
+                // sanity check from InterpretValue.
+                if (isSet) {
+                    int32_t cnt = 0;
+                    Macht::ReadSafe(fieldAddr + 0x18, cnt);
+                    if (cnt > 0 && cnt <= 256) {
+                        std::string s = ReadFString(fieldAddr, 0x10);
+                        if (!s.empty()) fv.strValue = std::move(s);
+                    }
+                }
             } else if (innerSize > 0) {
-                // Scalar/struct: trailing bIsSet at field + innerSize.
+                // Scalar/struct (no intrusive specialization): trailing
+                // bIsSet at field + innerSize.
                 uint8_t bIsSet = 0;
                 Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
                 isSet = (bIsSet != 0);
@@ -4352,6 +4408,14 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.typedValue = fv.structTypeName.empty()
                     ? "(set)"
                     : "{" + fv.structTypeName + "}";
+            } else if (isStrInner || isTextInner) {
+                // FString / FText: surface the resolved contents in quotes,
+                // matching the bare StrProperty / TextProperty single-value
+                // display. Empty contents stay quoted as "" so the user sees
+                // "set but empty" rather than mis-reading as "(set)".
+                fv.typedValue = "\"" + fv.strValue + "\"";
+            } else if (isNameInner) {
+                fv.typedValue = fv.strValue.empty() ? "(set)" : fv.strValue;
             } else if (innerSize > 0) {
                 std::vector<uint8_t> buf(innerSize, 0);
                 if (Macht::ReadBytesSafe(fieldAddr, buf.data(), innerSize)) {
