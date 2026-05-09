@@ -1459,9 +1459,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
 
             // Pre-resolve StructProperty inner fields via DLL
-            StatusText = "Resolving struct fields...";
+            StatusText = CsxDrilldownDepth > 0
+                ? "Resolving struct + pointer fields..."
+                : "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, fieldsForXml, arrayLimit: ArrayLimit);
+
+            // Pointer drill-down: walk ObjectProperty / Class / Weak / Soft / Lazy /
+            // Interface targets so the emitter can drop GroupHeader+Offsets=[0] children
+            // in for each pointer leaf. Depth comes from the existing toolbar slider
+            // (originally CSX-only); empty dict when depth=0.
+            var resolvedInstances = await CeXmlExportService.ResolvePointerInstancesAsync(
+                _dump, fieldsForXml, depth: CsxDrilldownDepth, arrayLimit: ArrayLimit);
 
             var rootBc = breadcrumbsForXml[0];
 
@@ -1483,7 +1492,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     _engineState.ModuleName,
                     resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
-                    maxDropDownEntries: DropDownLimit);
+                    maxDropDownEntries: DropDownLimit,
+                    resolvedInstances: resolvedInstances);
             }
             else
             {
@@ -1492,14 +1502,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
-                    maxDropDownEntries: DropDownLimit);
+                    maxDropDownEntries: DropDownLimit,
+                    resolvedInstances: resolvedInstances);
             }
 
             await _platform.CopyToClipboardAsync(xml);
             var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             StatusText = aobFallbackWarn ?? limitWarn ?? "";
-            _log.Info($"CE XML copied to clipboard for {CurrentClassName} (AOB={useAob}, {resolvedStructs.Count} structs resolved)");
+            _log.Info($"CE XML copied to clipboard for {CurrentClassName} (AOB={useAob}, " +
+                $"{resolvedStructs.Count} structs / {resolvedInstances.Count} pointers resolved, depth={CsxDrilldownDepth})");
         }
         catch (Exception ex)
         {
@@ -1612,9 +1624,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
 
             // Pre-resolve StructProperty inner fields for the selected field
-            StatusText = "Resolving struct fields...";
+            StatusText = CsxDrilldownDepth > 0
+                ? "Resolving struct + pointer fields..."
+                : "Resolving struct fields...";
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
                 _dump, singleFieldList, arrayLimit: ArrayLimit);
+
+            // Pointer drill-down for the selected field (and its target's nested
+            // pointers) up to CsxDrilldownDepth — same toolbar slider used by CSX.
+            var resolvedInstances = await CeXmlExportService.ResolvePointerInstancesAsync(
+                _dump, singleFieldList, depth: CsxDrilldownDepth, arrayLimit: ArrayLimit);
 
             var rootBc = breadcrumbsForXml[0];
 
@@ -1634,7 +1653,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     _engineState.ModuleName,
                     resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
-                    maxDropDownEntries: DropDownLimit);
+                    maxDropDownEntries: DropDownLimit,
+                    resolvedInstances: resolvedInstances);
             }
             else
             {
@@ -1643,14 +1663,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, singleFieldList, resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
-                    maxDropDownEntries: DropDownLimit);
+                    maxDropDownEntries: DropDownLimit,
+                    resolvedInstances: resolvedInstances);
             }
 
             await _platform.CopyToClipboardAsync(xml);
             var limitWarn = BuildContainerLimitWarning(singleFieldList, ArrayLimit);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             StatusText = aobFallbackWarn ?? limitWarn ?? "";
-            _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName}, AOB={useAob})");
+            _log.Info($"CE Field XML copied for {SelectedField.Name} ({SelectedField.TypeName}, AOB={useAob}, " +
+                $"{resolvedInstances.Count} pointer targets resolved at depth={CsxDrilldownDepth})");
         }
         catch (Exception ex)
         {

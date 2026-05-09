@@ -11,7 +11,7 @@
     <sys:String x:Key="str.Toolbar.ArrayLimitWarn">⚠ High memory usage — may cause crash</sys:String>
     <sys:String x:Key="str.Toolbar.DropDownLimit">DropDown Limit:</sys:String>
     <sys:String x:Key="str.Toolbar.PreviewLimit">Preview:</sys:String>
-    <sys:String x:Key="str.Toolbar.CsxDepth">CSX Depth:</sys:String>
+    <sys:String x:Key="str.Toolbar.CsxDepth">Drill Depth:</sys:String>
 
     <!-- Tabs -->
     <sys:String x:Key="str.Tab.ClassStruct">Class Structure</sys:String>
@@ -216,7 +216,7 @@
     <sys:String x:Key="str.Tip.ArrayLimit">Max array elements to read inline (2^N)</sys:String>
     <sys:String x:Key="str.Tip.DropDownLimit">Max CE DropDownList entries (2^N)</sys:String>
     <sys:String x:Key="str.Tip.PreviewLimit">Struct sub-fields shown in Value column (0 = no preview)</sys:String>
-    <sys:String x:Key="str.Tip.CsxDepth">CSX drilldown depth for child structures</sys:String>
+    <sys:String x:Key="str.Tip.CsxDepth">Pointer drill-down depth (0 = flat). Applies to both CSX export and CE XML / CE Field copy.</sys:String>
     <sys:String x:Key="str.Tip.Export">Export object data in various formats</sys:String>
 
     <!-- Tooltips: Object Tree -->

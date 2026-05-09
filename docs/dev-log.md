@@ -6,7 +6,95 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
-## 2026-05-09 (latest) — CE Field/XML ObjectProperty leaf shape fix
+## 2026-05-09 (latest) — CE XML pointer drill-down + Property Search scroll restore
+
+`feat(export): CE XML/CE Field N-level ObjectProperty drill-down (depth slider)`
+([`CeXmlExportService.cs`](../ui/UE5DumpUI/Services/CeXmlExportService.cs),
+[`LiveWalkerViewModel.cs`](../ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs),
+[`PropertySearchPanel.axaml.cs`](../ui/UE5DumpUI/Views/PropertySearchPanel.axaml.cs),
+build 541+)
+
+Two related issues from the build-534 session:
+
+1. **Copy CE Field on `ScalabilityModifiers` (ObjectProperty) only emits a
+   single 8-byte hex leaf.** The build-534 fix made the leaf shape valid
+   (`<VariableType>8 Bytes</VariableType>` instead of the broken
+   `<GroupHeader>1</GroupHeader>` placeholder), but users with
+   already-shipped CE tables expected the export to **follow the
+   pointer** and include the target's children — exactly the same way
+   the CSX export's `drilldownDepth` slider already worked. Their
+   workflow is "copy field → paste into CE → instantly inspect the
+   referenced UObject's UPROPERTYs without manually re-poking offsets".
+
+2. **Property Search loses scroll position + visible selection** when
+   switching tabs (Property Search → Instance Finder → back). The VM
+   keeps `SelectedResult` populated, but Avalonia's TabControl swaps
+   the tab content out and back in, and the freshly-attached DataGrid
+   doesn't auto-scroll to its `SelectedItem` — the highlighted row is
+   offscreen so it visually looks like the selection was cleared.
+
+### CE XML pointer drill-down
+
+Mirrors the CSX implementation almost verbatim:
+
+- New `CeXmlExportService.ResolvePointerInstancesAsync(dump, fields,
+  depth, arrayLimit)` ports
+  `CsxExportService.ResolvePointerInstancesAsync` — recursive walk
+  through `ObjectProperty` / `ClassProperty` /
+  `WeakObjectProperty` / `Soft*` / `LazyObjectProperty` /
+  `InterfaceProperty` targets, depth-capped, with a shared `visited`
+  HashSet for cycle protection. Returns `Dictionary<PtrAddress,
+  Fields>` so emit-time lookup is O(1).
+- `EmitFields` learned a new branch: when `resolvedInstances` has the
+  field's PtrAddress and the type is in the `IsObjectPropertyType` set,
+  call `EmitDrilledPointer` instead of the flat leaf path.
+- `EmitDrilledPointer` writes the leaf as
+  `<GroupHeader>1</GroupHeader> <Address>+{fieldOffset}</Address>
+  <Offsets><Offset>0</Offset></Offsets>` followed by a recursive
+  `EmitFields` over the target's children at their natural offsets
+  within the dereferenced UObject. Description is decorated with the
+  resolved `PtrClassName` so `BP_X (UCharacter)` is distinguishable
+  from `BP_X (UPawn)` without expanding.
+- `GenerateHierarchicalXml` / `GenerateInstanceXml` /
+  `GenerateAobWrappedXml` all gained an optional
+  `resolvedInstances:` parameter that flows through to `EmitFields`.
+- `LiveWalkerViewModel.ExportCeXmlAsync` and `ExportCeFieldXmlAsync`
+  pre-resolve via `ResolvePointerInstancesAsync(depth: CsxDrilldownDepth)`
+  using the same toolbar slider.
+
+### Slider repurposed
+
+The 0-4 slider previously labelled `CSX Depth` (`str.Toolbar.CsxDepth`)
+now drives drill-down for **both** CSX and CE XML / CE Field exports;
+renamed to `Drill Depth:` and the tooltip clarifies the broader scope.
+Backing property `CsxDrilldownDepth` is unchanged (preserves user
+preferences).
+
+### Property Search scroll restore
+
+`PropertySearchPanel.axaml.cs` hooks `Loaded` → looks up
+`ResultsGrid` (newly named `x:Name`) → schedules a
+`Dispatcher.UIThread.Post(... grid.ScrollIntoView(vm.SelectedResult))`
+at `Background` priority so the call runs after the DataGrid has
+materialized its row containers (otherwise `ScrollIntoView` no-ops on
+unrealized rows). Defensive try/catch covers recycled-grid /
+missing-row cases.
+
+### Tests
+
+3 new in `CeXmlExportServiceTests` covering:
+- ObjectProperty with resolved instance → GroupHeader + Offsets=[0] +
+  children at natural offsets
+- ObjectProperty with mismatched resolved-instance dict → falls back to
+  flat leaf (no leaked children)
+- Drilled children of common scalar types (FloatProperty / IntProperty)
+  emit as proper leaves
+
+**Build #541, 493 tests passing** (was 490).
+
+-----
+
+## 2026-05-09 (mid-latest) — CE Field/XML ObjectProperty leaf shape fix
 
 `fix(export): emit ObjectProperty/ClassProperty/WeakObjectProperty as 8-Byte leaf`
 ([`CeXmlExportService.cs::MapCeField`](../ui/UE5DumpUI/Services/CeXmlExportService.cs),
@@ -428,7 +516,7 @@ binding and the filter logic share one implementation.
 
 -----
 
-## Capability matrix (current — build 534)
+## Capability matrix (current — build 541)
 
 | Layer | Drill-down | Find Refs |
 |-------|-----------|-----------|

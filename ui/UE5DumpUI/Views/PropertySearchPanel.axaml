@@ -57,7 +57,8 @@
                IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
     <!-- Results DataGrid -->
-    <DataGrid ItemsSource="{Binding Results}"
+    <DataGrid x:Name="ResultsGrid"
+              ItemsSource="{Binding Results}"
               SelectedItem="{Binding SelectedResult}"
               IsReadOnly="True"
               CanUserResizeColumns="True"

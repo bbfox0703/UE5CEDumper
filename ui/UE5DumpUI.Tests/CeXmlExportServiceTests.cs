@@ -526,6 +526,140 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
+    public void GenerateInstanceXml_ObjectProperty_WithResolvedInstance_EmitsGroupHeaderWithChildren()
+    {
+        // ObjectProperty pre-resolved by ResolvePointerInstancesAsync should emit
+        // as GroupHeader + Offsets=[0] + the target's fields as children — so CE
+        // dereferences *(parent + 0x2C8) and lays the children out at their
+        // natural offsets within MapScalabilityModifierComponent.
+        const string ptrAddr = "0x7FF453509278";
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ScalabilityModifiers", TypeName = "ObjectProperty",
+                Offset = 0x2C8, Size = 8,
+                PtrAddress = ptrAddr,
+                PtrName = "ScalabilityModifiers",
+                PtrClassName = "MapScalabilityModifierComponent",
+            },
+        };
+
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [ptrAddr] = new()
+            {
+                new LiveFieldValue { Name = "Health", TypeName = "FloatProperty", Offset = 0x40, Size = 4 },
+                new LiveFieldValue { Name = "TickInterval", TypeName = "FloatProperty", Offset = 0xA0, Size = 4 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedInstances: resolvedInstances);
+
+        // Locate the ScalabilityModifiers entry block
+        var scStart = xml.IndexOf("\"ScalabilityModifiers (MapScalabilityModifierComponent)\"",
+            StringComparison.Ordinal);
+        Assert.True(scStart >= 0, "Drilled ScalabilityModifiers entry missing");
+
+        // The drilled entry must be a GroupHeader with Offsets=[0]
+        var headerEnd = xml.IndexOf("<CheatEntries>", scStart, StringComparison.Ordinal);
+        Assert.True(headerEnd > scStart, "Drilled entry must open <CheatEntries>");
+        var headerBlock = xml.Substring(scStart, headerEnd - scStart);
+        Assert.Contains("<GroupHeader>1</GroupHeader>", headerBlock);
+        Assert.Contains("<Address>+2C8</Address>", headerBlock);
+        Assert.Contains("<Offset>0</Offset>", headerBlock);
+
+        // Children should appear with their natural offsets relative to the
+        // dereferenced target (NOT the parent instance + 0x2C8). Use scalar
+        // fields the leaf emitter knows how to render.
+        Assert.Contains("\"Health\"", xml);
+        Assert.Contains("<Address>+40</Address>", xml);
+        Assert.Contains("\"TickInterval\"", xml);
+        Assert.Contains("<Address>+A0</Address>", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ObjectProperty_NoMatchingResolvedInstance_FallsBackToFlatLeaf()
+    {
+        // resolvedInstances has different PtrAddress → no match → should fall
+        // through to the standard 8 Bytes leaf path (after the build 534 fix).
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Lookup", TypeName = "ObjectProperty",
+                Offset = 0x100, Size = 8,
+                PtrAddress = "0x7FF000000000",
+                PtrName = "Target",
+                PtrClassName = "UTarget",
+            },
+        };
+
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>
+        {
+            ["0x7FFDEADBEEF0"] = new() // mismatched address
+            {
+                new LiveFieldValue { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedInstances: resolvedInstances);
+
+        var entryStart = xml.IndexOf("\"Lookup\"", StringComparison.Ordinal);
+        var entryEnd = xml.IndexOf("</CheatEntry>", entryStart, StringComparison.Ordinal);
+        var entryBlock = xml.Substring(entryStart, entryEnd - entryStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", entryBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", entryBlock);
+        Assert.DoesNotContain("<CheatEntries>", entryBlock);
+        // The mismatched-address entry should NOT have leaked in
+        Assert.DoesNotContain("\"X\"", entryBlock);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ObjectProperty_ResolvedInstance_PreservesScalarLeafShape()
+    {
+        // Drilled-pointer children of common scalar types must still emit as
+        // proper leaves (with VariableType, no GroupHeader) — this is the
+        // most common shape inside any UObject target.
+        const string ptrAddr = "0x7FF000000000";
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Comp", TypeName = "ObjectProperty",
+                Offset = 0x40, Size = 8,
+                PtrAddress = ptrAddr, PtrClassName = "UComponent",
+            },
+        };
+
+        var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [ptrAddr] = new()
+            {
+                new LiveFieldValue { Name = "Health", TypeName = "FloatProperty", Offset = 0x10, Size = 4 },
+                new LiveFieldValue { Name = "Mana", TypeName = "IntProperty", Offset = 0x14, Size = 4 },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields,
+            resolvedInstances: resolvedInstances);
+
+        Assert.Contains("\"Health\"", xml);
+        Assert.Contains("<VariableType>Float</VariableType>", xml);
+        Assert.Contains("<Address>+10</Address>", xml);
+        Assert.Contains("\"Mana\"", xml);
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+        Assert.Contains("<Address>+14</Address>", xml);
+    }
+
+    [Fact]
     public void GenerateInstanceXml_NullObjectProperty_StillEmitsLeaf()
     {
         // ObjectProperty with no resolved target (null pointer) — IsNavigable

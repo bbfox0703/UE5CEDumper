@@ -91,6 +91,74 @@ public static class CeXmlExportService
     ///        LiveFieldValue { Name="StructB.Y", Offset=0x14 },
     ///      ]
     /// </summary>
+    /// <summary>
+    /// Pre-resolve ObjectProperty / ClassProperty / WeakObjectProperty / Soft* / Lazy* /
+    /// Interface* targets so the CE XML emitter can drop GroupHeader+Offsets=[0] children
+    /// onto the pointer leaf, mirroring the same drilldown the CSX exporter ships
+    /// (CsxExportService.ResolvePointerInstancesAsync). The result is keyed by PtrAddress
+    /// so the emit-time lookup is O(1) per field.
+    ///
+    /// Recurses into resolved targets up to <paramref name="depth"/>; uses a
+    /// shared visited set for cycle detection. Returns empty when depth &lt;= 0.
+    /// </summary>
+    public static async Task<Dictionary<string, List<LiveFieldValue>>> ResolvePointerInstancesAsync(
+        IDumpService dump,
+        IReadOnlyList<LiveFieldValue> fields,
+        int depth,
+        int arrayLimit = 64)
+    {
+        var resolved = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
+        if (depth <= 0) return resolved;
+
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        await ResolvePointerInstancesRecursiveAsync(dump, fields, resolved, depth, arrayLimit, visited);
+        return resolved;
+    }
+
+    private static async Task ResolvePointerInstancesRecursiveAsync(
+        IDumpService dump,
+        IReadOnlyList<LiveFieldValue> fields,
+        Dictionary<string, List<LiveFieldValue>> resolved,
+        int remainingDepth,
+        int arrayLimit,
+        HashSet<string> visited)
+    {
+        if (remainingDepth <= 0) return;
+
+        foreach (var field in fields)
+        {
+            if (!IsObjectPropertyType(field.TypeName)) continue;
+            if (string.IsNullOrEmpty(field.PtrAddress) || field.PtrAddress == "0x0") continue;
+            if (resolved.ContainsKey(field.PtrAddress)) continue;
+            if (!visited.Add(field.PtrAddress)) continue; // cycle protection
+
+            try
+            {
+                var result = await dump.WalkInstanceAsync(field.PtrAddress, field.PtrClassAddr, arrayLimit);
+                if (result.Fields.Count > 0)
+                {
+                    resolved[field.PtrAddress] = result.Fields;
+                    // Recurse one level deeper for nested pointers in the resolved target
+                    await ResolvePointerInstancesRecursiveAsync(
+                        dump, result.Fields, resolved, remainingDepth - 1, arrayLimit, visited);
+                }
+            }
+            catch
+            {
+                // Pipe error / target reclaimed — skip this branch quietly,
+                // pointer falls back to a flat 8 Bytes hex leaf in the emit step.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Object/Class pointer family — same set CsxExportService treats as drilldown-eligible.
+    /// </summary>
+    private static bool IsObjectPropertyType(string typeName) => typeName is
+        "ObjectProperty" or "ClassProperty" or "WeakObjectProperty" or
+        "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty" or
+        "InterfaceProperty";
+
     public static async Task<Dictionary<int, List<LiveFieldValue>>> ResolveStructFieldsAsync(
         IDumpService dump, IReadOnlyList<LiveFieldValue> fields, int arrayLimit = 64)
     {
@@ -231,7 +299,8 @@ public static class CeXmlExportService
         IReadOnlyList<LiveFieldValue> currentFields,
         Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
-        int maxDropDownEntries = 512)
+        int maxDropDownEntries = 512,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         // Clean breadcrumbs: remove navigation cycles (e.g., Child->Parent->Child)
         // before generating XML to avoid deeply nested duplicate pointer chains.
@@ -285,7 +354,7 @@ public static class CeXmlExportService
         // Parent breadcrumb (if any) already handled pointer dereference via Offsets=[0],
         // so all leaf fields simply use Address=+{field.Offset}.
         var leafIndent = indent + new string(' ', cleanedBc.Count * 2);
-        EmitFields(sb, leafIndent, currentFields, resolvedStructs);
+        EmitFields(sb, leafIndent, currentFields, resolvedStructs, resolvedInstances);
 
         // Close all nested levels (innermost first)
         for (int i = openTags - 1; i >= 0; i--)
@@ -311,7 +380,8 @@ public static class CeXmlExportService
         IReadOnlyList<LiveFieldValue> fields,
         Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
-        int maxDropDownEntries = 512)
+        int maxDropDownEntries = 512,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         _nextId = 100;
         _collapsePointerNodes = collapsePointerNodes;
@@ -328,7 +398,7 @@ public static class CeXmlExportService
             showAsHex: true, varType: "8 Bytes");
 
         var leafIndent = indent + "  ";
-        EmitFields(sb, leafIndent, fields, resolvedStructs);
+        EmitFields(sb, leafIndent, fields, resolvedStructs, resolvedInstances);
 
         EmitGroupClose(sb, indent);
 
@@ -383,7 +453,8 @@ public static class CeXmlExportService
         string aob, int aobPos, int aobLen, string moduleName,
         Dictionary<int, List<LiveFieldValue>>? resolvedStructs = null,
         bool collapsePointerNodes = false,
-        int maxDropDownEntries = 512)
+        int maxDropDownEntries = 512,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
 
@@ -450,7 +521,7 @@ public static class CeXmlExportService
         // ---- Leaf fields ----
         var bcDepth = Math.Max(0, cleanedBc.Count - 1);
         var leafIndent = baseIndent + "    " + new string(' ', bcDepth * 2);
-        EmitFields(sb, leafIndent, currentFields, resolvedStructs);
+        EmitFields(sb, leafIndent, currentFields, resolvedStructs, resolvedInstances);
 
         // ---- Close inner breadcrumb groups ----
         for (int i = innerOpenTags - 1; i >= 0; i--)
@@ -635,7 +706,8 @@ public static class CeXmlExportService
     /// </summary>
     private static void EmitFields(StringBuilder sb, string indent,
         IReadOnlyList<LiveFieldValue> fields,
-        Dictionary<int, List<LiveFieldValue>>? resolvedStructs)
+        Dictionary<int, List<LiveFieldValue>>? resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>>? resolvedInstances = null)
     {
         foreach (var field in fields)
         {
@@ -646,6 +718,25 @@ public static class CeXmlExportService
                 && structChildren.Count > 0)
             {
                 EmitResolvedStruct(sb, indent, field, structChildren);
+                continue;
+            }
+
+            // Pointer drill-down: ObjectProperty / ClassProperty / Weak/Soft/Lazy/Interface
+            // with a pre-resolved target → emit GroupHeader+Offsets=[0] and recurse into
+            // the target's fields. CE will dereference *(parent + field.Offset) and lay
+            // the children out at their natural offsets within the target.
+            //
+            // Lookup is by PtrAddress so two fields pointing to the same instance share
+            // the same resolved field list (this is also what enables cycle protection
+            // from ResolvePointerInstancesAsync).
+            if (resolvedInstances != null
+                && IsObjectPropertyType(field.TypeName)
+                && !string.IsNullOrEmpty(field.PtrAddress)
+                && field.PtrAddress != "0x0"
+                && resolvedInstances.TryGetValue(field.PtrAddress, out var ptrChildren)
+                && ptrChildren.Count > 0)
+            {
+                EmitDrilledPointer(sb, indent, field, ptrChildren, resolvedStructs, resolvedInstances);
                 continue;
             }
 
@@ -745,6 +836,41 @@ public static class CeXmlExportService
     /// Children are flattened (nested structs already expanded with dot-prefixed names).
     /// Each child's Offset is relative to the struct start.
     /// </summary>
+    /// <summary>
+    /// Emit an ObjectProperty / Class / Weak / Soft / Lazy / Interface field whose
+    /// pointer target was pre-resolved by ResolvePointerInstancesAsync. The leaf
+    /// becomes a GroupHeader with Address=+{fieldOffset}, Offsets=[0] (CE
+    /// dereferences *(parent + fieldOffset)) and the resolved target's fields as
+    /// children at their natural offsets within the target instance.
+    ///
+    /// Reuses the standard EmitFields recursion so nested struct flattening,
+    /// container expansion, enum DropDownLists, and further pointer drill-downs
+    /// all work uniformly inside the target — depth was already capped during
+    /// the resolve phase, so this loop terminates.
+    /// </summary>
+    private static void EmitDrilledPointer(StringBuilder sb, string indent,
+        LiveFieldValue field,
+        List<LiveFieldValue> children,
+        Dictionary<int, List<LiveFieldValue>>? resolvedStructs,
+        Dictionary<string, List<LiveFieldValue>> resolvedInstances)
+    {
+        // Description: include the resolved class name when known so the user
+        // can tell BP_X (UCharacter) from BP_X (UPawn) without expanding.
+        var description = !string.IsNullOrEmpty(field.PtrClassName)
+            ? $"{field.Name} ({field.PtrClassName})"
+            : field.Name;
+
+        // Address=+{fieldOffset}, Offsets=[0] — CE dereferences the pointer
+        // and treats children's +{N} as offsets from the resolved target.
+        EmitGroupOpen(sb, indent, description, $"+{field.Offset:X}", new[] { 0 },
+            showAsHex: true);
+
+        var childIndent = indent + "  ";
+        EmitFields(sb, childIndent, children, resolvedStructs, resolvedInstances);
+
+        EmitGroupClose(sb, indent);
+    }
+
     private static void EmitResolvedStruct(StringBuilder sb, string indent,
         LiveFieldValue structField, List<LiveFieldValue> children)
     {
