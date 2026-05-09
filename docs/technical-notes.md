@@ -226,6 +226,35 @@ bindings list is **not** wired up — it would require a new AOB
 signature to locate the static storage map. Find Refs v2 likewise can't
 follow sparse-delegate target pointers without the storage walk.
 
+### OptionalProperty (UE 5.2+)
+
+`FOptionalProperty` wraps `TOptional<T>` and is laid out as
+`FProperty + FProperty* ValueProperty` — the same shape as
+`FArrayProperty`, so `WalkClassEx` reuses the `FARRAYPROP_INNER` probe
+to populate `innerType`. Two storage layouts exist depending on `T`:
+
+- **Intrusive** (UE 5.4+ for pointer types `Object/Class/Interface` and
+  the FWeakObjectPtr-shaped `Weak/Soft/Lazy`): `T` occupies the field
+  directly; "unset" is encoded as null/zero (or `{ idx=0, serial=0 }`
+  for weak-like). `sizeof(TOptional<T>) == sizeof(T)`.
+- **Non-intrusive** (older + non-pointer T): `{ T value; uint8 bIsSet; }`
+  with the trailing flag at `field + sizeof(T)`.
+
+`WalkInstance` dispatches by inner type: pointer-shaped innners use the
+null-sentinel test, scalars/structs read the trailing `bIsSet` byte at
+`field + ResolveInnerSize(inner)`. The display string is `(unset)` when
+not set, otherwise the rendered inner value (resolved UObject*, scalar
+text, etc.). Drill-down into struct-typed Optional is not yet wired —
+the inner struct fields aren't surfaced.
+
+Find Refs v2 covers `OptionalProperty<Object/Class/Interface>` (treated
+as direct pointers) and `OptionalProperty<Weak/Soft/Lazy>` (resolved
+through the embedded FWeakObjectPtr). For UE 5.2–5.3 non-intrusive
+pointer optionals, an unset slot's value is typically zero so it
+trivially fails the comparison; the rare uninitialized-memory false
+positive isn't filtered out (would require caching the inner size
+alongside the cache entry).
+
 ### Validating element stride
 
 Inner FProperty `ELEMSIZE` reads frequently return garbage. Each Phase

@@ -615,6 +615,20 @@ ClassInfo WalkClassEx(uintptr_t uclassAddr) {
             }
         }
 
+        // OptionalProperty (UE 5.2+) -> wrapped value type.
+        // FOptionalProperty is FProperty + FProperty* ValueProperty — same
+        // shape as FArrayProperty, so reuse the same Inner offset probe.
+        else if (tn == "OptionalProperty") {
+            auto [innerProp, innerTn] = ProbeInnerProperty(fi.Address, DynOff::FARRAYPROP_INNER);
+            if (innerProp) {
+                fi.innerType = innerTn;
+                if (innerTn == "StructProperty")
+                    fi.innerStructType = ReadSubclassTypeName(innerProp);
+                else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
+                    fi.innerObjClass = ReadSubclassTypeName(innerProp);
+            }
+        }
+
         // MapProperty -> key type + value type
         // FMapProperty layout: KeyProp at ext+0, ValueProp at ext+8 (same probe as WalkInstance)
         else if (tn == "MapProperty") {
@@ -4128,6 +4142,114 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 for (auto b : buf) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", b); hex += hx; }
                 fv.hexValue = hex;
             }
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
+        // Handle OptionalProperty (UE 5.2+): TOptional<T>.
+        // Two storage layouts:
+        //   - Intrusive (UE 5.4+ for pointer types): T occupies the field
+        //     directly; "unset" is encoded as null/zero. Inner size == fi.Size.
+        //   - Non-intrusive (older + non-pointer T): { T value; uint8 bIsSet; }.
+        //     Trailing flag byte lives at field + sizeof(T).
+        // Scalar/struct inner types use the trailing-flag form. Object/Class/
+        // Interface and the FWeakObjectPtr-shaped types (Weak/Soft/Lazy) treat
+        // null/zero as the unset sentinel.
+        if (fi.TypeName == "OptionalProperty") {
+            uintptr_t fieldAddr = instanceAddr + fi.Offset;
+            // Probe inner ValueProperty (same offset as ArrayProperty::Inner —
+            // both subclasses are FProperty + FProperty*).
+            auto [innerProp, probedTn] = ProbeInnerProperty(fi.Address, DynOff::FARRAYPROP_INNER);
+            std::string innerTn = !fi.innerType.empty() ? fi.innerType : probedTn;
+            int32_t innerSize = innerProp ? ResolveInnerSize(innerProp, innerTn) : 0;
+
+            const bool isObjectLike = innerTn == "ObjectProperty"
+                                   || innerTn == "ClassProperty"
+                                   || innerTn == "InterfaceProperty";
+            const bool isWeakLike   = innerTn == "WeakObjectProperty"
+                                   || innerTn == "SoftObjectProperty"
+                                   || innerTn == "SoftClassProperty"
+                                   || innerTn == "LazyObjectProperty";
+
+            bool isSet = false;
+
+            if (isObjectLike) {
+                uintptr_t ptr = 0;
+                Macht::ReadSafe(fieldAddr, ptr);
+                if (ptr) {
+                    isSet = true;
+                    fv.ptrValue = ptr;
+                    fv.ptrName  = GetName(ptr);
+                    uintptr_t cls = GetClass(ptr);
+                    if (cls) {
+                        fv.ptrClassName = GetName(cls);
+                        fv.ptrClassAddr = cls;
+                    }
+                }
+            } else if (isWeakLike) {
+                // Embedded FWeakObjectPtr at field+0; unset sentinel is { 0, 0 }.
+                int32_t objIdx = 0, serial = 0;
+                Macht::ReadSafe(fieldAddr,     objIdx);
+                Macht::ReadSafe(fieldAddr + 4, serial);
+                isSet = (objIdx != 0 || serial != 0);
+                uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
+                if (resolved) {
+                    fv.ptrValue = resolved;
+                    fv.ptrName  = GetName(resolved);
+                    uintptr_t cls = GetClass(resolved);
+                    if (cls) {
+                        fv.ptrClassName = GetName(cls);
+                        fv.ptrClassAddr = cls;
+                    }
+                }
+            } else if (innerSize > 0) {
+                // Scalar/struct: trailing bIsSet at field + innerSize.
+                uint8_t bIsSet = 0;
+                Macht::ReadSafe(fieldAddr + innerSize, bIsSet);
+                isSet = (bIsSet != 0);
+            }
+
+            // Build display string.
+            if (!isSet) {
+                fv.typedValue = "(unset)";
+            } else if (isObjectLike || isWeakLike) {
+                if (!fv.ptrName.empty()) {
+                    fv.typedValue = fv.ptrClassName.empty()
+                        ? fv.ptrName
+                        : fv.ptrName + " (" + fv.ptrClassName + ")";
+                } else if (isWeakLike) {
+                    fv.typedValue = "(stale)";
+                } else {
+                    fv.typedValue = "(set)";
+                }
+            } else if (innerSize > 0) {
+                std::vector<uint8_t> buf(innerSize, 0);
+                if (Macht::ReadBytesSafe(fieldAddr, buf.data(), innerSize)) {
+                    std::string interp = InterpretValue(innerTn, buf.data(), innerSize);
+                    fv.typedValue = interp.empty() ? "(set)" : interp;
+                } else {
+                    fv.typedValue = "(set)";
+                }
+            } else {
+                fv.typedValue = "(set)";
+            }
+
+            // Hex over reported size (defensive cap).
+            int32_t showBytes = (fi.Size > 0 && fi.Size <= 64) ? fi.Size : 0;
+            if (showBytes > 0) {
+                std::vector<uint8_t> rawBuf(showBytes, 0);
+                if (Macht::ReadBytesSafe(fieldAddr, rawBuf.data(), showBytes)) {
+                    std::string hex;
+                    hex.reserve(showBytes * 2);
+                    for (auto b : rawBuf) {
+                        char hx[3];
+                        snprintf(hx, sizeof(hx), "%02X", b);
+                        hex += hx;
+                    }
+                    fv.hexValue = hex;
+                }
+            }
+
             result.fields.push_back(std::move(fv));
             continue;
         }

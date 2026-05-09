@@ -182,8 +182,8 @@ struct ReferenceMatch {
     std::string fieldType;                // "ObjectProperty" / "ClassProperty" /
                                           // "InterfaceProperty" / "WeakObjectProperty" /
                                           // "SoftObjectProperty" / "SoftClassProperty" /
-                                          // "LazyObjectProperty" / "ArrayProperty" /
-                                          // "MapProperty" / "SetProperty"
+                                          // "LazyObjectProperty" / "OptionalProperty" /
+                                          // "ArrayProperty" / "MapProperty" / "SetProperty"
     std::string innerType;                // For Array: inner element type;
                                           // For Set: element type;
                                           // For Map: "<keyType> → <valueType>"
@@ -197,7 +197,9 @@ struct ReferenceMatch {
 //   - WeakObjectProperty / SoftObject{Class}Property / LazyObjectProperty
 //     (resolves embedded FWeakObjectPtr; only matches when bound to live
 //     UObject)
-//   - TArray of any of the above
+//   - OptionalProperty<T> for pointer-shaped T (Object/Class/Interface/
+//     Weak/Soft/Lazy) — same comparison as the bare T at field+0
+//   - TArray of any of the above (single-pointer types)
 //   - TMap with Object/Class key and/or value (allocated slots only)
 //   - TSet with Object/Class element (allocated slots only)
 // Walks include fields nested inside StructProperty (depth 3).

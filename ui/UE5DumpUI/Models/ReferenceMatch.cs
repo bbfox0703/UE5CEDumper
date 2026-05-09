@@ -25,7 +25,8 @@ public sealed class ReferenceMatch
     /// <summary>
     /// One of: "ObjectProperty", "ClassProperty", "InterfaceProperty",
     /// "WeakObjectProperty", "SoftObjectProperty", "SoftClassProperty",
-    /// "LazyObjectProperty", "ArrayProperty", "MapProperty", "SetProperty".
+    /// "LazyObjectProperty", "OptionalProperty", "ArrayProperty",
+    /// "MapProperty", "SetProperty".
     /// </summary>
     public string FieldType { get; init; } = "";
 

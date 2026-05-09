@@ -1565,6 +1565,21 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
         else if (IsWeakLikeProp(f.TypeName)) {
             out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
         }
+        // --- TOptional<T> wrapping a pointer-shaped T ---
+        // For pointer-shaped T, FOptionalProperty stores T directly at
+        // field+0; "unset" is encoded as null/zero. So the comparison logic
+        // is identical to the bare pointer/weak-like field — only the
+        // type-name label changes (so the user can see it was reached via
+        // an Optional). innerType comes from WalkClassEx.
+        else if (f.TypeName == "OptionalProperty"
+              && (IsDirectObjectProp(f.innerType)
+                  || f.innerType == "InterfaceProperty")) {
+            out.directPointers.push_back({ absOffset, fullName, f.TypeName });
+        }
+        else if (f.TypeName == "OptionalProperty"
+              && IsWeakLikeProp(f.innerType)) {
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName });
+        }
         // --- Array of pointer-shaped types ---
         else if (f.TypeName == "ArrayProperty") {
             if (IsDirectObjectProp(f.innerType)) {
