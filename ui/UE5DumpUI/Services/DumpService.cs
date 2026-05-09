@@ -472,6 +472,19 @@ public sealed class DumpService : IDumpService
 
         var found = res["found"]?.GetValue<bool>() ?? false;
 
+        ContainerScanStats? scanStats = null;
+        if (res["container_scan"] is JsonObject scanNode)
+        {
+            scanStats = new ContainerScanStats
+            {
+                ObjectsScanned = scanNode["objects_scanned"]?.GetValue<int>() ?? 0,
+                ObjectsTotal   = scanNode["objects_total"]?.GetValue<int>() ?? 0,
+                ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
+                DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
+                DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+            };
+        }
+
         var containerMatches = new List<ContainerMatch>();
         if (res["container_matches"] is JsonArray cmArr)
         {
@@ -505,6 +518,7 @@ public sealed class DumpService : IDumpService
                 Found = false,
                 QueryAddress = addr,
                 ContainerMatches = containerMatches,
+                ContainerScan = scanStats,
             };
         }
 
@@ -521,6 +535,7 @@ public sealed class DumpService : IDumpService
             OffsetFromBase = res["offset_from_base"]?.GetValue<int>() ?? 0,
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
             ContainerMatches = containerMatches,
+            ContainerScan = scanStats,
         };
     }
 

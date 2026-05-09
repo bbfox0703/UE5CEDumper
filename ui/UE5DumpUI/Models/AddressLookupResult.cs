@@ -58,6 +58,22 @@ public sealed class ContainerMatch
 }
 
 /// <summary>
+/// Diagnostic counters for the container scan portion of a reverse-address
+/// lookup. Lets callers tell whether a "no matches" result reflects a real
+/// negative or a truncated scan that hit the time deadline.
+/// </summary>
+public sealed class ContainerScanStats
+{
+    public int ObjectsScanned { get; init; }
+    public int ObjectsTotal { get; init; }
+    public int ClassesPrimed { get; init; }
+    public long DurationMs { get; init; }
+    public bool DeadlineHit { get; init; }
+
+    public bool IsComplete => !DeadlineHit && ObjectsScanned >= ObjectsTotal;
+}
+
+/// <summary>
 /// Result of a reverse address lookup — given an arbitrary address,
 /// find which UObject (if any) it belongs to.
 /// </summary>
@@ -108,4 +124,10 @@ public sealed class AddressLookupResult
     /// scan was not requested / produced no hits.
     /// </summary>
     public List<ContainerMatch> ContainerMatches { get; init; } = new();
+
+    /// <summary>
+    /// Diagnostic stats from the container scan; null when scan wasn't run.
+    /// Inspect ContainerScan?.DeadlineHit to detect a truncated scan.
+    /// </summary>
+    public ContainerScanStats? ContainerScan { get; init; }
 }

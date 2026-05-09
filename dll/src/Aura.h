@@ -141,13 +141,28 @@ struct ContainerMatch {
     std::string note;
 };
 
+// Diagnostic stats from a container scan — surfaced through the pipe so
+// the UI can tell the user whether a "not found" was a complete scan
+// or got cut off by the deadline.
+struct ContainerScanStats {
+    int32_t objectsScanned   = 0;   // UObjects iterated
+    int32_t objectsTotal     = 0;   // Total in GObjects
+    int32_t classesPrimed    = 0;   // Unique classes touched (cache built)
+    int64_t durationMs       = 0;
+    bool    deadlineHit      = false;
+};
+
 // Scan all UObjects' container fields for `addr`. Returns matches where
-// addr falls in [Data, Data + bound). Covers ArrayProperty (TArray.Data),
-// SetProperty (TSparseArray.Data, allocated slots only), and MapProperty
-// (TSparseArray.Data of TPair, allocated slots only). Has an internal
-// time deadline (~5s) and per-class field cache; performance improves on
-// subsequent calls because the cache persists for the DLL lifetime.
-std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults = 16);
+// addr falls in [Data, Data + bound). Covers ArrayProperty (TArray.Data,
+// including slack slots), SetProperty (TSparseArray.Data, including freed
+// slots), and MapProperty (TSparseArray.Data of TPair). Has an internal
+// time deadline and per-class field cache; cache persists for the DLL
+// lifetime so subsequent calls are much faster.
+//
+// `stats` (optional out param) receives diagnostic counters; if non-null
+// the caller can detect a truncated scan via `deadlineHit`.
+std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults = 16,
+                                              ContainerScanStats* stats = nullptr);
 
 // === Property Keyword Search ===
 

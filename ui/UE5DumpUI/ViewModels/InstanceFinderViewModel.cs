@@ -173,6 +173,18 @@ public partial class InstanceFinderViewModel : ViewModelBase
                 ContainerMatches.Add(cm);
             HasContainerMatches = ContainerMatches.Count > 0;
 
+            // Build a "[scanned X/Y in Zms]" suffix so the user can tell a
+            // clean miss from a deadline-truncated scan — important when
+            // testing on big games (FF7 Rebirth ~430K objects).
+            string scanSuffix = "";
+            if (result.ContainerScan is { } cs && cs.ObjectsTotal > 0)
+            {
+                if (cs.DeadlineHit)
+                    scanSuffix = $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms — DEADLINE HIT, retry to continue]";
+                else
+                    scanSuffix = $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms]";
+            }
+
             if (result.Found)
             {
                 var instance = new InstanceResult
@@ -200,20 +212,20 @@ public partial class InstanceFinderViewModel : ViewModelBase
                 };
                 if (HasContainerMatches)
                     matchInfo += $" — found in {ContainerMatches.Count} container(s) below";
-                LookupStatusText = matchInfo;
-                _log.Info($"FindByAddress: '{addrStr}' -> {matchInfo}");
+                LookupStatusText = matchInfo + scanSuffix;
+                _log.Info($"FindByAddress: '{addrStr}' -> {matchInfo}{scanSuffix}");
             }
             else if (HasContainerMatches)
             {
                 HasInstances = false;
-                LookupStatusText = $"Inside {ContainerMatches.Count} container(s) — see list below";
-                _log.Info($"FindByAddress: '{addrStr}' -> {ContainerMatches.Count} container matches only");
+                LookupStatusText = $"Inside {ContainerMatches.Count} container(s) — see list below" + scanSuffix;
+                _log.Info($"FindByAddress: '{addrStr}' -> {ContainerMatches.Count} container matches only{scanSuffix}");
             }
             else
             {
                 HasInstances = false;
-                LookupStatusText = "No UObject found at this address";
-                _log.Info($"FindByAddress: '{addrStr}' -> not found");
+                LookupStatusText = "No UObject found at this address" + scanSuffix;
+                _log.Info($"FindByAddress: '{addrStr}' -> not found{scanSuffix}");
             }
         }
         catch (Exception ex)

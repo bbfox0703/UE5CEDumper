@@ -1249,21 +1249,29 @@ static ContainerMatch BuildMatch(uintptr_t obj, int32_t ownerIndex, uintptr_t cl
     return m;
 }
 
-std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults) {
+std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
+                                              ContainerScanStats* stats) {
     std::vector<ContainerMatch> matches;
+    if (stats) *stats = {};
     if (!addr || !s_arrayAddr) return matches;
     if (maxResults <= 0) maxResults = 16;
 
     int32_t count = GetCount();
     if (count <= 0) return matches;
+    if (stats) stats->objectsTotal = count;
 
     LOG_INFO("FindInContainers: scanning %d objects for addr 0x%llX",
              count, static_cast<unsigned long long>(addr));
 
     // Per-call deadline so a slow / huge-class game doesn't hang the UI.
-    constexpr int kDeadlineMs = 5000;
+    // 15s is comfortable on first scan even for 400K-object games (FF7
+    // Rebirth) — first scan primes the per-class cache, subsequent scans
+    // finish in ~1s. 5s was too tight for first-scan on big games.
+    constexpr int kDeadlineMs = 15000;
     auto t0 = std::chrono::steady_clock::now();
     int32_t classesWalked = 0;
+    int32_t scanned = 0;
+    bool deadlineHit = false;
 
     for (int32_t i = 0; i < count && static_cast<int>(matches.size()) < maxResults; ++i) {
         if ((i & 0x3FF) == 0) {
@@ -1272,9 +1280,11 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults)
             if (dt > kDeadlineMs) {
                 LOG_INFO("FindInContainers: deadline reached after %d objects (%lld ms)",
                          i, static_cast<long long>(dt));
+                deadlineHit = true;
                 break;
             }
         }
+        scanned = i + 1;
 
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
@@ -1293,6 +1303,10 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults)
                 Macht::TArrayView arr;
                 if (!Macht::ReadTArray(fieldAddr, arr)) continue;
                 if (arr.Max <= 0 || !arr.Data) continue;
+                // ReadTArray sanity-caps Count at 1M but not Max. A corrupted
+                // Max would project a huge buffer span and dilute results.
+                // Apply the same cap defensively.
+                if (arr.Max > 0x100000) continue;
 
                 // Use Max (allocated capacity) rather than Count so we also
                 // catch addresses landing in the array's slack region — when
@@ -1319,6 +1333,8 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults)
                 Macht::TSparseArrayView sa;
                 if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
                 if (sa.MaxCapacity <= 0 || !sa.Data) continue;
+                // Defensive cap — same rationale as Array.Max above.
+                if (sa.MaxCapacity > 0x100000) continue;
 
                 // TSparseArray frees slots without overwriting them, so an
                 // address landing on a free-list slot may still hold the
@@ -1351,8 +1367,15 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults)
 
     auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
                   std::chrono::steady_clock::now() - t0).count();
-    LOG_INFO("FindInContainers: found %d matches in %lld ms (cached %d non-empty classes)",
-             static_cast<int>(matches.size()), static_cast<long long>(dt), classesWalked);
+    if (stats) {
+        stats->objectsScanned = scanned;
+        stats->classesPrimed  = classesWalked;
+        stats->durationMs     = static_cast<int64_t>(dt);
+        stats->deadlineHit    = deadlineHit;
+    }
+    LOG_INFO("FindInContainers: found %d matches in %lld ms (scanned %d/%d, %d non-empty classes%s)",
+             static_cast<int>(matches.size()), static_cast<long long>(dt),
+             scanned, count, classesWalked, deadlineHit ? ", DEADLINE HIT" : "");
     return matches;
 }
 

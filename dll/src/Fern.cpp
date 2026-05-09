@@ -1274,7 +1274,19 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             // UObject's PropertiesSize, so this is the only way to attribute
             // those addresses to an owner.
             if (requestedContainerScan || !lookupResult.found) {
-                auto containerMatches = Aura::FindInContainers(queryAddr, 16);
+                Aura::ContainerScanStats stats;
+                auto containerMatches = Aura::FindInContainers(queryAddr, 16, &stats);
+
+                // Surface scan stats so the UI can distinguish "really not in
+                // any container" from "scan got cut off by the deadline".
+                json scanInfo;
+                scanInfo["objects_scanned"] = stats.objectsScanned;
+                scanInfo["objects_total"]   = stats.objectsTotal;
+                scanInfo["classes_primed"]  = stats.classesPrimed;
+                scanInfo["duration_ms"]     = stats.durationMs;
+                scanInfo["deadline_hit"]    = stats.deadlineHit;
+                data["container_scan"]      = scanInfo;
+
                 json arr = json::array();
                 for (const auto& m : containerMatches) {
                     json mj;
