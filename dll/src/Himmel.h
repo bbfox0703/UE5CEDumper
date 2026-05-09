@@ -566,6 +566,12 @@ constexpr const char* AOB_GWORLD_GH_4 = "0F 57 C9 0F 2E C1 74 ?? 48 8B 1D ?? ?? 
 //        Twin-reference (lea+mov of same static) makes false-positives near-zero.
 //        instrOffset=16, 29 bytes; the `?? ?? ??` after critical-section call
 //        is the 3-byte mov rdx,rXX (param register varies by build).
+//
+//        Cross-version validated:
+//          ES2 (UE 5.4, bCasePreservingName=false) → SparseDelegates @ +9AA5F10
+//          TQ2 (UE 5.7, bCasePreservingName=true ) → SparseDelegates @ +D46D170
+//        Effectively universal across UE 5.x — same pattern, different layout
+//        branches handled by Aura::WalkSparseDelegateBindings (FName=8 vs 16).
 constexpr const char* AOB_SPARSE_ES2_1 =
     "48 8D 0D ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 48 8B ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 05";
 
