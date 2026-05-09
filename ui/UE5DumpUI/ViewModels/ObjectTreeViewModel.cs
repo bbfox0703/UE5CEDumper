@@ -57,25 +57,51 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
         "Level",
     ];
 
-    /// <summary>Common search suggestions for UE class names.</summary>
+    /// <summary>
+    /// Common search suggestions for UE class / object names. Curated to
+    /// hit the everyday targets when reverse-engineering a game:
+    /// player/character framework, components, gameplay systems, UMG/UI,
+    /// world/level, GAS, and save/inventory. Stored as the unprefixed UE
+    /// introspection name (no A/U prefixes — UClass::GetName drops them).
+    /// </summary>
     public string[] SearchSuggestions { get; } =
     [
+        // GAS
         "AbilitySystemComponent",
-        "ACharacter",
-        "ActorComponent",
-        "APawn",
         "AttributeSet",
-        "AttributesComponent",
-        "Character",
+        "GameplayAbility",
+        "GameplayEffect",
+        // Components
+        "ActorComponent",
+        "AnimInstance",
+        "AudioComponent",
+        "CapsuleComponent",
         "CharacterMovementComponent",
-        "GameMode",
-        "GameState",
-        "HUD",
+        "InventoryComponent",
+        "SceneComponent",
+        "SkeletalMeshComponent",
+        "StaticMeshComponent",
+        // Player / character framework
+        "Character",
         "LocalPlayer",
         "Pawn",
+        "PlayerCameraManager",
         "PlayerController",
+        "PlayerInput",
         "PlayerState",
-        "UAttributeSet",
+        // Game framework
+        "GameInstance",
+        "GameMode",
+        "GameState",
+        "GameUserSettings",
+        "HUD",
+        "SaveGame",
+        // World / level
+        "Level",
+        "World",
+        "WorldSettings",
+        // UMG / UI
+        "UserWidget",
         "Widget",
     ];
 

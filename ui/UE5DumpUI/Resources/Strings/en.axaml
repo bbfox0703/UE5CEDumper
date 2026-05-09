@@ -178,7 +178,9 @@
 
     <!-- Property Search -->
     <sys:String x:Key="str.PropertySearch.QueryHint">Property name (e.g. Health, Mana, Gold)</sys:String>
-    <sys:String x:Key="str.PropertySearch.TypeHint">Type filter (e.g. OptionalProperty)</sys:String>
+    <sys:String x:Key="str.PropertySearch.TypeHint">Type filter (start typing — e.g. opt, weak)</sys:String>
+    <sys:String x:Key="str.PropertySearch.ResultFilterLabel">Filter results:</sys:String>
+    <sys:String x:Key="str.PropertySearch.ResultFilterHint">Refine current results (no re-query)</sys:String>
     <sys:String x:Key="str.PropertySearch.Search">Search</sys:String>
     <sys:String x:Key="str.PropertySearch.GameOnly">Game classes only</sys:String>
     <sys:String x:Key="str.PropertySearch.FindInstances">Find Instances</sys:String>
@@ -236,7 +238,8 @@
 
     <!-- Tooltips: Property Search -->
     <sys:String x:Key="str.Tip.PropertySearch.Search">Search across all classes. Either Name or Type must be set; comma-separate multiple types.</sys:String>
-    <sys:String x:Key="str.Tip.PropertySearch.TypeFilter">Restrict by FProperty type (e.g. OptionalProperty, DelegateProperty). Comma-separated for OR.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.TypeFilter">Restrict by FProperty type. Type a few characters to filter the suggestion dropdown (e.g. 'opt' → OptionalProperty). Comma-separated for OR.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.ResultFilter">Filter the current result list locally (case-insensitive substring across Class / Property / Type / Super / Preview). No DLL roundtrip.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.GameOnly">Show only game-specific classes (exclude engine)</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.FindInstances">Find live instances of this class</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.CopyOffset">Copy property offset to clipboard</sys:String>

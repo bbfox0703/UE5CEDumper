@@ -6,19 +6,23 @@
              x:DataType="vm:PropertySearchViewModel">
 
   <DockPanel Margin="8">
-    <!-- Top: Search bar -->
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+    <!-- Top: Search bar (issues a DLL roundtrip on Search click / Enter) -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
       <TextBox PlaceholderText="{StaticResource str.PropertySearch.QueryHint}"
                Text="{Binding SearchQuery}"
                x:Name="SearchQueryInput"
                KeyDown="SearchQueryInput_KeyDown"
                Width="260" Padding="4,2"/>
-      <TextBox PlaceholderText="{StaticResource str.PropertySearch.TypeHint}"
-               Text="{Binding TypeFilter}"
-               x:Name="TypeFilterInput"
-               KeyDown="SearchQueryInput_KeyDown"
-               ToolTip.Tip="{StaticResource str.Tip.PropertySearch.TypeFilter}"
-               Width="220" Padding="4,2"/>
+      <AutoCompleteBox PlaceholderText="{StaticResource str.PropertySearch.TypeHint}"
+                       Text="{Binding TypeFilter}"
+                       ItemsSource="{Binding PropertyTypeSuggestions}"
+                       FilterMode="Contains"
+                       MinimumPrefixLength="0"
+                       MinimumPopulateDelay="0:0:0.05"
+                       ToolTip.Tip="{StaticResource str.Tip.PropertySearch.TypeFilter}"
+                       x:Name="TypeFilterInput"
+                       KeyDown="SearchQueryInput_KeyDown"
+                       Width="280" Padding="4,2"/>
       <CheckBox Content="{StaticResource str.PropertySearch.GameOnly}"
                 IsChecked="{Binding GameClassesOnly}"
                 ToolTip.Tip="{StaticResource str.Tip.PropertySearch.GameOnly}"
@@ -30,6 +34,16 @@
               Classes="accent" Padding="12,4"/>
       <TextBlock Text="{Binding StatusText}"
                  Foreground="#888" VerticalAlignment="Center" Margin="8,0"/>
+    </StackPanel>
+
+    <!-- Result filter (client-side; no DLL roundtrip) -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+      <TextBlock Text="{StaticResource str.PropertySearch.ResultFilterLabel}"
+                 Foreground="#888" FontSize="12" VerticalAlignment="Center"/>
+      <TextBox PlaceholderText="{StaticResource str.PropertySearch.ResultFilterHint}"
+               Text="{Binding ResultFilter}"
+               ToolTip.Tip="{StaticResource str.Tip.PropertySearch.ResultFilter}"
+               Width="320" Padding="4,2" FontSize="12"/>
     </StackPanel>
 
     <!-- Loading indicator -->
