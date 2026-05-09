@@ -18,10 +18,56 @@
       <!-- UE Version -->
       <Border Background="#2D2D30" CornerRadius="4" Padding="16,12">
         <StackPanel>
-          <TextBlock Text="{StaticResource str.Pointers.UEVersion}"
-                     Foreground="#888" FontSize="12"/>
-          <TextBlock Text="{Binding UeVersion}" FontSize="20"
-                     Foreground="#4EC9B0" FontWeight="SemiBold"/>
+          <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+            <StackPanel Grid.Column="0">
+              <TextBlock Text="{StaticResource str.Pointers.UEVersion}"
+                         Foreground="#888" FontSize="12"/>
+              <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <TextBlock Text="{Binding UeVersion}" FontSize="20"
+                           Foreground="#4EC9B0" FontWeight="SemiBold"/>
+                <!-- Detected (high confidence) — quiet green tick -->
+                <TextBlock Text="{StaticResource str.Pointers.VersionDetectedBadge}"
+                           Foreground="#7EC97A" FontSize="11" VerticalAlignment="Center"
+                           IsVisible="{Binding ShowVersionDetectedBadge}"/>
+                <!-- User Override — blue wrench badge -->
+                <TextBlock Text="{StaticResource str.Pointers.VersionUserOverrideBadge}"
+                           Foreground="#569CD6" FontSize="11" VerticalAlignment="Center"
+                           FontWeight="SemiBold"
+                           IsVisible="{Binding ShowUserOverrideBadge}"
+                           ToolTip.Tip="{StaticResource str.Pointers.VersionUserOverrideTooltip}"/>
+                <!-- Low confidence — amber warning -->
+                <TextBlock Text="{StaticResource str.Pointers.VersionLowConfidenceBadge}"
+                           Foreground="#E6A817" FontSize="11" VerticalAlignment="Center"
+                           FontWeight="SemiBold"
+                           IsVisible="{Binding ShowLowConfidenceWarning}"/>
+              </StackPanel>
+            </StackPanel>
+            <!-- Override ComboBox — to the right of the version number -->
+            <StackPanel Grid.Column="1" Orientation="Vertical" Spacing="2"
+                        VerticalAlignment="Center" HorizontalAlignment="Right">
+              <TextBlock Text="{StaticResource str.Pointers.VersionOverrideLabel}"
+                         Foreground="#888" FontSize="10"/>
+              <ComboBox ItemsSource="{Binding UeVersionOverrideOptions}"
+                        SelectedItem="{Binding SelectedUeVersionOverride, Mode=TwoWay}"
+                        IsEnabled="{Binding !IsApplyingOverride}"
+                        MinWidth="120" FontSize="11" Padding="6,2"
+                        ToolTip.Tip="{StaticResource str.Pointers.VersionOverrideTooltip}"/>
+            </StackPanel>
+          </Grid>
+          <!-- Warning text body — only shown for low-confidence path -->
+          <TextBlock Text="{StaticResource str.Pointers.VersionLowConfidenceText}"
+                     Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
+                     Margin="0,6,0,0"
+                     IsVisible="{Binding ShowLowConfidenceWarning}"/>
+          <!-- Publisher hint (Square Enix detected, etc.) -->
+          <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0"
+                      IsVisible="{Binding ShowPublisherHint}">
+            <TextBlock Text="{StaticResource str.Pointers.PublisherLabel}"
+                       Foreground="#888" FontSize="10"/>
+            <TextBlock Text="{Binding PublisherLabel}"
+                       Foreground="#C586C0" FontSize="10" FontWeight="SemiBold"/>
+          </StackPanel>
+          <!-- Legacy "version not detected" warning, kept for backward compat -->
           <TextBlock Text="{StaticResource str.Pointers.VersionWarning}"
                      Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
                      Margin="0,4,0,0"

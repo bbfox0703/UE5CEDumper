@@ -36,8 +36,13 @@ public sealed class DumpService : IDumpService
 
         // version_detected: true if PE/memory scan succeeded, false if using default/inferred
         var versionDetected = res["version_detected"]?.GetValue<bool>() ?? true;
+        // is_user_override / is_low_confidence: prefer init response (more authoritative), fall back to ptrs.
+        var isUserOverride  = res["is_user_override"]?.GetValue<bool>()
+                              ?? ptrs["is_user_override"]?.GetValue<bool>() ?? false;
+        var isLowConfidence = res["is_low_confidence"]?.GetValue<bool>()
+                              ?? ptrs["is_low_confidence"]?.GetValue<bool>() ?? false;
 
-        return BuildEngineState(ptrs, ueVersion, versionDetected);
+        return BuildEngineState(ptrs, ueVersion, versionDetected, isUserOverride, isLowConfidence);
     }
 
     public async Task<EngineState> GetPointersAsync(CancellationToken ct = default)
@@ -48,8 +53,27 @@ public sealed class DumpService : IDumpService
         return BuildEngineState(res);
     }
 
+    public async Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "set_ue_version_override",
+            ["version"] = version,
+            ["persist"] = persist,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+        _log.Info(Constants.LogCatInit,
+            version == 0
+                ? $"UE version override cleared (persisted={persist})"
+                : $"UE version override set to {version} (persisted={persist})");
+        // Re-fetch full state so the caller can update all panels with one ApplyState() call.
+        return await GetPointersAsync(ct);
+    }
+
     /// <summary>Build EngineState from a get_pointers response, with optional overrides from init.</summary>
-    private static EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool versionDetected = true)
+    private static EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool versionDetected = true,
+                                                 bool? isUserOverride = null, bool? isLowConfidence = null)
     {
         if (ueVersion == 0)
             ueVersion = ptrs["ue_version"]?.GetValue<int>() ?? 0;
@@ -60,6 +84,9 @@ public sealed class DumpService : IDumpService
         {
             UEVersion = ueVersion,
             VersionDetected = versionDetected,
+            IsUserOverride = isUserOverride ?? ptrs["is_user_override"]?.GetValue<bool>() ?? false,
+            IsLowConfidence = isLowConfidence ?? ptrs["is_low_confidence"]?.GetValue<bool>() ?? false,
+            PublisherThumbprint = ptrs["publisher_thumbprint"]?.GetValue<string>() ?? "",
             GObjectsAddr = ptrs["gobjects"]?.GetValue<string>() ?? "",
             GNamesAddr = ptrs["gnames"]?.GetValue<string>() ?? "",
             GWorldAddr = ptrs["gworld"]?.GetValue<string>() ?? "",

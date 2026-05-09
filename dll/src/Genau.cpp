@@ -1695,6 +1695,113 @@ uintptr_t FindGWorld(const char* hintPatternId) {
     return result;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Publisher thumbprint table — read from PE VERSIONINFO StringFileInfo
+//
+// SquareEnix is the only publisher we recognise here (FF7 Remake/Rebirth and
+// DQ I&II HD-2D are all UE4 forks that lie about their version: they ship
+// stripped UE++Release strings AND embed unrelated 5.x.y SDK strings that
+// fool Tier 3 of the memory scan into reporting UE 5.0+).
+//
+// Adding more publishers casually is risky — wrong bias overrides correct
+// detection. Add only when there is a documented misdetection on multiple
+// titles from the same publisher.
+// ─────────────────────────────────────────────────────────────────────────────
+struct PublisherEntry {
+    const char* needle;        // case-insensitive substring (LegalCopyright or CompanyName)
+    const char* thumbprint;    // canonical key exposed to UI / HintCache
+    uint32_t    biasFallback;  // UE version to use when memory scan fails
+};
+
+static const PublisherEntry kPublishers[] = {
+    // FF7 Remake (4.18), FF7 Rebirth (4.26 fork), DQ I&II HD-2D (4.27).
+    // 427 is the most-common case — Rebirth/Remake structural detection
+    // (bUE4NameArray / fnameEntryHeaderOffset) overrides downward to 422/426
+    // automatically post-FNamePool init.
+    { "SQUARE ENIX", "SQUARE_ENIX", 427 },
+};
+
+// Read a StringFileInfo string (LegalCopyright / CompanyName / etc.) from a
+// VERSIONINFO buffer. Walks every (lang, codepage) pair declared in
+// VarFileInfo\Translation and returns the first non-empty value.
+static std::string ReadVersionInfoString(uint8_t* buf, const wchar_t* keyName) {
+    struct LangCodepage { WORD wLanguage; WORD wCodePage; };
+    LangCodepage* langs = nullptr;
+    UINT langsLen = 0;
+    if (!VerQueryValueW(buf, L"\\VarFileInfo\\Translation",
+                        reinterpret_cast<LPVOID*>(&langs), &langsLen) || !langs)
+        return {};
+
+    int langCount = static_cast<int>(langsLen / sizeof(LangCodepage));
+    for (int i = 0; i < langCount; ++i) {
+        wchar_t subBlock[256];
+        swprintf_s(subBlock, L"\\StringFileInfo\\%04x%04x\\%ls",
+                   langs[i].wLanguage, langs[i].wCodePage, keyName);
+        wchar_t* str = nullptr;
+        UINT strLen = 0;
+        if (VerQueryValueW(buf, subBlock,
+                           reinterpret_cast<LPVOID*>(&str), &strLen) && str && strLen > 0) {
+            int sz = WideCharToMultiByte(CP_UTF8, 0, str, -1,
+                                         nullptr, 0, nullptr, nullptr);
+            if (sz <= 1) continue;
+            std::string out(static_cast<size_t>(sz - 1), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, str, -1,
+                                out.data(), sz, nullptr, nullptr);
+            return out;
+        }
+    }
+    return {};
+}
+
+static std::string AsciiUpper(std::string s) {
+    for (char& c : s) {
+        unsigned char u = static_cast<unsigned char>(c);
+        if (u >= 'a' && u <= 'z') c = static_cast<char>(u - ('a' - 'A'));
+    }
+    return s;
+}
+
+// Match a publisher from PE VERSIONINFO LegalCopyright / CompanyName.
+// Returns the matched PublisherEntry pointer (with string-literal-lifetime
+// thumbprint), or nullptr if no entry matched.
+static const PublisherEntry* DetectPublisherFromPE() {
+    wchar_t exePath[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return nullptr;
+
+    DWORD handle = 0;
+    DWORD infoSize = GetFileVersionInfoSizeW(exePath, &handle);
+    if (!infoSize) return nullptr;
+
+    std::vector<uint8_t> buf(infoSize);
+    if (!GetFileVersionInfoW(exePath, handle, infoSize, buf.data())) return nullptr;
+
+    std::string copyright = ReadVersionInfoString(buf.data(), L"LegalCopyright");
+    std::string company   = ReadVersionInfoString(buf.data(), L"CompanyName");
+
+    std::string upC = AsciiUpper(copyright);
+    std::string upN = AsciiUpper(company);
+
+    for (const auto& p : kPublishers) {
+        if ((!upC.empty() && upC.find(p.needle) != std::string::npos) ||
+            (!upN.empty() && upN.find(p.needle) != std::string::npos)) {
+            Sein::Info("SCAN:Ver",
+                       "DetectPublisher: matched '%s' (Copyright='%s', Company='%s')",
+                       p.thumbprint,
+                       copyright.empty() ? "-" : copyright.c_str(),
+                       company.empty()   ? "-" : company.c_str());
+            return &p;
+        }
+    }
+
+    if (!copyright.empty() || !company.empty()) {
+        Sein::Info("SCAN:Ver",
+                   "DetectPublisher: no thumbprint match (Copyright='%s', Company='%s')",
+                   copyright.empty() ? "-" : copyright.c_str(),
+                   company.empty()   ? "-" : company.c_str());
+    }
+    return nullptr;
+}
+
 // Fast O(1) version detection via PE VERSIONINFO resource.
 // UE games embed the engine version in their VS_FIXEDFILEINFO.dwProductVersion:
 //   HIWORD(dwProductVersionMS) = major (5 for UE5)
@@ -1748,24 +1855,61 @@ static uint32_t DetectVersionFromPEResource() {
     return 0;
 }
 
-uint32_t DetectVersion() {
+// Internal: scan a window of memory for any of a set of UE-related anchor
+// substrings. Used by Tier 3 to require contextual evidence ("Engine",
+// "Unreal", "UE4", "UE5", "++UE") near a bare version pattern, so that
+// stray SDK strings like "PhysX 5.5.0" / "DirectX 12.5" can no longer
+// fool the bare-pattern path.
+static bool HasUEAnchorNearby(const uint8_t* scan, size_t size,
+                              size_t off, size_t windowBytes) {
+    static const char* kAnchors[] = {
+        "Engine",  "engine",
+        "Unreal",  "unreal",
+        "++UE",
+        "UE4",     "UE5",
+    };
+    size_t lo = (off > windowBytes) ? off - windowBytes : 0;
+    size_t hi = off + windowBytes;
+    if (hi > size) hi = size;
+    if (hi <= lo) return false;
+    size_t winLen = hi - lo;
+    for (const char* a : kAnchors) {
+        size_t aLen = strlen(a);
+        if (aLen >= winLen) continue;
+        for (size_t i = 0; i + aLen <= winLen; ++i) {
+            if (memcmp(scan + lo + i, a, aLen) == 0) return true;
+        }
+    }
+    return false;
+}
+
+// Detection result. tier:
+//   1 = Tier 1 exact "++UE?+Release-X.Y" → highest confidence
+//   2 = Tier 2 "Release" within 16 bytes → high confidence
+//   3 = Tier 3 bare "X.Y.D" + UE anchor in 256-byte window → low confidence
+//   0 = no detection
+struct VersionScanResult {
+    uint32_t version = 0;
+    int      tier    = 0;
+};
+
+static VersionScanResult DetectVersionDetailed() {
+    VersionScanResult r;
     Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
 
-    // Fast path: read the PE VERSIONINFO resource (O(1), no memory scan)
+    // Fast path: PE VERSIONINFO resource (treated as Tier 1 — high confidence)
     uint32_t ver = DetectVersionFromPEResource();
-    if (ver) return ver;
+    if (ver) { r.version = ver; r.tier = 1; return r; }
 
     Sein::Warn("SCAN:Ver", "DetectVersion: PE resource failed, falling back to memory string scan");
 
-    // Slow path: scan for UE version strings embedded in the binary
     uintptr_t base = Macht::GetModuleBase(nullptr);
     size_t    size = Macht::GetModuleSize(nullptr);
     if (!base || !size) {
         Sein::Warn("SCAN:Ver", "DetectVersion: Cannot get module base");
-        return 0;
+        return r;
     }
 
-    // Version string patterns to match (ordered by priority — newest first)
     struct { const char* needle; uint32_t value; } patterns[] = {
         { "5.8.", 508 }, { "5.7.", 507 }, { "5.6.", 506 }, { "5.5.", 505 },
         { "5.4.", 504 }, { "5.3.", 503 }, { "5.2.", 502 },
@@ -1779,7 +1923,6 @@ uint32_t DetectVersion() {
     const uint8_t* scan = reinterpret_cast<const uint8_t*>(base);
 
     // === Tier 1: Exact UE build strings "++UE5+Release-5.X" / "++UE4+Release-4.XX" ===
-    // These are embedded in shipping UE builds and are the most reliable identifier.
     {
         const char* prefixes[] = { "++UE5+Release-", "++UE4+Release-" };
         for (const char* prefix : prefixes) {
@@ -1792,7 +1935,7 @@ uint32_t DetectVersion() {
                         memcmp(scan + off + prefixLen, p.needle, needleLen) == 0) {
                         Sein::Info("SCAN:Ver", "DetectVersion: Tier 1 '%s' -> %u at 0x%zX",
                                  prefix, p.value, off);
-                        return p.value;
+                        r.version = p.value; r.tier = 1; return r;
                     }
                 }
             }
@@ -1800,6 +1943,12 @@ uint32_t DetectVersion() {
     }
 
     // === Tier 2 + 3: Per-pattern scan with context checks ===
+    // Tier 3 hardening: defer first hit and prefer Tier 2 hits across all
+    // patterns. If we exit the outer loop without a Tier 2 hit, the deferred
+    // Tier 3 hit is returned (low confidence). This stops a stray "5.5.0"
+    // SDK string near the start of the module from out-racing a real
+    // "Release-4.27" string later in the module.
+    VersionScanResult bestTier3{};
     for (auto& p : patterns) {
         size_t needleLen = strlen(p.needle);
         for (size_t off = 0; off + needleLen + 10 < size; ++off) {
@@ -1812,27 +1961,48 @@ uint32_t DetectVersion() {
                 if (strstr(ctx, "Release") || strstr(ctx, "release")) {
                     Sein::Info("SCAN:Ver", "DetectVersion: Tier 2 Release prefix -> %u at 0x%zX",
                              p.value, off);
-                    return p.value;
+                    r.version = p.value; r.tier = 2; return r;
                 }
             }
 
-            // Tier 3: bare "X.Y.D" — only accept if preceding char is NOT a digit or period.
-            // This prevents matching game version strings like "15.6.0" or "v2.5.6.1".
+            // Tier 3: bare "X.Y.D" — only accept if preceding char is NOT a digit or period
+            // AND a UE-related anchor word exists within a 256-byte window. The anchor
+            // requirement filters out PhysX / DirectX / SDK version strings shipped alongside
+            // the real engine.
             if (scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
                 if (off > 0) {
                     uint8_t prev = scan[off - 1];
                     if ((prev >= '0' && prev <= '9') || prev == '.') {
-                        continue;  // Skip — likely a game version string, not UE version
+                        continue;  // game version "15.6.0" / "v2.5.6.1"
                     }
                 }
-                Sein::Info("SCAN:Ver", "DetectVersion: Tier 3 bare pattern -> %u at 0x%zX", p.value, off);
-                return p.value;
+                if (!HasUEAnchorNearby(scan, size, off, /*windowBytes=*/256)) {
+                    continue;  // no Engine/Unreal/UE4/UE5/++UE within window — likely SDK noise
+                }
+                if (bestTier3.tier == 0) {
+                    bestTier3.version = p.value;
+                    bestTier3.tier    = 3;
+                    Sein::Info("SCAN:Ver", "DetectVersion: Tier 3 candidate (deferred) -> %u at 0x%zX",
+                             p.value, off);
+                }
+                // do NOT return immediately — keep looking for a Tier 2 hit
+                break;  // first Tier 3 hit per pattern is enough
             }
         }
     }
 
+    if (bestTier3.tier == 3) {
+        Sein::Warn("SCAN:Ver", "DetectVersion: Tier 3 (low confidence) -> %u",
+                   bestTier3.version);
+        return bestTier3;
+    }
+
     Sein::Warn("SCAN:Ver", "DetectVersion: Could not detect UE version from PE or memory");
-    return 0;
+    return r;
+}
+
+uint32_t DetectVersion() {
+    return DetectVersionDetailed().version;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2994,28 +3164,90 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // Load hint cache: previously-winning pattern IDs for this game version
     auto hints = Flamme::LoadHints(out.peHash);
 
-    // UE version detection — use cached version only when it was reliably detected.
-    // DetectVersion() can take 5+ seconds on large games that lack standard UE version strings.
-    // The version is NOT used during AOB scanning (completely version-agnostic), only post-scan
-    // for DynOff offset selection. Structural findings (UE4 TNameEntryArray, hash-prefixed headers)
-    // will override the version later anyway, so a cached value is safe.
-    // NOTE: Only skip DetectVersion when versionDetected==true (PE resource matched).
+    // UE version detection — priority order:
+    //   1. User-set persistent override (from HintCache, set via UI) — always wins.
+    //   2. Cached high-confidence detection from a previous scan.
+    //   3. Fresh detection (PE VERSIONINFO + Tier 1/2 string scan + Tier 3 anchored fallback).
+    //   4. Hard fallback (504 by default, or publisher-biased if we can identify the shipper).
+    //
+    // DetectVersion() can take 5+ seconds on large games. The version is NOT used during
+    // AOB scanning (completely version-agnostic), only post-scan for DynOff offset selection.
+    // Structural findings (UE4 TNameEntryArray, hash-prefixed headers) override the version
+    // later anyway, so a cached value is safe.
+    //
+    // NOTE: Only skip DetectVersion when versionDetected==true (high-confidence hit).
     // When versionDetected==false (inferred/fallback), re-run to avoid amplifying misdetections.
     if (progress) progress(1, "Detecting UE version...");
-    if (hints.hasVersionHint && hints.ueVersion != 0 && hints.versionDetected) {
+
+    // Probe publisher (cheap, just PE info) regardless of cached state — useful for UI display
+    // and as a tiebreaker when detection runs.
+    const PublisherEntry* publisher = DetectPublisherFromPE();
+    out.publisherThumbprint = publisher ? publisher->thumbprint : nullptr;
+
+    if (hints.hasUserOverride && hints.userOverrideVersion != 0) {
+        out.UEVersion = hints.userOverrideVersion;
+        out.bVersionDetected = true;     // user is the source of truth — surface as confident
+        out.bUserOverride    = true;
+        out.bLowConfidence   = false;
+        LOG_INFO("FindAll: UE Version = %u (USER OVERRIDE — persistent for this game)",
+                 out.UEVersion);
+    } else if (hints.hasVersionHint && hints.ueVersion != 0 && hints.versionDetected
+               && publisher == nullptr) {
+        // Use cached high-confidence detection ONLY when no publisher thumbprint matched.
+        // Known-misleading publishers (SquareEnix) ship stripped/forked engine builds whose
+        // version strings can't be trusted — older builds may have cached versionDetected=true
+        // from less-strict detection logic, so we re-run detection (and force low confidence)
+        // every launch to keep the UI badge honest.
         out.UEVersion = hints.ueVersion;
         out.bVersionDetected = true;
+        out.bUserOverride    = false;
+        out.bLowConfidence   = false;
         LOG_INFO("FindAll: UE Version = %u (cached, detected) — skipped DetectVersion",
                  out.UEVersion);
     } else {
-        out.UEVersion = DetectVersion();
-        out.bVersionDetected = (out.UEVersion != 0);
-        if (out.UEVersion == 0) {
-            out.UEVersion = 504;  // Default fallback when detection fails
-            LOG_WARN("FindAll: UE version detection failed — using default %u", out.UEVersion);
+        if (publisher && hints.hasVersionHint && hints.ueVersion != 0 && hints.versionDetected) {
+            LOG_WARN("FindAll: Publisher (%s) is on the unreliable-version-string list — "
+                     "ignoring cached versionDetected=true and re-running detection.",
+                     publisher->thumbprint);
         }
-        LOG_INFO("FindAll: UE Version = %u (detected=%s)", out.UEVersion,
-                 out.bVersionDetected ? "yes" : "no");
+
+        VersionScanResult dr = DetectVersionDetailed();
+        out.UEVersion        = dr.version;
+        out.bVersionDetected = (dr.version != 0);
+        out.bUserOverride    = false;
+        // Tier 3 hits are not zero — they are real string matches — but the bare-pattern
+        // path is far more fragile than Tier 1/2, so flag them as low-confidence.
+        out.bLowConfidence   = (dr.tier == 3);
+
+        if (out.UEVersion == 0) {
+            // Detection failed completely. Bias the fallback by publisher when possible.
+            if (publisher) {
+                out.UEVersion = publisher->biasFallback;
+                out.bLowConfidence = true;
+                LOG_WARN("FindAll: UE detection failed — using publisher (%s) bias fallback %u",
+                         publisher->thumbprint, out.UEVersion);
+            } else {
+                out.UEVersion = 504;
+                out.bLowConfidence = true;
+                LOG_WARN("FindAll: UE version detection failed — using default %u",
+                         out.UEVersion);
+            }
+        }
+
+        // Final pass: a publisher thumbprint match unconditionally flags low confidence.
+        // We have direct evidence the publisher ships unreliable version strings (SquareEnix),
+        // so the badge must always nudge the user toward setting an override — even when
+        // detection produced a clean Tier 1 / Tier 2 hit, since those strings can come from
+        // bundled SDKs (PhysX, etc.) rather than the actual engine.
+        if (publisher) {
+            out.bLowConfidence = true;
+        }
+
+        LOG_INFO("FindAll: UE Version = %u (tier=%d, detected=%s, lowConfidence=%s, publisher=%s)",
+                 out.UEVersion, dr.tier,
+                 out.bVersionDetected ? "yes" : "no",
+                 out.bLowConfidence   ? "yes" : "no",
+                 out.publisherThumbprint ? out.publisherThumbprint : "-");
     }
 
     if (progress) progress(2, "Scanning GObjects...");

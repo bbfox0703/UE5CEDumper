@@ -13,6 +13,7 @@
 #include "Aura.h"
 #include "Serie.h"
 #include "Ubel.h"
+#include "Flamme.h"
 #include "BuildInfo.h"
 
 #include <json.hpp>
@@ -456,13 +457,85 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
         if (cmd == Renge::CMD_INIT) {
             extern uint32_t g_cachedUEVersion;
             extern bool     g_cachedVersionDetected;
+            extern bool     g_cachedIsUserOverride;
+            extern bool     g_cachedIsLowConfidence;
+            extern const char* g_cachedPublisherThumbprint;
             json data;
             data["ue_version"]       = g_cachedUEVersion;
             data["version_detected"] = g_cachedVersionDetected;
+            data["is_user_override"] = g_cachedIsUserOverride;
+            data["is_low_confidence"] = g_cachedIsLowConfidence;
+            data["publisher_thumbprint"] = g_cachedPublisherThumbprint
+                ? g_cachedPublisherThumbprint : "";
             data["build_git"]  = BUILD_GIT_SHORT;
             data["build_hash"] = BUILD_GIT_HASH;
             data["build_time"] = BUILD_TIMESTAMP;
             data["build_info"] = BUILD_VERSION_STRING;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // set_ue_version_override { version: int, persist: bool }
+        //   version == 0  → clear the override (revert to auto-detect on next launch)
+        //   version != 0  → record as the persistent override for this game
+        //   persist=false → only update the in-process cached version (no disk write)
+        //
+        // Updates g_cachedUEVersion immediately so version-dependent code paths
+        // (Soft array CE XML layout, FProperty offset selection, etc.) start
+        // using the new value on the next request — no re-init / re-scan needed.
+        // ─────────────────────────────────────────────────────────────────
+        if (cmd == Renge::CMD_SET_UE_VERSION_OVERRIDE) {
+            extern uint32_t    g_cachedUEVersion;
+            extern bool        g_cachedVersionDetected;
+            extern bool        g_cachedIsUserOverride;
+            extern bool        g_cachedIsLowConfidence;
+            extern char        g_cachedPeHash[17];
+
+            int     newVersion = request.value("version", 0);
+            bool    persist    = request.value("persist", true);
+
+            // Defensive bounds — UE 4.18 .. 5.9 plus 0 (clear).
+            if (newVersion != 0 && (newVersion < 418 || newVersion > 509)) {
+                return Renge::MakeError(id,
+                    "version out of supported range (418..509 or 0 to clear)").dump();
+            }
+
+            if (persist) {
+                // Resolve a process name for the JSON record's gameName.
+                wchar_t exeW[MAX_PATH] = {};
+                GetModuleFileNameW(nullptr, exeW, MAX_PATH);
+                std::wstring exePath(exeW);
+                auto lastSlash = exePath.find_last_of(L"\\/");
+                std::wstring fileName = (lastSlash != std::wstring::npos)
+                    ? exePath.substr(lastSlash + 1) : exePath;
+                std::string nameUtf8;
+                int sz = WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
+                                             nullptr, 0, nullptr, nullptr);
+                if (sz > 0) {
+                    nameUtf8.resize(sz - 1);
+                    WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
+                                        nameUtf8.data(), sz, nullptr, nullptr);
+                }
+                Flamme::SaveUserOverride(g_cachedPeHash,
+                                         static_cast<uint32_t>(newVersion),
+                                         nameUtf8.c_str());
+            }
+
+            if (newVersion == 0) {
+                // Clear: don't change the in-process version (would require re-init);
+                // just clear the override flag so UI shows "auto-detected" branding.
+                g_cachedIsUserOverride = false;
+            } else {
+                g_cachedUEVersion       = static_cast<uint32_t>(newVersion);
+                g_cachedVersionDetected = true;
+                g_cachedIsUserOverride  = true;
+                g_cachedIsLowConfidence = false;
+            }
+
+            json data;
+            data["ue_version"]       = g_cachedUEVersion;
+            data["is_user_override"] = g_cachedIsUserOverride;
+            data["persisted"]        = persist;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -491,12 +564,20 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             extern int         g_cachedGWorldAobPos;
             extern int         g_cachedGWorldAobLen;
 
+            extern bool        g_cachedIsUserOverride;
+            extern bool        g_cachedIsLowConfidence;
+            extern const char* g_cachedPublisherThumbprint;
+
             json data;
             data["gobjects"]         = Renge::AddrToStr(g_cachedGObjects);
             data["gnames"]           = Renge::AddrToStr(g_cachedGNames);
             data["gworld"]           = Renge::AddrToStr(g_cachedGWorld);
             data["ue_version"]       = g_cachedUEVersion;
             data["version_detected"] = g_cachedVersionDetected;
+            data["is_user_override"] = g_cachedIsUserOverride;
+            data["is_low_confidence"] = g_cachedIsLowConfidence;
+            data["publisher_thumbprint"] = g_cachedPublisherThumbprint
+                ? g_cachedPublisherThumbprint : "";
             data["object_count"]     = Aura::GetCount();
             data["gobjects_method"]  = g_cachedGObjectsMethod;
             data["gnames_method"]    = g_cachedGNamesMethod;

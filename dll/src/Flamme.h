@@ -33,6 +33,11 @@ struct ScanHints {
     uint32_t    ueVersion        = 0;
     bool        versionDetected  = false;  // true = version was reliably detected last time
     bool        hasVersionHint   = false;  // true = ueVersion/versionDetected are populated
+
+    // User-set persistent override (highest priority — wins over auto-detect on every scan).
+    // 0 = no override. Set/cleared via the set_ue_version_override pipe cmd.
+    uint32_t    userOverrideVersion = 0;
+    bool        hasUserOverride     = false;
 };
 
 /// Load hints for a given PE hash from the cache file.
@@ -42,8 +47,17 @@ ScanHints LoadHints(const char* peHash);
 
 /// Save scan results to the cache file.  Reads the existing file,
 /// updates/inserts the record for peHash, writes atomically.
+/// Preserves any pre-existing ueVersionUserOverride field on update.
 /// Never throws — errors are logged and silently ignored.
 void SaveResults(const char* peHash, const Genau::EnginePointers& ptrs,
                  const char* processName);
+
+/// Persist (or clear) the user-set UE version override for a game.
+///   ueVersion == 0 → clear the override (revert to auto-detect on next launch).
+///   ueVersion != 0 → save the override; auto-detect is skipped on next launch.
+/// processName is used only for the readable gameName field in the JSON record.
+/// Never throws — errors are logged.
+void SaveUserOverride(const char* peHash, uint32_t ueVersion,
+                      const char* processName);
 
 } // namespace Flamme

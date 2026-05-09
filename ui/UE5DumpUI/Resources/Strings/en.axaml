@@ -103,6 +103,14 @@
     <sys:String x:Key="str.Pointers.Copy">Copy</sys:String>
     <sys:String x:Key="str.Pointers.NotConnected">Not connected — connect to view pointers</sys:String>
     <sys:String x:Key="str.Pointers.VersionWarning">&#x26A0; Version not detected — inferred from engine analysis (custom UE build?)</sys:String>
+    <sys:String x:Key="str.Pointers.VersionDetectedBadge">&#x2713; Detected</sys:String>
+    <sys:String x:Key="str.Pointers.VersionUserOverrideBadge">&#x1F527; User Override</sys:String>
+    <sys:String x:Key="str.Pointers.VersionUserOverrideTooltip">UE version was set manually. The override is saved per-game and reapplied on every launch.</sys:String>
+    <sys:String x:Key="str.Pointers.VersionLowConfidenceBadge">&#x26A0; Low Confidence</sys:String>
+    <sys:String x:Key="str.Pointers.VersionLowConfidenceText">Detected via fragile fallback path — bare pattern match or publisher bias. If exports look wrong, set the correct UE version using the Override ComboBox below.</sys:String>
+    <sys:String x:Key="str.Pointers.VersionOverrideLabel">Override:</sys:String>
+    <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Force a specific UE version for this game. Saved per-game and reapplied on every launch. Choose Auto to revert to auto-detection.</sys:String>
+    <sys:String x:Key="str.Pointers.PublisherLabel">Publisher:</sys:String>
     <sys:String x:Key="str.Pointers.AobFailed">&#x26A0; AOB failed — found via</sys:String>
     <sys:String x:Key="str.Pointers.GWorldNotFound">GWorld not found (non-critical)</sys:String>
     <sys:String x:Key="str.Pointers.PatternIdTooltip">AOB pattern ID that matched this pointer</sys:String>

@@ -119,13 +119,24 @@ ScanHints LoadHints(const char* peHash) {
             hints.hasVersionHint = true;
         }
 
-        LOG_INFO("HintCache: Loaded hints for PE=%s (GObj=%s, GNam=%s, GWld=%s, UE=%u%s)",
+        // User-set persistent override (per-game, highest priority on next scan).
+        auto uoIt = rec.find("ueVersionUserOverride");
+        if (uoIt != rec.end() && uoIt->is_number_integer()) {
+            uint32_t v = uoIt->get<uint32_t>();
+            if (v != 0) {
+                hints.userOverrideVersion = v;
+                hints.hasUserOverride = true;
+            }
+        }
+
+        LOG_INFO("HintCache: Loaded hints for PE=%s (GObj=%s, GNam=%s, GWld=%s, UE=%u%s%s)",
                  peHash,
                  hints.gobjectsPatternId.empty() ? "-" : hints.gobjectsPatternId.c_str(),
                  hints.gnamesPatternId.empty()   ? "-" : hints.gnamesPatternId.c_str(),
                  hints.gworldPatternId.empty()    ? "-" : hints.gworldPatternId.c_str(),
                  hints.ueVersion,
-                 hints.hasVersionHint ? (hints.versionDetected ? " detected" : " inferred") : " none");
+                 hints.hasVersionHint ? (hints.versionDetected ? " detected" : " inferred") : " none",
+                 hints.hasUserOverride ? " [USER-OVERRIDE active]" : "");
 
     } catch (const std::exception& ex) {
         LOG_WARN("HintCache: Failed to load hints: %s", ex.what());
@@ -202,6 +213,10 @@ void SaveResults(const char* peHash, const Genau::EnginePointers& ptrs,
         rec["gameName"] = processName ? processName : "";
         rec["ueVersion"] = static_cast<int>(ptrs.UEVersion);
         rec["versionDetected"] = ptrs.bVersionDetected;
+        // Preserve any pre-existing ueVersionUserOverride from the previous record —
+        // a fresh scan must not silently clobber a user-set persistent override.
+        // If the field was absent before, leave it absent (no zero-stamp).
+        // The override is written/cleared exclusively via SaveUserOverride.
 
         rec["gObjects"] = MakeScanEntry(ptrs.gobjectsMethod, ptrs.gobjectsPatternId,
                                         ptrs.gobjectsPatternsTried, ptrs.gobjectsPatternsHit);
@@ -245,6 +260,76 @@ void SaveResults(const char* peHash, const Genau::EnginePointers& ptrs,
         LOG_WARN("HintCache: Failed to save results: %s", ex.what());
     } catch (...) {
         LOG_WARN("HintCache: Failed to save results (unknown error)");
+    }
+}
+
+// ============================================================
+// SaveUserOverride
+// ============================================================
+
+void SaveUserOverride(const char* peHash, uint32_t ueVersion,
+                      const char* processName) {
+    if (!peHash || !peHash[0]) return;
+
+    try {
+        auto path = GetCacheFilePath();
+        if (path.empty()) return;
+        fs::create_directories(path.parent_path());
+
+        json root;
+        if (fs::exists(path)) {
+            std::ifstream ifs(path);
+            if (ifs.is_open()) {
+                root = json::parse(ifs, nullptr, /*allow_exceptions=*/false);
+                ifs.close();
+                if (!root.is_object()) root = json::object();
+            }
+        }
+
+        if (!root.contains("version")) root["version"] = 1;
+        if (!root.contains("games") || !root["games"].is_object())
+            root["games"] = json::object();
+
+        json& games = root["games"];
+        json rec = games.contains(peHash) ? games[peHash] : json::object();
+
+        rec["peHash"]   = peHash;
+        if (processName && processName[0])
+            rec["gameName"] = processName;
+
+        if (ueVersion == 0) {
+            // Clear override
+            rec.erase("ueVersionUserOverride");
+            rec.erase("ueVersionUserOverrideAt");
+        } else {
+            rec["ueVersionUserOverride"]   = static_cast<int>(ueVersion);
+            rec["ueVersionUserOverrideAt"] = GetUtcTimestamp();
+        }
+
+        games[peHash] = rec;
+
+        auto tempPath = path;
+        tempPath += L".tmp";
+        {
+            std::ofstream ofs(tempPath, std::ios::trunc);
+            if (!ofs.is_open()) {
+                LOG_WARN("HintCache: SaveUserOverride: Failed to open temp file");
+                return;
+            }
+            ofs << root.dump(2);
+        }
+        fs::rename(tempPath, path);
+
+        if (ueVersion == 0)
+            LOG_INFO("HintCache: Cleared user UE-version override for PE=%s", peHash);
+        else
+            LOG_INFO("HintCache: Saved user UE-version override for PE=%s -> %u",
+                     peHash, ueVersion);
+
+    } catch (const std::exception& ex) {
+        LOG_WARN("HintCache: SaveUserOverride failed: %s", ex.what());
+    } catch (...) {
+        LOG_WARN("HintCache: SaveUserOverride failed (unknown error)");
     }
 }
 

@@ -45,6 +45,7 @@ constexpr const char* CMD_TRIGGER_SCAN      = "trigger_scan";
 constexpr const char* CMD_INVOKE_FUNCTION       = "invoke_function";
 constexpr const char* CMD_WALK_DATATABLE_ROWS   = "walk_datatable_rows";
 constexpr const char* CMD_SCAN_STATUS           = "scan_status";
+constexpr const char* CMD_SET_UE_VERSION_OVERRIDE = "set_ue_version_override";
 
 // Event types
 constexpr const char* EVT_WATCH            = "watch";
