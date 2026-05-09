@@ -1067,14 +1067,16 @@ static void LogScanReport(const ScanReport& report) {
 // ============================================================
 // Scan method tracking — set by each Find function, read by FindAll()
 // ============================================================
-static const char* s_gobjectsMethod = "not_found";
-static const char* s_gnamesMethod   = "not_found";
-static const char* s_gworldMethod   = "not_found";
+static const char* s_gobjectsMethod        = "not_found";
+static const char* s_gnamesMethod           = "not_found";
+static const char* s_gworldMethod           = "not_found";
+static const char* s_sparseDelegatesMethod  = "not_found";
 
 // File-scope ScanReports — promoted from local so FindAll() can read winningId + stats
 static ScanReport s_gobjectsReport;
 static ScanReport s_gnamesReport;
 static ScanReport s_gworldReport;
+static ScanReport s_sparseReport;
 
 // ============================================================
 // FindGObjects — unified scan + data-section fallback
@@ -1740,9 +1742,9 @@ uintptr_t FindSparseDelegateStorage() {
 
     Sein::Info("SCAN:Sparse", "FindSparseDelegateStorage: Scanning for FSparseDelegateStorage::SparseDelegates...");
 
-    static ScanReport s_sparseReport;
     s_sparseReport = ScanReport{};
     s_sparseReport.targetName = "SparseDelegates";
+    s_sparseDelegatesMethod = "not_found";
 
     uintptr_t result = ScanForTarget(
         Sig::SPARSE_PATTERNS, std::size(Sig::SPARSE_PATTERNS),
@@ -1752,6 +1754,7 @@ uintptr_t FindSparseDelegateStorage() {
     LogScanReport(s_sparseReport);
 
     if (result) {
+        s_sparseDelegatesMethod = "aob";
         Sein::Info("SCAN:Sparse", "FindSparseDelegateStorage: Found at 0x%llX",
                    static_cast<unsigned long long>(result));
     } else {
@@ -3361,13 +3364,25 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     out.gworldMethod = s_gworldMethod;
     // GWorld is non-critical, just log
 
+    // FSparseDelegateStorage::SparseDelegates — UE 5.0+ only. Eagerly scanned
+    // here (instead of lazy-on-first-drill-down) so the Pointer panel can
+    // display it. Cache is the same one used by Aura::WalkSparseDelegateBindings,
+    // so first drill-down is O(1).
+    if (out.UEVersion >= 500) {
+        if (progress) progress(4, "Scanning FSparseDelegateStorage...");
+        out.SparseDelegates = FindSparseDelegateStorage();
+        out.sparseDelegatesMethod = s_sparseDelegatesMethod;
+    }
+
     // --- AOB Usage Tracking: propagate scan stats ---
-    out.gobjectsPatternId = s_gobjectsReport.winningId;
-    out.gnamesPatternId   = s_gnamesReport.winningId;
-    out.gworldPatternId   = s_gworldReport.winningId;
-    out.gobjectsScanAddr  = s_gobjectsReport.scanAddr;
-    out.gnamesScanAddr    = s_gnamesReport.scanAddr;
-    out.gworldScanAddr    = s_gworldReport.scanAddr;
+    out.gobjectsPatternId        = s_gobjectsReport.winningId;
+    out.gnamesPatternId          = s_gnamesReport.winningId;
+    out.gworldPatternId          = s_gworldReport.winningId;
+    out.sparseDelegatesPatternId = s_sparseReport.winningId;
+    out.gobjectsScanAddr         = s_gobjectsReport.scanAddr;
+    out.gnamesScanAddr           = s_gnamesReport.scanAddr;
+    out.gworldScanAddr           = s_gworldReport.scanAddr;
+    out.sparseDelegatesScanAddr  = s_sparseReport.scanAddr;
 
     ExtractScanStats(s_gobjectsReport, out.gobjectsPatternsTried, out.gobjectsPatternsHit);
     ExtractScanStats(s_gnamesReport,   out.gnamesPatternsTried,   out.gnamesPatternsHit);
@@ -3380,10 +3395,11 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         out.gworldAobLen = ws->instrOffset + ws->totalLen;
     }
 
-    LOG_INFO("FindAll: Complete — GObjects=0x%llX (%s), GNames=0x%llX (%s), GWorld=0x%llX (%s), UE=%u, UE4Names=%s, hdrOff=%d",
+    LOG_INFO("FindAll: Complete — GObjects=0x%llX (%s), GNames=0x%llX (%s), GWorld=0x%llX (%s), Sparse=0x%llX (%s), UE=%u, UE4Names=%s, hdrOff=%d",
              static_cast<unsigned long long>(out.GObjects), out.gobjectsMethod,
              static_cast<unsigned long long>(out.GNames), out.gnamesMethod,
              static_cast<unsigned long long>(out.GWorld), out.gworldMethod,
+             static_cast<unsigned long long>(out.SparseDelegates), out.sparseDelegatesMethod,
              out.UEVersion,
              out.bUE4NameArray ? "yes" : "no",
              out.fnameEntryHeaderOffset);

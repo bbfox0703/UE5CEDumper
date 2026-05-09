@@ -27,24 +27,33 @@ struct EnginePointers {
     int       ue4StringOffset = 0x10;  // FNameEntry string offset for UE4 mode
     int       fnameEntryHeaderOffset = 0; // Offset to 2-byte header within FNameEntry (0=standard, 4=hash-prefixed UE4.26)
 
+    // FSparseDelegateStorage::SparseDelegates address (UE 5.0+; 0 if scan failed
+    // or version unsupported). Optional — drives MulticastSparseDelegateProperty
+    // drill-down + Find Refs sparse coverage. Populated eagerly during FindAll
+    // so the UI can display it; the same value backs Genau::FindSparseDelegateStorage.
+    uintptr_t SparseDelegates = 0;
+
     // Scan method for each pointer: "aob", "data_scan", "string_ref", "pointer_scan", "not_found"
-    const char* gobjectsMethod = "not_found";
-    const char* gnamesMethod   = "not_found";
-    const char* gworldMethod   = "not_found";
+    const char* gobjectsMethod        = "not_found";
+    const char* gnamesMethod          = "not_found";
+    const char* gworldMethod          = "not_found";
+    const char* sparseDelegatesMethod = "not_found";
 
     // --- AOB Usage Tracking ---
     // PE hash: TimeDateStamp (8 hex) + SizeOfImage (8 hex) = unique game build ID
     char peHash[17] = {0};
 
     // Winning pattern IDs (point to AobSignature::id constexpr strings in Signatures.h)
-    const char* gobjectsPatternId = nullptr;
-    const char* gnamesPatternId   = nullptr;
-    const char* gworldPatternId   = nullptr;
+    const char* gobjectsPatternId        = nullptr;
+    const char* gnamesPatternId          = nullptr;
+    const char* gworldPatternId          = nullptr;
+    const char* sparseDelegatesPatternId = nullptr;
 
     // AOB scan hit addresses (instruction address where the winning pattern matched)
-    uintptr_t gobjectsScanAddr = 0;
-    uintptr_t gnamesScanAddr   = 0;
-    uintptr_t gworldScanAddr   = 0;
+    uintptr_t gobjectsScanAddr        = 0;
+    uintptr_t gnamesScanAddr          = 0;
+    uintptr_t gworldScanAddr          = 0;
+    uintptr_t sparseDelegatesScanAddr = 0;
 
     // Per-target scan statistics
     int gobjectsPatternsTried = 0;

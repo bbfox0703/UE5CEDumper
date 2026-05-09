@@ -544,22 +544,26 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             extern uintptr_t   g_cachedGObjects;
             extern uintptr_t   g_cachedGNames;
             extern uintptr_t   g_cachedGWorld;
+            extern uintptr_t   g_cachedSparseDelegates;
             extern uint32_t    g_cachedUEVersion;
             extern bool        g_cachedVersionDetected;
             extern const char* g_cachedGObjectsMethod;
             extern const char* g_cachedGNamesMethod;
             extern const char* g_cachedGWorldMethod;
+            extern const char* g_cachedSparseDelegatesMethod;
             // AOB Usage Tracking
             extern char        g_cachedPeHash[17];
             extern const char* g_cachedGObjectsPatternId;
             extern const char* g_cachedGNamesPatternId;
             extern const char* g_cachedGWorldPatternId;
+            extern const char* g_cachedSparseDelegatesPatternId;
             extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
             extern int         g_cachedGNamesTried,   g_cachedGNamesHit;
             extern int         g_cachedGWorldTried,   g_cachedGWorldHit;
             extern uintptr_t   g_cachedGObjectsScanAddr;
             extern uintptr_t   g_cachedGNamesScanAddr;
             extern uintptr_t   g_cachedGWorldScanAddr;
+            extern uintptr_t   g_cachedSparseDelegatesScanAddr;
             extern const char* g_cachedGWorldAob;
             extern int         g_cachedGWorldAobPos;
             extern int         g_cachedGWorldAobLen;
@@ -572,22 +576,25 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             data["gobjects"]         = Renge::AddrToStr(g_cachedGObjects);
             data["gnames"]           = Renge::AddrToStr(g_cachedGNames);
             data["gworld"]           = Renge::AddrToStr(g_cachedGWorld);
+            data["sparse_delegates"] = Renge::AddrToStr(g_cachedSparseDelegates);
             data["ue_version"]       = g_cachedUEVersion;
             data["version_detected"] = g_cachedVersionDetected;
             data["is_user_override"] = g_cachedIsUserOverride;
             data["is_low_confidence"] = g_cachedIsLowConfidence;
             data["publisher_thumbprint"] = g_cachedPublisherThumbprint
                 ? g_cachedPublisherThumbprint : "";
-            data["object_count"]     = Aura::GetCount();
-            data["gobjects_method"]  = g_cachedGObjectsMethod;
-            data["gnames_method"]    = g_cachedGNamesMethod;
-            data["gworld_method"]    = g_cachedGWorldMethod;
+            data["object_count"]            = Aura::GetCount();
+            data["gobjects_method"]         = g_cachedGObjectsMethod;
+            data["gnames_method"]           = g_cachedGNamesMethod;
+            data["gworld_method"]           = g_cachedGWorldMethod;
+            data["sparse_delegates_method"] = g_cachedSparseDelegatesMethod;
 
             // AOB Usage Tracking
             data["pe_hash"] = g_cachedPeHash;
-            data["gobjects_pattern_id"] = g_cachedGObjectsPatternId ? g_cachedGObjectsPatternId : "";
-            data["gnames_pattern_id"]   = g_cachedGNamesPatternId   ? g_cachedGNamesPatternId   : "";
-            data["gworld_pattern_id"]   = g_cachedGWorldPatternId   ? g_cachedGWorldPatternId   : "";
+            data["gobjects_pattern_id"]         = g_cachedGObjectsPatternId        ? g_cachedGObjectsPatternId        : "";
+            data["gnames_pattern_id"]           = g_cachedGNamesPatternId          ? g_cachedGNamesPatternId          : "";
+            data["gworld_pattern_id"]           = g_cachedGWorldPatternId          ? g_cachedGWorldPatternId          : "";
+            data["sparse_delegates_pattern_id"] = g_cachedSparseDelegatesPatternId ? g_cachedSparseDelegatesPatternId : "";
             json scanStats;
             scanStats["gobjects_tried"] = g_cachedGObjectsTried;
             scanStats["gobjects_hit"]   = g_cachedGObjectsHit;
@@ -598,9 +605,10 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             data["scan_stats"] = scanStats;
 
             // AOB scan hit addresses (instruction that references the pointer)
-            data["gobjects_scan_addr"] = Renge::AddrToStr(g_cachedGObjectsScanAddr);
-            data["gnames_scan_addr"]   = Renge::AddrToStr(g_cachedGNamesScanAddr);
-            data["gworld_scan_addr"]   = Renge::AddrToStr(g_cachedGWorldScanAddr);
+            data["gobjects_scan_addr"]         = Renge::AddrToStr(g_cachedGObjectsScanAddr);
+            data["gnames_scan_addr"]           = Renge::AddrToStr(g_cachedGNamesScanAddr);
+            data["gworld_scan_addr"]           = Renge::AddrToStr(g_cachedGWorldScanAddr);
+            data["sparse_delegates_scan_addr"] = Renge::AddrToStr(g_cachedSparseDelegatesScanAddr);
 
             // GWorld winning pattern AOB metadata (for CE symbol registration)
             data["gworld_aob"]     = g_cachedGWorldAob ? g_cachedGWorldAob : "";
