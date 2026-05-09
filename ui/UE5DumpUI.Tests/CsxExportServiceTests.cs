@@ -54,6 +54,7 @@ public sealed class StubDumpService : IDumpService
     public Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr, string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<FindReferencesResult> FindReferencesToUObjectAsync(string addr, int maxResults = 32, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<PropertySearchResult> SearchPropertiesAsync(string query, string[]? types = null, bool gameOnly = true, int limit = 200, CancellationToken ct = default) => throw new NotImplementedException();

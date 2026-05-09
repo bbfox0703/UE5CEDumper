@@ -164,6 +164,38 @@ struct ContainerScanStats {
 std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults = 16,
                                               ContainerScanStats* stats = nullptr);
 
+// === Reverse Reference Search (logical-parent navigation) ===
+//
+// One match for a UObject that holds a pointer to the target UObject.
+// Used to answer "what owns this Item?" — UE's `OuterPrivate` is a
+// naming-hierarchy parent (often `/Engine/Transient` for runtime objects)
+// rather than the logical gameplay parent. Reverse-scanning all UObjects'
+// pointer fields and Object array elements gives the actual owner.
+struct ReferenceMatch {
+    uintptr_t   ownerObj      = 0;
+    int32_t     ownerIndex    = -1;
+    std::string ownerName;
+    std::string ownerClassName;
+    int32_t     fieldOffset   = 0;        // Absolute field offset within owner
+    std::string fieldName;                // Dotted path (e.g. "Stats.Equipment")
+    std::string fieldType;                // "ObjectProperty" / "ClassProperty" / "ArrayProperty"
+    std::string innerType;                // For arrays: inner element type
+    int32_t     elementIndex  = -1;       // -1 for direct field, >=0 for array element
+};
+
+// Find UObjects that hold a pointer to `target`. Walks every UObject's
+// ObjectProperty/ClassProperty fields (incl. nested in StructProperty,
+// depth 3) and TArray<UObject*> elements, comparing values to target.
+// Map/Set/Weak/Soft/Lazy/Interface support deferred to a later iteration.
+//
+// Has its own per-class metadata cache (separate from container cache);
+// first call primes, subsequent calls are fast.
+//
+// `stats` mirrors ContainerScanStats — duration and deadline indication.
+std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
+                                                     int32_t maxResults = 32,
+                                                     ContainerScanStats* stats = nullptr);
+
 // === Property Keyword Search ===
 
 struct PropertyMatch {

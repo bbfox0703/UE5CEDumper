@@ -38,6 +38,10 @@ public interface IDumpService
     // --- Address-to-Instance Reverse Lookup ---
     Task<AddressLookupResult> FindByAddressAsync(string addr, CancellationToken ct = default);
 
+    // --- Reverse Reference Search (logical-owner navigation) ---
+    Task<FindReferencesResult> FindReferencesToUObjectAsync(
+        string addr, int maxResults = 32, CancellationToken ct = default);
+
     // --- Enum Enumeration ---
     Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default);
 

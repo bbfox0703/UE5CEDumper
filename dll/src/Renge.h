@@ -28,6 +28,7 @@ constexpr const char* CMD_WALK_INSTANCE    = "walk_instance";
 constexpr const char* CMD_WALK_WORLD       = "walk_world";
 constexpr const char* CMD_FIND_INSTANCES   = "find_instances";
 constexpr const char* CMD_FIND_BY_ADDRESS  = "find_by_address";
+constexpr const char* CMD_FIND_REFS_TO_UOBJ = "find_refs_to_uobject";
 constexpr const char* CMD_GET_CE_PTR_INFO  = "get_ce_pointer_info";
 constexpr const char* CMD_GET_OFFSETS      = "get_offsets";
 constexpr const char* CMD_READ_ARRAY_ELEMS = "read_array_elements";

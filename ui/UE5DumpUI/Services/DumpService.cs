@@ -539,6 +539,60 @@ public sealed class DumpService : IDumpService
         };
     }
 
+    public async Task<FindReferencesResult> FindReferencesToUObjectAsync(
+        string addr, int maxResults = 32, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "find_refs_to_uobject",
+            ["addr"] = addr,
+            ["max_results"] = maxResults,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+
+        ContainerScanStats? scanStats = null;
+        if (res["scan"] is JsonObject scanNode)
+        {
+            scanStats = new ContainerScanStats
+            {
+                ObjectsScanned = scanNode["objects_scanned"]?.GetValue<int>() ?? 0,
+                ObjectsTotal   = scanNode["objects_total"]?.GetValue<int>() ?? 0,
+                ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
+                DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
+                DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+            };
+        }
+
+        var refs = new List<ReferenceMatch>();
+        if (res["references"] is JsonArray refsArr)
+        {
+            foreach (var node in refsArr)
+            {
+                if (node is not JsonObject r) continue;
+                refs.Add(new ReferenceMatch
+                {
+                    OwnerAddress   = r["owner_addr"]?.GetValue<string>() ?? "",
+                    OwnerIndex     = r["owner_index"]?.GetValue<int>() ?? -1,
+                    OwnerName      = r["owner_name"]?.GetValue<string>() ?? "",
+                    OwnerClassName = r["owner_class"]?.GetValue<string>() ?? "",
+                    FieldOffset    = r["field_offset"]?.GetValue<int>() ?? 0,
+                    FieldName      = r["field_name"]?.GetValue<string>() ?? "",
+                    FieldType      = r["field_type"]?.GetValue<string>() ?? "",
+                    InnerType      = r["inner_type"]?.GetValue<string>() ?? "",
+                    ElementIndex   = r["element_index"]?.GetValue<int>() ?? -1,
+                });
+            }
+        }
+
+        return new FindReferencesResult
+        {
+            QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
+            References   = refs,
+            Scan         = scanStats,
+        };
+    }
+
     public async Task<ArrayElementsResult> ReadArrayElementsAsync(
         string instanceAddr, int fieldOffset,
         string innerAddr, string innerType, int elemSize,

@@ -1313,6 +1313,51 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             return Renge::MakeResponse(id, data).dump();
         }
 
+        // === find_refs_to_uobject: reverse pointer search ===
+        // Given a UObject's address, find every other UObject that holds a
+        // pointer to it (direct ObjectProperty/ClassProperty fields,
+        // TArray<UObject*> elements, including nested in StructProperty).
+        // Resolves the "logical owner" question that UE's OuterPrivate
+        // doesn't answer for runtime-spawned objects.
+        if (cmd == Renge::CMD_FIND_REFS_TO_UOBJ) {
+            std::string addrStr = request.value("addr", "");
+            if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
+            uintptr_t target = Renge::StrToAddr(addrStr);
+            int32_t maxResults = request.value("max_results", 32);
+
+            Aura::ContainerScanStats stats;
+            auto refs = Aura::FindReferencesToUObject(target, maxResults, &stats);
+
+            json data;
+            data["query_addr"] = addrStr;
+
+            json scanInfo;
+            scanInfo["objects_scanned"] = stats.objectsScanned;
+            scanInfo["objects_total"]   = stats.objectsTotal;
+            scanInfo["classes_primed"]  = stats.classesPrimed;
+            scanInfo["duration_ms"]     = stats.durationMs;
+            scanInfo["deadline_hit"]    = stats.deadlineHit;
+            data["scan"] = scanInfo;
+
+            json arr = json::array();
+            for (const auto& r : refs) {
+                json rj;
+                rj["owner_addr"]    = Renge::AddrToStr(r.ownerObj);
+                rj["owner_index"]   = r.ownerIndex;
+                rj["owner_name"]    = r.ownerName;
+                rj["owner_class"]   = r.ownerClassName;
+                rj["field_offset"]  = r.fieldOffset;
+                rj["field_name"]    = r.fieldName;
+                rj["field_type"]    = r.fieldType;
+                if (!r.innerType.empty())
+                    rj["inner_type"] = r.innerType;
+                rj["element_index"] = r.elementIndex;
+                arr.push_back(rj);
+            }
+            data["references"] = arr;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
         // === get_ce_pointer_info: CE pointer chain info for a GObjects instance ===
         if (cmd == Renge::CMD_GET_CE_PTR_INFO) {
             std::string addrStr = request.value("addr", "");

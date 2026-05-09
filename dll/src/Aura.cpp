@@ -1423,6 +1423,223 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults,
     return matches;
 }
 
+// === Reverse Reference Search ===
+//
+// Per-class cache of pointer-shaped fields and Object array fields.
+// Built lazily, mirrors the container cache pattern. ObjectProperty and
+// ClassProperty are stored together (both 8-byte UObject*); WeakObject /
+// SoftObject / LazyObject / Interface are deferred to later iterations.
+//
+// Each entry's `offset` is absolute within the owner UObject (parent
+// struct offsets pre-summed for nested fields).
+
+struct DirectPointerEntry {
+    int32_t     offset;
+    std::string name;
+    std::string typeName;     // "ObjectProperty" / "ClassProperty"
+};
+
+struct ObjectArrayEntry {
+    int32_t     offset;
+    std::string name;
+    std::string innerType;    // "ObjectProperty" / "ClassProperty"
+};
+
+struct ClassReferenceMeta {
+    std::vector<DirectPointerEntry> directPointers;
+    std::vector<ObjectArrayEntry>   objectArrays;
+};
+
+static std::unordered_map<uintptr_t, ClassReferenceMeta> s_classRefCache;
+static std::mutex s_classRefMutex;
+
+// Recursive walker — descends through StructProperty (depth-capped) and
+// emits one entry per ObjectProperty/ClassProperty field and per
+// ArrayProperty<Object>. Mirrors CollectContainersRecursive's structure.
+static void CollectRefMetaRecursive(uintptr_t structAddr,
+                                     int32_t baseOffset,
+                                     const std::string& namePrefix,
+                                     ClassReferenceMeta& out,
+                                     int depth)
+{
+    constexpr int kMaxDepth = 3;
+    if (depth > kMaxDepth) return;
+
+    auto ci = Ubel::WalkClassEx(structAddr);
+    for (const auto& f : ci.Fields) {
+        if (!f.Address) continue;
+
+        std::string fullName = namePrefix.empty()
+            ? f.Name
+            : (namePrefix + "." + f.Name);
+        int32_t absOffset = baseOffset + f.Offset;
+
+        if (f.TypeName == "ObjectProperty" || f.TypeName == "ClassProperty") {
+            out.directPointers.push_back({ absOffset, fullName, f.TypeName });
+        }
+        else if (f.TypeName == "ArrayProperty"
+            && (f.innerType == "ObjectProperty" || f.innerType == "ClassProperty")) {
+            out.objectArrays.push_back({ absOffset, fullName, f.innerType });
+        }
+        else if (f.TypeName == "StructProperty") {
+            uintptr_t innerStruct = 0;
+            if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+                && innerStruct) {
+                CollectRefMetaRecursive(innerStruct, absOffset, fullName,
+                                         out, depth + 1);
+            }
+        }
+    }
+}
+
+static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
+    {
+        std::lock_guard<std::mutex> lk(s_classRefMutex);
+        auto it = s_classRefCache.find(cls);
+        if (it != s_classRefCache.end()) return it->second;
+    }
+
+    ClassReferenceMeta meta;
+    CollectRefMetaRecursive(cls, 0, "", meta, 0);
+
+    std::lock_guard<std::mutex> lk(s_classRefMutex);
+    auto [ins, _] = s_classRefCache.emplace(cls, std::move(meta));
+    return ins->second;
+}
+
+static void FillRefMatchOwner(ReferenceMatch& m, uintptr_t obj, int32_t idx, uintptr_t cls) {
+    m.ownerObj   = obj;
+    m.ownerIndex = idx;
+    uint32_t nameIdx = 0;
+    if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx))
+        m.ownerName = Serie::GetString(nameIdx);
+    uint32_t clsNameIdx = 0;
+    if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, clsNameIdx))
+        m.ownerClassName = Serie::GetString(clsNameIdx);
+}
+
+std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
+                                                     int32_t maxResults,
+                                                     ContainerScanStats* stats)
+{
+    std::vector<ReferenceMatch> matches;
+    if (stats) *stats = {};
+    if (!target || !s_arrayAddr) return matches;
+    if (maxResults <= 0) maxResults = 32;
+
+    int32_t count = GetCount();
+    if (count <= 0) return matches;
+    if (stats) stats->objectsTotal = count;
+
+    LOG_INFO("FindReferencesToUObject: scanning %d objects for ref to 0x%llX",
+             count, static_cast<unsigned long long>(target));
+
+    // Reference search is more expensive than container scan (each UObject
+    // checked has up to N pointer fields + array elements). Bump deadline
+    // to 30s so first-pass cache prime can complete on huge games.
+    constexpr int kDeadlineMs = 30000;
+    auto t0 = std::chrono::steady_clock::now();
+    int32_t classesPrimed = 0;
+    int32_t scanned = 0;
+    bool deadlineHit = false;
+
+    for (int32_t i = 0; i < count && static_cast<int>(matches.size()) < maxResults; ++i) {
+        if ((i & 0x3FF) == 0) {
+            auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - t0).count();
+            if (dt > kDeadlineMs) {
+                LOG_INFO("FindReferencesToUObject: deadline reached after %d objects (%lld ms)",
+                         i, static_cast<long long>(dt));
+                deadlineHit = true;
+                break;
+            }
+        }
+        scanned = i + 1;
+
+        uintptr_t obj = GetByIndex(i);
+        if (!obj || obj == target) continue;  // Don't report self-reference
+
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        const auto& meta = GetClassRefMeta(cls);
+        if (meta.directPointers.empty() && meta.objectArrays.empty()) continue;
+        ++classesPrimed;
+
+        // --- Direct pointer fields ---
+        for (const auto& pfe : meta.directPointers) {
+            uintptr_t ptr = 0;
+            if (!Macht::ReadSafe(obj + pfe.offset, ptr)) continue;
+            if (ptr != target) continue;
+
+            ReferenceMatch m;
+            FillRefMatchOwner(m, obj, i, cls);
+            m.fieldOffset  = pfe.offset;
+            m.fieldName    = pfe.name;
+            m.fieldType    = pfe.typeName;
+            m.elementIndex = -1;
+
+            LOG_INFO("FindReferencesToUObject: hit %s.%s (%s, owner=0x%llX, %s)",
+                     m.ownerName.c_str(), m.fieldName.c_str(),
+                     pfe.typeName.c_str(),
+                     static_cast<unsigned long long>(obj),
+                     m.ownerClassName.c_str());
+            matches.push_back(std::move(m));
+            if (static_cast<int>(matches.size()) >= maxResults) break;
+        }
+        if (static_cast<int>(matches.size()) >= maxResults) break;
+
+        // --- TArray<UObject*> elements ---
+        for (const auto& oae : meta.objectArrays) {
+            Macht::TArrayView arr;
+            if (!Macht::ReadTArray(obj + oae.offset, arr)) continue;
+            if (arr.Count <= 0 || !arr.Data) continue;
+
+            // Bulk-read the TArray's data buffer once and scan in-memory.
+            // Object/Class arrays are always 8-byte stride.
+            constexpr int32_t kArrayElemBytes = 8;
+            std::vector<uintptr_t> buf(arr.Count, 0);
+            if (!Macht::ReadBytesSafe(arr.Data, buf.data(),
+                                       arr.Count * kArrayElemBytes))
+                continue;
+
+            for (int32_t e = 0; e < arr.Count; ++e) {
+                if (buf[e] != target) continue;
+
+                ReferenceMatch m;
+                FillRefMatchOwner(m, obj, i, cls);
+                m.fieldOffset  = oae.offset;
+                m.fieldName    = oae.name;
+                m.fieldType    = "ArrayProperty";
+                m.innerType    = oae.innerType;
+                m.elementIndex = e;
+
+                LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] (Array<%s>, owner=0x%llX, %s)",
+                         m.ownerName.c_str(), m.fieldName.c_str(), e,
+                         oae.innerType.c_str(),
+                         static_cast<unsigned long long>(obj),
+                         m.ownerClassName.c_str());
+                matches.push_back(std::move(m));
+                if (static_cast<int>(matches.size()) >= maxResults) break;
+            }
+            if (static_cast<int>(matches.size()) >= maxResults) break;
+        }
+    }
+
+    auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - t0).count();
+    if (stats) {
+        stats->objectsScanned = scanned;
+        stats->classesPrimed  = classesPrimed;
+        stats->durationMs     = static_cast<int64_t>(dt);
+        stats->deadlineHit    = deadlineHit;
+    }
+    LOG_INFO("FindReferencesToUObject: found %d matches in %lld ms (scanned %d/%d, %d classes with refs%s)",
+             static_cast<int>(matches.size()), static_cast<long long>(dt),
+             scanned, count, classesPrimed, deadlineHit ? ", DEADLINE HIT" : "");
+    return matches;
+}
+
 // === Property Keyword Search ===
 
 // Engine packages to skip when gameOnly is true

@@ -57,6 +57,7 @@
     <sys:String x:Key="str.LiveWalker.StartWorld">Start from GWorld</sys:String>
     <sys:String x:Key="str.LiveWalker.Back">Back</sys:String>
     <sys:String x:Key="str.LiveWalker.Parent">Parent &#x2191;</sys:String>
+    <sys:String x:Key="str.LiveWalker.FindRefs">Find Refs</sys:String>
     <sys:String x:Key="str.LiveWalker.Refresh">Refresh</sys:String>
     <sys:String x:Key="str.LiveWalker.AddressHint">Address (hex or module.exe+offset)</sys:String>
     <sys:String x:Key="str.LiveWalker.Go">Go</sys:String>
@@ -261,6 +262,7 @@
     <sys:String x:Key="str.Tip.LiveWalker.StartWorld">Navigate to GWorld and list top-level objects</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Back">Go back to previous object</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Refresh">Re-read current object fields from memory</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FindRefs">Find UObjects that hold a pointer to this one (true logical owner — Outer/Parent often only gives the naming-hierarchy package)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.Go">Navigate to the specified address</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCE">Copy full CE XML pointer chain to clipboard</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCEField">Copy CE XML for selected field only</sys:String>

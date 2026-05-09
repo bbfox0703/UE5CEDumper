@@ -1146,6 +1146,89 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    // === Find References (reverse pointer scan) ===
+    //
+    // OuterPrivate / Parent gives the naming-hierarchy parent (often
+    // /Engine/Transient for runtime-spawned objects), not the logical
+    // gameplay owner. Find References reverse-scans every UObject for
+    // pointers to the current one, surfacing answers like "this Item is
+    // PlayerInventory.Items[3]". Results render in a panel above the
+    // field grid; user clicks Open to navigate to that owner.
+
+    [ObservableProperty] private ObservableCollection<ReferenceMatch> _references = new();
+    [ObservableProperty] private bool _hasReferences;
+    [ObservableProperty] private string _referencesHeader = "";
+
+    [RelayCommand]
+    private async Task FindReferencesAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentAddress) || CurrentAddress == "0x0") return;
+
+        try
+        {
+            ClearStatus();
+            IsLoading = true;
+            StatusText = "Searching for references…";
+
+            var result = await _dump.FindReferencesToUObjectAsync(CurrentAddress);
+
+            References.Clear();
+            foreach (var r in result.References)
+                References.Add(r);
+            HasReferences = References.Count > 0;
+
+            string scanSuffix = "";
+            if (result.Scan is { } cs && cs.ObjectsTotal > 0)
+            {
+                scanSuffix = cs.DeadlineHit
+                    ? $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms — DEADLINE HIT, retry to continue]"
+                    : $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms]";
+            }
+
+            if (HasReferences)
+            {
+                ReferencesHeader = $"References to {CurrentObjectName} ({References.Count})" + scanSuffix;
+                StatusText = $"Found {References.Count} reference(s)" + scanSuffix;
+                _log.Info($"FindReferences: {CurrentAddress} -> {References.Count} matches{scanSuffix}");
+            }
+            else
+            {
+                ReferencesHeader = $"References to {CurrentObjectName} (none found)" + scanSuffix;
+                HasReferences = true;  // Show empty panel so user sees scan completed
+                StatusText = "No references found — likely held by a non-reflected pointer (TUniquePtr / raw pointer / non-UObject struct)" + scanSuffix;
+                _log.Info($"FindReferences: {CurrentAddress} -> 0 matches{scanSuffix}");
+            }
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"FindReferences failed for {CurrentAddress}", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private void ClearReferences()
+    {
+        References.Clear();
+        HasReferences = false;
+        ReferencesHeader = "";
+    }
+
+    [RelayCommand]
+    private async Task OpenReferenceOwnerAsync(ReferenceMatch? match)
+    {
+        if (match == null || string.IsNullOrEmpty(match.OwnerAddress)) return;
+        // Append a status hint so the user knows where to look on the new
+        // page (the field that's holding the pointer).
+        StatusText = $"Opened {match.OwnerName} — held the previous object in '{match.FieldName}'"
+            + (match.ElementIndex >= 0 ? $"[{match.ElementIndex}]" : "");
+        await NavigateToAddressAsync(match.OwnerAddress);
+    }
+
     [RelayCommand]
     private async Task NavigateToAddressAsync(string? addr)
     {
@@ -1159,6 +1242,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             _preBookmarkBreadcrumbs = null;
             IsBookmarkSaveMode = false;
             Breadcrumbs.Clear();
+            // Stale references panel from a previous lookup target shouldn't
+            // hang around when we navigate elsewhere — references are
+            // about the now-current UObject, not the new one.
+            References.Clear();
+            HasReferences = false;
 
             // Normalize address: supports CE formats like "module.exe"+offset,
             // quoted module names ("module.exe"+offset), and plain hex
