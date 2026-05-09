@@ -2544,9 +2544,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
 
         // Apply pending scroll-to-field hint (e.g. set by OpenReferenceOwner).
-        // The DataGrid binds SelectedItem -> SelectedField and auto-scrolls
-        // the row into view when the selection changes, so we just need to
-        // assign the matching LiveFieldValue.
+        // Setting SelectedField alone does NOT scroll the DataGrid — Avalonia's
+        // DataGrid only auto-scrolls on user-driven selection. Raise the
+        // ScrollToFieldRequested event so the View calls ScrollIntoView, the
+        // same path used by edit-commit and inline drill navigation.
         if (!string.IsNullOrEmpty(_pendingScrollFieldName))
         {
             var hint = _pendingScrollFieldName;
@@ -2555,6 +2556,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (hit != null)
             {
                 SelectedField = hit;
+                ScrollToFieldRequested?.Invoke(hint);
                 _log.Info($"UpdateDisplay: auto-scrolled to '{hint}' (pending scroll hint)");
             }
             else
