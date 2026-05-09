@@ -1595,6 +1595,18 @@ public static class CeXmlExportService
             // TextProperty: FText internal pointer chain — CE can't resolve, show as hex
             "TextProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
+            // Pointer-shaped property types — single field is a raw 8B pointer.
+            // Without these, MapCeField returns null and EmitFields falls through
+            // to EmitNavigableField -> EmitGroupPlaceholder, which emits a
+            // <GroupHeader>1</GroupHeader> entry with NO <VariableType> — CE
+            // shows it as an empty folder rather than a readable pointer.
+            // Listing them here promotes them to a proper "8 Bytes / ShowAsHex"
+            // leaf so Copy CE Field / Copy CE XML for an ObjectProperty selection
+            // produces a usable pointer entry CE can actually display.
+            "ObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "ClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            "WeakObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
             // Soft/Lazy object: FName-based — CE can't resolve, show as hex
             "SoftObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "SoftClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
@@ -1603,7 +1615,7 @@ public static class CeXmlExportService
             // Interface: first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
-            _ => null // Unknown -- not a scalar (StructProperty, ArrayProperty, ObjectProperty, etc.)
+            _ => null // Unknown -- not a scalar (StructProperty, ArrayProperty, etc.)
         };
     }
 

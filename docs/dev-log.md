@@ -6,7 +6,64 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
-## 2026-05-09 (latest) — Soft array CE XML: per-element FName leaf emission
+## 2026-05-09 (latest) — CE Field/XML ObjectProperty leaf shape fix
+
+`fix(export): emit ObjectProperty/ClassProperty/WeakObjectProperty as 8-Byte leaf`
+([`CeXmlExportService.cs::MapCeField`](../ui/UE5DumpUI/Services/CeXmlExportService.cs),
+build 534+)
+
+Reported via Copy CE Field on `LocationInfo.ScalabilityModifiers`
+(ObjectProperty): the resulting CE XML entry contained
+`<GroupHeader>1</GroupHeader>` and **no `<VariableType>`** —
+CE rendered it as an empty folder rather than a readable pointer:
+
+```xml
+<CheatEntry>
+  <Description>"ScalabilityModifiers"</Description>
+  <ShowAsHex>1</ShowAsHex>
+  <GroupHeader>1</GroupHeader>     ← wrong: leaf is a folder
+  <Address>+2C8</Address>
+                                   ← wrong: missing <VariableType>
+</CheatEntry>
+```
+
+**Root cause:** `MapCeField` had `TextProperty` / `Soft*Property` /
+`LazyObjectProperty` / `InterfaceProperty` mapped to `("8 Bytes",
+ShowAsHex: true)`, but **`ObjectProperty` / `ClassProperty` /
+`WeakObjectProperty` were missing**. With `ceField == null`, `EmitFields`
+fell through to `IsNavigable` → `EmitNavigableField` →
+`EmitGroupPlaceholder`, which emits the GroupHeader-without-VariableType
+shape. That code path was originally meant for *struct* navigation (no
+scalar value, just a folder) — using it for raw object pointers
+produced the buggy output.
+
+**Fix:** add `ObjectProperty` / `ClassProperty` / `WeakObjectProperty`
+to `MapCeField` returning `("8 Bytes", ShowAsHex: true)`. They now
+emit through `EmitLeaf` and produce the same shape the soft / weak /
+interface pointer types already produced:
+
+```xml
+<CheatEntry>
+  <Description>"ScalabilityModifiers"</Description>
+  <ShowAsHex>1</ShowAsHex>
+  <ShowAsSigned>0</ShowAsSigned>
+  <VariableType>8 Bytes</VariableType>
+  <Address>+2C8</Address>
+</CheatEntry>
+```
+
+Also covers null-pointer ObjectProperty fields (where `IsNavigable`
+returns false because `PtrAddress` is empty) — they used to silently
+drop from the export entirely.
+
+**Tests:** 4 regression tests in `CeXmlExportServiceTests` covering
+ObjectProperty / ClassProperty / WeakObjectProperty leaf shape and
+null-ObjectProperty still-emits-leaf cases. **490 tests passing**
+(was 486).
+
+-----
+
+## 2026-05-09 (mid-late) — Soft array CE XML: per-element FName leaf emission
 
 `feat(export): TArray<TSoftObjectPtr> per-element CE XML group with FName leaf`
 ([`Ubel.cpp`](../dll/src/Ubel.cpp) Phase G, [`Fern.cpp`](../dll/src/Fern.cpp) array
@@ -371,7 +428,7 @@ binding and the filter logic share one implementation.
 
 -----
 
-## Capability matrix (current — build 532)
+## Capability matrix (current — build 534)
 
 | Layer | Drill-down | Find Refs |
 |-------|-----------|-----------|

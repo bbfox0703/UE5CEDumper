@@ -432,6 +432,129 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
+    public void GenerateInstanceXml_ObjectProperty_EmitsLeafWith8BytesNotGroupHeader()
+    {
+        // Regression: a single ObjectProperty field used to fall through to
+        // EmitNavigableField -> EmitGroupPlaceholder, producing a useless
+        // <GroupHeader>1</GroupHeader> entry with NO <VariableType> — CE
+        // rendered it as an empty folder. Now it must emit as a proper
+        // 8-byte ShowAsHex leaf so CE can read the pointer value.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ScalabilityModifiers", TypeName = "ObjectProperty",
+                Offset = 0x2C8, Size = 8,
+                PtrAddress = "0x7FF453509278",
+                PtrName = "ScalabilityModifiers",
+                PtrClassName = "MapScalabilityModifierComponent",
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // Outer wrapper for the instance is still a GroupHeader, but the
+        // ScalabilityModifiers entry itself must be a leaf — extract just
+        // its <CheatEntry> block to assert against.
+        var scStart = xml.IndexOf("\"ScalabilityModifiers\"", StringComparison.Ordinal);
+        Assert.True(scStart >= 0, "ScalabilityModifiers entry missing from XML");
+        var leafEnd = xml.IndexOf("</CheatEntry>", scStart, StringComparison.Ordinal);
+        var leafBlock = xml.Substring(scStart, leafEnd - scStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", leafBlock);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", leafBlock);
+        Assert.Contains("<Address>+2C8</Address>", leafBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", leafBlock);
+        Assert.DoesNotContain("<CheatEntries>", leafBlock); // leaf has no children
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ClassProperty_EmitsLeafWith8BytesNotGroupHeader()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "DefaultPawnClass", TypeName = "ClassProperty",
+                Offset = 0x40, Size = 8,
+                PtrAddress = "0x7FF000123456",
+                PtrName = "Pawn",
+                PtrClassName = "Class",
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var scStart = xml.IndexOf("\"DefaultPawnClass\"", StringComparison.Ordinal);
+        Assert.True(scStart >= 0);
+        var leafEnd = xml.IndexOf("</CheatEntry>", scStart, StringComparison.Ordinal);
+        var leafBlock = xml.Substring(scStart, leafEnd - scStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", leafBlock);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", leafBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", leafBlock);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_WeakObjectProperty_EmitsLeafWith8BytesNotGroupHeader()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "WeakOwner", TypeName = "WeakObjectProperty",
+                Offset = 0x18, Size = 8,
+                PtrAddress = "0x7FF000ABCDEF",
+                PtrName = "OwnerActor",
+                PtrClassName = "Actor",
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var scStart = xml.IndexOf("\"WeakOwner\"", StringComparison.Ordinal);
+        Assert.True(scStart >= 0);
+        var leafEnd = xml.IndexOf("</CheatEntry>", scStart, StringComparison.Ordinal);
+        var leafBlock = xml.Substring(scStart, leafEnd - scStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", leafBlock);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", leafBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", leafBlock);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_NullObjectProperty_StillEmitsLeaf()
+    {
+        // ObjectProperty with no resolved target (null pointer) — IsNavigable
+        // is false, but the field still needs an addressable entry so the
+        // user can watch the pointer slot fill in later.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "OptionalRef", TypeName = "ObjectProperty",
+                Offset = 0x80, Size = 8,
+                // No PtrAddress -> IsNavigable = false in the old code path
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var scStart = xml.IndexOf("\"OptionalRef\"", StringComparison.Ordinal);
+        Assert.True(scStart >= 0, "OptionalRef entry missing from XML");
+        var leafEnd = xml.IndexOf("</CheatEntry>", scStart, StringComparison.Ordinal);
+        var leafBlock = xml.Substring(scStart, leafEnd - scStart);
+
+        Assert.Contains("<VariableType>8 Bytes</VariableType>", leafBlock);
+        Assert.Contains("<ShowAsHex>1</ShowAsHex>", leafBlock);
+        Assert.DoesNotContain("<GroupHeader>1</GroupHeader>", leafBlock);
+    }
+
+    [Fact]
     public void GenerateHierarchicalXml_WithResolvedStruct_UnderPointerParent()
     {
         var breadcrumbs = new[]
