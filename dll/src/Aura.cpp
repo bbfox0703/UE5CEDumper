@@ -1755,6 +1755,82 @@ static uintptr_t ResolveWeakAt(uintptr_t addr) {
     return Ubel::ResolveWeakObjectPtr(objIdx, serial);
 }
 
+// ============================================================
+// TMap header reader — shared by FindReferencesToUObject (sparse pass)
+// and WalkSparseDelegateBindings.
+//
+// Layout reference (UE 5.0+, verified against Everspace 2 UE 5.4 PDB,
+// FSparseDelegateStorage::SparseDelegates):
+//
+//   TMap (0x50 bytes):
+//     +0x00  Elements.Data.AllocatorInstance.Data    (TPair<...>* heap base)
+//     +0x08  Elements.Data.ArrayNum                  (int32, total slots incl. freed)
+//     +0x0C  Elements.Data.ArrayMax                  (int32)
+//     +0x10  Elements.AllocationFlags inline data    (16B = 128 bits inline)
+//     +0x20  Elements.AllocationFlags secondary ptr  (heap if NumBits > 128)
+//     +0x28  Elements.AllocationFlags.NumBits        (int32)
+//     +0x2C  Elements.AllocationFlags.MaxBits        (int32)
+//     +0x30  Elements.FirstFreeIndex                 (int32)
+//     +0x34  Elements.NumFreeIndices                 (int32)
+//     +0x40  Hash secondary ptr
+//     +0x48  HashSize                                (int32)
+//
+//   FSparseDelegateStorage outer TSetElement stride: 0x60
+//     +0x00  Key   (UObjectBase*, 8B)
+//     +0x08  Value (inner TMap, 0x50B)
+//     +0x58  HashNextId / HashIndex (8B)
+//
+//   FSparseDelegateStorage inner TSetElement stride:
+//     bCasePreservingName=false (FName=8): TPair=24, +HashId 8 = 0x20
+//     bCasePreservingName=true  (FName=16): TPair=32, +HashId 8 = 0x28
+//
+//   TSharedPtr<TMulticastScriptDelegate, ThreadSafe> (16B):
+//     +0x00  Object* (FMulticastScriptDelegate*)
+//     +0x08  SharedReferenceCount*
+//
+//   FMulticastScriptDelegate (16B):
+//     +0x00  TArray<FScriptDelegate> InvocationList { Data, Num, Max }
+//
+//   FScriptDelegate (16B or 24B for case-preserving FName):
+//     +0x00  FWeakObjectPtr Object { int32 Idx, int32 Serial }
+//     +0x08  FName FunctionName
+// ============================================================
+
+// ResolveTMapBitArrayBase — figure out where the AllocationFlags bits live.
+// Inline if MaxBits <= 128; heap (secondaryPtr) otherwise.
+static uintptr_t ResolveTMapBitArrayBase(uintptr_t mapAddr) {
+    uintptr_t secondaryPtr = 0;
+    Macht::ReadSafe(mapAddr + 0x20, secondaryPtr);
+    if (secondaryPtr) return secondaryPtr;
+    return mapAddr + 0x10;  // inline buffer
+}
+
+static bool TMapBitSet(uintptr_t bitArrayBase, int32_t idx) {
+    if (idx < 0) return false;
+    uint32_t word = 0;
+    if (!Macht::ReadSafe(bitArrayBase + (idx >> 5) * 4u, word)) return false;
+    return (word >> (idx & 31)) & 1u;
+}
+
+// Read a TMap header. Returns false on read failure.
+struct TMapHeader {
+    uintptr_t arrayData      = 0;
+    int32_t   arrayNum       = 0;   // total slots (includes freed)
+    int32_t   numFreeIndices = 0;
+    uintptr_t bitArrayBase   = 0;
+};
+
+static bool ReadTMapHeader(uintptr_t mapAddr, TMapHeader& out) {
+    if (!Macht::ReadSafe(mapAddr + 0x00, out.arrayData))      return false;
+    if (!Macht::ReadSafe(mapAddr + 0x08, out.arrayNum))       return false;
+    if (!Macht::ReadSafe(mapAddr + 0x34, out.numFreeIndices)) return false;
+    out.bitArrayBase = ResolveTMapBitArrayBase(mapAddr);
+    // Sanity: ArrayNum bounded; some games hit 6-7 figures of total entries
+    // when many UObjects use sparse delegates, but never beyond 1M.
+    if (out.arrayNum < 0 || out.arrayNum > 0x100000) return false;
+    return true;
+}
+
 std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                                                      int32_t maxResults,
                                                      ContainerScanStats* stats)
@@ -2031,6 +2107,103 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
             if (hitMaxThisObj) break;
         }
         if (hitMaxThisObj) break;
+    }
+
+    // ── MulticastSparseDelegateProperty pass (UE 5.0+) ────────────────
+    // Field-level scan above can't see sparse delegates because their
+    // bindings live in a CoreUObject-global TMap, not in the owning
+    // UObject's memory. Walk that TMap once and check every binding's
+    // FWeakObjectPtr against `target`. Skipped silently when AOB scan
+    // failed or UE version is unsupported.
+    if (static_cast<int>(matches.size()) < maxResults && !deadlineHit &&
+        ::g_cachedUEVersion >= 500)
+    {
+        uintptr_t storage = Genau::FindSparseDelegateStorage();
+        if (storage) {
+            TMapHeader outerHdr{};
+            if (ReadTMapHeader(storage, outerHdr) && outerHdr.arrayData &&
+                outerHdr.arrayNum > 0)
+            {
+                constexpr int32_t kOuterStride = 0x60;
+                constexpr int32_t kOuterValueOffset = 0x08;
+                int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
+                int32_t innerStride = (fnameSize == 0x10 ? 0x28 : 0x20);
+                int32_t scriptDelegateSize = 8 + fnameSize;
+
+                int32_t outerVisited = 0;
+                bool sparseAbort = false;
+                for (int32_t oi = 0; oi < outerHdr.arrayNum && !sparseAbort; ++oi) {
+                    if (!TMapBitSet(outerHdr.bitArrayBase, oi)) continue;
+                    if ((++outerVisited & 0xFF) == 0) {
+                        auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - t0).count();
+                        if (dt > kDeadlineMs) { deadlineHit = true; break; }
+                    }
+
+                    uintptr_t outerSlot = outerHdr.arrayData +
+                        static_cast<uintptr_t>(oi) * kOuterStride;
+                    uintptr_t ownerObj = 0;
+                    if (!Macht::ReadSafe(outerSlot, ownerObj) || !ownerObj) continue;
+                    if (ownerObj == target) continue;  // self-reference suppressed
+
+                    uintptr_t innerMapAddr = outerSlot + kOuterValueOffset;
+                    TMapHeader innerHdr{};
+                    if (!ReadTMapHeader(innerMapAddr, innerHdr)) continue;
+                    if (!innerHdr.arrayData || innerHdr.arrayNum == 0) continue;
+
+                    for (int32_t ii = 0; ii < innerHdr.arrayNum; ++ii) {
+                        if (!TMapBitSet(innerHdr.bitArrayBase, ii)) continue;
+                        uintptr_t innerSlot = innerHdr.arrayData +
+                            static_cast<uintptr_t>(ii) * innerStride;
+
+                        int32_t funcComp = 0;
+                        if (!Macht::ReadSafe(innerSlot, funcComp)) continue;
+                        std::string fieldFName = Serie::GetString(funcComp);
+
+                        // TPair: FName at +0, TSharedPtr at +fnameSize
+                        uintptr_t mcdAddr = 0;
+                        if (!Macht::ReadSafe(innerSlot + fnameSize, mcdAddr) || !mcdAddr)
+                            continue;
+
+                        uintptr_t invData = 0;
+                        int32_t   invNum  = 0;
+                        Macht::ReadSafe(mcdAddr + 0x00, invData);
+                        Macht::ReadSafe(mcdAddr + 0x08, invNum);
+                        if (invNum < 0 || invNum > 4096 || !invData) continue;
+
+                        for (int32_t bi = 0; bi < invNum; ++bi) {
+                            uintptr_t bindAddr = invData +
+                                static_cast<uintptr_t>(bi) * scriptDelegateSize;
+                            uintptr_t resolved = ResolveWeakAt(bindAddr);
+                            if (resolved != target) continue;
+
+                            // Match. Resolve owner metadata.
+                            int32_t ownerIdx = -1;
+                            Macht::ReadSafe(ownerObj + Grimoire::OFF_UOBJECT_INDEX,
+                                            ownerIdx);
+                            uintptr_t ownerCls = 0;
+                            Macht::ReadSafe(ownerObj + Grimoire::OFF_UOBJECT_CLASS,
+                                            ownerCls);
+
+                            ReferenceMatch m;
+                            FillRefMatchOwner(m, ownerObj, ownerIdx, ownerCls);
+                            m.fieldOffset  = 0;  // unknown — bindings live outside owner
+                            m.fieldName    = fieldFName;
+                            m.fieldType    = "MulticastSparseDelegateProperty";
+                            m.elementIndex = bi;
+
+                            LOG_INFO("FindReferencesToUObject: hit %s.%s[%d] "
+                                     "(MulticastSparseDelegateProperty, owner=0x%llX, %s)",
+                                     m.ownerName.c_str(), m.fieldName.c_str(), bi,
+                                     static_cast<unsigned long long>(ownerObj),
+                                     m.ownerClassName.c_str());
+                            if (pushMatch(std::move(m))) { sparseAbort = true; break; }
+                        }
+                        if (sparseAbort) break;
+                    }
+                }
+            }
+        }
     }
 
     auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2359,84 +2532,6 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
     Sein::Info("PIPE:list", "ListClasses: %d classes (gameOnly=%d, scanned %d objects)",
                  static_cast<int>(result.results.size()), gameOnly ? 1 : 0, result.scannedObjects);
     return result;
-}
-
-// ============================================================
-// Sparse Delegate Storage Walker
-//
-// Layout reference (UE 5.0+, verified against Everspace 2 UE 5.4 PDB):
-//
-//   FSparseDelegateStorage::SparseDelegates:
-//     TMap<UObjectBase const*,
-//          TMap<FName, TSharedPtr<TMulticastScriptDelegate, ESPMode::ThreadSafe>>>
-//
-//   TMap layout (0x50 bytes):
-//     +0x00  Elements.Data.AllocatorInstance.Data    (TPair<...>* heap base)
-//     +0x08  Elements.Data.ArrayNum                  (int32, total slots incl. freed)
-//     +0x0C  Elements.Data.ArrayMax                  (int32)
-//     +0x10  Elements.AllocationFlags inline data    (16B = 128 bits inline)
-//     +0x20  Elements.AllocationFlags secondary ptr  (heap if NumBits > 128)
-//     +0x28  Elements.AllocationFlags.NumBits        (int32)
-//     +0x2C  Elements.AllocationFlags.MaxBits        (int32)
-//     +0x30  Elements.FirstFreeIndex                 (int32)
-//     +0x34  Elements.NumFreeIndices                 (int32)
-//     +0x40  Hash secondary ptr
-//     +0x48  HashSize                                (int32)
-//
-//   Outer TSetElement<TPair<UObjectBase*, TMap[0x50]>> stride: 0x60
-//     +0x00  Key   (UObjectBase*, 8B)
-//     +0x08  Value (TMap, 0x50B)
-//     +0x58  HashNextId / HashIndex (8B)
-//
-//   Inner TSetElement<TPair<FName, TSharedPtr>> stride:
-//     bCasePreservingName=false (FName=8): TPair=24, +HashId 8 = 0x20
-//     bCasePreservingName=true  (FName=16): TPair=32, +HashId 8 = 0x28
-//
-//   TSharedPtr<TMulticastScriptDelegate, ThreadSafe> (16B):
-//     +0x00  Object* (FMulticastScriptDelegate*)
-//     +0x08  SharedReferenceCount*
-//
-//   FMulticastScriptDelegate (16B):
-//     +0x00  TArray<FScriptDelegate> InvocationList { Data, Num, Max }
-//
-//   FScriptDelegate (16B or 24B for case-preserving FName):
-//     +0x00  FWeakObjectPtr Object { int32 Idx, int32 Serial }
-//     +0x08  FName FunctionName
-// ============================================================
-
-// ResolveTMapBitArrayBase — figure out where the AllocationFlags bits live.
-// Inline if MaxBits <= 128; heap (secondaryPtr) otherwise.
-static uintptr_t ResolveTMapBitArrayBase(uintptr_t mapAddr) {
-    uintptr_t secondaryPtr = 0;
-    Macht::ReadSafe(mapAddr + 0x20, secondaryPtr);
-    if (secondaryPtr) return secondaryPtr;
-    return mapAddr + 0x10;  // inline buffer
-}
-
-static bool TMapBitSet(uintptr_t bitArrayBase, int32_t idx) {
-    if (idx < 0) return false;
-    uint32_t word = 0;
-    if (!Macht::ReadSafe(bitArrayBase + (idx >> 5) * 4u, word)) return false;
-    return (word >> (idx & 31)) & 1u;
-}
-
-// Read a TMap header. Returns false on read failure.
-struct TMapHeader {
-    uintptr_t arrayData      = 0;
-    int32_t   arrayNum       = 0;   // total slots (includes freed)
-    int32_t   numFreeIndices = 0;
-    uintptr_t bitArrayBase   = 0;
-};
-
-static bool ReadTMapHeader(uintptr_t mapAddr, TMapHeader& out) {
-    if (!Macht::ReadSafe(mapAddr + 0x00, out.arrayData))      return false;
-    if (!Macht::ReadSafe(mapAddr + 0x08, out.arrayNum))       return false;
-    if (!Macht::ReadSafe(mapAddr + 0x34, out.numFreeIndices)) return false;
-    out.bitArrayBase = ResolveTMapBitArrayBase(mapAddr);
-    // Sanity: ArrayNum bounded; some games hit 6-7 figures of total entries
-    // when many UObjects use sparse delegates, but never beyond 1M.
-    if (out.arrayNum < 0 || out.arrayNum > 0x100000) return false;
-    return true;
 }
 
 SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
