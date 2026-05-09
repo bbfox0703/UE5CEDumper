@@ -6,7 +6,79 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
-## 2026-05-09 (latest) — CE XML drill-down: cascade struct resolution + OptionalProperty handler
+## 2026-05-09 (latest) — Find Refs auto-drill into element [N]
+
+`feat(walker): Open-from-Find-Refs auto-drills into array/map/set element`
+([`LiveWalkerViewModel.cs`](../ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs),
+build 547+)
+
+When Find Refs returned a hit on an array / map / set element (e.g.
+`OwnerObj.ActiveAbilities[3]`), clicking **Open** previously navigated
+to the owner UObject and auto-scrolled to the *container* row only —
+the user then had to click the `[N]` drill button manually to land on
+the actual element that held the pointer. With several long Find Refs
+sessions in a row that's a noticeable friction point that several
+shipped CE tables built around the workflow run into.
+
+The previous code had this comment as an intentional cap:
+> *Element index is NOT auto-drilled (would require a second
+> navigation step into the container view).*
+
+This change wires that second step.
+
+### Auto-drill chain
+
+`OpenReferenceOwnerAsync` now sets a new `_pendingDrillElementIndex`
+state alongside the existing `_pendingScrollFieldName`, but only when
+the FieldName refers **directly** to the container — accepted forms
+are `Container`, `Container.Key`, `Container.Value`. Nested struct
+paths like `Stats.Equipment` are **not** auto-drilled (the user still
+has to manually walk into the struct first; same behaviour as before
+for that case).
+
+`UpdateDisplay`'s post-load scroll handler:
+1. Find the container field by name → scroll into view (existing).
+2. NEW: if `_pendingDrillElementIndex >= 0` AND the field
+   `IsContainerNavigable`, re-arm `_pendingScrollFieldName = "[N]"`
+   and fire-and-forget `NavigateToContainerAsync(field)`.
+3. Container loads → `Populate{Array|Map|Set}ContainerFields` calls
+   the new `ApplyPendingElementScroll` helper which scrolls to the
+   element entry whose name is `[N]` (Array / Set) or starts with
+   `"[N] "` (Map's `"[N] keyDisplay"` naming pattern).
+
+### Cleanup hooks
+
+`NavigateToAddressAsync` resets `_pendingDrillElementIndex` to `-1`
+on entry **only when no pending scroll hint is set** — the guard
+preserves the OpenReferenceOwner-set state across its own call into
+NavigateToAddressAsync. Other navigation paths (manual address Go,
+breadcrumb back, etc.) drop stale drill state cleanly.
+
+### Result
+
+- Open from `OwnerObj.ActiveAbilities[3]` → lands on `[3]` selected
+  + scrolled into view in the container (0 manual clicks)
+- Open from `OwnerObj.ItemTable.Value` (map value side, sparseIdx=2)
+  → lands on `[2] keyName → valueName` row in the map view
+- Open from `OwnerObj.Stats.Equipment[1]` (struct-nested) →
+  unchanged: scrolls to `Stats` field, user manually drills in
+  (same as before — no regression)
+- Open from container field hit with element_index=-1 → unchanged
+
+### Tests
+
+The chain is event-driven async UI navigation that requires a live
+DLL/pipe to verify end-to-end (DataGrid scroll calls, real
+WalkInstance results). Existing test surface (496 tests) still
+covers the underlying export / VM logic; the auto-drill is built on
+top of already-tested NavigateToContainerAsync /
+PopulateContainerFields paths.
+
+**Build #547, 496 tests passing.**
+
+-----
+
+## 2026-05-09 (mid-latest) — CE XML drill-down: cascade struct resolution + OptionalProperty handler
 
 `fix(export): nested StructProperty inside drilled pointer targets +
 OptionalProperty CE XML emit`
@@ -596,7 +668,7 @@ binding and the filter logic share one implementation.
 
 -----
 
-## Capability matrix (current — build 544)
+## Capability matrix (current — build 547)
 
 | Layer | Drill-down | Find Refs |
 |-------|-----------|-----------|
@@ -630,15 +702,11 @@ binding and the filter logic share one implementation.
      only)
    - MulticastSparseDelegate target scan (needs the storage AOB above)
 
-3. **Find Refs auto-drill into array/map/set element [N]** — currently
-   auto-scrolls to the container field, but the user has to click drill
-   manually to reach the specific element.
+3. **`FieldPathProperty`** — rare, low priority.
 
-4. **`FieldPathProperty`** — rare, low priority.
+4. **GWorld**: Star Wars Jedi untested, Satisfactory fails.
 
-5. **GWorld**: Star Wars Jedi untested, Satisfactory fails.
-
-6. **UE version misdetection** on some UE4 games (DQ I&II,
+5. **UE version misdetection** on some UE4 games (DQ I&II,
    Ghostwire: Tokyo show UE505 incorrectly).
 
 ## Tested games (last verified 2026-05-09)

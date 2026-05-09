@@ -633,6 +633,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * sourceField.ArrayElemSize):X}";
             Fields.Add(f);
         }
+        ApplyPendingElementScroll();
     }
 
     private void PopulateMapContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
@@ -698,6 +699,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
             Fields.Add(f);
         }
+        ApplyPendingElementScroll();
     }
 
     /// <summary>
@@ -777,6 +779,39 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (dataBase != 0 && stride > 0)
                 f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
             Fields.Add(f);
+        }
+        ApplyPendingElementScroll();
+    }
+
+    /// <summary>
+    /// Apply a pending "[N]" scroll hint left over after Open-from-Find-Refs's
+    /// auto-drill chain. The first scroll hint (container field name) was
+    /// consumed by UpdateDisplay; UpdateDisplay re-armed
+    /// _pendingScrollFieldName with "[N]" before triggering NavigateToContainer
+    /// so the freshly-built container Fields list scrolls to the matching
+    /// element entry. Map elements use the "[N] keyDisplay" naming pattern, so
+    /// we accept either an exact match or a "[N] " prefix.
+    /// </summary>
+    private void ApplyPendingElementScroll()
+    {
+        if (string.IsNullOrEmpty(_pendingScrollFieldName)) return;
+        var hint = _pendingScrollFieldName;
+        // Only intercept "[N]" element hints here — non-bracket hints belong
+        // to the UpdateDisplay scroll path (object-instance fields).
+        if (hint.Length < 3 || hint[0] != '[' || !hint.EndsWith("]")) return;
+
+        _pendingScrollFieldName = null;
+        var hit = Fields.FirstOrDefault(f =>
+            f.Name == hint || f.Name.StartsWith(hint + " ", StringComparison.Ordinal));
+        if (hit != null)
+        {
+            SelectedField = hit;
+            ScrollToFieldRequested?.Invoke(hit.Name);
+            _log.Info($"PopulateContainer: auto-scrolled to '{hit.Name}' (element hint '{hint}')");
+        }
+        else
+        {
+            _log.Info($"PopulateContainer: element hint '{hint}' not found");
         }
     }
 
@@ -1166,6 +1201,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // user lands directly on the field that holds the pointer.
     private string? _pendingScrollFieldName;
 
+    // Optional auto-drill index applied alongside _pendingScrollFieldName.
+    // When >= 0 and the resolved field is container-navigable, the post-
+    // load handler navigates into the container view AND sets a follow-up
+    // scroll hint for the element entry "[N]" so Open-from-Find-Refs lands
+    // directly on the matched element instead of stopping at the container.
+    private int _pendingDrillElementIndex = -1;
+
     [RelayCommand]
     private async Task FindReferencesAsync()
     {
@@ -1231,13 +1273,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (match == null || string.IsNullOrEmpty(match.OwnerAddress)) return;
 
         // Pre-arm the scroll hint so when the new owner's Fields list
-        // populates we auto-select the field that held the pointer. For
-        // dotted paths (e.g. "Stats.Equipment") only the first segment
-        // is a top-level field — user can drill into the struct from
-        // there. Element index is NOT auto-drilled (would require a
-        // second navigation step into the container view).
+        // populates we auto-select the field that held the pointer.
         var firstSegment = (match.FieldName ?? "").Split('.')[0];
         _pendingScrollFieldName = string.IsNullOrEmpty(firstSegment) ? null : firstSegment;
+
+        // Container hits (Array/Map/Set element) — pre-arm the drill index
+        // so the post-load handler also navigates into the container view
+        // and lands on element "[N]". Only auto-drill when the FieldName
+        // refers DIRECTLY to the container (or "<Container>.Key" /
+        // "<Container>.Value" for map-side hits) — nested struct paths
+        // like "Stats.Equipment" require a manual struct drill the user
+        // has to do themselves, so we don't auto-drill those.
+        var fieldName = match.FieldName ?? "";
+        var canAutoDrill = match.ElementIndex >= 0
+            && !string.IsNullOrEmpty(firstSegment)
+            && (fieldName == firstSegment
+                || fieldName == firstSegment + ".Key"
+                || fieldName == firstSegment + ".Value");
+        _pendingDrillElementIndex = canAutoDrill ? match.ElementIndex : -1;
 
         // Append a status hint so the user knows where to look on the new
         // page (the field that's holding the pointer).
@@ -1250,6 +1303,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task NavigateToAddressAsync(string? addr)
     {
         if (string.IsNullOrEmpty(addr)) return;
+
+        // Drop stale Find Refs auto-drill state if a different navigation
+        // path takes over before the chained drill kicks in. Guarded:
+        // OpenReferenceOwnerAsync sets _pendingDrillElementIndex *before*
+        // calling NavigateToAddressAsync, so we mustn't clobber it on the
+        // call this command receives from that method. Detection: the
+        // pending hint set by OpenReferenceOwnerAsync is non-empty.
+        if (string.IsNullOrEmpty(_pendingScrollFieldName))
+            _pendingDrillElementIndex = -1;
 
         try
         {
@@ -2589,10 +2651,37 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 SelectedField = hit;
                 ScrollToFieldRequested?.Invoke(hint);
                 _log.Info($"UpdateDisplay: auto-scrolled to '{hint}' (pending scroll hint)");
+
+                // Find Refs auto-drill: if the matched field is container-
+                // navigable AND we have a pending element index, chain into
+                // the container view + leave a follow-up scroll hint for
+                // the element entry "[N]". Lets Open-from-Find-Refs land
+                // directly on the array/map/set element that held the
+                // pointer instead of stopping at the container row.
+                if (_pendingDrillElementIndex >= 0)
+                {
+                    var elemIndex = _pendingDrillElementIndex;
+                    _pendingDrillElementIndex = -1;
+                    if (hit.IsContainerNavigable)
+                    {
+                        // Stage the element scroll hint so PopulateContainerFields
+                        // (called by NavigateToContainerAsync) picks it up.
+                        _pendingScrollFieldName = $"[{elemIndex}]";
+                        _log.Info($"UpdateDisplay: auto-drill into container '{hint}' element [{elemIndex}]");
+                        _ = NavigateToContainerAsync(hit);
+                    }
+                    else
+                    {
+                        _log.Info($"UpdateDisplay: skipped auto-drill — '{hint}' is not container-navigable");
+                    }
+                }
             }
             else
             {
                 _log.Info($"UpdateDisplay: pending scroll hint '{hint}' not found in field list");
+                // Drop the drill hint too — without the container field we
+                // have nothing to drill into.
+                _pendingDrillElementIndex = -1;
             }
         }
 
