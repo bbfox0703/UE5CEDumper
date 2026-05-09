@@ -6,7 +6,317 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
-## 2026-05-09 (latest) — Find Refs auto-drill into element [N]
+## 2026-05-09 (latest, release 560) — Utf8Helpers extraction + 31-case C++ self-test
+
+`test(utf8): extract Utf8Helpers + add 31-case C++ self-test target`
+([`Utf8Helpers.h`](../dll/src/Utf8Helpers.h),
+[`utf8_helpers_test.cpp`](../dll/tests/utf8_helpers_test.cpp), build 559+)
+
+Two functions historically lived in two files with the same invariant
+("produce valid UTF-8 even from corrupt input") and that's exactly how
+the wide-path FName surrogate handling missed sanitization for so long
+(see the build 555 entry below). After fixing the immediate bug, the
+follow-up was to lock the contract behind a unit test so the next
+refactor can't re-introduce it.
+
+### What moved
+
+- `SanitizeUtf8` (was anonymous static in `Ubel.cpp`) and the
+  surrogate-aware UTF-16 → UTF-8 encoder (was inline inside
+  `Serie.cpp` wide path) are now `Utf8Helpers::Sanitize` and
+  `Utf8Helpers::EncodeUtf16` in a single header-only `Utf8Helpers.h`.
+  No `<Windows.h>`, no nlohmann, no MinHook — the test target can pick
+  it up without dragging the rest of the DLL into linkage.
+- Both [`Ubel.cpp`](../dll/src/Ubel.cpp) (`ReadFString`) and
+  [`Serie.cpp`](../dll/src/Serie.cpp) (`GetString` wide path) call
+  through to the helper. Single source of truth.
+
+### Test target
+
+`dll/tests/utf8_helpers_test.cpp` is a stand-alone executable: 31
+assert-based cases, no GoogleTest / Catch2 dependency. Coverage:
+
+**Sanitize** — ASCII passthrough + tab/lf/cr preservation; control
+byte rejection (0x01..0x1F minus tab/lf/cr); valid multi-byte (NBSP /
+CJK / emoji) round-trip; lone continuation bytes (the actual 0xA0 case
+from Squad logs); CESU-8 surrogate encodings (the
+`0xED 0xA0 0x80` = U+D800 case); overlongs (`0xC1 0x81` = 'A',
+`0xC0 0x80` = NUL); truncated 2/3/4-byte sequences; mixed valid+bad;
+**idempotency** (`Sanitize(Sanitize(x)) == Sanitize(x)`).
+
+**EncodeUtf16** — ASCII; NUL stops; BMP characters (CJK, Latin-é);
+surrogate pair → 4-byte UTF-8 (😀 = U+1F600 = 0xD83D + 0xDE00 →
+0xF0 0x9F 0x98 0x80); multiple pairs back-to-back; lone high
+surrogate; lone low surrogate; high+ASCII (no valid pair); reversed
+order (low then high); mixed realistic; **the round-trip invariant**:
+`Sanitize(EncodeUtf16(x)) == EncodeUtf16(x)` for any input — i.e. the
+encoder never produces output the sanitizer would reject.
+
+### Algorithm tweak driven by the suite
+
+Sanitize previously emitted one `?` per byte even when the malformed
+sequence was structurally well-formed (correct lead + correct number
+of continuations) but semantically invalid (CESU-8 surrogate /
+overlong). The Squad-style 3-byte CESU-8 input produced `???` instead
+of `?`. New behaviour: when the sequence is structurally valid but the
+decoded codepoint is bad, advance by `extra+1` and emit a single `?`.
+Truncated sequences and lone continuation bytes still go per-byte (we
+don't trust a malformed length claim — it might be random garbage that
+just happened to start with 0xED). Output is more compact; validity is
+unchanged.
+
+### Build wiring
+
+`dll/CMakeLists.txt` adds the `utf8_helpers_test` executable target;
+proxy-only configures skip it (proxies use separate build dirs).
+`build.ps1 -Target Test` now triggers
+`cmake --build … --target utf8_helpers_test` before running the
+executable. Ninja is a no-op when sources are unchanged; touched
+`Utf8Helpers.h` correctly triggers rebuild. C# xunit suite runs after.
+
+**Build #560, 532 tests passing (31 C++ + 501 C#).** Release shipped
+to `main` via PR #193.
+
+-----
+
+## 2026-05-09 — UTF-16 surrogate fix in Serie::GetString wide path
+
+`fix(fname): handle UTF-16 surrogates in Serie::GetString wide path`
+([`Serie.cpp`](../dll/src/Serie.cpp), build 555+)
+
+External user log against build 488 (Squad-Win64-Shipping, UE 5.7,
+240,341 objects) showed 13 occurrences of:
+
+```
+[PIPE:cmd] PipeServer: Exception in command 'get_object_list':
+[json.exception.type_error.316] invalid UTF-8 byte at index 1: 0xA0
+```
+
+All on `get_object_list`, which builds responses from
+`Ubel::GetName` → `ReadFName` → `Serie::GetString`. The ANSI path
+already sanitized non-ASCII to `?`, but the wide path naively encoded
+*any* codepoint in `[0x800..0xFFFF]` as 3-byte UTF-8 — **including the
+surrogate range 0xD800..0xDFFF**. Decoding the reported byte sequence:
+
+```
+0xE0 | (0xD800 >> 12)         = 0xED
+0x80 | ((0xD800 >> 6) & 0x3F) = 0xA0   ← matches the error
+0x80 | (0xD800 & 0x3F)        = 0x80
+```
+
+Output is well-formed CESU-8 but ill-formed UTF-8 — `nlohmann::json`
+strict-validates and rejects it as `type_error.316`.
+
+### Fix
+
+- Detect well-formed UTF-16 surrogate pairs (high then low) and
+  combine them into a single 4-byte UTF-8 sequence representing the
+  U+10000+ codepoint. Required for emoji and supplementary-plane
+  characters that some games (UE5 + custom Asian fonts, modded
+  blueprints, player loadout names) embed in display names.
+- Replace any lone surrogate (high without low, low without high)
+  with `?`, matching the ANSI-path convention.
+
+The bug had lived since the wide-path FName decoder was added —
+build 488 (the user log) and build 552 (current main at the time)
+both hit it. Squad happens to have enough objects with corrupt /
+unusual names that the bad codepoints reliably trigger on every full
+GObjects scan; smaller / cleaner games never noticed.
+
+**Build #555, 501 tests still pass.** Test target was added the
+following session (see build 559 entry above).
+
+-----
+
+## 2026-05-09 — ReadFString UTF-8 hardening
+
+`fix(walker): sanitize ReadFString output to avoid nlohmann::json UTF-8 errors`
+([`Ubel.cpp`](../dll/src/Ubel.cpp), build 553+)
+
+First-pass mitigation for the same `nlohmann::json` UTF-8 failure
+class. Audited string sources:
+
+- `Serie::GetString` (FName) — already sanitizes; safe.
+- `Ubel::ReadFString` (live FString values) — uses
+  `WideCharToMultiByte(CP_UTF8, 0, …)` which silently produces
+  ill-formed UTF-8 (CESU-8-style surrogate encodings) when game
+  memory contains lone surrogates from corrupted / freed FStrings.
+  *Plausible* source of the 0xA0 report.
+
+(The actual root cause turned out to be in Serie's wide path —
+see the build 555 entry — but the ReadFString hardening still
+matters for genuinely corrupt FString values from freed memory.)
+
+### Two-layer hardening
+
+1. Switch to `WC_ERR_INVALID_CHARS` flag — function fails fast
+   (returns 0) instead of producing CESU-8 when the wchar_t buffer
+   has unpaired surrogates. On failure, fall back to lossy
+   conversion with the original flag.
+2. New `SanitizeUtf8` helper (later promoted to
+   `Utf8Helpers::Sanitize` in build 559) — final byte-level walk
+   that strictly validates the output: rejects overlongs, surrogate
+   codepoints, truncated multi-byte sequences, stray continuation
+   bytes — replacing each malformed run with `?`. Cheap O(N), only
+   invoked on values that head into JSON.
+
+**Build #553.**
+
+-----
+
+## 2026-05-09 — CE XML emit pointer cycle protection
+
+`fix(export): break pointer cycle in CE XML emit + hard depth cap`
+([`CeXmlExportService.cs`](../ui/UE5DumpUI/Services/CeXmlExportService.cs),
+build 552+)
+
+Drill Depth=2 on DQ I&II HD-2D crashed the UI with
+`ArgumentOutOfRangeException` ("The length cannot be greater than the
+capacity") at `System.Text.StringBuilder.AppendWithExpansion` —
+output had grown to the ~2 GB ceiling.
+
+Stack trace showed > 50 alternating frames of
+`EmitDrilledPointer ↔ EmitFields`, classic infinite-recursion
+blow-up. Root cause: `ResolvePointerInstancesAsync`'s `visited`
+HashSet protects only the *resolve* phase. Once both A and B in a
+cycle (e.g. UWorld → PersistentLevel → OwningWorld → UWorld) are
+resolved, the resulting dictionary contains both entries, and the
+*emit* phase has no idea — it just looks up by `PtrAddress` and
+recurses, oscillating between them indefinitely.
+
+### Fix
+
+Path-based cycle detection in the emit phase (separate concern from
+resolve):
+
+- `_emitPath`: thread-static `HashSet<string>`, push/pop on each
+  `EmitDrilledPointer` entry. If the target's `PtrAddress` is already
+  on the path, drop a flat 8-byte hex leaf labeled
+  `(cycle elided)` so the user still has a watchable address in CE —
+  better than a blank or a hang.
+- `MaxEmitPointerDepth = 16` + `_emitPointerDepth` counter.
+  Belt-and-braces guard against any pathological-but-acyclic chain
+  (resolve depth cap is 4, cascade can extend it slightly). Hits
+  show `(max drill depth reached)` instead.
+
+Both states are reset at every `Generate*` entry point alongside the
+existing `_dropDownOwners` / `_dropDownDescriptions` reset, so the
+protection holds across multiple exports in the same session.
+
+No new tests — repro requires a live DLL/pipe with a self-referential
+UE world, which the unit-test surface can't synthesize. Verified by
+re-running Drill Depth=2 against DQ I&II HD-2D on build 552 (no
+crash, output ~3 MB instead of OOM).
+
+**Build #552, 501 tests still pass.**
+
+-----
+
+## 2026-05-09 — Per-game UE version override + SquareEnix publisher bias + Tier 3 hardening
+
+`feat(detect): per-game UE version override + SquareEnix publisher bias + Tier 3 hardening`
+([`Genau.cpp`](../dll/src/Genau.cpp),
+[`Flamme.cpp`](../dll/src/Flamme.cpp),
+[`Fern.cpp`](../dll/src/Fern.cpp),
+[`PointerPanelViewModel.cs`](../ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs),
+[`PointerPanel.axaml`](../ui/UE5DumpUI/Views/PointerPanel.axaml),
+build 549+)
+
+Three SquareEnix titles (FF7 Remake, FF7 Rebirth, DQ I&II HD-2D)
+consistently misdetected as UE 5.0+ when they're really UE4 forks.
+Shipped binaries strip the canonical `++UE?+Release-X.Y` strings AND
+embed unrelated SDK 5.x.y strings that the bare-pattern scan happily
+matches. PE VERSIONINFO is no help either — SquareEnix puts publisher
+version (1.0.0.4) where UE games normally put engine version. Result:
+wrong UEVersion drives wrong FSoftObjectPath layout in CE XML exports
+and wrong FProperty offset selection.
+
+### Three layers of fix
+
+**1. Publisher thumbprint**
+([`Genau.cpp`](../dll/src/Genau.cpp) `DetectPublisherFromPE`)
+
+Reads PE `LegalCopyright` + `CompanyName` via `VerQueryValueW`,
+matches against a small hardcoded table (currently `SQUARE_ENIX`
+only — adding more publishers casually risks wrong bias overriding
+correct detection). A match flips `bLowConfidence=true` regardless
+of which Tier hit, because we have direct evidence the publisher
+ships unreliable strings — even Tier 1 results may come from
+bundled SDKs (PhysX, etc.).
+
+**2. Tier 3 hardening**
+([`Genau.cpp`](../dll/src/Genau.cpp) `DetectVersionDetailed`)
+
+The bare `X.Y.D` pattern now requires an
+`Engine` / `Unreal` / `UE4` / `UE5` / `++UE` anchor in a 256-byte
+window AND defers the first hit so a real Tier 2 `Release-4.27`
+later in the module beats an early stray `5.5.0` SDK string.
+Tier 3 hits flagged `bLowConfidence` even when accepted.
+
+**3. User override**
+(Flamme + new pipe cmd + UI ComboBox)
+
+New `set_ue_version_override` pipe cmd writes
+`ueVersionUserOverride` into the per-PE
+[`HintCache`](../dll/src/Flamme.cpp) JSON. `FindAll`'s priority is
+now:
+
+```
+user override > cached high-confidence > fresh detection >
+publisher bias > 504 default
+```
+
+Override survives game restarts (HintCache reads it on next
+launch) and is the highest priority — beats cached detection so a
+wrong cache from older builds is recoverable.
+
+Critical [`AobUsageRecord.cs`](../ui/UE5DumpUI/Models/AobUsageRecord.cs)
+schema change: added `UEVersionUserOverride` +
+`UEVersionUserOverrideAt` fields so the C# `AobUsageService` doesn't
+silently drop these on its read-modify-write cycle. STJ source-gen
+with `PropertyNamingPolicy.CamelCase` produces `ueVersionUserOverride`
+which matches what Flamme writes (verified against the existing
+cache file on disk).
+
+### UI
+
+[`PointerPanel.axaml`](../ui/UE5DumpUI/Views/PointerPanel.axaml)
+gains a 3-state badge:
+
+| State | Badge | When |
+|---|---|---|
+| Detected | ✓ green | `bVersionDetected && !bUserOverride && !bLowConfidence` |
+| User Override | 🔧 blue | `bUserOverride` |
+| Low Confidence | ⚠ amber | `bLowConfidence && !bUserOverride` |
+
+Plus a Publisher chip ("Square Enix" purple) when any thumbprint
+matched, and a `Override:` ComboBox (Auto / UE 4.18-4.27 / UE
+5.0-5.8) — selection fires `set_ue_version_override` and refreshes
+all panels via the existing `RescanApplied` event.
+
+### Tests (+5)
+
+- `DumpService InitAsync_ParsesUserOverrideAndLowConfidence`
+- `DumpService InitAsync_ParsesLowConfidenceFlag`
+- `DumpService SetUeVersionOverrideAsync_SendsCorrectPayloadAndRefetches`
+- `DumpService SetUeVersionOverrideAsync_ZeroClearsOverride`
+- `AobUsageService RecordScan_PreservesUserOverrideAcrossRoundTrip`
+  (catches the regression where AobUsageService would clobber the
+  field Flamme wrote)
+
+### Verified
+
+DQ I&II HD-2D — initial run had cached `versionDetected=true` from
+build 488 era; new logic ignores cache when publisher is matched,
+re-runs detection, surfaces ⚠ Low Confidence + Publisher: Square
+Enix. User can then pick UE 4.27 in the ComboBox; subsequent
+launches auto-apply the override.
+
+**Build #549, 501 tests passing (+5 since build 547).**
+
+-----
+
+## 2026-05-09 (build 547) — Find Refs auto-drill into element [N]
 
 `feat(walker): Open-from-Find-Refs auto-drills into array/map/set element`
 ([`LiveWalkerViewModel.cs`](../ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs),
