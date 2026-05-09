@@ -4209,6 +4209,127 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 isSet = (bIsSet != 0);
             }
 
+            // Inner-struct surfacing: when the wrapped T is a StructProperty
+            // and the value is set, expose the same {structClassAddr,
+            // structDataAddr, structTypeName} triple that single-value
+            // StructProperty fields produce. This drives Live Walker
+            // drill-down and CE XML / CSX export through the standard
+            // struct path — no additional field on LiveFieldValue required.
+            //
+            // Layout reminder: TOptional<T> for struct T is always
+            // non-intrusive — { T value; uint8 bIsSet; } — so the value
+            // lives at fieldAddr+0 (same as the bare struct case).
+            //
+            // Address Finder + Find Refs descend through OptionalProperty
+            // mirroring StructProperty (see Aura.cpp::CollectContainersRecursive
+            // and CollectRefMetaRecursive), so a UObject pointer buried
+            // inside an Optional<Struct> still surfaces in the reverse scan.
+            const bool isStructInner = (innerTn == "StructProperty");
+            bool gotStructPreview = false;
+            if (isStructInner && isSet && innerProp) {
+                // Probe FStructProperty::Struct (UScriptStruct*) on the inner
+                // FProperty. Mirrors the single-StructProperty handler's
+                // probe so we self-correct mis-detected DynOff offsets.
+                static const int kStructPtrProbeOffsets[] = {
+                    0, 4, -4, 8, -8, 0x10, -0x10
+                };
+                for (int delta : kStructPtrProbeOffsets) {
+                    int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
+                    if (tryOff < 0) continue;
+                    uintptr_t candidate = 0;
+                    if (!Macht::ReadSafe(innerProp + tryOff, candidate)
+                        || !candidate) continue;
+                    if (candidate < 0x10000
+                        || candidate > 0x00007FFFFFFFFFFF) continue;
+                    std::string sname = GetName(candidate);
+                    if (sname.empty() || sname[0] < 0x20 || sname[0] >= 0x7F)
+                        continue;
+                    fv.structClassAddr = candidate;
+                    fv.structTypeName  = sname;
+                    fv.structDataAddr  = fieldAddr;
+                    break;
+                }
+
+                // Inline preview from cached WalkClass (matches single-value
+                // StructProperty path: bulk-read the struct, format the first
+                // `previewLimit` scalar sub-fields).
+                if (fv.structClassAddr && previewLimit > 0) {
+                    ClassInfo si = WalkClass(fv.structClassAddr);
+                    int32_t readSize = innerSize;
+                    if (readSize <= 0 || readSize > 1024) {
+                        readSize = si.PropertiesSize;
+                        if (readSize <= 0 || readSize > 1024) readSize = 0;
+                    }
+                    std::vector<uint8_t> structBuf;
+                    bool hasBuf = false;
+                    if (readSize > 0) {
+                        structBuf.resize(readSize, 0);
+                        hasBuf = Macht::ReadBytesSafe(fieldAddr,
+                                                     structBuf.data(),
+                                                     readSize);
+                    }
+
+                    std::string preview;
+                    int shown = 0;
+                    const int kMaxScanFields = 20;
+                    for (size_t idx = 0;
+                         idx < si.Fields.size()
+                         && static_cast<int>(idx) < kMaxScanFields; ++idx) {
+                        const auto& sf = si.Fields[idx];
+                        if (shown >= previewLimit) {
+                            preview += ", ...";
+                            break;
+                        }
+                        int32_t sfSize = sf.Size;
+                        int32_t expected = InferScalarSize(sf.TypeName);
+                        if (expected > 0 && sfSize != expected)
+                            sfSize = expected;
+                        if (!hasBuf || sf.Offset < 0
+                            || sf.Offset + sfSize > readSize) continue;
+                        const uint8_t* p = structBuf.data() + sf.Offset;
+                        std::string val;
+                        if (sf.TypeName == "FloatProperty" && sfSize == 4) {
+                            float v; memcpy(&v, p, 4);
+                            char buf[32]; snprintf(buf, sizeof(buf), "%.4g", v);
+                            val = buf;
+                        } else if (sf.TypeName == "DoubleProperty"
+                                   && sfSize == 8) {
+                            double v; memcpy(&v, p, 8);
+                            char buf[32]; snprintf(buf, sizeof(buf), "%.4g", v);
+                            val = buf;
+                        } else if (sf.TypeName == "IntProperty"
+                                   && sfSize == 4) {
+                            int32_t v; memcpy(&v, p, 4);
+                            val = std::to_string(v);
+                        } else if (sf.TypeName == "BoolProperty") {
+                            val = p[0] ? "true" : "false";
+                        } else if (sf.TypeName == "ByteProperty"
+                                   || sf.TypeName == "Int8Property") {
+                            val = std::to_string(p[0]);
+                        } else if (sf.TypeName == "NameProperty"
+                                   && sfSize >= 4) {
+                            int32_t nameIdx; memcpy(&nameIdx, p, 4);
+                            val = Serie::GetString(nameIdx);
+                            if (val.empty()) val = "None";
+                        } else if ((sf.TypeName == "ObjectProperty"
+                                    || sf.TypeName == "ClassProperty")
+                                   && sfSize >= 8) {
+                            uintptr_t ptr; memcpy(&ptr, p, 8);
+                            val = ptr ? GetName(ptr) : "null";
+                        } else {
+                            continue;
+                        }
+                        if (!preview.empty()) preview += ", ";
+                        preview += sf.Name + "=" + val;
+                        ++shown;
+                    }
+                    if (!preview.empty()) {
+                        fv.typedValue = "{" + preview + "}";
+                        gotStructPreview = true;
+                    }
+                }
+            }
+
             // Build display string.
             if (!isSet) {
                 fv.typedValue = "(unset)";
@@ -4222,6 +4343,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 } else {
                     fv.typedValue = "(set)";
                 }
+            } else if (gotStructPreview) {
+                // Struct preview already populated fv.typedValue above.
+            } else if (isStructInner) {
+                // Struct inner but no scalar sub-fields previewable — at
+                // least confirm the wrapper type rather than rendering
+                // garbage via InterpretValue("StructProperty", ...).
+                fv.typedValue = fv.structTypeName.empty()
+                    ? "(set)"
+                    : "{" + fv.structTypeName + "}";
             } else if (innerSize > 0) {
                 std::vector<uint8_t> buf(innerSize, 0);
                 if (Macht::ReadBytesSafe(fieldAddr, buf.data(), innerSize)) {
@@ -4234,8 +4364,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.typedValue = "(set)";
             }
 
-            // Hex over reported size (defensive cap).
-            int32_t showBytes = (fi.Size > 0 && fi.Size <= 64) ? fi.Size : 0;
+            // Hex over reported size (defensive cap; struct inners may push
+            // sizeof(TOptional<T>) above the 64B scalar cap, so allow up to
+            // 256B when we know the inner is a sized struct).
+            int32_t hexCap = isStructInner ? 256 : 64;
+            int32_t showBytes = (fi.Size > 0 && fi.Size <= hexCap) ? fi.Size : 0;
             if (showBytes > 0) {
                 std::vector<uint8_t> rawBuf(showBytes, 0);
                 if (Macht::ReadBytesSafe(fieldAddr, rawBuf.data(), showBytes)) {

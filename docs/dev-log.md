@@ -6,6 +6,62 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
+## 2026-05-09 (later) — OptionalProperty\<Struct\> drill-down + Find Refs descent
+
+`feat(walker): OptionalProperty<Struct> inner sub-field surfacing`
+([`Ubel.cpp`](../dll/src/Ubel.cpp), [`Aura.cpp`](../dll/src/Aura.cpp), build 528+)
+
+`OptionalProperty<StructProperty>` was the highest-impact gap remaining
+after the 2026-05-09 morning session — ES2 alone has 5 real game-class
+cases (`WorldPartitionRuntimeCellData.CellBounds`,
+`FontFace.PlatformRasterization`,
+`MapScalabilityModifierComponent.VolumetricFog...`) plus the
+`OptionalPropertyTestObject` test fixtures.
+
+**WalkInstance change** ([`Ubel.cpp`](../dll/src/Ubel.cpp)):
+The OptionalProperty handler already determined `isSet` via the trailing
+`bIsSet` byte for non-pointer inners. A new branch runs after `isSet` is
+known and before the display-string switch:
+
+- Probe `FStructProperty::Struct` (UScriptStruct\*) on the inner
+  FProperty, mirroring the single-value StructProperty handler's probe
+  list (`{0, ±4, ±8, ±0x10}`) so a mis-detected `FSTRUCTPROP_STRUCT`
+  self-corrects.
+- When set, populate the standard
+  `{structClassAddr, structDataAddr, structTypeName}` triple. The UI's
+  existing `LiveWalkerViewModel.NavigateToFieldAsync` already routes
+  these to `WalkInstanceAsync(structDataAddr, structClassAddr)` — no UI
+  change needed for drill-down.
+- Generate the inline preview from the cached `WalkClass(struct)` via
+  one bulk-read of the struct bytes, formatting up to `previewLimit`
+  scalar sub-fields (`{X=10.5, Y=200, ...}`). Same pattern as the bare
+  `StructProperty` handler at line ~3861.
+- Hex display cap raised from 64B → 256B for struct inners so
+  `sizeof(TOptional<FBox>)` etc. fit comfortably.
+
+Layout reminder: `TOptional<T>` for struct `T` is **always
+non-intrusive** — `{ T value; uint8 bIsSet; }` — so the value lives at
+field+0 (same as the bare struct case). The intrusive layout only
+applies to pointer-shaped `T` (Object/Class/Interface, Weak/Soft/Lazy)
+where null/zero is the unset sentinel.
+
+Unset slots cleanly take the existing `(unset)` path because
+`structDataAddr`/`structClassAddr` are only populated when `isSet`.
+
+**Find Refs / Address Finder descent** ([`Aura.cpp`](../dll/src/Aura.cpp)):
+Both `CollectContainersRecursive` (Address Finder) and
+`CollectRefMetaRecursive` (Find Refs v3) gained a parallel
+`OptionalProperty + StructProperty` branch alongside the existing
+`StructProperty` descent. The recursion walks through the inner
+UScriptStruct at the same `absOffset` (TOptional value sits at field+0),
+so a UObject pointer buried inside an `Optional<Struct>` now surfaces
+in the reverse scan with the dotted name `Field.SubField`. Depth cap of
+3 still applies.
+
+**Build / tests:** clean build, 483 tests passing.
+
+-----
+
 ## 2026-05-09 — Find Refs v2/v3, OptionalProperty, Property Search UX, Class Structure fixes
 
 Session focused on closing reverse-reference coverage gaps and fixing UI
@@ -196,7 +252,7 @@ binding and the filter logic share one implementation.
 
 -----
 
-## Capability matrix (current — build 525)
+## Capability matrix (current — build 528)
 
 | Layer | Drill-down | Find Refs |
 |-------|-----------|-----------|
@@ -209,21 +265,13 @@ binding and the filter logic share one implementation.
 | TArray<FScriptDelegate> | ✅ | ✅ (v3) |
 | MulticastSparseDelegate | ⚠️ bound flag only | ❌ (needs FSparseDelegateStorage AOB + walk) |
 | OptionalProperty\<pointer / weak / scalar\> | ✅ | ✅ |
-| OptionalProperty\<Struct\> | ❌ inner struct fields not surfaced | — |
+| OptionalProperty\<Struct\> | ✅ (build 528) | ✅ depth-3 descent through inner struct (build 528) |
 | FieldPathProperty | ❌ | ❌ |
 | TMap / TSet with weak-like inner sides | — | ❌ (v4 candidate) |
 
 ## Remaining gaps (next-session pickup candidates)
 
-1. **OptionalProperty\<StructProperty\> inner field drill-down** —
-   intrusive layout, but inner struct sub-fields aren't surfaced. ES2
-   has 5 such cases in real game classes
-   (`WorldPartitionRuntimeCellData.CellBounds`,
-   `FontFace.PlatformRasterization`,
-   `MapScalabilityModifierComponent.VolumetricFog...`) so a fix would
-   immediately validate against live data.
-
-2. **MulticastSparseDelegateProperty bindings list** — bound flag is
+1. **MulticastSparseDelegateProperty bindings list** — bound flag is
    shown; full enumeration needs:
    - Universal AOB for `FSparseDelegateStorage::SparseDelegates` static
      map (effort: similar to existing 128 AOB patterns)
@@ -231,23 +279,23 @@ binding and the filter logic share one implementation.
      (effort: NEW — TMap walking infra is mostly there but `FObjectKey`
      hashing + `TSharedPtr` control-block reading aren't)
 
-3. **Find Refs v4** —
+2. **Find Refs v4** —
    - `TMap` / `TSet` with weak-like inner sides (currently Object/Class
      only)
    - MulticastSparseDelegate target scan (needs the storage AOB above)
 
-4. **Find Refs auto-drill into array/map/set element [N]** — currently
+3. **Find Refs auto-drill into array/map/set element [N]** — currently
    auto-scrolls to the container field, but the user has to click drill
    manually to reach the specific element.
 
-5. **Soft array CE XML enhancement** — per-element group with FName leaf
+4. **Soft array CE XML enhancement** — per-element group with FName leaf
    at +0x10 instead of just 8B hex.
 
-6. **`FieldPathProperty`** — rare, low priority.
+5. **`FieldPathProperty`** — rare, low priority.
 
-7. **GWorld**: Star Wars Jedi untested, Satisfactory fails.
+6. **GWorld**: Star Wars Jedi untested, Satisfactory fails.
 
-8. **UE version misdetection** on some UE4 games (DQ I&II,
+7. **UE version misdetection** on some UE4 games (DQ I&II,
    Ghostwire: Tokyo show UE505 incorrectly).
 
 ## Tested games (last verified 2026-05-09)

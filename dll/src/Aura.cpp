@@ -1238,6 +1238,25 @@ static void CollectContainersRecursive(
                                            out, depth + 1);
             }
         }
+        else if (f.TypeName == "OptionalProperty"
+                 && f.innerType == "StructProperty") {
+            // TOptional<FStruct> non-intrusive layout: { T value; uint8 bIsSet; }.
+            // Value lives at field+0, so offset accumulation is identical to
+            // a bare StructProperty. We can't tell at cache-build time which
+            // instances are set vs unset, but a container scan that hits an
+            // unset slot just sees zeros and naturally fails its address
+            // comparison.
+            uintptr_t innerProp = 0;
+            uintptr_t innerStruct = 0;
+            // Probe inner FProperty* (same offset as ArrayProperty::Inner).
+            if (Macht::ReadSafe(f.Address + DynOff::FARRAYPROP_INNER, innerProp)
+                && innerProp
+                && Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+                && innerStruct) {
+                CollectContainersRecursive(innerStruct, absOffset, fullName,
+                                           out, depth + 1);
+            }
+        }
     }
 }
 
@@ -1672,6 +1691,22 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
         else if (f.TypeName == "StructProperty") {
             uintptr_t innerStruct = 0;
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
+                && innerStruct) {
+                CollectRefMetaRecursive(innerStruct, absOffset, fullName,
+                                         out, depth + 1);
+            }
+        }
+        else if (f.TypeName == "OptionalProperty"
+                 && f.innerType == "StructProperty") {
+            // TOptional<FStruct>: { T value; uint8 bIsSet; } — value at field+0,
+            // so absOffset is unchanged for sub-fields. The bIsSet trailing
+            // byte doesn't matter for reverse scan: an unset slot is zero
+            // and naturally fails pointer comparisons.
+            uintptr_t innerProp = 0;
+            uintptr_t innerStruct = 0;
+            if (Macht::ReadSafe(f.Address + DynOff::FARRAYPROP_INNER, innerProp)
+                && innerProp
+                && Macht::ReadSafe(innerProp + DynOff::FSTRUCTPROP_STRUCT, innerStruct)
                 && innerStruct) {
                 CollectRefMetaRecursive(innerStruct, absOffset, fullName,
                                          out, depth + 1);
