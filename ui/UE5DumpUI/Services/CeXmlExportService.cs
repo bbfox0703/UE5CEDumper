@@ -67,6 +67,32 @@ public static class CeXmlExportService
     [ThreadStatic]
     private static bool _collapsePointerNodes;
 
+    /// <summary>
+    /// Path-based cycle detection for drilled pointer emit. Holds the PtrAddresses
+    /// currently on the emit stack — we push on entry into EmitDrilledPointer and
+    /// pop on exit. If a target appears in this set, the pointer is a back-edge
+    /// (e.g. UWorld -&gt; PersistentLevel -&gt; OwningWorld) and must NOT be re-emitted
+    /// as a group, otherwise the StringBuilder explodes (observed: 2GB capacity
+    /// hit on DQ I&amp;II HD-2D with Drill Depth = 2).
+    ///
+    /// ResolvePointerInstancesAsync's visited set protects the *resolve* phase;
+    /// the *emit* phase is independent and needs its own protection.
+    /// </summary>
+    [ThreadStatic]
+    private static HashSet<string>? _emitPath;
+
+    /// <summary>
+    /// Hard ceiling on EmitDrilledPointer recursion depth — covers the rare case
+    /// where ResolvePointerInstancesAsync produced a long but acyclic chain that
+    /// would still trigger an XML blow-up. Set generously so legitimate trees
+    /// (depth 4 + cascade) fit comfortably; the cycle protection above is the
+    /// primary line of defence.
+    /// </summary>
+    private const int MaxEmitPointerDepth = 16;
+
+    [ThreadStatic]
+    private static int _emitPointerDepth;
+
     /// <summary>CE field metadata for XML generation.</summary>
     private record CeFieldInfo(
         string VariableType,
@@ -361,6 +387,8 @@ public static class CeXmlExportService
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
         _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
+        _emitPath = new HashSet<string>(StringComparer.Ordinal);
+        _emitPointerDepth = 0;
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
@@ -438,6 +466,8 @@ public static class CeXmlExportService
         _maxDropDownEntries = maxDropDownEntries;
         _dropDownOwners = new Dictionary<string, string>();
         _dropDownDescriptions = new HashSet<string>(StringComparer.Ordinal);
+        _emitPath = new HashSet<string>(StringComparer.Ordinal);
+        _emitPointerDepth = 0;
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
@@ -939,6 +969,30 @@ public static class CeXmlExportService
         Dictionary<string, List<LiveFieldValue>>? resolvedStructs,
         Dictionary<string, List<LiveFieldValue>> resolvedInstances)
     {
+        // ---- Cycle / depth guards ----
+        // ResolvePointerInstancesAsync caches resolved[X] keyed by PtrAddress, so
+        // back-pointers (UWorld -> PersistentLevel -> OwningWorld) are still
+        // populated in the dictionary. Without an emit-side path check, drilling
+        // would oscillate between A's and B's child lists indefinitely.
+        _emitPath ??= new HashSet<string>(StringComparer.Ordinal);
+        bool alreadyOnPath = !string.IsNullOrEmpty(field.PtrAddress)
+                             && _emitPath.Contains(field.PtrAddress);
+        bool depthExceeded = _emitPointerDepth >= MaxEmitPointerDepth;
+
+        if (alreadyOnPath || depthExceeded)
+        {
+            // Emit a flat 8-byte hex leaf so the user keeps a watchable address
+            // for the pointer, instead of nothing or an unbounded group. The
+            // description tags the reason so it's not mysterious in CE.
+            var reason = alreadyOnPath ? " (cycle elided)" : " (max drill depth reached)";
+            var classTag = !string.IsNullOrEmpty(field.PtrClassName)
+                ? $" ({field.PtrClassName})" : "";
+            EmitLeaf(sb, indent, field.Name + classTag + reason,
+                new CeFieldInfo("8 Bytes", ShowAsHex: true),
+                $"+{field.Offset:X}", null);
+            return;
+        }
+
         // Description: include the resolved class name when known so the user
         // can tell BP_X (UCharacter) from BP_X (UPawn) without expanding.
         var description = !string.IsNullOrEmpty(field.PtrClassName)
@@ -950,8 +1004,19 @@ public static class CeXmlExportService
         EmitGroupOpen(sb, indent, description, $"+{field.Offset:X}", new[] { 0 },
             showAsHex: true);
 
+        // Push self onto the path before recursing; pop on exit (try/finally
+        // is overkill — EmitFields doesn't throw under normal use, and a
+        // missing pop just makes the SAME pointer non-drillable next time
+        // within this call, which is benign).
+        bool pushed = !string.IsNullOrEmpty(field.PtrAddress)
+                      && _emitPath.Add(field.PtrAddress);
+        _emitPointerDepth++;
+
         var childIndent = indent + "  ";
         EmitFields(sb, childIndent, children, resolvedStructs, resolvedInstances);
+
+        _emitPointerDepth--;
+        if (pushed) _emitPath.Remove(field.PtrAddress);
 
         EmitGroupClose(sb, indent);
     }
