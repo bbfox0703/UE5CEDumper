@@ -215,8 +215,16 @@ populated). This makes `IsContainerNavigable=true` so the UI / CE XML /
 CSX export reuse the standard array drill path. CE XML's `Offsets=[0]`
 correctly dereferences `InvocationList::Data`.
 
-`MulticastSparseDelegateProperty` has a different layout (sparse delegate
-ID + names) and is **not** currently exposed for drill-down.
+`MulticastSparseDelegateProperty` stores only an `FSparseDelegate { uint8
+bIsBound }` flag at the field address. The actual `FScriptDelegate`
+bindings live in CoreUObject's global `FSparseDelegateStorage` (a
+`TMap<FObjectKey, TMap<FName, TSharedPtr<FMulticastScriptDelegate>>>`),
+keyed by the owning UObject and the delegate's FName. `WalkInstance`
+surfaces the bound flag as `(sparse, bound — bindings in
+FSparseDelegateStorage)` or `(sparse, unbound)`. Drill-down into the
+bindings list is **not** wired up — it would require a new AOB
+signature to locate the static storage map. Find Refs v2 likewise can't
+follow sparse-delegate target pointers without the storage walk.
 
 ### Validating element stride
 

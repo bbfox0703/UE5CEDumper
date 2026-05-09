@@ -4132,6 +4132,44 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
+        // Handle MulticastSparseDelegateProperty:
+        // Field stores only `FSparseDelegate { uint8 bIsBound; }` — actual
+        // FScriptDelegate bindings live in CoreUObject's FSparseDelegateStorage,
+        // a global TMap<FObjectKey, TMap<FName, TSharedPtr<FMulticastScriptDelegate>>>.
+        // Without an AOB for that static, we can only surface the bound flag.
+        // Bindings enumeration is a known follow-up (would need a new signature
+        // to locate FSparseDelegateStorage::SparseDelegates).
+        if (fi.TypeName == "MulticastSparseDelegateProperty") {
+            uintptr_t fieldAddr = instanceAddr + fi.Offset;
+            uint8_t bIsBound = 0;
+            Macht::ReadSafe(fieldAddr, bIsBound);
+
+            fv.typedValue = bIsBound
+                ? "(sparse, bound — bindings in FSparseDelegateStorage)"
+                : "(sparse, unbound)";
+
+            // Hex over the property's reported size (typically 1, sometimes
+            // padded to 4 or 8). Cap defensively so a garbage size doesn't
+            // make us read megabytes.
+            int32_t showBytes = (fi.Size > 0 && fi.Size <= 16) ? fi.Size : 1;
+            std::vector<uint8_t> rawBuf(showBytes, 0);
+            if (Macht::ReadBytesSafe(fieldAddr, rawBuf.data(), showBytes)) {
+                std::string hex;
+                hex.reserve(showBytes * 2);
+                for (auto b : rawBuf) {
+                    char hx[3];
+                    snprintf(hx, sizeof(hx), "%02X", b);
+                    hex += hx;
+                }
+                fv.hexValue = hex;
+            }
+            // No inline bindings to drill into — leave arrayCount = 0 so
+            // IsContainerNavigable stays false. arrayInnerType is left empty
+            // for the same reason.
+            result.fields.push_back(std::move(fv));
+            continue;
+        }
+
         // Handle MulticastInlineDelegateProperty / MulticastDelegateProperty:
         // FMulticastScriptDelegate = { TArray<FScriptDelegate> InvocationList (16B) }
         // FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
