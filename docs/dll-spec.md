@@ -1,18 +1,29 @@
 # C++ DLL Interface Specification
 
-> Covers all public C++ headers: Memory, OffsetFinder, ObjectArray, FNamePool, UStructWalker, ExportAPI, PipeServer, and the CE Lua bridge.
-> For the JSON pipe protocol, see [pipe-protocol.md](pipe-protocol.md).
+> Covers all public C++ headers: Macht (Memory), Genau (OffsetFinder), Aura
+> (ObjectArray), Serie (FNamePool), Ubel (UStructWalker), Frieren (ExportAPI),
+> Fern (PipeServer), and the CE Lua bridge.
+>
+> File / namespace names are Frieren-themed — see [naming-convention.md](naming-convention.md)
+> for the full mapping. The interfaces below show the **logical** shape of each
+> module; the headers in `dll/src/` are the ground truth and have grown beyond
+> what is reproduced here. Bullet points and counts are kept in sync with
+> build 525.
+>
+> For the JSON pipe protocol (31 commands), see [pipe-protocol.md](pipe-protocol.md).
+> For drill-down phase / Find Refs / OptionalProperty layout details, see
+> [technical-notes.md](technical-notes.md).
 
 -----
 
-## Memory.h
+## Macht.h (Memory)
 
 ```cpp
 #pragma once
 #include <Windows.h>
 #include <cstdint>
 
-namespace Mem {
+namespace Macht {  // legacy alias: Mem
 
     // --- Direct access (DLL is injected; direct pointer cast) ---
 
@@ -61,13 +72,13 @@ namespace Mem {
 
 -----
 
-## OffsetFinder.h
+## Genau.h (OffsetFinder)
 
 ```cpp
 #pragma once
 #include <cstdint>
 
-namespace OffsetFinder {
+namespace Genau {  // legacy alias: OffsetFinder
 
     struct EnginePointers {
         uintptr_t GObjects  = 0;   // FUObjectArray* (game module .data section)
@@ -102,21 +113,21 @@ namespace OffsetFinder {
 
 ### AOB Scan Strategy
 
-Scans game module **executable sections only** (`.text`). 128 AOB patterns + 5 symbol exports from 14 sources cover UE4.18–UE5.8+. Pattern handlers try both direct and deref variants, then validate via `ValidateGObjects()` / `ValidateGNames()`:
+Scans game module **executable sections only** (`.text`). 128 AOB patterns + 2 symbol exports (defined in `Himmel.h`) drawn from 14+ sources cover UE4.18–UE5.8+. Pattern handlers dispatch via `AobResolve` (RipDirect / RipDeref / RipBoth / SymbolExport / CallFollow / SymbolCallFollow), then validate via `ValidateGObjects()` / `ValidateGNames()`:
 
 ```cpp
 // RIP-relative resolution pattern
-uintptr_t target = Mem::ResolveRIP(match + opcodeLen, opcodeLen, instrLen);
+uintptr_t target = Macht::ResolveRIP(match + opcodeLen, opcodeLen, instrLen);
 // Try direct: ValidateGObjects(target)
-// Try deref:  ValidateGObjects(Mem::Read<uintptr_t>(target))
+// Try deref:  ValidateGObjects(Macht::Read<uintptr_t>(target))
 // Try offset: ValidateGObjects(target - 0x10)   ← for V12/RE2 GUObjectArray patterns
 ```
 
-`FindGNames` fallback when all 30 GNames AOB patterns fail: scans `.data` section for 8-byte-aligned pointers whose dereference matches a `"None"` FNameEntry (`00 01 4E 6F 6E 65`). Used on UE5.5+ / UE4.27 games (EverSpace 2, Hogwarts Legacy).
+`FindGNames` fallback when all GNames AOB patterns fail: scans `.data` section for 8-byte-aligned pointers whose dereference matches a `"None"` FNameEntry (`00 01 4E 6F 6E 65`). Used on UE5.5+ / UE4.27 games (EverSpace 2, Hogwarts Legacy).
 
 -----
 
-## Constants.h — DynOff Namespace
+## Grimoire.h — Constants + DynOff Namespace
 
 All FField/FProperty/UStruct offsets are stored as **runtime-mutable `inline int`** values. Never use compile-time constants for these.
 
@@ -166,7 +177,7 @@ namespace DynOff {
 
 -----
 
-## ObjectArray.h
+## Aura.h (ObjectArray)
 
 ```cpp
 #pragma once
@@ -178,9 +189,10 @@ namespace DynOff {
 // FUObjectItem size varies by game/UE version:
 //   16B = UE5 standard, some UE4 without GC clustering
 //   24B = most UE4 (Object* + Flags + ClusterRootIndex + SerialNumber + pad)
+//   20B = rare variants
 // GetItemSize() returns the detected stride.
 
-namespace ObjectArray {
+namespace Aura {  // legacy alias: ObjectArray
 
     void      Init(uintptr_t gobjectsAddr);
     int32_t   GetCount();
@@ -231,21 +243,36 @@ namespace ObjectArray {
     };
 
     AddressLookupResult FindByAddress(uintptr_t addr);
+
+    // --- Container scan: query addr is inside an allocated TArray/TMap/TSet buffer ---
+    struct ContainerHit { /* objectAddr, fieldName, containerType, elementIndex, note ("", "slack", "freed") */ };
+    std::vector<ContainerHit> FindInContainers(uintptr_t addr);
+
+    // --- Reverse reference scan: who holds a UObject* pointing at target? (Find Refs v3) ---
+    // Covers: direct Object/Class/Interface; Weak/Soft/Lazy (resolved FWeakObjectPtr);
+    //         OptionalProperty<pointer-shaped T>; DelegateProperty;
+    //         MulticastInline/MulticastDelegate (walks each FScriptDelegate binding);
+    //         TArray of all of those; TMap<UObject*, V> / TMap<K, UObject*>; TSet<UObject*>.
+    //         Excludes MulticastSparseDelegateProperty (storage external to field).
+    struct ReferenceHit { /* objectAddr, fieldName, fieldType, ".Key" / ".Value" suffix for maps */ };
+    std::vector<ReferenceHit> FindReferencesToUObject(uintptr_t target);
 }
 ```
 
-**Array layout detection** (`DetectItemSize`): walks stride-aligned positions from chunk[0], validates each slot via `FNamePool::GetString()`. Scoring: `named*10 - bad*3`; when all scores negative, picks fewest-bad stride. Flat array (`FFixedUObjectArray`) detected before chunked probing by checking `chunk[1]` validity with magnitude + `ReadSafe` checks.
+**Array layout detection** (`DetectItemSize`): walks stride-aligned positions from chunk[0], validates each slot via `Serie::GetString()`. Scoring: `named*10 - bad*3`; when all scores negative, picks fewest-bad stride. Flat array (`FFixedUObjectArray`) detected before chunked probing by checking `chunk[1]` validity with magnitude + `ReadSafe` checks.
+
+**Container / reference caches**: per-class `s_classContainerCache` and Find Refs metadata persist for DLL lifetime; first scan primes, subsequent are fast (~70-300ms even on 1.18M-object games). Scans honor a 15s (FindInContainers) / 30s (FindReferencesToUObject) deadline; the response carries scan-progress fields so the UI can flag truncated runs.
 
 -----
 
-## FNamePool.h
+## Serie.h (FNamePool)
 
 ```cpp
 #pragma once
 #include <cstdint>
 #include <string>
 
-namespace FNamePool {
+namespace Serie {  // legacy alias: FNamePool
 
     // UE5 FNamePool (standard or hash-prefixed UE4.26 SE fork)
     // headerOffset: 0 = standard ([2B header][string])
@@ -288,7 +315,7 @@ int       len   = hdr >> 6;
 
 -----
 
-## UStructWalker.h
+## Ubel.h (UStructWalker)
 
 ```cpp
 #pragma once
@@ -317,7 +344,7 @@ struct ClassInfo {
     std::vector<FieldInfo> Fields;       // all fields inc. inherited
 };
 
-namespace UStructWalker {
+namespace Ubel {  // legacy alias: UStructWalker
 
     ClassInfo   WalkClass(uintptr_t uclassAddr);
     uintptr_t   GetClass(uintptr_t uobjectAddr);
@@ -386,7 +413,7 @@ struct InstanceWalkResult {
     std::vector<LiveFieldValue> fields;
 };
 
-namespace UStructWalker {
+namespace Ubel {
     // Walk all live field values from a UObject instance.
     // classAddr = 0 → auto-resolved from UObject::ClassPrivate.
     // arrayLimit = max inline array elements (default 64, capped for Phase B).
@@ -440,9 +467,17 @@ ReadArrayResult ReadStructArrayElements(
 std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr);
 ```
 
+**Phase G/H/I/J/K readers** (Soft / Lazy / Interface / Delegate / MulticastDelegate
+arrays) and **OptionalProperty** (UE 5.2+, intrusive + non-intrusive layouts) are
+implemented in `Ubel.cpp` but omitted here for brevity — see
+[technical-notes.md → Property Type Layouts / Array Element Reader Phases](technical-notes.md#property-type-layouts-drill-down-reference)
+for layouts and validation strategies. `MulticastSparseDelegateProperty` surfaces
+the `bIsBound` flag only; binding enumeration is tracked in
+[dev-log.md](dev-log.md) under "Remaining gaps".
+
 -----
 
-## ExportAPI.h — C ABI Exports (30 functions)
+## Frieren.h — C ABI Exports (30 functions, legacy alias: ExportAPI)
 
 ```cpp
 #pragma once
@@ -518,7 +553,7 @@ extern "C" {
 
 -----
 
-## PipeServer.h
+## Fern.h (PipeServer)
 
 ```cpp
 #pragma once
@@ -566,12 +601,14 @@ private:
     std::string ReadLine(HANDLE pipe);
 };
 
-// Pipe constants (from Constants.h)
+// Pipe constants (from Grimoire.h)
 // PIPE_NAME    = L"\\\\.\\pipe\\UE5DumpBfx"
 // PIPE_BUF_SIZE = 65536
 ```
 
-For the JSON protocol, see [pipe-protocol.md](pipe-protocol.md).
+For the JSON protocol (31 commands, including `find_refs_to_uobject`), see
+[pipe-protocol.md](pipe-protocol.md). Command name constants live in `Renge.h`
+(legacy alias: `PipeProtocol`).
 
 -----
 

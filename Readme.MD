@@ -38,18 +38,20 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 
 | Feature | Description |
 |---|---|
-| **AOB Scanning** | 132 AOB patterns + 5 symbol exports from 14 sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. **Scan Hint Cache** remembers winning patterns per game for 3× faster repeat scans, with UI buttons to clear/reset the cache. |
+| **AOB Scanning** | 128 AOB patterns + 5 symbol exports from 14+ sources. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. **Scan Hint Cache** remembers winning patterns per game for 3× faster repeat scans, with UI buttons to clear/reset the cache. |
 | **DynOff (Dynamic Offsets)** | Runtime probing of `FField`, `FProperty`, and `UStruct`. No more manual offset updating after game patches. |
 | **Live Walker** | Inspect instance memory data with real-time value updates. Navigate into pointers (→), inline structs ({}), and containers ([]). Breadcrumb trail for full navigation history. Auto-refresh with configurable interval. |
 | **Definition View** | Drill into UScriptStruct/UClass definitions to see field layouts, types, and live hex values. Works seamlessly with CE XML export for pointer chain navigation. |
-| **Container Drill-Down** | Drill into **Array**, **Map**, and **Set** containers. ObjectProperty elements show resolved names and support click-through navigation. |
+| **Container Drill-Down** | Drill into **Array**, **Map**, **Set**, **Optional**, and delegate containers. Resolves Object/Class/Weak/Soft/Lazy/Interface/Delegate/MulticastDelegate inner types with click-through navigation to the target. |
+| **Address Finder** | Paste a CE address into Instance Finder → exact / contains / backward / nearest tiered match (with `match_kind` confidence labelling), plus container-aware scan that walks every reflected `TArray` / `TMap` / `TSet` (including nested in `StructProperty`, depth 3) to find the owning UObject. |
+| **Find Refs (Reverse Reference)** | "Who holds a pointer to this object?" — walks every UObject's pointer-shaped fields and containers, covering direct `Object/Class/Interface`, `Weak/Soft/Lazy`, `OptionalProperty<pointer>`, `Delegate` / `MulticastInline/MulticastDelegate` (per-binding `FWeakObjectPtr`), `TArray` of all of those, and `TMap` / `TSet` with UObject sides. Per-class metadata cache makes warm scans ~70 ms even on 1.18 M-object games. |
 | **UFunction Invoker** | Call game functions via `ProcessEvent` directly from the UI. Game-thread safe dispatch via MinHook hook. Supports ScriptStruct parameters — 12 known engine structs (FVector, FRotator, FColor, etc.) + dynamic struct layout discovery. |
 | **Instance Finder** | Locate all active objects of a class instantly. One-click to open in Live Walker. |
 | **Property Search** | Search across all classes for specific property names. Find where a field is defined without browsing the full object hierarchy. |
 | **Class Structure** | Browse class definitions with full field layouts, types, offsets, and inheritance chains. |
 | **Multi-Format CE Export** | **CE XML** (pointer chain address records), **CSX** (CE Structure Dissect), **SDK Header** (.h), **CE Field** (single field), **CE AA Script** (Auto Assembler). Supports scalars, bitfields, structs, arrays, Map/Set, and UEnum DropDownLists. |
 | **Proxy DLL** | `version.dll` proxy injection — no Cheat Engine required. Place next to the game exe, launch, and connect the UI. |
-| **Modern UI** | External **Avalonia UI** connected via high-speed Named Pipe (30 JSON-RPC commands). Native AOT published. Keep your game performance smooth. |
+| **Modern UI** | External **Avalonia UI** connected via high-speed Named Pipe (31 JSON-RPC commands). Native AOT published. Keep your game performance smooth. |
 
 ---
 

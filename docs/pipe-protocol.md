@@ -3,7 +3,7 @@
 Named pipe: `\\.\pipe\UE5DumpBfx`
 Format: JSON, newline-delimited (one message per `\n`)
 Direction: bidirectional — Request/Response + async push Events
-Total commands: 30
+Total commands: 31 (command name constants live in `dll/src/Renge.h`)
 
 -----
 
@@ -50,6 +50,13 @@ Total commands: 30
 
 // Reverse address lookup: given any address, find the containing UObject
 { "id": 8, "cmd": "find_by_address", "addr": "7FF123456789" }
+
+// Reverse reference scan (Find Refs v3): who holds a UObject* pointing at addr?
+// Covers direct Object/Class/Interface, Weak/Soft/Lazy, OptionalProperty<pointer>,
+// Delegate / MulticastInline / MulticastDelegate, TArray of all of those,
+// TMap<UObject*, V> / TMap<K, UObject*>, TSet<UObject*>. Excludes
+// MulticastSparseDelegate (storage is external to the field).
+{ "id": 30, "cmd": "find_refs_to_uobject", "addr": "7FF123456789", "max_results": 32 }
 ```
 
 ### Class & Instance Walking
@@ -441,6 +448,45 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
 // Not found
 { "id": 8, "ok": true, "found": false }
 ```
+
+### find_refs_to_uobject
+
+Reverse reference scan. `references[]` lists each UObject that holds a pointer
+to the target via a reflected field (or a container slot). Map matches set
+`field_name` to `<owningField>.Key` or `.Value`; array/set element matches
+populate `element_index` (otherwise `-1`).
+
+```jsonc
+{
+  "id": 30, "ok": true,
+  "query_addr": "7FF6AA000000",
+  "scan": {
+    "objects_scanned": 1180536,
+    "objects_total":   1180536,
+    "classes_primed":  6234,
+    "duration_ms":     224,
+    "deadline_hit":    false
+  },
+  "references": [
+    {
+      "owner_addr":   "7FF6BB100000",
+      "owner_index":  98231,
+      "owner_name":   "BP_PlayerState_C_0",
+      "owner_class":  "BP_PlayerState_C",
+      "field_offset": 0x2A8,
+      "field_name":   "ActiveAbilities",
+      "field_type":   "ArrayProperty",
+      "inner_type":   "ObjectProperty",
+      "element_index": 3
+    }
+  ]
+}
+```
+
+Cache is per-class and persists for DLL lifetime — a cold scan on a 1.18M-object
+game is typically ~200-300ms; warm scans are ~70ms. Hard deadline is 30s
+(`deadline_hit: true` indicates the scan was truncated and the UI should offer
+a re-run after warm-up).
 
 ### get_offsets
 
