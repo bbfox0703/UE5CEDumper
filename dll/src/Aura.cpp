@@ -1220,7 +1220,8 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
 static ContainerMatch BuildMatch(uintptr_t obj, int32_t ownerIndex, uintptr_t cls,
                                   const ContainerCacheEntry& cfe,
                                   uintptr_t dataAddr, int32_t count,
-                                  int32_t elementIndex, int32_t intraOffset) {
+                                  int32_t elementIndex, int32_t intraOffset,
+                                  const char* note = "") {
     ContainerMatch m;
     m.ownerObj     = obj;
     m.ownerIndex   = ownerIndex;
@@ -1244,6 +1245,7 @@ static ContainerMatch BuildMatch(uintptr_t obj, int32_t ownerIndex, uintptr_t cl
     m.intraOffset  = intraOffset;
     m.dataAddr     = dataAddr;
     m.count        = count;
+    m.note         = note ? note : "";
     return m;
 }
 
@@ -1290,17 +1292,25 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults)
             if (cfe.kind == ContainerKind::Array) {
                 Macht::TArrayView arr;
                 if (!Macht::ReadTArray(fieldAddr, arr)) continue;
-                if (arr.Count <= 0 || !arr.Data) continue;
+                if (arr.Max <= 0 || !arr.Data) continue;
 
-                uintptr_t bufEnd = arr.Data + static_cast<int64_t>(arr.Count) * cfe.stride;
+                // Use Max (allocated capacity) rather than Count so we also
+                // catch addresses landing in the array's slack region — when
+                // a value comes from a previously-shrunk array element the
+                // memory often still holds the last-written game value.
+                uintptr_t bufEnd = arr.Data + static_cast<int64_t>(arr.Max) * cfe.stride;
                 if (addr < arr.Data || addr >= bufEnd) continue;
 
                 int32_t intraTotal = static_cast<int32_t>(addr - arr.Data);
+                int32_t elemIdx    = intraTotal / cfe.stride;
+                const char* note   = (elemIdx >= arr.Count) ? "slack" : "";
+
                 auto m = BuildMatch(obj, i, cls, cfe, arr.Data, arr.Count,
-                                    intraTotal / cfe.stride, intraTotal % cfe.stride);
-                LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (Array, owner=0x%llX, %s)",
+                                    elemIdx, intraTotal % cfe.stride, note);
+                LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (Array%s, owner=0x%llX, %s)",
                          m.ownerName.c_str(), m.fieldName.c_str(),
                          m.elementIndex, m.intraOffset,
+                         note[0] ? "/slack" : "",
                          static_cast<unsigned long long>(obj),
                          m.ownerClassName.c_str());
                 matches.push_back(std::move(m));
@@ -1308,23 +1318,28 @@ std::vector<ContainerMatch> FindInContainers(uintptr_t addr, int32_t maxResults)
             else { // Set or Map — both use TSparseArray
                 Macht::TSparseArrayView sa;
                 if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
-                if (sa.MaxIndex <= 0 || !sa.Data) continue;
+                if (sa.MaxCapacity <= 0 || !sa.Data) continue;
 
-                uintptr_t bufEnd = sa.Data + static_cast<int64_t>(sa.MaxIndex) * cfe.stride;
+                // TSparseArray frees slots without overwriting them, so an
+                // address landing on a free-list slot may still hold the
+                // last-written value. Don't filter — surface them with a
+                // "freed" note so the user can judge.
+                uintptr_t bufEnd = sa.Data + static_cast<int64_t>(sa.MaxCapacity) * cfe.stride;
                 if (addr < sa.Data || addr >= bufEnd) continue;
 
                 int32_t intraTotal = static_cast<int32_t>(addr - sa.Data);
                 int32_t sparseIdx  = intraTotal / cfe.stride;
-                // Skip if the slot is in the free list (contains stale data only)
-                if (!Macht::IsSparseIndexAllocated(sa, sparseIdx)) continue;
+                bool allocated = Macht::IsSparseIndexAllocated(sa, sparseIdx);
+                const char* note = allocated ? "" : "freed";
 
                 int32_t logicalCount = sa.MaxIndex - sa.NumFreeIndices;
                 auto m = BuildMatch(obj, i, cls, cfe, sa.Data, logicalCount,
-                                    sparseIdx, intraTotal % cfe.stride);
-                LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (%s, owner=0x%llX, %s)",
+                                    sparseIdx, intraTotal % cfe.stride, note);
+                LOG_INFO("FindInContainers: hit %s.%s[%d]+0x%X (%s%s, owner=0x%llX, %s)",
                          m.ownerName.c_str(), m.fieldName.c_str(),
                          m.elementIndex, m.intraOffset,
                          m.fieldType.c_str(),
+                         note[0] ? "/freed" : "",
                          static_cast<unsigned long long>(obj),
                          m.ownerClassName.c_str());
                 matches.push_back(std::move(m));

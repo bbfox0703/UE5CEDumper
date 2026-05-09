@@ -1291,6 +1291,8 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
                     mj["intra_offset"]  = m.intraOffset;
                     mj["data_addr"]     = Renge::AddrToStr(m.dataAddr);
                     mj["count"]         = m.count;
+                    if (!m.note.empty())
+                        mj["note"]      = m.note;
                     arr.push_back(mj);
                 }
                 data["container_matches"] = arr;

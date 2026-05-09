@@ -34,7 +34,15 @@ public sealed class ContainerMatch
     /// <summary>TArray::Count (logical element count).</summary>
     public int Count { get; init; }
 
-    /// <summary>Display path: "OwnerName.FieldName[N]+0xK".</summary>
+    /// <summary>
+    /// Diagnostic note: empty for solid hits, "slack" for Array indices in
+    /// [Count, Max), "freed" for Map/Set free-list slots. Lower-confidence
+    /// matches — the memory still holds plausible data but the slot is
+    /// formally unallocated.
+    /// </summary>
+    public string Note { get; init; } = "";
+
+    /// <summary>Display path: "OwnerName.FieldName[N]+0xK (note)".</summary>
     public string DisplayPath
     {
         get
@@ -42,6 +50,8 @@ public sealed class ContainerMatch
             var path = $"{OwnerName}.{FieldName}[{ElementIndex}]";
             if (IntraOffset > 0)
                 path += $"+0x{IntraOffset:X}";
+            if (!string.IsNullOrEmpty(Note))
+                path += $" ({Note})";
             return path;
         }
     }

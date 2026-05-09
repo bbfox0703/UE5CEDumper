@@ -134,6 +134,11 @@ struct ContainerMatch {
     int32_t     intraOffset   = 0;      // (addr - elementStart) within element
     uintptr_t   dataAddr      = 0;      // TArray::Data / TSparseArray::Data base
     int32_t     count         = 0;      // Logical element count (allocated only for Map/Set)
+    // Diagnostic note about match confidence:
+    //   ""       — solid hit (within Count, allocated slot)
+    //   "slack"  — Array index is in [Count, Max) — uninitialised / freed slack
+    //   "freed"  — Map/Set slot is on the free list (stale data, may still match)
+    std::string note;
 };
 
 // Scan all UObjects' container fields for `addr`. Returns matches where

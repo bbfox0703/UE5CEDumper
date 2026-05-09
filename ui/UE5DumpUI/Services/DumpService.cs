@@ -493,6 +493,7 @@ public sealed class DumpService : IDumpService
                     IntraOffset    = m["intra_offset"]?.GetValue<int>() ?? 0,
                     DataAddress    = m["data_addr"]?.GetValue<string>() ?? "",
                     Count          = m["count"]?.GetValue<int>() ?? 0,
+                    Note           = m["note"]?.GetValue<string>() ?? "",
                 });
             }
         }
