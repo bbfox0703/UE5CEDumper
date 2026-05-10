@@ -156,7 +156,20 @@ public partial class InstanceFinderViewModel : ViewModelBase
             LookupStatusText = "Looking up...";
             ShowCeXml = false;
 
-            var addrStr = AddressHelper.NormalizeAddress(LookupAddress, _engineState?.ModuleBase);
+            // Reject malformed input up-front. Prior behavior surfaced
+            // "No UObject found at this address" for "0xajsd;jald" — misleading,
+            // because the DLL silently parsed it to 0 (noexcept StrToAddr) and
+            // searched for a UObject at 0 instead.
+            if (!AddressHelper.TryNormalizeAddress(LookupAddress, _engineState?.ModuleBase, out var addrStr))
+            {
+                LookupStatusText = "Invalid address — expected hex (e.g. 0x7FF... or module.exe+RVA)";
+                Instances.Clear();
+                ContainerMatches.Clear();
+                Fields.Clear();
+                HasFields = false;
+                HasContainerMatches = false;
+                return;
+            }
 
             var result = await _dump.FindByAddressAsync(addrStr);
 

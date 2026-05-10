@@ -254,6 +254,107 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task SetInvokeTimeoutAsync_SendsCorrectPayloadAndRefetches()
+    {
+        // Reproduces the Meltopia case from the old logs: 4x GameThreadDispatch invoke
+        // timeout (5s) errors fired on Blueprint widget delegates. UI raises the timeout
+        // to 15s for that game; the value must round-trip and surface in the next state.
+        JsonObject? lastReq = null;
+        int getPointersCount = 0;
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "set_invoke_timeout")
+            {
+                lastReq = req;
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["invoke_timeout_ms"] = 15000,
+                    ["persisted"] = true,
+                };
+            }
+            if (cmd == "get_pointers")
+            {
+                getPointersCount++;
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x10",
+                    ["gnames"] = "0x20",
+                    ["object_count"] = 5,
+                    ["invoke_timeout_ms"] = 15000,
+                };
+            }
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var svc = CreateService();
+        var state = await svc.SetInvokeTimeoutAsync(15000, persist: true, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastReq);
+        Assert.Equal(15000, lastReq!["timeout_ms"]?.GetValue<int>());
+        Assert.True(lastReq["persist"]?.GetValue<bool>());
+        Assert.Equal(15000, state.InvokeTimeoutMs);
+        Assert.Equal(1, getPointersCount);   // SetInvokeTimeout re-fetches state once
+    }
+
+    [Fact]
+    public async Task SetInvokeTimeoutAsync_ZeroClearsOverride()
+    {
+        // 0 → DLL clears the override and reverts to Stark::kDefaultInvokeTimeoutMs (5000).
+        JsonObject? lastReq = null;
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "set_invoke_timeout")
+            {
+                lastReq = req;
+                return new JsonObject { ["ok"] = true, ["invoke_timeout_ms"] = 5000 };
+            }
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x10",
+                    ["gnames"] = "0x20",
+                    ["object_count"] = 0,
+                    ["invoke_timeout_ms"] = 5000,
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var svc = CreateService();
+        var state = await svc.SetInvokeTimeoutAsync(0, persist: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, lastReq!["timeout_ms"]?.GetValue<int>());
+        Assert.Equal(5000, state.InvokeTimeoutMs);
+    }
+
+    [Fact]
+    public async Task GetPointersAsync_DefaultsInvokeTimeoutWhenAbsent()
+    {
+        // Old DLL builds (or response paths) won't include invoke_timeout_ms.
+        // EngineState should fall back to 5000 (the Stark default), not 0.
+        _pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x10",
+                    ["gnames"] = "0x20",
+                    ["object_count"] = 0,
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var svc = CreateService();
+        var state = await svc.GetPointersAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(5000, state.InvokeTimeoutMs);
+    }
+
+    [Fact]
     public async Task InitAsync_ParsesVersionDetectedFalse()
     {
         _pipe.SetHandler(req =>

@@ -126,13 +126,14 @@
                      Foreground="#CCCCCC" FontSize="12"
                      VerticalAlignment="Center"/>
           <Slider Value="{Binding CsxDrilldownDepth}"
-                  Minimum="0" Maximum="4"
+                  Minimum="0" Maximum="6"
                   TickFrequency="1" IsSnapToTickEnabled="True"
-                  Width="80"
+                  Width="100"
                   ToolTip.Tip="{StaticResource str.Tip.CsxDepth}"
                   VerticalAlignment="Center"/>
           <TextBlock Text="{Binding CsxDrilldownDepth}"
-                     Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                     Foreground="{Binding CsxDrilldownDepthBrush}"
+                     FontSize="12" FontWeight="Bold"
                      VerticalAlignment="Center" MinWidth="15"/>
         </StackPanel>
 

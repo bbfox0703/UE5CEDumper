@@ -110,6 +110,10 @@
     <sys:String x:Key="str.Pointers.VersionLowConfidenceText">Detected via fragile fallback path — bare pattern match or publisher bias. If exports look wrong, set the correct UE version using the Override ComboBox below.</sys:String>
     <sys:String x:Key="str.Pointers.VersionOverrideLabel">Override:</sys:String>
     <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Force a specific UE version for this game. Saved per-game and reapplied on every launch. Choose Auto to revert to auto-detection.</sys:String>
+    <sys:String x:Key="str.Pointers.InvokeTimeoutLabel">Invoke timeout (ms):</sys:String>
+    <sys:String x:Key="str.Pointers.InvokeTimeoutTooltip">UFunction call wait time. Default 5000 = 5s. Increase if "GameThreadDispatch: invoke timeout" appears in logs (Blueprint widget delegates often need 10-30s). Saved per-game; reset to 5000 to clear.</sys:String>
+    <sys:String x:Key="str.Pointers.InvokeTimeoutOverrideBadge">&#x23F1; Custom</sys:String>
+    <sys:String x:Key="str.Pointers.InvokeTimeoutOverrideTooltip">Per-game timeout override is active (differs from the 5000ms default).</sys:String>
     <sys:String x:Key="str.Pointers.PublisherLabel">Publisher:</sys:String>
     <sys:String x:Key="str.Pointers.AobFailed">&#x26A0; AOB failed — found via</sys:String>
     <sys:String x:Key="str.Pointers.GWorldNotFound">GWorld not found (non-critical)</sys:String>
@@ -228,7 +232,7 @@
     <sys:String x:Key="str.Tip.ArrayLimit">Max array elements to read inline (2^N)</sys:String>
     <sys:String x:Key="str.Tip.DropDownLimit">Max CE DropDownList entries (2^N)</sys:String>
     <sys:String x:Key="str.Tip.PreviewLimit">Struct sub-fields shown in Value column (0 = no preview)</sys:String>
-    <sys:String x:Key="str.Tip.CsxDepth">Pointer drill-down depth (0 = flat). Applies to both CSX export and CE XML / CE Field copy.</sys:String>
+    <sys:String x:Key="str.Tip.CsxDepth">Pointer drill-down depth (0 = flat). Applies to both CSX export and CE XML / CE Field copy. 0-4 normal; 5-6 deep — output size grows exponentially per level (depth 6 on UWorld can produce multi-MB CE XML).</sys:String>
     <sys:String x:Key="str.Tip.Export">Export object data in various formats</sys:String>
 
     <!-- Tooltips: Object Tree -->

@@ -184,6 +184,8 @@ public class AobUsageServiceTests : IDisposable
                     VersionDetected = true,
                     UEVersionUserOverride = 427,
                     UEVersionUserOverrideAt = "2026-05-09T12:00:00Z",
+                    InvokeTimeoutMs = 15000,
+                    InvokeTimeoutMsAt = "2026-05-10T08:00:00Z",
                     ScanCount = 5,
                 },
             },
@@ -200,6 +202,8 @@ public class AobUsageServiceTests : IDisposable
         var record = file.Games[peHash];
         Assert.Equal(427, record.UEVersionUserOverride);
         Assert.Equal("2026-05-09T12:00:00Z", record.UEVersionUserOverrideAt);
+        Assert.Equal(15000, record.InvokeTimeoutMs);
+        Assert.Equal("2026-05-10T08:00:00Z", record.InvokeTimeoutMsAt);
         Assert.Equal(6, record.ScanCount);  // sanity: scan increment still happened
     }
 

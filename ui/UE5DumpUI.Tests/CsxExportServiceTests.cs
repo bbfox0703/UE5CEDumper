@@ -41,6 +41,7 @@ public sealed class StubDumpService : IDumpService
     public Task<EngineState> InitAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<EngineState> GetPointersAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<EngineState> SetInvokeTimeoutAsync(int timeoutMs, bool persist = true, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<int> GetObjectCountAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();

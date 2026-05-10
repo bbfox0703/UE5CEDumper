@@ -103,7 +103,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     partial void OnCsxDrilldownDepthChanged(int value)
     {
         LiveWalker.CsxDrilldownDepth = value;
+        OnPropertyChanged(nameof(CsxDrilldownDepthBrush));
     }
+
+    /// <summary>Toolbar slider colour — default 0-4, amber 5, red 6 to flag exponential output growth.</summary>
+    public Avalonia.Media.IBrush CsxDrilldownDepthBrush => CsxDrilldownDepth switch
+    {
+        >= 6 => Avalonia.Media.SolidColorBrush.Parse("#E05252"),
+        5    => Avalonia.Media.SolidColorBrush.Parse("#E6A817"),
+        _    => Avalonia.Media.SolidColorBrush.Parse("#D4D4D4"),
+    };
 
     partial void OnPreviewLimitChanged(int value)
     {

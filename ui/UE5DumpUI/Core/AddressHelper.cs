@@ -59,16 +59,36 @@ public static class AddressHelper
     /// <param name="input">Raw address input from user (CE format, hex, etc.)</param>
     /// <param name="moduleBase">Optional module base address (e.g., "0x7FF700000000")</param>
     /// <returns>Normalized address string prefixed with "0x"</returns>
+    /// <remarks>
+    /// Legacy entry point — does NOT validate hex content. Garbage input like
+    /// "0xajsd;jald" passes through and surfaces as "no UObject found" downstream
+    /// instead of the more honest "invalid address". New callers should prefer
+    /// <see cref="TryNormalizeAddress"/>.
+    /// </remarks>
     public static string NormalizeAddress(string input, string? moduleBase = null)
     {
+        return TryNormalizeAddress(input, moduleBase, out var normalized) ? normalized : "0x0";
+    }
+
+    /// <summary>
+    /// Strict variant of <see cref="NormalizeAddress"/>. Returns false (and writes
+    /// "0x0" to <paramref name="normalized"/>) when:
+    ///   - input is empty / whitespace only
+    ///   - the hex body has non-hex characters (e.g. "0xajsd;jald", CE placeholders like "0x[ply_base]")
+    ///   - the module+offset path produces an unparseable offset
+    /// Mirrors the DLL's Renge::TryStrToAddr — UI rejects bad addresses before round-tripping
+    /// through the pipe so the user gets a clearer error than "No UObject found".
+    /// </summary>
+    public static bool TryNormalizeAddress(string input, string? moduleBase, out string normalized)
+    {
+        normalized = "0x0";
+        if (string.IsNullOrWhiteSpace(input)) return false;
         var s = input.Trim().Trim('"');
 
         // CE format: "module.exe"+offset or module.exe+offset
-        // Extract the part after the last '+'
         var plusIdx = s.LastIndexOf('+');
         if (plusIdx >= 0 && plusIdx < s.Length - 1)
         {
-            // Check if the part before '+' looks like a module name (contains '.' or letters)
             var beforePlus = s[..plusIdx].Trim().Trim('"');
             if (beforePlus.Contains('.') || beforePlus.Any(char.IsLetter))
             {
@@ -76,30 +96,48 @@ public static class AddressHelper
                 if (offsetHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
                     offsetHex = offsetHex[2..];
 
-                // Resolve to absolute address if moduleBase is available
+                if (!IsAllHex(offsetHex)) return false;
+
                 if (!string.IsNullOrEmpty(moduleBase))
                 {
                     var baseHex = moduleBase;
                     if (baseHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
                         baseHex = baseHex[2..];
 
-                    var baseAddr = Convert.ToUInt64(baseHex, 16);
-                    var offset = Convert.ToUInt64(offsetHex, 16);
+                    if (!IsAllHex(baseHex)) return false;
+                    if (!ulong.TryParse(baseHex, System.Globalization.NumberStyles.HexNumber,
+                                        System.Globalization.CultureInfo.InvariantCulture, out var baseAddr))
+                        return false;
+                    if (!ulong.TryParse(offsetHex, System.Globalization.NumberStyles.HexNumber,
+                                        System.Globalization.CultureInfo.InvariantCulture, out var offset))
+                        return false;
                     var absolute = unchecked(baseAddr + offset);
-                    return "0x" + absolute.ToString("X");
+                    normalized = "0x" + absolute.ToString("X");
+                    return true;
                 }
 
-                // No moduleBase — use offset as-is (best effort)
-                return "0x" + offsetHex;
+                normalized = "0x" + offsetHex;
+                return true;
             }
         }
 
-        // Remove 0x prefix if present (we'll re-add it)
         if (s.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-        {
             s = s[2..];
-        }
 
-        return "0x" + s;
+        if (s.Length == 0 || !IsAllHex(s)) return false;
+
+        normalized = "0x" + s;
+        return true;
+    }
+
+    private static bool IsAllHex(string s)
+    {
+        if (s.Length == 0) return false;
+        foreach (var c in s)
+        {
+            bool isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!isHex) return false;
+        }
+        return true;
     }
 }
