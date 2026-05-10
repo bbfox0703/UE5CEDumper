@@ -64,4 +64,11 @@ public sealed class EngineState
     public int GWorldAobPos { get; init; }
     /// <summary>Instruction end relative to AOB match (instrOffset + totalLen, for RIP calculation).</summary>
     public int GWorldAobLen { get; init; }
+
+    /// <summary>
+    /// Effective GameThreadDispatch invoke timeout in ms (default 5000 = Stark::kDefaultInvokeTimeoutMs).
+    /// Driven from the DLL — already-loaded per-game override is reflected here. UI shows it next
+    /// to the UE Version Override; user can adjust via SetInvokeTimeoutAsync.
+    /// </summary>
+    public int InvokeTimeoutMs { get; init; } = 5000;
 }

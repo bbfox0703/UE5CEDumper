@@ -96,8 +96,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <summary>Max CE DropDownList entries (2^N, default 512). Used during CE XML export.</summary>
     public int DropDownLimit { get; set; } = 512;
 
-    /// <summary>CSX drilldown depth (0 = flat/dummy, 1+ = real child structures for ObjectProperty).</summary>
-    public int CsxDrilldownDepth { get; set; }
+    /// <summary>CSX drilldown depth (0 = flat/dummy, 1-4 normal, 5-6 deep / warning band).
+    /// Each extra level can multiply CE XML / CSX output exponentially because every
+    /// ObjectProperty hit fans out to its own field tree. 4 was the historic ceiling
+    /// after the cycle-elision fix in build 552 hit a 2GB StringBuilder OOM at depth 2
+    /// on UWorld back-edges; raising to 6 is safe with the current cycle guard, but
+    /// the slider colour shifts to amber/red at 5-6 to flag the size impact.</summary>
+    [ObservableProperty] private int _csxDrilldownDepth;
+
+    /// <summary>Foreground brush for the depth display — default at 0-4, amber at 5, red at 6.</summary>
+    public Avalonia.Media.IBrush CsxDrilldownDepthBrush => CsxDrilldownDepth switch
+    {
+        >= 6 => Avalonia.Media.SolidColorBrush.Parse("#E05252"),  // red — likely huge output
+        5    => Avalonia.Media.SolidColorBrush.Parse("#E6A817"),  // amber — warning band
+        _    => Avalonia.Media.SolidColorBrush.Parse("#D4D4D4"),  // default
+    };
+
+    partial void OnCsxDrilldownDepthChanged(int value)
+        => OnPropertyChanged(nameof(CsxDrilldownDepthBrush));
 
     // Search
     [ObservableProperty] private string _searchText = "";
@@ -1328,8 +1344,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             HasReferences = false;
 
             // Normalize address: supports CE formats like "module.exe"+offset,
-            // quoted module names ("module.exe"+offset), and plain hex
-            var normalizedAddr = AddressHelper.NormalizeAddress(addr, _engineState?.ModuleBase);
+            // quoted module names ("module.exe"+offset), and plain hex.
+            // Strict validation — garbage like "0xlkaskdlaj" surfaces as a clean
+            // status message instead of silently navigating to address 0.
+            if (!AddressHelper.TryNormalizeAddress(addr, _engineState?.ModuleBase, out var normalizedAddr))
+            {
+                StatusText = "Invalid address — expected hex (e.g. 0x7FF... or module.exe+RVA)";
+                return;
+            }
 
             await NavigateToAsync(normalizedAddr, "Custom", 0, "Custom", isPointer: true);
         }

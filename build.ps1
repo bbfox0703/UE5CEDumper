@@ -633,6 +633,32 @@ if ($Target -in "All", "Test") {
         Write-Info "utf8_helpers_test.exe not available (skip — run -Target DLL or All first)"
     }
 
+    # ----- C++ pure-helper tests (Renge::TryStrToAddr, Scharf) -----
+    $dllTestExe = $null
+    if (Test-Path $BUILD_DIR) {
+        Write-Step "Building dll_helpers_test (C++ self-test)..."
+        $dllBuildOk = Invoke-CmdInVsEnv "cmake --build `"$BUILD_DIR`" --config $CppConfig --target dll_helpers_test"
+        if ($dllBuildOk) {
+            $dllTestExe = Get-ChildItem -Path $BUILD_DIR -Filter "dll_helpers_test.exe" -Recurse -ErrorAction SilentlyContinue |
+                          Select-Object -First 1
+        }
+    }
+
+    if ($dllTestExe) {
+        Write-Step "Running dll_helpers_test..."
+        & $dllTestExe.FullName
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "dll_helpers_test failed ($LASTEXITCODE assertion(s))"
+            $exitCode = 1
+        }
+        else {
+            Write-Ok "dll_helpers_test passed"
+        }
+    }
+    else {
+        Write-Info "dll_helpers_test.exe not available (skip — run -Target DLL or All first)"
+    }
+
     # ----- C# tests -----
     if (-not (Test-Path $TEST_PROJ)) {
         Write-Info "Test project not found, skipping"

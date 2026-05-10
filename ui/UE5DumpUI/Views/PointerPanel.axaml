@@ -72,6 +72,26 @@
                      Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
                      Margin="0,4,0,0"
                      IsVisible="{Binding ShowVersionWarning}"/>
+
+          <!-- Invoke timeout: per-game override for GameThreadDispatch UFunction wait. -->
+          <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="0,8,0,0" VerticalAlignment="Center">
+            <TextBlock Grid.Column="0"
+                       Text="{StaticResource str.Pointers.InvokeTimeoutLabel}"
+                       Foreground="#888" FontSize="11" VerticalAlignment="Center"/>
+            <NumericUpDown Grid.Column="1"
+                           Value="{Binding InvokeTimeoutMs, Mode=TwoWay}"
+                           Minimum="1000" Maximum="60000" Increment="1000"
+                           FormatString="0"
+                           IsEnabled="{Binding !IsApplyingInvokeTimeout}"
+                           MinWidth="110" Margin="6,0,0,0"
+                           ToolTip.Tip="{StaticResource str.Pointers.InvokeTimeoutTooltip}"/>
+            <TextBlock Grid.Column="3"
+                       Text="{StaticResource str.Pointers.InvokeTimeoutOverrideBadge}"
+                       Foreground="#569CD6" FontSize="11" FontWeight="SemiBold"
+                       VerticalAlignment="Center"
+                       IsVisible="{Binding ShowInvokeTimeoutOverrideBadge}"
+                       ToolTip.Tip="{StaticResource str.Pointers.InvokeTimeoutOverrideTooltip}"/>
+          </Grid>
         </StackPanel>
       </Border>
 

@@ -28,6 +28,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _publisherThumbprint = "";
     [ObservableProperty] private string _selectedUeVersionOverride = "Auto";
     [ObservableProperty] private bool _isApplyingOverride;
+    /// <summary>
+    /// Per-game GameThreadDispatch invoke timeout (ms). 5000 is the Stark default;
+    /// any value other than 5000 indicates a user override active for this game.
+    /// </summary>
+    [ObservableProperty] private int _invokeTimeoutMs = 5000;
+    [ObservableProperty] private bool _isApplyingInvokeTimeout;
     [ObservableProperty] private int _totalObjects;
     [ObservableProperty] private bool _hasData;
 
@@ -245,6 +251,12 @@ public partial class PointerPanelViewModel : ViewModelBase
         GworldAobLen = state.GWorldAobLen;
         ModuleName = state.ModuleName;
         PeHash = state.PeHash;
+        // Re-sync the invoke timeout from the DLL (already-applied per-game override or default).
+        // _suppressInvokeTimeoutEvent prevents the partial-changed handler from firing the apply
+        // round-trip when this is just a refresh.
+        _suppressInvokeTimeoutEvent = true;
+        InvokeTimeoutMs = state.InvokeTimeoutMs > 0 ? state.InvokeTimeoutMs : 5000;
+        _suppressInvokeTimeoutEvent = false;
         HasData = true;
         // Reset scan state on fresh update
         IsScanning = false;
@@ -275,6 +287,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowUserOverrideBadge));
         OnPropertyChanged(nameof(ShowLowConfidenceWarning));
         OnPropertyChanged(nameof(ShowVersionDetectedBadge));
+        OnPropertyChanged(nameof(ShowInvokeTimeoutOverrideBadge));
         OnPropertyChanged(nameof(ShowPublisherHint));
         OnPropertyChanged(nameof(PublisherLabel));
         OnPropertyChanged(nameof(ShowGObjectsWarning));
@@ -314,6 +327,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     }
 
     private bool _suppressOverrideSelectionEvent;
+    private bool _suppressInvokeTimeoutEvent;
+
+    /// <summary>True when the active timeout differs from Stark's 5000ms default.</summary>
+    public bool ShowInvokeTimeoutOverrideBadge => HasData && InvokeTimeoutMs != 5000;
 
     /// <summary>
     /// Auto-fired by [ObservableProperty] when SelectedUeVersionOverride changes.
@@ -326,6 +343,42 @@ public partial class PointerPanelViewModel : ViewModelBase
         if (!HasData) return;
         // Fire-and-forget — the apply command itself awaits the pipe round-trip.
         _ = ApplyOverrideAsync(value);
+    }
+
+    /// <summary>
+    /// Auto-fired when the invoke timeout NumericUpDown changes. Debounce comes from
+    /// the bound ValueChanged event itself (UI fires once per commit, not per keystroke).
+    /// </summary>
+    partial void OnInvokeTimeoutMsChanged(int value)
+    {
+        OnPropertyChanged(nameof(ShowInvokeTimeoutOverrideBadge));
+        if (_suppressInvokeTimeoutEvent) return;
+        if (_dump == null) return;
+        if (!HasData) return;
+        _ = ApplyInvokeTimeoutAsync(value);
+    }
+
+    private async Task ApplyInvokeTimeoutAsync(int timeoutMs)
+    {
+        if (_dump == null) return;
+        try
+        {
+            ClearError();
+            IsApplyingInvokeTimeout = true;
+            // 5000 = the Stark default → treat as "clear override" so the JSON stays clean.
+            int payload = timeoutMs == 5000 ? 0 : timeoutMs;
+            var newState = await _dump.SetInvokeTimeoutAsync(payload, persist: true);
+            Update(newState);
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log?.Error(Constants.LogCatInit, "Failed to apply invoke timeout", ex);
+        }
+        finally
+        {
+            IsApplyingInvokeTimeout = false;
+        }
     }
 
     private async Task ApplyOverrideAsync(string label)

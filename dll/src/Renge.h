@@ -46,6 +46,7 @@ constexpr const char* CMD_INVOKE_FUNCTION       = "invoke_function";
 constexpr const char* CMD_WALK_DATATABLE_ROWS   = "walk_datatable_rows";
 constexpr const char* CMD_SCAN_STATUS           = "scan_status";
 constexpr const char* CMD_SET_UE_VERSION_OVERRIDE = "set_ue_version_override";
+constexpr const char* CMD_SET_INVOKE_TIMEOUT       = "set_invoke_timeout";
 
 // Event types
 constexpr const char* EVT_WATCH            = "watch";
@@ -57,9 +58,34 @@ inline std::string AddrToStr(uintptr_t addr) {
     return oss.str();
 }
 
-// Hex string "0x..." to address
-inline uintptr_t StrToAddr(const std::string& str) {
-    return std::stoull(str, nullptr, 16);
+// Strict hex parse: optional "0x"/"0X" prefix, allows trailing whitespace, rejects
+// any other trailing garbage (e.g. unsubstituted CE placeholders like "0x[ply_base]").
+// Returns true and writes outAddr on success; returns false on failure (outAddr untouched).
+inline bool TryStrToAddr(const std::string& str, uintptr_t& outAddr) noexcept {
+    if (str.empty()) return false;
+    // Reject leading sign — std::stoull would silently accept "-1" and 2's-complement
+    // wrap to 0xFFFFFFFFFFFFFFFF, which is never a meaningful address from the UI side.
+    size_t front = 0;
+    while (front < str.size() && std::isspace(static_cast<unsigned char>(str[front]))) ++front;
+    if (front < str.size() && (str[front] == '-' || str[front] == '+')) return false;
+    try {
+        size_t pos = 0;
+        uintptr_t v = std::stoull(str, &pos, 16);
+        while (pos < str.size() && std::isspace(static_cast<unsigned char>(str[pos]))) ++pos;
+        if (pos != str.size()) return false;
+        outAddr = v;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Hex string "0x..." to address. Noexcept: returns 0 on malformed input.
+// Prefer TryStrToAddr at boundaries where you want to surface a clear error to the caller.
+inline uintptr_t StrToAddr(const std::string& str) noexcept {
+    uintptr_t v = 0;
+    TryStrToAddr(str, v);
+    return v;
 }
 
 // Bytes to hex string (no 0x prefix)

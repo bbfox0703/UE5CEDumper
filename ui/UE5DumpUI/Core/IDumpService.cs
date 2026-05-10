@@ -17,6 +17,15 @@ public interface IDumpService
     /// EngineState (re-fetched after the override took effect).
     /// </summary>
     Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default);
+
+    /// <summary>
+    /// Set or clear the per-game GameThreadDispatch invoke timeout in milliseconds.
+    /// timeoutMs=0 clears the override (revert to Stark::kDefaultInvokeTimeoutMs = 5000ms).
+    /// Persisted in the same HintCache JSON keyed by PE hash; ResetAllCache wipes it
+    /// alongside everything else. Returns the updated EngineState.
+    /// </summary>
+    Task<EngineState> SetInvokeTimeoutAsync(int timeoutMs, bool persist = true, CancellationToken ct = default);
+
     Task<int> GetObjectCountAsync(CancellationToken ct = default);
     Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default);
     Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default);

@@ -6,6 +6,7 @@
 #include "Genau.h"
 #include "Flamme.h"
 #include "Macht.h"
+#include "Stark.h"
 #define LOG_CAT "SCAN"
 #include "Sein.h"
 #include "Grimoire.h"
@@ -3254,6 +3255,15 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // and as a tiebreaker when detection runs.
     const PublisherEntry* publisher = DetectPublisherFromPE();
     out.publisherThumbprint = publisher ? publisher->thumbprint : nullptr;
+
+    // Apply per-game GameThreadDispatch invoke-timeout override (if user set one).
+    // Done early so any UFunction call placed before scan completion uses the right
+    // timeout. Default (Stark::kDefaultInvokeTimeoutMs) was already in effect; this
+    // bumps it if the JSON cache has a value.
+    if (hints.hasInvokeTimeoutOverride && hints.invokeTimeoutMs > 0) {
+        Stark::SetInvokeTimeoutMs(hints.invokeTimeoutMs);
+        LOG_INFO("FindAll: Applied invoke timeout override: %dms", hints.invokeTimeoutMs);
+    }
 
     if (hints.hasUserOverride && hints.userOverrideVersion != 0) {
         out.UEVersion = hints.userOverrideVersion;

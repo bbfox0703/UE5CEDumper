@@ -129,14 +129,25 @@ ScanHints LoadHints(const char* peHash) {
             }
         }
 
-        LOG_INFO("HintCache: Loaded hints for PE=%s (GObj=%s, GNam=%s, GWld=%s, UE=%u%s%s)",
+        // Per-game GameThreadDispatch invoke timeout override.
+        auto itIt = rec.find("invokeTimeoutMs");
+        if (itIt != rec.end() && itIt->is_number_integer()) {
+            int32_t v = itIt->get<int32_t>();
+            if (v > 0) {
+                hints.invokeTimeoutMs = v;
+                hints.hasInvokeTimeoutOverride = true;
+            }
+        }
+
+        LOG_INFO("HintCache: Loaded hints for PE=%s (GObj=%s, GNam=%s, GWld=%s, UE=%u%s%s%s)",
                  peHash,
                  hints.gobjectsPatternId.empty() ? "-" : hints.gobjectsPatternId.c_str(),
                  hints.gnamesPatternId.empty()   ? "-" : hints.gnamesPatternId.c_str(),
                  hints.gworldPatternId.empty()    ? "-" : hints.gworldPatternId.c_str(),
                  hints.ueVersion,
                  hints.hasVersionHint ? (hints.versionDetected ? " detected" : " inferred") : " none",
-                 hints.hasUserOverride ? " [USER-OVERRIDE active]" : "");
+                 hints.hasUserOverride ? " [USER-OVERRIDE active]" : "",
+                 hints.hasInvokeTimeoutOverride ? " [INVOKE-TIMEOUT override]" : "");
 
     } catch (const std::exception& ex) {
         LOG_WARN("HintCache: Failed to load hints: %s", ex.what());
@@ -330,6 +341,77 @@ void SaveUserOverride(const char* peHash, uint32_t ueVersion,
         LOG_WARN("HintCache: SaveUserOverride failed: %s", ex.what());
     } catch (...) {
         LOG_WARN("HintCache: SaveUserOverride failed (unknown error)");
+    }
+}
+
+// ============================================================
+// SaveInvokeTimeout — mirrors SaveUserOverride for the GameThreadDispatch
+// timeout. Same atomic write + record-preservation pattern.
+// ============================================================
+
+void SaveInvokeTimeout(const char* peHash, int32_t timeoutMs,
+                       const char* processName) {
+    if (!peHash || !peHash[0]) return;
+
+    try {
+        auto path = GetCacheFilePath();
+        if (path.empty()) return;
+        fs::create_directories(path.parent_path());
+
+        json root;
+        if (fs::exists(path)) {
+            std::ifstream ifs(path);
+            if (ifs.is_open()) {
+                root = json::parse(ifs, nullptr, /*allow_exceptions=*/false);
+                ifs.close();
+                if (!root.is_object()) root = json::object();
+            }
+        }
+
+        if (!root.contains("version")) root["version"] = 1;
+        if (!root.contains("games") || !root["games"].is_object())
+            root["games"] = json::object();
+
+        json& games = root["games"];
+        json rec = games.contains(peHash) ? games[peHash] : json::object();
+
+        rec["peHash"] = peHash;
+        if (processName && processName[0])
+            rec["gameName"] = processName;
+
+        if (timeoutMs <= 0) {
+            // Clear override
+            rec.erase("invokeTimeoutMs");
+            rec.erase("invokeTimeoutMsAt");
+        } else {
+            rec["invokeTimeoutMs"]   = timeoutMs;
+            rec["invokeTimeoutMsAt"] = GetUtcTimestamp();
+        }
+
+        games[peHash] = rec;
+
+        auto tempPath = path;
+        tempPath += L".tmp";
+        {
+            std::ofstream ofs(tempPath, std::ios::trunc);
+            if (!ofs.is_open()) {
+                LOG_WARN("HintCache: SaveInvokeTimeout: Failed to open temp file");
+                return;
+            }
+            ofs << root.dump(2);
+        }
+        fs::rename(tempPath, path);
+
+        if (timeoutMs <= 0)
+            LOG_INFO("HintCache: Cleared invoke timeout override for PE=%s", peHash);
+        else
+            LOG_INFO("HintCache: Saved invoke timeout override for PE=%s -> %dms",
+                     peHash, timeoutMs);
+
+    } catch (const std::exception& ex) {
+        LOG_WARN("HintCache: SaveInvokeTimeout failed: %s", ex.what());
+    } catch (...) {
+        LOG_WARN("HintCache: SaveInvokeTimeout failed (unknown error)");
     }
 }
 

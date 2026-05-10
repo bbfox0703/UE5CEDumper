@@ -71,6 +71,27 @@ public sealed class DumpService : IDumpService
         return await GetPointersAsync(ct);
     }
 
+    /// <summary>
+    /// Adjust the per-game GameThreadDispatch invoke timeout (UFunction call wait).
+    /// Pass 0 to clear the per-game override and revert to Stark::kDefaultInvokeTimeoutMs (5000).
+    /// </summary>
+    public async Task<EngineState> SetInvokeTimeoutAsync(int timeoutMs, bool persist = true, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "set_invoke_timeout",
+            ["timeout_ms"] = timeoutMs,
+            ["persist"] = persist,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+        _log.Info(Constants.LogCatInit,
+            timeoutMs == 0
+                ? $"Invoke timeout cleared (persisted={persist})"
+                : $"Invoke timeout set to {timeoutMs}ms (persisted={persist})");
+        return await GetPointersAsync(ct);
+    }
+
     /// <summary>Build EngineState from a get_pointers response, with optional overrides from init.</summary>
     private static EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool versionDetected = true,
                                                  bool? isUserOverride = null, bool? isLowConfidence = null)
@@ -118,6 +139,8 @@ public sealed class DumpService : IDumpService
             GWorldAob = ptrs["gworld_aob"]?.GetValue<string>() ?? "",
             GWorldAobPos = ptrs["gworld_aob_pos"]?.GetValue<int>() ?? 0,
             GWorldAobLen = ptrs["gworld_aob_len"]?.GetValue<int>() ?? 0,
+            // GameThreadDispatch invoke timeout (effective value)
+            InvokeTimeoutMs = ptrs["invoke_timeout_ms"]?.GetValue<int>() ?? 5000,
         };
     }
 

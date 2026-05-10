@@ -12,6 +12,7 @@
 #include "Aura.h"
 #include "Genau.h"
 #include "Utf8Helpers.h"
+#include "Scharf.h"
 
 #include <algorithm>
 #include <chrono>
@@ -358,22 +359,16 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
         Macht::ReadSafe<int32_t>(current + DynOff::FPROPERTY_ELEMSIZE, fi.Size);
         Macht::ReadSafe<uint64_t>(current + DynOff::FPROPERTY_FLAGS, fi.PropertyFlags);
 
-        // Alignment sanity warning: pointers/containers must be 8-byte, int/float 4-byte aligned
-        if (fi.Offset > 0 && !fi.TypeName.empty()) {
-            bool need8 = fi.TypeName.find("ObjectProperty") != std::string::npos ||
-                         fi.TypeName.find("ClassProperty")  != std::string::npos ||
-                         fi.TypeName == "ArrayProperty" || fi.TypeName == "MapProperty"  ||
-                         fi.TypeName == "SetProperty"   || fi.TypeName == "StrProperty"  ||
-                         fi.TypeName == "NameProperty"  || fi.TypeName == "TextProperty"  ||
-                         fi.TypeName == "DelegateProperty" || fi.TypeName.find("MulticastDelegateProperty") != std::string::npos ||
-                         fi.TypeName == "WeakObjectProperty" || fi.TypeName == "SoftObjectProperty" ||
-                         fi.TypeName == "InterfaceProperty";
-            bool need4 = fi.TypeName == "IntProperty" || fi.TypeName == "UInt32Property" ||
-                         fi.TypeName == "FloatProperty" || fi.TypeName == "EnumProperty";
-            if ((need8 && fi.Offset % 8 != 0) || (need4 && fi.Offset % 4 != 0)) {
-                Sein::Warn("WALK", "Misaligned field '%s' (%s) at offset 0x%X — possible wrong FPROPERTY_OFFSET",
-                    fi.Name.c_str(), fi.TypeName.c_str(), fi.Offset);
-            }
+        // Alignment sanity warning. See Scharf.h for the per-type rules — uses
+        // the engine-reported ElemSize for variable-width types (EnumProperty), and respects
+        // CasePreservingName mode for FName layout. Earlier inline check assumed all
+        // EnumProperty was 4-byte and all NameProperty was 8-byte aligned, which produced
+        // up to ~75 false positives per game on UE 5.x AActor-derived BPs.
+        if (fi.Offset > 0 && !fi.TypeName.empty()
+            && Scharf::IsAlignmentSuspicious(
+                   fi.TypeName, fi.Offset, fi.Size, DynOff::bCasePreservingName)) {
+            Sein::Warn("WALK", "Misaligned field '%s' (%s, size=%d) at offset 0x%X — possible wrong FPROPERTY_OFFSET",
+                fi.Name.c_str(), fi.TypeName.c_str(), fi.Size, fi.Offset);
         }
 
         if (!fi.Name.empty()) {
@@ -945,12 +940,19 @@ static int32_t InferScalarSize(const std::string& typeName) {
 /// The Inner FProperty's ELEMSIZE offset often returns garbage because the inner
 /// property has different metadata layout than top-level FField chain members.
 /// Returns the validated size (overridden for known types, capped for unknown).
+///
+/// Logging: both branches log at Debug level. UE 5.7 + CasePreservingName
+/// (e.g. TQ2) firing this 194 times per session was just recovery noise —
+/// the override / zero-fallback path is well-tested and the next-line
+/// "FArrayProperty::Inner found ... elemSize=N" Info entry already shows the
+/// resolved size. Keep at Debug for developer diagnosis without polluting
+/// user logs.
 static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeName) {
     int32_t expected = InferScalarSize(typeName);
     if (expected > 0) {
         // For known types, we know the exact size — override if it doesn't match
         if (readSize != expected) {
-            Sein::Warn("WALK:ArrayP", "elemSize=%d is invalid for '%s' (expected=%d), overriding",
+            Sein::Debug("WALK:ArrayP", "elemSize=%d is invalid for '%s' (expected=%d), overriding",
                 readSize, typeName.c_str(), expected);
             return expected;
         }
@@ -963,7 +965,7 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
         return 0;  // Caller handles zero-size case
     }
     if (readSize > 65536) {
-        Sein::Warn("WALK:ArrayP", "elemSize=%d is unreasonably large for '%s', zeroing",
+        Sein::Debug("WALK:ArrayP", "elemSize=%d is unreasonably large for '%s', zeroing",
             readSize, typeName.c_str());
         return 0;
     }
@@ -3557,7 +3559,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 ++read;
                             }
                             Sein::Debug("WALK:MapP", "Read %d/%d map entries for '%s' (skipped %d unallocated)", read, fv.mapCount, fi.Name.c_str(), skipped);
-                        } else {
+                        } else if (fv.mapCount > 0 || sa.Data != 0) {
+                            // Only warn when the map *should* have been readable. An empty
+                            // TMap (count=0, Data=null) is a normal default-initialised state,
+                            // not a walker failure — silencing those drowned out real cases.
                             Sein::Warn("WALK:MapP", "Cannot read map elements for '%s': count=%d Data=0x%llX KeySz=%d ValSz=%d",
                                 fi.Name.c_str(), fv.mapCount, (unsigned long long)sa.Data, fv.mapKeySize, fv.mapValueSize);
                         }

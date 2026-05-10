@@ -48,6 +48,16 @@ public sealed class AobUsageRecord
     /// <summary>UTC timestamp the override was last set (ISO 8601). Empty when not set.</summary>
     public string UEVersionUserOverrideAt { get; set; } = "";
 
+    /// <summary>
+    /// Per-game GameThreadDispatch invoke timeout in milliseconds (0 = use Stark default of 5000ms).
+    /// Written by the DLL via the set_invoke_timeout pipe cmd.
+    /// AobUsageService preserves this on round-trip — RecordScanAsync MUST NOT touch it.
+    /// </summary>
+    public int InvokeTimeoutMs { get; set; }
+
+    /// <summary>UTC timestamp the invoke timeout was last set (ISO 8601). Empty when not set.</summary>
+    public string InvokeTimeoutMsAt { get; set; } = "";
+
     /// <summary>Scan results for each target.</summary>
     public AobScanEntry GObjects { get; set; } = new();
     public AobScanEntry GNames { get; set; } = new();
