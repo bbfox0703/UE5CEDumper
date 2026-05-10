@@ -6,7 +6,273 @@ numbers from `build_number.txt` so a commit can be cross-referenced.
 
 -----
 
-## 2026-05-09 (latest, dev branch, build 561-577) — MulticastSparseDelegateProperty: walker + Find Refs v4 sparse + Pointer panel
+## 2026-05-10 (latest, dev branch, build 578-589) — Walker false-positive sweep + per-game invoke timeout + FillPointerSnapshot + drill-depth 0-6 band
+
+Three feature commits on `dev` (`c4f0644`, `95722fd`, `e49a599`) driven by
+analysis of cross-game logs (build 449 user submission with 7 games + the
+local ff7rebirth_ / DQ I&II / TQ2 / Meltopia / ES2 sessions). Awaits PR
+to `main`.
+
+### Phase A — walker false-positive sweep + new Scharf helper (build 582-583, c4f0644)
+
+Cross-game log review surfaced four loud-but-harmless WALK warning classes
+hammering scan logs across multiple titles:
+
+| Warning | Source | Worst offender / count |
+|---|---|---|
+| `Misaligned EnumProperty/NameProperty field` | hardcoded need4/need8 in [`Ubel.cpp`](../dll/src/Ubel.cpp) | ff7rebirth_ 2550, DQ I&II 943, Meltopia ~75/session |
+| `Cannot read map elements` on default-initialised TMap | [`Ubel.cpp`](../dll/src/Ubel.cpp) `count==0 && Data==null` | CaravanSandWitch 49 |
+| `ValidateArrayElemSize` → recovery succeeded | [`Ubel.cpp`](../dll/src/Ubel.cpp) Phase B | TQ2 UE 5.7 — 194/session |
+| `walk_instance` exception on placeholder | `Renge::StrToAddr` throwing `std::invalid_argument` | SquirrelGun (`0x[ply_base]`) |
+
+The misalignment heuristic was the loudest. Old check assumed:
+
+- Every `EnumProperty` is 4-byte aligned — wrong for `uint8` enums
+  (1-byte aligned, can sit at any offset)
+- Every `NameProperty` is 8-byte aligned — wrong for non-CPN builds
+  (FName=8, 4-byte aligned)
+
+New [`Scharf.h`](../dll/src/Scharf.h) (Frieren character #17, "sharp-eyed
+examinee" — fits FProperty layout sanity checking):
+
+```cpp
+namespace Scharf {
+    int RequiredAlignment(string typeName, int elemSize, bool isCPN);
+    bool IsAlignmentSuspicious(string typeName, int offset, int elemSize, bool isCPN);
+}
+```
+
+`RequiredAlignment` returns:
+
+- 0 for variable-layout types (`StructProperty` / `FieldPathProperty` /
+  `OptionalProperty` / garbage names — skip validation entirely)
+- For `EnumProperty` / `ByteProperty`: consults `FPROPERTY_ELEMSIZE`
+  (1, 2, or 4 — uint8 enum is 1-aligned, uint32 enum is 4-aligned)
+- For `NameProperty`: 4 if non-CPN, 8 if CPN (matches FName layout)
+- Standard alignment for fixed-size scalars
+
+Order-sensitive substring trap handled: `WeakObjectProperty` must match
+**before** plain `ObjectProperty` (substring `Object` would otherwise
+hijack). Pure header — picked up by both DLL and the new helper test exe
+without DLL link dependencies.
+
+`Ubel.cpp:362` calls into `Scharf::IsAlignmentSuspicious(typeName, offset,
+elemSize, casePreservingName)`. Empty-map guard at `Ubel.cpp:3561` skips
+the count=0 + Data=null branch (normal default-initialised TMap, not a
+read failure). `ValidateArrayElemSize` warnings at `Ubel.cpp:943-961`
+demoted to `LogDebug` — recovery (override known type / zero +
+PropertiesSize fallback) always succeeds; the next-line `Inner found` Info
+already shows the resolved size.
+
+### Phase B — Pipe address parsing safety (build 582, c4f0644)
+
+[`Renge.h`](../dll/src/Renge.h) `TryStrToAddr(string, uint64_t& out)`:
+noexcept strict hex parser. Rejects:
+
+- Unsubstituted CE placeholders (`"0x[ply_base]"` — root cause of the old
+  SquirrelGun `walk_instance` crash with
+  `std::invalid_argument` from `std::stoull`)
+- Leading sign (`"-1"` was wrapping to `0xFFFF...FFFF` via 2's complement)
+- Trailing garbage (`"0x123junk"`)
+- Empty / whitespace-only
+
+Legacy `Renge::StrToAddr` is now noexcept too (returns 0 on failure)
+so any unconverted call site cannot crash the pipe loop.
+[`Fern.cpp`](../dll/src/Fern.cpp) `walk_instance` handler upgraded to
+`TryStrToAddr` and returns clean `"Invalid addr"` error.
+
+### Phase C — `dll_helpers_test` second C++ test exe (c4f0644)
+
+[`dll/tests/dll_helpers_test.cpp`](../dll/tests/dll_helpers_test.cpp) —
+mirrors `utf8_helpers_test` style (no GoogleTest, EXPECT macros, exit
+code = failure count). 62 assertions across 13 test groups:
+
+- `TryStrToAddr`: CE placeholder rejection, trailing garbage, leading
+  sign, empty/whitespace, valid 0x / module+RVA forms
+- `Scharf::IsAlignmentSuspicious`: Meltopia uint8 enum @ 0x5F (must NOT
+  warn), CaravanSandWitch FName @ 0x3C (must NOT warn — non-CPN), CPN
+  FName @ 0x3C (MUST warn — needs 8-aligned), scalar primitives,
+  WeakObjectProperty substring trap
+
+Wired into `build.ps1 -Target Test` before the C# suite. Pulls in
+`vendor/nlohmann` since `Renge.h` includes `json.hpp`.
+
+### Phase D — Per-game GameThreadDispatch invoke timeout (build 583-588, c4f0644 + 95722fd)
+
+Meltopia logs showed 4 separate UFunction-invoke timeouts on Blueprint
+widget delegates (`BndEvt__OnClicked`, `SetShowCharacterState_BPI`).
+Stark.cpp's old `constexpr 5s` was too tight for delegate chains that
+lazy-load assets. Solution: per-game persisted timeout, mirroring the
+existing `set_ue_version_override` shape.
+
+**DLL backend** ([`Stark.cpp`](../dll/src/Stark.cpp), [`Stark.h`](../dll/src/Stark.h)):
+
+- `Stark::s_invokeTimeoutMs` is now a runtime-modifiable
+  `std::atomic<uint32_t>` (default 5000ms, clamp `[100, 600000]`).
+- Public API: `Stark::SetInvokeTimeoutMs(ms)` / `GetInvokeTimeoutMs()`.
+- Replaces every constexpr `std::chrono::milliseconds{5000}` reference.
+
+**HintCache persistence** ([`Flamme.cpp`](../dll/src/Flamme.cpp),
+[`Flamme.h`](../dll/src/Flamme.h)):
+
+- New `Flamme::SaveInvokeTimeout(peHash, ms, processName)` writes
+  `invokeTimeoutMs` + `invokeTimeoutMsAt` to the existing per-PE
+  HintCache JSON.
+- `LoadHints` reads them; `SaveResults` preserves on round-trip.
+- Same shape as `ueVersionUserOverride` handling — code structure copied
+  field-for-field.
+
+**Auto-apply** ([`Genau.cpp`](../dll/src/Genau.cpp) `FindAll`):
+
+- Calls `Stark::SetInvokeTimeoutMs(hints.invokeTimeoutMs)` early in
+  scan, so any pre-scan UFunction call also uses the right timeout.
+
+**Pipe** ([`Fern.cpp`](../dll/src/Fern.cpp)):
+
+- New `CMD_SET_INVOKE_TIMEOUT = "set_invoke_timeout"` accepts
+  `{timeout_ms, persist}` — mirrors `set_ue_version_override`.
+  `timeout_ms=0` clears override, falls back to default 5000.
+
+**UI** ([`PointerPanelViewModel.cs`](../ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs),
+[`PointerPanel.axaml`](../ui/UE5DumpUI/Views/PointerPanel.axaml),
+[`EngineState.cs`](../ui/UE5DumpUI/Models/EngineState.cs),
+[`AobUsageRecord.cs`](../ui/UE5DumpUI/Models/AobUsageRecord.cs),
+[`DumpService.cs`](../ui/UE5DumpUI/Services/DumpService.cs)):
+
+- `EngineState.InvokeTimeoutMs` (default 5000 = `Stark::kDefaultInvokeTimeoutMs`).
+- `AobUsageRecord.InvokeTimeoutMs` + `InvokeTimeoutMsAt` survive
+  `RecordScanAsync` round-trip (record class is serializer-driven).
+- `DumpService.SetInvokeTimeoutAsync` mirrors `SetUeVersionOverrideAsync`:
+  send pipe cmd, log, re-fetch `get_pointers`, `ApplyState()` propagates.
+- `PointerPanelViewModel.InvokeTimeoutMs` `[ObservableProperty]` +
+  `OnInvokeTimeoutMsChanged` partial fires `ApplyInvokeTimeoutAsync`.
+  `_suppressInvokeTimeoutEvent` gate stops refresh-driven assignments
+  from re-firing apply.
+- `ShowInvokeTimeoutOverrideBadge` surfaces "⏱ Custom" pill when
+  value ≠ 5000.
+- `NumericUpDown` (1000-60000, step 1000) sits below the UE Version
+  Override row in the Pointer panel. 5000 = "clear override" payload.
+
+### Phase E — `FillPointerSnapshot` refactor (build 588, 95722fd)
+
+User reported FF7 Rebirth panel showed `invoke_timeout_ms=5000` despite
+HintCache JSON having 6000, plus missing Square Enix chip + missing Low
+Confidence badge. DLL log proved the value applied correctly
+(`Genau::FindAll: Applied invoke timeout override: 6000ms`); the failure
+was that the `CMD_SCAN_STATUS` completion payload was missing
+`invoke_timeout_ms` / `is_user_override` / `is_low_confidence` /
+`publisher_thumbprint`. UI consumes `scan_status` post-`trigger_scan`,
+not `get_pointers`, so the gap meant new fields silently defaulted.
+
+This is the **exact same trap** that bit `sparse_delegates` in PR #194's
+first iteration (caught via pipe-trace log diff). Fix: extract a shared
+[`Fern.cpp`](../dll/src/Fern.cpp) `FillPointerSnapshot(json& data)`
+helper used by both `CMD_GET_POINTERS` and `CMD_SCAN_STATUS` completion.
+One helper, two call sites — bug class permanently closed.
+
+### Phase F — UI strict address validation (95722fd)
+
+[`AddressHelper.cs`](../ui/UE5DumpUI/Core/AddressHelper.cs)
+`TryNormalizeAddress(input, moduleBase, out string normalized)`:
+bool-returning variant of `NormalizeAddress` that mirrors the DLL's
+`Renge::TryStrToAddr` semantics — rejects non-hex bodies, leading sign,
+trailing garbage. Legacy `NormalizeAddress` becomes a thin wrapper
+returning `"0x0"` on failure (back-compat for any caller missed).
+
+InstanceFinder Lookup + LiveWalker Go button now show `"Invalid address —
+expected hex (e.g. 0x7FF... or module.exe+RVA)"` instead of the
+misleading `"No UObject found at this address"` (which previously fired
+because the noexcept `StrToAddr` silently parsed garbage as 0 and the
+DLL searched at addr 0).
+
+### Phase G — Drill Depth 0-6 with warning band (95722fd)
+
+[`MainWindow.axaml`](../ui/UE5DumpUI/Views/MainWindow.axaml) slider
+`Maximum 4 → 6`, width `80 → 100` to fit two extra ticks.
+TextBlock `Foreground` binds to `CsxDrilldownDepthBrush`:
+
+| Depth | Brush | Reason |
+|---|---|---|
+| 0-4 | default | safe range, was the old max |
+| 5 | amber `#E6A817` | exponential growth becomes noticeable |
+| 6 | red `#E05252` | a UWorld drill at depth 6 can produce multi-MB CE XML |
+
+Cycle-elision (build 552 fix) + `MaxEmitPointerDepth=16` keep depth 6
+*safe* (no crash); the colour band is advisory only.
+`LiveWalkerViewModel.CsxDrilldownDepth` converted from auto-property to
+`[ObservableProperty]` so brush re-computes; both VMs (Main +
+LiveWalker) carry their own brush since the slider binds to Main and
+propagates via `OnCsxDrilldownDepthChanged`.
+
+### Phase H — README tested games matrix (e49a599)
+
+Added 6 games verified via cross-game logs:
+
+- **4.18-4.20 row**: + The Occupation (UE 4.19, GNAM_CT3 path)
+- **4.25-4.27 row**: + TimeSplitters Rewind Early Access V0.3.3
+- **5.0-5.2 row**: + Squirrel With A Gun, Caravan Sandwitch, Meltopia,
+  Retro Rewind Demo (replaces the old "(Confirmed via generic patterns)"
+  placeholder)
+
+GWorld success ratio: 19/20 (~95%) → 25/26 (~96%). Restore Your Island
+skipped — proxy DLL loaded but UI never connected.
+
+### Tests (+96 over build 577 baseline)
+
+Tests grew from 532 (31 C++ + 501 C#) → **597 total (504 C# + 62
+dll_helpers + 31 utf8_helpers)**:
+
+- 3 new `DumpServiceTests`:
+  - `SetInvokeTimeoutAsync_SendsCorrectPayloadAndRefetches`
+  - `SetInvokeTimeoutAsync_ZeroClearsOverride`
+  - `GetPointersAsync_DefaultsInvokeTimeoutWhenAbsent` (back-compat with
+    older DLL builds that don't include the field)
+- `AobUsageServiceTests` round-trip preservation extended to verify
+  `InvokeTimeoutMs` + `InvokeTimeoutMsAt` survive `RecordScanAsync`.
+- New `dll_helpers_test` exe with 62 assertions (TryStrToAddr + Scharf).
+
+### Bug class caught + future-proofed
+
+The `FillPointerSnapshot` extraction is the more important
+infrastructural change — same shape bug had now bitten **twice**
+(`sparse_delegates` in PR #194, then `invoke_timeout_ms`/publisher fields
+in this round). The shared helper means any future "added a field to
+get_pointers" change automatically propagates to scan_status without
+needing a second edit in a separate code path. If a third instance
+appears post-589, the answer is to add a regression test that diffs the
+two payload schemas, not to write the snapshot field a third time.
+
+### Cross-version validation
+
+| Game | UE | Was loud about | Now |
+|---|---|---|---|
+| Meltopia | 5.0.5 | ~75 misalignment + 4 invoke timeouts | clean (Scharf + per-game timeout) |
+| ff7rebirth_ | 4.27 (override) | 2550 misalignment | clean; 6000ms timeout round-trip works (FillPointerSnapshot fix) |
+| DQ I&II HD-2D | 4.27 (override) | 943 misalignment | clean |
+| CaravanSandWitch | 5.0.4 | 49 empty-map false-positives + 4 misalignment | clean |
+| TQ2 | 5.7 | 194 ValidateArrayElemSize warnings | clean (demoted to Debug) |
+| SquirrelGun | 5.0.2 | `walk_instance` crash on `0x[ply_base]` | clean (TryStrToAddr) |
+
+### What's still pending
+
+- **PR `dev` → `main`** — these 3 commits haven't been merged yet
+  (this dev-log refresh was the prerequisite).
+- **UE 4.23-4.27 sparse delegate**: outer key is `FObjectKey`, walker
+  still returns `supported=false` for UE < 5.0. Carryover from build
+  561-577.
+- **FieldPathProperty**: still the only remaining drill-down type with
+  no specialized handler.
+- **Other publishers** with unreliable version strings: only
+  `SQUARE_ENIX` is in the `kPublishers[]` table. Adding casually risks
+  wrong bias overriding correct detection — wait for a real misdetection
+  report before adding.
+
+**Build #589, 597 tests passing (504 C# + 62 dll_helpers + 31
+utf8_helpers).** 3 commits ahead of `origin/main` on `dev`.
+
+-----
+
+## 2026-05-09 (build 561-577) — MulticastSparseDelegateProperty: walker + Find Refs v4 sparse + Pointer panel
 
 `feat(walker)` + `feat(refs)` + `feat(panel)` series — closes the
 `MulticastSparseDelegateProperty` drill-down gap that had been parked
@@ -1138,7 +1404,7 @@ binding and the filter logic share one implementation.
 
 -----
 
-## Capability matrix (current — build 547)
+## Capability matrix (current — build 589)
 
 | Layer | Drill-down | Find Refs |
 |-------|-----------|-----------|
@@ -1149,7 +1415,8 @@ binding and the filter logic share one implementation.
 | Delegate (single FScriptDelegate) | ✅ | ✅ (v3) |
 | MulticastInline / MulticastDelegate | ✅ | ✅ (v3) |
 | TArray<FScriptDelegate> | ✅ | ✅ (v3) |
-| MulticastSparseDelegate | ⚠️ bound flag only | ❌ (needs FSparseDelegateStorage AOB + walk) |
+| MulticastSparseDelegate (UE 5.0+) | ✅ bindings via SPARSE_ES2_1 AOB (build 561-577) | ✅ v4 sparse pass (build 565) |
+| MulticastSparseDelegate (UE 4.23-4.27) | ❌ FObjectKey outer key, separate AOB needed | ❌ |
 | OptionalProperty\<pointer / weak\> | ✅ | ✅ |
 | OptionalProperty\<scalar Int/Float/Bool/Byte/Enum\> | ✅ trailing-bIsSet | — |
 | OptionalProperty\<String / Name / Text\> | ✅ intrusive sentinel + value (build 530) | — |
@@ -1157,29 +1424,38 @@ binding and the filter logic share one implementation.
 | FieldPathProperty | ❌ | ❌ |
 | TMap / TSet with weak-like inner sides | — | ❌ (v4 candidate) |
 
+## Per-game configuration (build 589)
+
+Persisted in HintCache JSON per PE hash, surfaces in the Pointer panel:
+
+| Setting | Range | Default | Pipe cmd |
+|---|---|---|---|
+| UE version override | Auto / 4.18-4.27 / 5.0-5.8 | Auto (detect) | `set_ue_version_override` |
+| Invoke timeout | 1000-60000 ms | 5000 ms | `set_invoke_timeout` |
+
 ## Remaining gaps (next-session pickup candidates)
 
-1. **MulticastSparseDelegateProperty bindings list** — bound flag is
-   shown; full enumeration needs:
-   - Universal AOB for `FSparseDelegateStorage::SparseDelegates` static
-     map (effort: similar to existing 128 AOB patterns)
-   - Nested `TMap<FObjectKey, TMap<FName, TSharedPtr<...>>>` walk
-     (effort: NEW — TMap walking infra is mostly there but `FObjectKey`
-     hashing + `TSharedPtr` control-block reading aren't)
+1. **MulticastSparseDelegate UE 4.23-4.27** — outer key is
+   `FObjectKey { FWeakObjectPtr Object; int32 ObjectSerialNumber; }`
+   (12B + 4 pad = 16B), outer stride changes ~0x60 → ~0x68, key match
+   logic must reconstruct FObjectKey via `Aura::GetSerialNumber`. Need a
+   separate AOB — UE4 binaries don't share the UE5 lea sequence.
 
-2. **Find Refs v4** —
-   - `TMap` / `TSet` with weak-like inner sides (currently Object/Class
-     only)
-   - MulticastSparseDelegate target scan (needs the storage AOB above)
+2. **Find Refs v4 extension** — `TMap` / `TSet` with weak-like inner
+   sides (currently Object/Class only).
 
 3. **`FieldPathProperty`** — rare, low priority.
 
-4. **GWorld**: Star Wars Jedi untested, Satisfactory fails.
+4. **GWorld**: Star Wars Jedi untested, Satisfactory fails (modular DLL
+   — pattern may need to live in `CoreUObject-Win64-Shipping.dll`, not
+   the main exe).
 
-5. **UE version misdetection** on some UE4 games (DQ I&II,
-   Ghostwire: Tokyo show UE505 incorrectly).
+5. **Other publishers shipping unreliable version strings** — only
+   `SQUARE_ENIX` is in `kPublishers[]` (Genau.cpp). Adding casually risks
+   wrong bias overriding correct detection — wait for a real misdetection
+   report before adding.
 
-## Tested games (last verified 2026-05-09)
+## Tested games (last verified 2026-05-10)
 
 - **Everspace 2** ✅ (UE 5.4): item template ID via container scan; Find
   Refs v3 returns 9 correct references in 224ms (cache hot, scan
@@ -1187,7 +1463,36 @@ binding and the filter logic share one implementation.
   Class Structure for `LocalPlayer` shows correct fields after the
   class-like routing fix; PropertySearch type filter `OptionalProperty`
   finds 9 matches across 5 real classes + 4 test-object fields.
-- **DQ I&II HD-2D / FF7 Rebirth** (UE4): Char Lv / Cloud HP / Party Lv
-  in non-reflected memory (custom allocator, high-memory region
-  0x255*/0x296*/0x7FEF*). Container scan complete, 0 matches — out of
-  reflection scope. Use CE pointer scan for these.
+  **`SPARSE_ES2_1` resolves SparseDelegates @ +9AA5F10** (build 575,
+  ground truth from PDB).
+- **Titan Quest II** ✅ (UE 5.7, bCasePreservingName=**true**, 486k
+  objects): cross-version validation — same `SPARSE_ES2_1` AOB hits
+  `+D46D170`, exercises FName=16 walker branch (inner stride 0x28).
+  Was source of 194 `ValidateArrayElemSize` warnings/session pre-build
+  583 → now Debug-only.
+- **DQ I&II HD-2D / FF7 Rebirth / FF7 Remake** (UE4 forks, Square Enix
+  publisher): Square Enix publisher detected → ⚠ Low Confidence badge +
+  Publisher chip; user can set Override = UE 4.27 / 4.18, persists
+  across launches. Char Lv / HP / Party Lv in non-reflected memory
+  (custom allocator) — out of reflection scope; use CE pointer scan.
+  **Build 589 verified**: invoke_timeout=6000 round-trip OK after
+  `FillPointerSnapshot` fix; Square Enix purple chip + Low Confidence
+  amber badge both surface from `scan_status` payload now.
+- **Meltopia** ✅ (UE 5.0.5): full scan OK; was source of ~75
+  misalignment + ~58 empty-map false-positives + 4 UFunction timeouts →
+  all resolved in build 582-583 (Scharf alignment helper + empty-map
+  guard + per-game invoke timeout 6000ms via UI NumericUpDown).
+- **Squirrel With A Gun** ✅ (UE 5.0.2): full scan OK; was source of
+  `walk_instance` `std::invalid_argument` crash on unsubstituted CE
+  placeholder `0x[ply_base]` → resolved by `Renge::TryStrToAddr` in
+  build 582.
+- **Caravan Sandwitch** ✅ (UE 5.0.4): full scan OK; was source of 49
+  empty-TMap false-positives → resolved by count=0+Data=null guard.
+- **Retro Rewind Demo** ✅ (UE 5.0.4): full scan OK.
+- **The Occupation** ✅ (UE 4.19): UE4 path with `GNAM_CT3`, GWorld OK.
+- **TimeSplitters Rewind Early Access V0.3.3** ✅ (UE 4.25): full scan,
+  GWorld OK.
+- **Squad-Win64-Shipping** ✅ (UE 5.7, 240K objects): build 488 user
+  reported 13 `get_object_list` 0xA0 UTF-8 exceptions → root cause was
+  Serie wide-path surrogate encoding bug, fixed in build 555. Should
+  now work clean post-560.
