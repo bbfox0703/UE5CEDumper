@@ -22,10 +22,10 @@ UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumpe
 
 | UE 版本 | GObjects | GNames | DynOff | 已驗證遊戲 |
 |---|:---:|:---:|:---:|---|
-| **4.18** | ✅ | ✅ | ✅ | *Final Fantasy VII Remake Intergrade* |
+| **4.18 – 4.20** | ✅ | ✅ | ✅ | *Final Fantasy VII Remake Intergrade, The Occupation* |
 | **4.21 – 4.24** | ✅ | ✅ | ✅ | *《STAR WARS 絕地：組織殞落™》, 勇者鬥惡龍 XI S, 偶像大師 星耀季節, 八方旅人, 勇者鬥惡龍 I&II / III HD-2D 重製版* |
-| **4.25 – 4.27** | ✅ | ✅ | ✅ | *Final Fantasy VII Rebirth, Tower of Mask, 霍格華茲的傳承, 復活邪神 2 七英雄的復仇, Ghostwire: Tokyo* |
-| **5.0 – 5.2** | ✅ | ✅ | ✅ | (透過通用特徵碼確認支援) |
+| **4.25 – 4.27** | ✅ | ✅ | ✅ | *Final Fantasy VII Rebirth, Tower of Mask, 霍格華茲的傳承, 復活邪神 2 七英雄的復仇, Ghostwire: Tokyo, TimeSplitters Rewind (Early Access V0.3.3)* |
+| **5.0 – 5.2** | ✅ | ✅ | ✅ | *Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo* |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | *Satisfactory (v1.1.3.1 滿意工廠)* |
 | **5.5 – 5.7** | ✅ | ✅* | ✅** | *泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords), Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo* |
 
@@ -122,7 +122,7 @@ AOBMaker 下載連結（需先註冊）：https://opencheattables.com/viewtopic.
 ## 重要注意事項 (Important Notes)
 
 * **自定義數據結構**: 在如《FF7 Rebirth》等遊戲中，部分關鍵數據（如 HP）存儲在標準 `UObject` 之外的自定義結構中。Live Walker 可協助探查這些區域，但無法直接自動發現。
-* **GWorld 連通性**: `GWorld` 遍歷在約 95% 的實測遊戲中可正常運作（20 款中有 19 款）。若無法運作，請改用 **Object Tree** 或 **Instance Finder** 作為主要進入點。
+* **GWorld 連通性**: `GWorld` 遍歷在約 96% 的實測遊戲中可正常運作（26 款中有 25 款）。若無法運作，請改用 **Object Tree** 或 **Instance Finder** 作為主要進入點。
 * **容器元素限制**: Array/Map/Set 的元素讀取受可調限制值控制，避免過度記憶體存取。如需處理大型容器，請在 Live Walker 中調整 **Array Limit** 滑桿。
 
 ---
