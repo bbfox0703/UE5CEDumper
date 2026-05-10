@@ -43,4 +43,14 @@ bool IsHookActive();
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
+/// Default invoke timeout (compile-time baseline, used when no override is set).
+constexpr int32_t kDefaultInvokeTimeoutMs = 5000;
+
+/// Override the EnqueueInvoke timeout in milliseconds. Set to 0 to revert to
+/// kDefaultInvokeTimeoutMs. Clamped to [100, 600000] (100ms .. 10min). Thread-safe.
+void SetInvokeTimeoutMs(int32_t timeoutMs);
+
+/// Read the current invoke timeout in milliseconds (post-clamping).
+int32_t GetInvokeTimeoutMs();
+
 } // namespace Stark

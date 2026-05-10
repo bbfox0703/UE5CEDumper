@@ -14,6 +14,7 @@
 #include "Serie.h"
 #include "Ubel.h"
 #include "Flamme.h"
+#include "Stark.h"
 #include "BuildInfo.h"
 
 #include <json.hpp>
@@ -241,6 +242,103 @@ void Fern::PushEvent(const std::string& jsonLine) {
     }
     if (pipe == INVALID_HANDLE_VALUE) return;
     WriteLine(pipe, jsonLine);
+}
+
+// ============================================================
+// FillPointerSnapshot — Populate a JSON object with the engine pointer state
+// (GObjects/GNames/GWorld + scan metadata + per-game settings).
+//
+// Shared by CMD_GET_POINTERS and CMD_SCAN_STATUS (completion). Without this
+// shared helper the two paths drift — sparse_delegates was added to GET_POINTERS
+// alone in the PR-#194 first iteration and the panel was empty post-trigger_scan
+// because the UI consumes scan_status, not get_pointers, after a fresh scan.
+// invoke_timeout_ms / is_user_override / is_low_confidence / publisher_thumbprint
+// hit the same trap (UI showed defaults instead of the real values until a manual
+// re-fetch). One helper, two call sites — bug class closed.
+// ============================================================
+static void FillPointerSnapshot(json& data) {
+    extern uintptr_t   g_cachedGObjects;
+    extern uintptr_t   g_cachedGNames;
+    extern uintptr_t   g_cachedGWorld;
+    extern uintptr_t   g_cachedSparseDelegates;
+    extern uint32_t    g_cachedUEVersion;
+    extern bool        g_cachedVersionDetected;
+    extern bool        g_cachedIsUserOverride;
+    extern bool        g_cachedIsLowConfidence;
+    extern const char* g_cachedPublisherThumbprint;
+    extern const char* g_cachedGObjectsMethod;
+    extern const char* g_cachedGNamesMethod;
+    extern const char* g_cachedGWorldMethod;
+    extern const char* g_cachedSparseDelegatesMethod;
+    extern char        g_cachedPeHash[17];
+    extern const char* g_cachedGObjectsPatternId;
+    extern const char* g_cachedGNamesPatternId;
+    extern const char* g_cachedGWorldPatternId;
+    extern const char* g_cachedSparseDelegatesPatternId;
+    extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
+    extern int         g_cachedGNamesTried,   g_cachedGNamesHit;
+    extern int         g_cachedGWorldTried,   g_cachedGWorldHit;
+    extern uintptr_t   g_cachedGObjectsScanAddr;
+    extern uintptr_t   g_cachedGNamesScanAddr;
+    extern uintptr_t   g_cachedGWorldScanAddr;
+    extern uintptr_t   g_cachedSparseDelegatesScanAddr;
+    extern const char* g_cachedGWorldAob;
+    extern int         g_cachedGWorldAobPos;
+    extern int         g_cachedGWorldAobLen;
+
+    data["gobjects"]             = Renge::AddrToStr(g_cachedGObjects);
+    data["gnames"]               = Renge::AddrToStr(g_cachedGNames);
+    data["gworld"]               = Renge::AddrToStr(g_cachedGWorld);
+    data["sparse_delegates"]     = Renge::AddrToStr(g_cachedSparseDelegates);
+    data["ue_version"]           = g_cachedUEVersion;
+    data["version_detected"]     = g_cachedVersionDetected;
+    data["is_user_override"]     = g_cachedIsUserOverride;
+    data["is_low_confidence"]    = g_cachedIsLowConfidence;
+    data["publisher_thumbprint"] = g_cachedPublisherThumbprint ? g_cachedPublisherThumbprint : "";
+    data["object_count"]         = Aura::GetCount();
+    data["gobjects_method"]         = g_cachedGObjectsMethod;
+    data["gnames_method"]           = g_cachedGNamesMethod;
+    data["gworld_method"]           = g_cachedGWorldMethod;
+    data["sparse_delegates_method"] = g_cachedSparseDelegatesMethod;
+
+    data["pe_hash"]                     = g_cachedPeHash;
+    data["gobjects_pattern_id"]         = g_cachedGObjectsPatternId        ? g_cachedGObjectsPatternId        : "";
+    data["gnames_pattern_id"]           = g_cachedGNamesPatternId          ? g_cachedGNamesPatternId          : "";
+    data["gworld_pattern_id"]           = g_cachedGWorldPatternId          ? g_cachedGWorldPatternId          : "";
+    data["sparse_delegates_pattern_id"] = g_cachedSparseDelegatesPatternId ? g_cachedSparseDelegatesPatternId : "";
+    json scanStats;
+    scanStats["gobjects_tried"] = g_cachedGObjectsTried;
+    scanStats["gobjects_hit"]   = g_cachedGObjectsHit;
+    scanStats["gnames_tried"]   = g_cachedGNamesTried;
+    scanStats["gnames_hit"]     = g_cachedGNamesHit;
+    scanStats["gworld_tried"]   = g_cachedGWorldTried;
+    scanStats["gworld_hit"]     = g_cachedGWorldHit;
+    data["scan_stats"] = scanStats;
+
+    data["gobjects_scan_addr"]         = Renge::AddrToStr(g_cachedGObjectsScanAddr);
+    data["gnames_scan_addr"]           = Renge::AddrToStr(g_cachedGNamesScanAddr);
+    data["gworld_scan_addr"]           = Renge::AddrToStr(g_cachedGWorldScanAddr);
+    data["sparse_delegates_scan_addr"] = Renge::AddrToStr(g_cachedSparseDelegatesScanAddr);
+
+    data["gworld_aob"]     = g_cachedGWorldAob ? g_cachedGWorldAob : "";
+    data["gworld_aob_pos"] = g_cachedGWorldAobPos;
+    data["gworld_aob_len"] = g_cachedGWorldAobLen;
+
+    data["invoke_timeout_ms"] = Stark::GetInvokeTimeoutMs();
+
+    uintptr_t moduleBase = Macht::GetModuleBase(nullptr);
+    data["module_base"] = Renge::AddrToStr(moduleBase);
+    wchar_t moduleNameW[MAX_PATH] = {};
+    GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
+    std::wstring modulePath(moduleNameW);
+    auto lastSlash = modulePath.find_last_of(L"\\/");
+    std::wstring moduleFileName = (lastSlash != std::wstring::npos)
+        ? modulePath.substr(lastSlash + 1) : modulePath;
+    std::string moduleName;
+    for (wchar_t wc : moduleFileName) {
+        moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
+    }
+    data["module_name"] = moduleName;
 }
 
 // ============================================================
@@ -539,99 +637,55 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             return Renge::MakeResponse(id, data).dump();
         }
 
-        if (cmd == Renge::CMD_GET_POINTERS) {
-            // These are filled by ExportAPI's cached EnginePointers
-            extern uintptr_t   g_cachedGObjects;
-            extern uintptr_t   g_cachedGNames;
-            extern uintptr_t   g_cachedGWorld;
-            extern uintptr_t   g_cachedSparseDelegates;
-            extern uint32_t    g_cachedUEVersion;
-            extern bool        g_cachedVersionDetected;
-            extern const char* g_cachedGObjectsMethod;
-            extern const char* g_cachedGNamesMethod;
-            extern const char* g_cachedGWorldMethod;
-            extern const char* g_cachedSparseDelegatesMethod;
-            // AOB Usage Tracking
-            extern char        g_cachedPeHash[17];
-            extern const char* g_cachedGObjectsPatternId;
-            extern const char* g_cachedGNamesPatternId;
-            extern const char* g_cachedGWorldPatternId;
-            extern const char* g_cachedSparseDelegatesPatternId;
-            extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
-            extern int         g_cachedGNamesTried,   g_cachedGNamesHit;
-            extern int         g_cachedGWorldTried,   g_cachedGWorldHit;
-            extern uintptr_t   g_cachedGObjectsScanAddr;
-            extern uintptr_t   g_cachedGNamesScanAddr;
-            extern uintptr_t   g_cachedGWorldScanAddr;
-            extern uintptr_t   g_cachedSparseDelegatesScanAddr;
-            extern const char* g_cachedGWorldAob;
-            extern int         g_cachedGWorldAobPos;
-            extern int         g_cachedGWorldAobLen;
+        // ─────────────────────────────────────────────────────────────────
+        // set_invoke_timeout — adjust GameThreadDispatch's UFunction timeout.
+        // 0 = clear (revert to Stark::kDefaultInvokeTimeoutMs).
+        // Persisted alongside the UE version override in the same JSON cache,
+        // keyed by PE hash, so the value re-applies on next launch.
+        // ─────────────────────────────────────────────────────────────────
+        if (cmd == Renge::CMD_SET_INVOKE_TIMEOUT) {
+            extern char g_cachedPeHash[17];
 
-            extern bool        g_cachedIsUserOverride;
-            extern bool        g_cachedIsLowConfidence;
-            extern const char* g_cachedPublisherThumbprint;
+            int  timeoutMs = request.value("timeout_ms", 0);
+            bool persist   = request.value("persist", true);
 
-            json data;
-            data["gobjects"]         = Renge::AddrToStr(g_cachedGObjects);
-            data["gnames"]           = Renge::AddrToStr(g_cachedGNames);
-            data["gworld"]           = Renge::AddrToStr(g_cachedGWorld);
-            data["sparse_delegates"] = Renge::AddrToStr(g_cachedSparseDelegates);
-            data["ue_version"]       = g_cachedUEVersion;
-            data["version_detected"] = g_cachedVersionDetected;
-            data["is_user_override"] = g_cachedIsUserOverride;
-            data["is_low_confidence"] = g_cachedIsLowConfidence;
-            data["publisher_thumbprint"] = g_cachedPublisherThumbprint
-                ? g_cachedPublisherThumbprint : "";
-            data["object_count"]            = Aura::GetCount();
-            data["gobjects_method"]         = g_cachedGObjectsMethod;
-            data["gnames_method"]           = g_cachedGNamesMethod;
-            data["gworld_method"]           = g_cachedGWorldMethod;
-            data["sparse_delegates_method"] = g_cachedSparseDelegatesMethod;
-
-            // AOB Usage Tracking
-            data["pe_hash"] = g_cachedPeHash;
-            data["gobjects_pattern_id"]         = g_cachedGObjectsPatternId        ? g_cachedGObjectsPatternId        : "";
-            data["gnames_pattern_id"]           = g_cachedGNamesPatternId          ? g_cachedGNamesPatternId          : "";
-            data["gworld_pattern_id"]           = g_cachedGWorldPatternId          ? g_cachedGWorldPatternId          : "";
-            data["sparse_delegates_pattern_id"] = g_cachedSparseDelegatesPatternId ? g_cachedSparseDelegatesPatternId : "";
-            json scanStats;
-            scanStats["gobjects_tried"] = g_cachedGObjectsTried;
-            scanStats["gobjects_hit"]   = g_cachedGObjectsHit;
-            scanStats["gnames_tried"]   = g_cachedGNamesTried;
-            scanStats["gnames_hit"]     = g_cachedGNamesHit;
-            scanStats["gworld_tried"]   = g_cachedGWorldTried;
-            scanStats["gworld_hit"]     = g_cachedGWorldHit;
-            data["scan_stats"] = scanStats;
-
-            // AOB scan hit addresses (instruction that references the pointer)
-            data["gobjects_scan_addr"]         = Renge::AddrToStr(g_cachedGObjectsScanAddr);
-            data["gnames_scan_addr"]           = Renge::AddrToStr(g_cachedGNamesScanAddr);
-            data["gworld_scan_addr"]           = Renge::AddrToStr(g_cachedGWorldScanAddr);
-            data["sparse_delegates_scan_addr"] = Renge::AddrToStr(g_cachedSparseDelegatesScanAddr);
-
-            // GWorld winning pattern AOB metadata (for CE symbol registration)
-            data["gworld_aob"]     = g_cachedGWorldAob ? g_cachedGWorldAob : "";
-            data["gworld_aob_pos"] = g_cachedGWorldAobPos;
-            data["gworld_aob_len"] = g_cachedGWorldAobLen;
-
-            // Module info for CE address formatting
-            uintptr_t moduleBase = Macht::GetModuleBase(nullptr);
-            data["module_base"] = Renge::AddrToStr(moduleBase);
-            {
-                wchar_t moduleNameW[MAX_PATH] = {};
-                GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
-                std::wstring modulePath(moduleNameW);
-                auto lastSlash = modulePath.find_last_of(L"\\/");
-                std::wstring moduleFileName = (lastSlash != std::wstring::npos)
-                    ? modulePath.substr(lastSlash + 1) : modulePath;
-                std::string moduleName;
-                for (wchar_t wc : moduleFileName) {
-                    moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
-                }
-                data["module_name"] = moduleName;
+            // Defensive bounds — match Stark's clamp band, but allow 0 to clear.
+            if (timeoutMs != 0 && (timeoutMs < 100 || timeoutMs > 600000)) {
+                return Renge::MakeError(id,
+                    "timeout_ms out of supported range (100..600000 or 0 to clear)").dump();
             }
 
+            if (persist) {
+                wchar_t exeW[MAX_PATH] = {};
+                GetModuleFileNameW(nullptr, exeW, MAX_PATH);
+                std::wstring exePath(exeW);
+                auto lastSlash = exePath.find_last_of(L"\\/");
+                std::wstring fileName = (lastSlash != std::wstring::npos)
+                    ? exePath.substr(lastSlash + 1) : exePath;
+                std::string nameUtf8;
+                int sz = WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
+                                             nullptr, 0, nullptr, nullptr);
+                if (sz > 0) {
+                    nameUtf8.resize(sz - 1);
+                    WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
+                                        nameUtf8.data(), sz, nullptr, nullptr);
+                }
+                Flamme::SaveInvokeTimeout(g_cachedPeHash, timeoutMs, nameUtf8.c_str());
+            }
+
+            // Apply immediately — already-blocked invokes keep their original timeout
+            // (future.wait_for is captured at call time; see Stark.cpp::EnqueueInvoke).
+            Stark::SetInvokeTimeoutMs(timeoutMs);
+
+            json data;
+            data["invoke_timeout_ms"] = Stark::GetInvokeTimeoutMs();
+            data["persisted"]         = persist;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        if (cmd == Renge::CMD_GET_POINTERS) {
+            json data;
+            FillPointerSnapshot(data);
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -915,9 +969,13 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             std::string addrStr = request.value("addr", "");
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
 
-            uintptr_t addr = Renge::StrToAddr(addrStr);
+            uintptr_t addr = 0;
+            if (!Renge::TryStrToAddr(addrStr, addr))
+                return Renge::MakeError(id, "Invalid addr (not a hex number): " + addrStr).dump();
             std::string classAddrStr = request.value("class_addr", "");
-            uintptr_t classAddr = classAddrStr.empty() ? 0 : Renge::StrToAddr(classAddrStr);
+            uintptr_t classAddr = 0;
+            if (!classAddrStr.empty() && !Renge::TryStrToAddr(classAddrStr, classAddr))
+                return Renge::MakeError(id, "Invalid class_addr (not a hex number): " + classAddrStr).dump();
             int32_t arrayLimit = request.value("array_limit", 64);
             int32_t previewLimit = request.value("preview_limit", 2);
             bool fillGaps = request.value("fill_gaps", false);
@@ -1724,33 +1782,6 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
 
         // ── scan_status: Poll scan progress (pairs with trigger_scan) ────────
         if (cmd == Renge::CMD_SCAN_STATUS) {
-            extern uintptr_t   g_cachedGObjects;
-            extern uintptr_t   g_cachedGNames;
-            extern uintptr_t   g_cachedGWorld;
-            extern uintptr_t   g_cachedSparseDelegates;
-            extern uint32_t    g_cachedUEVersion;
-            extern bool        g_cachedVersionDetected;
-            extern const char* g_cachedGObjectsMethod;
-            extern const char* g_cachedGNamesMethod;
-            extern const char* g_cachedGWorldMethod;
-            extern const char* g_cachedSparseDelegatesMethod;
-            extern char        g_cachedPeHash[17];
-            extern const char* g_cachedGObjectsPatternId;
-            extern const char* g_cachedGNamesPatternId;
-            extern const char* g_cachedGWorldPatternId;
-            extern const char* g_cachedSparseDelegatesPatternId;
-            extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
-            extern int         g_cachedGNamesTried,   g_cachedGNamesHit;
-            extern int         g_cachedGWorldTried,   g_cachedGWorldHit;
-            extern uintptr_t   g_cachedGObjectsScanAddr;
-            extern uintptr_t   g_cachedGNamesScanAddr;
-            extern uintptr_t   g_cachedGWorldScanAddr;
-            extern uintptr_t   g_cachedSparseDelegatesScanAddr;
-            extern const char* g_cachedGWorldAob;
-            extern int         g_cachedGWorldAobPos;
-            extern int         g_cachedGWorldAobLen;
-
-            // Read progress from ScanProgress namespace (set by UE5_Init)
             namespace SP = ScanProgress;
             int phase = SP::phase.load(std::memory_order_acquire);
 
@@ -1759,56 +1790,11 @@ std::string Fern::DispatchCommand(const std::string& jsonLine) {
             data["phase"]       = phase;
             data["status_text"] = SP::GetStatusText();
 
-            // When complete, include full pointer data (same as get_pointers)
+            // When complete, include full pointer snapshot — same shape as
+            // get_pointers. Single helper guarantees the two paths can't drift.
             if (!m_scan.running.load() && m_scan.completed) {
-                data["scanned"]          = true;
-                data["gobjects"]         = Renge::AddrToStr(g_cachedGObjects);
-                data["gnames"]           = Renge::AddrToStr(g_cachedGNames);
-                data["gworld"]           = Renge::AddrToStr(g_cachedGWorld);
-                data["sparse_delegates"] = Renge::AddrToStr(g_cachedSparseDelegates);
-                data["ue_version"]       = g_cachedUEVersion;
-                data["version_detected"] = g_cachedVersionDetected;
-                data["object_count"]            = Aura::GetCount();
-                data["gobjects_method"]         = g_cachedGObjectsMethod;
-                data["gnames_method"]           = g_cachedGNamesMethod;
-                data["gworld_method"]           = g_cachedGWorldMethod;
-                data["sparse_delegates_method"] = g_cachedSparseDelegatesMethod;
-                data["pe_hash"]          = g_cachedPeHash;
-                data["gobjects_pattern_id"]         = g_cachedGObjectsPatternId        ? g_cachedGObjectsPatternId        : "";
-                data["gnames_pattern_id"]           = g_cachedGNamesPatternId          ? g_cachedGNamesPatternId          : "";
-                data["gworld_pattern_id"]           = g_cachedGWorldPatternId          ? g_cachedGWorldPatternId          : "";
-                data["sparse_delegates_pattern_id"] = g_cachedSparseDelegatesPatternId ? g_cachedSparseDelegatesPatternId : "";
-                json scanStats;
-                scanStats["gobjects_tried"] = g_cachedGObjectsTried;
-                scanStats["gobjects_hit"]   = g_cachedGObjectsHit;
-                scanStats["gnames_tried"]   = g_cachedGNamesTried;
-                scanStats["gnames_hit"]     = g_cachedGNamesHit;
-                scanStats["gworld_tried"]   = g_cachedGWorldTried;
-                scanStats["gworld_hit"]     = g_cachedGWorldHit;
-                data["scan_stats"]          = scanStats;
-                data["gobjects_scan_addr"]         = Renge::AddrToStr(g_cachedGObjectsScanAddr);
-                data["gnames_scan_addr"]           = Renge::AddrToStr(g_cachedGNamesScanAddr);
-                data["gworld_scan_addr"]           = Renge::AddrToStr(g_cachedGWorldScanAddr);
-                data["sparse_delegates_scan_addr"] = Renge::AddrToStr(g_cachedSparseDelegatesScanAddr);
-                data["gworld_aob"]          = g_cachedGWorldAob ? g_cachedGWorldAob : "";
-                data["gworld_aob_pos"]      = g_cachedGWorldAobPos;
-                data["gworld_aob_len"]      = g_cachedGWorldAobLen;
-
-                uintptr_t moduleBase = Macht::GetModuleBase(nullptr);
-                data["module_base"] = Renge::AddrToStr(moduleBase);
-                {
-                    wchar_t moduleNameW[MAX_PATH] = {};
-                    GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
-                    std::wstring modulePath(moduleNameW);
-                    auto lastSlash = modulePath.find_last_of(L"\\/");
-                    std::wstring moduleFileName = (lastSlash != std::wstring::npos)
-                        ? modulePath.substr(lastSlash + 1) : modulePath;
-                    std::string moduleName;
-                    for (wchar_t wc : moduleFileName) {
-                        moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
-                    }
-                    data["module_name"] = moduleName;
-                }
+                data["scanned"] = true;
+                FillPointerSnapshot(data);
             }
 
             return Renge::MakeResponse(id, data).dump();

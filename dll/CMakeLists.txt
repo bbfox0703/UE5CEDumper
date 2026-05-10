@@ -323,4 +323,25 @@ if(NOT BUILD_PROXY_DLL AND NOT BUILD_PROXY_DINPUT8)
             /utf-8 /W4 /permissive- /EHa
         )
     endif()
+
+    # Pure-helper tests (Renge::TryStrToAddr, Scharf::IsAlignmentSuspicious).
+    # Same harness style as utf8_helpers_test — exit code = failure count.
+    # Pulls in nlohmann/json since Renge.h needs it (header-only, no link).
+    add_executable(dll_helpers_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/dll_helpers_test.cpp
+    )
+
+    target_include_directories(dll_helpers_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/vendor/nlohmann
+    )
+
+    if(MSVC)
+        set_property(TARGET dll_helpers_test PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        )
+        target_compile_options(dll_helpers_test PRIVATE
+            /utf-8 /W4 /permissive- /EHa
+        )
+    endif()
 endif()

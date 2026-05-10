@@ -55,8 +55,12 @@ static std::atomic<bool> s_hookActive{false};
 static std::atomic<bool> s_mhInitialized{false};
 static uintptr_t s_hookedAddr = 0;
 
-// Timeout for waiting on game-thread execution
-static constexpr auto INVOKE_TIMEOUT = std::chrono::seconds(5);
+// Timeout for waiting on game-thread execution. Atomic so the pipe thread
+// (handling set_invoke_timeout) can update it while another pipe call is
+// already blocked in EnqueueInvoke without locking. Re-read on each invoke;
+// already-pending requests keep their original timeout (consistent with how
+// future.wait_for is captured at call time).
+static std::atomic<int32_t> s_invokeTimeoutMs{kDefaultInvokeTimeoutMs};
 
 // ---- SEH-isolated helper ----
 
@@ -264,9 +268,11 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
              (unsigned long long)instance, (unsigned long long)ufunc);
 
     // Wait for game thread to execute the request
-    auto status = future.wait_for(INVOKE_TIMEOUT);
+    int32_t timeoutMs = s_invokeTimeoutMs.load();
+    auto status = future.wait_for(std::chrono::milliseconds(timeoutMs));
     if (status == std::future_status::timeout) {
-        LOG_ERROR("GameThreadDispatch: invoke timeout (5s) inst=0x%llX func=0x%llX",
+        LOG_ERROR("GameThreadDispatch: invoke timeout (%dms) inst=0x%llX func=0x%llX",
+                  timeoutMs,
                   (unsigned long long)instance, (unsigned long long)ufunc);
         return -5;
     }
@@ -274,6 +280,23 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
     int32_t result = future.get();
     LOG_INFO("GameThreadDispatch: invoke completed result=%d", result);
     return result;
+}
+
+// Public setter/getter for the invoke timeout. Clamped to a sane band so
+// a misbehaving UI can't accidentally hang every UFunction call forever
+// (or, conversely, set such a tight value that everything always times out).
+void SetInvokeTimeoutMs(int32_t timeoutMs) {
+    if (timeoutMs <= 0) {
+        s_invokeTimeoutMs.store(kDefaultInvokeTimeoutMs);
+        return;
+    }
+    if (timeoutMs < 100)    timeoutMs = 100;
+    if (timeoutMs > 600000) timeoutMs = 600000;
+    s_invokeTimeoutMs.store(timeoutMs);
+}
+
+int32_t GetInvokeTimeoutMs() {
+    return s_invokeTimeoutMs.load();
 }
 
 } // namespace Stark

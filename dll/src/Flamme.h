@@ -38,6 +38,14 @@ struct ScanHints {
     // 0 = no override. Set/cleared via the set_ue_version_override pipe cmd.
     uint32_t    userOverrideVersion = 0;
     bool        hasUserOverride     = false;
+
+    // Per-game GameThreadDispatch invoke timeout in milliseconds.
+    // 0 = use Stark's compile-time default (5000ms). Set/cleared via the
+    // set_invoke_timeout pipe cmd. Useful when a game's UFunction completion
+    // is gated by next-frame logic (Blueprint widgets, multicast delegates)
+    // and 5s isn't enough.
+    int32_t     invokeTimeoutMs        = 0;
+    bool        hasInvokeTimeoutOverride = false;
 };
 
 /// Load hints for a given PE hash from the cache file.
@@ -59,5 +67,13 @@ void SaveResults(const char* peHash, const Genau::EnginePointers& ptrs,
 /// Never throws — errors are logged.
 void SaveUserOverride(const char* peHash, uint32_t ueVersion,
                       const char* processName);
+
+/// Persist (or clear) the user-set GameThreadDispatch invoke timeout for a game.
+///   timeoutMs == 0 → clear the override (revert to Stark's default 5000ms).
+///   timeoutMs != 0 → save the override; applied at next scan + immediately to Stark.
+/// processName is used only for the readable gameName field in the JSON record.
+/// Never throws — errors are logged.
+void SaveInvokeTimeout(const char* peHash, int32_t timeoutMs,
+                       const char* processName);
 
 } // namespace Flamme

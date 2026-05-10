@@ -40,6 +40,7 @@ narrative identity resonates with what the module *does*.
 | **Methode.cpp** | 梅特黛 | All-capable analyst mage | #16 | CEPlugin: CE Plugin Type 5 interface | Analytical entry point — examines everything |
 | **Heiter.cpp** | 海塔 | Priest who started the journey | — | dllmain: DLL entry point, auto-start logic | The one who set the journey in motion — DLL_PROCESS_ATTACH |
 | **Lugner.cpp** | 呂格納 | Demon master of disguise | #12 | ProxyVersion: version.dll forwarding proxy | The deceiver — pretends to be the real version.dll |
+| **Scharf.h** | 夏爾夫 | Sharp-eyed, scrutinizing examinee | #17 | WalkerAlignment: FProperty offset-vs-alignment validator | Sharp eye for layout flaws — catches misaligned EnumProperty / FName that hint at a wrong FPROPERTY_OFFSET probe |
 
 ---
 
@@ -67,6 +68,8 @@ narrative identity resonates with what the module *does*.
 
 **Unchanged**: `BuildInfo.h.in`, `version.rc`
 
+> **New (post-577)**: `Scharf.h` introduced for the FProperty alignment helper extracted from Ubel.cpp. No prior file rename — born Frieren-named.
+
 ---
 
 ## Namespace Structure
@@ -85,6 +88,7 @@ Flamme::                    // HintCache — ancient wisdom
 Stark::                     // GameThreadDispatch — frontline warrior
 Mimic::                     // Mailbox — disguised channel
 Renge::                     // PipeProtocol — liaison rules
+Scharf::                    // FProperty alignment validator (header-only)
 Grimoire::                  // Constants — spell book
 DynOff::                    // Dynamic offsets (in Grimoire.h, unchanged)
 ```
@@ -196,7 +200,7 @@ Frieren, Himmel, Stark, Fern, Methode, Mimic, Genau
 | Solitär (#11) | 11 | Stealth/concealment features |
 | Sense (#13) | 13 | Object destruction/cleanup |
 | Linie (#14) | 14 | Object cloning/replication |
-| Scharf (#17) | 17 | Sharp analysis tools |
+| ~~Scharf (#17)~~ | 17 | **In use → FProperty alignment validator (`Scharf.h`)** |
 | Glück (#18) | 18 | Lucky heuristics / fallback logic |
 | Wirbel (#20) | 20 | Strategy/optimization |
 | Denken (#25) | 25 | Deep analysis / type inference |
