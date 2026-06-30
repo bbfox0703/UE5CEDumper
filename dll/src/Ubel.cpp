@@ -1008,212 +1008,243 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
     constexpr uint64_t CPF_ReturnParm = 0x0400;
     constexpr uint64_t CPF_OutParm    = 0x0100;
 
-    // Walk the UField::Children chain (UStruct::Children at 0x48)
-    // This chain contains UFunctions (and possibly other UField types)
-    uintptr_t child = 0;
-    if (!Macht::ReadSafe(uclassAddr + DynOff::USTRUCT_CHILDREN, child) || !child)
-        return funcs;
+    // NEW: Offset for UStruct::SuperStruct (usually follows Children / ChildProperties)
+    // In UE4/UE5 UStruct layout:
+    // UField handles Next (0x28/0x30)
+    // UStruct handles SuperStruct (0x30/0x40 depending on version)
+    // We can safely assume it is at USTRUCT_CHILDREN - 0x08 in most layouts.
+    const uintptr_t OFF_USTRUCT_SUPER = DynOff::USTRUCT_CHILDREN - 0x08;
 
-    int safetyLimit = 4096;
-    std::unordered_set<uintptr_t> seenChildren;
-    seenChildren.reserve(64);
-    while (child != 0 && safetyLimit-- > 0) {
-        if (!seenChildren.insert(child).second) {
-            Sein::Warn("WALK:safe", "WalkFunctions: Children cycle at 0x%llx, aborting",
-                (unsigned long long)child);
+    // NEW: Keep track of processed classes to prevent infinite inheritance loops
+    std::unordered_set<uintptr_t> seenClasses;
+    uintptr_t currentClass = uclassAddr;
+
+    // NEW: Loop through the class inheritance hierarchy (Class -> SuperClass -> GrandSuperClass...)
+    while (currentClass != 0) {
+        if (!seenClasses.insert(currentClass).second) {
+            Sein::Warn("WALK:safe", "WalkFunctions: Class inheritance cycle at 0x%llx, aborting hierarchy",
+                (unsigned long long)currentClass);
             break;
         }
-        // Check if this child is a UFunction by reading its class name
-        uintptr_t childClass = 0;
-        if (Macht::ReadSafe(child + Grimoire::OFF_UOBJECT_CLASS, childClass) && childClass) {
-            std::string clsName = ReadFName(childClass + Grimoire::OFF_UOBJECT_NAME);
 
-            if (clsName == "Function") {
-                FunctionInfo fi{};
-                fi.name = GetName(child);
-                fi.fullName = GetFullName(child);
-                fi.address = child;
-
-                // Read FunctionFlags (UFunction::FunctionFlags)
-                // Version-aware probing: try the most likely offset first.
-                // RE-UE4SS templates confirm offsets:
-                //   0x88 = UE 4.18-4.20
-                //   0x98 = UE 4.21-4.24
-                //   0xB0 = UE 4.25-4.27 / UE5.0-5.4
-                //   0xC0 = UE 5.5+
-                uint32_t funcFlags = 0;
-                int funcFlagsOff = -1;
-
-                // Determine primary offset based on detected UE version
-                int primary;
-                if (g_cachedUEVersion >= 550)      primary = 0xC0;
-                else if (g_cachedUEVersion >= 425) primary = 0xB0;
-                else if (g_cachedUEVersion >= 421) primary = 0x98;
-                else                               primary = 0x88;
-
-                // Try primary offset first
-                if (Macht::ReadSafe<uint32_t>(child + primary, funcFlags) && funcFlags != 0) {
-                    funcFlagsOff = primary;
-                } else {
-                    // Fallback: try all known offsets (skip primary, already tried)
-                    for (int tryOff : { 0xB0, 0xC0, 0x88, 0x98, 0xA8, 0xB8 }) {
-                        if (tryOff == primary) continue;
-                        if (Macht::ReadSafe<uint32_t>(child + tryOff, funcFlags) && funcFlags != 0) {
-                            funcFlagsOff = tryOff;
-                            break;
-                        }
-                    }
-                }
-                fi.functionFlags = funcFlags;
-
-                // NumParms, ParmsSize, ReturnValueOffset are at fixed offsets
-                // relative to FunctionFlags (stable across all UE versions):
-                //   +0x04 = NumParms (uint8)
-                //   +0x06 = ParmsSize (uint16)
-                //   +0x08 = ReturnValueOffset (uint16)
-                if (funcFlagsOff >= 0) {
-                    Macht::ReadSafe<uint8_t> (child + funcFlagsOff + 0x04, fi.numParms);
-                    Macht::ReadSafe<uint16_t>(child + funcFlagsOff + 0x06, fi.parmsSize);
-                    Macht::ReadSafe<uint16_t>(child + funcFlagsOff + 0x08, fi.returnValueOffset);
-                }
-
-                // Walk the UFunction's own property chain (its parameters)
-                // UFunction inherits UStruct, so ChildProperties is at USTRUCT_CHILDPROPS
-                if (DynOff::bUseFProperty) {
-                    uintptr_t paramChain = 0;
-                    if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDPROPS, paramChain) && paramChain) {
-                        uintptr_t cur = DynOff::StripFFieldTag(paramChain);
-                        int paramLimit = 256;
-                        std::unordered_set<uintptr_t> seenParams;
-                        while (cur != 0 && paramLimit-- > 0) {
-                            if (!seenParams.insert(cur).second) {
-                                Sein::Warn("WALK:safe", "WalkFunctions: param FField cycle at 0x%llx", (unsigned long long)cur);
-                                break;
-                            }
-                            if (DynOff::IsFFieldVariantUObject(cur)) break;
-
-                            FunctionParam param{};
-                            param.name = ReadFName(cur + DynOff::FFIELD_NAME);
-                            param.typeName = GetFieldTypeName(cur);
-                            Macht::ReadSafe<int32_t>(cur + DynOff::FPROPERTY_ELEMSIZE, param.size);
-                            Macht::ReadSafe<int32_t>(cur + DynOff::FPROPERTY_OFFSET, param.offset);
-
-                            uint64_t propFlags = 0;
-                            Macht::ReadSafe<uint64_t>(cur + DynOff::FPROPERTY_FLAGS, propFlags);
-
-                            param.isReturn = (propFlags & CPF_ReturnParm) != 0;
-                            param.isOut = (propFlags & CPF_OutParm) != 0;
-
-                            // StructProperty -> read UScriptStruct name + sub-field layout
-                            if (param.typeName == "StructProperty") {
-                                param.structType = ReadSubclassTypeName(cur);
-                                // Phase B: walk the UScriptStruct to discover sub-fields
-                                uintptr_t structPtr = 0;
-                                if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr) && structPtr) {
-                                    ClassInfo structInfo = WalkClass(structPtr);
-                                    for (const auto& sf : structInfo.Fields)
-                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
-                                }
-                            }
-                            // Stage 1: Object/Class/Soft/Weak/Lazy/Interface params
-                            // expose their target UClass name (FObjectPropertyBase::
-                            // PropertyClass lives at the same FProperty subclass
-                            // extension slot as FStructProperty::Struct — mirrors
-                            // the WalkClassEx field-side enrichment at line 599).
-                            else if (param.typeName == "ObjectProperty"     || param.typeName == "ClassProperty"
-                                  || param.typeName == "WeakObjectProperty" || param.typeName == "SoftObjectProperty"
-                                  || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
-                                  || param.typeName == "LazyObjectProperty") {
-                                param.objClassName = ReadSubclassTypeName(cur);
-                            }
-
-                            if (param.isReturn)
-                                fi.returnType = param.typeName;
-
-                            if (!param.name.empty())
-                                fi.params.push_back(param);
-
-                            uintptr_t next = 0;
-                            if (!Macht::ReadSafe(cur + DynOff::FFIELD_NEXT, next)) break;
-                            cur = DynOff::StripFFieldTag(next);
-                        }
-                    }
-                } else {
-                    // UE4 <4.25: UProperty chain via Children
-                    uintptr_t paramChain = 0;
-                    if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDREN, paramChain) && paramChain) {
-                        uintptr_t cur = paramChain;
-                        int paramLimit = 256;
-                        std::unordered_set<uintptr_t> seenParams;
-                        while (cur != 0 && paramLimit-- > 0) {
-                            if (!seenParams.insert(cur).second) {
-                                Sein::Warn("WALK:safe", "WalkFunctions: param UProperty cycle at 0x%llx", (unsigned long long)cur);
-                                break;
-                            }
-                            FunctionParam param{};
-                            param.name = ReadFName(cur + Grimoire::OFF_UOBJECT_NAME);
-
-                            uintptr_t paramCls = 0;
-                            if (Macht::ReadSafe(cur + Grimoire::OFF_UOBJECT_CLASS, paramCls) && paramCls)
-                                param.typeName = ReadFName(paramCls + Grimoire::OFF_UOBJECT_NAME);
-
-                            Macht::ReadSafe<int32_t>(cur + DynOff::UPROPERTY_ELEMSIZE, param.size);
-                            Macht::ReadSafe<int32_t>(cur + DynOff::UPROPERTY_OFFSET, param.offset);
-
-                            uint64_t propFlags = 0;
-                            Macht::ReadSafe<uint64_t>(cur + DynOff::UPROPERTY_FLAGS, propFlags);
-
-                            param.isReturn = (propFlags & CPF_ReturnParm) != 0;
-                            param.isOut = (propFlags & CPF_OutParm) != 0;
-
-                            // UE4 StructProperty -> read UScriptStruct name + sub-field layout
-                            if (param.typeName == "StructProperty") {
-                                uintptr_t structPtr = 0;
-                                // UStructProperty::Struct is at UPROPERTY subclass extension offset
-                                if (Macht::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, structPtr) && structPtr) {
-                                    std::string sn = GetName(structPtr);
-                                    if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
-                                        param.structType = sn;
-                                    // Phase B: walk the UScriptStruct to discover sub-fields
-                                    ClassInfo structInfo = WalkClass(structPtr);
-                                    for (const auto& sf : structInfo.Fields)
-                                        param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
-                                }
-                            }
-                            // Stage 1 (UE4 <4.25 path): same UProperty subclass
-                            // extension slot as UStructProperty::Struct holds
-                            // UObjectPropertyBase::PropertyClass — both are the
-                            // first derived field after the UProperty base.
-                            else if (param.typeName == "ObjectProperty"     || param.typeName == "ClassProperty"
-                                  || param.typeName == "WeakObjectProperty" || param.typeName == "SoftObjectProperty"
-                                  || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
-                                  || param.typeName == "LazyObjectProperty") {
-                                uintptr_t classPtr = 0;
-                                if (Macht::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, classPtr) && classPtr) {
-                                    std::string cn = GetName(classPtr);
-                                    if (!cn.empty() && cn[0] >= 0x20 && cn[0] < 0x7F)
-                                        param.objClassName = cn;
-                                }
-                            }
-
-                            if (param.isReturn) fi.returnType = param.typeName;
-                            if (!param.name.empty()) fi.params.push_back(param);
-
-                            uintptr_t next = 0;
-                            if (!Macht::ReadSafe(cur + DynOff::UFIELD_NEXT, next)) break;
-                            cur = next;
-                        }
-                    }
-                }
-
-                funcs.push_back(std::move(fi));
+        // Walk the UField::Children chain (UStruct::Children at 0x48)
+        // This chain contains UFunctions (and possibly other UField types)
+        uintptr_t child = 0;
+        if (!Macht::ReadSafe(currentClass + DynOff::USTRUCT_CHILDREN, child) || !child) {
+            // NEW: If this specific class has no children, try to move to its SuperStruct
+            uintptr_t superTarget = 0;
+            if (Macht::ReadSafe(currentClass + OFF_USTRUCT_SUPER, superTarget) && superTarget) {
+                currentClass = superTarget;
+                continue;
             }
+            break;
         }
 
-        // Move to next UField via UField::Next
-        uintptr_t next = 0;
-        if (!Macht::ReadSafe(child + DynOff::UFIELD_NEXT, next)) break;
-        child = next;
+        int safetyLimit = 4096;
+        std::unordered_set<uintptr_t> seenChildren;
+        seenChildren.reserve(64);
+        while (child != 0 && safetyLimit-- > 0) {
+            if (!seenChildren.insert(child).second) {
+                Sein::Warn("WALK:safe", "WalkFunctions: Children cycle at 0x%llx, aborting",
+                    (unsigned long long)child);
+                break;
+            }
+            // Check if this child is a UFunction by reading its class name
+            uintptr_t childClass = 0;
+            if (Macht::ReadSafe(child + Grimoire::OFF_UOBJECT_CLASS, childClass) && childClass) {
+                std::string clsName = ReadFName(childClass + Grimoire::OFF_UOBJECT_NAME);
+
+                if (clsName == "Function") {
+                    FunctionInfo fi{};
+                    fi.name = GetName(child);
+                    fi.fullName = GetFullName(child);
+                    fi.address = child;
+
+                    // Read FunctionFlags (UFunction::FunctionFlags)
+                    // Version-aware probing: try the most likely offset first.
+                    // RE-UE4SS templates confirm offsets:
+                    //   0x88 = UE 4.18-4.20
+                    //   0x98 = UE 4.21-4.24
+                    //   0xB0 = UE 4.25-4.27 / UE5.0-5.4
+                    //   0xC0 = UE 5.5+
+                    uint32_t funcFlags = 0;
+                    int funcFlagsOff = -1;
+
+                    // Determine primary offset based on detected UE version
+                    int primary;
+                    if (g_cachedUEVersion >= 550)      primary = 0xC0;
+                    else if (g_cachedUEVersion >= 425) primary = 0xB0;
+                    else if (g_cachedUEVersion >= 421) primary = 0x98;
+                    else                               primary = 0x88;
+
+                    // Try primary offset first
+                    if (Macht::ReadSafe<uint32_t>(child + primary, funcFlags) && funcFlags != 0) {
+                        funcFlagsOff = primary;
+                    } else {
+                        // Fallback: try all known offsets (skip primary, already tried)
+                        for (int tryOff : { 0xB0, 0xC0, 0x88, 0x98, 0xA8, 0xB8 }) {
+                            if (tryOff == primary) continue;
+                            if (Macht::ReadSafe<uint32_t>(child + tryOff, funcFlags) && funcFlags != 0) {
+                                funcFlagsOff = tryOff;
+                                break;
+                            }
+                        }
+                    }
+                    fi.functionFlags = funcFlags;
+
+                    // NumParms, ParmsSize, ReturnValueOffset are at fixed offsets
+                    // relative to FunctionFlags (stable across all UE versions):
+                    //   +0x04 = NumParms (uint8)
+                    //   +0x06 = ParmsSize (uint16)
+                    //   +0x08 = ReturnValueOffset (uint16)
+                    if (funcFlagsOff >= 0) {
+                        Macht::ReadSafe<uint8_t> (child + funcFlagsOff + 0x04, fi.numParms);
+                        Macht::ReadSafe<uint16_t>(child + funcFlagsOff + 0x06, fi.parmsSize);
+                        Macht::ReadSafe<uint16_t>(child + funcFlagsOff + 0x08, fi.returnValueOffset);
+                    }
+                    // Walk the UFunction's own property chain (its parameters)
+                    // UFunction inherits UStruct, so ChildProperties is at USTRUCT_CHILDPROPS
+                    if (DynOff::bUseFProperty) {
+                        uintptr_t paramChain = 0;
+                        if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDPROPS, paramChain) && paramChain) {
+                            uintptr_t cur = DynOff::StripFFieldTag(paramChain);
+                            int paramLimit = 256;
+                            std::unordered_set<uintptr_t> seenParams;
+                            while (cur != 0 && paramLimit-- > 0) {
+                                if (!seenParams.insert(cur).second) {
+                                    Sein::Warn("WALK:safe", "WalkFunctions: param FField cycle at 0x%llx", (unsigned long long)cur);
+                                    break;
+                                }
+                                if (DynOff::IsFFieldVariantUObject(cur)) break;
+
+                                FunctionParam param{};
+                                param.name = ReadFName(cur + DynOff::FFIELD_NAME);
+                                param.typeName = GetFieldTypeName(cur);
+                                Macht::ReadSafe<int32_t>(cur + DynOff::FPROPERTY_ELEMSIZE, param.size);
+                                Macht::ReadSafe<int32_t>(cur + DynOff::FPROPERTY_OFFSET, param.offset);
+
+                                uint64_t propFlags = 0;
+                                Macht::ReadSafe<uint64_t>(cur + DynOff::FPROPERTY_FLAGS, propFlags);
+
+                                param.isReturn = (propFlags & CPF_ReturnParm) != 0;
+                                param.isOut = (propFlags & CPF_OutParm) != 0;
+
+                                // StructProperty -> read UScriptStruct name + sub-field layout
+                                if (param.typeName == "StructProperty") {
+                                    param.structType = ReadSubclassTypeName(cur);
+                                    // Phase B: walk the UScriptStruct to discover sub-fields
+                                    uintptr_t structPtr = 0;
+                                    if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr) && structPtr) {
+                                        ClassInfo structInfo = WalkClass(structPtr);
+                                        for (const auto& sf : structInfo.Fields)
+                                            param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
+                                    }
+                                }
+                                // Stage 1: Object/Class/Soft/Weak/Lazy/Interface params
+                                // expose their target UClass name (FObjectPropertyBase::
+                                // PropertyClass lives at the same FProperty subclass
+                                // extension slot as FStructProperty::Struct — mirrors
+                                // the WalkClassEx field-side enrichment at line 599).
+                                else if (param.typeName == "ObjectProperty"     || param.typeName == "ClassProperty"
+                                      || param.typeName == "WeakObjectProperty" || param.typeName == "SoftObjectProperty"
+                                      || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
+                                      || param.typeName == "LazyObjectProperty") {
+                                    param.objClassName = ReadSubclassTypeName(cur);
+                                }
+
+                                if (param.isReturn)
+                                    fi.returnType = param.typeName;
+
+                                if (!param.name.empty())
+                                    fi.params.push_back(param);
+
+                                uintptr_t next = 0;
+                                if (!Macht::ReadSafe(cur + DynOff::FFIELD_NEXT, next)) break;
+                                cur = DynOff::StripFFieldTag(next);
+                            }
+                        }
+                    } else {
+                        // UE4 <4.25: UProperty chain via Children
+                        uintptr_t paramChain = 0;
+                        if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDREN, paramChain) && paramChain) {
+                            uintptr_t cur = paramChain;
+                            int paramLimit = 256;
+                            std::unordered_set<uintptr_t> seenParams;
+                            while (cur != 0 && paramLimit-- > 0) {
+                                if (!seenParams.insert(cur).second) {
+                                    Sein::Warn("WALK:safe", "WalkFunctions: param UProperty cycle at 0x%llx", (unsigned long long)cur);
+                                    break;
+                                }
+                                FunctionParam param{};
+                                param.name = ReadFName(cur + Grimoire::OFF_UOBJECT_NAME);
+
+                                uintptr_t paramCls = 0;
+                                if (Macht::ReadSafe(cur + Grimoire::OFF_UOBJECT_CLASS, paramCls) && paramCls)
+                                    param.typeName = ReadFName(paramCls + Grimoire::OFF_UOBJECT_NAME);
+
+                                Macht::ReadSafe<int32_t>(cur + DynOff::UPROPERTY_ELEMSIZE, param.size);
+                                Macht::ReadSafe<int32_t>(cur + DynOff::UPROPERTY_OFFSET, param.offset);
+
+                                uint64_t propFlags = 0;
+                                Macht::ReadSafe<uint64_t>(cur + DynOff::UPROPERTY_FLAGS, propFlags);
+
+                                param.isReturn = (propFlags & CPF_ReturnParm) != 0;
+                                param.isOut = (propFlags & CPF_OutParm) != 0;
+
+                                // UE4 StructProperty -> read UScriptStruct name + sub-field layout
+                                if (param.typeName == "StructProperty") {
+                                    uintptr_t structPtr = 0;
+                                    // UStructProperty::Struct is at UPROPERTY subclass extension offset
+                                    if (Macht::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, structPtr) && structPtr) {
+                                        std::string sn = GetName(structPtr);
+                                        if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
+                                            param.structType = sn;
+                                        // Phase B: walk the UScriptStruct to discover sub-fields
+                                        ClassInfo structInfo = WalkClass(structPtr);
+                                        for (const auto& sf : structInfo.Fields)
+                                            param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size});
+                                    }
+                                }
+                                // Stage 1 (UE4 <4.25 path): same UProperty subclass
+                                // extension slot as UStructProperty::Struct holds
+                                // UObjectPropertyBase::PropertyClass — both are the
+                                // first derived field after the UProperty base.
+                                else if (param.typeName == "ObjectProperty"     || param.typeName == "ClassProperty"
+                                      || param.typeName == "WeakObjectProperty" || param.typeName == "SoftObjectProperty"
+                                      || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
+                                      || param.typeName == "LazyObjectProperty") {
+                                    uintptr_t classPtr = 0;
+                                    if (Macht::ReadSafe(cur + DynOff::UPROPERTY_OFFSET + 0x2C, classPtr) && classPtr) {
+                                        std::string cn = GetName(classPtr);
+                                        if (!cn.empty() && cn[0] >= 0x20 && cn[0] < 0x7F)
+                                            param.objClassName = cn;
+                                    }
+                                }
+
+                                if (param.isReturn) fi.returnType = param.typeName;
+                                if (!param.name.empty()) fi.params.push_back(param);
+
+                                uintptr_t next = 0;
+                                if (!Macht::ReadSafe(cur + DynOff::UFIELD_NEXT, next)) break;
+                                cur = next;
+                            }
+                        }
+                    }
+
+                    funcs.push_back(std::move(fi));
+                }
+            }
+
+            // Move to next UField via UField::Next
+            uintptr_t next = 0;
+            if (!Macht::ReadSafe(child + DynOff::UFIELD_NEXT, next)) break;
+            child = next;
+        }
+
+        // NEW: Move up the inheritance chain to the parent class (UStruct::SuperStruct)
+        uintptr_t nextClass = 0;
+        if (!Macht::ReadSafe(currentClass + OFF_USTRUCT_SUPER, nextClass)) break;
+        currentClass = nextClass;
     }
 
     LOG_INFO("WalkFunctions: %zu functions found at 0x%llX",
