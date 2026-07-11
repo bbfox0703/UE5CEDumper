@@ -200,55 +200,74 @@ local function writeFStringInline(pd, off, s, wide)
   _ue5_invoke_str_bufs[#_ue5_invoke_str_bufs + 1] = buf
 end
 
-local function writeBakedParams(mb, parmsSize, params)
-  local PD = mb + OFF_PARAMS
-
-  -- Zero-fill the params buffer (clears any stale data from previous calls).
-  for i = 0, parmsSize - 1 do
-    writeByte(PD + i, 0)
-  end
-
+local function writeParams(base, regionSize, params)
   if not params then return end
 
-  for _, p in ipairs(params) do
+  for i, p in ipairs(params) do
     local v   = p.value or 0
     local off = p.offset or 0
     local t   = p.type or 'int32'
+	local size = p.size      -- Optional for any type.
 
     if t == 'bool' then
-      writeBytes(PD + off, { (v ~= 0 and v ~= false) and 1 or 0 })
+      writeBytes(base + off, { (v ~= 0 and v ~= false) and 1 or 0 })
     elseif t == 'byte' then
-      writeBytes(PD + off, { math.floor(v) % 256 })
+      writeBytes(base + off, { math.floor(v) % 256 })
     elseif t == 'int16' or t == 'uint16' then
-      writeSmallInteger(PD + off, math.floor(v))
+      writeSmallInteger(base + off, math.floor(v))
     elseif t == 'int32' or t == 'uint32' or t == 'enum' then
-      writeInteger(PD + off, math.floor(v))
+      writeInteger(base + off, math.floor(v))
     elseif t == 'int64' or t == 'uint64' or t == 'qword' then
-      writeQword(PD + off, v)
+      writeQword(base + off, v)
     elseif t == 'float' then
-      writeFloat(PD + off, v)
+      writeFloat(base + off, v)
     elseif t == 'double' then
-      writeDouble(PD + off, v)
+      writeDouble(base + off, v)
     elseif t == 'pointer' or t == 'object' or t == 'class'
-           or t == 'name' or t == 'soft' or t == 'weak'
-           or t == 'lazy' or t == 'interface' then
-      writeQword(PD + off, v)
+        or t == 'name' or t == 'soft' or t == 'weak'
+        or t == 'lazy' or t == 'interface' then
+      writeQword(base + off, v)
     elseif t == 'fstring' then
-      -- Wide UE FString INPUT param (value = Lua string).
-      -- 寬字元 UE FString 輸入參數（value = Lua 字串）。
-      writeFStringInline(PD, off, v, true)
+      writeFStringInline(base, off, v, true)
     elseif t == 'fstringn' then
-      -- Narrow FUtf8String / FAnsiString INPUT param (value = Lua string).
-      -- 窄字元 FUtf8String / FAnsiString 輸入參數（value = Lua 字串）。
-      writeFStringInline(PD, off, v, false)
+      writeFStringInline(base, off, v, false)
+    elseif t == 'fstruct' then
+      local structSize
+      -- Explicit size always wins.
+      if size then
+        structSize = size
+      -- Otherwise infer it from the next member.
+      elseif i < #params then
+        structSize = params[i + 1].offset - off
+      -- Otherwise consume the rest of the region.
+      else
+        structSize = regionSize - off
+      end
+      -- Zero the struct.
+      for j = 0, structSize - 1 do
+        writeBytes(base + off + j, {0})
+      end
+      -- Only recurse if the value is actually a member table.
+      if type(v) == "table" then
+          writeParams(base + off, structSize, v)
+      end
     else
       error(string.format(
-        "[ue5_invoke] Unknown param type '%s' for '%s' -- " ..
-        "supported: bool/byte/int16/int32/int64/float/double/pointer/" ..
-        "fstring/fstringn",
+        "[ue5_invoke] Unknown param type '%s' for '%s'",
         tostring(t), tostring(p.name or '?')))
     end
   end
+end
+
+local function writeBakedParams(mb, parmsSize, params)
+  local PD = mb + OFF_PARAMS
+
+  -- Zero the entire parameter buffer.
+  for i = 0, parmsSize - 1 do
+    writeBytes(PD + i, {0})
+  end
+
+  writeParams(PD, parmsSize, params)
 end
 
 local function waitDone(mb, timeoutMs)
