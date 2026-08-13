@@ -12,7 +12,7 @@ public partial class CreditFooter : UserControl
         InitializeComponent();
     }
 
-    private void OnAuthorUrlPressed(object? sender, PointerPressedEventArgs e)
+    private void OnAobMakerUrlPressed(object? sender, PointerPressedEventArgs e)
     {
         if (sender is TextBlock tb)
             OpenUrl(tb.Text);

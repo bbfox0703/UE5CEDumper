@@ -474,8 +474,8 @@
     <sys:String x:Key="str.System.RemoveAllSnapshots.Error">Error: {0}</sys:String>
 
     <!-- Credit footer (System tab + Live Walker empty state) -->
-    <sys:String x:Key="str.Credit.AuthorPrefix">bbfox @ </sys:String>
-    <sys:String x:Key="str.Credit.AuthorUrl">https://opencheattables.com</sys:String>
+    <sys:String x:Key="str.Credit.AobMakerPrefix">AOBMaker: </sys:String>
+    <sys:String x:Key="str.Credit.AobMakerUrl">https://github.com/bbfox0703/AOBMaker-Release</sys:String>
     <sys:String x:Key="str.Credit.RepoPrefix">Repository: </sys:String>
     <sys:String x:Key="str.Credit.RepoUrl">https://github.com/bbfox0703/UE5CEDumper</sys:String>
     <sys:String x:Key="str.Credit.OpenInBrowserTip">Open in default browser</sys:String>

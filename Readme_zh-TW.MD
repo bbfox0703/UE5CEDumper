@@ -128,7 +128,7 @@ table，因此會直接顯示為不支援，而不是讓它以難以理解的方
 
 ### 選用：與 AOBMaker CE 外掛整合
 
-[AOBMaker](https://opencheattables.com/viewtopic.php?t=1788)（需先註冊）用於產生 AOB 特徵碼與 CE AA 腳本。其 CE DLL 外掛可讓 UE5CEDumper 一鍵在 CE 中瀏覽記憶體 / 程式碼，並產生動態 GWorld-AOB AA 腳本、UE 型別與欄位的 CE 記憶體紀錄，以及 Structure Dissect 資料。完全選用 — 核心功能不需它也能運作。
+[AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) 用於產生 AOB 特徵碼與 CE AA 腳本。其 CE DLL 外掛可讓 UE5CEDumper 一鍵在 CE 中瀏覽記憶體 / 程式碼，並產生動態 GWorld-AOB AA 腳本、UE 型別與欄位的 CE 記憶體紀錄，以及 Structure Dissect 資料。完全選用 — 核心功能不需它也能運作。
 
 ---
 
