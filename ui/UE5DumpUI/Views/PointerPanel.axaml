@@ -749,12 +749,12 @@
                   Padding="0" MinWidth="0"
                   VerticalAlignment="Center"
                   ToolTip.Tip="{StaticResource str.Experimental.EnableHint}"/>
-        <!-- Author credit: plain label + clickable link, full opacity. -->
+        <!-- AOBMaker link: plain label + clickable link, full opacity. -->
         <StackPanel Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
-          <TextBlock Text="{StaticResource str.Credit.AuthorPrefix}"
+          <TextBlock Text="{StaticResource str.Credit.AobMakerPrefix}"
                      Foreground="#888" FontSize="11" VerticalAlignment="Center"/>
-          <TextBlock x:Name="AuthorUrlText"
-                     Text="{StaticResource str.Credit.AuthorUrl}"
+          <TextBlock x:Name="AobMakerUrlText"
+                     Text="{StaticResource str.Credit.AobMakerUrl}"
                      Foreground="#569CD6" FontSize="11" VerticalAlignment="Center"
                      TextDecorations="Underline" Cursor="Hand"
                      PointerPressed="OnUrlPressed"

@@ -2,22 +2,22 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="UE5DumpUI.Views.CreditFooter">
 
-  <!-- Two-line credit footer: author tagline + repo URL. Both URLs open in
+  <!-- Two-line credit footer: AOBMaker download link + repo URL. Both URLs open in
        the default browser via Process.Start(UseShellExecute=true) wired in
        code-behind. Plain TextBlock click handlers (not HyperlinkButton) so
        the AOT trim path stays predictable. -->
   <StackPanel Spacing="2" HorizontalAlignment="Center">
 
-    <!-- Row 1: author @ opencheattables -->
+    <!-- Row 1: AOBMaker download link -->
     <StackPanel Orientation="Horizontal" Spacing="0" HorizontalAlignment="Center">
-      <TextBlock Text="{StaticResource str.Credit.AuthorPrefix}"
+      <TextBlock Text="{StaticResource str.Credit.AobMakerPrefix}"
                  Foreground="#888" FontSize="11" VerticalAlignment="Center"/>
-      <TextBlock x:Name="AuthorUrlText"
-                 Text="{StaticResource str.Credit.AuthorUrl}"
+      <TextBlock x:Name="AobMakerUrlText"
+                 Text="{StaticResource str.Credit.AobMakerUrl}"
                  Foreground="#569CD6" FontSize="11" VerticalAlignment="Center"
                  TextDecorations="Underline"
                  Cursor="Hand"
-                 PointerPressed="OnAuthorUrlPressed"
+                 PointerPressed="OnAobMakerUrlPressed"
                  ToolTip.Tip="{StaticResource str.Credit.OpenInBrowserTip}"/>
     </StackPanel>
 

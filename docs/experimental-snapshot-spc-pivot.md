@@ -108,6 +108,8 @@ is **persisted**.
 
 **Facts (confirmed):**
 - `bbfox` text lives in `Views/CreditFooter.axaml` (`str.Credit.AuthorPrefix`).
+  *(Since build 2808 that row is the AOBMaker download link, and the key is
+  `str.Credit.AobMakerPrefix` — the checkbox sits beside it either way.)*
 - `CreditFooter` is used twice: `PointerPanel.axaml:490` (System tab bottom) and
   `LiveWalkerPanel.axaml:512` (empty state). **Only the System-tab instance
   becomes a checkbox**; LiveWalker stays plain text.
