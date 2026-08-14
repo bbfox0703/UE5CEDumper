@@ -483,7 +483,18 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
             var typeSuffix = types.Length > 0 ? $" [types: {string.Join(",", types)}]" : "";
             var deepSuffix = DeepSearch ? " [deep]" : "";
-            StatusText = $"Found {result.Total} properties in {result.ScannedClasses:N0} classes (scanned {result.ScannedObjects:N0} objects){deepSuffix}";
+            // The cap/abort suffix is the whole point of D5/F4: without it a capped
+            // search reads as a completed sweep, the user filters these rows client-
+            // side, finds nothing, and concludes the field does not exist. The DLL
+            // now reports what it actually walked, so the counts no longer contradict
+            // the suffix. (Built here rather than in en.axaml to match the existing
+            // StatusText line it extends.)
+            var capSuffix = result.Aborted
+                ? "  ⚠ SCAN CANCELLED - this list is partial"
+                : result.Truncated
+                    ? $"  ⚠ STOPPED at the {result.Total}-row cap - more matches exist, narrow the query or raise Max"
+                    : "";
+            StatusText = $"Found {result.Total} properties in {result.ScannedClasses:N0} classes (scanned {result.ScannedObjects:N0} objects){deepSuffix}{capSuffix}";
             _log.Info($"SearchProperties: '{trimmedQuery}'{typeSuffix} -> {result.Total} results (classes={result.ScannedClasses}, objects={result.ScannedObjects})");
         }
         catch (Exception ex)

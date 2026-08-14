@@ -159,7 +159,16 @@ public class PropertySearchResult
 {
     public int Total { get; set; }
     public int ScannedClasses { get; set; }
+    /// <summary>Objects the DLL actually walked — NOT the pool size. Before build
+    /// 2818 this carried the full GObjects count regardless of where the walk
+    /// stopped, so a capped search claimed a complete sweep. (audit #5 D5/F4)</summary>
     public int ScannedObjects { get; set; }
+    /// <summary>The DLL stopped at the result cap: more matches exist beyond this set.
+    /// A client-side filter over these rows is therefore filtering a PAGE.</summary>
+    public bool Truncated { get; set; }
+    /// <summary>The walk was cancelled (client gone / shutdown) — the set is partial
+    /// for a different reason than <see cref="Truncated"/>.</summary>
+    public bool Aborted { get; set; }
     public List<PropertySearchMatch> Results { get; set; } = new();
 }
 

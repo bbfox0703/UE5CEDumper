@@ -1370,7 +1370,13 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "ByteProperty")   return 1;
     if (typeName == "BoolProperty")   return 1;
     // Engine types with known fixed sizes
-    if (typeName == "NameProperty")   return 8;  // FName = { ComparisonIndex(4) + Number(4) }
+    // FName is { ComparisonIndex(4) + Number(4) } = 8, but 0x10 under
+    // WITH_CASE_PRESERVING_NAME (UE5.5+/5.7). This MUST be dynamic: ValidateArrayElemSize
+    // treats InferScalarSize as authoritative and OVERRIDES the engine's reported size, so
+    // a hardcoded 8 actively replaced a correct 16 and halved every TArray<FName> /
+    // TMap<FName,V> stride on those games. Same expression as the rest of the tree
+    // (Ubel.cpp:126, Aura.cpp:2901/2924/3437/5791, Genau.cpp:5045).
+    if (typeName == "NameProperty")   return DynOff::bCasePreservingName ? 0x10 : 0x08;
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
@@ -1487,6 +1493,46 @@ int32_t GetSetElementStride(uintptr_t fieldAddr) {
 }
 
 // ============================================================
+// GetStructAlignment — read UScriptStruct::MinAlignment.
+//
+// UStruct lays out `int32 PropertiesSize;` immediately followed by MinAlignment,
+// so it sits at USTRUCT_PROPSSIZE + 4 (which is also why USTRUCT_SCRIPT is
+// PROPSSIZE + 8). MinAlignment is int16 in UE 5.8 — StructStateFlags takes the
+// other half of that word — and int32 in UE4 / early UE5. Reading the LOW 16 BITS
+// is correct for BOTH on little-endian x64 because alignments are small; reading
+// it as int32 would pick up StructStateFlags on newer engines.
+//
+// Returns 0 when it cannot be read or is not a sane power of two, which every
+// caller treats as "unknown" and falls back to the previous behaviour.
+//
+// Exists because Scharf::RequiredAlignment deliberately returns 0 for
+// StructProperty ("variable-layout ... skip validation") — it is a VALIDATION
+// helper, and using it as a LAYOUT ORACLE meant every struct-valued TMap silently
+// took ComputeMapValueOffset's size guess. That guess says "8 bytes or more =>
+// align 8", so TMap<int32, FVector> put the value at +8 when FVector is 4-aligned
+// and really sits at +4 — wrong for element 0, and wrong again in the stride.
+// ============================================================
+static int32_t GetStructAlignment(uintptr_t scriptStruct) {
+    if (!scriptStruct || !Grimoire::IsUserspacePointer(scriptStruct)) return 0;
+    int16_t minAlign = 0;
+    if (!Macht::ReadSafe(scriptStruct + DynOff::USTRUCT_PROPSSIZE + 4, minAlign)) return 0;
+    return Macht::SanitizeAlign(minAlign);
+}
+
+// ============================================================
+// ResolveElementAlignment — the real alignment of a TMap key/value or a
+// container element. Uses the per-type rule for everything Scharf can answer,
+// and UScriptStruct::MinAlignment for StructProperty (which Scharf cannot).
+// Returns 0 when still unknown.
+// ============================================================
+static int32_t ResolveElementAlignment(const std::string& typeName, int32_t size,
+                                       uintptr_t structAddr) {
+    if (typeName == "StructProperty")
+        return GetStructAlignment(structAddr);
+    return Scharf::RequiredAlignment(typeName, size, DynOff::bCasePreservingName);
+}
+
+// ============================================================
 // GetContainerInnerStructAddr — resolve the inner-element UScriptStruct* of
 // an ArrayProperty / SetProperty whose element is a StructProperty. Both probe
 // Inner at FARRAYPROP_INNER (same offset). Returns 0 when the element is not a
@@ -1541,19 +1587,26 @@ bool GetMapPairLayout(uintptr_t fieldAddr, MapPairLayout& out) {
         // container scan indexes map slots by the same stride the UI shows
         // (and FName/FWeakObjectPtr values are 8 bytes but 4-aligned, so a
         // size guess would mis-stride the whole buffer). See ComputeMapValueOffset.
-        int32_t valAlign  = Scharf::RequiredAlignment(valTn, valSize, DynOff::bCasePreservingName);
+        // Resolve key / value UScriptStruct* FIRST — the alignments below need them.
+        // (Also used by the deep container scan, so a TMap<K, FStruct> (or
+        // <FStruct, V>) can be descended into.)
+        if (keyTn == "StructProperty")
+            Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, out.keyStructAddr);
+        if (valTn == "StructProperty")
+            Macht::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT, out.valueStructAddr);
+
+        int32_t keyAlign  = ResolveElementAlignment(keyTn, keySize, out.keyStructAddr);
+        int32_t valAlign  = ResolveElementAlignment(valTn, valSize, out.valueStructAddr);
+        // alignof(TPair<K,V>) == max(alignof(K), alignof(V)); the stride must be a
+        // multiple of it, or every element after index 0 lands at a wrong address.
+        int32_t pairAlign = (keyAlign > valAlign) ? keyAlign : valAlign;
+
         int32_t valOffset = Macht::ComputeMapValueOffset(keySize, valSize, valAlign);
         int32_t pairSize  = valOffset + valSize;
         out.keySize     = keySize;
         out.valueSize   = valSize;
         out.valueOffset = valOffset;
-        out.pairStride  = Macht::ComputeSetElementStride(pairSize);
-        // Resolve key / value UScriptStruct* for the deep container scan, so a
-        // TMap<K, FStruct> (or <FStruct, V>) can be descended into.
-        if (keyTn == "StructProperty")
-            Macht::ReadSafe(keyProp + DynOff::FSTRUCTPROP_STRUCT, out.keyStructAddr);
-        if (valTn == "StructProperty")
-            Macht::ReadSafe(valueProp + DynOff::FSTRUCTPROP_STRUCT, out.valueStructAddr);
+        out.pairStride  = Macht::ComputeSetElementStride(pairSize, pairAlign);
         return true;
     }
     return false;
@@ -4076,8 +4129,20 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (!valueTypeName.empty() && valueTypeName.find("Property") != std::string::npos) {
                         fv.mapKeyType = keyTypeName;
                         fv.mapValueType = valueTypeName;
-                        Macht::ReadSafe<int32_t>(keyProp + DynOff::FPROPERTY_ELEMSIZE, fv.mapKeySize);
-                        Macht::ReadSafe<int32_t>(valueProp + DynOff::FPROPERTY_ELEMSIZE, fv.mapValueSize);
+                        // Route through the SAME validator every ArrayProperty path uses.
+                        // This read is documented in this file to return garbage: the
+                        // observed 1073742336 is 0x40000200, the low dword of
+                        // EPropertyFlags — i.e. exactly what you get when
+                        // DynOff::FPROPERTY_ELEMSIZE lands on PropertyFlags (Genau derives
+                        // it blind as bestProbe - 0x10 and can still report
+                        // bOffsetsValidated=true — audit #5 G1). Unvalidated it became a
+                        // per-element std::vector size: a ~1 GiB commit + zero-fill on every
+                        // iteration, plus a ~1 GiB stride that made every element wild.
+                        int32_t rawKeySize = 0, rawValSize = 0;
+                        Macht::ReadSafe<int32_t>(keyProp + DynOff::FPROPERTY_ELEMSIZE, rawKeySize);
+                        Macht::ReadSafe<int32_t>(valueProp + DynOff::FPROPERTY_ELEMSIZE, rawValSize);
+                        fv.mapKeySize   = ValidateArrayElemSize(rawKeySize, keyTypeName);
+                        fv.mapValueSize = ValidateArrayElemSize(rawValSize, valueTypeName);
                         Sein::Info("WALK:MapP", "FMapProperty KeyProp='%s'(%d) ValueProp='%s'(%d) at delta=%d for '%s'",
                             keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
                             delta, fi.Name.c_str());
@@ -4101,17 +4166,26 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         // Read inline element values if count is manageable
                         if (fv.mapCount > 0
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
-                            // Value alignment from the real per-type rule (NOT a size
+                            // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
                             // Map<Enum, Name> puts the value at +4. Wrong align => wrong
-                            // offset AND stride => every element reads garbage. 0 (struct/
-                            // variable) falls back to the size guess inside ComputeMapValueOffset.
-                            int32_t valAlign = Scharf::RequiredAlignment(
-                                valueTypeName, fv.mapValueSize, DynOff::bCasePreservingName);
+                            // offset AND stride => every element reads garbage. For a
+                            // StructProperty this reads UScriptStruct::MinAlignment, which
+                            // Scharf deliberately will not answer (it is a validation helper,
+                            // not a layout oracle) — without it every struct-valued TMap fell
+                            // through to the size guess.
+                            int32_t keyAlign = ResolveElementAlignment(
+                                keyTypeName, fv.mapKeySize, fv.mapKeyStructAddr);
+                            int32_t valAlign = ResolveElementAlignment(
+                                valueTypeName, fv.mapValueSize, fv.mapValueStructAddr);
+                            // alignof(TPair<K,V>) == max(alignof(K), alignof(V)); the stride
+                            // must be a multiple of it or the TPair's trailing padding is
+                            // dropped and every element past index 0 reads at a wrong address.
+                            int32_t pairAlign = (keyAlign > valAlign) ? keyAlign : valAlign;
                             int32_t valOffset = Macht::ComputeMapValueOffset(
                                 fv.mapKeySize, fv.mapValueSize, valAlign);
                             int32_t pairSize = valOffset + fv.mapValueSize;
-                            int32_t stride = Macht::ComputeSetElementStride(pairSize);
+                            int32_t stride = Macht::ComputeSetElementStride(pairSize, pairAlign);
                             fv.mapValueOffset = valOffset;
                             Sein::Debug("WALK:MapP", "Reading %d map entries for '%s': Data=0x%llX KeySz=%d ValSz=%d ValOff=%d Stride=%d MaxIdx=%d NumBits=%d",
                                 fv.mapCount, fi.Name.c_str(), (unsigned long long)sa.Data,
@@ -4209,8 +4283,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (!valueTypeName.empty() && valueTypeName.find("Property") != std::string::npos) {
                         fv.mapKeyType = keyTypeName;
                         fv.mapValueType = valueTypeName;
-                        Macht::ReadSafe<int32_t>(keyProp + DynOff::UPROPERTY_ELEMSIZE, fv.mapKeySize);
-                        Macht::ReadSafe<int32_t>(valueProp + DynOff::UPROPERTY_ELEMSIZE, fv.mapValueSize);
+                        // Same validation as the FProperty twin above — see the comment there.
+                        int32_t rawKeySize = 0, rawValSize = 0;
+                        Macht::ReadSafe<int32_t>(keyProp + DynOff::UPROPERTY_ELEMSIZE, rawKeySize);
+                        Macht::ReadSafe<int32_t>(valueProp + DynOff::UPROPERTY_ELEMSIZE, rawValSize);
+                        fv.mapKeySize   = ValidateArrayElemSize(rawKeySize, keyTypeName);
+                        fv.mapValueSize = ValidateArrayElemSize(rawValSize, valueTypeName);
                         Sein::Info("WALK:MapP", "UMapProperty KeyProp='%s'(%d) ValueProp='%s'(%d) at delta=%d for '%s'",
                             keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
                             delta, fi.Name.c_str());
@@ -4232,17 +4310,26 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                         // Read inline element values
                         if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
-                            // Value alignment from the real per-type rule (NOT a size
+                            // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
                             // Map<Enum, Name> puts the value at +4. Wrong align => wrong
-                            // offset AND stride => every element reads garbage. 0 (struct/
-                            // variable) falls back to the size guess inside ComputeMapValueOffset.
-                            int32_t valAlign = Scharf::RequiredAlignment(
-                                valueTypeName, fv.mapValueSize, DynOff::bCasePreservingName);
+                            // offset AND stride => every element reads garbage. For a
+                            // StructProperty this reads UScriptStruct::MinAlignment, which
+                            // Scharf deliberately will not answer (it is a validation helper,
+                            // not a layout oracle) — without it every struct-valued TMap fell
+                            // through to the size guess.
+                            int32_t keyAlign = ResolveElementAlignment(
+                                keyTypeName, fv.mapKeySize, fv.mapKeyStructAddr);
+                            int32_t valAlign = ResolveElementAlignment(
+                                valueTypeName, fv.mapValueSize, fv.mapValueStructAddr);
+                            // alignof(TPair<K,V>) == max(alignof(K), alignof(V)); the stride
+                            // must be a multiple of it or the TPair's trailing padding is
+                            // dropped and every element past index 0 reads at a wrong address.
+                            int32_t pairAlign = (keyAlign > valAlign) ? keyAlign : valAlign;
                             int32_t valOffset = Macht::ComputeMapValueOffset(
                                 fv.mapKeySize, fv.mapValueSize, valAlign);
                             int32_t pairSize = valOffset + fv.mapValueSize;
-                            int32_t stride = Macht::ComputeSetElementStride(pairSize);
+                            int32_t stride = Macht::ComputeSetElementStride(pairSize, pairAlign);
                             fv.mapValueOffset = valOffset;
                             int read = 0;
                             for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.mapCount && read < arrayLimit; ++idx) {
@@ -4339,7 +4426,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         || elemTypeName.find("Property") == std::string::npos) continue;
 
                     fv.setElemType = elemTypeName;
-                    Macht::ReadSafe<int32_t>(elemProp + DynOff::FPROPERTY_ELEMSIZE, fv.setElemSize);
+                    // Validated like the Map twins and every ArrayProperty path — an
+                    // unvalidated ELEMSIZE became a per-element std::vector size.
+                    int32_t rawElemSize = 0;
+                    Macht::ReadSafe<int32_t>(elemProp + DynOff::FPROPERTY_ELEMSIZE, rawElemSize);
+                    fv.setElemSize = ValidateArrayElemSize(rawElemSize, elemTypeName);
                     Sein::Info("WALK:SetP", "FSetProperty ElementProp='%s'(%d) at delta=%d for '%s'",
                         elemTypeName.c_str(), fv.setElemSize, delta, fi.Name.c_str());
 
@@ -4414,7 +4505,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (elemTypeName.empty() || elemTypeName.find("Property") == std::string::npos) continue;
 
                     fv.setElemType = elemTypeName;
-                    Macht::ReadSafe<int32_t>(elemProp + DynOff::UPROPERTY_ELEMSIZE, fv.setElemSize);
+                    // Validated like the Map twins and every ArrayProperty path — an
+                    // unvalidated ELEMSIZE became a per-element std::vector size.
+                    int32_t rawElemSize = 0;
+                    Macht::ReadSafe<int32_t>(elemProp + DynOff::UPROPERTY_ELEMSIZE, rawElemSize);
+                    fv.setElemSize = ValidateArrayElemSize(rawElemSize, elemTypeName);
                     Sein::Info("WALK:SetP", "USetProperty ElementProp='%s'(%d) at delta=%d for '%s'",
                         elemTypeName.c_str(), fv.setElemSize, delta, fi.Name.c_str());
 
@@ -5708,7 +5803,10 @@ static int32_t ProbeRowMapOffset(uintptr_t dataTableAddr, const ClassInfo& ci) {
 
     int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
     int pairSize  = fnameSize + 8;  // FName + uint8*
-    int stride    = Macht::ComputeSetElementStride(pairSize);
+    // alignof(TPair<FName, uint8*>) == 8 (the pointer). Both CPN states already
+    // give an 8-aligned pair here, so this changes no value today — it is passed
+    // so the site cannot silently drift if fnameSize or the value type changes.
+    int stride    = Macht::ComputeSetElementStride(pairSize, 8);
 
     // Scan forward from end of reflected properties, up to +256 bytes
     for (int32_t delta = 0; delta <= 256; delta += 8) {
@@ -5831,7 +5929,10 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
 
     int fnameSize = DynOff::bCasePreservingName ? 0x10 : 0x08;
     int pairSize  = fnameSize + 8;
-    int stride    = Macht::ComputeSetElementStride(pairSize);
+    // alignof(TPair<FName, uint8*>) == 8 (the pointer). Both CPN states already
+    // give an 8-aligned pair here, so this changes no value today — it is passed
+    // so the site cannot silently drift if fnameSize or the value type changes.
+    int stride    = Macht::ComputeSetElementStride(pairSize, 8);
 
     result.fnameSize = fnameSize;
     result.stride    = stride;

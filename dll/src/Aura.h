@@ -545,7 +545,20 @@ struct PropertyMatch {
 
 struct PropertySearchResult {
     int scannedClasses = 0;
+    // Objects ACTUALLY walked. This used to be assigned the full GObjects count
+    // before the loop started, so a search that stopped at the maxResults cap a
+    // few percent in still reported the whole pool as scanned — and the UI printed
+    // that as "scanned 1,204,338 objects". Measured on DumperTest 2026-08-14:
+    // "3 matches from 8 classes (scanned 24445 objects)". (audit #5 D5/F4)
     int scannedObjects = 0;
+    // The walk stopped early. `truncated` = the maxResults cap was reached (there
+    // are more matches); `aborted` = Tot::Requested() fired (client gone/shutdown).
+    // Without these the reply cannot be told from a complete search that found
+    // everything there is — the exact shape behind four "the scan missed my field"
+    // reports. Both are additive on the wire; a client that ignores them is
+    // unchanged.
+    bool truncated = false;
+    bool aborted   = false;
     std::vector<PropertyMatch> results;
 };
 

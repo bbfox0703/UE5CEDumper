@@ -1352,7 +1352,158 @@ discarding CE's reason string — **shipped**; see [dev-log.md](dev-log.md). CE-
 
 -----
 
+### 🔴 NEW 2026-08-14 — DumperTest cannot currently detect ANY of the audit #5 cluster ① fixes
+
+**Checked, not assumed.** The sample's four containers are `TSet<int32>`, `TMap<FName,int32>`,
+`TMap<int32,float>`, `TArray<FDumperTestStat>`. Working the arithmetic for each:
+
+| Sample container | pairAlign | unpadded pair | old stride | new stride | discriminates? |
+|---|--:|--:|--:|--:|---|
+| `TMap<FName,int32>` (non-CPN) | 4 | 12 | 20 | 20 | ❌ identical |
+| `TMap<int32,float>` | 4 | 8 | 16 | 16 | ❌ identical |
+| `TSet<int32>` | — | — | 12 | 12 | ❌ TSet is unaffected by design |
+| `TArray<FDumperTestStat>` | — | — | — | — | ❌ not a sparse container |
+
+**The sample has exactly the blind spot the unit tests had** — every pair is either 4-aligned or
+already a multiple of 8, so nothing discriminates. It also cannot reach M2/A2: the containers hold
+**3 entries each** and nothing is ever removed, while A2 needs **>128** entries (the `TBitArray` heap
+spill) and M2 needs a removal.
+
+`FDumperTestStat` does not help either: it carries an `FText` (a `TSharedRef`, so 8-aligned), which
+is exactly the case the size guess gets *right*.
+
+**Add these five properties** (the arithmetic each one is chosen to expose):
+
+- `TMap<int64,int32> Map_I64ToI32;` — pairAlign 8, unpadded 12 → **old 20 vs new 24**. The core M1
+  witness. `int64` key rather than `UObject*` so there is no lifetime/GC variable in the test.
+- `TMap<FString,int32> Map_StrToInt;` — unpadded 20 → **old 28 vs new 32**. A second M1 witness with
+  different arithmetic, so one wrong assumption cannot pass both.
+- A deliberately **4-aligned POD** struct (`USTRUCT FDumperTestVec3f { float X, Y, Z; }` — no FText,
+  no pointer, no double) + `TMap<int32,FDumperTestVec3f> Map_IntToVec3f;` — **M3**: the size guess
+  says "≥8 ⇒ align 8" and puts the value at +8 where it really sits at **+4**, so *even element 0* is
+  wrong. This is the only shape that exercises the `UScriptStruct::MinAlignment` read. It doubles as
+  **A4**'s target (a scalar leaf inside a map's struct side).
+- `TSet<int32> Set_Big;` populated with **200** entries, then `Remove()` of a **low** index (< 128)
+  at BeginPlay — **A2** (post-spill stale inline bits: the freed low slot must not appear) and **M2**
+  (header count must equal the rows rendered).
+- `TSet<FDumperTestVec3f> Set_Struct;` — **A4**'s set side.
+
+**U2 cannot be covered this way.** `WITH_CASE_PRESERVING_NAME` is an engine build flag, not a project
+property — it needs either a custom engine build or a real CPN title (Titan Quest II, UE 5.7).
+
+**Where to edit.** `tools/ue-sample/DumperTest` is the source of record and holds **only** the
+`DumperTest*` actor/types sources; the live project `D:\Unreal Projects\DumperTest` additionally has
+the project scaffolding the repo does not track (`.uproject`, `Config/`, `Content/`, `Plugins/`,
+`DumperTest.Build.cs`, the module `DumperTest.cpp/.h`, `DumperTestCharacter.*`). So syncing is a
+**file-level copy of the tracked sources**, never a directory overwrite — the latter would drop the
+scaffolding. Edit the repo copy first, then copy those files across and rebuild.
+
+*(Checked 2026-08-14: the two copies differ by **line endings only** — `diff --strip-trailing-cr`
+reports them identical. Nothing has desynced.)*
+
+-----
+
 ## Pending live-game verification (verify only — no code)
+
+### 🔴 NEW 2026-08-14 — TMap element geometry: pair padding + struct alignment + free-slot count (audit #5 M1/M2/M3)
+
+Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.
+
+> ### ✅ FIVE OF SIX VERIFIED IN-GAME 2026-08-14 — DumperTest, UE 5.4 Development package
+>
+> Driven **entirely headlessly**: launch the packaged sample → `scripts/inject-ue.ps1 -ProcessId` →
+> a ~10-line PowerShell `NamedPipeClientStream` issuing `find_instances` + `walk_instance`. No UI.
+> This is repeatable in one command; the witnesses were added to the sample the same day
+> (commit `58ddf76`) precisely because none of the pre-existing containers could discriminate.
+>
+> | Fix | Verdict | Evidence from the live walk |
+> |---|---|---|
+> | **M1** | ✅ | `Map_I64ToI32` all three elements correct (`600000000001..3` → `6001..3`). A stride of 20 makes elements 1–2 read from the previous element's tail; they are exact, so the stride is 24. |
+> | **M1** (2nd witness) | ✅ | `Map_StrToInt` `map_value_offset=16`, values `6101/6102/6103`. Different arithmetic from M1's first witness, so one wrong assumption cannot satisfy both. |
+> | **M3** | ✅ | `Map_IntToVec3f` reports **`map_value_offset: 4`**. The old size guess yields **8**. This is `Ubel::GetStructAlignment` reading `MinAlignment=4` off a live `UScriptStruct`. Raw hex `00C8C145 00D0C145 00D8C145` decodes to 6201.0/6202.0/6203.0 — all three floats at the right offsets. |
+> | **M2** | ✅ | `Set_Big` `set_count=199` (200 added, 1 removed). Before the fix `NumFreeIndices` always read 0, so this reported **200**. |
+> | **A2** | ✅ | `Set_Big` returns 199 elements with **9005 absent** and 9000 / 9004 / 9006 / 9199 all present. 9005 is index 5, i.e. its bit lives in the inline words the `TBitArray` froze when it spilled at 128 — the defect would still list it. |
+> | **U2** | ⬜ | **No known vehicle.** See the box below — TQ2 is NOT CasePreservingName on the current build. |
+>
+> ### ⚠ 2026-08-14 — TQ2 is NOT CasePreservingName, contradicting `test-games.md`
+>
+> Injected into `TQ2-Win64-Shipping.exe` (PID 53412, Steam, save loaded) to verify U2.
+> `get_offsets` returned **`case_preserving=false`**, and the DLL's own detection log is unambiguous:
+>
+> ```
+> [DYNO] DetectCasePreservingName: votes standard=20, CPN=0 (tested 20 objects)
+> [DYNO]   CasePreservingName: no
+> [SUMMARY] DynOff: CPN=no FProp=yes TagFFV=yes Outer=+0x20 validated=yes
+> [SCAN] FindAll: UE Version = 507 (tier=1, detected=yes, lowConfidence=no)
+> [OARR] FUObjectItem size=24, object-ptr offset=+0x08 (UE5.7+ reordered item) — 200 named, 200 total, 0 bad
+> ```
+>
+> A **20–0 sweep** is not a marginal or failed detection, and everything around it resolved cleanly
+> (correct UE 5.7, correct reordered `FUObjectItem`, 200/200 named). So this is not the detector
+> failing — this build genuinely has `WITH_CASE_PRESERVING_NAME` off.
+>
+> **`docs/test-games.md:13` says the opposite** ("CasePreservingName + DynOff. Stride 16."). One of
+> two things is true and they need different responses: the game was **patched** since that row was
+> written (then the row needs a date and a re-test note), or the row was **wrong from the start**
+> (then every conclusion drawn from "TQ2 is our CPN title" needs re-checking — including the claim,
+> made earlier today in commits `58ddf76` and `b281ca1`, that TQ2 is U2's verification vehicle).
+> **Do not treat that row as evidence until this is settled.**
+>
+> **Solarpunk (UE5.7) — 2026-08-14: measurably NOT CasePreservingName.** A first sample 60 s after
+> injection returned `case_preserving=false` with `probe_ran=false` — i.e. nothing, the probe had not
+> run yet. **Re-queried later on the same still-running process: `case_preserving=false,
+> validated=true, probe_ran=true`** — a real measurement. Solarpunk joins TQ2 as a confirmed non-CPN
+> title. (The log is misleading here and that is filed as audit G7: its only `DynOff:` summary still
+> says `validated=NO (DEFAULTS)` because it is never re-emitted after the later validation.)
+>
+> **Method note worth keeping:** the first sample was *real* but was not a *verdict*. `probe_ran` is
+> the field that separates the two, and reading `case_preserving` without it produces a confident
+> wrong answer in either direction.
+>
+> **U2 therefore has no known verification vehicle right now.** Three candidates are exhausted: TQ2
+> is measurably not CPN, Solarpunk is indeterminate, and DumperTest cannot be (engine flag). Options:
+> sweep other titles (`case_preserving` is one `get_offsets` call each, so this is cheap), or build UE
+> from source with the flag on and repackage DumperTest. Until then U2 stands on the unit tests and
+> code review only.
+>
+> **Incidental — D1/U3 CONFIRMED LIVE as still broken (not yet fixed).** `Map_IntToVec3f` renders as
+> `f:[6203.0000]`: one float, the **last** one. The raw hex holds all three correct values, so the
+> loss is in `InterpretValue`'s 8-byte "vtable preamble" skip — 12-byte struct − 8 = one float. U3
+> moves from inferred to observed.
+
+The remaining unchecked boxes below are superseded by the table above except where noted; U2 and the
+`TSet`/`UDataTable` no-regression check still stand.
+
+- ⬜ **A `TMap<K,V>` whose pair needs trailing padding reads correctly (M1).** Live Walker → expand
+  any `TMap<UObject*, float>` / `TMap<FString, int32>` / `TMap<AActor*, uint8>`. **Before the fix
+  every element past index 0 was wrong** (stride 20 vs the engine's 24). Confirm element 1..N show
+  plausible keys and values, and that no key repeats in a way that looks like a shifted window.
+- ⬜ **A struct-valued `TMap` reads correctly at element 0 (M3).** Expand a
+  `TMap<int32, FVector>`-shaped field (or any `TMap<K, FStruct>` whose struct is 4-aligned).
+  **Before the fix even element 0 was wrong** — the value was read at +8 where it really sits at +4.
+  This is the check that actually exercises the `MinAlignment` read.
+- ⬜ **Element count matches the rows rendered (M2).** Find a `TMap`/`TSet` that has had entries
+  removed during play (an inventory after dropping an item). The header count and the number of rows
+  must now agree — previously `NumFreeIndices` always read 0, so the count was inflated.
+- ⬜ **No regression on `TSet<T>` or `UDataTable`.** `TSet` geometry is unchanged by design
+  (`elemAlign` defaults to 4). Expand a `TSet<FName>` / `TSet<UObject*>` and open any DataTable to
+  confirm rows still resolve.
+- ⬜ **A container that outgrew 128 slots still lists the right elements (A2).** Find a `TMap`/`TSet`
+  with **more than 128** entries, then remove one in-game. Before the fix, indices 0..127 were judged
+  from the **frozen inline bit words** the TBitArray left behind when it spilled to the heap, so a
+  freed low slot still read as allocated and the walker showed a dead element. Also worth a
+  Find Refs / Value Search pass on such an object — the same stale bits admitted phantom hits there.
+- ⬜ **`TArray<FName>` / `TMap<FName,V>` on a CasePreservingName game (U2).** Needs a UE 5.5+/5.7
+  title where `Genau` logs `CasePreservingName: YES` (e.g. Titan Quest II). Expand any actor's `Tags`.
+  Before the fix `InferScalarSize` forced the stride to 8 against the engine's real 16, so every
+  element but the first was read from the middle of its predecessor.
+- ⬜ **A `TMap`/`TSet` whose ELEMSIZE reads garbage no longer wedges the walk (U1).** Hard to force
+  deliberately; the passive check is that no `walk-0.log` line shows an absurd `KeySz=`/`ValSz=`
+  (e.g. `1073742336`) and that expanding maps never produces a multi-second freeze. A rejected size
+  now degrades to "cannot read elements" instead of a ~1 GiB allocation per element.
+- ⬜ **Check `walk-0.log` for the `Stride=` values.** `WALK:MapP` logs `ValOff` and `Stride` per map
+  field. A struct-valued map should now show an odd-looking-but-correct stride (e.g. 24 for
+  `TMap<int32,FVector>`, not 28). This is the cheapest passive evidence.
 
 ### 🔴 NEW 2026-08-11 — `executeCodeEx` finite timeout + reason capture (build 2792)
 
@@ -2131,6 +2282,76 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 > *Method note worth keeping: three consecutive fixes were written against the phrase "idle in
 > ReadFile", which was a LABEL the code asserted, not something it had measured. Replacing the
 > label with an observation cost one build and ended the thread.*
+>
+> ### ⚠ 2026-08-14 — audit #5/D5 says the ANSWER above is the wrong mechanism. Read this before fixing.
+>
+> The conclusion recorded above ("genuinely blocked in a synchronous `ReadFile`"; root cause = no
+> `FILE_FLAG_OVERLAPPED`) accounts for attempt #2 failing but **not for attempt #3** —
+> `CancelSynchronousIo` was called on a duplicated *thread* handle, which is exactly the API for a
+> live thread blocked in synchronous I/O, and it *also* reported nothing-pending, 49 times.
+>
+> **A terminated thread explains both, and audit #5/D5's finding F1 shows the threads are terminated.**
+> `Fern::Stop` has two logging call sites — `UE5_Shutdown` (`Frieren.cpp:588`, whose FIRST statement is
+> `LOG_INFO("UE5_Shutdown: Cleaning up...")`) and `UE5_StopPipeServer`, which the shipped
+> `scripts/UE5CEDumper.CT:772-780` only *probes* with `pcall(getAddress, …)` before calling
+> `UE5_Shutdown` **alone**, deliberately. `grep -rn "Cleaning up"` over the whole
+> `%LOCALAPPDATA%\UE5CEDumper\Logs` tree returns **zero**. So every `Stop entry` capture on disk —
+> including the `conns=2` / `5029 ms` one this entry is built on — was reached from
+> **`~Fern()` during `DLL_PROCESS_DETACH`**, i.e. after `ExitProcess` had already terminated the
+> connection threads. A dead thread has no pending I/O for either cancel API to find, and it can never
+> erase itself from `m_conns`, so the drain predicate is **unsatisfiable by construction** and the full
+> 5 s budget burns every time.
+>
+> **Consequence for the two structural fixes proposed above: neither works on this path.** Closing the
+> connection handle from `Stop` makes a *live* thread's `ReadFile` return an error — there is no live
+> thread. Making the pipe overlapped has the same problem. The fix is not to run the drain at all when
+> `Stop` is entered from the destructor: give `Stop` a `bool graceful`, skip the wait/joins/cancels on
+> the DETACH path (the OS reclaims all of it — the reasoning `Heiter.cpp:288-301` already applies to its
+> own DETACH body), and log which entry path was taken so future captures can be attributed.
+>
+> *This is attempt #5, and it is the first one aimed at a mechanism rather than at an API. Note what
+> found it: not a new diagnostic, but reading the code that decides **who calls `Stop`** — a question
+> none of the four earlier attempts asked, because the repro was assumed to be the CE untick it was
+> written as, and no capture on disk is actually that repro.*
+>
+> ### ✅ There is now a ~30-second ON-DEMAND repro, with a negative control (2026-08-14, build 2812)
+>
+> Every capture in the four attempts above was **accidental**. This one is deliberate, headless, and
+> takes half a minute on packaged `DumperTest` — use it as the acceptance test for whatever fix ships:
+>
+> 1. Launch `DumperTest.exe`, `scripts\inject-ue.ps1 -ProcessId <the -Win64-Shipping pid>`.
+> 2. Connect a `NamedPipeClientStream` to `UE5DumpBfx` and send any command.
+> 3. **Close the game with `CloseMainWindow()`** — `WM_CLOSE` → `ExitProcess` → `DLL_PROCESS_DETACH`.
+>    **Not `Stop-Process -Force`**: `TerminateProcess` skips DETACH entirely, so a forced kill exits
+>    fast and "proves" the bug is gone.
+>
+> | | Client at exit | `Stop entry` | Drain | Process exit |
+> |---|---|---|---|---|
+> | **B** | **held open** | `conns=1` | `TIMEOUT, 1 left (5030 ms, 49 cancel re-asserts)` | **6,046 ms** |
+> | **A** | disconnected first | `conns=0` | `satisfied, 0 left (0 ms, 0 re-asserts)` | **1,105 ms** |
+>
+> One variable, 5.5× apart. **Run A as well as B** — without it, 6 s is indistinguishable from "how
+> long a UE game takes to close", and A is also the regression guard: a fix that skips the drain must
+> not make the already-correct `conns=0` path slower or noisier.
+>
+> **PASS for the fix** = case B reaches `Stopped` in well under a second, with the entry path named in
+> the log so a future capture can be attributed to process-exit vs a CE Disable.
+>
+> ### ✅✅ FIXED build 2813 (2026-08-14) — attempt #5, and it passed its own acceptance test
+>
+> `Fern::Stop` takes `bool graceful = true`; `~Fern()` calls `Stop(false)`, which logs
+> `Stop entry (process exit — skipping drain/joins, the OS reclaims this)` and returns before the
+> cancel sweeps, the watch/scan joins and the 5 s drain. **Case B re-measured on the fixed build:
+> 1,185 ms** (pre-fix 6,046 ms; pre-fix control A 1,105 ms) — a connection open at exit now costs
+> nothing. The entry path is named in the log, so the attribution problem that made this take five
+> attempts cannot recur.
+>
+> ⬜ **What is still unverified: the `graceful=true` path**, i.e. a CE Disable / `UE5_StopPipeServer`.
+> It is unchanged by construction (the fix is an early return in front of it) but it was not exercised
+> — the headless route cannot drive CE. **Next CE session, one grep:** untick the record with the UI
+> connected → `grep "Stop entry" pipe-0.log`. **PASS** = the line does **not** say `process exit`, the
+> drain reports `satisfied`, and `Stopped` follows. **FAIL** = `process exit` on a CE Disable, which
+> would mean the destructor is racing the explicit call.
 >
 > ⬜ does **not** mean "probably fine". It means nobody has looked. Most of the fourteen were
 > simply not exercised (no wrapper installed, no UI killed mid-command, no Extra Scan).

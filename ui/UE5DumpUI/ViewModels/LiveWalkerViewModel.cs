@@ -866,6 +866,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         Fields.Clear();
 
+        // The actor list is a PAGE. Before build 2818 the reply carried only the page
+        // size, so a 500-actor page and a 500-actor level were identical on the wire
+        // and an actor at index 1877 simply was not there. ActorTotal < 0 means the
+        // array was never read at all -- the DLL sets Error in that case and the
+        // caller surfaces it, so say nothing extra here. (audit #5 D5/F6)
+        if (world.Truncated && world.ActorTotal > world.ActorCount)
+        {
+            CurrentObjectName =
+                $"{world.WorldName}  ⚠ showing {world.ActorCount:N0} of {world.ActorTotal:N0} actors";
+        }
+
         // Compute base address for FieldAddress display
         ulong worldBase = 0;
         try

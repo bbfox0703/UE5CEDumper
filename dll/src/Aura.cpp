@@ -4176,11 +4176,16 @@ PropertySearchResult SearchProperties(
     std::unordered_map<DedupKey, size_t, DedupKeyHash> dedupIndex;
 
     int32_t count = GetCount();
-    result.scannedObjects = count;
+    // NOT result.scannedObjects — that is filled after the loop with what was
+    // actually walked. Assigning the pool size here made every capped search claim
+    // a full sweep. (audit #5 D5/F4)
+    int32_t walked = 0;
 
     for (int32_t i = 0; i < count && static_cast<int>(result.results.size()) < maxResults; ++i) {
+        walked = i + 1;   // objects ENTERED, so a full sweep reports count, not count-1
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:search", "SearchProperties: aborted (client gone / shutdown)");
+            result.aborted = true;
             break;  // return partial result
         }
         uintptr_t obj = GetByIndex(i);
@@ -4461,9 +4466,19 @@ PropertySearchResult SearchProperties(
         }
     }
 
-    Sein::Info("PIPE:search", "SearchProperties '%s': %d matches from %d classes (scanned %d objects)",
+    result.scannedObjects = walked;
+    result.truncated = static_cast<int>(result.results.size()) >= maxResults;
+
+    // The stop reason is in the line, not just the counts. "3 matches from 8
+    // classes (scanned 24445 objects)" was self-contradictory and read as a
+    // completed sweep; "scanned 8 objects, STOPPED at the 3-row cap" cannot.
+    Sein::Info("PIPE:search",
+                 "SearchProperties '%s': %d matches from %d classes (scanned %d objects)%s",
                  query.c_str(), static_cast<int>(result.results.size()),
-                 result.scannedClasses, result.scannedObjects);
+                 result.scannedClasses, result.scannedObjects,
+                 result.aborted   ? ", ABORTED (client gone / shutdown)"
+               : result.truncated ? ", STOPPED at the result cap — more matches exist"
+                                  : ", full sweep");
     return result;
 }
 
@@ -4543,10 +4558,16 @@ std::vector<PropertySearchResult> SearchPropertiesBatch(
 
     int32_t count = GetCount();
     int32_t scannedClasses = 0;
+    // Same fix as the single-query path: what was WALKED, not the pool size.
+    // (audit #5 D5/F4)
+    int32_t walked = 0;
+    bool    batchAborted = false;
 
     for (int32_t i = 0; i < count; ++i) {
+        walked = i + 1;   // objects ENTERED, so a full sweep reports count, not count-1
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:search", "SearchPropertiesBatch: aborted (client gone / shutdown)");
+            batchAborted = true;
             break;  // return partial result
         }
         // Early-exit: if every query is already at limit, stop walking.
@@ -4687,8 +4708,12 @@ std::vector<PropertySearchResult> SearchPropertiesBatch(
     std::vector<PropertySearchResult> out;
     out.reserve(qs.size());
     for (auto& s : qs) {
-        s.result.scannedObjects = count;
+        s.result.scannedObjects = walked;
         s.result.scannedClasses = scannedClasses;
+        s.result.aborted   = batchAborted;
+        // Per-query, not per-batch: the loop stops when EVERY query is full, so one
+        // query can be capped while another is not.
+        s.result.truncated = static_cast<int>(s.result.results.size()) >= maxResultsPerQuery;
         out.push_back(std::move(s.result));
     }
 

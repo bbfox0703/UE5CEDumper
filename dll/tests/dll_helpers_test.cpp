@@ -2031,6 +2031,68 @@ static void Test_ValueScan_SparseContainerGeometry() {
     EXPECT("Map<uint8,FName> value at +4 (align 4)",  Macht::ComputeMapValueOffset(1, 8, 4) == 4);
     EXPECT("Map<uint8,FName> WOULD be +8 w/o align",  Macht::ComputeMapValueOffset(1, 8)    == 8);
     EXPECT("Map<uint8,ptr> value at +8 (align 8)",    Macht::ComputeMapValueOffset(1, 8, 8) == 8);
+
+    // ---- Audit #5 D4a/M1 — the COMPOSITE recipe, not the two halves ----
+    // Real stride = Align(Align(unpaddedPair, alignof(TPair)) + 8, alignof(TPair)),
+    // where alignof(TPair) == max(alignof(Key), alignof(Value)). Every case above
+    // happens to land on a multiple of 8, which is exactly why this survived: both
+    // helpers were tested separately and the composition never was.
+    EXPECT("SanitizeAlign rejects 0",          Macht::SanitizeAlign(0)  == 0);
+    EXPECT("SanitizeAlign rejects negative",   Macht::SanitizeAlign(-8) == 0);
+    EXPECT("SanitizeAlign rejects non-pow2",   Macht::SanitizeAlign(12) == 0);
+    EXPECT("SanitizeAlign rejects > 32",       Macht::SanitizeAlign(64) == 0);
+    EXPECT("SanitizeAlign accepts 8",          Macht::SanitizeAlign(8)  == 8);
+
+    // TMap<AActor*,float>: key 8/align 8, value 4/align 4 -> pairAlign 8.
+    // Unpadded pair 12; the one-arg form returned 20, the engine strides 24.
+    EXPECT("Map<ptr,float> value at +8",
+           Macht::ComputeMapValueOffset(8, 4, 4) == 8);
+    EXPECT("Map<ptr,float> stride 24 (one-arg form gave 20)",
+           Macht::ComputeSetElementStride(8 + 4, 8) == 24);
+    EXPECT("Map<ptr,float> one-arg form is still 20",
+           Macht::ComputeSetElementStride(8 + 4) == 20);
+
+    // TMap<FString,int32>: unpadded pair 20 -> 32, not 28.
+    EXPECT("Map<FString,int32> stride 32",
+           Macht::ComputeSetElementStride(16 + 4, 8) == 32);
+    // TMap<UObject*,uint8>: unpadded pair 9 -> 24, not 20.
+    EXPECT("Map<ptr,uint8> stride 24",
+           Macht::ComputeSetElementStride(8 + 1, 8) == 24);
+
+    // ---- Audit #5 D4a/M3 — struct values must use MinAlignment, not a size guess ----
+    // TMap<int32,FVector>: FVector is 12 bytes but 4-ALIGNED, so the value really
+    // sits at +4 and the pair is 16. The size guess ("8 or more => align 8") put it
+    // at +8 with a stride of 28, so even element 0 displayed a wrong vector.
+    EXPECT("Map<int32,FVector> value at +4 with real align",
+           Macht::ComputeMapValueOffset(4, 12, 4) == 4);
+    EXPECT("Map<int32,FVector> stride 24 with real align",
+           Macht::ComputeSetElementStride(4 + 12, 4) == 24);
+    EXPECT("Map<int32,FVector> size guess WOULD give +8",
+           Macht::ComputeMapValueOffset(4, 12) == 8);
+    // TMap<int32,FGuid>: 16 bytes, 4-aligned -> value at +4, pair 20, stride 28.
+    EXPECT("Map<int32,FGuid> value at +4 with real align",
+           Macht::ComputeMapValueOffset(4, 16, 4) == 4);
+    EXPECT("Map<int32,FGuid> stride 28 with real align",
+           Macht::ComputeSetElementStride(4 + 16, 4) == 28);
+
+    // ---- Regression guard: every PDB-verified geometry in the tree still holds ----
+    // Everspace 2 UE 5.4, FSparseDelegateStorage::SparseDelegates (Aura.cpp).
+    EXPECT("ES2 outer TSetElement stride 0x60",
+           Macht::ComputeSetElementStride(8 + 0x50, 8) == 0x60);
+    EXPECT("ES2 inner Map<FName,TSharedPtr> stride 0x20 (non-CPN)",
+           Macht::ComputeSetElementStride(Macht::ComputeMapValueOffset(8, 16, 8) + 16, 8) == 0x20);
+    EXPECT("ES2 inner Map<FName,TSharedPtr> stride 0x28 (CPN)",
+           Macht::ComputeSetElementStride(Macht::ComputeMapValueOffset(16, 16, 8) + 16, 8) == 0x28);
+    // UDataTable RowMap TMap<FName, uint8*> — both CPN states.
+    EXPECT("DataTable RowMap stride 24 (non-CPN)",
+           Macht::ComputeSetElementStride(0x08 + 8, 8) == 24);
+    EXPECT("DataTable RowMap stride 32 (CPN)",
+           Macht::ComputeSetElementStride(0x10 + 8, 8) == 32);
+    // TSet<T> must be byte-identical to the pre-fix behaviour (elemSize is already
+    // a multiple of alignof(T), so the default align of 4 is correct there).
+    EXPECT("Set<FVector 12> unchanged at 20",  Macht::ComputeSetElementStride(12) == 20);
+    EXPECT("Set<ptr 8> align 8 == align 4",
+           Macht::ComputeSetElementStride(8, 8) == Macht::ComputeSetElementStride(8));
     EXPECT("Scharf NameProperty(8) align = 4",        Scharf::RequiredAlignment("NameProperty", 8, false) == 4);
     EXPECT("Scharf WeakObjectProperty align = 4",     Scharf::RequiredAlignment("WeakObjectProperty", 8, false) == 4);
 }

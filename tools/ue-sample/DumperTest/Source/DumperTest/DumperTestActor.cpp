@@ -97,6 +97,35 @@ ADumperTestActor::ADumperTestActor()
 
 	Arr_Int = { 10, 20, 30, 40, 50 };
 
+	// --- audit #5 cluster (1): container GEOMETRY witnesses ---
+	// The scan values are deliberately distinct per container so a hit identifies
+	// WHICH geometry is being exercised. See the header for the arithmetic.
+	Map_I64ToI32.Add(600000000001, 6001);
+	Map_I64ToI32.Add(600000000002, 6002);
+	Map_I64ToI32.Add(600000000003, 6003);
+
+	Map_StrToInt.Add(TEXT("StrAlpha"), 6101);
+	Map_StrToInt.Add(TEXT("StrBeta"),  6102);
+	Map_StrToInt.Add(TEXT("StrGamma"), 6103);
+
+	// Element 0 is the one that matters: the broken build reads its value at +8
+	// instead of +4, so 6201 is wrong even at index 0.
+	Map_IntToVec3f.Add(1, FDumperTestVec3f{ 6201.f, 6202.f, 6203.f });
+	Map_IntToVec3f.Add(2, FDumperTestVec3f{ 6211.f, 6212.f, 6213.f });
+	Map_IntToVec3f.Add(3, FDumperTestVec3f{ 6221.f, 6222.f, 6223.f });
+
+	// 200 entries (9000..9199) pushes the TBitArray past 128 bits onto the heap;
+	// removing 9005 frees a LOW slot (index 5) whose bit lives in the inline words
+	// the spill left frozen. A build with the stale-bits defect still lists 9005.
+	for (int32 i = 0; i < 200; ++i)
+	{
+		Set_Big.Add(9000 + i);
+	}
+	Set_Big.Remove(9005);
+
+	Set_Struct.Add(FDumperTestVec3f{ 6301.f, 6302.f, 6303.f });
+	Set_Struct.Add(FDumperTestVec3f{ 6311.f, 6312.f, 6313.f });
+
 	// Struct-element container: an FText one level deep inside a TArray, so a
 	// B28 regression that only shows up under the deep descent still has a home.
 	{
