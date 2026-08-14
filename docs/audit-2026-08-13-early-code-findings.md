@@ -258,7 +258,7 @@ result is what a total finder wipeout looks like** — the `<failures>` block wa
 said so. Resumed from the same run id; nothing was cached, so everything re-ran live.
 
 18 raw claims → **9 refuted (50%)** → 9 confirmed → **9 distinct** (no lens hit the same site twice).
-Recorded below: **2 MEDIUM · 7 LOW · 1 INFO**, after two adjustments I made by hand (S1 and P1, both
+Recorded below: **2 MEDIUM · 6 LOW · 1 INFO**, after two adjustments I made by hand (S1 and P1, both
 flagged in place).
 
 **Tally: 0 HIGH — and for the second segment running, the finders claimed none.** They claimed
@@ -289,7 +289,7 @@ flagged in place).
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **ST1** | MED | `Stark.cpp:160` | The queued-invoke drain is gated **only** on `s_queueDepth != 0` — never on thread identity — so it executes on whichever thread entered the patched `ProcessEvent`. `Stark.h:10-12` states the module's whole purpose is that "ProcessEvent is always called from the game thread". Multi-thread PE is **not speculative here**: it is a confirmed finding of audit #3 (L5), whose fix sits two lines above the drain in the same hook body (`Linie.cpp:46-52`). Verified independently: `grep -rn "IsInGameThread\|GGameThread\|GameThreadId\|GetCurrentThreadId" dll/src/` returns **four** hits, all logging or AOB comment text — **zero** thread-identity checks on any dispatch path. Second lens confirmed it on a *stronger* path than the finder's: `UE5_CallProcessEventDirect` recomputes the same vtable slot, so `Mimic::HandleInvoke`'s static-native route re-enters our own trampoline **from the mailbox polling thread**. | M / med |
+| **ST1** | MED | `Stark.cpp:160` | The queued-invoke drain is gated **only** on `s_queueDepth != 0` — never on thread identity — so it executes on whichever thread entered the patched `ProcessEvent`. `Stark.h:10-12` states the module's whole purpose is that "ProcessEvent is always called from the game thread". Multi-thread PE is **not speculative here**: it is a confirmed finding of audit #3 (L5), whose fix sits two lines above the drain in the same hook body (`Linie.cpp:46-52`). Verified independently: `grep -rn "IsInGameThread\|GGameThread\|GameThreadId\|GetCurrentThreadId" dll/src/` returns **five** hits (re-counted at takeover — D4b wrote four) — three are `Frieren.cpp` log-format arguments, two are `Himmel.h` AOB comment text — so **zero** thread-identity checks on any dispatch path. Second lens confirmed it on a *stronger* path than the finder's: `UE5_CallProcessEventDirect` recomputes the same vtable slot, so `Mimic::HandleInvoke`'s static-native route re-enters our own trampoline **from the mailbox polling thread**. | M / med |
 | **PX1** ‡ | MED | `ProxyDinput8.def:15-20` (+ `Lugner_Dinput8.cpp:54`) | The dinput8 proxy forwards **5 of the real DLL's 6 exports**. `GetdfDIJoystick` has no stub and no `.def` entry, and because the `.def` pins **no ordinals**, MSVC assigns them alphabetically and our `@6` becomes `UE5_AutoStart`. A by-name static import fails process creation outright (`STATUS_ENTRYPOINT_NOT_FOUND`, before any of our logging exists); an ordinal-`#6` import calls `UE5_AutoStart`, which kicks off the whole AOB scan and returns a `bool` in RAX where an `LPCDIDATAFORMAT` is expected. `ProxyImportAnalyzer` records only the imported DLL *name*, never a function list, so Proxy Deploy cannot warn. `ProxyDxgi.def` pins `@1..@20` and its own header says why: *"The @ordinal values match real dxgi.dll so ordinal imports resolve too."* | S / low |
 | **MB1** | LOW | `Mimic.cpp:557` | `HandleInvoke` decides the game-thread-vs-direct-off-thread route from `g_invokeMailbox.functionFlags`, which `Mimic.h` documents as a **DLL-filled output** and which `CMD_INVOKE`'s documented inputs do not include. A bare re-`FIRE` (`InvokeScriptGenerator.cs:383-384` re-issues `CMD_INVOKE` without re-running `CMD_FIND_FUNCTION`) therefore routes on whatever the *previous* command left at offset `0x024`. A stale `Native|Static` sends a stateful actor UFunction off the game thread — exactly what the comment three lines above forbids. The false-positive is the unsafe direction; the false-negative is harmless. | S / low |
 | **MB2** | LOW | `Mimic.cpp:278` | The `EnsureInitialized()` gate is applied to **every** command including `CMD_FOREGROUND`, which `Mimic.h` documents as thread-agnostic pure Win32 and which the pipe path services with no such gate — so on a game whose GObjects scan fails, Keep-Foreground is refused with `-10` and `ForegroundScriptGenerator.cs:79-81` renders it as `hook error -10`, naming MinHook, a subsystem never reached. Second half: `Frieren` latches `s_initialized` only on **success**, so the gate re-runs a whole-image AOB sweep on every command while init keeps failing, pinning the mailbox at `status=0xFF` past `MailboxPollTimeoutMs`. | S / low |
@@ -438,12 +438,26 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. Session handoff — state as of 2026-08-14 14:4x
+## 3b. Session handoff — state as of 2026-08-14 15:3x (D4b landed)
 
-**Scanning:** D1, D2, D3, D4a done. **D4b fired 14:31:08 as a scheduled task in its own session**
-(`audit5-segment-d4b`, now auto-disabled; prompt at
-`C:\Users\Andyc\.claude\scheduled-tasks\audit5-segment-d4b\SKILL.md`). It writes its own §2/§3 rows
-and updates §4 to "5 of 12". Still open after it: D5, U1–U5, S1, T1.
+**Scanning:** D1, D2, D3, D4a, **D4b done** (`8198309`). Still open: D5, U1–U5, S1, T1.
+
+> **The scheduled-task route works, and it is the right tool for the remaining seven segments.**
+> D4b ran unattended from `C:\Users\Andyc\.claude\scheduled-tasks\audit5-segment-d4b\SKILL.md`
+> (14:31:08 → commit 15:20:28, ~49 min) in **its own session with its own quota**, and it survived a
+> Claude Desktop re-login mid-run. The prompt file is the template: scope by file with line counts,
+> the workflow shape, the calibration paragraph, the do-not-re-derive list, and the write-up/commit
+> contract. Two properties that made the handoff cheap — it commits its own work, and it is
+> REPORT-ONLY, so a parallel session can hold the working tree as long as it stays hands-off (one
+> tree, two sessions: **do not edit anything while a segment session is live**).
+
+**D4b takeover check (this session, after the commit):** ST1 and SE1 re-read at source; **PX1
+re-verified independently against the shipped binaries** — not with `dumpbin` but with a
+throwaway PE export-table parser, which is the stronger check because it reads the artifact the same
+way the loader does: `C:\Windows\System32\dinput8.dll` `@6 = GetdfDIJoystick`,
+`dist\proxy\dinput8.dll` `@6 = UE5_AutoStart`, `@7 = UE5_CallProcessEvent`. Collision confirmed
+exactly as filed. Three count errors corrected in place (D4b's LOW tally, and both distinct-count
+cells in §4) — the totals were right, the per-segment cells were not.
 
 **Fixing — cluster ① is 6 of 7 shipped** (`5ef4c2b`, `c65fdfc`):
 M1, M2, M3, A2, U1, and U2 (which U1 forced in — they are not independently shippable).
@@ -486,10 +500,16 @@ be the default for any DLL fix:
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
 |---|--:|--:|--:|--:|---|
 | D1 Ubel | 24 | 27 | 13 (48%) | 11 | 2 → **0** |
-| D2 Genau+Serie | 36+14 | 26 | 19 (73%) | 6 | 7 → **0** |
+| D2 Genau+Serie | 36+14 | 26 | 19 (73%) | 6 **+1** ✦ | 7 → **0** |
 | D3 Aura | 16 | 18 | 8 (44%) | 10 | 0 → 0 |
 | D4a Macht | 10 | 9 | 5 (56%) | 3 | 0 → 0 |
-| D4b Mimic+Sein+Stark+Lugner | 11 (+5 lost) | 18 | 9 (50%) | 10 | 0 → 0 |
+| D4b Mimic+Sein+Stark+Lugner | 11 (+5 lost) | 18 | 9 (50%) | 9 | 0 → 0 |
+
+✦ **D2's section holds 7 rows but its run produced 6.** G7 did not come from any finder — it was
+found during the 2026-08-14 live-verification session and filed into the D2 section because that is
+where it belongs by subject. The Raw/Refuted columns describe the *runs*; the totals above count
+*rows*, so the two reconcile only through this row. (Counted directly: `grep -cE '^\| \*\*[A-Z]+[0-9]+\*\*'`
+over §2 = **40**, of which 22 MED / 17 LOW / 1 INFO. Re-derive it rather than trusting the table.)
 
 **Nine HIGHs were claimed across the audit and every one died** — and the last two segments claimed
 none at all, which is the calibration working rather than the code improving. Two things follow:
