@@ -322,7 +322,117 @@ a MEDIUM.**
 
 -----
 
+### D5 — Fern (PipeServer) + Frieren (ExportAPI) — ✅ scanned 2026-08-14
+
+Run `wf_39143753-6df`, 14 agents, **0 errors, 0 empty results** — the first segment where every agent
+returned. 19 raw claims → **11 refuted (58%)** → 8 confirmed → **8 distinct**. Recorded: **5 MEDIUM ·
+3 LOW**, and **every one of the five MEDIUMs went through a second independent lens and survived**.
+
+**Tally: 0 HIGH — the third segment running.** One claim arrived as HIGH and its own skeptic cut it to
+MEDIUM. `Fern.cpp` is the largest file in the DLL (6,028 lines) and was *partly* audited before —
+audits #3/#4 covered the command families added since their baselines, so the finders were pointed at
+the old core instead, and that is where all eight landed.
+
+> **The theme of this segment is the reply, not the transport.** The wire protocol and the connection
+> machinery came out clean: every framing, parsing and unbounded-allocation claim died (see §3).
+> What survived is almost entirely **what the DLL *says* about work it did not finish** — three of the
+> eight are a cap or an abort that the reply does not mention, one is a return value dropped, one is an
+> error string that describes an execution that provably never happened. Cluster ② and ⑥ now account
+> for 5 of D5's 8.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **F1** ‡ | MED | `Fern.h:30` (+ `Frieren.cpp:92`) | `~Fern() { Stop(); }` on a namespace-scope static makes the **entire pipe teardown** — cancel sweeps, watch joins, a **5-second** condition-variable drain and two thread joins — run from the CRT's static-destructor pass during `DLL_PROCESS_DETACH`: precisely the heavy work `Heiter.cpp:288-301` deliberately refuses to do there, and precisely the hazard `Routine.h:51-56` already documents for every *other* module's worker. At process exit `ExitProcess` has already terminated the connection threads, so they can never erase themselves from `m_conns` and the drain predicate is **unsatisfiable by construction** — the full budget burns every time. `Stop` also takes `m_connMutex`, Sein's log mutex and both Radar session mutexes *after* their holders were killed, which is the documented shape of a permanent exit hang. | S / low |
+| **F2** | MED | `Fern.cpp:854` (+ `:779`) | `Tot::ResetPerCommand()` runs **only** when a connection is accepted into an *empty* registry (`firstConn = m_conns.empty()`). The monitor latches `g_perCommand` when a pipe breaks, and nothing else ever clears it — so a reconnect that arrives while a dead session's connection is still registered (a bulk lane parked in `EnqueueInvoke`'s wait, up to the 600 s invoke timeout) carries the latch into the **new** session, permanently: the registry cannot go empty again until that session ends. Every cancellable loop then bails on its first poll and returns an empty or partial result **inside a successful response** — `find_instances` 0 rows, `search_properties` truncated, `begin_value_scan` empty. Second lens confirmed it and called it understated: `Stark.h:87-89` advertises the very guard that would have killed the claim, and it does not cover this path. | M / med |
+| **FR1** | MED | `Frieren.cpp:767` | `UE5_AutoStart` **discards `UE5_Init`'s return** behind the comment `// Always succeeds (partial init is OK …)` and unconditionally starts the pipe server and publishes `initState = INIT_READY` — a state the enum defines as "init finished **and** the pipe server is up". `UE5_Init` has a real `return false` (a shutdown landing during the multi-second scan; pointers partial, nothing latched). End state: a serving pipe, `s_initialized == false`, engine pointers from an aborted scan, and **no mailbox poller** (`Mimic::StopThread` already ran and `StartThread`'s only other caller is `DllMain`) — so every CE `.CT` feature row writes a command nobody collects and `status` stays `0`, which CLAUDE.md's own rule tells the user means *"stale `g_invokeMailbox` address"*. Sends the user to the wrong diagnosis. Second lens proved the comment stale **by history**: `af7ff3a` (2026-03-02) deleted the old `if (!UE5_Init()) return false;` when it was correct; `ab66d54` (2026-08-04, audit #4 B49) added the `return false` five months later without revisiting the call site. | S / low |
+| **F3** | MED | `Fern.cpp:1068` (+ `:1717`, `:4773`) | `Ubel`'s per-UObject name cache is keyed by a **raw `uintptr_t` with no generation/serial**, is never revalidated on hit, and Fern owns its only two purge sites — `begin_snapshot` and `trigger_scan`, neither reachable from ordinary browsing. The last-connection teardown at `:1068` drops Radar sessions, Linie, Sense and Schlacht but **not** this; nor does `Fern::Stop`, nor a CE Disable/Enable. After a level change recycles a UObject slot, every name-bearing response — Object Tree rows, `walk_instance`'s own/outer name, every ObjectProperty target — serves the **destroyed** object's name for the rest of the process's life, while the class is read fresh, so the two disagree with no error anywhere. Only restarting the game clears it. **Cluster ③, exactly.** | S / low |
+| **F4** | MED | `Fern.cpp:2645` (+ batch twin) | `Aura::SearchProperties` stops the GObjects walk the instant `results.size()` reaches `maxResults` (**200** by default from the UI) and also breaks on `Tot::Requested()`; the reply carries `total` = the capped row count with **no `truncated` and no aborted flag**. Worse, `scanned_objects` is echoed from a field Aura assigns to the **full** object count *before* the loop starts (`Aura.cpp:4179`), so a walk that stopped a few percent in reports the whole pool as scanned. The panel prints *"Found 200 properties in 3,412 classes (scanned 1,204,338 objects)"*; the user's client-side filter then finds nothing and they conclude the field does not exist. **This is the exact shape behind four "the scan missed my field" reports.** | S / low |
+| **F5** | LOW | `Renge.h:282` (+ `Fern::WriteLine`) | `MakeResponse` builds a 3-key envelope then `res.merge_patch(data)`; nlohmann's merge_patch assigns non-object values **by copy**, so a payload a handler carefully built with `std::move` is deep-copied in full — then `WriteLine` materialises a second copy of the serialized string solely to append `"\n"`. Peak ≈ 2× DOM + 2× string, **in the game process's heap**, on `snapshot_chunk` (8192 objects), `find_instances` (50000 cap) and `list_all_functions` (100000 default). | S / low |
+| **F6** | LOW | `Fern.cpp:2510` | `walk_world` clamps the Actors loop to the caller's `limit` (the UI sends **500**) and reports `actors.size()` as the level's actor count — the real `actorArr.Count` is read one line earlier and **discarded** — with no `truncated`/`total`, so a 500-actor page is indistinguishable from a 500-actor level and an actor at index 1877 simply is not there. Two sibling failures in the same block (Actors field unresolved; `ReadTArray` fails) also return `actors: []` with `ok:true` and **no `error`**, even though this same handler sets `data["error"]` for the two failures directly above. | S / low |
+| **F7** | LOW | `Fern.cpp:5042` | The `-7` response text reads *"(hook not active, direct call used)"*. `-7` is produced **only** by `Stark::EnqueueInvoke`'s inactive-hook guard or by `Stark::Shutdown` draining the queue — **neither executes ProcessEvent by any route**; the direct fallback lives on the other side of the `if (Stark::IsHookActive())` branch and returns 0/-2/-3/-4/-8. The string reports an execution that provably did not happen, and the dialog still shows `result_hex` — the untouched pre-call buffer. `-8` has no mapping at all. | S / low |
+
+‡ **F1 — I strengthened this one at takeover, and the strengthening removes the skeptic's own reason
+for downgrading it.** The skeptic did real work here: it read the MSVC CRT source to establish that
+`dllmain_crt_process_detach` runs the onexit table **unconditionally** (`is_terminating` gates only
+`__scrt_uninitialize_crt`), then went to `%LOCALAPPDATA%\UE5CEDumper\Logs` and found three real game
+exits whose `Stop entry` proves the destructor path executed. But all three had `conns=0`, so it cut
+HIGH → MEDIUM saying *"5 s on EVERY exit is unproven"*. **There is a fourth capture it did not find:**
+
+```
+DumperTest/pipe-20260812-092027.log
+  09:20:22.158  PipeServer: Stop entry (conns=2)
+  09:20:22.159  PipeServer: Stop cancel issued: 0 accepted, 2 had nothing pending
+  09:20:27.188  straggler: parked in ReadFile … for 3660559 ms, last cmd 'get_forced_fields'
+  09:20:27.188  straggler: parked in ReadFile … for 2457674 ms, last cmd 'walk_function_props'
+  09:20:27.188  PipeServer: Stop conn drain TIMEOUT, 2 left (5029 ms, 49 cancel re-asserts)
+```
+
+The `conns > 0` case is **measured**, and it burned 5029 ms exactly as predicted. I verified the
+load-bearing fact myself rather than taking it on trust: `UE5_Shutdown`'s **first statement** is
+`LOG_INFO("UE5_Shutdown: Cleaning up...")` (`Frieren.cpp:588`), `s_pipeServer.Stop()` has exactly two
+call sites (`:607` inside `UE5_Shutdown`, `:1777` in `UE5_StopPipeServer`), and the shipped
+`scripts/UE5CEDumper.CT:772-780` only *probes* `UE5_StopPipeServer` with `pcall(getAddress, …)` and
+then calls **`UE5_Shutdown` alone**, deliberately. `grep -rn "Cleaning up"` over the entire Logs tree
+returns **zero**. So no logging call site ran, and **every `Stop entry` on disk came from `~Fern()` at
+`DLL_PROCESS_DETACH`.** Severity stays MEDIUM — on outcome, not on doubt: what is demonstrated is a
+5-second hang at exit, while the loader-lock deadlock remains a real but undemonstrated escalation.
+
+**F1 also explains a four-times-refuted item in [todo.md](todo.md), and explains it better than the
+answer recorded there.** That entry (`Stop conn drain TIMEOUT`) concludes the connection is *"genuinely
+blocked in a synchronous `ReadFile`"* with the root cause being the absence of `FILE_FLAG_OVERLAPPED`.
+That accounts for `CancelIoEx` failing — but **not** for attempt #3, where `CancelSynchronousIo` was
+called on a duplicated thread handle and *also* returned nothing-pending. A **terminated** thread
+explains both, and it explains why "0 accepted, 2 had nothing pending" repeats 49 times: there is no
+thread left to cancel. The two structural fixes proposed there (close the handle from `Stop`; make the
+pipe overlapped) would **not** fix the process-exit path either — a dead thread cannot erase itself
+from `m_conns` however its `ReadFile` ends. See the note appended to that entry.
+
+-----
+
 ## 3. Refuted — do not re-raise
+
+### From D5 (11 of 19 — 58%)
+
+**The whole wire-protocol and connection-teardown surface came out clean**, and three refutations are
+worth more than the findings they killed because of *how* they died:
+
+- **`Fern.cpp:4904` — "`invoke_function` sizes the ProcessEvent parameter buffer from the wire's
+  `parms_size` and never cross-checks the resolved UFunction's real `ParmsSize`."** The missing
+  cross-check is structurally real and the citations are exact; refuted because neither half of the
+  failure scenario is reachable.
+- **`Fern.cpp:895` — "`ReadLine` issues one `ReadFile` syscall per request byte, inside the game
+  process."** The code property is real (one byte per call, vs a single `WriteFile` on the way out).
+  **Refuted on arithmetic** — the quantification (1.6–2.1 µs *per request byte*) is what would have
+  turned a style observation into a finding, and it does not survive being computed.
+- **`Fern.cpp:908`** — an over-length request kills the connection with no error response, making
+  `write_mem`'s advertised 65536-byte ceiling unreachable. **The arithmetic is right** (65536 bytes =
+  131072 hex characters, over `PIPE_BUF_SIZE`) and the ceiling genuinely is unreachable — refuted
+  because no shipping client can produce the request.
+- **`Fern.cpp:587`** (`Stop`'s wake-poke gated on a racy `m_listenPipe` snapshot) and **`Fern.cpp:643`**
+  (unlocked `scanThread` assignment → double join throwing out of `UE5_Shutdown`): both refuted on
+  reachability — the interleave is bounded by a single syscall in the first, and the second needs a
+  nanosecond-scale alignment on top of two simultaneous human actions in two applications.
+- **`Fern.cpp:860`** — "`HandleConnection`'s manual cleanup is bypassed when `RunThreadGuarded`
+  swallows a throw, permanently leaking one of only three pipe instances." Mechanism real; **no throw
+  can get out** — `DispatchCommand` is one giant try (`:1492-1498` catches the `json::parse` throw,
+  `:1508` opens a second try enclosing every handler and every return).
+- **`Frieren.cpp:746`** — "`UE5_AutoStart` is a multi-second blocking export called through a 5 s
+  `executeCodeEx`." Refuted: the revive path re-enters `UE5_Init` with the hint cache already written
+  for that PE hash, which short-circuits both expensive phases, so the "5–8 s band" premise is wrong
+  and the quoted budget comment describes a different path.
+- **`Frieren.cpp:1032`** (`UE5_SetDebugCamera` not escalating to the controller swap on a failed
+  invoke) — refuted on three grounds; the escalation is deliberately gated on a *confirmed* fire, and
+  the finder's own headline trigger (`-5` timeout) is the case where escalating is actively harmful
+  because the request stays queued.
+- **`Frieren.cpp:648`** — `UE5_SetObjectDecryption`'s stored callback. Refuted: the retract half of
+  the contract **is** documented at the declaration (`Frieren.h:52-55`).
+- **`Frieren.cpp:1761`** — "`UE5_StartPipeServer` returns true and `AutoStart` publishes `INIT_READY`
+  when it started no server, because the pipe name is machine-global." Refuted: `INIT_READY` and
+  `INIT_SKIPPED` are **behaviourally identical in the only consumer that exists**
+  (`CeReadinessLua.cs:82` breaks its poll on either), so the divergence has no bad outcome.
+- **`Frieren.cpp:992`** — debug-camera force-OFF "reports success from the flag it just cleared".
+  Refuted: the documented contract is *bail-before-any-write*, and the three guards deliver exactly
+  that.
 
 ### From D4b (9 of 18 — 50%)
 
@@ -440,7 +550,10 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 ## 3b. Session handoff — state as of 2026-08-14 15:3x (D4b landed)
 
-**Scanning:** D1, D2, D3, D4a, **D4b done** (`8198309`). Still open: D5, U1–U5, S1, T1.
+**Scanning:** D1, D2, D3, D4a, **D4b** (`8198309`) and **D5** done. Still open: U1–U5, S1, T1 — i.e.
+**the DLL is fully scanned; everything left is C# and Lua.** That changes the lens set: the remaining
+segments want AOT/trimming, MVVM/binding lifetime and async-cancellation lenses rather than the
+memory-safety ones, and they have real test coverage to refute against, which the DLL segments did not.
 
 > **The scheduled-task route works, and it is the right tool for the remaining seven segments.**
 > D4b ran unattended from `C:\Users\Andyc\.claude\scheduled-tasks\audit5-segment-d4b\SKILL.md`
@@ -494,8 +607,8 @@ be the default for any DLL fix:
 
 ## 4. Cross-segment rollup — read this before fixing anything
 
-**Status: 5 of 12 segments scanned** (D1, D2, D3, D4a, D4b). **40 distinct findings: 0 HIGH ·
-22 MEDIUM · 17 LOW · 1 INFO.** 98 raw claims, **54 refuted (55%)**. Remaining: D5, U1–U5, S1, T1.
+**Status: 6 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5). **48 distinct findings: 0 HIGH ·
+27 MEDIUM · 20 LOW · 1 INFO.** 117 raw claims, **65 refuted (56%)**. Remaining: U1–U5, S1, T1.
 
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
 |---|--:|--:|--:|--:|---|
@@ -504,19 +617,21 @@ be the default for any DLL fix:
 | D3 Aura | 16 | 18 | 8 (44%) | 10 | 0 → 0 |
 | D4a Macht | 10 | 9 | 5 (56%) | 3 | 0 → 0 |
 | D4b Mimic+Sein+Stark+Lugner | 11 (+5 lost) | 18 | 9 (50%) | 9 | 0 → 0 |
+| D5 Fern+Frieren | 14 | 19 | 11 (58%) | 8 | 1 → **0** |
 
 ✦ **D2's section holds 7 rows but its run produced 6.** G7 did not come from any finder — it was
 found during the 2026-08-14 live-verification session and filed into the D2 section because that is
 where it belongs by subject. The Raw/Refuted columns describe the *runs*; the totals above count
 *rows*, so the two reconcile only through this row. (Counted directly: `grep -cE '^\| \*\*[A-Z]+[0-9]+\*\*'`
-over §2 = **40**, of which 22 MED / 17 LOW / 1 INFO. Re-derive it rather than trusting the table.)
+over §2 = **48**, of which 27 MED / 20 LOW / 1 INFO. Re-derive it rather than trusting the table.)
 
-**Nine HIGHs were claimed across the audit and every one died** — and the last two segments claimed
-none at all, which is the calibration working rather than the code improving. Two things follow:
-severities from a finder are worthless before refutation, and — since the surviving 40 are all
-MED/LOW/INFO — *nothing found so far is an emergency*. Fix by cluster, not by walking the list.
+**Ten HIGHs were claimed across the audit and every one died** — D5's lone HIGH was cut to MEDIUM by
+its own skeptic, and D3/D4a/D4b claimed none at all, which is the calibration working rather than the
+code improving. Two things follow: severities from a finder are worthless before refutation, and —
+since the surviving 48 are all MED/LOW/INFO — *nothing found so far is an emergency*. Fix by cluster,
+not by walking the list.
 
-**The refutation rate has been stable at ~50–56% for four of the five segments** (D2's 73% is the
+**The refutation rate has been stable at ~50–58% for five of the six segments** (D2's 73% is the
 outlier). Treat "about half of what a finder says is wrong" as this codebase's working constant when
 budgeting a segment.
 
@@ -556,12 +671,22 @@ of 8, so none of them discriminates.
 root cause recurring in older code**, which is evidence it is a habit of this codebase rather than a
 one-off: D2/**G1** (`bOffsetsValidated = true` while probes failed), D3/**A6** (Property Search
 reports the *defining* class, so Force resolves an empty pool), D3/**A5** (Preview samples the CDO,
-not a live instance), D4a/**M2** (count says 10, six rows render).
+not a live instance), D4a/**M2** (count says 10, six rows render), and **three more from D5** —
+D5/**F4** (`search_properties` reports the full pool as `scanned_objects` for a walk that stopped at
+the 200-row cap), D5/**F6** (`walk_world` reports the page size as the level's actor count, having
+read and discarded the real one), D5/**F7** (the `-7` string names an execution that provably never
+happened). **D5 makes this the largest cluster (8 members) and the one with the clearest user cost:**
+F4 is the exact shape behind four "the scan missed my field" reports, and its fix is the cheapest in
+the audit — Fern can detect the cap locally, since `SearchProperties` stops *exactly* at `maxResults`.
 
 **③ A cache keyed by an address the engine recycles, never invalidated** — D1/**U4**, **U5**, **U6**
-(Ubel's class + name caches), D3/**A10** (Aura's per-class metadata). **One fix pattern, not four:**
-store an `(InternalIndex, SerialNumber)` witness and validate it on hit — the same pair UE itself
-uses to detect a recycled slot.
+(Ubel's class + name caches), D3/**A10** (Aura's per-class metadata), D5/**F3** (the *purge* half of
+the same name cache: its only two purge sites are `begin_snapshot` and `trigger_scan`, neither
+reachable from ordinary browsing, and the last-connection teardown that drops every other session
+resource skips it). **One fix pattern, not five:** store an `(InternalIndex, SerialNumber)` witness and
+validate it on hit — the same pair UE itself uses to detect a recycled slot. F3 additionally wants a
+one-line `Ubel::ClearNameCache()` in Fern's `if (last)` teardown, which is a fix for the
+*reconnect* case that the witness pattern does not cover.
 
 **④ Layout knowledge duplicated instead of derived** — D1/**U2** (FName width hardcoded 8 while
 `Ubel.cpp:126` and five `Aura.cpp` sites derive it), D1/**U8** (FName `Number` open-coded three times,
@@ -582,6 +707,21 @@ needs the caller to route its failure into whichever category is still alive. Ch
 currently costs a maintainer the *evidence* they would debug with — SE1 in particular defeats
 [log-verification-checklist.md](log-verification-checklist.md)'s grep-by-format-string procedure,
 which reads an absent line as "the code path never ran".
+D5 adds **FR1** — `UE5_AutoStart` drops `UE5_Init`'s `false` and publishes `INIT_READY` anyway. It is
+the most expensive member of the cluster because the state it produces (serving pipe, no mailbox
+poller) makes every CE `.CT` row report `status = 0`, which CLAUDE.md's own rule tells the user means
+a *stale mailbox address* — so the discarded return does not merely lose information, it manufactures
+a confident wrong diagnosis.
+
+**⑦ A hazard the codebase already solved everywhere else, missed at one door — new in D5.** D5/**F1**:
+`Heiter.cpp:288-301` refuses heavy work in `DLL_PROCESS_DETACH` and explains why, and `Routine.h:51-56`
+documents the same hazard for every feature worker ("at process exit every feature worker is still
+joinable, its static destructor runs, and the FIRST one to destruct kills the process") — and
+`Fern::Stop`'s explicit `join()` / `wait_for` calls were simply not on that list, so `~Fern()` runs the
+whole teardown at DETACH anyway. This is the inverse of D4b's dominant refutation shape: there, five
+claims died because the code carried a comment naming the defect it prevents; here the comment exists,
+names the defect, and **one path does not obey it**. Worth a sweep of its own: `grep` for namespace-
+scope statics with non-trivial destructors in `dll/src` and check each against the DETACH policy.
 
 ### One chain crosses segments — fix order matters
 

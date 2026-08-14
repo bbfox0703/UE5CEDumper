@@ -2283,6 +2283,37 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 > ReadFile", which was a LABEL the code asserted, not something it had measured. Replacing the
 > label with an observation cost one build and ended the thread.*
 >
+> ### ⚠ 2026-08-14 — audit #5/D5 says the ANSWER above is the wrong mechanism. Read this before fixing.
+>
+> The conclusion recorded above ("genuinely blocked in a synchronous `ReadFile`"; root cause = no
+> `FILE_FLAG_OVERLAPPED`) accounts for attempt #2 failing but **not for attempt #3** —
+> `CancelSynchronousIo` was called on a duplicated *thread* handle, which is exactly the API for a
+> live thread blocked in synchronous I/O, and it *also* reported nothing-pending, 49 times.
+>
+> **A terminated thread explains both, and audit #5/D5's finding F1 shows the threads are terminated.**
+> `Fern::Stop` has two logging call sites — `UE5_Shutdown` (`Frieren.cpp:588`, whose FIRST statement is
+> `LOG_INFO("UE5_Shutdown: Cleaning up...")`) and `UE5_StopPipeServer`, which the shipped
+> `scripts/UE5CEDumper.CT:772-780` only *probes* with `pcall(getAddress, …)` before calling
+> `UE5_Shutdown` **alone**, deliberately. `grep -rn "Cleaning up"` over the whole
+> `%LOCALAPPDATA%\UE5CEDumper\Logs` tree returns **zero**. So every `Stop entry` capture on disk —
+> including the `conns=2` / `5029 ms` one this entry is built on — was reached from
+> **`~Fern()` during `DLL_PROCESS_DETACH`**, i.e. after `ExitProcess` had already terminated the
+> connection threads. A dead thread has no pending I/O for either cancel API to find, and it can never
+> erase itself from `m_conns`, so the drain predicate is **unsatisfiable by construction** and the full
+> 5 s budget burns every time.
+>
+> **Consequence for the two structural fixes proposed above: neither works on this path.** Closing the
+> connection handle from `Stop` makes a *live* thread's `ReadFile` return an error — there is no live
+> thread. Making the pipe overlapped has the same problem. The fix is not to run the drain at all when
+> `Stop` is entered from the destructor: give `Stop` a `bool graceful`, skip the wait/joins/cancels on
+> the DETACH path (the OS reclaims all of it — the reasoning `Heiter.cpp:288-301` already applies to its
+> own DETACH body), and log which entry path was taken so future captures can be attributed.
+>
+> *This is attempt #5, and it is the first one aimed at a mechanism rather than at an API. Note what
+> found it: not a new diagnostic, but reading the code that decides **who calls `Stop`** — a question
+> none of the four earlier attempts asked, because the repro was assumed to be the CE untick it was
+> written as, and no capture on disk is actually that repro.*
+>
 > ⬜ does **not** mean "probably fine". It means nobody has looked. Most of the fourteen were
 > simply not exercised (no wrapper installed, no UI killed mid-command, no Extra Scan).
 
