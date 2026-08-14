@@ -222,6 +222,18 @@ Run `wf_8f75b7cb-452`, 10 agents, 0 errors. 9 raw claims → **5 refuted** → 4
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
+> **✅ ALL THREE SHIPPED 2026-08-14** (`Macht.h` + `Ubel.cpp` + `dll_helpers_test.cpp`, 1018 C++
+> tests green, +21 of them new and all covering the **composition**). `ComputeSetElementStride` took
+> an `elemAlign` parameter (default 4 → TSet behaviour byte-identical); a new `Macht::SanitizeAlign`
+> rejects anything not a power of two in [1,32]; `ReadTSparseArray` reads `NumFreeIndices` at `+0x34`;
+> and a new file-local `Ubel::GetStructAlignment` reads `UScriptStruct::MinAlignment` so struct-typed
+> keys/values stop falling through to the size guess. **Not yet verified on a real game** — see
+> [todo.md § Pending live-game verification](todo.md#pending-live-game-verification-verify-only--no-code).
+> One correction found while fixing: `MinAlignment` is **`int16`** in UE 5.8 (`StructStateFlags`
+> takes the other half of the word) but was **`int32`** in UE4 / early UE5 — so it is read as
+> `int16_t`, which is correct on **both** on little-endian x64. Reading it as `int32` as originally
+> proposed would have picked up the flags on newer engines.
+
 | **M1** | MED | `Macht.h:314` | `ComputeSetElementStride` aligns to **4** and cannot express `alignof(T)`, so the documented `TMap` recipe omits the `TPair`'s **trailing padding**. Real stride is `Align(sizeof(TTuple<K,V>) + 8, max(alignof K, alignof V))`. `TMap<AActor*,float>` → computes **20**, real **24**; `TMap<FString,int32>` → **28** vs **32**; `TMap<UObject*,uint8>` → **20** vs **24**. Every element past index 0 is read at a wrong address. `TSet<T>` is unaffected (a bare `elemSize` is always a multiple of `alignof(T)`). | S / med |
 | **M2** | MED | `Macht.h:293` | `ReadTSparseArray` reads `NumFreeIndices` at **`+0x3C`**. The PDB-verified layout in this repo (`Aura.cpp:3037-3038`, Everspace 2 UE 5.4) puts `FirstFreeIndex` at `+0x30` and `NumFreeIndices` at **`+0x34`**; `+0x3C` is padding before the Hash allocator at `+0x40`, zero-initialised and never written. So it always reads **0**, and `Ubel.cpp:4045`'s `mapCount = MaxIndex - NumFreeIndices` **over-reports** the count of any `TMap`/`TSet` that has had entries removed (10 shown, 6 rows rendered). The header comment claiming `TSparseArray` is `0x40` bytes is also wrong — it is `0x38`. | S / low |
 | **M3** | MED | `Macht.h:332` | `ComputeMapValueOffset`'s size-guess fallback is taken for **every struct-valued TMap**, because `Scharf::RequiredAlignment` returns **0** for `StructProperty` (`Scharf.h:76-78`). It then guesses `valueSize >= 8 → align 8`. For `TMap<int32,FVector>` the real value sits at **+4** (alignof 4) but it reads **+8**, so *even element 0* shows a wrong vector; `TMap<int32,FGuid>` reads every value 4 bytes late. **A validation helper is being reused as a layout oracle.** | M / med |

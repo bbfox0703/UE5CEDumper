@@ -257,8 +257,10 @@ inline uintptr_t ReadTArrayElement(const TArrayView& arr, int32_t i) {
 //          +0x20  SecondaryData* (heap ptr for >128 bits)
 //          +0x28  NumBits (int32)
 //          +0x2C  MaxBits (int32)
-//   +0x38  FirstFreeIndex (int32)
-//   +0x3C  NumFreeIndices (int32)
+//   +0x30  FirstFreeIndex (int32)
+//   +0x34  NumFreeIndices (int32)
+// Total size 0x38. Verified against the Everspace 2 UE 5.4 PDB — see the
+// layout reference in Aura.cpp (FSparseDelegateStorage::SparseDelegates).
 struct TSparseArrayView {
     uintptr_t Data         = 0;     // Element data pointer
     int32_t   MaxIndex     = 0;     // Total slots (allocated + free)
@@ -288,8 +290,13 @@ inline bool ReadTSparseArray(uintptr_t addr, TSparseArrayView& out) {
     ReadSafe(addr + 0x20, out.secondaryData);
     // NumBits at +0x28
     ReadSafe(addr + 0x28, out.numBits);
-    // NumFreeIndices at +0x3C
-    ReadSafe(addr + 0x3C, out.NumFreeIndices);
+    // NumFreeIndices at +0x34. It sits immediately after FirstFreeIndex (+0x30),
+    // which ends the 0x38-byte TSparseArray. Reading it at +0x3C lands past the
+    // end — in the enclosing TSet's Hash allocator padding, which is zeroed with
+    // the UObject and never written — so it always read 0 and every caller
+    // computing `MaxIndex - NumFreeIndices` OVER-reported the element count of
+    // any container that had ever had an entry removed.
+    ReadSafe(addr + 0x34, out.NumFreeIndices);
     return true;
 }
 
@@ -309,11 +316,37 @@ inline bool IsSparseIndexAllocated(const TSparseArrayView& sa, int32_t index) {
     return (word & (1u << bitIdx)) != 0;
 }
 
+// Sanitize an alignment that came from game memory (UScriptStruct::MinAlignment)
+// or from a caller. Returns 0 — "unknown, use the default" — for anything that is
+// not a power of two in [1, 32].
+inline int32_t SanitizeAlign(int32_t align) noexcept {
+    if (align <= 0 || align > 32) return 0;
+    if ((align & (align - 1)) != 0) return 0;
+    return align;
+}
+
 // Compute TSetElement stride: { T value; int32 HashNextId; int32 HashIndex; }
-// HashNextId is aligned to 4 bytes after the value.
-inline int32_t ComputeSetElementStride(int32_t elemSize) {
-    int32_t hashStart = (elemSize + 3) & ~3;  // align to 4
-    return hashStart + 8;  // + HashNextId(4) + HashIndex(4)
+//
+// The real slot is TSparseArray<TSetElement<T>>'s, whose size is
+//     Align(Align(sizeof(T), alignof(T)) + 8, alignof(T))
+// The two int32 hash fields are 4-aligned, so alignof(TSetElement<T>) is
+// max(alignof(T), 4) and the element must ALSO be padded at the tail so the
+// next element starts aligned.
+//
+// elemAlign: pass alignof(T). For a TMap that is max(alignof(Key), alignof(Value)).
+// Omitting it drops the TPair's TRAILING padding and every element after index 0
+// is read at a wrong address — TMap<AActor*,float> has an unpadded pair of 12, so
+// the old one-argument form returned 20 where the engine strides 24 (and
+// TMap<FString,int32> 28 vs 32, TMap<UObject*,uint8> 20 vs 24).
+//
+// TSet<T> is unaffected: a bare elemSize is already a multiple of alignof(T),
+// so the default of 4 reproduces the previous behaviour exactly and the TSet
+// call sites need no change.
+inline int32_t ComputeSetElementStride(int32_t elemSize, int32_t elemAlign = 0) {
+    int32_t a = SanitizeAlign(elemAlign);
+    if (a < 4) a = 4;                                  // hash fields are int32-aligned
+    int32_t hashStart = (elemSize + a - 1) & ~(a - 1);  // pad T to its own alignment
+    return (hashStart + 8 + a - 1) & ~(a - 1);          // then pad the whole slot
 }
 
 // Compute the aligned byte offset of Value within a TMap TPair<Key, Value>.

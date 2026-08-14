@@ -1354,6 +1354,31 @@ discarding CE's reason string — **shipped**; see [dev-log.md](dev-log.md). CE-
 
 ## Pending live-game verification (verify only — no code)
 
+### 🔴 NEW 2026-08-14 — TMap element geometry: pair padding + struct alignment + free-slot count (audit #5 M1/M2/M3)
+
+Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.
+**1018 C++ tests green, never run against a game.** The unit tests pin the *arithmetic contract*;
+they structurally **cannot** cover M3's real change, which is `Ubel` resolving
+`UScriptStruct::MinAlignment` out of a live process. That needs a game.
+
+- ⬜ **A `TMap<K,V>` whose pair needs trailing padding reads correctly (M1).** Live Walker → expand
+  any `TMap<UObject*, float>` / `TMap<FString, int32>` / `TMap<AActor*, uint8>`. **Before the fix
+  every element past index 0 was wrong** (stride 20 vs the engine's 24). Confirm element 1..N show
+  plausible keys and values, and that no key repeats in a way that looks like a shifted window.
+- ⬜ **A struct-valued `TMap` reads correctly at element 0 (M3).** Expand a
+  `TMap<int32, FVector>`-shaped field (or any `TMap<K, FStruct>` whose struct is 4-aligned).
+  **Before the fix even element 0 was wrong** — the value was read at +8 where it really sits at +4.
+  This is the check that actually exercises the `MinAlignment` read.
+- ⬜ **Element count matches the rows rendered (M2).** Find a `TMap`/`TSet` that has had entries
+  removed during play (an inventory after dropping an item). The header count and the number of rows
+  must now agree — previously `NumFreeIndices` always read 0, so the count was inflated.
+- ⬜ **No regression on `TSet<T>` or `UDataTable`.** `TSet` geometry is unchanged by design
+  (`elemAlign` defaults to 4). Expand a `TSet<FName>` / `TSet<UObject*>` and open any DataTable to
+  confirm rows still resolve.
+- ⬜ **Check `walk-0.log` for the `Stride=` values.** `WALK:MapP` logs `ValOff` and `Stride` per map
+  field. A struct-valued map should now show an odd-looking-but-correct stride (e.g. 24 for
+  `TMap<int32,FVector>`, not 28). This is the cheapest passive evidence.
+
 ### 🔴 NEW 2026-08-11 — `executeCodeEx` finite timeout + reason capture (build 2792)
 
 Shipped in [dev-log.md](dev-log.md) build 2792, **never run against a game**. Three call sites
