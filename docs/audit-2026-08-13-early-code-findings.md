@@ -125,6 +125,45 @@ itself. The fix must reuse the existing `DynOff::bCasePreservingName ? 0x10 : 0x
 than introduce a new constant — that expression is already the repo-wide convention
 (`Ubel.cpp:126`, `Aura.cpp:2901/2924/3437/5791`, `Genau.cpp:5045`).
 
+### D2 — Genau + Serie — ⚠ INCOMPLETE, findings are UNVERIFIED
+
+**Run `wf_3cc1586f-db1`, 2026-08-13. The 5 finders completed; every skeptic and every second-lens
+agent died on a session usage limit (31 of 36 agents errored).** What follows is therefore **raw,
+unrefuted finder output — NOT findings.** Do not act on it, do not file it in todo.md, and do not
+quote a severity from it until the refute pass has run.
+
+> **Why this warning is not boilerplate:** segment D1, run to completion, **refuted 13 of 27 raw
+> claims — including both of its HIGHs.** The list below contains **7 HIGHs**. On D1's base rate,
+> expect roughly half of these to be wrong.
+
+**To finish the segment** (the 5 finders replay from cache; only the killed agents re-run):
+
+```bash
+Workflow({scriptPath: "…/workflows/scripts/audit5-seg-d2-genau-serie-wf_3cc1586f-db1.js", resumeFromRunId: "wf_3cc1586f-db1"})
+```
+
+26 raw claims → **15 distinct clusters** after merging lens duplicates. Cross-lens convergence is
+noted where it happened: it is a *positive signal*, not verification — three lenses can share one
+wrong assumption.
+
+| Cluster | Claimed sev | Location | Claim (UNVERIFIED) | Lenses |
+|---|---|---|---|---|
+| A | HIGH | `Genau.cpp:4006-4007`, `3234` | `ValidateAndFixOffsets` stores `bOffsetsValidated = true` on paths where individual probes failed and logged "keeping default"; the flag is set-only, so a re-entrant call can only upgrade the claim. UI + log would report `validated=yes` over unmeasured values. | 3 |
+| B | HIGH | `Serie.cpp:273`,`298`; `Genau.cpp:1740` | Genau proves which `Blocks[]` offset decoded `None`, logs it, then discards it; Serie re-derives from a candidate list **missing 0x18/0x28**, and on total failure hardcodes `0x10` yet still latches `s_initialized=true`. | 3 |
+| C | MED | `Serie.cpp:313-314` | `DetectBlockOffsetBits` claimed to be a no-op — both candidate bit-widths allegedly compute the identical address, so the 14-bit arm is unreachable. | 3 |
+| D | MED | `Genau.cpp:3560` | The Guid-less "Vector" fallback struct is described with the UE4 4-byte-float layout, so it can never validate on UE 5.0+ LWC. | 2 |
+| E | MED/LOW | `Genau.cpp:3348`, `4015` | `USTRUCT_SCRIPT` is derived only on the success path, leaving it inconsistent with what the give-up path wrote. | 3 |
+| F | HIGH | `Genau.cpp:1365` | A GNames candidate that is validated and then **refused** leaves its FName-format globals latched, so the winning candidate inherits them. | 1 |
+| G | MED | `Genau.cpp:2766` | `CountPreUE4Markers` / `DetectVersionDetailed` walk the entire mapped image with raw, un-SEH-guarded loads. | 1 |
+| H | MED | `Genau.cpp:2929`, `3261` | Whole-image and multi-module sweeps never poll `Tot::Requested()`, so `UE5_Shutdown`'s join is unbounded. | 2 |
+| I | MED | `Genau.cpp:4753` | `FindAll` substitutes a hardcoded `504` for a failed version detection before offset detection runs. | 1 |
+| J | MED | `Serie.cpp:430` | `InitObfuscated` frees the 64K tag-key array out from under `GetTagKey` on re-init (use-after-free). | 1 |
+| K | MED | `Serie.cpp:442` | `Init` publishes pool geometry field-by-field; on a second init the release-store does not fence the earlier fields. | 1 |
+| L | MED | `Serie.cpp:593` | Obfuscated fork: the wide (UTF-16) FName branch never applies the XOR key. | 1 |
+| M | MED | `Serie.cpp:498` | UE4 `TNameEntryArray` mode indexes the chunk with a negative element index; the UE5 path's bounds guard is absent. | 1 |
+| N | LOW | `Genau.cpp:3088` | `DetectCasePreservingName` counts a **failed** `Macht::ReadSafe` as a valid null Outer, so unreadable objects vote. | 1 |
+| O | LOW | `Serie.cpp:142` | A tag whose key lookup misses is cached as a permanent miss. | 1 |
+
 -----
 
 ## 3. Refuted — do not re-raise
