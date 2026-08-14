@@ -679,12 +679,34 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 > independent canonical writers sitting in this tree. That is the strongest evidence any segment of
 > this audit has produced, and it was available for free.
 
+> ### ✅ W4 FIXED — build 2836, 2026-08-14
+>
+> Escaping moved into `BuildDropDownContent`, which is the **single choke point**: all six call sites
+> (including the cached `_dropDownOwners` link path) build their body there, and both
+> `<DropDownList>` emit sites interpolate that body. One change covers every path.
+>
+> **The fix has two halves, and the second is the one a well-formedness check would have missed.**
+> XML metacharacters go through the same `EscapeXmlContent` the Descriptions use. But the body is
+> also **line-delimited**, so a CR/LF inside a game string forges an extra dropdown row and shifts
+> every following one — without making the document malformed. `CollapseLineBreaks` flattens them.
+> The negative control proved the distinction: reverting the fix turned all four new tests red, and
+> the newline test was the only one that failed **without** an `XmlException`.
+>
+> **The regression tests live in `CeXmlEscapingTests`, deliberately.** That suite is where the gap
+> was: all five pre-existing tests put the game string in a map **key**, which lands in
+> `<Description>`, so the suite passed throughout while the `<DropDownList>` path interpolated raw.
+> The four new tests reach that path via a `TMap<int32,FName>` — `NameProperty` map values are routed
+> into a dropdown rather than a description. 3579 tests, 0 failed.
+>
+> Still open in the same family: **W6** (`CeWidthForSize` bypassed by the enum array/set path) is the
+> other partial-application defect in this emitter and is untouched.
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **W1** | **HIGH** | `UsmapExportService.cs:16`,`173-178`,`203`,`233` | The file stamps `Version = 3` (`LargeEnums`) but writes the **version-0 layout**, in three independent places. (a) `version` is followed straight by `compression` — the mandatory `int32 bHasVersionInfo` that every `version >= PackageVersioning(1)` file must carry is missing, so a reader's `ReadBoolean()` consumes 4 bytes of the size field and throws before a single name is read. (b) enum member count written `uint8`, but `>= LargeEnums` requires `uint16`. (c) per-property ArrayDim written as `(ushort)0` while the format (and the code's own adjacent comment) says `uint8` — so every struct's first property slides the stream by one byte. The file's own comment is also wrong: it says "3 = LongFName", but LongFName is **2**. | S / low |
 | **W2** | **HIGH** | `SdkExportService.cs:358` (+`EmitClassHeaderFromLive`) | The emitter assumes `ClassInfoModel.Fields` holds only the class's **own** properties, but `Ubel::WalkClass` deliberately prepends the entire SuperStruct chain and nothing filters it out. Every base-class property is therefore declared a **second time** inside a `struct X : public Super` that already inherits it, so `offsetof` is wrong for every derived class in the generated SDK — the header compiles and is silently mislaid out. | M / med |
 | **W3** | MED | `SdkExportService.cs:221` + `:382` | N `FBoolProperty` bitfields that UE packed into **one byte** are each emitted as a whole `bool` and the layout cursor advances by `Size` for each, so the struct grows N−1 bytes from that point. The emitter only pads when `offset > cursor`, so once the bools overshoot, **no padding can compensate** and every subsequent member — and the trailing `// Size:` — is shifted. | M / med |
-| **W4** | MED | `CeXmlExportService.cs:3522` + `:3586` (`BuildDropDownContent`) | `<DropDownList>` bodies are built from live FName / enum-name strings read out of game memory and interpolated **raw**, while every `<Description>` goes through `EscapeXmlContent`. One `&` in a `TArray<FName> Tags` entry (`Bow & Arrow`) makes the whole CheatTable malformed — and `EscapeXmlContent`'s own doc comment states the consequence: CE rejects the **entire document**, so a multi-thousand-entry export imports as nothing with no indication which record was at fault. This is audit #4's **B3 defect surviving at the one site B3 did not cover**. | S / low |
+| **W4** ✅ | MED | `CeXmlExportService.cs:3522` + `:3586` (`BuildDropDownContent`) | `<DropDownList>` bodies are built from live FName / enum-name strings read out of game memory and interpolated **raw**, while every `<Description>` goes through `EscapeXmlContent`. One `&` in a `TArray<FName> Tags` entry (`Bow & Arrow`) makes the whole CheatTable malformed — and `EscapeXmlContent`'s own doc comment states the consequence: CE rejects the **entire document**, so a multi-thousand-entry export imports as nothing with no indication which record was at fault. This is audit #4's **B3 defect surviving at the one site B3 did not cover**. | S / low |
 | **W5** | MED | `CeXmlExportService.cs:2141` (`EmitDrilledPointer`) | The scalar pointer-drill branch gates on the broad `IsObjectPropertyType`, which includes `WeakObjectProperty` / `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty`, and emits `Offsets=[0]` for slots whose first 8 bytes are **not** a `UObject*` — a weak pointer is an index+serial pair. The array path has an explicit regression test against exactly this. (Claimed HIGH, cut to MEDIUM by the second lens.) | S / low |
 | **W6** | MED | `CeXmlExportService.cs:2665` (`MapInnerTypeToCeField`) | `EnumProperty` is hardcoded to CE type `"4 Bytes"` while element **addresses** are laid out with the DLL's real `ArrayElemSize`/`SetElemSize` (1 for the standard `enum class : uint8`), so CE reads 4 bytes at every 1-byte-spaced element. `CeWidthForSize` exists to fix precisely this and the Map and struct-array emitters already route through it. | S / low |
 | **W7** | MED | `UsmapExportService.cs:323` | The name table is serialized first, from a snapshot of the pre-registration pass, but the struct-writing pass then calls `GetOrAdd(… : "None")` in four places. `"None"` is never pre-registered, so it is appended at index N **after** the file already declared exactly N names, and every affected property references an out-of-range index. | S / low |
@@ -947,7 +969,8 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: W1 (HIGH), W2 (HIGH), W3–W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2.**
+**Still open: W1 (HIGH), W2 (HIGH), W3, W5–W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2.**
+U2 shipped **W4** (build 2836).
 (Note the ID collision: `U2`/`U3` are D1 findings in `Ubel.cpp`, *not* segment names.)
 
 ### The C# lens set — as run in U1, with what it actually yielded

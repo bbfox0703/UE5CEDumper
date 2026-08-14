@@ -3707,15 +3707,38 @@ public static class CeXmlExportService
     /// <summary>
     /// Build DropDownList content string from value:name pairs.
     /// Format: newline-separated "value:name" entries (decimal values, no leading zeros).
+    ///
+    /// <para><b>The names are arbitrary GAME memory</b> — FName entries, enum member names,
+    /// formatted container element values — so they get the same treatment as
+    /// <c>&lt;Description&gt;</c> text, for the same reason and against two different failure
+    /// modes.</para>
+    ///
+    /// <para><b>XML metacharacters</b> (<see cref="EscapeXmlContent"/>): this body is interpolated
+    /// straight into <c>&lt;DropDownList&gt;</c>, so a single <c>&amp;</c> in one entry — a
+    /// <c>TArray&lt;FName&gt; Tags</c> holding a designer-typed <c>Bow &amp; Arrow</c> is enough —
+    /// makes the whole CheatTable malformed and Cheat Engine rejects the <b>entire document</b>. The
+    /// escaping added for Descriptions (audit #4 B3) never covered this site; audit #5 W4 is the same
+    /// defect surviving here.</para>
+    ///
+    /// <para><b>Line breaks</b>: the format is line-delimited, so a CR/LF inside a name would forge
+    /// extra dropdown entries and shift every following one. That does not break XML well-formedness,
+    /// which is exactly why it needs handling here rather than being left to the escaper — it is
+    /// silent. Collapsed to a space.</para>
     /// </summary>
     private static string BuildDropDownContent(IEnumerable<(long value, string name)> entries)
     {
         var sb = new StringBuilder();
         sb.AppendLine();  // newline after opening tag
         foreach (var (v, n) in entries)
-            sb.AppendLine($"{v}:{n}");
+            sb.AppendLine($"{v}:{EscapeXmlContent(CollapseLineBreaks(n))}");
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// Flatten CR/LF to spaces so a game string cannot forge a new record in a line-delimited body.
+    /// </summary>
+    private static string CollapseLineBreaks(string s) =>
+        s.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
 
     /// <summary>
     /// Escape special characters for XML element text content.

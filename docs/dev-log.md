@@ -22,6 +22,45 @@ builds ≤696 in
 
 -----
 
+## 2026-08-14 - One '&' in a game string could reject an entire pasted cheat table (build 2836)
+
+**Audit #5 segment U2 fix W4.** `<Description>` text has been XML-escaped since audit #4 B3, because
+a single `&` anywhere in a multi-thousand-entry export makes the document malformed and Cheat Engine
+rejects **all** of it, with no indication which record was at fault. The `<DropDownList>` body — the
+*other* place a game-derived string reaches the XML — was never covered.
+
+Its content is built from live `FName` entries, enum member names and formatted container element
+values, then interpolated raw. A stock `TArray<FName> Tags` holding a designer-typed `Bow & Arrow` is
+enough. So is a `TMap<int32, FName>`, whose values are routed into a dropdown rather than a
+description.
+
+Escaping now happens inside `BuildDropDownContent`, which is the single choke point: all six call
+sites — including the cached `_dropDownOwners` link path — build their body there, and both
+`<DropDownList>` emit sites interpolate that body.
+
+**The fix has two halves and the second is the one well-formedness cannot catch.** Metacharacters go
+through the same `EscapeXmlContent` the Descriptions use. But the body is also **line-delimited**, so
+a CR/LF inside a game string forges an extra dropdown row and shifts every following one *without*
+making the document malformed. `CollapseLineBreaks` flattens those to spaces.
+
+### Why five existing escaping tests did not catch it
+
+`CeXmlEscapingTests` was written for B3 and every one of its five tests puts the game string in a map
+**key** — which lands in `<Description>`. Nothing in the suite reached the dropdown path, so it passed
+throughout. The four new tests go through a `TMap<int32,FName>` to reach it, and they live in that
+same file on purpose: the file is the record of what "the export must survive arbitrary game text"
+means, and it was incomplete.
+
+Verified with a negative control rather than a green run: reverting the fix turns all four red, each
+for its own reason — `&` gives *"error parsing EntityName"*, `<` gives *"Name cannot begin with ' '"*
+(the parser started reading a tag), and the newline test fails **with no XmlException at all**, which
+is precisely why that half needed its own handling. 3579 tests, 0 failed.
+
+Still open in the same emitter and the same family: **W6**, where `CeWidthForSize` is bypassed by the
+enum array/set path — the other partial-application defect U2 found.
+
+-----
+
 ## 2026-08-14 - The map row that was editing its own key, and a formula the DLL had already fixed for itself (build 2830)
 
 **Audit #5 segment U1 fixes V1 (the audit's only surviving HIGH), V2 and V5.** One commit, because
