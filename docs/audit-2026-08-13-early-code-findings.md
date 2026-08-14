@@ -56,7 +56,7 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **D4a** ✅ | Macht + Scharf (memory layer) | `Macht` 708/755, `Macht.h`, `Scharf.h` | ~1,000 | **none** |
 | **D4b** ✅ | Mimic/Flamme/Sein/Stark/Lugner | `Mimic` 639, `Flamme` 410, `Sein` 342, `Stark` 302, `Lugner`(+Dinput8) 225 | ~1,626 | none |
 | **D5** | Fern + Frieren | `Fern.cpp` 2490/6028, `Frieren.cpp` 816/1784 | ~3,306 | partly audited before |
-| **U1** | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
+| **U1** ✅ | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
 | **U2** | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
 | **U3** | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
 | **U4** | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
@@ -539,7 +539,110 @@ from `m_conns` however its `ReadFile` ends. See the note appended to that entry.
 
 -----
 
+### U1 — LiveWalker + PointerPanel + ObjectTree ViewModels — ✅ scanned 2026-08-14
+
+**16 agents** (5 C# lenses → 4 refute batches → 7 second-lens), 0 errors. Run `wf_0fbfa801-46d`.
+19 raw claims → 18 after dedupe → **6 refuted (33%)** → 12 confirmed → **11 distinct** after merging
+the two lens-duplicate reports of the same `FindReferencesAsync` defect (`:2366` MED from
+mvvm-lifetime and `:2383` LOW from async-cancel are one missing post-await navigation guard; the
+MEDIUM is the superset — it covers the reference *list* as well as the header label).
+
+**Tally: 1 HIGH · 6 MEDIUM · 4 LOW.** Three things about this segment break the audit's own pattern
+and matter more than any individual row:
+
+> **1. The audit has its first surviving HIGH — the eleventh claimed, after ten died.** V1 survived a
+> refute-mandated skeptic, a second lens, *and* my own end-to-end re-derivation at both ends of the
+> wire. Until now §4 could say "nothing found so far is an emergency"; that sentence is no longer
+> true. V1 writes user-typed bytes to the wrong address **in a live game process**.
+>
+> **2. The refutation rate collapsed to 33%, against a 56% running mean.** Do not read this as
+> "the C# is worse" without noting the confound: this is the first segment whose skeptics had **real
+> test coverage** to refute *with*, and the refutations they did produce are visibly stronger for it
+> (four of six name a specific caller-side guard, an XAML binding, or computed both sides of the
+> arithmetic). The honest reading is that the C# early code has a higher true-positive density AND
+> that the skeptics were better equipped. Carry the 33% into U2's calibration paragraph as a range
+> ("33–73% across segments"), not as a new constant.
+>
+> **3. One finding is a regression this audit itself introduced.** V5 is the C# half of cluster ①'s
+> `ComputeSetElementStride` fix (`5ef4c2b`, 2026-08-14). The DLL side shipped a two-argument,
+> alignment-aware stride; **three independent C# copies of the one-argument formula were left
+> behind**, each still carrying a doc comment that claims it mirrors the DLL. Fixing one side of a
+> duplicated computation without grepping for its mirrors *re-created cluster ④ while closing
+> cluster ①*.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **V1** | **HIGH** | `LiveWalkerViewModel.cs:1380` (`PopulateMapContainerFields`) | A TMap element row is built with `TypeName = MapValueType` (so `IsEditableType` passes for any scalar-valued map) but `FieldAddress = dataBase + index*stride` — the TPair base, which is **the key**. The `+ valOffset` the same method computes 40 lines earlier for struct values is not applied. Inline-editing a `TMap<FName,int32>` value writes the user's 4 bytes over the **FName key**; the same wrong address is what "+CE" pushes as a record and what "Copy address" yields. | S / med |
+| **V2** | MED | `LiveWalkerViewModel.cs:1706` (`ComputeSetElementStride`) | The C# stride mirror is still `AlignUp(elemSize,4)+8` after the DLL moved to `Align(Align(elemSize,alignof(T))+8, alignof(T))` in `5ef4c2b`. **Three copies** are stale (`LiveWalkerViewModel.cs:1706`, `CeXmlExportService.cs:3513`, `CsxExportService.cs:877`) across **5 map call sites**. TSet is unaffected by construction. Every map element address the UI computes itself is short by 4+ bytes past index 0. | M / med |
+| **V3** | MED | `LiveWalkerViewModel.cs:2366` (`FindReferencesAsync`) | No post-await navigation guard. Every other long round-trip snapshots `CurrentAddress` + `Breadcrumbs.Count` before its `await`; this one reads `CurrentObjectName` and refills `References` *after*, and runs on the **bulk** lane precisely so the user can keep navigating. A scan started on A lands A's reference list under B's header. | S / low |
+| **V4** | MED | `LiveWalkerViewModel.cs:5575` (`NavigateToAsync`/`GoBackAsync`) | Navigation commands are separate `AsyncRelayCommand`s with no shared re-entrancy gate, so a drill-down that started first can append its crumb onto a spine `GoBackAsync` has already truncated — leaving a leaf whose `FieldOffset` is relative to a parent no longer in the list, i.e. a silently wrong CE pointer chain. | M / med |
+| **V5** | MED | `LiveWalkerViewModel.cs:1622` (`FilterContainerToElement`) | The Map branch rebuilds the container field property-by-property and **omits `MapValueOffset`**, so the CE emitter falls back to `valOffset = MapKeySize` and derives a different stride. Exporting *selected* map elements produces a different and wrong layout from exporting the same map unfiltered. The sibling clone at `CeXmlExportService.cs:1030` preserves it — the two clone sites have drifted. | S / low |
+| **V6** | MED | `LiveWalkerViewModel.cs:5927` (`UpdateDisplay`) | `RefreshAsync` deliberately keeps the field-search keyword alive (`clearFieldSearch: false`) but `UpdateDisplay` swaps in new `LiveFieldValue` objects whose `IsSearchMatch` defaults false, and nothing re-runs `ApplySearch`. Highlights vanish while `SearchMatchCount` and the ↑/↓ buttons keep advertising N live matches. | S / low |
+| **V7** | MED | `LiveWalkerViewModel.cs:4812` (`RefreshAsync`) | Refresh failures — including the 10 s hard timeout — are reported through `SetError` → `ErrorMessage`, **a property `LiveWalkerPanel.axaml` never binds**, after `ClearStatus()` blanked the one bound status line. A failed refresh is byte-identical on screen to a successful one, stale values render as live, and a subsequent edit prints `Written: …` over them. | S / low |
+| **V8** | LOW | `LiveWalkerViewModel.cs:1348` | Container drill-down renders an `arrayLimit`-truncated element list (default 128) as the complete container. `BuildContainerLimitWarning` computes exactly this warning and is wired into **one** site: the Copy-CE-XML path. | S / low |
+| **V9** | LOW | `ObjectTreeViewModel.cs:426` (`SearchAsync`) | `SearchObjectsAsync` is called without the `CancellationToken` it accepts, and `CancelLoadCommand` cancels `_loadCts` — which `SearchAsync` itself cancelled at `:411` and never replaced. For the whole search the panel's only enabled control is a Cancel button that structurally cannot do anything. | S / low |
+| **V10** | LOW | `PointerPanelViewModel.cs:551` (`Update`) | `Update(EngineState)` unconditionally resets `IsScanning`/`ScanComplete`/`ScanStatusText`, but `ExtraScanAsync` owns `IsScanning` across its 1.5 s polling loop and clears it in its own `finally`. `Update` is reachable mid-scan via the fire-and-forget `ApplyOverrideAsync`, whose ComboBox is gated on `IsApplyingOverride`, not `IsScanning`. | S / low |
+| **V11** | LOW | `PointerPanelViewModel.cs:988` | `CreateSymbolScriptAsync`'s `bool` is branched on only to pick `_log.Info` vs `_log.Warn`. Neither branch touches a bound property, so "Register symbol" looks identical whether CE registered it or the bridge never reached CE. The sibling call site in `LiveWalkerViewModel` does this correctly. | S / low |
+
+**Verified independently (not agent-reported).** Three checks, run by hand before recording:
+
+1. **V1 re-derived end-to-end at both ends of the wire.** UI: `TypeName = sourceField.MapValueType`
+   (`:1365`) → `LiveFieldValue.IsEditable` (`Models/LiveFieldValue.cs:318-321`) → `IsEditableType`
+   accepts `IntProperty` (`Core/FieldValueConverter.cs:18-24`) → `FieldGrid_BeginningEdit` cancels
+   only `!IsEditable` (`Views/LiveWalkerPanel.axaml.cs:382`) → `WriteMemAsync(field.FieldAddress, …)`
+   (`:5016`). DLL: `elemAddr = sa.Data + idx*stride`, key read **at** `elemAddr` (`Ubel.cpp:4202`),
+   value read at `elemAddr + valOffset` (`Ubel.cpp:4228`), and `mapValueType` is a genuine property
+   type name (gated on containing `"Property"`, `Ubel.cpp:4129`). The codebase **already knows** the
+   correction: `MapValueDrillOffset`'s doc comment (`:938-948`) states it outright, and it is applied
+   at exactly one call site — `NavigateToFieldAsync`'s `navOffset` (`:988`) — while the edit and CE
+   consumers do not. That is cluster ① in its purest form: *a correction that exists and is applied at
+   only some of its sites.*
+2. **V2's blast radius is 3× what the finder filed.** It reported one stale copy; `grep` found
+   **three**, all carrying a "Mirrors `Mem::ComputeSetElementStride` in the DLL" comment that is now
+   false. Worked arithmetic, `pairSize=12, pairAlign=8`: DLL `Align(Align(12,8)+8,8) = 24`, C#
+   `Align(12,4)+8 = 20`. They agree only when the pair alignment is 4.
+3. **A whole claim category pre-refuted by measurement.** I swept every expression-bodied computed
+   property in the three files against every `OnPropertyChanged(nameof(…))` /
+   `[NotifyPropertyChangedFor]`: `PointerPanelViewModel` has 57 computed / 58 raised / **0 never
+   raised**. Because that is an *absence*, I ran the negative control working-lessons §1.2 demands —
+   deleting the single `OnPropertyChanged(nameof(ShowVersionTooOldWarning))` (the one the file's own
+   comment records as historically missing) from a scratch copy made the detector report it. The
+   detector can fail, so the zero is real. The three apparent orphans are correct by design
+   (`FilterHistory`/`FunctionFilterHistory` return self-notifying `ObservableCollection`s;
+   `DisplayNumber => SlotIndex + 1` reads an `init`-only property). **Do not re-raise
+   "computed property never notifies" against these three files.**
+
+-----
+
 ## 3. Refuted — do not re-raise
+
+### From U1 (6 of 18 — 33%)
+
+The lowest kill rate of any segment, and the refutations are correspondingly better-argued — four of
+the six name a specific caller-side guard, an XAML binding, or compute both sides of the arithmetic.
+
+- **`LiveWalkerViewModel.cs:6123`** — Functions keyword box cleared without flushing the keyword
+  memory. Code facts right, *reachability* wrong: computed both sides, the pending timer is already
+  disposed for sub-minimum text.
+- **`PointerPanelViewModel.cs:159`** — the AOT lens's own **negative result**, filed as an INFO row.
+  Correctly classified as not-a-finding. Its sweep re-ran clean: no `Activator` / `MakeGeneric` /
+  `GetCustomAttribute` / reflective `Invoke` anywhere in the three files. **The AOT/trim lens found
+  nothing in U1** — worth knowing before spending a lens on it in U2–U5.
+- **`LiveWalkerViewModel.cs:5534`** — `ApplySearch` replacing the bound collection wipes multi-select.
+  Refuted: the load-bearing premise ("Avalonia clears selection and raises `SelectionChanged` on an
+  `ItemsSource` identity change") was asserted, never verified, and the branch that matters is
+  contradicted by the code the claim itself cites.
+- **`ObjectTreeViewModel.cs:473`** — `ApplyFilter` nulling `SelectedNode` blanks the Class/Struct
+  panel. Refuted by a caller-side null guard: `MainWindowViewModel.cs:717-720` is the only subscriber
+  and guards it.
+- **`ObjectTreeViewModel.cs:426`** — a *second* claim about `SearchAsync`, this one alleging a missing
+  post-await generation guard. Refuted on reachability, and one asserted symptom is contradicted by
+  the code. (The **cancellation-token** half of that function is a separate, surviving finding, V9 —
+  do not let this refutation suppress it.)
+- **`PointerPanelViewModel.cs:725`** — a failed UE-version override leaving the ComboBox showing a
+  version the DLL never applied. Refuted: unreachable through the bound controls, and the stated
+  premise is factually wrong — the DLL's only error branch is `Fern.cpp:1615`'s range check, which
+  the ComboBox cannot violate.
 
 ### From D5 (11 of 19 — 58%)
 
@@ -698,10 +801,17 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session picks up at U1
+## 3b. START HERE — next session picks up at U2
 
-*State as of 2026-08-14 17:3x. Read this section first; it is written for a session with no memory of
-the previous one.*
+*State as of 2026-08-14, after U1. Read this section first; it is written for a session with no
+memory of the previous one.*
+
+> 🔴 **Before starting U2, decide about V1.** U1 produced the audit's **first surviving HIGH**, and it
+> is the only item in 60 findings whose failure mode is *the tool writes wrong bytes into the user's
+> game*. It is an `S`-effort fix. The audit's own rule is "no fixes during a scan segment", which is
+> why it was not fixed in U1's window — but it should not wait behind five more scan segments either.
+> Fix V1 (plus V2, the stride mirrors, which is the same subsystem and half-shipped already) as a
+> small fix batch **before** U2, and treat that batch as the window's one stage.
 
 ### The pacing rule, learned by hitting it
 
@@ -713,52 +823,61 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 
 ### What is done
 
-**Scanning: 6 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`). Still open: **U1-U5, S1, T1**.
-**The DLL is fully scanned; everything left is C# and Lua.**
+**Scanning: 7 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1. Still open:
+**U2-U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
 
-**Fixing:** cluster (1) is 6 of 7 shipped (`5ef4c2b`, `c65fdfc`); A4 deliberately open. D5 shipped
-**F1, F3(a), F4, F6, F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21` (the last is the
-F4/F6 UI half, AOT-published and launch-checked). **Still open: F2, F5, F8, A4, U3, G7, U2.**
+**Fixing:** cluster ① is 6 of 7 shipped on the **DLL side only** (`5ef4c2b`, `c65fdfc`) — U1/V2 found
+its three C# mirrors were left stale, so the cluster is **re-opened**; A4 deliberately open. D5
+shipped **F1, F3(a), F4, F6, F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21` (the last
+is the F4/F6 UI half, AOT-published and launch-checked).
+**Still open: V1 (HIGH — do first), V2–V11, F2, F5, F8, A4, U3, G7, U2.**
 
-### What U1 must do differently — the lens set changes
+### The C# lens set — as run in U1, with what it actually yielded
 
-The DLL segments audited memory safety. U1-U5 are **C#/Avalonia**, so reuse the workflow shape but
-swap the lenses:
+U1 ran these five and they are the right five for U2–U5, with one adjustment:
 
-- **AOT / trimming** — every reflection-shaped construct is a shipping bug that compiles fine
-  (CLAUDE.md's rule; `[JsonSerializable]` contexts, `[ObservableProperty]`, boxed `SelectedItem`).
-- **MVVM / binding lifetime** — event handlers never detached, `CollectionChanged` subscriptions
-  outliving a view, the `DataGrid` rules in [working-lessons.md](working-lessons.md) section 3.2.
-- **async / cancellation** — `Task.Run` over shared mutable state, `CancellationToken` ignored,
-  `async void`, UI-thread marshalling (working-lessons 3.4: `Microsoft.Data.Sqlite`'s `*Async` runs
-  synchronously and `ReadAsync` ignores the token).
-- **file / IO** — working-lessons 3.1: `File.ReadLines` cannot open a log our own process holds.
+| Lens | U1 yield | Note for U2 |
+|---|---|---|
+| `domain-correctness` | **the HIGH + 2 MED** | highest-value lens by a distance; keep it first |
+| `status-honesty` | 1 MED + 2 LOW | reliably productive; cluster ② is project-wide, not DLL-only |
+| `mvvm-lifetime` | 2 MED | productive, but **drop the "computed property never notifies" prompt** — measured clean, see U1's verified-independently note |
+| `async-cancel` | 1 MED + 2 LOW | productive |
+| `aot-trim` | **nothing** | the lens self-reported clean and its sweep re-ran clean. **Consider dropping it or folding it into another lens** for U2–U5 and spending the slot on a second `domain-correctness` pass with a different sub-scope |
 
-> **The skeptics get something the DLL segments never had: real test coverage.** ~3,500 C# tests
+> **The skeptics get something the DLL segments never had: real test coverage.** ~3,567 C# tests
 > compile these files, so "no test covers this" is not an available refutation and "a test asserts the
 > opposite" is now an available one. Tell the skeptics to look for the test — and remember the trap
-> from working-lessons 1.3: a green test can still miss the seam.
+> from working-lessons 1.3: a green test can still miss the seam. **U1's HIGH lives exactly there:**
+> `FieldValueConverterTests` pins `IsEditableType` in isolation while nothing covers
+> `PopulateMapContainerFields` or `CommitFieldEditAsync`, so the tested helper is fed a wrong address
+> by an untested caller. **Point the finders at seams, not at helpers.**
 
 ### How to run it
 
 Copy the scheduled-task prompt at `~/.claude/scheduled-tasks/audit5-segment-d4b/SKILL.md` and change
 the scope, line counts and lens list. It ran unattended in **its own session with its own quota**
 (14:31 -> commit 15:20, ~49 min) and survived a Claude Desktop re-login. The workflow script to clone
-is `audit5-seg-d5-fern-frieren-wf_39143753-6df.js` under the session's `workflows/scripts/` (5 finders
--> skeptic batches -> second lens on surviving HIGH/MED; it also logs a wipeout warning when a finder
-dies).
+is now **U1's** — `audit5-seg-u1-viewmodels-wf_0fbfa801-46d.js` under the session's
+`workflows/scripts/` — because it already carries the C# lens set, the test-coverage instruction to
+the skeptics, and the AOT-specific refutation guidance; the D5 script
+(`audit5-seg-d5-fern-frieren-wf_39143753-6df.js`) remains the C++ flavour. Both are 5 finders ->
+skeptic batches -> second lens on surviving HIGH/MED, and log a wipeout warning when a finder dies.
 
-**U1 scope** (from section 1): `LiveWalkerViewModel` 2900 + `PointerPanelViewModel` 999 +
-`ObjectTreeViewModel` 360 early lines = **~4,259**. Note `LiveWalkerViewModel` was edited 2026-08-14
-for D5/F6 — that edit is new code, not early code.
+**U2 scope** (from section 1): export services — `CeXmlExportService` 1699 + `CsxExportService` 678 +
+SDK 569 + USMAP 397 + Symbol 215 early lines = **~3,558**. Two U1 findings land inside U2's files and
+should be treated as **already found, not re-derived**: V2's stale stride copies at
+`CeXmlExportService.cs:3513` and `CsxExportService.cs:877`, and V5's `MapValueOffset` clone drift
+against `CeXmlExportService.cs:1030`. U2 should instead ask what *else* those emitters recompute that
+the DLL already knows.
 
-**Put in every agent prompt** (measured to improve output): the calibration — *117 raw claims, 65
-refuted (56%), all ten claimed HIGHs died* — plus *"read the surrounding comments and the callers
-first"* (five of D4b's nine refutations were won by finding a comment naming the defect the code
-already prevents), and **REPORT ONLY, no edits**.
+**Put in every agent prompt** (measured to improve output): the calibration — *136 raw claims, 71
+refuted (**33–73% per segment**, ~52% overall), eleven HIGHs claimed and ten died* — plus *"read the
+surrounding comments and the callers first"* (five of D4b's nine refutations were won by finding a
+comment naming the defect the code already prevents), the **seam** instruction above, and
+**REPORT ONLY, no edits**.
 
 **Do not re-derive:** everything already in sections 2 and 3, especially D5's `Fern.cpp` /
-`Frieren.cpp` findings and the six shipped D5 fixes.
+`Frieren.cpp` findings, the six shipped D5 fixes, and U1's eleven findings + six refutations.
 
 ### One tree, two sessions
 
@@ -818,8 +937,9 @@ be the default for any DLL fix:
 
 ## 4. Cross-segment rollup — read this before fixing anything
 
-**Status: 6 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5). **49 distinct findings: 0 HIGH ·
-28 MEDIUM · 20 LOW · 1 INFO.** 117 raw claims, **65 refuted (56%)**. Remaining: U1–U5, S1, T1.
+**Status: 7 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5, U1). **60 distinct findings: 1 HIGH ·
+34 MEDIUM · 24 LOW · 1 INFO.** 136 raw claims, **71 refuted (52%)**. Remaining: U2–U5, S1, T1.
+**The DLL is fully scanned; everything left is C# and Lua.**
 
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
 |---|--:|--:|--:|--:|---|
@@ -829,6 +949,7 @@ be the default for any DLL fix:
 | D4a Macht | 10 | 9 | 5 (56%) | 3 | 0 → 0 |
 | D4b Mimic+Sein+Stark+Lugner | 11 (+5 lost) | 18 | 9 (50%) | 9 | 0 → 0 |
 | D5 Fern+Frieren | 14 | 19 | 11 (58%) | 8 **+1** ¤ | 1 → **0** |
+| U1 LiveWalker+Pointer+ObjectTree | 16 | 19 | 6 (33%) | 11 | 1 → **1** |
 
 ¤ **D5's section holds 9 rows but its run produced 8** — F8 came from verifying F6, not from a
 finder (same as D2's G7 below).
@@ -837,17 +958,27 @@ finder (same as D2's G7 below).
 found during the 2026-08-14 live-verification session and filed into the D2 section because that is
 where it belongs by subject. The Raw/Refuted columns describe the *runs*; the totals above count
 *rows*, so the two reconcile only through this row. (Counted directly: `grep -cE '^\| \*\*[A-Z]+[0-9]+\*\*'`
-over §2 = **49**, of which 28 MED / 20 LOW / 1 INFO. Re-derive it rather than trusting the table.)
+scoped to §2 = **60**, of which 1 HIGH / 34 MED / 24 LOW / 1 INFO. Re-derive it rather than trusting
+the table — and **scope the grep to §2**, because over the whole file it also catches §4's cluster
+tables and returns 71. ⚠ The severity column does **not** parse uniformly: five rows carry a footnote
+marker between the ID and the severity (`G7` †=LOW, `PX1` ‡=MED, `MB3` †=INFO, `F1` ‡=MED, `F8` ¤=MED),
+so a regex expecting `| **ID** | SEV` silently drops them and under-reports 55.)
 
-**Ten HIGHs were claimed across the audit and every one died** — D5's lone HIGH was cut to MEDIUM by
-its own skeptic, and D3/D4a/D4b claimed none at all, which is the calibration working rather than the
-code improving. Two things follow: severities from a finder are worthless before refutation, and —
-since the surviving 49 are all MED/LOW/INFO — *nothing found so far is an emergency*. Fix by cluster,
-not by walking the list.
+**Eleven HIGHs have been claimed across the audit; ten died and the eleventh is real.** For six
+segments the rule held — D5's lone HIGH was cut to MEDIUM by its own skeptic, D3/D4a/D4b claimed none
+at all — and the conclusion drawn from it was that *nothing found so far is an emergency*. **U1/V1
+ends that.** It survived a mandated skeptic, a second lens and a hand re-derivation at both ends of
+the wire, and its failure mode is a user-initiated write of the wrong bytes to the wrong address in a
+live game process. The first half of the old lesson stands and the second no longer does: severities
+from a finder are still worthless before refutation, but "nothing here is urgent" is now false, and
+**V1 should be fixed ahead of any cluster work**. Everything else remains MED/LOW/INFO — fix those by
+cluster, not by walking the list.
 
-**The refutation rate has been stable at ~50–58% for five of the six segments** (D2's 73% is the
-outlier). Treat "about half of what a finder says is wrong" as this codebase's working constant when
-budgeting a segment.
+**The refutation rate is 33–73% across seven segments and is NOT a constant.** It sat at ~50–58% for
+five of six (D2's 73% high, U1's 33% low), so "about half is wrong" is still the right planning
+default — but quote it to finders as a *range*, because U1 showed the rate moves with what the
+skeptics have to work with: it is the first segment where they could refute with **real test
+coverage**, and it produced both the lowest kill rate and the best-argued kills.
 
 ### The clusters, in the order worth fixing
 
@@ -881,6 +1012,19 @@ for the *composition*, not the parts** — that is precisely why none of this wa
 `dll_helpers_test` cases and every PDB-verified data point in the tree happen to land on multiples
 of 8, so none of them discriminates.
 
+> ⚠ **This cluster is NOT closed — the fix shipped on one side of the wire only.** U1 found that
+> `5ef4c2b`'s two-argument, alignment-aware `ComputeSetElementStride` was applied to the DLL and to
+> **none of the three C# copies of the same formula** (`LiveWalkerViewModel.cs:1706`,
+> `CeXmlExportService.cs:3513`, `CsxExportService.cs:877` — U1/**V2**), each of which still carries a
+> doc comment asserting that it mirrors the DLL. Five map call sites now disagree with the engine by
+> 4+ bytes per element past index 0; TSet is unaffected because the DLL's `elemAlign` default of 4
+> reproduces the old behaviour exactly. Two lessons, and the second is the expensive one:
+> **(a)** closing cluster ① on the DLL alone *re-opened cluster ④* — the fix duplicated layout
+> knowledge rather than deriving it; **(b)** the cheap durable repair is not to port the alignment
+> maths a fourth time but to have the DLL **publish the stride it already computed**
+> (`Ubel.cpp:4188` / `:4458`) as a wire field the C# consumes, deleting all three mirrors. Any future
+> cluster-① fix must start with a `grep` for the formula across **both** languages.
+
 **② A reported status computed by a different path than the reality.** This is **audit #4's own 4a
 root cause recurring in older code**, which is evidence it is a habit of this codebase rather than a
 one-off: D2/**G1** (`bOffsetsValidated = true` while probes failed), D3/**A6** (Property Search
@@ -893,6 +1037,18 @@ happened). **D5 makes this the largest cluster (8 members) and the one with the 
 F4 is the exact shape behind four "the scan missed my field" reports, and its fix is the cheapest in
 the audit — Fern can detect the cap locally, since `SearchProperties` stops *exactly* at `maxResults`.
 
+**U1 shows the cluster is not a DLL habit — it is a project-wide one, and the UI half is worse in one
+specific way: the DLL at least *computes* a status, while the UI computes one and then fails to
+render it.** Four new members, all client-side: U1/**V7** (refresh failure, timeout included, routed
+to `ErrorMessage` — a property the panel's XAML **never binds** — so a dead refresh is pixel-identical
+to a live one and stale values keep rendering), U1/**V6** (`SearchMatchCount` and the ↑/↓ buttons keep
+advertising N matches after a refresh silently dropped every highlight), U1/**V8** (a container
+truncated at `arrayLimit=128` renders as complete; the warning helper exists and is wired into exactly
+one unrelated path), U1/**V11** ("Register symbol" produces identical UI on success and failure —
+the `bool` reaches only `_log`). **V8 is F4's exact twin one layer up**, which means the truncation
+cluster now has a DLL end *and* a UI end and should be fixed as one story: the DLL reporting the cap
+buys nothing while the panel that receives it has no place to show it.
+
 **③ A cache keyed by an address the engine recycles, never invalidated** — D1/**U4**, **U5**, **U6**
 (Ubel's class + name caches), D3/**A10** (Aura's per-class metadata), D5/**F3** (the *purge* half of
 the same name cache: its only two purge sites are `begin_snapshot` and `trigger_scan`, neither
@@ -904,8 +1060,16 @@ one-line `Ubel::ClearNameCache()` in Fern's `if (last)` teardown, which is a fix
 
 **④ Layout knowledge duplicated instead of derived** — D1/**U2** (FName width hardcoded 8 while
 `Ubel.cpp:126` and five `Aura.cpp` sites derive it), D1/**U8** (FName `Number` open-coded three times,
-dropped in all three), D3/**A1** (a `>= 24` ternary that cannot express stride 20). In every case the
-correct derivation **already exists elsewhere in the tree**.
+dropped in all three), D3/**A1** (a `>= 24` ternary that cannot express stride 20), and now the two
+U1 members that make this the cluster with the worst recurrence record: U1/**V2** (the TSparseArray
+stride open-coded **three** times in C# and left behind when the DLL's copy was fixed — see the
+warning box in cluster ①) and U1/**V5** (`FilterContainerToElement` rebuilds a container field
+property-by-property and drops `MapValueOffset`, while the sibling clone at
+`CeXmlExportService.cs:1030` preserves it). In every case the correct derivation **already exists
+elsewhere in the tree** — and V2 proves the failure mode is not only "written twice originally" but
+"**fixed once, in one of the copies**". A property-by-property clone (V5) and a re-implemented formula
+(V2) are the same defect wearing different clothes: both should be replaced by carrying the value
+across the wire rather than recomputing it.
 
 **⑤ Long loops that ignore `Tot::Requested()`** — D2/**G2**, D3/**A7**. Note the same claim was
 **refuted** against `Macht` (guards present), so this is a per-site fact, not a pattern to apply blind.
@@ -956,6 +1120,22 @@ alone leaves every *other* consumer of the blind offset wrong. **Both, G1 first.
   wrong. Never file the losing side as do-not-re-raise without checking.
 - **A segment whose refute pass dies has produced nothing.** Park it as UNVERIFIED and resume;
   the workflow's dead-skeptic fallback puts unrefuted claims in the `confirmed` array.
+- **Verify the segment's own headline yourself — the pipeline's confidence is not evidence.** U1's
+  HIGH had already passed a mandated skeptic *and* a second lens, which is exactly the state in which
+  ten previous HIGHs still turned out wrong. Re-deriving it by hand took ~5 tool calls, confirmed it,
+  and **found the finder had understated a sibling MEDIUM by 3×** (V2 reported one stale stride copy;
+  `grep` found three). Budget one hand-check per segment for the top item; it is the cheapest
+  quality step in the whole method.
+- **Pre-refute a whole claim category with a script when the category is mechanically decidable.**
+  Before U1's agents reported, a ~40-line scanner compared every expression-bodied computed property
+  in the three files against every `OnPropertyChanged(nameof(…))` / `[NotifyPropertyChangedFor]`, and
+  a **negative control** (deleting one known-historically-missing raise from a scratch copy) proved
+  the scanner could fail. That turned "does the UI go stale?" from a lens's opinion into a measured
+  zero — and it is reusable verbatim for U3/U5, which are also ViewModel-heavy.
+- **An absence needs its conditions recorded, in an audit finding as much as in a measurement.** The
+  `aot-trim` lens's clean result is only meaningful stated as *"no `Activator`/`MakeGeneric`/
+  `GetCustomAttribute`/reflective `Invoke` in these three files"* — which is why it is written that
+  way in §3 rather than as "AOT is fine".
 - **A clean empty result and a total wipeout are the same shape — check `<failures>` every time.**
   D4b's first launch lost all five finders to `API Error: 529 Overloaded` at **0 tokens and 0 tool
   calls each**, and the workflow still returned `{"confirmed": [], "refuted": [], "note": "no

@@ -1409,6 +1409,23 @@ reports them identical. Nothing has desynced.)*
 
 Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.
 
+> ### 🔴 2026-08-14 — M1 SHIPPED ON THE DLL SIDE ONLY. The UI still strides TMaps the old way.
+>
+> The ✅ below is **correct and narrower than it looks**: it verifies that the *DLL* reads map
+> elements at the right stride, which it now does. Audit #5 segment **U1/V2** then found that the
+> same formula exists in **three C# copies that were not updated** —
+> `ViewModels/LiveWalkerViewModel.cs:1706`, `Services/CeXmlExportService.cs:3513`,
+> `Services/CsxExportService.cs:877` — each still `Align(elemSize,4)+8` and each still carrying a doc
+> comment claiming it mirrors the DLL. So the key→value **text** in the grid is right (the DLL read
+> it) while every map element **address the UI computes itself** is short by 4+ bytes past index 0:
+> the Address column, the struct-drill target, the breadcrumb `FieldOffset` feeding the CE chain, and
+> the CE-XML / CSX exports. Five map call sites; TSet is unaffected (the DLL's `elemAlign` default of
+> 4 reproduces the old behaviour exactly).
+>
+> **Do not close cluster ① on the strength of the table below.** The durable fix is not a fourth copy
+> of the alignment maths — have the DLL publish the stride it already computed (`Ubel.cpp:4188` /
+> `:4458`) as a wire field and delete all three mirrors.
+
 > ### ✅ FIVE OF SIX VERIFIED IN-GAME 2026-08-14 — DumperTest, UE 5.4 Development package
 >
 > Driven **entirely headlessly**: launch the packaged sample → `scripts/inject-ue.ps1 -ProcessId` →
