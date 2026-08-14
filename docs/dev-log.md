@@ -56,9 +56,19 @@ The F6 error string fired on DumperTest's stock ThirdPersonMap on its first run 
 `StreamingTextures` @320, `DestroyedReplicatedStaticActors` @768; the only `*Actor*` names are
 `ActorCluster` and `LevelScriptActor`, both `ObjectProperty`). `walk_world` finds the actor array
 purely by reflection, so on this engine "Load GWorld" renders a populated level as empty. `Actors` is
-a real native member — the fix is a native-offset read, not more reflection. **Measured on packaged
-DumperTest only**; `walk_world` demonstrably works on other titles, so the affected engine range is
-not established. Filed, not fixed.
+a real native member — the fix is a native-offset read, not more reflection. Filed, not fixed.
+
+**Reproduced on a second, unrelated title within the hour.** Solarpunk (commercial, different engine
+build), same day's session: `walk_world limit:500` → `{"actor_count":0,"actors":[],"ok":true,
+"world_name":"MainLevel"}`. **2 of 2 games tested return nothing**, so this is not a DumperTest
+artifact and may not be version-specific at all. Two captures is not a survey — what is established is
+that it fails on both engines we have evidence for, not the size of the affected range.
+
+> **This entry originally said "`walk_world` demonstrably works on other titles".** Nothing was checked
+> before writing that; it was a conservative-sounding assumption, and the maintainer asking an adjacent
+> question is what sent me to look at the one other capture on disk, which refutes it. **An "honest
+> limit" written to sound cautious is still an unverified claim — and it draws less scrutiny than a
+> bold one precisely because it sounds modest.**
 
 > Worth keeping as method: **the cheapest new finding of the day came from making an existing silent
 > failure speak**, not from another scan. When a reply cannot say what it failed to do, the defect
