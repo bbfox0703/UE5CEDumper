@@ -1408,9 +1408,30 @@ reports them identical. Nothing has desynced.)*
 ### 🔴 NEW 2026-08-14 — TMap element geometry: pair padding + struct alignment + free-slot count (audit #5 M1/M2/M3)
 
 Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.
-**1018 C++ tests green, never run against a game.** The unit tests pin the *arithmetic contract*;
-they structurally **cannot** cover M3's real change, which is `Ubel` resolving
-`UScriptStruct::MinAlignment` out of a live process. That needs a game.
+
+> ### ✅ FIVE OF SIX VERIFIED IN-GAME 2026-08-14 — DumperTest, UE 5.4 Development package
+>
+> Driven **entirely headlessly**: launch the packaged sample → `scripts/inject-ue.ps1 -ProcessId` →
+> a ~10-line PowerShell `NamedPipeClientStream` issuing `find_instances` + `walk_instance`. No UI.
+> This is repeatable in one command; the witnesses were added to the sample the same day
+> (commit `58ddf76`) precisely because none of the pre-existing containers could discriminate.
+>
+> | Fix | Verdict | Evidence from the live walk |
+> |---|---|---|
+> | **M1** | ✅ | `Map_I64ToI32` all three elements correct (`600000000001..3` → `6001..3`). A stride of 20 makes elements 1–2 read from the previous element's tail; they are exact, so the stride is 24. |
+> | **M1** (2nd witness) | ✅ | `Map_StrToInt` `map_value_offset=16`, values `6101/6102/6103`. Different arithmetic from M1's first witness, so one wrong assumption cannot satisfy both. |
+> | **M3** | ✅ | `Map_IntToVec3f` reports **`map_value_offset: 4`**. The old size guess yields **8**. This is `Ubel::GetStructAlignment` reading `MinAlignment=4` off a live `UScriptStruct`. Raw hex `00C8C145 00D0C145 00D8C145` decodes to 6201.0/6202.0/6203.0 — all three floats at the right offsets. |
+> | **M2** | ✅ | `Set_Big` `set_count=199` (200 added, 1 removed). Before the fix `NumFreeIndices` always read 0, so this reported **200**. |
+> | **A2** | ✅ | `Set_Big` returns 199 elements with **9005 absent** and 9000 / 9004 / 9006 / 9199 all present. 9005 is index 5, i.e. its bit lives in the inline words the `TBitArray` froze when it spilled at 128 — the defect would still list it. |
+> | **U2** | ⬜ | Not reachable this way — `WITH_CASE_PRESERVING_NAME` is an engine build flag. Needs Titan Quest II (UE5.7). |
+>
+> **Incidental — D1/U3 CONFIRMED LIVE as still broken (not yet fixed).** `Map_IntToVec3f` renders as
+> `f:[6203.0000]`: one float, the **last** one. The raw hex holds all three correct values, so the
+> loss is in `InterpretValue`'s 8-byte "vtable preamble" skip — 12-byte struct − 8 = one float. U3
+> moves from inferred to observed.
+
+The remaining unchecked boxes below are superseded by the table above except where noted; U2 and the
+`TSet`/`UDataTable` no-regression check still stand.
 
 - ⬜ **A `TMap<K,V>` whose pair needs trailing padding reads correctly (M1).** Live Walker → expand
   any `TMap<UObject*, float>` / `TMap<FString, int32>` / `TMap<AActor*, uint8>`. **Before the fix
