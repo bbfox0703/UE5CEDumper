@@ -162,6 +162,45 @@ six refuted outright, one (`Genau.cpp:4007`) downgraded to MEDIUM by the second 
 | **G5** | LOW | `Serie.cpp:498` | UE4 `TNameEntryArray` mode indexes the chunk with a **negative** element index; the bounds guard the UE5 path has is absent. A poison `ComparisonIndex` of `0xFFFFFFFF` with a non-zero Number skips `GetString`'s `nameIndex <= 0 && number == 0` early-out, so `chunkPtr + (size_t)(-1)*8` is dereferenced as an `FNameEntry*` and a **fabricated name** can be returned as real. | S / low |
 | **G6** | LOW | `Serie.cpp:142` | A tag whose key lookup misses is cached as a **permanent** `TAGKEY_MISS`, contradicting `Genau.cpp:1672`'s documented "absent tag = plaintext" rule. A transient miss (the 4 unsynchronized reads in `LookupTagKey` racing a live insert) blanks every FName in every block with that tag for the rest of the process. | S / low |
 
+### D3 — Aura (ObjectArray) — ✅ scanned 2026-08-13
+
+Run `wf_d6aaff24-28e`, 16 agents, 0 errors. 18 raw claims → **8 refuted (44%)** → **10 confirmed**.
+
+**Tally: 6 MEDIUM · 4 LOW · 0 HIGH — and the finders claimed no HIGH at all.** The prompt carried
+the measured refutation rate from D1/D2 and told them to reserve HIGH for something demonstrable
+end-to-end; the raw output came back correspondingly disciplined (18 claims from 5 lenses vs D2's 26).
+
+> **⚠ Two findings are outside this segment's files** — `Macht.h:302` (A2) and `Fern.cpp:4483` (A8).
+> They were found *from Aura's side* and are recorded here rather than deferred. **Segments D4 and
+> D5 must not re-derive them.**
+
+> **A recurring shape, now on its third instance: a cache keyed by an address the engine recycles.**
+> D1/U4+U5+U6 (`Ubel`'s class and name caches), D2 (none), D3/A10 (`Aura`'s per-class container and
+> reference metadata). Worth one fix pattern — a stored `(InternalIndex, SerialNumber)` witness
+> validated on hit, which is exactly the pair UE itself uses to detect a recycled slot — rather than
+> three separate patches.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **A1** | MED | `Aura.cpp:1370` | `GetSerialNumber` picks the serial offset with `s_itemSize >= 24 ? 0x10 : 0x0C`, a two-way split covering only strides 16 and 24 — but **stride 20 is reachable** (Avowed's packed `FUObjectItem`, via both `InitWithExtendedLayout` and the `{16,24,32,20}` sweep). At 20 it reads **`ClusterRootIndex`**, so `Ubel::ResolveWeakObjectPtr`'s bare `if (actualSerial != serialNumber) return 0;` declares **every** weak reference stale. Silent — nothing logs a mismatch. | S / low |
+| **A2** | MED | `Macht.h:302` *(D4 scope)* | `IsSparseIndexAllocated` judges slots 0..127 from the **stale inline bit words** once a `TSet`/`TMap` has spilled its `TBitArray` to the heap — affecting **13 Aura call sites + 6 in Ubel**, while `Aura::ResolveTMapBitArrayBase` gets the same rule right. A freed slot reads as live, so Find Refs can emit a phantom reference and `ScanForValue` admits a dead element's value. | S / low |
+| **A3** | MED | `Aura.cpp:6170` | `ScanForValue`'s struct-expansion cycle guard is **whole-walk instead of path-scoped**, so the 2nd and 3rd field of a repeated struct type are dropped from the scan index. Hits GAS directly — `FGameplayAttributeData Health/MaxHealth/Mana` share one `UScriptStruct`, so only `Health` is indexed. `CollectSchemaLeaves` (`4109`) already does it correctly. | S / low |
+| **A4** | MED | `Aura.cpp:6791` | Value Search's deep-container pass **drops every depth-1 leaf**, so values inside `TSet<FStruct>` / `TMap<K,FStruct>` elements are unreachable *even with Deep on* — the static index doesn't cover them either (`collectStructArrayInner` is only reached from the ArrayProperty branch). An everyday `TMap<FName, FItemData>` inventory count is unfindable. | M / low |
+| **A5** | MED | `Aura.cpp:4436` | Property Search's inline **Preview samples the CDO**, not a live instance, so the column shows the Blueprint default forever (Health = 100 while the player is at 37). `Solide.cpp:282`, `Wirbel.cpp:328` and `Edel.cpp:94` all already filter `Default__`. | S / low |
+| **A6** | MED | `Aura.cpp:4282` | `SearchProperties` reports the **defining** class, so dedup collapses ~4,800 `AActor` subclasses into one row named `Actor`; Force then calls `FindInstancesByClass("Actor", exactMatch)` and resolves an **empty pool**. The concrete class is known at row-emission time and thrown away. | M / med |
+| **A7** | LOW | `Aura.cpp:1685` | `FindByAddress` is the **only** full-GObjects walk in the file with neither a `Tot::Requested()` poll nor a deadline — same shape as D2/G2. Responsiveness, not correctness. | S / low |
+| **A8** | LOW | `Fern.cpp:4483` *(D5 scope)* | `get_ce_pointer_info` branches on `Aura::IsPacked()` but **never on `Aura::IsFlat()`**, so on a flat `FFixedUObjectArray` (OctoPath, FF7R Intergrade, Extinction, NEKOPALIVE) hop 3 dereferences `Item[0].Object` as a chunk pointer and CE resolves a garbage address **the user can write to**. LOW only because the UI client mitigates. | S / low |
+| **A9** | LOW | `Aura.cpp:8380` | `ScanForValueGroup` sets the per-object element budget but **never passes the counter**, leaving `maxTotalElems` inert on the deep walk — so the very stall it was added for (the recorded SEED ~24 s chunk) is still unbounded; only the global 15 s deadline stops it, consuming the whole scan budget on one object. | S / low |
+| **A10** | LOW | `Aura.cpp:2990` | Per-class container/reference metadata caches keyed on a raw `UClass*` the engine recycles, never invalidated. After a sublevel unload hands `BP_EnemyA_C`'s address to `BP_ChestB_C`, Find Refs iterates the wrong class's pointer offsets. | M / med |
+
+**Notable evidence quality on A1:** the second lens settled *intent vs omission* with `git blame` —
+the ternary is `d410359e` (2026-06-13) while **both** stride-20 paths postdate it (`22aaa523`
+2026-06-17, `55a2d092` 2026-08-05), and the explanatory comment above it still enumerates only
+16B/24B/UE5.7/packed57. It also re-derived the layout from a source the finder never cited
+(`docs/test-games.md:55`) and noted the predicate tests the wrong property: a packed 20-byte item is
+the 24-byte item with **tail padding removed**, so every field offset is unchanged and the question
+is "does it carry a `ClusterRootIndex`" (stride ≥ 20), not "is the stride ≥ 24".
+
 -----
 
 ## 3. Refuted — do not re-raise
@@ -181,6 +220,18 @@ Both claimed **HIGH**s died here, on evidence rather than opinion:
   monotonically improving, never a correct→wrong transition. Both globals are naturally-aligned
   `int`s on x64 (no torn read), and `CorrectSubclassOffsets` runs under `s_calibrationMutex` before
   the field loop in both callers.
+
+### From D3 (8 of 18)
+
+- **`Aura.cpp:3577` — "weak/soft/lazy and delegate graph edges are emitted with the same geometry as
+  real pointer edges."** Survived the skeptic, **killed by the second lens**.
+- **`Aura.cpp:3838`** `RecoverViaWorldLevel` reporting `ok_via_level` on a failed tail BFS;
+  **`Aura.cpp:4831`** `ListClasses` capping by GObjects index then reporting the cap as the true
+  total; **`Aura.cpp:4428`** a preview pass whose early-exit "can never fire"; **`Aura.cpp:7851`**
+  an unbounded rejected-edge walk in the cross-object group scan; **`Aura.cpp:8430`** and
+  **`Aura.cpp:7382`** missing cancellation polls in `RefineCandidates`/`RefineGroupCandidates`
+  (note A7 *is* a confirmed instance of this class — these two specific sites were refuted, the
+  `FindByAddress` one was not); **`Aura.cpp:3857`** a visited-cap constant sized on a bad estimate.
 
 ### From D2 (19 of 26 — a 73% kill rate)
 
