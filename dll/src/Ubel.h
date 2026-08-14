@@ -310,11 +310,18 @@ struct LiveFieldValue {
     uintptr_t   mapValueStructAddr = 0; // UScriptStruct* if value is StructProperty
     std::string mapValueStructType;      // Struct name for value
     int32_t     mapValueOffset = 0;      // Aligned byte offset of value within TPair (may differ from mapKeySize)
+    // The TSparseArray slot stride this walk ACTUALLY used to read the elements.
+    // Published on the wire so the UI never recomputes it: the stride needs
+    // alignof(Key)/alignof(Value), which do not cross the wire, and three
+    // independent C# re-implementations of the formula silently went stale when
+    // Macht::ComputeSetElementStride gained its elemAlign parameter (audit #5 V2).
+    int32_t     mapStride = 0;           // 0 = unknown (element data was not read)
 
     // For SetProperty: TSet header info
     int32_t     setCount = -1;       // -1 = not a set; ≥0 = actual entry count
     std::string setElemType;         // Element FProperty type name
     int32_t     setElemSize = 0;     // Element size in bytes
+    int32_t     setStride = 0;       // As mapStride, for TSet. 0 = unknown
     uintptr_t   setDataAddr = 0;     // TSparseArray::Data base address
     uintptr_t   setElemStructAddr = 0;  // UScriptStruct* if element is StructProperty
     std::string setElemStructType;       // Struct name for element

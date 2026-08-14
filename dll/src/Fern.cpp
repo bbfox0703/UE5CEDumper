@@ -1454,6 +1454,11 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
         fj["map_value_size"] = fv.mapValueSize;
         if (fv.mapValueOffset != 0)
             fj["map_value_offset"] = fv.mapValueOffset;
+        // The stride this walk used. The UI cannot derive it — the formula needs
+        // alignof(Key)/alignof(Value), which never cross the wire — so it must be
+        // told, or it re-implements the formula and drifts (audit #5 V2).
+        if (fv.mapStride != 0)
+            fj["map_stride"] = fv.mapStride;
         if (fv.mapDataAddr != 0)
             fj["map_data_addr"] = Renge::AddrToStr(fv.mapDataAddr);
         if (fv.mapKeyStructAddr != 0) {
@@ -1492,6 +1497,8 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
         fj["set_count"]     = fv.setCount;
         fj["set_elem_type"] = fv.setElemType;
         fj["set_elem_size"] = fv.setElemSize;
+        if (fv.setStride != 0)
+            fj["set_stride"] = fv.setStride;   // see map_stride above
         if (fv.setDataAddr != 0)
             fj["set_data_addr"] = Renge::AddrToStr(fv.setDataAddr);
         if (fv.setElemStructAddr != 0) {

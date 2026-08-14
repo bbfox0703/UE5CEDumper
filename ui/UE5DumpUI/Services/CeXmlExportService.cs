@@ -642,8 +642,8 @@ public static class CeXmlExportService
                 bool isObj = IsObjectPropertyType(field.MapValueType);
                 if (!isStruct && !isObj) break;
                 ulong dataBase = ParseHexAddr(field.MapDataAddr);
-                int valOffset = field.MapValueOffset > 0 ? field.MapValueOffset : field.MapKeySize;
-                int stride = ComputeSetElementStride(valOffset + field.MapValueSize);
+                int valOffset = ContainerGeometry.MapValueOffsetOf(field);
+                int stride = ContainerGeometry.MapStrideOf(field);
                 foreach (var e in field.MapElements)
                 {
                     long off = (long)e.Index * stride + valOffset;
@@ -673,7 +673,7 @@ public static class CeXmlExportService
                 bool isObj = IsObjectPropertyType(field.SetElemType);
                 if (!isStruct && !isObj) break;
                 ulong dataBase = ParseHexAddr(field.SetDataAddr);
-                int stride = ComputeSetElementStride(field.SetElemSize);
+                int stride = ContainerGeometry.SetStrideOf(field);
                 foreach (var e in field.SetElements)
                 {
                     long off = (long)e.Index * stride;
@@ -1028,6 +1028,7 @@ public static class CeXmlExportService
                     MapKeySize = f.MapKeySize,
                     MapValueSize = f.MapValueSize,
                     MapValueOffset = f.MapValueOffset,
+                    MapStride = f.MapStride,
                     MapDataAddr = f.MapDataAddr,
                     MapElements = f.MapElements,
                     // Container value/key struct metadata — REQUIRED so a Map/Set/Array
@@ -1040,6 +1041,7 @@ public static class CeXmlExportService
                     SetCount = f.SetCount,
                     SetElemType = f.SetElemType,
                     SetElemSize = f.SetElemSize,
+                    SetStride = f.SetStride,
                     SetDataAddr = f.SetDataAddr,
                     SetElemStructAddr = f.SetElemStructAddr,
                     SetElemStructType = f.SetElemStructType,
@@ -3159,7 +3161,7 @@ public static class CeXmlExportService
     /// <summary>
     /// Emit a MapProperty as a CE group with per-element children.
     /// TMap uses TSparseArray internally. Data pointer is at +0x00 (same as TArray).
-    /// Element stride = ComputeSetElementStride(valOffset + valueSize), where valOffset is aligned.
+    /// Element stride comes from the DLL via ContainerGeometry.MapStrideOf (never recomputed here).
     /// Each allocated element: key at +0, value at +valOffset (aligned) within the element.
     ///
     /// TSparseArray addressing:
@@ -3191,8 +3193,8 @@ public static class CeXmlExportService
         // int can change at runtime) — Name/Enum values instead get a CE DropDownList
         // (rawInt → resolved name) on the map group that the leaves link to, so CE
         // shows the LIVE name. Enum key/value widths follow the real byte size.
-        int valOffset = field.MapValueOffset > 0 ? field.MapValueOffset : field.MapKeySize;
-        int stride = ComputeSetElementStride(valOffset + field.MapValueSize);
+        int valOffset = ContainerGeometry.MapValueOffsetOf(field);
+        int stride = ContainerGeometry.MapStrideOf(field);
         ulong dataBase = ParseHexAddr(field.MapDataAddr);
         bool valStruct = field.MapValueType == "StructProperty"
                          && !string.IsNullOrEmpty(field.MapValueStructAddr);
@@ -3340,7 +3342,7 @@ public static class CeXmlExportService
     /// <summary>
     /// Emit a SetProperty as a CE group with per-element children.
     /// TSet uses TSparseArray. Data pointer at +0x00.
-    /// Element stride = ComputeSetElementStride(elemSize).
+    /// Element stride comes from the DLL via ContainerGeometry.SetStrideOf (never recomputed here).
     ///
     /// TSparseArray addressing:
     /// - Group header: Address=+{fieldOffset}, Offsets=[0] → dereferences TSparseArray.Data pointer
@@ -3365,7 +3367,7 @@ public static class CeXmlExportService
         }
 
         var ceElem = MapInnerTypeToCeField(field.SetElemType);   // null for struct/object
-        int stride = ComputeSetElementStride(field.SetElemSize);
+        int stride = ContainerGeometry.SetStrideOf(field);
         ulong dataBase = ParseHexAddr(field.SetDataAddr);
         bool elemStruct = field.SetElemType == "StructProperty"
                           && !string.IsNullOrEmpty(field.SetElemStructAddr);
@@ -3504,16 +3506,6 @@ public static class CeXmlExportService
         }
 
         EmitGroupClose(sb, indent);
-    }
-
-    /// <summary>
-    /// Compute TSetElement stride: AlignUp(elemSize, 4) + 8 (HashNextId + HashIndex).
-    /// Mirrors Mem::ComputeSetElementStride in the DLL.
-    /// </summary>
-    private static int ComputeSetElementStride(int elemSize)
-    {
-        int hashStart = (elemSize + 3) & ~3;  // align to 4
-        return hashStart + 8;  // + HashNextId(4) + HashIndex(4)
     }
 
     /// <summary>Emit a group header that will contain child entries (opens CheatEntries block).</summary>

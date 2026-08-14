@@ -4187,6 +4187,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             int32_t pairSize = valOffset + fv.mapValueSize;
                             int32_t stride = Macht::ComputeSetElementStride(pairSize, pairAlign);
                             fv.mapValueOffset = valOffset;
+                            fv.mapStride = stride;   // publish the stride actually used (audit #5 V2)
                             Sein::Debug("WALK:MapP", "Reading %d map entries for '%s': Data=0x%llX KeySz=%d ValSz=%d ValOff=%d Stride=%d MaxIdx=%d NumBits=%d",
                                 fv.mapCount, fi.Name.c_str(), (unsigned long long)sa.Data,
                                 fv.mapKeySize, fv.mapValueSize, valOffset, stride, sa.MaxIndex, sa.numBits);
@@ -4331,6 +4332,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             int32_t pairSize = valOffset + fv.mapValueSize;
                             int32_t stride = Macht::ComputeSetElementStride(pairSize, pairAlign);
                             fv.mapValueOffset = valOffset;
+                            fv.mapStride = stride;   // publish the stride actually used (audit #5 V2)
                             int read = 0;
                             for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.mapCount && read < arrayLimit; ++idx) {
                                 if (!Macht::IsSparseIndexAllocated(sa, idx)) continue;
@@ -4456,6 +4458,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (fv.setCount > 0
                         && sa.Data && fv.setElemSize > 0) {
                         int32_t stride = Macht::ComputeSetElementStride(fv.setElemSize);
+                        fv.setStride = stride;   // publish the stride actually used (audit #5 V2)
                         int read = 0;
                         for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.setCount && read < arrayLimit; ++idx) {
                             if (!Macht::IsSparseIndexAllocated(sa, idx)) continue;
@@ -4532,6 +4535,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
                     if (fv.setCount > 0 && sa.Data && fv.setElemSize > 0) {
                         int32_t stride = Macht::ComputeSetElementStride(fv.setElemSize);
+                        fv.setStride = stride;   // publish the stride actually used (audit #5 V2)
                         int read = 0;
                         for (int32_t idx = 0; idx < sa.MaxIndex && read < fv.setCount && read < arrayLimit; ++idx) {
                             if (!Macht::IsSparseIndexAllocated(sa, idx)) continue;

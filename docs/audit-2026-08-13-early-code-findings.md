@@ -570,13 +570,47 @@ and matter more than any individual row:
 > duplicated computation without grepping for its mirrors *re-created cluster ④ while closing
 > cluster ①*.
 
+> ### ✅ V1, V2 and V5 FIXED — build 2830, 2026-08-14
+>
+> One commit, because they are one subsystem and **not independently correct**: V1's write address is
+> computed *from* V2's stride, so shipping V1 against the stale stride would have aimed the corrected
+> offset off a wrong base. V5 came along because the fix adds fields that the multi-select clone must
+> carry — leaving it would have made the new stride reach every path except the filtered export.
+>
+> **The shape of the fix is the point.** The C# no longer computes container geometry at all. The DLL
+> publishes the stride it *actually used to read the elements* (`map_stride` / `set_stride`, additive
+> wire fields set at all four `Ubel.cpp` walk sites), and one new
+> [`Core/ContainerGeometry.cs`](../ui/UE5DumpUI/Core/ContainerGeometry.cs) consumes it. All **three**
+> stale copies of the formula are deleted; the old expression survives only as
+> `ContainerGeometry.FallbackStride`, documented as correct only for `alignof(T) <= 4` and reachable
+> only when the DLL supplied nothing. UI and DLL can no longer disagree about where an element is,
+> because there is only one number.
+>
+> **V1 needed a second half the finding did not name.** The row also reported
+> `Size = MapKeySize + MapValueSize`, and `Size` reaches `FieldValueConverter.TryConvert` as the
+> **write length** — so a `TMap<int32, enum4>` would have written 8 bytes over a 4-byte value even
+> once the address was right. The row now describes the value in all three respects: type, address
+> and size.
+>
+> **Verified with a negative control, not just a green run.** The 8 new tests in
+> `ContainerGeometryTests` pass (3575 total, 0 failed). Both fixes were then reverted in
+> `ContainerGeometry.cs` and the suite re-run: **5 tests failed** — the helper, the seam
+> (`PopulateMapContainerFields`) and the clone — then the fix was restored and green re-confirmed. Per
+> working-lessons §1.3 the seam test is the one that matters: the pre-existing
+> `FieldValueConverterTests` passed throughout, in both directions, because the helper was never wrong.
+>
+> ⬜ **Not yet verified in-game** — tracked in [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+> `Map_I64ToI32` / `Map_StrToInt` in `DumperTest` are existing witnesses for the DLL half; what needs a
+> live check is the **UI** half: that the Address column, an inline edit, and a pushed CE record all
+> land on the value.
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **V1** | **HIGH** | `LiveWalkerViewModel.cs:1380` (`PopulateMapContainerFields`) | A TMap element row is built with `TypeName = MapValueType` (so `IsEditableType` passes for any scalar-valued map) but `FieldAddress = dataBase + index*stride` — the TPair base, which is **the key**. The `+ valOffset` the same method computes 40 lines earlier for struct values is not applied. Inline-editing a `TMap<FName,int32>` value writes the user's 4 bytes over the **FName key**; the same wrong address is what "+CE" pushes as a record and what "Copy address" yields. | S / med |
-| **V2** | MED | `LiveWalkerViewModel.cs:1706` (`ComputeSetElementStride`) | The C# stride mirror is still `AlignUp(elemSize,4)+8` after the DLL moved to `Align(Align(elemSize,alignof(T))+8, alignof(T))` in `5ef4c2b`. **Three copies** are stale (`LiveWalkerViewModel.cs:1706`, `CeXmlExportService.cs:3513`, `CsxExportService.cs:877`) across **5 map call sites**. TSet is unaffected by construction. Every map element address the UI computes itself is short by 4+ bytes past index 0. | M / med |
+| **V1** ✅ | **HIGH** | `LiveWalkerViewModel.cs:1380` (`PopulateMapContainerFields`) | A TMap element row is built with `TypeName = MapValueType` (so `IsEditableType` passes for any scalar-valued map) but `FieldAddress = dataBase + index*stride` — the TPair base, which is **the key**. The `+ valOffset` the same method computes 40 lines earlier for struct values is not applied. Inline-editing a `TMap<FName,int32>` value writes the user's 4 bytes over the **FName key**; the same wrong address is what "+CE" pushes as a record and what "Copy address" yields. | S / med |
+| **V2** ✅ | MED | `LiveWalkerViewModel.cs:1706` (`ComputeSetElementStride`) | The C# stride mirror is still `AlignUp(elemSize,4)+8` after the DLL moved to `Align(Align(elemSize,alignof(T))+8, alignof(T))` in `5ef4c2b`. **Three copies** are stale (`LiveWalkerViewModel.cs:1706`, `CeXmlExportService.cs:3513`, `CsxExportService.cs:877`) across **5 map call sites**. TSet is unaffected by construction. Every map element address the UI computes itself is short by 4+ bytes past index 0. | M / med |
 | **V3** | MED | `LiveWalkerViewModel.cs:2366` (`FindReferencesAsync`) | No post-await navigation guard. Every other long round-trip snapshots `CurrentAddress` + `Breadcrumbs.Count` before its `await`; this one reads `CurrentObjectName` and refills `References` *after*, and runs on the **bulk** lane precisely so the user can keep navigating. A scan started on A lands A's reference list under B's header. | S / low |
 | **V4** | MED | `LiveWalkerViewModel.cs:5575` (`NavigateToAsync`/`GoBackAsync`) | Navigation commands are separate `AsyncRelayCommand`s with no shared re-entrancy gate, so a drill-down that started first can append its crumb onto a spine `GoBackAsync` has already truncated — leaving a leaf whose `FieldOffset` is relative to a parent no longer in the list, i.e. a silently wrong CE pointer chain. | M / med |
-| **V5** | MED | `LiveWalkerViewModel.cs:1622` (`FilterContainerToElement`) | The Map branch rebuilds the container field property-by-property and **omits `MapValueOffset`**, so the CE emitter falls back to `valOffset = MapKeySize` and derives a different stride. Exporting *selected* map elements produces a different and wrong layout from exporting the same map unfiltered. The sibling clone at `CeXmlExportService.cs:1030` preserves it — the two clone sites have drifted. | S / low |
+| **V5** ✅ | MED | `LiveWalkerViewModel.cs:1622` (`FilterContainerToElement`) | The Map branch rebuilds the container field property-by-property and **omits `MapValueOffset`**, so the CE emitter falls back to `valOffset = MapKeySize` and derives a different stride. Exporting *selected* map elements produces a different and wrong layout from exporting the same map unfiltered. The sibling clone at `CeXmlExportService.cs:1030` preserves it — the two clone sites have drifted. | S / low |
 | **V6** | MED | `LiveWalkerViewModel.cs:5927` (`UpdateDisplay`) | `RefreshAsync` deliberately keeps the field-search keyword alive (`clearFieldSearch: false`) but `UpdateDisplay` swaps in new `LiveFieldValue` objects whose `IsSearchMatch` defaults false, and nothing re-runs `ApplySearch`. Highlights vanish while `SearchMatchCount` and the ↑/↓ buttons keep advertising N live matches. | S / low |
 | **V7** | MED | `LiveWalkerViewModel.cs:4812` (`RefreshAsync`) | Refresh failures — including the 10 s hard timeout — are reported through `SetError` → `ErrorMessage`, **a property `LiveWalkerPanel.axaml` never binds**, after `ClearStatus()` blanked the one bound status line. A failed refresh is byte-identical on screen to a successful one, stale values render as live, and a subsequent edit prints `Written: …` over them. | S / low |
 | **V8** | LOW | `LiveWalkerViewModel.cs:1348` | Container drill-down renders an `arrayLimit`-truncated element list (default 128) as the complete container. `BuildContainerLimitWarning` computes exactly this warning and is wired into **one** site: the Copy-CE-XML path. | S / low |
@@ -806,12 +840,12 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 *State as of 2026-08-14, after U1. Read this section first; it is written for a session with no
 memory of the previous one.*
 
-> 🔴 **Before starting U2, decide about V1.** U1 produced the audit's **first surviving HIGH**, and it
-> is the only item in 60 findings whose failure mode is *the tool writes wrong bytes into the user's
-> game*. It is an `S`-effort fix. The audit's own rule is "no fixes during a scan segment", which is
-> why it was not fixed in U1's window — but it should not wait behind five more scan segments either.
-> Fix V1 (plus V2, the stride mirrors, which is the same subsystem and half-shipped already) as a
-> small fix batch **before** U2, and treat that batch as the window's one stage.
+> ✅ **V1 is fixed — U2 is genuinely next.** U1 produced the audit's first surviving HIGH (the only
+> item in 60 findings whose failure mode is *the tool writes wrong bytes into the user's game*), and
+> it shipped in build 2830 together with V2 and V5 as one commit, since the three are one subsystem
+> and not independently correct. **One thing is still owed: in-game verification of the UI half** —
+> see [todo.md](todo.md#pending-live-game-verification-verify-only--no-code). That is cheap and is
+> the right use of any budget left over in U2's window.
 
 ### The pacing rule, learned by hitting it
 
@@ -826,11 +860,10 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 **Scanning: 7 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1. Still open:
 **U2-U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
 
-**Fixing:** cluster ① is 6 of 7 shipped on the **DLL side only** (`5ef4c2b`, `c65fdfc`) — U1/V2 found
-its three C# mirrors were left stale, so the cluster is **re-opened**; A4 deliberately open. D5
-shipped **F1, F3(a), F4, F6, F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21` (the last
-is the F4/F6 UI half, AOT-published and launch-checked).
-**Still open: V1 (HIGH — do first), V2–V11, F2, F5, F8, A4, U3, G7, U2.**
+**Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
+and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
+F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
+**Still open: V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2.**
 
 ### The C# lens set — as run in U1, with what it actually yielded
 
@@ -1012,18 +1045,18 @@ for the *composition*, not the parts** — that is precisely why none of this wa
 `dll_helpers_test` cases and every PDB-verified data point in the tree happen to land on multiples
 of 8, so none of them discriminates.
 
-> ⚠ **This cluster is NOT closed — the fix shipped on one side of the wire only.** U1 found that
-> `5ef4c2b`'s two-argument, alignment-aware `ComputeSetElementStride` was applied to the DLL and to
-> **none of the three C# copies of the same formula** (`LiveWalkerViewModel.cs:1706`,
-> `CeXmlExportService.cs:3513`, `CsxExportService.cs:877` — U1/**V2**), each of which still carries a
-> doc comment asserting that it mirrors the DLL. Five map call sites now disagree with the engine by
-> 4+ bytes per element past index 0; TSet is unaffected because the DLL's `elemAlign` default of 4
-> reproduces the old behaviour exactly. Two lessons, and the second is the expensive one:
-> **(a)** closing cluster ① on the DLL alone *re-opened cluster ④* — the fix duplicated layout
-> knowledge rather than deriving it; **(b)** the cheap durable repair is not to port the alignment
-> maths a fourth time but to have the DLL **publish the stride it already computed**
-> (`Ubel.cpp:4188` / `:4458`) as a wire field the C# consumes, deleting all three mirrors. Any future
-> cluster-① fix must start with a `grep` for the formula across **both** languages.
+> ✅ **The C# half shipped in build 2830 — but read why it was ever separate.** `5ef4c2b`'s
+> two-argument, alignment-aware `ComputeSetElementStride` was applied to the DLL and to **none of the
+> three C# copies of the same formula** (U1/**V2**), each still carrying a doc comment asserting that
+> it mirrored the DLL. Five map call sites disagreed with the engine by 4+ bytes per element past
+> index 0. **Closing cluster ① on the DLL alone had re-opened cluster ④.**
+>
+> The repair was deliberately *not* a fourth copy of the alignment maths: the DLL now publishes the
+> stride it already computed (`Ubel.cpp` walk sites) as `map_stride` / `set_stride`, and
+> `Core/ContainerGeometry.cs` is the only client-side consumer. All three mirrors are deleted. **The
+> standing rule this leaves behind: any fix to a layout computation must start with a `grep` for the
+> formula across BOTH languages** — and where the input is an engine fact the wire does not carry
+> (an alignment, a size), the answer is to send the number, not to re-derive it.
 
 **② A reported status computed by a different path than the reality.** This is **audit #4's own 4a
 root cause recurring in older code**, which is evidence it is a habit of this codebase rather than a

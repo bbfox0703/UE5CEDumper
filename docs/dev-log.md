@@ -22,6 +22,76 @@ builds ≤696 in
 
 -----
 
+## 2026-08-14 - The map row that was editing its own key, and a formula the DLL had already fixed for itself (build 2830)
+
+**Audit #5 segment U1 fixes V1 (the audit's only surviving HIGH), V2 and V5.** One commit, because
+the three are one subsystem and not independently correct: V1's write address is computed *from*
+V2's stride, so shipping V1 alone would have aimed a corrected offset off a wrong base.
+
+### V1 — a TMap element row was inline-editable, and its address was the KEY
+
+A `TPair` stores its key first, so a map element's base address *is* the key. `PopulateMapContainerFields`
+built each row with `TypeName = MapValueType` — which makes any scalar-valued map pass
+`FieldValueConverter.IsEditableType` — while setting `FieldAddress` to that element base. Every
+consumer of `FieldAddress` on such a row acts on the row's declared type: the inline editor writes
+there, "+CE" pushes it as a record typed from the value, the Hex button navigates there, the Address
+column shows it. So editing a `TMap<FName,int32>` value wrote the user's four bytes over the FName
+key — silently corrupting the map in a live game, and every later lookup of that entry missing.
+
+The correction was already known to the file: `MapValueDrillOffset`'s doc comment states it outright,
+and it was applied at exactly one call site (`NavigateToFieldAsync`'s `navOffset`) while the edit and
+export consumers were not. Rows now carry the value's address.
+
+**A second half the finding did not name:** the row also reported `Size = MapKeySize + MapValueSize`,
+and `Size` reaches `TryConvert` as the **write length** — so a `TMap<int32, enum4>` would have written
+8 bytes over a 4-byte value even once the address was right. A row now describes the value in all
+three respects: type, address, size. `Offset` deliberately stays the element base, because
+`MapValueDrillOffset` adds the value offset back when a drill-down builds a breadcrumb.
+
+### V2 — three C# copies of a formula the DLL had already corrected
+
+Build 2554's cluster ① fix (`5ef4c2b`) replaced `ComputeSetElementStride` with an alignment-aware
+`Align(Align(elemSize, alignof(T)) + 8, alignof(T))` — **in the DLL only**. The same formula existed
+in three C# files (`LiveWalkerViewModel`, `CeXmlExportService`, `CsxExportService`), each carrying a
+doc comment claiming it mirrored the DLL. All three stayed on `Align(elemSize,4)+8`, so across five
+map call sites the grid's key→value *text* was right (the DLL read it) while every map element
+address the UI computed *itself* was 4+ bytes short past index 0: Address column, struct-drill target,
+the breadcrumb offset feeding CE chains, and the CE-XML / CSX exports. TSet was unaffected — a bare
+`elemSize` is already a multiple of `alignof(T)`, so the DLL's `elemAlign` default of 4 reproduces
+the old behaviour exactly.
+
+**The fix is not a fourth copy of the arithmetic.** The stride needs `alignof(Key)`/`alignof(Value)`,
+which are engine facts that never cross the wire — a client can only guess. So the DLL now publishes
+the stride it *actually used to read the elements* as additive wire fields `map_stride` / `set_stride`
+(set at all four `Ubel.cpp` walk sites), and one new `Core/ContainerGeometry.cs` is the only
+client-side consumer. All three mirrors are deleted; the old expression survives solely as
+`ContainerGeometry.FallbackStride`, documented as correct only for `alignof(T) <= 4` and reached only
+when the DLL supplied nothing. UI and DLL can no longer disagree, because there is one number.
+
+### V5 — the multi-select clone dropped the geometry
+
+`FilterContainerToElement` rebuilds a container field property-by-property for the "Copy CE Field(s)"
+path and omitted `MapValueOffset`, so exporting *selected* map elements laid out differently from
+exporting the same map whole. Fixed by carrying the geometry — which the V2 work made mandatory
+anyway, since a dropped `MapStride` would have sent that one path back to the guess.
+
+### Verified with a negative control, not just a green run
+
+8 new tests in `ContainerGeometryTests` (3575 total, 0 failed). Both fixes were then reverted in
+`ContainerGeometry.cs` and the suite re-run: **5 tests failed** — the helper, the seam
+(`PopulateMapContainerFields`, made `internal` so a test can drive the real populate path) and the
+clone — then the fix was restored and green re-confirmed. That ordering matters here: the pre-existing
+`FieldValueConverterTests` passed in *both* directions, because the helper was never the broken part.
+The bug lived in the caller that fed it an address, which is exactly the seam
+[working-lessons.md](working-lessons.md) §1.3 warns about.
+
+⬜ **In-game verification of the UI half is still owed** — see the entry in [todo.md](todo.md). The
+DLL half already has `DumperTest` witnesses; what no headless pipe check can see is client-side
+arithmetic, so the Address column / inline edit / CE record need a live look on a map whose pair
+alignment is 8 and whose pair size is not already a multiple of 8.
+
+-----
+
 ## 2026-08-14 - Two replies that reported work they had not done, and the feature that was empty all along (build 2818)
 
 **Audit #5 D5 fixes F4 and F6 — and F8, which the F6 fix immediately exposed.**

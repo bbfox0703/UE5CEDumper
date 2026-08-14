@@ -591,7 +591,7 @@ public static class CsxExportService
     /// </summary>
     private static List<LiveFieldValue> ConvertSetStructElementsToFields(LiveFieldValue setField)
     {
-        int stride = ComputeSetElementStride(setField.SetElemSize);
+        int stride = ContainerGeometry.SetStrideOf(setField);
         ulong dataBase = ParseHexAddr(setField.SetDataAddr);
         var fields = new List<LiveFieldValue>();
 
@@ -627,9 +627,9 @@ public static class CsxExportService
     {
         // Use the DLL's aligned value offset (PR #277: real value alignment, not a
         // size guess — FName-valued maps land correctly); fall back to key size.
-        int valOffset = mapField.MapValueOffset > 0 ? mapField.MapValueOffset : mapField.MapKeySize;
+        int valOffset = ContainerGeometry.MapValueOffsetOf(mapField);
         int pairSize = valOffset + mapField.MapValueSize;
-        int stride = ComputeSetElementStride(pairSize);
+        int stride = ContainerGeometry.MapStrideOf(mapField);
         bool valStruct = mapField.MapValueType == "StructProperty"
                          && !string.IsNullOrEmpty(mapField.MapValueStructAddr);
         ulong dataBase = ParseHexAddr(mapField.MapDataAddr);
@@ -712,7 +712,7 @@ public static class CsxExportService
     /// </summary>
     private static List<LiveFieldValue> ConvertSetPointerElementsToFields(LiveFieldValue setField)
     {
-        int stride = ComputeSetElementStride(setField.SetElemSize);
+        int stride = ContainerGeometry.SetStrideOf(setField);
         var fields = new List<LiveFieldValue>();
 
         foreach (var elem in setField.SetElements!)
@@ -820,7 +820,7 @@ public static class CsxExportService
     /// </summary>
     private static List<LiveFieldValue> ConvertSetScalarElementsToFields(LiveFieldValue setField)
     {
-        int stride = ComputeSetElementStride(setField.SetElemSize);
+        int stride = ContainerGeometry.SetStrideOf(setField);
         var fields = new List<LiveFieldValue>();
 
         foreach (var elem in setField.SetElements!)
@@ -868,16 +868,6 @@ public static class CsxExportService
         }
 
         return fields;
-    }
-
-    /// <summary>
-    /// Compute TSparseArray element stride: AlignUp(elemSize, 4) + 8 (HashNextId + HashIndex).
-    /// Mirrors Mem::ComputeSetElementStride in the DLL.
-    /// </summary>
-    private static int ComputeSetElementStride(int elemSize)
-    {
-        int hashStart = (elemSize + 3) & ~3; // align to 4
-        return hashStart + 8; // + HashNextId(4) + HashIndex(4)
     }
 
     /// <summary>

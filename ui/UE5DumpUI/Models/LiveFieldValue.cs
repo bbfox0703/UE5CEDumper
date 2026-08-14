@@ -199,6 +199,19 @@ public sealed class LiveFieldValue
     /// <summary>For MapProperty: aligned byte offset of value within TPair (may differ from MapKeySize due to alignment).</summary>
     public int MapValueOffset { get; init; }
 
+    /// <summary>
+    /// For MapProperty: the TSparseArray slot stride the DLL actually used to read these elements.
+    /// 0 = the DLL did not supply one (older DLL, or element data was not read).
+    /// <para>
+    /// Never recompute this client-side. The real formula is
+    /// <c>Align(Align(pairSize, alignof(TPair)) + 8, alignof(TPair))</c> and the alignments do not
+    /// cross the wire, so a client-side copy can only guess — which is exactly how three separate
+    /// C# copies silently went stale when the DLL's own formula was corrected (audit #5 V2).
+    /// Go through <see cref="ContainerGeometry.MapStrideOf"/>.
+    /// </para>
+    /// </summary>
+    public int MapStride { get; init; }
+
     /// <summary>For MapProperty: inline element preview.</summary>
     public List<ContainerElementValue>? MapElements { get; init; }
 
@@ -210,6 +223,12 @@ public sealed class LiveFieldValue
 
     /// <summary>For SetProperty: element size in bytes.</summary>
     public int SetElemSize { get; init; }
+
+    /// <summary>
+    /// For SetProperty: the TSparseArray slot stride the DLL actually used. 0 = not supplied.
+    /// Same rule as <see cref="MapStride"/> — go through <see cref="ContainerGeometry.SetStrideOf"/>.
+    /// </summary>
+    public int SetStride { get; init; }
 
     /// <summary>For SetProperty: TSparseArray::Data base address.</summary>
     public string SetDataAddr { get; init; } = "";

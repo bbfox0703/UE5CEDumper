@@ -1409,22 +1409,32 @@ reports them identical. Nothing has desynced.)*
 
 Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.
 
-> ### 🔴 2026-08-14 — M1 SHIPPED ON THE DLL SIDE ONLY. The UI still strides TMaps the old way.
+> ### ⬜ 2026-08-14 — the UI half (build 2830) is NOT yet verified in-game
 >
-> The ✅ below is **correct and narrower than it looks**: it verifies that the *DLL* reads map
-> elements at the right stride, which it now does. Audit #5 segment **U1/V2** then found that the
-> same formula exists in **three C# copies that were not updated** —
-> `ViewModels/LiveWalkerViewModel.cs:1706`, `Services/CeXmlExportService.cs:3513`,
-> `Services/CsxExportService.cs:877` — each still `Align(elemSize,4)+8` and each still carrying a doc
-> comment claiming it mirrors the DLL. So the key→value **text** in the grid is right (the DLL read
-> it) while every map element **address the UI computes itself** is short by 4+ bytes past index 0:
-> the Address column, the struct-drill target, the breadcrumb `FieldOffset` feeding the CE chain, and
-> the CE-XML / CSX exports. Five map call sites; TSet is unaffected (the DLL's `elemAlign` default of
-> 4 reproduces the old behaviour exactly).
+> The ✅ table below is **correct and narrower than it looks**: it verifies that the *DLL* reads map
+> elements at the right stride. Audit #5 segment **U1/V2** then found the same formula in **three C#
+> copies that `5ef4c2b` did not update**, so the key→value *text* in the grid was right (the DLL read
+> it) while every map element **address the UI computed itself** was short by 4+ bytes past index 0.
+> Alongside it, **U1/V1** (the audit's only surviving HIGH) had map rows publishing the element base —
+> the **key** — as the address the inline editor writes to.
 >
-> **Do not close cluster ① on the strength of the table below.** The durable fix is not a fourth copy
-> of the alignment maths — have the DLL publish the stride it already computed (`Ubel.cpp:4188` /
-> `:4458`) as a wire field and delete all three mirrors.
+> **Fixed in build 2830**: the DLL now publishes `map_stride` / `set_stride`, `Core/ContainerGeometry.cs`
+> is the single client-side consumer, all three mirrors are deleted, and a map row's type/address/size
+> all describe the value. Unit-verified with a negative control (reverting the fix turns 5 tests red,
+> including the seam test).
+>
+> **What still needs a live process** — the DLL half already has witnesses below; this is the **UI**
+> half, which no headless pipe check can see because it is client-side arithmetic:
+>
+> | Check | On a `TMap<AActor*,float>`-shaped field (8-aligned key, 4-byte value) | Expect |
+> |---|---|---|
+> | Address column | drill into the map, read element **[1]**'s Address | `MapDataAddr + 24 + 8`, **not** `+20`, and **not** the element base |
+> | Inline edit | edit element [1]'s value, then Refresh | the **value** changes; the key text is unchanged |
+> | CE record | "+CE" on element [1] | CE shows the value, and freezing it does not corrupt the key |
+>
+> `DumperTest`'s `Map_I64ToI32` / `Map_StrToInt` already exercise the DLL side; the UI check wants a
+> map whose pair alignment is 8 and whose pair size is NOT already a multiple of 8, since that is the
+> only shape where the old and new strides differ.
 
 > ### ✅ FIVE OF SIX VERIFIED IN-GAME 2026-08-14 — DumperTest, UE 5.4 Development package
 >
