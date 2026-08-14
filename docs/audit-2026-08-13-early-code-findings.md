@@ -54,7 +54,7 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **D2** | Genau + Serie | `Genau.cpp` 3386/5108, `Serie.cpp` 587/791 | ~3,973 | **Genau: none** |
 | **D3** | Aura — ObjectArray | `Aura.cpp` 3711/8763, `Aura.h` 522/1387 | ~4,233 | 1 test file |
 | **D4a** ✅ | Macht + Scharf (memory layer) | `Macht` 708/755, `Macht.h`, `Scharf.h` | ~1,000 | **none** |
-| **D4b** | Mimic/Flamme/Sein/Stark/Lugner | `Mimic` 639, `Flamme` 410, `Sein` 342, `Stark` 302, `Lugner`(+Dinput8) 225 | ~1,626 | none |
+| **D4b** ✅ | Mimic/Flamme/Sein/Stark/Lugner | `Mimic` 639, `Flamme` 410, `Sein` 342, `Stark` 302, `Lugner`(+Dinput8) 225 | ~1,626 | none |
 | **D5** | Fern + Frieren | `Fern.cpp` 2490/6028, `Frieren.cpp` 816/1784 | ~3,306 | partly audited before |
 | **U1** | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
 | **U2** | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
@@ -249,9 +249,116 @@ discriminates. The M1 skeptic established this by computing both formulas agains
 rather than arguing in prose, and noted that the corrected formula reproduces every verified value
 exactly — independent corroboration that the missing `Align` is real.
 
+### D4b — Mimic + Flamme + Sein + Stark + Lugner — ✅ scanned 2026-08-14
+
+Run `wf_97eaa194-4c7`, 11 agents, 0 errors — **on the second attempt.** The first launch lost all
+five finders to `API Error: 529 Overloaded` at 0 tokens and 0 tool calls each, and the workflow
+still returned `{"confirmed": [], "refuted": [], "note": "no findings"}`. **A clean-looking empty
+result is what a total finder wipeout looks like** — the `<failures>` block was the only thing that
+said so. Resumed from the same run id; nothing was cached, so everything re-ran live.
+
+18 raw claims → **9 refuted (50%)** → 9 confirmed → **9 distinct** (no lens hit the same site twice).
+Recorded below: **2 MEDIUM · 7 LOW · 1 INFO**, after two adjustments I made by hand (S1 and P1, both
+flagged in place).
+
+**Tally: 0 HIGH — and for the second segment running, the finders claimed none.** They claimed
+**13 MEDIUM**; one survived as MEDIUM, four were downgraded to LOW by their skeptic, and eight died.
+
+> **The prediction inverted again, in the same direction as D4a.** The segment was scoped around the
+> two surfaces that look most dangerous — the cross-process mailbox written by an external process
+> with no lock, and a MinHook trampoline on `ProcessEvent` in a live game. **Both are in good shape,
+> and they are in good shape because they have already been audited**: `Stark`'s in-flight-unhook
+> race is explicitly handled (`RemoveHook` soft-disables and says why, audit fixes #13/#14), `Sein`'s
+> sweep-killing shared `error_code` was fixed as B19, `WriteToFile`'s NULL-`FILE*` termination as
+> B11, the poller's raw-`CreateThread` throw as B14. Every one of those carries a comment naming the
+> defect it prevents, and **five of the nine refutations are a skeptic finding exactly such a
+> comment.** The real defects landed instead on the **unaudited edges**: a proxy `.def` file, an
+> `ofstream` nobody checks, a `bool` return nobody reads.
+
+> **Three root causes:**
+> 1. **A safety decision read from a field that is not an input.** `HandleInvoke` picks
+>    game-thread-vs-off-thread from `functionFlags` (MB1), a mailbox field `Mimic.h` documents as
+>    DLL-**output** — and which two *other* handlers overwrite with an unrelated page count.
+>    Cluster ② again: the value consulted is computed by a different path than the one that means it.
+> 2. **A `bool`/stream-state return discarded at the one site that could report the failure.**
+>    `OpenFileInDir` (SE1), `ofstream::good` (FL1), `fs::rename`'s failure (FL2). In each case the
+>    subsystem then reports success and dies silently.
+> 3. **The forwarding surface is enumerated by hand and is wrong.** PX1: the real `dinput8.dll`
+>    exports six names; our `.def` lists five and pins no ordinals, while the sibling `ProxyDxgi.def`
+>    pins all twenty and documents *why*.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **ST1** | MED | `Stark.cpp:160` | The queued-invoke drain is gated **only** on `s_queueDepth != 0` — never on thread identity — so it executes on whichever thread entered the patched `ProcessEvent`. `Stark.h:10-12` states the module's whole purpose is that "ProcessEvent is always called from the game thread". Multi-thread PE is **not speculative here**: it is a confirmed finding of audit #3 (L5), whose fix sits two lines above the drain in the same hook body (`Linie.cpp:46-52`). Verified independently: `grep -rn "IsInGameThread\|GGameThread\|GameThreadId\|GetCurrentThreadId" dll/src/` returns **four** hits, all logging or AOB comment text — **zero** thread-identity checks on any dispatch path. Second lens confirmed it on a *stronger* path than the finder's: `UE5_CallProcessEventDirect` recomputes the same vtable slot, so `Mimic::HandleInvoke`'s static-native route re-enters our own trampoline **from the mailbox polling thread**. | M / med |
+| **PX1** ‡ | MED | `ProxyDinput8.def:15-20` (+ `Lugner_Dinput8.cpp:54`) | The dinput8 proxy forwards **5 of the real DLL's 6 exports**. `GetdfDIJoystick` has no stub and no `.def` entry, and because the `.def` pins **no ordinals**, MSVC assigns them alphabetically and our `@6` becomes `UE5_AutoStart`. A by-name static import fails process creation outright (`STATUS_ENTRYPOINT_NOT_FOUND`, before any of our logging exists); an ordinal-`#6` import calls `UE5_AutoStart`, which kicks off the whole AOB scan and returns a `bool` in RAX where an `LPCDIDATAFORMAT` is expected. `ProxyImportAnalyzer` records only the imported DLL *name*, never a function list, so Proxy Deploy cannot warn. `ProxyDxgi.def` pins `@1..@20` and its own header says why: *"The @ordinal values match real dxgi.dll so ordinal imports resolve too."* | S / low |
+| **MB1** | LOW | `Mimic.cpp:557` | `HandleInvoke` decides the game-thread-vs-direct-off-thread route from `g_invokeMailbox.functionFlags`, which `Mimic.h` documents as a **DLL-filled output** and which `CMD_INVOKE`'s documented inputs do not include. A bare re-`FIRE` (`InvokeScriptGenerator.cs:383-384` re-issues `CMD_INVOKE` without re-running `CMD_FIND_FUNCTION`) therefore routes on whatever the *previous* command left at offset `0x024`. A stale `Native|Static` sends a stateful actor UFunction off the game thread — exactly what the comment three lines above forbids. The false-positive is the unsafe direction; the false-negative is harmless. | S / low |
+| **MB2** | LOW | `Mimic.cpp:278` | The `EnsureInitialized()` gate is applied to **every** command including `CMD_FOREGROUND`, which `Mimic.h` documents as thread-agnostic pure Win32 and which the pipe path services with no such gate — so on a game whose GObjects scan fails, Keep-Foreground is refused with `-10` and `ForegroundScriptGenerator.cs:79-81` renders it as `hook error -10`, naming MinHook, a subsystem never reached. Second half: `Frieren` latches `s_initialized` only on **success**, so the gate re-runs a whole-image AOB sweep on every command while init keeps failing, pinning the mailbox at `status=0xFF` past `MailboxPollTimeoutMs`. | S / low |
+| **SE1** | LOW | `Sein.cpp:473` | `InitProcessMirror` **discards `OpenFileInDir`'s `bool`** and sets `s_filesOpen = true` regardless, then flushes the early buffer into possibly-NULL `FILE*`s and `clear()`s it. A category that failed to open is dead for the session with **nothing logged anywhere**, not even into the `init` file that opened fine. Same shape in `RotateIfNeeded`: a failed reopen leaves `file == nullptr` **and `written = 0`**, so the size test at `:268` returns early forever and the category never retries. The victim is [log-verification-checklist.md](log-verification-checklist.md)'s own procedure — a grep that finds nothing reads as "the code path never ran" when the truth is "the file never opened". | S / low |
+| **SE2** | LOW | `Sein.cpp:359` (+ twin `:242`) | Both retention sweeps advance their `fs::directory_iterator` with a **range-for**, which calls the *throwing* `operator++()`, not `increment(error_code&)`. `directory_iterator(p, ec)` reports **construction** failures only — and on failure it equals `end()`, so the loop body never runs and the `if (iterEc) break;` guard inside it is **dead code**. Verified: `dll/CMakeLists.txt:155-157`+`186` strip `/EHsc` for `/EHa`, and `grep -c catch dll/src/Sein.cpp` = **0**, so an escaping `filesystem_error` unwinds out of `InitProcessMirror` into `DLL_PROCESS_ATTACH` unguarded. *Honest limit: the escape path is verified structurally; the trigger (`FindNextFileW` failing mid-enumeration) is not demonstrated.* | S / low |
+| **FL1** | LOW | `Flamme.cpp:323` | `ofs << root.dump(2);` then scope-exit, then `fs::rename` — **the stream's error state is never tested.** No `exceptions()` mask, no `good()`, no explicit `close()`, so a short write (full volume, quota) is swallowed by the destructor and the **truncated document is published over the only cache copy**. `LoadHints` then parses it with `allow_exceptions=false`, gets `discarded`, and returns empty — every game's pattern IDs, `ueVersion`, user override and invoke timeout gone. The C# twin structurally cannot do this: `await File.WriteAllTextAsync` throws *before* `File.Move` (`AobUsageService.cs:141-142`). Four copies of the block, so a fix must be a shared helper. | S / low |
+| **FL2** | LOW | `Flamme.cpp:325` | `fs::rename(tempPath, path)` is the **throwing** overload; the `catch` at `:331` logs and returns, leaving `<file>.tmp.<pid>` behind. The suffix is the PID, so every affected launch leaks a *distinctly named* full copy of the cache into `%LOCALAPPDATA%\UE5CEDumper\` and nothing ever removes them. Reachable without any disk fault: the UI holds the file via `File.ReadAllTextAsync` (`FileShare.Read`, **no** `FileShare.Delete`), so a replace-rename during a UI read fails. Violates CLAUDE.md's app-data rule directly — the root is for files "app-wide and fixed in number". | S / low |
+| **MB3** † | INFO | `Mimic.cpp:211` | `PollingThreadProc` wraps the **entire** `while (s_running)` loop in `Routine::RunThreadGuarded`, so a throw out of any handler ends the CE mailbox for the session. It is the **only loop in the tree** with the whole-body form — `Routine.h:168-169` (`while (SleepSliced(...)) RunTickGuarded(...)`) and `Stark.cpp:208-210` (guard per PE **call**) both guard per iteration. Filed as INFO, not MEDIUM: see † below. | S / low |
+
+‡ **P1 was downgraded to LOW by its skeptic and I put it back to MEDIUM — after verifying it against
+the shipped binary rather than the source.** `dumpbin /EXPORTS C:\Windows\System32\dinput8.dll` lists
+six: `DirectInput8Create @1 … DllUnregisterServer @5`, **`GetdfDIJoystick @6`**. `dumpbin /EXPORTS
+dist\proxy\dinput8.dll` (2026-08-14 build) lists `@1..@5` as the five real names and **`@6 =
+UE5_AutoStart`, `@7 = UE5_CallProcessEvent`**. The mechanism is therefore not argued, it is measured,
+and the outcome when it fires is total (the game does not launch, or it dereferences a `bool`). What
+is genuinely uncertain is only *reachability* — how many titles import `GetdfDIJoystick` — and that
+is a reason to state a caveat, not to rate a measured end-to-end defect as LOW.
+
+† **S1 is a MEDIUM that was refuted and is recorded as what survives — the D2/G7 treatment.** The
+skeptic confirmed it; the second lens refuted it and was **right on the fact that decided it**, which
+I checked myself: the skeptic's "unrevivable" rests on `StartThread`'s `if (s_running.load()) return;`,
+but a throw unwinds *past* `s_running.store(false)`, so `s_running` is still **true** — which means
+`StopThread`'s own guard (`if (!s_running.load()) return;`) **passes** and the documented CE
+Disable→Enable fully restores the poller. The second lens also chased a stronger version neither the
+finder nor the skeptic raised — under `/EHa`, `catch (...)` catches SEH too, so an access violation
+would kill the poller — and killed that too: every game-memory read in the mailbox call graph goes
+through `Macht::ReadSafe`'s `__try/__except`, which absorbs the fault *below* the thread guard. What
+survives is the structural asymmetry alone, with no demonstrated bad outcome. **Do not re-raise it as
+a MEDIUM.**
+
 -----
 
 ## 3. Refuted — do not re-raise
+
+### From D4b (9 of 18 — 50%)
+
+Eight of the thirteen claimed MEDIUMs died here. **Five of the nine refutations were won by finding a
+comment that names the defect the code already prevents** — the strongest signal yet that this
+codebase's previously-audited surfaces are genuinely fixed, and that a finder reading them cold
+re-discovers the *original* bug rather than a live one.
+
+- **`Mimic.cpp:370` — "`StopThread` ignores its 3 s wait, then `CloseHandle`s and `memset`s the
+  mailbox under a still-running poller."** Raised by **two** lenses independently, refuted both
+  times, on different grounds each time. The load-bearing premise ("the poller is cancel-immune so
+  the walk is not shortened") is false: `Tot.h:31-33` scopes `MarkCancelImmune` to the **per-command**
+  cancel only, `Requested()` still returns `g_shutdown`, and `Frieren.cpp:594-595` latches
+  `RequestShutdown()` **before** `StopThread()`, so the walk bails at `Aura.cpp:1521`.
+- **`Mimic.cpp:211` — the whole-body exception guard.** Refuted as a MEDIUM by the second lens; see
+  † above for the INFO that survives and why the "unrevivable" half was wrong.
+- **`Stark.cpp:208` — "the hook's exception guard allocates inside its `catch`, so it cannot contain
+  the allocation failure it was added for."** Refuted: `Routine.h:45-57` records that the DQ7R
+  fast-fail was `~std::thread` calling `std::terminate` **directly** — no exception was ever thrown,
+  so the guard was not added for that condition.
+- **`Sein.cpp:301` — "a second UE5Dumper module truncates and interleaves the first's five live log
+  files."** Refuted: **three** further guards exist, each in the exact injection vector named
+  (`ProxyDeployViewModel.cs:937`'s `DumperLoaded` short-circuit among them).
+- **`Sein.cpp:121` — "`GetLogDirectory`'s `.` fallback aims the folder sweep at the game's CWD."**
+  The asymmetry is real; refuted on reachability — it is gated on `SHGetKnownFolderPath` failing,
+  which the claim itself justified only speculatively.
+- **`Flamme.cpp:395`** ("override/timeout writes no-op on an empty PE hash yet reply `persisted:true`")
+  — unreachable at two independent points, both client-side (`PointerPanel.axaml:18`'s `IsVisible`,
+  and `if (!HasData) return;` in both change handlers). **`Flamme.cpp:87`** ("four writers share one
+  staging path with no lock") — refuted by call-graph: all four are reachable only from inside
+  `UE5_Init`, serialized by `s_initMutex` + the `s_initialized` latch.
+- **`Lugner.cpp:80` — "the per-export magic static freezes a transient resolve failure for the
+  process lifetime."** The pattern is real (17 sites in `Lugner.cpp`, 5 in `Lugner_Dinput8.cpp`, and
+  `LoadRealVersion` *does* retry while the function pointer does not) but the trigger requires
+  `LoadLibraryW` on a fully-qualified System32 path to fail **once and then succeed**, which was
+  asserted rather than demonstrated.
 
 ### From D1 (13)
 
@@ -373,8 +480,8 @@ be the default for any DLL fix:
 
 ## 4. Cross-segment rollup — read this before fixing anything
 
-**Status: 4 of 12 segments scanned** (D1, D2, D3, D4a). **30 distinct findings: 0 HIGH · 20 MEDIUM ·
-10 LOW.** 80 raw claims, **45 refuted (56%)**. Remaining: D4b, D5, U1–U5, S1, T1.
+**Status: 5 of 12 segments scanned** (D1, D2, D3, D4a, D4b). **40 distinct findings: 0 HIGH ·
+22 MEDIUM · 17 LOW · 1 INFO.** 98 raw claims, **54 refuted (55%)**. Remaining: D5, U1–U5, S1, T1.
 
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
 |---|--:|--:|--:|--:|---|
@@ -382,10 +489,16 @@ be the default for any DLL fix:
 | D2 Genau+Serie | 36+14 | 26 | 19 (73%) | 6 | 7 → **0** |
 | D3 Aura | 16 | 18 | 8 (44%) | 10 | 0 → 0 |
 | D4a Macht | 10 | 9 | 5 (56%) | 3 | 0 → 0 |
+| D4b Mimic+Sein+Stark+Lugner | 11 (+5 lost) | 18 | 9 (50%) | 10 | 0 → 0 |
 
-**Nine HIGHs were claimed across the audit and every one died.** Two things follow: severities from a
-finder are worthless before refutation, and — since the surviving 30 are all MED/LOW — *nothing found
-so far is an emergency*. Fix by cluster, not by walking the list.
+**Nine HIGHs were claimed across the audit and every one died** — and the last two segments claimed
+none at all, which is the calibration working rather than the code improving. Two things follow:
+severities from a finder are worthless before refutation, and — since the surviving 40 are all
+MED/LOW/INFO — *nothing found so far is an emergency*. Fix by cluster, not by walking the list.
+
+**The refutation rate has been stable at ~50–56% for four of the five segments** (D2's 73% is the
+outlier). Treat "about half of what a finder says is wrong" as this codebase's working constant when
+budgeting a segment.
 
 ### The clusters, in the order worth fixing
 
@@ -438,6 +551,18 @@ correct derivation **already exists elsewhere in the tree**.
 **⑤ Long loops that ignore `Tot::Requested()`** — D2/**G2**, D3/**A7**. Note the same claim was
 **refuted** against `Macht` (guards present), so this is a per-site fact, not a pattern to apply blind.
 
+**⑥ A failure return discarded at the one site that could have reported it — new in D4b.** Distinct
+from ②: there the reported status is *computed wrong*, here it is *never computed at all*, and the
+subsystem then reports success and dies silently. D4b/**SE1** (`OpenFileInDir`'s `bool` dropped, so a
+log category dies with nothing written anywhere — including into the file that *did* open),
+D4b/**FL1** (`ofstream` state never tested before `fs::rename` publishes a truncated cache),
+D4b/**FL2** (`fs::rename`'s throw caught and logged, staging file leaked). **One fix pattern:** a
+shared `WriteAtomically(path, text)` closes FL1+FL2 together and stops the four copies drifting; SE1
+needs the caller to route its failure into whichever category is still alive. Cheap, and each one
+currently costs a maintainer the *evidence* they would debug with — SE1 in particular defeats
+[log-verification-checklist.md](log-verification-checklist.md)'s grep-by-format-string procedure,
+which reads an absent line as "the code path never ran".
+
 ### One chain crosses segments — fix order matters
 
 **D2/G1 → D1/U1.** `Genau` reports `validated=true` over a blind `FPROPERTY_ELEMSIZE`; `Ubel`'s
@@ -457,3 +582,14 @@ alone leaves every *other* consumer of the blind offset wrong. **Both, G1 first.
   wrong. Never file the losing side as do-not-re-raise without checking.
 - **A segment whose refute pass dies has produced nothing.** Park it as UNVERIFIED and resume;
   the workflow's dead-skeptic fallback puts unrefuted claims in the `confirmed` array.
+- **A clean empty result and a total wipeout are the same shape — check `<failures>` every time.**
+  D4b's first launch lost all five finders to `API Error: 529 Overloaded` at **0 tokens and 0 tool
+  calls each**, and the workflow still returned `{"confirmed": [], "refuted": [], "note": "no
+  findings"}` with no error. Read literally that says *this code is clean*. It is the same trap as
+  the dead-skeptic fallback one rung earlier in the pipeline, and a 529 is transient — the identical
+  script re-run 2 minutes later produced 18 claims. **Never record a segment's result without
+  reading the failure block and the per-agent token counts.**
+- **Verify a measurable claim against the artifact, not the source.** D4b/PX1 was rated LOW on an
+  argument about reachability; two `dumpbin /EXPORTS` runs (the real System32 DLL vs our shipped
+  `dist\proxy\dinput8.dll`) turned the mechanism from arguable into measured and moved it back to
+  MEDIUM. Where a finding predicts something observable in a built binary, a log or a file, go look.
