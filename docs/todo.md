@@ -1449,20 +1449,16 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > made earlier today in commits `58ddf76` and `b281ca1`, that TQ2 is U2's verification vehicle).
 > **Do not treat that row as evidence until this is settled.**
 >
-> **Solarpunk (UE5.7) — tried 2026-08-14, INDETERMINATE, not a negative.** `get_offsets` returned
-> `case_preserving=false` **with `probe_ran=false` and `validated=false`**, and the log confirms why:
+> **Solarpunk (UE5.7) — 2026-08-14: measurably NOT CasePreservingName.** A first sample 60 s after
+> injection returned `case_preserving=false` with `probe_ran=false` — i.e. nothing, the probe had not
+> run yet. **Re-queried later on the same still-running process: `case_preserving=false,
+> validated=true, probe_ran=true`** — a real measurement. Solarpunk joins TQ2 as a confirmed non-CPN
+> title. (The log is misleading here and that is filed as audit G7: its only `DynOff:` summary still
+> says `validated=NO (DEFAULTS)` because it is never re-emitted after the later validation.)
 >
-> ```
-> [SUMMARY] DynOff: CPN=no FProp=yes TagFFV=no Outer=+0x20 validated=NO (DEFAULTS) reason=
-> [SCAN:Eng] FindGEngineSlot: deferred — dynamic offsets not validated yet
-> ```
->
-> There is **no `DetectCasePreservingName` line at all** — the probe never ran, so that `false` is the
-> compiled-in default, not a measurement. **This is "we don't know", NOT "Solarpunk is not CPN"**, and
-> the difference is exactly what `probe_ran` exists to express: TQ2 produced a real 20–0 vote, this
-> produced nothing. Do not record Solarpunk as a non-CPN title on this evidence.
-> (`test-games.md:57` already records Solarpunk failing on an unrecognised 24-byte `FUObjectItem`
-> before build 1259 — whether this is the same problem returning is unchecked.)
+> **Method note worth keeping:** the first sample was *real* but was not a *verdict*. `probe_ran` is
+> the field that separates the two, and reading `case_preserving` without it produces a confident
+> wrong answer in either direction.
 >
 > **U2 therefore has no known verification vehicle right now.** Three candidates are exhausted: TQ2
 > is measurably not CPN, Solarpunk is indeterminate, and DumperTest cannot be (engine flag). Options:
