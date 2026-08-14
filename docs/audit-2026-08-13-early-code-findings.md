@@ -351,6 +351,49 @@ the old core instead, and that is where all eight landed.
 | **F6** | LOW | `Fern.cpp:2510` | `walk_world` clamps the Actors loop to the caller's `limit` (the UI sends **500**) and reports `actors.size()` as the level's actor count — the real `actorArr.Count` is read one line earlier and **discarded** — with no `truncated`/`total`, so a 500-actor page is indistinguishable from a 500-actor level and an actor at index 1877 simply is not there. Two sibling failures in the same block (Actors field unresolved; `ReadTArray` fails) also return `actors: []` with `ok:true` and **no `error`**, even though this same handler sets `data["error"]` for the two failures directly above. | S / low |
 | **F7** | LOW | `Fern.cpp:5042` | The `-7` response text reads *"(hook not active, direct call used)"*. `-7` is produced **only** by `Stark::EnqueueInvoke`'s inactive-hook guard or by `Stark::Shutdown` draining the queue — **neither executes ProcessEvent by any route**; the direct fallback lives on the other side of the `if (Stark::IsHookActive())` branch and returns 0/-2/-3/-4/-8. The string reports an execution that provably did not happen, and the dialog still shows `result_hex` — the untouched pre-call buffer. `-8` has no mapping at all. | S / low |
 
+### D5 — LIVE VERIFIED 2026-08-14, headless, on packaged `DumperTest` (Shipping, DLL build 2812)
+
+Three of the eight were reproduced on a real process the same day they were filed. No UI, no CE — the
+[§3b recipe](#the-reusable-win-from-today--headless-in-game-verification): launch, `inject-ue.ps1
+-ProcessId`, a `NamedPipeClientStream` to `UE5DumpBfx`.
+
+**F1 — paired controls, one variable, 5.5× apart.** Same build, same map, same client; the only
+difference is whether a connection was still registered when the game closed. Closed **gracefully**
+via `CloseMainWindow()` (`WM_CLOSE` → `ExitProcess` → `DLL_PROCESS_DETACH`), never `Stop-Process
+-Force`, which would skip DETACH and prove nothing:
+
+| | Client at exit | `Stop entry` | Drain | Process exit |
+|---|---|---|---|---|
+| **B** | **held open** | `conns=1` | `TIMEOUT, 1 left (5030 ms, 49 cancel re-asserts)` | **6,046 ms** |
+| **A** | disconnected first | `conns=0` | `satisfied, 0 left (0 ms, 0 re-asserts)` | **1,105 ms** |
+
+The 5,030 ms is attributable to a still-registered connection and to nothing else. **This is the
+first time this signature has been produced deliberately** — the four attempts recorded in
+[todo.md](todo.md) all worked from accidental captures, and B is now a ~30-second on-demand repro
+usable as the acceptance test for whatever fix ships. Control A is not a formality: without it, 6 s
+is just "how long a UE game takes to close".
+
+**F4 — the reply contradicts itself in a single log line.** `search_properties query="Name" limit=3`:
+
+```
+SearchProperties 'Name': 3 matches from 8 classes (scanned 24445 objects)
+```
+
+**8 classes were walked; 24,445 objects are reported scanned** — the full pool, because `scannedObjects`
+is assigned before the loop. The two numbers are in one reply and cannot both be true. No `truncated`
+key is present. A control query that genuinely walked everything (`"Dumper"`, 0 matches) reports
+`scanned_classes: 1566, scanned_objects: 24445`, so 1566 is what a real full walk looks like.
+
+**F6 — the silent branch fires on a stock map.** `walk_world` on `ThirdPersonMap` returns
+`{"actor_count":0,"actors":[],"ok":true,…}` with `world_addr`, `level_name: "PersistentLevel"` and
+`level_offset: 48` all resolved — and **no `error` key**. Re-run with `limit: 5000` to rule out the
+cap: identical. So this is the `actorsOffset < 0` / `ReadTArray` branch, and the UI renders a
+populated level as an empty one with nothing to indicate a failure. (The truncation half of F6 was
+not exercised — DumperTest's level is too small to exceed the UI's 500 cap.)
+
+*Not verified: F2, FR1, F3, F5, F7 — each needs a state DumperTest cannot reach cheaply (a parked
+bulk lane, a shutdown landing mid-scan, a level change, a multi-MB payload, a torn-down hook).*
+
 ‡ **F1 — I strengthened this one at takeover, and the strengthening removes the skeptic's own reason
 for downgrading it.** The skeptic did real work here: it read the MSVC CRT source to establish that
 `dllmain_crt_process_detach` runs the onexit table **unconditionally** (`is_terminating` gates only

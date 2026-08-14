@@ -2314,6 +2314,29 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 > none of the four earlier attempts asked, because the repro was assumed to be the CE untick it was
 > written as, and no capture on disk is actually that repro.*
 >
+> ### ✅ There is now a ~30-second ON-DEMAND repro, with a negative control (2026-08-14, build 2812)
+>
+> Every capture in the four attempts above was **accidental**. This one is deliberate, headless, and
+> takes half a minute on packaged `DumperTest` — use it as the acceptance test for whatever fix ships:
+>
+> 1. Launch `DumperTest.exe`, `scripts\inject-ue.ps1 -ProcessId <the -Win64-Shipping pid>`.
+> 2. Connect a `NamedPipeClientStream` to `UE5DumpBfx` and send any command.
+> 3. **Close the game with `CloseMainWindow()`** — `WM_CLOSE` → `ExitProcess` → `DLL_PROCESS_DETACH`.
+>    **Not `Stop-Process -Force`**: `TerminateProcess` skips DETACH entirely, so a forced kill exits
+>    fast and "proves" the bug is gone.
+>
+> | | Client at exit | `Stop entry` | Drain | Process exit |
+> |---|---|---|---|---|
+> | **B** | **held open** | `conns=1` | `TIMEOUT, 1 left (5030 ms, 49 cancel re-asserts)` | **6,046 ms** |
+> | **A** | disconnected first | `conns=0` | `satisfied, 0 left (0 ms, 0 re-asserts)` | **1,105 ms** |
+>
+> One variable, 5.5× apart. **Run A as well as B** — without it, 6 s is indistinguishable from "how
+> long a UE game takes to close", and A is also the regression guard: a fix that skips the drain must
+> not make the already-correct `conns=0` path slower or noisier.
+>
+> **PASS for the fix** = case B reaches `Stopped` in well under a second, with the entry path named in
+> the log so a future capture can be attributed to process-exit vs a CE Disable.
+>
 > ⬜ does **not** mean "probably fine". It means nobody has looked. Most of the fourteen were
 > simply not exercised (no wrapper installed, no UI killed mid-command, no Extra Scan).
 
