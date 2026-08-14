@@ -53,7 +53,8 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **D1** | Ubel — UStructWalker | `Ubel.cpp` 5214/5968 (87%), `Ubel.h` 451/642 | ~5,665 | no compiled test |
 | **D2** | Genau + Serie | `Genau.cpp` 3386/5108, `Serie.cpp` 587/791 | ~3,973 | **Genau: none** |
 | **D3** | Aura — ObjectArray | `Aura.cpp` 3711/8763, `Aura.h` 522/1387 | ~4,233 | 1 test file |
-| **D4** | DLL core runtime | `Macht` 708/755, `Mimic` 639, `Flamme` 410, `Sein` 342, `Stark` 302, `Lugner`(+Dinput8) 225, `Scharf.h` | ~2,626 | **Macht: none** |
+| **D4a** ✅ | Macht + Scharf (memory layer) | `Macht` 708/755, `Macht.h`, `Scharf.h` | ~1,000 | **none** |
+| **D4b** | Mimic/Flamme/Sein/Stark/Lugner | `Mimic` 639, `Flamme` 410, `Sein` 342, `Stark` 302, `Lugner`(+Dinput8) 225 | ~1,626 | none |
 | **D5** | Fern + Frieren | `Fern.cpp` 2490/6028, `Frieren.cpp` 816/1784 | ~3,306 | partly audited before |
 | **U1** | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
 | **U2** | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
@@ -82,7 +83,9 @@ a "verified against the list it was written from" fix ships (audit #4's own less
 
 ## 2. Findings
 
-*(populated one segment at a time)*
+*(populated one segment at a time)* — **if you are here to FIX something, read
+[§4 Cross-segment rollup](#4-cross-segment-rollup--read-this-before-fixing-anything) first.** The
+findings group into five clusters that are much cheaper to fix together than to walk one by one.
 
 ### D1 — Ubel (UStructWalker) — ✅ scanned 2026-08-13
 
@@ -310,3 +313,80 @@ opposite order — the stale "all locks are leaf-level" comment at `Ubel.cpp:67-
 inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `FindField` deep-copy cost;
 `ResolveEnumValue`'s lazy latch; `WalkDataTableRows`' `FENUMPROP_ENUM` read; and
 `ReadSoftObjectPath`'s "dead fallback" (raised twice by two lenses, refuted both times).
+
+-----
+
+## 4. Cross-segment rollup — read this before fixing anything
+
+**Status: 4 of 12 segments scanned** (D1, D2, D3, D4a). **30 distinct findings: 0 HIGH · 20 MEDIUM ·
+10 LOW.** 80 raw claims, **45 refuted (56%)**. Remaining: D4b, D5, U1–U5, S1, T1.
+
+| Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
+|---|--:|--:|--:|--:|---|
+| D1 Ubel | 24 | 27 | 13 (48%) | 11 | 2 → **0** |
+| D2 Genau+Serie | 36+14 | 26 | 19 (73%) | 6 | 7 → **0** |
+| D3 Aura | 16 | 18 | 8 (44%) | 10 | 0 → 0 |
+| D4a Macht | 10 | 9 | 5 (56%) | 3 | 0 → 0 |
+
+**Nine HIGHs were claimed across the audit and every one died.** Two things follow: severities from a
+finder are worthless before refutation, and — since the surviving 30 are all MED/LOW — *nothing found
+so far is an emergency*. Fix by cluster, not by walking the list.
+
+### The clusters, in the order worth fixing
+
+**① UE container reading is wrong in six independent places, and they compose. — highest value.**
+All six corrupt the *same* user-visible thing: what appears when a `TMap`/`TSet` is expanded, plus
+every graph edge and scan candidate derived from one.
+
+| | Defect | Effect on the shared output |
+|---|---|---|
+| D4a/**M3** | `ComputeMapValueOffset` guesses alignment (always, for struct values) | wrong `valueOffset` … |
+| D4a/**M1** | `ComputeSetElementStride` drops the `TPair`'s trailing padding | …which feeds a wrong stride |
+| D4a/**M2** | `ReadTSparseArray` reads `NumFreeIndices` at `+0x3C` not `+0x34` | count over-reported |
+| D3/**A2** | `IsSparseIndexAllocated` reads stale inline bits after heap spill | freed slots read as live |
+| D1/**U1** | Map/Set element sizes unvalidated | 1 GiB allocations, wild stride |
+| D3/**A4** | deep pass drops depth-1 leaves | `TMap<K,FStruct>` values unfindable |
+
+Fix M3 → M1 → M2 in one commit (they are three lines in one header), then A2, then U1. **Add a test
+for the *composition*, not the parts** — that is precisely why none of this was caught: both
+`dll_helpers_test` cases and every PDB-verified data point in the tree happen to land on multiples
+of 8, so none of them discriminates.
+
+**② A reported status computed by a different path than the reality.** This is **audit #4's own 4a
+root cause recurring in older code**, which is evidence it is a habit of this codebase rather than a
+one-off: D2/**G1** (`bOffsetsValidated = true` while probes failed), D3/**A6** (Property Search
+reports the *defining* class, so Force resolves an empty pool), D3/**A5** (Preview samples the CDO,
+not a live instance), D4a/**M2** (count says 10, six rows render).
+
+**③ A cache keyed by an address the engine recycles, never invalidated** — D1/**U4**, **U5**, **U6**
+(Ubel's class + name caches), D3/**A10** (Aura's per-class metadata). **One fix pattern, not four:**
+store an `(InternalIndex, SerialNumber)` witness and validate it on hit — the same pair UE itself
+uses to detect a recycled slot.
+
+**④ Layout knowledge duplicated instead of derived** — D1/**U2** (FName width hardcoded 8 while
+`Ubel.cpp:126` and five `Aura.cpp` sites derive it), D1/**U8** (FName `Number` open-coded three times,
+dropped in all three), D3/**A1** (a `>= 24` ternary that cannot express stride 20). In every case the
+correct derivation **already exists elsewhere in the tree**.
+
+**⑤ Long loops that ignore `Tot::Requested()`** — D2/**G2**, D3/**A7**. Note the same claim was
+**refuted** against `Macht` (guards present), so this is a per-site fact, not a pattern to apply blind.
+
+### One chain crosses segments — fix order matters
+
+**D2/G1 → D1/U1.** `Genau` reports `validated=true` over a blind `FPROPERTY_ELEMSIZE`; `Ubel`'s
+Map/Set walkers then use that value as a `std::vector` size with no cap. Fixing **G1 first** shrinks
+U1's blast radius, but U1 still needs its own clamp (a bad size can arrive other ways); fixing U1
+alone leaves every *other* consumer of the blind offset wrong. **Both, G1 first.**
+
+### Method notes worth carrying into the remaining segments
+
+- **Calibrating finders is cheaper than refuting them.** Putting the measured refutation rate and
+  "reserve HIGH for what you can demonstrate end-to-end" into the finder prompt (from D3 on) cut raw
+  claims from 26 → 18 → 9 while the *confirmed* yield held (6 → 10 → 3 over shrinking scopes).
+- **`git blame` settles intent vs omission.** D3/A1's second lens proved the stride ternary predates
+  both stride-20 code paths, turning "deliberate?" into "omission" in one command.
+- **When duplicate claims get split verdicts, decide it yourself.** D2's `DetectBlockOffsetBits` was
+  refuted by one skeptic and confirmed by two; two minutes of arithmetic showed the *refutation* was
+  wrong. Never file the losing side as do-not-re-raise without checking.
+- **A segment whose refute pass dies has produced nothing.** Park it as UNVERIFIED and resume;
+  the workflow's dead-skeptic fallback puts unrefuted claims in the `confirmed` array.
