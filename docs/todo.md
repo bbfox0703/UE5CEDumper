@@ -1405,6 +1405,26 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-14 — open the exported .usmap in a real consumer (audit #5 W1/W7, build 2853)
+
+The `.usmap` export declared v3 and wrote the v0 body; it has been unopenable since the feature
+shipped on 2026-03-01. Now fixed to v4 with a round-trip reader in the test suite that asserts the
+stream is fully consumed at the widths the vendored canonical writers define.
+
+**What the round-trip cannot prove is that a real parser agrees with our reading of the format.**
+Both are derived from the same two sources (`vendor/RE-UE4SS/.../Generator.cpp`,
+`vendor/Dumper-7/.../MappingGenerator.cpp`), so a shared misreading would satisfy both.
+
+1. Export a `.usmap` from any connected game (**Export → USMAP**).
+2. Open it in **FModel** (Directory selector → *Mappings file*), or run it through CUE4Parse's
+   `UsmapParser` directly.
+3. Success criterion is not "no error" — it is that **property names and types appear for a class you
+   can independently verify**, e.g. `AActor`'s `bHidden` / `InitialLifeSpan`. A parser that accepted
+   the header and produced an empty or garbage table has still failed.
+4. Worth including a **Blueprint-generated** class in the check: `W8` (the bare `"Class"` filter that
+   drops every `*_C`) is **still open**, so a BP class legitimately will not be there yet — confirm
+   that is the reason rather than a parse failure.
+
 ### ⬜ NEW 2026-08-14 — SDK header layout: inherited-property boundary + packed bitfields (audit #5 W2/W3, build 2842)
 
 Both fixes are unit-verified end-to-end against the real emitters, with separate negative controls.

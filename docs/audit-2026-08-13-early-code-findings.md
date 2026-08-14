@@ -679,6 +679,46 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 > independent canonical writers sitting in this tree. That is the strongest evidence any segment of
 > this audit has produced, and it was available for free.
 
+> ### ✅ W1 and W7 FIXED — build 2853, 2026-08-14
+>
+> W7 came along because **W1's deliverable does not work without it**: a name index past the end of
+> the table corrupts the same file the version fix was meant to make openable.
+>
+> **The version now describes the bytes.** The writer emits **v4 (ExplicitEnumValues)** — the version
+> both vendored canonical writers produce — and every threshold it crosses is honoured: the
+> mandatory `int32 bHasVersionInfo` after the version byte, `uint16` enum member counts, and each
+> enum member's `int64` explicit value. v4 was chosen over "the cheapest v2" because the writer
+> already emitted `uint16` name lengths (so it can never go below 2), because `uint16` counts remove
+> a **silent truncation of any enum past 255 members**, and because explicit values stop an enum with
+> gaps being flattened to `0..N-1`. **The CEXT extensions block is not written**, which is safe:
+> Dumper-7 emits v4 without one.
+>
+> **Two more desyncs behind the header, both fixed.** ArrayDim is one byte carrying the real
+> dimension (it was a hardcoded 2-byte `0`, which both slid the stream and told a reader to register
+> no schema slots). And a struct's two counts are genuinely different numbers — the first is the sum
+> of every property's ArrayDim, the second is how many records follow; both were `Fields.Count`.
+>
+> **W7 is fixed by construction, not by care.** `"None"` is pre-registered, the write pass may only
+> use a non-appending `IndexOf`, and `NameTable.Seal()` makes any post-serialisation `GetOrAdd`
+> throw. The invariant is now enforced by the type rather than remembered by the caller.
+>
+> **The real deliverable is the round-trip reader.** `UsmapFile.Parse` in the tests parses the file
+> the way a consumer does, at the canonical widths, and asserts **the stream is fully consumed** and
+> every name index is in range. That is what the old tests could not do: all five skipped a hardcoded
+> 12-byte header and read fields at the widths the *writer* happened to use, so they encoded the bug
+> instead of checking it. Five were rewritten onto the reader and four added (full round-trip over
+> every container shape, static-array slot counting, a 300-member enum, and an unregistered struct
+> name).
+>
+> **Negative controls, one per sub-fix, each reverted alone:** removing `bHasVersionInfo` fails 9
+> tests; restoring the `uint8` enum count fails 3; restoring the 2-byte ArrayDim fails 4; un-
+> registering `"None"` fails 1. The reader is therefore checking the canonical layout, not mirroring
+> the writer. 3587 tests, 0 failed.
+>
+> ⬜ **Not verified against a real consumer.** The round-trip proves self-consistency at the widths
+> the vendored writers define; nobody has yet opened the output in FModel. Filed in
+> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
 > ### ✅ W2 and W3 FIXED — build 2842, 2026-08-14
 >
 > One commit: both live in the same emitter and the same layout cursor, and W3's byte accounting is
@@ -744,13 +784,13 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **W1** | **HIGH** | `UsmapExportService.cs:16`,`173-178`,`203`,`233` | The file stamps `Version = 3` (`LargeEnums`) but writes the **version-0 layout**, in three independent places. (a) `version` is followed straight by `compression` — the mandatory `int32 bHasVersionInfo` that every `version >= PackageVersioning(1)` file must carry is missing, so a reader's `ReadBoolean()` consumes 4 bytes of the size field and throws before a single name is read. (b) enum member count written `uint8`, but `>= LargeEnums` requires `uint16`. (c) per-property ArrayDim written as `(ushort)0` while the format (and the code's own adjacent comment) says `uint8` — so every struct's first property slides the stream by one byte. The file's own comment is also wrong: it says "3 = LongFName", but LongFName is **2**. | S / low |
+| **W1** ✅ | **HIGH** | `UsmapExportService.cs:16`,`173-178`,`203`,`233` | The file stamps `Version = 3` (`LargeEnums`) but writes the **version-0 layout**, in three independent places. (a) `version` is followed straight by `compression` — the mandatory `int32 bHasVersionInfo` that every `version >= PackageVersioning(1)` file must carry is missing, so a reader's `ReadBoolean()` consumes 4 bytes of the size field and throws before a single name is read. (b) enum member count written `uint8`, but `>= LargeEnums` requires `uint16`. (c) per-property ArrayDim written as `(ushort)0` while the format (and the code's own adjacent comment) says `uint8` — so every struct's first property slides the stream by one byte. The file's own comment is also wrong: it says "3 = LongFName", but LongFName is **2**. | S / low |
 | **W2** ✅ | **HIGH** | `SdkExportService.cs:358` (+`EmitClassHeaderFromLive`) | The emitter assumes `ClassInfoModel.Fields` holds only the class's **own** properties, but `Ubel::WalkClass` deliberately prepends the entire SuperStruct chain and nothing filters it out. Every base-class property is therefore declared a **second time** inside a `struct X : public Super` that already inherits it, so `offsetof` is wrong for every derived class in the generated SDK — the header compiles and is silently mislaid out. | M / med |
 | **W3** ✅ | MED | `SdkExportService.cs:221` + `:382` | N `FBoolProperty` bitfields that UE packed into **one byte** are each emitted as a whole `bool` and the layout cursor advances by `Size` for each, so the struct grows N−1 bytes from that point. The emitter only pads when `offset > cursor`, so once the bools overshoot, **no padding can compensate** and every subsequent member — and the trailing `// Size:` — is shifted. | M / med |
 | **W4** ✅ | MED | `CeXmlExportService.cs:3522` + `:3586` (`BuildDropDownContent`) | `<DropDownList>` bodies are built from live FName / enum-name strings read out of game memory and interpolated **raw**, while every `<Description>` goes through `EscapeXmlContent`. One `&` in a `TArray<FName> Tags` entry (`Bow & Arrow`) makes the whole CheatTable malformed — and `EscapeXmlContent`'s own doc comment states the consequence: CE rejects the **entire document**, so a multi-thousand-entry export imports as nothing with no indication which record was at fault. This is audit #4's **B3 defect surviving at the one site B3 did not cover**. | S / low |
 | **W5** | MED | `CeXmlExportService.cs:2141` (`EmitDrilledPointer`) | The scalar pointer-drill branch gates on the broad `IsObjectPropertyType`, which includes `WeakObjectProperty` / `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty`, and emits `Offsets=[0]` for slots whose first 8 bytes are **not** a `UObject*` — a weak pointer is an index+serial pair. The array path has an explicit regression test against exactly this. (Claimed HIGH, cut to MEDIUM by the second lens.) | S / low |
 | **W6** | MED | `CeXmlExportService.cs:2665` (`MapInnerTypeToCeField`) | `EnumProperty` is hardcoded to CE type `"4 Bytes"` while element **addresses** are laid out with the DLL's real `ArrayElemSize`/`SetElemSize` (1 for the standard `enum class : uint8`), so CE reads 4 bytes at every 1-byte-spaced element. `CeWidthForSize` exists to fix precisely this and the Map and struct-array emitters already route through it. | S / low |
-| **W7** | MED | `UsmapExportService.cs:323` | The name table is serialized first, from a snapshot of the pre-registration pass, but the struct-writing pass then calls `GetOrAdd(… : "None")` in four places. `"None"` is never pre-registered, so it is appended at index N **after** the file already declared exactly N names, and every affected property references an out-of-range index. | S / low |
+| **W7** ✅ | MED | `UsmapExportService.cs:323` | The name table is serialized first, from a snapshot of the pre-registration pass, but the struct-writing pass then calls `GetOrAdd(… : "None")` in four places. `"None"` is never pre-registered, so it is appended at index N **after** the file already declared exactly N names, and every affected property references an out-of-range index. | S / low |
 | **W8** | LOW | `UsmapExportService.cs:90` | The class collector accepts only `ClassName is "Class" or "ScriptStruct"`, so every `BlueprintGeneratedClass` / `AnimBlueprintGeneratedClass` / `WidgetBlueprintGeneratedClass` is silently dropped — on a normal shipped title that is thousands of classes vs a few hundred native ones. Both sibling exporters use the whitelist predicate, and `SdkExportService` carries a comment naming this exact bare-`"Class"` check as a bug fixed in DLL build 673. | S / low |
 
 **Verified independently (not agent-reported):**
@@ -981,18 +1021,19 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 *State as of 2026-08-14, after U2. Read this section first; it is written for a session with no
 memory of the previous one.*
 
-> 🔴 **Two HIGHs are open, and one is cheap. Decide before starting U3.**
-> - **W1** (`S`/low) — the `.usmap` export has produced an unparseable file since 2026-03-01 and the
->   fix is a handful of field widths plus the missing `int32`. Both canonical writers are vendored in
->   this tree to check against, and it needs a **round-trip test** (write, then read back with the
->   exact widths a real parser uses) or the next drift is equally invisible.
-> - **W2** (`M`/med) — every derived class in the SDK header has the wrong `offsetof`. Bigger, because
->   the fix must decide where the SuperStruct filter belongs: in `Ubel::WalkClass`'s output, or in the
->   emitter. **W3 is in the same emitter and the same layout cursor**, so fix them together.
+> ✅ **Both U2 HIGHs are fixed. U3 is genuinely next.** W1+W7 (build 2853) and W2+W3 (build 2842)
+> shipped, along with W4 (build 2836). **Nothing open in the audit is rated HIGH.**
 >
-> U1's **V1/V2/V5 shipped** (build 2830) but still owe **in-game verification of the UI half** —
-> see [todo.md](todo.md#pending-live-game-verification-verify-only--no-code). Cheap; good use of
-> leftover budget in any window.
+> **What is owed instead is verification, and it is the cheapest work available.** Three separate
+> items are queued in
+> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code) — the TMap geometry UI half
+> (U1), the `super_props_size` boundary value (W2), and opening a `.usmap` in a real consumer (W1).
+> None needs code. The `.usmap` one matters most because our reader and our writer are derived from
+> the same two vendored sources, so a shared misreading of the format would satisfy both.
+>
+> **Still open from U2, none urgent:** W5 (weak/soft pointers drilled with `Offsets=[0]`), W6
+> (`CeWidthForSize` bypassed by the enum array/set path — the sibling of the W4 partial-application
+> defect), W8 (USMAP drops every Blueprint-generated class).
 
 ### The pacing rule, learned by hitting it
 
@@ -1010,8 +1051,8 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: W1 (HIGH), W2 (HIGH), W3, W5–W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2.**
-U2 shipped **W4** (build 2836).
+**Still open: W5, W6, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs remain.
+U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853).
 (Note the ID collision: `U2`/`U3` are D1 findings in `Ubel.cpp`, *not* segment names.)
 
 ### The C# lens set — as run in U1, with what it actually yielded

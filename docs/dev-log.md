@@ -22,6 +22,68 @@ builds ≤696 in
 
 -----
 
+## 2026-08-14 - The .usmap export declared one format and wrote another, and had never produced a readable file (build 2853)
+
+**Audit #5 segment U2 fixes W1 (HIGH) and W7.** W7 came along because W1's deliverable does not work
+without it: a name index past the end of the table corrupts the very file the version fix exists to
+make openable.
+
+This was never a regression. `git log -S` shows the `Version` constant has exactly one commit in the
+file's history — its creation, `7f91295`, 2026-03-01 — and the string `bHasVersion` had never
+appeared in any revision. The menu item shipped for 5½ months and could not once have written a
+header a consumer would accept.
+
+### The version now describes the bytes
+
+The writer stamped `Version = 3` and emitted the version-0 body. Three independent desyncs followed,
+and the first one lands before a single name is read:
+
+- **`int32 bHasVersionInfo` was missing.** Any version ≥ `PackageVersioning` (1) must carry it. A
+  reader consumes four bytes there, so it ate the low bytes of the payload size and threw.
+- **Enum member counts were `uint8`** where ≥ `LargeEnums` (3) requires `uint16` — and the `uint8`
+  also silently truncated any enum past 255 members.
+- **ArrayDim was a hardcoded 2-byte `0`** where the format says one byte, so every struct's first
+  property slid the stream by one, and a `0` additionally tells a reader to register no schema slots.
+
+It now emits **v4 (ExplicitEnumValues)**, the version both vendored canonical writers produce, with
+each member's `int64` value so an enum with gaps is no longer flattened to `0..N-1`. v4 rather than
+"the cheapest v2" because the writer already emitted `uint16` name lengths (it can never go below 2)
+and because the `uint16` count removes the 255-member truncation. The CEXT extensions block is
+deliberately not written — Dumper-7 emits v4 without one, so it is optional.
+
+A fourth fix, quieter but the same class: a struct's two counts are genuinely different numbers — the
+first is the sum of every property's ArrayDim (a static array `Foo[4]` occupies four schema slots),
+the second is how many property records follow. Both were `Fields.Count`.
+
+### W7 — the name table can no longer be extended behind the file's back
+
+The table's length is written once, up front, but the write pass resolved struct/enum references
+through a `GetIndex` that fell through to `GetOrAdd` and **appended**, handing out an index past the
+end of the table the file had already declared. `"None"` is now pre-registered, the write pass may
+only use a non-appending `IndexOf`, and `NameTable.Seal()` makes any later `GetOrAdd` throw. The
+invariant is enforced by the type instead of remembered by the caller.
+
+### The real deliverable is the round-trip reader
+
+`UsmapFile.Parse` in the tests reads the file the way a consumer does, at the widths the canonical
+writers define, and asserts **the stream is fully consumed** and every name index is in range.
+
+That is exactly what the old tests could not do. All five skipped a hardcoded 12-byte header and read
+each field at the width the *writer* happened to use — so they encoded the bug rather than checking
+it, and stayed green for 5½ months. Five were rewritten onto the reader and four added: a full
+round-trip over every container shape, static-array slot counting, a 300-member enum, and an
+unregistered struct name.
+
+Negative controls were run one per sub-fix, each reverted alone: removing `bHasVersionInfo` fails 9
+tests, restoring the `uint8` enum count fails 3, restoring the 2-byte ArrayDim fails 4, and
+un-registering `"None"` fails 1. The reader is therefore checking the canonical layout rather than
+mirroring the writer. 3587 tests, 0 failed.
+
+⬜ Still unverified against a real consumer: the round-trip proves self-consistency at the vendored
+writers' widths, but nobody has opened the output in FModel yet. Filed in [todo.md](todo.md).
+
+-----
+
 ## 2026-08-14 - The SDK header re-declared everything it inherited, and gave each packed bool its own byte (build 2842)
 
 **Audit #5 segment U2 fixes W2 (HIGH) and W3.** One commit: both live in the same emitter and the

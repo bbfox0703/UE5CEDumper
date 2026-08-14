@@ -5,15 +5,40 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// Generates USMAP binary mapping files compatible with FModel/CUE4Parse.
-/// Format: USMAP v3 (LongFName), no compression.
+/// Format: USMAP v4 (ExplicitEnumValues), uncompressed.
+///
+/// <para><b>The declared version and the emitted layout must agree.</b> This writer used to stamp
+/// version 3 and emit the version-0 body: no <c>bHasVersionInfo</c>, a <c>uint8</c> enum member
+/// count, and a 2-byte ArrayDim. Each of those desynchronises the stream, and the first does it
+/// before a single name is read, so no consumer could ever open the output (audit #5 W1). The
+/// layout below is checked byte for byte against the two canonical writers vendored in this repo:
+/// <c>vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp</c> and
+/// <c>vendor/Dumper-7/Dumper/Generator/Private/Generators/MappingGenerator.cpp</c>. Both emit v4.
+/// Read them before touching this format again.</para>
 /// </summary>
 public static class UsmapExportService
 {
     // USMAP magic number
     private const ushort Magic = 0x30C4;
 
-    // Version: 3 = LongFName (uint16 name lengths instead of uint8)
-    private const byte Version = 3;
+    // EUsmapVersion, from the vendored writers: Initial=0, PackageVersioning=1, LongFName=2,
+    // LargeEnums=3, ExplicitEnumValues=4 (Latest). We emit 4 -- what both canonical writers
+    // produce today -- and every one of these thresholds changes the BYTES:
+    //   >= PackageVersioning  : the int32 bHasVersionInfo header field becomes MANDATORY
+    //   >= LongFName          : name lengths are uint16 (this writer always did that, which is
+    //                           why the version can never go below 2)
+    //   >= LargeEnums         : enum member counts are uint16, so a >255-member enum survives
+    //   >= ExplicitEnumValues : each enum member carries its int64 value, so an enum with gaps
+    //                           or explicit values is no longer flattened to 0..N-1
+    private const byte Version = 4;
+
+    // "No UE4/UE5 version info follows." The format spells this field 'bool' and a UE bool
+    // serialises as 4 bytes, so the reader consumes an int32 here either way.
+    private const int NoVersionInfo = 0;
+
+    // Fallback for an unresolved struct/enum reference. Registered up front so the write pass
+    // never has to extend the name table -- see NameTable.Seal.
+    private const string NoneName = "None";
 
     // Compression: 0 = None
     private const byte CompressionNone = 0;
@@ -136,7 +161,8 @@ public static class UsmapExportService
     {
         var nameTable = new NameTable();
 
-        // Pre-register all names we'll need
+        // Pre-register all names we'll need. This pass is the ONLY place that may add to the
+        // table; everything after WriteNameTable can only look up (see NameTable.Seal).
         foreach (var e in enums)
         {
             nameTable.GetOrAdd(e.Name);
@@ -156,11 +182,20 @@ public static class UsmapExportService
             }
         }
 
+        // Every name the write pass can reference must exist BEFORE the table is serialised --
+        // its length prefix is written once, up front. "None" is the fallback for an unresolved
+        // struct/enum reference and used to be added mid-write, landing at an index past the end
+        // of the table the file had already declared (audit #5 W7).
+        nameTable.GetOrAdd(NoneName);
+
         // Build the payload (name table + enums + structs)
         using var payload = new MemoryStream();
         using var w = new BinaryWriter(payload);
 
         WriteNameTable(w, nameTable);
+        // The table is now fixed: a later GetOrAdd would corrupt the file rather than extend it,
+        // so make that a hard error instead of a silent one.
+        nameTable.Seal();
         WriteEnums(w, enums, nameTable);
         WriteStructs(w, classInfos, nameTable);
 
@@ -170,12 +205,14 @@ public static class UsmapExportService
         using var final = new MemoryStream();
         using var fw = new BinaryWriter(final);
 
-        fw.Write(Magic);                          // uint16: magic
-        fw.Write(Version);                        // uint8: version
-        fw.Write(CompressionNone);                // uint8: compression
+        fw.Write(Magic);                           // uint16: magic
+        fw.Write(Version);                         // uint8:  version
+        fw.Write(NoVersionInfo);                   // int32:  bHasVersionInfo -- REQUIRED for version >= 1
+        fw.Write(CompressionNone);                 // uint8:  compression method
         fw.Write((uint)payloadBytes.Length);       // uint32: compressed size
         fw.Write((uint)payloadBytes.Length);       // uint32: decompressed size
         fw.Write(payloadBytes);
+        // No CEXT extensions block -- it is optional, and Dumper-7 emits v4 without one.
 
         return final.ToArray();
     }
@@ -198,12 +235,16 @@ public static class UsmapExportService
         w.Write((uint)enums.Count);
         foreach (var e in enums)
         {
-            w.Write(nameTable.GetIndex(e.Name));           // int32: name index
-            var count = (byte)Math.Min(e.Entries.Count, 255);
-            w.Write(count);                                 // uint8: member count
+            w.Write(nameTable.IndexOf(e.Name));             // int32: name index
+
+            // uint16 count (LargeEnums). The old uint8 both desynced the stream and silently
+            // truncated any enum past 255 members.
+            var count = (ushort)Math.Min(e.Entries.Count, ushort.MaxValue);
+            w.Write(count);                                 // uint16: member count
             for (int i = 0; i < count; i++)
             {
-                w.Write(nameTable.GetIndex(e.Entries[i].Name)); // int32: member name index
+                w.Write(e.Entries[i].Value);                   // int64: explicit value
+                w.Write(nameTable.IndexOf(e.Entries[i].Name)); // int32: member name index
             }
         }
     }
@@ -213,26 +254,36 @@ public static class UsmapExportService
         w.Write((uint)classInfos.Count);
         foreach (var ci in classInfos)
         {
-            w.Write(nameTable.GetIndex(ci.Name));           // int32: struct name index
+            w.Write(nameTable.IndexOf(ci.Name));            // int32: struct name index
 
             // Super struct index: -1 if none
             if (!string.IsNullOrEmpty(ci.SuperName) && nameTable.Contains(ci.SuperName))
-                w.Write(nameTable.GetIndex(ci.SuperName));
+                w.Write(nameTable.IndexOf(ci.SuperName));
             else
                 w.Write(-1);                                // int32: super index (-1 = none)
 
-            // Property count + serializable property count
-            var propCount = (ushort)ci.Fields.Count;
-            w.Write(propCount);                             // uint16: total property count
-            w.Write(propCount);                             // uint16: serializable property count
+            // These two counts are NOT the same number. The first is the sum of every property's
+            // ArrayDim -- a static array Foo[4] occupies four schema slots -- and the second is
+            // how many property RECORDS follow. Writing Fields.Count for both makes a reader that
+            // walks schema slots disagree with the records it is actually handed.
+            int totalSlots = 0;
+            foreach (var f in ci.Fields) totalSlots += ArrayDimOf(f);
 
+            w.Write((ushort)Math.Min(totalSlots, ushort.MaxValue));       // uint16: schema slot count
+            w.Write((ushort)Math.Min(ci.Fields.Count, ushort.MaxValue));  // uint16: record count
+
+            int slot = 0;
             foreach (var f in ci.Fields)
             {
-                // Schema index (same as property index for serializable properties)
-                w.Write((ushort)0);                         // uint16: schema index (unused, 0)
-                w.Write((ushort)0);                         // uint8: array dim (unused legacy)
-                w.Write(nameTable.GetIndex(f.Name));        // int32: property name index
+                var dim = ArrayDimOf(f);
+                w.Write((ushort)Math.Min(slot, ushort.MaxValue)); // uint16: this property's schema index
+                w.Write((byte)dim);                         // uint8:  array dim. ONE byte, and the real
+                                                            //         value: a hardcoded 2-byte 0 slid the
+                                                            //         stream AND told the reader to
+                                                            //         register no slots at all.
+                w.Write(nameTable.IndexOf(f.Name));         // int32:  property name index
                 WritePropertyType(w, f, nameTable);         // recursive property type
+                slot += dim;
             }
         }
     }
@@ -250,12 +301,12 @@ public static class UsmapExportService
             case EPropertyType.EnumProperty:
                 // EnumProperty: write underlying type + enum name
                 WriteInnerPropertyType(w, "ByteProperty");
-                w.Write(nameTable.GetOrAdd(
+                w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(f.EnumName) ? f.EnumName : "None"));
                 break;
 
             case EPropertyType.StructProperty:
-                w.Write(nameTable.GetOrAdd(
+                w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(f.StructType) ? f.StructType : "None"));
                 break;
 
@@ -314,13 +365,13 @@ public static class UsmapExportService
         switch (propType)
         {
             case EPropertyType.StructProperty:
-                w.Write(nameTable.GetOrAdd(
+                w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(structType) ? structType : "None"));
                 break;
 
             case EPropertyType.EnumProperty:
                 WriteInnerPropertyType(w, "ByteProperty");
-                w.Write(nameTable.GetOrAdd(
+                w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(enumName) ? enumName : "None"));
                 break;
 
@@ -378,6 +429,12 @@ public static class UsmapExportService
         };
     }
 
+    /// <summary>
+    /// Static C-array dimension of a property (Foo[4] -> 4), floored at 1. A property always
+    /// occupies at least one schema slot, and a 0 here tells a reader to register none.
+    /// </summary>
+    private static int ArrayDimOf(FieldInfoModel f) => f.ArrayDim > 0 ? f.ArrayDim : 1;
+
     private static void RegisterPropertyNames(NameTable table, FieldInfoModel f)
     {
         if (!string.IsNullOrEmpty(f.StructType)) table.GetOrAdd(f.StructType);
@@ -396,18 +453,41 @@ public static class UsmapExportService
         private readonly Dictionary<string, int> _map = new();
         private readonly List<string> _ordered = new();
 
+        private bool _sealed;
+
         public int GetOrAdd(string name)
         {
             if (_map.TryGetValue(name, out var idx))
                 return idx;
+            if (_sealed)
+            {
+                // Appending here would hand out an index past the end of the table already
+                // written to the file, which is a silently corrupt export. Fail loudly instead
+                // (audit #5 W7).
+                throw new InvalidOperationException(
+                    $"USMAP name table is sealed; '{name}' was not registered before serialization.");
+            }
             idx = _ordered.Count;
             _map[name] = idx;
             _ordered.Add(name);
             return idx;
         }
 
-        public int GetIndex(string name) =>
-            _map.TryGetValue(name, out var idx) ? idx : GetOrAdd(name);
+        /// <summary>
+        /// Freeze the table. Called once the name block has been written; from then on the set of
+        /// valid indices is fixed by the file itself.
+        /// </summary>
+        public void Seal() => _sealed = true;
+
+        /// <summary>
+        /// Index of an already-registered name, or the index of "None" for anything unregistered.
+        /// Never appends — this is the only lookup the write pass may use.
+        /// </summary>
+        public int IndexOf(string name)
+        {
+            if (_map.TryGetValue(name, out var idx)) return idx;
+            return _map.TryGetValue(NoneName, out var none) ? none : 0;
+        }
 
         public bool Contains(string name) => _map.ContainsKey(name);
 
