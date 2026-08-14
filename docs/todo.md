@@ -2337,6 +2337,22 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 > **PASS for the fix** = case B reaches `Stopped` in well under a second, with the entry path named in
 > the log so a future capture can be attributed to process-exit vs a CE Disable.
 >
+> ### ✅✅ FIXED build 2813 (2026-08-14) — attempt #5, and it passed its own acceptance test
+>
+> `Fern::Stop` takes `bool graceful = true`; `~Fern()` calls `Stop(false)`, which logs
+> `Stop entry (process exit — skipping drain/joins, the OS reclaims this)` and returns before the
+> cancel sweeps, the watch/scan joins and the 5 s drain. **Case B re-measured on the fixed build:
+> 1,185 ms** (pre-fix 6,046 ms; pre-fix control A 1,105 ms) — a connection open at exit now costs
+> nothing. The entry path is named in the log, so the attribution problem that made this take five
+> attempts cannot recur.
+>
+> ⬜ **What is still unverified: the `graceful=true` path**, i.e. a CE Disable / `UE5_StopPipeServer`.
+> It is unchanged by construction (the fix is an early return in front of it) but it was not exercised
+> — the headless route cannot drive CE. **Next CE session, one grep:** untick the record with the UI
+> connected → `grep "Stop entry" pipe-0.log`. **PASS** = the line does **not** say `process exit`, the
+> drain reports `satisfied`, and `Stopped` follows. **FAIL** = `process exit` on a CE Disable, which
+> would mean the destructor is racing the explicit call.
+>
 > ⬜ does **not** mean "probably fine". It means nobody has looked. Most of the fourteen were
 > simply not exercised (no wrapper installed, no UI killed mid-command, no Extra Scan).
 

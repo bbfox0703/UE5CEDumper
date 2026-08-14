@@ -27,9 +27,16 @@
 
 class Fern {
 public:
-    ~Fern() { Stop(); }
+    // NOT Stop() — see Stop's `graceful` parameter. This destructor runs from the
+    // CRT's static-destructor pass (s_pipeServer is a namespace-scope static in
+    // Frieren.cpp), i.e. during DLL_PROCESS_DETACH, where the full teardown is both
+    // useless and unsafe. (audit #5 D5/F1)
+    ~Fern() { Stop(/*graceful=*/false); }
     bool Start();
-    void Stop();
+    // graceful=true  — an explicit, in-process teardown (UE5_Shutdown / CE Disable /
+    //                  UE5_StopPipeServer): drain, cancel and join everything.
+    // graceful=false — reached from ~Fern() at process exit: do the minimum.
+    void Stop(bool graceful = true);
     bool IsClientConnected() const { return m_clientConnected.load(); }
 
 private:

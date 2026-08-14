@@ -394,6 +394,25 @@ not exercised — DumperTest's level is too small to exceed the UI's 500 cap.)
 *Not verified: F2, FR1, F3, F5, F7 — each needs a state DumperTest cannot reach cheaply (a parked
 bulk lane, a shutdown landing mid-scan, a level change, a multi-MB payload, a torn-down hook).*
 
+### ✅ F1 and F7 FIXED and re-measured — build 2813, 2026-08-14
+
+**F1**: `Fern::Stop(bool graceful = true)`; `~Fern()` calls `Stop(false)`, which logs the entry path and
+returns before the cancel sweeps, the joins and the 5 s drain. Re-ran control B on the fixed build —
+same client, same map, connection **held open** through a graceful close: **1,185 ms**, against
+6,046 ms pre-fix and 1,105 ms for the pre-fix disconnected control. A connection open at exit now costs
+nothing. The new log line is `Stop entry (process exit — skipping drain/joins, the OS reclaims this)`,
+which is also what a future capture needs to be attributable to process-exit rather than a CE Disable.
+
+**F7**: the `-7` text now says the invoke was never dispatched, and `-8` gained the mapping it never
+had. String-only; nothing to measure.
+
+⚠ **The `graceful=true` path was NOT exercised.** It is unchanged by construction — the fix is an early
+return in front of it — but reaching it needs a CE Disable (or `UE5_StopPipeServer`), which the headless
+route cannot drive. Filed in [todo.md](todo.md)'s pending register; do not record it as verified.
+Note also that `-Target Test` proves nothing about either fix: **no test target compiles `Fern.cpp`.**
+
+**The other six D5 findings remain REPORTED, NOT FIXED.**
+
 ‡ **F1 — I strengthened this one at takeover, and the strengthening removes the skeptic's own reason
 for downgrading it.** The skeptic did real work here: it read the MSVC CRT source to establish that
 `dllmain_crt_process_detach` runs the onexit table **unconditionally** (`is_terminating` gates only

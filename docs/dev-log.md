@@ -22,6 +22,67 @@ builds ≤696 in
 
 -----
 
+## 2026-08-14 - Every game exit paid 5 seconds to drain threads Windows had already killed (build 2813)
+
+**Audit #5 segment D5 fixes F1 and F7 — the first two fixes from the D5 scan, both in `Fern`.**
+
+### F1 — `~Fern()` ran the whole pipe teardown from `DLL_PROCESS_DETACH`
+
+`Fern::Stop` now takes `bool graceful = true`, and `~Fern()` calls `Stop(false)`, which logs the entry
+path and returns. Everything it skips — the cancel sweeps, the watch/scan joins, the **5-second**
+connection drain, and the accept/monitor joins — is teardown that `Heiter.cpp:288-301` already refuses
+to do at DETACH and `Routine.h:51-56` already documents as fatal for every *other* module's worker.
+`Fern::Stop`'s explicit `join()` / `wait_for` calls were simply never added to that list, and
+`s_pipeServer` being a namespace-scope static (`Frieren.cpp:92`) means the CRT runs them anyway.
+
+Two things went wrong, and the second is worse than the first:
+
+1. **`ExitProcess` has already terminated the connection threads**, so a dead thread can never erase
+   itself from `m_conns` and the drain predicate is **unsatisfiable by construction** — the full 5 s
+   budget burned on every exit that still had a client registered.
+2. The body takes `m_connMutex`, Sein's log mutex and both Radar session mutexes **after their holders
+   were killed**. MSDN is explicit that detach code taking a lock a terminated thread held deadlocks
+   the process — i.e. a game that never closes.
+
+**Measured on packaged DumperTest, one variable, graceful `WM_CLOSE` → `ExitProcess` → DETACH:**
+
+| | Client at exit | Drain | Process exit |
+|---|---|---|---|
+| pre-fix, held open | `conns=1` | `TIMEOUT, 1 left (5030 ms, 49 re-asserts)` | 6,046 ms |
+| pre-fix, disconnected first | `conns=0` | `satisfied, 0 left (0 ms)` | 1,105 ms |
+| **post-fix, held open** | — | *skipped* | **1,185 ms** |
+
+A connection open at exit now costs nothing. **`Stop-Process -Force` cannot see any of this** —
+`TerminateProcess` skips DETACH entirely, so a forced kill exits fast and "proves" the bug is gone.
+
+> **This also closes a question that had been answered wrongly four times.** todo.md's
+> `Stop conn drain TIMEOUT` entry concluded the connection was *genuinely blocked in a synchronous
+> `ReadFile`* (root cause: no `FILE_FLAG_OVERLAPPED`). That explains why `CancelIoEx` found nothing but
+> **not** why `CancelSynchronousIo` — the correct API for a live thread blocked in synchronous I/O —
+> also reported nothing-pending, 49 times. A terminated thread explains both. What found it was not a
+> new diagnostic but asking **who calls `Stop`**: `UE5_Shutdown` logs `"Cleaning up..."` as its first
+> statement, the shipped `.CT` only *probes* `UE5_StopPipeServer` before calling `UE5_Shutdown` alone,
+> and `grep -rn "Cleaning up"` over the whole Logs tree returns **zero** — so no capture on disk was
+> ever the CE-untick repro the entry was written around. Both structural fixes proposed there (close
+> the handle from `Stop`; make the pipe overlapped) act on a *live* thread's `ReadFile` and would not
+> have helped.
+
+### F7 — an error string that named an execution which never happened
+
+`invoke_function` rendered result `-7` as *"(hook not active, direct call used)"*. `-7` is produced
+**only** by `Stark::EnqueueInvoke`'s inactive-hook guard or by `Stark::Shutdown` draining the queue —
+neither reaches ProcessEvent by any route; the direct fallback lives on the other side of
+`if (Stark::IsHookActive())` and returns 0/-2/-3/-4/-8, never -7. Now reads *"game-thread hook is down
+— the invoke was never dispatched; re-enable the script and retry"*, and `-8` gained the mapping it
+never had (it used to fall through as a bare number).
+
+**Not verified: the graceful path.** It is unchanged by construction — the fix is an early return in
+front of it — but reaching `Stop(graceful=true)` needs a CE Disable, so it is filed in todo.md's
+pending register rather than claimed. Note also that `-Target Test` says nothing here: **no test target
+compiles `Fern.cpp`.**
+
+-----
+
 ## 2026-08-12 - The leftover-proxy refusal nobody could see, and the log we could not read (build 2801/2804)
 
 Finished B13/B41's end-to-end half — *watch a leftover-proxy row actually carry the no-Recycle-Bin

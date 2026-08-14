@@ -498,8 +498,49 @@ bool Fern::Start() {
     return true;
 }
 
-void Fern::Stop() {
+void Fern::Stop(bool graceful) {
     if (!m_running.exchange(false)) return; // Already stopped
+
+    // ── Process-exit path (~Fern(), audit #5 D5/F1) ────────────────────────────
+    // Everything below this block is teardown that DLL_PROCESS_DETACH must not do,
+    // and Heiter.cpp's DETACH case already refuses to do for exactly these reasons —
+    // it just could not speak for a static destructor, which the CRT runs anyway
+    // (dllmain_crt_process_detach calls __scrt_dllmain_uninitialize_c()
+    // unconditionally; `is_terminating` gates only __scrt_uninitialize_crt).
+    //
+    // Two things go wrong when the full body runs here:
+    //   1. ExitProcess has ALREADY terminated the accept, monitor and connection
+    //      threads. A dead connection thread can never erase itself from m_conns, so
+    //      the drain predicate below is unsatisfiable BY CONSTRUCTION and the whole
+    //      5 s budget burns on every exit. Measured 2026-08-14 on DumperTest: with a
+    //      client still registered, `conn drain TIMEOUT, 1 left (5030 ms, 49 cancel
+    //      re-asserts)` and 6,046 ms to exit; with it disconnected first, `satisfied,
+    //      0 left (0 ms)` and 1,105 ms. One variable, 5.5x apart.
+    //   2. Worse than slow: this body takes m_connMutex, Sein's log mutex and both
+    //      Radar session mutexes AFTER their holders were killed. MSDN is explicit
+    //      that detach code taking a lock a terminated thread held deadlocks the
+    //      process — a game that never closes.
+    //
+    // The OS reclaims the handles, threads and memory. That is the same reasoning
+    // Heiter.cpp:288-301 applies to its own DETACH body and Routine.h:51-56 applies
+    // to every feature worker; Fern::Stop's explicit join()/wait_for calls were
+    // simply not on that list.
+    //
+    // Note this path deliberately takes NO lock — not even to report m_conns.size(),
+    // which is the count a reader would most want. Reading it means m_connMutex, and
+    // that is hazard 2 above.
+    //
+    // The only case this gives up on is FreeLibrary of this DLL with the process
+    // still alive (DETACH with lpReserved == NULL, threads still running). Nothing
+    // in this repo does that — the injector LoadLibrarys and never unloads, and CE's
+    // Disable calls UE5_Shutdown, which reaches Stop(graceful=true) through the
+    // normal path — and Heiter.cpp's no-op DETACH already relies on the same fact.
+    if (!graceful) {
+        LOG_INFO("PipeServer: Stop entry (process exit — skipping drain/joins, "
+                 "the OS reclaims this)");
+        m_clientConnected = false;
+        return;
+    }
     // Closed only on the way out. m_running goes false in the line above, so
     // without this the whole teardown window looks "stopped" to Start(), which
     // would then move-assign over a still-joinable m_acceptThread — a
@@ -5039,7 +5080,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 else if (callResult == -3) errMsg += " (ProcessEvent offset not found)";
                 else if (callResult == -4) errMsg += " (exception during call)";
                 else if (callResult == -5) errMsg += " (game-thread dispatch timeout)";
-                else if (callResult == -7) errMsg += " (hook not active, direct call used)";
+                // -7 does NOT mean "a direct call was made". It is produced ONLY by
+                // Stark::EnqueueInvoke — its `if (!s_hookActive) return -7;` guard, or
+                // Stark::Shutdown draining the queue with set_value(-7) — and neither
+                // path reaches ProcessEvent by any route: the direct fallback lives on
+                // the other side of UE5_CallProcessEventEx's `if (Stark::IsHookActive())`
+                // and returns 0/-2/-3/-4/-8, never -7. The old text named an execution
+                // that provably did not happen, sending the user to inspect the function
+                // and the game state when the truth is that nothing was ever dispatched.
+                // (audit #5 D5/F7)
+                else if (callResult == -7) errMsg += " (game-thread hook is down — the invoke was "
+                                                     "never dispatched; re-enable the script and retry)";
+                // -8 had no mapping at all, so it fell through as a bare number.
+                else if (callResult == -8) errMsg += " (repeating worker invoke refused while the "
+                                                     "hook is down)";
                 data["error"] = errMsg;
             }
 
