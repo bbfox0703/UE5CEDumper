@@ -105,4 +105,99 @@ public class CeXmlEscapingTests
 
         Assert.NotNull(XDocument.Parse(xml).Root);
     }
+
+    // ----- <DropDownList> bodies (audit #5 W4) --------------------------------
+    //
+    // Every test above puts the game string in a map KEY, which lands in <Description>.
+    // That is the whole reason this defect survived audit #4 B3: the escaping was added
+    // to Descriptions, and the OTHER place a game string reaches the XML — the
+    // <DropDownList> body, built from FName / enum-name / element-value text — kept
+    // interpolating raw. The suite passed throughout because nothing in it reached that
+    // path. These tests reach it.
+
+    /// <summary>A TMap whose VALUE is an FName: map values of NameProperty are routed
+    /// into a DropDownList rather than a Description.</summary>
+    private static LiveFieldValue NameValuedMap(params string[] valueTexts)
+    {
+        var elems = new List<ContainerElementValue>();
+        for (int i = 0; i < valueTexts.Length; i++)
+            elems.Add(new ContainerElementValue
+            {
+                Index = i,
+                Key = (i + 1).ToString(),
+                Value = valueTexts[i],
+                ValueHex = $"{i + 1:X2}00000000000000",
+            });
+
+        return new LiveFieldValue
+        {
+            Name = "ItemNames",
+            TypeName = "MapProperty",
+            Offset = 0x50,
+            Size = 80,
+            MapCount = elems.Count,
+            MapKeyType = "IntProperty",
+            MapValueType = "NameProperty",
+            MapKeySize = 4,
+            MapValueSize = 8,
+            MapValueOffset = 8,
+            MapStride = 24,
+            MapDataAddr = "0x9000",
+            MapElements = elems,
+        };
+    }
+
+    private static string DropDownBody(string xml)
+    {
+        var doc = XDocument.Parse(xml);
+        var dd = doc.Descendants("DropDownList").FirstOrDefault();
+        Assert.NotNull(dd);
+        return dd!.Value;
+    }
+
+    [Fact]
+    public void An_ampersand_in_a_dropdown_entry_still_yields_well_formed_xml()
+    {
+        // The reproducer for W4. Before the fix this threw
+        // XmlException: "An error occurred while parsing EntityName".
+        var doc = XDocument.Parse(Xml(NameValuedMap("Bow & Arrow", "Plain")));
+        Assert.NotNull(doc.Root);
+    }
+
+    [Fact]
+    public void Every_metacharacter_in_a_dropdown_entry_survives_the_round_trip()
+    {
+        // Not just "it parses" — the user has to be able to read the name in CE, so the
+        // text must come back out of the parser unmangled.
+        var body = DropDownBody(Xml(NameValuedMap(Nasty)));
+        Assert.Contains("Bow & Arrow", body);
+        Assert.Contains("<Rare>", body);
+    }
+
+    [Fact]
+    public void A_less_than_in_a_dropdown_entry_cannot_open_a_phantom_element()
+    {
+        var xml = Xml(NameValuedMap("HP < 50%", "Plain"));
+        var doc = XDocument.Parse(xml);
+
+        // If '<' were raw, the parser would either throw or invent an element.
+        Assert.NotNull(doc.Root);
+        Assert.Contains("HP < 50%", DropDownBody(xml));
+    }
+
+    [Fact]
+    public void A_newline_in_a_dropdown_entry_cannot_forge_an_extra_record()
+    {
+        // Well-formedness does NOT catch this one — the body is line-delimited, so a CR/LF
+        // inside a game string would silently add a dropdown row and shift the rest.
+        var body = DropDownBody(Xml(NameValuedMap("Sword\r\nOf\nTruth", "Plain")));
+
+        var rows = body.Split('\n')
+                       .Select(r => r.Trim())
+                       .Where(r => r.Length > 0)
+                       .ToList();
+
+        Assert.Equal(2, rows.Count);                       // two entries in, two out
+        Assert.Contains(rows, r => r.Contains("Sword Of Truth"));
+    }
 }

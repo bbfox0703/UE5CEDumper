@@ -642,8 +642,8 @@ public static class CeXmlExportService
                 bool isObj = IsObjectPropertyType(field.MapValueType);
                 if (!isStruct && !isObj) break;
                 ulong dataBase = ParseHexAddr(field.MapDataAddr);
-                int valOffset = field.MapValueOffset > 0 ? field.MapValueOffset : field.MapKeySize;
-                int stride = ComputeSetElementStride(valOffset + field.MapValueSize);
+                int valOffset = ContainerGeometry.MapValueOffsetOf(field);
+                int stride = ContainerGeometry.MapStrideOf(field);
                 foreach (var e in field.MapElements)
                 {
                     long off = (long)e.Index * stride + valOffset;
@@ -673,7 +673,7 @@ public static class CeXmlExportService
                 bool isObj = IsObjectPropertyType(field.SetElemType);
                 if (!isStruct && !isObj) break;
                 ulong dataBase = ParseHexAddr(field.SetDataAddr);
-                int stride = ComputeSetElementStride(field.SetElemSize);
+                int stride = ContainerGeometry.SetStrideOf(field);
                 foreach (var e in field.SetElements)
                 {
                     long off = (long)e.Index * stride;
@@ -1028,6 +1028,7 @@ public static class CeXmlExportService
                     MapKeySize = f.MapKeySize,
                     MapValueSize = f.MapValueSize,
                     MapValueOffset = f.MapValueOffset,
+                    MapStride = f.MapStride,
                     MapDataAddr = f.MapDataAddr,
                     MapElements = f.MapElements,
                     // Container value/key struct metadata — REQUIRED so a Map/Set/Array
@@ -1040,6 +1041,7 @@ public static class CeXmlExportService
                     SetCount = f.SetCount,
                     SetElemType = f.SetElemType,
                     SetElemSize = f.SetElemSize,
+                    SetStride = f.SetStride,
                     SetDataAddr = f.SetDataAddr,
                     SetElemStructAddr = f.SetElemStructAddr,
                     SetElemStructType = f.SetElemStructType,
@@ -2660,7 +2662,7 @@ public static class CeXmlExportService
         }
 
         // Map inner type to CE type
-        var ceElem = MapInnerTypeToCeField(field.ArrayInnerType);
+        var ceElem = MapInnerTypeToCeField(field.ArrayInnerType, field.ArrayElemSize);
 
         // Non-scalar, empty, or no inline elements → placeholder only (no deref needed)
         if (ceElem == null || field.ArrayCount <= 0
@@ -3086,12 +3088,7 @@ public static class CeXmlExportService
 
                 foreach (var sf in elem.StructFields)
                 {
-                    // Enum width follows the sub-field's real byte size (a 1-byte
-                    // enum must NOT be read as 4 bytes — that pulls in the next
-                    // field's bytes). Other scalars/pointers map by type name.
-                    var ceField = sf.TypeName == "EnumProperty"
-                        ? new CeFieldInfo(CeWidthForSize(sf.Size))
-                        : MapInnerTypeToCeField(sf.TypeName);
+                    var ceField = MapInnerTypeToCeField(sf.TypeName, sf.Size);
                     if (ceField != null)
                     {
                         EmitLeaf(sb, fieldIndent,
@@ -3159,7 +3156,7 @@ public static class CeXmlExportService
     /// <summary>
     /// Emit a MapProperty as a CE group with per-element children.
     /// TMap uses TSparseArray internally. Data pointer is at +0x00 (same as TArray).
-    /// Element stride = ComputeSetElementStride(valOffset + valueSize), where valOffset is aligned.
+    /// Element stride comes from the DLL via ContainerGeometry.MapStrideOf (never recomputed here).
     /// Each allocated element: key at +0, value at +valOffset (aligned) within the element.
     ///
     /// TSparseArray addressing:
@@ -3191,16 +3188,14 @@ public static class CeXmlExportService
         // int can change at runtime) — Name/Enum values instead get a CE DropDownList
         // (rawInt → resolved name) on the map group that the leaves link to, so CE
         // shows the LIVE name. Enum key/value widths follow the real byte size.
-        int valOffset = field.MapValueOffset > 0 ? field.MapValueOffset : field.MapKeySize;
-        int stride = ComputeSetElementStride(valOffset + field.MapValueSize);
+        int valOffset = ContainerGeometry.MapValueOffsetOf(field);
+        int stride = ContainerGeometry.MapStrideOf(field);
         ulong dataBase = ParseHexAddr(field.MapDataAddr);
         bool valStruct = field.MapValueType == "StructProperty"
                          && !string.IsNullOrEmpty(field.MapValueStructAddr);
         bool valScalar = !valStruct && !IsObjectPropertyType(field.MapValueType);
 
-        var ceKey = field.MapKeyType == "EnumProperty"
-            ? new CeFieldInfo(CeWidthForSize(field.MapKeySize))
-            : MapInnerTypeToCeField(field.MapKeyType);
+        var ceKey = MapInnerTypeToCeField(field.MapKeyType, field.MapKeySize);
 
         // Shared value DropDownList (rawInt → name) for Name/Enum values.
         string? valueDropDown = null;
@@ -3295,9 +3290,7 @@ public static class CeXmlExportService
             }
             else
             {
-                var ceVal = field.MapValueType == "EnumProperty"
-                    ? new CeFieldInfo(CeWidthForSize(field.MapValueSize))
-                    : MapInnerTypeToCeField(field.MapValueType);
+                var ceVal = MapInnerTypeToCeField(field.MapValueType, field.MapValueSize);
                 if (ceVal != null)
                     EmitLeaf(sb, fieldIndent, DecorateDesc("Value", valOffset, null), ceVal,
                         $"+{valOffset:X}", null,
@@ -3340,7 +3333,7 @@ public static class CeXmlExportService
     /// <summary>
     /// Emit a SetProperty as a CE group with per-element children.
     /// TSet uses TSparseArray. Data pointer at +0x00.
-    /// Element stride = ComputeSetElementStride(elemSize).
+    /// Element stride comes from the DLL via ContainerGeometry.SetStrideOf (never recomputed here).
     ///
     /// TSparseArray addressing:
     /// - Group header: Address=+{fieldOffset}, Offsets=[0] → dereferences TSparseArray.Data pointer
@@ -3364,8 +3357,8 @@ public static class CeXmlExportService
             return;
         }
 
-        var ceElem = MapInnerTypeToCeField(field.SetElemType);   // null for struct/object
-        int stride = ComputeSetElementStride(field.SetElemSize);
+        var ceElem = MapInnerTypeToCeField(field.SetElemType, field.SetElemSize);  // null for struct/object
+        int stride = ContainerGeometry.SetStrideOf(field);
         ulong dataBase = ParseHexAddr(field.SetDataAddr);
         bool elemStruct = field.SetElemType == "StructProperty"
                           && !string.IsNullOrEmpty(field.SetElemStructAddr);
@@ -3504,16 +3497,6 @@ public static class CeXmlExportService
         }
 
         EmitGroupClose(sb, indent);
-    }
-
-    /// <summary>
-    /// Compute TSetElement stride: AlignUp(elemSize, 4) + 8 (HashNextId + HashIndex).
-    /// Mirrors Mem::ComputeSetElementStride in the DLL.
-    /// </summary>
-    private static int ComputeSetElementStride(int elemSize)
-    {
-        int hashStart = (elemSize + 3) & ~3;  // align to 4
-        return hashStart + 8;  // + HashNextId(4) + HashIndex(4)
     }
 
     /// <summary>Emit a group header that will contain child entries (opens CheatEntries block).</summary>
@@ -3715,15 +3698,38 @@ public static class CeXmlExportService
     /// <summary>
     /// Build DropDownList content string from value:name pairs.
     /// Format: newline-separated "value:name" entries (decimal values, no leading zeros).
+    ///
+    /// <para><b>The names are arbitrary GAME memory</b> — FName entries, enum member names,
+    /// formatted container element values — so they get the same treatment as
+    /// <c>&lt;Description&gt;</c> text, for the same reason and against two different failure
+    /// modes.</para>
+    ///
+    /// <para><b>XML metacharacters</b> (<see cref="EscapeXmlContent"/>): this body is interpolated
+    /// straight into <c>&lt;DropDownList&gt;</c>, so a single <c>&amp;</c> in one entry — a
+    /// <c>TArray&lt;FName&gt; Tags</c> holding a designer-typed <c>Bow &amp; Arrow</c> is enough —
+    /// makes the whole CheatTable malformed and Cheat Engine rejects the <b>entire document</b>. The
+    /// escaping added for Descriptions (audit #4 B3) never covered this site; audit #5 W4 is the same
+    /// defect surviving here.</para>
+    ///
+    /// <para><b>Line breaks</b>: the format is line-delimited, so a CR/LF inside a name would forge
+    /// extra dropdown entries and shift every following one. That does not break XML well-formedness,
+    /// which is exactly why it needs handling here rather than being left to the escaper — it is
+    /// silent. Collapsed to a space.</para>
     /// </summary>
     private static string BuildDropDownContent(IEnumerable<(long value, string name)> entries)
     {
         var sb = new StringBuilder();
         sb.AppendLine();  // newline after opening tag
         foreach (var (v, n) in entries)
-            sb.AppendLine($"{v}:{n}");
+            sb.AppendLine($"{v}:{EscapeXmlContent(CollapseLineBreaks(n))}");
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// Flatten CR/LF to spaces so a game string cannot forge a new record in a line-delimited body.
+    /// </summary>
+    private static string CollapseLineBreaks(string s) =>
+        s.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
 
     /// <summary>
     /// Escape special characters for XML element text content.
@@ -3937,8 +3943,31 @@ public static class CeXmlExportService
     /// BoolProperty in arrays = full byte (no bitfield).
     /// Returns null for non-scalar types (StructProperty, ObjectProperty, etc.).
     /// </summary>
-    private static CeFieldInfo? MapInnerTypeToCeField(string innerTypeName)
+    /// <summary>
+    /// Map a container element / struct sub-field type to a CE record type.
+    ///
+    /// <para><b><paramref name="elemSize"/> is required, not optional.</b> For most types the name
+    /// determines the width, but an enum's does not: <c>enum class : uint8</c> is one byte and the
+    /// standard reflected enum is four. The element ADDRESSES are laid out with the DLL's real
+    /// element size either way, so a hardcoded 4 makes CE read four bytes at every 1-byte-spaced
+    /// element — each record swallowing the next three elements.</para>
+    ///
+    /// <para>That rule was already known and written down at the struct sub-field site (<i>"a 1-byte
+    /// enum must NOT be read as 4 bytes — that pulls in the next field's bytes"</i>) and applied at
+    /// three of the five call sites; the TArray and TSet element paths were left out (audit #5 W6).
+    /// Taking the size as a parameter rather than as a caller-side ternary is what stops a sixth
+    /// call site forgetting it.</para>
+    ///
+    /// <para>Deliberately NOT size-driven: <c>NameProperty</c> stays 4 bytes because the record
+    /// shows the FName ComparisonIndex (paired with a DropDownList of names) rather than the whole
+    /// 8- or 16-byte FName, and the pointer flavours stay 8 regardless of stride.</para>
+    /// </summary>
+    private static CeFieldInfo? MapInnerTypeToCeField(string innerTypeName, int elemSize)
     {
+        // Enum width follows the element's REAL size; everything else is fixed by its type.
+        if (innerTypeName == "EnumProperty")
+            return new CeFieldInfo(CeWidthForSize(elemSize));
+
         return innerTypeName switch
         {
             "FloatProperty" => new CeFieldInfo("Float"),
@@ -3961,9 +3990,6 @@ public static class CeXmlExportService
 
             // FName index
             "NameProperty" => new CeFieldInfo("4 Bytes"),
-
-            // Enum -- underlying value is typically int32
-            "EnumProperty" => new CeFieldInfo("4 Bytes"),
 
             // Phase D: pointer types — 8 bytes, shown as hex
             "ObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),

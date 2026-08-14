@@ -56,8 +56,8 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **D4a** ✅ | Macht + Scharf (memory layer) | `Macht` 708/755, `Macht.h`, `Scharf.h` | ~1,000 | **none** |
 | **D4b** ✅ | Mimic/Flamme/Sein/Stark/Lugner | `Mimic` 639, `Flamme` 410, `Sein` 342, `Stark` 302, `Lugner`(+Dinput8) 225 | ~1,626 | none |
 | **D5** | Fern + Frieren | `Fern.cpp` 2490/6028, `Frieren.cpp` 816/1784 | ~3,306 | partly audited before |
-| **U1** | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
-| **U2** | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
+| **U1** ✅ | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
+| **U2** ✅ | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
 | **U3** | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
 | **U4** | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
 | **U5** | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
@@ -539,7 +539,347 @@ from `m_conns` however its `ReadFile` ends. See the note appended to that entry.
 
 -----
 
+### U1 — LiveWalker + PointerPanel + ObjectTree ViewModels — ✅ scanned 2026-08-14
+
+**16 agents** (5 C# lenses → 4 refute batches → 7 second-lens), 0 errors. Run `wf_0fbfa801-46d`.
+19 raw claims → 18 after dedupe → **6 refuted (33%)** → 12 confirmed → **11 distinct** after merging
+the two lens-duplicate reports of the same `FindReferencesAsync` defect (`:2366` MED from
+mvvm-lifetime and `:2383` LOW from async-cancel are one missing post-await navigation guard; the
+MEDIUM is the superset — it covers the reference *list* as well as the header label).
+
+**Tally: 1 HIGH · 6 MEDIUM · 4 LOW.** Three things about this segment break the audit's own pattern
+and matter more than any individual row:
+
+> **1. The audit has its first surviving HIGH — the eleventh claimed, after ten died.** V1 survived a
+> refute-mandated skeptic, a second lens, *and* my own end-to-end re-derivation at both ends of the
+> wire. Until now §4 could say "nothing found so far is an emergency"; that sentence is no longer
+> true. V1 writes user-typed bytes to the wrong address **in a live game process**.
+>
+> **2. The refutation rate collapsed to 33%, against a 56% running mean.** Do not read this as
+> "the C# is worse" without noting the confound: this is the first segment whose skeptics had **real
+> test coverage** to refute *with*, and the refutations they did produce are visibly stronger for it
+> (four of six name a specific caller-side guard, an XAML binding, or computed both sides of the
+> arithmetic). The honest reading is that the C# early code has a higher true-positive density AND
+> that the skeptics were better equipped. Carry the 33% into U2's calibration paragraph as a range
+> ("33–73% across segments"), not as a new constant.
+>
+> **3. One finding is a regression this audit itself introduced.** V5 is the C# half of cluster ①'s
+> `ComputeSetElementStride` fix (`5ef4c2b`, 2026-08-14). The DLL side shipped a two-argument,
+> alignment-aware stride; **three independent C# copies of the one-argument formula were left
+> behind**, each still carrying a doc comment that claims it mirrors the DLL. Fixing one side of a
+> duplicated computation without grepping for its mirrors *re-created cluster ④ while closing
+> cluster ①*.
+
+> ### ✅ V1, V2 and V5 FIXED — build 2830, 2026-08-14
+>
+> One commit, because they are one subsystem and **not independently correct**: V1's write address is
+> computed *from* V2's stride, so shipping V1 against the stale stride would have aimed the corrected
+> offset off a wrong base. V5 came along because the fix adds fields that the multi-select clone must
+> carry — leaving it would have made the new stride reach every path except the filtered export.
+>
+> **The shape of the fix is the point.** The C# no longer computes container geometry at all. The DLL
+> publishes the stride it *actually used to read the elements* (`map_stride` / `set_stride`, additive
+> wire fields set at all four `Ubel.cpp` walk sites), and one new
+> [`Core/ContainerGeometry.cs`](../ui/UE5DumpUI/Core/ContainerGeometry.cs) consumes it. All **three**
+> stale copies of the formula are deleted; the old expression survives only as
+> `ContainerGeometry.FallbackStride`, documented as correct only for `alignof(T) <= 4` and reachable
+> only when the DLL supplied nothing. UI and DLL can no longer disagree about where an element is,
+> because there is only one number.
+>
+> **V1 needed a second half the finding did not name.** The row also reported
+> `Size = MapKeySize + MapValueSize`, and `Size` reaches `FieldValueConverter.TryConvert` as the
+> **write length** — so a `TMap<int32, enum4>` would have written 8 bytes over a 4-byte value even
+> once the address was right. The row now describes the value in all three respects: type, address
+> and size.
+>
+> **Verified with a negative control, not just a green run.** The 8 new tests in
+> `ContainerGeometryTests` pass (3575 total, 0 failed). Both fixes were then reverted in
+> `ContainerGeometry.cs` and the suite re-run: **5 tests failed** — the helper, the seam
+> (`PopulateMapContainerFields`) and the clone — then the fix was restored and green re-confirmed. Per
+> working-lessons §1.3 the seam test is the one that matters: the pre-existing
+> `FieldValueConverterTests` passed throughout, in both directions, because the helper was never wrong.
+>
+> ⬜ **Not yet verified in-game** — tracked in [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+> `Map_I64ToI32` / `Map_StrToInt` in `DumperTest` are existing witnesses for the DLL half; what needs a
+> live check is the **UI** half: that the Address column, an inline edit, and a pushed CE record all
+> land on the value.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **V1** ✅ | **HIGH** | `LiveWalkerViewModel.cs:1380` (`PopulateMapContainerFields`) | A TMap element row is built with `TypeName = MapValueType` (so `IsEditableType` passes for any scalar-valued map) but `FieldAddress = dataBase + index*stride` — the TPair base, which is **the key**. The `+ valOffset` the same method computes 40 lines earlier for struct values is not applied. Inline-editing a `TMap<FName,int32>` value writes the user's 4 bytes over the **FName key**; the same wrong address is what "+CE" pushes as a record and what "Copy address" yields. | S / med |
+| **V2** ✅ | MED | `LiveWalkerViewModel.cs:1706` (`ComputeSetElementStride`) | The C# stride mirror is still `AlignUp(elemSize,4)+8` after the DLL moved to `Align(Align(elemSize,alignof(T))+8, alignof(T))` in `5ef4c2b`. **Three copies** are stale (`LiveWalkerViewModel.cs:1706`, `CeXmlExportService.cs:3513`, `CsxExportService.cs:877`) across **5 map call sites**. TSet is unaffected by construction. Every map element address the UI computes itself is short by 4+ bytes past index 0. | M / med |
+| **V3** | MED | `LiveWalkerViewModel.cs:2366` (`FindReferencesAsync`) | No post-await navigation guard. Every other long round-trip snapshots `CurrentAddress` + `Breadcrumbs.Count` before its `await`; this one reads `CurrentObjectName` and refills `References` *after*, and runs on the **bulk** lane precisely so the user can keep navigating. A scan started on A lands A's reference list under B's header. | S / low |
+| **V4** | MED | `LiveWalkerViewModel.cs:5575` (`NavigateToAsync`/`GoBackAsync`) | Navigation commands are separate `AsyncRelayCommand`s with no shared re-entrancy gate, so a drill-down that started first can append its crumb onto a spine `GoBackAsync` has already truncated — leaving a leaf whose `FieldOffset` is relative to a parent no longer in the list, i.e. a silently wrong CE pointer chain. | M / med |
+| **V5** ✅ | MED | `LiveWalkerViewModel.cs:1622` (`FilterContainerToElement`) | The Map branch rebuilds the container field property-by-property and **omits `MapValueOffset`**, so the CE emitter falls back to `valOffset = MapKeySize` and derives a different stride. Exporting *selected* map elements produces a different and wrong layout from exporting the same map unfiltered. The sibling clone at `CeXmlExportService.cs:1030` preserves it — the two clone sites have drifted. | S / low |
+| **V6** | MED | `LiveWalkerViewModel.cs:5927` (`UpdateDisplay`) | `RefreshAsync` deliberately keeps the field-search keyword alive (`clearFieldSearch: false`) but `UpdateDisplay` swaps in new `LiveFieldValue` objects whose `IsSearchMatch` defaults false, and nothing re-runs `ApplySearch`. Highlights vanish while `SearchMatchCount` and the ↑/↓ buttons keep advertising N live matches. | S / low |
+| **V7** | MED | `LiveWalkerViewModel.cs:4812` (`RefreshAsync`) | Refresh failures — including the 10 s hard timeout — are reported through `SetError` → `ErrorMessage`, **a property `LiveWalkerPanel.axaml` never binds**, after `ClearStatus()` blanked the one bound status line. A failed refresh is byte-identical on screen to a successful one, stale values render as live, and a subsequent edit prints `Written: …` over them. | S / low |
+| **V8** | LOW | `LiveWalkerViewModel.cs:1348` | Container drill-down renders an `arrayLimit`-truncated element list (default 128) as the complete container. `BuildContainerLimitWarning` computes exactly this warning and is wired into **one** site: the Copy-CE-XML path. | S / low |
+| **V9** | LOW | `ObjectTreeViewModel.cs:426` (`SearchAsync`) | `SearchObjectsAsync` is called without the `CancellationToken` it accepts, and `CancelLoadCommand` cancels `_loadCts` — which `SearchAsync` itself cancelled at `:411` and never replaced. For the whole search the panel's only enabled control is a Cancel button that structurally cannot do anything. | S / low |
+| **V10** | LOW | `PointerPanelViewModel.cs:551` (`Update`) | `Update(EngineState)` unconditionally resets `IsScanning`/`ScanComplete`/`ScanStatusText`, but `ExtraScanAsync` owns `IsScanning` across its 1.5 s polling loop and clears it in its own `finally`. `Update` is reachable mid-scan via the fire-and-forget `ApplyOverrideAsync`, whose ComboBox is gated on `IsApplyingOverride`, not `IsScanning`. | S / low |
+| **V11** | LOW | `PointerPanelViewModel.cs:988` | `CreateSymbolScriptAsync`'s `bool` is branched on only to pick `_log.Info` vs `_log.Warn`. Neither branch touches a bound property, so "Register symbol" looks identical whether CE registered it or the bridge never reached CE. The sibling call site in `LiveWalkerViewModel` does this correctly. | S / low |
+
+**Verified independently (not agent-reported).** Three checks, run by hand before recording:
+
+1. **V1 re-derived end-to-end at both ends of the wire.** UI: `TypeName = sourceField.MapValueType`
+   (`:1365`) → `LiveFieldValue.IsEditable` (`Models/LiveFieldValue.cs:318-321`) → `IsEditableType`
+   accepts `IntProperty` (`Core/FieldValueConverter.cs:18-24`) → `FieldGrid_BeginningEdit` cancels
+   only `!IsEditable` (`Views/LiveWalkerPanel.axaml.cs:382`) → `WriteMemAsync(field.FieldAddress, …)`
+   (`:5016`). DLL: `elemAddr = sa.Data + idx*stride`, key read **at** `elemAddr` (`Ubel.cpp:4202`),
+   value read at `elemAddr + valOffset` (`Ubel.cpp:4228`), and `mapValueType` is a genuine property
+   type name (gated on containing `"Property"`, `Ubel.cpp:4129`). The codebase **already knows** the
+   correction: `MapValueDrillOffset`'s doc comment (`:938-948`) states it outright, and it is applied
+   at exactly one call site — `NavigateToFieldAsync`'s `navOffset` (`:988`) — while the edit and CE
+   consumers do not. That is cluster ① in its purest form: *a correction that exists and is applied at
+   only some of its sites.*
+2. **V2's blast radius is 3× what the finder filed.** It reported one stale copy; `grep` found
+   **three**, all carrying a "Mirrors `Mem::ComputeSetElementStride` in the DLL" comment that is now
+   false. Worked arithmetic, `pairSize=12, pairAlign=8`: DLL `Align(Align(12,8)+8,8) = 24`, C#
+   `Align(12,4)+8 = 20`. They agree only when the pair alignment is 4.
+3. **A whole claim category pre-refuted by measurement.** I swept every expression-bodied computed
+   property in the three files against every `OnPropertyChanged(nameof(…))` /
+   `[NotifyPropertyChangedFor]`: `PointerPanelViewModel` has 57 computed / 58 raised / **0 never
+   raised**. Because that is an *absence*, I ran the negative control working-lessons §1.2 demands —
+   deleting the single `OnPropertyChanged(nameof(ShowVersionTooOldWarning))` (the one the file's own
+   comment records as historically missing) from a scratch copy made the detector report it. The
+   detector can fail, so the zero is real. The three apparent orphans are correct by design
+   (`FilterHistory`/`FunctionFilterHistory` return self-notifying `ObservableCollection`s;
+   `DisplayNumber => SlotIndex + 1` reads an `init`-only property). **Do not re-raise
+   "computed property never notifies" against these three files.**
+
+-----
+
+### U2 — Export services (CE XML / CSX / SDK / USMAP / Symbol) — ✅ scanned 2026-08-14
+
+**21 agents** (5 emitter lenses → 4 refute batches → 12 second-lens), 0 errors. Run `wf_4afb1a7b-927`.
+20 raw claims → 16 after dedupe → **4 refuted (25%)** → 12 confirmed → **8 distinct** after merging
+two lens-duplicate clusters: four separate reports of the same USMAP version/layout desync
+(`:174` ×2, `:175`, `:203`, `:233` — one defect with three concrete desync points) and two of the
+same SDK bitfield defect (`:221` / `:382`).
+
+**Tally: 2 HIGH · 5 MEDIUM · 1 LOW.** Seven HIGHs were claimed; after merging, **two distinct HIGHs
+survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
+
+> **1. A shipped export has never once produced a usable file.** W1 is not a regression — `git log -S`
+> shows the `Version` constant has exactly **one** commit in the file's history (its creation,
+> `7f91295`, **2026-03-01**) and the string `bHasVersion` has **never appeared in any revision**. The
+> menu item (`MainWindow.axaml:284`) has been shipping for 5½ months and cannot ever have written a
+> parseable header. This is D5/F8's shape again — *the feature that was empty all along* — and it is
+> the second time this audit has found one, which makes it a pattern rather than an accident: **an
+> export whose consumer is an external tool is never exercised by our own tests, so nothing in the
+> project notices that it is dead.**
+>
+> **2. The refutation rate fell again — 25%, against a 52% running mean.** U1 was 33%, U2 is 25%. The
+> emitter code is genuinely denser in real defects than the DLL was, and the reason is visible in the
+> findings: **an emitter's output is validated by a program we do not run.** A wrong CE varType, a
+> wrong SDK offset and a malformed .usmap all leave our process looking like a success.
+>
+> **3. Two findings were confirmed against the repo's OWN vendored sources, not the internet.** The
+> USMAP skeptic refused to lean on the finder's CUE4Parse citation and instead read
+> `vendor/RE-UE4SS/.../Generator.cpp` and `vendor/Dumper-7/.../MappingGenerator.cpp`, which are two
+> independent canonical writers sitting in this tree. That is the strongest evidence any segment of
+> this audit has produced, and it was available for free.
+
+> ### ✅ W6 FIXED — build 2857, 2026-08-14
+>
+> **The fix is the signature, not the branch.** `MapInnerTypeToCeField` now *requires* the element
+> size and applies the enum rule itself, so all five call sites get it by construction. Previously
+> each site had to remember a caller-side ternary — and three of five did (struct sub-fields, map
+> key, map value) while the TArray and TSet element paths did not.
+>
+> The rule was not merely known, it was **written down** at the site that got it right: *"a 1-byte
+> enum must NOT be read as 4 bytes — that pulls in the next field's bytes."* This is cluster ④'s
+> partial-application variant in its clearest form, and the reason the repair is a required parameter
+> rather than a fourth copy of the ternary is that a sixth call site would otherwise forget it too.
+>
+> Deliberately **not** size-driven, and documented as such so a later reader does not "fix" them:
+> `NameProperty` stays 4 bytes because the record shows the FName ComparisonIndex paired with a
+> DropDownList of names, not the whole 8/16-byte FName; the pointer flavours stay 8 regardless of
+> stride.
+>
+> **Negative control:** reverting the width to a hardcoded `"4 Bytes"` fails 3 tests — the two new
+> byte-wide array/set tests **and a pre-existing struct-sub-field test**, which is the useful part:
+> it confirms the refactor preserved the behaviour that test was already pinning rather than merely
+> satisfying new assertions. 3590 tests, 0 failed.
+
+> ### ✅ W1 and W7 FIXED — build 2853, 2026-08-14
+>
+> W7 came along because **W1's deliverable does not work without it**: a name index past the end of
+> the table corrupts the same file the version fix was meant to make openable.
+>
+> **The version now describes the bytes.** The writer emits **v4 (ExplicitEnumValues)** — the version
+> both vendored canonical writers produce — and every threshold it crosses is honoured: the
+> mandatory `int32 bHasVersionInfo` after the version byte, `uint16` enum member counts, and each
+> enum member's `int64` explicit value. v4 was chosen over "the cheapest v2" because the writer
+> already emitted `uint16` name lengths (so it can never go below 2), because `uint16` counts remove
+> a **silent truncation of any enum past 255 members**, and because explicit values stop an enum with
+> gaps being flattened to `0..N-1`. **The CEXT extensions block is not written**, which is safe:
+> Dumper-7 emits v4 without one.
+>
+> **Two more desyncs behind the header, both fixed.** ArrayDim is one byte carrying the real
+> dimension (it was a hardcoded 2-byte `0`, which both slid the stream and told a reader to register
+> no schema slots). And a struct's two counts are genuinely different numbers — the first is the sum
+> of every property's ArrayDim, the second is how many records follow; both were `Fields.Count`.
+>
+> **W7 is fixed by construction, not by care.** `"None"` is pre-registered, the write pass may only
+> use a non-appending `IndexOf`, and `NameTable.Seal()` makes any post-serialisation `GetOrAdd`
+> throw. The invariant is now enforced by the type rather than remembered by the caller.
+>
+> **The real deliverable is the round-trip reader.** `UsmapFile.Parse` in the tests parses the file
+> the way a consumer does, at the canonical widths, and asserts **the stream is fully consumed** and
+> every name index is in range. That is what the old tests could not do: all five skipped a hardcoded
+> 12-byte header and read fields at the widths the *writer* happened to use, so they encoded the bug
+> instead of checking it. Five were rewritten onto the reader and four added (full round-trip over
+> every container shape, static-array slot counting, a 300-member enum, and an unregistered struct
+> name).
+>
+> **Negative controls, one per sub-fix, each reverted alone:** removing `bHasVersionInfo` fails 9
+> tests; restoring the `uint8` enum count fails 3; restoring the 2-byte ArrayDim fails 4; un-
+> registering `"None"` fails 1. The reader is therefore checking the canonical layout, not mirroring
+> the writer. 3587 tests, 0 failed.
+>
+> ⬜ **Not verified against a real consumer.** The round-trip proves self-consistency at the widths
+> the vendored writers define; nobody has yet opened the output in FModel. Filed in
+> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
+> ### ✅ W2 and W3 FIXED — build 2842, 2026-08-14
+>
+> One commit: both live in the same emitter and the same layout cursor, and W3's byte accounting is
+> only observable once W2 stops flooding the struct with inherited members.
+>
+> **W2 — the boundary is now sent, not guessed.** `walk_class` gained `super_props_size` (the
+> immediate super's `PropertiesSize`, read in `Ubel::WalkClass` where `SuperClass` is already
+> resolved), because nothing else in the reply implies it: the DLL prepends the **entire** SuperStruct
+> chain to `Fields`, so "own vs inherited" is underdetermined client-side. Same shape as V2's
+> `map_stride` — *where the input is an engine fact the wire does not carry, send the number*. The old
+> first-field heuristic survives only as a fallback for an older DLL, and is documented as a fallback
+> because it mis-splits silently when a derived class adds no properties of its own.
+>
+> **W3 — packed bools become real bitfields at their true bit positions.** N `uint8 bX:1` flags
+> sharing one byte arrive at the same offset with Size 1; emitting a whole `bool` each grew the struct
+> by N−1 bytes, and padding could never compensate because it is only emitted when the next offset is
+> *ahead* of the cursor. They are now emitted as `uint8_t Name : 1` with **unnamed fillers for the
+> bits UE left unused**, so bit N in the game is bit N in the header. A native `bool` (mask `0xFF`)
+> and an unresolved mask (`0`) both keep their whole byte — an unknown must never rewrite the layout.
+>
+> **Both duplicated loops are gone.** The schema and live emitters carried byte-identical member-emit
+> loops and therefore both defects; they now project into one `SdkField` record and share
+> `EmitStructBody`. Fixing this in two places was how it would have drifted again.
+>
+> **One pre-existing test was CHANGED, which deserves the scrutiny.**
+> `GenerateClassHeader_BoolBitfield_EmitsComment` asserted `bool bHidden;` for a field with
+> `BoolFieldMask = 0x04` — a single-bit mask, i.e. exactly the packed bitfield W3 is about. Its name
+> and its second assertion show it was written for the *mask comment*; the declaration form was
+> incidental and pinned the defect. The mask assertion is unchanged and the declaration assertion now
+> expects the bitfield. The arithmetic that justifies it: with **one** bool the struct size is the
+> same either way, but the bit position was wrong (bit 0, not bit 2) — and with several bools the
+> size itself breaks, which the new eight-bool test demonstrates.
+>
+> **Negative controls, run separately so each fix is independently guarded:** reverting only the
+> bitfield grouping turns exactly the two W3 tests red; reverting only the inherited-field filter
+> turns exactly the one W2 test red. Restored, 3583 tests, 0 failed.
+>
+> ⬜ **Not verified in-game.** The unit tests drive the real emitters end-to-end, but the *boundary
+> value* now comes from the DLL, and no headless check confirms a real `super_props_size` on a live
+> class — see [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
+> ### ✅ W4 FIXED — build 2836, 2026-08-14
+>
+> Escaping moved into `BuildDropDownContent`, which is the **single choke point**: all six call sites
+> (including the cached `_dropDownOwners` link path) build their body there, and both
+> `<DropDownList>` emit sites interpolate that body. One change covers every path.
+>
+> **The fix has two halves, and the second is the one a well-formedness check would have missed.**
+> XML metacharacters go through the same `EscapeXmlContent` the Descriptions use. But the body is
+> also **line-delimited**, so a CR/LF inside a game string forges an extra dropdown row and shifts
+> every following one — without making the document malformed. `CollapseLineBreaks` flattens them.
+> The negative control proved the distinction: reverting the fix turned all four new tests red, and
+> the newline test was the only one that failed **without** an `XmlException`.
+>
+> **The regression tests live in `CeXmlEscapingTests`, deliberately.** That suite is where the gap
+> was: all five pre-existing tests put the game string in a map **key**, which lands in
+> `<Description>`, so the suite passed throughout while the `<DropDownList>` path interpolated raw.
+> The four new tests reach that path via a `TMap<int32,FName>` — `NameProperty` map values are routed
+> into a dropdown rather than a description. 3579 tests, 0 failed.
+>
+> Still open in the same family: **W6** (`CeWidthForSize` bypassed by the enum array/set path) is the
+> other partial-application defect in this emitter and is untouched.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **W1** ✅ | **HIGH** | `UsmapExportService.cs:16`,`173-178`,`203`,`233` | The file stamps `Version = 3` (`LargeEnums`) but writes the **version-0 layout**, in three independent places. (a) `version` is followed straight by `compression` — the mandatory `int32 bHasVersionInfo` that every `version >= PackageVersioning(1)` file must carry is missing, so a reader's `ReadBoolean()` consumes 4 bytes of the size field and throws before a single name is read. (b) enum member count written `uint8`, but `>= LargeEnums` requires `uint16`. (c) per-property ArrayDim written as `(ushort)0` while the format (and the code's own adjacent comment) says `uint8` — so every struct's first property slides the stream by one byte. The file's own comment is also wrong: it says "3 = LongFName", but LongFName is **2**. | S / low |
+| **W2** ✅ | **HIGH** | `SdkExportService.cs:358` (+`EmitClassHeaderFromLive`) | The emitter assumes `ClassInfoModel.Fields` holds only the class's **own** properties, but `Ubel::WalkClass` deliberately prepends the entire SuperStruct chain and nothing filters it out. Every base-class property is therefore declared a **second time** inside a `struct X : public Super` that already inherits it, so `offsetof` is wrong for every derived class in the generated SDK — the header compiles and is silently mislaid out. | M / med |
+| **W3** ✅ | MED | `SdkExportService.cs:221` + `:382` | N `FBoolProperty` bitfields that UE packed into **one byte** are each emitted as a whole `bool` and the layout cursor advances by `Size` for each, so the struct grows N−1 bytes from that point. The emitter only pads when `offset > cursor`, so once the bools overshoot, **no padding can compensate** and every subsequent member — and the trailing `// Size:` — is shifted. | M / med |
+| **W4** ✅ | MED | `CeXmlExportService.cs:3522` + `:3586` (`BuildDropDownContent`) | `<DropDownList>` bodies are built from live FName / enum-name strings read out of game memory and interpolated **raw**, while every `<Description>` goes through `EscapeXmlContent`. One `&` in a `TArray<FName> Tags` entry (`Bow & Arrow`) makes the whole CheatTable malformed — and `EscapeXmlContent`'s own doc comment states the consequence: CE rejects the **entire document**, so a multi-thousand-entry export imports as nothing with no indication which record was at fault. This is audit #4's **B3 defect surviving at the one site B3 did not cover**. | S / low |
+| **W5** | MED | `CeXmlExportService.cs:2141` (`EmitDrilledPointer`) | The scalar pointer-drill branch gates on the broad `IsObjectPropertyType`, which includes `WeakObjectProperty` / `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty`, and emits `Offsets=[0]` for slots whose first 8 bytes are **not** a `UObject*` — a weak pointer is an index+serial pair. The array path has an explicit regression test against exactly this. (Claimed HIGH, cut to MEDIUM by the second lens.) | S / low |
+| **W6** ✅ | MED | `CeXmlExportService.cs:2665` (`MapInnerTypeToCeField`) | `EnumProperty` is hardcoded to CE type `"4 Bytes"` while element **addresses** are laid out with the DLL's real `ArrayElemSize`/`SetElemSize` (1 for the standard `enum class : uint8`), so CE reads 4 bytes at every 1-byte-spaced element. `CeWidthForSize` exists to fix precisely this and the Map and struct-array emitters already route through it. | S / low |
+| **W7** ✅ | MED | `UsmapExportService.cs:323` | The name table is serialized first, from a snapshot of the pre-registration pass, but the struct-writing pass then calls `GetOrAdd(… : "None")` in four places. `"None"` is never pre-registered, so it is appended at index N **after** the file already declared exactly N names, and every affected property references an out-of-range index. | S / low |
+| **W8** | LOW | `UsmapExportService.cs:90` | The class collector accepts only `ClassName is "Class" or "ScriptStruct"`, so every `BlueprintGeneratedClass` / `AnimBlueprintGeneratedClass` / `WidgetBlueprintGeneratedClass` is silently dropped — on a normal shipped title that is thousands of classes vs a few hundred native ones. Both sibling exporters use the whitelist predicate, and `SdkExportService` carries a comment naming this exact bare-`"Class"` check as a bug fixed in DLL build 673. | S / low |
+
+**Verified independently (not agent-reported):**
+
+1. **W4 was found by hand BEFORE the agents reported, and reproduced end-to-end.** A scan of every
+   interpolation reaching XML markup in both emitters (filtering indents, counters and hex addresses)
+   left 14 sites, of which `dropDownContent` was the only game-derived one. A throwaway test built a
+   `TMap<int32,FName>` whose value was `Bow & Arrow`, ran the real `GenerateInstanceXml`, and
+   `XDocument.Parse` threw `XmlException: An error occurred while parsing EntityName`. The harness was
+   deleted afterwards (scan segments ship no code) — **re-create it as the regression test when W4 is
+   fixed.** The agents then reported the same defect independently, which is convergence, not a second
+   source.
+2. **Why no test caught W4 — the seam again.** All five `CeXmlEscapingTests` put the game string in a
+   map **key**, which lands in `<Description>`. None puts one where it lands in `<DropDownList>`. Same
+   shape as U1's HIGH: the helper is tested, the path that bypasses it is not.
+3. **W1 re-derived from this repo's own vendored writers.** `vendor/RE-UE4SS/…/Generator.cpp:541-547`
+   writes `magic → version → int32 bHasVersionInfo → compression → sizes`; ours goes
+   `version → compression` with nothing between. `vendor/Dumper-7/…/MappingGenerator.h:13-18`
+   documents the layout literally (`if (version >= Packaging) int32 bHasVersionInfo;`), and
+   `Generator.cpp:29-33` pins `LongFName = 2, LargeEnums = 3` — so the constant's own comment is wrong
+   about which version it names.
+
+-----
+
 ## 3. Refuted — do not re-raise
+
+### From U2 (4 of 16 — 25%)
+
+The lowest kill rate of the audit. All four are worth reading because none died on "unreachable" —
+they died on a guard or a cap the finder had not looked for:
+
+- **`SdkExportService.cs:364`** — a *second* bitfield claim, arguing the shared offset shifts
+  following fields. Refuted as a duplicate framing of the surviving W3 with the mechanism wrong.
+- **`SdkExportService.cs:320`** — "generated headers declare none of the types they use / no
+  `#include`". Refuted: the single-class export is documented as a fragment, not a translation unit.
+- **`CeXmlExportService.cs:1411`** — AOB-symbol export omitting the UE5.7+ "UNVERIFIED packed layout"
+  caveat its three siblings carry. Refuted on reachability.
+- **`CsxExportService.cs:225`** — CSX drilldown has no entry cap, no shared-object dedup and no
+  cancellation. Refuted: a depth bound already terminates it.
+
+### From U1 (6 of 18 — 33%)
+
+The lowest kill rate of any segment, and the refutations are correspondingly better-argued — four of
+the six name a specific caller-side guard, an XAML binding, or compute both sides of the arithmetic.
+
+- **`LiveWalkerViewModel.cs:6123`** — Functions keyword box cleared without flushing the keyword
+  memory. Code facts right, *reachability* wrong: computed both sides, the pending timer is already
+  disposed for sub-minimum text.
+- **`PointerPanelViewModel.cs:159`** — the AOT lens's own **negative result**, filed as an INFO row.
+  Correctly classified as not-a-finding. Its sweep re-ran clean: no `Activator` / `MakeGeneric` /
+  `GetCustomAttribute` / reflective `Invoke` anywhere in the three files. **The AOT/trim lens found
+  nothing in U1** — worth knowing before spending a lens on it in U2–U5.
+- **`LiveWalkerViewModel.cs:5534`** — `ApplySearch` replacing the bound collection wipes multi-select.
+  Refuted: the load-bearing premise ("Avalonia clears selection and raises `SelectionChanged` on an
+  `ItemsSource` identity change") was asserted, never verified, and the branch that matters is
+  contradicted by the code the claim itself cites.
+- **`ObjectTreeViewModel.cs:473`** — `ApplyFilter` nulling `SelectedNode` blanks the Class/Struct
+  panel. Refuted by a caller-side null guard: `MainWindowViewModel.cs:717-720` is the only subscriber
+  and guards it.
+- **`ObjectTreeViewModel.cs:426`** — a *second* claim about `SearchAsync`, this one alleging a missing
+  post-await generation guard. Refuted on reachability, and one asserted symptom is contradicted by
+  the code. (The **cancellation-token** half of that function is a separate, surviving finding, V9 —
+  do not let this refutation suppress it.)
+- **`PointerPanelViewModel.cs:725`** — a failed UE-version override leaving the ComboBox showing a
+  version the DLL never applied. Refuted: unreachable through the bound controls, and the stated
+  premise is factually wrong — the DLL's only error branch is `Fern.cpp:1615`'s range check, which
+  the ComboBox cannot violate.
 
 ### From D5 (11 of 19 — 58%)
 
@@ -698,10 +1038,24 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session picks up at U1
+## 3b. START HERE — next session picks up at U3
 
-*State as of 2026-08-14 17:3x. Read this section first; it is written for a session with no memory of
-the previous one.*
+*State as of 2026-08-14, after U2. Read this section first; it is written for a session with no
+memory of the previous one.*
+
+> ✅ **Both U2 HIGHs are fixed. U3 is genuinely next.** W1+W7 (build 2853) and W2+W3 (build 2842)
+> shipped, along with W4 (build 2836). **Nothing open in the audit is rated HIGH.**
+>
+> **What is owed instead is verification, and it is the cheapest work available.** Three separate
+> items are queued in
+> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code) — the TMap geometry UI half
+> (U1), the `super_props_size` boundary value (W2), and opening a `.usmap` in a real consumer (W1).
+> None needs code. The `.usmap` one matters most because our reader and our writer are derived from
+> the same two vendored sources, so a shared misreading of the format would satisfy both.
+>
+> **Still open from U2, none urgent:** W5 (weak/soft pointers drilled with `Offsets=[0]`), W8
+> (USMAP drops every Blueprint-generated class — worth pairing with the FModel check, since a missing
+> `*_C` class there is expected until W8 is fixed).
 
 ### The pacing rule, learned by hitting it
 
@@ -713,52 +1067,68 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 
 ### What is done
 
-**Scanning: 6 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`). Still open: **U1-U5, S1, T1**.
-**The DLL is fully scanned; everything left is C# and Lua.**
+**Scanning: 8 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2. Still open:
+**U3-U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
 
-**Fixing:** cluster (1) is 6 of 7 shipped (`5ef4c2b`, `c65fdfc`); A4 deliberately open. D5 shipped
-**F1, F3(a), F4, F6, F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21` (the last is the
-F4/F6 UI half, AOT-published and launch-checked). **Still open: F2, F5, F8, A4, U3, G7, U2.**
+**Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
+and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
+F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
+**Still open: W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs remain.
+U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
+(Note the ID collision: `U2`/`U3` are D1 findings in `Ubel.cpp`, *not* segment names.)
 
-### What U1 must do differently — the lens set changes
+### The C# lens set — as run in U1, with what it actually yielded
 
-The DLL segments audited memory safety. U1-U5 are **C#/Avalonia**, so reuse the workflow shape but
-swap the lenses:
+U1 ran these five and they are the right five for U2–U5, with one adjustment:
 
-- **AOT / trimming** — every reflection-shaped construct is a shipping bug that compiles fine
-  (CLAUDE.md's rule; `[JsonSerializable]` contexts, `[ObservableProperty]`, boxed `SelectedItem`).
-- **MVVM / binding lifetime** — event handlers never detached, `CollectionChanged` subscriptions
-  outliving a view, the `DataGrid` rules in [working-lessons.md](working-lessons.md) section 3.2.
-- **async / cancellation** — `Task.Run` over shared mutable state, `CancellationToken` ignored,
-  `async void`, UI-thread marshalling (working-lessons 3.4: `Microsoft.Data.Sqlite`'s `*Async` runs
-  synchronously and `ReadAsync` ignores the token).
-- **file / IO** — working-lessons 3.1: `File.ReadLines` cannot open a log our own process holds.
+| Lens | U1 yield | Note for U2 |
+|---|---|---|
+| `domain-correctness` | **the HIGH + 2 MED** | highest-value lens by a distance; keep it first |
+| `status-honesty` | 1 MED + 2 LOW | reliably productive; cluster ② is project-wide, not DLL-only |
+| `mvvm-lifetime` | 2 MED | productive, but **drop the "computed property never notifies" prompt** — measured clean, see U1's verified-independently note |
+| `async-cancel` | 1 MED + 2 LOW | productive |
+| `aot-trim` | **nothing** | the lens self-reported clean and its sweep re-ran clean. **Consider dropping it or folding it into another lens** for U2–U5 and spending the slot on a second `domain-correctness` pass with a different sub-scope |
 
-> **The skeptics get something the DLL segments never had: real test coverage.** ~3,500 C# tests
+> **The skeptics get something the DLL segments never had: real test coverage.** ~3,567 C# tests
 > compile these files, so "no test covers this" is not an available refutation and "a test asserts the
 > opposite" is now an available one. Tell the skeptics to look for the test — and remember the trap
-> from working-lessons 1.3: a green test can still miss the seam.
+> from working-lessons 1.3: a green test can still miss the seam. **U1's HIGH lives exactly there:**
+> `FieldValueConverterTests` pins `IsEditableType` in isolation while nothing covers
+> `PopulateMapContainerFields` or `CommitFieldEditAsync`, so the tested helper is fed a wrong address
+> by an untested caller. **Point the finders at seams, not at helpers.**
 
 ### How to run it
 
 Copy the scheduled-task prompt at `~/.claude/scheduled-tasks/audit5-segment-d4b/SKILL.md` and change
 the scope, line counts and lens list. It ran unattended in **its own session with its own quota**
 (14:31 -> commit 15:20, ~49 min) and survived a Claude Desktop re-login. The workflow script to clone
-is `audit5-seg-d5-fern-frieren-wf_39143753-6df.js` under the session's `workflows/scripts/` (5 finders
--> skeptic batches -> second lens on surviving HIGH/MED; it also logs a wipeout warning when a finder
-dies).
+is now **U1's** — `audit5-seg-u1-viewmodels-wf_0fbfa801-46d.js` under the session's
+`workflows/scripts/` — because it already carries the C# lens set, the test-coverage instruction to
+the skeptics, and the AOT-specific refutation guidance; the D5 script
+(`audit5-seg-d5-fern-frieren-wf_39143753-6df.js`) remains the C++ flavour. Both are 5 finders ->
+skeptic batches -> second lens on surviving HIGH/MED, and log a wipeout warning when a finder dies.
 
-**U1 scope** (from section 1): `LiveWalkerViewModel` 2900 + `PointerPanelViewModel` 999 +
-`ObjectTreeViewModel` 360 early lines = **~4,259**. Note `LiveWalkerViewModel` was edited 2026-08-14
-for D5/F6 — that edit is new code, not early code.
+**U3 scope** (from section 1): dump services + MainWindow VM — 1517 + 437 + 1366 early lines =
+**~3,320**. `MainWindowViewModel` is the composition root and command surface, so the U1 lens set
+(mvvm-lifetime / async-cancel / domain-correctness / status-honesty) fits it better than U2's emitter
+lenses did. Keep U2's **round-trip instinct** though: ask of every dump artifact whether anything ever
+reads back what was written.
 
-**Put in every agent prompt** (measured to improve output): the calibration — *117 raw claims, 65
-refuted (56%), all ten claimed HIGHs died* — plus *"read the surrounding comments and the callers
-first"* (five of D4b's nine refutations were won by finding a comment naming the defect the code
-already prevents), and **REPORT ONLY, no edits**.
+**What U2 proved about lens choice, carry it forward:** `aot-trim` was dropped for U2 (it found
+nothing in U1) and nothing was lost. `domain-correctness`/`pointer-chain` and `status-honesty` were
+the two productive lenses in both C# segments — weight them, and give one lens the *consumer's*
+point of view (in U2 that was "does the artifact parse in the tool that reads it", which produced
+both HIGHs).
+
+**Put in every agent prompt** (measured to improve output): the calibration — *156 raw claims, 75
+refuted (**25–73% per segment**, ~48% overall; the two C# segments are the two lowest at 33% and 25%),
+eighteen HIGHs claimed, fifteen died and three were real* — plus *"read the surrounding comments and
+the callers first"* (five of D4b's nine refutations were won by finding a comment naming the defect
+the code already prevents), the **seam** instruction above, and **REPORT ONLY, no edits**.
 
 **Do not re-derive:** everything already in sections 2 and 3, especially D5's `Fern.cpp` /
-`Frieren.cpp` findings and the six shipped D5 fixes.
+`Frieren.cpp` findings, the six shipped D5 fixes, U1's eleven findings + six refutations (V1/V2/V5
+now fixed), and U2's eight findings + four refutations.
 
 ### One tree, two sessions
 
@@ -818,8 +1188,9 @@ be the default for any DLL fix:
 
 ## 4. Cross-segment rollup — read this before fixing anything
 
-**Status: 6 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5). **49 distinct findings: 0 HIGH ·
-28 MEDIUM · 20 LOW · 1 INFO.** 117 raw claims, **65 refuted (56%)**. Remaining: U1–U5, S1, T1.
+**Status: 8 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5, U1, U2). **68 distinct findings:
+3 HIGH · 39 MEDIUM · 25 LOW · 1 INFO.** 156 raw claims, **75 refuted (48%)**. Remaining: U3–U5, S1, T1.
+**The DLL is fully scanned; everything left is C# and Lua.**
 
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
 |---|--:|--:|--:|--:|---|
@@ -829,25 +1200,47 @@ be the default for any DLL fix:
 | D4a Macht | 10 | 9 | 5 (56%) | 3 | 0 → 0 |
 | D4b Mimic+Sein+Stark+Lugner | 11 (+5 lost) | 18 | 9 (50%) | 9 | 0 → 0 |
 | D5 Fern+Frieren | 14 | 19 | 11 (58%) | 8 **+1** ¤ | 1 → **0** |
+| U1 LiveWalker+Pointer+ObjectTree | 16 | 19 | 6 (33%) | 11 | 1 → **1** |
+| U2 export services | 21 | 20 | 4 (25%) | 8 | 7 → **2** ◊ |
 
 ¤ **D5's section holds 9 rows but its run produced 8** — F8 came from verifying F6, not from a
 finder (same as D2's G7 below).
+
+◊ **U2's seven HIGH claims collapse to two distinct findings.** Four were the same USMAP
+version/layout desync seen through different lenses, one was downgraded to MEDIUM by the second lens.
+The Distinct column counts findings, not claims.
 
 ✦ **D2's section holds 7 rows but its run produced 6.** G7 did not come from any finder — it was
 found during the 2026-08-14 live-verification session and filed into the D2 section because that is
 where it belongs by subject. The Raw/Refuted columns describe the *runs*; the totals above count
 *rows*, so the two reconcile only through this row. (Counted directly: `grep -cE '^\| \*\*[A-Z]+[0-9]+\*\*'`
-over §2 = **49**, of which 28 MED / 20 LOW / 1 INFO. Re-derive it rather than trusting the table.)
+scoped to §2 = **68**, of which 3 HIGH / 39 MED / 25 LOW / 1 INFO. Re-derive it rather than trusting
+the table — and **scope the grep to §2**, because over the whole file it also catches §4's cluster
+tables and returns 71. ⚠ The severity column does **not** parse uniformly: five rows carry a footnote
+marker between the ID and the severity (`G7` †=LOW, `PX1` ‡=MED, `MB3` †=INFO, `F1` ‡=MED, `F8` ¤=MED),
+so a regex expecting `| **ID** | SEV` silently drops them; allow an optional marker (`(?: ✅| †| ‡| ¤)?`) and all 68 parse.)
 
-**Ten HIGHs were claimed across the audit and every one died** — D5's lone HIGH was cut to MEDIUM by
-its own skeptic, and D3/D4a/D4b claimed none at all, which is the calibration working rather than the
-code improving. Two things follow: severities from a finder are worthless before refutation, and —
-since the surviving 49 are all MED/LOW/INFO — *nothing found so far is an emergency*. Fix by cluster,
-not by walking the list.
+**Eighteen HIGHs have been claimed across the audit; fifteen died and three are real** — and all
+three real ones are in the **C# UI**, none in the DLL. For six segments the rule "every claimed HIGH
+dies" held and the conclusion drawn was that *nothing found so far is an emergency*. U1/V1 ended that
+(a user-initiated write of the wrong bytes to a live game process; **fixed**, build 2830), and U2 added
+two more: **W1**, a shipped export that has never once produced a parseable file, and **W2**, an SDK
+header whose every derived class has the wrong `offsetof`. The surviving half of the old lesson:
+severities from a finder are still worthless *before* refutation — U2 claimed seven HIGHs that collapse
+to two. The dead half: "nothing here is urgent" is no longer a safe default for the C# side.
 
-**The refutation rate has been stable at ~50–58% for five of the six segments** (D2's 73% is the
-outlier). Treat "about half of what a finder says is wrong" as this codebase's working constant when
-budgeting a segment.
+**Why the HIGHs cluster in the UI and not the DLL is worth understanding, because it predicts where
+U3–U5 will hurt.** The DLL's output is consumed by our own UI, which is exercised constantly. The UI's
+export output is consumed by *other programs* — Cheat Engine, a C++ compiler, a `.usmap` parser — that
+nothing in this project runs. A defect there produces a successful-looking export and is discovered
+only by a user, if ever. W1 went undetected for 5½ months.
+
+**The refutation rate is 25–73% across eight segments and is NOT a constant — and it is TRENDING
+DOWN as the audit moves into C#.** The six DLL segments sat at ~44–73%; U1 came in at 33% and U2 at
+**25%**, the two lowest. Two things move it, and they point the same way: the C# skeptics are the first
+with **real test coverage** to refute *with* (their kills are visibly better argued), and the C# code
+under audit is genuinely denser in real defects because its output is validated by programs we never
+run. Quote the range to finders, not a constant, and do not budget U3–U5 on the DLL's ~50%.
 
 ### The clusters, in the order worth fixing
 
@@ -881,6 +1274,19 @@ for the *composition*, not the parts** — that is precisely why none of this wa
 `dll_helpers_test` cases and every PDB-verified data point in the tree happen to land on multiples
 of 8, so none of them discriminates.
 
+> ✅ **The C# half shipped in build 2830 — but read why it was ever separate.** `5ef4c2b`'s
+> two-argument, alignment-aware `ComputeSetElementStride` was applied to the DLL and to **none of the
+> three C# copies of the same formula** (U1/**V2**), each still carrying a doc comment asserting that
+> it mirrored the DLL. Five map call sites disagreed with the engine by 4+ bytes per element past
+> index 0. **Closing cluster ① on the DLL alone had re-opened cluster ④.**
+>
+> The repair was deliberately *not* a fourth copy of the alignment maths: the DLL now publishes the
+> stride it already computed (`Ubel.cpp` walk sites) as `map_stride` / `set_stride`, and
+> `Core/ContainerGeometry.cs` is the only client-side consumer. All three mirrors are deleted. **The
+> standing rule this leaves behind: any fix to a layout computation must start with a `grep` for the
+> formula across BOTH languages** — and where the input is an engine fact the wire does not carry
+> (an alignment, a size), the answer is to send the number, not to re-derive it.
+
 **② A reported status computed by a different path than the reality.** This is **audit #4's own 4a
 root cause recurring in older code**, which is evidence it is a habit of this codebase rather than a
 one-off: D2/**G1** (`bOffsetsValidated = true` while probes failed), D3/**A6** (Property Search
@@ -893,6 +1299,26 @@ happened). **D5 makes this the largest cluster (8 members) and the one with the 
 F4 is the exact shape behind four "the scan missed my field" reports, and its fix is the cheapest in
 the audit — Fern can detect the cap locally, since `SearchProperties` stops *exactly* at `maxResults`.
 
+**U2 adds the cluster's most extreme member and a new sub-shape.** U2/**W8** is the familiar one — a
+USMAP export silently drops every Blueprint-generated class (thousands on a normal title) and reports
+nothing. But U2/**W1** is the shape at its limit: there is no wrong *status* at all, because the export
+reports success and writes a file no consumer can open. **Once the artifact leaves the process, "did
+it work?" stops being a question our code can answer** — so this cluster's export members need a
+different fix from its DLL members: not a corrected count, but a round-trip read-back of what was
+just written.
+
+**U1 shows the cluster is not a DLL habit — it is a project-wide one, and the UI half is worse in one
+specific way: the DLL at least *computes* a status, while the UI computes one and then fails to
+render it.** Four new members, all client-side: U1/**V7** (refresh failure, timeout included, routed
+to `ErrorMessage` — a property the panel's XAML **never binds** — so a dead refresh is pixel-identical
+to a live one and stale values keep rendering), U1/**V6** (`SearchMatchCount` and the ↑/↓ buttons keep
+advertising N matches after a refresh silently dropped every highlight), U1/**V8** (a container
+truncated at `arrayLimit=128` renders as complete; the warning helper exists and is wired into exactly
+one unrelated path), U1/**V11** ("Register symbol" produces identical UI on success and failure —
+the `bool` reaches only `_log`). **V8 is F4's exact twin one layer up**, which means the truncation
+cluster now has a DLL end *and* a UI end and should be fixed as one story: the DLL reporting the cap
+buys nothing while the panel that receives it has no place to show it.
+
 **③ A cache keyed by an address the engine recycles, never invalidated** — D1/**U4**, **U5**, **U6**
 (Ubel's class + name caches), D3/**A10** (Aura's per-class metadata), D5/**F3** (the *purge* half of
 the same name cache: its only two purge sites are `begin_snapshot` and `trigger_scan`, neither
@@ -904,8 +1330,23 @@ one-line `Ubel::ClearNameCache()` in Fern's `if (last)` teardown, which is a fix
 
 **④ Layout knowledge duplicated instead of derived** — D1/**U2** (FName width hardcoded 8 while
 `Ubel.cpp:126` and five `Aura.cpp` sites derive it), D1/**U8** (FName `Number` open-coded three times,
-dropped in all three), D3/**A1** (a `>= 24` ternary that cannot express stride 20). In every case the
-correct derivation **already exists elsewhere in the tree**.
+dropped in all three), D3/**A1** (a `>= 24` ternary that cannot express stride 20), and now the two
+U1 members that make this the cluster with the worst recurrence record: U1/**V2** (the TSparseArray
+stride open-coded **three** times in C# and left behind when the DLL's copy was fixed — see the
+warning box in cluster ①) and U1/**V5** (`FilterContainerToElement` rebuilds a container field
+property-by-property and drops `MapValueOffset`, while the sibling clone at
+`CeXmlExportService.cs:1030` preserves it). U2 contributes the *partial-application* variant, where the
+helper is correct and some call sites simply bypass it: **W4** (`EscapeXmlContent` is applied to every
+`<Description>` and to no `<DropDownList>` — audit #4's B3 defect surviving at the one site B3 did not
+cover) and **W6** (`CeWidthForSize` is routed through by the Map and struct-array emitters but not by
+the enum array/set path).
+
+In every case the correct derivation **already exists elsewhere in the tree**. V2 proves the failure
+mode is not only "written twice originally" but "**fixed once, in one of the copies**"; W4 proves it is
+also "**fixed once, at one of the call sites**". A property-by-property clone (V5), a re-implemented
+formula (V2) and a skipped helper (W4/W6) are the same defect wearing different clothes — and the two
+durable repairs are to carry the value across the wire rather than recompute it, and to make the
+helper impossible to bypass rather than remember to call it.
 
 **⑤ Long loops that ignore `Tot::Requested()`** — D2/**G2**, D3/**A7**. Note the same claim was
 **refuted** against `Macht` (guards present), so this is a per-site fact, not a pattern to apply blind.
@@ -956,6 +1397,22 @@ alone leaves every *other* consumer of the blind offset wrong. **Both, G1 first.
   wrong. Never file the losing side as do-not-re-raise without checking.
 - **A segment whose refute pass dies has produced nothing.** Park it as UNVERIFIED and resume;
   the workflow's dead-skeptic fallback puts unrefuted claims in the `confirmed` array.
+- **Verify the segment's own headline yourself — the pipeline's confidence is not evidence.** U1's
+  HIGH had already passed a mandated skeptic *and* a second lens, which is exactly the state in which
+  ten previous HIGHs still turned out wrong. Re-deriving it by hand took ~5 tool calls, confirmed it,
+  and **found the finder had understated a sibling MEDIUM by 3×** (V2 reported one stale stride copy;
+  `grep` found three). Budget one hand-check per segment for the top item; it is the cheapest
+  quality step in the whole method.
+- **Pre-refute a whole claim category with a script when the category is mechanically decidable.**
+  Before U1's agents reported, a ~40-line scanner compared every expression-bodied computed property
+  in the three files against every `OnPropertyChanged(nameof(…))` / `[NotifyPropertyChangedFor]`, and
+  a **negative control** (deleting one known-historically-missing raise from a scratch copy) proved
+  the scanner could fail. That turned "does the UI go stale?" from a lens's opinion into a measured
+  zero — and it is reusable verbatim for U3/U5, which are also ViewModel-heavy.
+- **An absence needs its conditions recorded, in an audit finding as much as in a measurement.** The
+  `aot-trim` lens's clean result is only meaningful stated as *"no `Activator`/`MakeGeneric`/
+  `GetCustomAttribute`/reflective `Invoke` in these three files"* — which is why it is written that
+  way in §3 rather than as "AOT is fine".
 - **A clean empty result and a total wipeout are the same shape — check `<failures>` every time.**
   D4b's first launch lost all five finders to `API Error: 529 Overloaded` at **0 tokens and 0 tool
   calls each**, and the workflow still returned `{"confirmed": [], "refuted": [], "note": "no

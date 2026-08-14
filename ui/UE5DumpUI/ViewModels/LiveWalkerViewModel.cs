@@ -951,7 +951,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (parent is { IsContainerView: true, ContainerField: { } cf }
             && cf.MapCount > 0 && !string.IsNullOrEmpty(cf.MapKeyType))
         {
-            return cf.MapValueOffset > 0 ? cf.MapValueOffset : cf.MapKeySize;
+            return ContainerGeometry.MapValueOffsetOf(cf);
         }
         return 0;
     }
@@ -1317,7 +1317,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         ApplyPendingElementScroll();
     }
 
-    private void PopulateMapContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
+    // internal (not private) so a test can drive the real seam: the geometry bug this method
+    // carried (audit #5 V1) was invisible to every test that exercised the helpers in isolation.
+    internal void PopulateMapContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
     {
         var keyLabel = !string.IsNullOrEmpty(sourceField.MapKeyType) ? sourceField.MapKeyType : "?";
         var valLabel = !string.IsNullOrEmpty(sourceField.MapValueType) ? sourceField.MapValueType : "?";
@@ -1335,10 +1337,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (!string.IsNullOrEmpty(sourceField.MapDataAddr))
             ulong.TryParse(sourceField.MapDataAddr.Replace("0x", "").Replace("0X", ""),
                 System.Globalization.NumberStyles.HexNumber, null, out dataBase);
-        // Use aligned value offset if available (DLL computes alignment); fall back to key size
-        int valOffset = sourceField.MapValueOffset > 0 ? sourceField.MapValueOffset : sourceField.MapKeySize;
-        int pairSize = valOffset + sourceField.MapValueSize;
-        int stride = ComputeSetElementStride(pairSize);
+        // Geometry comes from the DLL (it is the only side that knows alignof(Key)/alignof(Value)),
+        // never from a client-side re-derivation — see ContainerGeometry.
+        int valOffset = ContainerGeometry.MapValueOffsetOf(sourceField);
+        int stride = ContainerGeometry.MapStrideOf(sourceField);
 
         // Check if value type is StructProperty with navigation metadata
         bool isStructValue = sourceField.MapValueType == "StructProperty"
@@ -1355,16 +1357,21 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var keyDisplay = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
             var valDisplay = !string.IsNullOrEmpty(elem.ValuePtrName) ? elem.ValuePtrName : elem.Value;
 
-            // Compute value struct address: entry start + aligned value offset
-            var valStructAddr = (isStructValue && dataBase != 0 && stride > 0)
-                ? $"0x{dataBase + (ulong)(elem.Index * stride) + (ulong)valOffset:X}" : "";
+            // Value's absolute address: entry start + aligned value offset.
+            ulong valAddr = ContainerGeometry.MapValueAddress(sourceField, dataBase, elem.Index);
+            var valStructAddr = (isStructValue && valAddr != 0) ? $"0x{valAddr:X}" : "";
 
             var f = new LiveFieldValue
             {
                 Name = $"[{elem.Index}] {keyDisplay}",
                 TypeName = sourceField.MapValueType,
                 Offset = elem.Index * stride,
-                Size = sourceField.MapKeySize + sourceField.MapValueSize,
+                // The row DESCRIBES THE VALUE: TypeName is the value's type and FieldAddress below
+                // is the value's address, so Size must be the value's size too. It used to be the
+                // whole pair, which reaches FieldValueConverter.TryConvert as the write length —
+                // a TMap<int32, enum4> pair of 8 made an enum edit write 8 bytes over a 4-byte
+                // value, clobbering the next element's key (audit #5 V1).
+                Size = sourceField.MapValueSize,
                 HexValue = !string.IsNullOrEmpty(elem.ValueHex) ? $"{elem.KeyHex} | {elem.ValueHex}" : elem.KeyHex,
                 TypedValue = $"{keyDisplay} \u2192 {valDisplay}",
                 // Enable → navigation for ObjectProperty values
@@ -1376,8 +1383,21 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 StructClassAddr = isStructValue ? sourceField.MapValueStructAddr : "",
                 StructTypeName = isStructValue ? sourceField.MapValueStructType : "",
             };
-            if (dataBase != 0 && stride > 0)
-                f.FieldAddress = $"0x{dataBase + (ulong)(elem.Index * stride):X}";
+            // FieldAddress is the VALUE's address, not the element base.
+            //
+            // A TPair stores the key FIRST, so the element base IS the key. Every consumer of
+            // FieldAddress on this row treats it as the row's TypeName — which is MapValueType:
+            // the inline editor writes there (CommitFieldEditAsync), "+CE" pushes it as a record
+            // typed from the value, the Hex button navigates there, and the Address column shows
+            // it. Publishing the element base aimed all four at the key, so an inline edit of a
+            // TMap<FName,int32> value wrote the user's 4 bytes over the FName key — silently
+            // corrupting the map in a live game (audit #5 V1).
+            //
+            // Offset deliberately stays the ELEMENT BASE offset: MapValueDrillOffset() adds
+            // valOffset back when a drill-down builds a breadcrumb, so adding it here as well
+            // would double-count it in every CE/CSX pointer chain.
+            if (valAddr != 0)
+                f.FieldAddress = $"0x{valAddr:X}";
             Fields.Add(f);
         }
         ApplyPendingElementScroll();
@@ -1469,7 +1489,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (!string.IsNullOrEmpty(sourceField.SetDataAddr))
             ulong.TryParse(sourceField.SetDataAddr.Replace("0x", "").Replace("0X", ""),
                 System.Globalization.NumberStyles.HexNumber, null, out dataBase);
-        int stride = ComputeSetElementStride(sourceField.SetElemSize);
+        int stride = ContainerGeometry.SetStrideOf(sourceField);
 
         // Check if element type is StructProperty with navigation metadata
         bool isStructElem = sourceField.SetElemType == "StructProperty"
@@ -1620,6 +1640,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 MapValueType = containerField.MapValueType,
                 MapKeySize = containerField.MapKeySize,
                 MapValueSize = containerField.MapValueSize,
+                // Geometry MUST survive the filter or the emitters silently fall back to a
+                // guess: MapValueOffset was already being dropped here while the sibling clone
+                // in CeXmlExportService preserved it, so exporting SELECTED map elements laid
+                // out differently from exporting the same map whole (audit #5 V5).
+                MapValueOffset = containerField.MapValueOffset,
+                MapStride = containerField.MapStride,
                 MapDataAddr = containerField.MapDataAddr,
                 MapKeyStructAddr = containerField.MapKeyStructAddr,
                 MapKeyStructType = containerField.MapKeyStructType,
@@ -1640,6 +1666,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 SetCount = containerField.SetCount,
                 SetElemType = containerField.SetElemType,
                 SetElemSize = containerField.SetElemSize,
+                SetStride = containerField.SetStride,
                 SetDataAddr = containerField.SetDataAddr,
                 SetElemStructAddr = containerField.SetElemStructAddr,
                 SetElemStructType = containerField.SetElemStructType,
@@ -1698,16 +1725,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             or "DelegateProperty"
             or "MulticastDelegateProperty" or "MulticastInlineDelegateProperty"
             or "StructProperty";
-
-    /// <summary>
-    /// Compute TSparseArray element stride: AlignUp(elemSize, 4) + 8.
-    /// Mirrors Mem::ComputeSetElementStride in the DLL and CeXmlExportService.
-    /// </summary>
-    private static int ComputeSetElementStride(int elemSize)
-    {
-        int hashStart = (elemSize + 3) & ~3;
-        return hashStart + 8;
-    }
 
     /// <summary>
     /// Detect fields whose container element count exceeds the loaded element count.
@@ -3679,8 +3696,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 && !string.IsNullOrEmpty(container.MapValueStructAddr))
             {
                 ulong dataBase = ParseHexAddr(container.MapDataAddr);
-                int valOffset = container.MapValueOffset > 0 ? container.MapValueOffset : container.MapKeySize;
-                int stride = ComputeSetElementStride(valOffset + container.MapValueSize);
+                int valOffset = ContainerGeometry.MapValueOffsetOf(container);
+                int stride = ContainerGeometry.MapStrideOf(container);
                 if (dataBase != 0 && stride > 0)
                     return ($"0x{dataBase + (ulong)(index * stride) + (ulong)valOffset:X}",
                             container.MapValueStructAddr);
@@ -3699,7 +3716,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 && !string.IsNullOrEmpty(container.SetElemStructAddr))
             {
                 ulong dataBase = ParseHexAddr(container.SetDataAddr);
-                int stride = ComputeSetElementStride(container.SetElemSize);
+                int stride = ContainerGeometry.SetStrideOf(container);
                 if (dataBase != 0 && stride > 0)
                     return ($"0x{dataBase + (ulong)(index * stride):X}", container.SetElemStructAddr);
                 return null;
@@ -4646,6 +4663,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             // Get the superclass name from the first breadcrumb's class info if available
             var superName = "";
+            var superPropsSize = 0;
             if (Breadcrumbs.Count > 0)
             {
                 var bc = Breadcrumbs[^1];
@@ -4655,6 +4673,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     {
                         var classInfo = await _dump.WalkClassAsync(bc.ClassAddr);
                         superName = classInfo.SuperName;
+                        // Where this class's own properties start — without it the header
+                        // re-declares every inherited property (audit #5 W2).
+                        superPropsSize = classInfo.SuperPropertiesSize;
                     }
                     catch
                     {
@@ -4672,7 +4693,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
 
             var header = SdkExportService.GenerateClassHeader(
-                CurrentClassName, superName, propsSize, Fields.ToList());
+                CurrentClassName, superName, propsSize, Fields.ToList(),
+                fullPath: null, superPropsSize: superPropsSize);
 
             await File.WriteAllTextAsync(filePath, header);
 

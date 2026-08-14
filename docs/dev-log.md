@@ -22,6 +22,275 @@ builds ≤696 in
 
 -----
 
+## 2026-08-14 - A 1-byte enum array was exported as 4-byte CE records, so each one ate the next three elements (build 2857)
+
+**Audit #5 segment U2 fix W6**, and with it the last of the segment's partial-application defects.
+
+`MapInnerTypeToCeField` mapped `EnumProperty` to a hardcoded CE type of `"4 Bytes"`, but element
+**addresses** are laid out with the DLL's real `ArrayElemSize` / `SetElemSize` — 1 for the standard
+`enum class : uint8`. So a `TArray<ECharacterState>` produced records spaced one byte apart, each
+reading four bytes: element 0's record swallowed elements 1–3, and every value in the pasted table
+was wrong in a way that still looked like a plausible number.
+
+### The fix is the signature, not the branch
+
+The rule was already known — and already *written down* at the site that got it right:
+
+> *"Enum width follows the sub-field's real byte size (a 1-byte enum must NOT be read as 4 bytes —
+> that pulls in the next field's bytes)."*
+
+It was applied at three of five call sites (struct sub-fields, map key, map value) via a caller-side
+ternary, and the TArray and TSet element paths simply did not have it. Adding a fourth copy of the
+ternary would have left the sixth call site free to forget it again, so instead
+`MapInnerTypeToCeField` now **requires** the element size and applies the rule itself. All five sites
+get it by construction, and the duplicated ternaries are gone.
+
+Two mappings are deliberately **not** size-driven, and are now documented as such so a later reader
+does not "fix" them: `NameProperty` stays 4 bytes because the record shows the FName
+`ComparisonIndex` paired with a DropDownList of names rather than the whole 8- or 16-byte FName, and
+the pointer flavours stay 8 regardless of stride.
+
+### Negative control
+
+Reverting the width to a hardcoded `"4 Bytes"` fails three tests: the two new byte-wide array/set
+tests **and a pre-existing struct-sub-field test**. That last one is the useful part — it confirms
+the refactor preserved the behaviour that test was already pinning, rather than merely satisfying
+assertions written alongside the change. 3590 tests, 0 failed.
+
+-----
+
+## 2026-08-14 - The .usmap export declared one format and wrote another, and had never produced a readable file (build 2853)
+
+**Audit #5 segment U2 fixes W1 (HIGH) and W7.** W7 came along because W1's deliverable does not work
+without it: a name index past the end of the table corrupts the very file the version fix exists to
+make openable.
+
+This was never a regression. `git log -S` shows the `Version` constant has exactly one commit in the
+file's history — its creation, `7f91295`, 2026-03-01 — and the string `bHasVersion` had never
+appeared in any revision. The menu item shipped for 5½ months and could not once have written a
+header a consumer would accept.
+
+### The version now describes the bytes
+
+The writer stamped `Version = 3` and emitted the version-0 body. Three independent desyncs followed,
+and the first one lands before a single name is read:
+
+- **`int32 bHasVersionInfo` was missing.** Any version ≥ `PackageVersioning` (1) must carry it. A
+  reader consumes four bytes there, so it ate the low bytes of the payload size and threw.
+- **Enum member counts were `uint8`** where ≥ `LargeEnums` (3) requires `uint16` — and the `uint8`
+  also silently truncated any enum past 255 members.
+- **ArrayDim was a hardcoded 2-byte `0`** where the format says one byte, so every struct's first
+  property slid the stream by one, and a `0` additionally tells a reader to register no schema slots.
+
+It now emits **v4 (ExplicitEnumValues)**, the version both vendored canonical writers produce, with
+each member's `int64` value so an enum with gaps is no longer flattened to `0..N-1`. v4 rather than
+"the cheapest v2" because the writer already emitted `uint16` name lengths (it can never go below 2)
+and because the `uint16` count removes the 255-member truncation. The CEXT extensions block is
+deliberately not written — Dumper-7 emits v4 without one, so it is optional.
+
+A fourth fix, quieter but the same class: a struct's two counts are genuinely different numbers — the
+first is the sum of every property's ArrayDim (a static array `Foo[4]` occupies four schema slots),
+the second is how many property records follow. Both were `Fields.Count`.
+
+### W7 — the name table can no longer be extended behind the file's back
+
+The table's length is written once, up front, but the write pass resolved struct/enum references
+through a `GetIndex` that fell through to `GetOrAdd` and **appended**, handing out an index past the
+end of the table the file had already declared. `"None"` is now pre-registered, the write pass may
+only use a non-appending `IndexOf`, and `NameTable.Seal()` makes any later `GetOrAdd` throw. The
+invariant is enforced by the type instead of remembered by the caller.
+
+### The real deliverable is the round-trip reader
+
+`UsmapFile.Parse` in the tests reads the file the way a consumer does, at the widths the canonical
+writers define, and asserts **the stream is fully consumed** and every name index is in range.
+
+That is exactly what the old tests could not do. All five skipped a hardcoded 12-byte header and read
+each field at the width the *writer* happened to use — so they encoded the bug rather than checking
+it, and stayed green for 5½ months. Five were rewritten onto the reader and four added: a full
+round-trip over every container shape, static-array slot counting, a 300-member enum, and an
+unregistered struct name.
+
+Negative controls were run one per sub-fix, each reverted alone: removing `bHasVersionInfo` fails 9
+tests, restoring the `uint8` enum count fails 3, restoring the 2-byte ArrayDim fails 4, and
+un-registering `"None"` fails 1. The reader is therefore checking the canonical layout rather than
+mirroring the writer. 3587 tests, 0 failed.
+
+⬜ Still unverified against a real consumer: the round-trip proves self-consistency at the vendored
+writers' widths, but nobody has opened the output in FModel yet. Filed in [todo.md](todo.md).
+
+-----
+
+## 2026-08-14 - The SDK header re-declared everything it inherited, and gave each packed bool its own byte (build 2842)
+
+**Audit #5 segment U2 fixes W2 (HIGH) and W3.** One commit: both live in the same emitter and the
+same layout cursor, and W3's byte accounting is only observable once W2 stops flooding the struct
+with inherited members.
+
+### W2 — every derived class had the wrong `offsetof`
+
+`Ubel::WalkClass` deliberately prepends the **entire** SuperStruct chain to its field list, and
+nothing between the DLL and the SDK emitter filtered it out. The emitter's own comment said "skip
+fields below the superclass boundary", but the code only moved the padding cursor — the loop still
+emitted every inherited property. So `struct BP_Player_C : public AActor` re-declared all of AActor's
+properties inside a struct that already inherits them. That compiles, which is why nobody noticed;
+it just silently lays the struct out wrong from the first member onward.
+
+The boundary is now **sent, not guessed**: `walk_class` gained `super_props_size`, read in
+`Ubel::WalkClass` where `SuperClass` is already resolved. Nothing else in the reply implies it, so a
+client can only heuristic its way there — the same situation as `map_stride` two builds ago, and the
+same answer: *where the input is an engine fact the wire does not carry, send the number.* The old
+first-field heuristic survives only as a fallback for an older DLL, and is now documented as one,
+because it mis-splits silently when a derived class adds no properties of its own.
+
+### W3 — N packed bools consumed N bytes instead of one
+
+UE packs `uint8 bX:1` flags into a shared byte; they arrive at the same offset with Size 1. The
+emitter wrote a whole `bool` for each and advanced the cursor by Size every time, so eight flags took
+eight bytes instead of one. Padding could not compensate — it is only emitted when the next field's
+offset is *ahead* of the cursor, and by then the cursor had overshot. Every later member, and the
+trailing `// Size:` comment, was displaced.
+
+They are now emitted as `uint8_t Name : 1` at their **true bit positions**, with unnamed fillers for
+the bits UE left unused, so bit N in the game is bit N in the header. A native `bool` (FieldMask
+`0xFF`) keeps its byte, and so does an unresolved mask (`0`) — an unknown must never be allowed to
+rewrite the layout.
+
+### Both duplicated loops are gone
+
+The schema and live emitters carried byte-identical member-emit loops, and therefore carried both
+defects. They now project into a single `SdkField` record and share one `EmitStructBody`. Fixing this
+in two places is how it would have drifted apart again — the same lesson as the three stride mirrors.
+
+### One pre-existing test was changed, deliberately
+
+`GenerateClassHeader_BoolBitfield_EmitsComment` asserted `bool bHidden;` for a field with
+`BoolFieldMask = 0x04` — a single-bit mask, i.e. precisely the packed bitfield W3 is about. Its name
+and its second assertion show it was written for the *mask comment*; the declaration form was
+incidental and pinned the defect. The mask assertion is untouched; the declaration assertion now
+expects the bitfield. The arithmetic behind that call: with **one** bool the struct size is identical
+either way, but the bit position was wrong (bit 0 instead of bit 2) — and with several bools the size
+itself breaks, which the new eight-bool test demonstrates.
+
+Negative controls were run **separately** so each fix is independently guarded: reverting only the
+bitfield grouping turns exactly the two W3 tests red; reverting only the inherited-field filter turns
+exactly the one W2 test red. Restored and re-confirmed: 3583 tests, 0 failed.
+
+⬜ The unit tests drive the real emitters end-to-end, but the boundary *value* now comes from the DLL
+and no headless check has yet read a real `super_props_size` off a live class — filed in
+[todo.md](todo.md).
+
+-----
+
+## 2026-08-14 - One '&' in a game string could reject an entire pasted cheat table (build 2836)
+
+**Audit #5 segment U2 fix W4.** `<Description>` text has been XML-escaped since audit #4 B3, because
+a single `&` anywhere in a multi-thousand-entry export makes the document malformed and Cheat Engine
+rejects **all** of it, with no indication which record was at fault. The `<DropDownList>` body — the
+*other* place a game-derived string reaches the XML — was never covered.
+
+Its content is built from live `FName` entries, enum member names and formatted container element
+values, then interpolated raw. A stock `TArray<FName> Tags` holding a designer-typed `Bow & Arrow` is
+enough. So is a `TMap<int32, FName>`, whose values are routed into a dropdown rather than a
+description.
+
+Escaping now happens inside `BuildDropDownContent`, which is the single choke point: all six call
+sites — including the cached `_dropDownOwners` link path — build their body there, and both
+`<DropDownList>` emit sites interpolate that body.
+
+**The fix has two halves and the second is the one well-formedness cannot catch.** Metacharacters go
+through the same `EscapeXmlContent` the Descriptions use. But the body is also **line-delimited**, so
+a CR/LF inside a game string forges an extra dropdown row and shifts every following one *without*
+making the document malformed. `CollapseLineBreaks` flattens those to spaces.
+
+### Why five existing escaping tests did not catch it
+
+`CeXmlEscapingTests` was written for B3 and every one of its five tests puts the game string in a map
+**key** — which lands in `<Description>`. Nothing in the suite reached the dropdown path, so it passed
+throughout. The four new tests go through a `TMap<int32,FName>` to reach it, and they live in that
+same file on purpose: the file is the record of what "the export must survive arbitrary game text"
+means, and it was incomplete.
+
+Verified with a negative control rather than a green run: reverting the fix turns all four red, each
+for its own reason — `&` gives *"error parsing EntityName"*, `<` gives *"Name cannot begin with ' '"*
+(the parser started reading a tag), and the newline test fails **with no XmlException at all**, which
+is precisely why that half needed its own handling. 3579 tests, 0 failed.
+
+Still open in the same emitter and the same family: **W6**, where `CeWidthForSize` is bypassed by the
+enum array/set path — the other partial-application defect U2 found.
+
+-----
+
+## 2026-08-14 - The map row that was editing its own key, and a formula the DLL had already fixed for itself (build 2830)
+
+**Audit #5 segment U1 fixes V1 (the audit's only surviving HIGH), V2 and V5.** One commit, because
+the three are one subsystem and not independently correct: V1's write address is computed *from*
+V2's stride, so shipping V1 alone would have aimed a corrected offset off a wrong base.
+
+### V1 — a TMap element row was inline-editable, and its address was the KEY
+
+A `TPair` stores its key first, so a map element's base address *is* the key. `PopulateMapContainerFields`
+built each row with `TypeName = MapValueType` — which makes any scalar-valued map pass
+`FieldValueConverter.IsEditableType` — while setting `FieldAddress` to that element base. Every
+consumer of `FieldAddress` on such a row acts on the row's declared type: the inline editor writes
+there, "+CE" pushes it as a record typed from the value, the Hex button navigates there, the Address
+column shows it. So editing a `TMap<FName,int32>` value wrote the user's four bytes over the FName
+key — silently corrupting the map in a live game, and every later lookup of that entry missing.
+
+The correction was already known to the file: `MapValueDrillOffset`'s doc comment states it outright,
+and it was applied at exactly one call site (`NavigateToFieldAsync`'s `navOffset`) while the edit and
+export consumers were not. Rows now carry the value's address.
+
+**A second half the finding did not name:** the row also reported `Size = MapKeySize + MapValueSize`,
+and `Size` reaches `TryConvert` as the **write length** — so a `TMap<int32, enum4>` would have written
+8 bytes over a 4-byte value even once the address was right. A row now describes the value in all
+three respects: type, address, size. `Offset` deliberately stays the element base, because
+`MapValueDrillOffset` adds the value offset back when a drill-down builds a breadcrumb.
+
+### V2 — three C# copies of a formula the DLL had already corrected
+
+Build 2554's cluster ① fix (`5ef4c2b`) replaced `ComputeSetElementStride` with an alignment-aware
+`Align(Align(elemSize, alignof(T)) + 8, alignof(T))` — **in the DLL only**. The same formula existed
+in three C# files (`LiveWalkerViewModel`, `CeXmlExportService`, `CsxExportService`), each carrying a
+doc comment claiming it mirrored the DLL. All three stayed on `Align(elemSize,4)+8`, so across five
+map call sites the grid's key→value *text* was right (the DLL read it) while every map element
+address the UI computed *itself* was 4+ bytes short past index 0: Address column, struct-drill target,
+the breadcrumb offset feeding CE chains, and the CE-XML / CSX exports. TSet was unaffected — a bare
+`elemSize` is already a multiple of `alignof(T)`, so the DLL's `elemAlign` default of 4 reproduces
+the old behaviour exactly.
+
+**The fix is not a fourth copy of the arithmetic.** The stride needs `alignof(Key)`/`alignof(Value)`,
+which are engine facts that never cross the wire — a client can only guess. So the DLL now publishes
+the stride it *actually used to read the elements* as additive wire fields `map_stride` / `set_stride`
+(set at all four `Ubel.cpp` walk sites), and one new `Core/ContainerGeometry.cs` is the only
+client-side consumer. All three mirrors are deleted; the old expression survives solely as
+`ContainerGeometry.FallbackStride`, documented as correct only for `alignof(T) <= 4` and reached only
+when the DLL supplied nothing. UI and DLL can no longer disagree, because there is one number.
+
+### V5 — the multi-select clone dropped the geometry
+
+`FilterContainerToElement` rebuilds a container field property-by-property for the "Copy CE Field(s)"
+path and omitted `MapValueOffset`, so exporting *selected* map elements laid out differently from
+exporting the same map whole. Fixed by carrying the geometry — which the V2 work made mandatory
+anyway, since a dropped `MapStride` would have sent that one path back to the guess.
+
+### Verified with a negative control, not just a green run
+
+8 new tests in `ContainerGeometryTests` (3575 total, 0 failed). Both fixes were then reverted in
+`ContainerGeometry.cs` and the suite re-run: **5 tests failed** — the helper, the seam
+(`PopulateMapContainerFields`, made `internal` so a test can drive the real populate path) and the
+clone — then the fix was restored and green re-confirmed. That ordering matters here: the pre-existing
+`FieldValueConverterTests` passed in *both* directions, because the helper was never the broken part.
+The bug lived in the caller that fed it an address, which is exactly the seam
+[working-lessons.md](working-lessons.md) §1.3 warns about.
+
+⬜ **In-game verification of the UI half is still owed** — see the entry in [todo.md](todo.md). The
+DLL half already has `DumperTest` witnesses; what no headless pipe check can see is client-side
+arithmetic, so the Address column / inline edit / CE record need a live look on a map whose pair
+alignment is 8 and whose pair size is not already a multiple of 8.
+
+-----
+
 ## 2026-08-14 - Two replies that reported work they had not done, and the feature that was empty all along (build 2818)
 
 **Audit #5 D5 fixes F4 and F6 — and F8, which the F6 fix immediately exposed.**

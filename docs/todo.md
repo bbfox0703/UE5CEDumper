@@ -1405,9 +1405,79 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-14 — open the exported .usmap in a real consumer (audit #5 W1/W7, build 2853)
+
+The `.usmap` export declared v3 and wrote the v0 body; it has been unopenable since the feature
+shipped on 2026-03-01. Now fixed to v4 with a round-trip reader in the test suite that asserts the
+stream is fully consumed at the widths the vendored canonical writers define.
+
+**What the round-trip cannot prove is that a real parser agrees with our reading of the format.**
+Both are derived from the same two sources (`vendor/RE-UE4SS/.../Generator.cpp`,
+`vendor/Dumper-7/.../MappingGenerator.cpp`), so a shared misreading would satisfy both.
+
+1. Export a `.usmap` from any connected game (**Export → USMAP**).
+2. Open it in **FModel** (Directory selector → *Mappings file*), or run it through CUE4Parse's
+   `UsmapParser` directly.
+3. Success criterion is not "no error" — it is that **property names and types appear for a class you
+   can independently verify**, e.g. `AActor`'s `bHidden` / `InitialLifeSpan`. A parser that accepted
+   the header and produced an empty or garbage table has still failed.
+4. Worth including a **Blueprint-generated** class in the check: `W8` (the bare `"Class"` filter that
+   drops every `*_C`) is **still open**, so a BP class legitimately will not be there yet — confirm
+   that is the reason rather than a parse failure.
+
+### ⬜ NEW 2026-08-14 — SDK header layout: inherited-property boundary + packed bitfields (audit #5 W2/W3, build 2842)
+
+Both fixes are unit-verified end-to-end against the real emitters, with separate negative controls.
+What no unit test can cover is the **boundary value itself**: `super_props_size` is a new
+`walk_class` field read off a live `UStruct`, and the tests supply it by hand.
+
+**Cheapest check — headless, no UI**, using the pipe recipe in
+[audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md#the-reusable-win-from-today--headless-in-game-verification):
+
+1. Inject into any game, then `walk_class` a **derived** class (anything `*_C`, or `AActor` itself).
+2. Assert `super_props_size` is **non-zero, less than `props_size`**, and equal to the `props_size`
+   the same command reports for `super_addr` when walked directly. That last equality is the real
+   check — it is the only one that would catch the offset being read off the wrong struct.
+3. Confirm the lowest-offset field in `fields` is **below** `super_props_size` (i.e. the reply really
+   does carry inherited properties, so the filter has something to do). A run where every field is
+   already ≥ the boundary proves nothing — it is the absence-shaped result
+   [working-lessons.md](working-lessons.md) §1.2 warns about.
+
+**Then the UI half**: export an SDK header for that class and check the struct opens at the super's
+size, declares none of the base's properties, and that a class with packed bools (`AActor` has a
+replication-flag block) emits `uint8_t bX : 1` runs whose byte count matches the gap to the next
+field.
+
 ### 🔴 NEW 2026-08-14 — TMap element geometry: pair padding + struct alignment + free-slot count (audit #5 M1/M2/M3)
 
 Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.
+
+> ### ⬜ 2026-08-14 — the UI half (build 2830) is NOT yet verified in-game
+>
+> The ✅ table below is **correct and narrower than it looks**: it verifies that the *DLL* reads map
+> elements at the right stride. Audit #5 segment **U1/V2** then found the same formula in **three C#
+> copies that `5ef4c2b` did not update**, so the key→value *text* in the grid was right (the DLL read
+> it) while every map element **address the UI computed itself** was short by 4+ bytes past index 0.
+> Alongside it, **U1/V1** (the audit's only surviving HIGH) had map rows publishing the element base —
+> the **key** — as the address the inline editor writes to.
+>
+> **Fixed in build 2830**: the DLL now publishes `map_stride` / `set_stride`, `Core/ContainerGeometry.cs`
+> is the single client-side consumer, all three mirrors are deleted, and a map row's type/address/size
+> all describe the value. Unit-verified with a negative control (reverting the fix turns 5 tests red,
+> including the seam test).
+>
+> **What still needs a live process** — the DLL half already has witnesses below; this is the **UI**
+> half, which no headless pipe check can see because it is client-side arithmetic:
+>
+> | Check | On a `TMap<AActor*,float>`-shaped field (8-aligned key, 4-byte value) | Expect |
+> |---|---|---|
+> | Address column | drill into the map, read element **[1]**'s Address | `MapDataAddr + 24 + 8`, **not** `+20`, and **not** the element base |
+> | Inline edit | edit element [1]'s value, then Refresh | the **value** changes; the key text is unchanged |
+> | CE record | "+CE" on element [1] | CE shows the value, and freezing it does not corrupt the key |
+>
+> `DumperTest`'s `Map_I64ToI32` / `Map_StrToInt` already exercise the DLL side; the UI check wants a
+> map whose pair alignment is 8 and whose pair size is NOT already a multiple of 8, since that is the
+> only shape where the old and new strides differ.
 
 > ### ✅ FIVE OF SIX VERIFIED IN-GAME 2026-08-14 — DumperTest, UE 5.4 Development package
 >

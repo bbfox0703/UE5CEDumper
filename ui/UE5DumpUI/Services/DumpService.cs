@@ -340,6 +340,7 @@ public sealed class DumpService : IDumpService
             SuperAddress = classObj["super_addr"]?.GetValue<string>() ?? "",
             SuperName = classObj["super_name"]?.GetValue<string>() ?? "",
             PropertiesSize = classObj["props_size"]?.GetValue<int>() ?? 0,
+            SuperPropertiesSize = classObj["super_props_size"]?.GetValue<int>() ?? 0,
         };
 
         if (classObj["fields"] is JsonArray fields)
@@ -1417,10 +1418,12 @@ public sealed class DumpService : IDumpService
             MapValueStructAddr = fo["map_value_struct_addr"]?.GetValue<string>() ?? "",
             MapValueStructType = fo["map_value_struct_type"]?.GetValue<string>() ?? "",
             MapValueOffset = fo["map_value_offset"]?.GetValue<int>() ?? 0,
+            MapStride = fo["map_stride"]?.GetValue<int>() ?? 0,
             MapElements = ParseContainerElements(fo["map_elements"]),
             SetCount = fo["set_count"]?.GetValue<int>() ?? -1,
             SetElemType = fo["set_elem_type"]?.GetValue<string>() ?? "",
             SetElemSize = fo["set_elem_size"]?.GetValue<int>() ?? 0,
+            SetStride = fo["set_stride"]?.GetValue<int>() ?? 0,
             SetDataAddr = fo["set_data_addr"]?.GetValue<string>() ?? "",
             SetElemStructAddr = fo["set_elem_struct_addr"]?.GetValue<string>() ?? "",
             SetElemStructType = fo["set_elem_struct_type"]?.GetValue<string>() ?? "",
