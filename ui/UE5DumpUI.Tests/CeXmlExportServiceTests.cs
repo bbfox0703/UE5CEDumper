@@ -5226,4 +5226,88 @@ public class CeXmlExportServiceTests
             IsContainerView = isContainerView,
         };
     }
+
+    // --- Enum element width follows the real element size (audit #5 W6) ---------
+    //
+    // Element ADDRESSES are laid out with the DLL's element size, so a CE record wider than the
+    // stride makes every element swallow the next ones. The rule was already applied to struct
+    // sub-fields and to map keys/values; TArray and TSet were left out.
+
+    [Fact]
+    public void GenerateInstanceXml_ByteWideEnumArray_EmitsByteRecords()
+    {
+        // TArray<ECharacterState> where ECharacterState : uint8 -> stride 1.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "States", TypeName = "ArrayProperty", Offset = 0x7D0, Size = 16,
+                ArrayCount = 3, ArrayInnerType = "EnumProperty", ArrayElemSize = 1,
+                ArrayInnerAddr = "0x5000",
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "2", RawIntValue = 2 },
+                    new() { Index = 1, Value = "0", RawIntValue = 0 },
+                    new() { Index = 2, Value = "5", RawIntValue = 5 },
+                },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        // A 4-byte record at 1-byte spacing would read elements 1..3 into element 0.
+        Assert.Contains("<VariableType>Byte</VariableType>", xml);
+        Assert.DoesNotContain("<VariableType>4 Bytes</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_FourByteEnumArray_StillEmitsFourByteRecords()
+    {
+        // The other half of the rule: a genuinely 4-byte enum must not be narrowed.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Modes", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+                ArrayCount = 2, ArrayInnerType = "EnumProperty", ArrayElemSize = 4,
+                ArrayInnerAddr = "0x5000",
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "1", RawIntValue = 1 },
+                    new() { Index = 1, Value = "2", RawIntValue = 2 },
+                },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("<VariableType>4 Bytes</VariableType>", xml);
+    }
+
+    [Fact]
+    public void GenerateInstanceXml_ByteWideEnumSet_EmitsByteRecords()
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Flags", TypeName = "SetProperty", Offset = 0x90, Size = 80,
+                SetCount = 2, SetElemType = "EnumProperty", SetElemSize = 1,
+                SetDataAddr = "0x9000",
+                SetElements = new List<ContainerElementValue>
+                {
+                    new() { Index = 0, Key = "1" },
+                    new() { Index = 1, Key = "3" },
+                },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        Assert.Contains("<VariableType>Byte</VariableType>", xml);
+        Assert.DoesNotContain("<VariableType>4 Bytes</VariableType>", xml);
+    }
 }

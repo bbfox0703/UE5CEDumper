@@ -22,6 +22,43 @@ builds ≤696 in
 
 -----
 
+## 2026-08-14 - A 1-byte enum array was exported as 4-byte CE records, so each one ate the next three elements (build 2857)
+
+**Audit #5 segment U2 fix W6**, and with it the last of the segment's partial-application defects.
+
+`MapInnerTypeToCeField` mapped `EnumProperty` to a hardcoded CE type of `"4 Bytes"`, but element
+**addresses** are laid out with the DLL's real `ArrayElemSize` / `SetElemSize` — 1 for the standard
+`enum class : uint8`. So a `TArray<ECharacterState>` produced records spaced one byte apart, each
+reading four bytes: element 0's record swallowed elements 1–3, and every value in the pasted table
+was wrong in a way that still looked like a plausible number.
+
+### The fix is the signature, not the branch
+
+The rule was already known — and already *written down* at the site that got it right:
+
+> *"Enum width follows the sub-field's real byte size (a 1-byte enum must NOT be read as 4 bytes —
+> that pulls in the next field's bytes)."*
+
+It was applied at three of five call sites (struct sub-fields, map key, map value) via a caller-side
+ternary, and the TArray and TSet element paths simply did not have it. Adding a fourth copy of the
+ternary would have left the sixth call site free to forget it again, so instead
+`MapInnerTypeToCeField` now **requires** the element size and applies the rule itself. All five sites
+get it by construction, and the duplicated ternaries are gone.
+
+Two mappings are deliberately **not** size-driven, and are now documented as such so a later reader
+does not "fix" them: `NameProperty` stays 4 bytes because the record shows the FName
+`ComparisonIndex` paired with a DropDownList of names rather than the whole 8- or 16-byte FName, and
+the pointer flavours stay 8 regardless of stride.
+
+### Negative control
+
+Reverting the width to a hardcoded `"4 Bytes"` fails three tests: the two new byte-wide array/set
+tests **and a pre-existing struct-sub-field test**. That last one is the useful part — it confirms
+the refactor preserved the behaviour that test was already pinning, rather than merely satisfying
+assertions written alongside the change. 3590 tests, 0 failed.
+
+-----
+
 ## 2026-08-14 - The .usmap export declared one format and wrote another, and had never produced a readable file (build 2853)
 
 **Audit #5 segment U2 fixes W1 (HIGH) and W7.** W7 came along because W1's deliverable does not work

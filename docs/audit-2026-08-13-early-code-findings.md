@@ -679,6 +679,28 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 > independent canonical writers sitting in this tree. That is the strongest evidence any segment of
 > this audit has produced, and it was available for free.
 
+> ### ✅ W6 FIXED — build 2857, 2026-08-14
+>
+> **The fix is the signature, not the branch.** `MapInnerTypeToCeField` now *requires* the element
+> size and applies the enum rule itself, so all five call sites get it by construction. Previously
+> each site had to remember a caller-side ternary — and three of five did (struct sub-fields, map
+> key, map value) while the TArray and TSet element paths did not.
+>
+> The rule was not merely known, it was **written down** at the site that got it right: *"a 1-byte
+> enum must NOT be read as 4 bytes — that pulls in the next field's bytes."* This is cluster ④'s
+> partial-application variant in its clearest form, and the reason the repair is a required parameter
+> rather than a fourth copy of the ternary is that a sixth call site would otherwise forget it too.
+>
+> Deliberately **not** size-driven, and documented as such so a later reader does not "fix" them:
+> `NameProperty` stays 4 bytes because the record shows the FName ComparisonIndex paired with a
+> DropDownList of names, not the whole 8/16-byte FName; the pointer flavours stay 8 regardless of
+> stride.
+>
+> **Negative control:** reverting the width to a hardcoded `"4 Bytes"` fails 3 tests — the two new
+> byte-wide array/set tests **and a pre-existing struct-sub-field test**, which is the useful part:
+> it confirms the refactor preserved the behaviour that test was already pinning rather than merely
+> satisfying new assertions. 3590 tests, 0 failed.
+
 > ### ✅ W1 and W7 FIXED — build 2853, 2026-08-14
 >
 > W7 came along because **W1's deliverable does not work without it**: a name index past the end of
@@ -789,7 +811,7 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 | **W3** ✅ | MED | `SdkExportService.cs:221` + `:382` | N `FBoolProperty` bitfields that UE packed into **one byte** are each emitted as a whole `bool` and the layout cursor advances by `Size` for each, so the struct grows N−1 bytes from that point. The emitter only pads when `offset > cursor`, so once the bools overshoot, **no padding can compensate** and every subsequent member — and the trailing `// Size:` — is shifted. | M / med |
 | **W4** ✅ | MED | `CeXmlExportService.cs:3522` + `:3586` (`BuildDropDownContent`) | `<DropDownList>` bodies are built from live FName / enum-name strings read out of game memory and interpolated **raw**, while every `<Description>` goes through `EscapeXmlContent`. One `&` in a `TArray<FName> Tags` entry (`Bow & Arrow`) makes the whole CheatTable malformed — and `EscapeXmlContent`'s own doc comment states the consequence: CE rejects the **entire document**, so a multi-thousand-entry export imports as nothing with no indication which record was at fault. This is audit #4's **B3 defect surviving at the one site B3 did not cover**. | S / low |
 | **W5** | MED | `CeXmlExportService.cs:2141` (`EmitDrilledPointer`) | The scalar pointer-drill branch gates on the broad `IsObjectPropertyType`, which includes `WeakObjectProperty` / `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty`, and emits `Offsets=[0]` for slots whose first 8 bytes are **not** a `UObject*` — a weak pointer is an index+serial pair. The array path has an explicit regression test against exactly this. (Claimed HIGH, cut to MEDIUM by the second lens.) | S / low |
-| **W6** | MED | `CeXmlExportService.cs:2665` (`MapInnerTypeToCeField`) | `EnumProperty` is hardcoded to CE type `"4 Bytes"` while element **addresses** are laid out with the DLL's real `ArrayElemSize`/`SetElemSize` (1 for the standard `enum class : uint8`), so CE reads 4 bytes at every 1-byte-spaced element. `CeWidthForSize` exists to fix precisely this and the Map and struct-array emitters already route through it. | S / low |
+| **W6** ✅ | MED | `CeXmlExportService.cs:2665` (`MapInnerTypeToCeField`) | `EnumProperty` is hardcoded to CE type `"4 Bytes"` while element **addresses** are laid out with the DLL's real `ArrayElemSize`/`SetElemSize` (1 for the standard `enum class : uint8`), so CE reads 4 bytes at every 1-byte-spaced element. `CeWidthForSize` exists to fix precisely this and the Map and struct-array emitters already route through it. | S / low |
 | **W7** ✅ | MED | `UsmapExportService.cs:323` | The name table is serialized first, from a snapshot of the pre-registration pass, but the struct-writing pass then calls `GetOrAdd(… : "None")` in four places. `"None"` is never pre-registered, so it is appended at index N **after** the file already declared exactly N names, and every affected property references an out-of-range index. | S / low |
 | **W8** | LOW | `UsmapExportService.cs:90` | The class collector accepts only `ClassName is "Class" or "ScriptStruct"`, so every `BlueprintGeneratedClass` / `AnimBlueprintGeneratedClass` / `WidgetBlueprintGeneratedClass` is silently dropped — on a normal shipped title that is thousands of classes vs a few hundred native ones. Both sibling exporters use the whitelist predicate, and `SdkExportService` carries a comment naming this exact bare-`"Class"` check as a bug fixed in DLL build 673. | S / low |
 
@@ -1031,9 +1053,9 @@ memory of the previous one.*
 > None needs code. The `.usmap` one matters most because our reader and our writer are derived from
 > the same two vendored sources, so a shared misreading of the format would satisfy both.
 >
-> **Still open from U2, none urgent:** W5 (weak/soft pointers drilled with `Offsets=[0]`), W6
-> (`CeWidthForSize` bypassed by the enum array/set path — the sibling of the W4 partial-application
-> defect), W8 (USMAP drops every Blueprint-generated class).
+> **Still open from U2, none urgent:** W5 (weak/soft pointers drilled with `Offsets=[0]`), W8
+> (USMAP drops every Blueprint-generated class — worth pairing with the FModel check, since a missing
+> `*_C` class there is expected until W8 is fixed).
 
 ### The pacing rule, learned by hitting it
 
@@ -1051,8 +1073,8 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: W5, W6, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs remain.
-U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853).
+**Still open: W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs remain.
+U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 (Note the ID collision: `U2`/`U3` are D1 findings in `Ubel.cpp`, *not* segment names.)
 
 ### The C# lens set — as run in U1, with what it actually yielded
