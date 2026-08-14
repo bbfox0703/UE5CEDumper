@@ -331,6 +331,46 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
+## 3b. Session handoff — state as of 2026-08-14 14:4x
+
+**Scanning:** D1, D2, D3, D4a done. **D4b fired 14:31:08 as a scheduled task in its own session**
+(`audit5-segment-d4b`, now auto-disabled; prompt at
+`C:\Users\Andyc\.claude\scheduled-tasks\audit5-segment-d4b\SKILL.md`). It writes its own §2/§3 rows
+and updates §4 to "5 of 12". Still open after it: D5, U1–U5, S1, T1.
+
+**Fixing — cluster ① is 6 of 7 shipped** (`5ef4c2b`, `c65fdfc`):
+M1, M2, M3, A2, U1, and U2 (which U1 forced in — they are not independently shippable).
+**A4 is deliberately open** — it changes which candidates the value scanner emits, needs a `leafAddr`
+dedupe, and was stopped by the maintainer pending in-game confirmation of the geometry underneath it.
+
+**Verification — five of six confirmed on a live process** (see
+[todo.md](todo.md#pending-live-game-verification-verify-only--no-code) for the evidence table).
+**U2 has no vehicle**: TQ2 and Solarpunk both measured non-CPN, DumperTest cannot be (engine flag).
+
+**Still unfixed and known:** A4 · U3 (*live-confirmed* 2026-08-14, not merely inferred) · G7 (reframed
+to LOW after the original filing was retracted) · U2 (unit-tested only).
+
+### The reusable win from today — headless in-game verification
+
+No UI, no CE, ~4 commands. This is now the cheapest verification path the project has and it should
+be the default for any DLL fix:
+
+1. Launch the game (or the packaged `DumperTest`).
+2. `powershell scripts\inject-ue.ps1 -ProcessId <pid>` — **pass the PID explicitly**; AUTO mode aborts
+   when it sees more than one UE process, and the Epic Games Launcher counts as one.
+3. Connect a ~10-line `System.IO.Pipes.NamedPipeClientStream` to `UE5DumpBfx`, `WriteLine` a JSON
+   request, `ReadLine` the reply.
+4. `get_offsets` first, then `find_instances` → `walk_instance`.
+
+**Two traps, both hit today:**
+- **`get_offsets` must be read as a triple.** `case_preserving` alone is meaningless — check
+  `probe_ran` and `validated` with it. A sample taken 60 s after injection caught Solarpunk
+  mid-initialisation and produced a confident wrong answer that survived into a commit.
+- **Container element values live under the element's own key.** A `TSet` element is `k`, not `v`;
+  reading the wrong one silently yields empty results that look like a real negative.
+
+-----
+
 ## 4. Cross-segment rollup — read this before fixing anything
 
 **Status: 4 of 12 segments scanned** (D1, D2, D3, D4a). **30 distinct findings: 0 HIGH · 20 MEDIUM ·
