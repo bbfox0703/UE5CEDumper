@@ -698,12 +698,73 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. Session handoff — state as of 2026-08-14 15:3x (D4b landed)
+## 3b. START HERE — next session picks up at U1
 
-**Scanning:** D1, D2, D3, D4a, **D4b** (`8198309`) and **D5** done. Still open: U1–U5, S1, T1 — i.e.
-**the DLL is fully scanned; everything left is C# and Lua.** That changes the lens set: the remaining
-segments want AOT/trimming, MVVM/binding lifetime and async-cancellation lenses rather than the
-memory-safety ones, and they have real test coverage to refute against, which the DLL segments did not.
+*State as of 2026-08-14 17:3x. Read this section first; it is written for a session with no memory of
+the previous one.*
+
+### The pacing rule, learned by hitting it
+
+**ONE segment per 5-hour quota window. Do not plan two.** Measured on 2026-08-14: that window ran the
+D4b takeover + the whole of D5 + six fixes (F1, F3a, F4, F6, F7, FR1) with their builds and in-game
+verification, and reached **80% of quota**. A segment is a scan *or* a fix batch, not both, unless the
+fixes are trivial. If a window has budget left after the segment, spend it on **verification**, which
+is cheap and compounds — not on starting the next segment, which will be cut off mid-flight.
+
+### What is done
+
+**Scanning: 6 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`). Still open: **U1-U5, S1, T1**.
+**The DLL is fully scanned; everything left is C# and Lua.**
+
+**Fixing:** cluster (1) is 6 of 7 shipped (`5ef4c2b`, `c65fdfc`); A4 deliberately open. D5 shipped
+**F1, F3(a), F4, F6, F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21` (the last is the
+F4/F6 UI half, AOT-published and launch-checked). **Still open: F2, F5, F8, A4, U3, G7, U2.**
+
+### What U1 must do differently — the lens set changes
+
+The DLL segments audited memory safety. U1-U5 are **C#/Avalonia**, so reuse the workflow shape but
+swap the lenses:
+
+- **AOT / trimming** — every reflection-shaped construct is a shipping bug that compiles fine
+  (CLAUDE.md's rule; `[JsonSerializable]` contexts, `[ObservableProperty]`, boxed `SelectedItem`).
+- **MVVM / binding lifetime** — event handlers never detached, `CollectionChanged` subscriptions
+  outliving a view, the `DataGrid` rules in [working-lessons.md](working-lessons.md) section 3.2.
+- **async / cancellation** — `Task.Run` over shared mutable state, `CancellationToken` ignored,
+  `async void`, UI-thread marshalling (working-lessons 3.4: `Microsoft.Data.Sqlite`'s `*Async` runs
+  synchronously and `ReadAsync` ignores the token).
+- **file / IO** — working-lessons 3.1: `File.ReadLines` cannot open a log our own process holds.
+
+> **The skeptics get something the DLL segments never had: real test coverage.** ~3,500 C# tests
+> compile these files, so "no test covers this" is not an available refutation and "a test asserts the
+> opposite" is now an available one. Tell the skeptics to look for the test — and remember the trap
+> from working-lessons 1.3: a green test can still miss the seam.
+
+### How to run it
+
+Copy the scheduled-task prompt at `~/.claude/scheduled-tasks/audit5-segment-d4b/SKILL.md` and change
+the scope, line counts and lens list. It ran unattended in **its own session with its own quota**
+(14:31 -> commit 15:20, ~49 min) and survived a Claude Desktop re-login. The workflow script to clone
+is `audit5-seg-d5-fern-frieren-wf_39143753-6df.js` under the session's `workflows/scripts/` (5 finders
+-> skeptic batches -> second lens on surviving HIGH/MED; it also logs a wipeout warning when a finder
+dies).
+
+**U1 scope** (from section 1): `LiveWalkerViewModel` 2900 + `PointerPanelViewModel` 999 +
+`ObjectTreeViewModel` 360 early lines = **~4,259**. Note `LiveWalkerViewModel` was edited 2026-08-14
+for D5/F6 — that edit is new code, not early code.
+
+**Put in every agent prompt** (measured to improve output): the calibration — *117 raw claims, 65
+refuted (56%), all ten claimed HIGHs died* — plus *"read the surrounding comments and the callers
+first"* (five of D4b's nine refutations were won by finding a comment naming the defect the code
+already prevents), and **REPORT ONLY, no edits**.
+
+**Do not re-derive:** everything already in sections 2 and 3, especially D5's `Fern.cpp` /
+`Frieren.cpp` findings and the six shipped D5 fixes.
+
+### One tree, two sessions
+
+A segment session commits its own work and is REPORT-ONLY, so another session may watch — but it must
+stay **hands-off the working tree** until the segment commits, or its edits get swept into the
+segment's commit.
 
 > **The scheduled-task route works, and it is the right tool for the remaining seven segments.**
 > D4b ran unattended from `C:\Users\Andyc\.claude\scheduled-tasks\audit5-segment-d4b\SKILL.md`

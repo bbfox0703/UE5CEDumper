@@ -527,6 +527,11 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
   machine, but the real corpus is the archive at `D:\UE_Analyze_data`; run
   `py tools/ghidra/corpus_relocate.py` / `preflight.py` before trusting any path. Never host it on USB
   (see the 2026-08-01 drive-drop incident).
+- **Plan ONE stage per 5-hour quota window, not two.** Measured 2026-08-14: one window ran an audit
+  segment takeover + a full new segment + six fixes with their builds and in-game verification, and
+  reached **80%**. A stage is a scan *or* a fix batch, not both. If budget is left over, spend it on
+  **verification** — it is cheap, it compounds, and it ends at a clean stopping point; starting the
+  next stage does not, and a segment cut off mid-flight costs more to resume than it saved.
 - **Long unattended work can run as a scheduled task in its own session with its own quota.** Audit #5's
   segment D4b ran that way for ~49 minutes and survived a Claude Desktop re-login; the prompt file under
   `~/.claude/scheduled-tasks/<name>/SKILL.md` is the template. Two constraints: the task must **commit
