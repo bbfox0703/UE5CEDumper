@@ -306,10 +306,21 @@ inline bool IsSparseIndexAllocated(const TSparseArrayView& sa, int32_t index) {
     int wordIdx = index / 32;
     int bitIdx  = index % 32;
     uint32_t word = 0;
-    if (wordIdx < 4) {
+    // The heap allocation WINS whenever it exists. A TBitArray that has grown past
+    // 128 bits COPIES the inline words to the heap and then keeps updating only the
+    // heap copy — the inline buffer is left frozen at its spill-time contents. So
+    // checking `wordIdx < 4` first meant that once a TSet/TMap had ever exceeded 128
+    // slots, indices 0..127 were judged from STALE bits: a slot freed after the spill
+    // still read as allocated, and callers walked a dead element (a phantom Find-Refs
+    // hit, a dead value admitted by ScanForValue).
+    //
+    // Aura::ResolveTMapBitArrayBase has always applied this rule correctly
+    // ("Inline if MaxBits <= 128; heap (secondaryPtr) otherwise"); this is the same
+    // rule, and it fixes all 13 Aura call sites and 6 Ubel ones at once.
+    if (sa.secondaryData) {
+        if (!ReadSafe(sa.secondaryData + wordIdx * 4, word)) return false;
+    } else if (wordIdx < 4) {
         word = sa.inlineBits[wordIdx];
-    } else if (sa.secondaryData) {
-        ReadSafe(sa.secondaryData + wordIdx * 4, word);
     } else {
         return false;
     }

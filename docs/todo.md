@@ -1375,6 +1375,19 @@ they structurally **cannot** cover M3's real change, which is `Ubel` resolving
 - ⬜ **No regression on `TSet<T>` or `UDataTable`.** `TSet` geometry is unchanged by design
   (`elemAlign` defaults to 4). Expand a `TSet<FName>` / `TSet<UObject*>` and open any DataTable to
   confirm rows still resolve.
+- ⬜ **A container that outgrew 128 slots still lists the right elements (A2).** Find a `TMap`/`TSet`
+  with **more than 128** entries, then remove one in-game. Before the fix, indices 0..127 were judged
+  from the **frozen inline bit words** the TBitArray left behind when it spilled to the heap, so a
+  freed low slot still read as allocated and the walker showed a dead element. Also worth a
+  Find Refs / Value Search pass on such an object — the same stale bits admitted phantom hits there.
+- ⬜ **`TArray<FName>` / `TMap<FName,V>` on a CasePreservingName game (U2).** Needs a UE 5.5+/5.7
+  title where `Genau` logs `CasePreservingName: YES` (e.g. Titan Quest II). Expand any actor's `Tags`.
+  Before the fix `InferScalarSize` forced the stride to 8 against the engine's real 16, so every
+  element but the first was read from the middle of its predecessor.
+- ⬜ **A `TMap`/`TSet` whose ELEMSIZE reads garbage no longer wedges the walk (U1).** Hard to force
+  deliberately; the passive check is that no `walk-0.log` line shows an absurd `KeySz=`/`ValSz=`
+  (e.g. `1073742336`) and that expanding maps never produces a multi-second freeze. A rejected size
+  now degrades to "cannot read elements" instead of a ~1 GiB allocation per element.
 - ⬜ **Check `walk-0.log` for the `Stride=` values.** `WALK:MapP` logs `ValOff` and `Stride` per map
   field. A struct-valued map should now show an odd-looking-but-correct stride (e.g. 24 for
   `TMap<int32,FVector>`, not 28). This is the cheapest passive evidence.

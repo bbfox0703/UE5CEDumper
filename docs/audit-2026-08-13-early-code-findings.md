@@ -350,14 +350,26 @@ so far is an emergency*. Fix by cluster, not by walking the list.
 All six corrupt the *same* user-visible thing: what appears when a `TMap`/`TSet` is expanded, plus
 every graph edge and scan candidate derived from one.
 
-| | Defect | Effect on the shared output |
-|---|---|---|
-| D4a/**M3** | `ComputeMapValueOffset` guesses alignment (always, for struct values) | wrong `valueOffset` … |
-| D4a/**M1** | `ComputeSetElementStride` drops the `TPair`'s trailing padding | …which feeds a wrong stride |
-| D4a/**M2** | `ReadTSparseArray` reads `NumFreeIndices` at `+0x3C` not `+0x34` | count over-reported |
-| D3/**A2** | `IsSparseIndexAllocated` reads stale inline bits after heap spill | freed slots read as live |
-| D1/**U1** | Map/Set element sizes unvalidated | 1 GiB allocations, wild stride |
-| D3/**A4** | deep pass drops depth-1 leaves | `TMap<K,FStruct>` values unfindable |
+| | Defect | Effect on the shared output | Status |
+|---|---|---|---|
+| D4a/**M3** | `ComputeMapValueOffset` guesses alignment (always, for struct values) | wrong `valueOffset` … | ✅ 2026-08-14 |
+| D4a/**M1** | `ComputeSetElementStride` drops the `TPair`'s trailing padding | …which feeds a wrong stride | ✅ 2026-08-14 |
+| D4a/**M2** | `ReadTSparseArray` reads `NumFreeIndices` at `+0x3C` not `+0x34` | count over-reported | ✅ 2026-08-14 |
+| D3/**A2** | `IsSparseIndexAllocated` reads stale inline bits after heap spill | freed slots read as live | ✅ 2026-08-14 |
+| D1/**U1** | Map/Set element sizes unvalidated | 1 GiB allocations, wild stride | ✅ 2026-08-14 |
+| D1/**U2** | `InferScalarSize` hardcodes FName = 8, overriding the engine's 16 | halved `TArray<FName>` stride | ✅ 2026-08-14 † |
+| D3/**A4** | deep pass drops depth-1 leaves | `TMap<K,FStruct>` values unfindable | ⬜ **open** |
+
+† **U2 was not originally in this cluster — U1's fix forced it.** Routing the Map/Set sizes through
+`ValidateArrayElemSize` sends them through `InferScalarSize`, which *overrides* the engine's reported
+size. With `NameProperty` hardcoded to 8, fixing U1 alone would have taken a `TMap<FName,V>` key size
+of 16 on a CasePreservingName game and **replaced it with 8** — importing U2's bug into a path that
+did not have it. The two are not independently shippable.
+
+**A4 remains open** and is deliberately not batched with these: it changes what the value scanner
+emits as candidates (dropping the depth-1 exclusion needs a `leafAddr` dedupe against what the static
+index already emitted), so it carries a duplicate-candidate and hot-path cost risk that the others do
+not, and it cannot be validated by the header-level unit tests that cover M1–M3.
 
 Fix M3 → M1 → M2 in one commit (they are three lines in one header), then A2, then U1. **Add a test
 for the *composition*, not the parts** — that is precisely why none of this was caught: both

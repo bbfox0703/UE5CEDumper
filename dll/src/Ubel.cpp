@@ -1370,7 +1370,13 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "ByteProperty")   return 1;
     if (typeName == "BoolProperty")   return 1;
     // Engine types with known fixed sizes
-    if (typeName == "NameProperty")   return 8;  // FName = { ComparisonIndex(4) + Number(4) }
+    // FName is { ComparisonIndex(4) + Number(4) } = 8, but 0x10 under
+    // WITH_CASE_PRESERVING_NAME (UE5.5+/5.7). This MUST be dynamic: ValidateArrayElemSize
+    // treats InferScalarSize as authoritative and OVERRIDES the engine's reported size, so
+    // a hardcoded 8 actively replaced a correct 16 and halved every TArray<FName> /
+    // TMap<FName,V> stride on those games. Same expression as the rest of the tree
+    // (Ubel.cpp:126, Aura.cpp:2901/2924/3437/5791, Genau.cpp:5045).
+    if (typeName == "NameProperty")   return DynOff::bCasePreservingName ? 0x10 : 0x08;
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
@@ -4123,8 +4129,20 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (!valueTypeName.empty() && valueTypeName.find("Property") != std::string::npos) {
                         fv.mapKeyType = keyTypeName;
                         fv.mapValueType = valueTypeName;
-                        Macht::ReadSafe<int32_t>(keyProp + DynOff::FPROPERTY_ELEMSIZE, fv.mapKeySize);
-                        Macht::ReadSafe<int32_t>(valueProp + DynOff::FPROPERTY_ELEMSIZE, fv.mapValueSize);
+                        // Route through the SAME validator every ArrayProperty path uses.
+                        // This read is documented in this file to return garbage: the
+                        // observed 1073742336 is 0x40000200, the low dword of
+                        // EPropertyFlags — i.e. exactly what you get when
+                        // DynOff::FPROPERTY_ELEMSIZE lands on PropertyFlags (Genau derives
+                        // it blind as bestProbe - 0x10 and can still report
+                        // bOffsetsValidated=true — audit #5 G1). Unvalidated it became a
+                        // per-element std::vector size: a ~1 GiB commit + zero-fill on every
+                        // iteration, plus a ~1 GiB stride that made every element wild.
+                        int32_t rawKeySize = 0, rawValSize = 0;
+                        Macht::ReadSafe<int32_t>(keyProp + DynOff::FPROPERTY_ELEMSIZE, rawKeySize);
+                        Macht::ReadSafe<int32_t>(valueProp + DynOff::FPROPERTY_ELEMSIZE, rawValSize);
+                        fv.mapKeySize   = ValidateArrayElemSize(rawKeySize, keyTypeName);
+                        fv.mapValueSize = ValidateArrayElemSize(rawValSize, valueTypeName);
                         Sein::Info("WALK:MapP", "FMapProperty KeyProp='%s'(%d) ValueProp='%s'(%d) at delta=%d for '%s'",
                             keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
                             delta, fi.Name.c_str());
@@ -4265,8 +4283,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (!valueTypeName.empty() && valueTypeName.find("Property") != std::string::npos) {
                         fv.mapKeyType = keyTypeName;
                         fv.mapValueType = valueTypeName;
-                        Macht::ReadSafe<int32_t>(keyProp + DynOff::UPROPERTY_ELEMSIZE, fv.mapKeySize);
-                        Macht::ReadSafe<int32_t>(valueProp + DynOff::UPROPERTY_ELEMSIZE, fv.mapValueSize);
+                        // Same validation as the FProperty twin above — see the comment there.
+                        int32_t rawKeySize = 0, rawValSize = 0;
+                        Macht::ReadSafe<int32_t>(keyProp + DynOff::UPROPERTY_ELEMSIZE, rawKeySize);
+                        Macht::ReadSafe<int32_t>(valueProp + DynOff::UPROPERTY_ELEMSIZE, rawValSize);
+                        fv.mapKeySize   = ValidateArrayElemSize(rawKeySize, keyTypeName);
+                        fv.mapValueSize = ValidateArrayElemSize(rawValSize, valueTypeName);
                         Sein::Info("WALK:MapP", "UMapProperty KeyProp='%s'(%d) ValueProp='%s'(%d) at delta=%d for '%s'",
                             keyTypeName.c_str(), fv.mapKeySize, valueTypeName.c_str(), fv.mapValueSize,
                             delta, fi.Name.c_str());
@@ -4404,7 +4426,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         || elemTypeName.find("Property") == std::string::npos) continue;
 
                     fv.setElemType = elemTypeName;
-                    Macht::ReadSafe<int32_t>(elemProp + DynOff::FPROPERTY_ELEMSIZE, fv.setElemSize);
+                    // Validated like the Map twins and every ArrayProperty path — an
+                    // unvalidated ELEMSIZE became a per-element std::vector size.
+                    int32_t rawElemSize = 0;
+                    Macht::ReadSafe<int32_t>(elemProp + DynOff::FPROPERTY_ELEMSIZE, rawElemSize);
+                    fv.setElemSize = ValidateArrayElemSize(rawElemSize, elemTypeName);
                     Sein::Info("WALK:SetP", "FSetProperty ElementProp='%s'(%d) at delta=%d for '%s'",
                         elemTypeName.c_str(), fv.setElemSize, delta, fi.Name.c_str());
 
@@ -4479,7 +4505,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (elemTypeName.empty() || elemTypeName.find("Property") == std::string::npos) continue;
 
                     fv.setElemType = elemTypeName;
-                    Macht::ReadSafe<int32_t>(elemProp + DynOff::UPROPERTY_ELEMSIZE, fv.setElemSize);
+                    // Validated like the Map twins and every ArrayProperty path — an
+                    // unvalidated ELEMSIZE became a per-element std::vector size.
+                    int32_t rawElemSize = 0;
+                    Macht::ReadSafe<int32_t>(elemProp + DynOff::UPROPERTY_ELEMSIZE, rawElemSize);
+                    fv.setElemSize = ValidateArrayElemSize(rawElemSize, elemTypeName);
                     Sein::Info("WALK:SetP", "USetProperty ElementProp='%s'(%d) at delta=%d for '%s'",
                         elemTypeName.c_str(), fv.setElemSize, delta, fi.Name.c_str());
 
