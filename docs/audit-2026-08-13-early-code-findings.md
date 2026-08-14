@@ -125,44 +125,42 @@ itself. The fix must reuse the existing `DynOff::bCasePreservingName ? 0x10 : 0x
 than introduce a new constant — that expression is already the repo-wide convention
 (`Ubel.cpp:126`, `Aura.cpp:2901/2924/3437/5791`, `Genau.cpp:5045`).
 
-### D2 — Genau + Serie — ⚠ INCOMPLETE, findings are UNVERIFIED
+### D2 — Genau + Serie — ✅ scanned 2026-08-13
 
-**Run `wf_3cc1586f-db1`, 2026-08-13. The 5 finders completed; every skeptic and every second-lens
-agent died on a session usage limit (31 of 36 agents errored).** What follows is therefore **raw,
-unrefuted finder output — NOT findings.** Do not act on it, do not file it in todo.md, and do not
-quote a severity from it until the refute pass has run.
+Run `wf_3cc1586f-db1`, in two parts: the 5 finders completed, a session usage limit killed all 9
+refute batches and all 22 second-lens agents, then a **resume** replayed the finders from cache and
+ran the 14 survivors live. 26 raw claims → **19 refuted (73%)** → 7 confirmed → **6 distinct** after
+merging the two `DetectBlockOffsetBits` reports.
 
-> **Why this warning is not boilerplate:** segment D1, run to completion, **refuted 13 of 27 raw
-> claims — including both of its HIGHs.** The list below contains **7 HIGHs**. On D1's base rate,
-> expect roughly half of these to be wrong.
+**Tally: 3 MEDIUM · 3 LOW · 0 HIGH.** The finders claimed **seven HIGHs; every one of them died** —
+six refuted outright, one (`Genau.cpp:4007`) downgraded to MEDIUM by the second lens.
 
-**To finish the segment** (the 5 finders replay from cache; only the killed agents re-run):
+> **The refutation rate is the headline.** D1 refuted 13/27 (48%); D2 refuted 19/26 (73%). Raw
+> finder output on this codebase is *mostly wrong*, and it is wrong in a specific direction: it
+> reports **plausible-sounding structural criticisms of code whose oddities are load-bearing**, and it
+> over-rates them. **A segment that cannot complete its refute pass has produced nothing usable** —
+> park it as UNVERIFIED and resume, never promote it.
 
-```bash
-Workflow({scriptPath: "…/workflows/scripts/audit5-seg-d2-genau-serie-wf_3cc1586f-db1.js", resumeFromRunId: "wf_3cc1586f-db1"})
-```
+> ⚠ **One refutation was OVERTURNED by hand — do not re-suppress it.** A skeptic refuted the
+> `DetectBlockOffsetBits` claim; two other skeptics confirmed it. I checked the code directly:
+> at `testIdx = 1`, `1 >> 16` and `1 >> 14` are **both 0**, and the masks `0xFFFF`/`0x3FFF` do not
+> bite below 16384 — so both candidate widths compute the identical `(ci=0, co=1*stride)` and probe
+> the same byte. The detector structurally cannot distinguish the two. **The finders were right.**
 
-26 raw claims → **15 distinct clusters** after merging lens duplicates. Cross-lens convergence is
-noted where it happened: it is a *positive signal*, not verification — three lenses can share one
-wrong assumption.
+> **One root cause behind G1/G3 — `bOffsetsValidated` does not mean what its own contract says.**
+> `Grimoire.h:244` defines it as *"the values were actually MEASURED and are trustworthy"*, and the
+> split from `bOffsetsProbeRan` exists specifically to stop the give-up paths from lying. G1 is that
+> lie happening anyway, from **inside** the success path. Everything downstream that writes to game
+> memory at a derived offset (`Solide::force_field`, `Wirbel`, `Solitar`, `Laufen`) trusts it.
 
-| Cluster | Claimed sev | Location | Claim (UNVERIFIED) | Lenses |
-|---|---|---|---|---|
-| A | HIGH | `Genau.cpp:4006-4007`, `3234` | `ValidateAndFixOffsets` stores `bOffsetsValidated = true` on paths where individual probes failed and logged "keeping default"; the flag is set-only, so a re-entrant call can only upgrade the claim. UI + log would report `validated=yes` over unmeasured values. | 3 |
-| B | HIGH | `Serie.cpp:273`,`298`; `Genau.cpp:1740` | Genau proves which `Blocks[]` offset decoded `None`, logs it, then discards it; Serie re-derives from a candidate list **missing 0x18/0x28**, and on total failure hardcodes `0x10` yet still latches `s_initialized=true`. | 3 |
-| C | MED | `Serie.cpp:313-314` | `DetectBlockOffsetBits` claimed to be a no-op — both candidate bit-widths allegedly compute the identical address, so the 14-bit arm is unreachable. | 3 |
-| D | MED | `Genau.cpp:3560` | The Guid-less "Vector" fallback struct is described with the UE4 4-byte-float layout, so it can never validate on UE 5.0+ LWC. | 2 |
-| E | MED/LOW | `Genau.cpp:3348`, `4015` | `USTRUCT_SCRIPT` is derived only on the success path, leaving it inconsistent with what the give-up path wrote. | 3 |
-| F | HIGH | `Genau.cpp:1365` | A GNames candidate that is validated and then **refused** leaves its FName-format globals latched, so the winning candidate inherits them. | 1 |
-| G | MED | `Genau.cpp:2766` | `CountPreUE4Markers` / `DetectVersionDetailed` walk the entire mapped image with raw, un-SEH-guarded loads. | 1 |
-| H | MED | `Genau.cpp:2929`, `3261` | Whole-image and multi-module sweeps never poll `Tot::Requested()`, so `UE5_Shutdown`'s join is unbounded. | 2 |
-| I | MED | `Genau.cpp:4753` | `FindAll` substitutes a hardcoded `504` for a failed version detection before offset detection runs. | 1 |
-| J | MED | `Serie.cpp:430` | `InitObfuscated` frees the 64K tag-key array out from under `GetTagKey` on re-init (use-after-free). | 1 |
-| K | MED | `Serie.cpp:442` | `Init` publishes pool geometry field-by-field; on a second init the release-store does not fence the earlier fields. | 1 |
-| L | MED | `Serie.cpp:593` | Obfuscated fork: the wide (UTF-16) FName branch never applies the XOR key. | 1 |
-| M | MED | `Serie.cpp:498` | UE4 `TNameEntryArray` mode indexes the chunk with a negative element index; the UE5 path's bounds guard is absent. | 1 |
-| N | LOW | `Genau.cpp:3088` | `DetectCasePreservingName` counts a **failed** `Macht::ReadSafe` as a valid null Outer, so unreadable objects vote. | 1 |
-| O | LOW | `Serie.cpp:142` | A tag whose key lookup misses is cached as a permanent miss. | 1 |
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **G1** | MED | `Genau.cpp:4005-4007` | `ValidateAndFixOffsets` stores `bOffsetsValidated = true` **unconditionally on the success tail**, though three in-path give-up branches (`3701` FField::Name, `3761` FField::Next, `3915` Offset_Internal) fall through to it after logging *"keeping default"*. Provable by construction: `nextOff < 0` ⇒ Step 7 collects 1 field ⇒ Step 8's `matches >= 2` is unsatisfiable ⇒ `FPROPERTY_OFFSET`/`ELEMSIZE`/`FLAGS` keep Step-2.5's blind version guesses ⇒ `Fern.cpp:4543` reports `{"validated": true, "fallback_reason": ""}`. **This is the root of D1's U1** (`FPROPERTY_ELEMSIZE` garbage). | S / low |
+| **G2** | MED | `Genau.cpp:2929` (+`CountPreUE4Markers`, `DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`, `FindGNamesByStringRef`) | The whole-image and multi-module sweeps **never poll `Tot::Requested()`** — three sibling scans in the same file do, for exactly this reason. On a ~482 MB image, Tier 2/3 alone is ~9.2e9 runtime-length `memcmp`s (~14 s), and `UE5_Shutdown`'s join blocks for all of it. Per `docs/ce-plugin-sdk-notes.md` §13 the CE-side wait has **no message pump**, so CE reads as hung. | S / low |
+| **G3** | MED | `Genau.cpp:3242`, `3167`, `3261` | `ValidateAndFixOffsets` rewrites the DynOff set **in place**, republishing unmeasured version defaults over already-probed values for the seconds a re-run takes. Reachable on a CE `[DISABLE]`/`[ENABLE]` cycle: `UE5_Shutdown` never clears `g_cachedGObjects`/`g_cachedGNames`, so `Mimic`'s poller gate (`Mimic.cpp:388`) is satisfied by **stale** addresses and keeps servicing mailbox commands while `UFIELD_NEXT` is reset 0x38 → 0x28 mid-flight. | L / med |
+| **G4** | LOW | `Serie.cpp:303-314` | `DetectBlockOffsetBits` **cannot detect anything**: at `testIdx = 1` both candidate widths compute `ci = 0`, `co = 1*stride`, so 16 always wins and the 14-bit arm is unreachable — yet `Init` logs the result as a measurement. On a real 14-bit pool every FName ≥ `0x4000` reads past the end of a 32 KB block, so engine names resolve and the **game-specific tail comes back blank**. *(Overturned refutation — see the note above.)* | M / med |
+| **G5** | LOW | `Serie.cpp:498` | UE4 `TNameEntryArray` mode indexes the chunk with a **negative** element index; the bounds guard the UE5 path has is absent. A poison `ComparisonIndex` of `0xFFFFFFFF` with a non-zero Number skips `GetString`'s `nameIndex <= 0 && number == 0` early-out, so `chunkPtr + (size_t)(-1)*8` is dereferenced as an `FNameEntry*` and a **fabricated name** can be returned as real. | S / low |
+| **G6** | LOW | `Serie.cpp:142` | A tag whose key lookup misses is cached as a **permanent** `TAGKEY_MISS`, contradicting `Genau.cpp:1672`'s documented "absent tag = plaintext" rule. A transient miss (the 4 unsynchronized reads in `LookupTagKey` racing a live insert) blanks every FName in every block with that tag for the rest of the process. | S / low |
 
 -----
 
@@ -183,6 +181,31 @@ Both claimed **HIGH**s died here, on evidence rather than opinion:
   monotonically improving, never a correct→wrong transition. Both globals are naturally-aligned
   `int`s on x64 (no torn read), and `CorrectSubclassOffsets` runs under `s_calibrationMutex` before
   the field loop in both callers.
+
+### From D2 (19 of 26 — a 73% kill rate)
+
+All seven claimed HIGHs died here. The recurring shape: **a criticism that is structurally true but
+whose bad outcome a later phase already prevents.** The most instructive:
+
+- **`Serie.cpp:273`/`298` + `Genau.cpp:1740` — "Genau proves the `Blocks[]` offset, discards it, and
+  Serie re-derives it from a candidate list missing 0x18/0x28, hardcoding 0x10 on total failure."**
+  Claimed HIGH by two lenses. Refuted: the narrower list is not the operative guard, and the
+  downstream validation rejects a wrong base before it can be latched — the "silent blank names"
+  outcome does not follow.
+- **`Genau.cpp:1365` — "a refused GNames candidate leaves its FName-format globals latched."**
+  Refuted: the winning candidate re-establishes them.
+- **`Genau.cpp:3560` — "the Guid-less `Vector` fallback assumes a 4-byte-float FVector, so it can
+  never validate on UE 5.0+ LWC."** Raised by two lenses, refuted both times.
+- **`Serie.cpp:430`/`442` (use-after-free on re-init; unfenced field-by-field publish)**,
+  **`Serie.cpp:593`** (wide FName branch skipping the XOR key), **`Genau.cpp:4753`** (hardcoded 504
+  for failed version detection), **`Genau.cpp:2766`** (un-SEH-guarded whole-image loads),
+  **`Genau.cpp:3348`/`4015`** (`USTRUCT_SCRIPT` success-path-only, raised three times),
+  **`Genau.cpp:3088`** (`DetectCasePreservingName` counting failed reads as votes).
+
+**Not refuted — `Serie.cpp:313-314` `DetectBlockOffsetBits`.** One skeptic refuted it; two did not.
+Checked by hand and the refutation is **wrong** (see G4). Filed as a finding, not a refutation.
+
+### From D1 (13)
 
 Also refuted: the `FARRAYPROP_INNER` "partial update" claim (UE5.7 genuinely puts
 `EArrayPropertyFlags` before `Inner`, so **not** dragging the other four offsets along is the correct
