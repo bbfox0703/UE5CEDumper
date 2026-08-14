@@ -764,13 +764,39 @@ bool UE5_AutoStart() {
     // Publish progress into the mailbox so a CE Lua poller can stop sleeping a
     // fixed budget and react the moment we are actually ready (Mimic::InitState).
     g_invokeMailbox.initState = Mimic::INIT_RUNNING;
-    UE5_Init();  // Always succeeds (partial init is OK — Extra Scan can recover)
+    // UE5_Init CAN fail. The "Always succeeds" comment this replaces was correct
+    // when it was written (af7ff3a deleted the old `if (!UE5_Init()) return false;`
+    // for Extra Scan), but audit #4's B49 added a real `return false` at :528 five
+    // months later — a shutdown landing during the multi-second scan bails with
+    // NOTHING latched — and this call site was never revisited. (audit #5 D5/FR1)
+    const bool inited = UE5_Init();
+    if (!inited) {
+        LOG_WARN("UE5_AutoStart: UE5_Init ABORTED (shutdown landed mid-scan) — "
+                 "pointers are partial and nothing was latched");
+        // That same shutdown ran Mimic::StopThread(), which memsets the mailbox and
+        // joins the poller — and StartThread's only other caller is DllMain, which
+        // never runs twice. A CE .CT row would then write commands nobody collects,
+        // leaving status = 0, which CLAUDE.md's own rule tells the user means "stale
+        // g_invokeMailbox address" — a confidently WRONG diagnosis.
+        //
+        // Re-arm only if the shutdown is no longer latched. Reviving the poller
+        // while it IS still latched would fight the user's own untick, and
+        // Tot::RequestShutdown is deliberately sticky. So this covers the transient
+        // case and deliberately does NOT resurrect against a live shutdown.
+        if (!Tot::ShutdownRequested()) Mimic::StartThread();
+    }
     bool ok = UE5_StartPipeServer();
     // Publish only AFTER StartPipeServer returns — a poller that sees READY must
-    // be able to connect immediately.
-    g_invokeMailbox.initState = ok ? Mimic::INIT_READY : Mimic::INIT_FAILED;
-    LOG_INFO("UE5_AutoStart: pipe server %s", ok ? "started" : "FAILED to start");
-    return ok;
+    // be able to connect immediately. READY now also requires init to have
+    // COMPLETED: the enum defines it as "init finished AND the pipe server is up",
+    // and publishing it over an aborted scan told every CE feature row it was safe
+    // to proceed.
+    g_invokeMailbox.initState = (ok && inited) ? Mimic::INIT_READY : Mimic::INIT_FAILED;
+    LOG_INFO("UE5_AutoStart: pipe server %s, init %s -> initState=%d",
+             ok ? "started" : "FAILED to start",
+             inited ? "complete" : "ABORTED",
+             static_cast<int>(g_invokeMailbox.initState));
+    return ok && inited;
 }
 
 // === Property Detail Queries (for CE Lua dissect) ===

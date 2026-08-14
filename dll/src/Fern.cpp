@@ -766,6 +766,7 @@ void Fern::Stop(bool graceful) {
     Radar::SessionManager::Instance().DropAll();
     Radar::GroupSessionManager::Instance().DropAll();
     Linie::Reset();   // drop any live PE-profile recording + free the table
+    Ubel::ClearNameCache();   // same reason as the last-connection teardown (D5/F3)
 
     m_clientConnected = false;
     LOG_INFO("PipeServer: Stopped");
@@ -1115,6 +1116,21 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // "un-hidden on disable / disconnect", and there's no UI left to toggle it.
         // Cheap no-op when see-through was never enabled. (M3)
         Schlacht::SetEnabled(false);
+        // Ubel's per-UObject name cache is keyed by a raw address with no
+        // generation/serial and is never revalidated on hit, so once UE recycles a
+        // UObject slot every name-bearing reply serves the DESTROYED object's name.
+        // Its only two purge sites were begin_snapshot and trigger_scan — neither
+        // reachable from ordinary browsing — so this teardown dropped every other
+        // per-session resource and left the one that can serve wrong data. A UI
+        // reconnect is now a full reset. (audit #5 D5/F3)
+        //
+        // This does NOT fix the in-session case (a level change while connected);
+        // that needs the (InternalIndex, SerialNumber) witness that cluster ③ shares
+        // with D1/U4-U6 and D3/A10, and is deliberately left to that pass.
+        //
+        // Cost is a lazy repopulate on the next connect, which is what every other
+        // line in this block already accepts.
+        Ubel::ClearNameCache();
     }
 
     m_connCv.notify_all();

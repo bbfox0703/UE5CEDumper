@@ -440,8 +440,38 @@ DumperTest the error fires immediately and names the branch — which is how **F
 the flag, so the user still sees no "more matches exist" strip. Same for `walk_world`'s
 `actor_total`/`truncated` in `LiveWalkerViewModel`. **Wire-only fix; the panels are a separate pass.**
 
-**The other four D5 findings (F2, FR1, F3, F5) remain REPORTED, NOT FIXED**, and F8 is new and
-unfixed.
+### ✅ F3(a) and FR1 FIXED — builds 2819 / 2820, 2026-08-14
+
+**F3(a)** — `Ubel::ClearNameCache()` added to Fern's last-connection teardown (beside the Radar /
+Linie / Sense / Schlacht drops it sat next to) and to `Fern::Stop`'s post-join block, so a UI
+reconnect or a CE Disable/Enable is now a full reset. Verified on DumperTest by comparing
+`get_object_list` across a disconnect/reconnect: the ~200 returned names are **byte-identical**, so
+the purge does not break lazy repopulation. **The in-session half is deliberately NOT fixed** — a level
+change while connected still serves recycled-slot names, and that wants cluster ③'s
+`(InternalIndex, SerialNumber)` witness shared with D1/U4–U6 and D3/A10.
+
+> A harness bug worth recording: the first run reported MISMATCH. The PowerShell helper emitted its
+> label *inside* the function, so the label joined the return value and two **arrays** were compared,
+> not two strings. Re-run with the label on `Write-Host`: MATCH. **A red result from a harness written
+> in the same breath as the fix is a claim about the harness until proven otherwise.**
+
+**FR1** — `UE5_AutoStart` now captures `UE5_Init`'s return. `INIT_READY` requires
+`ok && inited`, so an aborted scan publishes `INIT_FAILED`; the log names both halves; and the export
+returns `ok && inited` rather than the pipe result alone. Deliberately **reuses `INIT_FAILED` rather
+than adding a state**: a new enum value is an additive mailbox-contract change and would need a
+`MAILBOX_CONTRACT` bump — `tools/check_mailbox_contract.py` passes unchanged.
+
+> **One guard the recommendation did not have.** The chosen option was "keep serving but re-arm the
+> mailbox poller". The re-arm is gated on `!Tot::ShutdownRequested()`: the abort path *is* a shutdown,
+> `RequestShutdown` is deliberately sticky, and resurrecting the poller while it is still latched would
+> fight the user's own untick. So the re-arm covers the transient case only, and the honest-state half
+> — which is the part that stops the wrong diagnosis — always applies.
+
+⚠ **FR1's failure path is UNVERIFIED**: reproducing it needs a shutdown landing inside the
+multi-second scan. What *was* verified is the regression guard — a normal AutoStart still logs
+`pipe server started, init complete -> initState=2` and the pipe serves (`get_object_count` = 24445).
+
+**F2, F5 and F8 remain REPORTED, NOT FIXED.**
 
 ¤¤ **A retraction inside F8, kept visible because the shape is the point.** F8 was first filed with
 the caveat *"`walk_world` demonstrably works on other titles, so this is engine-version-dependent"*.
