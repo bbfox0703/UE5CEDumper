@@ -148,13 +148,25 @@ write *call*), committed inside a test written to catch exactly that class of er
 
 ## 2. Audit agents — raw finder output is about half wrong
 
-**Never present un-refuted audit finder output as findings.** Measured base rate over five completed
-segments of audit #5: **54 of 98 raw claims (55%) refuted, and all nine claimed HIGHs died.**
-Per-segment: D1 13/27 (48%), D2 19/26 (73%), D3 8/18 (44%), D4a 5/9 (56%), D4b 9/18 (50%).
+**Never present un-refuted audit finder output as findings.** Measured base rate over **seven**
+completed segments of audit #5: **71 of 136 raw claims (~52%) refuted.** Per-segment: D1 13/27 (48%),
+D2 19/26 (73%), D3 8/18 (44%), D4a 5/9 (56%), D4b 9/18 (50%), D5 11/19 (58%), **U1 6/18 (33%)**.
+
+**The rate is a RANGE (33–73%), not a constant**, and U1 shows what moves it: it is the first segment
+whose skeptics could refute using **real test coverage** (~3,567 C# tests compile those files), and it
+produced both the lowest kill rate *and* the best-argued kills. Quote the range to finders, not "about
+half".
+
+> ⚠ **CORRECTED 2026-08-14 — "every claimed HIGH dies" held for ten and is now FALSE.** Eleven HIGHs
+> have been claimed; ten died and **U1/V1 survived** a mandated skeptic, a second lens, and a hand
+> re-derivation (a TMap element row is inline-editable while its `FieldAddress` points at the TPair
+> base — the KEY — so an edit writes over the map key in a live game process). The old heuristic
+> justifies **scepticism, not dismissal**: do not let it talk you out of a HIGH that survives
+> refutation.
 
 **The error has a direction, so expect it:** finders report criticisms that are *structurally true* of
 code whose oddities are **load-bearing for one specific game, or neutralised by a later phase** — and
-they over-rate severity. HIGH from a finder is close to worthless before refutation.
+they over-rate severity. HIGH from a finder is close to worthless *before* refutation.
 
 In segment D4b, **five of the nine refutations were won by the skeptic finding a COMMENT that names
 the very defect the code already prevents** — i.e. the finder had rediscovered the original bug, not a
@@ -184,6 +196,22 @@ live one. Put "read the surrounding comments and the callers first" in every fin
   finder prompt (from D3 onward) cut raw claims 26 → 18 → 9 while confirmed yield held.
 - **Verify against the artifact, not the source, when the artifact is what ships.** D4b's PX1 was
   restored from LOW to MEDIUM by reading the shipped DLL's export table rather than the `.def` file.
+- **Hand-verify the segment's headline finding yourself — the pipeline's confidence is not evidence.**
+  U1's HIGH had already passed a skeptic *and* a second lens, which is precisely the state in which
+  ten earlier HIGHs were still wrong. Re-deriving it took ~5 tool calls, confirmed it, and **found the
+  finder had understated a sibling MEDIUM by 3×** (it reported one stale copy of a duplicated formula;
+  `grep` found three). One hand-check per segment on the top item is the cheapest quality step in the
+  method.
+- **Pre-refute a mechanically-decidable claim category with a script, before the agents report.** In
+  U1, ~40 lines compared every expression-bodied computed property in the three files against every
+  `OnPropertyChanged(nameof(…))` / `[NotifyPropertyChangedFor]` (PointerPanel: 57 computed / 58 raised
+  / 0 orphaned). Because the result was an *absence*, §1.2's negative control was mandatory — deleting
+  one known-historically-missing raise from a scratch copy made the detector report it. That converts
+  a lens's opinion into a measured zero that cannot be re-raised.
+- **Once a segment has test coverage, point finders at SEAMS, not helpers.** U1's HIGH lives exactly
+  there: `IsEditableType` is unit-tested in isolation while nothing covers the caller that hands it a
+  wrong address. "A test asserts the opposite" becomes an available refutation at the same time, so
+  say so in the skeptic prompt.
 
 -----
 
