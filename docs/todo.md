@@ -1423,7 +1423,36 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > | **M3** | ✅ | `Map_IntToVec3f` reports **`map_value_offset: 4`**. The old size guess yields **8**. This is `Ubel::GetStructAlignment` reading `MinAlignment=4` off a live `UScriptStruct`. Raw hex `00C8C145 00D0C145 00D8C145` decodes to 6201.0/6202.0/6203.0 — all three floats at the right offsets. |
 > | **M2** | ✅ | `Set_Big` `set_count=199` (200 added, 1 removed). Before the fix `NumFreeIndices` always read 0, so this reported **200**. |
 > | **A2** | ✅ | `Set_Big` returns 199 elements with **9005 absent** and 9000 / 9004 / 9006 / 9199 all present. 9005 is index 5, i.e. its bit lives in the inline words the `TBitArray` froze when it spilled at 128 — the defect would still list it. |
-> | **U2** | ⬜ | Not reachable this way — `WITH_CASE_PRESERVING_NAME` is an engine build flag. Needs Titan Quest II (UE5.7). |
+> | **U2** | ⬜ | **No known vehicle.** See the box below — TQ2 is NOT CasePreservingName on the current build. |
+>
+> ### ⚠ 2026-08-14 — TQ2 is NOT CasePreservingName, contradicting `test-games.md`
+>
+> Injected into `TQ2-Win64-Shipping.exe` (PID 53412, Steam, save loaded) to verify U2.
+> `get_offsets` returned **`case_preserving=false`**, and the DLL's own detection log is unambiguous:
+>
+> ```
+> [DYNO] DetectCasePreservingName: votes standard=20, CPN=0 (tested 20 objects)
+> [DYNO]   CasePreservingName: no
+> [SUMMARY] DynOff: CPN=no FProp=yes TagFFV=yes Outer=+0x20 validated=yes
+> [SCAN] FindAll: UE Version = 507 (tier=1, detected=yes, lowConfidence=no)
+> [OARR] FUObjectItem size=24, object-ptr offset=+0x08 (UE5.7+ reordered item) — 200 named, 200 total, 0 bad
+> ```
+>
+> A **20–0 sweep** is not a marginal or failed detection, and everything around it resolved cleanly
+> (correct UE 5.7, correct reordered `FUObjectItem`, 200/200 named). So this is not the detector
+> failing — this build genuinely has `WITH_CASE_PRESERVING_NAME` off.
+>
+> **`docs/test-games.md:13` says the opposite** ("CasePreservingName + DynOff. Stride 16."). One of
+> two things is true and they need different responses: the game was **patched** since that row was
+> written (then the row needs a date and a re-test note), or the row was **wrong from the start**
+> (then every conclusion drawn from "TQ2 is our CPN title" needs re-checking — including the claim,
+> made earlier today in commits `58ddf76` and `b281ca1`, that TQ2 is U2's verification vehicle).
+> **Do not treat that row as evidence until this is settled.**
+>
+> **U2 therefore has no known verification vehicle right now.** Options: find another CPN title (the
+> `case_preserving` flag is one `get_offsets` call per candidate, so this is cheap to sweep), or
+> build UE from source with the flag on and repackage DumperTest. Until then U2 stands on the unit
+> tests and code review only.
 >
 > **Incidental — D1/U3 CONFIRMED LIVE as still broken (not yet fixed).** `Map_IntToVec3f` renders as
 > `f:[6203.0000]`: one float, the **last** one. The raw hex holds all three correct values, so the
