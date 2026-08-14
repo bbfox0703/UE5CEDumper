@@ -201,6 +201,36 @@ the ternary is `d410359e` (2026-06-13) while **both** stride-20 paths postdate i
 the 24-byte item with **tail padding removed**, so every field offset is unchanged and the question
 is "does it carry a `ClusterRootIndex`" (stride ≥ 20), not "is the stride ≥ 24".
 
+### D4a — Macht + Scharf (memory layer) — ✅ scanned 2026-08-13
+
+Run `wf_8f75b7cb-452`, 10 agents, 0 errors. 9 raw claims → **5 refuted** → 4 confirmed → **3 distinct**
+(two lenses hit `ComputeMapValueOffset` independently). **Tally: 3 MEDIUM · 0 HIGH.**
+
+> **The result inverted the prediction, and that is the finding.** D4a was scoped as the highest-risk
+> file in the project because of the **SEH read/write contract** and **AOBScan** — 94% early code,
+> zero tests, everything routes through it. **Every claim against those two surfaces was refuted**
+> (5 of 5: page-protection restore, missing `Tot::Requested()` polls, stale module snapshots, two
+> region-size off-by-ones). All three real defects are in the **small pure arithmetic helpers in
+> `Macht.h`** — the part that looks least dangerous and has no test covering the *composition* of
+> its pieces.
+>
+> **They compound.** M3 produces a wrong `valueOffset`, which feeds `pairSize`, which feeds M1's
+> stride — the same element address is wrong twice over.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **M1** | MED | `Macht.h:314` | `ComputeSetElementStride` aligns to **4** and cannot express `alignof(T)`, so the documented `TMap` recipe omits the `TPair`'s **trailing padding**. Real stride is `Align(sizeof(TTuple<K,V>) + 8, max(alignof K, alignof V))`. `TMap<AActor*,float>` → computes **20**, real **24**; `TMap<FString,int32>` → **28** vs **32**; `TMap<UObject*,uint8>` → **20** vs **24**. Every element past index 0 is read at a wrong address. `TSet<T>` is unaffected (a bare `elemSize` is always a multiple of `alignof(T)`). | S / med |
+| **M2** | MED | `Macht.h:293` | `ReadTSparseArray` reads `NumFreeIndices` at **`+0x3C`**. The PDB-verified layout in this repo (`Aura.cpp:3037-3038`, Everspace 2 UE 5.4) puts `FirstFreeIndex` at `+0x30` and `NumFreeIndices` at **`+0x34`**; `+0x3C` is padding before the Hash allocator at `+0x40`, zero-initialised and never written. So it always reads **0**, and `Ubel.cpp:4045`'s `mapCount = MaxIndex - NumFreeIndices` **over-reports** the count of any `TMap`/`TSet` that has had entries removed (10 shown, 6 rows rendered). The header comment claiming `TSparseArray` is `0x40` bytes is also wrong — it is `0x38`. | S / low |
+| **M3** | MED | `Macht.h:332` | `ComputeMapValueOffset`'s size-guess fallback is taken for **every struct-valued TMap**, because `Scharf::RequiredAlignment` returns **0** for `StructProperty` (`Scharf.h:76-78`). It then guesses `valueSize >= 8 → align 8`. For `TMap<int32,FVector>` the real value sits at **+4** (alignof 4) but it reads **+8**, so *even element 0* shows a wrong vector; `TMap<int32,FGuid>` reads every value 4 bytes late. **A validation helper is being reused as a layout oracle.** | M / med |
+
+**Why the composite was never caught:** `dll_helpers_test.cpp:2013-2033` exercises
+`ComputeSetElementStride` and `ComputeMapValueOffset` **separately**, and every case it picks happens
+to land on a multiple of 8. The same is true of every empirically PDB-verified data point in the tree
+(`Aura.cpp:3046-3054`, `Ubel.cpp:5709-5711`) — all have already-8-aligned pairs, so none of them
+discriminates. The M1 skeptic established this by computing both formulas against each verified case
+rather than arguing in prose, and noted that the corrected formula reproduces every verified value
+exactly — independent corroboration that the missing `Align` is real.
+
 -----
 
 ## 3. Refuted — do not re-raise
@@ -220,6 +250,20 @@ Both claimed **HIGH**s died here, on evidence rather than opinion:
   monotonically improving, never a correct→wrong transition. Both globals are naturally-aligned
   `int`s on x64 (no torn read), and `CorrectSubclassOffsets` runs under `s_calibrationMutex` before
   the field loop in both callers.
+
+### From D4a (5 of 9 — the entire SEH/AOB surface)
+
+Recorded together because the pattern matters more than the items: **every claim against the
+SEH-guard contract and the AOB scanner was refuted.**
+
+- **`Macht.cpp:57` — "`WriteBytes` restores only the FIRST page's protection to the whole range, and
+  can leave game memory writable."** The most dangerous-sounding claim in the segment; refuted.
+- **`Macht.cpp:461`/`520` — the AOB scan family never polling `Tot::Requested()`, and
+  `AOBScanAllModules` faulting on a `FreeLibrary` mid-sweep.** Refuted (note this is the *same claim
+  shape* that was CONFIRMED against `Genau` as D2/G2 and against `Aura::FindByAddress` as D3/A7 —
+  here the guards exist).
+- **`Macht.cpp:556`/`629` — two `ScanRegionBatch` region-size off-by-ones** against the batch's
+  shortest vs longest pattern. Refuted.
 
 ### From D3 (8 of 18)
 
