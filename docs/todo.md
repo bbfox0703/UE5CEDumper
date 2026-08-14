@@ -1391,9 +1391,15 @@ is exactly the case the size guess gets *right*.
 **U2 cannot be covered this way.** `WITH_CASE_PRESERVING_NAME` is an engine build flag, not a project
 property — it needs either a custom engine build or a real CPN title (Titan Quest II, UE 5.7).
 
-⚠ **Two copies exist and they DIFFER**: the live project is `D:\Unreal Projects\DumperTest`, the
-tracked source of record is `tools/ue-sample/DumperTest`. Land the change in both, or the repo copy
-silently stops describing what was actually packaged.
+**Where to edit.** `tools/ue-sample/DumperTest` is the source of record and holds **only** the
+`DumperTest*` actor/types sources; the live project `D:\Unreal Projects\DumperTest` additionally has
+the project scaffolding the repo does not track (`.uproject`, `Config/`, `Content/`, `Plugins/`,
+`DumperTest.Build.cs`, the module `DumperTest.cpp/.h`, `DumperTestCharacter.*`). So syncing is a
+**file-level copy of the tracked sources**, never a directory overwrite — the latter would drop the
+scaffolding. Edit the repo copy first, then copy those files across and rebuild.
+
+*(Checked 2026-08-14: the two copies differ by **line endings only** — `diff --strip-trailing-cr`
+reports them identical. Nothing has desynced.)*
 
 -----
 
