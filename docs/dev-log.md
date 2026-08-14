@@ -22,6 +22,53 @@ builds ≤696 in
 
 -----
 
+## 2026-08-14 - Two replies that reported work they had not done, and the feature that was empty all along (build 2818)
+
+**Audit #5 D5 fixes F4 and F6 — and F8, which the F6 fix immediately exposed.**
+
+### F4 — `search_properties` claimed a full sweep after stopping at the result cap
+
+`Aura::SearchProperties` assigned `result.scannedObjects = GetCount()` **before** the walk, so a
+search that stopped at the `maxResults` cap a few percent in still reported the whole pool. The panel
+printed that as *"Found 200 properties in 3,412 classes (scanned 1,204,338 objects)"* — and a user
+whose field was past the cap read it as proof the field does not exist. `PropertySearchResult` now
+carries `truncated` (cap reached) and `aborted` (`Tot::Requested()` fired), `scannedObjects` is what
+was actually walked, and the batch twin got the same treatment with **per-query** `truncated` — the
+batch loop stops only when *every* query is full, so one seed keyword can be capped while another
+swept everything. Measured on DumperTest: capped query `total 3 / classes 8 / scanned 105 /
+truncated true`; full sweep `scanned 24445`, which is exactly what `get_object_count` reports.
+
+> The first build had `walked = i` and a full sweep reported **24444** — one short. Caught by the
+> same cross-check that made the original lie visible. A number compared only against itself is not
+> checked at all.
+
+### F6 — `walk_world` reported the page size as the level's actor count, and failed silently
+
+`actor_total` and `truncated` are now emitted beside `actor_count`, and the two failure branches
+(`Actors` unresolved; `ReadTArray` failed) set `data["error"]` instead of returning `actors: []` with
+`ok:true` — which the handler already did for the two failures above them.
+
+### F8 (new) — `ULevel` has no reflected `Actors` on this engine, so `walk_world` enumerates nothing
+
+The F6 error string fired on DumperTest's stock ThirdPersonMap on its first run and named the branch:
+`actorsOffset < 0`, not a failed read. Walking the live `ULevel` confirms it — **29 fields, 7
+`ArrayProperty`, none named `Actors`** (`ModelComponents` @208, `NavDataChunks` @264,
+`StreamingTextures` @320, `DestroyedReplicatedStaticActors` @768; the only `*Actor*` names are
+`ActorCluster` and `LevelScriptActor`, both `ObjectProperty`). `walk_world` finds the actor array
+purely by reflection, so on this engine "Load GWorld" renders a populated level as empty. `Actors` is
+a real native member — the fix is a native-offset read, not more reflection. **Measured on packaged
+DumperTest only**; `walk_world` demonstrably works on other titles, so the affected engine range is
+not established. Filed, not fixed.
+
+> Worth keeping as method: **the cheapest new finding of the day came from making an existing silent
+> failure speak**, not from another scan. When a reply cannot say what it failed to do, the defect
+> underneath it is invisible too.
+
+**Wire-only.** `PropertySearchPanel` does not yet bind `truncated`, and `LiveWalkerViewModel` does not
+bind `actor_total` — the DLL stopped lying, the panels have not started telling. Separate pass.
+
+-----
+
 ## 2026-08-14 - Every game exit paid 5 seconds to drain threads Windows had already killed (build 2813)
 
 **Audit #5 segment D5 fixes F1 and F7 — the first two fixes from the D5 scan, both in `Fern`.**

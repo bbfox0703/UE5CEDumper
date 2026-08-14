@@ -349,6 +349,7 @@ the old core instead, and that is where all eight landed.
 | **F4** | MED | `Fern.cpp:2645` (+ batch twin) | `Aura::SearchProperties` stops the GObjects walk the instant `results.size()` reaches `maxResults` (**200** by default from the UI) and also breaks on `Tot::Requested()`; the reply carries `total` = the capped row count with **no `truncated` and no aborted flag**. Worse, `scanned_objects` is echoed from a field Aura assigns to the **full** object count *before* the loop starts (`Aura.cpp:4179`), so a walk that stopped a few percent in reports the whole pool as scanned. The panel prints *"Found 200 properties in 3,412 classes (scanned 1,204,338 objects)"*; the user's client-side filter then finds nothing and they conclude the field does not exist. **This is the exact shape behind four "the scan missed my field" reports.** | S / low |
 | **F5** | LOW | `Renge.h:282` (+ `Fern::WriteLine`) | `MakeResponse` builds a 3-key envelope then `res.merge_patch(data)`; nlohmann's merge_patch assigns non-object values **by copy**, so a payload a handler carefully built with `std::move` is deep-copied in full — then `WriteLine` materialises a second copy of the serialized string solely to append `"\n"`. Peak ≈ 2× DOM + 2× string, **in the game process's heap**, on `snapshot_chunk` (8192 objects), `find_instances` (50000 cap) and `list_all_functions` (100000 default). | S / low |
 | **F6** | LOW | `Fern.cpp:2510` | `walk_world` clamps the Actors loop to the caller's `limit` (the UI sends **500**) and reports `actors.size()` as the level's actor count — the real `actorArr.Count` is read one line earlier and **discarded** — with no `truncated`/`total`, so a 500-actor page is indistinguishable from a 500-actor level and an actor at index 1877 simply is not there. Two sibling failures in the same block (Actors field unresolved; `ReadTArray` fails) also return `actors: []` with `ok:true` and **no `error`**, even though this same handler sets `data["error"]` for the two failures directly above. | S / low |
+| **F8** ¤ | MED | `Fern.cpp:2510` (same handler as F6) | **`ULevel` has no reflected `Actors` property on this engine, so `walk_world` enumerates nothing — always.** Found while verifying F6: the fix's new error string named the branch (`actorsOffset < 0`, not a failed read), and walking the live `ULevel` instance confirms it — **29 fields, 7 `ArrayProperty`, none called `Actors`** (`ModelComponents` @208, `NavDataChunks` @264, `StreamingTextures` @320, `DestroyedReplicatedStaticActors` @768; the only `*Actor*` names are `ActorCluster` and `LevelScriptActor`, both `ObjectProperty`). `walk_world`'s entire actor enumeration is built on finding that property by reflection, so on this engine Live Walker's "Load GWorld" shows a populated level as empty. `ULevel::Actors` is a real native member — the fix is a native-offset read (the `Ubel::GuessGapTypes` machinery already exists for exactly this), not more reflection. *Honest limit: measured on packaged DumperTest only; `walk_world` demonstrably works on other titles, so this is engine-version-dependent and the affected range is not established.* | M / med |
 | **F7** | LOW | `Fern.cpp:5042` | The `-7` response text reads *"(hook not active, direct call used)"*. `-7` is produced **only** by `Stark::EnqueueInvoke`'s inactive-hook guard or by `Stark::Shutdown` draining the queue — **neither executes ProcessEvent by any route**; the direct fallback lives on the other side of the `if (Stark::IsHookActive())` branch and returns 0/-2/-3/-4/-8. The string reports an execution that provably did not happen, and the dialog still shows `result_hex` — the untouched pre-call buffer. `-8` has no mapping at all. | S / low |
 
 ### D5 — LIVE VERIFIED 2026-08-14, headless, on packaged `DumperTest` (Shipping, DLL build 2812)
@@ -411,7 +412,41 @@ return in front of it — but reaching it needs a CE Disable (or `UE5_StopPipeSe
 route cannot drive. Filed in [todo.md](todo.md)'s pending register; do not record it as verified.
 Note also that `-Target Test` proves nothing about either fix: **no test target compiles `Fern.cpp`.**
 
-**The other six D5 findings remain REPORTED, NOT FIXED.**
+### ✅ F4 and F6 FIXED and re-measured — build 2818, 2026-08-14
+
+**F4**: `PropertySearchResult` gained `truncated` / `aborted`; `scannedObjects` is now what the loop
+**walked** instead of the pool size assigned before it; the same fix went into the batch twin
+(per-query `truncated`, since the batch stops only when *every* query is full). Fern emits all three.
+Both paths measured on DumperTest, with an independent cross-check:
+
+| query | `total` | `scanned_classes` | `scanned_objects` | `truncated` |
+|---|--:|--:|--:|---|
+| `"Name"`, limit 3 | 3 | 8 | **105** | **true** |
+| `"Dumper"`, limit 200 | 0 | 1566 | **24445** | false |
+
+`get_object_count` on the same process returns **24445** — so a full sweep now reports exactly the
+pool and a capped one reports what it touched. (Pre-fix, the capped query reported 24445 too.) The
+log line also names the stop reason now: `…, STOPPED at the result cap — more matches exist`.
+
+> **An off-by-one I introduced and then caught with the same cross-check.** The first build tracked
+> `walked = i`, so a full sweep reported **24444** — one short of the pool. It is exactly the kind of
+> error that survives when a number is only compared against itself; `get_object_count` is what made
+> it visible. Fixed to `walked = i + 1` ("objects ENTERED") and re-measured.
+
+**F6**: `actor_total` and `truncated` added, and both silent branches now set `data["error"]`. On
+DumperTest the error fires immediately and names the branch — which is how **F8** was found.
+
+⚠ **F4's UI half is NOT done.** The DLL no longer lies, but `PropertySearchPanel` does not yet bind
+the flag, so the user still sees no "more matches exist" strip. Same for `walk_world`'s
+`actor_total`/`truncated` in `LiveWalkerViewModel`. **Wire-only fix; the panels are a separate pass.**
+
+**The other four D5 findings (F2, FR1, F3, F5) remain REPORTED, NOT FIXED**, and F8 is new and
+unfixed.
+
+¤ **F8 did not come from a finder.** It came from *fixing* F6 and then asking why the branch fired —
+the D2/G7 shape again. Worth noting as method: **the cheapest new finding of the day was produced by
+making an existing silent failure speak**, not by another scan. The audit's own §4 cluster ② predicts
+this: when a reply cannot say what it failed to do, the defect underneath it is invisible too.
 
 ‡ **F1 — I strengthened this one at takeover, and the strengthening removes the skeptic's own reason
 for downgrading it.** The skeptic did real work here: it read the MSVC CRT source to establish that
@@ -669,8 +704,8 @@ be the default for any DLL fix:
 
 ## 4. Cross-segment rollup — read this before fixing anything
 
-**Status: 6 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5). **48 distinct findings: 0 HIGH ·
-27 MEDIUM · 20 LOW · 1 INFO.** 117 raw claims, **65 refuted (56%)**. Remaining: U1–U5, S1, T1.
+**Status: 6 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5). **49 distinct findings: 0 HIGH ·
+28 MEDIUM · 20 LOW · 1 INFO.** 117 raw claims, **65 refuted (56%)**. Remaining: U1–U5, S1, T1.
 
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
 |---|--:|--:|--:|--:|---|
@@ -679,18 +714,21 @@ be the default for any DLL fix:
 | D3 Aura | 16 | 18 | 8 (44%) | 10 | 0 → 0 |
 | D4a Macht | 10 | 9 | 5 (56%) | 3 | 0 → 0 |
 | D4b Mimic+Sein+Stark+Lugner | 11 (+5 lost) | 18 | 9 (50%) | 9 | 0 → 0 |
-| D5 Fern+Frieren | 14 | 19 | 11 (58%) | 8 | 1 → **0** |
+| D5 Fern+Frieren | 14 | 19 | 11 (58%) | 8 **+1** ¤ | 1 → **0** |
+
+¤ **D5's section holds 9 rows but its run produced 8** — F8 came from verifying F6, not from a
+finder (same as D2's G7 below).
 
 ✦ **D2's section holds 7 rows but its run produced 6.** G7 did not come from any finder — it was
 found during the 2026-08-14 live-verification session and filed into the D2 section because that is
 where it belongs by subject. The Raw/Refuted columns describe the *runs*; the totals above count
 *rows*, so the two reconcile only through this row. (Counted directly: `grep -cE '^\| \*\*[A-Z]+[0-9]+\*\*'`
-over §2 = **48**, of which 27 MED / 20 LOW / 1 INFO. Re-derive it rather than trusting the table.)
+over §2 = **49**, of which 28 MED / 20 LOW / 1 INFO. Re-derive it rather than trusting the table.)
 
 **Ten HIGHs were claimed across the audit and every one died** — D5's lone HIGH was cut to MEDIUM by
 its own skeptic, and D3/D4a/D4b claimed none at all, which is the calibration working rather than the
 code improving. Two things follow: severities from a finder are worthless before refutation, and —
-since the surviving 48 are all MED/LOW/INFO — *nothing found so far is an emergency*. Fix by cluster,
+since the surviving 49 are all MED/LOW/INFO — *nothing found so far is an emergency*. Fix by cluster,
 not by walking the list.
 
 **The refutation rate has been stable at ~50–58% for five of the six segments** (D2's 73% is the

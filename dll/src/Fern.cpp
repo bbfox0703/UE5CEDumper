@@ -2496,9 +2496,25 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json actors = json::array();
             int actorLimit = request.value("limit", 200);
 
-            if (actorsOffset >= 0) {
+            // The two failures below used to return `actors: []` with ok:true and NO
+            // error, even though this same handler sets data["error"] for the two
+            // failures above it — so the UI rendered a populated level as an empty
+            // one. Live on DumperTest's stock ThirdPersonMap 2026-08-14: actor_count
+            // 0 while world_addr / level_name / level_offset all resolved. That is a
+            // real unanswered question about this map, and it was invisible because
+            // nothing said which branch fired. (audit #5 D5/F6)
+            int actorTotal = -1;
+            if (actorsOffset < 0) {
+                data["error"] = "ULevel::Actors ArrayProperty not found on this level's class "
+                                "— the actor list below is empty because it was never read";
+            } else {
                 Macht::TArrayView actorArr;
-                if (Macht::ReadTArray(levelAddr + actorsOffset, actorArr)) {
+                if (!Macht::ReadTArray(levelAddr + actorsOffset, actorArr)) {
+                    data["error"] = "ULevel::Actors TArray unreadable at +"
+                                  + std::to_string(actorsOffset)
+                                  + " — the actor list below is empty because the read failed";
+                } else {
+                    actorTotal = actorArr.Count;
                     int count = (std::min)(actorArr.Count, actorLimit);
                     for (int i = 0; i < count; ++i) {
                         uintptr_t actorAddr = Macht::ReadTArrayElement(actorArr, i);
@@ -2549,6 +2565,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             data["actors"]      = actors;
             data["actor_count"] = static_cast<int>(actors.size());
+            // actor_count is the PAGE size. The level's real element count was read
+            // one line above and thrown away, so a 500-actor page was indis-
+            // tinguishable from a 500-actor level and an actor at index 1877 simply
+            // was not there. -1 = never read (see the error above). (audit #5 D5/F6)
+            data["actor_total"] = actorTotal;
+            data["truncated"]   = (actorTotal > actorLimit);
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -2683,7 +2705,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["total"]           = static_cast<int>(searchResult.results.size());
             data["scanned_classes"] = searchResult.scannedClasses;
+            // Now the objects actually walked, not the pool size (audit #5 D5/F4).
             data["scanned_objects"] = searchResult.scannedObjects;
+            // Additive: a client that ignores these behaves as before. Without them
+            // a capped search is indistinguishable from a complete one that found
+            // everything, which is how "the scan missed my field" gets reported.
+            data["truncated"]       = searchResult.truncated;
+            data["aborted"]         = searchResult.aborted;
             data["results"]         = matches;
             return Renge::MakeResponse(id, data).dump();
         }
@@ -2764,6 +2792,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 envelope["query"] = queries[qi];
                 envelope["results"] = matches;
                 envelope["match_count"] = static_cast<int>(sr.results.size());
+                // Per-query: the batch loop stops when EVERY query is full, so one
+                // seed keyword can be capped while another swept the whole pool.
+                // (audit #5 D5/F4)
+                envelope["truncated"]   = sr.truncated;
                 perQuery.push_back(envelope);
             }
 
@@ -2771,7 +2803,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["query_count"]     = static_cast<int>(queries.size());
             data["total"]           = grandTotal;
             data["scanned_classes"] = totalScannedClasses;
-            data["scanned_objects"] = totalScannedObjects;
+            data["scanned_objects"] = totalScannedObjects;   // walked, not pool size
+            data["aborted"]         = !batchResults.empty() && batchResults[0].aborted;
             data["per_query"]       = perQuery;
             return Renge::MakeResponse(id, data).dump();
         }
