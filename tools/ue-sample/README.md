@@ -320,6 +320,11 @@ stored `00 4E` — a NUL at an even byte offset.
 | `Map_IntToFloat` | 1:1.5 2:2.5 3:3.5 | non-FName key shape |
 | `Arr_Int` | `{10,20,30,40,50}` | |
 | `Arr_Struct` | 2 × `FDumperTestStat` — `StatName` Attack/Defence, `Value` 7777/6666, `Label` an FText | struct-element container — the deep-descent level, with an FText inside it |
+| `Map_I64ToI32` | 600000000001:6001 600000000002:6002 600000000003:6003 | **audit #5 M1.** pairAlign 8, unpadded pair 12 → stride 24. A build with the defect strides 20, so 6002 / 6003 read as garbage while 6001 looks fine |
+| `Map_StrToInt` | StrAlpha:6101 StrBeta:6102 StrGamma:6103 | **M1, second witness**, different arithmetic — unpadded pair 20 → stride 32 (defect: 28). Two witnesses so one wrong assumption cannot pass both |
+| `Map_IntToVec3f` | 1:(6201 6202 6203) 2:(6211 6212 6213) 3:(6221 6222 6223) | **M3.** `FDumperTestVec3f` is a 4-aligned POD (`X` `Y` `Z` floats, no FText/pointer/double), so its value sits at +4. The defect's size guess reads +8 — **the only container here that is wrong at element 0**, so scanning 6201 fails outright. Also **A4**'s target: a scalar leaf inside a map's struct side |
+| `Set_Big` | 9000..9199 (200 entries) with 9005 removed | **A2 + M2.** 200 entries push the `TBitArray` past its 128-bit inline buffer onto the heap; 9005 is a LOW index (5), so a build reading the frozen inline words still lists it. M2: the rendered row count must equal the header count |
+| `Set_Struct` | (6301 6302 6303) (6311 6312 6313) | **A4**, set side — a struct element whose scalar leaf the Deep pass must reach |
 | `Opt_Int_Set` | **24680** | V1c — appears under the optional's field name; Next Scan prunes |
 | `Opt_Float_Set` | 99.5 | |
 | `Opt_Str_Set` | `OptionalPresent` | |

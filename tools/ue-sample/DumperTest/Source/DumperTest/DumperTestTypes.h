@@ -52,3 +52,35 @@ struct FDumperTestStat
 	UPROPERTY() int32 Value = 0;
 	UPROPERTY() FText Label;
 };
+
+// ============================================================
+// FDumperTestVec3f — deliberately 4-ALIGNED POD (audit #5 M3).
+//
+// Three floats: no FText, no pointer, no double. That matters. FDumperTestStat
+// above carries an FText, i.e. a TSharedRef, i.e. 8 bytes of alignment — which
+// is EXACTLY the case the broken size guess ("value >= 8 bytes => align 8")
+// happens to get right. A struct that is genuinely 4-aligned is the only shape
+// that can tell Ubel::GetStructAlignment's real MinAlignment read apart from
+// that guess: as a TMap value it sits at +4, where the guess says +8.
+//
+// operator== and GetTypeHash are required by UE for a TSet element / TMap key.
+// ============================================================
+USTRUCT()
+struct FDumperTestVec3f
+{
+	GENERATED_BODY()
+
+	UPROPERTY() float X = 0.f;
+	UPROPERTY() float Y = 0.f;
+	UPROPERTY() float Z = 0.f;
+
+	bool operator==(const FDumperTestVec3f& Other) const
+	{
+		return X == Other.X && Y == Other.Y && Z == Other.Z;
+	}
+};
+
+FORCEINLINE uint32 GetTypeHash(const FDumperTestVec3f& V)
+{
+	return HashCombine(HashCombine(GetTypeHash(V.X), GetTypeHash(V.Y)), GetTypeHash(V.Z));
+}
