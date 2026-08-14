@@ -1405,6 +1405,29 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-14 — SDK header layout: inherited-property boundary + packed bitfields (audit #5 W2/W3, build 2842)
+
+Both fixes are unit-verified end-to-end against the real emitters, with separate negative controls.
+What no unit test can cover is the **boundary value itself**: `super_props_size` is a new
+`walk_class` field read off a live `UStruct`, and the tests supply it by hand.
+
+**Cheapest check — headless, no UI**, using the pipe recipe in
+[audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md#the-reusable-win-from-today--headless-in-game-verification):
+
+1. Inject into any game, then `walk_class` a **derived** class (anything `*_C`, or `AActor` itself).
+2. Assert `super_props_size` is **non-zero, less than `props_size`**, and equal to the `props_size`
+   the same command reports for `super_addr` when walked directly. That last equality is the real
+   check — it is the only one that would catch the offset being read off the wrong struct.
+3. Confirm the lowest-offset field in `fields` is **below** `super_props_size` (i.e. the reply really
+   does carry inherited properties, so the filter has something to do). A run where every field is
+   already ≥ the boundary proves nothing — it is the absence-shaped result
+   [working-lessons.md](working-lessons.md) §1.2 warns about.
+
+**Then the UI half**: export an SDK header for that class and check the struct opens at the super's
+size, declares none of the base's properties, and that a class with packed bools (`AActor` has a
+replication-flag block) emits `uint8_t bX : 1` runs whose byte count matches the gap to the next
+field.
+
 ### 🔴 NEW 2026-08-14 — TMap element geometry: pair padding + struct alignment + free-slot count (audit #5 M1/M2/M3)
 
 Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.

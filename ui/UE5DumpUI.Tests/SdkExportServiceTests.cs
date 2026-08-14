@@ -260,8 +260,12 @@ public class SdkExportServiceTests
     }
 
     [Fact]
-    public void GenerateClassHeader_BoolBitfield_EmitsComment()
+    public void GenerateClassHeader_BoolBitfield_EmitsBitfieldAtItsTrueBit()
     {
+        // Mask 0x04 is a PACKED bitfield (one bit, bit 2), not a native bool. It used to be
+        // emitted as a whole `bool`, which put it at bit 0 and — once a class had more than one
+        // such flag — made the struct longer than the game's (audit #5 W3). The mask comment,
+        // which is what this test was originally written for, is unchanged.
         var fields = new List<LiveFieldValue>
         {
             new()
@@ -273,8 +277,110 @@ public class SdkExportServiceTests
 
         var header = SdkExportService.GenerateClassHeader("AActor", "", 0x18, fields);
 
-        Assert.Contains("bool bHidden;", header);
+        Assert.Contains("uint8_t bHidden : 1;", header);
+        Assert.Contains("uint8_t : 2;", header);          // bits 0-1 are UE's, not ours to reuse
         Assert.Contains("[Mask: 0x04]", header);
+        Assert.DoesNotContain("bool bHidden;", header);
+    }
+
+    [Fact]
+    public void GenerateClassHeader_EightPackedBools_DoNotGrowTheStruct()
+    {
+        // The case the old emitter could not survive: eight flags share ONE byte at 0x10, and a
+        // float follows at 0x14. Emitting eight `bool` members advanced the cursor to 0x18, past
+        // the float — and padding is only emitted when the next offset is AHEAD of the cursor, so
+        // nothing could compensate and every later member was displaced.
+        var fields = new List<LiveFieldValue>();
+        for (int bit = 0; bit < 8; bit++)
+            fields.Add(new LiveFieldValue
+            {
+                Name = $"bFlag{bit}", TypeName = "BoolProperty",
+                Offset = 0x10, Size = 1, BoolFieldMask = 1 << bit,
+            });
+        fields.Add(new LiveFieldValue
+        {
+            Name = "Speed", TypeName = "FloatProperty", Offset = 0x14, Size = 4,
+        });
+
+        var header = SdkExportService.GenerateClassHeader("AActor", "", 0x18, fields);
+
+        for (int bit = 0; bit < 8; bit++)
+            Assert.Contains($"uint8_t bFlag{bit} : 1;", header);
+        Assert.DoesNotContain("uint8_t : ", header);       // all eight bits used, no filler
+        Assert.Contains("float Speed;", header);
+        // The eight flags occupy 0x10..0x11, so 3 bytes of padding must reach the float at 0x14.
+        Assert.Contains("Pad_0011[0x0003]", header);
+    }
+
+    [Fact]
+    public void GenerateClassHeader_NativeBool_StaysAWholeBool()
+    {
+        // FieldMask 0xFF is a real `bool` that owns its byte — it must NOT become a bitfield.
+        var fields = new List<LiveFieldValue>
+        {
+            new()
+            {
+                Name = "bReplicates", TypeName = "BoolProperty",
+                Offset = 0x10, Size = 1, BoolFieldMask = 0xFF,
+            },
+        };
+
+        var header = SdkExportService.GenerateClassHeader("AActor", "", 0x18, fields);
+
+        Assert.Contains("bool bReplicates;", header);
+        Assert.DoesNotContain(" : 1;", header);
+    }
+
+    // --- Inherited properties (audit #5 W2) ---
+
+    [Fact]
+    public void GenerateClassHeaderFromSchema_InheritedFieldsAreNotRedeclared()
+    {
+        // walk_class returns the WHOLE SuperStruct chain, so without the boundary the emitter
+        // re-declares every base property inside a struct that already inherits it — which
+        // compiles, and puts offsetof wrong for every derived class.
+        var classInfo = new ClassInfoModel
+        {
+            Name = "BP_Player_C",
+            SuperName = "AActor",
+            PropertiesSize = 0x2A0,
+            SuperPropertiesSize = 0x290,
+            Fields =
+            {
+                new FieldInfoModel { Name = "RootComponent", TypeName = "ObjectProperty", Offset = 0x120, Size = 8 },
+                new FieldInfoModel { Name = "bHidden", TypeName = "BoolProperty", Offset = 0x88, Size = 1, BoolFieldMask = 0x01 },
+                new FieldInfoModel { Name = "Health", TypeName = "FloatProperty", Offset = 0x290, Size = 4 },
+            },
+        };
+
+        var header = SdkExportService.GenerateClassHeaderFromSchema(classInfo);
+
+        Assert.Contains(": public AActor", header);
+        Assert.Contains("float Health;", header);
+        Assert.DoesNotContain("RootComponent", header);
+        Assert.DoesNotContain("bHidden", header);
+    }
+
+    [Fact]
+    public void GenerateClassHeaderFromSchema_WithoutBoundary_KeepsTheLegacyHeuristic()
+    {
+        // An older DLL sends no super_props_size. The emitter must still produce what it always
+        // did rather than dropping everything or nothing.
+        var classInfo = new ClassInfoModel
+        {
+            Name = "BP_Player_C",
+            SuperName = "AActor",
+            PropertiesSize = 0x2A0,
+            SuperPropertiesSize = 0,
+            Fields =
+            {
+                new FieldInfoModel { Name = "Health", TypeName = "FloatProperty", Offset = 0x290, Size = 4 },
+            },
+        };
+
+        var header = SdkExportService.GenerateClassHeaderFromSchema(classInfo);
+
+        Assert.Contains("float Health;", header);
     }
 
     [Fact]

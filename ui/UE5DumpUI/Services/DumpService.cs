@@ -340,6 +340,7 @@ public sealed class DumpService : IDumpService
             SuperAddress = classObj["super_addr"]?.GetValue<string>() ?? "",
             SuperName = classObj["super_name"]?.GetValue<string>() ?? "",
             PropertiesSize = classObj["props_size"]?.GetValue<int>() ?? 0,
+            SuperPropertiesSize = classObj["super_props_size"]?.GetValue<int>() ?? 0,
         };
 
         if (classObj["fields"] is JsonArray fields)

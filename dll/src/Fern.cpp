@@ -1991,6 +1991,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             classData["super_addr"] = Renge::AddrToStr(ci.SuperClass);
             classData["super_name"] = ci.SuperName;
             classData["props_size"] = ci.PropertiesSize;
+            // Where this class's OWN properties begin. "fields" below carries the whole
+            // SuperStruct chain, and nothing else in this reply implies the boundary
+            // (audit #5 W2).
+            classData["super_props_size"] = ci.SuperPropertiesSize;
 
             json fields = json::array();
             for (const auto& f : ci.Fields) {

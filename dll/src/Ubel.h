@@ -47,6 +47,11 @@ struct ClassInfo {
     uintptr_t              SuperClass;    // Super UClass* address
     std::string            SuperName;
     int32_t                PropertiesSize;
+    // The immediate super's PropertiesSize, i.e. where THIS class's own properties begin.
+    // Fields carries the whole SuperStruct chain (they are prepended below), so a consumer
+    // that must tell own from inherited -- the SDK header emitter -- cannot do it without
+    // this number, and nothing else on the wire implies it (audit #5 W2).
+    int32_t                SuperPropertiesSize = 0;
     std::vector<FieldInfo> Fields;
 };
 

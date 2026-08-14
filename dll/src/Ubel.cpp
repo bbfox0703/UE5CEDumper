@@ -725,6 +725,8 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     Macht::ReadSafe(uclassAddr + DynOff::USTRUCT_SUPER, info.SuperClass);
     if (info.SuperClass) {
         info.SuperName = GetName(info.SuperClass);
+        // Where this class's OWN properties start -- see the field's comment in Ubel.h.
+        Macht::ReadSafe(info.SuperClass + DynOff::USTRUCT_PROPSSIZE, info.SuperPropertiesSize);
     }
 
     // Read PropertiesSize

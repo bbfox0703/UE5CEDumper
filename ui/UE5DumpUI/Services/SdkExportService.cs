@@ -14,13 +14,19 @@ public static class SdkExportService
     /// <summary>
     /// Generate a C++ header for a single class from LiveWalker field values.
     /// </summary>
+    /// <param name="superPropsSize">
+    /// The super's PropertiesSize — where this class's own properties begin. Callers that have
+    /// walked the class should pass <c>ClassInfoModel.SuperPropertiesSize</c>; 0 falls back to the
+    /// first-field heuristic. Without it every inherited property is re-declared inside a struct
+    /// that already inherits it (audit #5 W2).
+    /// </param>
     public static string GenerateClassHeader(
         string className, string superName, int propsSize,
-        IReadOnlyList<LiveFieldValue> fields, string? fullPath = null)
+        IReadOnlyList<LiveFieldValue> fields, string? fullPath = null, int superPropsSize = 0)
     {
         var sb = new StringBuilder(fields.Count * 80 + 256);
         EmitFileHeader(sb);
-        EmitClassHeaderFromLive(sb, className, superName, propsSize, fields, fullPath);
+        EmitClassHeaderFromLive(sb, className, superName, propsSize, fields, fullPath, superPropsSize);
         return sb.ToString();
     }
 
@@ -347,54 +353,131 @@ public static class SdkExportService
         sb.AppendLine();
         sb.AppendLine("{");
 
-        // Sort fields by offset
-        var sorted = classInfo.Fields.OrderBy(f => f.Offset).ToList();
-        int cursor = 0;
+        EmitStructBody(
+            sb,
+            classInfo.Fields.Select(f => new SdkField(
+                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppType(f))).ToList(),
+            superName, classInfo.SuperPropertiesSize, propsSize);
+    }
 
-        // If we have a super class, skip fields below the superclass boundary.
-        // Heuristic: first field offset is the superclass size.
-        if (sorted.Count > 0 && !string.IsNullOrEmpty(superName))
-        {
-            cursor = sorted[0].Offset;
-        }
+    /// <summary>
+    /// One field, normalised so the schema and live emitters share the layout logic instead of
+    /// keeping two copies of it. They had two, and both carried the same two defects.
+    /// </summary>
+    private readonly record struct SdkField(
+        string Name, int Offset, int Size, string TypeName, int BoolMask, string CppType);
 
-        foreach (var field in sorted)
+    /// <summary>
+    /// Emit the member list, padding and closing brace for one struct.
+    ///
+    /// <para><b>Inherited properties are dropped</b> (audit #5 W2). The DLL prepends the <b>entire</b>
+    /// SuperStruct chain to the field list, so emitting all of them re-declares every base property
+    /// inside a <c>struct X : public Super</c> that already inherits it — which compiles, and makes
+    /// <c>offsetof</c> wrong for every derived class in the generated SDK. The boundary is the super's
+    /// <c>PropertiesSize</c>, supplied by the DLL as <c>super_props_size</c>; the old first-field
+    /// heuristic is kept only as a fallback for a DLL that does not send it, and it is a fallback
+    /// precisely because it silently mis-splits when a derived class adds no properties of its own.</para>
+    ///
+    /// <para><b>Packed bitfield bools get real bitfields</b> (audit #5 W3). N <c>uint8 bX:1</c> flags
+    /// that UE packed into ONE byte all arrive at the same offset with Size 1. Emitting a whole
+    /// <c>bool</c> each made the struct N−1 bytes too long from that point, and no padding could
+    /// compensate because padding is only emitted when the next offset is ahead of the cursor. They
+    /// are now emitted as C++ bitfields at their true bit positions, with unnamed fillers for the
+    /// bits UE left unused, so the byte reconstructs exactly.</para>
+    /// </summary>
+    private static void EmitStructBody(
+        StringBuilder sb, List<SdkField> fields, string superName, int superPropsSize, int propsSize)
+    {
+        // Order by offset, then by bit position so a packed byte reads low bit first.
+        var sorted = fields.OrderBy(f => f.Offset).ThenBy(f => f.BoolMask).ToList();
+
+        // Where this class's OWN properties start.
+        int ownStart = 0;
+        if (superPropsSize > 0)
+            ownStart = superPropsSize;
+        else if (sorted.Count > 0 && !string.IsNullOrEmpty(superName))
+            ownStart = sorted[0].Offset;   // legacy fallback — see the remark above
+
+        var own = sorted.Where(f => f.Offset >= ownStart).ToList();
+        int cursor = ownStart;
+
+        for (int i = 0; i < own.Count; i++)
         {
-            // Emit padding if gap
-            if (field.Offset > cursor)
+            // Collect every field sharing this offset — a packed bitfield byte if they all
+            // carry a single-bit mask.
+            int j = i;
+            while (j + 1 < own.Count && own[j + 1].Offset == own[i].Offset) j++;
+            var group = own.GetRange(i, j - i + 1);
+            bool packedBits = group.Count > 0 && group.TrueForAll(IsPackedBitfieldBool);
+
+            if (own[i].Offset > cursor)
+                EmitPadding(sb, cursor, own[i].Offset - cursor);
+
+            if (packedBits)
             {
-                var pad = field.Offset - cursor;
-                EmitPadding(sb, cursor, pad);
+                EmitBitfieldByte(sb, group);
+                cursor = own[i].Offset + 1;      // the whole group occupies ONE byte
             }
-
-            // Field declaration
-            var cppType = MapCppType(field);
-            var comment = BuildFieldComment(field.Offset, field.Size, field.TypeName, field.BoolFieldMask);
-
-            sb.Append("    ");
-            sb.Append(cppType);
-            sb.Append(' ');
-            sb.Append(field.Name);
-            sb.Append(';');
-            sb.Append(comment);
-            sb.AppendLine();
-
-            cursor = field.Offset + field.Size;
+            else
+            {
+                foreach (var f in group)
+                {
+                    sb.Append("    ").Append(f.CppType).Append(' ').Append(f.Name).Append(';')
+                      .Append(BuildFieldComment(f.Offset, f.Size, f.TypeName, f.BoolMask))
+                      .AppendLine();
+                }
+                cursor = own[i].Offset + group[^1].Size;
+            }
+            i = j;
         }
 
-        // Tail padding to reach PropertiesSize
         if (propsSize > cursor && propsSize > 0)
-        {
             EmitPadding(sb, cursor, propsSize - cursor);
-        }
 
         sb.Append("}; // Size: 0x");
         sb.AppendLine(propsSize.ToString("X4"));
     }
 
+    /// <summary>
+    /// True for a bool that UE packed into a shared byte, i.e. its FieldMask names exactly one bit.
+    /// A native <c>bool</c> has mask 0xFF and owns its byte; mask 0 means the DLL could not resolve
+    /// one, and is deliberately treated as a native bool so an unknown never rewrites the layout.
+    /// </summary>
+    private static bool IsPackedBitfieldBool(SdkField f) =>
+        f.TypeName == "BoolProperty" && f.BoolMask > 0 && (f.BoolMask & (f.BoolMask - 1)) == 0;
+
+    /// <summary>
+    /// Emit one byte's worth of packed bools as C++ bitfields at their true bit positions,
+    /// filling the gaps UE left so bit N in the game is bit N in the generated struct.
+    /// </summary>
+    private static void EmitBitfieldByte(StringBuilder sb, List<SdkField> group)
+    {
+        int pendingFiller = 0;
+        for (int bit = 0; bit < 8; bit++)
+        {
+            int mask = 1 << bit;
+            var field = group.Find(f => f.BoolMask == mask);
+            if (field.Name is null)
+            {
+                pendingFiller++;               // unused bit — accumulate
+                continue;
+            }
+            if (pendingFiller > 0)
+            {
+                sb.Append("    uint8_t : ").Append(pendingFiller).Append(';')
+                  .Append(" // unused bit").Append(pendingFiller > 1 ? "s" : "").AppendLine();
+                pendingFiller = 0;
+            }
+            sb.Append("    uint8_t ").Append(field.Name).Append(" : 1;")
+              .Append(BuildFieldComment(field.Offset, field.Size, field.TypeName, field.BoolMask))
+              .AppendLine();
+        }
+        // Trailing unused bits need no filler: the next member starts on a fresh byte anyway.
+    }
+
     private static void EmitClassHeaderFromLive(
         StringBuilder sb, string className, string superName, int propsSize,
-        IReadOnlyList<LiveFieldValue> fields, string? fullPath)
+        IReadOnlyList<LiveFieldValue> fields, string? fullPath, int superPropsSize)
     {
         sb.Append("// ");
         sb.Append(!string.IsNullOrEmpty(fullPath) ? fullPath : className);
@@ -410,42 +493,11 @@ public static class SdkExportService
         sb.AppendLine();
         sb.AppendLine("{");
 
-        var sorted = fields.OrderBy(f => f.Offset).ToList();
-        int cursor = 0;
-
-        if (sorted.Count > 0 && !string.IsNullOrEmpty(superName))
-        {
-            cursor = sorted[0].Offset;
-        }
-
-        foreach (var field in sorted)
-        {
-            if (field.Offset > cursor)
-            {
-                EmitPadding(sb, cursor, field.Offset - cursor);
-            }
-
-            var cppType = MapCppType(field);
-            var comment = BuildFieldComment(field.Offset, field.Size, field.TypeName, field.BoolFieldMask);
-
-            sb.Append("    ");
-            sb.Append(cppType);
-            sb.Append(' ');
-            sb.Append(field.Name);
-            sb.Append(';');
-            sb.Append(comment);
-            sb.AppendLine();
-
-            cursor = field.Offset + field.Size;
-        }
-
-        if (propsSize > cursor && propsSize > 0)
-        {
-            EmitPadding(sb, cursor, propsSize - cursor);
-        }
-
-        sb.Append("}; // Size: 0x");
-        sb.AppendLine(propsSize.ToString("X4"));
+        EmitStructBody(
+            sb,
+            fields.Select(f => new SdkField(
+                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppType(f))).ToList(),
+            superName, superPropsSize, propsSize);
     }
 
     private static void EmitPadding(StringBuilder sb, int offset, int size)

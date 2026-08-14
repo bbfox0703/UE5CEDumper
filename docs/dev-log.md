@@ -22,6 +22,67 @@ builds ≤696 in
 
 -----
 
+## 2026-08-14 - The SDK header re-declared everything it inherited, and gave each packed bool its own byte (build 2842)
+
+**Audit #5 segment U2 fixes W2 (HIGH) and W3.** One commit: both live in the same emitter and the
+same layout cursor, and W3's byte accounting is only observable once W2 stops flooding the struct
+with inherited members.
+
+### W2 — every derived class had the wrong `offsetof`
+
+`Ubel::WalkClass` deliberately prepends the **entire** SuperStruct chain to its field list, and
+nothing between the DLL and the SDK emitter filtered it out. The emitter's own comment said "skip
+fields below the superclass boundary", but the code only moved the padding cursor — the loop still
+emitted every inherited property. So `struct BP_Player_C : public AActor` re-declared all of AActor's
+properties inside a struct that already inherits them. That compiles, which is why nobody noticed;
+it just silently lays the struct out wrong from the first member onward.
+
+The boundary is now **sent, not guessed**: `walk_class` gained `super_props_size`, read in
+`Ubel::WalkClass` where `SuperClass` is already resolved. Nothing else in the reply implies it, so a
+client can only heuristic its way there — the same situation as `map_stride` two builds ago, and the
+same answer: *where the input is an engine fact the wire does not carry, send the number.* The old
+first-field heuristic survives only as a fallback for an older DLL, and is now documented as one,
+because it mis-splits silently when a derived class adds no properties of its own.
+
+### W3 — N packed bools consumed N bytes instead of one
+
+UE packs `uint8 bX:1` flags into a shared byte; they arrive at the same offset with Size 1. The
+emitter wrote a whole `bool` for each and advanced the cursor by Size every time, so eight flags took
+eight bytes instead of one. Padding could not compensate — it is only emitted when the next field's
+offset is *ahead* of the cursor, and by then the cursor had overshot. Every later member, and the
+trailing `// Size:` comment, was displaced.
+
+They are now emitted as `uint8_t Name : 1` at their **true bit positions**, with unnamed fillers for
+the bits UE left unused, so bit N in the game is bit N in the header. A native `bool` (FieldMask
+`0xFF`) keeps its byte, and so does an unresolved mask (`0`) — an unknown must never be allowed to
+rewrite the layout.
+
+### Both duplicated loops are gone
+
+The schema and live emitters carried byte-identical member-emit loops, and therefore carried both
+defects. They now project into a single `SdkField` record and share one `EmitStructBody`. Fixing this
+in two places is how it would have drifted apart again — the same lesson as the three stride mirrors.
+
+### One pre-existing test was changed, deliberately
+
+`GenerateClassHeader_BoolBitfield_EmitsComment` asserted `bool bHidden;` for a field with
+`BoolFieldMask = 0x04` — a single-bit mask, i.e. precisely the packed bitfield W3 is about. Its name
+and its second assertion show it was written for the *mask comment*; the declaration form was
+incidental and pinned the defect. The mask assertion is untouched; the declaration assertion now
+expects the bitfield. The arithmetic behind that call: with **one** bool the struct size is identical
+either way, but the bit position was wrong (bit 0 instead of bit 2) — and with several bools the size
+itself breaks, which the new eight-bool test demonstrates.
+
+Negative controls were run **separately** so each fix is independently guarded: reverting only the
+bitfield grouping turns exactly the two W3 tests red; reverting only the inherited-field filter turns
+exactly the one W2 test red. Restored and re-confirmed: 3583 tests, 0 failed.
+
+⬜ The unit tests drive the real emitters end-to-end, but the boundary *value* now comes from the DLL
+and no headless check has yet read a real `super_props_size` off a live class — filed in
+[todo.md](todo.md).
+
+-----
+
 ## 2026-08-14 - One '&' in a game string could reject an entire pasted cheat table (build 2836)
 
 **Audit #5 segment U2 fix W4.** `<Description>` text has been XML-escaped since audit #4 B3, because

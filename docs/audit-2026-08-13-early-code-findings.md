@@ -679,6 +679,47 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 > independent canonical writers sitting in this tree. That is the strongest evidence any segment of
 > this audit has produced, and it was available for free.
 
+> ### ✅ W2 and W3 FIXED — build 2842, 2026-08-14
+>
+> One commit: both live in the same emitter and the same layout cursor, and W3's byte accounting is
+> only observable once W2 stops flooding the struct with inherited members.
+>
+> **W2 — the boundary is now sent, not guessed.** `walk_class` gained `super_props_size` (the
+> immediate super's `PropertiesSize`, read in `Ubel::WalkClass` where `SuperClass` is already
+> resolved), because nothing else in the reply implies it: the DLL prepends the **entire** SuperStruct
+> chain to `Fields`, so "own vs inherited" is underdetermined client-side. Same shape as V2's
+> `map_stride` — *where the input is an engine fact the wire does not carry, send the number*. The old
+> first-field heuristic survives only as a fallback for an older DLL, and is documented as a fallback
+> because it mis-splits silently when a derived class adds no properties of its own.
+>
+> **W3 — packed bools become real bitfields at their true bit positions.** N `uint8 bX:1` flags
+> sharing one byte arrive at the same offset with Size 1; emitting a whole `bool` each grew the struct
+> by N−1 bytes, and padding could never compensate because it is only emitted when the next offset is
+> *ahead* of the cursor. They are now emitted as `uint8_t Name : 1` with **unnamed fillers for the
+> bits UE left unused**, so bit N in the game is bit N in the header. A native `bool` (mask `0xFF`)
+> and an unresolved mask (`0`) both keep their whole byte — an unknown must never rewrite the layout.
+>
+> **Both duplicated loops are gone.** The schema and live emitters carried byte-identical member-emit
+> loops and therefore both defects; they now project into one `SdkField` record and share
+> `EmitStructBody`. Fixing this in two places was how it would have drifted again.
+>
+> **One pre-existing test was CHANGED, which deserves the scrutiny.**
+> `GenerateClassHeader_BoolBitfield_EmitsComment` asserted `bool bHidden;` for a field with
+> `BoolFieldMask = 0x04` — a single-bit mask, i.e. exactly the packed bitfield W3 is about. Its name
+> and its second assertion show it was written for the *mask comment*; the declaration form was
+> incidental and pinned the defect. The mask assertion is unchanged and the declaration assertion now
+> expects the bitfield. The arithmetic that justifies it: with **one** bool the struct size is the
+> same either way, but the bit position was wrong (bit 0, not bit 2) — and with several bools the
+> size itself breaks, which the new eight-bool test demonstrates.
+>
+> **Negative controls, run separately so each fix is independently guarded:** reverting only the
+> bitfield grouping turns exactly the two W3 tests red; reverting only the inherited-field filter
+> turns exactly the one W2 test red. Restored, 3583 tests, 0 failed.
+>
+> ⬜ **Not verified in-game.** The unit tests drive the real emitters end-to-end, but the *boundary
+> value* now comes from the DLL, and no headless check confirms a real `super_props_size` on a live
+> class — see [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
 > ### ✅ W4 FIXED — build 2836, 2026-08-14
 >
 > Escaping moved into `BuildDropDownContent`, which is the **single choke point**: all six call sites
@@ -704,8 +745,8 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **W1** | **HIGH** | `UsmapExportService.cs:16`,`173-178`,`203`,`233` | The file stamps `Version = 3` (`LargeEnums`) but writes the **version-0 layout**, in three independent places. (a) `version` is followed straight by `compression` — the mandatory `int32 bHasVersionInfo` that every `version >= PackageVersioning(1)` file must carry is missing, so a reader's `ReadBoolean()` consumes 4 bytes of the size field and throws before a single name is read. (b) enum member count written `uint8`, but `>= LargeEnums` requires `uint16`. (c) per-property ArrayDim written as `(ushort)0` while the format (and the code's own adjacent comment) says `uint8` — so every struct's first property slides the stream by one byte. The file's own comment is also wrong: it says "3 = LongFName", but LongFName is **2**. | S / low |
-| **W2** | **HIGH** | `SdkExportService.cs:358` (+`EmitClassHeaderFromLive`) | The emitter assumes `ClassInfoModel.Fields` holds only the class's **own** properties, but `Ubel::WalkClass` deliberately prepends the entire SuperStruct chain and nothing filters it out. Every base-class property is therefore declared a **second time** inside a `struct X : public Super` that already inherits it, so `offsetof` is wrong for every derived class in the generated SDK — the header compiles and is silently mislaid out. | M / med |
-| **W3** | MED | `SdkExportService.cs:221` + `:382` | N `FBoolProperty` bitfields that UE packed into **one byte** are each emitted as a whole `bool` and the layout cursor advances by `Size` for each, so the struct grows N−1 bytes from that point. The emitter only pads when `offset > cursor`, so once the bools overshoot, **no padding can compensate** and every subsequent member — and the trailing `// Size:` — is shifted. | M / med |
+| **W2** ✅ | **HIGH** | `SdkExportService.cs:358` (+`EmitClassHeaderFromLive`) | The emitter assumes `ClassInfoModel.Fields` holds only the class's **own** properties, but `Ubel::WalkClass` deliberately prepends the entire SuperStruct chain and nothing filters it out. Every base-class property is therefore declared a **second time** inside a `struct X : public Super` that already inherits it, so `offsetof` is wrong for every derived class in the generated SDK — the header compiles and is silently mislaid out. | M / med |
+| **W3** ✅ | MED | `SdkExportService.cs:221` + `:382` | N `FBoolProperty` bitfields that UE packed into **one byte** are each emitted as a whole `bool` and the layout cursor advances by `Size` for each, so the struct grows N−1 bytes from that point. The emitter only pads when `offset > cursor`, so once the bools overshoot, **no padding can compensate** and every subsequent member — and the trailing `// Size:` — is shifted. | M / med |
 | **W4** ✅ | MED | `CeXmlExportService.cs:3522` + `:3586` (`BuildDropDownContent`) | `<DropDownList>` bodies are built from live FName / enum-name strings read out of game memory and interpolated **raw**, while every `<Description>` goes through `EscapeXmlContent`. One `&` in a `TArray<FName> Tags` entry (`Bow & Arrow`) makes the whole CheatTable malformed — and `EscapeXmlContent`'s own doc comment states the consequence: CE rejects the **entire document**, so a multi-thousand-entry export imports as nothing with no indication which record was at fault. This is audit #4's **B3 defect surviving at the one site B3 did not cover**. | S / low |
 | **W5** | MED | `CeXmlExportService.cs:2141` (`EmitDrilledPointer`) | The scalar pointer-drill branch gates on the broad `IsObjectPropertyType`, which includes `WeakObjectProperty` / `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty`, and emits `Offsets=[0]` for slots whose first 8 bytes are **not** a `UObject*` — a weak pointer is an index+serial pair. The array path has an explicit regression test against exactly this. (Claimed HIGH, cut to MEDIUM by the second lens.) | S / low |
 | **W6** | MED | `CeXmlExportService.cs:2665` (`MapInnerTypeToCeField`) | `EnumProperty` is hardcoded to CE type `"4 Bytes"` while element **addresses** are laid out with the DLL's real `ArrayElemSize`/`SetElemSize` (1 for the standard `enum class : uint8`), so CE reads 4 bytes at every 1-byte-spaced element. `CeWidthForSize` exists to fix precisely this and the Map and struct-array emitters already route through it. | S / low |
