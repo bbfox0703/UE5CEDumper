@@ -628,6 +628,10 @@ public sealed class DumpService : IDumpService
             LevelName = res["level_name"]?.GetValue<string>() ?? "",
             LevelOffset = res["level_offset"]?.GetValue<int>() ?? 0,
             ActorCount = res["actor_count"]?.GetValue<int>() ?? 0,
+            // -1 on a pre-2818 DLL and whenever the level's Actors array was never
+            // read at all, which is why the UI must test for < 0 and not for 0.
+            ActorTotal = res["actor_total"]?.GetValue<int>() ?? -1,
+            Truncated = res["truncated"]?.GetValue<bool>() ?? false,
             Error = res["error"]?.GetValue<string>() ?? "",
         };
 
@@ -1651,6 +1655,9 @@ public sealed class DumpService : IDumpService
             Total = res["total"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
+            // Absent on a pre-2818 DLL -> false, i.e. the old silent behaviour.
+            Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            Aborted = res["aborted"]?.GetValue<bool>() ?? false,
         };
 
         if (res["results"] is JsonArray arr2)

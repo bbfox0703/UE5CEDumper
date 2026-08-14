@@ -436,9 +436,20 @@ log line also names the stop reason now: `…, STOPPED at the result cap — mor
 **F6**: `actor_total` and `truncated` added, and both silent branches now set `data["error"]`. On
 DumperTest the error fires immediately and names the branch — which is how **F8** was found.
 
-⚠ **F4's UI half is NOT done.** The DLL no longer lies, but `PropertySearchPanel` does not yet bind
-the flag, so the user still sees no "more matches exist" strip. Same for `walk_world`'s
-`actor_total`/`truncated` in `LiveWalkerViewModel`. **Wire-only fix; the panels are a separate pass.**
+✅ **F4/F6 UI half DONE — build 2823, AOT-trimmed.** `PropertySearchResult` gained `Truncated` /
+`Aborted` and `WorldWalkResult` gained `ActorTotal` / `Truncated`; both parse with a **backward-safe
+default** (`false` / `-1`), so an older DLL degrades to the old silent behaviour rather than throwing.
+Property Search's status line now appends `⚠ STOPPED at the N-row cap — more matches exist, narrow the
+query or raise Max` (or `⚠ SCAN CANCELLED — this list is partial`), and Live Walker's GWorld header
+reads `⚠ showing 500 of 4,300 actors` when the list is a page. F6's *error* half needed no UI work:
+`LiveWalkerViewModel` already surfaced `world.Error`, which was simply never set before build 2818.
+
+`ActorTotal` is **-1**, not 0, when the array was never read — the UI must test `< 0`, because on the
+engines measured for F8 that is the normal case and the `Error` string is what should speak there.
+
+Verified: `-Target UI` and the full C# suite green, `check_axaml_strings` clean (1295/1295), then
+`-Mode Publish` → **54.3 MB** (the trimmed binary, not the 107.5 MB one) and **launch-checked** — alive
+after 12 s with no `crash.log`, because under AOT a successful build is not a successful start.
 
 ### ✅ F3(a) and FR1 FIXED — builds 2819 / 2820, 2026-08-14
 
