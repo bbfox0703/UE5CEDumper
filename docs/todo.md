@@ -1352,6 +1352,51 @@ discarding CE's reason string — **shipped**; see [dev-log.md](dev-log.md). CE-
 
 -----
 
+### 🔴 NEW 2026-08-14 — DumperTest cannot currently detect ANY of the audit #5 cluster ① fixes
+
+**Checked, not assumed.** The sample's four containers are `TSet<int32>`, `TMap<FName,int32>`,
+`TMap<int32,float>`, `TArray<FDumperTestStat>`. Working the arithmetic for each:
+
+| Sample container | pairAlign | unpadded pair | old stride | new stride | discriminates? |
+|---|--:|--:|--:|--:|---|
+| `TMap<FName,int32>` (non-CPN) | 4 | 12 | 20 | 20 | ❌ identical |
+| `TMap<int32,float>` | 4 | 8 | 16 | 16 | ❌ identical |
+| `TSet<int32>` | — | — | 12 | 12 | ❌ TSet is unaffected by design |
+| `TArray<FDumperTestStat>` | — | — | — | — | ❌ not a sparse container |
+
+**The sample has exactly the blind spot the unit tests had** — every pair is either 4-aligned or
+already a multiple of 8, so nothing discriminates. It also cannot reach M2/A2: the containers hold
+**3 entries each** and nothing is ever removed, while A2 needs **>128** entries (the `TBitArray` heap
+spill) and M2 needs a removal.
+
+`FDumperTestStat` does not help either: it carries an `FText` (a `TSharedRef`, so 8-aligned), which
+is exactly the case the size guess gets *right*.
+
+**Add these five properties** (the arithmetic each one is chosen to expose):
+
+- `TMap<int64,int32> Map_I64ToI32;` — pairAlign 8, unpadded 12 → **old 20 vs new 24**. The core M1
+  witness. `int64` key rather than `UObject*` so there is no lifetime/GC variable in the test.
+- `TMap<FString,int32> Map_StrToInt;` — unpadded 20 → **old 28 vs new 32**. A second M1 witness with
+  different arithmetic, so one wrong assumption cannot pass both.
+- A deliberately **4-aligned POD** struct (`USTRUCT FDumperTestVec3f { float X, Y, Z; }` — no FText,
+  no pointer, no double) + `TMap<int32,FDumperTestVec3f> Map_IntToVec3f;` — **M3**: the size guess
+  says "≥8 ⇒ align 8" and puts the value at +8 where it really sits at **+4**, so *even element 0* is
+  wrong. This is the only shape that exercises the `UScriptStruct::MinAlignment` read. It doubles as
+  **A4**'s target (a scalar leaf inside a map's struct side).
+- `TSet<int32> Set_Big;` populated with **200** entries, then `Remove()` of a **low** index (< 128)
+  at BeginPlay — **A2** (post-spill stale inline bits: the freed low slot must not appear) and **M2**
+  (header count must equal the rows rendered).
+- `TSet<FDumperTestVec3f> Set_Struct;` — **A4**'s set side.
+
+**U2 cannot be covered this way.** `WITH_CASE_PRESERVING_NAME` is an engine build flag, not a project
+property — it needs either a custom engine build or a real CPN title (Titan Quest II, UE 5.7).
+
+⚠ **Two copies exist and they DIFFER**: the live project is `D:\Unreal Projects\DumperTest`, the
+tracked source of record is `tools/ue-sample/DumperTest`. Land the change in both, or the repo copy
+silently stops describing what was actually packaged.
+
+-----
+
 ## Pending live-game verification (verify only — no code)
 
 ### 🔴 NEW 2026-08-14 — TMap element geometry: pair padding + struct alignment + free-slot count (audit #5 M1/M2/M3)
