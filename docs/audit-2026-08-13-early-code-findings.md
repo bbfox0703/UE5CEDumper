@@ -120,6 +120,13 @@ Map/Set defect; D1-3/D1-10 the same struct-preview defect; D1-8/D1-11 the same F
 | **U10** | LOW | `Ubel.cpp:198` | `ReadFString` **rejects** on `count > 256` and returns `""`, which callers map to the literal label `(empty)` — a 400-character description is displayed as empty while `hexValue` on the adjacent row shows `Count=0x191`. | M / low |
 | **U11** | LOW | `Ubel.cpp:4934` | `TOptional<FText>` is decoded as an inline FString at `FText+0x10`, where stock UE stores the `uint32 Flags`. The correct decoder (`ReadFTextString`) already exists ~4,400 lines earlier in the same file and is used by the plain TextProperty path. | S / low |
 
+† **G7 was NOT found by the scan.** It surfaced while injecting into Solarpunk to look for something
+else entirely, which is worth noting about the method: five diverse lenses over `Genau.cpp` found G1
+(*claims success when probes failed*) and none of them found its mirror image (*claims failure with
+no reason*). One live injection into an unfamiliar title found it in a single log line. **A scan pass
+and a live run are not substitutes for each other**, and the register in
+[todo.md](todo.md#pending-live-game-verification-verify-only--no-code) is where that gets paid off.
+
 **Verified independently (not just agent-reported):** U2's evidence is stronger than the finding
 states — `InferScalarSize`'s own comment two lines below it already knows this failure mode
 (*"FScriptDelegate … is 16 or 24 depending on CasePreservingName. Do **NOT** override these here"*),
@@ -163,6 +170,7 @@ six refuted outright, one (`Genau.cpp:4007`) downgraded to MEDIUM by the second 
 | **G3** | MED | `Genau.cpp:3242`, `3167`, `3261` | `ValidateAndFixOffsets` rewrites the DynOff set **in place**, republishing unmeasured version defaults over already-probed values for the seconds a re-run takes. Reachable on a CE `[DISABLE]`/`[ENABLE]` cycle: `UE5_Shutdown` never clears `g_cachedGObjects`/`g_cachedGNames`, so `Mimic`'s poller gate (`Mimic.cpp:388`) is satisfied by **stale** addresses and keeps servicing mailbox commands while `UFIELD_NEXT` is reset 0x38 → 0x28 mid-flight. | L / med |
 | **G4** | LOW | `Serie.cpp:303-314` | `DetectBlockOffsetBits` **cannot detect anything**: at `testIdx = 1` both candidate widths compute `ci = 0`, `co = 1*stride`, so 16 always wins and the 14-bit arm is unreachable — yet `Init` logs the result as a measurement. On a real 14-bit pool every FName ≥ `0x4000` reads past the end of a 32 KB block, so engine names resolve and the **game-specific tail comes back blank**. *(Overturned refutation — see the note above.)* | M / med |
 | **G5** | LOW | `Serie.cpp:498` | UE4 `TNameEntryArray` mode indexes the chunk with a **negative** element index; the bounds guard the UE5 path has is absent. A poison `ComparisonIndex` of `0xFFFFFFFF` with a non-zero Number skips `GetString`'s `nameIndex <= 0 && number == 0` early-out, so `chunkPtr + (size_t)(-1)*8` is dereferenced as an `FNameEntry*` and a **fabricated name** can be returned as real. | S / low |
+| **G7** † | MED | `Genau.cpp` give-up paths | **The other half of G1: a give-up that does not say why.** Observed live on Solarpunk 2026-08-14 — `DynOff: … validated=NO (DEFAULTS) reason=` with `g_offsetsFallbackReason` **empty**, and no `DetectCasePreservingName` line at all. G1 is "reports success when probes failed"; G7 is "reports failure with no reason", so the operator gets `validated=false` and cannot tell *where* it bailed. At least one bail-out path reaches the summary without setting a reason. | S / low |
 | **G6** | LOW | `Serie.cpp:142` | A tag whose key lookup misses is cached as a **permanent** `TAGKEY_MISS`, contradicting `Genau.cpp:1672`'s documented "absent tag = plaintext" rule. A transient miss (the 4 unsynchronized reads in `LookupTagKey` racing a live insert) blanks every FName in every block with that tag for the rest of the process. | S / low |
 
 ### D3 — Aura (ObjectArray) — ✅ scanned 2026-08-13

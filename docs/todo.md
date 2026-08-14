@@ -1449,10 +1449,26 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > made earlier today in commits `58ddf76` and `b281ca1`, that TQ2 is U2's verification vehicle).
 > **Do not treat that row as evidence until this is settled.**
 >
-> **U2 therefore has no known verification vehicle right now.** Options: find another CPN title (the
-> `case_preserving` flag is one `get_offsets` call per candidate, so this is cheap to sweep), or
-> build UE from source with the flag on and repackage DumperTest. Until then U2 stands on the unit
-> tests and code review only.
+> **Solarpunk (UE5.7) — tried 2026-08-14, INDETERMINATE, not a negative.** `get_offsets` returned
+> `case_preserving=false` **with `probe_ran=false` and `validated=false`**, and the log confirms why:
+>
+> ```
+> [SUMMARY] DynOff: CPN=no FProp=yes TagFFV=no Outer=+0x20 validated=NO (DEFAULTS) reason=
+> [SCAN:Eng] FindGEngineSlot: deferred — dynamic offsets not validated yet
+> ```
+>
+> There is **no `DetectCasePreservingName` line at all** — the probe never ran, so that `false` is the
+> compiled-in default, not a measurement. **This is "we don't know", NOT "Solarpunk is not CPN"**, and
+> the difference is exactly what `probe_ran` exists to express: TQ2 produced a real 20–0 vote, this
+> produced nothing. Do not record Solarpunk as a non-CPN title on this evidence.
+> (`test-games.md:57` already records Solarpunk failing on an unrecognised 24-byte `FUObjectItem`
+> before build 1259 — whether this is the same problem returning is unchecked.)
+>
+> **U2 therefore has no known verification vehicle right now.** Three candidates are exhausted: TQ2
+> is measurably not CPN, Solarpunk is indeterminate, and DumperTest cannot be (engine flag). Options:
+> sweep other titles (`case_preserving` is one `get_offsets` call each, so this is cheap), or build UE
+> from source with the flag on and repackage DumperTest. Until then U2 stands on the unit tests and
+> code review only.
 >
 > **Incidental — D1/U3 CONFIRMED LIVE as still broken (not yet fixed).** `Map_IntToVec3f` renders as
 > `f:[6203.0000]`: one float, the **last** one. The raw hex holds all three correct values, so the
