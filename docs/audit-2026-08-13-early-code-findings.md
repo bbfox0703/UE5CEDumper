@@ -61,7 +61,7 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **U3** ✅ | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
 | **U4** ✅ | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
 | **U5** ✅ | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
-| **S1** | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
+| **S1** ✅ | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
 | **T1** | Tail sweep — **SPLIT into T1a–T1e, see below** | every remaining file ≥50 early lines + the never-touched-since-May files | ~9.4k | — |
 
 ### T1 is split into five phases (decided 2026-08-15, re-measured twice)
@@ -1387,6 +1387,107 @@ MEDIUM.
 
 -----
 
+### S1 — Early Lua scripts — ✅ scanned 2026-08-15
+
+**31 agents** (5 lenses → 11 refute batches → 14 second-lens batches), 0 errors, over 3 files /
+1,668 lines — **1,236 of them early, the densest early-code concentration in the tree at 74%**, and
+with **zero test coverage of any kind**.
+
+**65 raw claims → 7 refuted → 2 killed by the second lens → 56 survived → 36 distinct** after merging
+by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
+
+> ### ⚠ The kill rate fell again — 14%, and this time the skeptic prompt was the STRICTEST yet
+>
+> U5 refuted 20% and was recorded as lenient, so S1's skeptic was explicitly constrained: it could
+> only refute by filling a `counter_input` field naming the guard or documented behaviour that makes
+> the scenario impossible, and the second lens ran on **every** survivor rather than HIGH/MED only.
+> **It refuted less: 7/65 = 11%, plus 2 second-lens kills = 14% total**, against the audit's 33–73%
+> band. Tightening the rubric did not tighten the skeptic.
+>
+> **And it marked ZERO duplicates while 14 locations were reported by more than one lens** — the one
+> mechanical job it was given, with U5's five missed pairs quoted at it as the reason. Merging by
+> location alone takes 56 → 36. Treat `duplicate_of_idx` as **structurally unreliable** in this
+> harness and merge by hand; do not spend prompt budget asking for it again.
+>
+> **What I hand-verified, and what changed.** The finders returned **6 HIGHs** — extraordinary against
+> a history where ten of eleven claimed HIGHs died. Merging by location gives 5, and re-deriving each
+> against the source gives **3**:
+> - `writeBool:153` — **CONFIRMED HIGH.** The code's own comment says it: *"We do NOT support packed
+>   bitfield bools … generating a freeze script for one will overwrite the whole byte, clobbering
+>   sibling bools."* The DLL sibling reached from the **same Property Search row** (Solitar's Force)
+>   does a masked read–modify–write via `ApplyBoolBit`. One row, two actions, opposite correctness.
+> - `:452` / `:461` — **CONFIRMED HIGH** (one defect, two lenses). True by construction: the guard
+>   tests *"is there a non-zero qword at addr"*, not *"is addr still the object I enumerated"*, so a
+>   recycled slot **cannot** trip it. The second lens earned its place here by killing the finder's
+>   *"writes past the object"* sub-claim on MallocBinned same-size-bin grounds while keeping the
+>   finding.
+> - `fillGaps:289` — **DOWNGRADED to MED.** Verified dead (one `grep` hit: the definition) and the
+>   header does advertise it at `:15`, but a dead feature plus a lying header is not a wrong write.
+> - `start:474` — **DOWNGRADED to MED.** Verified: `_lastError` is written at `:462`/`:467` and read
+>   **nowhere**, and `start()` discards `rescan()`'s outcome, so both timers arm over an empty cache
+>   and the script proceeds to its auto-close. Real, but a failure-to-act, not a wrong act.
+>
+> **The low kill rate is not, by itself, evidence these findings are wrong.** S1's files are the
+> densest early code in the repo, have no tests, and Y9 and Y15 both found real defects in this exact
+> freeze path within the last two builds. A genuinely higher true-positive rate here is plausible.
+> What the rate *does* mean is that **nothing below HIGH has been vetted to this audit's standard** —
+> re-derive any MED or LOW before fixing it, exactly as for U5's Z-findings.
+
+> **Root causes, and the freeze helper is where they concentrate** (18 of 36 findings):
+> 1. **A raw pointer used as an identity.** AA2/AA3 are the audit's recycled-address hazard — already
+>    recorded three times on the DLL side (D1/U4–U6, D3/A10, D5/F3) — reaching the Lua tier, where
+>    there is no `GetSerialNumber` witness on the wire to fix it cheaply.
+> 2. **`callDLL` returns `nil` on failure and not one of its 14 call sites handles it** (AA5, AA6).
+>    `nil ~= 0` is **true** in Lua, so a failed read is recorded as success — root cause #1 in its
+>    purest form, and a Lua-specific trap that has no C# analogue.
+> 3. **Root cause #6 again, and it is now the audit's most reliable predictor.** AA1's defect is
+>    stated verbatim in its own comment; `fillGaps`' header advertises a feature that does not run.
+>    Every time this audit has followed a comment admitting a limitation, it has found a real defect.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AA1** | HIGH | `ue5_freeze_helper.lua:153` (writeBool) | Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit **[2 lenses]** | M / med |
+| **AA2** | HIGH | `ue5_freeze_helper.lua:452` (freezeProperty -> tick) | The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds | M / med |
+| **AA3** | HIGH | `ue5_freeze_helper.lua:461` (rescan / tick) | A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely **[2 lenses]** | M / med |
+| **AA4** | MED | `ue5_dissect.lua:53` (callDLL) | Bare getAddress RAISES on a missing symbol (CE source-verified), so the 'DLL function not found' message is dead code and the registered dissect override breaks CE's dissect for unrelated addresses **[2 lenses]** | S / low |
+| **AA5** | MED | `ue5_dissect.lua:63` (callDLL) | callDLL returns nil on every executeCodeEx failure and not one of its 14 call sites handles nil: `<= 0` raises, `~= 0` inverts **[2 lenses]** | S / low |
+| **AA6** | MED | `ue5_dissect.lua:173` (addFieldsToStruct / walkClassFields) | callDLL returns nil on failure and every caller treats nil as SUCCESS — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as a duplicate of the previous field **[2 lenses]** | S / low |
+| **AA7** | MED | `ue5_dissect.lua:289` (fillGaps) | "Gap filling" is advertised in the header but fillGaps is never called — and its coverage test would emit overlapping elements if it were **[2 lenses]** | S / low |
+| **AA8** | MED | `ue5_dissect.lua:341` (addUObjectHeader) | UObject header offsets are hardcoded (Outer=0x20) while the DLL detects and switches them (DynOff::UOBJECT_OUTER = 0x28 on case-preserving-FName games) **[2 lenses]** | M / low |
+| **AA9** | MED | `ue5_freeze_helper.lua:95` (header SAMPLES block) | The file's own copy/paste samples produce a freeze that cannot be stopped: `local h` in [ENABLE] is invisible to [DISABLE], and SAMPLES 1-3 show no stop at all | S / low |
+| **AA10** | MED | `ue5_freeze_helper.lua:341` (fetchInstancePage) | The mailbox has two mutually-blind concurrency guards: generated scripts wait for cmd==IDLE, the standalone helpers use a Lua flag no generated script sets | M / low |
+| **AA11** | MED | `ue5_freeze_helper.lua:386` (rescanInstances) | A page-fetch failure after page 0 is thrown away, so a PARTIAL instance list is returned as a clean success and replaces the freeze cache **[2 lenses]** | S / low |
+| **AA12** | MED | `ue5_freeze_helper.lua:471` (freezeProperty -> handle.start) | A freeze that applied NOTHING reports clean success: start() cannot raise, so the generated script's pcall succeeds, the Lua window auto-closes and the CE record stays ticked | S / low |
+| **AA13** | MED | `ue5_freeze_helper.lua:474` (handle.start) | Every freeze failure is silent: start() discards rescan()'s error, nothing reads _lastError, and the generated script then auto-closes the Lua window over a ticked record that froze nothing **[2 lenses]** | S / low |
+| **AA14** | MED | `ue5_invoke_helper.lua:215` (writeFStringInline) | allocateMemory's nil return is unchecked, so a failed allocation ships an FString of { Data = nullptr, Num = n+1 } into the game **[2 lenses]** | S / low |
+| **AA15** | MED | `ue5_invoke_helper.lua:223` (writeFStringInline) | allocateMemory's nil return is never checked, so a failed allocation stamps an FString with Data=nullptr and ArrayNum=n+1 into a live UFunction call | S / low |
+| **AA16** | MED | `ue5_invoke_helper.lua:293` (writeParams) | BakedScriptGenerator can emit five param-type tokens writeParams has never accepted, so the exported script aborts the whole invoke at CE runtime | S / low |
+| **AA17** | MED | `ue5_invoke_helper.lua:308` (writeBakedParams) | The params buffer is zeroed only up to the CALLER'S parmsSize while the DLL hands ProcessEvent all 1024 bytes — stale bytes from an earlier command become live parameters **[2 lenses]** | S / low |
+| **AA18** | MED | `ue5_invoke_helper.lua:363` (waitDone) | A mailbox timeout reports the STALE errorMsg left by an earlier command as this command's reason — the guessed diagnosis CLAUDE.md forbids | S / low |
+| **AA19** | MED | `ue5_invoke_helper.lua:464` (invokeUFunction) | The reentrancy flag is cleared on the timeout path — exactly when the DLL still owns the mailbox — so the next invoke scribbles on an in-flight command and is reported OK though it never ran | M / med |
+| **AA20** | MED | `ue5_invoke_helper.lua:512` (readUFunctionReturn) | readUFunctionReturn decodes int32/int16 returns UNSIGNED, so a UFunction returning -1 reads as 4294967295 -- while the same file passes the signed flag two functions earlier **[2 lenses]** | S / low |
+| **AA21** | LOW | `ue5_dissect.lua:23` (module state (structList / structCache)) | Module state is per-dofile while CE's structure list and Lua state are global and never rebuilt, so a re-load duplicates every structure and orphans the old ones | S / low |
+| **AA22** | LOW | `ue5_dissect.lua:24` (dissect.enableAutoCallback) | The already-registered guard is a chunk-local, so a second dofile double-registers the dissect override and disableAutoCallback can only unregister the newest one | S / low |
+| **AA23** | LOW | `ue5_dissect.lua:208` (addFieldsToStruct) | The struct-recursion depth cap returns silently, so a nested StructProperty deeper than 6 levels is simply absent from the dissect with no marker | S / low |
+| **AA24** | LOW | `ue5_dissect.lua:222` (addFieldsToStruct) | A CreateRemoteThread round-trip plus a target-process allocation per StructProperty field, whose result is discarded — and it leaks if the call raises | S / low |
+| **AA25** | LOW | `ue5_dissect.lua:243` (addFieldsToStruct) | A failed callDLL mid-walk raises with beginUpdate() unmatched, orphaning a CE structure that is never registered in structList and so can never be freed by clearAll() | S / low |
+| **AA26** | LOW | `ue5_dissect.lua:244` (addFieldsToStruct (BoolProperty branch)) | The bitmask is stored in ChildStructStart, a CE property that means 'byte offset inside a child struct', not a mask **[2 lenses]** | S / low |
+| **AA27** | LOW | `ue5_dissect.lua:522` (dissect.enableAutoCallback) | The CE-global dissect override is registered with no automatic unregister, and CE never rebuilds its Lua state — so after the DLL goes away it breaks CE's 'guess structure' for the rest of the session | S / low |
+| **AA28** | LOW | `ue5_freeze_helper.lua:220` (checkContract) | An unreadable contract symbol is reported as "stale address — re-inject the DLL" when the process is simply gone, though the same file already knows how to say that | S / low |
+| **AA29** | LOW | `ue5_freeze_helper.lua:303` (waitDone) | Lua `and`/`or` precedence keeps the documented-as-dormant iteration fallback permanently live, so the effective deadline is min(tick, iterations) and the printed "%dms" is not the arm that fired **[2 lenses]** | S / low |
+| **AA30** | LOW | `ue5_freeze_helper.lua:409` (module-level re-declaration guard (`if not freezeProperty then`)) | The generated loader re-loads the helper on every [ENABLE] but the helper's own `if not X then` guards make that a no-op, so an updated helper silently never takes effect in a running CE | S / low |
+| **AA31** | LOW | `ue5_invoke_helper.lua:40` ((file header — Debug Camera sample)) | The setDebugCamera sample this file tells users to paste leaves the memory record ticked when the call raises or returns -1 | S / low |
+| **AA32** | LOW | `ue5_invoke_helper.lua:227` (writeFStringInline / freeInvokeStringBuffers) | One un-reclaimed target-process allocation per FString param per invoke, tracked in a global table that survives every script re-activation | M / med |
+| **AA33** | LOW | `ue5_invoke_helper.lua:235` (writeParams) | writeParams takes regionSize and never bounds a single write by it — a param offset near the end writes past g_invokeMailbox | S / low |
+| **AA34** | LOW | `ue5_invoke_helper.lua:239` (writeParams) | `p.value or 0` turns a missing string param into the literal string "0" passed into the game | S / low |
+| **AA35** | INFO | `ue5_freeze_helper.lua:355` (fetchInstancePage) | The uint16 sign fixup is dead code resting on a false claim about CE's readSmallInteger | S / low |
+| **AA36** | INFO | `ue5_invoke_helper.lua:88` (file-scope mailbox layout constants) | The CI contract gate hashes Mimic.h and CeMailboxLayout.cs only — the two standalone helpers hold a third hand-copied layout it cannot see | S / low |
+
+> **Not re-derived by hand:** everything rated MED and below. The three HIGHs were verified against
+> the source as described above; the rest carry the 14%-kill-rate caveat.
+
+-----
+
 ### U5 — Remaining VMs / Models / Core / scoring — ✅ scanned 2026-08-15
 
 **11 agents** (5 lenses → 5 refute batches → 1 second-lens batch), 0 errors, over 10 files /
@@ -1726,15 +1827,20 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 *State as of 2026-08-15, after U5 + ten fix batches. Read this section first; it is written for a
 session with no memory of the previous one.*
 
-> 🔵 **Y9 shipped in 2895, Y15 in 2904. U5 was SCANNED on 2026-08-15 (no fixes — scanning applies
-> none). Next up is W5.** The maintainer asked to stop after U5, so **S1 has not been started**.
-> 11 of 12 segments are done; the remaining backlog is worth more than another scan. Work the open
+> 🔵 **Y9 shipped in 2895, Y15 in 2904. U5 and S1 were both SCANNED on 2026-08-15** (no fixes —
+> scanning applies none). **Only T1 remains, split into five phases T1a–T1e (§1).** Work the open
 > list one item (or one related group) at a time, and report after each so the quota is watchable.
 >
-> ⚠ **U5's findings need re-derivation before they are fixed.** Its skeptic refuted only 20% against
-> a 33–73% band, its second lens killed nothing, and its 14 LOWs never saw a second lens at all. The
-> full warning is at the head of §2's U5 block. The three MEDs (Z1/Z2/Z3) *were* re-derived by hand
-> against the source and hold; nothing below MED was.
+> ⚠ **U5's AND S1's findings need re-derivation before they are fixed.** U5's skeptic refuted 20%,
+> S1's refuted **14% despite the strictest prompt written so far**, against a 33–73% band. Both
+> blocks in §2 carry the full warning. Hand-verified and holding: U5's Z1/Z2/Z3 and S1's three HIGHs
+> (AA1/AA2/AA3). **Nothing else in either segment has been vetted to this audit's standard.**
+>
+> 📌 **Two harness lessons from those two segments, worth more than the findings:**
+> (a) tightening the skeptic's rubric did **not** raise its kill rate — S1's was stricter than U5's
+> and killed proportionally less; (b) `duplicate_of_idx` is **structurally unreliable** — S1 marked
+> zero duplicates while 14 locations came from more than one lens. **Merge by location in the script,
+> and stop spending prompt budget asking the model to dedupe.**
 >
 > **W5** — `CeXmlExportService.cs:2141`, `S`/low. Weak/soft/lazy pointers are drilled with
 > `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer.
@@ -1805,9 +1911,9 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 
 ### What is done
 
-**Scanning: 11 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3, U4, U5.
-Still open: **S1, T1**. **The DLL and the C# are fully scanned; everything left is Lua (S1) plus the
-T1 tail sweep.**
+**Scanning: 12 of 12 segments started — only T1 remains**, and T1 is split into five phases
+(T1a–T1e, see §1). D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3, U4, U5, S1 are done.
+**The DLL, the C# and the Lua are all scanned; what is left is the T1 tail.**
 
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
