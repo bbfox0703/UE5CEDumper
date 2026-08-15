@@ -1425,6 +1425,21 @@ This is the one verification in the register that needs **no game at all**.
    *"UE5CEDumper: Inject & Connect"* menu item against a running game and confirm the DLL still
    injects, the pipe opens, and the CE Lua mailbox works. The poller is *supposed* to run in the
    game — only CE's own process is refused.
+
+   **⚠ This step also verifies AB2 (build 2932), so do it deliberately.** `UE5_AutoStart` now spawns
+   and returns instead of running the scan on CE's remote thread, which CE frees after a hard 10 s
+   (`CEFuncProc.pas:1346-1360`) or, with Settings' **`cbInjectDLLWithAPC`** ticked, after 1 s
+   (`:1332-1343`) — the `ret` onto that freed page crashed the **game**. Measured async
+   (`py tools/probe_autostart_async.py` → 2.3 ms, vs 3486 ms with the spawn reverted), but never run
+   against a real CE + game. Check:
+   - The menu item returns **immediately** and the dialog says the scan started *in the background*;
+     CE's own window should not freeze for the scan any more.
+   - The game does **not** crash a few seconds later — that was the AB2 symptom.
+   - **Tick `cbInjectDLLWithAPC` in CE's Settings and repeat.** That is the near-certain-crash path
+     before the fix and the strongest single check here.
+   - The dialog now reports what it **observed** (is our module mapped?) rather than CE's `InjectDLL`
+     BOOL, which is inverted for the common failures. A "success" dialog must mean the pipe really
+     comes up; an "injection failed" dialog must mean the module really is absent.
 5. Worth one negative case: a game whose folder is named e.g. `...\Cheat Engine 7.7\Game.exe` must
    still get its poller. Only the executable leaf is tested, and there is a unit test for it.
 

@@ -22,6 +22,97 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - Cheat Engine freed the injection stub out from under our still-running scan, crashing the GAME (build 2932) — AUDIT #5 HAS NO OPEN HIGHs LEFT
+
+**Audit #5 phase T1a, finding AB2** — the eleventh and last HIGH. Every HIGH this audit raised is now
+fixed (AB1 2913 · AD1/AD2 2914 · AA1 2922 · AA2/AA3 2926 · AB2 2932).
+
+### The defect
+
+The CE plugin's *"Inject & Connect"* called `InjectDLL(dllPath, "UE5_AutoStart")`, so CE's remote
+thread ran our **entire multi-second startup** — DllMain + `Sein::Init` + a 2-8 s AOB scan + pipe
+start. CE does not wait that long. From its own source (read at tag `7.5`, 2026-08-15):
+
+| `CEFuncProc.pas` | what it does |
+|---|---|
+| `:1346-1360` | `createremotethread`, then a wait loop of `counter := 10000 div 10` × 10 ms — a **hard, unconfigurable 10 s** ceiling, after which it raises |
+| `:1332-1343` | with Settings' **`cbInjectDLLWithAPC`** ticked there is no wait at all: `CreateRemoteAPC` then a flat `sleep(1000)` |
+| `:1379-1387` | `finally ... virtualfreeex(processhandle, injectionlocation, 0, MEM_RELEASE)` — **unconditional, on both paths** |
+
+So the page our code is executing on gets released while it runs, and the eventual `ret` lands on
+freed memory. **The victim is the game process, not CE** — and AB1's module pin does not help, because
+that protects our image in our address space whereas this is CE's own `VirtualAllocEx` page in the
+game. (CE's timeout string even claims *"Injection routine not freed"*, which that `finally`
+contradicts.) The same shape reached us a second way: generated CE Lua calls
+`callDLL('UE5_AutoStart')` → `executeCodeEx`, whose timeout path sets `dontfree := true` and leaks the
+stub permanently (ce-plugin-sdk-notes.md §13).
+
+### The fix
+
+`UE5_AutoStart` **spawns and returns**. The work moved into `AutoStartWork()`, reached by two entry
+points sharing a one-at-a-time latch:
+
+- `UE5_AutoStart()` — exported, spawns a guarded thread, returns immediately.
+- `UE5_AutoStartBlocking()` — **not exported**, runs inline, for `DllMain`'s auto-start thread which
+  already owns a thread of its own.
+
+Readiness was already published through `Mimic::InitState` and every emitted script already polls it
+(`CeReadinessLua::AppendPollLoop`), so no caller lost information. Worth noting: the **Lua inject path
+never passed a function name to `injectDLL` at all** — only our own plugin was taking the dangerous
+route.
+
+Two details the fix had to get right. **In a Cheat Engine host it runs inline, no thread** (AB1's
+rule — CE `FreeLibrary`s plugin DLLs; and there is no remote stub to outrun in-process). And **the
+latch is load-bearing, not theoretical**: in the ordinary plugin flow `LoadLibrary` spawns DllMain's
+auto-start thread *and* CE's stub then calls the export, two full scans that were previously survived
+only incidentally via `UE5_Init`'s `s_initialized` latch and a pipe-exists probe.
+
+### A second defect, in the half the audit only called "misleading"
+
+`ce_InjectDLL` (`pluginexports.pas:622-640`) returns false **only if an exception escapes**, and CE's
+own handler swallows one of the three it can raise (`CEFuncProc.pas:1050-1051`, `1391-1396`):
+
+| CE outcome | Exception class | `InjectDLL` returns |
+|---|---|---|
+| injection thread > 10 s | plain `Exception` | **false** |
+| "Failed executing the function of the dll" | `EInjectDLLFunctionFailure` — a **sibling** of `EInjectError`, not a subclass, so `on e:EInjectError` misses it | **false** |
+| "Failed injecting the DLL" | `EInjectError` → caught, falls back to `forceLoadModule` | **true** |
+
+So the BOOL is **true on a real injection failure** and **false while the DLL is loaded and working**.
+Our dialog was not merely worded badly — it was reading an inverted signal, and cheerfully told users
+to check that the target is 64-bit when the DLL was in fact loaded and scanning.
+
+`OnInjectAndConnect` now **decides by looking**: it re-runs the same target module-list walk it
+already uses for the already-loaded check (with a short retry, since the APC path does not wait on the
+loader) and reports what is actually mapped, naming CE's unreliable result when the two disagree.
+
+### Verified by measurement + negative control
+
+This is a behaviour, not a shape, and **no test target compiles `Frieren.cpp`**. So
+[tools/probe_autostart_async.py](../tools/probe_autostart_async.py) (stdlib-only) loads the shipped
+DLL, times the export, and reads `InitState` at the instant it returns:
+
+| build | elapsed until return | `initState` at return | verdict |
+|---|---|---|---|
+| fixed | **2.3 ms** (1.0 ms on a re-run) | 0 IDLE — work not started | ASYNC CONFIRMED |
+| spawn reverted | **3486.5 ms** | 2 READY — work already finished | STILL BLOCKING |
+
+That 3.5 s is in a **Python host with no game at all**; a real UE AOB scan is 2-8 s, i.e. squarely
+inside CE's 10 s ceiling and always past the APC path's 1 s. The export table was checked against the
+**shipped artifact** rather than the source (64 exports; `UE5_AutoStart` present,
+`UE5_AutoStartBlocking` correctly absent).
+
+The probe is a manual tool, not a build step: it loads the DLL into the running process, starts real
+workers and opens the pipe, so it wants a throwaway process — and a build step that skips when its
+precondition is missing is the AD1 defect this session opened with.
+
+**Not verified against a real Cheat Engine + game.** The measurement proves the export returns in
+time; it cannot prove CE is happy. Folded into the existing AB1 CE-session entry in
+[todo.md](todo.md)'s register, including the `cbInjectDLLWithAPC` case, which is the
+near-certain-crash path and therefore the strongest single check.
+
+-----
+
 ## 2026-08-15 - A running freeze could write into a recycled UObject slot, and a dead mailbox never stopped it (build 2926; mailbox contract 1 -> 2)
 
 **Audit #5 segment S1, findings AA2 + AA3** — one defect at two sites, and the last two HIGHs in the

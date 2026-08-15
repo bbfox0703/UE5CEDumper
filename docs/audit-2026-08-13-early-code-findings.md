@@ -1862,10 +1862,75 @@ second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside t
 > paths (AB6: the group grid **sorts** by `slotMatches[0][0]` while it **displays**
 > `slotMatches[0][picks[0]]`).
 
+> ### ✅ AB2 FIXED — build 2932, 2026-08-15 — **AUDIT #5 HAS NO OPEN HIGHS LEFT**
+>
+> **The mechanism, re-read in CE's own source and sharper than the register recorded it.**
+> `CEFuncProc.pas:1346-1360` waits `counter := 10000 div 10` × 10 ms — a hard, unconfigurable **10 s**;
+> `:1332-1343` (Settings' `cbInjectDLLWithAPC`) does not wait at all, just `CreateRemoteAPC` then a flat
+> `sleep(1000)`; and `:1379-1387` `finally ... virtualfreeex(..., MEM_RELEASE)` runs **unconditionally on
+> both paths**. So the page our function is executing on is released while it runs, and the `ret`
+> lands on freed memory — in the **GAME**, not CE. *(CE's own timeout string even claims "Injection
+> routine not freed", which that `finally` contradicts.)*
+>
+> **Fixed as the register proposed: `UE5_AutoStart` spawns and returns.** The work moved to
+> `AutoStartWork()`, reached through two entry points sharing a one-at-a-time latch —
+> `UE5_AutoStart()` (spawns, exported) and `UE5_AutoStartBlocking()` (inline, **not** exported, for
+> `DllMain`'s auto-start thread, which already owns a thread). Readiness was already published via
+> `Mimic::InitState` and the emitted scripts already poll it (`CeReadinessLua::AppendPollLoop`), so no
+> caller lost information — and the Lua inject path never passed a function name to `injectDLL` in the
+> first place, i.e. **only our own plugin was taking the dangerous route.**
+>
+> Two details the fix had to get right:
+> - **In a Cheat Engine host it runs INLINE, no thread** — AB1's rule (CE `FreeLibrary`s plugin DLLs).
+>   There is no remote stub to outrun in-process, so there is nothing to gain and a crash to lose.
+> - **The latch is real, not theoretical.** In the ordinary plugin flow `LoadLibrary` spawns DllMain's
+>   auto-start thread *and* CE's stub then calls the export — two full scans that were previously
+>   survived only incidentally (`UE5_Init`'s `s_initialized` plus a pipe-exists probe).
+>
+> **A second defect was found while fixing this, in the half the register only called "misleading".**
+> `ce_InjectDLL` (`pluginexports.pas:622-640`) returns false *only if an exception escapes*, and CE's
+> own handler swallows one of the three it can raise (`CEFuncProc.pas:1050-1051`, `1391-1396`):
+>
+> | CE outcome | Exception class | `InjectDLL` returns |
+> |---|---|---|
+> | injection thread > 10 s | plain `Exception` | **false** |
+> | "Failed executing the function of the dll" | `EInjectDLLFunctionFailure` — a **sibling** of `EInjectError`, not a subclass, so `on e:EInjectError` misses it | **false** |
+> | "Failed injecting the DLL" | `EInjectError` → caught, falls back to `forceLoadModule` | **true** |
+>
+> So the BOOL is **true on a real injection failure** and **false while the DLL is loaded and working**
+> — our dialog was not merely worded badly, it was reading an inverted signal. `OnInjectAndConnect` now
+> **decides by looking**: it re-runs the same module-list walk it already uses for the
+> already-loaded check (with a short retry, because the APC path does not wait on the loader) and
+> reports what is actually mapped, naming CE's unreliable result when the two disagree.
+>
+> ### Verified by measurement + negative control
+>
+> `UE5_AutoStart` is behaviour, not shape, and **no test target compiles `Frieren.cpp`**. So
+> **`tools/probe_autostart_async.py`** (stdlib-only) loads the shipped DLL, times the export, and reads
+> `InitState` at the instant it returns:
+>
+> | build | elapsed until return | `initState` at return | verdict |
+> |---|---|---|---|
+> | fixed | **2.3 ms** (1.0 ms on a re-run) | 0 IDLE — work not started | ASYNC CONFIRMED |
+> | spawn reverted | **3486.5 ms** | 2 READY — work already done | STILL BLOCKING |
+>
+> The 3.5 s is in a **Python host with no game at all**; a real UE AOB scan is 2-8 s, i.e. squarely
+> inside CE's 10 s ceiling and always past the APC path's 1 s. Export table checked against the
+> **shipped artifact**, not the source: `UE5_AutoStart` exported, `UE5_AutoStartBlocking` correctly
+> **not** (64 exports).
+>
+> The probe is a manual tool, not a build step — it loads the DLL into the running process, starts
+> real workers and opens the pipe, so it wants a throwaway process. (And a build step that skips when
+> its precondition is missing is the AD1 defect.)
+>
+> ⚠ **Not verified against a real Cheat Engine + game.** The measurement proves the export returns in
+> time; it cannot prove CE is happy. See todo.md's register — the AB1 entry already asks for a real CE
+> session and this rides along with it.
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **AB1** ✅ | HIGH | `Heiter.cpp:274` (DllMain (DLL_PROCESS_ATTACH) → Mimic::StartThread) | DllMain starts a 1 ms-poll thread in EVERY host, including Cheat Engine — and CE FreeLibrary's plugin DLLs, so the thread runs on after the image is unmapped | S / low |
-| **AB2** | HIGH | `Methode.cpp:307` (OnInjectAndConnect) | InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread **[2 lenses]** | S / low |
+| **AB2** ✅ | HIGH | `Methode.cpp:307` (OnInjectAndConnect) | InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread **[2 lenses]** | S / low |
 | **AB3** | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
 | **AB4** | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
 | **AB5** | MED | `Radar.cpp:797` (Radar::CompareVectorPredicate) | The FVector/FRotator scan is hardcoded to 3×float / 12 bytes, so it reads junk on every UE5 (LWC double) game — while the reflected 24-byte size is captured and thrown away | M / med |
@@ -2479,11 +2544,15 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**234 of 272 findings are still open** (38 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **1 HIGH · 73 MED ·
-133 LOW · 27 INFO**. Fixed HIGHs: 10 (V1, W1, W2, Y1, AB1, AD1, AD2, AA1, **AA2, AA3**).
+**233 of 272 findings are still open** (39 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 73 MED ·
+133 LOW · 27 INFO**. Fixed HIGHs: **11 of 11** (V1, W1, W2, Y1, AB1, AD1, AD2, AA1, AA2, AA3, AB2).
 
-> **Only AB2 remains at HIGH.**
+> ## ✅ THERE ARE NO OPEN HIGHs. Every HIGH this audit raised is fixed.
+>
+> The queue from here is the **MED tier, grouped by family rather than by segment** — see the family
+> block below. And the standing caution is unchanged and now dominant: **LOW/INFO were never vetted to
+> this audit's standard, so re-derive before fixing.**
 
 > **Updated 2026-08-15 (build 2914): AD1 + AD2 FIXED**, counts above re-derived with the command
 > rather than hand-tallied. Both sites were collapsed into a single `Invoke-CppSelfTest` helper, a
@@ -2496,7 +2565,7 @@ shipped, the in-session half is deliberately deferred to cluster ③). Open: **1
 > §2 block states what was hand-verified. **Re-derive any LOW before fixing it** — several are
 > pattern-sweep leads, not findings.
 
-### The 1 open HIGH — start here
+### The HIGHs — all 11 fixed
 
 > ✅ **All six were re-verified against the source 2026-08-15 (PM double-check pass — see the block at
 > the end of this section). Zero line drift on all six.** The per-finding corrections below are from
@@ -2509,37 +2578,16 @@ outcomes that shared the "skip" line are now three distinct failures, the C# pha
 sibling was fixed at the same time, and a negative control proved the check can now fail. Record in
 T1b's block, §2. *Nothing about the remaining HIGHs changed.*
 
-1. **AB2** — `Methode.cpp:307 (OnInjectAndConnect)`
-   InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread
-   *Re-verify (mechanism CONFIRMED in CE's own source, `CEFuncProc.pas:1346-1388`), three corrections:
-   (a) the free is **not unconditional** — CE waits a hard, unconfigurable **10 s** ceiling
-   (`waitforsingleobject` loop) and the `finally` then `VirtualFreeEx`es the stub page; the hazard is
-   "total remote work > 10 s" (DllMain + Sein::Init + 2–8 s AOB scan + pipe start), which is why it
-   does not always reproduce. (b) **The victim is the GAME process, not CE** — AB1 crashed CE, AB2
-   crashes the game (the `ret` lands on the freed stub page). (c) A worse sibling path: with CE's
-   Settings checkbox `cbInjectDLLWithAPC` ticked, the stub is freed after **1 s unconditionally**
-   (`CEFuncProc.pas:1332-1343`) — near-certain crash. Two secondary costs: CE's GUI freezes for the
-   whole scan (Type-5 callback on the main thread, no message pump), and the 10 s timeout surfaces as
-   our misleading "Injection failed. Ensure the target is a 64-bit UE5 process…" dialog while the DLL
-   is in fact loaded and scanning. **AB1's fix does NOT mitigate this** — the pin protects our image
-   in our address space; the freed memory is CE's own `VirtualAllocEx` stub in the game. Fix shape:
-   `UE5_AutoStart` must spawn-and-return (publish via `Mimic::InitState`, which `UE5CEDumper.CT`
-   already polls), so the remote thread exits inside the 10 s window.*
+~~**AB2**~~ — ✅ **FIXED, build 2932, 2026-08-15.** Every correction in the re-verify note held up
+and two mattered to the fix: the 10 s ceiling is the gate (so the hazard is "total remote work >
+10 s", which is why it never reproduced reliably), and the APC path's 1 s makes it near-certain for
+anyone with that Settings box ticked. The fix is the proposed spawn-and-return — **measured at 2.3 ms
+to return against 3486 ms for the same build with the spawn reverted.** The note's "misleading
+dialog" aside turned out to understate a second defect: CE's `InjectDLL` BOOL is *inverted* for the
+common cases, so the plugin now decides by observing the target's module list. Full record in T1a's
+block, §2.
 
-~~**AA1**~~ — ✅ **FIXED, build 2922, 2026-08-15.** The re-verify note was right on both counts:
-the mask was structurally absent end-to-end and had to be wired through five tiers, and Y15's
-`required`-on-the-params-record template was the fix — it immediately caught a sixth tier
-(`ScoredPropertyRow`) the plan had missed. Negative-control verified; full record in S1's block, §2.
-
-~~**AA2 / AA3**~~ — ✅ **FIXED, build 2926, 2026-08-15.** Both re-verify notes were load-bearing and
-both changed the fix. AA3's "indefinitely" really is conditional on a *persistent* failure, so the
-repair is a bounded failure streak rather than dropping the cache on the first error. And AA2's note
-that the wire carries raw addresses is what forced the contract change — but **not** the widening
-proposed in the fix-order list: for a class-wide freeze the witness that matters is class membership,
-not object identity, so it rides in two unused output fields and the 8-byte entries are untouched.
-The observation that the vtable guard "catches only decommitted pages" is now a test case. Full
-record, including the one-break-at-a-time negative control, in S1's block, §2.
-
+## ✅ EVERY HIGH IS FIXED — the queue below is MED and lower
 
 ### Where the rest live
 
@@ -2549,7 +2597,7 @@ record, including the one-break-at-a-time negative control, in S1's block, §2.
 | T1c VMs + Core + Models | – | 10 | 15 | 4 | **29** |
 | T1b DLL headers + C++ tests | – | 4 | 15 | 6 | **25** (AD1+AD2 fixed b2914) |
 | T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
-| T1a Radar + entry points | **1** | 5 | 12 | 4 | **22** |
+| T1a Radar + entry points | – | 5 | 12 | 4 | **21** (AB2 fixed b2932) |
 | U5 remaining VMs / Models / Core | – | 3 | 13 | 1 | **17** |
 | T1d UI Services | – | 2 | 10 | 5 | **17** |
 | U3 Dump services + MainWindow VM | – | 1 | 9 | 0 | **10** |
@@ -2567,7 +2615,7 @@ record, including the one-break-at-a-time negative control, in S1's block, §2.
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | **1** | **73** | **133** | **27** | **234** |
+| **TOTAL** | – | **73** | **133** | **27** | **233** |
 
 ### Fix order recommended
 
@@ -2583,9 +2631,10 @@ record, including the one-break-at-a-time negative control, in S1's block, §2.
    class-wide freeze is class membership, not object identity, and that rides in two unused output
    fields with the 8-byte entries untouched. See S1's block for why a serial-number check would
    have been *less* correct.
-4. **AB2** — CE frees the remote stub after its hard 10 s inject ceiling while our scan still runs;
-   the GAME crashes. Same root assumption as AB1 (CE unloads what we assume it won't) but **AB1's
-   fix does not touch it** — the fix is spawn-and-return in `UE5_AutoStart` (see the AB2 note above).
+4. ~~**AB2**~~ — ✅ **DONE, build 2932.** Spawn-and-return in `UE5_AutoStart`, exactly as proposed,
+   measured at 2.3 ms against 3486 ms for the reverted build. A second defect surfaced while fixing
+   it: CE's `InjectDLL` BOOL is *inverted* for the common cases, so the plugin now decides by
+   observing the target's module list instead of trusting it. See T1a's block.
 5. Then the MED tier, **grouped by family rather than by segment** — see below.
 
 ### Fix by FAMILY, not by ID — this is the audit's strongest recommendation
@@ -2691,11 +2740,12 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 > re-derive itself after a fix. **All six open HIGHs were re-verified against the source
 > 2026-08-15 PM (zero line drift)** — per-finding correction notes sit inline in §3c's HIGH list.
 >
-> ✅ **AB1 (2913), AD1/AD2 (2914), AA1 (2922) and AA2/AA3 (2926) are FIXED** — see dev-log.
-> **One open HIGH left: AB2** — CE frees its remote inject stub after a hard 10 s ceiling while our
-> AOB scan is still running, and the GAME crashes. Fix shape is spawn-and-return in `UE5_AutoStart`
-> (publish progress via `Mimic::InitState`, which `UE5CEDumper.CT` already polls). After that the
-> queue is the MED tier, grouped by family — §3c.
+> ## ✅ ALL ELEVEN HIGHs ARE FIXED (builds 2913 - 2932). There is no HIGH work left.
+>
+> AB1 (2913) · AD1/AD2 (2914) · AA1 (2922) · AA2/AA3 (2926) · AB2 (2932) — see dev-log for each.
+> **The queue from here is the MED tier, grouped by FAMILY rather than by segment** (§3c's family
+> block). Before picking anything below MED, re-read the vetting warning: LOW/INFO were scored at
+> 10-35% kill rates against this audit's own 33-73% band, so **re-derive a LOW before fixing it**.
 >
 > 🔴 **The two most consequential findings, both hand-verified against the source:**
 > - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path. ✅ FIXED (2913).** `DllMain` starts a
@@ -2715,6 +2765,10 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 >   wiping up to 7 sibling bools and — unless the mask was 0x01 — never setting the intended one.
 >   **✅ FIXED (2922):** the FieldMask was structurally absent end-to-end and now travels DLL wire →
 >   model → row → params → CFG → Lua. Live-game half is UNPROVEN — see todo.md's register.
+> - **T1a/AB2 — CE freed the remote inject stub out from under our still-running scan**, crashing the
+>   GAME. **✅ FIXED (2932):** `UE5_AutoStart` spawns and returns (2.3 ms measured, vs 3486 ms
+>   reverted). It also exposed that CE's `InjectDLL` BOOL is inverted for the common failures, so the
+>   plugin now reports what it can observe rather than what CE claims.
 >
 > ⚠ **Vetting is uneven and the doc says so per segment.** Kill rates ran 10–35% across the T1
 > phases against the audit's own 33–73% band. **Everything hand-verified is marked as such in its

@@ -23,6 +23,12 @@ std::atomic<bool> g_isCEPlugin{false};
 
 // Forward declaration — defined in ExportAPI.cpp
 extern "C" bool UE5_AutoStart();
+// The on-this-thread form. Declared here rather than by including Frieren.h,
+// matching how every other export above is reached from this file.
+// `extern "C"` is REQUIRED, not decorative: Frieren.h declares it inside the
+// same extern "C" block as the exports, so a plain C++ declaration here would
+// mangle differently and fail to link.
+extern "C" bool UE5_AutoStartBlocking();
 extern "C" bool UE5_StartPipeServer();
 extern "C" void UE5_Shutdown();
 
@@ -180,9 +186,14 @@ static void AutoStartBody()
         return;
     }
 
-    LOG_INFO("DllMain AutoStart: game process — calling UE5_AutoStart");
-    UE5_AutoStart();
-    LOG_INFO("DllMain AutoStart: UE5_AutoStart returned");
+    // The BLOCKING form on purpose: this already IS the dedicated auto-start
+    // thread, so the exported spawn-and-return entry point would only hand the
+    // work to a second thread and leave this one to exit immediately. The
+    // asynchrony that AB2 needs is for CE's remote stub, which has a 10 s
+    // deadline; nothing here does.
+    LOG_INFO("DllMain AutoStart: game process — running auto-start on this thread");
+    UE5_AutoStartBlocking();
+    LOG_INFO("DllMain AutoStart: auto-start returned");
     return;
 }
 #endif

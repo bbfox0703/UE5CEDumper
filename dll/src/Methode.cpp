@@ -303,21 +303,69 @@ static void __stdcall OnInjectAndConnect()
     // 3. Inject this DLL into the game process and call UE5_AutoStart.
     //    CE's InjectDLL handles: CreateRemoteThread → LoadLibrary(path)
     //    → GetProcAddress("UE5_AutoStart") → call it in the game process.
-    //    UE5_AutoStart runs UE5_Init (AOB scan) + UE5_StartPipeServer.
+    //
+    //    UE5_AutoStart is ASYNCHRONOUS since build 2932 (audit #5 AB2): it spawns
+    //    the AOB scan + pipe start and returns at once. That is not a style
+    //    choice — CE's stub does not wait for us:
+    //      CEFuncProc.pas:1346-1360  a hard 10 s ceiling (counter := 10000 div 10)
+    //      CEFuncProc.pas:1332-1343  or none at all on the APC path — CreateRemoteAPC
+    //                                then a flat sleep(1000)
+    //      CEFuncProc.pas:1379-1387  `finally ... virtualfreeex(...)` UNCONDITIONALLY
+    //    so a multi-second scan used to have the page it is running on freed out from
+    //    under it, and the `ret` crashed the GAME. (CE's own timeout text even says
+    //    "Injection routine not freed", which the `finally` above contradicts —
+    //    read from the published 7.5 source, 2026-08-15.)
     BOOL ok = g_CE.InjectDLL(dllPath, g_AutoStartFn);
     LOG_INFO("CEPlugin: InjectDLL returned %s", ok ? "TRUE" : "FALSE");
 
-    if (!ok) {
-        g_CE.ShowMessage(const_cast<char*>(
-            "UE5CEDumper: Injection failed.\n"
-            "Ensure the target is a 64-bit UE5 process and CE has\n"
-            "sufficient privileges. Check Logs\\UE5Dumper-*.log for details."));
+    // 4. Decide what to report by LOOKING, not by trusting that BOOL.
+    //
+    //    ce_InjectDLL's result is not the outcome of the injection — it is only
+    //    "did an exception escape", and CE's own handler swallows the two it
+    //    declares (pluginexports.pas:622-640, CEFuncProc.pas:1050-1051,
+    //    1391-1396, read from the 7.5 source):
+    //      * "Failed injecting the DLL"    → EInjectError → CAUGHT inside, falls
+    //        back to forceLoadModule, and ce_InjectDLL returns **TRUE**.
+    //      * "took longer than 10 seconds" → a plain Exception → escapes → FALSE.
+    //      * "Failed executing the function of the dll" → EInjectDLLFunctionFailure,
+    //        which is a SIBLING of EInjectError rather than a subclass, so it also
+    //        escapes → FALSE.
+    //    So the BOOL can be true on a real failure and false while the DLL is
+    //    loaded and working. We already have a direct observation — the same
+    //    module-list walk used above — so use it and stop guessing.
+    //
+    //    Short retry window: on the APC path CE only sleeps 1 s and does not wait
+    //    on the loader at all, so the module can still be appearing.
+    std::string loadedName, loadedPath;
+    bool present = false;
+    for (int attempt = 0; attempt < 5 && !present; ++attempt) {
+        if (attempt) Sleep(100);
+        present = IsAlreadyLoadedInTarget(hTarget, loadedName, loadedPath);
+    }
+    LOG_INFO("CEPlugin: post-inject module check: %s (ok=%d)",
+             present ? loadedPath.c_str() : "NOT PRESENT", ok ? 1 : 0);
+
+    if (!present) {
+        char msg[1024];
+        snprintf(msg, sizeof(msg),
+            "UE5CEDumper: Injection failed — the DLL is not mapped in the target.\n\n"
+            "%s\n\n"
+            "Usual causes: the target is 32-bit, anti-cheat blocked the load, or CE\n"
+            "needs to run as administrator.\n"
+            "Details: Logs\\UE5Dumper-*.log",
+            ok ? "(Cheat Engine reported success, but the module is absent — CE\n"
+                 "swallows \"Failed injecting the DLL\" internally and still returns\n"
+                 "true, so its result cannot be trusted on its own.)"
+               : "(Cheat Engine also reported failure.)");
+        g_CE.ShowMessage(msg);
         return;
     }
 
+    // Mapped. The scan runs on its own thread now, so this is genuinely "started",
+    // not "finished" — the UI's Connect polls the pipe until it is up.
     g_CE.ShowMessage(const_cast<char*>(
-        "UE5CEDumper: DLL injected — GObjects/GNames scan started.\n"
-        "Connect UE5DumpUI.exe to pipe: \\\\.\\pipe\\UE5DumpBfx\n"
+        "UE5CEDumper: DLL injected — GObjects/GNames scan started in the background.\n"
+        "It takes a few seconds; connect UE5DumpUI.exe to \\\\.\\pipe\\UE5DumpBfx\n"
         "(check the log file if the scan fails on first run)"));
 }
 
