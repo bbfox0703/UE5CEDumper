@@ -4428,9 +4428,29 @@ PropertySearchResult SearchProperties(
             needPreviewClasses.insert(m.previewClassAddr);
 
         // 2b. Scan GObjects to find one instance per preview-source class.
+        //
+        // A LIVE instance, not the class default object. The CDO is an instance of its own
+        // class and is constructed at class-load time, so it sits near the front of GObjects
+        // and won this first-match-wins race essentially every time — the Preview column then
+        // showed the Blueprint default forever (Health = 100 while the player is at 37).
+        // `obj != cls` only excluded the UClass itself, never its CDO. (audit #5 A5)
+        //
+        // Same `Default__` test Solide.cpp:170/:282, Wirbel.cpp:328 and Edel.cpp:94 already
+        // apply — a name compare rather than RF_ClassDefaultObject because the flags word is
+        // one more unverified offset, and CLAUDE.md's rule is that UObject offsets are probed,
+        // not assumed. The name is only resolved for objects whose class we actually want,
+        // which is a handful out of the pool.
         std::unordered_map<uintptr_t, uintptr_t> instanceMap;
+        // Classes for which the CDO is all that exists. Used only after the sweep, so a live
+        // instance appearing later always wins — the whole point of the finding.
+        std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;
         int32_t cnt = GetCount();
         for (int32_t i = 0; i < cnt && instanceMap.size() < needPreviewClasses.size(); ++i) {
+            // Skipping CDOs means a class with no live instance no longer satisfies the
+            // early-exit condition, so this loop can now run the full pool. It is the same
+            // sweep the search loop above already does, but it must stay abortable.
+            if ((i & 0xFFF) == 0 && Tot::Requested()) break;   // partial previews, not a hang
+
             uintptr_t obj = GetByIndex(i);
             if (!obj) continue;
 
@@ -4438,9 +4458,27 @@ PropertySearchResult SearchProperties(
             if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
 
             // Skip if this IS a UClass (we want instances, not the class itself)
-            if (needPreviewClasses.count(cls) && !instanceMap.count(cls) && obj != cls) {
-                instanceMap[cls] = obj;
+            if (!needPreviewClasses.count(cls) || instanceMap.count(cls) || obj == cls) continue;
+
+            uint32_t nameIdx = 0;
+            if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) &&
+                Serie::GetString(nameIdx).find("Default__") != std::string::npos) {
+                cdoOnlyMap.emplace(cls, obj);   // first CDO seen wins; live instance still preferred
+                continue;
             }
+
+            instanceMap[cls] = obj;
+        }
+
+        // Fall back to the CDO where nothing live exists — a default value is still the only
+        // truth available, and dropping the preview entirely would lose information. But it
+        // must not be presented as a live reading: that silent substitution IS the defect
+        // this fix removes, so the row says which one it got (marked in 2c below).
+        std::unordered_set<uintptr_t> previewFromCdo;
+        for (const auto& kv : cdoOnlyMap) {
+            if (instanceMap.count(kv.first)) continue;
+            instanceMap[kv.first] = kv.second;
+            previewFromCdo.insert(kv.first);
         }
 
         // 2c. Read property values and fill previews. ResolvePropertyPreviews
@@ -4462,6 +4500,17 @@ PropertySearchResult SearchProperties(
             Ubel::ResolvePropertyPreviews(result.results, instanceMap);
             for (auto& m : result.results) {
                 std::swap(m.classAddr, m.previewClassAddr);
+            }
+            // Mark the rows whose only available sample was the class default object, so a
+            // Blueprint default cannot read as a live value. `preview` is a free-text column
+            // (bound as a TextBlock, and one of the fields the keyword box ORs over), so the
+            // marker needs no wire or UI change and stays greppable by the user.
+            if (!previewFromCdo.empty()) {
+                for (auto& m : result.results) {
+                    if (!m.preview.empty() && previewFromCdo.count(m.previewClassAddr)) {
+                        m.preview += " (CDO default)";
+                    }
+                }
             }
         }
     }
