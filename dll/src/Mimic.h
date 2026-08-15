@@ -294,8 +294,26 @@ struct MailboxData {
                                         //   Output: parmsSize = total live instance count (capped at 0xFFFF)
                                         //           numParms  = returned count this page
                                         //           functionFlags = total pages
+                                        //           instanceAddr  = UClass* of the enumerated class
+                                        //                           (0 = not resolved; contract 2+)
+                                        //           ufuncAddr     = byte offset of UObject::ClassPrivate,
+                                        //                           i.e. Grimoire::OFF_UOBJECT_CLASS
+                                        //                           (contract 2+)
                                         //   Each entry is 8 bytes (max 128 per page):
                                         //     [0..7]   UObject* (uint64)
+                                        //
+                                        // WHY the two extra outputs (contract 2, audit #5 AA2/AA3):
+                                        //   A caller that CACHES these pointers and writes to them on a
+                                        //   timer cannot tell a still-live instance from a recycled slot.
+                                        //   With (UClass*, classOffset) it can re-read obj->ClassPrivate
+                                        //   before each write and refuse when the slot now holds a
+                                        //   DIFFERENT class — which is the write that actually corrupts,
+                                        //   since the frozen offset means something else there.
+                                        //   A slot recycled by ANOTHER INSTANCE OF THE SAME CLASS is not
+                                        //   a hazard for a class-wide freeze: that instance is a target
+                                        //   too, and the next rescan would enumerate it anyway.
+                                        //   Both are class-wide, not per-entry, so the entries stay
+                                        //   8 bytes and the page size is unchanged — this is additive.
 };
 #pragma pack(pop)
 
@@ -351,7 +369,11 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 namespace Mimic {
 
 /// Current contract revision. Bump when any item 1-5 above changes.
-constexpr int32_t MAILBOX_CONTRACT = 1;
+/// 2 (build 2926, audit #5 AA2/AA3): CMD_LIST_INSTANCES additionally publishes the
+///   enumerated UClass* in `instanceAddr` and the UObject::ClassPrivate byte offset
+///   in `ufuncAddr`. ADDITIVE — both fields were unused outputs for this command, so
+///   no contract-1 script referenced them and MAILBOX_CONTRACT_MIN stays at 1.
+constexpr int32_t MAILBOX_CONTRACT = 2;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.

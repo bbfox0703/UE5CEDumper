@@ -22,6 +22,104 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - A running freeze could write into a recycled UObject slot, and a dead mailbox never stopped it (build 2926; mailbox contract 1 -> 2)
+
+**Audit #5 segment S1, findings AA2 + AA3** — one defect at two sites, and the last two HIGHs in the
+freeze helper. Only **AB2** remains open at HIGH.
+
+### The defect
+
+`ue5_freeze_helper.lua` caches instance pointers from `CMD_LIST_INSTANCES` and writes to them on a
+CE `TTimer` (~16 writes/sec per address — `Interval = 50` quantised by the ~15.6 ms scheduler tick;
+the file's own "20x/sec" comment was never measured), re-enumerating every 5 s.
+
+**AA2:** between two rescans, UE can destroy an instance and the allocator can hand the same address
+to something else. The only guard was:
+
+```lua
+local vt = readQword(addr)          -- "is the vtable slot non-zero?"
+if vt and vt ~= 0 then ... end
+```
+
+which a recycled block passes trivially — a pooled free block keeps old bytes or an allocator
+free-list link in qword 0, both non-zero. In practice it caught only fully decommitted pages, i.e.
+the game exiting. So the freeze could sit there writing its value into an unrelated live object at an
+offset that means something completely different there.
+
+**AA3:** a failed rescan kept the previous cache and tried again in 5 s. Right for a transient
+`mailbox busy`; wrong for the failures that never self-heal — DLL unloaded or re-injected so
+`g_invokeMailbox` no longer resolves, a contract mismatch after a DLL update, a wedged
+`_ue5_invoke_busy`. Those wrote into an unrefreshed cache indefinitely. And `_lastError` had **three
+writers and zero readers repo-wide**, so no failure ever reached anyone.
+
+### The fix, and why it is not the one the audit proposed
+
+The register said this needs an identity witness (`InternalIndex`, `SerialNumber`) so the tick can
+ask *"is this still the object I enumerated?"*. Re-deriving it against what the feature actually
+promises says that is the wrong question:
+
+- The freeze is **class-wide by design** — it locks a property on *all* live instances of a class and
+  picks up newly spawned ones each rescan. A slot recycled by **another instance of the same class**
+  is therefore not a hazard; it is a target. A serial-number check would refuse that write, i.e.
+  refuse to do the feature's job for up to 5 s.
+- The write that actually corrupts is into an object of a **different class**.
+
+So the witness that matters is **class membership** — and it is far cheaper, because one `UClass*`
+and one offset are constant across the whole enumeration. They ride in two previously-unused
+**output** fields (`instanceAddr`, `ufuncAddr`) rather than widening every 8-byte entry, so the entry
+stride, page size and 128-per-page cap are all unchanged. That makes the change **additive**:
+`MAILBOX_CONTRACT` 1 → **2**, `MAILBOX_CONTRACT_MIN` stays **1**, so every `.CT` saved against
+contract 1 keeps working.
+
+| Change | Where |
+|---|---|
+| Publish `instanceAddr` = enumerated `UClass*`, `ufuncAddr` = `OFF_UOBJECT_CLASS` | [Mimic.cpp](../dll/src/Mimic.cpp) `HandleListInstances` |
+| Contract 1 → 2 + why it is additive | [Mimic.h](../dll/src/Mimic.h), `CeMailboxLayout.cs`, `check_mailbox_contract.py` |
+| tick re-reads `ClassPrivate`, refuses a foreign class | [ue5_freeze_helper.lua](../scripts/ue5_freeze_helper.lua) |
+| Bounded failure streak (3) → drop the cache, stop writing, print once | same, `rescan()` |
+| `handle.lastError()` / `handle.isAbandoned()` | same |
+
+Both fields are **cleared before use**: an earlier command may have left a real `UObject*` /
+`UFunction*` there and a caller must never mistake that for a witness. The Lua additionally
+range-checks the offset (`8 ≤ off ≤ 0x200`) so a leftover 64-bit address cannot masquerade as one.
+Getting this wrong fails *closed* — every write refused, i.e. a freeze that silently does nothing —
+which is exactly why it is checked on both sides.
+
+`check_mailbox_contract.py` refused the bump at first with *"MAILBOX_CONTRACT is 2 but the surface is
+unchanged"*, and that is the gate working: its hash covers field **layout**, not field **meaning**, so
+a command that starts using a field it never touched is invisible to it. The golden version was moved
+deliberately with a comment recording that blind spot.
+
+### The verification: the helper is now EXECUTED, not just grepped
+
+A Lua 5.4 interpreter turned out to be available, so
+**[scripts/tests/freeze_helper_test.lua](../scripts/tests/freeze_helper_test.lua)** stubs the CE
+globals the helper touches (memory reads/writes, timers, symbol lookup) over a plain table, runs the
+real `freezeProperty` / `tick` / `rescan`, and asserts on **what was actually written**. It is the
+first executable test of any script in S1 — the segment the audit flagged as having none — and it
+covers the AA1 bool fix from the previous build as well.
+
+**23 checks, 0 failures.** Then each fix was reverted **one at a time**: AA1 → 4 failures, AA2 → 11,
+AA3 → 6. All three detected. The first attempt broke all three at once and the output was
+*uninterpretable* (AA2's break made an AA1 case fail for an unrelated reason) — one break at a time
+is the only version that proves anything. That run also caught the harness aborting on its first
+failure and hiding every later case; it now uses safe accessors.
+
+**Deliberately NOT wired into `build.ps1` or CI.** `lua` is not a declared dependency of this repo,
+and a test step that silently skips when its tool is missing is precisely the defect AD1/AD2 fixed
+one build earlier. Three C# tests are the CI tripwire instead — they cannot prove the guard works,
+only that nobody deleted it, and one pins the helper's own `UE5_SCRIPT_CONTRACT` to
+`CeMailboxLayout.ContractVersion` so the hand-maintained copy cannot drift. 3748 → **3751**.
+
+**Residual, stated plainly:** a slot freed and *not* yet reused can keep its old class pointer, so a
+write can still land in dead memory. Nothing cheap sees that. What is removed is the write into a
+*live object of another class*.
+
+**Not verified in-game** — needs a class whose instances die and respawn with a freeze active. Filed
+in [todo.md](todo.md)'s `## Pending live-game verification`.
+
+-----
+
 ## 2026-08-15 - Freezing a packed bitfield bool stamped the whole byte and wiped its 7 siblings (build 2922)
 
 **Audit #5 segment S1, finding AA1** — the fourth site of the dropped-field family behind W6, Y2,

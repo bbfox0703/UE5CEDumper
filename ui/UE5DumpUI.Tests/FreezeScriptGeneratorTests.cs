@@ -381,6 +381,64 @@ public class FreezeScriptGeneratorTests
         Assert.DoesNotContain("We do NOT support packed bitfield bools", lua);
     }
 
+    // ── audit #5 AA2/AA3: recycled slots and a cache kept forever ────────────
+    //
+    // The behaviour of these two is covered properly by scripts/tests/
+    // freeze_helper_test.lua, which EXECUTES the helper against stubbed CE
+    // globals. CI has no Lua interpreter, so these source-level assertions are
+    // the tripwire: they cannot prove the guard works, only that nobody deleted
+    // it. Run the Lua harness after touching the helper.
+
+    [Fact]
+    public void FreezeHelper_TickGuardsOnClassIdentity_NotJustTheVtable()
+    {
+        var lua = FreezeHelperLuaResource.Read();
+
+        // The witness travels from the mailbox into the handle...
+        Assert.Contains("OFF_INSTANCE", lua);
+        Assert.Contains("OFF_UFUNC", lua);
+        Assert.Contains("handle._classPtr", lua);
+
+        // ...and the tick compares the object's live ClassPrivate against it.
+        Assert.Contains("readQword(addr + cOff) == cPtr", lua);
+
+        // The old guard tested only "is qword 0 non-zero", which a recycled or
+        // pooled block passes because it holds old bytes or a free-list link.
+        // It survives ONLY as the no-witness fallback, so the bare form that
+        // used to gate the write must not be the gate any more.
+        Assert.DoesNotContain("local vt = readQword(addr)\n        if vt and vt ~= 0 then", lua);
+    }
+
+    [Fact]
+    public void FreezeHelper_PersistentRescanFailure_StopsWritingAndSurfaces()
+    {
+        var lua = FreezeHelperLuaResource.Read();
+
+        // A bounded failure streak, not "keep the stale cache forever".
+        Assert.Contains("MAX_FAIL_STREAK", lua);
+        Assert.Contains("handle._failStreak", lua);
+        Assert.Contains("handle._abandoned", lua);
+
+        // _lastError had three writers and zero readers — the failure never
+        // reached anyone. Both accessors are the readers.
+        Assert.Contains("handle.lastError = function()", lua);
+        Assert.Contains("handle.isAbandoned = function()", lua);
+    }
+
+    [Fact]
+    public void FreezeHelper_BakesTheSameContractVersionAsTheGenerator()
+    {
+        // The helper is a hand-maintained table file carrying its OWN copy of the
+        // contract number, so it can drift from the DLL/C# pair that
+        // check_mailbox_contract.py keeps in step. It reads the contract-2
+        // identity witness, so a helper stuck at 1 would run happily against a
+        // DLL that never fills those fields.
+        var lua = FreezeHelperLuaResource.Read();
+
+        Assert.Contains(
+            $"local UE5_SCRIPT_CONTRACT = {CeMailboxLayout.ContractVersion}", lua);
+    }
+
     [Fact]
     public void Generate_ClassNameWithQuote_IsEscaped()
     {

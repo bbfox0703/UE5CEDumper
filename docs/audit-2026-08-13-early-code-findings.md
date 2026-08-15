@@ -1942,7 +1942,10 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 > **Root causes, and the freeze helper is where they concentrate** (18 of 36 findings):
 > 1. **A raw pointer used as an identity.** AA2/AA3 are the audit's recycled-address hazard — already
 >    recorded three times on the DLL side (D1/U4–U6, D3/A10, D5/F3) — reaching the Lua tier, where
->    there is no `GetSerialNumber` witness on the wire to fix it cheaply.
+>    there is no `GetSerialNumber` witness on the wire to fix it cheaply. *(✅ fixed 2926 — and the
+>    resolution is worth carrying to the other three: the cheap witness was not object identity at
+>    all, but the weaker predicate the FEATURE actually needs. Ask what the caller must not do before
+>    reaching for a serial number.)*
 > 2. **`callDLL` returns `nil` on failure and not one of its 14 call sites handles it** (AA5, AA6).
 >    `nil ~= 0` is **true** in Lua, so a failed read is recorded as success — root cause #1 in its
 >    purest form, and a Lua-specific trap that has no C# analogue.
@@ -2003,11 +2006,89 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 > real packed bool's mask actually arrives on the `search_properties` wire. Bench-checking it needs a
 > game whose class has a `uint8 bFoo:1`.
 
+
+> ### ✅ AA2 + AA3 FIXED — build 2926, 2026-08-15
+>
+> **The fix shape differs from the one this register recommended, deliberately.** The register said
+> the honest fix needs an identity witness (`InternalIndex`, `SerialNumber`) so the tick can ask *"is
+> this still the object I enumerated?"*. Re-deriving it against the feature's actual contract says
+> that is the **wrong question**, and answering it would make the freeze less correct, not more:
+>
+> - This freeze is **class-wide by design** — it locks a property on *all* live instances of a class
+>   and picks up newly spawned ones every rescan. So a slot recycled by **another instance of the same
+>   class** is not a hazard: that object is a target too, and the next rescan would enumerate it. A
+>   serial-number check would *refuse* that write, i.e. refuse to do the feature's job for 5 s.
+> - The write that actually corrupts is into an object of a **different class**, where `propOffset`
+>   addresses something else entirely.
+>
+> So the witness that matters is **class membership**, and it is also much cheaper: one `UClass*` and
+> one offset are constant across the whole enumeration, so they ride in two previously-unused
+> **output** fields (`instanceAddr`, `ufuncAddr`) instead of widening every 8-byte entry. The page
+> size, the entry stride and the 128-per-page cap are all unchanged, which makes this **additive** —
+> `MAILBOX_CONTRACT` 1 → **2**, `MAILBOX_CONTRACT_MIN` stays **1**, so every saved `.CT` from
+> contract 1 keeps working.
+>
+> | Change | Where |
+> |---|---|
+> | Publish `instanceAddr` = enumerated `UClass*`, `ufuncAddr` = `OFF_UOBJECT_CLASS` | `Mimic.cpp` `HandleListInstances` |
+> | Contract 1 → 2 (+ the rule for why it is additive) | `Mimic.h`, `CeMailboxLayout.cs`, `check_mailbox_contract.py` |
+> | tick re-reads `ClassPrivate` and refuses a foreign class | `ue5_freeze_helper.lua` |
+> | Bounded failure streak → drop the cache, stop writing, say so once | `ue5_freeze_helper.lua` `rescan()` |
+> | `handle.lastError()` / `handle.isAbandoned()` | `ue5_freeze_helper.lua` |
+>
+> **Both fields are cleared before use.** An earlier command may have left a real `UObject*` /
+> `UFunction*` there, and a caller must never mistake that for a witness — so the DLL zeroes them,
+> and the Lua additionally range-checks the offset (`8 ≤ off ≤ 0x200`) so a leftover 64-bit address
+> cannot masquerade as one. Getting this wrong fails *closed* (every write refused = a silent no-op),
+> which is why it is checked twice.
+>
+> **AA3's "indefinitely" is now bounded at three consecutive failures** (~15 s at the default rescan
+> interval). One failure is usually a transient `mailbox busy` and keeping the cache is right; the
+> unbounded cases named in the re-verify note — DLL unloaded/re-injected, contract mismatch, a wedged
+> `_ue5_invoke_busy` — never self-heal, and now stop the writes and print **once** (ungated: CE Lua
+> hygiene keeps genuine failures unconditional). `_lastError` had three writers and zero readers; it
+> has two readers now.
+>
+> ### The verification is the notable part: the helper is now EXECUTED, not just grepped
+>
+> A Lua 5.4 interpreter turned out to be available on the dev machine, so
+> **`scripts/tests/freeze_helper_test.lua`** stubs the ~15 CE globals the helper touches (memory
+> reads/writes, timers, symbol lookup) over a plain table, runs the real `freezeProperty` /
+> `tick` / `rescan`, and asserts on **what was actually written**. That is the first executable test
+> of any script in S1 — the segment the audit flagged as having none — and it covers AA1 as well.
+>
+> **23 checks, 0 failures.** Then each of the three fixes was reverted **one at a time**:
+>
+> | Reverted | Result |
+> |---|---|
+> | AA1 → unconditional whole-byte stamp | **DETECTED** — 4 failures |
+> | AA2 → old vtable-only guard | **DETECTED** — 11 failures |
+> | AA3 → keep the stale cache, silently | **DETECTED** — 6 failures |
+>
+> The first attempt broke all three at once and the results were **uninterpretable** — AA2's break
+> made an AA1 case fail for an unrelated reason. One break at a time is the only version that proves
+> anything. The same run also caught the harness aborting on its first failure and hiding every later
+> case; it now uses safe accessors.
+>
+> **It is deliberately NOT wired into `build.ps1` or CI.** `lua` is not a declared dependency, and a
+> test step that silently skips when its tool is missing is precisely the defect AD1/AD2 just fixed
+> one commit earlier. Three C# tests act as the CI tripwire — they cannot prove the guard *works*,
+> only that nobody deleted it, and one of them pins the helper's own `UE5_SCRIPT_CONTRACT` to
+> `CeMailboxLayout.ContractVersion` so the hand-maintained copy cannot drift.
+>
+> **Residual, stated honestly:** a slot that is freed and *not* reused can keep its old class pointer
+> until the allocator hands it out, so a write can still land in dead memory. The class check cannot
+> see that; nothing cheap can. What it removes is the write into a *live object of another class*,
+> which is the case that corrupts.
+>
+> ⚠ **Not verified in-game.** Needs a class whose instances are destroyed and respawned (combat
+> deaths, level streaming) with a freeze active — see todo.md's register.
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **AA1** ✅ | HIGH | `ue5_freeze_helper.lua:153` (writeBool) | Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit **[2 lenses]** | M / med |
-| **AA2** | HIGH | `ue5_freeze_helper.lua:452` (freezeProperty -> tick) | The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds *(re-measured 2026-08-15: ~16/s per cached address — TTimer 50 ms quantised to ~62.5 ms; 5 s is the BEST case — see §3c)* | M / med |
-| **AA3** | HIGH | `ue5_freeze_helper.lua:461` (rescan / tick) | A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely **[2 lenses]** *(2026-08-15: "indefinitely" holds under PERSISTENT failure — DLL re-inject / contract mismatch / wedged `_ue5_invoke_busy`; transient busy self-heals in 5 s; `_lastError` is write-only — see §3c)* | M / med |
+| **AA2** ✅ | HIGH | `ue5_freeze_helper.lua:452` (freezeProperty -> tick) | The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds *(re-measured 2026-08-15: ~16/s per cached address — TTimer 50 ms quantised to ~62.5 ms; 5 s is the BEST case — see §3c)* | M / med |
+| **AA3** ✅ | HIGH | `ue5_freeze_helper.lua:461` (rescan / tick) | A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely **[2 lenses]** *(2026-08-15: "indefinitely" holds under PERSISTENT failure — DLL re-inject / contract mismatch / wedged `_ue5_invoke_busy`; transient busy self-heals in 5 s; `_lastError` is write-only — see §3c)* | M / med |
 | **AA4** | MED | `ue5_dissect.lua:53` (callDLL) | Bare getAddress RAISES on a missing symbol (CE source-verified), so the 'DLL function not found' message is dead code and the registered dissect override breaks CE's dissect for unrelated addresses **[2 lenses]** | S / low |
 | **AA5** | MED | `ue5_dissect.lua:63` (callDLL) | callDLL returns nil on every executeCodeEx failure and not one of its 14 call sites handles nil: `<= 0` raises, `~= 0` inverts **[2 lenses]** | S / low |
 | **AA6** | MED | `ue5_dissect.lua:173` (addFieldsToStruct / walkClassFields) | callDLL returns nil on failure and every caller treats nil as SUCCESS — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as a duplicate of the previous field **[2 lenses]** | S / low |
@@ -2398,9 +2479,11 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**236 of 272 findings are still open** (36 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **3 HIGH · 73 MED ·
-133 LOW · 27 INFO**. Fixed HIGHs: 8 (V1, W1, W2, Y1, AB1, AD1, AD2, **AA1**).
+**234 of 272 findings are still open** (38 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **1 HIGH · 73 MED ·
+133 LOW · 27 INFO**. Fixed HIGHs: 10 (V1, W1, W2, Y1, AB1, AD1, AD2, AA1, **AA2, AA3**).
+
+> **Only AB2 remains at HIGH.**
 
 > **Updated 2026-08-15 (build 2914): AD1 + AD2 FIXED**, counts above re-derived with the command
 > rather than hand-tallied. Both sites were collapsed into a single `Invoke-CppSelfTest` helper, a
@@ -2413,7 +2496,7 @@ shipped, the in-session half is deliberately deferred to cluster ③). Open: **3
 > §2 block states what was hand-verified. **Re-derive any LOW before fixing it** — several are
 > pattern-sweep leads, not findings.
 
-### The 3 open HIGHs — start here
+### The 1 open HIGH — start here
 
 > ✅ **All six were re-verified against the source 2026-08-15 (PM double-check pass — see the block at
 > the end of this section). Zero line drift on all six.** The per-finding corrections below are from
@@ -2448,31 +2531,21 @@ the mask was structurally absent end-to-end and had to be wired through five tie
 `required`-on-the-params-record template was the fix — it immediately caught a sixth tier
 (`ScoredPropertyRow`) the plan had missed. Negative-control verified; full record in S1's block, §2.
 
-2. **AA2** — `ue5_freeze_helper.lua:452 (freezeProperty -> tick)`
-   The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds
-   *Re-verify: mechanism exact (the wire carries **raw addresses only** — `Mimic::HandleListInstances`
-   packs 8-byte pointers, no `InternalIndex`/`SerialNumber`, though `Aura::GetSerialNumber` exists).
-   Two number corrections: the tick is a CE `TTimer` at `Interval=50`, quantised by the ~15.6 ms
-   scheduler tick to **~16 writes/sec per cached address** (the "20/sec" was the file's own header
-   comment, never measured), and "up to 5 s" is the BEST case — a slow rescan extends it (5 s timeout
-   × up to 16 pages, synchronous), and a failed one hands over to AA3.*
-
-3. **AA3** — `ue5_freeze_helper.lua:461 (rescan / tick)`
-   A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely
-   *Re-verify: "indefinitely" is **conditional on a persistent failure** — a transient
-   `mailbox busy` self-heals on the next 5 s rescan; the unbounded cases are real and ordinary (DLL
-   unloaded/re-injected → `g_invokeMailbox` unresolvable forever; contract mismatch after a DLL
-   update; a wedged shared `_ue5_invoke_busy`). `_lastError` is **write-only** (3 occurrences
-   repo-wide, zero readers) so nothing ever surfaces the failure. The vtable-nonzero guard is weaker
-   than even AA2 implies: a pooled free block keeps old bytes or a free-list link in qword 0, both
-   non-zero — in practice it catches only decommitted pages (i.e. game exit).*
+~~**AA2 / AA3**~~ — ✅ **FIXED, build 2926, 2026-08-15.** Both re-verify notes were load-bearing and
+both changed the fix. AA3's "indefinitely" really is conditional on a *persistent* failure, so the
+repair is a bounded failure streak rather than dropping the cache on the first error. And AA2's note
+that the wire carries raw addresses is what forced the contract change — but **not** the widening
+proposed in the fix-order list: for a class-wide freeze the witness that matters is class membership,
+not object identity, so it rides in two unused output fields and the 8-byte entries are untouched.
+The observation that the vtable guard "catches only decommitted pages" is now a test case. Full
+record, including the one-break-at-a-time negative control, in S1's block, §2.
 
 
 ### Where the rest live
 
 | Segment | HIGH | MED | LOW | INFO | Open |
 |---------|-----:|----:|----:|-----:|-----:|
-| S1 early Lua scripts | **2** | 17 | 14 | 2 | **35** (AA1 fixed b2922) |
+| S1 early Lua scripts | – | 17 | 14 | 2 | **33** (AA1/AA2/AA3 fixed b2922-2926) |
 | T1c VMs + Core + Models | – | 10 | 15 | 4 | **29** |
 | T1b DLL headers + C++ tests | – | 4 | 15 | 6 | **25** (AD1+AD2 fixed b2914) |
 | T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
@@ -2494,7 +2567,7 @@ the mask was structurally absent end-to-end and had to be wired through five tie
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | **3** | **73** | **133** | **27** | **236** |
+| **TOTAL** | **1** | **73** | **133** | **27** | **234** |
 
 ### Fix order recommended
 
@@ -2505,10 +2578,11 @@ the mask was structurally absent end-to-end and had to be wired through five tie
    at five tiers (DLL wire → `PropertySearchMatch` → `ScoredPropertyRow` → `FreezeScriptParams` →
    CFG → Lua). It is now a fourth implementation of the one bit rule that `Solitar::ApplyBoolBit`,
    `FieldValueConverter.ApplyBoolMask` and `UE5T_setbit` already shared.
-3. **AA2/AA3** — one defect (the freeze tick's liveness guard) at two sites. Bigger: the honest fix
-   needs an identity witness (`InternalIndex`,`SerialNumber`) the Lua tier does not currently
-   receive — `Mimic::HandleListInstances` would have to widen its 8-byte entries, which is a
-   mailbox-contract change (bump rules in `dll/src/Mimic.h`).
+3. ~~**AA2/AA3**~~ — ✅ **DONE, build 2926.** It was a mailbox-contract change as predicted
+   (1 → 2, additive), but **not** the widening this line proposed: the witness that matters for a
+   class-wide freeze is class membership, not object identity, and that rides in two unused output
+   fields with the 8-byte entries untouched. See S1's block for why a serial-number check would
+   have been *less* correct.
 4. **AB2** — CE frees the remote stub after its hard 10 s inject ceiling while our scan still runs;
    the GAME crashes. Same root assumption as AB1 (CE unloads what we assume it won't) but **AB1's
    fix does not touch it** — the fix is spawn-and-return in `UE5_AutoStart` (see the AB2 note above).
@@ -2617,9 +2691,11 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 > re-derive itself after a fix. **All six open HIGHs were re-verified against the source
 > 2026-08-15 PM (zero line drift)** — per-finding correction notes sit inline in §3c's HIGH list.
 >
-> ✅ **AB1 (2913), AD1/AD2 (2914) and AA1 (2922) are FIXED** — see dev-log. **3 open HIGHs left:
-> AA2/AA3** (one defect, two sites — needs an identity witness the Lua tier does not receive, so it
-> is a mailbox-contract change) **then AB2**. §3c's fix-order list is current.
+> ✅ **AB1 (2913), AD1/AD2 (2914), AA1 (2922) and AA2/AA3 (2926) are FIXED** — see dev-log.
+> **One open HIGH left: AB2** — CE frees its remote inject stub after a hard 10 s ceiling while our
+> AOB scan is still running, and the GAME crashes. Fix shape is spawn-and-return in `UE5_AutoStart`
+> (publish progress via `Mimic::InitState`, which `UE5CEDumper.CT` already polls). After that the
+> queue is the MED tier, grouped by family — §3c.
 >
 > 🔴 **The two most consequential findings, both hand-verified against the source:**
 > - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path. ✅ FIXED (2913).** `DllMain` starts a

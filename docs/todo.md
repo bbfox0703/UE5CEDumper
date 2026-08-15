@@ -1429,6 +1429,33 @@ This is the one verification in the register that needs **no game at all**.
    still get its poller. Only the executable leaf is tested, and there is a unit test for it.
 
 
+### ⬜ NEW 2026-08-15 — keep a freeze running across deaths/respawns (audit #5 AA2/AA3, build 2926)
+
+The freeze tick used to write to cached pointers guarded only by "is qword 0 non-zero", which a
+recycled or pooled block passes — so between two rescans it could write into an object of a
+different class. It now re-reads `ClassPrivate` before every write and refuses a foreign class, using
+a `(UClass*, offset)` witness the DLL publishes on `CMD_LIST_INSTANCES` (**mailbox contract 1 → 2**).
+
+**The behaviour is covered by an executable harness** (`lua scripts/tests/freeze_helper_test.lua`,
+23 checks, negative-controlled one break at a time), so what is unproven here is the *live* half:
+that a real game's `CMD_LIST_INSTANCES` fills the witness and that the guard does not reject valid
+instances.
+
+1. **Contract first.** With an **old** DLL injected and a freshly-injected helper, the freeze must
+   refuse with *"the DLL is older than this script"*. If it runs anyway, the contract check is not
+   firing and nothing below means anything.
+2. With the new DLL: start a class-wide freeze on something with many live instances (enemies, pickups).
+   **Success = the value actually holds.** A silently-refusing guard looks exactly like a freeze that
+   does nothing — that is the main risk of this change, and it fails in that direction by design.
+3. Check `init-0.log` for `LIST_INSTANCES ... classWitness=0x...`. **A zero witness means the guard
+   fell back** and the fix is inert.
+4. **Now cause churn**: kill/respawn the frozen actors, or cross a level-streaming boundary, with the
+   freeze still enabled. Success = the freeze re-acquires within one rescan (~5 s) and nothing
+   unrelated changes. Watch for any *other* object's fields changing — that is the old bug.
+5. **AA3**: with the freeze running, unload/re-inject the DLL so rescans fail permanently. Expect the
+   Lua console to print `... consecutive rescans failed -- freeze STOPPED writing` **once** within
+   ~15 s, and no further writes.
+
 ### ⬜ NEW 2026-08-15 — freeze a PACKED bitfield bool and check its 7 siblings survive (audit #5 AA1, build 2922)
 
 Sibling of the Y15 check below, same panel, same failure shape — a whole-byte write over a field that

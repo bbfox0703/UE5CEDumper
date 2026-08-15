@@ -44,7 +44,19 @@ import re
 import sys
 
 # (contract_version, sha256 of the surface). Update BOTH together, never one.
-GOLDEN_VERSION = 1
+#
+# NOTE on version 2 (build 2926, audit #5 AA2/AA3): the version moved while the HASH
+# did NOT, and that is correct rather than an oversight. The surface hash covers field
+# names, types, declared offsets and enum VALUES — the LAYOUT. Version 2 changed a
+# field's MEANING: CMD_LIST_INSTANCES now publishes the enumerated UClass* in
+# `instanceAddr` and the ClassPrivate offset in `ufuncAddr`, both previously unused
+# outputs for that command. No field moved, so nothing this script hashes could move.
+#
+# That is a real blind spot worth knowing about: a command that starts reading or
+# writing a field it never touched before is a contract change this hash cannot see.
+# The "bumped but unchanged" branch below is what surfaces it — it forces the bumper
+# to come here and say why, which is the check actually doing its job.
+GOLDEN_VERSION = 2
 GOLDEN_HASH = "7021c884dde831a77009d4a8b968f6c2e8382941c4100f87dda223fe92b5b63b"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")
