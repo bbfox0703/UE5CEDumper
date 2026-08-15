@@ -59,7 +59,7 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **U1** ✅ | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
 | **U2** ✅ | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
 | **U3** ✅ | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
-| **U4** | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
+| **U4** ✅ | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
 | **U5** | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
 | **S1** | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
 | **T1** | Tail sweep | every remaining file ≥50 early lines + the 53 never-touched-since-May files | ~10k | — |
@@ -909,7 +909,81 @@ unread flags, not wrong writes.
 
 -----
 
+### U4 — Dialogs + CE script generators — ✅ scanned 2026-08-15
+
+**18 agents** (5 lenses → 3 refute batches → 10 second-lens), 0 errors. Run `wf_be335f2c-7b7`.
+20 raw claims → 15 after dedupe → **0 refuted** → 15 confirmed → **14 distinct** after merging the two
+lens-duplicate reports of the same `EnumProperty` defect (`ParamBufferBuilder.cs:221`/`:224`).
+
+**Tally: 1 HIGH · 8 MEDIUM · 5 LOW.** Four HIGHs were claimed; one survived and three were cut to
+MEDIUM.
+
+> ⚠ **A 0% refutation rate is an outlier and must not be read as a quality signal.** Every other
+> segment killed 25–73%. Two readings are available and they are not exclusive: this is the densest
+> early code in the tree (`InvokeParamDialog` is **96% early**, and the whole segment emits code that
+> runs against a live game), or the skeptics underperformed. **Because the rate could not be used as a
+> check here, three findings were re-derived by hand** — the HIGH, the merged enum pair, and V-lens
+> item Y10 — and all three held, which is why the tally is recorded as-is. Treat the five LOWs as the
+> least-scrutinised rows in this audit.
+
+> **The HIGH is a capability that has never worked, for the third time in this audit.** Y1 makes the
+> generated CE invoke form pass **0** for every `UObject*` / `FName` parameter the user actually fills
+> in — joining W1 (a `.usmap` that never parsed) and V1 (a map edit that wrote to the key). The
+> pattern across all three: *the default value happens to work*, so any smoke test passes.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **Y1** | **HIGH** | `InvokeScriptGenerator.cs:603` (`GetParseExpression`) | The pointer/FName branch detects a leading `0x` and then passes the **still-prefixed** string to Lua's `tonumber(s, 16)`, which rejects the `x` and returns `nil`; `or 0` then writes a **null pointer** into the params buffer. The DLL memcpys that straight into `ProcessEvent`, so the UFunction is called with `nullptr` — an access violation for any callee that dereferences it — and the script still reports `INVOKED OK` (or closes the Lua window silently when `DEBUG == 0`). The `else` branch's bare `tonumber(s)` **would have worked**: the special case is the only thing breaking it. The default `'0x0'` yields 0 correctly by accident, so a smoke test with unmodified defaults always passes. | S / low |
+| **Y2** | MED | `ParamBufferBuilder.cs:221` (+`:224`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` and written as 4 bytes gated on `available >= 4`, so a **1-byte enum param is not written at all** and the game receives 0. FIRE and the exported AA Script therefore send different values for the same dialog input. | S / low |
+| **Y3** | MED | `ParamBufferBuilder.cs:165` | Typing `true` for a bool param: **FIRE sends 0, Copy AA Script bakes 1** — one dialog, two opposite calls. | S / low |
+| **Y4** | MED | `ParamBufferBuilder.cs:185` | Float params: FIRE parses with `AllowThousands` and accepts `NaN`/`Infinity`; the baked generator does neither, so `1,5` **fires as 15.0 and bakes as 0**. | M / low |
+| **Y5** | MED | `ParamBufferBuilder.cs:254` (`ParseByte`) | Rejects the very inputs the sibling baked generator accepts, so `true` and negative int8 values silently become 0 on FIRE. | S / low |
+| **Y6** | MED | `InvokeScriptGenerator.cs:528` | Struct params in the interactive CE form collapse to a **single 4-byte `writeInteger`**, so an `FVector` param is filled with garbage. | M / low |
+| **Y7** | MED | `InvokeParamDialog.cs:328` | Struct params pick their sub-field layout from the **guessed UE version** and never cross-check it against the size the engine reported for the param. | S / low |
+| **Y8** | MED | `InvokeScriptGenerator.cs:164` | The last site in the repo still using bare `getAddress` — its module-prefixed fallback is unreachable, so a wrong-address result is reported as a real one. | S / low |
+| **Y9** | MED | `FreezeValueDialog.cs:231` | Accepts (and pre-fills) values wider than the property — `uint8` 9999 is silently written as 15. | S / low |
+| **Y10** | LOW | `BakedScriptGenerator.cs:223` | Verify mode writes into the mailbox (`writeByte(_PD_dbg + i, 0)` over `parmsSize`) **before any contract check** — `BakedScriptGenerator` is the only mailbox-touching generator with no `AppendContractCheck`, and CLAUDE.md's rule is explicit that the check comes *before the first write* because the layout is what is in question. | S / low |
+| **Y11** | LOW | `ParamBufferBuilder.cs:228` | FIRE has no unsupported-param-type gate: an `FText`/`TArray`/`TMap` param's textbox is written as a raw int32 into the struct's pointer field. | M / low |
+| **Y12** | LOW | `InvokeParamDialog.cs:856` | The baked-invoke clipboard fallback still copies a raw AA body — the build-1986 `WrapAaScriptXml` sweep reached the no-arg sibling **two lines away** and not this one. | S / low |
+| **Y13** | LOW | `BakedScriptGenerator.cs:195` | Verify mode's 32-byte dump window cannot contain the complex return it tells the user to read. | S / low |
+| **Y14** | LOW | `InvokeParamDialog.cs:850` | *"AA Script created in CE … (N baked param(s))"* is reported even when a param failed to parse and was baked as 0. | M / low |
+
+**Verified independently (not agent-reported):**
+
+1. **Y1's second lens MEASURED it rather than arguing it** — the strongest verification any agent has
+   produced in this audit. Instead of reasoning about Lua semantics it loaded **CE's own
+   `lua53-64.dll`** via ctypes and evaluated the emitted expression verbatim against a stub `edits`
+   table: `0x1F2A3B4C5D0` → **0**, `0X…` → 0, bare hex → 0, and only a *decimal* address survives —
+   which nothing in this project ever produces, since `Renge::AddrToStr` formats every address as
+   `0x` + uppercase hex. Branch isolation confirmed the untaken `else` would have worked. That is a
+   negative control in the form this project demands, run by an agent.
+2. **A hand-run CeLuaHygiene usage matrix found Y10 before the agents reported, and corrected my own
+   analysis.** Cross-tabulating every CE-Lua emitter against the shared helpers showed
+   `BakedScriptGenerator` alone hand-rolling `close-on-success` and carrying **no contract check**
+   while its twin `InvokeScriptGenerator` uses `AppendContractCheck`. My first pass then wrongly
+   concluded Baked performs no mailbox *writes* — the grep covered
+   `writeInteger|writeQword|writeBytes|writeFloat` and **missed `writeByte`**, which is exactly what
+   `:223` emits. The agents caught what the too-narrow pattern hid, so Y10 is a write-before-check,
+   not the cosmetic duplication I had downgraded it to. *(The matrix's control passed:
+   `CeLuaHygiene.cs` and 10+ reference generators show as helper users, so its negatives mean
+   something.)*
+3. **A related duplication the matrix surfaced, filed here so it is not lost:** `0x328` is hardcoded
+   at `BakedScriptGenerator.cs:194`/`:309` and `TeleportScriptGenerator.cs:173`/`:185`, while **five
+   generators across eight sites** interpolate `CeMailboxLayout.OffParamsData` (`InvokeScriptGenerator`
+   even aliases it). The offsets are correct today; this is cluster ④ waiting to happen the next time
+   the mailbox layout moves. `TeleportScriptGenerator` is outside U4's scope — fix it in the same
+   sweep.
+
+-----
+
 ## 3. Refuted — do not re-raise
+
+### From U4 (0 of 15 — 0%)
+
+**Nothing was refuted**, which is itself the entry: no U4 claim has been cleared, so nothing from this
+segment is on the do-not-re-raise list. See the outlier warning in §2 — the three rows re-derived by
+hand held, but the five LOWs are the least-scrutinised findings in this audit and a future session
+should not treat their survival as confirmation.
 
 ### From U3 (6 of 18 — 33%)
 
@@ -1124,13 +1198,21 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session picks up at U4
+## 3b. START HERE — next session picks up at U5
 
-*State as of 2026-08-15, after U3. Read this section first; it is written for a session with no
+*State as of 2026-08-15, after U4. Read this section first; it is written for a session with no
 memory of the previous one.*
 
-> ✅ **Nothing open in the audit is rated HIGH.** All three real HIGHs shipped: V1 (2830), W2+W3
-> (2842), W1+W7 (2853), plus W4 (2836) and W6 (2857). U3 claimed no HIGHs at all.
+> 🔴 **U4/Y1 is an open HIGH and it is an `S`/low fix — do it first.** The generated CE invoke form
+> passes **0** for every `UObject*` / `FName` parameter the user fills in, because
+> `tonumber(s, 16)` is handed a string that still carries its `0x` prefix. The fix is to drop the base
+> argument (plain `tonumber(s)` accepts `0x…`) or strip the prefix, mirroring
+> `CeXmlExportService.NormalizeHex`. **It needs a test asserting the emitted expression yields the
+> address for `0xDEADBEEF` rather than 0** — nothing covers `GetParseExpression` today, which is why
+> a capability that never worked stayed green.
+>
+> The other three real HIGHs shipped: V1 (2830), W2+W3 (2842), W1+W7 (2853), plus W4 (2836) and
+> W6 (2857).
 >
 > 🔁 **Read this before fixing anything from U3.** X1 is the D5/**F4 fix applied to one of its two
 > sites** — the DLL covered both the single and batch property-search paths, the C# covered only the
@@ -1159,13 +1241,13 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 
 ### What is done
 
-**Scanning: 9 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3. Still open:
-**U4, U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
+**Scanning: 10 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3, U4. Still
+open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
 
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: X1–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs remain.
+**Still open: Y1 (HIGH), Y2–Y14, X1–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2.**
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).
@@ -1203,21 +1285,25 @@ the skeptics, and the AOT-specific refutation guidance; the D5 script
 (`audit5-seg-d5-fern-frieren-wf_39143753-6df.js`) remains the C++ flavour. Both are 5 finders ->
 skeptic batches -> second lens on surviving HIGH/MED, and log a wipeout warning when a finder dies.
 
-**U4 scope** (from section 1): dialogs + CE script generators — `InvokeParamDialog` 1020 (96%
-early), `Baked` 503, `Invoke` 399, `ObjInstancePicker` 295, `ParamBuffer` 258, `CheatTable` 245,
-`FreezeDialog` 242, `FreezeGen` 210 = **~3,172**.
+**U5 scope** (from section 1): the remaining VMs / Models / Core / scoring — Console 445,
+InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478,
+Logging 362, scoring tables ~800 = **~3,500**. It is the last UI segment; S1 (early Lua scripts) and
+T1 (tail sweep) follow.
 
-**U4 needs a lens the earlier C# segments did not have: CE Lua output hygiene.** CLAUDE.md carries a
-long MUST-follow rule set for every script this project emits — the `DEBUG`/`dbg()` gating, the
-auto-close-on-success that must be **unreachable on every error path**, the untick-the-record rule
-with its two *non-interchangeable* shapes (stateful toggles return early; momentary actions flag
-`hadError` and fall through so the deferred untick still runs), the mailbox contract-version range
-check **before the first write**, and the rule that a mailbox failure must never be reported by
-guessing (`status==0` = stale address, `0xFF` = wedged) with a real `getTickCount()` deadline because
-`sleep(1)` is 15.47 ms. `CeMailboxBailoutTests` asserts the two bail-out shapes. **Point one lens
-squarely at that rule set** — it is unusually well specified, which makes violations decidable rather
-than arguable. `CeLuaHygiene` is the shared emitter; the finding shape to hunt is a generator that
-hand-rolls what `CeLuaHygiene` provides.
+**Two U3/U4 findings land in U5's files — do not re-derive, but DO check their siblings:** X1's
+consumers are `InterestingPropertiesViewModel` and `DetectStatsViewModel` (the panels that present a
+capped pool as complete), and the scoring tables are what feed them. Ask instead what *else* those
+panels report as complete.
+
+**What U4 proved about lens design, and it is the most transferable result so far.** The
+`ce-lua-hygiene` lens — pointed at CLAUDE.md's MUST-follow rule block as a *specification* — produced
+the HIGH. A rule set precise enough to make violations **decidable rather than arguable** is worth a
+lens of its own. For U5 the equivalent specifications are CLAUDE.md's **keyword-search-box contract**
+(space = AND via `ObjectTreeFilter.MatchesAllTerms`, never a single `.Contains` over a concatenated
+string; per-keyword memory via `KeywordSearchMemory` with `Schedule` vs `Commit` for async counts;
+`Flush()` before clearing on navigation) and the **UI-strings rule** (English only, in
+`Resources/Strings/en.axaml`, referenced via `StaticResource` — CI-gated by `check_axaml_strings`, so
+a violation is decidable). Point one lens at each.
 
 **What the C# segments proved about lens choice:** `aot-trim` was dropped after U1 (it found nothing)
 and nothing was lost. `domain-correctness` and `status-honesty` were productive in all three. Give one
@@ -1230,15 +1316,19 @@ C#-read JSON keys found X3; it structurally could NOT find X1, because a key rea
 path counts as read everywhere. A per-command version of that sweep would find both, and would be
 worth writing once.
 
-**Put in every agent prompt** (measured to improve output): the calibration — *175 raw claims, 81
-refuted (**25–73% per segment**, ~46% overall; the three C# segments are the lowest at 33% / 25% /
-33%), eighteen HIGHs claimed, fifteen died and three were real* — plus *"read the surrounding comments
-and the callers first"* (five of D4b's nine refutations were won by finding a comment naming the
-defect the code already prevents), the **seam** instruction above, and **REPORT ONLY, no edits**.
+**Put in every agent prompt** (measured to improve output): the calibration — *195 raw claims, 81
+refuted (**0–73% per segment**, ~42% overall; U4 refuted nothing, which is an outlier and not a
+target), twenty-two HIGHs claimed, eighteen died and four were real* — plus *"read the surrounding
+comments and the callers first"*, the **seam** instruction above, and **REPORT ONLY, no edits**.
+
+**And add U4's lesson about what hides a defect:** all four real HIGHs lived in code whose happy path
+is only ever exercised with **default or absent input** — a `'0x0'` default that parses correctly, a
+map row whose first element is at offset 0, a `.usmap` nobody opened. Ask of each finding: *would a
+smoke test with default values catch this?* If not, that is the finding to chase.
 
 **Do not re-derive:** everything already in sections 2 and 3 — D5's `Fern.cpp`/`Frieren.cpp`
-findings and its six shipped fixes, U1's eleven (V1/V2/V5 fixed), U2's eight (six fixed), and U3's
-twelve findings + six refutations.
+findings and its six shipped fixes, U1's eleven (V1/V2/V5 fixed), U2's eight (six fixed), U3's twelve
++ six refutations, and U4's fourteen (nothing refuted — see the outlier warning).
 
 ### One tree, two sessions
 
@@ -1298,9 +1388,9 @@ be the default for any DLL fix:
 
 ## 4. Cross-segment rollup — read this before fixing anything
 
-**Status: 9 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5, U1, U2, U3). **80 distinct findings:
-3 HIGH · 42 MEDIUM · 34 LOW · 1 INFO.** 175 raw claims, **81 refuted (46%)**. Remaining: U4, U5, S1, T1.
-**The DLL is fully scanned; everything left is C# and Lua.**
+**Status: 10 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5, U1, U2, U3, U4). **94 distinct
+findings: 4 HIGH · 50 MEDIUM · 39 LOW · 1 INFO.** 195 raw claims, **81 refuted (42%)**. Remaining:
+U5, S1, T1. **The DLL is fully scanned; everything left is C# and Lua.**
 
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
 |---|--:|--:|--:|--:|---|
@@ -1313,6 +1403,7 @@ be the default for any DLL fix:
 | U1 LiveWalker+Pointer+ObjectTree | 16 | 19 | 6 (33%) | 11 | 1 → **1** |
 | U2 export services | 21 | 20 | 4 (25%) | 8 | 7 → **2** ◊ |
 | U3 dump services + MainWindow VM | 11 | 19 | 6 (33%) | 11 **+1** ✧ | 0 → 0 |
+| U4 dialogs + CE generators | 18 | 20 | **0 (0%)** ⚠ | 14 | 4 → **1** |
 
 ¤ **D5's section holds 9 rows but its run produced 8** — F8 came from verifying F6, not from a
 finder (same as D2's G7 below).
@@ -1324,11 +1415,15 @@ The Distinct column counts findings, not claims.
 ✧ **U3's section holds 12 rows but its run produced 11** — X3 came from a hand-run sweep of
 DLL-written vs C#-read JSON keys, not from a finder (same as D2's G7 and D5's F8).
 
+⚠ **U4 refuted NOTHING, which is an outlier, not a result.** Every other segment killed 25–73%. The
+rate is therefore unusable as a quality signal for U4; three of its rows were re-derived by hand
+instead and held. Its five LOWs are the least-scrutinised findings in this audit.
+
 ✦ **D2's section holds 7 rows but its run produced 6.** G7 did not come from any finder — it was
 found during the 2026-08-14 live-verification session and filed into the D2 section because that is
 where it belongs by subject. The Raw/Refuted columns describe the *runs*; the totals above count
 *rows*, so the two reconcile only through this row. (Counted directly: `grep -cE '^\| \*\*[A-Z]+[0-9]+\*\*'`
-scoped to §2 = **80**, of which 3 HIGH / 42 MED / 34 LOW / 1 INFO. Re-derive it rather than trusting
+scoped to §2 = **94**, of which 4 HIGH / 50 MED / 39 LOW / 1 INFO. Re-derive it rather than trusting
 the table — and **scope the grep to §2**, because over the whole file it also catches §4's cluster
 tables and returns 71. ⚠ The severity column does **not** parse uniformly: five rows carry a footnote
 marker between the ID and the severity (`G7` †=LOW, `PX1` ‡=MED, `MB3` †=INFO, `F1` ‡=MED, `F8` ¤=MED),
@@ -1356,9 +1451,12 @@ refute *with* (their kills are visibly better argued), and the C# code is genuin
 defects because much of its output is validated by programs we never run. Quote the range to finders,
 not a constant, and budget U4/U5 on ~30%, not the DLL's ~50%.
 
-**Severity is falling as the C# segments proceed** — U1 produced a HIGH, U2 two, U3 **none claimed at
-all**. That is not the code improving so much as the *kind* of defect changing: U1/U2 were wrong
-writes and unreadable artifacts, U3 is missing caveats and unread flags. Expect U4/U5 to look like U3.
+**Severity does NOT decay monotonically — that prediction was wrong and is worth keeping as a
+correction.** After U1 (one HIGH), U2 (two) and U3 (none claimed), the note here predicted U4 would
+"look like U3". **U4 produced a HIGH**, and the same kind as U1's and W1's: a capability that has never
+worked, hidden because its *default value happens to be correct*. The lesson is not about severity
+trending but about **what makes a defect invisible** — all four real HIGHs in this audit were in code
+whose happy path is exercised only with default or absent input.
 
 ### The clusters, in the order worth fixing
 
