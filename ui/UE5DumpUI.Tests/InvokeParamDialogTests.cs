@@ -340,4 +340,51 @@ public class InvokeParamDialogTests
 
         Assert.Equal("X=10, Y=20", result);
     }
+
+    // --- Struct layout must agree with the engine (audit #5 Y7) ---------------
+
+    [Fact]
+    public void ResolveTrustedLayout_SizeAgrees_UsesTheKnownLayout()
+    {
+        // UE5 FVector: 3 doubles = 24 bytes, and the engine agrees.
+        var layout = InvokeParamDialog.ResolveTrustedLayout("StructProperty", "Vector", 24, ueVersion: 505);
+
+        Assert.NotNull(layout);
+        Assert.Equal(24, layout!.TotalSize);
+        Assert.Equal(3, layout.Fields.Count);
+    }
+
+    [Fact]
+    public void ResolveTrustedLayout_VersionGuessContradictsTheEngine_IsRefused()
+    {
+        // The detected version says UE5 (24-byte LWC FVector) but the engine reports 12 -- the
+        // UE4 layout. The guess is wrong; expanding on it would put Y at +8 where the engine has
+        // it at +4, so every sub-field the user filled in would land in the wrong bytes.
+        var layout = InvokeParamDialog.ResolveTrustedLayout("StructProperty", "Vector", 12, ueVersion: 505);
+
+        Assert.Null(layout);
+    }
+
+    [Fact]
+    public void ResolveTrustedLayout_TheOtherDirectionToo()
+    {
+        var layout = InvokeParamDialog.ResolveTrustedLayout("StructProperty", "Vector", 24, ueVersion: 427);
+        Assert.Null(layout);
+    }
+
+    [Fact]
+    public void ResolveTrustedLayout_EngineReportedNoSize_KeepsTheGuess()
+    {
+        // Nothing to contradict it -- a guess beats no layout at all.
+        var layout = InvokeParamDialog.ResolveTrustedLayout("StructProperty", "Vector", 0, ueVersion: 505);
+        Assert.NotNull(layout);
+    }
+
+    [Fact]
+    public void ResolveTrustedLayout_NonStructOrUnknown_IsNull()
+    {
+        Assert.Null(InvokeParamDialog.ResolveTrustedLayout("IntProperty", "Vector", 4, 505));
+        Assert.Null(InvokeParamDialog.ResolveTrustedLayout("StructProperty", "", 24, 505));
+        Assert.Null(InvokeParamDialog.ResolveTrustedLayout("StructProperty", "FSomeGameStruct", 40, 505));
+    }
 }

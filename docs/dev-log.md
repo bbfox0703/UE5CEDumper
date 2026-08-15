@@ -22,6 +22,52 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - Struct parameters: one path wrote four bytes of a vector, the other trusted a guessed layout (build 2881)
+
+**Audit #5 segment U4 fixes Y6 and Y7.** Both are struct params, and both come down to the same
+question — *what do you do when you cannot know the layout?* They answer it in opposite places, so
+the fixes differ.
+
+### Y6 — the CE form cannot edit a struct, so it must stop pretending to
+
+The generated form has one edit box per param, and `StructProperty` has no scalar spelling. It fell
+through `GetMailboxWriteStatement`'s size switch to `writeInteger`: **four bytes** of a 12-byte (UE4)
+or 24-byte (UE5 LWC) `FVector`, taken from `math.floor(tonumber(text))`, with the remaining bytes left
+zero. A garbage vector went into a live call and nothing said so.
+
+The write is now skipped. The params buffer is already zero-filled, so the callee receives a
+well-defined zeroed struct rather than a mangled one; the emitted script carries a
+`-- <name>: struct (N B) left ZEROED` line; and the box keeps its place with its label changed to
+`NOT EDITABLE - sent as zeroes`. Keeping the box is deliberate — `edits[i]` is indexed by param
+position, so removing it would silently shift every later param's box.
+
+### Y7 — the engine's size overrules the version guess
+
+`KnownStructLayouts.GetLayout` is keyed on a **detected** UE version, and the dialog built its
+sub-field editors from it without ever comparing it against the size the engine reported for that
+param. When the two disagree the guess is wrong: a mis-detected version (LWC turns `FVector`'s floats
+into doubles, doubling every offset) or a licensee fork with a modified struct — this project has met
+both. Expanding on a wrong layout puts every sub-field editor at a wrong offset, so the numbers the
+user types land in the wrong bytes of a live call with nothing on screen saying so.
+
+The layout is now refused when it contradicts the engine, and the caller falls through to the
+DLL-discovered fields, which came from the actual `UScriptStruct`.
+
+**The rule was extracted to `ResolveTrustedLayout` so it could be tested at all.** It had been an
+inline condition inside a View's control-building loop — unreachable from a test, which is the same
+structural reason X1's missing field survived two builds. Five tests cover it now, including both
+directions of the mismatch and the `engineSize <= 0` case, where nothing contradicts the guess and
+keeping it is the right answer.
+
+**Negative control:** reverting both turns 4 tests red — 2 for Y6 (one per struct size) and 2 for Y7
+(one per direction of the mismatch). `Generate_StructParam_LabelsTheBoxAsInert` correctly stayed
+green: the label and the write-skip are separate changes and only the latter was reverted.
+3624 tests, 0 failed.
+
+⬜ Not verified in-game: nobody has passed a struct param through either path against a live UFunction.
+
+-----
+
 ## 2026-08-15 - The invoke script's mailbox lookup raised on exactly the case it was written to handle (build 2875)
 
 **Audit #5 segment U4 fix Y8**, and the last bare `getAddress` the repo emitted.

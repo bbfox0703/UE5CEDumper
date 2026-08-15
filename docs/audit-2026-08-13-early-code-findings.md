@@ -995,6 +995,43 @@ MEDIUM.
 > ⬜ **Not exercised against a live game.** The bytes are unit-verified; nobody has yet watched a
 > UFunction receive a 1-byte enum or a `true` from the FIRE button.
 
+> ### ✅ Y6 and Y7 FIXED — build 2881, 2026-08-15
+>
+> Both are struct params, and both come down to the same question: **what do you do when you cannot
+> know the layout?** They answer it in opposite places and the fixes differ accordingly.
+>
+> **Y6 — the CE form cannot edit a struct, so it must stop pretending to.** The form has one edit box
+> per param; `StructProperty` has no scalar spelling, so it fell through `GetMailboxWriteStatement`'s
+> size switch to `writeInteger` — **four bytes** of a 12-byte (UE4) or 24-byte (UE5 LWC) `FVector`,
+> taken from `math.floor(tonumber(text))`, with the rest left zero. A garbage vector went into a live
+> call and nothing said so. The write is now skipped: the params buffer is already zero-filled, so the
+> callee receives a well-defined zeroed struct instead of a mangled one, the emitted script carries a
+> `-- <name>: struct (N B) left ZEROED` line, and **the box keeps its place but its label says
+> `NOT EDITABLE - sent as zeroes`**. The box is kept deliberately — `edits[i]` is indexed by param
+> position, so removing it would silently shift every later param's box.
+>
+> **Y7 — the engine's size overrules the version guess.** `KnownStructLayouts.GetLayout` is keyed on a
+> **detected** UE version, and the dialog expanded sub-field editors from it without ever comparing it
+> to the size the engine reported for that param. When the two disagree the guess is wrong — a
+> mis-detected version (LWC turns `FVector`'s floats into doubles, doubling every offset) or a
+> licensee fork with a modified struct, and this project has met both. The layout is now refused on
+> mismatch and the caller falls through to the DLL-discovered fields, which came from the actual
+> `UScriptStruct`.
+>
+> **Y7's rule was extracted to `InvokeParamDialog.ResolveTrustedLayout` so it could be tested at
+> all.** It had been an inline condition inside a View's control-building loop — unreachable from a
+> test, which is the same structural reason X1's missing field survived two builds. Five tests now
+> cover it, including both directions of the mismatch and the `engineSize <= 0` case where nothing
+> contradicts the guess and keeping it is correct.
+>
+> **Negative control:** reverting both turns 4 tests red — 2 for Y6 (each struct size) and 2 for Y7
+> (each direction of the mismatch). Note `Generate_StructParam_LabelsTheBoxAsInert` stayed green,
+> correctly: the label and the write-skip are separate changes and only the latter was reverted.
+> 3624 tests, 0 failed.
+>
+> ⬜ **Not verified in-game.** Nobody has yet passed a struct param through either path against a live
+> UFunction.
+
 > ### ✅ Y8 FIXED — build 2875, 2026-08-15
 >
 > `celua.txt` settles it: `getAddress` *"returns the address of a symbol"* while `getAddressSafe`
@@ -1080,8 +1117,8 @@ MEDIUM.
 | **Y3** ✅ | MED | `ParamBufferBuilder.cs:165` | Typing `true` for a bool param: **FIRE sends 0, Copy AA Script bakes 1** — one dialog, two opposite calls. | S / low |
 | **Y4** ✅ | MED | `ParamBufferBuilder.cs:185` | Float params: FIRE parses with `AllowThousands` and accepts `NaN`/`Infinity`; the baked generator does neither, so `1,5` **fires as 15.0 and bakes as 0**. | M / low |
 | **Y5** ✅ | MED | `ParamBufferBuilder.cs:254` (`ParseByte`) | Rejects the very inputs the sibling baked generator accepts, so `true` and negative int8 values silently become 0 on FIRE. | S / low |
-| **Y6** | MED | `InvokeScriptGenerator.cs:528` | Struct params in the interactive CE form collapse to a **single 4-byte `writeInteger`**, so an `FVector` param is filled with garbage. | M / low |
-| **Y7** | MED | `InvokeParamDialog.cs:328` | Struct params pick their sub-field layout from the **guessed UE version** and never cross-check it against the size the engine reported for the param. | S / low |
+| **Y6** ✅ | MED | `InvokeScriptGenerator.cs:528` | Struct params in the interactive CE form collapse to a **single 4-byte `writeInteger`**, so an `FVector` param is filled with garbage. | M / low |
+| **Y7** ✅ | MED | `InvokeParamDialog.cs:328` | Struct params pick their sub-field layout from the **guessed UE version** and never cross-check it against the size the engine reported for the param. | S / low |
 | **Y8** ✅ | MED | `InvokeScriptGenerator.cs:164` | The last site in the repo still using bare `getAddress` — its module-prefixed fallback is unreachable, so a wrong-address result is reported as a real one. | S / low |
 | **Y9** | MED | `FreezeValueDialog.cs:231` | Accepts (and pre-fills) values wider than the property — `uint8` 9999 is silently written as 15. | S / low |
 | **Y10** | LOW | `BakedScriptGenerator.cs:223` | Verify mode writes into the mailbox (`writeByte(_PD_dbg + i, 0)` over `parmsSize`) **before any contract check** — `BakedScriptGenerator` is the only mailbox-touching generator with no `AppendContractCheck`, and CLAUDE.md's rule is explicit that the check comes *before the first write* because the layout is what is in question. | S / low |
@@ -1388,9 +1425,9 @@ open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y6, Y7, Y9–Y14, X2–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no
-HIGHs remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866) and **Y8** (2875) — 6 of its 14;
-U3 shipped **X1** (2870) — 1 of its 12.
+**Still open: Y9–Y14, X2–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875) and **Y6+Y7** (2881) —
+8 of its 14; U3 shipped **X1** (2870) — 1 of its 12.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).

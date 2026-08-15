@@ -325,9 +325,7 @@ public sealed class InvokeParamDialog : Window
                 var p = inputParams[i];
 
                 // Check if this is a known struct that we can expand
-                var structLayout = (p.TypeName == "StructProperty" && !string.IsNullOrEmpty(p.StructName))
-                    ? KnownStructLayouts.GetLayout(p.StructName, _ueVersion)
-                    : null;
+                var structLayout = ResolveTrustedLayout(p.TypeName, p.StructName, p.Size, _ueVersion);
 
                 // Build a unified sub-field list from known layout or DLL-discovered fields
                 IReadOnlyList<DynamicStructField>? expandFields = null;
@@ -1049,6 +1047,33 @@ public sealed class InvokeParamDialog : Window
             parts.Add($"{sf.Name}={val}");
         }
         return string.Join(", ", parts);
+    }
+
+    /// <summary>
+    /// The hardcoded layout for a struct param, but ONLY when it agrees with the size the engine
+    /// reported for that param.
+    /// <para>
+    /// The engine's size is ground truth; the layout is a guess keyed on a DETECTED UE version.
+    /// When they disagree the guess is wrong -- a mis-detected version (LWC turns FVector's
+    /// floats into doubles, doubling every offset) or a licensee fork with a modified struct,
+    /// both of which this project has met. Expanding on a wrong layout puts every sub-field
+    /// editor at a wrong offset and writes the user's numbers into the wrong bytes of a live
+    /// call, with nothing on screen saying so. Returning null falls the caller through to the
+    /// DLL-discovered fields, which came from the actual UScriptStruct (audit #5 Y7).
+    /// </para>
+    /// </summary>
+    internal static KnownStructLayouts.StructLayout? ResolveTrustedLayout(
+        string typeName, string? structName, int engineSize, int ueVersion)
+    {
+        if (typeName != "StructProperty" || string.IsNullOrEmpty(structName)) return null;
+
+        var layout = KnownStructLayouts.GetLayout(structName, ueVersion);
+        if (layout == null) return null;
+
+        // engineSize <= 0 means the DLL did not report one -- nothing to contradict the guess.
+        if (engineSize > 0 && layout.TotalSize != engineSize) return null;
+
+        return layout;
     }
 
     internal static byte[] HexToBytes(string hex)

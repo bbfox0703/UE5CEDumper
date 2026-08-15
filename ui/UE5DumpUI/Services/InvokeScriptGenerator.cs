@@ -310,7 +310,11 @@ public static class InvokeScriptGenerator
             var objClassSuffix = !string.IsNullOrEmpty(p.ObjectClassName)
                 ? $": {p.ObjectClassName}"
                 : "";
-            var label = $"{p.Name}  [{ShortTypeName(p.TypeName)}{objClassSuffix}, {p.Size} B{(p.IsOut ? ", out" : "")}]";
+            // Struct params keep their edit box so the `edits[i]` indices stay aligned with the
+            // param list, but the label says the box is inert -- the alternative is a form that
+            // silently ignores what the user typed (audit #5 Y6).
+            var structNote = p.TypeName == "StructProperty" ? ", NOT EDITABLE - sent as zeroes" : "";
+            var label = $"{p.Name}  [{ShortTypeName(p.TypeName)}{objClassSuffix}, {p.Size} B{(p.IsOut ? ", out" : "")}{structNote}]";
             var defaultVal = GetDefaultValue(p.TypeName);
             int idx = i + 1;
 
@@ -386,6 +390,19 @@ public static class InvokeScriptGenerator
             if (IsStringType(p.TypeName) && p.IsOut)
             {
                 Line(sb, $"    -- {p.Name}: out FString left empty (callee fills it)");
+                continue;
+            }
+            // A struct param has no scalar spelling, and this form has one edit box per
+            // param. It used to fall through GetMailboxWriteStatement's size switch to
+            // writeInteger, so an FVector (12 B on UE4, 24 on UE5) got FOUR bytes written from
+            // math.floor(tonumber(text)) and the rest left zero -- i.e. the call went out with a
+            // garbage vector and nothing said so. The params buffer is already zero-filled
+            // above, so skipping the write sends a well-defined zeroed struct instead, which is
+            // at least a value the callee can survive. Use the app's Invoke dialog (which
+            // expands sub-fields) to pass a real one (audit #5 Y6).
+            if (p.TypeName == "StructProperty")
+            {
+                Line(sb, $"    -- {p.Name}: struct ({p.Size} B) left ZEROED - this form cannot edit a struct");
                 continue;
             }
             var parseExpr = GetParseExpression(p.TypeName, idx);

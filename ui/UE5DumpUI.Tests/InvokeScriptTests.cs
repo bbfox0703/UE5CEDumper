@@ -1467,4 +1467,63 @@ public class InvokeScriptTests
         Assert.Contains("g_invokeMailbox not found", afterLookup);   // the diagnostic
         Assert.Contains("memrec", afterLookup);                      // the untick / cleanup timer
     }
+
+    // --- Struct params in the CE form (audit #5 Y6) ---------------------------
+
+    private static FunctionInfoModel VectorParamFunc(int structSize) => new()
+    {
+        Name = "SetLocation",
+        NumParms = 1,
+        ParmsSize = (ushort)structSize,
+        Params = new List<FunctionParamModel>
+        {
+            new() { Name = "NewLocation", TypeName = "StructProperty", StructName = "Vector",
+                    Size = structSize, Offset = 0 },
+        },
+    };
+
+    [Theory]
+    [InlineData(12)]   // UE4 FVector (3 floats)
+    [InlineData(24)]   // UE5 LWC FVector (3 doubles)
+    public void Generate_StructParam_IsNeverWrittenAsAScalar(int structSize)
+    {
+        // It used to fall through the size switch to writeInteger: FOUR bytes of an N-byte
+        // struct, from math.floor(tonumber(text)), rest left zero -- a garbage vector passed to
+        // a live call with nothing saying so.
+        var script = InvokeScriptGenerator.Generate("BP_Player_C", "SetLocation",
+                                                    VectorParamFunc(structSize));
+
+        Assert.DoesNotContain("writeInteger(PD + 0,", script);
+        Assert.Contains("struct", script);
+        Assert.Contains("left ZEROED", script);
+    }
+
+    [Fact]
+    public void Generate_StructParam_LabelsTheBoxAsInert()
+    {
+        // The box stays (edits[i] indices must stay aligned with the param list) but must not
+        // pretend to accept input.
+        var script = InvokeScriptGenerator.Generate("BP_Player_C", "SetLocation", VectorParamFunc(24));
+
+        Assert.Contains("NOT EDITABLE", script);
+    }
+
+    [Fact]
+    public void Generate_ScalarParams_AreStillWritten()
+    {
+        // The struct skip must not have swallowed ordinary params.
+        var func = new FunctionInfoModel
+        {
+            Name = "AddMoney", NumParms = 1, ParmsSize = 4,
+            Params = new List<FunctionParamModel>
+            {
+                new() { Name = "Amount", TypeName = "IntProperty", Size = 4, Offset = 0 },
+            },
+        };
+
+        var script = InvokeScriptGenerator.Generate("Player_C", "AddMoney", func);
+
+        Assert.Contains("writeInteger(PD + 0,", script);
+        Assert.DoesNotContain("left ZEROED", script);
+    }
 }
