@@ -1430,4 +1430,41 @@ public class InvokeScriptTests
         Assert.Contains("s:match('^0[xX](%x+)$')", script);
         Assert.DoesNotContain("tonumber(s, 16)", script);
     }
+
+    // --- Mailbox symbol resolution (audit #5 Y8) -------------------------------
+
+    [Fact]
+    public void Generate_ResolvesTheMailbox_WithoutARaisingLookup()
+    {
+        // celua.txt: getAddress RAISES when the symbol is missing; getAddressSafe returns nil.
+        // The missing-symbol case is exactly what this block handles, so the bare form aborted
+        // the chunk and took the fallback spelling, the diagnostic message and the cleanup timer
+        // (the untick) with it.
+        var func = new FunctionInfoModel { Name = "openShop", Params = new() };
+
+        var script = InvokeScriptGenerator.Generate("ShopKeeper_C", "openShop", func);
+
+        Assert.DoesNotContain("getAddress('", script);          // no raising lookup emitted
+        Assert.Contains("getAddressSafe('g_invokeMailbox')", script);
+        Assert.Contains("getAddressSafe('UE5Dumper.g_invokeMailbox')", script);
+    }
+
+    [Fact]
+    public void Generate_MailboxMiss_StillUnticksAndExplains()
+    {
+        // The three things the raising lookup used to skip must all still be emitted after it.
+        var func = new FunctionInfoModel { Name = "openShop", Params = new() };
+
+        var script = InvokeScriptGenerator.Generate("ShopKeeper_C", "openShop", func);
+
+        // Anchor on the SYMBOL, not the lookup function -- otherwise this test fails on a
+        // spelling change for a mechanical reason (IndexOf returning -1) rather than because
+        // the thing it is about actually broke.
+        int lookup = script.IndexOf("UE5Dumper.g_invokeMailbox", System.StringComparison.Ordinal);
+        Assert.True(lookup >= 0, "module-prefixed fallback spelling is gone");
+        var afterLookup = script.Substring(lookup);
+
+        Assert.Contains("g_invokeMailbox not found", afterLookup);   // the diagnostic
+        Assert.Contains("memrec", afterLookup);                      // the untick / cleanup timer
+    }
 }

@@ -995,6 +995,38 @@ MEDIUM.
 > ⬜ **Not exercised against a live game.** The bytes are unit-verified; nobody has yet watched a
 > UFunction receive a 1-byte enum or a `true` from the FIRE button.
 
+> ### ✅ Y8 FIXED — build 2875, 2026-08-15
+>
+> `celua.txt` settles it: `getAddress` *"returns the address of a symbol"* while `getAddressSafe`
+> *"returns the address of a symbol, **or nil if not found**"*. The bare form **raises** on a missing
+> symbol — which is the exact case the block exists to handle — so when the DLL was not loaded the
+> first call aborted the chunk and took three things with it:
+> - the **module-prefixed fallback** on the next line (never reached, though both spellings are
+>   mandatory: which one resolves depends on how CE picked the module up — lessons-learned B33),
+> - the **diagnostic** `showMessage` (the user saw CE's raw Lua error instead of *"make sure
+>   UE5Dumper DLL is loaded"*), and
+> - the **cleanup timer**, so the memory record stayed **ticked** after a bail-out that applied
+>   nothing — against CLAUDE.md's untick rule.
+>
+> This was the last bare `getAddress` the repo emitted. Both sibling generators already did it
+> correctly — `BakedScriptGenerator` via `getAddressSafe`, `CeReadinessLua` via
+> `pcall(getAddress, …)` — so this is the same sibling-divergence shape as W4/W6/X1.
+>
+> **A pre-existing test broke, and it was the RIGHT kind of break.**
+> `CeMailboxBailoutTests.NoMailboxWriteEscapesTheIdleWait` uses the mailbox lookup as a *textual
+> anchor* for its window scan, and the rename lost the anchor — the test's own failure message had
+> predicted exactly that (*"the anchor this scan starts from is gone"*). It now anchors on the
+> **symbol** rather than the lookup function, so it survives a change of lookup. Note the
+> distinction from Y1, where an actual **assertion** had to change: here only an anchor moved, and
+> the test's subject (write ordering) is untouched.
+>
+> **Negative control:** reverting to `getAddress` turns the two new tests red while
+> `CeMailboxBailoutTests` stays **green** — which is the proof the re-anchoring is genuinely
+> spelling-agnostic rather than retuned to the new spelling. One of the two new tests was also
+> hardened mid-flight: it had anchored on `getAddressSafe(`, so on revert it failed because
+> `IndexOf` returned −1 rather than because the untick had gone. It now anchors on the symbol too.
+> 3615 tests, 0 failed.
+
 > ### ✅ Y1 FIXED — build 2862, 2026-08-15
 >
 > The prefix is stripped before the base-16 parse. The emitted expression now matches
@@ -1050,7 +1082,7 @@ MEDIUM.
 | **Y5** ✅ | MED | `ParamBufferBuilder.cs:254` (`ParseByte`) | Rejects the very inputs the sibling baked generator accepts, so `true` and negative int8 values silently become 0 on FIRE. | S / low |
 | **Y6** | MED | `InvokeScriptGenerator.cs:528` | Struct params in the interactive CE form collapse to a **single 4-byte `writeInteger`**, so an `FVector` param is filled with garbage. | M / low |
 | **Y7** | MED | `InvokeParamDialog.cs:328` | Struct params pick their sub-field layout from the **guessed UE version** and never cross-check it against the size the engine reported for the param. | S / low |
-| **Y8** | MED | `InvokeScriptGenerator.cs:164` | The last site in the repo still using bare `getAddress` — its module-prefixed fallback is unreachable, so a wrong-address result is reported as a real one. | S / low |
+| **Y8** ✅ | MED | `InvokeScriptGenerator.cs:164` | The last site in the repo still using bare `getAddress` — its module-prefixed fallback is unreachable, so a wrong-address result is reported as a real one. | S / low |
 | **Y9** | MED | `FreezeValueDialog.cs:231` | Accepts (and pre-fills) values wider than the property — `uint8` 9999 is silently written as 15. | S / low |
 | **Y10** | LOW | `BakedScriptGenerator.cs:223` | Verify mode writes into the mailbox (`writeByte(_PD_dbg + i, 0)` over `parmsSize`) **before any contract check** — `BakedScriptGenerator` is the only mailbox-touching generator with no `AppendContractCheck`, and CLAUDE.md's rule is explicit that the check comes *before the first write* because the layout is what is in question. | S / low |
 | **Y11** | LOW | `ParamBufferBuilder.cs:228` | FIRE has no unsupported-param-type gate: an `FText`/`TArray`/`TMap` param's textbox is written as a raw int32 into the struct's pointer field. | M / low |
@@ -1356,9 +1388,9 @@ open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y6–Y14, X2–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
-remain. U4 shipped **Y1** (2862) and **Y2+Y3+Y4+Y5** (2866) — 5 of its 14; U3 shipped **X1**
-(2870) — 1 of its 12.
+**Still open: Y6, Y7, Y9–Y14, X2–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no
+HIGHs remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866) and **Y8** (2875) — 6 of its 14;
+U3 shipped **X1** (2870) — 1 of its 12.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).

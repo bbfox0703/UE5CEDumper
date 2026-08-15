@@ -160,10 +160,25 @@ public static class InvokeScriptGenerator
 
     private static void AppendMailboxDetection(StringBuilder sb)
     {
+        // getAddressSafe, NOT getAddress. celua.txt: getAddress "returns the address of a
+        // symbol"; getAddressSafe "returns the address of a symbol, OR NIL IF NOT FOUND".
+        // The bare form RAISES on a missing symbol, which is the case this whole block exists
+        // to handle -- so when the DLL was not loaded the first call aborted the chunk and took
+        // three things with it: the module-prefixed fallback below (never reached), the
+        // diagnostic showMessage (never shown, leaving CE's raw Lua error instead), and the
+        // cleanup timer -- so the memory record stayed TICKED after a bail-out that applied
+        // nothing, against CLAUDE.md's untick rule. This was the last bare getAddress the repo
+        // emitted (audit #5 Y8).
+        //
+        // Both spellings are mandatory and the order is not a preference: depending on how CE
+        // picked the module up, an export is reachable bare or only as "<module>.<name>", and
+        // which one works is not predictable from here (lessons-learned B33). The sibling
+        // generators already do this -- BakedScriptGenerator via getAddressSafe, CeReadinessLua
+        // via pcall(getAddress, ...).
         Line(sb, "-- Find mailbox symbol (exported by UE5Dumper DLL)");
-        Line(sb, "mb = getAddress('g_invokeMailbox')");
+        Line(sb, "mb = getAddressSafe('g_invokeMailbox')");
         Line(sb, "if not mb or mb == 0 then");
-        Line(sb, "    mb = getAddress('UE5Dumper.g_invokeMailbox')");
+        Line(sb, "    mb = getAddressSafe('UE5Dumper.g_invokeMailbox')");
         Line(sb, "end");
         Line(sb, "if not mb or mb == 0 then");
         Line(sb, "    print('ERROR: g_invokeMailbox not found!')");

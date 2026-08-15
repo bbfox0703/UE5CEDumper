@@ -22,6 +22,44 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - The invoke script's mailbox lookup raised on exactly the case it was written to handle (build 2875)
+
+**Audit #5 segment U4 fix Y8**, and the last bare `getAddress` the repo emitted.
+
+`celua.txt` is unambiguous: `getAddress` *"returns the address of a symbol"*, while `getAddressSafe`
+*"returns the address of a symbol, **or nil if not found**"*. The bare form **raises**. The block in
+question exists precisely to handle a missing symbol — the DLL not being loaded — so the first call
+aborted the whole chunk and took three things with it:
+
+- the **module-prefixed fallback** on the very next line. Both spellings are mandatory, not a
+  preference: which one resolves depends on how CE picked the module up (lessons-learned B33).
+- the **diagnostic**, so instead of *"make sure UE5Dumper DLL is loaded (version.dll Proxy or CE
+  inject)"* the user got CE's raw Lua error.
+- the **cleanup timer**, so the memory record stayed **ticked** after a bail-out that applied
+  nothing — against CLAUDE.md's rule that a bail-out which applied nothing must untick.
+
+Both siblings already did this right: `BakedScriptGenerator` via `getAddressSafe`, `CeReadinessLua`
+via `pcall(getAddress, …)`. Same sibling-divergence shape as W4/W6/X1.
+
+### A pre-existing test broke, and it was the right kind of break
+
+`CeMailboxBailoutTests.NoMailboxWriteEscapesTheIdleWait` uses the mailbox lookup as a *textual
+anchor* to find where its window scan starts, and the rename lost it. The test had predicted this in
+its own failure message — *"the anchor this scan starts from is gone"*. It now anchors on the
+**symbol** instead of the lookup function, so it survives a change of lookup.
+
+Worth distinguishing from the Y1 fix two commits ago, where an actual **assertion** had to change
+because it pinned the defect. Here nothing about the test's subject — write ordering — moved; only
+its anchor did.
+
+**Negative control:** reverting to `getAddress` turns the two new tests red while
+`CeMailboxBailoutTests` stays green, which is the proof the re-anchoring is genuinely
+spelling-agnostic rather than retuned to the new spelling. One new test was hardened mid-flight for
+the same reason: it had anchored on `getAddressSafe(`, so on revert it failed because `IndexOf`
+returned −1 rather than because the untick had gone. 3615 tests, 0 failed.
+
+-----
+
 ## 2026-08-15 - Two discovery panels reported a capped page as the whole pool (build 2870)
 
 **Audit #5 segment U3 fix X1** — and it is the D5/F4 truncation fix finally reaching its second site.
