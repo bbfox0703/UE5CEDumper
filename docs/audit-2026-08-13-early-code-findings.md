@@ -82,7 +82,7 @@ contract, not by line count**, so the established method applies unchanged.
 | **T1b** ✅ | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
 | **T1c** ✅ | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
 | **T1d** ✅ | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
-| **T1e** | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
+| **T1e** ✅ | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
 
 > **Why five and not six, and why the VMs merged.** Two corrections, both from re-measuring rather
 > than re-reasoning:
@@ -1387,6 +1387,132 @@ MEDIUM.
 
 -----
 
+### T1e — Views code-behind + app root + the sub-50 tail — ✅ scanned 2026-08-15 — **AUDIT #5 SCANNING COMPLETE**
+
+**12 agents** (2 deep lenses on the head + 3 grep-driven sweeps over the tail → 3 refute batches →
+4 second-lens batches), 0 errors. Scope: **5 head files (628 early lines) read properly + 226 tail
+files (1,172 early lines) swept by pattern**, exactly as §1's phase plan specified — a deep read of
+226 five-line files is waste.
+
+**32 raw → 30 distinct → 3 refuted → 0 killed by the second lens → 27 confirmed. Kill rate 10%.**
+
+**Tally: 0 HIGH · 6 MED · 17 LOW · 4 INFO.**
+
+> ### ⚠ 10% — the lowest kill rate of the entire audit
+>
+> Below S1's 14%. **Nothing below MED here is vetted.** The grep-sweep design is the likely cause and
+> it cuts both ways: it surfaces real signature hits cheaply, but a hit that a deep read would have
+> dismissed in context reaches the skeptic looking plausible. Treat the 17 LOWs and 4 INFOs as
+> **leads produced by a pattern search**, not as findings.
+
+> ### 🔍 The second lens corrected the FIRST SKEPTIC — the best adversarial work in the audit
+>
+> On AF1, the first skeptic decoded Avalonia's shipped IL by hand (RVA→file offset, method header, IL
+> bytes) and found `SelectingItemsControl.SelectionChangedEvent` and `DataGrid.SelectionChangedEvent`
+> both registering with `ldc.i4.4` = `RoutingStrategies.Bubble`. It then concluded **both** reach the
+> handler. The second lens read the same evidence and drew the opposite — correct — conclusion:
+> `DataGrid` **Registers a new RoutedEvent** rather than `AddOwner`-ing the existing one, and
+> Avalonia keys handlers by RoutedEvent *instance*, so the two are **disjoint routes**. TeleportPanel's
+> `CoordGrid` therefore does **not** reach this handler; `ComboBox`/`ListBox` (which derive from
+> `SelectingItemsControl`) do.
+>
+> So the finding survives on a narrower and correct mechanism. **A skeptic that measures can still
+> misread its own measurement** — which is the argument for the second lens existing at all, and the
+> second time this audit has seen it (T1c/AE1 was the first).
+>
+> **AF1 itself, hand-verified:** `MainWindow.axaml:420` attaches `MainTabs_SelectionChanged` to the
+> **outer** `TabControl`; the handler guards only on `sender is not TabControl` and `DataContext is
+> not MainWindowViewModel` — **zero** `e.Source` / `e.Handled` / `OriginalSource` checks (grep count:
+> 0). Its own remark at `:551` says *"inner SelectionChanged events bubbling from child grids are
+> harmless"* — which defends the **tag read** and not the side-effect body, so picking an older
+> snapshot in Class Pivot's ComboBox re-fires the whole per-tab activation routine and
+> `RefreshAsync` snaps `SelectedSnapshot` back to `Snapshots[0]`. Root cause **#6** again — now
+> **6 for 6**, and it found the lead finding in three consecutive phases (T1a, T1b, T1e).
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AF1** | MED | `Neu.h:94` (Neu::BuildLayout (FNameData57 branch)) | UEnum member count is range-checked AFTER a signed cast, so the whole upper half of the uint32 range passes and yields a NEGATIVE count | S / low |
+| **AF2** | MED | `DetectStatsViewModel.cs:158` (DetectStatsViewModel.DetectAsync) | Detect Stats stops live-probing after 30 classes, and the never-probed rows render identically to rows that were probed and had no live instance | S / low |
+| **AF3** | MED | `LiveFuncsViewModel.cs:210` (LiveFuncsViewModel.FetchAndPopulateAsync) | Live PE Profiler fetches only the top 300 functions but reports the DLL's FULL distinct count, and builds the diff baseline from the same truncated page — manufacturing false "NEW" rows | M / low |
+| **AF4** | MED | `LiveWalkerPanel.axaml.cs:76` (LiveWalkerPanel.OnDetached) | Live Walker tears down all six VM event subscriptions on visual-tree detach and never re-subscribes on re-attach | S / low |
+| **AF5** | MED | `MainWindow.axaml.cs:666` (MainTabs_SelectionChanged) | Per-tab activation routine re-runs on every bubbled child SelectionChanged, silently reverting the user's Class Pivot snapshot/pick selections | S / med |
+| **AF6** | MED | `PropertySearchPanel.axaml.cs:68` (PromptForceValueAsync (double.TryParse of the ) | The Force flow funnels the width-validated int64 literal through a double, and any parse failure is returned as "cancelled" | S / low |
+| **AF7** | LOW | `Denken.h:37` (Denken::NativeAnalysisResult::budgetHit) | Path-2 native disasm's "result may be partial" flag is written, logged, and then dropped before the wire — the Xref dialog shows a truncated field list as complete | S / low |
+| **AF8** | LOW | `Solide.cpp:128` (Solide::ReadNumeric (byte-width fallback)) | Int8Property is READ as unsigned while it is WRITTEN as signed, so a negative forced value never converges and the re-assert worker reports permanent drift against the game | S / low |
+| **AF9** | LOW | `Constants.cs:37` (Constants.MaxProcessFolders) | A COUNT cap silently deletes whole per-game log folders inside the 21-day window that CLAUDE.md says is the only retention rule | S / low |
+| **AF10** | LOW | `Program.cs:27` (Program.Main) | Main discards the process exit code, so the deliberate Shutdown(1) on the second-instance path reports success | S / low |
+| **AF11** | LOW | `CoordinateLibraryStore.cs:43` (CoordinateLibraryStore..ctor) | A third unbounded per-game file family writes to the app-data ROOT, bypassing AppDataFolderMaintenance -- and Constants.cs asserts it does not exist **[2 lenses]** | M / low |
+| **AF12** | LOW | `GroupMatch.cs:285` (GroupMatch.Run) | The "shared per-slot cap" invariant the comment insists on is broken the moment the user changes the live cap | S / low |
+| **AF13** | LOW | `GroupMatch.cs:302` (GroupMatch.Run (per-slot cap truncation)) | Snapshot group match truncates a slot at 256 leaves with no signal of any kind — the DLL sibling at least logs it | S / low |
+| **AF14** | LOW | `MovementScriptGenerator.cs:163` (MovementScriptGenerator.EmitGravDirBlock) | Gravity-direction emitter writes X through CeMailboxLayout.OffParamsData but Y and Z at raw 0x330 / 0x338 in the same statement group | S / low |
+| **AF15** | LOW | `TeleportViewModel.cs:3914` (TeleportViewModel.PushCoordLuaNoDllAsync / Sav) | The coordinate-library "N group(s) had no radio button" disclosure is emitted at 1 of the 3 export call sites; the other two discard it with `out _` | S / low |
+| **AF16** | LOW | `DetectStatsPanel.axaml.cs:14` (DetectStatsPanel..ctor) | Four panels break the AOT sort rule their sibling panels' comments spell out — column headers are clickable and do nothing in the shipped trimmed build | M / low |
+| **AF17** | LOW | `DetectStatsPanel.axaml.cs:14` (DetectStatsPanel..ctor) | Detect Stats panel makes no WireSortComparers call at all; two of its seven sortable columns sort on a path no binding roots | S / low |
+| **AF18** | LOW | `FunctionPropsDialog.cs:165` (FunctionPropsDialog.BuildUi (_grid)) | Code-built xref grid enables sorting on six template columns with no CustomSortComparer — every header is dead under AOT | S / low |
+| **AF19** | LOW | `LiveFuncsPanel.axaml.cs:15` (LiveFuncsPanel.ResultsSortComparers) | Live Funcs comparer dictionary omits MeanPeriodMs, leaving the Period column — the point of the Phase E cadence feature — unsortable under AOT | S / low |
+| **AF20** | LOW | `LiveWalkerPanel.axaml.cs:44` (LiveWalkerPanel (ctor) / WireSortComparers) | AOT sort comparers are wired onto 1 of the file's 3 DataGrids; FunctionGrid's "Params" column breaks the repo's own documented AOT sort rule and its header is a silent no-op in the shipped binary **[2 lenses]** | S / low |
+| **AF21** | LOW | `MainWindow.axaml.cs:276` (IsSnapshotPositionAcceptable) | Window-placement guard feeds DIP sizes to a helper documented as taking physical pixels, so on a HiDPI monitor a legitimately-placed window is rejected and its position stops being tracked | S / low |
+| **AF22** | LOW | `PropertySearchPanel.axaml.cs:57` (PromptForceValueAsync) | The "Force value…" flow shows the Freeze dialog verbatim, so the button the user clicks says "Create freeze script" while the action writes and holds the field on every live instance | S / low |
+| **AF23** | LOW | `PropertyXrefDialog.cs:270` (PropertyXrefDialog.BuildUi (_grid)) | Property-xref grid: same six-template-column sort surface, also never wired to a comparer | S / low |
+| **AF24** | INFO | `ObjectTreeFilter.cs:58` (ObjectTreeFilter.MatchesAllTerms) | NEGATIVE RESULT — four of the tail helpers most likely to be half-applied are in fact fully applied | S / low |
+| **AF25** | INFO | `CeMailboxLayout.cs:94` (CeMailboxLayout (Cmd opcodes)) | The canonical mailbox-layout class names Teleport as one of its consumers but carries no Teleport opcode; two generators hardcode 8 instead | S / low |
+| **AF26** | INFO | `ViewLocator.cs:15` (ViewLocator.Build) | NEGATIVE RESULT — the AOT/trim reflection sweep over all 226 tail files came back clean | S / low |
+| **AF27** | INFO | `ViewLocator.cs:23` (ViewLocator.Build) | Negative result on the AOT name-resolution trap -- but Match accepts 22 ViewModel types while Build handles 6 | S / low |
+
+> **Hand-verified:** AF1. **Not re-derived:** the other 5 MEDs, 17 LOWs and 4 INFOs — and at a 10%
+> kill rate over a grep-driven sweep, that caveat is heavier here than anywhere else in the audit.
+
+-----
+
+## 2z. Scanning is COMPLETE — 12 of 12 segments, 2026-08-13 → 2026-08-15
+
+Every segment in §1's plan has been scanned. **No segment remains.**
+
+| Segment | Raw → distinct | Kill rate | HIGH / MED / LOW / INFO |
+|---------|---------------|----------:|-------------------------|
+| D1 Ubel | 27 → 11 | 48% | 0 / 8 / 3 / 0 |
+| D2 Genau+Serie · D3 Aura · D4a · D4b · D5 | see each block | 44–73% | — |
+| U1 LiveWalker/Pointer/ObjectTree | 18 | 33% | **1** / … |
+| U2 Export services | 16 | 25% | 2 / … |
+| U3 Dump + MainWindow VM | 18 | 33% | 0 / … |
+| U4 Dialogs + CE generators | 15 | 0% | **1** / … |
+| U5 Remaining VMs/Models/Core | 30 → 19 | 20% | 0 / 3 / 14 / 2 |
+| S1 Early Lua | 65 → 36 | 14% | **3** / 17 / 14 / 2 |
+| T1a Radar + entry points | 35 → 30 | 23% | **2** / 5 / 12 / 4 |
+| T1b DLL headers + C++ tests | 40 → 34 | 21% | **2** / 4 / 15 / 6 |
+| T1c VMs + Core + Models | 46 → 34 | 15% | 0 / 10 / 15 / 4 |
+| T1d UI Services | 30 → 26 | 35% | 0 / 2 / 10 / 5 |
+| T1e Views + root + tail | 32 → 30 | 10% | 0 / 6 / 17 / 4 |
+
+**The three findings a reader should start from**, all hand-verified against the source:
+
+1. **T1a/AB1 — our DLL crashes Cheat Engine** on a documented install path. `DllMain` starts a
+   1 ms-poll thread unconditionally; CE `FreeLibrary`s plugin DLLs; `DllMain`'s `lpReserved` is
+   commented out so DETACH cannot tell unload from process-exit; nothing pins the module.
+2. **T1b/AD1 — a C++ test target that fails to COMPILE is reported as "skip" and the build exits 0**,
+   in CI too. Latent today (the control confirmed the suite runs), but it silently disarms ~700
+   assertions the moment a test stops compiling.
+3. **S1/the freeze helper — a bool freeze writes a WHOLE BYTE over a bit-packed `FBoolProperty`**,
+   20×/sec, while the DLL sibling reached from the same Property Search row writes only the bit.
+
+**Two defect FAMILIES account for more findings than any single subsystem**, and both are greppable:
+- **The width family** (an out-of-range value masked to the field width and reported as written):
+  **W6, Y2, Y9, Y15, Y16, AE9** — six findings, four subsystems. At every site the correct width was
+  in scope and simply not enforced.
+- **Root cause #4, a fix applied at only some of its sites**: **V2, W4/W6, X1, Y16, AC2, AE10** —
+  seven occurrences, and **AC2 is this audit's own Y7 fix at 1 of 5 consumers**.
+
+**The single most productive technique was the comment sweep** — grep for a comment admitting a
+limitation or asserting an impossibility, then check it. **6 for 6**, and it produced the lead
+finding in T1a, T1b and T1e.
+
+**Harness lessons, measured:** merge claims by location **in the script** (asking the model does not
+work — S1 marked zero while 14 locations were multi-lens); cost scales with **claims found**, not
+lines read (S1: 31 agents for 1,236 lines; T1a: 11 for 1,504); and **tightening the skeptic's rubric
+does not raise its kill rate** — S1's was the strictest written and killed the least.
+
+-----
+
 ### T1c — remaining UI ViewModels + Core + Model DTOs — ✅ scanned 2026-08-15
 
 **13 agents** (5 lenses → 4 refute batches → 4 second-lens batches), 0 errors, over 22 files /
@@ -2159,84 +2285,39 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session FIXES W5 (scanning is paused)
+## 3b. START HERE — scanning is DONE; everything left is fixing
 
-*State as of 2026-08-15, after U5 + ten fix batches. Read this section first; it is written for a
-session with no memory of the previous one.*
+*State as of 2026-08-15. Read this first; it is written for a session with no memory of this one.*
 
-> 🔵 **Y9 shipped in 2895, Y15 in 2904. U5 and S1 were both SCANNED on 2026-08-15** (no fixes —
-> scanning applies none). **Only T1 remains, split into five phases T1a–T1e (§1).** Work the open
-> list one item (or one related group) at a time, and report after each so the quota is watchable.
+> ✅ **ALL 12 SEGMENTS ARE SCANNED.** D1–D5, U1–U5, S1, and T1's five phases T1a–T1e. See §2z for the
+> completion summary: per-segment kill rates, the three findings to start from, and the two defect
+> families that account for more findings than any single subsystem.
 >
-> ⚠ **U5's AND S1's findings need re-derivation before they are fixed.** U5's skeptic refuted 20%,
-> S1's refuted **14% despite the strictest prompt written so far**, against a 33–73% band. Both
-> blocks in §2 carry the full warning. Hand-verified and holding: U5's Z1/Z2/Z3 and S1's three HIGHs
-> (AA1/AA2/AA3). **Nothing else in either segment has been vetted to this audit's standard.**
+> 🔴 **The two most consequential open findings, both hand-verified against the source:**
+> - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path.** `DllMain` starts a
+>   1 ms-poll thread unconditionally; CE `FreeLibrary`s plugin DLLs on Settings→Add and on every exit;
+>   `DllMain`'s `lpReserved` is commented out so DETACH cannot distinguish unload from process-exit;
+>   nothing pins the module; and `Grimoire::IsCheatEngineExeName` has exactly one call site — *inside*
+>   the thread it should have prevented. Fix is two small guards; **do not** join threads from DETACH.
+> - **T1b/AD1 — a C++ test target that fails to COMPILE is reported as "skip" and the build exits 0**,
+>   CI included (`build.ps1:691-693`; the `else` arm never touches `$exitCode`). **Latent** — the
+>   control was run and the suite does execute today — but it silently disarms ~700 assertions the
+>   moment a test stops compiling.
 >
-> 📌 **Two harness lessons from those two segments, worth more than the findings:**
-> (a) tightening the skeptic's rubric did **not** raise its kill rate — S1's was stricter than U5's
-> and killed proportionally less; (b) `duplicate_of_idx` is **structurally unreliable** — S1 marked
-> zero duplicates while 14 locations came from more than one lens. **Merge by location in the script,
-> and stop spending prompt budget asking the model to dedupe.**
+> ⚠ **Vetting is uneven and the doc says so per segment.** Kill rates ran 10–35% across the T1
+> phases against the audit's own 33–73% band. **Everything hand-verified is marked as such in its
+> block; re-derive anything else before fixing it.**
 >
-> **W5** — `CeXmlExportService.cs:2141`, `S`/low. Weak/soft/lazy pointers are drilled with
-> `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer.
->
-> **Y16 is surveyed but DELIBERATELY NOT FIXED** — the maintainer's call, 2026-08-15. Do not pick it
-> up as filler work; ask first. The survey is worth reading anyway (§2, "Y16 scope note"): it is
-> **three** sites, not the one the row cites, and re-rated M/low. Every one of them already holds the
-> size and does not pass it.
->
-> **Read Y15's and Y9's entries in §2 before either.** Their lessons are the reusable ones:
-> Y15 — before writing a test, ask **whether the call site can fail the test at all**. Its mapping
-> was already covered; the two places that *used* it were unreachable from a test (an Avalonia
-> constructor, a command needing a bridge and a modal), so the width could have been dropped at
-> either with zero failures. Two `internal static` seams later, the controls actually fire.
-> Y9 — the check belongs where the user can still see it, because everything downstream narrows in
-> silence; and a validator tightened without its **pre-fill** produces a dialog that rejects its own
-> default.
->
-> ⚠ **The enum-width family has now cost four findings across SEVEN sites in four subsystems**
-> (W6 ✅ CE XML export, Y2 ✅ FIRE param buffer, Y15 ✅ freeze/force, Y16 open = three invoke sites +
-> one stale comment). If you touch any code that decides how many bytes to write — or **read** — for
-> an `EnumProperty`, the answer is *the size the engine reported*, never the type name.
->
-> Its second-order lesson is sharper than the rule itself: at all seven sites **the size was already
-> in scope and simply not passed**. Three of them carried a code comment describing the gap before
-> anyone reported it. So the cheap sweep is not "grep `EnumProperty`" — it is *grep for a method that
-> takes a size argument and does not use it*.
+> 🔁 **Before closing ANY fix, grep for its siblings.** Root cause #4 is at **seven** occurrences
+> (V2, W4/W6, X1, Y16, AC2, AE10) and **AC2 is this audit's own Y7 fix applied at 1 of 5 consumers**.
+> The rule has been in this section since the fourth; three more have appeared since, which means it
+> is still not being applied *at fix time*. Treat "where else does this predicate belong?" as part of
+> the fix.
 
-> ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
-> (2842), W1+W7 (2853), Y1 (2862).
->
-> **Fixed so far — 21 findings across thirteen fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: Y15 (2904), Y9 (2895), X2 (2888), Y6+Y7 (2881), Y8 (2875), X1
-> (2870), Y2+Y3+Y4+Y5 (2866), Y1 (2862), W6 (2857), W1+W7 (2853), W2+W3 (2842), W4 (2836),
-> V1+V2+V5 (2830). Test count went 3590 → 3724 over the session; every fix carries a negative
-> control, and the doc entry for each says what the control proved.
->
-> **Y1 is the one to read before fixing anything else**, because its verification is the template:
-> a claim about a *runtime we do not control* (Lua inside Cheat Engine) was settled by evaluating the
-> emitted expression in **CE's own `lua53-64.dll`** and cross-checking CE's **bundled Lua source** —
-> two independent detectors, neither of which is "reasoning about Lua". `celua.txt` in the CE install
-> is the API reference to consult first for any CE-side call; `D:/Github/cheat-engine` is the last
-> public source (7.5) when the reference is not enough.
->
-> 🔁 **Read this before fixing anything from U3.** X1 is the D5/**F4 fix applied to one of its two
-> sites** — the DLL covered both the single and batch property-search paths, the C# covered only the
-> single one. That is the **third** time this audit has found its own fix half-applied (V2 = one side
-> of the wire, W4/W6 = some call sites, X1 = one of two twins). Before closing any fix, grep for its
-> siblings across languages, call sites, and single/batch twins.
->
-> **What is owed instead is verification, and it is the cheapest work available.** Three separate
-> items are queued in
-> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code) — the TMap geometry UI half
-> (U1), the `super_props_size` boundary value (W2), and opening a `.usmap` in a real consumer (W1).
-> None needs code. The `.usmap` one matters most because our reader and our writer are derived from
-> the same two vendored sources, so a shared misreading of the format would satisfy both.
->
-> **Still open from U2, none urgent:** W5 (weak/soft pointers drilled with `Offsets=[0]`), W8
-> (USMAP drops every Blueprint-generated class — worth pairing with the FModel check, since a missing
-> `*_C` class there is expected until W8 is fixed).
+> **Next fix in the queue: W5** — `CeXmlExportService.cs:2141`, `S`/low: weak/soft/lazy pointers
+> drilled with `Offsets=[0]`, i.e. dereferencing a slot that is not a pointer.
+> **Y16 remains PARKED at the maintainer's request** (2026-08-15) — surveyed in full in §2, three
+> sites, M/low. Do not pick it up as filler; ask first.
 
 ### The pacing rule, learned by hitting it
 
