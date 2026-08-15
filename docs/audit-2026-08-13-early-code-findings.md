@@ -81,7 +81,7 @@ contract, not by line count**, so the established method applies unchanged.
 | **T1a** ✅ | DLL value-scan engine — `Radar.cpp` 696, `Radar.h` 354, `Methode.cpp` 269, `Heiter.cpp` 185 | 1,504 |
 | **T1b** | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
 | **T1c** | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
-| **T1d** | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
+| **T1d** ✅ | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
 | **T1e** | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
 
 > **Why five and not six, and why the VMs merged.** Two corrections, both from re-measuring rather
@@ -1384,6 +1384,77 @@ MEDIUM.
    even aliases it). The offsets are correct today; this is cluster ④ waiting to happen the next time
    the mailbox layout moves. `TeleportScriptGenerator` is outside U4's scope — fix it in the same
    sweep.
+
+-----
+
+### T1d — UI Services — ✅ scanned 2026-08-15
+
+**11 agents** (5 lenses → 3 refute batches → 3 second-lens batches), 0 errors, over 12 files /
+1,975 early lines. **30 raw → 26 distinct** (4 folded in-script) **→ 9 refuted → 0 killed by the
+second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside the audit's 33–73% band.**
+
+**Tally: 0 HIGH · 2 MED · 10 LOW · 5 INFO.** Both MEDs were re-derived by hand.
+
+> ### 🔁 AC2 is the FIFTH time this audit has found its own fix half-applied
+>
+> `ResolveTrustedLayout` — the **Y7 fix, shipped in build 2881** — encodes the rule *"the engine's
+> reported size overrules the version-guessed layout"*. Verified by hand: it is defined at
+> `InvokeParamDialog.cs:1065` and has **exactly one call site** (`:328`), while **four** other files
+> consume `KnownStructLayouts` — `StructReturnDecoder.cs`, `ParamBufferBuilder.cs`,
+> `FunctionInfoModel.cs`, and the table itself. The decoder that renders an invoke's **return value**
+> therefore still trusts a layout keyed on a detected UE version without checking it against the size
+> the engine reported — the exact defect Y7 fixed on the input side.
+>
+> The running tally of this shape: **V2** (one side of the wire), **W4/W6** (some call sites),
+> **X1** (one of two twins), **Y16** (one of three sites), **AC2** (one of five consumers). The §3b
+> rule "before closing any fix, grep for its siblings" exists because of the first four — and the
+> fifth was found anyway, which says the rule is not being applied at fix time. **Treat "where else
+> does this predicate belong?" as part of the fix, not part of the next audit.**
+
+> ### AC1 — a per-operation consent stored as a durable global, over a file we can name
+>
+> `ProxyDeployService.cs:916` is the only refusal protecting a foreign DLL:
+> `if (File.Exists(targetDll) && !IsOurProxyDll(targetDll) && !force)`, and `:955` is
+> `File.Copy(sourceDllPath, targetDll, overwrite: true)` — no backup, no Recycle Bin. Verified that
+> `force` is **persisted**: `UiOptionsSettings.cs:217`, saved at `MainWindowViewModel.cs:2581`,
+> restored at `:2437`. So a checkbox ticked once to push our proxy onto **one** game survives restarts
+> and then applies to a **Select All → Deploy** batch, silently replacing every third-party
+> `dxgi.dll` (ReShade, Special K, Ultimate ASI Loader) with no way back.
+>
+> Root cause #1, and unusually clean: `RefreshDeployStatusAsync` **already computed the identity of
+> the file at risk** — it reads `FileVersionInfo.GetVersionInfo(targetDll)` and puts
+> *"Other proxy: {ProductName}"* on the row — while the action path 60 lines later treats the same
+> target as an unnamed blank, and `:956` logs only the destination. The report knows the name; the
+> action does not use it.
+>
+> Held at **MED, not HIGH**, deliberately: the write is the literal function of a checkbox the user
+> ticked at least once. The defect is *stale, global consent*, not an unrequested destructive act.
+> Note the contrast the same file sets for its **leftover-cleanup** feature — dry-run report, confirm
+> dialog listing every path, refusal on a volume with no Recycle Bin, and `MoveToRecycleBin` rather
+> than unlink — a far higher bar for a file it is *more* confident is ours.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AC1** | MED | `ProxyDeployService.cs:916` (ProxyDeployService.DeployAsync) | A persisted global "Force Overwrite" silently destroys a third party's DLL that the grid is simultaneously naming on screen | S / low |
+| **AC2** | MED | `StructReturnDecoder.cs:55` (StructReturnDecoder.Decode / StructReturnDecoder.C) | Audit #5's own Y7 fix (ResolveTrustedLayout) is applied at 1 of its 3 sites — the invoke dialog refuses a size-contradicted layout for the INPUT boxes and accepts it for the RESULT grid **[2 lenses]** | S / low |
+| **AC3** | LOW | `AobMakerBridgeService.cs:470` (AobMakerBridgeService.ReconnectAsync) | ReconnectAsync's bare `catch` swallows every connect failure with no logging, so all seven "AOBMaker not connected" outcomes reach the user with zero diagnostics | S / low |
+| **AC4** | LOW | `AobUsageService.cs:121` (AobUsageService.LoadFileAsync) | A corrupt usage file is silently replaced with an empty one, wiping every other game's cached scan record — while the DELIBERATE reset of the same file keeps ten numbered backups | S / low |
+| **AC5** | LOW | `AobUsageService.cs:124` (AobUsageService.LoadFileAsync / RecordScanAsync) | A corrupt cache file is answered by writing a one-game file over it — every OTHER game's user-set UE-version override and invoke timeout are destroyed, with no backup, from a Warn nobody reads | S / low |
+| **AC6** | LOW | `AobUsageService.cs:139` (AobUsageService.SaveFileAsync) | The only atomic-write site in Services with no stale-temp cleanup, and its PID-suffixed name means the residue is unbounded | S / low |
+| **AC7** | LOW | `ClassLocationScorer.cs:56` (ClassLocationScorer.FunctionBonuses / PropertyRule) | Two table comments claim the class bonus is "keyword-gated" and that "Player" is a fallback for classes missing the specific tokens; neither gate exists, and Player+Character = exactly the interesting threshold | M / med |
+| **AC8** | LOW | `ClassLocationScorer.cs:163` (ClassLocationScorer.PropertyRules / FunctionBonuse) | Two rule blocks justify themselves as "keyword-gated"; neither scorer implements any gate | S / low |
+| **AC9** | LOW | `ClassLocationScorer.cs:189` (ClassLocationScorer.PropertyRules — UCheatManager ) | The `UCheatManager` rule can never fire (UE class names carry no U/A prefix), and the comment justifying the row beneath it names an example that rule does not match either | S / low |
+| **AC10** | LOW | `PipeClient.cs:187` (PipeClient.SendAsync) | The `!IsConnected` disjunct in the write-failure filters fires ONLY on unexpected pipe death, and converts it into a token-less OperationCanceledException — the exact case the file's own comment says must be an IOException | S / low |
+| **AC11** | LOW | `ProxyDeployService.cs:955` (ProxyDeployService.DeployAsync) | Deploy writes straight over the live target with no staging, and a half-written proxy is then invisible AND unremovable to both of this file's own removal paths | S / low |
+| **AC12** | LOW | `VdfParser.cs:141` (VdfParser.ExtractPaths) | The token stream carries neither key/value position nor nesting validity, so a value that reads "path" injects a fake library and any brace imbalance silently yields zero libraries | M / low |
+| **AC13** | INFO | `PipeClient.cs:224` (PipeClient.SendAsync) | PipeTransportStats.Record sits in a finally that wraps only the response await, so a request failing in the WRITE contributes zero transport time — precisely the case its own comment says must be counted | S / low |
+| **AC14** | INFO | `PipeClient.cs:240` (PipeClient.ReadLoopAsync) | ReadLoopAsync null-checks `_reader` as a field and then dereferences the field, the exact pattern SendAsync captures into a local at :140 to avoid — an NRE the loop's IOException/ObjectDisposedException catches do not cover | S / low |
+| **AC15** | INFO | `ProxyDeployService.cs:420` (ProxyDeployService.TryDetectUeVersion) | `TryDetectUeVersion` reads every game exe's full VERSIONINFO resource and unconditionally discards it; the property it feeds is never read by anything **[2 lenses]** | S / low |
+| **AC16** | INFO | `ProxyDeployService.cs:1608` (ProxyDeployService (leftover-proxy cleanup region)) | NEGATIVE RESULT — CLAUDE.md's three leftover-cleanup invariants all hold as written; do not re-audit this surface without new evidence | S / low |
+| **AC17** | INFO | `WindowsPlatformService.cs:790` (WindowsPlatformService.VolumeHasRecycleBin) | The fixed-drive pre-filter on the Recycle-Bin gate answers about the HOST volume — `new DriveInfo(root)` re-runs the exact `Path.GetPathRoot` lookup the comment three lines above says it avoids | S / low |
+
+> **Hand-verified:** AC1 and AC2 (both MEDs). **Not re-derived:** the 10 LOWs and 5 INFOs — though at
+> a 35% kill rate this is the best-vetted phase so far.
 
 -----
 
