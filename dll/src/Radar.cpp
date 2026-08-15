@@ -1424,40 +1424,72 @@ std::vector<uint32_t> BuildGroupOrderedView(
         return idx;
     }
 
-    // Object-level key extractors (use the first non-empty slot / slot 0).
-    auto firstMatch = [&](const GroupCandidate& gc) -> const GroupSlotMatch* {
-        for (const auto& sl : gc.slotMatches)
-            if (!sl.empty()) return &sl[0];
+    // Which leaf each slot DISPLAYS, per surviving candidate.
+    //
+    // The key extractors below used to read `slotMatches[0][0]` — the first leaf the
+    // scan happened to keep — while the row Fern renders shows `slotMatches[0][picks[0]]`.
+    // With `per_slot_cap` at 256 a slot routinely keeps dozens of leaves, so the grid was
+    // ordered by a value the user cannot see: "sort by Value" on a filtered group scan
+    // produced an order with no visible relationship to the Value column. (audit #5 AB6)
+    //
+    // Precomputed once per candidate rather than inside the comparator: std::stable_sort
+    // calls `less` O(n log n) times and the assignment is a per-slot scan over every kept
+    // leaf. Keyed by candidate index so the comparator stays a lookup.
+    //
+    // The same function Fern calls, deliberately — CLAUDE.md records that this rule
+    // drifting from the filter it must agree with is what produced four "the scan missed
+    // my field" reports, and a sort key computed from a second, private notion of "the
+    // leaf" would be that drift returning in the one place nobody looks.
+    std::unordered_map<uint32_t, std::vector<size_t>> picksByCandidate;
+    picksByCandidate.reserve(idx.size());
+    for (uint32_t i : idx)
+        picksByCandidate.emplace(
+            i, PickGroupWitnessAssignment(candidates[i].slotMatches, slots, descriptors, terms));
+
+    // The displayed leaf of slot `s`, or nullptr when that slot kept nothing.
+    auto shown = [&](uint32_t ci, size_t s) -> const GroupSlotMatch* {
+        const GroupCandidate& gc = candidates[ci];
+        if (s >= gc.slotMatches.size() || gc.slotMatches[s].empty()) return nullptr;
+        auto it = picksByCandidate.find(ci);
+        size_t pick = (it != picksByCandidate.end() && s < it->second.size()) ? it->second[s] : 0;
+        if (pick >= gc.slotMatches[s].size()) pick = 0;   // defensive: never index past the row
+        return &gc.slotMatches[s][pick];
+    };
+
+    // Object-level key extractors (first non-empty slot, else slot 0 — as displayed).
+    auto firstMatch = [&](uint32_t ci) -> const GroupSlotMatch* {
+        for (size_t s = 0; s < candidates[ci].slotMatches.size(); ++s)
+            if (const GroupSlotMatch* m = shown(ci, s)) return m;
         return nullptr;
     };
-    auto classOf = [&](const GroupCandidate& gc) -> std::string {
-        const GroupSlotMatch* m = firstMatch(gc);
+    auto classOf = [&](uint32_t ci) -> std::string {
+        const GroupSlotMatch* m = firstMatch(ci);
         return m ? descriptors[m->descriptorIdx].className : std::string();
     };
-    auto slot0Offset = [&](const GroupCandidate& gc) -> int32_t {
-        return (!gc.slotMatches.empty() && !gc.slotMatches[0].empty())
-                 ? gc.slotMatches[0][0].offset : 0;
+    auto slot0Offset = [&](uint32_t ci) -> int32_t {
+        const GroupSlotMatch* m = shown(ci, 0);
+        return m ? m->offset : 0;
     };
-    auto slot0Num = [&](const GroupCandidate& gc) -> double {
-        if (gc.slotMatches.empty() || gc.slotMatches[0].empty()) return 0.0;
-        const GroupSlotMatch& sm = gc.slotMatches[0][0];
-        DataType m = slots.empty() ? DataType::Int32 : slots[0].dt;
-        if (IsMultiNumericDataType(m))
-            TryDataTypeFromPropertyTypeName(descriptors[sm.descriptorIdx].fieldType, m);
-        return DecodeNumericToDouble(m, sm.prevValue);
+    auto slot0Num = [&](uint32_t ci) -> double {
+        const GroupSlotMatch* m = shown(ci, 0);
+        if (!m) return 0.0;
+        DataType t = slots.empty() ? DataType::Int32 : slots[0].dt;
+        if (IsMultiNumericDataType(t))
+            TryDataTypeFromPropertyTypeName(descriptors[m->descriptorIdx].fieldType, t);
+        return DecodeNumericToDouble(t, m->prevValue);
     };
 
     auto less = [&](uint32_t a, uint32_t b) -> bool {
         const GroupCandidate& ca = candidates[a];
         const GroupCandidate& cb = candidates[b];
         switch (sortKey) {
-            case SortKey::ClassName:     return classOf(ca) < classOf(cb);
+            case SortKey::ClassName:     return classOf(a) < classOf(b);
             case SortKey::InstanceName:  return instances[ca.instanceIdx].instanceName
                                               < instances[cb.instanceIdx].instanceName;
             case SortKey::InstanceIndex: return instances[ca.instanceIdx].instanceIndex
                                               < instances[cb.instanceIdx].instanceIndex;
-            case SortKey::Offset:        return slot0Offset(ca) < slot0Offset(cb);
-            case SortKey::Value:         return slot0Num(ca) < slot0Num(cb);
+            case SortKey::Offset:        return slot0Offset(a) < slot0Offset(b);
+            case SortKey::Value:         return slot0Num(a) < slot0Num(b);
             default:                     return false;  // unsupported key -> scan order
         }
     };
