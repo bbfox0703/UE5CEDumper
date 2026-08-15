@@ -22,6 +22,44 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - Two discovery panels reported a capped page as the whole pool (build 2870)
+
+**Audit #5 segment U3 fix X1** — and it is the D5/F4 truncation fix finally reaching its second site.
+
+The DLL has emitted per-query `truncated` and batch-level `aborted` since F4; the comment at
+`Fern.cpp:2822-2825` names *"audit #5 D5/F4"* outright. The C# parsed them on the single-query path
+and not on the batch twin, ~80 lines away in the same file, and `PropertySearchQueryEnvelope` had no
+field to parse into.
+
+The cost lands on the two panels that use the batch call. **Interesting Properties** sends all 51
+`PropertyScoringTable.SeedQueries` at 200 rows each, so ordinary seeds — `Max`, `Count`, `Time`,
+`Level`, `Hit` — cap routinely on any real game. The panel then reported *"N unique properties"* with
+no caveat, the user filtered that page, did not find their field, and concluded it does not exist.
+That is the exact report class the F4 fix was written to end. **Detect Player Stats** makes the same
+call at the same limit and had the same blind spot.
+
+Both now say so, mirroring the wording the single-query path has used since F4: *"⚠ N of 51 keywords
+STOPPED at the 200-row cap (Max, Count, Time, …) — more matches exist"*, and a shorter form in Detect.
+
+### The test hook is the durable part
+
+The batch parse was inlined in an `async` method that needs a live pipe, so **nothing could reach
+it** — which is precisely why a missing field survived two builds. It is now
+`internal static ParseSearchPropertiesBatch(JsonObject)` plus a string-taking hook, so the wire
+contract is testable without a pipe. Three tests: the per-query flag, the batch flag, and an older
+DLL that omits both keys.
+
+That third test matters more than it looks. It passes in **both** directions — before and after the
+fix — because it asserts an *absence*: a pre-2818 DLL sends neither key and must not produce a
+spurious cap warning on every scan. It is a guard against the fix, not a demonstration of it.
+
+**Negative control:** removing the two parse lines turns the two flag tests red. 3613 tests, 0 failed.
+
+⬜ Not verified in-game: nobody has run a real batch scan on a title where a seed keyword caps and
+watched the strip appear.
+
+-----
+
 ## 2026-08-15 - One dialog, two different calls: FIRE and Copy AA Script disagreed on what you typed (build 2866)
 
 **Audit #5 segment U4 fixes Y2, Y3, Y4 and Y5.** One commit, because they are one defect wearing four

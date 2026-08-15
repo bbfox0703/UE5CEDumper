@@ -1729,13 +1729,25 @@ public sealed class DumpService : IDumpService
 
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
+        return ParseSearchPropertiesBatch(res);
+    }
 
+    /// <summary>
+    /// Parse a search_properties_batch reply. Split out of the async caller so the wire
+    /// contract can be tested without a pipe -- the per-query `truncated` flag went
+    /// unparsed here for two builds precisely because nothing could reach this code
+    /// (audit #5 X1).
+    /// </summary>
+    internal static PropertySearchBatchResult ParseSearchPropertiesBatch(JsonObject res)
+    {
         var result = new PropertySearchBatchResult
         {
             QueryCount     = res["query_count"]?.GetValue<int>() ?? 0,
             Total          = res["total"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
+            // Absent on a pre-2818 DLL -> false, i.e. the old silent behaviour.
+            Aborted = res["aborted"]?.GetValue<bool>() ?? false,
         };
 
         if (res["per_query"] is JsonArray perQuery)
@@ -1747,6 +1759,7 @@ public sealed class DumpService : IDumpService
                 {
                     Query      = envObj["query"]?.GetValue<string>() ?? "",
                     MatchCount = envObj["match_count"]?.GetValue<int>() ?? 0,
+                    Truncated  = envObj["truncated"]?.GetValue<bool>() ?? false,
                 };
                 if (envObj["results"] is JsonArray matches)
                 {
@@ -1783,6 +1796,10 @@ public sealed class DumpService : IDumpService
 
         return result;
     }
+
+    /// <summary>Test hook: parse a raw reply body.</summary>
+    internal static PropertySearchBatchResult ParseSearchPropertiesBatchForTest(string json)
+        => ParseSearchPropertiesBatch((JsonObject)JsonNode.Parse(json)!);
 
     // --- Value Search (CE-style First Scan / Next Scan) ---
 

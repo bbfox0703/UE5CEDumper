@@ -1,3 +1,4 @@
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace UE5DumpUI.Models;
@@ -180,6 +181,17 @@ public class PropertySearchQueryEnvelope
 {
     public string Query { get; set; } = "";
     public int MatchCount { get; set; }
+    /// <summary>
+    /// This query stopped at the per-query cap: more matches exist for it. Per-query and not
+    /// per-batch, because the shared walk only stops once EVERY query is full — one seed keyword
+    /// can be capped while another swept the whole pool.
+    /// <para>
+    /// The DLL has emitted this since the D5/F4 fix; the client parsed it on the single-query path
+    /// and not here, so the two discovery panels presented a capped page as the whole pool — the
+    /// exact report class F4 was written to end (audit #5 X1).
+    /// </para>
+    /// </summary>
+    public bool Truncated { get; set; }
     public List<PropertySearchMatch> Results { get; set; } = new();
 }
 
@@ -197,5 +209,12 @@ public class PropertySearchBatchResult
     public int Total { get; set; }
     public int ScannedClasses { get; set; }
     public int ScannedObjects { get; set; }
+    /// <summary>The shared walk was cancelled (client gone / shutdown), so every query's set is
+    /// partial for a different reason than <see cref="PropertySearchQueryEnvelope.Truncated"/>.</summary>
+    public bool Aborted { get; set; }
     public List<PropertySearchQueryEnvelope> PerQuery { get; set; } = new();
+
+    /// <summary>Queries that hit their cap. Empty when the sweep was complete.</summary>
+    public List<string> TruncatedQueries =>
+        PerQuery.Where(q => q.Truncated).Select(q => q.Query).ToList();
 }

@@ -857,9 +857,36 @@ unread flags, not wrong writes.
 > done until you have grepped for its siblings** — across languages, across call sites, and across
 > single/batch twins.
 
+> ### ✅ X1 FIXED — build 2870, 2026-08-15
+>
+> **This was the D5/F4 fix reaching its second site.** The DLL had emitted per-query `truncated` and
+> batch `aborted` since F4 — the comment at `Fern.cpp:2822-2825` names *"audit #5 D5/F4"* — and the
+> C# read them on the single-query path only. The two parsers sit ~80 lines apart in the same file.
+>
+> `PropertySearchQueryEnvelope` gained `Truncated`, `PropertySearchBatchResult` gained `Aborted` and
+> a `TruncatedQueries` convenience, and both discovery panels now say so:
+> **Interesting Properties** appends *"⚠ N of 51 keywords STOPPED at the 200-row cap (Max, Count,
+> Time, …) — more matches exist"*, and **Detect Player Stats** — which makes the same call at the
+> same limit — appends its own shorter form. Both mirror the wording the single-query path has used
+> since F4.
+>
+> **A test hook came out of it, and that is the durable part.** The batch parse was inlined in an
+> `async` method that needs a live pipe, so *nothing could reach it* — which is precisely why a
+> missing field survived two builds. It is now
+> `internal static ParseSearchPropertiesBatch(JsonObject)` with a string-taking test hook, so the
+> wire contract is testable without a pipe.
+>
+> **Negative control:** removing the two parse lines turns the two flag tests red. The third test —
+> an older DLL that omits both keys — passes in **both** directions, which is correct and is the
+> point of having it: the fix must not start warning on every scan against a pre-2818 DLL.
+> 3613 tests, 0 failed.
+>
+> ⬜ **Not verified in-game.** Nobody has yet run a real batch scan on a title where a seed keyword
+> caps and confirmed the strip appears.
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **X1** | MED | `DumpService.cs:1746` (`SearchPropertiesBatchAsync`) | The batch property search parses `query` + `match_count` only, dropping the per-query `truncated` and batch `aborted` the DLL emits for exactly this purpose — `PropertySearchQueryEnvelope` has no such field to parse into. Interesting Properties sends all 51 seed queries at 200 rows each, so common seeds (`Max`, `Count`, `Time`, `Level`, `Hit`) cap routinely and the panel reports *"N unique properties"* with no cap note. **This is the exact report class the F4 fix was written to end**, surviving at F4's other site. `DetectStatsViewModel` makes the same call with the same blind spot. | S / low |
+| **X1** ✅ | MED | `DumpService.cs:1746` (`SearchPropertiesBatchAsync`) | The batch property search parses `query` + `match_count` only, dropping the per-query `truncated` and batch `aborted` the DLL emits for exactly this purpose — `PropertySearchQueryEnvelope` has no such field to parse into. Interesting Properties sends all 51 seed queries at 200 rows each, so common seeds (`Max`, `Count`, `Time`, `Level`, `Hit`) cap routinely and the panel reports *"N unique properties"* with no cap note. **This is the exact report class the F4 fix was written to end**, surviving at F4's other site. `DetectStatsViewModel` makes the same call with the same blind spot. | S / low |
 | **X2** | MED | `MainWindowViewModel.cs:1650` | Class-address lookups scan a single 5,000-row `list_classes` page and report a real class as **"not found"** when it falls past the cap. | S / low |
 | **X3** | MED | *(hand-found)* `DumpService.cs` / `Models/EngineState.cs` | The DLL computes and publishes a three-flag offset-validation verdict (`validated`, `probe_ran`, `case_preserving`, plus `fallback_reason`) and **the UI never issues `get_offsets` at all**, so nothing can tell the user the walker is running on unvalidated default offsets. | S / low |
 | **X4** | LOW | `MainWindowViewModel.cs:3373` | The Dump All completion line is derived from the **file's byte length** rather than from what the dump did, so a zero-class or half-failed dump still announces an export — and the figure itself is integer division (`Length / 1024 / 1024:F1`), so a 3.7 MB dump prints `3.0 MB` and anything under 1 MB prints `0.0 MB`. | S / low |
@@ -1329,8 +1356,9 @@ open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y6–Y14, X1–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
-remain. U4 shipped **Y1** (2862) and **Y2+Y3+Y4+Y5** (2866) — 5 of its 14 findings.
+**Still open: Y6–Y14, X2–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+remain. U4 shipped **Y1** (2862) and **Y2+Y3+Y4+Y5** (2866) — 5 of its 14; U3 shipped **X1**
+(2870) — 1 of its 12.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).

@@ -2072,4 +2072,61 @@ public class DumpServiceTests
         Assert.NotNull(captured);
         Assert.True(captured!["auto_skip_noise"]?.GetValue<bool>());
     }
+
+    // --- search_properties_batch truncation (audit #5 X1) ----------------------
+    //
+    // The DLL has emitted per-query `truncated` and batch `aborted` since the D5/F4 fix.
+    // The single-query parser read them; this batch twin, ~80 lines away in the same
+    // file, did not -- so the two discovery panels presented a capped page as the pool,
+    // which is the exact report class F4 was written to end.
+
+    [Fact]
+    public void ParseSearchPropertiesBatch_CarriesPerQueryTruncation()
+    {
+        var json = """
+        {"per_query":[
+           {"query":"Max","match_count":200,"truncated":true,"results":[]},
+           {"query":"Zzz","match_count":3,"truncated":false,"results":[]}],
+         "query_count":2,"total":203,"scanned_classes":10,"scanned_objects":99,
+         "aborted":false}
+        """;
+
+        var r = DumpService.ParseSearchPropertiesBatchForTest(json);
+
+        Assert.True(r.PerQuery[0].Truncated);
+        Assert.False(r.PerQuery[1].Truncated);
+        Assert.Equal(new[] { "Max" }, r.TruncatedQueries);
+        Assert.False(r.Aborted);
+    }
+
+    [Fact]
+    public void ParseSearchPropertiesBatch_CarriesAborted()
+    {
+        var json = """
+        {"per_query":[{"query":"Max","match_count":1,"results":[]}],
+         "query_count":1,"total":1,"scanned_classes":1,"scanned_objects":1,
+         "aborted":true}
+        """;
+
+        var r = DumpService.ParseSearchPropertiesBatchForTest(json);
+
+        Assert.True(r.Aborted);
+    }
+
+    [Fact]
+    public void ParseSearchPropertiesBatch_OlderDllWithoutTheFlags_StaysSilent()
+    {
+        // Backward-safe: a pre-2818 DLL omits both keys, and the old silent behaviour
+        // (no cap warning) must remain -- not a spurious warning on every scan.
+        var json = """
+        {"per_query":[{"query":"Max","match_count":5,"results":[]}],
+         "query_count":1,"total":5,"scanned_classes":1,"scanned_objects":1}
+        """;
+
+        var r = DumpService.ParseSearchPropertiesBatchForTest(json);
+
+        Assert.False(r.Aborted);
+        Assert.False(r.PerQuery[0].Truncated);
+        Assert.Empty(r.TruncatedQueries);
+    }
 }
