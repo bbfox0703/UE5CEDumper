@@ -931,6 +931,43 @@ MEDIUM.
 > in — joining W1 (a `.usmap` that never parsed) and V1 (a map edit that wrote to the key). The
 > pattern across all three: *the default value happens to work*, so any smoke test passes.
 
+> ### ✅ Y2, Y3, Y4 and Y5 FIXED — build 2866, 2026-08-15
+>
+> One commit, because they are one defect wearing four hats: **`ParamBufferBuilder` (the FIRE path)
+> re-implemented, more weakly, the parsing `BakedScriptGenerator` (Copy AA Script) already did
+> correctly.** The same dialog therefore produced two different calls into a live game depending on
+> which button the user pressed.
+>
+> | | typed | FIRE sent | exported script sent |
+> |---|---|---|---|
+> | **Y2** | `3` into a 1-byte enum | **nothing at all** (game got 0) | 3 |
+> | **Y3** | `true` | **0** | 1 |
+> | **Y4** | `1,5` | **15.0** | refused |
+> | **Y5** | `-1` into an `Int8` | **0** | −1 |
+>
+> Y2 is the sharpest: `EnumProperty` was grouped with `IntProperty` and gated on
+> `available >= 4`, so a 1-byte `enum class : uint8` param failed the guard and **was never written**.
+>
+> **The fix is to share, not to re-copy.** `BakedScriptGenerator.ParseBoolLiteral` and
+> `TryParseHexOrDecimal` became `internal` and the FIRE path now calls them; `EnumProperty` routes
+> through a new `WriteBySize` that the size-driven fallback also uses, so those two cannot drift
+> apart either. Writing a fifth parser was the obvious move and the wrong one — this audit has now
+> found its own fixes half-applied three times (V2, W4/W6, X1), and *sharing the implementation* is
+> the only repair that does not depend on a future editor remembering.
+>
+> Y4's guard is copied verbatim in intent from the sibling's own comment: `TryParse(text,
+> IFormatProvider, out _)` defaults to `NumberStyles.Float | AllowThousands` **and accepts `NaN` /
+> `Infinity`**, so those reached the game as real floats. The baked path had documented this (as
+> B23) and guarded it; the FIRE path had not.
+>
+> **Negative control:** reverting `ParamBufferBuilder.cs` to its pre-fix state turns **11** tests
+> red, mapping to all four defects — 2 for the enum widths, 4 bool spellings (`true`/`TRUE`/`yes`/
+> `on`; `1`/`0`/`false`/`no` pass either way, since the old byte parser handled digits), 4 float
+> cases, 1 signed byte. 3610 tests, 0 failed.
+>
+> ⬜ **Not exercised against a live game.** The bytes are unit-verified; nobody has yet watched a
+> UFunction receive a 1-byte enum or a `true` from the FIRE button.
+
 > ### ✅ Y1 FIXED — build 2862, 2026-08-15
 >
 > The prefix is stripped before the base-16 parse. The emitted expression now matches
@@ -980,10 +1017,10 @@ MEDIUM.
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **Y1** ✅ | **HIGH** | `InvokeScriptGenerator.cs:603` (`GetParseExpression`) | The pointer/FName branch detects a leading `0x` and then passes the **still-prefixed** string to Lua's `tonumber(s, 16)`, which rejects the `x` and returns `nil`; `or 0` then writes a **null pointer** into the params buffer. The DLL memcpys that straight into `ProcessEvent`, so the UFunction is called with `nullptr` — an access violation for any callee that dereferences it — and the script still reports `INVOKED OK` (or closes the Lua window silently when `DEBUG == 0`). The `else` branch's bare `tonumber(s)` **would have worked**: the special case is the only thing breaking it. The default `'0x0'` yields 0 correctly by accident, so a smoke test with unmodified defaults always passes. | S / low |
-| **Y2** | MED | `ParamBufferBuilder.cs:221` (+`:224`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` and written as 4 bytes gated on `available >= 4`, so a **1-byte enum param is not written at all** and the game receives 0. FIRE and the exported AA Script therefore send different values for the same dialog input. | S / low |
-| **Y3** | MED | `ParamBufferBuilder.cs:165` | Typing `true` for a bool param: **FIRE sends 0, Copy AA Script bakes 1** — one dialog, two opposite calls. | S / low |
-| **Y4** | MED | `ParamBufferBuilder.cs:185` | Float params: FIRE parses with `AllowThousands` and accepts `NaN`/`Infinity`; the baked generator does neither, so `1,5` **fires as 15.0 and bakes as 0**. | M / low |
-| **Y5** | MED | `ParamBufferBuilder.cs:254` (`ParseByte`) | Rejects the very inputs the sibling baked generator accepts, so `true` and negative int8 values silently become 0 on FIRE. | S / low |
+| **Y2** ✅ | MED | `ParamBufferBuilder.cs:221` (+`:224`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` and written as 4 bytes gated on `available >= 4`, so a **1-byte enum param is not written at all** and the game receives 0. FIRE and the exported AA Script therefore send different values for the same dialog input. | S / low |
+| **Y3** ✅ | MED | `ParamBufferBuilder.cs:165` | Typing `true` for a bool param: **FIRE sends 0, Copy AA Script bakes 1** — one dialog, two opposite calls. | S / low |
+| **Y4** ✅ | MED | `ParamBufferBuilder.cs:185` | Float params: FIRE parses with `AllowThousands` and accepts `NaN`/`Infinity`; the baked generator does neither, so `1,5` **fires as 15.0 and bakes as 0**. | M / low |
+| **Y5** ✅ | MED | `ParamBufferBuilder.cs:254` (`ParseByte`) | Rejects the very inputs the sibling baked generator accepts, so `true` and negative int8 values silently become 0 on FIRE. | S / low |
 | **Y6** | MED | `InvokeScriptGenerator.cs:528` | Struct params in the interactive CE form collapse to a **single 4-byte `writeInteger`**, so an `FVector` param is filled with garbage. | M / low |
 | **Y7** | MED | `InvokeParamDialog.cs:328` | Struct params pick their sub-field layout from the **guessed UE version** and never cross-check it against the size the engine reported for the param. | S / low |
 | **Y8** | MED | `InvokeScriptGenerator.cs:164` | The last site in the repo still using bare `getAddress` — its module-prefixed fallback is unreachable, so a wrong-address result is reported as a real one. | S / low |
@@ -1292,8 +1329,8 @@ open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y2–Y14, X1–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
-remain. U4 shipped **Y1** (2862).
+**Still open: Y6–Y14, X1–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+remain. U4 shipped **Y1** (2862) and **Y2+Y3+Y4+Y5** (2866) — 5 of its 14 findings.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).

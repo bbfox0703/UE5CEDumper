@@ -515,7 +515,9 @@ public static class BakedScriptGenerator
     private static string MarkUnparsed(string raw)
         => $"--[[unparsed:{EscapeLuaComment(raw)}]] 0";
 
-    private static bool TryParseHexOrDecimal(string text, out ulong value)
+    /// <summary>Shared with <see cref="ParamBufferBuilder"/> so the FIRE path and the exported
+    /// script parse the same inputs, negatives included (audit #5 Y2/Y5).</summary>
+    internal static bool TryParseHexOrDecimal(string text, out ulong value)
     {
         value = 0;
         var t = text.Trim();
@@ -542,7 +544,9 @@ public static class BakedScriptGenerator
                               CultureInfo.InvariantCulture, out value);
     }
 
-    private static bool? ParseBoolLiteral(string text) => text.ToLowerInvariant() switch
+    /// <summary>Shared with <see cref="ParamBufferBuilder"/> so the FIRE path and the exported
+    /// script accept the SAME spellings -- they used to disagree (audit #5 Y3).</summary>
+    internal static bool? ParseBoolLiteral(string text) => text.ToLowerInvariant() switch
     {
         "true" or "1" or "yes" or "on"  => true,
         "false" or "0" or "no" or "off" => false,

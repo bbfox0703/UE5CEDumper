@@ -159,11 +159,18 @@ public static class ParamBufferBuilder
         switch (typeName)
         {
             case "BoolProperty":
+            {
+                // Same spellings the exported script accepts (true/false/yes/no/on/off/1/0).
+                // This path used to run everything through ParseByte, so typing `true` made
+                // FIRE send 0 while Copy AA Script baked 1 -- one dialog, two opposite calls
+                // into a live game (audit #5 Y3).
+                buf[offset] = BakedScriptGenerator.ParseBoolLiteral(text) == true ? (byte)1 : (byte)0;
+                break;
+            }
             case "ByteProperty":
             case "Int8Property":
             {
-                byte val = ParseByte(text);
-                buf[offset] = val;
+                buf[offset] = ParseByteOrSByte(text);
                 break;
             }
             case "Int16Property":
@@ -182,16 +189,14 @@ public static class ParamBufferBuilder
             }
             case "FloatProperty":
             {
-                float val = float.TryParse(text, CultureInfo.InvariantCulture, out var f) ? f : 0f;
                 if (available >= 4)
-                    BinaryPrimitives.WriteSingleLittleEndian(buf.AsSpan(offset), val);
+                    BinaryPrimitives.WriteSingleLittleEndian(buf.AsSpan(offset), (float)ParseReal(text));
                 break;
             }
             case "DoubleProperty":
             {
-                double val = double.TryParse(text, CultureInfo.InvariantCulture, out var d) ? d : 0.0;
                 if (available >= 8)
-                    BinaryPrimitives.WriteDoubleLittleEndian(buf.AsSpan(offset), val);
+                    BinaryPrimitives.WriteDoubleLittleEndian(buf.AsSpan(offset), ParseReal(text));
                 break;
             }
             case "Int64Property":
@@ -218,45 +223,82 @@ public static class ParamBufferBuilder
             }
             case "IntProperty":
             case "UInt32Property":
-            case "EnumProperty":
             {
                 int val = (int)ParseLong(text);
                 if (available >= 4)
                     BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(offset), val);
                 break;
             }
+            case "EnumProperty":
+            {
+                // An enum's width is whatever the engine reported, NOT 4. This case used to
+                // be grouped with IntProperty, so a 1-byte `enum class : uint8` param hit the
+                // `available >= 4` guard, wrote NOTHING, and the game received 0 while the
+                // exported script sent the user's value (audit #5 Y2).
+                WriteBySize(buf, offset, available, size, text);
+                break;
+            }
             default:
             {
-                // Fallback by size
-                switch (size)
-                {
-                    case 1:
-                        buf[offset] = ParseByte(text);
-                        break;
-                    case 2:
-                        if (available >= 2)
-                            BinaryPrimitives.WriteInt16LittleEndian(buf.AsSpan(offset), (short)ParseLong(text));
-                        break;
-                    case 8:
-                        if (available >= 8)
-                            BinaryPrimitives.WriteUInt64LittleEndian(buf.AsSpan(offset), ParseULong(text));
-                        break;
-                    default:
-                        if (available >= 4)
-                            BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(offset), (int)ParseLong(text));
-                        break;
-                }
+                // Fallback by size -- shared with EnumProperty so the two cannot drift.
+                WriteBySize(buf, offset, available, size, text);
                 break;
             }
         }
     }
 
-    private static byte ParseByte(string text)
+    /// <summary>
+    /// Write an integer value at whatever width the engine reported for the param.
+    /// Used by the size-driven fallback and by EnumProperty, whose width is 1/2/4/8.
+    /// </summary>
+    private static void WriteBySize(byte[] buf, int offset, int available, int size, string text)
     {
-        if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-            return byte.TryParse(text.AsSpan(2), NumberStyles.HexNumber, null, out var b) ? b : (byte)0;
-        return byte.TryParse(text, out var v) ? v : (byte)0;
+        switch (size)
+        {
+            case 1:
+                buf[offset] = ParseByteOrSByte(text);
+                break;
+            case 2:
+                if (available >= 2)
+                    BinaryPrimitives.WriteInt16LittleEndian(buf.AsSpan(offset), (short)ParseLong(text));
+                break;
+            case 8:
+                if (available >= 8)
+                    BinaryPrimitives.WriteUInt64LittleEndian(buf.AsSpan(offset), ParseULong(text));
+                break;
+            default:
+                if (available >= 4)
+                    BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(offset), (int)ParseLong(text));
+                break;
+        }
     }
+
+    /// <summary>
+    /// One byte, accepting everything the exported script accepts: decimal, 0x hex, and
+    /// NEGATIVE values for a signed Int8 (-1 -> 0xFF). The old parser used
+    /// <c>byte.TryParse</c>, which rejects any negative outright and silently sent 0
+    /// (audit #5 Y5).
+    /// </summary>
+    private static byte ParseByteOrSByte(string text)
+        => BakedScriptGenerator.TryParseHexOrDecimal((text ?? "").Trim(), out var u)
+               ? unchecked((byte)u)
+               : (byte)0;
+
+    /// <summary>
+    /// Parse a real number the way the exported script does: InvariantCulture, no thousands
+    /// separators, and non-finite values refused.
+    /// <para>
+    /// <c>TryParse(text, IFormatProvider, out _)</c> defaults to
+    /// <c>NumberStyles.Float | NumberStyles.AllowThousands</c> and ACCEPTS "NaN" / "Infinity",
+    /// so `1,5` fired as 15.0 while the baked script rendered it unparsed, and NaN reached the
+    /// game as a real float (audit #5 Y4).
+    /// </para>
+    /// </summary>
+    private static double ParseReal(string text)
+        => double.TryParse((text ?? "").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d)
+           && double.IsFinite(d)
+               ? d
+               : 0.0;
 
     private static long ParseLong(string text)
     {

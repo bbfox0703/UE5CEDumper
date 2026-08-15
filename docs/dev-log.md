@@ -22,6 +22,49 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - One dialog, two different calls: FIRE and Copy AA Script disagreed on what you typed (build 2866)
+
+**Audit #5 segment U4 fixes Y2, Y3, Y4 and Y5.** One commit, because they are one defect wearing four
+hats: `ParamBufferBuilder` — the FIRE path — re-implemented, more weakly, the parsing
+`BakedScriptGenerator` already did correctly for the exported script.
+
+| | typed | FIRE sent | exported script sent |
+|---|---|---|---|
+| **Y2** | `3` into a 1-byte enum | **nothing at all** (game got 0) | 3 |
+| **Y3** | `true` | **0** | 1 |
+| **Y4** | `1,5` | **15.0** | refused |
+| **Y5** | `-1` into an `Int8` | **0** | −1 |
+
+Y2 is the sharpest of the four: `EnumProperty` was grouped with `IntProperty` and the write gated on
+`available >= 4`, so a 1-byte `enum class : uint8` param — the standard shape — failed the guard and
+**was never written at all**. The game received whatever the zero-filled buffer held.
+
+Y4 is the one with a paper trail: `TryParse(text, IFormatProvider, out _)` defaults to
+`NumberStyles.Float | AllowThousands` **and accepts `NaN` / `Infinity`**. The baked path had already
+discovered that, documented it (as B23) and guarded against it; the FIRE path had not, so `1,5` fired
+as 15.0 and `NaN` reached the game as a real float.
+
+### The fix is to share the parsers, not to write a fifth one
+
+`BakedScriptGenerator.ParseBoolLiteral` and `TryParseHexOrDecimal` became `internal`, and the FIRE
+path calls them. `EnumProperty` now routes through a new `WriteBySize` that the size-driven fallback
+uses too, so those two cannot drift apart either.
+
+Copying the logic across would have been the obvious move and the wrong one. This audit has now found
+its *own* fixes applied to only some of the places that needed them three separate times — V2 (one
+side of the wire), W4/W6 (some call sites of a helper), X1 (one of two single/batch twins). Sharing
+the implementation is the only repair that does not depend on a future editor remembering.
+
+**Negative control:** reverting `ParamBufferBuilder.cs` to its pre-fix state turns **11** tests red,
+mapping to all four defects — 2 enum widths, 4 bool spellings (`true`/`TRUE`/`yes`/`on`; `1`/`0`/
+`false`/`no` pass either way because the old byte parser handled digits), 4 float cases, 1 signed
+byte. 3610 tests, 0 failed.
+
+⬜ Not exercised against a live game: the bytes are unit-verified, but nobody has watched a UFunction
+receive a 1-byte enum or a `true` from the FIRE button.
+
+-----
+
 ## 2026-08-15 - The CE invoke form passed a null pointer for every address you typed into it (build 2862)
 
 **Audit #5 segment U4 fix Y1 (HIGH).** The generated Cheat Engine invoke form detected a leading

@@ -423,4 +423,122 @@ public class ParamBufferBuilderTests
         // Convert.ToHexString uppercases → CDAB3412F67F0000.
         Assert.Equal("CDAB3412F67F0000", hex);
     }
+
+    // --- FIRE must agree with the exported script (audit #5 Y2/Y3/Y4/Y5) ------
+    //
+    // The FIRE path (this builder) and Copy AA Script (BakedScriptGenerator) parse the
+    // SAME dialog text. They used to disagree, so one dialog produced two different calls
+    // into a live game. Each test below pins a case where FIRE previously sent the wrong
+    // bytes; the "baked" column in each comment is what the exported script always sent.
+
+    [Fact]
+    public void OneByteEnum_IsWritten_NotSilentlyDropped()
+    {
+        // Y2: EnumProperty was grouped with IntProperty and gated on `available >= 4`, so a
+        // 1-byte `enum class : uint8` wrote NOTHING and the game got 0.  baked: 3
+        var @params = new List<FunctionParamModel>
+        {
+            new() { Name = "State", TypeName = "EnumProperty", Size = 1, Offset = 0 },
+        };
+
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { "3" }, parmsSize: 1);
+
+        Assert.Equal("03", hex);
+    }
+
+    [Fact]
+    public void TwoByteEnum_UsesItsRealWidth()
+    {
+        var @params = new List<FunctionParamModel>
+        {
+            new() { Name = "State", TypeName = "EnumProperty", Size = 2, Offset = 0 },
+        };
+
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { "258" }, parmsSize: 2);
+
+        Assert.Equal("0201", hex);   // 258 = 0x0102, little-endian
+    }
+
+    [Theory]
+    [InlineData("true", "01")]
+    [InlineData("TRUE", "01")]
+    [InlineData("yes", "01")]
+    [InlineData("on", "01")]
+    [InlineData("1", "01")]
+    [InlineData("false", "00")]
+    [InlineData("no", "00")]
+    [InlineData("0", "00")]
+    public void BoolParam_AcceptsTheSameSpellingsAsTheExportedScript(string typed, string expected)
+    {
+        // Y3: `true` went through a byte parser, failed, and FIRE sent 0 while baked sent 1.
+        var @params = new List<FunctionParamModel>
+        {
+            new() { Name = "Flag", TypeName = "BoolProperty", Size = 1, Offset = 0 },
+        };
+
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { typed }, parmsSize: 1);
+
+        Assert.Equal(expected, hex);
+    }
+
+    [Fact]
+    public void SignedByteParam_AcceptsNegatives()
+    {
+        // Y5: byte.TryParse rejects any negative outright, so -1 silently became 0.
+        var @params = new List<FunctionParamModel>
+        {
+            new() { Name = "Delta", TypeName = "Int8Property", Size = 1, Offset = 0 },
+        };
+
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { "-1" }, parmsSize: 1);
+
+        Assert.Equal("FF", hex);
+    }
+
+    [Fact]
+    public void FloatParam_RejectsThousandsSeparators()
+    {
+        // Y4: the default TryParse overload allows thousands separators, so `1,5` fired as
+        // 15.0 while the baked script refused it. Refusing (0) is the honest answer, and it
+        // matches the sibling.
+        var @params = new List<FunctionParamModel>
+        {
+            new() { Name = "Scale", TypeName = "FloatProperty", Size = 4, Offset = 0 },
+        };
+
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { "1,5" }, parmsSize: 4);
+
+        Assert.Equal("00000000", hex);
+    }
+
+    [Theory]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("-Infinity")]
+    public void FloatParam_RefusesNonFiniteValues(string typed)
+    {
+        // Y4: TryParse ACCEPTS these, so they reached the game as real floats.
+        var @params = new List<FunctionParamModel>
+        {
+            new() { Name = "Scale", TypeName = "FloatProperty", Size = 4, Offset = 0 },
+        };
+
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { typed }, parmsSize: 4);
+
+        Assert.Equal("00000000", hex);
+    }
+
+    [Fact]
+    public void FloatParam_StillAcceptsAPlainInvariantDecimal()
+    {
+        // The guard must not cost the normal case.
+        var @params = new List<FunctionParamModel>
+        {
+            new() { Name = "Scale", TypeName = "FloatProperty", Size = 4, Offset = 0 },
+        };
+
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { "1.5" }, parmsSize: 4);
+
+        Assert.Equal("0000C03F", hex);   // 1.5f
+    }
 }
