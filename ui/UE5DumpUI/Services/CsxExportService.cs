@@ -209,11 +209,15 @@ public static class CsxExportService
                 childStructure = BuildStrChildStructure(field.TypeName, field.HexValue);
                 break;
 
+            // Audit #5 W9: Soft / SoftClass / Lazy were here too. A child <Structure>
+            // is only reachable in a dissect file by dereferencing the parent element,
+            // and those slots hold an FSoftObjectPath / FWeakObjectPtr rather than an
+            // address — so the child was laid out under a slot CE cannot follow. The
+            // DLL does resolve their embedded target and stamps it on PtrAddress, which
+            // is exactly what made the TryGetValue guard below succeed and the defect
+            // invisible. Same reasoning, same three types, as W5 in the CE-XML emitter.
             case "ObjectProperty":
             case "ClassProperty":
-            case "SoftObjectProperty":
-            case "SoftClassProperty":
-            case "LazyObjectProperty":
             case "InterfaceProperty":
                 // Drilldown: use real child structure if instance was resolved
                 if (drilldownDepth > 0
@@ -335,18 +339,28 @@ public static class CsxExportService
             "AnsiStrProperty"       => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
             "ObjectProperty"        => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
             "ClassProperty"         => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
-            "SoftObjectProperty"    => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
-            "SoftClassProperty"     => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
-            "LazyObjectProperty"    => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
+            // InterfaceProperty IS a pointer slot: FScriptInterface is
+            // { UObject* +0x00; void* +0x08 }, so its first 8 bytes are a real address.
             "InterfaceProperty"     => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
             "ArrayProperty"         => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
             "MapProperty"           => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
             "SetProperty"           => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
             "DataTableRows"         => new CsxTypeInfo("Pointer", 8, "unsigned integer"),
 
-            // Opaque types
+            // Opaque types — 8-byte hex leaves, NOT Vartype=Pointer.
+            // Audit #5 W9: Soft / SoftClass / Lazy sat in the pointer block above, so
+            // CSX told CE to dereference a slot that holds no address —
+            // FSoftObjectPath for the soft pair, FWeakObjectPtr { int32 ObjectIndex;
+            // int32 SerialNumber } for Lazy. This is exactly what W5 fixed in the
+            // CE-XML emitter (see CeXmlExportService.IsRawObjectPtrSlot and its doc
+            // block); that commit did not touch this file. WeakObjectProperty was
+            // already correct here, which is why the defect never looked systematic.
+            // A watchable 8-byte hex leaf is the honest representation for all four.
             "TextProperty"         => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "WeakObjectProperty"   => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
+            "SoftObjectProperty"   => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
+            "SoftClassProperty"    => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
+            "LazyObjectProperty"   => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "DelegateProperty"     => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "MulticastInlineDelegateProperty" =>
                 new CsxTypeInfo("Array of byte", fieldSize > 0 ? fieldSize : 16, "hexadecimal"),

@@ -1252,8 +1252,14 @@ public class CsxExportServiceTests
         // Element offsets: index * 0x28 (40)
         Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*40 = 0
         Assert.Contains("Offset=\"40\"", csx);   // [1]: 1*40 = 40
-        // SoftObjectProperty maps to Pointer in CSX
-        Assert.Contains("Vartype=\"Pointer\"", csx);
+        // The Vartype="Pointer" in this output comes from the OUTER ArrayProperty
+        // element, not from the soft leaves — so Contains("Pointer") alone passes
+        // whatever the inner mapping is, and cannot fail if W9 is reverted. Audit #5
+        // W9: TSoftObjectPtr holds an FSoftObjectPath, not an address, so its elements
+        // must be watchable 8-byte hex leaves. Assert BOTH, mirroring the Delegate
+        // sibling test below.
+        Assert.Contains("Vartype=\"Pointer\"", csx);    // the ArrayProperty parent
+        Assert.Contains("Vartype=\"8 Bytes\"", csx);    // the SoftObjectProperty leaves
     }
 
     [Fact]
@@ -1279,8 +1285,11 @@ public class CsxExportServiceTests
         // Sequential offsets: index * 0x20 (32)
         Assert.Contains("Offset=\"0\"", csx);    // [0]: 0*32 = 0
         Assert.Contains("Offset=\"32\"", csx);   // [1]: 1*32 = 32
-        // LazyObjectProperty maps to Pointer
-        Assert.Contains("Vartype=\"Pointer\"", csx);
+        // Same trap as the SoftObject sibling above: the Pointer comes from the OUTER
+        // ArrayProperty element. Audit #5 W9 — TLazyObjectPtr's first 8 bytes are an
+        // FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber }, not an address.
+        Assert.Contains("Vartype=\"Pointer\"", csx);    // the ArrayProperty parent
+        Assert.Contains("Vartype=\"8 Bytes\"", csx);    // the LazyObjectProperty leaves
     }
 
     [Fact]
@@ -1649,5 +1658,76 @@ public class CsxExportServiceTests
             ct: TestContext.Current.CancellationToken);
 
         Assert.Contains("<Structures>", csx);   // produced output despite the walk failure
+    }
+
+    // ============================================================
+    // Audit #5 W9 — the CSX twin of W5's CE-XML guard.
+    //
+    // W5 stopped the CE-XML emitter dereferencing slots that hold no address; the same
+    // defect lived in CSX (Vartype="Pointer" + a child <Structure>) and that commit did
+    // not touch this file. These two theories are deliberately PAIRED: the negative one
+    // pins the four weak-like types as watchable hex leaves, the positive one pins the
+    // three real pointer slots as still drillable, so a predicate tightened too far
+    // fails just as loudly as one left too broad. Mirrors
+    // CeXmlExportServiceTests.DrillDown_NonPointerSlot_IsNotDereferenced / _RealPointerSlot_.
+    //
+    // The pre-existing array tests above could not do this job: their
+    // Assert.Contains("Vartype=\"Pointer\"") is satisfied by the ArrayProperty PARENT,
+    // so they passed identically before and after W9.
+    // ============================================================
+    private static async Task<string> DrillCsxFor(string typeName)
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0xB100", new InstanceWalkResult
+        {
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x10, Size = 4 },
+            }
+        });
+
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Target", TypeName = typeName, Offset = 0x28, Size = 8,
+                    PtrAddress = "0xB100", PtrName = "SomeActor", PtrClassName = "BP_Actor_C" },
+        };
+
+        return await CsxExportService.GenerateCsxAsync(
+            dump, "TestStruct", fields, drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+    }
+
+    [Theory]
+    [InlineData("WeakObjectProperty")]   // FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber }
+    [InlineData("SoftObjectProperty")]   // FSoftObjectPath
+    [InlineData("SoftClassProperty")]    // FSoftObjectPath
+    [InlineData("LazyObjectProperty")]   // FWeakObjectPtr at +0, FGuid after it
+    public async Task Csx_DrillDown_NonPointerSlot_IsNotDereferenced(string typeName)
+    {
+        var csx = await DrillCsxFor(typeName);
+
+        // The resolved child must NOT appear: emitting it under a Vartype=Pointer
+        // element is what told CE to dereference a slot that holds no address.
+        Assert.DoesNotContain("Health", csx);
+        Assert.DoesNotContain("Vartype=\"Pointer\"", csx);
+        // ...and the field itself must still be present as a watchable hex leaf.
+        // CSX carries the field name in Description, not Name (Name is the Structure).
+        Assert.Contains("Target", csx);
+        Assert.Contains("Vartype=\"8 Bytes\"", csx);
+        Assert.Contains("DisplayMethod=\"hexadecimal\"", csx);
+    }
+
+    [Theory]
+    [InlineData("ObjectProperty")]
+    [InlineData("ClassProperty")]
+    // FScriptInterface is { UObject* +0x00; void* +0x08 }, so its first 8 bytes ARE an
+    // object pointer and the drill has always been correct for it. Pinned so a future
+    // tightening of the predicate cannot silently drop a working case.
+    [InlineData("InterfaceProperty")]
+    public async Task Csx_DrillDown_RealPointerSlot_StillDereferences(string typeName)
+    {
+        var csx = await DrillCsxFor(typeName);
+
+        Assert.Contains("Health", csx);
+        Assert.Contains("Vartype=\"Pointer\"", csx);
     }
 }
