@@ -179,8 +179,8 @@ Map/Set defect; D1-3/D1-10 the same struct-preview defect; D1-8/D1-11 the same F
 | **U4** | MED | `Ubel.cpp:818` (+`1055`, `149`) | `WalkClass` `try_emplace`s its result **unconditionally**, including a zero-field `ClassInfo` from a transient read failure or a not-yet-`Link`ed UClass — and no `erase`/`clear` for either class cache exists anywhere in `dll/src`. The poisoned entry is returned for the rest of the process lifetime. | S / low |
 | **U5** | MED | `Ubel.cpp:683` | `s_walkClassCache` and `s_walkClassExCache` each retain a **full flattened** `ClassInfo` (14 `std::string`s per `FieldInfo`) per class ever walked, twice, unbounded, for the process lifetime. | M / med |
 | **U6** | MED | `Ubel.cpp:411` | `s_nameCache` is keyed by raw `UObject*` with no validation, no bound, no expiry; its only two callers (`begin_snapshot`, `trigger_scan`) are **not** the events that recycle addresses (GC / level transition). Corrupts control flow, not just display — `WalkInstance`'s `isRawStruct` probe (`3360`) switches on `GetName`. | M / med |
-| **U7** | MED | `Ubel.cpp:5565` | `s.resize(50)` cuts a validated UTF-8 preview at a raw byte boundary, splitting a multi-byte sequence; nlohmann's default **strict** `dump()` then throws and the **entire `search_properties` response** becomes `{"error":...}` — zero results for a search that actually matched. | S / low |
-| **U8** | MED | `Ubel.cpp:1649`,`1653` (+open-coded twins `4568`, `5043`) | `InterpretValue` decodes FName from `ComparisonIndex` only, dropping `FName::Number` — so `Slot_1`/`Slot_2`/`Slot_3` all render as `Slot`. `ReadFNameAt` on the same bytes returns the suffix, so the panel and value-search **disagree about the same 8 bytes**. | S / low |
+| **U7** ✅ | MED | `Ubel.cpp:5565` | `s.resize(50)` cuts a validated UTF-8 preview at a raw byte boundary, splitting a multi-byte sequence; nlohmann's default **strict** `dump()` then throws and the **entire `search_properties` response** becomes `{"error":...}` — zero results for a search that actually matched. | S / low |
+| **U8** ✅ | MED | `Ubel.cpp:1649`,`1653` (+open-coded twins `4568`, `5043`) | `InterpretValue` decodes FName from `ComparisonIndex` only, dropping `FName::Number` — so `Slot_1`/`Slot_2`/`Slot_3` all render as `Slot`. `ReadFNameAt` on the same bytes returns the suffix, so the panel and value-search **disagree about the same 8 bytes**. | S / low |
 | **U9** | LOW | `Ubel.cpp:2238` | Byte-enum read casts through `int8_t`, so enumerators ≥ 128 (incl. the standard UHT `MAX = 255` sentinel) sign-extend, miss the UEnum lookup and render as a negative integer. Four sibling sites read it unsigned. | S / low |
 | **U10** | LOW | `Ubel.cpp:198` | `ReadFString` **rejects** on `count > 256` and returns `""`, which callers map to the literal label `(empty)` — a 400-character description is displayed as empty while `hexValue` on the adjacent row shows `Count=0x191`. | M / low |
 | **U11** | LOW | `Ubel.cpp:4934` | `TOptional<FText>` is decoded as an inline FString at `FText+0x10`, where stock UE stores the `uint32 Flags`. The correct decoder (`ReadFTextString`) already exists ~4,400 lines earlier in the same file and is used by the plain TextProperty path. | S / low |
@@ -229,7 +229,7 @@ six refuted outright, one (`Genau.cpp:4007`) downgraded to MEDIUM by the second 
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **G1** | MED | `Genau.cpp:4005-4007` | `ValidateAndFixOffsets` stores `bOffsetsValidated = true` **unconditionally on the success tail**, though three in-path give-up branches (`3701` FField::Name, `3761` FField::Next, `3915` Offset_Internal) fall through to it after logging *"keeping default"*. Provable by construction: `nextOff < 0` ⇒ Step 7 collects 1 field ⇒ Step 8's `matches >= 2` is unsatisfiable ⇒ `FPROPERTY_OFFSET`/`ELEMSIZE`/`FLAGS` keep Step-2.5's blind version guesses ⇒ `Fern.cpp:4543` reports `{"validated": true, "fallback_reason": ""}`. **This is the root of D1's U1** (`FPROPERTY_ELEMSIZE` garbage). | S / low |
+| **G1** ✅ | MED | `Genau.cpp:4005-4007` | `ValidateAndFixOffsets` stores `bOffsetsValidated = true` **unconditionally on the success tail**, though three in-path give-up branches (`3701` FField::Name, `3761` FField::Next, `3915` Offset_Internal) fall through to it after logging *"keeping default"*. Provable by construction: `nextOff < 0` ⇒ Step 7 collects 1 field ⇒ Step 8's `matches >= 2` is unsatisfiable ⇒ `FPROPERTY_OFFSET`/`ELEMSIZE`/`FLAGS` keep Step-2.5's blind version guesses ⇒ `Fern.cpp:4543` reports `{"validated": true, "fallback_reason": ""}`. **This is the root of D1's U1** (`FPROPERTY_ELEMSIZE` garbage). | S / low |
 | **G2** | MED | `Genau.cpp:2929` (+`CountPreUE4Markers`, `DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`, `FindGNamesByStringRef`) | The whole-image and multi-module sweeps **never poll `Tot::Requested()`** — three sibling scans in the same file do, for exactly this reason. On a ~482 MB image, Tier 2/3 alone is ~9.2e9 runtime-length `memcmp`s (~14 s), and `UE5_Shutdown`'s join blocks for all of it. Per `docs/ce-plugin-sdk-notes.md` §13 the CE-side wait has **no message pump**, so CE reads as hung. | S / low |
 | **G3** | MED | `Genau.cpp:3242`, `3167`, `3261` | `ValidateAndFixOffsets` rewrites the DynOff set **in place**, republishing unmeasured version defaults over already-probed values for the seconds a re-run takes. Reachable on a CE `[DISABLE]`/`[ENABLE]` cycle: `UE5_Shutdown` never clears `g_cachedGObjects`/`g_cachedGNames`, so `Mimic`'s poller gate (`Mimic.cpp:388`) is satisfied by **stale** addresses and keeps servicing mailbox commands while `UFIELD_NEXT` is reset 0x38 → 0x28 mid-flight. | L / med |
 | **G4** | LOW | `Serie.cpp:303-314` | `DetectBlockOffsetBits` **cannot detect anything**: at `testIdx = 1` both candidate widths compute `ci = 0`, `co = 1*stride`, so 16 always wins and the 14-bit arm is unreachable — yet `Init` logs the result as a measurement. On a real 14-bit pool every FName ≥ `0x4000` reads past the end of a 32 KB block, so engine names resolve and the **game-specific tail comes back blank**. *(Overturned refutation — see the note above.)* | M / med |
@@ -261,7 +261,7 @@ end-to-end; the raw output came back correspondingly disciplined (18 claims from
 | **A2** ✅ | MED | `Macht.h:302` *(D4 scope)* | `IsSparseIndexAllocated` judges slots 0..127 from the **stale inline bit words** once a `TSet`/`TMap` has spilled its `TBitArray` to the heap — affecting **13 Aura call sites + 6 in Ubel**, while `Aura::ResolveTMapBitArrayBase` gets the same rule right. A freed slot reads as live, so Find Refs can emit a phantom reference and `ScanForValue` admits a dead element's value. | S / low |
 | **A3** | MED | `Aura.cpp:6170` | `ScanForValue`'s struct-expansion cycle guard is **whole-walk instead of path-scoped**, so the 2nd and 3rd field of a repeated struct type are dropped from the scan index. Hits GAS directly — `FGameplayAttributeData Health/MaxHealth/Mana` share one `UScriptStruct`, so only `Health` is indexed. `CollectSchemaLeaves` (`4109`) already does it correctly. | S / low |
 | **A4** | MED | `Aura.cpp:6791` | Value Search's deep-container pass **drops every depth-1 leaf**, so values inside `TSet<FStruct>` / `TMap<K,FStruct>` elements are unreachable *even with Deep on* — the static index doesn't cover them either (`collectStructArrayInner` is only reached from the ArrayProperty branch). An everyday `TMap<FName, FItemData>` inventory count is unfindable. | M / low |
-| **A5** | MED | `Aura.cpp:4436` | Property Search's inline **Preview samples the CDO**, not a live instance, so the column shows the Blueprint default forever (Health = 100 while the player is at 37). `Solide.cpp:282`, `Wirbel.cpp:328` and `Edel.cpp:94` all already filter `Default__`. | S / low |
+| **A5** ✅ | MED | `Aura.cpp:4436` | Property Search's inline **Preview samples the CDO**, not a live instance, so the column shows the Blueprint default forever (Health = 100 while the player is at 37). `Solide.cpp:282`, `Wirbel.cpp:328` and `Edel.cpp:94` all already filter `Default__`. | S / low |
 | **A6** | MED | `Aura.cpp:4282` | `SearchProperties` reports the **defining** class, so dedup collapses ~4,800 `AActor` subclasses into one row named `Actor`; Force then calls `FindInstancesByClass("Actor", exactMatch)` and resolves an **empty pool**. The concrete class is known at row-emission time and thrown away. | M / med |
 | **A7** | LOW | `Aura.cpp:1685` | `FindByAddress` is the **only** full-GObjects walk in the file with neither a `Tot::Requested()` poll nor a deadline — same shape as D2/G2. Responsiveness, not correctness. | S / low |
 | **A8** | LOW | `Fern.cpp:4483` *(D5 scope)* | `get_ce_pointer_info` branches on `Aura::IsPacked()` but **never on `Aura::IsFlat()`**, so on a flat `FFixedUObjectArray` (OctoPath, FF7R Intergrade, Extinction, NEKOPALIVE) hop 3 dereferences `Item[0].Object` as a chunk pointer and CE resolves a garbage address **the user can write to**. LOW only because the UI client mitigates. | S / low |
@@ -680,8 +680,8 @@ and matter more than any individual row:
 | **V3** | MED | `LiveWalkerViewModel.cs:2366` (`FindReferencesAsync`) | No post-await navigation guard. Every other long round-trip snapshots `CurrentAddress` + `Breadcrumbs.Count` before its `await`; this one reads `CurrentObjectName` and refills `References` *after*, and runs on the **bulk** lane precisely so the user can keep navigating. A scan started on A lands A's reference list under B's header. | S / low |
 | **V4** | MED | `LiveWalkerViewModel.cs:5575` (`NavigateToAsync`/`GoBackAsync`) | Navigation commands are separate `AsyncRelayCommand`s with no shared re-entrancy gate, so a drill-down that started first can append its crumb onto a spine `GoBackAsync` has already truncated — leaving a leaf whose `FieldOffset` is relative to a parent no longer in the list, i.e. a silently wrong CE pointer chain. | M / med |
 | **V5** ✅ | MED | `LiveWalkerViewModel.cs:1622` (`FilterContainerToElement`) | The Map branch rebuilds the container field property-by-property and **omits `MapValueOffset`**, so the CE emitter falls back to `valOffset = MapKeySize` and derives a different stride. Exporting *selected* map elements produces a different and wrong layout from exporting the same map unfiltered. The sibling clone at `CeXmlExportService.cs:1030` preserves it — the two clone sites have drifted. | S / low |
-| **V6** | MED | `LiveWalkerViewModel.cs:5927` (`UpdateDisplay`) | `RefreshAsync` deliberately keeps the field-search keyword alive (`clearFieldSearch: false`) but `UpdateDisplay` swaps in new `LiveFieldValue` objects whose `IsSearchMatch` defaults false, and nothing re-runs `ApplySearch`. Highlights vanish while `SearchMatchCount` and the ↑/↓ buttons keep advertising N live matches. | S / low |
-| **V7** | MED | `LiveWalkerViewModel.cs:4812` (`RefreshAsync`) | Refresh failures — including the 10 s hard timeout — are reported through `SetError` → `ErrorMessage`, **a property `LiveWalkerPanel.axaml` never binds**, after `ClearStatus()` blanked the one bound status line. A failed refresh is byte-identical on screen to a successful one, stale values render as live, and a subsequent edit prints `Written: …` over them. | S / low |
+| **V6** ✅ | MED | `LiveWalkerViewModel.cs:5927` (`UpdateDisplay`) | `RefreshAsync` deliberately keeps the field-search keyword alive (`clearFieldSearch: false`) but `UpdateDisplay` swaps in new `LiveFieldValue` objects whose `IsSearchMatch` defaults false, and nothing re-runs `ApplySearch`. Highlights vanish while `SearchMatchCount` and the ↑/↓ buttons keep advertising N live matches. | S / low |
+| **V7** ✅ | MED | `LiveWalkerViewModel.cs:4812` (`RefreshAsync`) | Refresh failures — including the 10 s hard timeout — are reported through `SetError` → `ErrorMessage`, **a property `LiveWalkerPanel.axaml` never binds**, after `ClearStatus()` blanked the one bound status line. A failed refresh is byte-identical on screen to a successful one, stale values render as live, and a subsequent edit prints `Written: …` over them. | S / low |
 | **V8** | LOW | `LiveWalkerViewModel.cs:1348` | Container drill-down renders an `arrayLimit`-truncated element list (default 128) as the complete container. `BuildContainerLimitWarning` computes exactly this warning and is wired into **one** site: the Copy-CE-XML path. | S / low |
 | **V9** | LOW | `ObjectTreeViewModel.cs:426` (`SearchAsync`) | `SearchObjectsAsync` is called without the `CancellationToken` it accepts, and `CancelLoadCommand` cancels `_loadCts` — which `SearchAsync` itself cancelled at `:411` and never replaced. For the whole search the panel's only enabled control is a Cancel button that structurally cannot do anything. | S / low |
 | **V10** | LOW | `PointerPanelViewModel.cs:551` (`Update`) | `Update(EngineState)` unconditionally resets `IsScanning`/`ScanComplete`/`ScanStatusText`, but `ExtraScanAsync` owns `IsScanning` across its 1.5 s polling loop and clears it in its own `finally`. `Update` is reachable mid-scan via the fire-and-forget `ApplyOverrideAsync`, whose ComboBox is gated on `IsApplyingOverride`, not `IsScanning`. | S / low |
@@ -1031,7 +1031,7 @@ unread flags, not wrong writes.
 |----|-----|----------|--------|-------------|
 | **X1** ✅ | MED | `DumpService.cs:1746` (`SearchPropertiesBatchAsync`) | The batch property search parses `query` + `match_count` only, dropping the per-query `truncated` and batch `aborted` the DLL emits for exactly this purpose — `PropertySearchQueryEnvelope` has no such field to parse into. Interesting Properties sends all 51 seed queries at 200 rows each, so common seeds (`Max`, `Count`, `Time`, `Level`, `Hit`) cap routinely and the panel reports *"N unique properties"* with no cap note. **This is the exact report class the F4 fix was written to end**, surviving at F4's other site. `DetectStatsViewModel` makes the same call with the same blind spot. | S / low |
 | **X2** ✅ | MED | `MainWindowViewModel.cs:1650` | Class-address lookups scan a single 5,000-row `list_classes` page and report a real class as **"not found"** when it falls past the cap. | S / low |
-| **X3** | MED | *(hand-found)* `DumpService.cs` / `Models/EngineState.cs` | The DLL computes and publishes a three-flag offset-validation verdict (`validated`, `probe_ran`, `case_preserving`, plus `fallback_reason`) and **the UI never issues `get_offsets` at all**, so nothing can tell the user the walker is running on unvalidated default offsets. | S / low |
+| **X3** ✅ | MED | *(hand-found)* `DumpService.cs` / `Models/EngineState.cs` | The DLL computes and publishes a three-flag offset-validation verdict (`validated`, `probe_ran`, `case_preserving`, plus `fallback_reason`) and **the UI never issues `get_offsets` at all**, so nothing can tell the user the walker is running on unvalidated default offsets. | S / low |
 | **X4** | LOW | `MainWindowViewModel.cs:3373` | The Dump All completion line is derived from the **file's byte length** rather than from what the dump did, so a zero-class or half-failed dump still announces an export — and the figure itself is integer division (`Length / 1024 / 1024:F1`), so a 3.7 MB dump prints `3.0 MB` and anything under 1 MB prints `0.0 MB`. | S / low |
 | **X5** | LOW | `MainWindowViewModel.cs:2003` | The disconnect fan-out resets **3 of 15** panels; every other panel keeps its rows across a reconnect and goes on offering jumps to addresses from the previous process. | M / med |
 | **X6** | LOW | `MainWindowViewModel.cs:3336` | The three long-running export commands take no `CancellationToken`, so every `ct` check inside the services they drive is dead code. | M / low |
@@ -1475,12 +1475,12 @@ files (1,172 early lines) swept by pattern**, exactly as §1's phase plan specif
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **AF1** | MED | `Neu.h:94` (Neu::BuildLayout (FNameData57 branch)) | UEnum member count is range-checked AFTER a signed cast, so the whole upper half of the uint32 range passes and yields a NEGATIVE count | S / low |
+| **AF1** ✅ | MED | `Neu.h:94` (Neu::BuildLayout (FNameData57 branch)) | UEnum member count is range-checked AFTER a signed cast, so the whole upper half of the uint32 range passes and yields a NEGATIVE count | S / low |
 | **AF2** | MED | `DetectStatsViewModel.cs:158` (DetectStatsViewModel.DetectAsync) | Detect Stats stops live-probing after 30 classes, and the never-probed rows render identically to rows that were probed and had no live instance | S / low |
 | **AF3** | MED | `LiveFuncsViewModel.cs:210` (LiveFuncsViewModel.FetchAndPopulateAsync) | Live PE Profiler fetches only the top 300 functions but reports the DLL's FULL distinct count, and builds the diff baseline from the same truncated page — manufacturing false "NEW" rows | M / low |
 | **AF4** | MED | `LiveWalkerPanel.axaml.cs:76` (LiveWalkerPanel.OnDetached) | Live Walker tears down all six VM event subscriptions on visual-tree detach and never re-subscribes on re-attach | S / low |
 | **AF5** | MED | `MainWindow.axaml.cs:666` (MainTabs_SelectionChanged) | Per-tab activation routine re-runs on every bubbled child SelectionChanged, silently reverting the user's Class Pivot snapshot/pick selections | S / med |
-| **AF6** | MED | `PropertySearchPanel.axaml.cs:68` (PromptForceValueAsync (double.TryParse of the ) | The Force flow funnels the width-validated int64 literal through a double, and any parse failure is returned as "cancelled" | S / low |
+| **AF6** ✅ | MED | `PropertySearchPanel.axaml.cs:68` (PromptForceValueAsync (double.TryParse of the ) | The Force flow funnels the width-validated int64 literal through a double, and any parse failure is returned as "cancelled" | S / low |
 | **AF7** | LOW | `Denken.h:37` (Denken::NativeAnalysisResult::budgetHit) | Path-2 native disasm's "result may be partial" flag is written, logged, and then dropped before the wire — the Xref dialog shows a truncated field list as complete | S / low |
 | **AF8** | LOW | `Solide.cpp:128` (Solide::ReadNumeric (byte-width fallback)) | Int8Property is READ as unsigned while it is WRITTEN as signed, so a negative forced value never converges and the re-assert worker reports permanent drift against the game | S / low |
 | **AF9** | LOW | `Constants.cs:37` (Constants.MaxProcessFolders) | A COUNT cap silently deletes whole per-game log folders inside the 21-day window that CLAUDE.md says is the only retention rule | S / low |
@@ -1644,8 +1644,8 @@ finders did not over-rate anything. Three MEDs re-derived by hand.
 | **AE5** | MED | `ProxyDeployViewModel.cs:1073` (RefreshAsync) | IsScanning is READ as a global busy flag by six guards but WRITTEN by only three of eight operations - Refresh/Deploy/Undeploy/UpdateAll are invisible to every guard | S / low |
 | **AE6** | MED | `ProxyDeployViewModel.cs:1106` (DeploySelectedAsync / UndeploySelectedAsync / ) | The four file-mutating Proxy Deploy commands set no busy flag, only TEST one — so Deploy and Undeploy run concurrently over the same Binaries folder and both write the single result line | S / low |
 | **AE7** | MED | `ProxyDeployViewModel.cs:1233` (UpdateAllAsync) | UpdateAllAsync iterates the live Games ObservableCollection across awaits while a concurrent scan can Games.Clear() it - and the method has no catch, so the tally is never reported **[2 lenses]** | S / low |
-| **AE8** | MED | `ValueSearchViewModel.cs:752` (FirstScanAsync / NextScanAsync) | The DiagnosticsProbe is opened BEFORE the input validation, so every rejected click costs two get_diagnostics round-trips and logs a "Value Scan (First)" measurement for a scan that never ran | S / low |
-| **AE9** | MED | `ValueSearchViewModel.cs:906` (NewScanAsync / GroupNewScanAsync) | New Scan resets the internal sort key but not the bound Sort picker, and re-selecting the option the picker already shows is a silent no-op | S / low |
+| **AE8** ✅ | MED | `ValueSearchViewModel.cs:752` (FirstScanAsync / NextScanAsync) | The DiagnosticsProbe is opened BEFORE the input validation, so every rejected click costs two get_diagnostics round-trips and logs a "Value Scan (First)" measurement for a scan that never ran | S / low |
+| **AE9** ✅ | MED | `ValueSearchViewModel.cs:906` (NewScanAsync / GroupNewScanAsync) | New Scan resets the internal sort key but not the bound Sort picker, and re-selecting the option the picker already shows is a silent no-op | S / low |
 | **AE10** ✅ | MED | `ValueSearchViewModel.cs:951` (ValueSearchViewModel.IsGWorldAvailable) | The "stop gating Locate-in-GWorld on the client IsGWorldAvailable flag" fix is applied at Value Search only — **7** sibling VMs still gate on it, at 19 sites: 14 C# + 5 XAML (recounted 2026-08-15; the earlier "9" counted `LiveWalkerViewModel`'s write-only dead flag and `MainWindowViewModel`'s propagation assignments as gates) | M / low |
 | **AE11** | LOW | `AddressHelper.cs:41` (AddressHelper.FormatAddress (AddressFormat.Mod) | ModuleOffset formats a heap address as a wrapped RVA with no in-module check, producing a module-relative address that breaks on relaunch | S / low |
 | **AE12** | LOW | `IDumpService.cs:264` (IDumpService.BeginValueScanAsync) | Three doc comments assert native (non-UPROPERTY) fields are unreachable — 18 lines above the `nativeC` parameter that reaches them | S / low |
@@ -2007,7 +2007,7 @@ second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside t
 | **AB3** | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
 | **AB4** | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
 | **AB5** | MED | `Radar.cpp:797` (Radar::CompareVectorPredicate) | The FVector/FRotator scan is hardcoded to 3×float / 12 bytes, so it reads junk on every UE5 (LWC double) game — while the reflected 24-byte size is captured and thrown away | M / med |
-| **AB6** | MED | `Radar.cpp:1441` (BuildGroupOrderedView::slot0Num / slot0Offset) | Group sort keys read slotMatches[0][0] while the row displays slotMatches[0][picks[0]] — the grid orders by a leaf the user cannot see | S / low |
+| **AB6** ✅ | MED | `Radar.cpp:1441` (BuildGroupOrderedView::slot0Num / slot0Offset) | Group sort keys read slotMatches[0][0] while the row displays slotMatches[0][picks[0]] — the grid orders by a leaf the user cannot see | S / low |
 | **AB7** | MED | `Radar.h:384` (Radar::Candidate / Radar::InstanceRecord) | A scan session's candidate addresses are raw addresses used as IDENTITY across RPCs; the GObjects index is captured but never validated and no serial witness is stored | M / med |
 | **AB8** | LOW | `Heiter.cpp:41` (g_hAutoStartThread) | The auto-start thread handle is stored, never waited on and never closed; two comments assert a join that no code performs | S / low |
 | **AB9** | LOW | `Heiter.cpp:234` (DllMain → Sein::Init / Sein::InitProcessMirror) | DllMain does shell32 + unbounded recursive filesystem work (two directory sweeps and possibly a multi-GB remove_all) inline, under the loader lock | M / med |
@@ -2654,9 +2654,24 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**229 of 277 findings are still open** (48 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 69 MED ·
+**217 of 277 findings are still open** (60 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 57 MED ·
 133 LOW · 27 INFO**.
+
+> ✅ **Updated 2026-08-16 PM — twelve MEDs fixed in one session, builds 3016-3027** (the MED tier
+> went 69 → 57). In the recommended CLUSTER order rather than by segment, since the three named
+> families were already closed: **G1 · A5 · U7 · U8 · V7 · V6 · X3 · AB6 · AF1 · AF6 · AE9 · AE8**.
+> Each is one commit with its own negative control. Two things worth carrying forward:
+>
+> - **G1 → X3 is a pair and the order mattered.** G1 made `bOffsetsValidated` mean what
+>   `Grimoire.h:243` says; X3 then gave that verdict its first client. Wiring X3 first would have
+>   rendered a banner driven by a flag that was itself lying.
+> - **The fix-time sibling grep paid off in EIGHT of the twelve.** V7 named one panel and six were
+>   unbound; AE8 named one probe site and four had the shape; AE9, G1, U8 and AF6 each grew a
+>   second site the finding did not list. Keep running it — see §2's method notes.
+>
+> **A6 was re-derived, CONFIRMED, and deliberately NOT fixed** — it needs a product decision, not
+> code. See the block at the end of this section.
 
 > **Updated 2026-08-16: +5 findings (272 → 277), from re-deriving the parked UNVETTED lead, not from
 > a new scan.** Scanning is still complete at 12/12. `U12`–`U15` (D1 Ubel) and `W9` (U2 export
@@ -2747,7 +2762,12 @@ block, §2.
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | – | **69** | **133** | **27** | **229** |
+| **TOTAL** | – | **57** | **133** | **27** | **217** |
+
+> ⚠ **The per-segment MED counts in the table above are the pre-2026-08-16-PM numbers and were NOT
+> re-derived per row.** Twelve MEDs were fixed that afternoon (G1, A5, U7, U8, V7, V6, X3, AB6, AF1,
+> AF6, AE9, AE8) and they span D1, D2, D3, U1, U3, T1a, T1c and T1e. Only the TOTAL row is
+> authoritative — re-run the command at the top of this section rather than trusting a segment row.
 
 ### Fix order recommended
 
@@ -2958,6 +2978,59 @@ W5: CSX's `IsObjectPropertyType` excludes Weak and CE-XML gives it a hex leaf re
   thick — do not "fix" without checking what the resolver needs.
 
 ---
+
+### ⛔ A6 — CONFIRMED, and deliberately NOT FIXED. It needs a decision, not code (2026-08-16)
+
+Re-derived by hand while fixing the cluster ② batch. Both halves hold:
+
+- `Aura.cpp` sets `match.className = definingName`, so a row for an inherited field is keyed to
+  `AActor` and `Solide::ApplyJobLocked`'s `FindInstancesByClass(name, exactMatch=true)` resolves an
+  essentially empty pool. **`exactMatch=false` is NOT the answer** — it is a case-insensitive
+  SUBSTRING match on the class NAME (`Aura.cpp:1547`), not a derivation test, so "Actor" would
+  capture everything with "actor" in its name.
+- `PropertySearchViewModel.cs`'s own doc comment claimed the opposite — *"Uses the concrete matched
+  ClassName (not the base defining class)"*. **That comment is now corrected in the tree** (build
+  3027) because a false comment costs the next reader a re-derivation; the capability gap is not.
+
+**Why it is parked rather than fixed.** The repair is a product choice with no right default:
+
+| option | what it means | cost |
+|---|---|---|
+| (a) defining class **+ every subclass** | semantically what the row says (`inherited by 4822`) | changes the pool `force_field` writes to for EVERY existing caller, including the shipped, in-game-verified **Stealth Meter** card; needs a derivation-aware resolver in `Solide` with a per-class verdict cache |
+| (b) the one most-derived subclass observed | `previewClassAddr`, already computed and dropped before the wire | arbitrary — one BP class out of thousands |
+
+Today's behaviour is at least HONEST: the status line says *"0 live instances of Actor matched —
+nothing held."* So this is a **capability gap, not a corruption**, which is why it does not justify
+guessing in a session with no game running. **Ask the maintainer which semantics they want.**
+
+### ⚠ NEW UNVETTED LEAD, raised 2026-08-16 PM while fixing U8 — instance names drop `FName::Number`
+
+Found by U8's fix-time sibling grep, and it is the LARGER half of U8. `DecodeFNameBytes` closed the
+three byte-buffer decoders, but `dll/src` holds ~65 single-argument `Serie::GetString(idx)` call
+sites, ~19 of which read `obj + Grimoire::OFF_UOBJECT_NAME` on an **instance** and therefore drop
+`Number` the same way. UE names spawned objects `BP_Enemy_C_0` / `_1` / `_2` with the suffix stored
+IN `FName::Number`, so those sites render every instance of a class under one identical name.
+
+Two are user-visible and worth checking first: **`Aura.cpp:1557`** (Instance Finder's `objName`,
+which is ALSO what the object-name gate substring-matches against — so a user searching `Enemy_3`
+matches nothing) and **`Aura.cpp:1648`** (`FillLookupResult`'s `out.name`).
+
+**Do not sed this.** Class-name reads in the same loops are correct as-is (a class FName has
+`Number == 0` by construction), and `Genau`'s probe-time comparisons against literals like
+`"Vector"` / `"Guid"` are correct for the same reason. It needs a per-site pass, object-name vs
+class-name. The public helper to route the real ones through already exists: `Ubel::ReadFNameAt`.
+
+*Status: mechanism verified against the source; blast radius NOT measured. `docs/pipe-protocol.md`'s
+`Player_C_0` examples are illustrative, not captured output, so they are not evidence either way.*
+
+### ✅ Checked and BENIGN — do not re-raise (2026-08-16)
+
+`ReadFName` (`Ubel.cpp:77`) reading `Number` at `+4` is **correct even on case-preserving-FName
+games**. I raised this as a suspicion while fixing U8 — the tree derives the FName *size* from
+`bCasePreservingName` in eight places, so `+4` looked like it should be `+8` there — and the
+vendored engine refutes it: `NameTypes.h:1258-1267` declares `ComparisonIndex`, then `Number`, then
+the case-preserving `DisplayIndex`. The 0x10 FName is wider at the **tail**, so both fields we read
+sit at fixed offsets.
 
 ### ⚠ NEW UNVETTED LEAD, raised 2026-08-16 while FIXING U12–U15 — `TLazyObjectPtr` is not 0x20
 

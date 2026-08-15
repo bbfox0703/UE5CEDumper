@@ -327,6 +327,73 @@ All eleven HIGHs are fixed. These are what generalised out of doing them.
   export and read a data export. **Do not write that probe in PowerShell**: AMSI blocks a
   `LoadLibrary`/`GetProcAddress` P/Invoke script as malicious content.
 
+### 2.3 Fixing the MED tier — what twelve in one session taught (audit #5, builds 3016-3027)
+
+The HIGH-tier lessons in §2.2 all held. These are the ones that only showed up at MED volume.
+
+- **The fix-time sibling grep is not an optional polish step — it found MORE defects than the
+  findings did.** Eight of the twelve grew at least one extra site: V7 named one panel and six were
+  unbound, AE8 named one probe site and four had the shape, and G1/U8/AE9/AF6 each gained a second.
+  In no case did the finding's text hint at the sibling. Budget for it: the grep costs a minute and
+  changed the size of two thirds of these commits.
+- **A finding can be the SMALL half of its own defect.** U8 was "three open-coded FName decoders
+  drop `Number`". Fixing them made the grep obvious, and the grep found ~19 further sites reading an
+  *instance's* name the same way — a bigger, user-visible surface (the Instance Finder shows every
+  instance of a class under one name, and its name filter matches against that same truncated
+  string). When a fix is "route N call sites through one helper", ask what ELSE calls the thing the
+  helper wraps.
+- **Order two findings that touch the same fact.** G1 made `bOffsetsValidated` honest; X3 gave that
+  verdict its first UI client. Doing X3 first would have shipped a banner driven by a flag that was
+  itself lying — a green test and a visible feature, both meaningless.
+- **Check your own hypothesis against the vendored engine before treating it as a finding.** While
+  fixing U8 I was confident `ReadFName`'s `+4` Number read was wrong on case-preserving-FName games,
+  because the tree derives FName *size* from that flag in eight places. `NameTypes.h:1258-1267` says
+  ComparisonIndex, **Number**, then the case-preserving DisplayIndex — the 0x10 FName is wider at the
+  TAIL. §2's "raw finder output is ~52% wrong" applies to your own leads too.
+- **Refuse rather than silently substitute, when the honest fix is out of scope.** `force_field`
+  carries a `double` end to end (`Solide::AddForce(..., double)`), so a wide `Int64Property` cannot
+  be held exactly. Widening the wire is a DLL + protocol change; refusing with the substitute named
+  is one function. The bad option is the one that was there — write a different number and say
+  nothing.
+- **Two states cannot express three outcomes, and the missing one is always the interesting one.**
+  `double?` for a value prompt collapsed *cancel* and *rejected* into `null`, so a refused value was
+  reported to the user as "you pressed Cancel". Whenever a nullable return doubles as an error
+  channel, check what happens to the third case.
+- **A capability gap is not a corruption, and they get different treatment.** A6 is confirmed —
+  Force resolves an empty pool on inherited rows — but its status line already SAYS *"0 live
+  instances of Actor matched"*. The fix needs a product decision that would change what a shipped,
+  in-game-verified feature writes to. Correct the false comment (cheap, prevents the next
+  re-derivation); park the behaviour and ask.
+
+**Three C# numeric traps, all hit inside one fix** (AF6, deciding whether a `long` survives a
+`double`). Each looks obviously right and each is wrong:
+
+| expression | why it lies |
+|---|---|
+| `(long)asDouble != i64` | an out-of-range `double`→`long` **saturates** in .NET Core, so `long.MaxValue` reports itself unchanged — it fails on the exact input the check exists for |
+| `asDouble.ToString("F0") != i64.ToString()` | a formatting question, and it answers differently at the ends of the range |
+| `(decimal)asDouble != i64` | `double`→`decimal` **rounds to 15 significant digits**, so it rejects 2^53, which a `double` holds exactly |
+
+Range-guard first (`>= -2^63 && < 2^63`), *then* cast back — exact, and it accepts 2^53 and -2^63
+while rejecting 2^53+1 and `long.MaxValue`. **My first two test oracles had the same bugs as the
+code and disagreed with a correct implementation.** When every concise way to compute the oracle
+shares the code's failure mode, write the expectations out explicitly with the rule stated beside
+them.
+
+- **A test fixture can silently alias and report coverage it does not have.** AF1's loop wrote three
+  different headers to ONE address in `NeuFakeMem`, whose `Put` **appends** and whose `Read` returns
+  the FIRST region covering an address — so all three cases re-read the first value. It passed. The
+  tell came from the negative control: 6 failures (3 × 2 assertions) when only 2 of the 3 inputs can
+  actually slip through. **A negative control checks the test, not only the code** — an unexpected
+  failure COUNT is a finding.
+- **Assert the direction that could disable the thing.** Moving a probe (AE8) is an easy way to
+  delete it. "Not called on the rejected path" passes for a probe that no longer exists, so the
+  accepted path needs an assertion too.
+- **Existing tests that break are doing their job — read them before editing.**
+  `InitAsync_ParsesResponse` asserted the connect makes exactly 2 round-trips and X3 made it 3. The
+  right move was to update the number and say why in a comment, keeping it exact so an accidental
+  fourth is still caught — not to relax it to `>= 2`.
+
 -----
 
 ## 3. Traps in our own stack
