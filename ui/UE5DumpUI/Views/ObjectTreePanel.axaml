@@ -69,6 +69,12 @@
                  IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                  Margin="0,0,0,2"/>
 
+      <!-- Failure surface — see the note in LiveWalkerPanel.axaml (audit #5 V7). -->
+      <TextBlock Text="{Binding ErrorMessage}"
+                 Foreground="#F48771" FontSize="12" TextWrapping="Wrap"
+                 IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                 Margin="0,0,0,2"/>
+
       <!-- Class type + text filter -->
       <StackPanel Orientation="Horizontal" Spacing="4">
         <TextBlock Text="{StaticResource str.ObjectTree.ClassFilter}"

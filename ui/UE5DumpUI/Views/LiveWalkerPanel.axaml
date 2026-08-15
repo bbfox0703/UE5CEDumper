@@ -511,6 +511,15 @@
     <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}"
                Foreground="#AAB8D0" FontSize="11" Margin="4,0,0,2"
                IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+    <!-- Failure surface. This panel's VM calls SetError 28 times — including the
+         refresh path's 10 s hard timeout — and NOTHING rendered ErrorMessage, so a
+         dead refresh was pixel-identical to a live one while stale values kept
+         showing. ClearStatus() had already blanked StatusText above, so there was
+         not even a leftover line to contradict. (audit #5 U1/V7) -->
+    <TextBlock DockPanel.Dock="Top" Text="{Binding ErrorMessage}"
+               Foreground="#F48771" FontSize="11.5" TextWrapping="Wrap"
+               Margin="4,0,4,2"
+               IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
     <!-- Field list + Functions split -->
     <Grid RowDefinitions="*,Auto">
