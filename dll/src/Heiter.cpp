@@ -232,6 +232,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
 #endif
 
         Sein::Init();
+        // Decided from the host executable below, and read by the thread-start block that
+        // follows. Threads must not be created at all in a Cheat Engine host — see there.
+        bool startBackgroundThreads = true;
         {
             // Log which process loaded this DLL — distinguishes CE plugin
             // host (ce.exe) from game process injection in the log file.
@@ -243,6 +246,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             auto lastSlash = fullPath.find_last_of(L"\\/");
             std::wstring fileName = (lastSlash != std::wstring::npos)
                 ? fullPath.substr(lastSlash + 1) : fullPath;
+
+            // Same guard AutoStartBody already applies, hoisted here because the decision
+            // it drives is "create threads or not" and that has to be made BEFORE the
+            // threads exist. Fed the FULL path, which is what the tested helper takes —
+            // DllMain itself is unreachable from a test (audit #5 AB1).
+            startBackgroundThreads = HostAllowsBackgroundThreads(procPathW);
 
             // UTF-8 encode the WIDE path already in hand rather than asking Windows for a
             // narrow one. GetModuleFileNameA converts through the ANSI code page, which
@@ -269,18 +278,61 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             }
 #endif
         }
-        // Start mailbox polling thread (CE Lua shared memory interface).
-        // Runs in both proxy and inject modes — handles auto-init on first command.
-        Mimic::StartThread();
-
-        // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
-        // is set true by CEPlugin_InitializePlugin within 1 second.
-        // Store the handle so DLL_PROCESS_DETACH can wait for it to finish.
-        g_hAutoStartThread = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
-        if (g_hAutoStartThread) {
-            LOG_INFO("DllMain: auto-start thread created OK");
+        // ── Threads: never in a Cheat Engine host (audit #5 AB1) ──────────────────
+        //
+        // CE loads a plugin DLL and then UNLOADS it, repeatedly:
+        //   * Settings → Plugins → Add does LoadLibrary → CEPlugin_GetVersion →
+        //     FreeLibrary (cheat-engine 7.5, plugin.pas:1497 / :1522 / :1525), so the
+        //     refcount hits 0 microseconds after this function returns;
+        //   * every CE exit does FormClose → pluginhandler.free → UnloadPlugin →
+        //     FreeLibrary (plugin.pas:1417, MainUnit.pas:7832) — and that runs BEFORE CE
+        //     writes its settings, so a crash here also loses the user's CE config.
+        // docs/ce-plugin-api-reference.md already records the load/free cycle.
+        //
+        // Mimic's poller returns from Sleep(1) into our code at least every millisecond.
+        // If the image is unmapped underneath it that is an access violation on a thread
+        // with no handler — i.e. WE crash Cheat Engine, the user's main tool.
+        //
+        // AutoStartBody has always refused to do anything in a CE host, but the refusal
+        // lived INSIDE the thread it should have prevented, and the mailbox poller had no
+        // such check at all. DLL_PROCESS_DETACH cannot rescue this: its `reserved`
+        // parameter is unnamed, so it cannot tell a FreeLibrary unload from process exit,
+        // and joining threads from DETACH would deadlock under the loader lock anyway.
+        if (!startBackgroundThreads) {
+            LOG_WARN("DllMain: host is Cheat Engine — NOT starting the mailbox poller or "
+                     "the auto-start thread. CE FreeLibrary's plugin DLLs (on Settings→Add "
+                     "and on exit), and a thread left running in an unmapped image takes CE "
+                     "down with it. The CE-plugin entry points still work; they inject into "
+                     "the GAME, which is where the poller belongs.");
+            g_invokeMailbox.initState = Mimic::INIT_SKIPPED;
         } else {
-            LOG_ERROR("DllMain: CreateThread failed (error=%lu)", GetLastError());
+            // Our threads live in this image, so the image must not become unmappable
+            // while they run. Nothing in this repo calls FreeLibrary on us — but "nothing
+            // in this repo" is exactly the assumption AB1 falsified, and pinning costs one
+            // call. Deliberately NOT done in the CE branch above: with no threads running
+            // there is nothing to protect, and CE should stay free to unload us cleanly.
+            HMODULE pinned = nullptr;
+            if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN |
+                                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                    reinterpret_cast<LPCWSTR>(&DllMain), &pinned)) {
+                LOG_WARN("DllMain: module PIN failed (err=%lu) — a FreeLibrary of this DLL "
+                         "while the poller runs would unmap code that is executing",
+                         GetLastError());
+            }
+
+            // Start mailbox polling thread (CE Lua shared memory interface).
+            // Runs in both proxy and inject modes — handles auto-init on first command.
+            Mimic::StartThread();
+
+            // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
+            // is set true by CEPlugin_InitializePlugin within 1 second.
+            // Store the handle so DLL_PROCESS_DETACH can wait for it to finish.
+            g_hAutoStartThread = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
+            if (g_hAutoStartThread) {
+                LOG_INFO("DllMain: auto-start thread created OK");
+            } else {
+                LOG_ERROR("DllMain: CreateThread failed (error=%lu)", GetLastError());
+            }
         }
         break;
     }

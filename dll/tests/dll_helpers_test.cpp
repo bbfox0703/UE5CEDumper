@@ -3432,6 +3432,51 @@ static void Test_Grimoire_IsCheatEngineExeName() {
     EXPECT("null",                     !IsCheatEngineExeName(nullptr));
 }
 
+// AB1 (audit #5, HIGH) — DllMain started a 1 ms-poll thread in EVERY host including Cheat
+// Engine, and CE FreeLibrary's plugin DLLs (Settings->Plugins->Add does LoadLibrary ->
+// CEPlugin_GetVersion -> FreeLibrary; every CE exit unloads every plugin). A thread left
+// running in an unmapped image crashes CE.
+//
+// The guard EXISTED — IsCheatEngineExeName — and had exactly one call site, INSIDE the
+// thread it should have prevented from being created. The fix hoists the decision into
+// DllMain, and this test exists because DllMain itself is unreachable from any test: the
+// decision had to move somewhere a test can reach, taking the FULL path exactly as
+// GetModuleFileNameW(nullptr, ...) hands it over.
+static void Test_Grimoire_HostAllowsBackgroundThreads() {
+    std::printf("Test_Grimoire_HostAllowsBackgroundThreads\n");
+
+    // Refused for CE — full paths, because that is what the caller actually passes.
+    EXPECT("CE full path (the live-miss variant)",
+           !HostAllowsBackgroundThreads(
+               L"C:\\Program Files\\Cheat Engine 7.7\\cheatengine-x86_64-SSE4-AVX2.exe"));
+    EXPECT("CE plain x86_64 full path",
+           !HostAllowsBackgroundThreads(L"D:\\CE\\cheatengine-x86_64.exe"));
+    EXPECT("CE launcher shim full path",
+           !HostAllowsBackgroundThreads(L"C:\\Tools\\Cheat Engine.exe"));
+    EXPECT("bare leaf, no directory at all",
+           !HostAllowsBackgroundThreads(L"cheatengine-i386.exe"));
+    // A path can reach us with forward slashes; the leaf must still be found.
+    EXPECT("forward slashes",
+           !HostAllowsBackgroundThreads(L"C:/CE/cheatengine-x86_64.exe"));
+    EXPECT("mixed separators, last one wins",
+           !HostAllowsBackgroundThreads(L"C:\\Tools/CE\\cheatengine-x86_64.exe"));
+
+    // Allowed for anything else — the ONLY host we refuse is CE.
+    EXPECT("a real game",
+           HostAllowsBackgroundThreads(
+               L"D:\\Steam\\steamapps\\common\\DQ7R\\DQ7R-Win64-Shipping.exe"));
+    // The directory may say Cheat Engine while the executable does not: only the leaf counts.
+    EXPECT("CE in the DIRECTORY name, game as the leaf",
+           HostAllowsBackgroundThreads(L"C:\\Cheat Engine 7.7\\SomeGame.exe"));
+    EXPECT("substring is not enough",
+           HostAllowsBackgroundThreads(L"C:\\Games\\MyCheatEngineClone.exe"));
+
+    // FAILS OPEN. An unreadable host path must not silently disable the DLL for every
+    // game; the shipped behaviour for a non-CE host is what we preserve.
+    EXPECT("empty path fails open", HostAllowsBackgroundThreads(L""));
+    EXPECT("null path fails open",  HostAllowsBackgroundThreads(nullptr));
+}
+
 // B46 — HexToBytes could not fail, so write_mem could not report a bad pattern.
 static void Test_Renge_TryHexToBytes() {
     std::printf("Test_Renge_TryHexToBytes\n");
@@ -3825,6 +3870,7 @@ int main() {
 
     // Grimoire — Cheat Engine host detection (prefix, not an exact-name list)
     Test_Grimoire_IsCheatEngineExeName();
+    Test_Grimoire_HostAllowsBackgroundThreads();
 
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     Test_Renge_TryHexToBytes();

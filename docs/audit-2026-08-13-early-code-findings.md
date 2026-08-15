@@ -60,9 +60,69 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **U2** ✅ | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
 | **U3** ✅ | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
 | **U4** ✅ | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
-| **U5** | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
-| **S1** | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
-| **T1** | Tail sweep | every remaining file ≥50 early lines + the 53 never-touched-since-May files | ~10k | — |
+| **U5** ✅ | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
+| **S1** ✅ | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
+| **T1** | Tail sweep — **SPLIT into T1a–T1e, see below** | every remaining file ≥50 early lines + the never-touched-since-May files | ~9.4k | — |
+
+### T1 is split into five phases (decided 2026-08-15, re-measured twice)
+
+**Why split.** T1's own criterion — every remaining file with ≥50 early lines — is **9,390 early
+lines over 53 files**. That is **1.7× the largest segment ever run** (D1/Ubel, ~5,665) and ~3× the
+norm (~3,300). But size is the lesser reason. *Every prior segment was one subsystem*, so a lens
+could hold it in view and cross-check siblings — which is how this audit's best findings were made
+(`countsPartial` applied at some sites, L14 at 2 of 4, the detach line in 3 of 4 panels). T1 as one
+unit hands each lens **54 unrelated files across the DLL, its headers, the C++ test suite, UI
+ViewModels, Services, Models, Core and Views** — the exact condition that produced U5's failure mode
+(finders pad, skeptic goes lenient), and U5 was only *10* files. Phases are grouped by **shared
+contract, not by line count**, so the established method applies unchanged.
+
+| Phase | Contents | Early |
+|-------|----------|------:|
+| **T1a** ✅ | DLL value-scan engine — `Radar.cpp` 696, `Radar.h` 354, `Methode.cpp` 269, `Heiter.cpp` 185 | 1,504 |
+| **T1b** ✅ | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
+| **T1c** ✅ | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
+| **T1d** ✅ | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
+| **T1e** ✅ | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
+
+> **Why five and not six, and why the VMs merged.** Two corrections, both from re-measuring rather
+> than re-reasoning:
+> 1. **`PointerPanelViewModel.cs` (999 early) is already covered by U1** — U1's row reads
+>    "LiveWalker / Pointer / ObjectTree, 2900 + 999 + 360", and the 999 *is* this file. The first
+>    T1 sizing put it in the remainder because it checked a filename (`PointerViewModel.cs`) that
+>    **does not exist in the tree**. T1 drops 10,389→**9,390** and the VM phase drops 2,071→1,072.
+>    Validating that every name in a "covered" list actually resolves to a file costs one `os.path`
+>    loop and would have caught it immediately.
+> 2. **Per-phase cost is roughly FLAT, not proportional to lines.** S1 is the datapoint: 1,236 early
+>    lines cost ~25% of a quota window — about what the 3,500-line U5 cost — because the price is the
+>    fixed 5-lens + refute + second-lens structure, not the reading. So a 1,072-line phase costs
+>    nearly as much as a 2,900-line one, and splitting finely *wastes* budget. The 1,072-line VM
+>    group was therefore merged with Core + Models.
+
+**T1b is the one to prioritise if the budget runs out.** §0's entire thesis is that the C++ suite is
+two header-only test files that compile **no `.cpp` at all**. Auditing *those tests* — what they
+assert, and what they structurally cannot catch — belongs beside the headers defining the contracts
+they claim to test.
+
+> **Scope decision, recorded because it is worth 15k lines.** The **UI test project is OUT of scope**
+> and stays out. §0's area table has no `ui-tests` row, and that is not an oversight — reproducing
+> §0's published per-area numbers *requires* excluding both `ui/UE5DumpUI.Tests` and `.axaml`
+> (verified 2026-08-15: the reproduction lands on `scripts` 1,236 and `ui/Core` 806 **exactly**, and
+> within 2% everywhere else). Excluding it leaves **15,541 early lines over 142 test files**
+> unaudited. T1 pulls in only the test files caught by the "+ never-touched-since-May" clause. If the
+> maintainer ever wants the rest, it is a **separate T2**, not a T1 phase — adding it would more than
+> double T1.
+
+> **Re-measurement note (2026-08-15, build 2904).** §0's "~10k" for T1 is accurate *on §0's scope
+> rule*. A first re-measurement said 30,231 and was **wrong** — it had swept in tests and `.axaml`.
+> The lesson is §0's own: a number recorded without its conditions is not a measurement, and the
+> condition here is the scope predicate. Current totals on §0's rule: **49,612 early / 138,186 total
+> over 331 files** (§0 published 48,950 / 131,522 / 321 at build 2804 — the tree grew ~100 builds).
+> Covered by D1–D5 + U1–U5 + S1: **39,050 early over 51 files**. T1 remainder: **10,562 over 279
+> files**, of which 9,390 clear the ≥50 bar and 1,172 are the sub-50 tail. (Corrected from an earlier
+> 11,561/10,389 that wrongly counted `PointerPanelViewModel.cs` as unscanned — see the note under the
+> phase table.)
+> The never-touched-since-May list is now **46 files** (§0 recorded 53) — this audit's own fixes
+> touched seven of them.
 
 ### Method per segment
 
@@ -108,8 +168,8 @@ Map/Set defect; D1-3/D1-10 the same struct-preview defect; D1-8/D1-11 the same F
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **U1** | MED | `Ubel.cpp:4079`,`4103`,`4127`,`4155`,`4342`,`4374` (+UProperty twins `4212`,`4253`,`4277`,`4417`,`4446`) | Map/Set element sizes are read raw from `FPROPERTY_ELEMSIZE` and gated only on `> 0`, then used as a **per-element `std::vector` size** *and* as the TSparseArray stride. Every `ArrayProperty` path routes the identical read through `ValidateArrayElemSize` (cap 65536) precisely because this read is documented to return garbage. | S / low |
-| **U2** | MED | `Ubel.cpp:1373` + `1403` | `InferScalarSize` returns a hardcoded `8` for `NameProperty`, and `ValidateArrayElemSize` treats that as authoritative and **overrides the engine's correct 16** on `bCasePreservingName` games. | S / med |
+| **U1** ✅ | MED | `Ubel.cpp:4079`,`4103`,`4127`,`4155`,`4342`,`4374` (+UProperty twins `4212`,`4253`,`4277`,`4417`,`4446`) | Map/Set element sizes are read raw from `FPROPERTY_ELEMSIZE` and gated only on `> 0`, then used as a **per-element `std::vector` size** *and* as the TSparseArray stride. Every `ArrayProperty` path routes the identical read through `ValidateArrayElemSize` (cap 65536) precisely because this read is documented to return garbage. | S / low |
+| **U2** ✅ | MED | `Ubel.cpp:1373` + `1403` | `InferScalarSize` returns a hardcoded `8` for `NameProperty`, and `ValidateArrayElemSize` treats that as authoritative and **overrides the engine's correct 16** on `bCasePreservingName` games. | S / med |
 | **U3** | MED | `Ubel.cpp:1662` | `InterpretValue`'s StructProperty preview skips 8 bytes as a "vtable preamble" (USTRUCTs generally have no vtable) and reads UE5 LWC **doubles as floats**. Prints plausible-looking numbers that are not the struct's values. | M / low |
 | **U4** | MED | `Ubel.cpp:818` (+`1055`, `149`) | `WalkClass` `try_emplace`s its result **unconditionally**, including a zero-field `ClassInfo` from a transient read failure or a not-yet-`Link`ed UClass — and no `erase`/`clear` for either class cache exists anywhere in `dll/src`. The poisoned entry is returned for the rest of the process lifetime. | S / low |
 | **U5** | MED | `Ubel.cpp:683` | `s_walkClassCache` and `s_walkClassExCache` each retain a **full flattened** `ClassInfo` (14 `std::string`s per `FieldInfo`) per class ever walked, twice, unbounded, for the process lifetime. | M / med |
@@ -189,7 +249,7 @@ end-to-end; the raw output came back correspondingly disciplined (18 claims from
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **A1** | MED | `Aura.cpp:1370` | `GetSerialNumber` picks the serial offset with `s_itemSize >= 24 ? 0x10 : 0x0C`, a two-way split covering only strides 16 and 24 — but **stride 20 is reachable** (Avowed's packed `FUObjectItem`, via both `InitWithExtendedLayout` and the `{16,24,32,20}` sweep). At 20 it reads **`ClusterRootIndex`**, so `Ubel::ResolveWeakObjectPtr`'s bare `if (actualSerial != serialNumber) return 0;` declares **every** weak reference stale. Silent — nothing logs a mismatch. | S / low |
-| **A2** | MED | `Macht.h:302` *(D4 scope)* | `IsSparseIndexAllocated` judges slots 0..127 from the **stale inline bit words** once a `TSet`/`TMap` has spilled its `TBitArray` to the heap — affecting **13 Aura call sites + 6 in Ubel**, while `Aura::ResolveTMapBitArrayBase` gets the same rule right. A freed slot reads as live, so Find Refs can emit a phantom reference and `ScanForValue` admits a dead element's value. | S / low |
+| **A2** ✅ | MED | `Macht.h:302` *(D4 scope)* | `IsSparseIndexAllocated` judges slots 0..127 from the **stale inline bit words** once a `TSet`/`TMap` has spilled its `TBitArray` to the heap — affecting **13 Aura call sites + 6 in Ubel**, while `Aura::ResolveTMapBitArrayBase` gets the same rule right. A freed slot reads as live, so Find Refs can emit a phantom reference and `ScanForValue` admits a dead element's value. | S / low |
 | **A3** | MED | `Aura.cpp:6170` | `ScanForValue`'s struct-expansion cycle guard is **whole-walk instead of path-scoped**, so the 2nd and 3rd field of a repeated struct type are dropped from the scan index. Hits GAS directly — `FGameplayAttributeData Health/MaxHealth/Mana` share one `UScriptStruct`, so only `Health` is indexed. `CollectSchemaLeaves` (`4109`) already does it correctly. | S / low |
 | **A4** | MED | `Aura.cpp:6791` | Value Search's deep-container pass **drops every depth-1 leaf**, so values inside `TSet<FStruct>` / `TMap<K,FStruct>` elements are unreachable *even with Deep on* — the static index doesn't cover them either (`collectStructArrayInner` is only reached from the ArrayProperty branch). An everyday `TMap<FName, FItemData>` inventory count is unfindable. | M / low |
 | **A5** | MED | `Aura.cpp:4436` | Property Search's inline **Preview samples the CDO**, not a live instance, so the column shows the Blueprint default forever (Health = 100 while the player is at 37). `Solide.cpp:282`, `Wirbel.cpp:328` and `Edel.cpp:94` all already filter `Default__`. | S / low |
@@ -237,9 +297,9 @@ Run `wf_8f75b7cb-452`, 10 agents, 0 errors. 9 raw claims → **5 refuted** → 4
 > `int16_t`, which is correct on **both** on little-endian x64. Reading it as `int32` as originally
 > proposed would have picked up the flags on newer engines.
 
-| **M1** | MED | `Macht.h:314` | `ComputeSetElementStride` aligns to **4** and cannot express `alignof(T)`, so the documented `TMap` recipe omits the `TPair`'s **trailing padding**. Real stride is `Align(sizeof(TTuple<K,V>) + 8, max(alignof K, alignof V))`. `TMap<AActor*,float>` → computes **20**, real **24**; `TMap<FString,int32>` → **28** vs **32**; `TMap<UObject*,uint8>` → **20** vs **24**. Every element past index 0 is read at a wrong address. `TSet<T>` is unaffected (a bare `elemSize` is always a multiple of `alignof(T)`). | S / med |
-| **M2** | MED | `Macht.h:293` | `ReadTSparseArray` reads `NumFreeIndices` at **`+0x3C`**. The PDB-verified layout in this repo (`Aura.cpp:3037-3038`, Everspace 2 UE 5.4) puts `FirstFreeIndex` at `+0x30` and `NumFreeIndices` at **`+0x34`**; `+0x3C` is padding before the Hash allocator at `+0x40`, zero-initialised and never written. So it always reads **0**, and `Ubel.cpp:4045`'s `mapCount = MaxIndex - NumFreeIndices` **over-reports** the count of any `TMap`/`TSet` that has had entries removed (10 shown, 6 rows rendered). The header comment claiming `TSparseArray` is `0x40` bytes is also wrong — it is `0x38`. | S / low |
-| **M3** | MED | `Macht.h:332` | `ComputeMapValueOffset`'s size-guess fallback is taken for **every struct-valued TMap**, because `Scharf::RequiredAlignment` returns **0** for `StructProperty` (`Scharf.h:76-78`). It then guesses `valueSize >= 8 → align 8`. For `TMap<int32,FVector>` the real value sits at **+4** (alignof 4) but it reads **+8**, so *even element 0* shows a wrong vector; `TMap<int32,FGuid>` reads every value 4 bytes late. **A validation helper is being reused as a layout oracle.** | M / med |
+| **M1** ✅ | MED | `Macht.h:314` | `ComputeSetElementStride` aligns to **4** and cannot express `alignof(T)`, so the documented `TMap` recipe omits the `TPair`'s **trailing padding**. Real stride is `Align(sizeof(TTuple<K,V>) + 8, max(alignof K, alignof V))`. `TMap<AActor*,float>` → computes **20**, real **24**; `TMap<FString,int32>` → **28** vs **32**; `TMap<UObject*,uint8>` → **20** vs **24**. Every element past index 0 is read at a wrong address. `TSet<T>` is unaffected (a bare `elemSize` is always a multiple of `alignof(T)`). | S / med |
+| **M2** ✅ | MED | `Macht.h:293` | `ReadTSparseArray` reads `NumFreeIndices` at **`+0x3C`**. The PDB-verified layout in this repo (`Aura.cpp:3037-3038`, Everspace 2 UE 5.4) puts `FirstFreeIndex` at `+0x30` and `NumFreeIndices` at **`+0x34`**; `+0x3C` is padding before the Hash allocator at `+0x40`, zero-initialised and never written. So it always reads **0**, and `Ubel.cpp:4045`'s `mapCount = MaxIndex - NumFreeIndices` **over-reports** the count of any `TMap`/`TSet` that has had entries removed (10 shown, 6 rows rendered). The header comment claiming `TSparseArray` is `0x40` bytes is also wrong — it is `0x38`. | S / low |
+| **M3** ✅ | MED | `Macht.h:332` | `ComputeMapValueOffset`'s size-guess fallback is taken for **every struct-valued TMap**, because `Scharf::RequiredAlignment` returns **0** for `StructProperty` (`Scharf.h:76-78`). It then guesses `valueSize >= 8 → align 8`. For `TMap<int32,FVector>` the real value sits at **+4** (alignof 4) but it reads **+8**, so *even element 0* shows a wrong vector; `TMap<int32,FGuid>` reads every value 4 bytes late. **A validation helper is being reused as a layout oracle.** | M / med |
 
 **Why the composite was never caught:** `dll_helpers_test.cpp:2013-2033` exercises
 `ComputeSetElementStride` and `ComputeMapValueOffset` **separately**, and every case it picks happens
@@ -342,15 +402,15 @@ the old core instead, and that is where all eight landed.
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **F1** ‡ | MED | `Fern.h:30` (+ `Frieren.cpp:92`) | `~Fern() { Stop(); }` on a namespace-scope static makes the **entire pipe teardown** — cancel sweeps, watch joins, a **5-second** condition-variable drain and two thread joins — run from the CRT's static-destructor pass during `DLL_PROCESS_DETACH`: precisely the heavy work `Heiter.cpp:288-301` deliberately refuses to do there, and precisely the hazard `Routine.h:51-56` already documents for every *other* module's worker. At process exit `ExitProcess` has already terminated the connection threads, so they can never erase themselves from `m_conns` and the drain predicate is **unsatisfiable by construction** — the full budget burns every time. `Stop` also takes `m_connMutex`, Sein's log mutex and both Radar session mutexes *after* their holders were killed, which is the documented shape of a permanent exit hang. | S / low |
+| **F1** ✅ ‡ | MED | `Fern.h:30` (+ `Frieren.cpp:92`) | `~Fern() { Stop(); }` on a namespace-scope static makes the **entire pipe teardown** — cancel sweeps, watch joins, a **5-second** condition-variable drain and two thread joins — run from the CRT's static-destructor pass during `DLL_PROCESS_DETACH`: precisely the heavy work `Heiter.cpp:288-301` deliberately refuses to do there, and precisely the hazard `Routine.h:51-56` already documents for every *other* module's worker. At process exit `ExitProcess` has already terminated the connection threads, so they can never erase themselves from `m_conns` and the drain predicate is **unsatisfiable by construction** — the full budget burns every time. `Stop` also takes `m_connMutex`, Sein's log mutex and both Radar session mutexes *after* their holders were killed, which is the documented shape of a permanent exit hang. | S / low |
 | **F2** | MED | `Fern.cpp:854` (+ `:779`) | `Tot::ResetPerCommand()` runs **only** when a connection is accepted into an *empty* registry (`firstConn = m_conns.empty()`). The monitor latches `g_perCommand` when a pipe breaks, and nothing else ever clears it — so a reconnect that arrives while a dead session's connection is still registered (a bulk lane parked in `EnqueueInvoke`'s wait, up to the 600 s invoke timeout) carries the latch into the **new** session, permanently: the registry cannot go empty again until that session ends. Every cancellable loop then bails on its first poll and returns an empty or partial result **inside a successful response** — `find_instances` 0 rows, `search_properties` truncated, `begin_value_scan` empty. Second lens confirmed it and called it understated: `Stark.h:87-89` advertises the very guard that would have killed the claim, and it does not cover this path. | M / med |
-| **FR1** | MED | `Frieren.cpp:767` | `UE5_AutoStart` **discards `UE5_Init`'s return** behind the comment `// Always succeeds (partial init is OK …)` and unconditionally starts the pipe server and publishes `initState = INIT_READY` — a state the enum defines as "init finished **and** the pipe server is up". `UE5_Init` has a real `return false` (a shutdown landing during the multi-second scan; pointers partial, nothing latched). End state: a serving pipe, `s_initialized == false`, engine pointers from an aborted scan, and **no mailbox poller** (`Mimic::StopThread` already ran and `StartThread`'s only other caller is `DllMain`) — so every CE `.CT` feature row writes a command nobody collects and `status` stays `0`, which CLAUDE.md's own rule tells the user means *"stale `g_invokeMailbox` address"*. Sends the user to the wrong diagnosis. Second lens proved the comment stale **by history**: `af7ff3a` (2026-03-02) deleted the old `if (!UE5_Init()) return false;` when it was correct; `ab66d54` (2026-08-04, audit #4 B49) added the `return false` five months later without revisiting the call site. | S / low |
+| **FR1** ✅ | MED | `Frieren.cpp:767` | `UE5_AutoStart` **discards `UE5_Init`'s return** behind the comment `// Always succeeds (partial init is OK …)` and unconditionally starts the pipe server and publishes `initState = INIT_READY` — a state the enum defines as "init finished **and** the pipe server is up". `UE5_Init` has a real `return false` (a shutdown landing during the multi-second scan; pointers partial, nothing latched). End state: a serving pipe, `s_initialized == false`, engine pointers from an aborted scan, and **no mailbox poller** (`Mimic::StopThread` already ran and `StartThread`'s only other caller is `DllMain`) — so every CE `.CT` feature row writes a command nobody collects and `status` stays `0`, which CLAUDE.md's own rule tells the user means *"stale `g_invokeMailbox` address"*. Sends the user to the wrong diagnosis. Second lens proved the comment stale **by history**: `af7ff3a` (2026-03-02) deleted the old `if (!UE5_Init()) return false;` when it was correct; `ab66d54` (2026-08-04, audit #4 B49) added the `return false` five months later without revisiting the call site. | S / low |
 | **F3** | MED | `Fern.cpp:1068` (+ `:1717`, `:4773`) | `Ubel`'s per-UObject name cache is keyed by a **raw `uintptr_t` with no generation/serial**, is never revalidated on hit, and Fern owns its only two purge sites — `begin_snapshot` and `trigger_scan`, neither reachable from ordinary browsing. The last-connection teardown at `:1068` drops Radar sessions, Linie, Sense and Schlacht but **not** this; nor does `Fern::Stop`, nor a CE Disable/Enable. After a level change recycles a UObject slot, every name-bearing response — Object Tree rows, `walk_instance`'s own/outer name, every ObjectProperty target — serves the **destroyed** object's name for the rest of the process's life, while the class is read fresh, so the two disagree with no error anywhere. Only restarting the game clears it. **Cluster ③, exactly.** | S / low |
-| **F4** | MED | `Fern.cpp:2645` (+ batch twin) | `Aura::SearchProperties` stops the GObjects walk the instant `results.size()` reaches `maxResults` (**200** by default from the UI) and also breaks on `Tot::Requested()`; the reply carries `total` = the capped row count with **no `truncated` and no aborted flag**. Worse, `scanned_objects` is echoed from a field Aura assigns to the **full** object count *before* the loop starts (`Aura.cpp:4179`), so a walk that stopped a few percent in reports the whole pool as scanned. The panel prints *"Found 200 properties in 3,412 classes (scanned 1,204,338 objects)"*; the user's client-side filter then finds nothing and they conclude the field does not exist. **This is the exact shape behind four "the scan missed my field" reports.** | S / low |
+| **F4** ✅ | MED | `Fern.cpp:2645` (+ batch twin) | `Aura::SearchProperties` stops the GObjects walk the instant `results.size()` reaches `maxResults` (**200** by default from the UI) and also breaks on `Tot::Requested()`; the reply carries `total` = the capped row count with **no `truncated` and no aborted flag**. Worse, `scanned_objects` is echoed from a field Aura assigns to the **full** object count *before* the loop starts (`Aura.cpp:4179`), so a walk that stopped a few percent in reports the whole pool as scanned. The panel prints *"Found 200 properties in 3,412 classes (scanned 1,204,338 objects)"*; the user's client-side filter then finds nothing and they conclude the field does not exist. **This is the exact shape behind four "the scan missed my field" reports.** | S / low |
 | **F5** | LOW | `Renge.h:282` (+ `Fern::WriteLine`) | `MakeResponse` builds a 3-key envelope then `res.merge_patch(data)`; nlohmann's merge_patch assigns non-object values **by copy**, so a payload a handler carefully built with `std::move` is deep-copied in full — then `WriteLine` materialises a second copy of the serialized string solely to append `"\n"`. Peak ≈ 2× DOM + 2× string, **in the game process's heap**, on `snapshot_chunk` (8192 objects), `find_instances` (50000 cap) and `list_all_functions` (100000 default). | S / low |
-| **F6** | LOW | `Fern.cpp:2510` | `walk_world` clamps the Actors loop to the caller's `limit` (the UI sends **500**) and reports `actors.size()` as the level's actor count — the real `actorArr.Count` is read one line earlier and **discarded** — with no `truncated`/`total`, so a 500-actor page is indistinguishable from a 500-actor level and an actor at index 1877 simply is not there. Two sibling failures in the same block (Actors field unresolved; `ReadTArray` fails) also return `actors: []` with `ok:true` and **no `error`**, even though this same handler sets `data["error"]` for the two failures directly above. | S / low |
+| **F6** ✅ | LOW | `Fern.cpp:2510` | `walk_world` clamps the Actors loop to the caller's `limit` (the UI sends **500**) and reports `actors.size()` as the level's actor count — the real `actorArr.Count` is read one line earlier and **discarded** — with no `truncated`/`total`, so a 500-actor page is indistinguishable from a 500-actor level and an actor at index 1877 simply is not there. Two sibling failures in the same block (Actors field unresolved; `ReadTArray` fails) also return `actors: []` with `ok:true` and **no `error`**, even though this same handler sets `data["error"]` for the two failures directly above. | S / low |
 | **F8** ¤ | MED | `Fern.cpp:2510` (same handler as F6) | **`ULevel` has no reflected `Actors` property on this engine, so `walk_world` enumerates nothing — always.** Found while verifying F6: the fix's new error string named the branch (`actorsOffset < 0`, not a failed read), and walking the live `ULevel` instance confirms it — **29 fields, 7 `ArrayProperty`, none called `Actors`** (`ModelComponents` @208, `NavDataChunks` @264, `StreamingTextures` @320, `DestroyedReplicatedStaticActors` @768; the only `*Actor*` names are `ActorCluster` and `LevelScriptActor`, both `ObjectProperty`). `walk_world`'s entire actor enumeration is built on finding that property by reflection, so on this engine Live Walker's "Load GWorld" shows a populated level as empty. `ULevel::Actors` is a real native member — the fix is a native-offset read (the `Ubel::GuessGapTypes` machinery already exists for exactly this), not more reflection. **CONFIRMED AT THE SOURCE.** `vendor/UnrealEngine/Engine/Source/Runtime/Engine/Classes/Engine/Level.h:428-429` declares `TArray<TObjectPtr<AActor>> Actors;` with **no `UPROPERTY()`** — a plain C++ member the engine never reflects. Our walker is not dropping it: `DestroyedReplicatedStaticActors` (`Level.h:887`), which IS a `UPROPERTY`, appears in the field list we read. So `walk_world`'s reflection-based lookup **cannot ever have worked**, on any engine matching this source, and the feature has been silently returning an empty world since it was written. The alternative hypothesis — "our class walker is truncating the field list", which would have been far worse — is dead. **Reproduced on a second, unrelated title.** Solarpunk (commercial, different engine build) in the 2026-08-14 session: `TX {"cmd":"walk_world","limit":500,...}` → `RX {"actor_count":0,"actors":[],"ok":true,"world_name":"MainLevel",...}`. **2 of 2 games tested return nothing**, so this is not a DumperTest artifact and may not be version-specific at all. *Honest limit: two captures is not a survey — what is established is that it fails on both engines we have evidence for, not the size of the affected range.* | M / med |
-| **F7** | LOW | `Fern.cpp:5042` | The `-7` response text reads *"(hook not active, direct call used)"*. `-7` is produced **only** by `Stark::EnqueueInvoke`'s inactive-hook guard or by `Stark::Shutdown` draining the queue — **neither executes ProcessEvent by any route**; the direct fallback lives on the other side of the `if (Stark::IsHookActive())` branch and returns 0/-2/-3/-4/-8. The string reports an execution that provably did not happen, and the dialog still shows `result_hex` — the untouched pre-call buffer. `-8` has no mapping at all. | S / low |
+| **F7** ✅ | LOW | `Fern.cpp:5042` | The `-7` response text reads *"(hook not active, direct call used)"*. `-7` is produced **only** by `Stark::EnqueueInvoke`'s inactive-hook guard or by `Stark::Shutdown` draining the queue — **neither executes ProcessEvent by any route**; the direct fallback lives on the other side of the `if (Stark::IsHookActive())` branch and returns 0/-2/-3/-4/-8. The string reports an execution that provably did not happen, and the dialog still shows `result_hex` — the untouched pre-call buffer. `-8` has no mapping at all. | S / low |
 
 ### D5 — LIVE VERIFIED 2026-08-14, headless, on packaged `DumperTest` (Shipping, DLL build 2812)
 
@@ -1327,7 +1387,683 @@ MEDIUM.
 
 -----
 
+### T1e — Views code-behind + app root + the sub-50 tail — ✅ scanned 2026-08-15 — **AUDIT #5 SCANNING COMPLETE**
+
+**12 agents** (2 deep lenses on the head + 3 grep-driven sweeps over the tail → 3 refute batches →
+4 second-lens batches), 0 errors. Scope: **5 head files (628 early lines) read properly + 226 tail
+files (1,172 early lines) swept by pattern**, exactly as §1's phase plan specified — a deep read of
+226 five-line files is waste.
+
+**32 raw → 30 distinct → 3 refuted → 0 killed by the second lens → 27 confirmed. Kill rate 10%.**
+
+**Tally: 0 HIGH · 6 MED · 17 LOW · 4 INFO.**
+
+> ### ⚠ 10% — the lowest kill rate of the entire audit
+>
+> Below S1's 14%. **Nothing below MED here is vetted.** The grep-sweep design is the likely cause and
+> it cuts both ways: it surfaces real signature hits cheaply, but a hit that a deep read would have
+> dismissed in context reaches the skeptic looking plausible. Treat the 17 LOWs and 4 INFOs as
+> **leads produced by a pattern search**, not as findings.
+
+> ### 🔍 The second lens corrected the FIRST SKEPTIC — the best adversarial work in the audit
+>
+> On AF1, the first skeptic decoded Avalonia's shipped IL by hand (RVA→file offset, method header, IL
+> bytes) and found `SelectingItemsControl.SelectionChangedEvent` and `DataGrid.SelectionChangedEvent`
+> both registering with `ldc.i4.4` = `RoutingStrategies.Bubble`. It then concluded **both** reach the
+> handler. The second lens read the same evidence and drew the opposite — correct — conclusion:
+> `DataGrid` **Registers a new RoutedEvent** rather than `AddOwner`-ing the existing one, and
+> Avalonia keys handlers by RoutedEvent *instance*, so the two are **disjoint routes**. TeleportPanel's
+> `CoordGrid` therefore does **not** reach this handler; `ComboBox`/`ListBox` (which derive from
+> `SelectingItemsControl`) do.
+>
+> So the finding survives on a narrower and correct mechanism. **A skeptic that measures can still
+> misread its own measurement** — which is the argument for the second lens existing at all, and the
+> second time this audit has seen it (T1c/AE1 was the first).
+>
+> **AF1 itself, hand-verified:** `MainWindow.axaml:420` attaches `MainTabs_SelectionChanged` to the
+> **outer** `TabControl`; the handler guards only on `sender is not TabControl` and `DataContext is
+> not MainWindowViewModel` — **zero** `e.Source` / `e.Handled` / `OriginalSource` checks (grep count:
+> 0). Its own remark at `:551` says *"inner SelectionChanged events bubbling from child grids are
+> harmless"* — which defends the **tag read** and not the side-effect body, so picking an older
+> snapshot in Class Pivot's ComboBox re-fires the whole per-tab activation routine and
+> `RefreshAsync` snaps `SelectedSnapshot` back to `Snapshots[0]`. Root cause **#6** again — now
+> **6 for 6**, and it found the lead finding in three consecutive phases (T1a, T1b, T1e).
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AF1** | MED | `Neu.h:94` (Neu::BuildLayout (FNameData57 branch)) | UEnum member count is range-checked AFTER a signed cast, so the whole upper half of the uint32 range passes and yields a NEGATIVE count | S / low |
+| **AF2** | MED | `DetectStatsViewModel.cs:158` (DetectStatsViewModel.DetectAsync) | Detect Stats stops live-probing after 30 classes, and the never-probed rows render identically to rows that were probed and had no live instance | S / low |
+| **AF3** | MED | `LiveFuncsViewModel.cs:210` (LiveFuncsViewModel.FetchAndPopulateAsync) | Live PE Profiler fetches only the top 300 functions but reports the DLL's FULL distinct count, and builds the diff baseline from the same truncated page — manufacturing false "NEW" rows | M / low |
+| **AF4** | MED | `LiveWalkerPanel.axaml.cs:76` (LiveWalkerPanel.OnDetached) | Live Walker tears down all six VM event subscriptions on visual-tree detach and never re-subscribes on re-attach | S / low |
+| **AF5** | MED | `MainWindow.axaml.cs:666` (MainTabs_SelectionChanged) | Per-tab activation routine re-runs on every bubbled child SelectionChanged, silently reverting the user's Class Pivot snapshot/pick selections | S / med |
+| **AF6** | MED | `PropertySearchPanel.axaml.cs:68` (PromptForceValueAsync (double.TryParse of the ) | The Force flow funnels the width-validated int64 literal through a double, and any parse failure is returned as "cancelled" | S / low |
+| **AF7** | LOW | `Denken.h:37` (Denken::NativeAnalysisResult::budgetHit) | Path-2 native disasm's "result may be partial" flag is written, logged, and then dropped before the wire — the Xref dialog shows a truncated field list as complete | S / low |
+| **AF8** | LOW | `Solide.cpp:128` (Solide::ReadNumeric (byte-width fallback)) | Int8Property is READ as unsigned while it is WRITTEN as signed, so a negative forced value never converges and the re-assert worker reports permanent drift against the game | S / low |
+| **AF9** | LOW | `Constants.cs:37` (Constants.MaxProcessFolders) | A COUNT cap silently deletes whole per-game log folders inside the 21-day window that CLAUDE.md says is the only retention rule | S / low |
+| **AF10** | LOW | `Program.cs:27` (Program.Main) | Main discards the process exit code, so the deliberate Shutdown(1) on the second-instance path reports success | S / low |
+| **AF11** | LOW | `CoordinateLibraryStore.cs:43` (CoordinateLibraryStore..ctor) | A third unbounded per-game file family writes to the app-data ROOT, bypassing AppDataFolderMaintenance -- and Constants.cs asserts it does not exist **[2 lenses]** | M / low |
+| **AF12** | LOW | `GroupMatch.cs:285` (GroupMatch.Run) | The "shared per-slot cap" invariant the comment insists on is broken the moment the user changes the live cap | S / low |
+| **AF13** | LOW | `GroupMatch.cs:302` (GroupMatch.Run (per-slot cap truncation)) | Snapshot group match truncates a slot at 256 leaves with no signal of any kind — the DLL sibling at least logs it | S / low |
+| **AF14** | LOW | `MovementScriptGenerator.cs:163` (MovementScriptGenerator.EmitGravDirBlock) | Gravity-direction emitter writes X through CeMailboxLayout.OffParamsData but Y and Z at raw 0x330 / 0x338 in the same statement group | S / low |
+| **AF15** | LOW | `TeleportViewModel.cs:3914` (TeleportViewModel.PushCoordLuaNoDllAsync / Sav) | The coordinate-library "N group(s) had no radio button" disclosure is emitted at 1 of the 3 export call sites; the other two discard it with `out _` | S / low |
+| **AF16** | LOW | `DetectStatsPanel.axaml.cs:14` (DetectStatsPanel..ctor) | Four panels break the AOT sort rule their sibling panels' comments spell out — column headers are clickable and do nothing in the shipped trimmed build | M / low |
+| **AF17** | LOW | `DetectStatsPanel.axaml.cs:14` (DetectStatsPanel..ctor) | Detect Stats panel makes no WireSortComparers call at all; two of its seven sortable columns sort on a path no binding roots | S / low |
+| **AF18** | LOW | `FunctionPropsDialog.cs:165` (FunctionPropsDialog.BuildUi (_grid)) | Code-built xref grid enables sorting on six template columns with no CustomSortComparer — every header is dead under AOT | S / low |
+| **AF19** | LOW | `LiveFuncsPanel.axaml.cs:15` (LiveFuncsPanel.ResultsSortComparers) | Live Funcs comparer dictionary omits MeanPeriodMs, leaving the Period column — the point of the Phase E cadence feature — unsortable under AOT | S / low |
+| **AF20** | LOW | `LiveWalkerPanel.axaml.cs:44` (LiveWalkerPanel (ctor) / WireSortComparers) | AOT sort comparers are wired onto 1 of the file's 3 DataGrids; FunctionGrid's "Params" column breaks the repo's own documented AOT sort rule and its header is a silent no-op in the shipped binary **[2 lenses]** | S / low |
+| **AF21** | LOW | `MainWindow.axaml.cs:276` (IsSnapshotPositionAcceptable) | Window-placement guard feeds DIP sizes to a helper documented as taking physical pixels, so on a HiDPI monitor a legitimately-placed window is rejected and its position stops being tracked | S / low |
+| **AF22** | LOW | `PropertySearchPanel.axaml.cs:57` (PromptForceValueAsync) | The "Force value…" flow shows the Freeze dialog verbatim, so the button the user clicks says "Create freeze script" while the action writes and holds the field on every live instance | S / low |
+| **AF23** | LOW | `PropertyXrefDialog.cs:270` (PropertyXrefDialog.BuildUi (_grid)) | Property-xref grid: same six-template-column sort surface, also never wired to a comparer | S / low |
+| **AF24** | INFO | `ObjectTreeFilter.cs:58` (ObjectTreeFilter.MatchesAllTerms) | NEGATIVE RESULT — four of the tail helpers most likely to be half-applied are in fact fully applied | S / low |
+| **AF25** | INFO | `CeMailboxLayout.cs:94` (CeMailboxLayout (Cmd opcodes)) | The canonical mailbox-layout class names Teleport as one of its consumers but carries no Teleport opcode; two generators hardcode 8 instead | S / low |
+| **AF26** | INFO | `ViewLocator.cs:15` (ViewLocator.Build) | NEGATIVE RESULT — the AOT/trim reflection sweep over all 226 tail files came back clean | S / low |
+| **AF27** | INFO | `ViewLocator.cs:23` (ViewLocator.Build) | Negative result on the AOT name-resolution trap -- but Match accepts 22 ViewModel types while Build handles 6 | S / low |
+
+> **Hand-verified:** AF1. **Not re-derived:** the other 5 MEDs, 17 LOWs and 4 INFOs — and at a 10%
+> kill rate over a grep-driven sweep, that caveat is heavier here than anywhere else in the audit.
+
+-----
+
+## 2z. Scanning is COMPLETE — 12 of 12 segments, 2026-08-13 → 2026-08-15
+
+Every segment in §1's plan has been scanned. **No segment remains.**
+
+| Segment | Raw → distinct | Kill rate | HIGH / MED / LOW / INFO |
+|---------|---------------|----------:|-------------------------|
+| D1 Ubel | 27 → 11 | 48% | 0 / 8 / 3 / 0 |
+| D2 Genau+Serie · D3 Aura · D4a · D4b · D5 | see each block | 44–73% | — |
+| U1 LiveWalker/Pointer/ObjectTree | 18 | 33% | **1** / … |
+| U2 Export services | 16 | 25% | 2 / … |
+| U3 Dump + MainWindow VM | 18 | 33% | 0 / … |
+| U4 Dialogs + CE generators | 15 | 0% | **1** / … |
+| U5 Remaining VMs/Models/Core | 30 → 19 | 20% | 0 / 3 / 14 / 2 |
+| S1 Early Lua | 65 → 36 | 14% | **3** / 17 / 14 / 2 |
+| T1a Radar + entry points | 35 → 30 | 23% | **2** / 5 / 12 / 4 |
+| T1b DLL headers + C++ tests | 40 → 34 | 21% | **2** / 4 / 15 / 6 |
+| T1c VMs + Core + Models | 46 → 34 | 15% | 0 / 10 / 15 / 4 |
+| T1d UI Services | 30 → 26 | 35% | 0 / 2 / 10 / 5 |
+| T1e Views + root + tail | 32 → 30 | 10% | 0 / 6 / 17 / 4 |
+
+**The three findings a reader should start from**, all hand-verified against the source:
+
+1. **T1a/AB1 — our DLL crashes Cheat Engine** on a documented install path. `DllMain` starts a
+   1 ms-poll thread unconditionally; CE `FreeLibrary`s plugin DLLs; `DllMain`'s `lpReserved` is
+   commented out so DETACH cannot tell unload from process-exit; nothing pins the module.
+2. **T1b/AD1 — a C++ test target that fails to COMPILE is reported as "skip" and the build exits 0**,
+   in CI too. Latent today (the control confirmed the suite runs), but it silently disarms ~700
+   assertions the moment a test stops compiling.
+3. **S1/the freeze helper — a bool freeze writes a WHOLE BYTE over a bit-packed `FBoolProperty`**,
+   20×/sec, while the DLL sibling reached from the same Property Search row writes only the bit.
+
+**Two defect FAMILIES account for more findings than any single subsystem**, and both are greppable:
+- **The width family** (an out-of-range value masked to the field width and reported as written):
+  **W6, Y2, Y9, Y15, Y16, AE1** — six findings, four subsystems. At every site the correct width was
+  in scope and simply not enforced. *(This line originally said "AE9" — a misnumbering; T1c's table
+  assigns the `FieldValueConverter.cs` width finding the ID **AE1**, and AE9 is the Sort-picker
+  no-op. Corrected 2026-08-15.)*
+- **Root cause #4, a fix applied at only some of its sites**: **V2, W4/W6, X1, Y16, AC2, AE10** —
+  seven occurrences, and **AC2 is this audit's own Y7 fix at 1 of 5 consumers**.
+
+**The single most productive technique was the comment sweep** — grep for a comment admitting a
+limitation or asserting an impossibility, then check it. **6 for 6**, and it produced the lead
+finding in T1a, T1b and T1e.
+
+**Harness lessons, measured:** merge claims by location **in the script** (asking the model does not
+work — S1 marked zero while 14 locations were multi-lens); cost scales with **claims found**, not
+lines read (S1: 31 agents for 1,236 lines; T1a: 11 for 1,504); and **tightening the skeptic's rubric
+does not raise its kill rate** — S1's was the strictest written and killed the least.
+
+-----
+
+### T1c — remaining UI ViewModels + Core + Model DTOs — ✅ scanned 2026-08-15
+
+**13 agents** (5 lenses → 4 refute batches → 4 second-lens batches), 0 errors, over 22 files /
+2,889 early lines. **46 raw → 34 distinct** (**12 folded in-script — the highest yet**) **→ 3 refuted
+→ 2 killed by the second lens → 29 confirmed. Kill rate 15%.**
+
+**Tally: 0 HIGH · 10 MED · 15 LOW · 4 INFO.** No inflated HIGHs this time — the first phase where the
+finders did not over-rate anything. Three MEDs re-derived by hand.
+
+> ### ⚠ 15% kill rate — low again, and the LOWs are unvetted
+>
+> Only S1 (14%) was lower. **Nothing below MED here has been re-derived**; treat the 15 LOWs and 4
+> INFOs as leads, not findings. What *did* work well is the pipeline's ability to **correct a
+> mechanism instead of passing it through**: on AE1 both the skeptic and the second lens killed the
+> finder's headline race (both commands route to the same FIFO interactive lane, so the interleaving
+> it needed cannot occur) and kept the finder's *own* secondary trigger, which is real. That is the
+> stage doing its job even at a low kill count.
+
+> ### The two patterns that keep recurring, now at four and seven occurrences
+>
+> **AE1 — the width family reaches a FOURTH subsystem** *(this paragraph originally said "AE9", but
+> the table above numbers this finding AE1 — corrected 2026-08-15)*. `FieldValueConverter.cs:198` writes an
+> enum-backed field as `1 => new[] { (byte)(rawValue & 0xFF) }` (and `& 0xFFFF` / `& 0xFFFFFFFF` for
+> the wider cases) — verified by hand. An out-of-range value is **masked to the field width and the
+> untruncated number is reported as written**, which is Y9's defect (`9999` accepted for a `uint8`,
+> game gets `15`) in a different file. The family now spans **W6, Y2, Y15, Y16, Y9 and AE9**, and in
+> every case the correct width was in scope and simply not enforced.
+>
+> **AE10 — root cause #4's SEVENTH occurrence.** The "stop gating Locate-in-GWorld on the client
+> `IsGWorldAvailable` flag" fix is applied at Value Search only. Verified: `IsGWorldAvailable` has
+> **37 references across 12 ViewModels**. The running list is now V2, W4/W6, X1, Y16, AC2 (the
+> audit's own Y7 fix at 1 of 5) and AE10. §3b's "grep for siblings before closing a fix" rule was
+> written after the fourth; the fact that three more have appeared since says the rule is still not
+> being applied *at fix time*.
+
+> **AE1 is worth reading before fixing anything in Class/Struct.** `ClassStructViewModel.cs:218`
+> latches `_lastLoadedNodeAddress = node.Address` **before** dispatching the walk, and
+> `LoadClassAsync`'s `catch` never resets `HasClass`. So a failed walk leaves the key naming node B
+> while the grid still shows class A's names, offsets and FProperty addresses — and the entry guard
+> `if (_lastLoadedNodeAddress == node.Address && HasClass) return;` then makes **re-selecting B a
+> no-op**. Two aggravations the second lens established independently: the panel binds **no**
+> ErrorMessage/HasError at all, so `SetError` writes to a property this panel never renders (the
+> failure is completely silent); and nothing resets either field on connect/disconnect, so it
+> **survives a reconnect**. The user copies A's offsets into CE believing they are B's.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AE1** | MED | `FieldValueConverter.cs:198` (FieldValueConverter.TryConvertByte / TryConver) | An enum-backed field silently truncates an out-of-range value and reports the untruncated number as written | S / low |
+| **AE2** | MED | `ClassStructViewModel.cs:192` (OnObjectSelected) | Object-Tree selection drives Class/Struct through an async-void handler with NO generation guard, and the two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node | S / low |
+| **AE3** | MED | `ClassStructViewModel.cs:218` (OnObjectSelected) | The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry **[2 lenses]** | S / low |
+| **AE4** | MED | `ProxyDeployViewModel.cs:236` (OnSelectedProxyTypeChanged / RefreshAfterTypeC) | Two rapid proxy-radio clicks race two fire-and-forget refreshes; the loser's proxy type wins the grid and nothing ever re-runs | S / low |
+| **AE5** | MED | `ProxyDeployViewModel.cs:1073` (RefreshAsync) | IsScanning is READ as a global busy flag by six guards but WRITTEN by only three of eight operations - Refresh/Deploy/Undeploy/UpdateAll are invisible to every guard | S / low |
+| **AE6** | MED | `ProxyDeployViewModel.cs:1106` (DeploySelectedAsync / UndeploySelectedAsync / ) | The four file-mutating Proxy Deploy commands set no busy flag, only TEST one — so Deploy and Undeploy run concurrently over the same Binaries folder and both write the single result line | S / low |
+| **AE7** | MED | `ProxyDeployViewModel.cs:1233` (UpdateAllAsync) | UpdateAllAsync iterates the live Games ObservableCollection across awaits while a concurrent scan can Games.Clear() it - and the method has no catch, so the tally is never reported **[2 lenses]** | S / low |
+| **AE8** | MED | `ValueSearchViewModel.cs:752` (FirstScanAsync / NextScanAsync) | The DiagnosticsProbe is opened BEFORE the input validation, so every rejected click costs two get_diagnostics round-trips and logs a "Value Scan (First)" measurement for a scan that never ran | S / low |
+| **AE9** | MED | `ValueSearchViewModel.cs:906` (NewScanAsync / GroupNewScanAsync) | New Scan resets the internal sort key but not the bound Sort picker, and re-selecting the option the picker already shows is a silent no-op | S / low |
+| **AE10** | MED | `ValueSearchViewModel.cs:951` (ValueSearchViewModel.IsGWorldAvailable) | The "stop gating Locate-in-GWorld on the client IsGWorldAvailable flag" fix is applied at Value Search only — **7** sibling VMs still gate on it, at 19 sites: 14 C# + 5 XAML (recounted 2026-08-15; the earlier "9" counted `LiveWalkerViewModel`'s write-only dead flag and `MainWindowViewModel`'s propagation assignments as gates) | M / low |
+| **AE11** | LOW | `AddressHelper.cs:41` (AddressHelper.FormatAddress (AddressFormat.Mod) | ModuleOffset formats a heap address as a wrapped RVA with no in-module check, producing a module-relative address that breaks on relaunch | S / low |
+| **AE12** | LOW | `IDumpService.cs:264` (IDumpService.BeginValueScanAsync) | Three doc comments assert native (non-UPROPERTY) fields are unreachable — 18 lines above the `nativeC` parameter that reaches them | S / low |
+| **AE13** | LOW | `ValueScanModels.cs:462` (GroupScanBeginResult) | The group scan's per-slot leaf-cap truncation is computed by the DLL and only LOGGED — no wire key, so no DTO can carry it | M / low |
+| **AE14** | LOW | `ClassStructViewModel.cs:70` (ApplyFieldFilter) | Fields.Clear() on a selection-bound DataGrid with no SelectedField = null detach - the one panel missing the line the other four carry verbatim **[3 lenses]** | S / low |
+| **AE15** | LOW | `GameClassFilterViewModel.cs:81` (RebuildSuggestions) | The Super / Package suggestion lists are built from a truncated class page and presented as complete, ten lines above the code that reads the truncation flag | S / low |
+| **AE16** | LOW | `GameClassFilterViewModel.cs:194` (ClearFilters) | ClearFilters blanks the filter box without _filterMemory.Flush(), discarding the keyword the user just typed | S / low |
+| **AE17** | LOW | `GameClassFilterViewModel.cs:267` (BatchFindFuncAsync) | Batch Find Func discards res.Scan.DeadlineHit, so a class whose reflection sweep timed out is written as "0" - indistinguishable from "no function takes this class" | S / low |
+| **AE18** | LOW | `GameClassFilterViewModel.cs:268` (BatchFindFuncAsync) | Batch Find Func writes "0" for a class whose 30 s reflection sweep was cut short **[2 lenses]** | S / low |
+| **AE19** | LOW | `GameClassFilterViewModel.cs:283` (BatchFindFuncAsync) | Batch Find Func reports a pipe disconnect as "you cancelled" — audit #3's L14 at a third unfixed site **[5 lenses]** | S / low |
+| **AE20** | LOW | `ProxyDeployViewModel.cs:786` (DeleteSelectedOrphansAsync (and ScanAsync / De) | Six commands accept a CancellationToken, check it in their loops and carry a whole "cancelled" reporting path — and none of them can be cancelled, including the destructive Recycle-Bin delete | S / low |
+| **AE21** | LOW | `ValueSearchViewModel.cs:439` (LoadWindowAsync) | "Load More" cancels an in-flight page-0 reload and then derives its offset from Candidates.Count, which still holds the SUPERSEDED window — producing a grid that concatenates two different filters/sorts | S / low |
+| **AE22** | LOW | `ValueSearchViewModel.cs:729` (SetEngineState) | Nothing clears the Value Search session on disconnect, so a dead game's session id and candidate rows survive a full reconnect | S / low |
+| **AE23** | LOW | `ValueSearchViewModel.cs:820` (FirstScanAsync / NextScanAsync / GroupFirstSca) | Eight bare OperationCanceledException catches report a token-less pipe-disconnect OCE as "you cancelled", two of them silently **[2 lenses]** | S / low |
+| **AE24** | LOW | `ValueSearchViewModel.cs:875` (NextScanAsync / GroupNextScanAsync) | A Next Scan erases both truncation signals from a truncated First Scan - the status note and the "Counts are partial" badge - though the survivor set is still a subset of a truncated scan **[3 lenses]** | S / low |
+| **AE25** | LOW | `ValueSearchViewModel.cs:1063` (ValueSearchViewModel.GroupScanTypeOptions) | Doc says Between is "intentionally excluded" from the group scan-type picker; Between is the 4th element of that same initializer | S / low |
+| **AE26** | INFO | `FieldValueConverter.cs:11` (T1c AOT/trim + Core-purity sweep (negative res) | NEGATIVE RESULT — all 22 T1c files are AOT-clean and Core contains zero platform-specific code | S / low |
+| **AE27** | INFO | `ClassListResult.cs:32` (GameClassEntry.Package) | `Package` is documented as "Pre-computed once so the DataGrid binding doesn't recompute per repaint" but is an expression-bodied property that recomputes on every read | S / low |
+| **AE28** | INFO | `ProxyDeployViewModel.cs:513` (ProxyDeployViewModel.NotifyOrphanSelectionChan) | `NotifyOrphanSelectionChanged`'s doc names a View call-site that does not exist; the real trigger is the per-row PropertyChanged subscription | S / low |
+| **AE29** | INFO | `ProxyDeployViewModel.cs:1310` (ProxyDeployViewModel.NotifySelectionChanged) | `NotifySelectionChanged` documents itself as "called from View" and has no caller anywhere; the `HasSelection` it raises has no per-row hook, unlike its sibling in the same file | S / low |
+
+> **Also worth noting among the refuted:** the claim that `ClassListResult.TotalClasses` is rendered
+> as a pool census died — correctly, because **X2 already fixed exactly that** (build 2888 added the
+> `truncated` flag and the cap note). A refutation landing on this audit's own shipped fix is the
+> pipeline confirming a fix took, which is worth as much as a finding.
+>
+> **Hand-verified:** AE1, AE9, AE10. **Not re-derived:** the other 7 MEDs, 15 LOWs and 4 INFOs.
+
+-----
+
+### T1b — DLL contract headers + the entire C++ test suite — ✅ scanned 2026-08-15
+
+**13 agents** (5 lenses → 4 refute batches → 4 second-lens batches), 0 errors, over 10 files /
+2,394 early lines. **40 raw → 34 distinct** (6 folded in-script) **→ 7 refuted → 0 killed by the
+second lens → 27 confirmed. Kill rate 21%.**
+
+**Tally: 2 HIGH · 4 MED · 15 LOW · 6 INFO.** The two HIGHs are **one defect** reported by two lenses
+at the two arms of the same branch; both were re-derived by hand.
+
+> ### 🔴 AD1/AD2 — a C++ test target that FAILS TO COMPILE is reported as "skip", and the build exits 0
+>
+> This is what putting the tests in scope as *subjects* was for. **The pass/fail signal is derived
+> from "did an exe path get assigned", not from "did the build succeed"** — and one failure mode of
+> the former is indistinguishable from a benign one. Verified line by line:
+>
+> - `build.ps1:351-357` — `$cppTargets` is **UE5Dumper + the four proxies only**. Neither test target
+>   is ever built by the DLL phase, so a break confined to a test target cannot fail any other phase.
+> - `build.ps1:184` — `if ($LASTEXITCODE -ne 0) { return $false }`, so a compile error makes
+>   `$dllBuildOk` false.
+> - `build.ps1:670-677` — `$dllTestExe = $null`, assigned **only inside `if ($dllBuildOk)`**.
+> - `build.ps1:691-693` — the `else` arm is **exactly one line**:
+>   `Write-Info "dll_helpers_test.exe not available (skip — run -Target DLL or All first)"`.
+>   **`$exitCode` is never touched.** The identical shape sits at `:665-667` for the utf8 suite.
+> - `.github/workflows/ci.yml:142` — `./build.ps1 -Mode Publish -Clean -NoBumpBuildNumber`, and
+>   `build.ps1:43` is `[string]$Target = "All"`, so **CI runs straight through this branch**, with
+>   `-Clean` guaranteeing no stale exe can rescue it.
+>
+> Rename a symbol, update the one DLL caller and not the test, and: the five shipping targets build
+> clean, `dll_helpers_test` fails to compile, the script prints an INFO line, `Status: SUCCESS`, CI
+> green — and **~700 assertions across Radar/Orden/GraphPath/Lineal/Denken/Solitar/Solide/Macht stop
+> executing with no signal**, including the memory-corruption class `Test_Solitar_ApplyBoolBit` and
+> `Test_Packed_*` exist to catch.
+>
+> **The message actively misdirects.** "not available (skip — run -Target DLL or All first)" tells the
+> operator they forgot a prerequisite — when they ran the *right* target and a compile error scrolled
+> past in the same transcript. The correct diagnosis is the one the text argues against.
+>
+> ✅ **Negative control, run rather than assumed:** `build.ps1 -Target Test` on the current tree prints
+> `>> Running utf8_helpers_test... [OK] utf8_helpers_test passed` and `>> Running dll_helpers_test...`,
+> so **the C++ suite really is executing today** and every "tests green" claim in this session's
+> commits is backed by a real run. This defect is **latent, not currently biting** — which is the
+> distinction that decides its priority: it is a trap for the next person who breaks a test's
+> compilation, not an active hole.
+>
+> Fix is small and splits the two causes: set `$exitCode = 1` + `Write-Fail` when `$xxxBuildOk` is
+> false, and keep the benign "skip" only for the genuinely-absent-`$BUILD_DIR` case at `:645`/`:671`.
+>
+> **Scope note:** `build.ps1` is not one of T1b's ten files. It is recorded here because it is the
+> **sole enforcement path** for the two files that *are* in scope — a property of the suite under
+> audit, not a stray finding. Two in-repo comments assert the opposite contract in writing
+> (`dll/CMakeLists.txt:503-504` "a non-zero exit fails the test phase";
+> `dll/tests/utf8_helpers_test.cpp:8-9` "any failure short-circuits the test phase") — both describe
+> the **run** path, and the **build** path has no failure channel at all. Root cause #6 again.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AD1** | HIGH | `build.ps1:666` (Unit Tests block — utf8_helpers_test / dll_helpe) | A C++ test target that fails to COMPILE is reported as "skip", not as a failure — the whole C++ suite can go silent, including in CI **[2 lenses]** | S / low |
+| **AD2** | HIGH | `build.ps1:692` (Test phase — dll_helpers_test / utf8_helpers_tes) | A C++ test target that FAILS TO COMPILE is reported as "skip" and leaves exitCode 0 — the whole C++ suite silently stops running, in CI too | S / low |
+| **AD3** | MED | `Genau.cpp:1120` (ScanForTarget — hint phase `sorted.erase(it)`) | The cached-hint fast path inspects only the FIRST match, then deletes the pattern from the full scan | S / low |
+| **AD4** | MED | `Renge.h:106` (Renge::CMD_GET_PROTECT_STATE / UE5_GetProtectSta) | The GodMode want/live/resolvable command is fully shipped in the DLL and has zero clients; the UI reads the live-only proxy instead | S / low |
+| **AD5** | MED | `Utf8Helpers.h:324` (DecodeFStringBuffer (KNOWN RESIDUAL)) | The header's own "KNOWN RESIDUAL" mis-decodes an ASCII FUtf8String as UTF-16 and produces a CJK glyph — and no test pins the boundary it admits | M / low |
+| **AD6** | MED | `dll_helpers_test.cpp:243` (Test_Mimic_PollLatency_OneMillisecond) | The mailbox poll-latency test exercises ZERO Mimic code — it re-implements the mechanism inside the test process, while its own comment claims it "covers the actual mechanism" **[2 lenses]** | M / low |
+| **AD7** | LOW | `Frieren.h:5` (Frieren.h file header comment (and Fern.h:5)) | The two headers the CI derived-count gate DERIVES FROM carry stale counts of their own contents, and are the only claim sites the gate does not check | S / low |
+| **AD8** | LOW | `Frieren.h:84` (UE5_CallProcessEvent) | The exported invoke's documented error table stops at -4, omitting -5/-7/-8 — including the one code that means "do not free your params buffer" | S / low |
+| **AD9** | LOW | `Genau.h:174` (Genau::FindGEngineSlot) | The declaration names bOffsetsValidated as the enforced precondition; the code gates on bOffsetsProbeRan, and Grimoire.h records that swapping to the strict flag regresses &GEngine | S / low |
+| **AD10** | LOW | `Himmel.h:209` (IsCeReplayableAob) | IsCeReplayableAob approves RipDeref and the deref half of RipBoth, which the published (pattern, pos, len) triple cannot express | M / low |
+| **AD11** | LOW | `Himmel.h:1552` (Sig::GOBJECTS_PATTERNS GOBJ_DI427_1 / Sig::GWORL) | Two table entries can never win: a broader sibling with identical resolve geometry sits at a lower priority number and matches everywhere they do **[2 lenses]** | S / low |
+| **AD12** | LOW | `Himmel.h:1581` (GOBJECTS_PATTERNS[] entry "GOBJ_PS1") | GOBJ_PS1's instrOffset points 2 bytes inside its LEA, so every match resolves to garbage | S / low |
+| **AD13** | LOW | `Himmel.h:1611` (GOBJECTS_PATTERNS[] entry "GOBJ_PS6") | GOBJ_PS6's instrOffset names the displacement, so the arithmetic anchor never resolves | S / low |
+| **AD14** | LOW | `Himmel.h:1808` (GWORLD_PATTERNS[] entry "GWLD_G427_2") | GWLD_G427_2 is strictly subsumed by GWLD_SF_4 at a lower priority number, so it can never be reached | S / low |
+| **AD15** | LOW | `Himmel.h:1814` (Sig::GWORLD_PATTERNS — GWLD_TQ_3 / GWLD_TQ_4) | GWLD_TQ_3 and GWLD_TQ_4 put the DISPLACEMENT offset (3) in the instrOffset field, so both resolve to a garbage address — and TQ_4 can publish it as &GWorld **[2 lenses]** | S / low |
+| **AD16** | LOW | `Himmel.h:1815` (GWORLD_PATTERNS[] entry "GWLD_TQ_4") | GWLD_TQ_4 resolves off the displacement instead of the instruction, and its allowNull flag lets the resulting arbitrary address validate | S / low |
+| **AD17** | LOW | `Himmel.h:2019` (ASSERT_TABLE_ORDER / the compile-time table inva) | Nothing validates a signature's (instrOffset, opcodeLen, totalLen) against its own pattern text — the blocktest oracle covers 35 of 158 entries | S / low |
+| **AD18** | LOW | `Lugner_Dinput8.cpp:33` (LoadRealDinput8) | GetSystemDirectoryW's return value is discarded and the path is built with the unbounded wsprintfW — on failure the proxy LoadLibraryW's a drive-root-relative "\dinput8.dll" | S / low |
+| **AD19** | LOW | `Renge.h:215` (Renge::StrToAddr) | Renge ships a strict and a lenient address parser with a documented preference; the strict one is used at 8 sites and the lenient one at 22, including write_mem's own address | M / low |
+| **AD20** | LOW | `Utf8Helpers.h:34` (Utf8Helpers::Sanitize / the header's published c) | Utf8Helpers is the repo's declared defence against nlohmann's strict validator yet offers no LENGTH-BOUNDED variant, and its test file has zero truncation tests — which is exactly how U7 shipped **[2 lenses]** | M / low |
+| **AD21** | LOW | `dll_helpers_test.cpp:3363` (Test_Routine_SafeThread) | The SafeThread test detaches a thread that keeps writing to a stack local after the frame is gone, corrupting the three tests that run after it | S / low |
+| **AD22** | INFO | `Fern.h:5` (Fern (file banner)) | The Fern.h banner still says "~30 commands" against a real 99 — the seventh stale copy the derived-count CI gate was built for, and the gate does not cover source files | S / low |
+| **AD23** | INFO | `Himmel.h:156` (file-header UE 5.8 note ("back into a base ancho) | The header says the -0x14 and +0x0C adjustments produce an FUObjectArray base anchor; the entries themselves say they land on ObjObjects | S / low |
+| **AD24** | INFO | `Renge.h:268` (Renge::MakeResponse / MakeError / MakeEvent / Ad) | Enumerated coverage gaps in the in-scope headers — including the pipe response envelope, which is structurally UNLINKABLE from the only test target that includes it | M / low |
+| **AD25** | INFO | `Utf8Helpers.h:236` (IsWellFormedUtf8) | hasMultiByte is left true when the function returns false, and nothing documents that the out-param is only meaningful on a true return | S / low |
+| **AD26** | INFO | `utf8_helpers_test.cpp:204` (Test_EncodeUtf16_OutputAlwaysValidUtf8 / Test_De) | Two test comments describe coverage the tests do not provide — one input is not the pathological case it is named for, the other's deliberate setup is inert | S / low |
+| **AD27** | INFO | `utf8_helpers_test.cpp:358` (Test_Decode_Utf8CjkWithTrailingHeapBytes) | The test's deliberately-non-zero UTF-16 terminator bytes are unreachable setup, and its comment is contradicted by the test 80 lines below | S / low |
+
+> **Hand-verified:** AD1/AD2 in full, including running the negative control. **Not re-derived:** the
+> 4 MEDs, 15 LOWs and 6 INFOs — 21% kill rate, below the 33–73% band, so re-derive before fixing.
+
+-----
+
+### T1d — UI Services — ✅ scanned 2026-08-15
+
+**11 agents** (5 lenses → 3 refute batches → 3 second-lens batches), 0 errors, over 12 files /
+1,975 early lines. **30 raw → 26 distinct** (4 folded in-script) **→ 9 refuted → 0 killed by the
+second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside the audit's 33–73% band.**
+
+**Tally: 0 HIGH · 2 MED · 10 LOW · 5 INFO.** Both MEDs were re-derived by hand.
+
+> ### 🔁 AC2 is the FIFTH time this audit has found its own fix half-applied
+>
+> `ResolveTrustedLayout` — the **Y7 fix, shipped in build 2881** — encodes the rule *"the engine's
+> reported size overrules the version-guessed layout"*. Verified by hand: it is defined at
+> `InvokeParamDialog.cs:1065` and has **exactly one call site** (`:328`), while **four** other files
+> consume `KnownStructLayouts` — `StructReturnDecoder.cs`, `ParamBufferBuilder.cs`,
+> `FunctionInfoModel.cs`, and the table itself. The decoder that renders an invoke's **return value**
+> therefore still trusts a layout keyed on a detected UE version without checking it against the size
+> the engine reported — the exact defect Y7 fixed on the input side.
+>
+> The running tally of this shape: **V2** (one side of the wire), **W4/W6** (some call sites),
+> **X1** (one of two twins), **Y16** (one of three sites), **AC2** (one of five consumers). The §3b
+> rule "before closing any fix, grep for its siblings" exists because of the first four — and the
+> fifth was found anyway, which says the rule is not being applied at fix time. **Treat "where else
+> does this predicate belong?" as part of the fix, not part of the next audit.**
+
+> ### AC1 — a per-operation consent stored as a durable global, over a file we can name
+>
+> `ProxyDeployService.cs:916` is the only refusal protecting a foreign DLL:
+> `if (File.Exists(targetDll) && !IsOurProxyDll(targetDll) && !force)`, and `:955` is
+> `File.Copy(sourceDllPath, targetDll, overwrite: true)` — no backup, no Recycle Bin. Verified that
+> `force` is **persisted**: `UiOptionsSettings.cs:217`, saved at `MainWindowViewModel.cs:2581`,
+> restored at `:2437`. So a checkbox ticked once to push our proxy onto **one** game survives restarts
+> and then applies to a **Select All → Deploy** batch, silently replacing every third-party
+> `dxgi.dll` (ReShade, Special K, Ultimate ASI Loader) with no way back.
+>
+> Root cause #1, and unusually clean: `RefreshDeployStatusAsync` **already computed the identity of
+> the file at risk** — it reads `FileVersionInfo.GetVersionInfo(targetDll)` and puts
+> *"Other proxy: {ProductName}"* on the row — while the action path 60 lines later treats the same
+> target as an unnamed blank, and `:956` logs only the destination. The report knows the name; the
+> action does not use it.
+>
+> Held at **MED, not HIGH**, deliberately: the write is the literal function of a checkbox the user
+> ticked at least once. The defect is *stale, global consent*, not an unrequested destructive act.
+> Note the contrast the same file sets for its **leftover-cleanup** feature — dry-run report, confirm
+> dialog listing every path, refusal on a volume with no Recycle Bin, and `MoveToRecycleBin` rather
+> than unlink — a far higher bar for a file it is *more* confident is ours.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AC1** | MED | `ProxyDeployService.cs:916` (ProxyDeployService.DeployAsync) | A persisted global "Force Overwrite" silently destroys a third party's DLL that the grid is simultaneously naming on screen | S / low |
+| **AC2** | MED | `StructReturnDecoder.cs:55` (StructReturnDecoder.Decode / StructReturnDecoder.C) | Audit #5's own Y7 fix (ResolveTrustedLayout) is applied at **1 of 4 `GetLayout` call sites** (recounted 2026-08-15; unguarded: `InvokeParamDialog.cs:693`, `StructReturnDecoder.cs:55` + `:79`) — the invoke dialog refuses a size-contradicted layout for the INPUT boxes and accepts it for the RESULT grid **[2 lenses]** | S / low |
+| **AC3** | LOW | `AobMakerBridgeService.cs:470` (AobMakerBridgeService.ReconnectAsync) | ReconnectAsync's bare `catch` swallows every connect failure with no logging, so all seven "AOBMaker not connected" outcomes reach the user with zero diagnostics | S / low |
+| **AC4** | LOW | `AobUsageService.cs:121` (AobUsageService.LoadFileAsync) | A corrupt usage file is silently replaced with an empty one, wiping every other game's cached scan record — while the DELIBERATE reset of the same file keeps ten numbered backups | S / low |
+| **AC5** | LOW | `AobUsageService.cs:124` (AobUsageService.LoadFileAsync / RecordScanAsync) | A corrupt cache file is answered by writing a one-game file over it — every OTHER game's user-set UE-version override and invoke timeout are destroyed, with no backup, from a Warn nobody reads | S / low |
+| **AC6** | LOW | `AobUsageService.cs:139` (AobUsageService.SaveFileAsync) | The only atomic-write site in Services with no stale-temp cleanup, and its PID-suffixed name means the residue is unbounded | S / low |
+| **AC7** | LOW | `ClassLocationScorer.cs:56` (ClassLocationScorer.FunctionBonuses / PropertyRule) | Two table comments claim the class bonus is "keyword-gated" and that "Player" is a fallback for classes missing the specific tokens; neither gate exists, and Player+Character = exactly the interesting threshold | M / med |
+| **AC8** | LOW | `ClassLocationScorer.cs:163` (ClassLocationScorer.PropertyRules / FunctionBonuse) | Two rule blocks justify themselves as "keyword-gated"; neither scorer implements any gate | S / low |
+| **AC9** | LOW | `ClassLocationScorer.cs:189` (ClassLocationScorer.PropertyRules — UCheatManager ) | The `UCheatManager` rule can never fire (UE class names carry no U/A prefix), and the comment justifying the row beneath it names an example that rule does not match either | S / low |
+| **AC10** | LOW | `PipeClient.cs:187` (PipeClient.SendAsync) | The `!IsConnected` disjunct in the write-failure filters fires ONLY on unexpected pipe death, and converts it into a token-less OperationCanceledException — the exact case the file's own comment says must be an IOException | S / low |
+| **AC11** | LOW | `ProxyDeployService.cs:955` (ProxyDeployService.DeployAsync) | Deploy writes straight over the live target with no staging, and a half-written proxy is then invisible AND unremovable to both of this file's own removal paths | S / low |
+| **AC12** | LOW | `VdfParser.cs:141` (VdfParser.ExtractPaths) | The token stream carries neither key/value position nor nesting validity, so a value that reads "path" injects a fake library and any brace imbalance silently yields zero libraries | M / low |
+| **AC13** | INFO | `PipeClient.cs:224` (PipeClient.SendAsync) | PipeTransportStats.Record sits in a finally that wraps only the response await, so a request failing in the WRITE contributes zero transport time — precisely the case its own comment says must be counted | S / low |
+| **AC14** | INFO | `PipeClient.cs:240` (PipeClient.ReadLoopAsync) | ReadLoopAsync null-checks `_reader` as a field and then dereferences the field, the exact pattern SendAsync captures into a local at :140 to avoid — an NRE the loop's IOException/ObjectDisposedException catches do not cover | S / low |
+| **AC15** | INFO | `ProxyDeployService.cs:420` (ProxyDeployService.TryDetectUeVersion) | `TryDetectUeVersion` reads every game exe's full VERSIONINFO resource and unconditionally discards it; the property it feeds is never read by anything **[2 lenses]** | S / low |
+| **AC16** | INFO | `ProxyDeployService.cs:1608` (ProxyDeployService (leftover-proxy cleanup region)) | NEGATIVE RESULT — CLAUDE.md's three leftover-cleanup invariants all hold as written; do not re-audit this surface without new evidence | S / low |
+| **AC17** | INFO | `WindowsPlatformService.cs:790` (WindowsPlatformService.VolumeHasRecycleBin) | The fixed-drive pre-filter on the Recycle-Bin gate answers about the HOST volume — `new DriveInfo(root)` re-runs the exact `Path.GetPathRoot` lookup the comment three lines above says it avoids | S / low |
+
+> **Hand-verified:** AC1 and AC2 (both MEDs). **Not re-derived:** the 10 LOWs and 5 INFOs — though at
+> a 35% kill rate this is the best-vetted phase so far.
+
+-----
+
+### T1a — Radar value-scan engine + Methode/Heiter entry points — ✅ scanned 2026-08-15
+
+**11 agents** (5 lenses → 3 refute batches → 3 second-lens batches), 0 errors, over 4 files /
+1,504 early lines. **35 raw → 30 distinct** (5 lens-duplicates folded **in-script**) **→ 6 refuted
+→ 1 killed by the second lens → 23 confirmed. Kill rate 23%.**
+
+**Tally: 2 HIGH · 5 MED · 12 LOW · 4 INFO.**
+
+> ### ✅ The harness fix worked — 11 agents where S1 spent 31
+>
+> S1 cost 31 agents because refute/second-lens batches scale with **claims found**, not lines read
+> (65 claims → 25 batches). Two changes: **merge by location in the SCRIPT** rather than asking the
+> model (S1 marked zero duplicates while 14 locations were multi-lens; here 5 folded automatically,
+> *before* the expensive stages), and batches 6→10 / 4→8. Same rigour, **a third of the agents**,
+> and the kill rate rose 14% → 23%. **Do this in every remaining phase.**
+
+> ### 🔴 AB1 is the most consequential finding of this audit — hand-verified in full
+>
+> **Our DLL crashes Cheat Engine, the user's primary tool, on a documented install path.**
+>
+> `DllMain(DLL_PROCESS_ATTACH)` unconditionally starts a **1 ms-poll thread** — `Heiter.cpp:274`
+> `Mimic::StartThread();`, comment *"Runs in both proxy and inject modes"* — plus the auto-start
+> thread at `:279`. Neither is conditional on the host process, and CE loads this DLL as a **plugin**.
+>
+> I verified every link myself rather than taking the agent's word:
+> - **`Heiter.cpp:190` declares `DllMain(HMODULE, DWORD, LPVOID /*reserved*/)` — the parameter is
+>   COMMENTED OUT.** So `DLL_PROCESS_DETACH` structurally *cannot* distinguish a `FreeLibrary`
+>   unload from process exit; both hit the same `break;`. Its own comment claims *"Only the implicit
+>   process-exit DETACH is a no-op"* — a distinction the signature makes impossible to draw.
+> - **`Fern.cpp:533-537` asserts the case away**: *"The only case this gives up on is FreeLibrary of
+>   this DLL with the process still alive … **Nothing in this repo does that** … and Heiter.cpp's
+>   no-op DETACH already relies on the same fact."* Two modules resting on one unverified premise.
+> - **CE's own source refutes it**: `D:/Github/cheat-engine/Cheat Engine/plugin.pas:1525` is
+>   `freelibrary(hmodule);`. And this repo's *own mirrored doc* already records the cycle —
+>   `docs/ce-plugin-api-reference.md:95-102`, *"TRAP — CE opens your DLL twice, and throws the first
+>   pass away … your DllMain(PROCESS_ATTACH) and GetVersion run once against a module that is
+>   immediately unloaded."*
+> - **Nothing pins the module**: `grep GET_MODULE_HANDLE_EX_FLAG_PIN dll/src/` = **0 hits**.
+> - **The guard exists and is applied at the wrong site**: `Grimoire::IsCheatEngineExeName` has
+>   exactly **one** call site in the entire DLL — `Heiter.cpp:158`, *inside the auto-start thread
+>   body*, i.e. inside the very thing it should have prevented from being created.
+> - **`CEPlugin_DisablePlugin` (`Methode.cpp:386`) calls only `UnregisterFunction`** — it never stops
+>   the poller.
+>
+> Net: add the plugin via Settings→Plugins→Add and CE does LoadLibrary → GetVersion → **FreeLibrary**,
+> unmapping the image while a 1 ms thread lives in it. It is also every CE *exit*, via
+> `FormClose → pluginhandler.free → UnloadPlugin → FreeLibrary`, which runs **before** CE writes its
+> settings — so the crash also loses that session's CE settings. Fix is two small guards: call the
+> existing `IsCheatEngineExeName` on the host before creating threads, and pin the module. **Do not**
+> try to join threads from DETACH — the existing comment is right that that deadlocks.
+>
+> This is root cause **#6** in its sharpest form to date: a comment asserting an impossibility,
+> contradicted by a source **mirrored into this same repo**. Every time this audit has followed such
+> a comment it has found a real defect — now 4 for 4.
+
+> **The other root causes, unchanged:** #5 the width family reaches Radar — AB3/AB5 hardcode a
+> 12-byte 3×float `FVector` while accepting UE5 LWC's **24-byte double** struct (the exact shape that
+> cost W6/Y2/Y15/Y16); #7 raw addresses as identity (AB7); #1 the report and the reality by different
+> paths (AB6: the group grid **sorts** by `slotMatches[0][0]` while it **displays**
+> `slotMatches[0][picks[0]]`).
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AB1** ✅ | HIGH | `Heiter.cpp:274` (DllMain (DLL_PROCESS_ATTACH) → Mimic::StartThread) | DllMain starts a 1 ms-poll thread in EVERY host, including Cheat Engine — and CE FreeLibrary's plugin DLLs, so the thread runs on after the image is unmapped | S / low |
+| **AB2** | HIGH | `Methode.cpp:307` (OnInjectAndConnect) | InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread **[2 lenses]** | S / low |
+| **AB3** | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
+| **AB4** | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
+| **AB5** | MED | `Radar.cpp:797` (Radar::CompareVectorPredicate) | The FVector/FRotator scan is hardcoded to 3×float / 12 bytes, so it reads junk on every UE5 (LWC double) game — while the reflected 24-byte size is captured and thrown away | M / med |
+| **AB6** | MED | `Radar.cpp:1441` (BuildGroupOrderedView::slot0Num / slot0Offset) | Group sort keys read slotMatches[0][0] while the row displays slotMatches[0][picks[0]] — the grid orders by a leaf the user cannot see | S / low |
+| **AB7** | MED | `Radar.h:384` (Radar::Candidate / Radar::InstanceRecord) | A scan session's candidate addresses are raw addresses used as IDENTITY across RPCs; the GObjects index is captured but never validated and no serial witness is stored | M / med |
+| **AB8** | LOW | `Heiter.cpp:41` (g_hAutoStartThread) | The auto-start thread handle is stored, never waited on and never closed; two comments assert a join that no code performs | S / low |
+| **AB9** | LOW | `Heiter.cpp:234` (DllMain → Sein::Init / Sein::InitProcessMirror) | DllMain does shell32 + unbounded recursive filesystem work (two directory sweeps and possibly a multi-GB remove_all) inline, under the loader lock | M / med |
+| **AB10** | LOW | `Heiter.cpp:268` (DllMain (proxy mutex diagnostic)) | The unarmed-guard warning prints a GetLastError() captured hundreds of API calls after the failure it claims to report | S / low |
+| **AB11** | LOW | `Heiter.cpp:268` (DllMain (UE5_PROXY_BUILD unarmed-mutex warning)) | The B47 diagnostic logs a GetLastError() captured after ~6 intervening Win32/CRT calls, so the error code it blames CreateMutexW for is not CreateMutexW's | S / low |
+| **AB12** | LOW | `Methode.cpp:211` (IsAlreadyLoadedInTarget) | The 1024-entry module array is clamped correctly but its truncation is invisible, and the consequence is no longer just a wasted map | S / low |
+| **AB13** | LOW | `Methode.cpp:293` (OnInjectAndConnect) | The one path whose value is functional still uses GetModuleFileNameA — the fix applied at both display sites in this same file was not applied here **[3 lenses]** | S / low |
+| **AB14** | LOW | `Radar.cpp:335` (Radar::TryDataTypeFromPropertyTypeName) | EnumProperty is absent from the numeric type map, so enum-backed state fields are invisible to every value scan although the DLL resolves their width correctly elsewhere | M / low |
+| **AB15** | LOW | `Radar.cpp:463` (Radar::BuildNumericTargets) | A leading zero makes one user value mean two different numbers inside a single meta scan: octal for the integer widths, decimal for Float/Double | S / low |
+| **AB16** | LOW | `Radar.cpp:996` (CandidateMatchesFilter) | The server-side Value Search filter does not cover the displayed "Origin" column, so filtering for `native` reports zero matches on rows that visibly read "Native-C (Int32)" | S / low |
+| **AB17** | LOW | `Radar.cpp:1154` (Radar::SessionManager::ExpireOldSessions / GroupSess) | The documented 300 s idle expiry is reachable ONLY from `Begin` on the same manager, so it never fires for the case the header says it protects against — a client that goes quiet | S / low |
+| **AB18** | LOW | `Radar.cpp:1353` (PickGroupWitnessAssignment) | Greedy witness picker can show the same leaf in two slots, asserting a pairing the group-scan contract forbids — while Orden already computed a valid assignment and threw it away | M / low |
+| **AB19** | LOW | `Radar.h:687` (Radar::GroupCandidate::slotMatches / GroupSessionMan) | A group session's leaf memory is the unbounded product of three caps and only one of them is bounded against memory; the clamp that exists names the hazard it does not cover | M / low |
+| **AB20** | INFO | `Heiter.cpp:278` (g_hAutoStartThread) | Two comments claim shutdown waits for the auto-start thread via a stored handle; no code anywhere waits on it, and the handle is file-static so UE5_Shutdown cannot reach it | S / low |
+| **AB21** | INFO | `Methode.cpp:352` (CEPlugin_InitializePlugin / CEPlugin_GetVersion / Ex) | Negative result — the static ABI surface itself is correct; no Radar/Radar.h finding from this lens | S / low |
+| **AB22** | INFO | `Radar.h:80` (DataType (enum banner comment)) | The DataType enum's banner says TArray<T> scan "remains deferred" 28 lines after the file header says it shipped in build 757 | S / low |
+| **AB23** | INFO | `Radar.h:676` (Radar::GroupSlotMatch::ownerClass) | `GroupSlotMatch` carries a by-value `std::string` per leaf, re-introducing exactly the per-record heap string that V3-A's interning was built to remove | S / low |
+
+> **Hand-verified:** AB1 in full (above). **Not re-derived:** everything else — the 23% kill rate is
+> better than S1's 14% but still below the 33–73% band, so re-derive before fixing.
+
+-----
+
+### S1 — Early Lua scripts — ✅ scanned 2026-08-15
+
+**31 agents** (5 lenses → 11 refute batches → 14 second-lens batches), 0 errors, over 3 files /
+1,668 lines — **1,236 of them early, the densest early-code concentration in the tree at 74%**, and
+with **zero test coverage of any kind**.
+
+**65 raw claims → 7 refuted → 2 killed by the second lens → 56 survived → 36 distinct** after merging
+by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
+
+> ### ⚠ The kill rate fell again — 14%, and this time the skeptic prompt was the STRICTEST yet
+>
+> U5 refuted 20% and was recorded as lenient, so S1's skeptic was explicitly constrained: it could
+> only refute by filling a `counter_input` field naming the guard or documented behaviour that makes
+> the scenario impossible, and the second lens ran on **every** survivor rather than HIGH/MED only.
+> **It refuted less: 7/65 = 11%, plus 2 second-lens kills = 14% total**, against the audit's 33–73%
+> band. Tightening the rubric did not tighten the skeptic.
+>
+> **And it marked ZERO duplicates while 14 locations were reported by more than one lens** — the one
+> mechanical job it was given, with U5's five missed pairs quoted at it as the reason. Merging by
+> location alone takes 56 → 36. Treat `duplicate_of_idx` as **structurally unreliable** in this
+> harness and merge by hand; do not spend prompt budget asking for it again.
+>
+> **What I hand-verified, and what changed.** The finders returned **6 HIGHs** — extraordinary against
+> a history where ten of eleven claimed HIGHs died. Merging by location gives 5, and re-deriving each
+> against the source gives **3**:
+> - `writeBool:153` — **CONFIRMED HIGH.** The code's own comment says it: *"We do NOT support packed
+>   bitfield bools … generating a freeze script for one will overwrite the whole byte, clobbering
+>   sibling bools."* The DLL sibling reached from the **same Property Search row** (Solitar's Force)
+>   does a masked read–modify–write via `ApplyBoolBit`. One row, two actions, opposite correctness.
+> - `:452` / `:461` — **CONFIRMED HIGH** (one defect, two lenses). True by construction: the guard
+>   tests *"is there a non-zero qword at addr"*, not *"is addr still the object I enumerated"*, so a
+>   recycled slot **cannot** trip it. The second lens earned its place here by killing the finder's
+>   *"writes past the object"* sub-claim on MallocBinned same-size-bin grounds while keeping the
+>   finding.
+> - `fillGaps:289` — **DOWNGRADED to MED.** Verified dead (one `grep` hit: the definition) and the
+>   header does advertise it at `:15`, but a dead feature plus a lying header is not a wrong write.
+> - `start:474` — **DOWNGRADED to MED.** Verified: `_lastError` is written at `:462`/`:467` and read
+>   **nowhere**, and `start()` discards `rescan()`'s outcome, so both timers arm over an empty cache
+>   and the script proceeds to its auto-close. Real, but a failure-to-act, not a wrong act.
+>
+> **The low kill rate is not, by itself, evidence these findings are wrong.** S1's files are the
+> densest early code in the repo, have no tests, and Y9 and Y15 both found real defects in this exact
+> freeze path within the last two builds. A genuinely higher true-positive rate here is plausible.
+> What the rate *does* mean is that **nothing below HIGH has been vetted to this audit's standard** —
+> re-derive any MED or LOW before fixing it, exactly as for U5's Z-findings.
+
+> **Root causes, and the freeze helper is where they concentrate** (18 of 36 findings):
+> 1. **A raw pointer used as an identity.** AA2/AA3 are the audit's recycled-address hazard — already
+>    recorded three times on the DLL side (D1/U4–U6, D3/A10, D5/F3) — reaching the Lua tier, where
+>    there is no `GetSerialNumber` witness on the wire to fix it cheaply.
+> 2. **`callDLL` returns `nil` on failure and not one of its 14 call sites handles it** (AA5, AA6).
+>    `nil ~= 0` is **true** in Lua, so a failed read is recorded as success — root cause #1 in its
+>    purest form, and a Lua-specific trap that has no C# analogue.
+> 3. **Root cause #6 again, and it is now the audit's most reliable predictor.** AA1's defect is
+>    stated verbatim in its own comment; `fillGaps`' header advertises a feature that does not run.
+>    Every time this audit has followed a comment admitting a limitation, it has found a real defect.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AA1** | HIGH | `ue5_freeze_helper.lua:153` (writeBool) | Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit **[2 lenses]** | M / med |
+| **AA2** | HIGH | `ue5_freeze_helper.lua:452` (freezeProperty -> tick) | The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds *(re-measured 2026-08-15: ~16/s per cached address — TTimer 50 ms quantised to ~62.5 ms; 5 s is the BEST case — see §3c)* | M / med |
+| **AA3** | HIGH | `ue5_freeze_helper.lua:461` (rescan / tick) | A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely **[2 lenses]** *(2026-08-15: "indefinitely" holds under PERSISTENT failure — DLL re-inject / contract mismatch / wedged `_ue5_invoke_busy`; transient busy self-heals in 5 s; `_lastError` is write-only — see §3c)* | M / med |
+| **AA4** | MED | `ue5_dissect.lua:53` (callDLL) | Bare getAddress RAISES on a missing symbol (CE source-verified), so the 'DLL function not found' message is dead code and the registered dissect override breaks CE's dissect for unrelated addresses **[2 lenses]** | S / low |
+| **AA5** | MED | `ue5_dissect.lua:63` (callDLL) | callDLL returns nil on every executeCodeEx failure and not one of its 14 call sites handles nil: `<= 0` raises, `~= 0` inverts **[2 lenses]** | S / low |
+| **AA6** | MED | `ue5_dissect.lua:173` (addFieldsToStruct / walkClassFields) | callDLL returns nil on failure and every caller treats nil as SUCCESS — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as a duplicate of the previous field **[2 lenses]** | S / low |
+| **AA7** | MED | `ue5_dissect.lua:289` (fillGaps) | "Gap filling" is advertised in the header but fillGaps is never called — and its coverage test would emit overlapping elements if it were **[2 lenses]** | S / low |
+| **AA8** | MED | `ue5_dissect.lua:341` (addUObjectHeader) | UObject header offsets are hardcoded (Outer=0x20) while the DLL detects and switches them (DynOff::UOBJECT_OUTER = 0x28 on case-preserving-FName games) **[2 lenses]** | M / low |
+| **AA9** | MED | `ue5_freeze_helper.lua:95` (header SAMPLES block) | The file's own copy/paste samples produce a freeze that cannot be stopped: `local h` in [ENABLE] is invisible to [DISABLE], and SAMPLES 1-3 show no stop at all | S / low |
+| **AA10** | MED | `ue5_freeze_helper.lua:341` (fetchInstancePage) | The mailbox has two mutually-blind concurrency guards: generated scripts wait for cmd==IDLE, the standalone helpers use a Lua flag no generated script sets | M / low |
+| **AA11** | MED | `ue5_freeze_helper.lua:386` (rescanInstances) | A page-fetch failure after page 0 is thrown away, so a PARTIAL instance list is returned as a clean success and replaces the freeze cache **[2 lenses]** | S / low |
+| **AA12** | MED | `ue5_freeze_helper.lua:471` (freezeProperty -> handle.start) | A freeze that applied NOTHING reports clean success: start() cannot raise, so the generated script's pcall succeeds, the Lua window auto-closes and the CE record stays ticked | S / low |
+| **AA13** | MED | `ue5_freeze_helper.lua:474` (handle.start) | Every freeze failure is silent: start() discards rescan()'s error, nothing reads _lastError, and the generated script then auto-closes the Lua window over a ticked record that froze nothing **[2 lenses]** | S / low |
+| **AA14** | MED | `ue5_invoke_helper.lua:215` (writeFStringInline) | allocateMemory's nil return is unchecked, so a failed allocation ships an FString of { Data = nullptr, Num = n+1 } into the game **[2 lenses]** | S / low |
+| **AA15** | MED | `ue5_invoke_helper.lua:223` (writeFStringInline) | allocateMemory's nil return is never checked, so a failed allocation stamps an FString with Data=nullptr and ArrayNum=n+1 into a live UFunction call | S / low |
+| **AA16** | MED | `ue5_invoke_helper.lua:293` (writeParams) | BakedScriptGenerator can emit five param-type tokens writeParams has never accepted, so the exported script aborts the whole invoke at CE runtime | S / low |
+| **AA17** | MED | `ue5_invoke_helper.lua:308` (writeBakedParams) | The params buffer is zeroed only up to the CALLER'S parmsSize while the DLL hands ProcessEvent all 1024 bytes — stale bytes from an earlier command become live parameters **[2 lenses]** | S / low |
+| **AA18** | MED | `ue5_invoke_helper.lua:363` (waitDone) | A mailbox timeout reports the STALE errorMsg left by an earlier command as this command's reason — the guessed diagnosis CLAUDE.md forbids | S / low |
+| **AA19** | MED | `ue5_invoke_helper.lua:464` (invokeUFunction) | The reentrancy flag is cleared on the timeout path — exactly when the DLL still owns the mailbox — so the next invoke scribbles on an in-flight command and is reported OK though it never ran | M / med |
+| **AA20** | MED | `ue5_invoke_helper.lua:512` (readUFunctionReturn) | readUFunctionReturn decodes int32/int16 returns UNSIGNED, so a UFunction returning -1 reads as 4294967295 -- while the same file passes the signed flag two functions earlier **[2 lenses]** | S / low |
+| **AA21** | LOW | `ue5_dissect.lua:23` (module state (structList / structCache)) | Module state is per-dofile while CE's structure list and Lua state are global and never rebuilt, so a re-load duplicates every structure and orphans the old ones | S / low |
+| **AA22** | LOW | `ue5_dissect.lua:24` (dissect.enableAutoCallback) | The already-registered guard is a chunk-local, so a second dofile double-registers the dissect override and disableAutoCallback can only unregister the newest one | S / low |
+| **AA23** | LOW | `ue5_dissect.lua:208` (addFieldsToStruct) | The struct-recursion depth cap returns silently, so a nested StructProperty deeper than 6 levels is simply absent from the dissect with no marker | S / low |
+| **AA24** | LOW | `ue5_dissect.lua:222` (addFieldsToStruct) | A CreateRemoteThread round-trip plus a target-process allocation per StructProperty field, whose result is discarded — and it leaks if the call raises | S / low |
+| **AA25** | LOW | `ue5_dissect.lua:243` (addFieldsToStruct) | A failed callDLL mid-walk raises with beginUpdate() unmatched, orphaning a CE structure that is never registered in structList and so can never be freed by clearAll() | S / low |
+| **AA26** | LOW | `ue5_dissect.lua:244` (addFieldsToStruct (BoolProperty branch)) | The bitmask is stored in ChildStructStart, a CE property that means 'byte offset inside a child struct', not a mask **[2 lenses]** | S / low |
+| **AA27** | LOW | `ue5_dissect.lua:522` (dissect.enableAutoCallback) | The CE-global dissect override is registered with no automatic unregister, and CE never rebuilds its Lua state — so after the DLL goes away it breaks CE's 'guess structure' for the rest of the session | S / low |
+| **AA28** | LOW | `ue5_freeze_helper.lua:220` (checkContract) | An unreadable contract symbol is reported as "stale address — re-inject the DLL" when the process is simply gone, though the same file already knows how to say that | S / low |
+| **AA29** | LOW | `ue5_freeze_helper.lua:303` (waitDone) | Lua `and`/`or` precedence keeps the documented-as-dormant iteration fallback permanently live, so the effective deadline is min(tick, iterations) and the printed "%dms" is not the arm that fired **[2 lenses]** | S / low |
+| **AA30** | LOW | `ue5_freeze_helper.lua:409` (module-level re-declaration guard (`if not freezeProperty then`)) | The generated loader re-loads the helper on every [ENABLE] but the helper's own `if not X then` guards make that a no-op, so an updated helper silently never takes effect in a running CE | S / low |
+| **AA31** | LOW | `ue5_invoke_helper.lua:40` ((file header — Debug Camera sample)) | The setDebugCamera sample this file tells users to paste leaves the memory record ticked when the call raises or returns -1 | S / low |
+| **AA32** | LOW | `ue5_invoke_helper.lua:227` (writeFStringInline / freeInvokeStringBuffers) | One un-reclaimed target-process allocation per FString param per invoke, tracked in a global table that survives every script re-activation | M / med |
+| **AA33** | LOW | `ue5_invoke_helper.lua:235` (writeParams) | writeParams takes regionSize and never bounds a single write by it — a param offset near the end writes past g_invokeMailbox | S / low |
+| **AA34** | LOW | `ue5_invoke_helper.lua:239` (writeParams) | `p.value or 0` turns a missing string param into the literal string "0" passed into the game | S / low |
+| **AA35** | INFO | `ue5_freeze_helper.lua:355` (fetchInstancePage) | The uint16 sign fixup is dead code resting on a false claim about CE's readSmallInteger | S / low |
+| **AA36** | INFO | `ue5_invoke_helper.lua:88` (file-scope mailbox layout constants) | The CI contract gate hashes Mimic.h and CeMailboxLayout.cs only — the two standalone helpers hold a third hand-copied layout it cannot see | S / low |
+
+> **Not re-derived by hand:** everything rated MED and below. The three HIGHs were verified against
+> the source as described above; the rest carry the 14%-kill-rate caveat.
+
+-----
+
+### U5 — Remaining VMs / Models / Core / scoring — ✅ scanned 2026-08-15
+
+**11 agents** (5 lenses → 5 refute batches → 1 second-lens batch), 0 errors, over 10 files /
+~5,830 lines (~3,500 early). **30 raw claims → 6 refuted → 24 survived → 19 distinct** after merging
+five lens-duplicate pairs the skeptic failed to mark.
+
+**Tally: 0 HIGH · 3 MED · 14 LOW · 2 INFO.**
+
+> ### ⚠ Read this before trusting the LOWs — U5's refute rate is the audit's LOWEST
+>
+> **6 of 30 (20%) refuted**, against a measured per-segment band of **33–73%** over the eight prior
+> segments (working-lessons §2). Worse, **two of those six did not die on the merits**: one was a
+> duplicate and one was a self-declared *negative result* (the AOT lens correctly reporting that all
+> ten files are clean). The on-the-merits kill rate is therefore **4/30 ≈ 13%** — an outlier by a
+> wide margin, and the honest reading is that this skeptic was lenient, not that this code is clean.
+>
+> **The second lens killed zero.** It ran on all 3 HIGH/MED survivors and confirmed all 3. That is
+> not nothing — see below — but a 0% kill on top of a 13% kill is two lenient stages in a row.
+>
+> **The 14 LOWs never faced a second lens at all** (the method sends only HIGH/MED). They are the
+> least-scrutinised items in this audit. **Re-derive any LOW before fixing it.** The same warning was
+> attached to U4's five LOWs and is repeated here for the same reason.
+>
+> **The skeptic also failed at dedup**, which is a job it was explicitly given (`duplicate_of_idx`).
+> It caught one pair and missed five: `InterestingFunctionsViewModel.cs:439`,
+> `KeywordScoringTable.cs:82`, `InterestingPropertiesViewModel.cs:224`,
+> `InstanceFinderViewModel.cs:466`, and the `InstanceFinderViewModel.cs:274`/`:289` pair (one
+> mechanism — the detach-then-restore cycle — reported as two defects). Merged here by hand; that is
+> why 24 "confirmed" is 19 findings.
+>
+> **What the second lens DID do is the reason to keep the stage.** On Z1 it demolished the mechanism
+> while keeping the finding: the finder claimed a two-toggle race, and the second lens showed that
+> race is not demonstrable (during `LoadAsync` the guard early-returns, so there is no competing run;
+> post-load both runs do byte-identical work with A starting first). It then found the *real* window
+> by asking a different question — can the data reach that branch at all? — and produced a concrete
+> one: the tick is swallowed during the **2-second AOBMaker probe that runs after the grid has
+> already filled and the status line already says "done"**. It also corrected `:383`→`:377` and
+> struck the unobserved-exception half of the claim as having no failing input. A kill count of zero
+> undersold that stage considerably.
+
+> **Two root causes, and both are repeat offenders rather than new ones:**
+>
+> 1. **Cluster ① again — a cap treated as the whole set (5 of the 19).** The `countsPartial`
+>    parameter on `ClassFacetFilter.Rebuild` **exists, defaults to false, and is left unpassed at both
+>    Property Search and Interesting Properties** — in each case *within fifteen lines of the same
+>    method reading the truncation flag to print its own cap warning*. So one toolbar shows
+>    "⚠ 14 of 50 keywords STOPPED at the 200-row cap" while the class picker beside it reports a clean
+>    census of the same data. `ValueSearchViewModel.cs:808` passes it correctly.
+> 2. **Cluster ④ again — a fix applied at some of its sites (6 of the 19).** Audit **#3's L14**
+>    (a bare disconnect-`OperationCanceledException` reported as "you cancelled") is fixed at
+>    Property Search and Instance Finder and **not** at Interesting Properties or Interesting
+>    Functions — L14's own "Where" list named only the two it fixed. `scan.deadline_hit` is displayed
+>    by the single-row xref dialog and dropped by **all three** batch callers. `SelectedResult = null;
+>    // detach before rebuilding the selection-bound list` appears verbatim in three of the four
+>    panels in scope.
+>
+> **A third, new shape worth naming: the fetch list and the score list are two hand-maintained tables
+> that must agree, and don't** (Z3). It is root cause #1 in table form, and it is the only U5 finding
+> whose cost is "the feature silently cannot find your field".
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **Z1** | MED | `InterestingFunctionsViewModel.cs:439` (`RescoreAsync`) | `RescoreAsync` bails on `if (IsLoading \|\| _entries.Count == 0) return;`, and `LoadAsync` holds `IsLoading` true through a trailing `await CheckAobMakerAsync()` (`:377`) that this file's own comment documents as **a 2 s pipe-connect timeout when CE isn't running** — *after* `ApplyFilter()` has filled the grid (`:362`) and the final status text is written (`:368`). The Gameplay-Actions CheckBox has no `IsEnabled` gate, and its `IsChecked` is TwoWay. So a tick in that window **latches ON while the rows stay scored with `includeGameplayActions:false`**, forever: nothing re-runs. The user filters `shop`/`dash`, sees nothing, and concludes the pack found nothing — against a tooltip promising *"Re-scores the loaded set in place"*. Recovery is untick+retick, which is not discoverable. **The covering test never touches this path** — `InterestingFunctionsViewModelTests.cs:233` sets the property and then `await`s `RescoreAsync()` directly (working-lessons §1.3 seam). Fix is a pending-rescore latch, **not** the generation guard the finder proposed. | S / low |
+| **Z2** | MED | `InterestingPropertiesViewModel.cs:409` (`ApplyFilter`) | Bare `Results.Clear();` with `Results` bound as DataGrid `ItemsSource` and `SelectedResult` as its `SelectedItem`. The other **three** panels in scope carry `SelectedResult = null;   // detach before rebuilding the selection-bound list` verbatim (`InterestingFunctions:454`, `PropertySearch:556`, `Console:303`), a convention introduced by the build-879 fix + `Services/UiCollection.Reset` after a shipped Avalonia selection-model crash. ⚠ **Honest caveat carried from the finder:** audit #3's L18/L19 confirmed this same class at two other VMs and **downgraded it to "cosmetic churn, zero functional effect"**. New site, but rank it by that precedent. | S / low |
+| **Z3** | MED | `PropertyScoringTable.cs:509` (`SeedQueries`) | `SeedQueries` is the **only** thing deciding which properties Interesting Properties (and Detect Player Stats) ever see, and the DLL matches each seed as a case-insensitive **substring of the property name** (`Aura.cpp:4624`). The Stats seed line carries `HP, Health, Mana, Stamina, Energy, Level, Experience, Max, Dead, Alive` — while `StatsKeywords` (`:66`) *scores* `MP`, `SP`, `XP`, `Exp`, `Lv`, `Lvl`, and the category doc advertises "HP / MP / Stamina / XP". **`CurrentMP` contains no seed, so it is never fetched and those scoring arms are dead** (`MaxMP` survives only because `Max` is seeded — same field family, opposite outcome). Same drift hits most of Utility (`Save`/`Checkpoint`/`Score`/`NoClip`/`GodMode`), Movement (`Velocity`/`Dash`), and the build-678 Combat additions the table's own comment says were confirmed across 14/15 games. Cost of the fix is near zero — the DLL walks GObjects **once** and tests every field against every query in that pass. | S / low |
+| **Z4** | LOW | `PropertySearchViewModel.cs:498` + `InterestingPropertiesViewModel.cs:359` | `ClassFilter.Rebuild(...)` omits `countsPartial`, so the class-noise picker presents a capped page as a complete class census — **in both cases within fifteen lines of the same method reading the truncation flag to print its own cap warning**. The `⚠ Counts are partial` string exists in `en.axaml` and can never appear on either panel. `ValueSearchViewModel.cs:808` does it right. | S / low |
+| **Z5** | LOW | `InterestingPropertiesViewModel.cs:224` + `InterestingFunctionsViewModel.cs:269` | Bare `catch (OperationCanceledException)` → *"Find Funcs cancelled at N/M"*. `PipeClient.cs:192`/`:198` throw a **token-less** OCE on connection loss, so a game crash or DLL unload reads as "you pressed Cancel", with nothing logged. **This is audit #3's L14, applied at 2 of its 4 sites** — the two siblings carry the fix with an explicit `(L14)` comment. Both files also skip the `oldCts`/`Dispose` half. | S / low |
+| **Z6** | LOW | `InstanceFinderViewModel.cs:466` (`LookupAddressAsync`) | A bare `_searchGen++` steals the generation from an in-flight class search, but `LookupAddressAsync` owns only `IsLookingUp` and never touches `IsSearching`. The superseded search's `finally` (`:452`, *"only the latest op owns the flag"*) then skips its clear, so the indeterminate ProgressBar bound at `InstanceFinderPanel.axaml:65` **animates for the rest of the session** with nothing in flight. The invariant is "whoever bumps the generation takes over the flag"; this is the one bumper that is not itself a search. | S / low |
+| **Z7** | LOW | `InstanceFinderViewModel.cs:274`+`:289` (`ApplyInstanceFilter`) | The method's doc promises it *"Preserves the current selection (and its loaded field grid)"* and *"purely client-side, no server round-trip"*. `UiCollection.Reset` calls its detach callback **unconditionally**, so `SelectedInstance = null` fires `Fields.Clear()`, and the restore at `:289` re-enters the handler and issues a **fresh `walk_instance`** for the address already loaded. Every keystroke pause (200 ms debounce) blanks the field grid and refetches it; one class-noise tick costs **two** walks, since `ApplyInstanceFilter` runs both immediately and again when the server re-run lands. | S / low |
+| **Z8** | LOW | `ConsoleViewModel.cs:238` (`LoadAsync`) | `list_all_functions` inherits `limit = 100000`, and `Aura::EnumerateAllFunctions` breaks out of the GObjects walk at the cap **emitting no truncation marker of any kind** — unlike its `search_properties` sibling. The one field that could expose it is degenerate: `totalFunctions++` sits *inside* the push loop (`Aura.cpp:5080`), so it is identically `entries.size()`, and nothing reads the model property anyway. The panel then states a **positive claim about the game** — *"No UFUNCTION(exec) commands found in this game (scanned 100,000 functions…)"* — from a scan that never reached the classes in question. `InterestingFunctionsViewModel` has the identical blind spot and additionally **cannot** pass `countsPartial` to its `Rebuild` because no flag exists to pass. Needs a DLL change, hence M. | M / low |
+| **Z9** | LOW | `PropertySearchViewModel.cs:675` (+ `InterestingPropertiesViewModel.cs:209`, `InstanceFinderViewModel.cs:827`) | The batch xref loops consume `res.Xrefs` and discard `res.Scan.DeadlineHit`, which the DLL latches on a real 30 s budget. A row whose sweep timed out is written as **`0`** — the signal the user reads as *"no Blueprint function touches this field, so freezing it is safe"*. The single-row dialog built on the same call prints `[DEADLINE HIT — partial]`, so two UI paths over one DLL call disagree. | S / low |
+| **Z10** | LOW | `PropertySearchViewModel.cs:512` | The cap suffix advises *"narrow the query or raise Max"* on a panel with **no Max control** — the string was lifted from Instance Finder, which really does own an `InstanceSearchCap` NumericUpDown. This panel never passes `limit`, so the cap is the compile-time default 200. Either drop the advice or add the lever (the latter is the better fix; 200 is very low for `Health`). | S / low |
+| **Z11** | LOW | `PropertySearchViewModel.cs:396` (`ApplyForceAsync`) | `held == 0` is reported as *"nothing held"*, but `Solide::AddForce` only discards a job when the field was found **and type-refused**; with no live instances yet it keeps the job and **starts the re-assert worker**. So the hold is armed and will begin writing into the game the moment an instance spawns, having told the user it did nothing. The `resolved` field that separates the two zero cases is already on the wire (`Fern.cpp:5457`) and never parsed. The "Forced fields" strip and the status line say opposite things. | S / low |
+| **Z12** | LOW | `InstanceFinderViewModel.cs:518` | The `[scanned X/Y in Zms]` suffix — whose stated purpose is *"so the user can tell a clean miss from a deadline-truncated scan"* — is built from the **shallow** pass's counters. `container_scan.deep_scan` is emitted by the DLL and never parsed, and `Fern.cpp:4013` only swaps in the deep stats when the deep pass found **nothing**. So a deep-scan success reports the shallow pass's 180 ms, and a deep miss never reveals that the 256-element cap, not exhaustion, ended the search. | S / low |
+| **Z13** | LOW | `KeywordScoringTable.cs:82` + `PropertyScoringTable.cs:66` | `StatsKeywords` lists both `"HP"` and `"Hp"`; `CountTokenHits` re-tokenises each keyword and lowercases, so both yield `["hp"]` and **one distinct keyword is counted twice**. This contradicts the method's own documented contract, quoted at `:326`: *"Each keyword counts once total even if multiple tokens would match."* Every HP-named row gets a silent +5 over every other stat keyword in the column the panel sorts on, and the tooltip renders "keywords(2 hits)". Duplicated across both scoring tables. | S / low |
+| **Z14** | LOW | `PropertyScoringTable.cs:74` | `"IsDead"`/`"IsAlive"` can never match without `"Dead"`/`"Alive"` also matching, and the comment justifying their presence describes the tokenisation that makes them redundant. | S / low |
+| **Z15** | LOW | `InterestingFunctionsViewModel.cs:443` | Toggling Gameplay Actions re-scores every row but leaves the status line's *"above threshold: N"* count from the **previous** scoring mode — the counts are written by `LoadAsync` and `RescoreAsync` never updates them. Distinct from Z1 (that is the re-score not running; this is the re-score running and the report not following). | S / low |
+| **Z16** | LOW | `PropertySearchViewModel.cs:606` (`CopyOffset`) | `clipboard?.SetTextAsync(...)` — a Task returned and dropped inside a `void` command, reaching into `Application.Current` by hand even though `IPlatformService` is **injected into this very VM and used by every other copy site**. A clipboard failure (another process holding it open) surfaces nowhere, logs nothing, and sets no status, so the user pastes a stale offset into CE. It is the only unawaited `SetTextAsync` in the UI. | S / low |
+| **Z17** | INFO | `LoggingService.cs:18` + `ILoggingService.cs:46` | Two doc comments on the logging surface state a **generation-count** rotation policy ("2-version rotation") — the exact policy CLAUDE.md's app-data rule replaced with age-based retention, and which it explains at length *cannot* express the requirement. The code follows the age rule; only the docs are stale. Per this audit's own §1.11 lesson a comment admitting/asserting the wrong contract is worth filing, but there is no behavioural defect. | S / low |
+
+> **Negative result worth recording** (it reproduces, and an absence is the cheapest thing to produce
+> by accident): the AOT/trim lens swept all ten files for `Activator.`, `MakeGeneric`,
+> `GetCustomAttribute`, `typeof(…).Get*`, `Type.GetType`, `Assembly.`, `Expression.`, `dynamic`,
+> `Convert.ChangeType`, `Enum.Parse/GetValues/GetNames` and non-source-generated `JsonSerializer`
+> calls, and found **none**. The two `ComboBox` bindings in scope do not bind a boxed value to
+> `SelectedItem`. U5's C# is AOT-clean.
+
+-----
+
 ## 3. Refuted — do not re-raise
+
+### From U5 (6 of 30 — 20%, the audit's lowest; see the leniency warning in §2)
+
+Only four of these died on the merits; read the caveat before treating the survivors as vetted.
+
+- **`ConsoleViewModel.cs:72`** — the sticky-instance pin surviving a reconnect to a *different* game.
+  Refuted: the self-heal is designed for exactly this and names it — *"A pinned address can go stale
+  (object freed, level change, PIPE RECONNECT) … drop the pin and retry once with a fresh classname
+  resolution"* — and the code delivers it.
+- **`ConsoleViewModel.cs:161`** — three VMs own an `IDisposable KeywordSearchMemory` without being
+  `IDisposable` themselves. Refuted: every code fact is correct and **no bad outcome follows** — the
+  700 ms debounce timer is harmless at process exit. Worth remembering as the shape of a true
+  "correct but inconsequential" claim.
+- **`InterestingPropertiesViewModel.cs:224`** — died as a **duplicate** of the async-thread lens's
+  better-evidenced report of the same defect, *not* on the merits. The surviving copy is **Z5**.
+- **`InterestingFunctionsViewModel.cs:269`** — the L14 twin, refuted on its stated failure input
+  ("the game crashes at…") while the underlying site is real; folded into **Z5**, which cites it.
+- **`InterestingPropertiesViewModel.cs:409`** — duplicate of the claim recorded as **Z2**.
+- **`InterestingPropertiesViewModel.cs:593`** — the AOT lens's self-declared **negative result**,
+  correctly not a finding. Recorded as a negative result in §2 instead.
 
 ### From U4 (0 of 15 — 0%)
 
@@ -1552,74 +2288,285 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session FIXES W5 (scanning is paused)
+## 3c. THE OPEN REGISTER — every finding still outstanding
 
-*State as of 2026-08-15, after U4 + ten fix batches. Read this section first; it is written for a
-session with no memory of the previous one.*
+*Generated from §2's tables, not hand-tallied. Re-derive after any fix with:*
 
-> 🔵 **Y9 shipped in 2895, Y15 in 2904. Next up is W5. Do not start U5.**
-> Scanning is deliberately paused with 10 of 12 segments done — the remaining backlog is worth more
-> than another 14 findings. Work the open list one item (or one related group) at a time, and report
-> after each so the maintainer can watch the quota.
->
-> **W5** — `CeXmlExportService.cs:2141`, `S`/low. Weak/soft/lazy pointers are drilled with
-> `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer.
->
-> **Y16 is surveyed but DELIBERATELY NOT FIXED** — the maintainer's call, 2026-08-15. Do not pick it
-> up as filler work; ask first. The survey is worth reading anyway (§2, "Y16 scope note"): it is
-> **three** sites, not the one the row cites, and re-rated M/low. Every one of them already holds the
-> size and does not pass it.
->
-> **Read Y15's and Y9's entries in §2 before either.** Their lessons are the reusable ones:
-> Y15 — before writing a test, ask **whether the call site can fail the test at all**. Its mapping
-> was already covered; the two places that *used* it were unreachable from a test (an Avalonia
-> constructor, a command needing a bridge and a modal), so the width could have been dropped at
-> either with zero failures. Two `internal static` seams later, the controls actually fire.
-> Y9 — the check belongs where the user can still see it, because everything downstream narrows in
-> silence; and a validator tightened without its **pre-fill** produces a dialog that rejects its own
-> default.
->
-> ⚠ **The enum-width family has now cost four findings across SEVEN sites in four subsystems**
-> (W6 ✅ CE XML export, Y2 ✅ FIRE param buffer, Y15 ✅ freeze/force, Y16 open = three invoke sites +
-> one stale comment). If you touch any code that decides how many bytes to write — or **read** — for
-> an `EnumProperty`, the answer is *the size the engine reported*, never the type name.
->
-> Its second-order lesson is sharper than the rule itself: at all seven sites **the size was already
-> in scope and simply not passed**. Three of them carried a code comment describing the gap before
-> anyone reported it. So the cheap sweep is not "grep `EnumProperty`" — it is *grep for a method that
-> takes a size argument and does not use it*.
+```bash
+python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encoding='utf-8').read();r=re.findall(r'^\| \*\*([A-Z]{1,2}\d+)\*\*( ✅)?(?: †| ‡| ¤)? \| (?:\*\*)?(HIGH|MED|LOW|INFO)(?:\*\*)? \|',s,re.M);print(len([x for x in r if not x[1]]),'open /',len(r),'total')"
+```
 
-> ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
-> (2842), W1+W7 (2853), Y1 (2862).
+> ⚠ **The first version of this command (2026-08-15 AM) undercounted — 263 total instead of 272.**
+> Two parser traps, both now tolerated above: (a) the five dagger-marked rows (`G7`†, `PX1`‡, `MB3`†,
+> `F1`‡, `F8`¤) that §4's own footnote at "allow an optional marker" had already documented, and
+> (b) the four rows whose severity cell is **bold** (`| **V1** ✅ | **HIGH** |` — V1, W1, W2, Y1, all
+> fixed HIGHs), which nothing had documented. On top of that, eleven findings fixed in §2's
+> prose blocks (M1–M3, A2, U1, U2, F1, F4, F6, F7, FR1 — commits `5ef4c2b`, `c65fdfc`, `0d9fcfa`,
+> `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
+> register counted them open. Rows are now marked; the numbers below are the corrected derivation.
+
+**239 of 272 findings are still open** (33 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **6 HIGH · 73 MED ·
+133 LOW · 27 INFO**. Fixed HIGHs: 5 (V1, W1, W2, Y1, AB1).
+
+> ⚠ **The LOW and INFO tiers are NOT vetted to this audit's standard.** Kill rates ran 10–35%
+> against the audit's own 33–73% band, and only HIGH/MED got a second lens in most segments. Each
+> §2 block states what was hand-verified. **Re-derive any LOW before fixing it** — several are
+> pattern-sweep leads, not findings.
+
+### The 6 open HIGHs — start here
+
+> ✅ **All six re-verified against the source 2026-08-15 (PM double-check pass — see the block at the
+> end of this section). Zero line drift on all six.** The per-finding corrections below are from that
+> pass; the original one-line claims stand, but several details a fixer would code against changed.
+
+1. **AD1** — `build.ps1:666 (Unit Tests block — utf8_helpers_test / dll_helpe)`
+   A C++ test target that fails to COMPILE is reported as "skip", not as a failure — the whole C++ suite can go silent, including in CI
+   *Re-verify: AD1 (`:644-667`) and AD2 (`:669-693`) are **two separate `if/else` statements**, not
+   two arms of one branch — the fix must be applied at BOTH sites independently. A third condition
+   collapses into the same skip message: build succeeded but no `.exe` found. CI inherits the hole
+   confirmed: `ci.yml:142` and `release.yml:70` are single `build.ps1` steps with no artifact
+   assertion. Partial mitigation only: `dll_helpers_test` compiles `Radar.cpp`/`Denken.cpp`, so a
+   break in those two files fails the DLL phase — a break in a test .cpp or a header-only signature
+   is fully silent, and `utf8_helpers_test` shares no .cpp at all.*
+
+2. **AD2** — `build.ps1:692 (Test phase — dll_helpers_test / utf8_helpers_tes)`
+   A C++ test target that FAILS TO COMPILE is reported as "skip" and leaves exitCode 0 — the whole C++ suite silently stops running, in CI too
+   *(see AD1's note — same defect class, second required edit)*
+
+3. **AB2** — `Methode.cpp:307 (OnInjectAndConnect)`
+   InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread
+   *Re-verify (mechanism CONFIRMED in CE's own source, `CEFuncProc.pas:1346-1388`), three corrections:
+   (a) the free is **not unconditional** — CE waits a hard, unconfigurable **10 s** ceiling
+   (`waitforsingleobject` loop) and the `finally` then `VirtualFreeEx`es the stub page; the hazard is
+   "total remote work > 10 s" (DllMain + Sein::Init + 2–8 s AOB scan + pipe start), which is why it
+   does not always reproduce. (b) **The victim is the GAME process, not CE** — AB1 crashed CE, AB2
+   crashes the game (the `ret` lands on the freed stub page). (c) A worse sibling path: with CE's
+   Settings checkbox `cbInjectDLLWithAPC` ticked, the stub is freed after **1 s unconditionally**
+   (`CEFuncProc.pas:1332-1343`) — near-certain crash. Two secondary costs: CE's GUI freezes for the
+   whole scan (Type-5 callback on the main thread, no message pump), and the 10 s timeout surfaces as
+   our misleading "Injection failed. Ensure the target is a 64-bit UE5 process…" dialog while the DLL
+   is in fact loaded and scanning. **AB1's fix does NOT mitigate this** — the pin protects our image
+   in our address space; the freed memory is CE's own `VirtualAllocEx` stub in the game. Fix shape:
+   `UE5_AutoStart` must spawn-and-return (publish via `Mimic::InitState`, which `UE5CEDumper.CT`
+   already polls), so the remote thread exits inside the 10 s window.*
+
+4. **AA1** — `ue5_freeze_helper.lua:153 (writeBool)`
+   Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit
+   *Re-verify: worse than stated — when `ByteMask != 0x01` the intended bool is **never set at all**
+   (writing 1 sets bit 0), so the feature silently no-ops while corrupting up to 7 neighbours. The
+   mask is structurally absent from the whole freeze pipeline (`PropertySearchMatch` /
+   `FreezeScriptParams` carry no mask field) but already exists on neighbouring wires
+   (`FieldInfoModel.BoolFieldMask`, `bool_mask`) — a dropped field, the Y15 shape, and Y15's own
+   repair (`required` on the params record) is the template. The DLL sibling reached from the same
+   row is correct and exhaustively tested (`Solitar::ApplyBoolBit`, `dll_helpers_test.cpp:2629`).*
+
+5. **AA2** — `ue5_freeze_helper.lua:452 (freezeProperty -> tick)`
+   The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds
+   *Re-verify: mechanism exact (the wire carries **raw addresses only** — `Mimic::HandleListInstances`
+   packs 8-byte pointers, no `InternalIndex`/`SerialNumber`, though `Aura::GetSerialNumber` exists).
+   Two number corrections: the tick is a CE `TTimer` at `Interval=50`, quantised by the ~15.6 ms
+   scheduler tick to **~16 writes/sec per cached address** (the "20/sec" was the file's own header
+   comment, never measured), and "up to 5 s" is the BEST case — a slow rescan extends it (5 s timeout
+   × up to 16 pages, synchronous), and a failed one hands over to AA3.*
+
+6. **AA3** — `ue5_freeze_helper.lua:461 (rescan / tick)`
+   A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely
+   *Re-verify: "indefinitely" is **conditional on a persistent failure** — a transient
+   `mailbox busy` self-heals on the next 5 s rescan; the unbounded cases are real and ordinary (DLL
+   unloaded/re-injected → `g_invokeMailbox` unresolvable forever; contract mismatch after a DLL
+   update; a wedged shared `_ue5_invoke_busy`). `_lastError` is **write-only** (3 occurrences
+   repo-wide, zero readers) so nothing ever surfaces the failure. The vtable-nonzero guard is weaker
+   than even AA2 implies: a pooled free block keeps old bytes or a free-list link in qword 0, both
+   non-zero — in practice it catches only decommitted pages (i.e. game exit).*
+
+
+### Where the rest live
+
+| Segment | HIGH | MED | LOW | INFO | Open |
+|---------|-----:|----:|----:|-----:|-----:|
+| S1 early Lua scripts | **3** | 17 | 14 | 2 | **36** |
+| T1c VMs + Core + Models | – | 10 | 15 | 4 | **29** |
+| T1b DLL headers + C++ tests | **2** | 4 | 15 | 6 | **27** |
+| T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
+| T1a Radar + entry points | **1** | 5 | 12 | 4 | **22** |
+| U5 remaining VMs / Models / Core | – | 3 | 13 | 1 | **17** |
+| T1d UI Services | – | 2 | 10 | 5 | **17** |
+| U3 Dump services + MainWindow VM | – | 1 | 9 | 0 | **10** |
+| D1 Ubel | – | 6 | 3 | 0 | **9** (U1, U2 fixed) |
+| D3 Aura | – | 5 | 4 | 0 | **9** (A2 fixed) |
+| U1 LiveWalker / Pointer / ObjectTree | – | 4 | 4 | 0 | **8** |
+| D2 Genau+Serie | – | 3 | 4 | 0 | **7** (incl. G7 †) |
+| U4 Dialogs + CE generators | – | 1 | 5 | 0 | **6** |
+| D5 Fern | – | 3 | 1 | 0 | **4** (open: F2, F3's in-session half, F8 ¤, F5) |
+| D4b Mimic | – | 0 | 2 | 1 | **3** (incl. MB3 †) |
+| U2 Export services | – | 1 | 1 | 0 | **2** |
+| D4b Flamme | – | 0 | 2 | 0 | **2** |
+| D4b Sein | – | 0 | 2 | 0 | **2** |
+| D4b Stark | – | 1 | 0 | 0 | **1** |
+| D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
+| D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
+| D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
+| **TOTAL** | **6** | **73** | **133** | **27** | **239** |
+
+### Fix order recommended
+
+1. **AD1/AD2** — one defect class, **two separate sites** (not two arms of one branch — both need
+   the edit), and it is *meta*: while it stands, every other fix's "tests green" is one compile
+   error away from meaning nothing. Fix it before the rest.
+2. **AA1** — a wrong WRITE into the game, ~16×/sec per address, and the DLL sibling reached from the
+   **same Property Search row** already does it correctly (`Solitar::ApplyBoolBit`). Small and
+   well-defined — but note the mask must first be ADDED to the freeze pipeline's wire/params (it is
+   absent end-to-end; `FieldInfoModel.BoolFieldMask` shows where to copy from).
+3. **AA2/AA3** — one defect (the freeze tick's liveness guard) at two sites. Bigger: the honest fix
+   needs an identity witness (`InternalIndex`,`SerialNumber`) the Lua tier does not currently
+   receive — `Mimic::HandleListInstances` would have to widen its 8-byte entries, which is a
+   mailbox-contract change (bump rules in `dll/src/Mimic.h`).
+4. **AB2** — CE frees the remote stub after its hard 10 s inject ceiling while our scan still runs;
+   the GAME crashes. Same root assumption as AB1 (CE unloads what we assume it won't) but **AB1's
+   fix does not touch it** — the fix is spawn-and-return in `UE5_AutoStart` (see the AB2 note above).
+5. Then the MED tier, **grouped by family rather than by segment** — see below.
+
+### Fix by FAMILY, not by ID — this is the audit's strongest recommendation
+
+The two recurring families are both greppable. Status as of the 2026-08-15 double-check:
+
+- **The width family** — an out-of-range value masked to the field width and reported as written.
+  Six audited occurrences across four subsystems, of which **four are already fixed** (W6 ✅ b2857,
+  Y2 ✅ b2866, Y9 ✅ b3da36ca, Y15 ✅ b2904). Still open: **AE1** (`FieldValueConverter.cs:196-207`,
+  re-confirmed: `9999` → `(byte)(9999 & 0xFF)` = 15, then the caller logs `Written: … = 9999`) and
+  **Y16 (PARKED — do not pick up, ask first)**. **At every site the correct width was already in
+  scope and simply not enforced.** ⚠ The double-check's focused grep found **three NEW unvetted
+  leads** in this family — see the double-check block below; re-derive before filing or fixing.
+- **Root cause #4 — a fix applied at only some of its sites.** Seven audited occurrences (V2, W4/W6,
+  X1, Y16, AC2, AE10), of which **four are fixed** (V2 ✅, W4 ✅, W6 ✅, X1 ✅ — all verified in-tree
+  2026-08-15). Still open: **AC2** (recounted: `ResolveTrustedLayout` guards **1 of 4
+  `KnownStructLayouts.GetLayout` call sites** — the doc's earlier "1 of 5 consumers" counted two
+  non-consumers, and "1 of 3 sites" missed `InvokeParamDialog.cs:693`, the same file as the fix),
+  **AE10** (recounted: **7** sibling VMs still gate on `IsGWorldAvailable` at 19 sites — 14 C# + 5
+  XAML — not 9; `LiveWalkerViewModel`'s flag is write-only dead, not a gate), and **Y16 (parked)**.
+  The rule "grep for siblings before closing a fix" has been in §3b since the fourth occurrence and
+  three more have appeared since — so it is not being applied *at fix time*. Make it part of the fix.
+
+**The single most productive technique was the comment sweep** — grep for a comment admitting a
+limitation or asserting an impossibility, then check it. **6 for 6**, and it produced the lead
+finding in T1a, T1b and T1e.
+
+### 🔎 Double-check pass — 2026-08-15 PM (verification only, no code changed)
+
+Five parallel read-only verifiers re-derived the fix queue's head against tree `8941fb4` before
+handing it to the fixing session. Scope: the 6 open HIGHs, the open family members (AE1, AC2, AE10),
+W5 (next in queue), the Y16 parked survey, and **every ✅ mark in §2** (all 22 row-marked + the 11
+prose-fixed rows now marked). Everything below was verified by locating code by IDENTIFIER, not by
+the row's line number.
+
+**Verdicts:**
+
+| Finding | Verdict | Key correction (details inline above where load-bearing) |
+|---|---|---|
+| AD1, AD2 | CONFIRMED, zero drift | Two independent sites; CI hole confirmed end-to-end |
+| AB2 | CONFIRMED, zero drift | 10 s ceiling gate; victim is the game; APC path = 1 s |
+| AA1 | CONFIRMED, zero drift | Also no-ops the intended bool when mask ≠ 0x01 |
+| AA2 | CONFIRMED, details drifted | ~16 writes/s per address (TTimer quantised), not 20; 5 s is best case |
+| AA3 | CONFIRMED, details drifted | "Indefinitely" = persistent-failure cases only; `_lastError` write-only |
+| W5 | CONFIRMED, exact line | The look-alike test (`…EmitsLeafWith8BytesNotGroupHeader`) passes **no `resolvedInstances`**, so the drill branch is untested; the correct predicate `IsRawObjectPtrArrayInner` + the refusing comment sit at `:478-486` of the same file |
+| AE1 | CONFIRMED, unfixed | Untouched by the Y9/Y15 fixes (`FieldValueConverter.cs` has exactly one commit ever); defect is specific to the enum-backed branch — plain `ByteProperty` correctly rejects 9999 |
+| AC2 | CONFIRMED, counts corrected | 1 of **4** `GetLayout` call sites guarded (3 distinct consumers); unguarded: `InvokeParamDialog.cs:693`, `StructReturnDecoder.cs:55` + `:79`; size in scope at all three; `StructReturnDecoder.cs` already `using UE5DumpUI.Views;` |
+| AE10 | CONFIRMED, counts corrected | **7** VMs / 19 sites still gate (ClassPivot, Snapshot(+Group), SpcQuery(+Group), InstanceFinder, InterestingFunctions, InterestingProperties, DetectStats); todo.md's pending list under-names them |
+| Y16 (parked) | Survey re-verified, no drift | All three sites + the cosmetic straggler exist exactly as surveyed (`CeInvokeReturn.cs` lives in `Services\`) |
+| All 33 ✅ fixes | **VERIFIED-FIXED in tree, 0 failures** | Includes the 11 newly row-marked (M1–M3, A2, U1, U2, F1, F4, F6, F7, FR1) |
+
+**Residuals left inside shipped fixes (string/comment-level, worth sweeping with the next commit in
+each file):**
+
+- **AB1 (✅ 2913):** the helpers are at **global scope**, not `namespace Grimoire` (`Grimoire.h`
+  closes the namespace at `:347` before declaring them — `Grimoire::HostAllowsBackgroundThreads`
+  would not compile; §3b's bullet and the memory files say otherwise). Three stale comments
+  survived the fix: `Heiter.cpp:353` ("Only the implicit process-exit DETACH is a no-op" — the
+  unnamed `lpReserved` still can't tell), `Heiter.cpp:329` ("Store the handle so DETACH can wait" —
+  nothing waits), and `Fern.cpp:533-537` (cites `Heiter.cpp:288-301`, now the middle of the new
+  comment block, and justifies safety by the falsified premise instead of the new PIN).
+- **V2 (✅ 2830):** `ContainerGeometry.FallbackStride` deliberately keeps the old
+  `Align(elemSize,4)+8` for pre-2830 DLLs (documented, correct only for `alignof(T) <= 4`), and
+  `CsxExportService.cs:623` still carries a doc comment asserting the dead formula directly above
+  code that calls `ContainerGeometry.MapStrideOf`.
+
+**Three NEW width-family leads (⚠ single-agent finds, NO skeptic pass — re-derive before filing as
+findings, per §2's own ~50% raw kill rate):**
+
+1. `InvokeParamDialog.cs:992` — `DecodeParamValue` reads a 1-byte enum as 4 bytes when
+   `available >= 4` (the C# read side of the invoke result grid; NOT one of Y16's three sites, which
+   are all on the generated-Lua side). Tell: a 1-byte enum at the END of the buffer decodes right
+   (guard fails → correct size fallback), one mid-buffer doesn't.
+2. `SdkExportService.cs` — the generated enum's declared width comes from
+   `InferEnumUnderlyingType(entries)` while the layout cursor advances by the real `f.Size`
+   (`:264-265`, `:319` hardcode `uint8_t`) — a header that silently mis-lays out members after a
+   wide enum.
+3. `ParamBufferBuilder.cs` — the FIRE path masks out-of-range values (`(short)`, `(int)`,
+   `unchecked((byte)u)`) with zero validation in `InvokeParamDialog` — Y9's defect in the invoke
+   dialog. Caveat: the byte wrap is PARTLY deliberate (Y5's `-1` → `0xFF`), so the repair is a
+   signed/unsigned-aware range check, not removing the cast.
+
+**Bookkeeping corrected in this pass:** the register command + counts (263→272 total, see the
+header note), the 11 unmarked fixed rows, the segment table, and one misnumbering: the width-family
+member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T1c's prose called it
+"AE9" (which is actually the Sort-picker no-op finding). Both prose sites now corrected.
+
+-----
+
+## 3b. START HERE — scanning is DONE; everything left is fixing
+
+*State as of 2026-08-15. Read this first; it is written for a session with no memory of this one.*
+
+> ✅ **ALL 12 SEGMENTS ARE SCANNED.** D1–D5, U1–U5, S1, and T1's five phases T1a–T1e. See §2z for the
+> completion summary: per-segment kill rates, the three findings to start from, and the two defect
+> families that account for more findings than any single subsystem.
 >
-> **Fixed so far — 21 findings across thirteen fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: Y15 (2904), Y9 (2895), X2 (2888), Y6+Y7 (2881), Y8 (2875), X1
-> (2870), Y2+Y3+Y4+Y5 (2866), Y1 (2862), W6 (2857), W1+W7 (2853), W2+W3 (2842), W4 (2836),
-> V1+V2+V5 (2830). Test count went 3590 → 3724 over the session; every fix carries a negative
-> control, and the doc entry for each says what the control proved.
+> 📋 **The complete open list is §3c, "THE OPEN REGISTER" — read that first.** It is generated
+> from §2's tables (**239 open of 272; 6 HIGH / 73 MED / 133 LOW / 27 INFO** — corrected 2026-08-15
+> PM: the earlier "245 of 263" came from a regex that dropped nine rows and from eleven fixed rows
+> that were never ✅-marked; see §3c's header note), names the six open HIGHs with file:line, says
+> where every remaining finding lives, gives a recommended fix order, and carries the command to
+> re-derive itself after a fix. **All six open HIGHs were re-verified against the source
+> 2026-08-15 PM (zero line drift)** — per-finding correction notes sit inline in §3c's HIGH list.
 >
-> **Y1 is the one to read before fixing anything else**, because its verification is the template:
-> a claim about a *runtime we do not control* (Lua inside Cheat Engine) was settled by evaluating the
-> emitted expression in **CE's own `lua53-64.dll`** and cross-checking CE's **bundled Lua source** —
-> two independent detectors, neither of which is "reasoning about Lua". `celua.txt` in the CE install
-> is the API reference to consult first for any CE-side call; `D:/Github/cheat-engine` is the last
-> public source (7.5) when the reference is not enough.
+> ✅ **AB1 is FIXED in build 2913** — see dev-log. The remaining must-fix is AD1/AD2.
 >
-> 🔁 **Read this before fixing anything from U3.** X1 is the D5/**F4 fix applied to one of its two
-> sites** — the DLL covered both the single and batch property-search paths, the C# covered only the
-> single one. That is the **third** time this audit has found its own fix half-applied (V2 = one side
-> of the wire, W4/W6 = some call sites, X1 = one of two twins). Before closing any fix, grep for its
-> siblings across languages, call sites, and single/batch twins.
+> 🔴 **The two most consequential findings, both hand-verified against the source:**
+> - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path. ✅ FIXED (2913).** `DllMain` starts a
+>   1 ms-poll thread unconditionally; CE `FreeLibrary`s plugin DLLs on Settings→Add and on every exit;
+>   `DllMain`'s `lpReserved` is commented out so DETACH cannot distinguish unload from process-exit;
+>   nothing pins the module; and `IsCheatEngineExeName` (global scope in `Grimoire.h` — NOT
+>   `Grimoire::`, the namespace closes before it is declared) had exactly one call site — *inside*
+>   the thread it should have prevented. Fix is two small guards; **do not** join threads from DETACH.
+>   Fix verified in-tree 2026-08-15; three stale comments survived it — see §3c's double-check block.
+> - **T1b/AD1 — a C++ test target that fails to COMPILE is reported as "skip" and the build exits 0**,
+>   CI included (`build.ps1:691-693`; the `else` arm never touches `$exitCode`). **Latent** — the
+>   control was run and the suite does execute today — but it silently disarms ~700 assertions the
+>   moment a test stops compiling.
 >
-> **What is owed instead is verification, and it is the cheapest work available.** Three separate
-> items are queued in
-> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code) — the TMap geometry UI half
-> (U1), the `super_props_size` boundary value (W2), and opening a `.usmap` in a real consumer (W1).
-> None needs code. The `.usmap` one matters most because our reader and our writer are derived from
-> the same two vendored sources, so a shared misreading of the format would satisfy both.
+> ⚠ **Vetting is uneven and the doc says so per segment.** Kill rates ran 10–35% across the T1
+> phases against the audit's own 33–73% band. **Everything hand-verified is marked as such in its
+> block; re-derive anything else before fixing it.**
 >
-> **Still open from U2, none urgent:** W5 (weak/soft pointers drilled with `Offsets=[0]`), W8
-> (USMAP drops every Blueprint-generated class — worth pairing with the FModel check, since a missing
-> `*_C` class there is expected until W8 is fixed).
+> 🔁 **Before closing ANY fix, grep for its siblings.** Root cause #4 is at **seven** occurrences
+> (V2, W4/W6, X1, Y16, AC2, AE10 — four now fixed, see §3c's family block) and **AC2 is this
+> audit's own Y7 fix applied at 1 of 4 `GetLayout` call sites** (recounted 2026-08-15 — the earlier
+> "1 of 5 consumers" counted two non-consumers and "1 of 3 sites" missed `InvokeParamDialog.cs:693`).
+> The rule has been in this section since the fourth; three more have appeared since, which means it
+> is still not being applied *at fix time*. Treat "where else does this predicate belong?" as part of
+> the fix.
+
+> **Next fix in the queue: W5** — `CeXmlExportService.cs:2141`, `S`/low: weak/soft/lazy pointers
+> drilled with `Offsets=[0]`, i.e. dereferencing a slot that is not a pointer. Re-confirmed
+> 2026-08-15 (exact line): the branch predicate is the broad `IsObjectPropertyType` family while the
+> correct narrow predicate `IsRawObjectPtrArrayInner` + the refusing comment already exist at
+> `:478-486` of the same file. ⚠ The existing test
+> `GenerateInstanceXml_WeakObjectProperty_EmitsLeafWith8BytesNotGroupHeader` passes **no
+> `resolvedInstances`**, so the drill branch is currently untestable-by-accident — extending that
+> test IS the regression test for this fix.
+> **Y16 remains PARKED at the maintainer's request** (2026-08-15) — surveyed in full in §2, three
+> sites, M/low. Do not pick it up as filler; ask first.
 
 ### The pacing rule, learned by hitting it
 
@@ -1631,13 +2578,14 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 
 ### What is done
 
-**Scanning: 10 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3, U4. Still
-open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
+**Scanning: 12 of 12 segments started — only T1 remains**, and T1 is split into five phases
+(T1a–T1e, see §1). D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3, U4, U5, S1 are done.
+**The DLL, the C# and the Lua are all scanned; what is left is the T1 tail.**
 
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y10–Y14, Y16, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+**Still open: Z1–Z17, Y10–Y14, Y16, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
 remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875), **Y6+Y7** (2881),
 **Y9** (2895) and **Y15** (2904) — 10 of its 16 (Y15 was hand-found while fixing Y9, and Y16 while
 fixing Y15); U3 shipped **X1** (2870) and **X2** (2888) — 2 of its 12.

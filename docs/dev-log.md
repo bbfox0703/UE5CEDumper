@@ -110,6 +110,86 @@ nobody has frozen a real `enum class : uint8` and confirmed its neighbours survi
 
 -----
 
+## 2026-08-15 - We were crashing Cheat Engine, and the guard that would have stopped it had one call site (build 2913)
+
+**Audit #5 phase T1a, finding AB1 — the audit's most consequential.**
+
+### What we were doing to CE
+
+`DllMain(DLL_PROCESS_ATTACH)` started a **1 ms-poll thread unconditionally** — `Heiter.cpp:274`
+`Mimic::StartThread();`, whose comment reads *"Runs in both proxy and inject modes"* — plus the
+auto-start thread. Neither was conditional on the host process, and **Cheat Engine loads this DLL as
+a plugin and then unloads it**:
+
+* `Settings → Plugins → Add` does LoadLibrary → `CEPlugin_GetVersion` → **FreeLibrary**
+  (cheat-engine 7.5 `plugin.pas:1497 / :1522 / :1525`), so the refcount hits 0 microseconds after
+  `DllMain` returns;
+* **every CE exit** does `FormClose → pluginhandler.free → UnloadPlugin → FreeLibrary`
+  (`plugin.pas:1417`, `MainUnit.pas:7832`) — and that runs **before** CE writes its settings, so the
+  crash also loses the user's CE configuration for that session.
+
+A thread that returns from `Sleep(1)` into an unmapped image is an access violation on a thread with
+no handler. We were taking down the user's primary tool.
+
+### Three things had to be simultaneously true, and they were
+
+1. **The guard existed and was applied at the wrong place.** `IsCheatEngineExeName` had **exactly one
+   call site in the entire DLL** — inside `AutoStartBody`, i.e. *inside the thread it should have
+   prevented from being created*.
+2. **`DLL_PROCESS_DETACH` could not rescue it.** `Heiter.cpp:190` declared
+   `DllMain(HMODULE, DWORD, LPVOID /*reserved*/)` — **the parameter is commented out**, so DETACH
+   structurally cannot distinguish a `FreeLibrary` unload from process exit. Its own comment claimed
+   *"Only the implicit process-exit DETACH is a no-op"*, a distinction the signature makes impossible
+   to draw.
+3. **A comment asserted the case away.** `Fern.cpp:533-537`: *"The only case this gives up on is
+   FreeLibrary of this DLL with the process still alive … **Nothing in this repo does that** … and
+   Heiter.cpp's no-op DETACH already relies on the same fact."* Two modules resting on one unverified
+   premise — and **this repo's own mirrored doc already recorded the load/free cycle** at
+   `docs/ce-plugin-api-reference.md:95-102`.
+
+### The fix
+
+Two small guards, in `DllMain` where the decision belongs.
+
+**Do not create threads in a CE host.** The host executable path was *already* read at `Heiter.cpp:239`
+for logging, so the decision costs no new syscall and no new loader-lock exposure. The CE-plugin entry
+points still work — they inject into the **game**, which is where the poller belongs.
+
+**Pin the module when we do start threads.** `GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | …)`,
+so a `FreeLibrary` can never unmap an image our threads live in. Deliberately **not** done in the CE
+branch: with no threads running there is nothing to protect, and CE should stay free to unload us
+cleanly. `grep GET_MODULE_HANDLE_EX_FLAG_PIN dll/src/` previously returned **0**.
+
+**Threads are still not joined from DETACH** — the existing comment is right that that deadlocks under
+the loader lock.
+
+### The test is the durable part
+
+`DllMain` is unreachable from any test, so a test of the guard alone would have proved nothing about
+the call site — which is exactly how this shipped. The decision moved into
+`Grimoire::HostAllowsBackgroundThreads(const wchar_t* hostExePath)`, a pure header-only function
+taking **the full path as `GetModuleFileNameW(nullptr, …)` hands it over**, so the tested unit is the
+one `DllMain` actually calls. It fails **open**: an unreadable path returns `true`, preserving shipped
+behaviour for every non-CE host rather than silently disabling the DLL.
+
+12 assertions: every CE variant as a full path (including `cheatengine-x86_64-SSE4-AVX2.exe`, the
+build variant that defeated the original exact-name list), forward and mixed separators, a bare leaf
+with no directory, and the other direction — a real game, **Cheat Engine in the DIRECTORY name with a
+game as the leaf**, `MyCheatEngineClone.exe`, and both fail-open cases.
+
+**Negative control:** reverting `HostAllowsBackgroundThreads` to `return true` (the pre-fix behaviour)
+reds **exactly the 6 CE-refusal assertions** — `Pass: 1023  Fail: 6` — while all 6 allow/fail-open
+assertions stay green, because those assert what the broken version does. Sensitive to the defect
+rather than to the edit. Restored: **81 + 1029 C++ assertions, 3724 C# tests, 0 failed.** `dist` is
+the 54.4 MB AOT-trimmed binary, launch-verified, no `crash.log`.
+
+⚠ **Not verified against a real Cheat Engine.** The unload paths are read out of CE's published
+7.5 source; nobody has yet installed the plugin into CE 7.7 and watched it survive
+`Settings → Plugins → Add` and a clean exit. Queued in
+[todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
+-----
+
 ## 2026-08-15 - The freeze dialog took 9999 for a byte and the game got 15 (build 2895)
 
 **Audit #5 segment U4 finding Y9.**
