@@ -376,6 +376,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     // direction, so the two property-change handlers don't each kick off a
     // (superseded) server query — ApplyColumnSort issues exactly one reload.
     private bool _suppressSortReload;
+    private bool _suppressGroupSortReload;
 
     // Rows fetched per window (begin/refine first page + Load More + reloads).
     private const int PageSize = 1000;
@@ -901,8 +902,16 @@ public partial class ValueSearchViewModel : ViewModelBase
         Candidates = new ObservableCollection<ValueCandidate>();
         Total = 0;
         FilteredTotal = 0;
-        _sortKey = "";
-        _sortDesc = false;
+        // Reset the bound PICKER, not just the private key. Assigning `_sortKey` alone left
+        // the combo still displaying the previous sort while the next scan ran in scan order,
+        // and re-selecting the option the combo already shows raises no change notification —
+        // so the user could not get that sort back without picking something else first.
+        // (audit #5 AE9)
+        _suppressSortReload = true;
+        SelectedSortOption = SortOptions[0];   // "Scan order"
+        SortDescending = false;
+        _suppressSortReload = false;
+        ApplyUiSort();   // re-syncs _sortKey/_sortDesc even when the picker was already at [0]
         // ClassFilter is reset by EndSessionIfAnyAsync above (single source of truth).
         UpdateWindowStatus();
         StatusText = "Session ended. Configure a new scan and click First Scan.";
@@ -1256,8 +1265,13 @@ public partial class ValueSearchViewModel : ViewModelBase
         GroupCandidates = new ObservableCollection<GroupCandidate>();
         GroupTotal = 0;
         GroupFilteredTotal = 0;
-        _groupSortKey = "";
-        _groupSortDesc = false;
+        // Same picker reset as NewScanAsync — the group mode had the identical defect and
+        // the finding named only the single-scan side. (audit #5 AE9)
+        _suppressGroupSortReload = true;
+        SelectedGroupSortOption = GroupSortOptions[0];   // "Scan order"
+        GroupSortDescending = false;
+        _suppressGroupSortReload = false;
+        ApplyGroupUiSort();
         // GroupClassFilter is reset by EndGroupSessionIfAnyAsync above.
         UpdateGroupWindowStatus();
         StatusText = "Group session ended. Configure values and click Group First Scan.";
@@ -1343,6 +1357,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         _groupSortKey  = SelectedGroupSortOption?.Key ?? "";
         _groupSortDesc = GroupSortDescending;
+        if (_suppressGroupSortReload) return;
         if (HasGroupSession) _ = LoadGroupWindowAsync(reset: true);
     }
 
