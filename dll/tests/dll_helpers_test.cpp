@@ -3010,6 +3010,59 @@ static void Test_Neu_Edge() {
         Neu::EnumNamesLayout L3;
         EXPECT("edge unmapped arrays -> false", !Neu::DetectLayout(rd, 0x10000000, 8, 16384, L3));
     }
+    {   // audit #5 AF1 — the count is range-checked BEFORE the narrowing cast.
+        //
+        // The FNameData57 branch tested `static_cast<int32_t>(numNew) > maxCount`, so the
+        // entire upper half of the uint32 range slipped past: 0x80000000 casts to
+        // -2147483648, which is not greater than maxCount. `out.count` then came back
+        // NEGATIVE from a function whose contract is "parses sanely".
+        //
+        // The arrays ARE mapped here, so the only thing that can reject these headers is
+        // the count check itself — a fixture with unmapped arrays would pass for the
+        // wrong reason and prove nothing.
+        NeuFakeMem fm;
+        uint8_t names[64] = {}, vals[64] = {};
+        fm.Put(0x30000000, names, sizeof(names));
+        fm.Put(0x40000000, vals,  sizeof(vals));
+
+        auto putHdr = [&](uintptr_t region, uint32_t rawCount) {
+            uint8_t hdr[0x18] = {};
+            uint64_t tn = 0x30000000ull | 1, tv = 0x40000000ull | 1;
+            std::memcpy(hdr + 0,  &tn, 8);
+            std::memcpy(hdr + 8,  &tv, 8);
+            std::memcpy(hdr + 16, &rawCount, 4);
+            fm.Put(region, hdr, sizeof(hdr));
+        };
+        auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
+
+        // Sanity: the same fixture with a PLAUSIBLE count is accepted, so a rejection
+        // below is about the count and not about the fixture being unreadable.
+        putHdr(0x10000000, 4);
+        Neu::EnumNamesLayout ok;
+        EXPECT("AF1 control: a sane count on this fixture is accepted",
+               Neu::BuildLayout(rd, 0x10000000, Neu::EnumNamesFormat::FNameData57, 8, 16384, ok)
+               && ok.count == 4);
+
+        // The sign-bit case, and the two neighbours that bracket it.
+        //
+        // A DISTINCT region per case, deliberately: NeuFakeMem::Put appends and Read
+        // returns the FIRST region that covers the address, so re-using one address
+        // would have silently re-read case 1 three times — a loop that reports three
+        // passes while testing one value.
+        const uint32_t cases[] = { 0x80000000u, 0xFFFFFFFFu, 0x7FFFFFFFu };
+        uintptr_t region = 0x11000000;
+        for (uint32_t raw : cases) {
+            region += 0x1000;
+            putHdr(region, raw);
+            Neu::EnumNamesLayout bad;
+            bool built = Neu::BuildLayout(rd, region,
+                                          Neu::EnumNamesFormat::FNameData57, 8, 16384, bad);
+            EXPECT("AF1: an implausible uint32 count is rejected", !built);
+            // Belt and braces: even if some future change accepts one, it must never
+            // publish a negative count — that is the value that reaches the callers.
+            EXPECT("AF1: count is never negative", !built || bad.count > 0);
+        }
+    }
 }
 
 // ----- Orden::MatchGroup — multi-value group scan SDR matcher --------------
