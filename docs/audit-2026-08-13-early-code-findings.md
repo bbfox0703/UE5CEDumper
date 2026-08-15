@@ -2285,6 +2285,99 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
+## 3c. THE OPEN REGISTER — every finding still outstanding
+
+*Generated from §2's tables, not hand-tallied. Re-derive after any fix with:*
+
+```bash
+python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encoding='utf-8').read();r=re.findall(r'^\| \*\*([A-Z]{1,2}\d+)\*\*( ✅)? \| (HIGH|MED|LOW|INFO) \|',s,re.M);print(len([x for x in r if not x[1]]),'open /',len(r),'total')"
+```
+
+**245 of 263 findings are still open** (18 fixed). Open: **6 HIGH · 79 MED · 134 LOW · 26 INFO**.
+
+> ⚠ **The LOW and INFO tiers are NOT vetted to this audit's standard.** Kill rates ran 10–35%
+> against the audit's own 33–73% band, and only HIGH/MED got a second lens in most segments. Each
+> §2 block states what was hand-verified. **Re-derive any LOW before fixing it** — several are
+> pattern-sweep leads, not findings.
+
+### The 6 open HIGHs — start here
+
+1. **AD1** — `build.ps1:666 (Unit Tests block — utf8_helpers_test / dll_helpe)`
+   A C++ test target that fails to COMPILE is reported as "skip", not as a failure — the whole C++ suite can go silent, including in CI
+
+2. **AD2** — `build.ps1:692 (Test phase — dll_helpers_test / utf8_helpers_tes)`
+   A C++ test target that FAILS TO COMPILE is reported as "skip" and leaves exitCode 0 — the whole C++ suite silently stops running, in CI too
+
+3. **AB2** — `Methode.cpp:307 (OnInjectAndConnect)`
+   InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread
+
+4. **AA1** — `ue5_freeze_helper.lua:153 (writeBool)`
+   Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit
+
+5. **AA2** — `ue5_freeze_helper.lua:452 (freezeProperty -> tick)`
+   The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds
+
+6. **AA3** — `ue5_freeze_helper.lua:461 (rescan / tick)`
+   A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely
+
+
+### Where the rest live
+
+| Segment | HIGH | MED | LOW | INFO | Open |
+|---------|-----:|----:|----:|-----:|-----:|
+| S1 early Lua scripts | **3** | 17 | 14 | 2 | **36** |
+| T1b DLL headers + C++ tests | **2** | 4 | 15 | 6 | **27** |
+| T1a Radar + entry points | **1** | 5 | 12 | 4 | **22** |
+| T1c VMs + Core + Models | – | 10 | 15 | 4 | **29** |
+| D1 Ubel | – | 8 | 3 | 0 | **11** |
+| D3 Aura | – | 6 | 4 | 0 | **10** |
+| T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
+| U1 LiveWalker / Pointer / ObjectTree | – | 4 | 4 | 0 | **8** |
+| D2 Genau+Serie | – | 3 | 3 | 0 | **6** |
+| D4a Macht | – | 3 | 0 | 0 | **3** |
+| D5 Fern | – | 3 | 3 | 0 | **6** |
+| U5 remaining VMs / Models / Core | – | 3 | 13 | 1 | **17** |
+| T1d UI Services | – | 2 | 10 | 5 | **17** |
+| D4b Stark | – | 1 | 0 | 0 | **1** |
+| D5 Frieren | – | 1 | 0 | 0 | **1** |
+| U2 Export services | – | 1 | 1 | 0 | **2** |
+| U3 Dump services + MainWindow VM | – | 1 | 9 | 0 | **10** |
+| U4 Dialogs + CE generators | – | 1 | 5 | 0 | **6** |
+| D4b Flamme | – | 0 | 2 | 0 | **2** |
+| D4b Mimic | – | 0 | 2 | 0 | **2** |
+| D4b Sein | – | 0 | 2 | 0 | **2** |
+| **TOTAL** | **6** | **79** | **134** | **26** | **245** |
+
+### Fix order recommended
+
+1. **AD1/AD2** — one defect, two arms, and it is *meta*: while it stands, every other fix's "tests
+   green" is one compile error away from meaning nothing. Fix it before the rest.
+2. **AA1** — a wrong WRITE into the game, 20×/sec, and the DLL sibling reached from the **same
+   Property Search row** already does it correctly (`Solitar::ApplyBoolBit`). Small and well-defined.
+3. **AA2/AA3** — one defect (the freeze tick's liveness guard) at two sites. Bigger: the honest fix
+   needs an identity witness the Lua tier does not currently receive.
+4. **AB2** — CE frees the remote stub under a still-running thread. Same family as AB1 (already
+   fixed): we assume CE will not unload something it routinely unloads.
+5. Then the MED tier, **grouped by family rather than by segment** — see below.
+
+### Fix by FAMILY, not by ID — this is the audit's strongest recommendation
+
+Two families account for more open findings than any single subsystem, and both are greppable:
+
+- **The width family** — an out-of-range value masked to the field width and reported as written.
+  Six occurrences (W6, Y2, Y9, Y15, Y16, AE1) across four subsystems. **At every site the correct
+  width was already in scope and simply not enforced.**
+- **Root cause #4 — a fix applied at only some of its sites.** Seven occurrences (V2, W4/W6, X1,
+  Y16, AC2, AE10), and **AC2 is this audit's own Y7 fix at 1 of 5 consumers**. The rule "grep for
+  siblings before closing a fix" has been in §3b since the fourth occurrence and three more have
+  appeared since — so it is not being applied *at fix time*. Make it part of the fix.
+
+**The single most productive technique was the comment sweep** — grep for a comment admitting a
+limitation or asserting an impossibility, then check it. **6 for 6**, and it produced the lead
+finding in T1a, T1b and T1e.
+
+-----
+
 ## 3b. START HERE — scanning is DONE; everything left is fixing
 
 *State as of 2026-08-15. Read this first; it is written for a session with no memory of this one.*
@@ -2293,7 +2386,12 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 > completion summary: per-segment kill rates, the three findings to start from, and the two defect
 > families that account for more findings than any single subsystem.
 >
-> ✅ **AB1 is FIXED in build 2913** — see dev-log. The remaining must-fix is AD1.
+> 📋 **The complete open list is §3c, "THE OPEN REGISTER" — read that first.** It is generated
+> from §2's tables (245 open of 263; 6 HIGH / 79 MED / 134 LOW / 26 INFO), names the six open HIGHs
+> with file:line, says where every remaining finding lives, gives a recommended fix order, and
+> carries the command to re-derive itself after a fix.
+>
+> ✅ **AB1 is FIXED in build 2913** — see dev-log. The remaining must-fix is AD1/AD2.
 >
 > 🔴 **The two most consequential findings, both hand-verified against the source:**
 > - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path. ✅ FIXED (2913).** `DllMain` starts a
