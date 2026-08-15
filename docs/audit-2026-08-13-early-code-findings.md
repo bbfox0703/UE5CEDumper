@@ -931,9 +931,55 @@ MEDIUM.
 > in — joining W1 (a `.usmap` that never parsed) and V1 (a map edit that wrote to the key). The
 > pattern across all three: *the default value happens to work*, so any smoke test passes.
 
+> ### ✅ Y1 FIXED — build 2862, 2026-08-15
+>
+> The prefix is stripped before the base-16 parse. The emitted expression now matches
+> `^0[xX](%x+)$` and parses the **captured digits**, falling back to decimal and then to bare hex:
+>
+> ```lua
+> local s = edits[N].Text or ''; s = s:gsub('%s+','')
+> local h = s:match('^0[xX](%x+)$')
+> if h then return tonumber(h,16) or 0 end
+> return tonumber(s) or tonumber(s,16) or 0
+> ```
+>
+> **Decimal is tried before bare hex deliberately.** This branch also serves `NameProperty`, whose
+> value is an FName index a user may well type in decimal — reading `1234` as hex would silently
+> change its meaning. That ordering is pinned by a test.
+>
+> **Verified with three independent detectors** (working-lessons §1.4), because a claim about Lua
+> semantics is not settled by reasoning about Lua:
+> 1. **Runtime** — the expression was evaluated verbatim in **Cheat Engine's own `lua53-64.dll`**
+>    (`_VERSION` = Lua 5.3) against a stub `edits` table. Before: `0x1F2A3B4C5D0` → **0**,
+>    `0X7FF6CD120000` → **0**, bare hex → **0**, and only a *decimal* address survived — which nothing
+>    in this project produces, since `Renge::AddrToStr` formats every address as `0x` + uppercase hex.
+>    After: every form resolves correctly, `1234` stays 1234, junk → 0, and every result is a Lua
+>    **integer** (`math.type`), which `writeQword` requires.
+> 2. **A standalone Lua 5.4.6 CLI** reproduced all ten inputs **identically** to CE's 5.3 DLL, which
+>    also establishes that the behaviour is stable across 5.3 → 5.4 — worth knowing if CE ever
+>    updates its bundled Lua.
+> 3. **Source** — CE's bundled `Cheat Engine/lua53/lua53/src/lbaselib.c:48-65` shows the mechanism:
+>    `int digit = isdigit(*s) ? *s - '0' : toupper(*s) - 'A' + 10; if (digit >= base) return NULL;`
+>    For `'x'` that is `'X' - 'A' + 10 = 33`, and `33 >= 16`, so the conversion returns `NULL` → `nil`
+>    → `or 0`.
+>
+> **A detail worth keeping:** the old code accidentally *worked* for padded input — `  0x40  ` made
+> `s:sub(1,2)` miss the prefix and fall into the `else`, where plain `tonumber` handles `0x` fine. So
+> the same field succeeded or silently returned null depending on stray whitespace.
+>
+> **Negative control:** reverting the fix turns all four new tests red. One of those tests was itself
+> wrong on the first attempt — it asserted the script contains no `tonumber(s,16)` at all, which fails
+> the *correct* code, because the fix legitimately uses that form as the bare-hex fallback once the
+> prefix is known absent. Corrected to assert the old prefix-detection idiom (`s:sub(1,2)`) is gone,
+> which is the defect's precise signature. 3594 tests, 0 failed.
+>
+> ⬜ **Not verified in Cheat Engine itself.** The Lua semantics are measured, but nobody has yet run
+> the generated script against a live game and watched a UFunction receive the right pointer — see
+> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **Y1** | **HIGH** | `InvokeScriptGenerator.cs:603` (`GetParseExpression`) | The pointer/FName branch detects a leading `0x` and then passes the **still-prefixed** string to Lua's `tonumber(s, 16)`, which rejects the `x` and returns `nil`; `or 0` then writes a **null pointer** into the params buffer. The DLL memcpys that straight into `ProcessEvent`, so the UFunction is called with `nullptr` — an access violation for any callee that dereferences it — and the script still reports `INVOKED OK` (or closes the Lua window silently when `DEBUG == 0`). The `else` branch's bare `tonumber(s)` **would have worked**: the special case is the only thing breaking it. The default `'0x0'` yields 0 correctly by accident, so a smoke test with unmodified defaults always passes. | S / low |
+| **Y1** ✅ | **HIGH** | `InvokeScriptGenerator.cs:603` (`GetParseExpression`) | The pointer/FName branch detects a leading `0x` and then passes the **still-prefixed** string to Lua's `tonumber(s, 16)`, which rejects the `x` and returns `nil`; `or 0` then writes a **null pointer** into the params buffer. The DLL memcpys that straight into `ProcessEvent`, so the UFunction is called with `nullptr` — an access violation for any callee that dereferences it — and the script still reports `INVOKED OK` (or closes the Lua window silently when `DEBUG == 0`). The `else` branch's bare `tonumber(s)` **would have worked**: the special case is the only thing breaking it. The default `'0x0'` yields 0 correctly by accident, so a smoke test with unmodified defaults always passes. | S / low |
 | **Y2** | MED | `ParamBufferBuilder.cs:221` (+`:224`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` and written as 4 bytes gated on `available >= 4`, so a **1-byte enum param is not written at all** and the game receives 0. FIRE and the exported AA Script therefore send different values for the same dialog input. | S / low |
 | **Y3** | MED | `ParamBufferBuilder.cs:165` | Typing `true` for a bool param: **FIRE sends 0, Copy AA Script bakes 1** — one dialog, two opposite calls. | S / low |
 | **Y4** | MED | `ParamBufferBuilder.cs:185` | Float params: FIRE parses with `AllowThousands` and accepts `NaN`/`Infinity`; the baked generator does neither, so `1,5` **fires as 15.0 and bakes as 0**. | M / low |
@@ -1203,16 +1249,15 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 *State as of 2026-08-15, after U4. Read this section first; it is written for a session with no
 memory of the previous one.*
 
-> 🔴 **U4/Y1 is an open HIGH and it is an `S`/low fix — do it first.** The generated CE invoke form
-> passes **0** for every `UObject*` / `FName` parameter the user fills in, because
-> `tonumber(s, 16)` is handed a string that still carries its `0x` prefix. The fix is to drop the base
-> argument (plain `tonumber(s)` accepts `0x…`) or strip the prefix, mirroring
-> `CeXmlExportService.NormalizeHex`. **It needs a test asserting the emitted expression yields the
-> address for `0xDEADBEEF` rather than 0** — nothing covers `GetParseExpression` today, which is why
-> a capability that never worked stayed green.
+> ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
+> (2842), W1+W7 (2853), Y1 (2862), plus W4 (2836) and W6 (2857).
 >
-> The other three real HIGHs shipped: V1 (2830), W2+W3 (2842), W1+W7 (2853), plus W4 (2836) and
-> W6 (2857).
+> **Y1 is the one to read before fixing anything else**, because its verification is the template:
+> a claim about a *runtime we do not control* (Lua inside Cheat Engine) was settled by evaluating the
+> emitted expression in **CE's own `lua53-64.dll`** and cross-checking CE's **bundled Lua source** —
+> two independent detectors, neither of which is "reasoning about Lua". `celua.txt` in the CE install
+> is the API reference to consult first for any CE-side call; `D:/Github/cheat-engine` is the last
+> public source (7.5) when the reference is not enough.
 >
 > 🔁 **Read this before fixing anything from U3.** X1 is the D5/**F4 fix applied to one of its two
 > sites** — the DLL covered both the single and batch property-search paths, the C# covered only the
@@ -1247,7 +1292,8 @@ open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y1 (HIGH), Y2–Y14, X1–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2.**
+**Still open: Y2–Y14, X1–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+remain. U4 shipped **Y1** (2862).
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).

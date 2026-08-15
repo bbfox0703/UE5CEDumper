@@ -592,15 +592,33 @@ public static class InvokeScriptGenerator
         if (IsStringType(typeName))
             return $"edits[{editIndex}].Text or ''";
 
-        // Pointer/FName types: hex-aware parsing
+        // Pointer/FName types: hex-aware parsing.
+        //
+        // The prefix MUST be stripped before tonumber(s, 16). Lua's base form rejects any
+        // character that is not a digit of that base, and 'x' is not a hex digit, so
+        // tonumber('0x1F2A3B4C5D0', 16) is nil -- the old code detected the "0x" and then
+        // handed the still-prefixed string straight to it, so `or 0` wrote a NULL POINTER
+        // for every address the user actually pasted. The app formats every address as
+        // "0x" + uppercase hex (Renge::AddrToStr), so that was every real input; only the
+        // '0x0' default parsed "correctly", which is why it went unnoticed (audit #5 Y1).
+        //
+        // Verified in Cheat Engine's own lua53-64.dll: 0x1F2A3B4C5D0 -> 2141640246736,
+        // bare hex 1F2A3B4C5D0 -> the same, decimal 1234 -> 1234, junk -> 0, and every
+        // result is a Lua *integer* (math.type), which writeQword requires.
+        //
+        // Decimal is tried BEFORE bare hex on purpose: this branch also serves
+        // NameProperty, whose value is an FName index a user may well type in decimal.
+        // Reading "1234" as hex would silently change its meaning.
         if (typeName is "NameProperty" or "ObjectProperty" or "ClassProperty"
             or "SoftObjectProperty" or "SoftClassProperty"
             or "WeakObjectProperty" or "LazyObjectProperty"
             or "InterfaceProperty")
         {
-            return $"(function() local s = edits[{editIndex}].Text; " +
-                   "if s:sub(1,2) == '0x' or s:sub(1,2) == '0X' then " +
-                   "return tonumber(s, 16) or 0 else return tonumber(s) or 0 end end)()";
+            return $"(function() local s = edits[{editIndex}].Text or ''; " +
+                   "s = s:gsub('%s+',''); " +
+                   "local h = s:match('^0[xX](%x+)$'); " +
+                   "if h then return tonumber(h,16) or 0 end; " +
+                   "return tonumber(s) or tonumber(s,16) or 0 end)()";
         }
 
         // Float types: direct tonumber

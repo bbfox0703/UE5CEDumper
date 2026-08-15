@@ -1405,6 +1405,28 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-15 — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
+
+The invoke form passed **0** for every `UObject*` / `FName` argument since the feature shipped;
+`tonumber(s, 16)` was handed a string still carrying its `0x`. Fixed, and the Lua semantics are
+measured in three independent interpreters (CE's own `lua53-64.dll`, a 5.4 CLI, and CE's bundled
+`lbaselib.c`).
+
+**What that does NOT prove is that the corrected value reaches the function.** The measurement stops
+at the Lua expression; everything after it — the mailbox write, the DLL's `CMD_INVOKE`, `ProcessEvent`
+— is untested end-to-end.
+
+1. In Live Walker, pick a UFunction taking an object parameter (`K2_AttachToActor`, or any
+   `BlueprintCallable` with an `AActor*`), and use **Copy AA Script** / push to CE.
+2. Paste an instance address from any panel — i.e. the app's own `0x`+uppercase-hex format — into the
+   `[UObject*: …]` field and FIRE.
+3. Success is **not** `INVOKED OK`: that was printed by the broken version too. Confirm the *effect*
+   in-game, or set `UE5_DEBUG=1` and read the decoded return.
+4. Worth one negative case: FIRE with the untouched `0x0` default and confirm it behaves as a null
+   argument — that path was the only one that ever worked, so it should be unchanged.
+
+
+
 ### ⬜ NEW 2026-08-14 — open the exported .usmap in a real consumer (audit #5 W1/W7, build 2853)
 
 The `.usmap` export declared v3 and wrote the v0 body; it has been unopenable since the feature

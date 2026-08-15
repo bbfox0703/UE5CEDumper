@@ -22,6 +22,68 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - The CE invoke form passed a null pointer for every address you typed into it (build 2862)
+
+**Audit #5 segment U4 fix Y1 (HIGH).** The generated Cheat Engine invoke form detected a leading
+`0x` and then handed the **still-prefixed** string to Lua's `tonumber(s, 16)`. Lua's base form
+rejects any character that is not a digit of that base, so the `x` made it `nil` and the `or 0`
+fallback wrote a **null pointer** into the params buffer. The DLL memcpys that straight into
+`ProcessEvent`, so the UFunction was called with `nullptr` — an access violation for any callee that
+dereferences it — while the script still reported `INVOKED OK`, or closed the Lua window silently
+when `DEBUG == 0`.
+
+Every `UObject*` / `FName` argument the user actually filled in was affected, because the app formats
+every address as `0x` + uppercase hex (`Renge::AddrToStr`). Only the `'0x0'` default parsed
+"correctly" — by arriving at the same 0 — which is why a smoke test with unmodified defaults always
+passed and the capability never worked.
+
+The irony is that the `else` branch was already right: plain `tonumber(s)` accepts `0x…` hex quite
+happily. The special case written to handle hex was the only thing breaking hex.
+
+### The fix
+
+Strip the prefix before the base-16 parse, then fall back to decimal and finally to bare hex:
+
+```lua
+local s = edits[N].Text or ''; s = s:gsub('%s+','')
+local h = s:match('^0[xX](%x+)$')
+if h then return tonumber(h,16) or 0 end
+return tonumber(s) or tonumber(s,16) or 0
+```
+
+**Decimal is tried before bare hex on purpose.** This branch also serves `NameProperty`, whose value
+is an FName index a user may well type in decimal; reading `1234` as hex would silently change its
+meaning. A test pins the ordering.
+
+### Verified with three independent detectors
+
+A claim about a runtime we do not control is not settled by reasoning about that runtime:
+
+1. **Cheat Engine's own `lua53-64.dll`** (`_VERSION` = Lua 5.3), driven via ctypes with a stub
+   `edits` table, evaluating the emitted expression verbatim. Before: `0x1F2A3B4C5D0` → **0**,
+   `0X7FF6CD120000` → **0**, bare hex → **0**, and only a *decimal* address survived. After: every
+   form resolves, `1234` stays 1234, junk → 0, and every result is a Lua **integer** (`math.type`),
+   which `writeQword` requires.
+2. **A standalone Lua 5.4.6 CLI** reproduced all ten inputs identically, which also shows the
+   behaviour is stable across 5.3 → 5.4 — worth knowing if CE ever updates its bundled Lua.
+3. **CE's bundled Lua source**, `Cheat Engine/lua53/lua53/src/lbaselib.c:48-65`, gives the mechanism:
+   `int digit = isdigit(*s) ? *s - '0' : toupper(*s) - 'A' + 10; if (digit >= base) return NULL;` —
+   for `'x'` that is `'X' - 'A' + 10 = 33`, and `33 >= 16`.
+
+**A detail worth keeping:** the old code accidentally *worked* for padded input. `  0x40  ` made
+`s:sub(1,2)` miss the prefix and fall into the working `else`, so the same field succeeded or
+silently returned null depending on stray whitespace.
+
+**Negative control:** reverting the fix turns all four new tests red. One of those tests was wrong on
+the first attempt — it asserted the emitted script contains no `tonumber(s,16)` at all, which fails
+the *correct* code, since the fix legitimately uses that form as the bare-hex fallback once the prefix
+is known absent. Corrected to assert the old prefix-detection idiom (`s:sub(1,2)`) is gone, which is
+the defect's precise signature. 3594 tests, 0 failed.
+
+⬜ Not yet exercised inside Cheat Engine against a live game — filed in [todo.md](todo.md).
+
+-----
+
 ## 2026-08-14 - A 1-byte enum array was exported as 4-byte CE records, so each one ate the next three elements (build 2857)
 
 **Audit #5 segment U2 fix W6**, and with it the last of the segment's partial-application defects.

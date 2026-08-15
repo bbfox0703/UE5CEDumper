@@ -1340,4 +1340,94 @@ public class InvokeScriptTests
 
         Assert.Contains("local _DUMP_LEN = 8", script);
     }
+
+    // --- Pointer / FName parameter parsing (audit #5 Y1) ------------------------
+    //
+    // The emitted Lua used to detect a leading "0x" and then hand the STILL PREFIXED
+    // string to tonumber(s, 16). Lua's base form rejects any character that is not a
+    // digit of that base, so the 'x' made it nil and `or 0` wrote a NULL POINTER for
+    // every address the user pasted. Only the '0x0' default parsed "correctly", so a
+    // smoke test with defaults always passed and the capability never worked.
+    //
+    // Measured in Cheat Engine's own lua53-64.dll (Lua 5.3), before and after:
+    //   before: 0x1F2A3B4C5D0 -> 0,             bare 1F2A3B4C5D0 -> 0
+    //   after : 0x1F2A3B4C5D0 -> 2141640246736, bare 1F2A3B4C5D0 -> 2141640246736
+    //           decimal 1234 -> 1234 (FName indices keep decimal meaning), junk -> 0
+    // These tests pin the emitted SHAPE; the semantics above are what that shape buys.
+
+    private static string PointerParamScript()
+    {
+        var func = new FunctionInfoModel
+        {
+            Name = "K2_AttachToActor",
+            NumParms = 1,
+            ParmsSize = 8,
+            Params = new List<FunctionParamModel>
+            {
+                new() { Name = "ParentActor", TypeName = "ObjectProperty", Size = 8, Offset = 0 },
+            },
+        };
+        return InvokeScriptGenerator.Generate("BP_Player_C", "K2_AttachToActor", func);
+    }
+
+    [Fact]
+    public void Generate_PointerParam_StripsThePrefixBeforeBase16()
+    {
+        var script = PointerParamScript();
+
+        // The prefix is removed by the pattern capture, so what reaches tonumber(.,16)
+        // is bare hex digits.
+        Assert.Contains("s:match('^0[xX](%x+)$')", script);
+        Assert.Contains("tonumber(h,16)", script);
+    }
+
+    [Fact]
+    public void Generate_PointerParam_NeverBase16ParsesTheUnstrippedText()
+    {
+        // The precise signature of the defect is the OLD PREFIX-DETECTION IDIOM: the code
+        // tested s:sub(1,2) for "0x" and then base-16 parsed s WITH the prefix still on it.
+        //
+        // Note the fix legitimately contains tonumber(s,16) as a bare-hex FALLBACK -- by
+        // the time it runs, the 0x form has already been matched and handled, so s is known
+        // to carry no prefix. Asserting on that substring alone would fail the correct code,
+        // which is exactly what it did when this test was first written.
+        var script = PointerParamScript();
+
+        Assert.DoesNotContain("s:sub(1,2)", script);
+    }
+
+    [Fact]
+    public void Generate_PointerParam_FallsBackToDecimalBeforeBareHex()
+    {
+        // This branch also serves NameProperty, whose value is an FName index a user may
+        // type in decimal -- reading "1234" as hex would silently change its meaning.
+        var script = PointerParamScript();
+        var expr = script.Substring(script.IndexOf("local h = s:match", System.StringComparison.Ordinal));
+
+        int decimalFirst = expr.IndexOf("tonumber(s)", System.StringComparison.Ordinal);
+        int hexFallback = expr.IndexOf("tonumber(s,16)", System.StringComparison.Ordinal);
+
+        Assert.True(decimalFirst >= 0, "decimal parse missing");
+        Assert.True(hexFallback >= 0, "bare-hex fallback missing");
+        Assert.True(decimalFirst < hexFallback, "decimal must be tried before bare hex");
+    }
+
+    [Fact]
+    public void Generate_NameParam_UsesTheSameHexAwareParse()
+    {
+        var func = new FunctionInfoModel
+        {
+            Name = "SetTag",
+            NumParms = 1,
+            ParmsSize = 8,
+            Params = new List<FunctionParamModel>
+            {
+                new() { Name = "Tag", TypeName = "NameProperty", Size = 8, Offset = 0 },
+            },
+        };
+        var script = InvokeScriptGenerator.Generate("BP_Player_C", "SetTag", func);
+
+        Assert.Contains("s:match('^0[xX](%x+)$')", script);
+        Assert.DoesNotContain("tonumber(s, 16)", script);
+    }
 }
