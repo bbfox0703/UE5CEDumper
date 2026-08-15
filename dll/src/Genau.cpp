@@ -3670,6 +3670,24 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         return false;
     }
 
+    // Which probes below GAVE UP and kept an unmeasured default (audit #5 G1).
+    //
+    // Every "keeping default" branch from here on falls THROUGH to the success tail, which
+    // used to store bOffsetsValidated = true unconditionally. Per Grimoire.h's contract that
+    // flag means "the values were actually MEASURED", so a run that could not find
+    // FField::Next reported validated=yes over a version guess — and Ubel.cpp:4206 documents
+    // what a blind FPROPERTY_ELEMSIZE then costs downstream (audit #5 U1).
+    //
+    // A bitmask rather than a bool because the reason string has to name WHICH probe fell
+    // back: a maintainer reading `validated=NO (DEFAULTS) reason=` needs to know where to look.
+    enum : uint32_t {
+        UNMEASURED_FFIELD_NAME    = 1u << 0,
+        UNMEASURED_FFIELD_NEXT    = 1u << 1,
+        UNMEASURED_PROP_OFFSET    = 1u << 2,
+        UNMEASURED_PROP_ELEMSIZE  = 1u << 3,
+    };
+    uint32_t unmeasured = 0;
+
     // Update ChildProperties offset
     if (DynOff::bUseFProperty) {
         DynOff::USTRUCT_CHILDPROPS = childPropsOff;
@@ -3700,6 +3718,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         if (nameOff < 0) {
             Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FField::Name, keeping default 0x%02X",
                      DynOff::FFIELD_NAME);
+            unmeasured |= UNMEASURED_FFIELD_NAME;
         } else {
             DynOff::FFIELD_NAME = nameOff;
         }
@@ -3760,6 +3779,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         if (nextOff < 0) {
             Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find FField::Next, keeping default 0x%02X",
                      DynOff::FFIELD_NEXT);
+            unmeasured |= UNMEASURED_FFIELD_NEXT;
         } else {
             DynOff::FFIELD_NEXT = nextOff;
         }
@@ -3773,6 +3793,10 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         if (nextOff == 0x20 && nameOff < 0) {
             DynOff::FFIELD_NAME = 0x28;  // FName follows Next in FField layout
             nameOff = 0x28;
+            // Derived from a MEASURED Next, not a version guess — the same class of
+            // derivation as Step 9's, which nobody counts as unmeasured. Clear the bit the
+            // Step-5 give-up set, or the run reports a fallback it has already recovered from.
+            unmeasured &= ~UNMEASURED_FFIELD_NAME;
             Sein::Info("DYNO", "ValidateAndFixOffsets: Inferred FField::Name=0x28 from Next=0x20 (FFieldVariant=0x10)");
 
             if (DynOff::bTaggedFFieldVariant) {
@@ -3819,6 +3843,9 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             // Fallback: use the default (may fail downstream but at least log it)
             nextOff = defaultNext;
             Sein::Warn("DYNO", "ValidateAndFixOffsets: UField::Next probe failed, falling back to +0x%02X", nextOff);
+            // Same give-up as the FProperty arm above, in the UE4 UProperty arm — found by
+            // grepping for siblings while fixing G1, which named only the FProperty site.
+            unmeasured |= UNMEASURED_FFIELD_NEXT;
         }
 
         // Update the global offset if probing found a non-default value
@@ -3913,6 +3940,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         }
     } else {
         Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find Offset_Internal, keeping defaults");
+        unmeasured |= UNMEASURED_PROP_OFFSET;
     }
 
     if (propElemSizeOff < 0 && propOffsetOff > 0) {
@@ -3935,6 +3963,15 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         } else {
             DynOff::UPROPERTY_ELEMSIZE = propElemSizeOff;
         }
+    } else {
+        // Checked AFTER the heuristic above, because that heuristic READS BACK the guessed
+        // slot and requires it to equal expectedElemSize — a recovery that qualifies as a
+        // measurement. Only a still-negative offset means the version guess survives.
+        // This is the one that matters most: an ELEMSIZE landing on PropertyFlags is what
+        // Ubel.cpp:4206 documents as a ~1 GiB per-element allocation (audit #5 U1).
+        Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ElementSize, keeping default 0x%02X",
+                 DynOff::bUseFProperty ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE);
+        unmeasured |= UNMEASURED_PROP_ELEMSIZE;
     }
 
     // Step 9: Derive remaining offsets
@@ -4002,9 +4039,42 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         Sein::Info("DYNO", "ValidateAndFixOffsets: Inferred tagged FFieldVariant from FField::Next=0x18");
     }
 
-    DynOff::g_offsetsFallbackReason = "";
+    // A give-up recorded above means at least one DynOff value is a version GUESS, not a
+    // measurement — so bOffsetsValidated must be false even though we reached the success
+    // tail (audit #5 G1: it used to be stored true here unconditionally, three lines after
+    // "keeping default"). Grimoire.h:243 is the contract; bOffsetsProbeRan stays true either
+    // way, which is what FindGEngineSlot / ResolveGEngineDeferred actually gate on.
+    //
+    // The table is indexed by the bitmask so the reason can name EVERY probe that fell back,
+    // not just the worst one. All 16 entries are string literals — g_offsetsFallbackReason is
+    // a bare const char* read from other threads and must never point at a heap string.
+    static const char* const kUnmeasuredReason[16] = {
+        /* 0000 */ "",
+        /* 0001 */ "unmeasured:ffield-name",
+        /* 0010 */ "unmeasured:ffield-next",
+        /* 0011 */ "unmeasured:ffield-name+ffield-next",
+        /* 0100 */ "unmeasured:offset-internal",
+        /* 0101 */ "unmeasured:ffield-name+offset-internal",
+        /* 0110 */ "unmeasured:ffield-next+offset-internal",
+        /* 0111 */ "unmeasured:ffield-name+ffield-next+offset-internal",
+        /* 1000 */ "unmeasured:elemsize",
+        /* 1001 */ "unmeasured:ffield-name+elemsize",
+        /* 1010 */ "unmeasured:ffield-next+elemsize",
+        /* 1011 */ "unmeasured:ffield-name+ffield-next+elemsize",
+        /* 1100 */ "unmeasured:offset-internal+elemsize",
+        /* 1101 */ "unmeasured:ffield-name+offset-internal+elemsize",
+        /* 1110 */ "unmeasured:ffield-next+offset-internal+elemsize",
+        /* 1111 */ "unmeasured:ffield-name+ffield-next+offset-internal+elemsize",
+    };
+    const bool allMeasured = (unmeasured == 0);
+    DynOff::g_offsetsFallbackReason = kUnmeasuredReason[unmeasured & 0x0F];
     DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
-    DynOff::bOffsetsValidated.store(true, std::memory_order_release);
+    DynOff::bOffsetsValidated.store(allMeasured, std::memory_order_release);
+    if (!allMeasured) {
+        Sein::Warn("DYNO", "ValidateAndFixOffsets: PARTIAL — %s (validated=NO, offsets below "
+                           "mix probed values with version defaults)",
+                 DynOff::g_offsetsFallbackReason);
+    }
 
     // Summary log
     Sein::Info("DYNO", "=== Dynamic Offset Summary ===");

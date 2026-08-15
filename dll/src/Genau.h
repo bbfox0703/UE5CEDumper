@@ -171,10 +171,16 @@ uintptr_t FindSparseDelegateStorage();
 // same version-independent test FindLiveGameEngine uses. Returns 0 if no pattern
 // validated; callers then fall back to the GObjects walk (object only, no slot).
 //
-// That precondition is ENFORCED, not just documented: if DynOff::bOffsetsValidated is
+// That precondition is ENFORCED, not just documented: if DynOff::bOffsetsProbeRan is
 // still false this returns 0 immediately (method "deferred") without scanning, because the
 // validator cannot possibly succeed and the scan costs 0.2-0.7 s. Call
 // ResolveGEngineDeferred once the offsets are up.
+//
+// PROBE-RAN, not VALIDATED — this comment named the strict flag while the code has always
+// read the loose one, and since audit #5's G1 fix the two genuinely diverge (a partially
+// probed run now reports validated=false). Grimoire.h:246 explains why the loose flag is
+// the correct gate: using the strict one would regress &GEngine on exactly the builds
+// where detection falls back to defaults.
 uintptr_t FindGEngineSlot();
 
 // Second-pass GEngine resolution, run after ValidateAndFixOffsets + FNamePool init.
