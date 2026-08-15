@@ -22,6 +22,57 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - CE XML told CE to dereference slots that hold no pointer (build 2966)
+
+**Audit #5 U2 finding W5.** First MED after both named families closed.
+
+### The defect
+
+`EmitDrilledPointer`'s scalar branch gated on `IsObjectPropertyType` — the whole pointer *family* —
+and emitted `Offsets=[0]`, which instructs CE to dereference the 8 bytes at `+Offset`. Three of that
+family hold no address at all:
+
+| type | what is actually in the slot |
+|---|---|
+| `WeakObjectProperty` | `FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber; }` — two ints |
+| `SoftObjectProperty` / `SoftClassProperty` | `FSoftObjectPath` — a string-ish struct |
+| `LazyObjectProperty` | `FGuid` — four ints |
+
+**What made it reachable and invisible is the same fact.** The DLL resolves every one of those to a
+live `UObject*` and stamps it on `PtrAddress`, so the branch's `TryGetValue(field.PtrAddress, …)`
+guard *succeeded* — a target genuinely had been resolved. It simply is not what lives in the slot.
+The exported table then looks entirely healthy: a group header, a plausible class name, children at
+plausible offsets — and CE follows an index+serial pair as if it were an address.
+
+### The fix
+
+A new `IsRawObjectPtrSlot` beside the existing predicates, gating the drill on "the field's own 8
+bytes hold a `UObject*`". Weak/Soft/Lazy fall through to the 8-byte hex leaf they already had —
+watchable, and honest about being a raw slot rather than a followed pointer.
+
+**The correct distinction already existed 1,660 lines up in the same file** as
+`IsRawObjectPtrArrayInner`, with a comment justifying each exclusion, because the ARRAY path had been
+written correctly and given a regression test. Same file, same question, one path right — the audit's
+double-check pass had already pinned that line, which is what made this a short fix.
+
+**`InterfaceProperty` is deliberately INCLUDED** where the array predicate excludes it, and the
+asymmetry is real: `FScriptInterface` is `{ UObject* +0x00, void* +0x08 }` — stated by the DLL at
+`Ubel::IsInterfaceArrayType` — so its first 8 bytes *are* an object pointer and the scalar drill has
+always been correct for it. It is absent from the array predicate because a `TScriptInterface`
+element is **16 bytes** and gets its own DLL reader, not because it is not a pointer. Copying the
+array predicate verbatim would have silently removed a working case. Both predicates now
+cross-reference each other and state why they differ.
+
+### Verified
+
+3824 → **3831** tests, 0 failures; restoring the broad gate fails 4 (one per non-pointer type).
+
+New tests were required rather than optional: the double-check had already established that the
+look-alike test (`…EmitsLeafWith8BytesNotGroupHeader`) passes **no `resolvedInstances`**, so it never
+entered the drill branch — the branch had no coverage at all.
+
+-----
+
 ## 2026-08-15 - Root cause #4, closed: a struct-layout guard that a Service could not reach, and a GWorld gate that disabled a working button (build 2961)
 
 **Audit #5 findings AC2 + AE10** — the second and last named family. Both were *the audit's own

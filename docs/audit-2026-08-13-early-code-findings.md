@@ -870,7 +870,41 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 | **W2** ✅ | **HIGH** | `SdkExportService.cs:358` (+`EmitClassHeaderFromLive`) | The emitter assumes `ClassInfoModel.Fields` holds only the class's **own** properties, but `Ubel::WalkClass` deliberately prepends the entire SuperStruct chain and nothing filters it out. Every base-class property is therefore declared a **second time** inside a `struct X : public Super` that already inherits it, so `offsetof` is wrong for every derived class in the generated SDK — the header compiles and is silently mislaid out. | M / med |
 | **W3** ✅ | MED | `SdkExportService.cs:221` + `:382` | N `FBoolProperty` bitfields that UE packed into **one byte** are each emitted as a whole `bool` and the layout cursor advances by `Size` for each, so the struct grows N−1 bytes from that point. The emitter only pads when `offset > cursor`, so once the bools overshoot, **no padding can compensate** and every subsequent member — and the trailing `// Size:` — is shifted. | M / med |
 | **W4** ✅ | MED | `CeXmlExportService.cs:3522` + `:3586` (`BuildDropDownContent`) | `<DropDownList>` bodies are built from live FName / enum-name strings read out of game memory and interpolated **raw**, while every `<Description>` goes through `EscapeXmlContent`. One `&` in a `TArray<FName> Tags` entry (`Bow & Arrow`) makes the whole CheatTable malformed — and `EscapeXmlContent`'s own doc comment states the consequence: CE rejects the **entire document**, so a multi-thousand-entry export imports as nothing with no indication which record was at fault. This is audit #4's **B3 defect surviving at the one site B3 did not cover**. | S / low |
-| **W5** | MED | `CeXmlExportService.cs:2141` (`EmitDrilledPointer`) | The scalar pointer-drill branch gates on the broad `IsObjectPropertyType`, which includes `WeakObjectProperty` / `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty`, and emits `Offsets=[0]` for slots whose first 8 bytes are **not** a `UObject*` — a weak pointer is an index+serial pair. The array path has an explicit regression test against exactly this. (Claimed HIGH, cut to MEDIUM by the second lens.) | S / low |
+
+> ### ✅ W5 FIXED — build 2966, 2026-08-15
+>
+> The scalar pointer-drill gated on the broad `IsObjectPropertyType` and emitted
+> `Offsets=[0]` — "dereference the 8 bytes at `+Offset`" — for slots that hold no address:
+> `FWeakObjectPtr` is `{int32 ObjectIndex, int32 SerialNumber}`, `FSoftObjectPath` is a string-ish
+> struct, `FGuid` is four ints. CE would follow an index+serial pair as a pointer.
+>
+> **What made it reachable AND invisible is the same fact**: the DLL resolves all of those to a live
+> `UObject*` and stamps it on `PtrAddress`, so the branch's `TryGetValue(field.PtrAddress, …)` guard
+> *succeeded* — a target really had been resolved. It just is not what lives in the slot. The export
+> then looked entirely healthy: a group header, a plausible class name, children at plausible offsets.
+>
+> Fixed with a new `IsRawObjectPtrSlot` next to the existing predicates. **The double-check's line
+> reference was the whole shortcut** — the correct distinction already existed 1,660 lines up as
+> `IsRawObjectPtrArrayInner`, with a comment justifying each exclusion, because the ARRAY path had
+> been written correctly and given a regression test. Same file, same question, one path right.
+>
+> **`InterfaceProperty` is deliberately INCLUDED** where the array predicate excludes it, and that
+> asymmetry is real rather than sloppy: `FScriptInterface` is `{ UObject* +0x00, void* +0x08 }` —
+> stated by the DLL itself at `Ubel::IsInterfaceArrayType` — so its first 8 bytes *are* an object
+> pointer and the scalar drill has always been right for it. It is missing from the array predicate
+> because a `TScriptInterface` element is **16 bytes** and gets its own DLL reader, not because it
+> is not a pointer. Copying the array predicate verbatim would have silently removed a working case;
+> both predicates now cross-reference each other and say why they differ.
+>
+> Weak/Soft/Lazy now fall through to the 8-byte hex leaf they already had — watchable, and honest
+> about being a raw slot rather than a followed pointer.
+>
+> ✅ **Negative-controlled**: 3824 → **3831** tests, 0 failures; restoring the broad gate fails 4
+> (one per non-pointer type). The double-check had already established *why* this needed new tests —
+> the look-alike `…EmitsLeafWith8BytesNotGroupHeader` passes **no `resolvedInstances`**, so it never
+> entered the drill branch at all.
+
+| **W5** ✅ | MED | `CeXmlExportService.cs:2141` (`EmitDrilledPointer`) | The scalar pointer-drill branch gates on the broad `IsObjectPropertyType`, which includes `WeakObjectProperty` / `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty`, and emits `Offsets=[0]` for slots whose first 8 bytes are **not** a `UObject*` — a weak pointer is an index+serial pair. The array path has an explicit regression test against exactly this. (Claimed HIGH, cut to MEDIUM by the second lens.) | S / low |
 | **W6** ✅ | MED | `CeXmlExportService.cs:2665` (`MapInnerTypeToCeField`) | `EnumProperty` is hardcoded to CE type `"4 Bytes"` while element **addresses** are laid out with the DLL's real `ArrayElemSize`/`SetElemSize` (1 for the standard `enum class : uint8`), so CE reads 4 bytes at every 1-byte-spaced element. `CeWidthForSize` exists to fix precisely this and the Map and struct-array emitters already route through it. | S / low |
 | **W7** ✅ | MED | `UsmapExportService.cs:323` | The name table is serialized first, from a snapshot of the pre-registration pass, but the struct-writing pass then calls `GetOrAdd(… : "None")` in four places. `"None"` is never pre-registered, so it is appended at index N **after** the file already declared exactly N names, and every affected property references an out-of-range index. | S / low |
 | **W8** | LOW | `UsmapExportService.cs:90` | The class collector accepts only `ClassName is "Class" or "ScriptStruct"`, so every `BlueprintGeneratedClass` / `AnimBlueprintGeneratedClass` / `WidgetBlueprintGeneratedClass` is silently dropped — on a normal shipped title that is thousands of classes vs a few hundred native ones. Both sibling exporters use the whitelist predicate, and `SdkExportService` carries a comment naming this exact bare-`"Class"` check as a bug fixed in DLL build 673. | S / low |
@@ -2573,8 +2607,8 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**230 of 272 findings are still open** (42 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 70 MED ·
+**229 of 272 findings are still open** (43 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 69 MED ·
 133 LOW · 27 INFO**.
 
 > **BOTH named families are now closed** apart from the parked Y16 — the width family (b2950) and
@@ -2645,14 +2679,14 @@ block, §2.
 | U4 Dialogs + CE generators | – | 1 | 5 | 0 | **6** |
 | D5 Fern | – | 3 | 1 | 0 | **4** (open: F2, F3's in-session half, F8 ¤, F5) |
 | D4b Mimic | – | 0 | 2 | 1 | **3** (incl. MB3 †) |
-| U2 Export services | – | 1 | 1 | 0 | **2** |
+| U2 Export services | – | 0 | 1 | 0 | **1** (W5 fixed b2966) |
 | D4b Flamme | – | 0 | 2 | 0 | **2** |
 | D4b Sein | – | 0 | 2 | 0 | **2** |
 | D4b Stark | – | 1 | 0 | 0 | **1** |
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | – | **70** | **133** | **27** | **230** |
+| **TOTAL** | – | **69** | **133** | **27** | **229** |
 
 ### Fix order recommended
 

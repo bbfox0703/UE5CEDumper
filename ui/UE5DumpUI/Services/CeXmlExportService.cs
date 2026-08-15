@@ -482,8 +482,41 @@ public static class CeXmlExportService
     // Lazy (FGuid) elements are NOT raw pointers even though the DLL resolves them
     // to a live UObject* — dereferencing their slot would land CE at a garbage
     // address, so they must keep their existing leaf / Phase-G handling.
+    //
+    // Interface is absent here for a DIFFERENT reason than Weak/Soft/Lazy: its first
+    // 8 bytes ARE a UObject*, but a TScriptInterface element is 16 bytes and the DLL
+    // gives it its own reader (Ubel::IsInterfaceArrayType). See IsRawObjectPtrSlot,
+    // which is the scalar question and does include it.
     private static bool IsRawObjectPtrArrayInner(string innerType) =>
         innerType is "ObjectProperty" or "ClassProperty";
+
+    /// <summary>
+    /// Whether the field's OWN 8 bytes at <c>+Offset</c> hold a raw <c>UObject*</c>, so CE can
+    /// dereference the slot with <c>Offsets=[0]</c> and lay the target's fields out beneath it.
+    ///
+    /// <para><b>Not the same question as <see cref="IsObjectPropertyType"/></b>, which is the whole
+    /// pointer FAMILY. The pointer-drill branch used to gate on that broad set and emit
+    /// <c>Offsets=[0]</c> for slots that are not pointers at all (audit #5 W5):</para>
+    /// <list type="bullet">
+    /// <item><c>WeakObjectProperty</c> — <c>FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber; }</c>.
+    /// Two ints, not an address.</item>
+    /// <item><c>SoftObjectProperty</c> / <c>SoftClassProperty</c> — <c>FSoftObjectPath</c>, a string-ish struct.</item>
+    /// <item><c>LazyObjectProperty</c> — <c>FGuid</c>, four ints.</item>
+    /// </list>
+    /// <para>The DLL resolves all of those to a live <c>UObject*</c> and stamps it on
+    /// <c>PtrAddress</c>, which is exactly what made the bug reachable and invisible: a target WAS
+    /// resolved, so the branch fired — but the resolved pointer is not what lives in the slot, and
+    /// CE would dereference an index+serial pair as an address. They keep their 8-byte hex leaf,
+    /// which is watchable and honest.</para>
+    ///
+    /// <para><c>InterfaceProperty</c> IS included: <c>FScriptInterface</c> is
+    /// <c>{ UObject* +0x00, void* +0x08 }</c> — stated by the DLL at
+    /// <c>Ubel::IsInterfaceArrayType</c> — so its first 8 bytes are a genuine object pointer and the
+    /// drill has always been correct for it. Excluding it to match the array predicate would have
+    /// removed a working case.</para>
+    /// </summary>
+    private static bool IsRawObjectPtrSlot(string typeName) =>
+        typeName is "ObjectProperty" or "ClassProperty" or "InterfaceProperty";
 
     // ========================================
     // Unified drilldown resolver (docs/ce-export-drilldown-spec.md Phase A)
@@ -2129,16 +2162,23 @@ public static class CeXmlExportService
                 continue;
             }
 
-            // Pointer drill-down: ObjectProperty / ClassProperty / Weak/Soft/Lazy/Interface
-            // with a pre-resolved target → emit GroupHeader+Offsets=[0] and recurse into
-            // the target's fields. CE will dereference *(parent + field.Offset) and lay
-            // the children out at their natural offsets within the target.
+            // Pointer drill-down: ObjectProperty / ClassProperty / InterfaceProperty with a
+            // pre-resolved target → emit GroupHeader+Offsets=[0] and recurse into the
+            // target's fields. CE will dereference *(parent + field.Offset) and lay the
+            // children out at their natural offsets within the target.
+            //
+            // The gate is IsRawObjectPtrSlot, NOT the broad IsObjectPropertyType: Weak /
+            // Soft / Lazy slots do not contain a pointer at all, so Offsets=[0] would
+            // dereference an index+serial pair (or a GUID) as an address. They keep their
+            // 8-byte hex leaf further down. See IsRawObjectPtrSlot (audit #5 W5) — the
+            // array path has had the equivalent distinction, with a regression test, since
+            // it was written.
             //
             // Lookup is by PtrAddress so two fields pointing to the same instance share
             // the same resolved field list (this is also what enables cycle protection
             // from ResolvePointerInstancesAsync).
             if (resolvedInstances != null
-                && IsObjectPropertyType(field.TypeName)
+                && IsRawObjectPtrSlot(field.TypeName)
                 && !string.IsNullOrEmpty(field.PtrAddress)
                 && field.PtrAddress != "0x0"
                 && resolvedInstances.TryGetValue(field.PtrAddress, out var ptrChildren)
