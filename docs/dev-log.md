@@ -22,11 +22,11 @@ builds ≤696 in
 
 -----
 
-## 2026-08-16 - Twelve audit-#5 MEDs, fixed in cluster order (builds 3016-3027)
+## 2026-08-16 - Fourteen audit-#5 MEDs, fixed in cluster order (builds 3016-3031)
 
 **Audit #5, MED tier.** The three named families were already closed, so this run followed §4's
-*"clusters, in the order worth fixing"* instead of picking by segment. Twelve findings, twelve
-commits, each with its own negative control. The open MED tier went **69 → 57**.
+*"clusters, in the order worth fixing"* instead of picking by segment. Fourteen findings, fourteen
+commits, each with its own negative control. The open MED tier went **69 → 55**.
 
 ### What was fixed
 
@@ -44,6 +44,8 @@ commits, each with its own negative control. The open MED tier went **69 → 57*
 | **AF6** | `PropertySearchPanel` | A REFUSED force value was reported as a cancel; and `double.TryParse` silently rounds a wide `Int64Property`, so Force would hold a number the user never typed. |
 | **AE9** | `ValueSearchViewModel.cs` | New Scan reset the private sort key but not the bound picker, and re-selecting the option the combo already shows is a no-op. |
 | **AE8** | 4 sites | `DiagnosticsProbe` opened BEFORE validation, filing measurements for operations that never ran — into the dataset the probe exists to collect. |
+| **AF2** | `DetectStatsViewModel.cs` | Detect stops live-probing after 30 classes, and past the cap every signal is false for a DIFFERENT reason than on a rejected row — both rendered "· guess", so a real stat at rank 31 looked disproven. |
+| **AF4** | `LiveWalkerPanel.axaml.cs` | All six VM callbacks were torn down on visual-tree detach and only ever re-subscribed from `DataContextChanged` — which a tab switch does not raise, so one round trip silently killed every scroll-to and the bookmark view restore. |
 
 ### Two things worth carrying forward
 
@@ -51,7 +53,7 @@ commits, each with its own negative control. The open MED tier went **69 → 57*
 says it means; X3 then gave that verdict its first client (an amber Pointers banner). Wiring X3
 first would have rendered a banner driven by a flag that was itself lying.
 
-**The fix-time sibling grep paid off in EIGHT of the twelve.** V7 named one panel and six were
+**The fix-time sibling grep paid off in EIGHT of the fourteen** (and cleared two more: AF4's shape exists in exactly one view, and AE8's fourth site was already correct). V7 named one panel and six were
 unbound; AE8 named one probe site and four had the shape; AE9, G1, U8 and AF6 each grew a second
 site the finding never listed. In no case did the finding's own text mention the sibling.
 
@@ -73,7 +75,11 @@ verified; blast radius not measured. Full block in the audit doc.
 
 Every fix was proved able to fail by reverting it in the tree and watching the suite go red, then
 restored. Every UI/binding change additionally ran `-Mode Publish` (Native AOT, trimmed) per
-CLAUDE.md. Test counts moved **246/1029 → 246/1042** (C++) and **3847 → 3882** (C#).
+CLAUDE.md. Test counts moved **246/1029 → 246/1042** (C++) and **3847 → 3884** (C#).
+
+**AF4 is deliberately NOT unit-tested** — the defect lives in Avalonia's visual-tree lifecycle, and
+a test driving the private handlers would assert my model of when Avalonia raises them rather than
+the behaviour. It is a live-verification step instead.
 
 ⚠ **Nothing here is verified on a running game.** See todo.md's pending-verification section.
 

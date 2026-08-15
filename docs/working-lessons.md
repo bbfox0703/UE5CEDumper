@@ -327,12 +327,12 @@ All eleven HIGHs are fixed. These are what generalised out of doing them.
   export and read a data export. **Do not write that probe in PowerShell**: AMSI blocks a
   `LoadLibrary`/`GetProcAddress` P/Invoke script as malicious content.
 
-### 2.3 Fixing the MED tier — what twelve in one session taught (audit #5, builds 3016-3027)
+### 2.3 Fixing the MED tier — what fourteen in one session taught (audit #5, builds 3016-3031)
 
 The HIGH-tier lessons in §2.2 all held. These are the ones that only showed up at MED volume.
 
 - **The fix-time sibling grep is not an optional polish step — it found MORE defects than the
-  findings did.** Eight of the twelve grew at least one extra site: V7 named one panel and six were
+  findings did.** Eight of the fourteen grew at least one extra site: V7 named one panel and six were
   unbound, AE8 named one probe site and four had the shape, and G1/U8/AE9/AF6 each gained a second.
   In no case did the finding's text hint at the sibling. Budget for it: the grep costs a minute and
   changed the size of two thirds of these commits.
@@ -359,6 +359,19 @@ The HIGH-tier lessons in §2.2 all held. These are the ones that only showed up 
   `double?` for a value prompt collapsed *cancel* and *rejected* into `null`, so a refused value was
   reported to the user as "you pressed Cancel". Whenever a nullable return doubles as an error
   channel, check what happens to the third case.
+- **"Final cleanup" in a teardown comment is a claim, and it is usually wrong in a UI.** Live
+  Walker's `OnDetached` said "final cleanup when the panel leaves the visual tree" and tore down six
+  VM callbacks with no re-subscribe — but a TabControl detaches and re-attaches on every tab switch,
+  and re-attach does NOT raise `DataContextChanged` (the VM is the same object). One round trip
+  silently killed every scroll-to and the bookmark restore, with no error. The repair is to make
+  subscribe/unsubscribe **idempotent** and call subscribe from both `DataContextChanged` and
+  `AttachedToVisualTree` — idempotence is what makes two call sites safe, not discipline about which
+  one runs.
+- **Not every fix should get a unit test, and saying which is part of the work.** AF4's defect is in
+  Avalonia's visual-tree lifecycle; a test calling the private handlers directly would assert *my
+  model of when Avalonia raises them*, not the behaviour — a test that passes whether or not the
+  product works. It went into the live-verification register instead, with the exact click sequence.
+  Prefer an honest "verify this by hand, here's how" over a test that only pins the author's belief.
 - **A capability gap is not a corruption, and they get different treatment.** A6 is confirmed —
   Force resolves an empty pool on inherited rows — but its status line already SAYS *"0 live
   instances of Actor matched"*. The fix needs a product decision that would change what a shipped,

@@ -1405,7 +1405,7 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
-### ⬜ NEW 2026-08-16 — the twelve-MED batch, all UI-visible (builds 3016-3027)
+### ⬜ NEW 2026-08-16 — the fourteen-MED batch, all UI-visible (builds 3016-3031)
 
 None of this session's twelve fixes has been seen on a running game. They are cheap to check because
 each has a *visible* pass/fail, and four of them only ever show up when something ELSE goes wrong.
@@ -1440,6 +1440,16 @@ each has a *visible* pass/fail, and four of them only ever show up when somethin
    success = rows come back and the preview ends in `…`.
 8. **AB6 — group sort follows the visible column.** Group Scan with a filter that makes a slot keep
    many leaves, then sort by Value. The order must match the Value column on screen.
+
+9. **AF4 — the Live Walker survives a tab round trip.** This one has NO unit test by design (it is
+   an Avalonia visual-tree lifecycle fact). Open Live Walker on an object → switch to another tab →
+   switch back → then use **🌍 Locate in GWorld**, a bookmark restore, or the ↑/↓ match stepper.
+   The grid must still scroll. Before the fix all six callbacks were dead after one round trip and
+   nothing errored — the buttons just stopped moving the view.
+10. **AF2 — unchecked rows say so.** Experimental → Detect Player Stats on a game with more than 30
+    candidate classes. Rows past the cap must read **"? not checked"** in amber, not "· guess", and
+    the status line must say *"30 of N classes live-probed"*. On a small game with under 30 classes
+    the correct result is that the suffix is ABSENT — check both, or you have only tested one branch.
 
 **Trivially checkable, low value alone:** AF6 (type a huge integer into Force → expect an explicit
 refusal naming the substitute, NOT a silent nothing), AE8 (a rejected scan click should no longer

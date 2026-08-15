@@ -1476,9 +1476,9 @@ files (1,172 early lines) swept by pattern**, exactly as §1's phase plan specif
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **AF1** ✅ | MED | `Neu.h:94` (Neu::BuildLayout (FNameData57 branch)) | UEnum member count is range-checked AFTER a signed cast, so the whole upper half of the uint32 range passes and yields a NEGATIVE count | S / low |
-| **AF2** | MED | `DetectStatsViewModel.cs:158` (DetectStatsViewModel.DetectAsync) | Detect Stats stops live-probing after 30 classes, and the never-probed rows render identically to rows that were probed and had no live instance | S / low |
+| **AF2** ✅ | MED | `DetectStatsViewModel.cs:158` (DetectStatsViewModel.DetectAsync) | Detect Stats stops live-probing after 30 classes, and the never-probed rows render identically to rows that were probed and had no live instance | S / low |
 | **AF3** | MED | `LiveFuncsViewModel.cs:210` (LiveFuncsViewModel.FetchAndPopulateAsync) | Live PE Profiler fetches only the top 300 functions but reports the DLL's FULL distinct count, and builds the diff baseline from the same truncated page — manufacturing false "NEW" rows | M / low |
-| **AF4** | MED | `LiveWalkerPanel.axaml.cs:76` (LiveWalkerPanel.OnDetached) | Live Walker tears down all six VM event subscriptions on visual-tree detach and never re-subscribes on re-attach | S / low |
+| **AF4** ✅ | MED | `LiveWalkerPanel.axaml.cs:76` (LiveWalkerPanel.OnDetached) | Live Walker tears down all six VM event subscriptions on visual-tree detach and never re-subscribes on re-attach | S / low |
 | **AF5** | MED | `MainWindow.axaml.cs:666` (MainTabs_SelectionChanged) | Per-tab activation routine re-runs on every bubbled child SelectionChanged, silently reverting the user's Class Pivot snapshot/pick selections | S / med |
 | **AF6** ✅ | MED | `PropertySearchPanel.axaml.cs:68` (PromptForceValueAsync (double.TryParse of the ) | The Force flow funnels the width-validated int64 literal through a double, and any parse failure is returned as "cancelled" | S / low |
 | **AF7** | LOW | `Denken.h:37` (Denken::NativeAnalysisResult::budgetHit) | Path-2 native disasm's "result may be partial" flag is written, logged, and then dropped before the wire — the Xref dialog shows a truncated field list as complete | S / low |
@@ -2654,13 +2654,14 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**217 of 277 findings are still open** (60 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 57 MED ·
+**215 of 277 findings are still open** (62 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 55 MED ·
 133 LOW · 27 INFO**.
 
-> ✅ **Updated 2026-08-16 PM — twelve MEDs fixed in one session, builds 3016-3027** (the MED tier
-> went 69 → 57). In the recommended CLUSTER order rather than by segment, since the three named
-> families were already closed: **G1 · A5 · U7 · U8 · V7 · V6 · X3 · AB6 · AF1 · AF6 · AE9 · AE8**.
+> ✅ **Updated 2026-08-16 PM — fourteen MEDs fixed in one session, builds 3016-3031** (the MED tier
+> went 69 → 55). In the recommended CLUSTER order rather than by segment, since the three named
+> families were already closed: **G1 · A5 · U7 · U8 · V7 · V6 · X3 · AB6 · AF1 · AF6 · AE9 · AE8 ·
+> AF2 · AF4**.
 > Each is one commit with its own negative control. Two things worth carrying forward:
 >
 > - **G1 → X3 is a pair and the order mattered.** G1 made `bOffsetsValidated` mean what
@@ -2762,11 +2763,11 @@ block, §2.
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | – | **57** | **133** | **27** | **217** |
+| **TOTAL** | – | **55** | **133** | **27** | **215** |
 
 > ⚠ **The per-segment MED counts in the table above are the pre-2026-08-16-PM numbers and were NOT
-> re-derived per row.** Twelve MEDs were fixed that afternoon (G1, A5, U7, U8, V7, V6, X3, AB6, AF1,
-> AF6, AE9, AE8) and they span D1, D2, D3, U1, U3, T1a, T1c and T1e. Only the TOTAL row is
+> re-derived per row.** Fourteen MEDs were fixed that afternoon (G1, A5, U7, U8, V7, V6, X3, AB6, AF1,
+> AF6, AE9, AE8, AF2, AF4) and they span D1, D2, D3, U1, U3, T1a, T1c and T1e. Only the TOTAL row is
 > authoritative — re-run the command at the top of this section rather than trusting a segment row.
 
 ### Fix order recommended
