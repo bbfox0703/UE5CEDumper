@@ -5,10 +5,15 @@
 > Every lesson below was paid for with a debugging session, and until now the other machine had no
 > way to know it. This doc is the shared copy.
 >
-> **Sync rule:** memory and this file are mirrors. When one changes, change the other. Memory is the
-> convenient index for an in-session assistant; **this file is the record.** If they disagree, prefer
-> whichever cites a concrete measurement, then re-verify against the code — every claim here was true
-> at the build named beside it, and code moves.
+> **Sync rule (changed 2026-08-15): this file is now the SOLE copy — it is no longer mirrored.**
+> The assistant's memory folder used to carry a near-identical duplicate of every section below, and
+> the "edit both" tax was paid unevenly: the copies drifted, and the folder does not travel with git
+> anyway. Those 15 memory files were deleted; `MEMORY.md` now carries a pointer to this file plus the
+> section map. **Write new working-lessons here, not into memory.** Memory keeps only what is
+> genuinely machine-local (paths, in-flight project state, session preferences).
+>
+> Every claim here was true at the build named beside it, and code moves — re-verify against the code
+> before acting on a `file:line`.
 >
 > **What belongs here vs elsewhere:** this file is *how to work* — verification method, traps in our
 > own stack, and decisions settled in conversation that leave no trace in the code.
@@ -249,6 +254,79 @@ live one. Put "read the surrounding comments and the callers first" in every fin
   wrong address. "A test asserts the opposite" becomes an available refutation at the same time, so
   say so in the skeptic prompt.
 
+### 2.1 What audit #5 measured across all 12 segments (2026-08-13 → 2026-08-15)
+
+Recorded when scanning completed. These are measurements, not opinions — do not re-derive them.
+The findings themselves live in
+[audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md) §3c.
+
+- **The comment sweep is the best single technique: 6 for 6.** Grep for a comment that admits a
+  limitation or asserts an impossibility, then check whether it is still true. It produced the lead
+  finding in T1a, T1b **and** T1e. Nothing else in the method has a hit rate anywhere near it.
+- **Fix by FAMILY, not by ID — and grep for siblings *at fix time*, not at scan time.** Two families
+  recurred across unrelated subsystems: *the width family* (an out-of-range value masked to the field
+  width and then reported as written — six occurrences over four subsystems, and **at every site the
+  correct width was already in scope and simply not enforced**) and *root cause #4* (a fix applied at
+  only some of its sites — seven occurrences). The rule "grep for siblings before closing a fix" had
+  been written down since the fourth occurrence and three more appeared anyway, because it was being
+  read at scan time and not applied at fix time. The audit's own register generator repeated the
+  pattern: §4 documented a marker tolerance that §3c's regex then failed to apply, dropping 9 rows.
+- **Before writing a test, ask whether the CALL SITE can fail it.** AB1's guard was unit-tested and
+  still shipped the crash — its single call site sat *inside* the thread the guard existed to
+  prevent. A helper tested in isolation proves nothing about the seam that calls it (§1.3, and U1's
+  HIGH is the same shape).
+- **Cost scales with CLAIMS FOUND, not with lines read.** Segment T1 covered 8.5× S1's lines for
+  2.2× its tokens. The lever is claim volume: **merge claims by location inside the script**, and
+  batch 10 per refute agent / 8 per second-lens agent to hold a phase to 11–13 agents.
+- **Tightening the skeptic's rubric does NOT raise its kill rate.** S1 had the strictest rubric
+  written and killed the least (14%). What *does* work is calibrating the finders up front (§2).
+- **Keep the second lens even when its kill count is zero** — twice (T1c/AE1, T1e/AF1) it caught the
+  *skeptic* being wrong, which is a failure mode nothing else in the pipeline detects.
+- **Validate that every filename in a "covered" list resolves to a real file.** T1's first sizing
+  budgeted a phase around `PointerViewModel.cs`, **a file that does not exist**; the real file was
+  already covered by U1. Six planned phases became five once the names were checked.
+- **A tier that skipped the second lens is not a finding tier.** Audit #5's LOW/INFO kill rates ran
+  10–35% against the method's own measured 33–73% band — i.e. those tiers were scored leniently, not
+  found cleaner. Re-derive any LOW before fixing it; several are pattern-sweep leads, not findings.
+
+### 2.2 Fixing a finding — four things the HIGH tier taught (audit #5, builds 2913–2932)
+
+All eleven HIGHs are fixed. These are what generalised out of doing them.
+
+- **Ask what the FEATURE promises before adopting the register's proposed fix shape.** AA2's entry
+  said the fix "needs an identity witness (`InternalIndex`, `SerialNumber`)". Wrong question: the
+  freeze is class-wide *by design*, so a slot recycled by the same class is a target, not a hazard —
+  an identity check would have refused a correct write. The right predicate (class membership) was
+  also far cheaper: two unused mailbox output fields instead of widening every entry. **A finding is
+  evidence a defect exists; it is not authority on the repair.**
+- **Make a wired-through field `required`, never optional.** AA1's mask had to cross five tiers, and
+  `required` on the params record immediately caught a sixth the plan had missed (`ScoredPropertyRow`
+  forwarded `PropSize` but not the mask — the same dropped-field shape, one line further down the
+  same file). Optional would have silently kept the bug on that path.
+- **Negative-control ONE change at a time.** Breaking all three freeze fixes at once produced output
+  that could not be read — one break made an unrelated case fail for its own reason. Separately:
+  AA1→4 failures, AA2→11, AA3→6, all detected. The same run exposed the harness aborting on its first
+  failure and hiding every later case.
+- **A predicate that guards X belongs WITH X.** Audit #5's Y7 wrote a struct-layout guard as a
+  private helper inside a View; its two other consumers were in a Service, which cannot depend on a
+  View, so the guard could not spread even in principle and the same dialog refused a bad layout for
+  its inputs while accepting it for its results (AC2). Before writing a guard, ask which callers must
+  reach it — if any of them is in a lower layer, the guard is already in the wrong place.
+- **When you find a fix under-applied, expect its siblings to have TESTS defending them.** Three of
+  the four sites closed in the AC2/AE10 batch had a green test asserting the defect, and one carried
+  a written justification for it. That is *how* the sibling survived a fix: the code was wrong and
+  the suite said it was fine. Read such a test as evidence about the **belief** at the time, not
+  about the code — then check the belief's premise. (AE10's premise was that
+  `IsGWorldAvailable` means "GWorld is resolved"; its own definition is "the AOB scan produced a
+  slot address", which is not the same claim.)
+- **When no test target compiles the file, measure the behaviour instead of arguing about it.**
+  Nothing compiles `Frieren.cpp`, so AB2's async property was measured: 2.3 ms to return with the fix
+  versus 3486 ms with the spawn reverted (`tools/probe_autostart_async.py`). Two reusable pieces —
+  a Lua interpreter can execute the CE helpers against stubbed globals
+  (`scripts/tests/freeze_helper_test.lua`), and Python `ctypes` can load the shipped DLL, time an
+  export and read a data export. **Do not write that probe in PowerShell**: AMSI blocks a
+  `LoadLibrary`/`GetProcAddress` P/Invoke script as malicious content.
+
 -----
 
 ## 3. Traps in our own stack
@@ -395,6 +473,42 @@ Verify Return Value mode tried to find the return slot.
 hardcode `+0x3C` or any "+8 from ElementSize" form.
 
 ### 4.2 CE Lua quirks baked into our code as defensive patterns
+
+> **Where to check whether a CE Lua call exists — and there are two copies, which answer different
+> questions.** CLAUDE.md forbids inventing CE Lua calls, so grep one of these first:
+>
+> - **The installed binary's docs** — `celua.txt` in the CE install directory
+>   (`C:\Program Files\Cheat Engine\celua.txt`, ~238 KB, 7.7 on this machine). Use this for *"does
+>   this work in the CE the user is actually running?"*
+> - **The CE source clone** — `D:\Github\cheat-engine\Cheat Engine\bin\celua.txt` (a real git clone;
+>   `git tag` includes `7.5`). Check out an older tag to read that release's `celua.txt`. Use this for
+>   *"since which version has this existed?"*
+>
+> **The public source lags the release**, so the two genuinely disagree — [CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md)
+> §4 is the worked example: a defect still present in the 7.5 source and measured **fixed** in the 7.7
+> binary. Reading only the source would have had us document a bug the shipping CE does not have.
+>
+> **And a probe beats both.** `celua.txt` has advertised a capability that does not exist *and* denied
+> one that works (see the `getSettings()` entry below, where three rounds of being wrong were each
+> settled by probing, not by re-reading).
+>
+> **For CE's *plugin* API, read the Pascal, not the header.** `ce_InjectDLL` is the worked example
+> (`pluginexports.pas:622-640` + `CEFuncProc.pas:1050-1051`, `1391-1396`): it returns `false` only if
+> an exception *escapes*, and CE catches one of the three it can raise. So it returns **true** on
+> "Failed injecting the DLL" (caught internally, falls back to `forceLoadModule`) and **false** on the
+> >10 s timeout (a plain `Exception`) and on "Failed executing the function of the dll"
+> (`EInjectDLLFunctionFailure` — a **sibling** of `EInjectError`, not a subclass, so
+> `on e:EInjectError` misses it). The BOOL is therefore *inverted for the common cases*, and a UI that
+> trusted it told users to check that the target is 64-bit while the DLL was loaded and running
+> (audit #5 AB2). **Where CE hands back an ambiguous status, prefer something you can observe** — the
+> plugin now re-walks the target's module list instead.
+>
+> **CE's Lua has no `bAnd` / `bOr` / `bNot`.** Single-bit set/clear is done with pure arithmetic
+> (`math.floor(b / mask) % 2` to test, `b + mask` / `b - mask` to set/clear), which is also version-
+> proof. Two places in this repo do it that way — `StandaloneTrainerScriptGenerator`'s `UE5T_setbit`
+> and `ue5_freeze_helper.lua`'s `writeBool` — and a third tier (`Solitar::ApplyBoolBit`) and a fourth
+> (`FieldValueConverter.ApplyBoolMask`) implement the same rule in C++ and C#. If you change the rule,
+> change all four.
 
 **`getAddress` vs `getAddressSafe`.** `getAddress(name)` either throws or silently returns garbage when
 the symbol can't be resolved (CE-version dependent); `getAddressSafe(name)` consistently returns nil/0.
@@ -601,3 +715,39 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
   `~/.claude/scheduled-tasks/<name>/SKILL.md` is the template. Two constraints: the task must **commit
   its own work** (nothing else persists), and if another session is open on the same clone it must stay
   **hands-off** — one working tree, two sessions.
+
+### 7.1 Where a lesson belongs — this file vs. the assistant's memory
+
+**Rule, settled 2026-08-15 and binding on both machines: a working lesson goes in THIS FILE, and the
+memory folder does not keep a copy.**
+
+The memory folder lives at `%USERPROFILE%\.claude\projects\<project>\memory\` and is **not in git**,
+so it exists on one machine at a time. Between 2026-08-14 and 2026-08-15 every section of this file
+also existed there as a `feedback_*.md` twin, on an "edit both" rule. That rule failed in the ordinary
+way: the copies drifted, several twins were staler than this file, and the machine that needed them
+most — the other one — never had them at all. **Fifteen duplicate memory files (~48 KB) were deleted
+on 2026-08-15**; `MEMORY.md` now carries a pointer here plus the section map above.
+
+**How to route a new fact:**
+
+| Fact | Goes to |
+|---|---|
+| A verification method, a trap in our stack, a UE/CE fact, a settled decision | **This file** (§1–§6) |
+| What shipped, when, and why | `dev-log.md` (append-only) |
+| Open work, effort/risk, pending live verification | `todo.md` |
+| What a *game* does differently | `lessons-learned.md` |
+| A machine-local path (`$GHIDRA_PROJS`, corpus location, sibling repo checkouts) | memory |
+| In-flight project state that has no home in the repo yet | memory |
+| Which doc to read next, and where the current work is | `MEMORY.md`, as a **pointer**, not a copy |
+
+**Two corollaries, both learned by paying for them:**
+
+1. **Never let memory restate content that a repo doc owns.** If you catch yourself writing a fact
+   into memory that a doc already states, write it in the doc and point at it. Duplicated prose is not
+   redundancy — it is a second thing that can be wrong, and the reader cannot tell which copy is
+   current. The audit register hit the same shape from the other direction (§2.1, root cause #4).
+2. **`MEMORY.md` is the only file loaded into every session**; topic files load on recall. So the cost
+   of a long `MEMORY.md` is paid on every single turn of every session, while the cost of a topic file
+   is paid only when it is relevant. Keep `MEMORY.md` to pointers and machine-local facts. **Adding a
+   second index file does not help** — it either also loads (no saving) or is never read (dead
+   weight). The lever is deduplication against git-carried docs, not more files.

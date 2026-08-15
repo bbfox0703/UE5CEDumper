@@ -98,7 +98,6 @@
                 <Button Content="{StaticResource str.InstanceFinder.LocateGWorldShort}"
                         Command="{Binding $parent[DataGrid].((vm:DetectStatsViewModel)DataContext).LocateRowInGWorldCommand}"
                         CommandParameter="{Binding}"
-                        IsEnabled="{Binding $parent[DataGrid].((vm:DetectStatsViewModel)DataContext).IsGWorldAvailable}"
                         ToolTip.Tip="{StaticResource str.Tip.Detect.GWorld}"
                         Foreground="#C586C0" Background="Transparent"
                         BorderThickness="1" BorderBrush="#C586C0"

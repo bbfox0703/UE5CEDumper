@@ -1425,9 +1425,95 @@ This is the one verification in the register that needs **no game at all**.
    *"UE5CEDumper: Inject & Connect"* menu item against a running game and confirm the DLL still
    injects, the pipe opens, and the CE Lua mailbox works. The poller is *supposed* to run in the
    game — only CE's own process is refused.
+
+   **⚠ This step also verifies AB2 (build 2932), so do it deliberately.** `UE5_AutoStart` now spawns
+   and returns instead of running the scan on CE's remote thread, which CE frees after a hard 10 s
+   (`CEFuncProc.pas:1346-1360`) or, with Settings' **`cbInjectDLLWithAPC`** ticked, after 1 s
+   (`:1332-1343`) — the `ret` onto that freed page crashed the **game**. Measured async
+   (`py tools/probe_autostart_async.py` → 2.3 ms, vs 3486 ms with the spawn reverted), but never run
+   against a real CE + game. Check:
+   - The menu item returns **immediately** and the dialog says the scan started *in the background*;
+     CE's own window should not freeze for the scan any more.
+   - The game does **not** crash a few seconds later — that was the AB2 symptom.
+   - **Tick `cbInjectDLLWithAPC` in CE's Settings and repeat.** That is the near-certain-crash path
+     before the fix and the strongest single check here.
+   - The dialog now reports what it **observed** (is our module mapped?) rather than CE's `InjectDLL`
+     BOOL, which is inverted for the common failures. A "success" dialog must mean the pipe really
+     comes up; an "injection failed" dialog must mean the module really is absent.
 5. Worth one negative case: a game whose folder is named e.g. `...\Cheat Engine 7.7\Game.exe` must
    still get its poller. Only the executable leaf is tested, and there is a unit test for it.
 
+
+### ⬜ NEW 2026-08-15 — 🌍 Locate-in-GWorld on a game where the AOB scan does NOT resolve &GWorld (audit #5 AE10, build 2961)
+
+The 🌍 buttons were gated on the client `IsGWorldAvailable` flag, which is really *"the AOB scan
+produced a &GWorld slot address"* — not *"a live UWorld exists"*. The DLL has world-recovery
+fallbacks that work when that scan did not, so the gate **disabled the button on games where locate
+worked**. All 19 gates are gone and the flag is deleted; the DLL now decides.
+
+**The payoff case is a game where GWorld did NOT resolve by AOB** — the Pointers panel shows no
+GWorld address, or the game runs in proxy mode (TQ2 is the recorded example). Nothing in the test
+suite can reach this.
+
+1. On such a game, the per-row **🌍** buttons must now be **enabled** in Instance Finder, Interesting
+   Functions, Interesting Properties, Detect Stats, Class Pivot, Snapshot (Diff + Group) and SPC
+   Query. Before this build they were greyed out with no explanation.
+2. Click one. **Success = a path is found, or a clear "no path"/"invalid" message** from the DLL.
+   Silence is a failure — the whole point is that a click now says something either way.
+3. **Then the negative case**: on a game with genuinely no live UWorld (main menu before a level
+   loads), the click must report the DLL's invalid/no-path status rather than appearing to work.
+4. Regression check on a normal game where GWorld *does* resolve: the 🌍 handoffs still behave as
+   before — this change should be invisible there.
+
+### ⬜ NEW 2026-08-15 — keep a freeze running across deaths/respawns (audit #5 AA2/AA3, build 2926)
+
+The freeze tick used to write to cached pointers guarded only by "is qword 0 non-zero", which a
+recycled or pooled block passes — so between two rescans it could write into an object of a
+different class. It now re-reads `ClassPrivate` before every write and refuses a foreign class, using
+a `(UClass*, offset)` witness the DLL publishes on `CMD_LIST_INSTANCES` (**mailbox contract 1 → 2**).
+
+**The behaviour is covered by an executable harness** (`lua scripts/tests/freeze_helper_test.lua`,
+23 checks, negative-controlled one break at a time), so what is unproven here is the *live* half:
+that a real game's `CMD_LIST_INSTANCES` fills the witness and that the guard does not reject valid
+instances.
+
+1. **Contract first.** With an **old** DLL injected and a freshly-injected helper, the freeze must
+   refuse with *"the DLL is older than this script"*. If it runs anyway, the contract check is not
+   firing and nothing below means anything.
+2. With the new DLL: start a class-wide freeze on something with many live instances (enemies, pickups).
+   **Success = the value actually holds.** A silently-refusing guard looks exactly like a freeze that
+   does nothing — that is the main risk of this change, and it fails in that direction by design.
+3. Check `init-0.log` for `LIST_INSTANCES ... classWitness=0x...`. **A zero witness means the guard
+   fell back** and the fix is inert.
+4. **Now cause churn**: kill/respawn the frozen actors, or cross a level-streaming boundary, with the
+   freeze still enabled. Success = the freeze re-acquires within one rescan (~5 s) and nothing
+   unrelated changes. Watch for any *other* object's fields changing — that is the old bug.
+5. **AA3**: with the freeze running, unload/re-inject the DLL so rescans fail permanently. Expect the
+   Lua console to print `... consecutive rescans failed -- freeze STOPPED writing` **once** within
+   ~15 s, and no further writes.
+
+### ⬜ NEW 2026-08-15 — freeze a PACKED bitfield bool and check its 7 siblings survive (audit #5 AA1, build 2922)
+
+Sibling of the Y15 check below, same panel, same failure shape — a whole-byte write over a field that
+does not own the whole byte. Freezing a `BoolProperty` now emits `boolMask` into the generated CFG and
+the helper writes only that bit. 24 unit tests plus a negative control cover the C# and the helper
+*source*, **but the DLL→UI half has never run against a real game**: nobody has seen a real packed
+bool's `bool_mask` arrive on the `search_properties` wire.
+
+**Needs a game with a `uint8 bFoo:1` bitfield bool** — extremely common on `AActor`
+(`bHidden`, `bReplicates`, `bCanBeDamaged` are bitfields on many UE versions), so any UE game should do.
+
+1. Property Search a bool on a live class. In the row, generate the freeze script.
+2. **Read the generated CFG.** A packed bool must show `boolMask = 0xNN,` (one of 0x01…0x80). Its
+   *absence* is the whole finding, so this line is the check — if it is missing, the mask is not
+   reaching the UI and everything below is moot. A **native** bool correctly shows no `boolMask`;
+   confirm you are looking at a packed one (Live Walker shows the mask in the field's tooltip/CSX
+   description).
+3. Note the **whole byte** at `prop_offset` in Live Walker / CE before enabling.
+4. Enable the script, let it tick, and re-read that byte. Success = only the masked bit changed;
+   **failure = the byte became `0x00` or `0x01`**, which is the pre-fix behaviour.
+5. The nastiest half of the old bug: when the mask is **not** `0x01`, the intended bool was never set
+   at all. So also confirm the target bool actually reads as the value you froze.
 
 ### ⬜ NEW 2026-08-15 — freeze a 1-byte enum and check its neighbours survive (audit #5 Y15, build 2904)
 

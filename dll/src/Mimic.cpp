@@ -789,6 +789,28 @@ static void HandleListInstances() {
     g_invokeMailbox.numParms = static_cast<uint16_t>(returnedCount);
     g_invokeMailbox.functionFlags = totalPages;
 
+    // Contract 2: publish the identity witness a caching caller needs to tell a
+    // live instance from a recycled slot (audit #5 AA2/AA3).
+    //
+    // Read from an actual enumerated instance rather than resolved by name a
+    // second time: the caller compares against what it will read out of THESE
+    // objects, so the witness has to come from the same place. exactMatch=true
+    // above means every entry shares one class, so one pointer covers the page —
+    // and the page the caller is holding, not just page 0.
+    //
+    // Both are cleared first: a previous command may have left an unrelated
+    // UObject*/UFunction* here, and a caller must never mistake that for a
+    // witness. Zero means "not available" and the caller falls back.
+    g_invokeMailbox.instanceAddr = 0;
+    g_invokeMailbox.ufuncAddr    = 0;
+    if (returnedCount > 0) {
+        uintptr_t cls = Ubel::GetClass(live[startIdx]);
+        if (cls) {
+            g_invokeMailbox.instanceAddr = static_cast<uint64_t>(cls);
+            g_invokeMailbox.ufuncAddr    = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
+        }
+    }
+
     memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
 
     for (uint32_t i = 0; i < returnedCount; ++i) {
@@ -796,8 +818,9 @@ static void HandleListInstances() {
         memcpy(g_invokeMailbox.paramsData + (i * ENTRY_SIZE), &addr, ENTRY_SIZE);
     }
 
-    LOG_INFO("Mailbox: LIST_INSTANCES returned %u/%u (page %u/%u)",
-             returnedCount, totalCount, pageIndex + 1, totalPages);
+    LOG_INFO("Mailbox: LIST_INSTANCES returned %u/%u (page %u/%u) classWitness=0x%llX",
+             returnedCount, totalCount, pageIndex + 1, totalPages,
+             (unsigned long long)g_invokeMailbox.instanceAddr);
     SetDone(0);
 }
 

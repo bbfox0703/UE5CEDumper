@@ -128,7 +128,8 @@ public partial class SnapshotViewModel
     public bool CanUseGroupRowActions =>
         !string.IsNullOrEmpty(_currentSessionId) && NewestGroupSnapshot?.GameSessionId == _currentSessionId;
 
-    public bool CanLocateGroupRowInGWorld => CanUseGroupRowActions && IsGWorldAvailable;
+    // NOT gated on the client IsGWorldAvailable flag (audit #5 AE10).
+    public bool CanLocateGroupRowInGWorld => CanUseGroupRowActions;
 
     partial void OnGroupSnapshotChanged(SnapshotMeta? value)
     {
@@ -286,7 +287,7 @@ public partial class SnapshotViewModel
     [RelayCommand]
     private void LocateGroupSlotInGWorld(GroupSlotMatch? slot)
     {
-        if (slot == null || !IsGWorldAvailable || string.IsNullOrEmpty(slot.InstanceAddr)) return;
+        if (slot == null || string.IsNullOrEmpty(slot.InstanceAddr)) return;
         LocateInGWorld?.Invoke(slot.InstanceAddr, slot.FieldOffset, slot.FieldName);
     }
 

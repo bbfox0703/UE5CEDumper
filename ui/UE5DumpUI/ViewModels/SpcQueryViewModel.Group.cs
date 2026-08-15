@@ -227,7 +227,7 @@ public partial class SpcQueryViewModel
     [RelayCommand]
     private void LocateGroupSlotInGWorld(GroupSlotMatch? slot)
     {
-        if (slot == null || !IsGWorldAvailable || string.IsNullOrEmpty(slot.InstanceAddr)) return;
+        if (slot == null || string.IsNullOrEmpty(slot.InstanceAddr)) return;
         LocateInGWorld?.Invoke(slot.InstanceAddr, slot.FieldOffset, slot.FieldName);
     }
 

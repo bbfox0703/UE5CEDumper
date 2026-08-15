@@ -357,7 +357,6 @@ public partial class SpcQueryViewModel : ViewModelBase
     public event Action<string, int, string>? LocateInGameEngine;
 
     /// <summary>True when GWorld is available — gates the per-row "Locate in GWorld" button.</summary>
-    [ObservableProperty] private bool _isGWorldAvailable;
 
     // Live game session id (PeHash-CreationTime; unique per launch even on
     // no-ASLR games). Result rows carry the NEWEST selected snapshot's live
@@ -377,10 +376,9 @@ public partial class SpcQueryViewModel : ViewModelBase
     public bool CanUseResultRowActions =>
         !string.IsNullOrEmpty(_currentSessionId) && NewestSelectedSessionId == _currentSessionId;
     /// <summary>As above, additionally requiring GWorld for the 🌍 button.</summary>
-    public bool CanLocateResultRowInGWorld => CanUseResultRowActions && IsGWorldAvailable;
+    // NOT gated on the client IsGWorldAvailable flag (audit #5 AE10).
+    public bool CanLocateResultRowInGWorld => CanUseResultRowActions;
 
-    partial void OnIsGWorldAvailableChanged(bool value) =>
-        OnPropertyChanged(nameof(CanLocateResultRowInGWorld));
 
     private void RaiseResultRowActionGates()
     {
@@ -408,7 +406,6 @@ public partial class SpcQueryViewModel : ViewModelBase
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
-        IsGWorldAvailable = state.HasGWorld;
         _currentSessionId = state.GameSessionId;   // PeHash-CreationTime; matches capture-time GameSessionId
         RaiseResultRowActionGates();
         _store.SetActiveGame(state.PeHash);
@@ -726,7 +723,7 @@ public partial class SpcQueryViewModel : ViewModelBase
     [RelayCommand]
     private void LocateRowInGWorld(SpcResultRow? row)
     {
-        if (row == null || !IsGWorldAvailable || string.IsNullOrEmpty(row.ObjAddr)) return;
+        if (row == null || string.IsNullOrEmpty(row.ObjAddr)) return;
         LocateInGWorld?.Invoke(row.ObjAddr, row.PropOffset, row.PropName);
     }
 

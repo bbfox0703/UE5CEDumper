@@ -1691,6 +1691,9 @@ public sealed class DumpService : IDumpService
                     DefiningClassPath = obj["defining_class_path"]?.GetValue<string>() ?? "",
                     InheritedByCount  = obj["inherited_by_count"]?.GetValue<int>() ?? 0,
                     FieldAddr         = obj["field_addr"]?.GetValue<string>() ?? "",
+                    // FBoolProperty FieldMask. Absent for native bools AND for
+                    // pre-AA1 DLLs → 0, which both mean "write the whole byte".
+                    BoolFieldMask     = obj["bool_mask"]?.GetValue<int>() ?? 0,
                     // Deep-mode synthetic dotted-path leaf (build 1222). Absent
                     // on shallow rows + older DLLs → defaults false.
                     IsNested          = obj["is_nested"]?.GetValue<bool>() ?? false,
@@ -1787,6 +1790,11 @@ public sealed class DumpService : IDumpService
                             DefiningClassPath = obj["defining_class_path"]?.GetValue<string>() ?? "",
                             InheritedByCount  = obj["inherited_by_count"]?.GetValue<int>() ?? 0,
                             FieldAddr         = obj["field_addr"]?.GetValue<string>() ?? "",
+                            // FBoolProperty FieldMask — see the single-query
+                            // parser above. Freeze is reachable from the
+                            // Interesting Properties rows this path feeds, so it
+                            // needs the mask too. (audit #5 AA1)
+                            BoolFieldMask     = obj["bool_mask"]?.GetValue<int>() ?? 0,
                         });
                     }
                 }

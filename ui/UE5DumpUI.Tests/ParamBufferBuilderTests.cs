@@ -541,4 +541,114 @@ public class ParamBufferBuilderTests
 
         Assert.Equal("0000C03F", hex);   // 1.5f
     }
+
+    // ── audit #5: the width family on the FIRE path ─────────────────────────
+    //
+    // Every integer write in ParamBufferBuilder masks to the field width
+    // ((short), (int), unchecked((byte)u)), so an out-of-range value used to
+    // reach the game truncated with nothing said. The masks stay — they are Y5's
+    // fix, so a signed -1 still reaches the game as 0xFF — and a range check now
+    // sits in front of them.
+
+    [Theory]
+    // Fits: the exact unsigned max, and the negative that Y5 requires to survive.
+    [InlineData("ByteProperty", 1, "255", true)]
+    [InlineData("ByteProperty", 1, "-1", true)]
+    [InlineData("Int8Property", 1, "-128", true)]
+    [InlineData("Int16Property", 2, "65535", true)]
+    [InlineData("Int16Property", 2, "-32768", true)]
+    // Does not fit in EITHER signedness — the case the whole family is about.
+    [InlineData("ByteProperty", 1, "9999", false)]
+    [InlineData("ByteProperty", 1, "256", false)]
+    [InlineData("Int8Property", 1, "-129", false)]
+    [InlineData("Int16Property", 2, "65536", false)]
+    [InlineData("UInt16Property", 2, "70000", false)]
+    [InlineData("IntProperty", 4, "5000000000", false)]
+    // Enum width comes from the engine, not the type name.
+    [InlineData("EnumProperty", 1, "9999", false)]
+    [InlineData("EnumProperty", 1, "200", true)]
+    [InlineData("EnumProperty", 4, "9999", true)]
+    // Hex forms go through the same parser as the writer.
+    [InlineData("ByteProperty", 1, "0xFF", true)]
+    [InlineData("ByteProperty", 1, "0x100", false)]
+    public void TryValidateScalar_RangeChecksAgainstTheEngineReportedWidth(
+        string typeName, int size, string text, bool expectOk)
+    {
+        var ok = ParamBufferBuilder.TryValidateScalar(typeName, size, text, out var err);
+
+        Assert.Equal(expectOk, ok);
+        if (expectOk) Assert.Equal("", err);
+        else Assert.Contains("does not fit", err);
+    }
+
+    [Theory]
+    // Not integer-ranged: validated by their own parsers, never by width.
+    [InlineData("BoolProperty", 1, "true")]
+    [InlineData("FloatProperty", 4, "1e30")]
+    [InlineData("DoubleProperty", 8, "1e300")]
+    // A pointer is a raw 8-byte address, not a ranged integer.
+    [InlineData("ObjectProperty", 8, "0xFFFFFFFFFFFFFFFF")]
+    [InlineData("UInt64Property", 8, "18446744073709551615")]
+    // Non-numeric text is the parsers' business, not this check's.
+    [InlineData("ByteProperty", 1, "not a number")]
+    [InlineData("ByteProperty", 1, "")]
+    public void TryValidateScalar_LeavesNonRangedInputAlone(string typeName, int size, string text)
+        => Assert.True(ParamBufferBuilder.TryValidateScalar(typeName, size, text, out _));
+
+    [Theory]
+    // Y5 fixed "a negative silently fires 0" for ByteProperty only; every unsigned
+    // path kept the bug, so FIRE sent 0 while the exported script baked 0xFFFF...
+    // for the same input. Found at fix time by the width-family sweep, not by a
+    // finder. (audit #5, root cause #4's eighth occurrence.)
+    [InlineData("UInt16Property", 2, "-1", "FFFF")]
+    [InlineData("Int16Property", 2, "-1", "FFFF")]
+    [InlineData("ByteProperty", 1, "-1", "FF")]
+    [InlineData("UInt64Property", 8, "-1", "FFFFFFFFFFFFFFFF")]
+    public void WriteParam_NegativeOnAnUnsignedParam_MatchesWhatTheScriptBakes(
+        string typeName, int size, string text, string expectedHexPrefix)
+    {
+        var @params = new[]
+        {
+            new FunctionParamModel { Name = "p", TypeName = typeName, Offset = 0, Size = size },
+        };
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { text }, parmsSize: 16);
+
+        Assert.StartsWith(expectedHexPrefix, hex, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("ByteProperty", 1, 1)]
+    [InlineData("Int8Property", 1, 1)]
+    [InlineData("Int16Property", 2, 2)]
+    [InlineData("UInt16Property", 2, 2)]
+    [InlineData("IntProperty", 4, 4)]
+    [InlineData("UInt32Property", 4, 4)]
+    [InlineData("Int64Property", 8, 8)]
+    [InlineData("EnumProperty", 1, 1)]
+    [InlineData("EnumProperty", 2, 2)]
+    [InlineData("EnumProperty", 4, 4)]
+    public void EffectiveIntWidth_AgreesWithHowManyBytesWriteParamActuallyTouches(
+        string typeName, int size, int expectedWidth)
+    {
+        // EffectiveIntWidth's table mirrors WriteParam's switch, which is a drift
+        // risk by construction — this is what pins them together. If someone
+        // changes one, the buffer stops matching and this fails.
+        Assert.Equal(expectedWidth, ParamBufferBuilder.EffectiveIntWidth(typeName, size));
+
+        var @params = new[]
+        {
+            new FunctionParamModel { Name = "p", TypeName = typeName, Offset = 0, Size = size },
+        };
+        // The buffer starts zeroed, so write -1: all-ones at EVERY width, which
+        // makes the number of non-zero leading bytes exactly the width written.
+        // (Writing 0 measures nothing at all — it leaves a zeroed buffer zeroed,
+        // which is how the first version of this test managed to "pass" its own
+        // premise while measuring the buffer length.)
+        var hex = ParamBufferBuilder.BuildParamsHex(@params, new[] { "-1" }, parmsSize: 16);
+        var bytes = Convert.FromHexString(hex);
+
+        int touched = 0;
+        while (touched < bytes.Length && bytes[touched] == 0xFF) touched++;
+        Assert.Equal(expectedWidth, touched);
+    }
 }

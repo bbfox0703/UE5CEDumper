@@ -50,6 +50,7 @@ public class CheatTableBuilderTests
                 PropertyOffset = offset,
                 UeTypeName     = ueType,
                 PropertySize   = propSize,
+                BoolFieldMask  = 0,
                 ValueLiteral   = value,
             },
         };

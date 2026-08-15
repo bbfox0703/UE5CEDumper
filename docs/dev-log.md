@@ -22,6 +22,542 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - CE XML told CE to dereference slots that hold no pointer (build 2966)
+
+**Audit #5 U2 finding W5.** First MED after both named families closed.
+
+### The defect
+
+`EmitDrilledPointer`'s scalar branch gated on `IsObjectPropertyType` — the whole pointer *family* —
+and emitted `Offsets=[0]`, which instructs CE to dereference the 8 bytes at `+Offset`. Three of that
+family hold no address at all:
+
+| type | what is actually in the slot |
+|---|---|
+| `WeakObjectProperty` | `FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber; }` — two ints |
+| `SoftObjectProperty` / `SoftClassProperty` | `FSoftObjectPath` — a string-ish struct |
+| `LazyObjectProperty` | `FGuid` — four ints |
+
+**What made it reachable and invisible is the same fact.** The DLL resolves every one of those to a
+live `UObject*` and stamps it on `PtrAddress`, so the branch's `TryGetValue(field.PtrAddress, …)`
+guard *succeeded* — a target genuinely had been resolved. It simply is not what lives in the slot.
+The exported table then looks entirely healthy: a group header, a plausible class name, children at
+plausible offsets — and CE follows an index+serial pair as if it were an address.
+
+### The fix
+
+A new `IsRawObjectPtrSlot` beside the existing predicates, gating the drill on "the field's own 8
+bytes hold a `UObject*`". Weak/Soft/Lazy fall through to the 8-byte hex leaf they already had —
+watchable, and honest about being a raw slot rather than a followed pointer.
+
+**The correct distinction already existed 1,660 lines up in the same file** as
+`IsRawObjectPtrArrayInner`, with a comment justifying each exclusion, because the ARRAY path had been
+written correctly and given a regression test. Same file, same question, one path right — the audit's
+double-check pass had already pinned that line, which is what made this a short fix.
+
+**`InterfaceProperty` is deliberately INCLUDED** where the array predicate excludes it, and the
+asymmetry is real: `FScriptInterface` is `{ UObject* +0x00, void* +0x08 }` — stated by the DLL at
+`Ubel::IsInterfaceArrayType` — so its first 8 bytes *are* an object pointer and the scalar drill has
+always been correct for it. It is absent from the array predicate because a `TScriptInterface`
+element is **16 bytes** and gets its own DLL reader, not because it is not a pointer. Copying the
+array predicate verbatim would have silently removed a working case. Both predicates now
+cross-reference each other and state why they differ.
+
+### Verified
+
+3824 → **3831** tests, 0 failures; restoring the broad gate fails 4 (one per non-pointer type).
+
+New tests were required rather than optional: the double-check had already established that the
+look-alike test (`…EmitsLeafWith8BytesNotGroupHeader`) passes **no `resolvedInstances`**, so it never
+entered the drill branch — the branch had no coverage at all.
+
+-----
+
+## 2026-08-15 - Root cause #4, closed: a struct-layout guard that a Service could not reach, and a GWorld gate that disabled a working button (build 2961)
+
+**Audit #5 findings AC2 + AE10** — the second and last named family. Both were *the audit's own
+earlier fixes applied at only some of their sites*.
+
+### AC2 — a predicate that guarded a table, but did not live with the table
+
+Y7 added `ResolveTrustedLayout`: use the hardcoded struct layout **only when it agrees with the size
+the engine reported**, because the layout is a guess keyed on a *detected* UE version (LWC turns
+FVector's floats into doubles and doubles every offset) while the engine's size is ground truth.
+
+It was written as a private helper inside `InvokeParamDialog` — **a View**. The two other consumers
+live in `StructReturnDecoder` — **a Service**, which cannot depend on a View. So the guard could not
+spread even in principle, and the invoke dialog **refused a size-contradicted layout for its INPUT
+boxes while accepting the very same layout for the RESULT grid**. Four call sites, one guarded.
+
+Fixed by moving the rule to `KnownStructLayouts.GetTrustedLayout`, beside the table it guards, with
+all four sites routed through it (`ResolveTrustedLayout` keeps its name and delegates, so callers and
+tests do not churn). **A predicate that guards a table belongs with the table** — had Y7 put it there,
+AC2 could not have existed.
+
+### AE10 — a cheap proxy signal in front of a predicate the DLL already computes
+
+Locate-in-GWorld was gated on the client-side `IsGWorldAvailable` flag at **19 sites across 7
+ViewModels** (14 C# + 5 XAML `IsEnabled` bindings). Value Search had been decoupled from it; nothing
+else was.
+
+**The flag is not what its name says.** It comes from `EngineState.HasGWorld`, whose definition is
+`GWorldAddr` non-empty and non-zero — i.e. *"the AOB scan produced a &GWorld **slot address**"*, not
+*"a live UWorld exists"*. The DLL has world-recovery fallbacks that work when that scan did not, so
+the gate **disabled the button on games where locate worked fine** (TQ2, proxy mode). Meanwhile
+`find_path_from_gworld` returns an explicit invalid/no-path status when there really is no live
+UWorld, and the locate flow surfaces it. This is audit #4's recorded root cause verbatim: *a cheap
+proxy signal substituted for a predicate a sibling in this repo already computes correctly*.
+
+All 19 gates removed. Then the flag itself **deleted from 9 ViewModels** — removing only the gates
+would have left it write-only in nine places, which is the dead-flag shape this audit already flagged
+in `LiveWalkerViewModel`, and a flag nobody reads is an invitation to re-gate on it. Deleting it makes
+the mistake unavailable. `EngineState.HasGWorld` remains for anything that wants to *display* GWorld
+status; what must not return is gating an **action** on it.
+
+Each edit is easy to check because in every one of those files the **engine-rooted counterpart sits a
+few lines below and was already un-gated**, with a comment explaining why — so each fix makes the
+GWorld command match its own sibling.
+
+### Two existing tests were pinning the defects — one of them argued for it
+
+`CanDecode_KnownStruct_ReturnsTrue` asserted that a **12-byte** FVector param decodes with the
+**24-byte** UE5 layout. `LocateResultInGWorld_RaisesEvent_OnlyWhenGWorldAvailable` asserted the gate.
+And `InterestingPropertiesViewModelTests` carried a written justification: *"a property is a
+class-level definition, so without a resolved GWorld there is nothing to locate against."*
+
+That argument is sound in its conclusion and wrong in its premise — which is why it was checked
+against `EngineState.HasGWorld`'s definition rather than overridden. **This is how both findings
+survived: the sibling got fixed, and a green test kept saying the other site was fine.** When a fix
+turns out to be under-applied, expect its siblings to have tests defending them, and read those tests
+as evidence about the *belief*, not about the code.
+
+All three were rewritten into regression tests that state the reasoning.
+
+### Verified
+
+3820 → **3824** tests, 0 failures. Negative control, one break at a time, each revert compiling:
+the command guard restored → 2 failures; the `Can*` property gate restored → 1.
+
+**Not verified in-game.** The payoff case is precisely a game where the AOB scan does not resolve
+&GWorld but locate still works (TQ2, proxy mode) — the button should now be live there. Nothing here
+can prove that without one.
+
+-----
+
+## 2026-08-15 - The width family, closed: out-of-range values are refused instead of silently masked (build 2950)
+
+**Audit #5 T1c finding AE1**, plus the two double-check leads that survived re-derivation and one
+sibling the tests exposed. First MED-tier batch, and it takes the width family from five open
+occurrences to **one — the parked Y16**.
+
+### The family
+
+Nine occurrences across five subsystems, all the same mistake: **an out-of-range value masked down to
+the field width, and the untruncated number reported as if it had been written.** W6, Y2, Y9 and Y15
+were fixed in earlier builds; this closes the rest.
+
+**AE1** — `FieldValueConverter.TryConvertEnum` wrote `(byte)(rawValue & 0xFF)` and returned success,
+so typing `9999` for a 1-byte enum put **15** in the game while LiveWalker's status line said
+`Written: Field = 9999`. Every sibling converter in that same file already refused out-of-range and
+named the range (`TryConvertByte` → *"Invalid byte (range: 0 to 255)"*); the enum path was the one
+that never adopted the idiom.
+
+**The predicate now exists once**, as `FieldValueConverter.FitsInWidth(value, sizeBytes)` — five
+hand-written range checks are five things that drift apart, which is how this family got to nine.
+It is deliberately **signedness-tolerant**: N bytes accept the union `[-2^(8N-1), 2^(8N)-1]`, because
+the engine reports a width but not always a signedness and both readings are things users
+legitimately type (`-1` into a byte means `0xFF` — Y5's rule, which must not regress; `255` into a
+signed byte is that bit pattern from the other direction). The union still catches what every
+finding here was about: a value that fits **neither** reading.
+
+### The three leads from the double-check, re-derived by hand first
+
+They were single-agent finds with no skeptic pass, so §2's ~50% base rate applied and none was
+treated as a finding until re-derived:
+
+| lead | verdict |
+|---|---|
+| `InvokeParamDialog.DecodeParamValue` reads a 1-byte enum as 4 | **CONFIRMED** — `"EnumProperty"` sat in the `"IntProperty"` group behind `available >= 4`, so a 1-byte enum **mid-buffer** returned its own byte plus three belonging to the next param, while the same enum at the buffer's END decoded correctly (the guard failed and it fell through to the size switch). That asymmetry is what identified it. This is the READ side of the mistake Y2 fixed on the write side of the same file. Fixed with a shared `DecodeBySize`, the mirror of `WriteBySize`. |
+| `SdkExportService` enum width vs the layout cursor | **REFUTED — do not re-raise.** The premise needs `InferEnumUnderlyingType` and the layout cursor to meet, and they never do: `GenerateEnumDefinition` / `InferEnumUnderlyingType` have **zero production callers** (grep across `ui/` returns only `SdkExportServiceTests`). The class layout goes through `MapCppType`, which emits the enum's NAME, not a width. |
+| `ParamBufferBuilder` FIRE path masks with no validation | **CONFIRMED, and its caveat was the whole story.** `WriteBySize` masks at every width, so 9999 into a 1-byte param fired 15 silently. The masks are Y5's fix and are **kept**; the repair is a signedness-aware range check in front of them (`ParamBufferBuilder.TryValidateScalar`), surfaced through the dialog's existing red result label, refusing the invoke rather than calling a UFunction with one silently-wrong argument. |
+
+### A new sibling, found by a test rather than by a finder — root cause #4's eighth occurrence
+
+`ParseULong("-1")` returns **0**, because `ulong.TryParse` rejects the sign. So typing `-1` for a
+`UInt16Property` / `UInt64Property` / pointer param fired **0** at the live game while *Copy AA
+Script* baked `0xFFFF…` — one dialog, two opposite calls. **That is exactly the defect Y5 fixed**,
+and Y5 fixed it in `ParseByteOrSByte` only, leaving every unsigned path with the original bug.
+
+It surfaced because a new test asserts `EffectiveIntWidth` against how many bytes `WriteParam`
+*actually touches* — i.e. it was caught by testing the **seam**, not the helper. That test also
+exists to pin the two together permanently: `EffectiveIntWidth`'s table mirrors `WriteParam`'s
+switch, which is a drift risk by construction.
+
+### Verified by negative control — and the control was wrong the first time
+
+3751 → **3820** tests, 0 failures. Each fix then reverted **alone**: AE1 → 6 failures, the enum-read
+revert → 3, the FIRE range check → 8, `ParseULong` → 3.
+
+⚠ **The first control run reported two of those as detected when nothing had been detected.** Those
+two reverts did not compile, so no test ran, and the harness's `'error CS' in out` fallback counted
+the compile error as a catch. A compile error is **inconclusive**, not detection. The reverts were
+redone so they build, and the harness now says INCONCLUSIVE for that case. Worth carrying: *a
+negative control needs a revert that BUILDS, or it measures the compiler instead of the tests* — and
+it is the same defect class as AD1, in the tool being used to verify the fix for it.
+
+-----
+
+## 2026-08-15 - Cheat Engine freed the injection stub out from under our still-running scan, crashing the GAME (build 2932) — AUDIT #5 HAS NO OPEN HIGHs LEFT
+
+**Audit #5 phase T1a, finding AB2** — the eleventh and last HIGH. Every HIGH this audit raised is now
+fixed (AB1 2913 · AD1/AD2 2914 · AA1 2922 · AA2/AA3 2926 · AB2 2932).
+
+### The defect
+
+The CE plugin's *"Inject & Connect"* called `InjectDLL(dllPath, "UE5_AutoStart")`, so CE's remote
+thread ran our **entire multi-second startup** — DllMain + `Sein::Init` + a 2-8 s AOB scan + pipe
+start. CE does not wait that long. From its own source (read at tag `7.5`, 2026-08-15):
+
+| `CEFuncProc.pas` | what it does |
+|---|---|
+| `:1346-1360` | `createremotethread`, then a wait loop of `counter := 10000 div 10` × 10 ms — a **hard, unconfigurable 10 s** ceiling, after which it raises |
+| `:1332-1343` | with Settings' **`cbInjectDLLWithAPC`** ticked there is no wait at all: `CreateRemoteAPC` then a flat `sleep(1000)` |
+| `:1379-1387` | `finally ... virtualfreeex(processhandle, injectionlocation, 0, MEM_RELEASE)` — **unconditional, on both paths** |
+
+So the page our code is executing on gets released while it runs, and the eventual `ret` lands on
+freed memory. **The victim is the game process, not CE** — and AB1's module pin does not help, because
+that protects our image in our address space whereas this is CE's own `VirtualAllocEx` page in the
+game. (CE's timeout string even claims *"Injection routine not freed"*, which that `finally`
+contradicts.) The same shape reached us a second way: generated CE Lua calls
+`callDLL('UE5_AutoStart')` → `executeCodeEx`, whose timeout path sets `dontfree := true` and leaks the
+stub permanently (ce-plugin-sdk-notes.md §13).
+
+### The fix
+
+`UE5_AutoStart` **spawns and returns**. The work moved into `AutoStartWork()`, reached by two entry
+points sharing a one-at-a-time latch:
+
+- `UE5_AutoStart()` — exported, spawns a guarded thread, returns immediately.
+- `UE5_AutoStartBlocking()` — **not exported**, runs inline, for `DllMain`'s auto-start thread which
+  already owns a thread of its own.
+
+Readiness was already published through `Mimic::InitState` and every emitted script already polls it
+(`CeReadinessLua::AppendPollLoop`), so no caller lost information. Worth noting: the **Lua inject path
+never passed a function name to `injectDLL` at all** — only our own plugin was taking the dangerous
+route.
+
+Two details the fix had to get right. **In a Cheat Engine host it runs inline, no thread** (AB1's
+rule — CE `FreeLibrary`s plugin DLLs; and there is no remote stub to outrun in-process). And **the
+latch is load-bearing, not theoretical**: in the ordinary plugin flow `LoadLibrary` spawns DllMain's
+auto-start thread *and* CE's stub then calls the export, two full scans that were previously survived
+only incidentally via `UE5_Init`'s `s_initialized` latch and a pipe-exists probe.
+
+### A second defect, in the half the audit only called "misleading"
+
+`ce_InjectDLL` (`pluginexports.pas:622-640`) returns false **only if an exception escapes**, and CE's
+own handler swallows one of the three it can raise (`CEFuncProc.pas:1050-1051`, `1391-1396`):
+
+| CE outcome | Exception class | `InjectDLL` returns |
+|---|---|---|
+| injection thread > 10 s | plain `Exception` | **false** |
+| "Failed executing the function of the dll" | `EInjectDLLFunctionFailure` — a **sibling** of `EInjectError`, not a subclass, so `on e:EInjectError` misses it | **false** |
+| "Failed injecting the DLL" | `EInjectError` → caught, falls back to `forceLoadModule` | **true** |
+
+So the BOOL is **true on a real injection failure** and **false while the DLL is loaded and working**.
+Our dialog was not merely worded badly — it was reading an inverted signal, and cheerfully told users
+to check that the target is 64-bit when the DLL was in fact loaded and scanning.
+
+`OnInjectAndConnect` now **decides by looking**: it re-runs the same target module-list walk it
+already uses for the already-loaded check (with a short retry, since the APC path does not wait on the
+loader) and reports what is actually mapped, naming CE's unreliable result when the two disagree.
+
+### Verified by measurement + negative control
+
+This is a behaviour, not a shape, and **no test target compiles `Frieren.cpp`**. So
+[tools/probe_autostart_async.py](../tools/probe_autostart_async.py) (stdlib-only) loads the shipped
+DLL, times the export, and reads `InitState` at the instant it returns:
+
+| build | elapsed until return | `initState` at return | verdict |
+|---|---|---|---|
+| fixed | **2.3 ms** (1.0 ms on a re-run) | 0 IDLE — work not started | ASYNC CONFIRMED |
+| spawn reverted | **3486.5 ms** | 2 READY — work already finished | STILL BLOCKING |
+
+That 3.5 s is in a **Python host with no game at all**; a real UE AOB scan is 2-8 s, i.e. squarely
+inside CE's 10 s ceiling and always past the APC path's 1 s. The export table was checked against the
+**shipped artifact** rather than the source (64 exports; `UE5_AutoStart` present,
+`UE5_AutoStartBlocking` correctly absent).
+
+The probe is a manual tool, not a build step: it loads the DLL into the running process, starts real
+workers and opens the pipe, so it wants a throwaway process — and a build step that skips when its
+precondition is missing is the AD1 defect this session opened with.
+
+**Not verified against a real Cheat Engine + game.** The measurement proves the export returns in
+time; it cannot prove CE is happy. Folded into the existing AB1 CE-session entry in
+[todo.md](todo.md)'s register, including the `cbInjectDLLWithAPC` case, which is the
+near-certain-crash path and therefore the strongest single check.
+
+-----
+
+## 2026-08-15 - A running freeze could write into a recycled UObject slot, and a dead mailbox never stopped it (build 2926; mailbox contract 1 -> 2)
+
+**Audit #5 segment S1, findings AA2 + AA3** — one defect at two sites, and the last two HIGHs in the
+freeze helper. Only **AB2** remains open at HIGH.
+
+### The defect
+
+`ue5_freeze_helper.lua` caches instance pointers from `CMD_LIST_INSTANCES` and writes to them on a
+CE `TTimer` (~16 writes/sec per address — `Interval = 50` quantised by the ~15.6 ms scheduler tick;
+the file's own "20x/sec" comment was never measured), re-enumerating every 5 s.
+
+**AA2:** between two rescans, UE can destroy an instance and the allocator can hand the same address
+to something else. The only guard was:
+
+```lua
+local vt = readQword(addr)          -- "is the vtable slot non-zero?"
+if vt and vt ~= 0 then ... end
+```
+
+which a recycled block passes trivially — a pooled free block keeps old bytes or an allocator
+free-list link in qword 0, both non-zero. In practice it caught only fully decommitted pages, i.e.
+the game exiting. So the freeze could sit there writing its value into an unrelated live object at an
+offset that means something completely different there.
+
+**AA3:** a failed rescan kept the previous cache and tried again in 5 s. Right for a transient
+`mailbox busy`; wrong for the failures that never self-heal — DLL unloaded or re-injected so
+`g_invokeMailbox` no longer resolves, a contract mismatch after a DLL update, a wedged
+`_ue5_invoke_busy`. Those wrote into an unrefreshed cache indefinitely. And `_lastError` had **three
+writers and zero readers repo-wide**, so no failure ever reached anyone.
+
+### The fix, and why it is not the one the audit proposed
+
+The register said this needs an identity witness (`InternalIndex`, `SerialNumber`) so the tick can
+ask *"is this still the object I enumerated?"*. Re-deriving it against what the feature actually
+promises says that is the wrong question:
+
+- The freeze is **class-wide by design** — it locks a property on *all* live instances of a class and
+  picks up newly spawned ones each rescan. A slot recycled by **another instance of the same class**
+  is therefore not a hazard; it is a target. A serial-number check would refuse that write, i.e.
+  refuse to do the feature's job for up to 5 s.
+- The write that actually corrupts is into an object of a **different class**.
+
+So the witness that matters is **class membership** — and it is far cheaper, because one `UClass*`
+and one offset are constant across the whole enumeration. They ride in two previously-unused
+**output** fields (`instanceAddr`, `ufuncAddr`) rather than widening every 8-byte entry, so the entry
+stride, page size and 128-per-page cap are all unchanged. That makes the change **additive**:
+`MAILBOX_CONTRACT` 1 → **2**, `MAILBOX_CONTRACT_MIN` stays **1**, so every `.CT` saved against
+contract 1 keeps working.
+
+| Change | Where |
+|---|---|
+| Publish `instanceAddr` = enumerated `UClass*`, `ufuncAddr` = `OFF_UOBJECT_CLASS` | [Mimic.cpp](../dll/src/Mimic.cpp) `HandleListInstances` |
+| Contract 1 → 2 + why it is additive | [Mimic.h](../dll/src/Mimic.h), `CeMailboxLayout.cs`, `check_mailbox_contract.py` |
+| tick re-reads `ClassPrivate`, refuses a foreign class | [ue5_freeze_helper.lua](../scripts/ue5_freeze_helper.lua) |
+| Bounded failure streak (3) → drop the cache, stop writing, print once | same, `rescan()` |
+| `handle.lastError()` / `handle.isAbandoned()` | same |
+
+Both fields are **cleared before use**: an earlier command may have left a real `UObject*` /
+`UFunction*` there and a caller must never mistake that for a witness. The Lua additionally
+range-checks the offset (`8 ≤ off ≤ 0x200`) so a leftover 64-bit address cannot masquerade as one.
+Getting this wrong fails *closed* — every write refused, i.e. a freeze that silently does nothing —
+which is exactly why it is checked on both sides.
+
+`check_mailbox_contract.py` refused the bump at first with *"MAILBOX_CONTRACT is 2 but the surface is
+unchanged"*, and that is the gate working: its hash covers field **layout**, not field **meaning**, so
+a command that starts using a field it never touched is invisible to it. The golden version was moved
+deliberately with a comment recording that blind spot.
+
+### The verification: the helper is now EXECUTED, not just grepped
+
+A Lua 5.4 interpreter turned out to be available, so
+**[scripts/tests/freeze_helper_test.lua](../scripts/tests/freeze_helper_test.lua)** stubs the CE
+globals the helper touches (memory reads/writes, timers, symbol lookup) over a plain table, runs the
+real `freezeProperty` / `tick` / `rescan`, and asserts on **what was actually written**. It is the
+first executable test of any script in S1 — the segment the audit flagged as having none — and it
+covers the AA1 bool fix from the previous build as well.
+
+**23 checks, 0 failures.** Then each fix was reverted **one at a time**: AA1 → 4 failures, AA2 → 11,
+AA3 → 6. All three detected. The first attempt broke all three at once and the output was
+*uninterpretable* (AA2's break made an AA1 case fail for an unrelated reason) — one break at a time
+is the only version that proves anything. That run also caught the harness aborting on its first
+failure and hiding every later case; it now uses safe accessors.
+
+**Deliberately NOT wired into `build.ps1` or CI.** `lua` is not a declared dependency of this repo,
+and a test step that silently skips when its tool is missing is precisely the defect AD1/AD2 fixed
+one build earlier. Three C# tests are the CI tripwire instead — they cannot prove the guard works,
+only that nobody deleted it, and one pins the helper's own `UE5_SCRIPT_CONTRACT` to
+`CeMailboxLayout.ContractVersion` so the hand-maintained copy cannot drift. 3748 → **3751**.
+
+**Residual, stated plainly:** a slot freed and *not* yet reused can keep its old class pointer, so a
+write can still land in dead memory. Nothing cheap sees that. What is removed is the write into a
+*live object of another class*.
+
+**Not verified in-game** — needs a class whose instances die and respawn with a freeze active. Filed
+in [todo.md](todo.md)'s `## Pending live-game verification`.
+
+-----
+
+## 2026-08-15 - Freezing a packed bitfield bool stamped the whole byte and wiped its 7 siblings (build 2922)
+
+**Audit #5 segment S1, finding AA1** — the fourth site of the dropped-field family behind W6, Y2,
+Y9 and Y15, and the second one in the freeze pipeline in three builds.
+
+### The defect
+
+UE stores an `FBoolProperty` two ways: a **native bool** owning one whole byte, or a **packed
+bitfield** (`uint8 bFoo:1`) where up to eight bools share a byte and each owns one bit named by the
+property's `FieldMask`. `ue5_freeze_helper.lua`'s `writeBool` did:
+
+```lua
+writeByte(addr, (v == true or v == 1) and 1 or 0)
+```
+
+unconditionally. On a packed bool that is wrong twice over, ~16 times a second for as long as the
+freeze is enabled:
+
+1. **The seven siblings are wiped.** Writing `1` sets the byte to `0x01` — every other bool in it
+   goes to false.
+2. **The intended bool is never set** whenever its mask is not `0x01`. Writing `1` sets *bit 0*. So a
+   bool at bit 2 stayed false while its neighbours were destroyed — the feature silently did nothing
+   *and* corrupted the field around it. There is no error channel, so the user sees unrelated flags
+   flipping and goes hunting in the game's logic.
+
+The code's own comment stated the defect as a design limitation — *"We do NOT support packed bitfield
+bools … generating a freeze script for one will overwrite the whole byte, clobbering sibling bools"* —
+which is exactly why it survived. Audit #5's most reliable technique is grepping for a comment that
+admits a limitation and then checking whether it is still acceptable; this is its sixth hit.
+
+Meanwhile the DLL sibling reachable from the **same Property Search row** (Solide's Force ON/OFF, via
+`Solitar::ApplyBoolBit`) does a masked read-modify-write correctly, and is exhaustively unit-tested.
+One row, two actions, opposite correctness.
+
+### The fix — a five-tier wire-through, not a Lua edit
+
+The engine reported the `FieldMask` all along; every tier dropped it, so the mask had to be added
+end-to-end:
+
+| Tier | Change |
+|---|---|
+| DLL wire | [Fern.cpp](../dll/src/Fern.cpp) — both `search_properties` encoders emit `bool_mask` when non-zero (single-query **and** batch) |
+| Model | `PropertySearchMatch.BoolFieldMask` + both `DumpService` parsers |
+| Row | `ScoredPropertyRow.BoolFieldMask` — forwarded exactly like `PropSize` one line above |
+| Params | `FreezeScriptParams.BoolFieldMask`, **`required`** |
+| Script | [FreezeScriptGenerator.cs](../ui/UE5DumpUI/Services/FreezeScriptGenerator.cs) emits `boolMask = 0xNN` into CFG only for a genuinely packed bool |
+| Lua | [ue5_freeze_helper.lua](../scripts/ue5_freeze_helper.lua) `writeBool(addr, v, mask)` does a masked read-modify-write; `tick` passes `cfg.boolMask`. Helper version 1.1 |
+
+**No `ByteOffset` is needed, and that is verified rather than assumed.** The DLL sets
+`boolFieldMask` only after reading `FieldSize == 1` (`Ubel.cpp:662` and `:1044` — both check it), and
+a one-byte property has nowhere for a `ByteOffset` to point. So a row carrying a mask always has its
+bit in the byte at `prop_offset`. Consistently, `PropertyMatch::boolByteOffset` is **declared and
+never assigned anywhere in the tree** — dead, and now known to be harmlessly so.
+
+**`0xFF` is not a bit mask.** UE's `SetBoolSize` writes `FieldMask = 255` for a native bool, so both
+`0` (no mask reported, including from a pre-2922 DLL) and `0xFF` fall back to the whole-byte write.
+The accept set is exactly `{0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80}`, encoded identically in C#
+(`IsPackedBoolMask`) and Lua (`BOOL_BIT_MASKS`).
+
+**Reused three existing correct implementations rather than inventing a fourth rule.** The bit rule
+already lived in `Solitar::ApplyBoolBit` (C++), `FieldValueConverter.ApplyBoolMask` (C#, the Live
+Walker edit path) and `UE5T_setbit` (Lua, the standalone trainer). The last also supplied the idiom:
+**CE's Lua has no `bAnd`/`bOr`/`bNot`**, so the helper uses pure arithmetic
+(`math.floor(b / mask) % 2`), which is version-proof and writes only on drift. `readByte` /
+`writeByte` were checked against `celua.txt` before use, per CLAUDE.md.
+
+**A failed read must not fall through.** If `readByte` returns nil the tick returns without writing —
+falling through to the whole-byte write is the corruption the branch exists to prevent.
+
+**`required` immediately earned its keep.** The build failed on `InterestingPropertiesViewModel`
+because `ScoredPropertyRow` forwards `PropSize` but not the mask — the same dropped-field shape, one
+row further down the same file. Left optional, that call site would have silently kept the bug on the
+batch-CT path. This is Y15's own repair template working as intended.
+
+### Verified by negative control
+
+24 new tests, **3724 → 3748**, 0 failures. Then both halves of the fix were reverted — the CFG
+emission and the mask argument in `tick` — and the packed-mask theories **failed**, naming the exact
+eight masks; restored, green again.
+
+Also asserted: a native bool emits **no** `boolMask`; `0xFF`, multi-bit and negative values emit
+none; a non-bool type never emits one even carrying a stale mask; and the helper source no longer
+contains *"We do NOT support packed bitfield bools"*.
+
+**Not yet verified in-game** — the DLL→UI half (does a real packed bool's mask arrive on the
+`search_properties` wire?) needs a running game. Tracked in
+[todo.md](todo.md)'s `## Pending live-game verification`.
+
+-----
+
+## 2026-08-15 - A C++ test that failed to COMPILE was reported as "skip", and the build exited 0 (build 2914)
+
+**Audit #5 phase T1b, findings AD1 + AD2** — the *meta* one, fixed first on purpose: while it stood,
+every other fix's "tests green" was one compile error away from meaning nothing.
+
+### The defect
+
+The test phase derived its pass/fail signal from **"did an `.exe` path get assigned"**, not from
+**"did the build succeed"**. Three unrelated outcomes therefore collapsed into one line:
+
+```
+Write-Info "dll_helpers_test.exe not available (skip — run -Target DLL or All first)"
+```
+
+`$exitCode` was never touched, so the script printed `Status: SUCCESS` and **exited 0**. The three
+outcomes were: the target **failed to compile**; the build succeeded but **no `.exe` was found**;
+and the **build dir was absent**. Only the third is benign, and even it isn't under `-Target Test`.
+
+Rename a symbol, update the DLL caller and not the test, and the five shipping targets build clean,
+`dll_helpers_test` fails to compile, and **~700 assertions across Radar / Orden / GraphPath / Lineal /
+Denken / Solitar / Solide / Macht stop executing with no signal** — including the memory-corruption
+class `Test_Solitar_ApplyBoolBit` exists to catch. CI inherited all of it: `ci.yml:142` and
+`release.yml:70` are single `build.ps1` steps that assert nothing beyond its exit code.
+
+Worse, the message actively misdirects. *"not available (skip — run -Target DLL or All first)"* tells
+the operator they forgot a prerequisite, when in fact they ran the right target and a compile error
+scrolled past earlier in the same transcript. Two in-repo comments asserted the opposite contract in
+writing (`dll/CMakeLists.txt:503-504`, `dll/tests/utf8_helpers_test.cpp:8-9`) — both describe the
+**run** path; the **build** path had no failure channel at all.
+
+### The fix — one helper, not two edits
+
+The finding asked for the same edit at two sites. Two hand-copied blocks *are* audit #5's root
+cause #4 ("a fix applied at only some of its sites"), so instead both were collapsed into a single
+`Invoke-CppSelfTest` helper in [build.ps1](../build.ps1), beside `Invoke-CmdInVsEnv`. Adding a third
+C++ test target can no longer add a third copy of the logic. The call sites are now two lines of
+`if (-not (Invoke-CppSelfTest …)) { $exitCode = 1 }`.
+
+Each of the three outcomes now has its own `Write-Fail` and fails the build. **The benign-skip arm
+was removed, not narrowed** — under `-Target Test` / `All` the C++ suite is expected to build and
+run, so no absence of it is benign.
+
+**A sibling was found and fixed at fix time** — the rule the audit says keeps being read at scan time
+and not applied at fix time. The C# phase's `if (-not (Test-Path $TEST_PROJ)) { Write-Info "Test
+project not found, skipping" }` is the same defect class: the csproj is checked into the repo, so its
+absence means a broken tree, and it left a green exit code with **zero C# tests run**. Now
+`Write-Fail` + `$exitCode = 1`.
+
+**PowerShell trap worth remembering:** moving the runner into a function changes what
+`& $exe.FullName` does — a native command's stdout joins the *pipeline*, so the test's own output
+would have been captured into the function's return value and every call would have read as truthy.
+It is piped to `Out-Host`; `$LASTEXITCODE` is unaffected. (The `Write-*` helpers were checked first —
+all use `Write-Host`, so they don't pollute the return.)
+
+### Verified by negative control, not by inspection
+
+Mandatory here: the finding *is* "a check that cannot fail", so a green run proves nothing on its own.
+
+1. **Positive control** — `-Target Test` on the clean tree: `[OK] utf8_helpers_test passed`,
+   `[OK] dll_helpers_test passed` (1029 assertions), **3724** C# passed, `Status: SUCCESS`, exit **0**.
+2. **Negative control** — a deliberate syntax error appended to `dll/tests/utf8_helpers_test.cpp`:
+   `[FAIL] utf8_helpers_test FAILED TO COMPILE - the C++ suite did not run (this is a build failure,
+   not a skip)`, `Status: FAILED`, exit **1**. The pre-fix code emitted `Write-Info "…(skip…)"` and
+   exit **0** in exactly this state. `dll_helpers_test` still ran and passed in the same invocation —
+   one broken target must not hide the other's result.
+3. Source restored, re-ran: green, exit 0.
+
+No workflow change was needed — CI already gates on `build.ps1`'s exit code. That was the problem:
+the script was reporting success.
+
+-----
+
 ## 2026-08-15 - Freezing a 1-byte enum wrote four bytes and destroyed its three neighbours (build 2904)
 
 **Audit #5 segment U4 finding Y15** — the third site of a family this audit has now closed three

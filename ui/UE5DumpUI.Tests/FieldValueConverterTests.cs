@@ -406,4 +406,75 @@ public class FieldValueConverterTests
         Assert.False(success);
         Assert.Contains("not editable", error);
     }
+
+    // ── audit #5 AE1: the enum path masked instead of refusing ───────────────
+    //
+    // TryConvertEnum wrote `(byte)(rawValue & 0xFF)` and reported success, so
+    // typing 9999 for a 1-byte enum put 15 in the game while LiveWalker's status
+    // line said "Written: Field = 9999". Every sibling converter in that file
+    // already refused out-of-range and named the range; the enum path did not.
+
+    [Theory]
+    [InlineData(1, "255", true)]
+    [InlineData(1, "-1", true)]      // 0xFF from the other direction — Y5's rule
+    [InlineData(1, "-128", true)]
+    [InlineData(1, "0", true)]
+    [InlineData(1, "256", false)]
+    [InlineData(1, "9999", false)]   // the reported case
+    [InlineData(1, "-129", false)]
+    [InlineData(2, "65535", true)]
+    [InlineData(2, "65536", false)]
+    [InlineData(4, "4294967295", true)]
+    [InlineData(4, "4294967296", false)]
+    [InlineData(8, "9223372036854775807", true)]
+    public void TryConvert_EnumProperty_RefusesWhatItCannotStore(
+        int size, string input, bool expectOk)
+    {
+        var (ok, data, err) = FieldValueConverter.TryConvert(
+            "EnumProperty", input, size, Array.Empty<EnumEntryValue>());
+
+        Assert.Equal(expectOk, ok);
+        if (expectOk)
+        {
+            Assert.Equal(size, data.Length);
+        }
+        else
+        {
+            Assert.Empty(data);
+            Assert.Contains("does not fit", err);
+            Assert.Contains("range", err);
+        }
+    }
+
+    [Fact]
+    public void TryConvert_EnumProperty_OutOfRange_DoesNotSilentlyTruncate()
+    {
+        // The exact regression: 9999 & 0xFF == 15. If this ever returns ok with
+        // a 15 in it, the mask is back in front of the range check.
+        var (ok, data, _) = FieldValueConverter.TryConvert(
+            "EnumProperty", "9999", 1, Array.Empty<EnumEntryValue>());
+
+        Assert.False(ok);
+        Assert.Empty(data);
+    }
+
+    [Theory]
+    // The union of the signed and unsigned ranges for each width.
+    [InlineData(-128L, 1, true)]
+    [InlineData(255L, 1, true)]
+    [InlineData(-129L, 1, false)]
+    [InlineData(256L, 1, false)]
+    [InlineData(-32768L, 2, true)]
+    [InlineData(65535L, 2, true)]
+    [InlineData(65536L, 2, false)]
+    [InlineData(-2147483648L, 4, true)]
+    [InlineData(4294967295L, 4, true)]
+    [InlineData(4294967296L, 4, false)]
+    [InlineData(long.MaxValue, 8, true)]
+    [InlineData(long.MinValue, 8, true)]
+    // Unknown/zero width is treated as the narrowest, not as "anything goes".
+    [InlineData(9999L, 0, false)]
+    public void FitsInWidth_AcceptsEitherSignednessAndNothingWider(
+        long value, int sizeBytes, bool expected)
+        => Assert.Equal(expected, FieldValueConverter.FitsInWidth(value, sizeBytes));
 }

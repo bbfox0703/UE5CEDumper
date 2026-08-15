@@ -50,9 +50,18 @@ public static class StructReturnDecoder
 
         // Prefer the known layout when available — survives empty
         // DLL-side StructFields and locks the per-version offset table.
+        //
+        // GetTrustedLayout, not GetLayout: a hardcoded layout that CONTRADICTS the
+        // engine-reported size is a wrong guess (mis-detected UE version, or a
+        // licensee fork), and decoding on it labels every value with the wrong
+        // field name at the wrong offset. Falling through to the DLL-discovered
+        // fields below is strictly better — those came from the real UScriptStruct.
+        // The invoke dialog has refused such a layout for its INPUT boxes since Y7;
+        // this RESULT path accepted it for four more builds (audit #5 AC2).
         if (!string.IsNullOrEmpty(returnParam.StructName))
         {
-            var layout = KnownStructLayouts.GetLayout(returnParam.StructName, ueVersion);
+            var layout = KnownStructLayouts.GetTrustedLayout(
+                returnParam.StructName, returnParam.Size, ueVersion);
             if (layout != null)
                 return DecodeWithLayout(buf, returnParam, layout);
         }
@@ -75,8 +84,11 @@ public static class StructReturnDecoder
     {
         if (returnParam is null) return false;
         if (returnParam.TypeName != "StructProperty") return false;
-        if (!string.IsNullOrEmpty(returnParam.StructName)
-            && KnownStructLayouts.GetLayout(returnParam.StructName, ueVersion) != null)
+        // Must use the SAME predicate as Decode above, or the gate and the render
+        // disagree: CanDecode would show the grid and Decode would then return the
+        // dynamic-field rows (or nothing at all).
+        if (KnownStructLayouts.GetTrustedLayout(
+                returnParam.StructName, returnParam.Size, ueVersion) != null)
         {
             return true;
         }

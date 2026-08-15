@@ -743,9 +743,41 @@ bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
     return CopyToBuffer(name, buf, bufLen);
 }
 
-bool UE5_AutoStart() {
-    // Called by CEPlugin's InjectDLL after the DLL is loaded into the game.
-    // Idempotent: UE5_Init checks s_initialized and skips if already done.
+// ── Auto-start: the WORK, and the two ways to reach it ──────────────────────
+//
+// This used to be the body of UE5_AutoStart(), which every caller ran to
+// completion. That is a multi-second job (DllMain + Sein::Init + a 2-8 s AOB
+// scan + pipe start), and one of the callers is Cheat Engine's remote injection
+// stub — which does not wait that long (audit #5 AB2):
+//
+//   CEFuncProc.pas:1346-1360   createremotethread, then a wait loop of
+//                              `counter := 10000 div 10` × 10 ms = a HARD,
+//                              unconfigurable 10 s ceiling.
+//   CEFuncProc.pas:1332-1343   with Settings' `cbInjectDLLWithAPC` ticked there
+//                              is no wait at all — CreateRemoteAPC then a flat
+//                              `sleep(1000)`.
+//   CEFuncProc.pas:1379-1387   `finally ... virtualfreeex(processhandle,
+//                              injectionlocation, 0, MEM_RELEASE)` — UNCONDITIONAL
+//                              on both paths.
+//
+// So the stub page is released while our function is still running on it, and
+// the eventual `ret` lands on freed memory. **The victim is the GAME process**,
+// not CE — and note AB1's module pin does not help: that protects our image in
+// our address space, whereas this is CE's own VirtualAllocEx page in the game.
+//
+// The same shape reaches us a second way: generated CE Lua calls
+// `callDLL('UE5_AutoStart')`, which goes through executeCodeEx — a
+// WaitForSingleObject on the calling thread with no message pump, and its
+// timeout path sets `dontfree := true` and leaks the stub permanently
+// (docs/ce-plugin-sdk-notes.md §13).
+//
+// The fix is to make the exported entry point SPAWN AND RETURN, so the remote
+// thread is long gone before either deadline. Readiness was already published
+// through Mimic::InitState and the emitted scripts already poll it
+// (CeReadinessLua::AppendPollLoop), so no caller loses information — the Lua
+// inject path never passed a function name to injectDLL in the first place and
+// has always relied on that poll.
+static bool AutoStartWork() {
     LOG_INFO("UE5_AutoStart: entry");
 
     // Re-arm after a CE Disable. UE5_Shutdown latches Tot::RequestShutdown() and
@@ -797,6 +829,71 @@ bool UE5_AutoStart() {
              inited ? "complete" : "ABORTED",
              static_cast<int>(g_invokeMailbox.initState));
     return ok && inited;
+}
+
+// One auto-start at a time. Both entry points funnel through here, and they DO
+// overlap in the ordinary CE-plugin flow: LoadLibrary spawns DllMain's auto-start
+// thread, and CE's stub then calls the export a moment later. Before, that raced
+// two full scans past each other and was survived only incidentally (UE5_Init's
+// s_initialized latch plus the pipe-exists probe). Now the second caller returns
+// at once instead of duplicating a multi-second scan.
+static std::atomic<bool> s_autoStartInFlight{false};
+
+bool UE5_AutoStartBlocking() {
+    bool expected = false;
+    if (!s_autoStartInFlight.compare_exchange_strong(expected, true)) {
+        LOG_INFO("UE5_AutoStart: a start is already in flight — not starting a second");
+        return true;   // "an auto-start is happening", which is what the caller wanted
+    }
+    bool ok = false;
+    try {
+        ok = AutoStartWork();
+    } catch (...) {
+        // A throw must not leave the latch set, or the session can never re-arm
+        // after a CE Disable/Enable. Routine::RunThreadGuarded catches it again
+        // on the thread path; this covers the inline path too.
+        LOG_ERROR("UE5_AutoStart: unhandled exception during auto-start");
+    }
+    s_autoStartInFlight.store(false);
+    return ok;
+}
+
+bool UE5_AutoStart() {
+    // Cheat Engine hosting us is the one case where a background thread is the
+    // wrong answer (audit #5 AB1: CE FreeLibrary's plugin DLLs, and a thread left
+    // running in an unmapped image crashes CE). There is also no remote stub to
+    // outrun there — an in-process call has no deadline — so run inline.
+    wchar_t hostPath[MAX_PATH] = {};
+    const bool mayThread = (GetModuleFileNameW(nullptr, hostPath, MAX_PATH) == 0)
+                           || HostAllowsBackgroundThreads(hostPath);
+    if (!mayThread) {
+        LOG_INFO("UE5_AutoStart: host is Cheat Engine — running inline, no thread");
+        return UE5_AutoStartBlocking();
+    }
+
+    HANDLE h = CreateThread(nullptr, 0, [](LPVOID) -> DWORD {
+        // A throw out of a raw thread proc is std::terminate (B14).
+        Routine::RunThreadGuarded("UE5_AutoStart", [] { UE5_AutoStartBlocking(); });
+        return 0;
+    }, nullptr, 0, nullptr);
+
+    if (!h) {
+        // Falling back to inline is strictly better than not starting at all: the
+        // caller may well be CE's stub, but a scan that finishes late beats a game
+        // that never gets one, and the 10 s ceiling is a crash risk rather than a
+        // certainty.
+        LOG_ERROR("UE5_AutoStart: CreateThread failed (error=%lu) — running inline "
+                  "(a caller with a deadline may see this as a timeout)", GetLastError());
+        return UE5_AutoStartBlocking();
+    }
+    // Not joined anywhere: cancellation is Tot's job (UE5_Shutdown latches
+    // Tot::RequestShutdown and the scan loops bail), and a joinable handle nobody
+    // joins is just a leak.
+    CloseHandle(h);
+
+    LOG_INFO("UE5_AutoStart: launched on a background thread — returning immediately "
+             "(poll Mimic::InitState in the mailbox for readiness)");
+    return true;
 }
 
 // === Property Detail Queries (for CE Lua dissect) ===

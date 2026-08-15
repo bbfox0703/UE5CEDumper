@@ -186,6 +186,67 @@ function Invoke-CmdInVsEnv([string]$Commands) {
     return $true
 }
 
+function Invoke-CppSelfTest {
+    <#
+    .SYNOPSIS
+        Build and run one C++ self-test target. Returns $true only when the
+        target compiled, produced an .exe, ran, and passed.
+
+    .DESCRIPTION
+        A C++ test target that FAILS TO COMPILE used to be reported as a skip
+        and left the exit code at 0, so the entire C++ suite could go silent —
+        in CI too, because ci.yml / release.yml assert nothing beyond
+        build.ps1's exit code. Three different outcomes collapsed into one
+        "not available (skip)" line: the target failed to compile, the build
+        succeeded but no .exe was found, and the build dir was never
+        configured. None of them is a skip; under -Target Test / All the C++
+        suite is expected to build and run, so all three are failures now.
+        (Audit #5 AD1/AD2 — docs/audit-2026-08-13-early-code-findings.md §3c.)
+
+        This lives in ONE function on purpose. It was two hand-copied blocks,
+        which is the exact shape of that audit's root cause #4 — a fix applied
+        at only some of its sites. Adding a third test target must not add a
+        third copy of this logic.
+
+        PowerShell note: the test's own stdout is piped to Out-Host rather than
+        left on the pipeline, or it would be captured into this function's
+        return value. $LASTEXITCODE is still set.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$TargetName,
+        [Parameter(Mandatory)][string]$BuildDir,
+        [Parameter(Mandatory)][string]$Config
+    )
+
+    if (-not (Test-Path $BuildDir)) {
+        Write-Fail "$TargetName did NOT run - no C++ build dir ($BuildDir); the CMake configure above must have failed"
+        return $false
+    }
+
+    Write-Step "Building $TargetName (C++ self-test)..."
+    if (-not (Invoke-CmdInVsEnv "cmake --build `"$BuildDir`" --config $Config --target $TargetName")) {
+        Write-Fail "$TargetName FAILED TO COMPILE - the C++ suite did not run (this is a build failure, not a skip)"
+        return $false
+    }
+
+    $exe = Get-ChildItem -Path $BuildDir -Filter "$TargetName.exe" -Recurse -ErrorAction SilentlyContinue |
+           Select-Object -First 1
+    if (-not $exe) {
+        Write-Fail "$TargetName.exe not found after a successful build - check the CMake target name / output dir"
+        return $false
+    }
+
+    Write-Step "Running $TargetName..."
+    & $exe.FullName | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "$TargetName failed ($LASTEXITCODE assertion(s))"
+        return $false
+    }
+
+    Write-Ok "$TargetName passed"
+    return $true
+}
+
 function Get-FileSize([string]$Path) {
     if (Test-Path $Path) {
         $size = (Get-Item $Path).Length
@@ -634,67 +695,34 @@ if ($Target -in "All", "Test") {
         }
     }
 
-    # ----- C++ Utf8Helpers self-test -----
+    # ----- C++ self-tests -----
     # Build + run before the C# tests so a regression in the surrogate /
     # UTF-8 logic surfaces immediately rather than being masked by a
     # downstream pipe / serialization failure. Always trigger a cmake
     # build of the test target — Ninja is a no-op when the source is
-    # unchanged, and re-runs the compilation when Utf8Helpers.h or the
-    # test cpp is touched.
-    $utf8TestExe = $null
-    if (Test-Path $BUILD_DIR) {
-        Write-Step "Building utf8_helpers_test (C++ self-test)..."
-        $utf8BuildOk = Invoke-CmdInVsEnv "cmake --build `"$BUILD_DIR`" --config $CppConfig --target utf8_helpers_test"
-        if ($utf8BuildOk) {
-            $utf8TestExe = Get-ChildItem -Path $BUILD_DIR -Filter "utf8_helpers_test.exe" -Recurse -ErrorAction SilentlyContinue |
-                           Select-Object -First 1
-        }
+    # unchanged, and re-runs the compilation when a header or the test
+    # cpp is touched.
+    #
+    # Both targets go through the SAME Invoke-CppSelfTest helper on purpose;
+    # see its comment for why this used to be two hand-copied blocks.
+    if (-not (Invoke-CppSelfTest -TargetName "utf8_helpers_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
     }
 
-    if ($utf8TestExe) {
-        Write-Step "Running utf8_helpers_test..."
-        & $utf8TestExe.FullName
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "utf8_helpers_test failed ($LASTEXITCODE assertion(s))"
-            $exitCode = 1
-        }
-        else {
-            Write-Ok "utf8_helpers_test passed"
-        }
-    }
-    else {
-        Write-Info "utf8_helpers_test.exe not available (skip — run -Target DLL or All first)"
-    }
-
-    # ----- C++ pure-helper tests (Renge::TryStrToAddr, Scharf) -----
-    $dllTestExe = $null
-    if (Test-Path $BUILD_DIR) {
-        Write-Step "Building dll_helpers_test (C++ self-test)..."
-        $dllBuildOk = Invoke-CmdInVsEnv "cmake --build `"$BUILD_DIR`" --config $CppConfig --target dll_helpers_test"
-        if ($dllBuildOk) {
-            $dllTestExe = Get-ChildItem -Path $BUILD_DIR -Filter "dll_helpers_test.exe" -Recurse -ErrorAction SilentlyContinue |
-                          Select-Object -First 1
-        }
-    }
-
-    if ($dllTestExe) {
-        Write-Step "Running dll_helpers_test..."
-        & $dllTestExe.FullName
-        if ($LASTEXITCODE -ne 0) {
-            Write-Fail "dll_helpers_test failed ($LASTEXITCODE assertion(s))"
-            $exitCode = 1
-        }
-        else {
-            Write-Ok "dll_helpers_test passed"
-        }
-    }
-    else {
-        Write-Info "dll_helpers_test.exe not available (skip — run -Target DLL or All first)"
+    # dll_helpers_test covers the pure helpers (Renge::TryStrToAddr, Scharf)
+    # and compiles Radar.cpp / Denken.cpp as sources.
+    if (-not (Invoke-CppSelfTest -TargetName "dll_helpers_test" -BuildDir $BUILD_DIR -Config $CppConfig)) {
+        $exitCode = 1
     }
 
     # ----- C# tests -----
+    # A missing test csproj is NOT a skip: it is checked into the repo, so its
+    # absence means a broken tree or a wrong path, and reporting it as a skip
+    # leaves a green exit code with zero C# tests run. Same defect class as
+    # AD1/AD2 above, found by grepping this file for siblings at fix time.
     if (-not (Test-Path $TEST_PROJ)) {
-        Write-Info "Test project not found, skipping"
+        Write-Fail "C# test project not found at $TEST_PROJ - no C# tests ran (this is a failure, not a skip)"
+        $exitCode = 1
     }
     else {
         Write-Step "Building + running tests..."

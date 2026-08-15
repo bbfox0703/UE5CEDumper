@@ -148,6 +148,18 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 // + struct-typed container elements (TArray/TSet<FStruct>, TMap<K,FStruct>); such
 // matches set "is_nested": true and carry a dotted path in "prop_name"
 // (e.g. SaveSlotList[].MsTuneData.GP).
+//
+// Each match may carry "bool_mask" (uint8): the FBoolProperty FieldMask, i.e. the
+// single bit this bool owns inside the byte at "prop_offset". EMITTED ONLY when
+// non-zero, and the DLL only sets it after reading FieldSize == 1 with a
+// single-bit mask — so its PRESENCE means "packed bitfield (`uint8 bFoo:1`, up to
+// 8 per byte)" and its ABSENCE means "native bool, owns its whole byte". Because
+// it is only reported for a FieldSize == 1 property, the bit is always in the byte
+// at "prop_offset"; there is no ByteOffset to accompany it. Populated during the
+// class field walk, so it is present on the batch (no-preview) path too.
+// A client that writes a bool MUST do a masked read-modify-write when this is
+// present — stamping the whole byte clobbers up to 7 sibling bools and, unless the
+// mask is 0x01, never sets the intended one. (audit #5 AA1)
 { "id": 20, "cmd": "search_properties", "query": "Health", "limit": 100, "deep": false }
 
 // List all classes (UClass objects). Response adds "truncated": true when the walk

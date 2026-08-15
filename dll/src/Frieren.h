@@ -17,7 +17,20 @@ __declspec(dllexport) uint32_t UE5_GetVersion();
 
 // Combined init + pipe server start — called by CEPlugin's InjectDLL
 // so that a single entry point activates everything in the game process.
+//
+// ASYNCHRONOUS since build 2932 (audit #5 AB2): it SPAWNS the work and returns
+// immediately, because one of its callers is Cheat Engine's injection stub, which
+// frees the remote page after a hard 10 s (or 1 s on the APC path) whether we
+// finished or not — and the `ret` onto that freed page crashes the GAME.
+// The return value therefore means "an auto-start is running or was launched",
+// NOT "init finished". Poll `Mimic::InitState` in the mailbox for readiness;
+// every emitted script already does (CeReadinessLua::AppendPollLoop).
 __declspec(dllexport) bool     UE5_AutoStart();
+
+// Same work, run on the CALLING thread. Not exported — for callers that already
+// own a dedicated thread and must not spawn another (DllMain's auto-start
+// thread). Shares the one-at-a-time latch with UE5_AutoStart.
+bool UE5_AutoStartBlocking();
 
 // === Global Pointers ===
 __declspec(dllexport) uintptr_t UE5_GetGObjectsAddr();

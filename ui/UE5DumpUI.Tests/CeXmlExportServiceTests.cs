@@ -5310,4 +5310,71 @@ public class CeXmlExportServiceTests
         Assert.Contains("<VariableType>Byte</VariableType>", xml);
         Assert.DoesNotContain("<VariableType>4 Bytes</VariableType>", xml);
     }
+
+    // ── audit #5 W5: only a slot that HOLDS a UObject* may be dereferenced ────
+    //
+    // The scalar pointer-drill branch gated on the broad IsObjectPropertyType, so
+    // it emitted GroupHeader + Offsets=[0] for Weak / Soft / Lazy slots too. Those
+    // are not pointers: FWeakObjectPtr is {int32 ObjectIndex, int32 SerialNumber},
+    // FSoftObjectPath is a string-ish struct, FGuid is four ints. The DLL resolves
+    // all of them to a live UObject* and stamps PtrAddress, which is what made the
+    // bug both reachable and invisible — a target WAS resolved, so the branch
+    // fired, but CE then dereferenced an index+serial pair as an address.
+    //
+    // The array path has had the equivalent distinction (IsRawObjectPtrArrayInner)
+    // with a regression test since it was written; this is the scalar half.
+
+    private static string DrillXmlFor(string typeName)
+    {
+        const string ptrAddr = "0x7FF400001234";
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "Target", TypeName = typeName, Offset = 0x30, Size = 8,
+                PtrAddress = ptrAddr, PtrName = "Target", PtrClassName = "UTargetClass",
+            },
+        };
+        var resolved = new Dictionary<string, List<LiveFieldValue>>
+        {
+            [ptrAddr] = new()
+            {
+                new LiveFieldValue { Name = "Health", TypeName = "FloatProperty", Offset = 0x40, Size = 4 },
+            },
+        };
+        return CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields, resolvedInstances: resolved);
+    }
+
+    [Theory]
+    [InlineData("WeakObjectProperty")]   // FWeakObjectPtr { int32, int32 }
+    [InlineData("SoftObjectProperty")]   // FSoftObjectPath
+    [InlineData("SoftClassProperty")]    // FSoftObjectPath
+    [InlineData("LazyObjectProperty")]   // FGuid
+    public void DrillDown_NonPointerSlot_IsNotDereferenced(string typeName)
+    {
+        var xml = DrillXmlFor(typeName);
+
+        // The resolved child must NOT appear: emitting it means CE was told to
+        // dereference a slot that holds no address.
+        Assert.DoesNotContain("Health", xml);
+        // ...and the field itself must still be present as a watchable leaf.
+        Assert.Contains("Target", xml);
+    }
+
+    [Theory]
+    [InlineData("ObjectProperty")]
+    [InlineData("ClassProperty")]
+    // FScriptInterface is { UObject* +0x00, void* +0x08 } — the DLL states this at
+    // Ubel::IsInterfaceArrayType — so its first 8 bytes ARE an object pointer and
+    // the drill has always been correct for it. Pinned so a future tightening of
+    // the predicate to match the (narrower) array-inner one cannot silently drop it.
+    [InlineData("InterfaceProperty")]
+    public void DrillDown_RealPointerSlot_StillDereferences(string typeName)
+    {
+        var xml = DrillXmlFor(typeName);
+
+        Assert.Contains("Health", xml);
+        Assert.Contains("<Offsets>", xml);
+    }
 }

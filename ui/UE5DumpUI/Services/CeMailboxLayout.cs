@@ -67,7 +67,7 @@ internal static class CeMailboxLayout
     // the DLL publishes. The DLL answers with a RANGE, so the two failure
     // directions can be told apart: too-old script => regenerate the .CT, too-old
     // DLL => update the DLL. Today the second case is silent corruption.
-    public const int ContractVersion = 1;
+    public const int ContractVersion = 2;
 
     /// <summary>Exported symbol carrying the contract. Deliberately NOT a field of
     /// the mailbox struct: reading the layout version out of the struct whose layout

@@ -303,7 +303,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // User-set search depth (how many pointer hops down from GWorld to look),
     // and live GWorld availability (drives gray-out of the feature).
     [ObservableProperty] private int _gWorldLocateDepth = 7;
-    [ObservableProperty] private bool _isGWorldAvailable;
 
     /// <summary>Opt-in deep "Locate in GWorld" (default OFF). When on, the forward
     /// BFS also follows object pointers stored inside one struct-element container
@@ -686,7 +685,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         _engineState = state;
         _activePeHash = state?.PeHash ?? "";
         IsAobSymbolAvailable = !string.IsNullOrEmpty(state?.GWorldAob);
-        IsGWorldAvailable = state?.HasGWorld ?? false;
     }
 
     partial void OnIsAobSymbolAvailableChanged(bool value)

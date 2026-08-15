@@ -626,6 +626,20 @@ public sealed class InvokeParamDialog : Window
                     {
                         // Scalar param
                         var text = (_edits[i]?.Text ?? "0").Trim();
+                        // Range-check BEFORE writing. Every integer write in
+                        // ParamBufferBuilder masks to the field width, so an
+                        // out-of-range value used to reach the game truncated with
+                        // nothing said — 9999 into a 1-byte param fired 15. Refusing
+                        // the whole invoke is right here: a UFunction called with one
+                        // silently-wrong argument is worse than one not called.
+                        // (audit #5, the width family on the FIRE path.)
+                        if (!ParamBufferBuilder.TryValidateScalar(
+                                param.TypeName, param.Size, text, out var rangeErr))
+                        {
+                            _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+                            _resultLabel.Text = $"ERROR: {param.Name}: {rangeErr}";
+                            return;
+                        }
                         ParamBufferBuilder.WriteParam(buf, param.Offset, param.TypeName, param.Size, text);
                     }
                 }
@@ -689,9 +703,12 @@ public sealed class InvokeParamDialog : Window
                 {
                     // Use struct-aware decoding for known structs, then dynamic, then scalar
                     string decoded;
-                    var structLayout = (p.TypeName == "StructProperty" && !string.IsNullOrEmpty(p.StructName))
-                        ? KnownStructLayouts.GetLayout(p.StructName, _ueVersion)
-                        : null;
+                    // Trusted form: the same size cross-check the INPUT boxes have
+                    // used since Y7. Decoding the post-call buffer on a
+                    // size-contradicted layout renames and re-offsets every value
+                    // the user reads back (audit #5 AC2).
+                    var structLayout = ResolveTrustedLayout(
+                        p.TypeName, p.StructName, p.Size, _ueVersion);
                     if (structLayout != null)
                         decoded = DecodeStructParamValue(bytes, p, structLayout);
                     else if (p.TypeName == "StructProperty" && p.StructFields.Count > 0)
@@ -989,22 +1006,45 @@ public sealed class InvokeParamDialog : Window
                 => BinaryPrimitives.ReadSingleLittleEndian(span).ToString(CultureInfo.InvariantCulture),
             "DoubleProperty" when available >= 8
                 => BinaryPrimitives.ReadDoubleLittleEndian(span).ToString(CultureInfo.InvariantCulture),
-            "IntProperty" or "UInt32Property" or "EnumProperty" when available >= 4
+            "IntProperty" or "UInt32Property" when available >= 4
                 => BinaryPrimitives.ReadInt32LittleEndian(span).ToString(),
+            // EnumProperty is decoded at the width the ENGINE reported, never 4.
+            // It used to be grouped with IntProperty above, so UE's dominant shape
+            // — `enum class E : uint8` — was read as 4 bytes whenever 4 bytes of
+            // buffer remained: the returned value was the enum byte plus three
+            // bytes belonging to whatever followed it. The tell is that a 1-byte
+            // enum at the very END of the buffer decoded correctly (the guard
+            // failed and it fell through to the size switch) while the same enum
+            // mid-buffer did not. This is the READ side of the mistake Y2 fixed on
+            // the write side of this very file — found by the width-family grep.
+            "EnumProperty" => DecodeBySize(buf, p.Offset, available, p.Size),
             "Int64Property" when available >= 8
                 => BinaryPrimitives.ReadInt64LittleEndian(span).ToString(),
             "UInt64Property" or "ObjectProperty" or "ClassProperty"
                 or "NameProperty" or "SoftObjectProperty" or "WeakObjectProperty"
                 or "InterfaceProperty" when available >= 8
                 => $"0x{BinaryPrimitives.ReadUInt64LittleEndian(span):X}",
-            _ => p.Size switch
-            {
-                1 => buf[p.Offset].ToString(),
-                2 when available >= 2 => BinaryPrimitives.ReadInt16LittleEndian(span).ToString(),
-                4 when available >= 4 => BinaryPrimitives.ReadInt32LittleEndian(span).ToString(),
-                8 when available >= 8 => $"0x{BinaryPrimitives.ReadUInt64LittleEndian(span):X}",
-                _ => BitConverter.ToString(buf, p.Offset, Math.Min(p.Size, available)),
-            },
+            // Shared with EnumProperty above so the two cannot drift -- the mirror
+            // of ParamBufferBuilder.WriteBySize on the write side.
+            _ => DecodeBySize(buf, p.Offset, available, p.Size),
+        };
+    }
+
+    /// <summary>
+    /// Decode an integer param at whatever width the engine reported. Used by the
+    /// size-driven fallback and by EnumProperty, whose width is 1/2/4/8 and is NOT
+    /// implied by its type name (audit #5, the width family).
+    /// </summary>
+    private static string DecodeBySize(byte[] buf, int offset, int available, int size)
+    {
+        var span = buf.AsSpan(offset);
+        return size switch
+        {
+            1 => buf[offset].ToString(),
+            2 when available >= 2 => BinaryPrimitives.ReadInt16LittleEndian(span).ToString(),
+            4 when available >= 4 => BinaryPrimitives.ReadInt32LittleEndian(span).ToString(),
+            8 when available >= 8 => $"0x{BinaryPrimitives.ReadUInt64LittleEndian(span):X}",
+            _ => BitConverter.ToString(buf, offset, Math.Min(Math.Max(size, 0), available)),
         };
     }
 
@@ -1050,30 +1090,21 @@ public sealed class InvokeParamDialog : Window
     }
 
     /// <summary>
-    /// The hardcoded layout for a struct param, but ONLY when it agrees with the size the engine
-    /// reported for that param.
-    /// <para>
-    /// The engine's size is ground truth; the layout is a guess keyed on a DETECTED UE version.
-    /// When they disagree the guess is wrong -- a mis-detected version (LWC turns FVector's
-    /// floats into doubles, doubling every offset) or a licensee fork with a modified struct,
-    /// both of which this project has met. Expanding on a wrong layout puts every sub-field
-    /// editor at a wrong offset and writes the user's numbers into the wrong bytes of a live
-    /// call, with nothing on screen saying so. Returning null falls the caller through to the
-    /// DLL-discovered fields, which came from the actual UScriptStruct (audit #5 Y7).
-    /// </para>
+    /// The hardcoded layout for a struct param, but ONLY when it agrees with the engine-reported
+    /// size — plus this view's "is it even a StructProperty" test.
+    ///
+    /// <para><b>The rule itself now lives on <see cref="KnownStructLayouts.GetTrustedLayout"/></b>,
+    /// beside the table it guards. It was written here as a private helper (Y7), which meant the
+    /// two consumers in <c>StructReturnDecoder</c> structurally could not reach it — a Service
+    /// cannot depend on a View — so this dialog refused a size-contradicted layout for its INPUT
+    /// boxes and accepted the same layout for the RESULT grid. That is audit #5 AC2. The name is
+    /// kept so existing callers and tests do not churn; the behaviour is defined in one place.</para>
     /// </summary>
     internal static KnownStructLayouts.StructLayout? ResolveTrustedLayout(
         string typeName, string? structName, int engineSize, int ueVersion)
     {
-        if (typeName != "StructProperty" || string.IsNullOrEmpty(structName)) return null;
-
-        var layout = KnownStructLayouts.GetLayout(structName, ueVersion);
-        if (layout == null) return null;
-
-        // engineSize <= 0 means the DLL did not report one -- nothing to contradict the guess.
-        if (engineSize > 0 && layout.TotalSize != engineSize) return null;
-
-        return layout;
+        if (typeName != "StructProperty") return null;
+        return KnownStructLayouts.GetTrustedLayout(structName, engineSize, ueVersion);
     }
 
     internal static byte[] HexToBytes(string hex)

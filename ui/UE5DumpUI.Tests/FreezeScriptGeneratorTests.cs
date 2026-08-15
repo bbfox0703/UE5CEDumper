@@ -132,6 +132,7 @@ public class FreezeScriptGeneratorTests
             PropertyOffset = 0x2C1,
             UeTypeName     = "EnumProperty",
             PropertySize   = 1,
+            BoolFieldMask  = 0,
             ValueLiteral   = "3",
         };
 
@@ -156,6 +157,7 @@ public class FreezeScriptGeneratorTests
             PropertyOffset = 0x10,
             UeTypeName     = "EnumProperty",
             PropertySize   = size,
+            BoolFieldMask  = 0,
             ValueLiteral   = "0",
         };
 
@@ -191,6 +193,7 @@ public class FreezeScriptGeneratorTests
             PropertyOffset = 0x4F8,
             UeTypeName     = "FloatProperty",
             PropertySize   = 4,
+            BoolFieldMask  = 0,
             ValueLiteral   = "9999.0",
         };
 
@@ -234,6 +237,7 @@ public class FreezeScriptGeneratorTests
             PropertyOffset = 0x328,
             UeTypeName     = "BoolProperty",
             PropertySize   = 1,
+            BoolFieldMask  = 0,   // native bool: owns its whole byte
             ValueLiteral   = "false",
         };
 
@@ -241,6 +245,198 @@ public class FreezeScriptGeneratorTests
 
         Assert.Contains("valueType          = 'bool',", script);
         Assert.Contains("value              = false,", script);
+        // A native bool owns its whole byte, so NO mask must be emitted —
+        // emitting one would make the helper touch a single bit of a byte
+        // that is entirely this property's. (audit #5 AA1)
+        Assert.DoesNotContain("boolMask", script);
+    }
+
+    // ── audit #5 AA1: packed bitfield bools ──────────────────────────────
+    //
+    // UE packs `uint8 bFoo:1` bools eight to a byte. The freeze pipeline used
+    // to drop the FBoolProperty FieldMask, so the helper stamped the whole
+    // byte ~16x/sec: up to 7 sibling bools clobbered, and — whenever the mask
+    // was not 0x01 — the intended bool never set at all (writing 1 sets bit 0),
+    // so the feature silently no-opped WHILE corrupting its neighbours.
+
+    [Theory]
+    [InlineData(0x01)]
+    [InlineData(0x02)]
+    [InlineData(0x04)]
+    [InlineData(0x08)]
+    [InlineData(0x10)]
+    [InlineData(0x20)]
+    [InlineData(0x40)]
+    [InlineData(0x80)]
+    public void Generate_PackedBoolMask_EmitsBoolMaskIntoCfg(int mask)
+    {
+        var p = new FreezeScriptParams
+        {
+            ClassName      = "PlayerCharacter",
+            PropertyName   = "bIsInvulnerable",
+            PropertyOffset = 0x328,
+            UeTypeName     = "BoolProperty",
+            PropertySize   = 1,
+            BoolFieldMask  = mask,
+            ValueLiteral   = "true",
+        };
+
+        var script = FreezeScriptGenerator.Generate(p);
+
+        Assert.Contains($"boolMask           = 0x{mask:X2},", script);
+    }
+
+    [Theory]
+    // 0 = the DLL reported no mask (native bool, or a pre-AA1 DLL).
+    [InlineData(0)]
+    // 0xFF = UE's OWN native-bool marker: SetBoolSize writes FieldMask = 255
+    // when bIsNativeBool. Treating it as a bit mask would write bit 0..7 of a
+    // byte the property already owns outright.
+    [InlineData(0xFF)]
+    // Multi-bit values are not a shape UE produces for a single bool; ORing
+    // them in would set bits belonging to nobody.
+    [InlineData(0x03)]
+    [InlineData(0x05)]
+    [InlineData(0x81)]
+    // Defensive: a negative can only arrive from a corrupt wire value.
+    [InlineData(-1)]
+    public void Generate_NonPackedBoolMask_OmitsBoolMask(int mask)
+    {
+        var p = new FreezeScriptParams
+        {
+            ClassName      = "PlayerCharacter",
+            PropertyName   = "bCanBeDamaged",
+            PropertyOffset = 0x328,
+            UeTypeName     = "BoolProperty",
+            PropertySize   = 1,
+            BoolFieldMask  = mask,
+            ValueLiteral   = "false",
+        };
+
+        var script = FreezeScriptGenerator.Generate(p);
+
+        Assert.DoesNotContain("boolMask", script);
+    }
+
+    [Fact]
+    public void Generate_NonBoolType_NeverEmitsBoolMask()
+    {
+        // The mask is meaningless off a BoolProperty. A row carrying a stale
+        // one must not turn an int freeze into a bit write — the CFG guard is
+        // on the resolved helper type, not just on the mask value.
+        var p = new FreezeScriptParams
+        {
+            ClassName      = "Foo",
+            PropertyName   = "Count",
+            PropertyOffset = 0x10,
+            UeTypeName     = "IntProperty",
+            PropertySize   = 4,
+            BoolFieldMask  = 0x04,
+            ValueLiteral   = "42",
+        };
+
+        var script = FreezeScriptGenerator.Generate(p);
+
+        Assert.Contains("valueType          = 'int32',", script);
+        Assert.DoesNotContain("boolMask", script);
+    }
+
+    [Theory]
+    [InlineData(0x01, true)]
+    [InlineData(0x02, true)]
+    [InlineData(0x80, true)]
+    [InlineData(0x00, false)]   // no mask reported
+    [InlineData(0xFF, false)]   // UE's native-bool marker
+    [InlineData(0x03, false)]   // two bits
+    [InlineData(0x100, false)]  // outside a byte
+    [InlineData(-2, false)]
+    public void IsPackedBoolMask_AcceptsOnlySingleBitsInAByte(int mask, bool expected)
+        => Assert.Equal(expected, FreezeScriptGenerator.IsPackedBoolMask(mask));
+
+    [Fact]
+    public void FreezeHelper_WriteBool_HonoursTheMaskItIsGiven()
+    {
+        // The generator emitting `boolMask` is only half the fix — the helper
+        // has to ACT on it. This pins the helper source, because nothing else
+        // in the suite executes Lua: the byte-stamping write must be reachable
+        // ONLY when no packed mask was supplied.
+        var lua = FreezeHelperLuaResource.Read();
+
+        // The mask reaches the writer (tick passes it as the 3rd argument).
+        Assert.Contains("w(addr + offset, value, mask)", lua);
+        Assert.Contains("handle.cfg.boolMask", lua);
+
+        // Read-modify-write of a single bit, arithmetic-only because CE's Lua
+        // has no bAnd/bOr/bNot (same idiom as UE5T_setbit).
+        Assert.Contains("isPackedBoolMask(mask)", lua);
+        Assert.Contains("math.floor(b / mask) % 2", lua);
+
+        // The 0/0xFF exclusions live in the helper too, not only in C#.
+        Assert.Contains("BOOL_BIT_MASKS", lua);
+        Assert.DoesNotContain("[255]", lua);
+        Assert.DoesNotContain("[0] =", lua);
+
+        // The old unconditional comment must be gone: it documented the defect
+        // as intended behaviour, which is how it survived so long.
+        Assert.DoesNotContain("We do NOT support packed bitfield bools", lua);
+    }
+
+    // ── audit #5 AA2/AA3: recycled slots and a cache kept forever ────────────
+    //
+    // The behaviour of these two is covered properly by scripts/tests/
+    // freeze_helper_test.lua, which EXECUTES the helper against stubbed CE
+    // globals. CI has no Lua interpreter, so these source-level assertions are
+    // the tripwire: they cannot prove the guard works, only that nobody deleted
+    // it. Run the Lua harness after touching the helper.
+
+    [Fact]
+    public void FreezeHelper_TickGuardsOnClassIdentity_NotJustTheVtable()
+    {
+        var lua = FreezeHelperLuaResource.Read();
+
+        // The witness travels from the mailbox into the handle...
+        Assert.Contains("OFF_INSTANCE", lua);
+        Assert.Contains("OFF_UFUNC", lua);
+        Assert.Contains("handle._classPtr", lua);
+
+        // ...and the tick compares the object's live ClassPrivate against it.
+        Assert.Contains("readQword(addr + cOff) == cPtr", lua);
+
+        // The old guard tested only "is qword 0 non-zero", which a recycled or
+        // pooled block passes because it holds old bytes or a free-list link.
+        // It survives ONLY as the no-witness fallback, so the bare form that
+        // used to gate the write must not be the gate any more.
+        Assert.DoesNotContain("local vt = readQword(addr)\n        if vt and vt ~= 0 then", lua);
+    }
+
+    [Fact]
+    public void FreezeHelper_PersistentRescanFailure_StopsWritingAndSurfaces()
+    {
+        var lua = FreezeHelperLuaResource.Read();
+
+        // A bounded failure streak, not "keep the stale cache forever".
+        Assert.Contains("MAX_FAIL_STREAK", lua);
+        Assert.Contains("handle._failStreak", lua);
+        Assert.Contains("handle._abandoned", lua);
+
+        // _lastError had three writers and zero readers — the failure never
+        // reached anyone. Both accessors are the readers.
+        Assert.Contains("handle.lastError = function()", lua);
+        Assert.Contains("handle.isAbandoned = function()", lua);
+    }
+
+    [Fact]
+    public void FreezeHelper_BakesTheSameContractVersionAsTheGenerator()
+    {
+        // The helper is a hand-maintained table file carrying its OWN copy of the
+        // contract number, so it can drift from the DLL/C# pair that
+        // check_mailbox_contract.py keeps in step. It reads the contract-2
+        // identity witness, so a helper stuck at 1 would run happily against a
+        // DLL that never fills those fields.
+        var lua = FreezeHelperLuaResource.Read();
+
+        Assert.Contains(
+            $"local UE5_SCRIPT_CONTRACT = {CeMailboxLayout.ContractVersion}", lua);
     }
 
     [Fact]
@@ -253,6 +449,7 @@ public class FreezeScriptGeneratorTests
             PropertyOffset = 0x10,
             UeTypeName     = "IntProperty",
             PropertySize   = 4,
+            BoolFieldMask  = 0,
             ValueLiteral   = "1",
         };
 
@@ -273,6 +470,7 @@ public class FreezeScriptGeneratorTests
             PropertyOffset = 256,
             UeTypeName     = "IntProperty",
             PropertySize   = 4,
+            BoolFieldMask  = 0,
             ValueLiteral   = "0",
         };
 

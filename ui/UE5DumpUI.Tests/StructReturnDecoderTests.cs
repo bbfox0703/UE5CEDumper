@@ -65,11 +65,55 @@ public class StructReturnDecoderTests
     }
 
     [Fact]
-    public void CanDecode_KnownStruct_ReturnsTrue()
+    public void CanDecode_KnownStruct_SizeAgreesWithTheLayout_ReturnsTrue()
     {
-        // FVector is locked in KnownStructLayouts for both UE4 and UE5.
+        // 12 bytes is UE4's float FVector, and the 427 layout is 12 bytes. Agreed.
         var p = MakeFVectorReturnParam();
         Assert.True(StructReturnDecoder.CanDecode(p, ueVersion: 427));
+    }
+
+    [Fact]
+    public void CanDecode_KnownStruct_SizeContradictsTheDetectedVersion_ReturnsFalse()
+    {
+        // audit #5 AC2. The engine says this param is 12 bytes; UE5's FVector layout
+        // is 24 (LWC turned the floats into doubles). They cannot both be right, and
+        // the ENGINE is ground truth — the layout is a guess keyed on a DETECTED
+        // version, and mis-detection plus licensee forks are both things this project
+        // has met. Decoding on the 24-byte layout would label every value with the
+        // wrong field at the wrong offset, silently.
+        //
+        // This assertion used to read `Assert.True(... 505)` — it pinned the
+        // pre-Y7 behaviour on the RESULT path, which is precisely why AC2 survived:
+        // Y7 fixed the INPUT path in the dialog and a green test kept saying the
+        // result path was fine.
+        var p = MakeFVectorReturnParam();
+        Assert.False(StructReturnDecoder.CanDecode(p, ueVersion: 505));
+        Assert.Empty(StructReturnDecoder.Decode(new byte[64], p, ueVersion: 505));
+    }
+
+    [Fact]
+    public void CanDecode_KnownStruct_UE5SizedVector_ReturnsTrue()
+    {
+        // The positive control for the case above: when the engine DOES report 24,
+        // the UE5 layout agrees and must still be used.
+        var p = new FunctionParamModel
+        {
+            Name = "ReturnValue", TypeName = "StructProperty", StructName = "Vector",
+            Size = 24, Offset = 0, IsReturn = true,
+        };
+        Assert.True(StructReturnDecoder.CanDecode(p, ueVersion: 505));
+    }
+
+    [Fact]
+    public void CanDecode_KnownStruct_EngineReportedNoSize_TrustsTheLayout()
+    {
+        // Size <= 0 means the DLL did not report one, so there is nothing to
+        // contradict the guess and the layout is still the best signal available.
+        var p = new FunctionParamModel
+        {
+            Name = "ReturnValue", TypeName = "StructProperty", StructName = "Vector",
+            Size = 0, Offset = 0, IsReturn = true,
+        };
         Assert.True(StructReturnDecoder.CanDecode(p, ueVersion: 505));
     }
 

@@ -127,7 +127,6 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     public event Action<string>? LocateInGameEngine;
 
     /// <summary>True when GWorld is available — gates the per-row "Locate in GWorld" button.</summary>
-    [ObservableProperty] private bool _isGWorldAvailable;
 
     /// <summary>Raised when the user clicks "Generate Cheat Table" on
     /// the multi-select toolbar. Subscribers (MainWindow) open the
@@ -520,7 +519,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     [RelayCommand]
     private void LocateRowInGWorld(ScoredFunctionRow? row)
     {
-        if (row == null || !IsGWorldAvailable || string.IsNullOrEmpty(row.ClassName)) return;
+        if (row == null || string.IsNullOrEmpty(row.ClassName)) return;
         LocateInGWorld?.Invoke(row.ClassName);
     }
 

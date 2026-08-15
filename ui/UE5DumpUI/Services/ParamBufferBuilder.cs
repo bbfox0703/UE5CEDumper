@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Globalization;
+using UE5DumpUI.Core;      // FieldValueConverter.FitsInWidth — the width family's one predicate
 using UE5DumpUI.Models;
 
 namespace UE5DumpUI.Services;
@@ -149,6 +150,74 @@ public static class ParamBufferBuilder
             if (absOffset < 0 || absOffset >= buf.Length) continue;
             WriteParam(buf, absOffset, sf.TypeName, sf.Size, subValues[i].Trim());
         }
+    }
+
+    /// <summary>
+    /// Byte width <see cref="WriteParam"/> will actually write for an INTEGER-ish param,
+    /// or 0 when the type is not integer-ranged (bool, float/double, strings, structs).
+    ///
+    /// <para>Exists so the FIRE path can range-check a value before writing it. Every write
+    /// below silently masks — <c>(short)</c>, <c>(int)</c>, <c>unchecked((byte)u)</c> — so
+    /// typing 9999 for a 1-byte param sent 15 to the game with nothing said. That is the
+    /// width family again (W6/Y2/Y9/Y15/AE1), on the invoke dialog's FIRE path.</para>
+    ///
+    /// <para><b>The masking casts are deliberately kept.</b> They are Y5's fix: a signed
+    /// <c>-1</c> must reach the game as <c>0xFF</c>. The repair is a signedness-aware RANGE
+    /// CHECK in front of them (<see cref="FieldValueConverter.FitsInWidth"/>), not removing
+    /// the cast — remove it and Y5 comes straight back.</para>
+    ///
+    /// <para>This table mirrors the switch below, which is a drift risk by construction, so
+    /// <c>ParamBufferBuilderWidthTests</c> pins them together: for every type named here it
+    /// asserts that <see cref="WriteParam"/> touches exactly this many bytes.</para>
+    /// </summary>
+    public static int EffectiveIntWidth(string typeName, int size) => typeName switch
+    {
+        "ByteProperty" or "Int8Property" => 1,
+        "Int16Property" or "UInt16Property" => 2,
+        "IntProperty" or "UInt32Property" => 4,
+        "Int64Property" or "UInt64Property" => 8,
+        // Enum width is whatever the engine reported, never implied by the name.
+        // Anything unrecognised takes the same size-driven path in WriteBySize.
+        "EnumProperty" => size > 0 ? size : 4,
+        "BoolProperty" or "FloatProperty" or "DoubleProperty" => 0,
+        // Pointer-ish types are written as a raw 8-byte address, not a ranged integer.
+        "NameProperty" or "ObjectProperty" or "ClassProperty" or "SoftObjectProperty"
+            or "SoftClassProperty" or "WeakObjectProperty" or "LazyObjectProperty"
+            or "InterfaceProperty" => 0,
+        _ => size > 0 ? size : 0,
+    };
+
+    /// <summary>
+    /// Whether <paramref name="text"/> can be written to this param without silent
+    /// truncation. Returns false plus a message naming the accepted range.
+    ///
+    /// <para>Only integer-ranged params are checked (see <see cref="EffectiveIntWidth"/>);
+    /// everything else returns true and is validated by its own parser. A value that is not
+    /// a number at all also returns true — the parsers already have defined behaviour for
+    /// that and it is not this check's job to duplicate it.</para>
+    /// </summary>
+    public static bool TryValidateScalar(string typeName, int size, string text, out string error)
+    {
+        error = "";
+        int width = EffectiveIntWidth(typeName, size);
+        if (width <= 0 || width >= 8) return true;   // not ranged, or an 8-byte field takes any long
+
+        var trimmed = (text ?? "").Trim();
+        if (trimmed.Length == 0) return true;
+        if (!BakedScriptGenerator.TryParseHexOrDecimal(trimmed, out var bits)) return true;
+
+        // TryParseHexOrDecimal hands back a BIT PATTERN, not a magnitude: "-1" arrives as
+        // 0xFFFFFFFFFFFFFFFF. Reinterpreting as signed is what makes the check agree with
+        // the writer, which does exactly the same reinterpretation (`unchecked((byte)u)`,
+        // `(short)ParseLong(...)`). A check that disagreed with the write would be worse
+        // than none — it would refuse values the game receives correctly.
+        long raw = unchecked((long)bits);
+
+        if (FieldValueConverter.FitsInWidth(raw, width)) return true;
+
+        error = $"{raw} does not fit in this {width}-byte parameter " +
+                $"(range: {FieldValueConverter.WidthRangeText(width)})";
+        return false;
     }
 
     internal static void WriteParam(byte[] buf, int offset, string typeName, int size, string text)
@@ -307,10 +376,28 @@ public static class ParamBufferBuilder
         return long.TryParse(text, out var r) ? r : 0;
     }
 
+    /// <summary>
+    /// Parse an unsigned value the way the exported script does, INCLUDING negatives.
+    ///
+    /// <para><c>ulong.TryParse("-1")</c> fails, and the old body then returned 0 — so typing
+    /// <c>-1</c> for a <c>UInt16Property</c> / <c>UInt64Property</c> / pointer param fired
+    /// <b>0</b> at the live game while "Copy AA Script" baked <c>0xFFFF…</c>, because
+    /// <see cref="BakedScriptGenerator.TryParseHexOrDecimal"/> reinterprets the sign bits.
+    /// One dialog, two opposite calls.</para>
+    ///
+    /// <para>That is <b>exactly</b> the defect Y5 fixed — and Y5 fixed it only in
+    /// <see cref="ParseByteOrSByte"/>, leaving every unsigned path here with the original
+    /// bug. Root cause #4 ("a fix applied at only some of its sites"), found at fix time by
+    /// the width-family sweep rather than by a finder.</para>
+    /// </summary>
     private static ulong ParseULong(string text)
     {
         if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
             return ulong.TryParse(text.AsSpan(2), NumberStyles.HexNumber, null, out var v) ? v : 0;
+        // Negative decimal -> the same sign-preserved bit pattern the script emits.
+        if (text.StartsWith("-", StringComparison.Ordinal))
+            return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)
+                   ? unchecked((ulong)s) : 0;
         return ulong.TryParse(text, out var r) ? r : 0;
     }
 }
