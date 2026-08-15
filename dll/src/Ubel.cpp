@@ -85,6 +85,27 @@ static std::string ReadFName(uintptr_t fnameAddr) {
     return Serie::GetString(compIndex, number);
 }
 
+// The same decode, from BYTES already in hand rather than from a live address.
+//
+// Three call sites open-coded this as `memcpy(&idx, p, 4); Serie::GetString(idx)` and
+// all three dropped FName::Number, so Slot_1 / Slot_2 / Slot_3 every rendered as "Slot"
+// — while ReadFNameAt, reading the same 8 bytes through the function above, returned the
+// suffix. The panel and value search disagreed about one field. (audit #5 U8)
+//
+// Number sits at +4 in EVERY configuration: UE declares it immediately after
+// ComparisonIndex, and the case-preserving DisplayIndex is appended AFTER it (verified in
+// vendor/UnrealEngine .../UObject/NameTypes.h:1258-1267). That is why this takes a byte
+// count and not DynOff::bCasePreservingName — the 0x10 FName is wider at the TAIL, so the
+// two fields we read are at fixed offsets. `size` still gates the Number read, because a
+// caller holding only 4 bytes has no Number to decode and must keep the old behaviour.
+static std::string DecodeFNameBytes(const uint8_t* bytes, int32_t size) {
+    if (!bytes || size < 4) return "";
+    int32_t compIndex = 0, number = 0;
+    memcpy(&compIndex, bytes, 4);
+    if (size >= 8) memcpy(&number, bytes + 4, 4);
+    return Serie::GetString(compIndex, number);
+}
+
 // ============================================================
 // ResolveEnumValue — resolve an enum integer value to its name string.
 // Uses a per-UEnum cache (static unordered_map) for performance.
@@ -1702,10 +1723,8 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
         return bytes[0] ? "true" : "false";
     }
     if (typeName == "NameProperty" && size >= 4) {
-        // FName — resolve via FNamePool
-        int32_t nameIdx;
-        memcpy(&nameIdx, bytes, 4);
-        return Serie::GetString(nameIdx);
+        // FName — resolve via FNamePool, Number included (audit #5 U8)
+        return DecodeFNameBytes(bytes, size);
     }
 
     // StructProperty: for small structs, show inline float hints
@@ -4731,8 +4750,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         } else if (sf.TypeName == "ByteProperty" || sf.TypeName == "Int8Property") {
                             val = std::to_string(p[0]);
                         } else if (sf.TypeName == "NameProperty" && sfSize >= 4) {
-                            int32_t nameIdx; memcpy(&nameIdx, p, 4);
-                            val = Serie::GetString(nameIdx);
+                            val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
                             if (val.empty()) val = "None";
                         } else if ((sf.TypeName == "ObjectProperty" || sf.TypeName == "ClassProperty") && sfSize >= 8) {
                             uintptr_t ptr; memcpy(&ptr, p, 8);
@@ -5206,8 +5224,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             val = std::to_string(p[0]);
                         } else if (sf.TypeName == "NameProperty"
                                    && sfSize >= 4) {
-                            int32_t nameIdx; memcpy(&nameIdx, p, 4);
-                            val = Serie::GetString(nameIdx);
+                            val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
                             if (val.empty()) val = "None";
                         } else if ((sf.TypeName == "ObjectProperty"
                                     || sf.TypeName == "ClassProperty")
