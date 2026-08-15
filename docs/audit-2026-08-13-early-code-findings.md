@@ -1149,6 +1149,52 @@ MEDIUM.
 > the generated script against a live game and watched a UFunction receive the right pointer — see
 > [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
 
+> ✅ **Y9 fixed in build 2895** — the dialog is the only place that can tell the user, so it now does.
+>
+> **Why the dialog and not the writer.** Everything downstream narrows in silence and reports
+> success: `ue5_freeze_helper.lua`'s byte writer is `writeByte(addr, math.floor(v) % 256)` and
+> `Solide::WriteNumeric` is `static_cast<uint8_t>(llround(value))`. Neither has a channel to say
+> "that did not fit" — the freeze is a background timer and the force-hold is a re-assert worker.
+> So `9999` on a `ByteProperty` became `15` in the game with nothing on screen, and the user is left
+> debugging the game rather than the input.
+>
+> **`ValidateAndConvert` now checks the WIDTH, not just the parse.** It had only ever asked "does
+> this fit a `long`/`ulong`", which is the wrong question for seven of its eight integer types.
+> `IntegerRange` is the inclusive per-type table, and the error names both the range and the value
+> that would have landed: *"uint8 holds 0 to 255 — 9999 would be written as 15"*. `WrapToRange`
+> computes that number with the same modular arithmetic the writers perform, and a test cross-checks
+> it, so the quoted number cannot drift from the one that lands.
+>
+> **Two more sites of the same defect came with it, both inside the same method.** `float` was
+> validated as a **double** — the check that rejects `NaN`/`Infinity` (B23) passed `1e300` straight
+> through, and CE's `writeFloat` / Solide's `WriteFloatAt` narrow it to `+inf`; `1e-300` collapses to
+> `0`. Both are now rejected for `float` and still accepted for `double`, which a test asserts in
+> both directions.
+>
+> **The pre-filled default was half the finding and is inseparable from the fix.** `SuggestedDefault`
+> returned a flat `"9999"` for every integer type, so adding the range check alone would have opened
+> every `ByteProperty` dialog holding a value its own OK button rejects. It is now derived from the
+> same `IntegerRange` table (`min(9999, Max)`), and a test asserts every helper type's suggestion
+> survives `ValidateAndConvert` — a property that cannot drift, rather than a list that can.
+>
+> **One check covers two features.** `PropertySearchPanel.PromptForceValueAsync` reuses this dialog
+> for Solide's Force value precisely for its per-type validation, so Force gained the same guard.
+>
+> **Negative controls, three, each isolating one claim:** deleting the two integer range checks reds
+> exactly the 11 width tests (the boundary-acceptance and default tests stay green); deleting the
+> float narrowing check reds exactly the 3 float tests; reverting `SuggestedDefault` to the flat
+> `"9999"` reds exactly the 4 default tests — **and only for `int8`/`uint8`**, which is the predicted
+> shape, since 9999 fits every wider type. That third control also demonstrates the interaction:
+> without it the new range check would reject the app's own pre-fill. 3674 tests, 0 failed
+> (3631 → 3674). `dist` is the 54.4 MB AOT-trimmed binary, launch-verified, no `crash.log`.
+>
+> 🆕 **Found while fixing it: Y15**, the *third* site of the `EnumProperty`-is-not-4-bytes family this
+> audit has already fixed twice (W6, Y2). Recorded, not fixed — it needs a size plumbed through
+> `FreezeScriptParams`, so it is M, not S.
+>
+> ⬜ **Not verified in-game.** The arithmetic is measured against the writers' own masking, but nobody
+> has typed 9999 into a real `ByteProperty` freeze and watched the new error instead of a 15.
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **Y1** ✅ | **HIGH** | `InvokeScriptGenerator.cs:603` (`GetParseExpression`) | The pointer/FName branch detects a leading `0x` and then passes the **still-prefixed** string to Lua's `tonumber(s, 16)`, which rejects the `x` and returns `nil`; `or 0` then writes a **null pointer** into the params buffer. The DLL memcpys that straight into `ProcessEvent`, so the UFunction is called with `nullptr` — an access violation for any callee that dereferences it — and the script still reports `INVOKED OK` (or closes the Lua window silently when `DEBUG == 0`). The `else` branch's bare `tonumber(s)` **would have worked**: the special case is the only thing breaking it. The default `'0x0'` yields 0 correctly by accident, so a smoke test with unmodified defaults always passes. | S / low |
@@ -1159,12 +1205,13 @@ MEDIUM.
 | **Y6** ✅ | MED | `InvokeScriptGenerator.cs:528` | Struct params in the interactive CE form collapse to a **single 4-byte `writeInteger`**, so an `FVector` param is filled with garbage. | M / low |
 | **Y7** ✅ | MED | `InvokeParamDialog.cs:328` | Struct params pick their sub-field layout from the **guessed UE version** and never cross-check it against the size the engine reported for the param. | S / low |
 | **Y8** ✅ | MED | `InvokeScriptGenerator.cs:164` | The last site in the repo still using bare `getAddress` — its module-prefixed fallback is unreachable, so a wrong-address result is reported as a real one. | S / low |
-| **Y9** | MED | `FreezeValueDialog.cs:231` | Accepts (and pre-fills) values wider than the property — `uint8` 9999 is silently written as 15. | S / low |
+| **Y9** ✅ | MED | `FreezeValueDialog.cs:231` | Accepts (and pre-fills) values wider than the property — `uint8` 9999 is silently written as 15. | S / low |
 | **Y10** | LOW | `BakedScriptGenerator.cs:223` | Verify mode writes into the mailbox (`writeByte(_PD_dbg + i, 0)` over `parmsSize`) **before any contract check** — `BakedScriptGenerator` is the only mailbox-touching generator with no `AppendContractCheck`, and CLAUDE.md's rule is explicit that the check comes *before the first write* because the layout is what is in question. | S / low |
 | **Y11** | LOW | `ParamBufferBuilder.cs:228` | FIRE has no unsupported-param-type gate: an `FText`/`TArray`/`TMap` param's textbox is written as a raw int32 into the struct's pointer field. | M / low |
 | **Y12** | LOW | `InvokeParamDialog.cs:856` | The baked-invoke clipboard fallback still copies a raw AA body — the build-1986 `WrapAaScriptXml` sweep reached the no-arg sibling **two lines away** and not this one. | S / low |
 | **Y13** | LOW | `BakedScriptGenerator.cs:195` | Verify mode's 32-byte dump window cannot contain the complex return it tells the user to read. | S / low |
 | **Y14** | LOW | `InvokeParamDialog.cs:850` | *"AA Script created in CE … (N baked param(s))"* is reported even when a param failed to parse and was baked as 0. | M / low |
+| **Y15** | MED | *(hand-found while fixing Y9)* `FreezeScriptGenerator.cs:193` + `Models/FreezeScriptParams.cs` | `MapToHelperType` maps **`EnumProperty` → `int32` unconditionally**, so freezing / force-holding an `enum class : uint8` field emits a **4-byte `writeInteger`** and clobbers the three bytes after it. `FreezeScriptParams` carries no size at all, so the generator *cannot* know better — the DLL's real width is on `PropertySearchMatch.PropSize` and is dropped at the model boundary. **Third site of a family this audit has already fixed twice**: W6 (CE XML export hardcoded `"4 Bytes"`) and Y2 (invoke param buffer gated on `available >= 4`). The code comment at the mapping admits it — *"if a future game has a 1-byte enum we'd want to surface the size and pick uint8 instead. Out of v1 scope."* — which is the whole finding. Needs plumbing, hence M not S. | M / low |
 
 **Verified independently (not agent-reported):**
 
@@ -1419,30 +1466,33 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session FIXES Y9 (scanning is paused)
+## 3b. START HERE — next session FIXES W5 (scanning is paused)
 
-*State as of 2026-08-15, after U4 + nine fix batches. Read this section first; it is written for a
+*State as of 2026-08-15, after U4 + ten fix batches. Read this section first; it is written for a
 session with no memory of the previous one.*
 
-> 🔵 **X2 shipped in build 2888. Next up is Y9. Do not start U5.**
+> 🔵 **X2 shipped in 2888, Y9 in 2895. Next up is W5. Do not start U5.**
 > Scanning is deliberately paused with 10 of 12 segments done — the remaining backlog is worth more
 > than another 14 findings. Work the open list one item (or one related group) at a time, and report
 > after each so the maintainer can watch the quota.
 >
-> **Y9** — `FreezeValueDialog.cs:231`, `S`/low. A `uint8` field accepts `9999` and silently writes
-> `15` (the truncated low byte). Then **W5** — `CeXmlExportService.cs:2141`, weak/soft/lazy pointers
-> drilled with `Offsets=[0]`, i.e. dereferencing a slot that is not a pointer.
+> **W5** — `CeXmlExportService.cs:2141`, `S`/low. Weak/soft/lazy pointers are drilled with
+> `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer. Then **Y15** (M/low), the
+> newest hand-found item and the *third* site of a family this audit has already fixed twice.
 >
-> **Read X2's entry in §2 before either.** Its lesson is the reusable one: the fix was not the
-> truncation caveat, it was noticing that the panels *already had the address* and had thrown it
-> away. Ask that question first — is the value being re-derived one the caller already holds?
+> **Read X2's and Y9's entries in §2 before either.** Their lessons are the reusable ones:
+> X2 — the fix was not the truncation caveat, it was noticing the panels *already had the address*
+> and had thrown it away. Ask that first: is the value being re-derived one the caller already holds?
+> Y9 — the check belongs where the user can still see it, because everything downstream narrows in
+> silence; and a validator tightened without its **pre-fill** produces a dialog that rejects its own
+> default.
 
 > ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
 > (2842), W1+W7 (2853), Y1 (2862).
 >
-> **Fixed so far — 19 findings across eleven fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: X2 (2888), Y6+Y7 (2881), Y8 (2875), X1
+> **Fixed so far — 20 findings across twelve fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: Y9 (2895), X2 (2888), Y6+Y7 (2881), Y8 (2875), X1
 > (2870), Y2+Y3+Y4+Y5 (2866), Y1 (2862), W6 (2857), W1+W7 (2853), W2+W3 (2842), W4 (2836),
-> V1+V2+V5 (2830). Test count went 3590 → 3631 over the session; every fix carries a negative
+> V1+V2+V5 (2830). Test count went 3590 → 3674 over the session; every fix carries a negative
 > control, and the doc entry for each says what the control proved.
 >
 > **Y1 is the one to read before fixing anything else**, because its verification is the template:
@@ -1485,9 +1535,10 @@ open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y9–Y14, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
-remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875) and **Y6+Y7** (2881) —
-8 of its 14; U3 shipped **X1** (2870) and **X2** (2888) — 2 of its 12.
+**Still open: Y10–Y15, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875), **Y6+Y7** (2881) and
+**Y9** (2895) — 9 of its 15 (Y15 was hand-found while fixing Y9); U3 shipped **X1** (2870) and
+**X2** (2888) — 2 of its 12.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).

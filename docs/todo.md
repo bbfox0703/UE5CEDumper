@@ -1405,6 +1405,28 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-15 — freeze a byte-wide property and try to overflow it (audit #5 Y9, build 2895)
+
+The freeze / force value dialog now rejects values wider than the target property instead of letting
+them wrap. The arithmetic is measured against the writers' own masking in unit tests, **but nobody
+has run the dialog against a real property** — and the pre-fill change is only observable in the UI.
+
+Needs any connected game with a `ByteProperty` (Property Search → `byte`, or any `bEnabled`-style
+flag stored as one).
+
+1. **Property Search** → find a `ByteProperty` row → **Freeze**. The value box must open pre-filled
+   with **`255`**, not `9999`. That is the pre-fill half of the fix and nothing else surfaces it.
+2. Type `9999` and press OK. Expect the inline error
+   *"uint8 holds 0 to 255 — 9999 would be written as 15"*, and the dialog must **stay open**.
+3. Correct it to `200`, confirm the script generates as before — the check must not have broken the
+   ordinary path.
+4. Repeat step 2 via the **Force** submenu on the same row (Property Search → row context → Force →
+   value…), which reuses this dialog. Same error expected; that consumer is Solide, not the Lua
+   helper.
+5. Worth one **float** case: on a `FloatProperty`, `1e300` should now be refused with
+   *"would be written as infinity"*, while the same value on a `DoubleProperty` must still be
+   accepted. If the double case is refused, the narrowing check leaked into the 8-byte path.
+
 ### ⬜ NEW 2026-08-15 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
 
 The three handoffs that need a class address stopped re-deriving it from the capped `list_classes`

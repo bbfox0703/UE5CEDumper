@@ -22,6 +22,63 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - The freeze dialog took 9999 for a byte and the game got 15 (build 2895)
+
+**Audit #5 segment U4 finding Y9.**
+
+### Why the dialog is the only place this can be caught
+
+Everything downstream narrows in silence *and reports success*.
+`ue5_freeze_helper.lua`'s byte writer is `writeByte(addr, math.floor(v) % 256)`;
+`Solide::WriteNumeric` is `static_cast<uint8_t>(llround(value))`. Neither has a channel to say
+"that did not fit" — the freeze is a background timer and the force-hold is a re-assert worker.
+So `9999` on a `ByteProperty` became `15` in the game with nothing on screen, and the user ends up
+debugging the game instead of the input.
+
+### The check was asking the wrong question
+
+`ValidateAndConvert` had only ever asked *does this fit a `long`/`ulong`*, which is the wrong
+question for seven of its eight integer types. It now checks the **width**: `IntegerRange` is the
+inclusive per-type table, and the error names the range *and* the value that would have landed —
+*"uint8 holds 0 to 255 — 9999 would be written as 15"*. `WrapToRange` computes that number with the
+same modular arithmetic the writers perform, and a test cross-checks it, so the number we quote
+cannot drift from the number that lands.
+
+Two more sites of the same defect were inside the same method: **`float` was validated as a
+`double`**. The existing `NaN`/`Infinity` guard (B23) passed `1e300` straight through, and CE's
+`writeFloat` / Solide's `WriteFloatAt` narrow it to `+inf`; `1e-300` collapses to `0`. Both are now
+rejected for `float` and still accepted for `double`, asserted in both directions.
+
+### The pre-fill is inseparable from the check
+
+`SuggestedDefault` returned a flat `"9999"` for every integer type. Adding the range check alone
+would have opened every `ByteProperty` dialog holding a value its own OK button rejects. It is now
+derived from the same `IntegerRange` table (`min(9999, Max)`), and a test asserts every helper
+type's suggestion survives `ValidateAndConvert` — a property that cannot drift, rather than a list
+that can.
+
+**One check covers two features**: `PropertySearchPanel.PromptForceValueAsync` reuses this dialog
+for Solide's Force value precisely for its per-type validation, so Force gained the same guard.
+
+**Negative controls, three, each isolating one claim.** Deleting the two integer range checks reds
+exactly the 11 width tests, and the boundary-acceptance tests stay green — an inclusive bound must
+not become an off-by-one that costs the top value of every field. Deleting the float narrowing check
+reds exactly the 3 float tests. Reverting `SuggestedDefault` reds exactly the 4 default tests and
+**only for `int8`/`uint8`**, which is the predicted shape since 9999 fits every wider type; that
+control is also what demonstrates the interaction above. 3674 tests, 0 failed. `dist` is the 54.4 MB
+AOT-trimmed binary, launch-verified, no `crash.log`.
+
+**Found while fixing it, recorded not fixed:** `FreezeScriptGenerator.MapToHelperType` maps
+`EnumProperty` → `int32` unconditionally, so freezing an `enum class : uint8` writes 4 bytes over 3
+neighbours. That is the *third* site of a family this audit has already closed twice (W6 in the CE
+XML export, Y2 in the invoke param buffer), and `FreezeScriptParams` carries no size for the
+generator to consult — filed as **Y15**, M/low.
+
+⬜ **Not verified in-game** — nobody has typed 9999 into a real `ByteProperty` freeze and watched the
+new error appear instead of a 15.
+
+-----
+
 ## 2026-08-15 - "Class not found" about the class you just clicked on (build 2888)
 
 **Audit #5 segment U3 finding X2**, plus two twins the finding did not cite.
