@@ -289,6 +289,32 @@ The findings themselves live in
   10–35% against the method's own measured 33–73% band — i.e. those tiers were scored leniently, not
   found cleaner. Re-derive any LOW before fixing it; several are pattern-sweep leads, not findings.
 
+### 2.2 Fixing a finding — four things the HIGH tier taught (audit #5, builds 2913–2932)
+
+All eleven HIGHs are fixed. These are what generalised out of doing them.
+
+- **Ask what the FEATURE promises before adopting the register's proposed fix shape.** AA2's entry
+  said the fix "needs an identity witness (`InternalIndex`, `SerialNumber`)". Wrong question: the
+  freeze is class-wide *by design*, so a slot recycled by the same class is a target, not a hazard —
+  an identity check would have refused a correct write. The right predicate (class membership) was
+  also far cheaper: two unused mailbox output fields instead of widening every entry. **A finding is
+  evidence a defect exists; it is not authority on the repair.**
+- **Make a wired-through field `required`, never optional.** AA1's mask had to cross five tiers, and
+  `required` on the params record immediately caught a sixth the plan had missed (`ScoredPropertyRow`
+  forwarded `PropSize` but not the mask — the same dropped-field shape, one line further down the
+  same file). Optional would have silently kept the bug on that path.
+- **Negative-control ONE change at a time.** Breaking all three freeze fixes at once produced output
+  that could not be read — one break made an unrelated case fail for its own reason. Separately:
+  AA1→4 failures, AA2→11, AA3→6, all detected. The same run exposed the harness aborting on its first
+  failure and hiding every later case.
+- **When no test target compiles the file, measure the behaviour instead of arguing about it.**
+  Nothing compiles `Frieren.cpp`, so AB2's async property was measured: 2.3 ms to return with the fix
+  versus 3486 ms with the spawn reverted (`tools/probe_autostart_async.py`). Two reusable pieces —
+  a Lua interpreter can execute the CE helpers against stubbed globals
+  (`scripts/tests/freeze_helper_test.lua`), and Python `ctypes` can load the shipped DLL, time an
+  export and read a data export. **Do not write that probe in PowerShell**: AMSI blocks a
+  `LoadLibrary`/`GetProcAddress` P/Invoke script as malicious content.
+
 -----
 
 ## 3. Traps in our own stack
@@ -453,6 +479,17 @@ hardcode `+0x3C` or any "+8 from ElementSize" form.
 > **And a probe beats both.** `celua.txt` has advertised a capability that does not exist *and* denied
 > one that works (see the `getSettings()` entry below, where three rounds of being wrong were each
 > settled by probing, not by re-reading).
+>
+> **For CE's *plugin* API, read the Pascal, not the header.** `ce_InjectDLL` is the worked example
+> (`pluginexports.pas:622-640` + `CEFuncProc.pas:1050-1051`, `1391-1396`): it returns `false` only if
+> an exception *escapes*, and CE catches one of the three it can raise. So it returns **true** on
+> "Failed injecting the DLL" (caught internally, falls back to `forceLoadModule`) and **false** on the
+> >10 s timeout (a plain `Exception`) and on "Failed executing the function of the dll"
+> (`EInjectDLLFunctionFailure` — a **sibling** of `EInjectError`, not a subclass, so
+> `on e:EInjectError` misses it). The BOOL is therefore *inverted for the common cases*, and a UI that
+> trusted it told users to check that the target is 64-bit while the DLL was loaded and running
+> (audit #5 AB2). **Where CE hands back an ambiguous status, prefer something you can observe** — the
+> plugin now re-walks the target's module list instead.
 >
 > **CE's Lua has no `bAnd` / `bOr` / `bNot`.** Single-bit set/clear is done with pure arithmetic
 > (`math.floor(b / mask) % 2` to test, `b + mask` / `b - mask` to set/clear), which is also version-
