@@ -1444,6 +1444,27 @@ This is the one verification in the register that needs **no game at all**.
    still get its poller. Only the executable leaf is tested, and there is a unit test for it.
 
 
+### ⬜ NEW 2026-08-15 — 🌍 Locate-in-GWorld on a game where the AOB scan does NOT resolve &GWorld (audit #5 AE10, build 2961)
+
+The 🌍 buttons were gated on the client `IsGWorldAvailable` flag, which is really *"the AOB scan
+produced a &GWorld slot address"* — not *"a live UWorld exists"*. The DLL has world-recovery
+fallbacks that work when that scan did not, so the gate **disabled the button on games where locate
+worked**. All 19 gates are gone and the flag is deleted; the DLL now decides.
+
+**The payoff case is a game where GWorld did NOT resolve by AOB** — the Pointers panel shows no
+GWorld address, or the game runs in proxy mode (TQ2 is the recorded example). Nothing in the test
+suite can reach this.
+
+1. On such a game, the per-row **🌍** buttons must now be **enabled** in Instance Finder, Interesting
+   Functions, Interesting Properties, Detect Stats, Class Pivot, Snapshot (Diff + Group) and SPC
+   Query. Before this build they were greyed out with no explanation.
+2. Click one. **Success = a path is found, or a clear "no path"/"invalid" message** from the DLL.
+   Silence is a failure — the whole point is that a click now says something either way.
+3. **Then the negative case**: on a game with genuinely no live UWorld (main menu before a level
+   loads), the click must report the DLL's invalid/no-path status rather than appearing to work.
+4. Regression check on a normal game where GWorld *does* resolve: the 🌍 handoffs still behave as
+   before — this change should be invisible there.
+
 ### ⬜ NEW 2026-08-15 — keep a freeze running across deaths/respawns (audit #5 AA2/AA3, build 2926)
 
 The freeze tick used to write to cached pointers guarded only by "is qword 0 non-zero", which a

@@ -95,7 +95,6 @@ public partial class ClassPivotViewModel : ViewModelBase
     [ObservableProperty] private PivotResultRow? _selectedResult;
     /// <summary>GWorld availability (gates the result 🌍 Locate button; ⚙ Engine is not
     /// GWorld-gated). Set from the engine state on connect.</summary>
-    [ObservableProperty] private bool _isGWorldAvailable;
     /// <summary>Client-side substring filter over the results grid (key + values).</summary>
     [ObservableProperty] private string _resultFilter = "";
 
@@ -164,16 +163,16 @@ public partial class ClassPivotViewModel : ViewModelBase
 
     /// <summary>A result row is selected, so its representative object can be located.</summary>
     public bool CanLocateResult => SelectedResult != null;
-    /// <summary>…and GWorld is up (gates the 🌍 button; ⚙ Engine is not GWorld-gated).</summary>
-    public bool CanLocateResultInGWorld => SelectedResult != null && IsGWorldAvailable;
+    /// <summary>Same precondition as <see cref="CanLocateResult"/>. NOT gated on the client
+    /// IsGWorldAvailable flag: the DLL is the source of truth for GWorld, and a stale/false
+    /// flag disabled this button on games where GWorld WAS resolved (audit #5 AE10).</summary>
+    public bool CanLocateResultInGWorld => SelectedResult != null;
 
     partial void OnSelectedResultChanged(PivotResultRow? value)
     {
         OnPropertyChanged(nameof(CanLocateResult));
         OnPropertyChanged(nameof(CanLocateResultInGWorld));
     }
-    partial void OnIsGWorldAvailableChanged(bool value) =>
-        OnPropertyChanged(nameof(CanLocateResultInGWorld));
     partial void OnResultFilterChanged(string value)
     {
         ApplyResultFilter();
@@ -225,7 +224,6 @@ public partial class ClassPivotViewModel : ViewModelBase
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
-        IsGWorldAvailable = state.HasGWorld;
         _store.SetActiveGame(state.PeHash);
         LoadDenylistFromStore();
         // A new connection invalidates any DataTable list/rows from a prior game.
@@ -1135,7 +1133,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     [RelayCommand]
     private void LocateResultInGWorld(PivotResultRow? row)
     {
-        if (row == null || string.IsNullOrEmpty(row.ObjAddr) || !IsGWorldAvailable) return;
+        if (row == null || string.IsNullOrEmpty(row.ObjAddr)) return;
         LocateInGWorld?.Invoke(row.ObjAddr);
     }
 

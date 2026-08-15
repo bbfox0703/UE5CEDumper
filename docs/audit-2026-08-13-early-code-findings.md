@@ -1602,7 +1602,7 @@ finders did not over-rate anything. Three MEDs re-derived by hand.
 | **AE7** | MED | `ProxyDeployViewModel.cs:1233` (UpdateAllAsync) | UpdateAllAsync iterates the live Games ObservableCollection across awaits while a concurrent scan can Games.Clear() it - and the method has no catch, so the tally is never reported **[2 lenses]** | S / low |
 | **AE8** | MED | `ValueSearchViewModel.cs:752` (FirstScanAsync / NextScanAsync) | The DiagnosticsProbe is opened BEFORE the input validation, so every rejected click costs two get_diagnostics round-trips and logs a "Value Scan (First)" measurement for a scan that never ran | S / low |
 | **AE9** | MED | `ValueSearchViewModel.cs:906` (NewScanAsync / GroupNewScanAsync) | New Scan resets the internal sort key but not the bound Sort picker, and re-selecting the option the picker already shows is a silent no-op | S / low |
-| **AE10** | MED | `ValueSearchViewModel.cs:951` (ValueSearchViewModel.IsGWorldAvailable) | The "stop gating Locate-in-GWorld on the client IsGWorldAvailable flag" fix is applied at Value Search only — **7** sibling VMs still gate on it, at 19 sites: 14 C# + 5 XAML (recounted 2026-08-15; the earlier "9" counted `LiveWalkerViewModel`'s write-only dead flag and `MainWindowViewModel`'s propagation assignments as gates) | M / low |
+| **AE10** ✅ | MED | `ValueSearchViewModel.cs:951` (ValueSearchViewModel.IsGWorldAvailable) | The "stop gating Locate-in-GWorld on the client IsGWorldAvailable flag" fix is applied at Value Search only — **7** sibling VMs still gate on it, at 19 sites: 14 C# + 5 XAML (recounted 2026-08-15; the earlier "9" counted `LiveWalkerViewModel`'s write-only dead flag and `MainWindowViewModel`'s propagation assignments as gates) | M / low |
 | **AE11** | LOW | `AddressHelper.cs:41` (AddressHelper.FormatAddress (AddressFormat.Mod) | ModuleOffset formats a heap address as a wrapped RVA with no in-module check, producing a module-relative address that breaks on relaunch | S / low |
 | **AE12** | LOW | `IDumpService.cs:264` (IDumpService.BeginValueScanAsync) | Three doc comments assert native (non-UPROPERTY) fields are unreachable — 18 lines above the `nativeC` parameter that reaches them | S / low |
 | **AE13** | LOW | `ValueScanModels.cs:462` (GroupScanBeginResult) | The group scan's per-slot leaf-cap truncation is computed by the DLL and only LOGGED — no wire key, so no DTO can carry it | M / low |
@@ -1808,7 +1808,7 @@ second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside t
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **AC1** | MED | `ProxyDeployService.cs:916` (ProxyDeployService.DeployAsync) | A persisted global "Force Overwrite" silently destroys a third party's DLL that the grid is simultaneously naming on screen | S / low |
-| **AC2** | MED | `StructReturnDecoder.cs:55` (StructReturnDecoder.Decode / StructReturnDecoder.C) | Audit #5's own Y7 fix (ResolveTrustedLayout) is applied at **1 of 4 `GetLayout` call sites** (recounted 2026-08-15; unguarded: `InvokeParamDialog.cs:693`, `StructReturnDecoder.cs:55` + `:79`) — the invoke dialog refuses a size-contradicted layout for the INPUT boxes and accepts it for the RESULT grid **[2 lenses]** | S / low |
+| **AC2** ✅ | MED | `StructReturnDecoder.cs:55` (StructReturnDecoder.Decode / StructReturnDecoder.C) | Audit #5's own Y7 fix (ResolveTrustedLayout) is applied at **1 of 4 `GetLayout` call sites** (recounted 2026-08-15; unguarded: `InvokeParamDialog.cs:693`, `StructReturnDecoder.cs:55` + `:79`) — the invoke dialog refuses a size-contradicted layout for the INPUT boxes and accepts it for the RESULT grid **[2 lenses]** | S / low |
 | **AC3** | LOW | `AobMakerBridgeService.cs:470` (AobMakerBridgeService.ReconnectAsync) | ReconnectAsync's bare `catch` swallows every connect failure with no logging, so all seven "AOBMaker not connected" outcomes reach the user with zero diagnostics | S / low |
 | **AC4** | LOW | `AobUsageService.cs:121` (AobUsageService.LoadFileAsync) | A corrupt usage file is silently replaced with an empty one, wiping every other game's cached scan record — while the DELIBERATE reset of the same file keeps ten numbered backups | S / low |
 | **AC5** | LOW | `AobUsageService.cs:124` (AobUsageService.LoadFileAsync / RecordScanAsync) | A corrupt cache file is answered by writing a one-game file over it — every OTHER game's user-set UE-version override and invoke timeout are destroyed, with no backup, from a Warn nobody reads | S / low |
@@ -2573,9 +2573,14 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**232 of 272 findings are still open** (40 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 72 MED ·
+**230 of 272 findings are still open** (42 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 70 MED ·
 133 LOW · 27 INFO**.
+
+> **BOTH named families are now closed** apart from the parked Y16 — the width family (b2950) and
+> root cause #4 (b2961). What remains in MED is no longer family-grouped; pick by segment or by
+> subsystem, and keep applying the sibling grep at fix time (it found two new occurrences in these
+> two batches alone).
 
 > **The width family is CLOSED** (build 2950) apart from the parked Y16 — see the family block below,
 > which also records one refuted lead and one new sibling found at fix time. Fixed HIGHs: **11 of 11** (V1, W1, W2, Y1, AB1, AD1, AD2, AA1, AA2, AA3, AB2).
@@ -2626,10 +2631,10 @@ block, §2.
 | Segment | HIGH | MED | LOW | INFO | Open |
 |---------|-----:|----:|----:|-----:|-----:|
 | S1 early Lua scripts | – | 17 | 14 | 2 | **33** (AA1/AA2/AA3 fixed b2922-2926) |
-| T1c VMs + Core + Models | – | 9 | 15 | 4 | **28** (AE1 fixed b2950) |
+| T1c VMs + Core + Models | – | 8 | 15 | 4 | **27** (AE1, AE10 fixed b2950/2961) |
 | T1b DLL headers + C++ tests | – | 4 | 15 | 6 | **25** (AD1+AD2 fixed b2914) |
 | T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
-| T1a Radar + entry points | – | 5 | 12 | 4 | **21** (AB2 fixed b2932) |
+| T1a Radar + entry points | – | 4 | 12 | 4 | **20** (AB2 b2932, AC2 b2961) |
 | U5 remaining VMs / Models / Core | – | 3 | 13 | 1 | **17** |
 | T1d UI Services | – | 2 | 10 | 5 | **17** |
 | U3 Dump services + MainWindow VM | – | 1 | 9 | 0 | **10** |
@@ -2647,7 +2652,7 @@ block, §2.
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | – | **72** | **133** | **27** | **232** |
+| **TOTAL** | – | **70** | **133** | **27** | **230** |
 
 ### Fix order recommended
 
@@ -2697,15 +2702,40 @@ The two recurring families are both greppable. Status as of the 2026-08-15 doubl
   Y5 fixed it in `ParseByteOrSByte` only, leaving every unsigned path with the original bug. It
   surfaced because a test asserted `EffectiveIntWidth` against how many bytes `WriteParam` really
   touches — i.e. it was caught by testing the SEAM, not the helper (§1.3).
-- **Root cause #4 — a fix applied at only some of its sites.** Seven audited occurrences (V2, W4/W6,
-  X1, Y16, AC2, AE10), of which **four are fixed** (V2 ✅, W4 ✅, W6 ✅, X1 ✅ — all verified in-tree
-  2026-08-15). Still open: **AC2** (recounted: `ResolveTrustedLayout` guards **1 of 4
-  `KnownStructLayouts.GetLayout` call sites** — the doc's earlier "1 of 5 consumers" counted two
-  non-consumers, and "1 of 3 sites" missed `InvokeParamDialog.cs:693`, the same file as the fix),
-  **AE10** (recounted: **7** sibling VMs still gate on `IsGWorldAvailable` at 19 sites — 14 C# + 5
-  XAML — not 9; `LiveWalkerViewModel`'s flag is write-only dead, not a gate), and **Y16 (parked)**.
-  The rule "grep for siblings before closing a fix" has been in §3b since the fourth occurrence and
-  three more have appeared since — so it is not being applied *at fix time*. Make it part of the fix.
+- **Root cause #4 — ✅ CLOSED except the parked member** (build 2961). Eight occurrences: V2 ✅,
+  W4 ✅, W6 ✅, X1 ✅, **AC2 ✅ b2961**, **AE10 ✅ b2961**, the `ParseULong` sibling ✅ b2950, and
+  **Y16 — PARKED, ask first**.
+
+  **AC2** — `ResolveTrustedLayout` (the audit's OWN Y7 fix) guarded 1 of 4
+  `KnownStructLayouts.GetLayout` call sites. The reason it could not spread is structural and worth
+  keeping: **Y7 wrote the predicate as a private helper inside `InvokeParamDialog`, a View**, so the
+  two consumers in `StructReturnDecoder` (a Service) could not reach it even in principle. The fix
+  moves it to `KnownStructLayouts.GetTrustedLayout`, beside the table it guards — **a predicate that
+  guards a table belongs with the table**, and then all four sites reach one implementation.
+
+  **AE10** — 19 gate sites (14 C# + 5 XAML) across 7 VMs, all removed, and then the flag itself
+  deleted from **9** ViewModels. Removing the gates alone would have left `IsGWorldAvailable`
+  write-only in nine places — the exact dead-flag shape this register already noted in
+  `LiveWalkerViewModel` — and a flag nobody reads is an invitation to re-gate on it. Deleting it
+  makes the mistake unavailable. `EngineState.HasGWorld` remains for anything that wants to *display*
+  GWorld status; what must not return is gating an ACTION on it.
+
+  **The premise, verified rather than assumed** (two tests argued the other way and one of them
+  argued well): `IsGWorldAvailable` comes from `EngineState.HasGWorld`, whose own definition is
+  *"`GWorldAddr` is non-empty and non-zero"* — i.e. **"the AOB scan produced a &GWorld slot
+  address"**, NOT "a live UWorld exists". The DLL has world-recovery fallbacks that work when that
+  scan did not, which is why the button was dead on games where locate worked (TQ2, proxy mode). It
+  is a **cheap proxy signal substituted for a predicate the DLL already computes correctly** —
+  audit #4's recorded root cause, and the reason the counter-argument in
+  `InterestingPropertiesViewModelTests` ("a property is a class-level definition, so without a
+  resolved GWorld there is nothing to locate against") is sound in its conclusion and wrong in its
+  premise.
+
+  ⚠ **Two existing tests were pinning the defect**, one in each finding — `CanDecode_KnownStruct_
+  ReturnsTrue` asserted a UE5 layout for a 12-byte param, and `LocateResultInGWorld_RaisesEvent_
+  OnlyWhenGWorldAvailable` asserted the gate. **This is how both survived: the sibling was fixed, a
+  green test kept saying the other site was fine.** When a fix is under-applied, expect its siblings
+  to have tests defending them, and read those tests as evidence about the BELIEF, not the code.
 
 **The single most productive technique was the comment sweep** — grep for a comment admitting a
 limitation or asserting an impossibility, then check it. **6 for 6**, and it produced the lead

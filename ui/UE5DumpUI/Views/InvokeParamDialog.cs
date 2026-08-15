@@ -703,9 +703,12 @@ public sealed class InvokeParamDialog : Window
                 {
                     // Use struct-aware decoding for known structs, then dynamic, then scalar
                     string decoded;
-                    var structLayout = (p.TypeName == "StructProperty" && !string.IsNullOrEmpty(p.StructName))
-                        ? KnownStructLayouts.GetLayout(p.StructName, _ueVersion)
-                        : null;
+                    // Trusted form: the same size cross-check the INPUT boxes have
+                    // used since Y7. Decoding the post-call buffer on a
+                    // size-contradicted layout renames and re-offsets every value
+                    // the user reads back (audit #5 AC2).
+                    var structLayout = ResolveTrustedLayout(
+                        p.TypeName, p.StructName, p.Size, _ueVersion);
                     if (structLayout != null)
                         decoded = DecodeStructParamValue(bytes, p, structLayout);
                     else if (p.TypeName == "StructProperty" && p.StructFields.Count > 0)
@@ -1087,30 +1090,21 @@ public sealed class InvokeParamDialog : Window
     }
 
     /// <summary>
-    /// The hardcoded layout for a struct param, but ONLY when it agrees with the size the engine
-    /// reported for that param.
-    /// <para>
-    /// The engine's size is ground truth; the layout is a guess keyed on a DETECTED UE version.
-    /// When they disagree the guess is wrong -- a mis-detected version (LWC turns FVector's
-    /// floats into doubles, doubling every offset) or a licensee fork with a modified struct,
-    /// both of which this project has met. Expanding on a wrong layout puts every sub-field
-    /// editor at a wrong offset and writes the user's numbers into the wrong bytes of a live
-    /// call, with nothing on screen saying so. Returning null falls the caller through to the
-    /// DLL-discovered fields, which came from the actual UScriptStruct (audit #5 Y7).
-    /// </para>
+    /// The hardcoded layout for a struct param, but ONLY when it agrees with the engine-reported
+    /// size — plus this view's "is it even a StructProperty" test.
+    ///
+    /// <para><b>The rule itself now lives on <see cref="KnownStructLayouts.GetTrustedLayout"/></b>,
+    /// beside the table it guards. It was written here as a private helper (Y7), which meant the
+    /// two consumers in <c>StructReturnDecoder</c> structurally could not reach it — a Service
+    /// cannot depend on a View — so this dialog refused a size-contradicted layout for its INPUT
+    /// boxes and accepted the same layout for the RESULT grid. That is audit #5 AC2. The name is
+    /// kept so existing callers and tests do not churn; the behaviour is defined in one place.</para>
     /// </summary>
     internal static KnownStructLayouts.StructLayout? ResolveTrustedLayout(
         string typeName, string? structName, int engineSize, int ueVersion)
     {
-        if (typeName != "StructProperty" || string.IsNullOrEmpty(structName)) return null;
-
-        var layout = KnownStructLayouts.GetLayout(structName, ueVersion);
-        if (layout == null) return null;
-
-        // engineSize <= 0 means the DLL did not report one -- nothing to contradict the guess.
-        if (engineSize > 0 && layout.TotalSize != engineSize) return null;
-
-        return layout;
+        if (typeName != "StructProperty") return null;
+        return KnownStructLayouts.GetTrustedLayout(structName, engineSize, ueVersion);
     }
 
     internal static byte[] HexToBytes(string hex)

@@ -684,9 +684,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 LiveWalker.SetEngineState(state);
                 InstanceFinder.SetEngineState(state);
                 ValueSearch.SetEngineState(state);
-                InterestingFunctions.IsGWorldAvailable = state.HasGWorld;
-                InterestingProperties.IsGWorldAvailable = state.HasGWorld;
-                DetectStats.IsGWorldAvailable = state.HasGWorld;
                 Snapshot?.SetEngineState(state);
                 Spc?.SetEngineState(state);
                 Pivot?.SetEngineState(state);
@@ -2608,9 +2605,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         LiveWalker.LoadBookmarksForGame(state.PeHash);
         InstanceFinder.SetEngineState(state);
         ValueSearch.SetEngineState(state);
-        InterestingFunctions.IsGWorldAvailable = state.HasGWorld;
-        InterestingProperties.IsGWorldAvailable = state.HasGWorld;
-        DetectStats.IsGWorldAvailable = state.HasGWorld;
         Teleport.SetConnected(true);   // refresh markers once the DLL is scanned
         Teleport.SetEngineState(state);
         Teleport.LoadCoordLibraryForGame(state.ModuleName);

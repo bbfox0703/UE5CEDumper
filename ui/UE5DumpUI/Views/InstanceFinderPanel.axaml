@@ -148,7 +148,6 @@
                     <Button Content="{StaticResource str.InstanceFinder.LocateGWorldShort}"
                             Command="{Binding $parent[DataGrid].((vm:InstanceFinderViewModel)DataContext).LocateContainerOwnerInGWorldCommand}"
                             CommandParameter="{Binding}"
-                            IsEnabled="{Binding $parent[DataGrid].((vm:InstanceFinderViewModel)DataContext).IsGWorldAvailable}"
                             ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.LocateGWorldContainer}"
                             Foreground="#C586C0" Background="Transparent"
                             BorderThickness="1" BorderBrush="#C586C0"
@@ -333,7 +332,6 @@
                   Padding="8,4"/>
           <Button Content="{StaticResource str.InstanceFinder.LocateGWorld}"
                   Command="{Binding LocateSelectedInGWorldCommand}"
-                  IsEnabled="{Binding IsGWorldAvailable}"
                   ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.LocateGWorld}"
                   Padding="8,4"/>
           <!-- Locate in GameEngine: kept as a compact icon button (not big text)

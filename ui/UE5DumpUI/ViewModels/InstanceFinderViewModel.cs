@@ -183,7 +183,6 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     public event Action<string>? NavigateToRelatedObjects;
 
     /// <summary>True when GWorld is available — gates the "Locate in GWorld" button.</summary>
-    [ObservableProperty] private bool _isGWorldAvailable;
 
     /// <summary>Per-container element probe cap for the recursive deep container
     /// scan (the find_by_address fallback that locates values in deeply-nested,
@@ -331,7 +330,6 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
-        IsGWorldAvailable = state?.HasGWorld ?? false;
     }
 
     /// <summary>Cross-tab handoff entry point (the per-row "inst" buttons on
@@ -911,7 +909,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void LocateSelectedInGWorld()
     {
-        if (SelectedInstance == null || !IsGWorldAvailable) return;
+        if (SelectedInstance == null) return;
         LocateInGWorld?.Invoke(SelectedInstance.Address);
     }
 
@@ -939,7 +937,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void LocateContainerOwnerInGWorld(ContainerMatch? match)
     {
-        if (match == null || !IsGWorldAvailable || string.IsNullOrEmpty(match.OwnerAddress)) return;
+        if (match == null || string.IsNullOrEmpty(match.OwnerAddress)) return;
         // Hand off the whole match — the Live Walker reaches the owner via the
         // GWorld path and drills the full container chain (outermost → element →
         // … → deepest value), which covers both 1-level struct-element values

@@ -204,7 +204,6 @@
                 <Button Content="{StaticResource str.IF.LocateGWorld}"
                         Command="{Binding $parent[UserControl].((vm:InterestingFunctionsViewModel)DataContext).LocateRowInGWorldCommand}"
                         CommandParameter="{Binding}"
-                        IsEnabled="{Binding $parent[UserControl].((vm:InterestingFunctionsViewModel)DataContext).IsGWorldAvailable}"
                         ToolTip.Tip="{StaticResource str.Tip.IF.LocateGWorld}"
                         Foreground="#C586C0" Background="Transparent"
                         BorderThickness="1" BorderBrush="#C586C0"

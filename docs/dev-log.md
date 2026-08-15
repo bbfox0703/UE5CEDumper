@@ -22,6 +22,77 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - Root cause #4, closed: a struct-layout guard that a Service could not reach, and a GWorld gate that disabled a working button (build 2961)
+
+**Audit #5 findings AC2 + AE10** — the second and last named family. Both were *the audit's own
+earlier fixes applied at only some of their sites*.
+
+### AC2 — a predicate that guarded a table, but did not live with the table
+
+Y7 added `ResolveTrustedLayout`: use the hardcoded struct layout **only when it agrees with the size
+the engine reported**, because the layout is a guess keyed on a *detected* UE version (LWC turns
+FVector's floats into doubles and doubles every offset) while the engine's size is ground truth.
+
+It was written as a private helper inside `InvokeParamDialog` — **a View**. The two other consumers
+live in `StructReturnDecoder` — **a Service**, which cannot depend on a View. So the guard could not
+spread even in principle, and the invoke dialog **refused a size-contradicted layout for its INPUT
+boxes while accepting the very same layout for the RESULT grid**. Four call sites, one guarded.
+
+Fixed by moving the rule to `KnownStructLayouts.GetTrustedLayout`, beside the table it guards, with
+all four sites routed through it (`ResolveTrustedLayout` keeps its name and delegates, so callers and
+tests do not churn). **A predicate that guards a table belongs with the table** — had Y7 put it there,
+AC2 could not have existed.
+
+### AE10 — a cheap proxy signal in front of a predicate the DLL already computes
+
+Locate-in-GWorld was gated on the client-side `IsGWorldAvailable` flag at **19 sites across 7
+ViewModels** (14 C# + 5 XAML `IsEnabled` bindings). Value Search had been decoupled from it; nothing
+else was.
+
+**The flag is not what its name says.** It comes from `EngineState.HasGWorld`, whose definition is
+`GWorldAddr` non-empty and non-zero — i.e. *"the AOB scan produced a &GWorld **slot address**"*, not
+*"a live UWorld exists"*. The DLL has world-recovery fallbacks that work when that scan did not, so
+the gate **disabled the button on games where locate worked fine** (TQ2, proxy mode). Meanwhile
+`find_path_from_gworld` returns an explicit invalid/no-path status when there really is no live
+UWorld, and the locate flow surfaces it. This is audit #4's recorded root cause verbatim: *a cheap
+proxy signal substituted for a predicate a sibling in this repo already computes correctly*.
+
+All 19 gates removed. Then the flag itself **deleted from 9 ViewModels** — removing only the gates
+would have left it write-only in nine places, which is the dead-flag shape this audit already flagged
+in `LiveWalkerViewModel`, and a flag nobody reads is an invitation to re-gate on it. Deleting it makes
+the mistake unavailable. `EngineState.HasGWorld` remains for anything that wants to *display* GWorld
+status; what must not return is gating an **action** on it.
+
+Each edit is easy to check because in every one of those files the **engine-rooted counterpart sits a
+few lines below and was already un-gated**, with a comment explaining why — so each fix makes the
+GWorld command match its own sibling.
+
+### Two existing tests were pinning the defects — one of them argued for it
+
+`CanDecode_KnownStruct_ReturnsTrue` asserted that a **12-byte** FVector param decodes with the
+**24-byte** UE5 layout. `LocateResultInGWorld_RaisesEvent_OnlyWhenGWorldAvailable` asserted the gate.
+And `InterestingPropertiesViewModelTests` carried a written justification: *"a property is a
+class-level definition, so without a resolved GWorld there is nothing to locate against."*
+
+That argument is sound in its conclusion and wrong in its premise — which is why it was checked
+against `EngineState.HasGWorld`'s definition rather than overridden. **This is how both findings
+survived: the sibling got fixed, and a green test kept saying the other site was fine.** When a fix
+turns out to be under-applied, expect its siblings to have tests defending them, and read those tests
+as evidence about the *belief*, not about the code.
+
+All three were rewritten into regression tests that state the reasoning.
+
+### Verified
+
+3820 → **3824** tests, 0 failures. Negative control, one break at a time, each revert compiling:
+the command guard restored → 2 failures; the `Can*` property gate restored → 1.
+
+**Not verified in-game.** The payoff case is precisely a game where the AOB scan does not resolve
+&GWorld but locate still works (TQ2, proxy mode) — the button should now be live there. Nothing here
+can prove that without one.
+
+-----
+
 ## 2026-08-15 - The width family, closed: out-of-range values are refused instead of silently masked (build 2950)
 
 **Audit #5 T1c finding AE1**, plus the two double-check leads that survived re-derivation and one

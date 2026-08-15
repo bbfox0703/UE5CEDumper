@@ -2086,7 +2086,7 @@ public class ValueSearchTests
         Assert.True(begin.crossObject);
     }
 
-    // ---- Locate-in-GWorld handoff: decoupled from the IsGWorldAvailable flag ----
+    // ---- Locate-in-GWorld handoff: the DLL decides, not the client ----
     // (Gating the button on a C# flag that read false on TQ2 — proxy mode — silently
     // disabled it even though GWorld was resolved; the DLL path search is the truth.)
 
@@ -2094,7 +2094,8 @@ public class ValueSearchTests
     public void GroupLocate_InvokesEvenWhenGWorldFlagFalse()
     {
         var (vm, _) = MakeVm();
-        Assert.False(vm.IsGWorldAvailable);          // no engine state set -> flag is false
+        // No engine state set at all — and there is no longer a client-side GWorld
+        // flag to consult, so the handoff cannot be pre-refused (audit #5 AE10).
         string? located = null;
         vm.LocateInGWorld += (addr, _, _) => located = addr;
 

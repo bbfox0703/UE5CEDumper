@@ -672,23 +672,41 @@ public class ClassPivotViewModelTests : IDisposable
     }
 
     [Fact]
-    public void LocateResultInGWorld_RaisesEvent_OnlyWhenGWorldAvailable()
+    public void LocateResultInGWorld_RaisesEvent_RegardlessOfTheClientGWorldFlag()
     {
+        // audit #5 AE10 — this used to assert the command was gated off when
+        // IsGWorldAvailable was false. That flag is EngineState.HasGWorld, i.e. "the
+        // AOB scan produced a non-zero &GWorld slot address", NOT "a live UWorld
+        // exists": the DLL has world-recovery fallbacks that work when the scan did
+        // not, so the gate disabled the button on games where locate worked. The DLL
+        // answers authoritatively; the client must not pre-refuse.
         var vm = NewVm();
         string? hit = null;
         vm.LocateInGWorld += a => hit = a;
         var row = new PivotResultRow { ObjAddr = "0xABC", KeyValue = "K" };
-
-        vm.IsGWorldAvailable = false;
-        vm.LocateResultInGWorldCommand.Execute(row);
-        Assert.Null(hit);                         // gated off when GWorld is down
-        Assert.False(vm.CanLocateResultInGWorld);
-
-        vm.IsGWorldAvailable = true;
         vm.SelectedResult = row;
-        Assert.True(vm.CanLocateResultInGWorld);
+
+        Assert.True(vm.CanLocateResultInGWorld);   // selection is the only precondition
         vm.LocateResultInGWorldCommand.Execute(row);
         Assert.Equal("0xABC", hit);
+
+        hit = null;
+        vm.LocateResultInGWorldCommand.Execute(row);
+        Assert.Equal("0xABC", hit);                // and repeatable
+    }
+
+    [Fact]
+    public void LocateResultInGWorld_StillRequiresAnAddress()
+    {
+        // Removing the GWorld gate must not remove the REAL precondition.
+        var vm = NewVm();
+        string? hit = null;
+        vm.LocateInGWorld += a => hit = a;
+
+        vm.LocateResultInGWorldCommand.Execute(new PivotResultRow { ObjAddr = "", KeyValue = "K" });
+        Assert.Null(hit);
+        vm.LocateResultInGWorldCommand.Execute(null);
+        Assert.Null(hit);
     }
 
     [Fact]
@@ -697,7 +715,6 @@ public class ClassPivotViewModelTests : IDisposable
         var vm = NewVm();
         string? hit = null;
         vm.LocateInGameEngine += a => hit = a;
-        vm.IsGWorldAvailable = false;             // engine root is independent of GWorld
         vm.LocateResultInGameEngineCommand.Execute(new PivotResultRow { ObjAddr = "0xDEF" });
         Assert.Equal("0xDEF", hit);
     }

@@ -94,9 +94,6 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     /// rooted at the live UGameEngine). Payload = class name.</summary>
     public event Action<string>? LocateInGameEngine;
 
-    /// <summary>True when GWorld is available — gates the per-row "Locate in GWorld"
-    /// button (set by MainWindow from the engine state's HasGWorld flag).</summary>
-    [ObservableProperty] private bool _isGWorldAvailable;
 
     /// <summary>Raised to pivot the selected property in the experimental Class
     /// Pivot tab (className, propName). C5 right-click handoff.</summary>
@@ -472,7 +469,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     [RelayCommand]
     private void LocateRowInGWorld(ScoredPropertyRow? row)
     {
-        if (row == null || !IsGWorldAvailable || string.IsNullOrEmpty(row.ClassName)) return;
+        if (row == null || string.IsNullOrEmpty(row.ClassName)) return;
         LocateInGWorld?.Invoke(row.ClassName);
     }
 

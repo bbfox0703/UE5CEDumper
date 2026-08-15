@@ -69,8 +69,6 @@ public partial class DetectStatsViewModel : ViewModelBase
     /// <summary>Opt-in behavioral signal: cross-reference the two most-recent
     /// snapshots and boost fields that decreased (capture → take damage → capture).</summary>
     [ObservableProperty] private bool _useSnapshotSignal;
-    /// <summary>Gates the per-row 🌍 handoff (set by MainWindow from HasGWorld).</summary>
-    [ObservableProperty] private bool _isGWorldAvailable;
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the
     /// filter box's AutoCompleteBox suggestions — see <see cref="KeywordSearchMemory"/>.</summary>
@@ -348,7 +346,7 @@ public partial class DetectStatsViewModel : ViewModelBase
     [RelayCommand]
     private void LocateRowInGWorld(DetectedStat? row)
     {
-        if (row == null || !IsGWorldAvailable || string.IsNullOrEmpty(row.ClassName)) return;
+        if (row == null || string.IsNullOrEmpty(row.ClassName)) return;
         LocateInGWorld?.Invoke(row.ClassName);
     }
 

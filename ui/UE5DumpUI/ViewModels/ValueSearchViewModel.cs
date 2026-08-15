@@ -695,7 +695,6 @@ public partial class ValueSearchViewModel : ViewModelBase
     public event Action<string>? NavigateToRelatedObjects;
 
     /// <summary>True when GWorld is available — gates the per-row "Locate in GWorld" button.</summary>
-    [ObservableProperty] private bool _isGWorldAvailable;
 
     /// <summary>Server-side class-noise filter for SINGLE mode. Unlike the
     /// client-side panels, the candidate set is windowed in the DLL — so the
@@ -728,7 +727,6 @@ public partial class ValueSearchViewModel : ViewModelBase
 
     public void SetEngineState(EngineState state)
     {
-        IsGWorldAvailable = state?.HasGWorld ?? false;
     }
 
     // Shared auto-detect provider for both class filters: classify the facet

@@ -87,7 +87,6 @@ public partial class SnapshotViewModel : ViewModelBase
     [ObservableProperty] private bool   _isEstimating;
     [ObservableProperty] private bool   _isCapturing;
     [ObservableProperty] private bool   _isDeleting;
-    [ObservableProperty] private bool   _isGWorldAvailable;   // gates the per-row 🌍 button
     [ObservableProperty] private double _progress;          // 0..1
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private SnapshotMeta? _selectedSnapshot;
@@ -237,7 +236,8 @@ public partial class SnapshotViewModel : ViewModelBase
     public bool CanUseDiffRowActions =>
         !string.IsNullOrEmpty(_currentSessionId) && DiffB?.GameSessionId == _currentSessionId;
     /// <summary>As above, additionally requiring GWorld for the 🌍 button.</summary>
-    public bool CanLocateDiffRowInGWorld => CanUseDiffRowActions && IsGWorldAvailable;
+    // NOT gated on the client IsGWorldAvailable flag — see AE10 in ClassPivotViewModel.
+    public bool CanLocateDiffRowInGWorld => CanUseDiffRowActions;
 
     partial void OnDiffAChanged(SnapshotMeta? value)   => OnPropertyChanged(nameof(CanRunDiff));
     partial void OnDiffBChanged(SnapshotMeta? value)
@@ -245,12 +245,6 @@ public partial class SnapshotViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanRunDiff));
         RaiseDiffRowActionGates();
     }
-    partial void OnIsGWorldAvailableChanged(bool value)
-    {
-        OnPropertyChanged(nameof(CanLocateDiffRowInGWorld));
-        OnPropertyChanged(nameof(CanLocateGroupRowInGWorld));
-    }
-
     private void RaiseDiffRowActionGates()
     {
         OnPropertyChanged(nameof(CanUseDiffRowActions));
@@ -455,7 +449,6 @@ public partial class SnapshotViewModel : ViewModelBase
         // the DB just re-scoped to this game; the user re-arms explicitly.
         StopAutoSnapshot();
         _engineState = state;
-        IsGWorldAvailable = state.HasGWorld;   // enable the per-row 🌍 button
         _currentSessionId = state.GameSessionId;   // PeHash-CreationTime; matches capture-time GameSessionId
         RaiseDiffRowActionGates();
         // Scope the store to this game's DB, then load its saved snapshots.
@@ -1375,7 +1368,7 @@ public partial class SnapshotViewModel : ViewModelBase
     [RelayCommand]
     private void LocateRowInGWorld(SnapshotDiffRow? row)
     {
-        if (row == null || !IsGWorldAvailable || string.IsNullOrEmpty(row.ObjAddr)) return;
+        if (row == null || string.IsNullOrEmpty(row.ObjAddr)) return;
         LocateInGWorld?.Invoke(row.ObjAddr, row.PropOffset, row.PropName);
     }
 
