@@ -2718,6 +2718,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // ("which methods use this field?"). Populated during the
                 // field walk regardless of preview.
                 item["field_addr"] = Renge::AddrToStr(m.fieldAddr);
+                // BoolProperty FieldMask — the single bit this bool owns inside
+                // its byte. Populated from the class field walk (not the preview
+                // pass), so it is present whether or not a representative
+                // instance was found. Emitted ONLY when non-zero, and the DLL
+                // only ever sets it after reading FieldSize == 1 with a
+                // single-bit mask — so "present" means "packed bitfield, and the
+                // bit is in the byte at prop_offset". Absent = native bool =
+                // the whole byte belongs to this property.
+                //
+                // Freeze needs this: without it the generated script wrote a
+                // whole byte over a bit-packed bool, clobbering up to 7 siblings
+                // and — when the mask was not 0x01 — never setting the intended
+                // bool at all. (audit #5 AA1)
+                if (m.boolFieldMask != 0)
+                    item["bool_mask"] = m.boolFieldMask;
                 // Deep-mode nested leaf: prop_name carries a dotted path and
                 // there is no class-absolute address. UI gates Copy Offset /
                 // Freeze off this flag and keeps finder + Find Funcs. Omitted
@@ -2810,6 +2825,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     // FProperty* address for find_property_xrefs (set during
                     // the field walk, so available even on this no-preview path).
                     item["field_addr"] = Renge::AddrToStr(m.fieldAddr);
+                    // BoolProperty FieldMask — see the single-query encoder above
+                    // for the full contract. Also set during the field walk, so
+                    // this no-preview path carries it too. (audit #5 AA1)
+                    if (m.boolFieldMask != 0)
+                        item["bool_mask"] = m.boolFieldMask;
                     // Note: preview omitted intentionally — batch path skips
                     // Phase-2 instance scan. Interesting Properties tab
                     // (the only caller) doesn't display previews.

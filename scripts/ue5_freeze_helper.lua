@@ -39,13 +39,20 @@
     valueType          (req) string  see TYPE_WRITERS table below
     value              (req) number  target value to write each tick
                                      -- for 'bool' accepts true/false or 0/1
+    boolMask           opt   number  'bool' only: FBoolProperty FieldMask, one
+                                     of 0x01/0x02/.../0x80. Set it for a PACKED
+                                     bitfield bool (`uint8 bFoo:1`, up to 8 per
+                                     byte) and only that bit is written. OMIT it
+                                     for a native bool -- it owns its whole byte.
+                                     UE5DumpUI fills this in automatically; the
+                                     DLL reports the mask only for packed bools.
     tickIntervalMs     opt   number  default 50  -- 20 writes/sec per instance
     refreshIntervalSec opt   number  default 5   -- rescan instances every 5s
     filter             opt   fn      function(addr) -> bool
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.0'
+    UE5_FREEZE_HELPER_VERSION = '1.1'   -- 1.1 added cfg.boolMask (packed bitfield bools)
 
   =========================================================================
   SAMPLES -- copy/paste into your AA Script's [ENABLE] block, modify in place.
@@ -66,6 +73,18 @@
       propOffset = 0x328,
       valueType  = 'bool',
       value      = false,    -- e.g. bCanBeDamaged = false  (or 0)
+    })
+    h.start()
+
+  ----- SAMPLE 2b: PACKED bitfield bool (shares a byte with siblings) -----
+    -- UE packs `uint8 bFoo:1` bools eight to a byte. Pass the FieldMask and
+    -- only that bit is touched; omit it and the other seven get wiped.
+    local h = freezeProperty({
+      className  = 'PlayerCharacter',
+      propOffset = 0x328,
+      valueType  = 'bool',
+      value      = true,
+      boolMask   = 0x04,     -- this bool owns bit 2 of the byte at 0x328
     })
     h.start()
 
@@ -102,8 +121,13 @@
     -- into CFG, done.
 ]]
 
+-- 1.1: cfg.boolMask -- packed bitfield bools are written bit-wise instead of
+-- stamping the whole byte. A 1.0 helper still loads every generated script
+-- (it just ignores boolMask and keeps the old whole-byte behaviour), and a
+-- 1.1 helper runs every 1.0 script unchanged -- so this is informational,
+-- not a compatibility gate.
 if not UE5_FREEZE_HELPER_VERSION then
-  UE5_FREEZE_HELPER_VERSION = '1.0'
+  UE5_FREEZE_HELPER_VERSION = '1.1'
 end
 
 -- ============================================================
@@ -144,13 +168,60 @@ end
 -- normalised through TYPE_ALIASES before lookup. v1 supports numeric +
 -- bool only; FString / FName / struct fields are out of scope.
 
-local function writeBool(addr, v)
-  -- UE TBoolBase / bitfield-free bool occupies one byte (0 or 1).
-  -- We do NOT support packed bitfield bools (multiple bools sharing
-  -- a byte via MASK/BITMASK). PropertySearch surfaces those as
-  -- BoolProperty too -- generating a freeze script for one will
-  -- overwrite the whole byte, clobbering sibling bools.
-  writeByte(addr, (v == true or v == 1) and 1 or 0)
+-- Packed bitfield bools ARE supported (since the AA1 fix). UE stores a
+-- bool as either:
+--   * a native bool -- one whole byte, 0 or 1; or
+--   * a packed bitfield (`uint8 bFoo:1`) -- up to 8 bools sharing one byte,
+--     each owning a single bit named by the FProperty's FieldMask.
+-- The generated CFG carries `boolMask` for the second kind ONLY, so the
+-- absence of a mask is itself the signal that the whole byte is ours. The
+-- DLL only reports a mask after reading FieldSize == 1, so the bit is always
+-- inside the byte at propOffset -- there is no ByteOffset to apply here.
+--
+-- Before this, EVERY bool freeze wrote a whole byte. On a packed bool that
+-- clobbered up to 7 sibling bools ~16x/sec, and whenever the mask was not
+-- 0x01 it also never set the intended bool (writing 1 sets bit 0), so the
+-- freeze silently did nothing while corrupting its neighbours. (audit #5 AA1)
+-- The eight legal single-bit FieldMask values. An explicit set rather than a
+-- power-of-two test because the domain IS these eight, and it excludes both
+-- values that must never be treated as a bit mask: 0 (no mask reported) and
+-- 0xFF (UE's own native-bool marker -- SetBoolSize writes FieldMask = 255 when
+-- bIsNativeBool). Both of those mean "the whole byte is ours".
+local BOOL_BIT_MASKS = {
+  [1] = true, [2] = true, [4] = true, [8] = true,
+  [16] = true, [32] = true, [64] = true, [128] = true,
+}
+
+local function isPackedBoolMask(mask)
+  return type(mask) == 'number' and BOOL_BIT_MASKS[mask] == true
+end
+
+local function writeBool(addr, v, mask)
+  local on = (v == true or v == 1)
+  if isPackedBoolMask(mask) then
+    -- Read-modify-write the single bit, leaving the siblings untouched.
+    -- Same rule as the DLL's Solitar::ApplyBoolBit and the UI's
+    -- FieldValueConverter.ApplyBoolMask -- three tiers, one rule.
+    --
+    -- Pure arithmetic, no bitwise operators: CE's Lua has no bAnd/bOr/bNot
+    -- and this mirrors StandaloneTrainerScriptGenerator's UE5T_setbit, which
+    -- solved the same problem here first. Writing only on drift is a bonus
+    -- the arithmetic gives for free.
+    local b = readByte(addr)
+    -- A failed read must NOT fall through to the whole-byte write below:
+    -- that is exactly the corruption this branch exists to prevent. Skip
+    -- this tick; the address is re-validated on the next rescan.
+    if not b then return end
+    local isSet = math.floor(b / mask) % 2
+    if on and isSet == 0 then
+      writeByte(addr, b + mask)
+    elseif (not on) and isSet == 1 then
+      writeByte(addr, b - mask)
+    end
+    return
+  end
+  -- Native bool (no mask reported): the whole byte belongs to this property.
+  writeByte(addr, on and 1 or 0)
 end
 
 local TYPE_WRITERS = {
@@ -443,6 +514,9 @@ if not freezeProperty then
       local value  = handle.cfg.value
       local w      = handle._writer
       local cache  = handle._cache
+      -- Only writeBool reads a third argument; every other writer ignores it.
+      -- nil here means "native bool / not a bool" -> whole-byte write.
+      local mask   = handle.cfg.boolMask
       for i = 1, #cache do
         local addr = cache[i]
         -- Liveness guard: if the vtable slot is zero, the instance has
@@ -451,7 +525,7 @@ if not freezeProperty then
         -- required (rescan will drop dead entries soon) but cheap.
         local vt = readQword(addr)
         if vt and vt ~= 0 then
-          w(addr + offset, value)
+          w(addr + offset, value, mask)
         end
       end
     end

@@ -129,6 +129,16 @@ public static class FreezeScriptGenerator
         Line(sb, $"  propOffset         = 0x{p.PropertyOffset:X},");
         Line(sb, $"  valueType          = '{helperType}',");
         Line(sb, $"  value              = {p.ValueLiteral},");
+        // Packed-bitfield bool: emit the FieldMask so the helper does a masked
+        // read-modify-write instead of stamping the whole byte. Emitted ONLY for
+        // a real packed bool — a native bool (mask 0) owns its byte and must keep
+        // the plain whole-byte write, and emitting a mask for it would be wrong
+        // in the other direction. See FreezeScriptParams.BoolFieldMask (AA1).
+        if (helperType == "bool" && IsPackedBoolMask(p.BoolFieldMask))
+        {
+            Line(sb, $"  boolMask           = 0x{p.BoolFieldMask:X2}," +
+                     "  -- packed bitfield: only this bit is written");
+        }
         Line(sb, "  tickIntervalMs     = 50,    -- writes 20x/sec; lower = more CPU");
         Line(sb, "  refreshIntervalSec = 5,     -- re-enum instances every 5s");
         Line(sb, "  -- filter = function(addr) return true end,  -- optional");
@@ -251,6 +261,27 @@ public static class FreezeScriptGenerator
     /// </summary>
     public static bool IsTypeSupported(string ueTypeName)
         => !string.IsNullOrEmpty(MapToHelperType(ueTypeName));
+
+    /// <summary>
+    /// Whether an <c>FBoolProperty</c> FieldMask describes a <b>packed bitfield</b>
+    /// bool — i.e. one that shares its byte with siblings and must be written with a
+    /// masked read-modify-write.
+    ///
+    /// <para>True only for a single set bit in <c>[0x01 … 0x80]</c>. Everything else is
+    /// deliberately false and falls back to the plain whole-byte write:</para>
+    /// <list type="bullet">
+    /// <item><c>0</c> — the DLL reports no mask (native bool, or a pre-AA1 DLL).</item>
+    /// <item><c>0xFF</c> — UE's own marker for a native bool (<c>SetBoolSize</c> sets
+    /// <c>FieldMask = 255</c> when <c>bIsNativeBool</c>), which owns its whole byte.</item>
+    /// <item>Any multi-bit value — not a shape UE produces for a single bool; treating
+    /// it as a mask would OR in bits belonging to nobody.</item>
+    /// </list>
+    /// <para>A mask that reaches here is guaranteed to sit in the byte at the property
+    /// offset: the DLL only emits one after reading <c>FieldSize == 1</c>, so the
+    /// property is a single byte and there is no <c>ByteOffset</c> to apply.</para>
+    /// </summary>
+    public static bool IsPackedBoolMask(int fieldMask)
+        => fieldMask > 0 && fieldMask < 0xFF && (fieldMask & (fieldMask - 1)) == 0;
 
     // ------------------------------------------------------------------
     // Lua escaping

@@ -436,6 +436,31 @@ hardcode `+0x3C` or any "+8 from ElementSize" form.
 
 ### 4.2 CE Lua quirks baked into our code as defensive patterns
 
+> **Where to check whether a CE Lua call exists — and there are two copies, which answer different
+> questions.** CLAUDE.md forbids inventing CE Lua calls, so grep one of these first:
+>
+> - **The installed binary's docs** — `celua.txt` in the CE install directory
+>   (`C:\Program Files\Cheat Engine\celua.txt`, ~238 KB, 7.7 on this machine). Use this for *"does
+>   this work in the CE the user is actually running?"*
+> - **The CE source clone** — `D:\Github\cheat-engine\Cheat Engine\bin\celua.txt` (a real git clone;
+>   `git tag` includes `7.5`). Check out an older tag to read that release's `celua.txt`. Use this for
+>   *"since which version has this existed?"*
+>
+> **The public source lags the release**, so the two genuinely disagree — [CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md)
+> §4 is the worked example: a defect still present in the 7.5 source and measured **fixed** in the 7.7
+> binary. Reading only the source would have had us document a bug the shipping CE does not have.
+>
+> **And a probe beats both.** `celua.txt` has advertised a capability that does not exist *and* denied
+> one that works (see the `getSettings()` entry below, where three rounds of being wrong were each
+> settled by probing, not by re-reading).
+>
+> **CE's Lua has no `bAnd` / `bOr` / `bNot`.** Single-bit set/clear is done with pure arithmetic
+> (`math.floor(b / mask) % 2` to test, `b + mask` / `b - mask` to set/clear), which is also version-
+> proof. Two places in this repo do it that way — `StandaloneTrainerScriptGenerator`'s `UE5T_setbit`
+> and `ue5_freeze_helper.lua`'s `writeBool` — and a third tier (`Solitar::ApplyBoolBit`) and a fourth
+> (`FieldValueConverter.ApplyBoolMask`) implement the same rule in C++ and C#. If you change the rule,
+> change all four.
+
 **`getAddress` vs `getAddressSafe`.** `getAddress(name)` either throws or silently returns garbage when
 the symbol can't be resolved (CE-version dependent); `getAddressSafe(name)` consistently returns nil/0.
 CE's resolver may only register the **module-prefixed** form on some setups, so bare-name lookups can

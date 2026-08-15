@@ -1493,8 +1493,9 @@ Every segment in §1's plan has been scanned. **No segment remains.**
    in CI too. Latent today (the control confirmed the suite runs), but it silently disarms ~700
    assertions the moment a test stops compiling. — ✅ **FIXED with AD2, build 2914** (one shared
    `Invoke-CppSelfTest` helper + a same-class sibling in the C# phase; negative-control verified).
-3. **S1/the freeze helper — a bool freeze writes a WHOLE BYTE over a bit-packed `FBoolProperty`**,
-   20×/sec, while the DLL sibling reached from the same Property Search row writes only the bit.
+3. **S1/AA1 — a bool freeze writes a WHOLE BYTE over a bit-packed `FBoolProperty`**, ~16×/sec,
+   while the DLL sibling reached from the same Property Search row writes only the bit. — ✅ **FIXED
+   (2922)**: the FieldMask now travels DLL wire → model → row → params → CFG → Lua.
 
 **Two defect FAMILIES account for more findings than any single subsystem**, and both are greppable:
 - **The width family** (an out-of-range value masked to the field width and reported as written):
@@ -1949,9 +1950,62 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 >    stated verbatim in its own comment; `fillGaps`' header advertises a feature that does not run.
 >    Every time this audit has followed a comment admitting a limitation, it has found a real defect.
 
+> ### ✅ AA1 FIXED — build 2922, 2026-08-15
+>
+> **The mask was absent end-to-end, so the fix is a five-tier wire-through, not a Lua edit.** The
+> engine reported the FieldMask all along and every tier dropped it:
+>
+> | Tier | Change |
+> |---|---|
+> | DLL wire | `Fern.cpp` — both `search_properties` encoders now emit `bool_mask` when non-zero (single-query **and** batch; the value comes from the class field walk, not the preview pass, so the no-preview batch path carries it too) |
+> | Model | `PropertySearchMatch.BoolFieldMask` + both `DumpService` parsers |
+> | Row | `ScoredPropertyRow.BoolFieldMask` — forwarded, exactly like `PropSize` one line above it |
+> | Params | `FreezeScriptParams.BoolFieldMask`, **`required`** — Y15's own template, and it earned its keep immediately (see below) |
+> | Script | `FreezeScriptGenerator` emits `boolMask = 0xNN` into CFG **only** for a genuinely packed bool |
+> | Lua | `writeBool(addr, v, mask)` does a masked read-modify-write; `tick` passes `cfg.boolMask` |
+>
+> **What decided the scope: no `ByteOffset` is needed, and that is verified rather than assumed.**
+> The DLL sets `boolFieldMask` only after reading `FieldSize == 1` (`Ubel.cpp:662` and `:1044`, both
+> conditions checked). A one-byte property has nowhere for a `ByteOffset` to point, so a row that
+> carries a mask always has its bit in the byte at `prop_offset`. Consistently,
+> `PropertyMatch::boolByteOffset` is **declared and never assigned anywhere in the tree** — dead, and
+> now known to be harmlessly so.
+>
+> **`0xFF` is not a bit mask.** UE's `SetBoolSize` writes `FieldMask = 255` for a native bool, so
+> both `0` (no mask reported) and `0xFF` must fall back to the whole-byte write. The accept set is
+> exactly `{0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80}`, encoded identically in C#
+> (`IsPackedBoolMask`) and Lua (`BOOL_BIT_MASKS`).
+>
+> **Reused three existing correct implementations instead of inventing a fourth rule.** The bit rule
+> already existed at `Solitar::ApplyBoolBit` (C++), `FieldValueConverter.ApplyBoolMask` (C#, the Live
+> Walker edit path) and `UE5T_setbit` (Lua, the standalone trainer). The last of those also supplied
+> the *idiom*: **CE's Lua has no `bAnd`/`bOr`/`bNot`**, so the helper uses pure arithmetic
+> (`math.floor(b / mask) % 2`), which is version-proof and writes only on drift. `readByte` /
+> `writeByte` were verified against `celua.txt` before use, per CLAUDE.md.
+>
+> **A failed read must not fall through.** If `readByte` returns nil the tick returns without writing
+> — falling through to the whole-byte write is the exact corruption the branch exists to prevent.
+>
+> **`required` caught a tier the plan had missed.** The build failed on
+> `InterestingPropertiesViewModel` because `ScoredPropertyRow` forwards `PropSize` but not the mask —
+> the same dropped-field shape, one row further down the same file. Left optional, that call site
+> would have silently kept the bug on the batch-CT path.
+>
+> ✅ **Verified by negative control.** 24 new tests (3724 → **3748**, 0 failures). Then both halves of
+> the fix were reverted — the CFG emission and the mask argument in `tick` — and the packed-mask
+> theories **failed**, naming the exact 8 masks; restored, green again. Also asserted: a native bool
+> emits **no** `boolMask`, `0xFF`/multi-bit/negative emit none, a non-bool type never emits one even
+> when a stale mask is present, and the helper source no longer contains the comment
+> *"We do NOT support packed bitfield bools"* — the comment that documented this defect as intended
+> behaviour and is why it survived. (Root cause #6, one more time.)
+>
+> ⚠ **Not yet verified in-game.** The remaining risk is entirely in the DLL→UI direction: whether a
+> real packed bool's mask actually arrives on the `search_properties` wire. Bench-checking it needs a
+> game whose class has a `uint8 bFoo:1`.
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **AA1** | HIGH | `ue5_freeze_helper.lua:153` (writeBool) | Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit **[2 lenses]** | M / med |
+| **AA1** ✅ | HIGH | `ue5_freeze_helper.lua:153` (writeBool) | Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit **[2 lenses]** | M / med |
 | **AA2** | HIGH | `ue5_freeze_helper.lua:452` (freezeProperty -> tick) | The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds *(re-measured 2026-08-15: ~16/s per cached address — TTimer 50 ms quantised to ~62.5 ms; 5 s is the BEST case — see §3c)* | M / med |
 | **AA3** | HIGH | `ue5_freeze_helper.lua:461` (rescan / tick) | A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely **[2 lenses]** *(2026-08-15: "indefinitely" holds under PERSISTENT failure — DLL re-inject / contract mismatch / wedged `_ue5_invoke_busy`; transient busy self-heals in 5 s; `_lastError` is write-only — see §3c)* | M / med |
 | **AA4** | MED | `ue5_dissect.lua:53` (callDLL) | Bare getAddress RAISES on a missing symbol (CE source-verified), so the 'DLL function not found' message is dead code and the registered dissect override breaks CE's dissect for unrelated addresses **[2 lenses]** | S / low |
@@ -2344,9 +2398,9 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**237 of 272 findings are still open** (35 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **4 HIGH · 73 MED ·
-133 LOW · 27 INFO**. Fixed HIGHs: 7 (V1, W1, W2, Y1, AB1, **AD1, AD2**).
+**236 of 272 findings are still open** (36 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **3 HIGH · 73 MED ·
+133 LOW · 27 INFO**. Fixed HIGHs: 8 (V1, W1, W2, Y1, AB1, AD1, AD2, **AA1**).
 
 > **Updated 2026-08-15 (build 2914): AD1 + AD2 FIXED**, counts above re-derived with the command
 > rather than hand-tallied. Both sites were collapsed into a single `Invoke-CppSelfTest` helper, a
@@ -2359,12 +2413,12 @@ shipped, the in-session half is deliberately deferred to cluster ③). Open: **4
 > §2 block states what was hand-verified. **Re-derive any LOW before fixing it** — several are
 > pattern-sweep leads, not findings.
 
-### The 4 open HIGHs — start here
+### The 3 open HIGHs — start here
 
 > ✅ **All six were re-verified against the source 2026-08-15 (PM double-check pass — see the block at
 > the end of this section). Zero line drift on all six.** The per-finding corrections below are from
 > that pass; the original one-line claims stand, but several details a fixer would code against
-> changed. **Two of the six (AD1, AD2) have since been fixed** — build 2914, see below.
+> changed. **Three of the six (AD1, AD2, AA1) have since been fixed** — builds 2914 / 2922.
 
 ~~1. **AD1** / 2. **AD2**~~ — ✅ **FIXED, build 2914, 2026-08-15.** Both collapsed into one
 `Invoke-CppSelfTest` helper (two hand-copied blocks were themselves root cause #4), the three
@@ -2389,17 +2443,12 @@ T1b's block, §2. *Nothing about the remaining HIGHs changed.*
    `UE5_AutoStart` must spawn-and-return (publish via `Mimic::InitState`, which `UE5CEDumper.CT`
    already polls), so the remote thread exits inside the 10 s window.*
 
-2. **AA1** — `ue5_freeze_helper.lua:153 (writeBool)`
-   Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit
-   *Re-verify: worse than stated — when `ByteMask != 0x01` the intended bool is **never set at all**
-   (writing 1 sets bit 0), so the feature silently no-ops while corrupting up to 7 neighbours. The
-   mask is structurally absent from the whole freeze pipeline (`PropertySearchMatch` /
-   `FreezeScriptParams` carry no mask field) but already exists on neighbouring wires
-   (`FieldInfoModel.BoolFieldMask`, `bool_mask`) — a dropped field, the Y15 shape, and Y15's own
-   repair (`required` on the params record) is the template. The DLL sibling reached from the same
-   row is correct and exhaustively tested (`Solitar::ApplyBoolBit`, `dll_helpers_test.cpp:2629`).*
+~~**AA1**~~ — ✅ **FIXED, build 2922, 2026-08-15.** The re-verify note was right on both counts:
+the mask was structurally absent end-to-end and had to be wired through five tiers, and Y15's
+`required`-on-the-params-record template was the fix — it immediately caught a sixth tier
+(`ScoredPropertyRow`) the plan had missed. Negative-control verified; full record in S1's block, §2.
 
-3. **AA2** — `ue5_freeze_helper.lua:452 (freezeProperty -> tick)`
+2. **AA2** — `ue5_freeze_helper.lua:452 (freezeProperty -> tick)`
    The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds
    *Re-verify: mechanism exact (the wire carries **raw addresses only** — `Mimic::HandleListInstances`
    packs 8-byte pointers, no `InternalIndex`/`SerialNumber`, though `Aura::GetSerialNumber` exists).
@@ -2408,7 +2457,7 @@ T1b's block, §2. *Nothing about the remaining HIGHs changed.*
    comment, never measured), and "up to 5 s" is the BEST case — a slow rescan extends it (5 s timeout
    × up to 16 pages, synchronous), and a failed one hands over to AA3.*
 
-4. **AA3** — `ue5_freeze_helper.lua:461 (rescan / tick)`
+3. **AA3** — `ue5_freeze_helper.lua:461 (rescan / tick)`
    A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely
    *Re-verify: "indefinitely" is **conditional on a persistent failure** — a transient
    `mailbox busy` self-heals on the next 5 s rescan; the unbounded cases are real and ordinary (DLL
@@ -2423,7 +2472,7 @@ T1b's block, §2. *Nothing about the remaining HIGHs changed.*
 
 | Segment | HIGH | MED | LOW | INFO | Open |
 |---------|-----:|----:|----:|-----:|-----:|
-| S1 early Lua scripts | **3** | 17 | 14 | 2 | **36** |
+| S1 early Lua scripts | **2** | 17 | 14 | 2 | **35** (AA1 fixed b2922) |
 | T1c VMs + Core + Models | – | 10 | 15 | 4 | **29** |
 | T1b DLL headers + C++ tests | – | 4 | 15 | 6 | **25** (AD1+AD2 fixed b2914) |
 | T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
@@ -2445,17 +2494,17 @@ T1b's block, §2. *Nothing about the remaining HIGHs changed.*
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | **4** | **73** | **133** | **27** | **237** |
+| **TOTAL** | **3** | **73** | **133** | **27** | **236** |
 
 ### Fix order recommended
 
 1. ~~**AD1/AD2**~~ — ✅ **DONE, build 2914.** It was first because it is *meta*: while it stood,
    every other fix's "tests green" was one compile error away from meaning nothing. That is no
    longer true, so the fixes below now rest on a test phase that can actually fail.
-2. **AA1** — a wrong WRITE into the game, ~16×/sec per address, and the DLL sibling reached from the
-   **same Property Search row** already does it correctly (`Solitar::ApplyBoolBit`). Small and
-   well-defined — but note the mask must first be ADDED to the freeze pipeline's wire/params (it is
-   absent end-to-end; `FieldInfoModel.BoolFieldMask` shows where to copy from).
+2. ~~**AA1**~~ — ✅ **DONE, build 2922.** The mask was indeed absent end-to-end and had to be added
+   at five tiers (DLL wire → `PropertySearchMatch` → `ScoredPropertyRow` → `FreezeScriptParams` →
+   CFG → Lua). It is now a fourth implementation of the one bit rule that `Solitar::ApplyBoolBit`,
+   `FieldValueConverter.ApplyBoolMask` and `UE5T_setbit` already shared.
 3. **AA2/AA3** — one defect (the freeze tick's liveness guard) at two sites. Bigger: the honest fix
    needs an identity witness (`InternalIndex`,`SerialNumber`) the Lua tier does not currently
    receive — `Mimic::HandleListInstances` would have to widen its 8-byte entries, which is a
@@ -2568,8 +2617,9 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 > re-derive itself after a fix. **All six open HIGHs were re-verified against the source
 > 2026-08-15 PM (zero line drift)** — per-finding correction notes sit inline in §3c's HIGH list.
 >
-> ✅ **AB1 is FIXED (2913) and AD1/AD2 are FIXED (2914)** — see dev-log. **The next must-fix is
-> AA1**, then AA2/AA3, then AB2; §3c's fix-order list is current.
+> ✅ **AB1 (2913), AD1/AD2 (2914) and AA1 (2922) are FIXED** — see dev-log. **3 open HIGHs left:
+> AA2/AA3** (one defect, two sites — needs an identity witness the Lua tier does not receive, so it
+> is a mailbox-contract change) **then AB2**. §3c's fix-order list is current.
 >
 > 🔴 **The two most consequential findings, both hand-verified against the source:**
 > - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path. ✅ FIXED (2913).** `DllMain` starts a
@@ -2585,6 +2635,10 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 >   moment a test stopped compiling. **✅ FIXED with AD2 (2914):** both sites are now one
 >   `Invoke-CppSelfTest` helper, the "skip" arm is gone, the C# phase's same-class sibling was fixed
 >   with them, and a negative control (a deliberately broken test source) now fails the build.
+> - **S1/AA1 — a bool freeze stamped a WHOLE BYTE over a bit-packed `FBoolProperty`** ~16x/sec,
+>   wiping up to 7 sibling bools and — unless the mask was 0x01 — never setting the intended one.
+>   **✅ FIXED (2922):** the FieldMask was structurally absent end-to-end and now travels DLL wire →
+>   model → row → params → CFG → Lua. Live-game half is UNPROVEN — see todo.md's register.
 >
 > ⚠ **Vetting is uneven and the doc says so per segment.** Kill rates ran 10–35% across the T1
 > phases against the audit's own 33–73% band. **Everything hand-verified is marked as such in its

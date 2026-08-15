@@ -46,6 +46,23 @@ public sealed class FreezeScriptParams
     /// </summary>
     public required int PropertySize { get; init; }
 
+    /// <summary>
+    /// FBoolProperty FieldMask (<c>PropertySearchMatch.BoolFieldMask</c>) — the single
+    /// bit this bool owns inside the byte at <see cref="PropertyOffset"/>. 0 for every
+    /// non-bool type, for a native bool that owns its whole byte, and for a row that
+    /// came from a DLL older than this field.
+    ///
+    /// <para><b>Required on purpose</b>, for the same reason as <see cref="PropertySize"/>
+    /// and by the same precedent. UE packs <c>uint8 bFoo:1</c> bools eight to a byte, and
+    /// without the mask the freeze tick wrote the whole byte ~16×/sec: up to 7 sibling
+    /// bools clobbered, and — whenever the mask was not <c>0x01</c> — the intended bool
+    /// never set at all, so the feature silently did nothing while corrupting its
+    /// neighbours. The engine reported the mask all along and it was dropped at this
+    /// boundary. Making it optional would let the next call site re-create the bug
+    /// silently; <c>required</c> makes the compiler ask. (audit #5 AA1)</para>
+    /// </summary>
+    public required int BoolFieldMask { get; init; }
+
     /// <summary>User-supplied value as a literal Lua expression (already
     /// validated by <c>FreezeValueDialog</c>). For numerics this is a
     /// number literal; for bool it is the string "true" or "false".</summary>

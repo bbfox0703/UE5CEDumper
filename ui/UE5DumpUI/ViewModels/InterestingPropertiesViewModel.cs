@@ -571,6 +571,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 PropertyOffset  = sr.PropOffset,
                 UeTypeName      = sr.PropType,
                 PropertySize    = sr.PropSize,
+                BoolFieldMask   = sr.BoolFieldMask,
                 ValueLiteral    = DefaultFreezeLiteral(sr.PropType),
             };
             string desc = targetClass == sr.ClassName

@@ -1429,6 +1429,29 @@ This is the one verification in the register that needs **no game at all**.
    still get its poller. Only the executable leaf is tested, and there is a unit test for it.
 
 
+### ⬜ NEW 2026-08-15 — freeze a PACKED bitfield bool and check its 7 siblings survive (audit #5 AA1, build 2922)
+
+Sibling of the Y15 check below, same panel, same failure shape — a whole-byte write over a field that
+does not own the whole byte. Freezing a `BoolProperty` now emits `boolMask` into the generated CFG and
+the helper writes only that bit. 24 unit tests plus a negative control cover the C# and the helper
+*source*, **but the DLL→UI half has never run against a real game**: nobody has seen a real packed
+bool's `bool_mask` arrive on the `search_properties` wire.
+
+**Needs a game with a `uint8 bFoo:1` bitfield bool** — extremely common on `AActor`
+(`bHidden`, `bReplicates`, `bCanBeDamaged` are bitfields on many UE versions), so any UE game should do.
+
+1. Property Search a bool on a live class. In the row, generate the freeze script.
+2. **Read the generated CFG.** A packed bool must show `boolMask = 0xNN,` (one of 0x01…0x80). Its
+   *absence* is the whole finding, so this line is the check — if it is missing, the mask is not
+   reaching the UI and everything below is moot. A **native** bool correctly shows no `boolMask`;
+   confirm you are looking at a packed one (Live Walker shows the mask in the field's tooltip/CSX
+   description).
+3. Note the **whole byte** at `prop_offset` in Live Walker / CE before enabling.
+4. Enable the script, let it tick, and re-read that byte. Success = only the masked bit changed;
+   **failure = the byte became `0x00` or `0x01`**, which is the pre-fix behaviour.
+5. The nastiest half of the old bug: when the mask is **not** `0x01`, the intended bool was never set
+   at all. So also confirm the target bool actually reads as the value you froze.
+
 ### ⬜ NEW 2026-08-15 — freeze a 1-byte enum and check its neighbours survive (audit #5 Y15, build 2904)
 
 Freezing an `EnumProperty` now picks its writer from the width the engine reported instead of always

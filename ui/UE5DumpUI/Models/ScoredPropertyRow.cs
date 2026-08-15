@@ -73,6 +73,12 @@ public sealed partial class ScoredPropertyRow : ObservableObject
     /// <c>FreezeScriptParams.PropertySize</c> so the batch-CT path picks an
     /// EnumProperty's writer by its real width (audit #5 Y15).</summary>
     public int    PropSize          => Match.PropSize;
+    /// <summary>FBoolProperty FieldMask — carried through to
+    /// <c>FreezeScriptParams.BoolFieldMask</c> so the batch-CT path writes only
+    /// the bit a packed bool owns instead of stamping its whole byte and wiping
+    /// up to 7 siblings (audit #5 AA1). Exactly the same dropped-field shape as
+    /// <see cref="PropSize"/> above, one row down.</summary>
+    public int    BoolFieldMask     => Match.BoolFieldMask;
     public string DefiningClassName => Match.DefiningClassName;
     public int    InheritedByCount  => Match.InheritedByCount;
     public string InheritanceBadge  => Match.InheritanceBadge;

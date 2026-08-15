@@ -315,6 +315,11 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             PropertyOffset = match.PropOffset,
             UeTypeName     = match.PropType,
             PropertySize   = match.PropSize,
+            // Audit #5 AA1: the FBoolProperty bit mask used to stop here too, so a
+            // packed `uint8 bFoo:1` was frozen by stamping the whole byte — wiping
+            // up to 7 sibling bools and, unless the mask was 0x01, never setting the
+            // intended one. Same dropped-field shape as PropertySize above.
+            BoolFieldMask  = match.BoolFieldMask,
             ValueLiteral   = literal,
         };
 

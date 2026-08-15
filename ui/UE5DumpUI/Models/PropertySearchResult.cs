@@ -40,6 +40,25 @@ public partial class PropertySearchMatch : ObservableObject
     /// Feeds the auto-detect scorer's PropertyFlags gating.</summary>
     public ulong PropertyFlags { get; set; }
 
+    /// <summary>
+    /// FBoolProperty FieldMask — the single bit this bool owns inside the byte
+    /// at <see cref="PropOffset"/>. <b>0 means "not a packed bitfield"</b>: the
+    /// DLL emits <c>bool_mask</c> only after reading <c>FieldSize == 1</c> with a
+    /// single-bit mask, so a native bool (which owns its whole byte) and an older
+    /// DLL both arrive as 0, and both want the same whole-byte write.
+    ///
+    /// <para>Because the mask is only ever reported for a <c>FieldSize == 1</c>
+    /// property, the bit is necessarily in the byte at <see cref="PropOffset"/> —
+    /// there is no second byte for a <c>ByteOffset</c> to select. That is why the
+    /// mask travels alone and no byte offset accompanies it.</para>
+    ///
+    /// <para>Consumed by <see cref="FreezeScriptParams.BoolFieldMask"/>. Without
+    /// it, a freeze on a packed bool wrote the whole byte 16×/sec: up to 7 sibling
+    /// bools clobbered, and when the mask was not <c>0x01</c> the intended bool was
+    /// never set at all. (audit #5 AA1)</para>
+    /// </summary>
+    public int BoolFieldMask { get; set; }
+
     // === Inheritance-aware fields (build 610+) ===
     public string DefiningClassName { get; set; } = "";
     public string DefiningClassAddr { get; set; } = "";

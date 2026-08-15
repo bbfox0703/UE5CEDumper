@@ -22,6 +22,96 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - Freezing a packed bitfield bool stamped the whole byte and wiped its 7 siblings (build 2922)
+
+**Audit #5 segment S1, finding AA1** — the fourth site of the dropped-field family behind W6, Y2,
+Y9 and Y15, and the second one in the freeze pipeline in three builds.
+
+### The defect
+
+UE stores an `FBoolProperty` two ways: a **native bool** owning one whole byte, or a **packed
+bitfield** (`uint8 bFoo:1`) where up to eight bools share a byte and each owns one bit named by the
+property's `FieldMask`. `ue5_freeze_helper.lua`'s `writeBool` did:
+
+```lua
+writeByte(addr, (v == true or v == 1) and 1 or 0)
+```
+
+unconditionally. On a packed bool that is wrong twice over, ~16 times a second for as long as the
+freeze is enabled:
+
+1. **The seven siblings are wiped.** Writing `1` sets the byte to `0x01` — every other bool in it
+   goes to false.
+2. **The intended bool is never set** whenever its mask is not `0x01`. Writing `1` sets *bit 0*. So a
+   bool at bit 2 stayed false while its neighbours were destroyed — the feature silently did nothing
+   *and* corrupted the field around it. There is no error channel, so the user sees unrelated flags
+   flipping and goes hunting in the game's logic.
+
+The code's own comment stated the defect as a design limitation — *"We do NOT support packed bitfield
+bools … generating a freeze script for one will overwrite the whole byte, clobbering sibling bools"* —
+which is exactly why it survived. Audit #5's most reliable technique is grepping for a comment that
+admits a limitation and then checking whether it is still acceptable; this is its sixth hit.
+
+Meanwhile the DLL sibling reachable from the **same Property Search row** (Solide's Force ON/OFF, via
+`Solitar::ApplyBoolBit`) does a masked read-modify-write correctly, and is exhaustively unit-tested.
+One row, two actions, opposite correctness.
+
+### The fix — a five-tier wire-through, not a Lua edit
+
+The engine reported the `FieldMask` all along; every tier dropped it, so the mask had to be added
+end-to-end:
+
+| Tier | Change |
+|---|---|
+| DLL wire | [Fern.cpp](../dll/src/Fern.cpp) — both `search_properties` encoders emit `bool_mask` when non-zero (single-query **and** batch) |
+| Model | `PropertySearchMatch.BoolFieldMask` + both `DumpService` parsers |
+| Row | `ScoredPropertyRow.BoolFieldMask` — forwarded exactly like `PropSize` one line above |
+| Params | `FreezeScriptParams.BoolFieldMask`, **`required`** |
+| Script | [FreezeScriptGenerator.cs](../ui/UE5DumpUI/Services/FreezeScriptGenerator.cs) emits `boolMask = 0xNN` into CFG only for a genuinely packed bool |
+| Lua | [ue5_freeze_helper.lua](../scripts/ue5_freeze_helper.lua) `writeBool(addr, v, mask)` does a masked read-modify-write; `tick` passes `cfg.boolMask`. Helper version 1.1 |
+
+**No `ByteOffset` is needed, and that is verified rather than assumed.** The DLL sets
+`boolFieldMask` only after reading `FieldSize == 1` (`Ubel.cpp:662` and `:1044` — both check it), and
+a one-byte property has nowhere for a `ByteOffset` to point. So a row carrying a mask always has its
+bit in the byte at `prop_offset`. Consistently, `PropertyMatch::boolByteOffset` is **declared and
+never assigned anywhere in the tree** — dead, and now known to be harmlessly so.
+
+**`0xFF` is not a bit mask.** UE's `SetBoolSize` writes `FieldMask = 255` for a native bool, so both
+`0` (no mask reported, including from a pre-2922 DLL) and `0xFF` fall back to the whole-byte write.
+The accept set is exactly `{0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80}`, encoded identically in C#
+(`IsPackedBoolMask`) and Lua (`BOOL_BIT_MASKS`).
+
+**Reused three existing correct implementations rather than inventing a fourth rule.** The bit rule
+already lived in `Solitar::ApplyBoolBit` (C++), `FieldValueConverter.ApplyBoolMask` (C#, the Live
+Walker edit path) and `UE5T_setbit` (Lua, the standalone trainer). The last also supplied the idiom:
+**CE's Lua has no `bAnd`/`bOr`/`bNot`**, so the helper uses pure arithmetic
+(`math.floor(b / mask) % 2`), which is version-proof and writes only on drift. `readByte` /
+`writeByte` were checked against `celua.txt` before use, per CLAUDE.md.
+
+**A failed read must not fall through.** If `readByte` returns nil the tick returns without writing —
+falling through to the whole-byte write is the corruption the branch exists to prevent.
+
+**`required` immediately earned its keep.** The build failed on `InterestingPropertiesViewModel`
+because `ScoredPropertyRow` forwards `PropSize` but not the mask — the same dropped-field shape, one
+row further down the same file. Left optional, that call site would have silently kept the bug on the
+batch-CT path. This is Y15's own repair template working as intended.
+
+### Verified by negative control
+
+24 new tests, **3724 → 3748**, 0 failures. Then both halves of the fix were reverted — the CFG
+emission and the mask argument in `tick` — and the packed-mask theories **failed**, naming the exact
+eight masks; restored, green again.
+
+Also asserted: a native bool emits **no** `boolMask`; `0xFF`, multi-bit and negative values emit
+none; a non-bool type never emits one even carrying a stale mask; and the helper source no longer
+contains *"We do NOT support packed bitfield bools"*.
+
+**Not yet verified in-game** — the DLL→UI half (does a real packed bool's mask arrive on the
+`search_properties` wire?) needs a running game. Tracked in
+[todo.md](todo.md)'s `## Pending live-game verification`.
+
+-----
+
 ## 2026-08-15 - A C++ test that failed to COMPILE was reported as "skip", and the build exited 0 (build 2914)
 
 **Audit #5 phase T1b, findings AD1 + AD2** — the *meta* one, fixed first on purpose: while it stood,
