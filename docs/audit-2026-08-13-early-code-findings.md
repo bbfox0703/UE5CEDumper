@@ -1260,7 +1260,44 @@ MEDIUM.
 | **Y13** | LOW | `BakedScriptGenerator.cs:195` | Verify mode's 32-byte dump window cannot contain the complex return it tells the user to read. | S / low |
 | **Y14** | LOW | `InvokeParamDialog.cs:850` | *"AA Script created in CE … (N baked param(s))"* is reported even when a param failed to parse and was baked as 0. | M / low |
 | **Y15** ✅ | MED | *(hand-found while fixing Y9)* `FreezeScriptGenerator.cs:193` + `Models/FreezeScriptParams.cs` | `MapToHelperType` maps **`EnumProperty` → `int32` unconditionally**, so freezing / force-holding an `enum class : uint8` field emits a **4-byte `writeInteger`** and clobbers the three bytes after it. `FreezeScriptParams` carries no size at all, so the generator *cannot* know better — the DLL's real width is on `PropertySearchMatch.PropSize` and is dropped at the model boundary. **Third site of a family this audit has already fixed twice**: W6 (CE XML export hardcoded `"4 Bytes"`) and Y2 (invoke param buffer gated on `available >= 4`). The code comment at the mapping admits it — *"if a future game has a 1-byte enum we'd want to surface the size and pick uint8 instead. Out of v1 scope."* — which is the whole finding. Needs plumbing, hence M not S. | M / low |
-| **Y16** | MED | *(hand-found while fixing Y15)* `InvokeScriptGenerator.cs:558` (`GetMailboxWriteStatement`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` → **`writeInteger`**, so the **interactive CE invoke form** writes 4 bytes for a 1-byte enum param and clobbers the next param in `params_data`. Same defect Y2 fixed in `ParamBufferBuilder` (the FIRE path), surviving in a third path — so for one dialog input the three ways of calling a UFunction still do not agree. **Fourth site of the enum-width family** (W6, Y2, Y15). One line: the method already receives `p.Size` and its `_ => size switch` fallback already maps 1/2/8 correctly — `EnumProperty` short-circuits past it, so deleting it from that arm is the fix. | S / low |
+| **Y16** | MED | *(hand-found while fixing Y15)* `InvokeScriptGenerator.cs:558` (`GetMailboxWriteStatement`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` → **`writeInteger`**, so the **interactive CE invoke form** writes 4 bytes for a 1-byte enum param and clobbers the next param in `params_data`. Same defect Y2 fixed in `ParamBufferBuilder` (the FIRE path), surviving in a third path — so for one dialog input the three ways of calling a UFunction still do not agree. **Fourth site of the enum-width family** (W6, Y2, Y15). One line: the method already receives `p.Size` and its `_ => size switch` fallback already maps 1/2/8 correctly — `EnumProperty` short-circuits past it, so deleting it from that arm is the fix. **⚠ NOT a one-liner — see Y16's scope note below; it is three sites, not one.** | M / low |
+
+> ### 📋 Y16 scope note — surveyed 2026-08-15, DELIBERATELY NOT FIXED
+>
+> The maintainer asked for this to be recorded rather than fixed. Recorded here because the survey
+> found **the row above understates it**: Y16 is *three* sites, not one, and the sizing rule was
+> already at hand at every one of them. Re-rated **M / low**.
+>
+> **Every call site already holds the size and does not pass it.** That is the whole shape, and it is
+> Y15's shape exactly — *the finding is the dropped field, not the guess*:
+>
+> | # | Site | What it does today | Size in scope? |
+> |---|------|--------------------|----------------|
+> | 1 | `InvokeScriptGenerator.cs:558` `GetMailboxWriteStatement` — **interactive CE form, WRITE** | `EnumProperty` shares the `IntProperty`/`UInt32Property` arm → `writeInteger`, 4 bytes over the next param | **yes**, `size` is a parameter, and the `_ => size switch` fallback below it already maps 1/2/8 correctly |
+> | 2 | `BakedScriptGenerator.cs:385` `MapToHelperType`, reached via `MapInputType` (`:430`) from the baked emit (`:154`) — **Copy AA Script (Baked), WRITE** | emits the token `'int32'`; `writeParams` in `scripts/ue5_invoke_helper.lua:250` is `elseif t == 'int32' or t == 'uint32' or t == 'enum' then writeInteger(...)`, so **even the `'enum'` token is 4 bytes** | **yes**, `v.Size` is in hand at `:154` and used only for the `fstruct` arm |
+> | 3 | `CeInvokeReturn.cs:75` (+ the display type at `BakedScriptGenerator.cs:242`) — **RETURN, READ** | classifies via the same sizeless `MapToHelperType` → `ScalarRead("int32")` → `readInteger`, so a 1-byte enum **return** is reported from 4 bytes | **yes**, `size` is already a parameter of the enclosing method; `returnParam.Size` at `:242` |
+>
+> Sites 1–2 corrupt memory; site 3 only misreports. Fixing site 1 alone would leave the three ways of
+> invoking a UFunction from one dialog input **still disagreeing**, which is the row's own complaint.
+>
+> **`BakedParamValue.Size`'s doc comment states the defective assumption outright** — *"Used for
+> sanity checks; the helper allocates from `FunctionInfoModel.ParmsSize` and writes by type, not
+> size."* That is the third time in this family a comment has documented the gap before anyone
+> reported it (`MapToHelperType`'s "out of v1 scope" for Y15; `CeWidthForSize` existing-but-unused
+> for W6).
+>
+> **The repair needs no Lua change**, which is worth knowing before scoping it: the helper already
+> accepts `byte` / `int16` / `int64` tokens (`ue5_invoke_helper.lua:246-253`), so site 2 is a C#-only
+> mapping change and no user has to re-embed the helper. Y15 already built the precedent to copy —
+> a `(string, int)` overload plus a sizeless overload that behaves as size 0, with only
+> `EnumProperty` consulting the size and a test asserting every other type **ignores** it.
+>
+> **One cosmetic straggler**, to fold in rather than file separately:
+> `BakedScriptGenerator.ShortTypeNameForComment` (`:571`) hardcodes `"enum(int32)"`, so the generated
+> script's own trailing comment would keep asserting `int32` after the write was corrected.
+>
+> The family now stands at **4 findings across 7 sites in 4 subsystems** — W6 (CE XML export) ✅,
+> Y2 (FIRE param buffer) ✅, Y15 (freeze/force) ✅, Y16 (three invoke sites + one comment) open.
 
 **Verified independently (not agent-reported):**
 
@@ -1526,8 +1563,12 @@ session with no memory of the previous one.*
 > after each so the maintainer can watch the quota.
 >
 > **W5** — `CeXmlExportService.cs:2141`, `S`/low. Weak/soft/lazy pointers are drilled with
-> `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer. Then **Y16** (S/low), the
-> newest hand-found item — the *fourth* site of the enum-width family, and a one-liner.
+> `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer.
+>
+> **Y16 is surveyed but DELIBERATELY NOT FIXED** — the maintainer's call, 2026-08-15. Do not pick it
+> up as filler work; ask first. The survey is worth reading anyway (§2, "Y16 scope note"): it is
+> **three** sites, not the one the row cites, and re-rated M/low. Every one of them already holds the
+> size and does not pass it.
 >
 > **Read Y15's and Y9's entries in §2 before either.** Their lessons are the reusable ones:
 > Y15 — before writing a test, ask **whether the call site can fail the test at all**. Its mapping
@@ -1538,9 +1579,15 @@ session with no memory of the previous one.*
 > silence; and a validator tightened without its **pre-fill** produces a dialog that rejects its own
 > default.
 >
-> ⚠ **The enum-width family has now cost four findings** (W6, Y2, Y15, Y16) in three subsystems.
-> If you touch any code that decides how many bytes to write for a `EnumProperty`, the answer is
-> *the size the engine reported*, never the type name.
+> ⚠ **The enum-width family has now cost four findings across SEVEN sites in four subsystems**
+> (W6 ✅ CE XML export, Y2 ✅ FIRE param buffer, Y15 ✅ freeze/force, Y16 open = three invoke sites +
+> one stale comment). If you touch any code that decides how many bytes to write — or **read** — for
+> an `EnumProperty`, the answer is *the size the engine reported*, never the type name.
+>
+> Its second-order lesson is sharper than the rule itself: at all seven sites **the size was already
+> in scope and simply not passed**. Three of them carried a code comment describing the gap before
+> anyone reported it. So the cheap sweep is not "grep `EnumProperty`" — it is *grep for a method that
+> takes a size argument and does not use it*.
 
 > ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
 > (2842), W1+W7 (2853), Y1 (2862).
