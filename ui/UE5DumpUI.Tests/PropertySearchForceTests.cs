@@ -48,7 +48,7 @@ public class PropertySearchForceTests
         var dump = new RecordingDump();
         var vm = new PropertySearchViewModel(dump, new NoopLog())
         {
-            ForceValuePrompt = _ => Task.FromResult<double?>(42.5),
+            ForceValuePrompt = _ => Task.FromResult(ForceValuePromptResult.Accept(42.5)),
         };
 
         await vm.ForceNumericCommand.ExecuteAsync(NewMatch("FloatProperty", "Visibility"));
@@ -58,13 +58,34 @@ public class PropertySearchForceTests
         Assert.Equal(42.5, dump.LastValue);
     }
 
+    /// <summary>
+    /// A REJECTED value is not a cancel: nothing is sent (same as cancel), but the user is
+    /// told why. Before AF6 both came back as null and the command returned in silence.
+    /// </summary>
+    [Fact]
+    public async Task ForceNumeric_prompt_reject_does_not_send_but_reports_why()
+    {
+        var dump = new RecordingDump();
+        var vm = new PropertySearchViewModel(dump, new NoopLog())
+        {
+            ForceValuePrompt = _ => Task.FromResult(
+                ForceValuePromptResult.Reject("needs more than 53 bits. Refused.")),
+        };
+
+        await vm.ForceNumericCommand.ExecuteAsync(NewMatch("Int64Property", "Gold"));
+
+        Assert.Equal(0, dump.ForceCalls);
+        Assert.Contains("53 bits", vm.StatusText);
+        Assert.Contains("Gold", vm.StatusText);
+    }
+
     [Fact]
     public async Task ForceNumeric_prompt_cancel_does_not_send()
     {
         var dump = new RecordingDump();
         var vm = new PropertySearchViewModel(dump, new NoopLog())
         {
-            ForceValuePrompt = _ => Task.FromResult<double?>(null),  // cancel
+            ForceValuePrompt = _ => Task.FromResult(ForceValuePromptResult.Cancel()),
         };
 
         await vm.ForceNumericCommand.ExecuteAsync(NewMatch("FloatProperty", "Visibility"));

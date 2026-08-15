@@ -351,9 +351,14 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] private bool _hasForcedFields;
 
-    /// <summary>View-injected numeric-value prompt (keeps the VM dialog-free /
-    /// testable). Returns the value, or null on cancel.</summary>
-    public Func<PropertySearchMatch, Task<double?>>? ForceValuePrompt { get; set; }
+    /// <summary>View-injected numeric-value prompt (keeps the VM dialog-free / testable).
+    /// <para>
+    /// Three outcomes, not two. It used to return <c>double?</c> where null meant "cancel",
+    /// so a literal the dialog had already accepted but the caller could not convert came
+    /// back indistinguishable from the user pressing Cancel — Force silently did nothing.
+    /// (audit #5 AF6)
+    /// </para></summary>
+    public Func<PropertySearchMatch, Task<ForceValuePromptResult>>? ForceValuePrompt { get; set; }
 
     /// <summary>View-injected confirm for the higher-risk "Force → null" (nulling a
     /// live object pointer the game may later dereference). Returns true to proceed.</summary>
@@ -378,17 +383,32 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     {
         if (m == null) return;
         if (ForceValuePrompt == null) { StatusText = "Force value prompt not wired"; return; }
-        double? v;
-        try { v = await ForceValuePrompt(m); }
+        ForceValuePromptResult r;
+        try { r = await ForceValuePrompt(m); }
         catch (Exception ex) { StatusText = $"Force dialog error: {ex.Message}"; return; }
-        if (v == null) return;   // cancelled
-        await ApplyForceAsync(m, "numeric", value: v.Value);
+        if (r.Cancelled) return;                       // user pressed Cancel — say nothing
+        if (r.Error != null)                           // ...but a REJECTED value must be reported
+        {
+            StatusText = $"Force {m.PropName}: {r.Error}";
+            return;
+        }
+        await ApplyForceAsync(m, "numeric", value: r.Value);
     }
 
     /// <summary>Force <paramref name="m"/>'s field to a value on all live instances
-    /// of its class and hold it (DLL force_field). Uses the concrete matched
-    /// <see cref="PropertySearchMatch.ClassName"/> (not the base defining class) so
-    /// the pool scan stays targeted.</summary>
+    /// of its class and hold it (DLL force_field), keyed on
+    /// <see cref="PropertySearchMatch.ClassName"/>.
+    /// <para>
+    /// ⚠ That name is the DEFINING class, not the concrete one. This comment used to
+    /// assert the opposite ("not the base defining class"); `Aura.cpp` sets
+    /// <c>match.className = definingName</c> so dedup can collapse the inheritors into
+    /// one row, so on an inherited row this resolves an EMPTY pool and holds nothing —
+    /// which the status line does at least say out loud. Corrected here rather than
+    /// fixed, because the fix is a product decision nobody has made: hold on the defining
+    /// class AND every subclass (semantically right, but changes the shipped Stealth Meter
+    /// path and writes to a far larger live pool), or on the one most-derived subclass the
+    /// search happened to observe (arbitrary). See audit #5 A6.
+    /// </para></summary>
     private async Task ApplyForceAsync(PropertySearchMatch? m, string kind, double value = 0, bool on = false)
     {
         if (m == null || string.IsNullOrEmpty(m.ClassName) || string.IsNullOrEmpty(m.PropName)) return;
