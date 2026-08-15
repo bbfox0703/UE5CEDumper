@@ -204,6 +204,9 @@ public partial class DetectStatsViewModel : ViewModelBase
                         BaseScore = x.score,
                         Confidence = conf,
                         IsConfirmed = confirmed,
+                        // Carried so an UNCHECKED row cannot render as a checked-and-rejected
+                        // one — past the cap every signal is false for a different reason.
+                        WasProbed = probe,
                         LiveInstanceExists = liveExists,
                         ValuePlausible = plausible,
                         HasMaxSibling = hasMax,
@@ -232,9 +235,19 @@ public partial class DetectStatsViewModel : ViewModelBase
                 : cappedQueries > 0
                     ? $"  ⚠ {cappedQueries} keyword(s) hit the 200-row cap — more candidates exist"
                     : "";
+            // The class-probe cap is its OWN truncation and was silent: the row cap above talks
+            // about candidates, this one about how many of their classes were live-checked at
+            // all. Without it "0 confirmed" reads as "nothing is a stat" when it can mean
+            // "we stopped looking after 30 classes". (audit #5 AF2)
+            int unprobedClasses = byClass.Count - classesProbed;
+            var probeSuffix = unprobedClasses > 0
+                ? $"  ⚠ {classesProbed} of {byClass.Count} classes live-probed — {unprobedClasses} " +
+                  "shown as \"? not checked\""
+                : "";
             StatusText =
                 $"{results.Count} candidates · {confirmedCount} confirmed"
                 + (UseSnapshotSignal ? $" · snapshot: {snapNote}" : "")
+                + probeSuffix
                 + capSuffix
                 + "  — reference only, verify before use.";
         }
