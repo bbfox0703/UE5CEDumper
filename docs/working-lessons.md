@@ -5,10 +5,15 @@
 > Every lesson below was paid for with a debugging session, and until now the other machine had no
 > way to know it. This doc is the shared copy.
 >
-> **Sync rule:** memory and this file are mirrors. When one changes, change the other. Memory is the
-> convenient index for an in-session assistant; **this file is the record.** If they disagree, prefer
-> whichever cites a concrete measurement, then re-verify against the code — every claim here was true
-> at the build named beside it, and code moves.
+> **Sync rule (changed 2026-08-15): this file is now the SOLE copy — it is no longer mirrored.**
+> The assistant's memory folder used to carry a near-identical duplicate of every section below, and
+> the "edit both" tax was paid unevenly: the copies drifted, and the folder does not travel with git
+> anyway. Those 15 memory files were deleted; `MEMORY.md` now carries a pointer to this file plus the
+> section map. **Write new working-lessons here, not into memory.** Memory keeps only what is
+> genuinely machine-local (paths, in-flight project state, session preferences).
+>
+> Every claim here was true at the build named beside it, and code moves — re-verify against the code
+> before acting on a `file:line`.
 >
 > **What belongs here vs elsewhere:** this file is *how to work* — verification method, traps in our
 > own stack, and decisions settled in conversation that leave no trace in the code.
@@ -248,6 +253,41 @@ live one. Put "read the surrounding comments and the callers first" in every fin
   there: `IsEditableType` is unit-tested in isolation while nothing covers the caller that hands it a
   wrong address. "A test asserts the opposite" becomes an available refutation at the same time, so
   say so in the skeptic prompt.
+
+### 2.1 What audit #5 measured across all 12 segments (2026-08-13 → 2026-08-15)
+
+Recorded when scanning completed. These are measurements, not opinions — do not re-derive them.
+The findings themselves live in
+[audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md) §3c.
+
+- **The comment sweep is the best single technique: 6 for 6.** Grep for a comment that admits a
+  limitation or asserts an impossibility, then check whether it is still true. It produced the lead
+  finding in T1a, T1b **and** T1e. Nothing else in the method has a hit rate anywhere near it.
+- **Fix by FAMILY, not by ID — and grep for siblings *at fix time*, not at scan time.** Two families
+  recurred across unrelated subsystems: *the width family* (an out-of-range value masked to the field
+  width and then reported as written — six occurrences over four subsystems, and **at every site the
+  correct width was already in scope and simply not enforced**) and *root cause #4* (a fix applied at
+  only some of its sites — seven occurrences). The rule "grep for siblings before closing a fix" had
+  been written down since the fourth occurrence and three more appeared anyway, because it was being
+  read at scan time and not applied at fix time. The audit's own register generator repeated the
+  pattern: §4 documented a marker tolerance that §3c's regex then failed to apply, dropping 9 rows.
+- **Before writing a test, ask whether the CALL SITE can fail it.** AB1's guard was unit-tested and
+  still shipped the crash — its single call site sat *inside* the thread the guard existed to
+  prevent. A helper tested in isolation proves nothing about the seam that calls it (§1.3, and U1's
+  HIGH is the same shape).
+- **Cost scales with CLAIMS FOUND, not with lines read.** Segment T1 covered 8.5× S1's lines for
+  2.2× its tokens. The lever is claim volume: **merge claims by location inside the script**, and
+  batch 10 per refute agent / 8 per second-lens agent to hold a phase to 11–13 agents.
+- **Tightening the skeptic's rubric does NOT raise its kill rate.** S1 had the strictest rubric
+  written and killed the least (14%). What *does* work is calibrating the finders up front (§2).
+- **Keep the second lens even when its kill count is zero** — twice (T1c/AE1, T1e/AF1) it caught the
+  *skeptic* being wrong, which is a failure mode nothing else in the pipeline detects.
+- **Validate that every filename in a "covered" list resolves to a real file.** T1's first sizing
+  budgeted a phase around `PointerViewModel.cs`, **a file that does not exist**; the real file was
+  already covered by U1. Six planned phases became five once the names were checked.
+- **A tier that skipped the second lens is not a finding tier.** Audit #5's LOW/INFO kill rates ran
+  10–35% against the method's own measured 33–73% band — i.e. those tiers were scored leniently, not
+  found cleaner. Re-derive any LOW before fixing it; several are pattern-sweep leads, not findings.
 
 -----
 
@@ -601,3 +641,39 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
   `~/.claude/scheduled-tasks/<name>/SKILL.md` is the template. Two constraints: the task must **commit
   its own work** (nothing else persists), and if another session is open on the same clone it must stay
   **hands-off** — one working tree, two sessions.
+
+### 7.1 Where a lesson belongs — this file vs. the assistant's memory
+
+**Rule, settled 2026-08-15 and binding on both machines: a working lesson goes in THIS FILE, and the
+memory folder does not keep a copy.**
+
+The memory folder lives at `%USERPROFILE%\.claude\projects\<project>\memory\` and is **not in git**,
+so it exists on one machine at a time. Between 2026-08-14 and 2026-08-15 every section of this file
+also existed there as a `feedback_*.md` twin, on an "edit both" rule. That rule failed in the ordinary
+way: the copies drifted, several twins were staler than this file, and the machine that needed them
+most — the other one — never had them at all. **Fifteen duplicate memory files (~48 KB) were deleted
+on 2026-08-15**; `MEMORY.md` now carries a pointer here plus the section map above.
+
+**How to route a new fact:**
+
+| Fact | Goes to |
+|---|---|
+| A verification method, a trap in our stack, a UE/CE fact, a settled decision | **This file** (§1–§6) |
+| What shipped, when, and why | `dev-log.md` (append-only) |
+| Open work, effort/risk, pending live verification | `todo.md` |
+| What a *game* does differently | `lessons-learned.md` |
+| A machine-local path (`$GHIDRA_PROJS`, corpus location, sibling repo checkouts) | memory |
+| In-flight project state that has no home in the repo yet | memory |
+| Which doc to read next, and where the current work is | `MEMORY.md`, as a **pointer**, not a copy |
+
+**Two corollaries, both learned by paying for them:**
+
+1. **Never let memory restate content that a repo doc owns.** If you catch yourself writing a fact
+   into memory that a doc already states, write it in the doc and point at it. Duplicated prose is not
+   redundancy — it is a second thing that can be wrong, and the reader cannot tell which copy is
+   current. The audit register hit the same shape from the other direction (§2.1, root cause #4).
+2. **`MEMORY.md` is the only file loaded into every session**; topic files load on recall. So the cost
+   of a long `MEMORY.md` is paid on every single turn of every session, while the cost of a topic file
+   is paid only when it is relevant. Keep `MEMORY.md` to pointers and machine-local facts. **Adding a
+   second index file does not help** — it either also loads (no saving) or is never read (dead
+   weight). The lever is deduplication against git-carried docs, not more files.

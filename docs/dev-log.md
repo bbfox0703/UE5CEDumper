@@ -22,6 +22,78 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - A C++ test that failed to COMPILE was reported as "skip", and the build exited 0 (build 2914)
+
+**Audit #5 phase T1b, findings AD1 + AD2** — the *meta* one, fixed first on purpose: while it stood,
+every other fix's "tests green" was one compile error away from meaning nothing.
+
+### The defect
+
+The test phase derived its pass/fail signal from **"did an `.exe` path get assigned"**, not from
+**"did the build succeed"**. Three unrelated outcomes therefore collapsed into one line:
+
+```
+Write-Info "dll_helpers_test.exe not available (skip — run -Target DLL or All first)"
+```
+
+`$exitCode` was never touched, so the script printed `Status: SUCCESS` and **exited 0**. The three
+outcomes were: the target **failed to compile**; the build succeeded but **no `.exe` was found**;
+and the **build dir was absent**. Only the third is benign, and even it isn't under `-Target Test`.
+
+Rename a symbol, update the DLL caller and not the test, and the five shipping targets build clean,
+`dll_helpers_test` fails to compile, and **~700 assertions across Radar / Orden / GraphPath / Lineal /
+Denken / Solitar / Solide / Macht stop executing with no signal** — including the memory-corruption
+class `Test_Solitar_ApplyBoolBit` exists to catch. CI inherited all of it: `ci.yml:142` and
+`release.yml:70` are single `build.ps1` steps that assert nothing beyond its exit code.
+
+Worse, the message actively misdirects. *"not available (skip — run -Target DLL or All first)"* tells
+the operator they forgot a prerequisite, when in fact they ran the right target and a compile error
+scrolled past earlier in the same transcript. Two in-repo comments asserted the opposite contract in
+writing (`dll/CMakeLists.txt:503-504`, `dll/tests/utf8_helpers_test.cpp:8-9`) — both describe the
+**run** path; the **build** path had no failure channel at all.
+
+### The fix — one helper, not two edits
+
+The finding asked for the same edit at two sites. Two hand-copied blocks *are* audit #5's root
+cause #4 ("a fix applied at only some of its sites"), so instead both were collapsed into a single
+`Invoke-CppSelfTest` helper in [build.ps1](../build.ps1), beside `Invoke-CmdInVsEnv`. Adding a third
+C++ test target can no longer add a third copy of the logic. The call sites are now two lines of
+`if (-not (Invoke-CppSelfTest …)) { $exitCode = 1 }`.
+
+Each of the three outcomes now has its own `Write-Fail` and fails the build. **The benign-skip arm
+was removed, not narrowed** — under `-Target Test` / `All` the C++ suite is expected to build and
+run, so no absence of it is benign.
+
+**A sibling was found and fixed at fix time** — the rule the audit says keeps being read at scan time
+and not applied at fix time. The C# phase's `if (-not (Test-Path $TEST_PROJ)) { Write-Info "Test
+project not found, skipping" }` is the same defect class: the csproj is checked into the repo, so its
+absence means a broken tree, and it left a green exit code with **zero C# tests run**. Now
+`Write-Fail` + `$exitCode = 1`.
+
+**PowerShell trap worth remembering:** moving the runner into a function changes what
+`& $exe.FullName` does — a native command's stdout joins the *pipeline*, so the test's own output
+would have been captured into the function's return value and every call would have read as truthy.
+It is piped to `Out-Host`; `$LASTEXITCODE` is unaffected. (The `Write-*` helpers were checked first —
+all use `Write-Host`, so they don't pollute the return.)
+
+### Verified by negative control, not by inspection
+
+Mandatory here: the finding *is* "a check that cannot fail", so a green run proves nothing on its own.
+
+1. **Positive control** — `-Target Test` on the clean tree: `[OK] utf8_helpers_test passed`,
+   `[OK] dll_helpers_test passed` (1029 assertions), **3724** C# passed, `Status: SUCCESS`, exit **0**.
+2. **Negative control** — a deliberate syntax error appended to `dll/tests/utf8_helpers_test.cpp`:
+   `[FAIL] utf8_helpers_test FAILED TO COMPILE - the C++ suite did not run (this is a build failure,
+   not a skip)`, `Status: FAILED`, exit **1**. The pre-fix code emitted `Write-Info "…(skip…)"` and
+   exit **0** in exactly this state. `dll_helpers_test` still ran and passed in the same invocation —
+   one broken target must not hide the other's result.
+3. Source restored, re-ran: green, exit 0.
+
+No workflow change was needed — CI already gates on `build.ps1`'s exit code. That was the problem:
+the script was reporting success.
+
+-----
+
 ## 2026-08-15 - Freezing a 1-byte enum wrote four bytes and destroyed its three neighbours (build 2904)
 
 **Audit #5 segment U4 finding Y15** — the third site of a family this audit has now closed three

@@ -1491,7 +1491,8 @@ Every segment in §1's plan has been scanned. **No segment remains.**
    commented out so DETACH cannot tell unload from process-exit; nothing pins the module.
 2. **T1b/AD1 — a C++ test target that fails to COMPILE is reported as "skip" and the build exits 0**,
    in CI too. Latent today (the control confirmed the suite runs), but it silently disarms ~700
-   assertions the moment a test stops compiling.
+   assertions the moment a test stops compiling. — ✅ **FIXED with AD2, build 2914** (one shared
+   `Invoke-CppSelfTest` helper + a same-class sibling in the C# phase; negative-control verified).
 3. **S1/the freeze helper — a bool freeze writes a WHOLE BYTE over a bit-packed `FBoolProperty`**,
    20×/sec, while the DLL sibling reached from the same Property Search row writes only the bit.
 
@@ -1611,6 +1612,7 @@ second lens → 27 confirmed. Kill rate 21%.**
 at the two arms of the same branch; both were re-derived by hand.
 
 > ### 🔴 AD1/AD2 — a C++ test target that FAILS TO COMPILE is reported as "skip", and the build exits 0
+> ### ✅ FIXED build 2914 — the finding as written is below, the fix record follows it
 >
 > This is what putting the tests in scope as *subjects* was for. **The pass/fail signal is derived
 > from "did an exe path get assigned", not from "did the build succeed"** — and one failure mode of
@@ -1648,6 +1650,43 @@ at the two arms of the same branch; both were re-derived by hand.
 > Fix is small and splits the two causes: set `$exitCode = 1` + `Write-Fail` when `$xxxBuildOk` is
 > false, and keep the benign "skip" only for the genuinely-absent-`$BUILD_DIR` case at `:645`/`:671`.
 >
+> ### ✅ AD1 + AD2 FIXED — build 2914, 2026-08-15
+>
+> **Both sites collapsed into ONE function**, `Invoke-CppSelfTest` (`build.ps1`, beside
+> `Invoke-CmdInVsEnv`), rather than the two parallel edits the finding asked for. Two hand-copied
+> blocks *are* root cause #4's shape — the audit's strongest recommendation is to fix the family, and
+> here the family could be eliminated outright: adding a third C++ test target can no longer add a
+> third copy of the logic. The call sites are now two `if (-not (Invoke-CppSelfTest …)) { $exitCode = 1 }`.
+>
+> Three outcomes that used to collapse into one "skip" line are now three distinct failures:
+> **target failed to compile**, **built but no `.exe` found**, **build dir absent**. The benign-skip
+> arm was *removed*, not narrowed — under `-Target Test` / `All` the C++ suite is expected to build
+> and run, so no absence of it is benign.
+>
+> **Sibling found and fixed at fix time** (the rule this audit says is not being applied at fix time):
+> the C# phase's `if (-not (Test-Path $TEST_PROJ)) { Write-Info "Test project not found, skipping" }`
+> is the same defect class — the csproj is checked into the repo, so its absence means a broken tree,
+> and it left a green exit code with **zero C# tests run**. Now `Write-Fail` + `$exitCode = 1`.
+>
+> **PowerShell trap worth keeping:** moving the runner into a function changes what `& $exe.FullName`
+> does — a native command's stdout joins the *pipeline*, so the test's own output would have been
+> captured into the function's return value and every call would read as truthy. Piped to `Out-Host`;
+> `$LASTEXITCODE` is unaffected. (The `Write-*` helpers were checked first — all use `Write-Host`.)
+>
+> ✅ **Verified by negative control, not by inspection** — mandatory here, since the finding *is* "a
+> check that cannot fail":
+> 1. **Positive control**: `-Target Test` on the clean tree → `[OK] utf8_helpers_test passed`,
+>    `[OK] dll_helpers_test passed` (1029 assertions), 3724 C# passed, `Status: SUCCESS`, **exit 0**.
+> 2. **Negative control**: appended a deliberate syntax error to `dll/tests/utf8_helpers_test.cpp` →
+>    `[FAIL] utf8_helpers_test FAILED TO COMPILE - the C++ suite did not run (this is a build failure,
+>    not a skip)`, `Status: FAILED`, **exit 1**. The pre-fix code emitted `Write-Info "…(skip — run
+>    -Target DLL or All first)"` and **exit 0** in exactly this state. `dll_helpers_test` still ran and
+>    passed in the same invocation — one broken target must not hide the other's result.
+> 3. Source restored (`git status` clean for that file); re-ran → green, exit 0.
+>
+> CI inherits the fix with no workflow change: `ci.yml:142` / `release.yml:70` already gate on
+> `build.ps1`'s exit code, which is what was wrong — the script was reporting success.
+>
 > **Scope note:** `build.ps1` is not one of T1b's ten files. It is recorded here because it is the
 > **sole enforcement path** for the two files that *are* in scope — a property of the suite under
 > audit, not a stray finding. Two in-repo comments assert the opposite contract in writing
@@ -1657,8 +1696,8 @@ at the two arms of the same branch; both were re-derived by hand.
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **AD1** | HIGH | `build.ps1:666` (Unit Tests block — utf8_helpers_test / dll_helpe) | A C++ test target that fails to COMPILE is reported as "skip", not as a failure — the whole C++ suite can go silent, including in CI **[2 lenses]** | S / low |
-| **AD2** | HIGH | `build.ps1:692` (Test phase — dll_helpers_test / utf8_helpers_tes) | A C++ test target that FAILS TO COMPILE is reported as "skip" and leaves exitCode 0 — the whole C++ suite silently stops running, in CI too | S / low |
+| **AD1** ✅ | HIGH | `build.ps1:666` (Unit Tests block — utf8_helpers_test / dll_helpe) | A C++ test target that fails to COMPILE is reported as "skip", not as a failure — the whole C++ suite can go silent, including in CI **[2 lenses]** | S / low |
+| **AD2** ✅ | HIGH | `build.ps1:692` (Test phase — dll_helpers_test / utf8_helpers_tes) | A C++ test target that FAILS TO COMPILE is reported as "skip" and leaves exitCode 0 — the whole C++ suite silently stops running, in CI too | S / low |
 | **AD3** | MED | `Genau.cpp:1120` (ScanForTarget — hint phase `sorted.erase(it)`) | The cached-hint fast path inspects only the FIRST match, then deletes the pattern from the full scan | S / low |
 | **AD4** | MED | `Renge.h:106` (Renge::CMD_GET_PROTECT_STATE / UE5_GetProtectSta) | The GodMode want/live/resolvable command is fully shipped in the DLL and has zero clients; the UI reads the live-only proxy instead | S / low |
 | **AD5** | MED | `Utf8Helpers.h:324` (DecodeFStringBuffer (KNOWN RESIDUAL)) | The header's own "KNOWN RESIDUAL" mis-decodes an ASCII FUtf8String as UTF-16 and produces a CJK glyph — and no test pins the boundary it admits | M / low |
@@ -2305,36 +2344,35 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**239 of 272 findings are still open** (33 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **6 HIGH · 73 MED ·
-133 LOW · 27 INFO**. Fixed HIGHs: 5 (V1, W1, W2, Y1, AB1).
+**237 of 272 findings are still open** (35 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **4 HIGH · 73 MED ·
+133 LOW · 27 INFO**. Fixed HIGHs: 7 (V1, W1, W2, Y1, AB1, **AD1, AD2**).
+
+> **Updated 2026-08-15 (build 2914): AD1 + AD2 FIXED**, counts above re-derived with the command
+> rather than hand-tallied. Both sites were collapsed into a single `Invoke-CppSelfTest` helper, a
+> same-class sibling in the C# phase was fixed alongside them, and the fix was proved with a negative
+> control (a deliberately broken test source now fails the build; it previously printed "skip" and
+> exited 0). Full record in T1b's block, §2.
 
 > ⚠ **The LOW and INFO tiers are NOT vetted to this audit's standard.** Kill rates ran 10–35%
 > against the audit's own 33–73% band, and only HIGH/MED got a second lens in most segments. Each
 > §2 block states what was hand-verified. **Re-derive any LOW before fixing it** — several are
 > pattern-sweep leads, not findings.
 
-### The 6 open HIGHs — start here
+### The 4 open HIGHs — start here
 
-> ✅ **All six re-verified against the source 2026-08-15 (PM double-check pass — see the block at the
-> end of this section). Zero line drift on all six.** The per-finding corrections below are from that
-> pass; the original one-line claims stand, but several details a fixer would code against changed.
+> ✅ **All six were re-verified against the source 2026-08-15 (PM double-check pass — see the block at
+> the end of this section). Zero line drift on all six.** The per-finding corrections below are from
+> that pass; the original one-line claims stand, but several details a fixer would code against
+> changed. **Two of the six (AD1, AD2) have since been fixed** — build 2914, see below.
 
-1. **AD1** — `build.ps1:666 (Unit Tests block — utf8_helpers_test / dll_helpe)`
-   A C++ test target that fails to COMPILE is reported as "skip", not as a failure — the whole C++ suite can go silent, including in CI
-   *Re-verify: AD1 (`:644-667`) and AD2 (`:669-693`) are **two separate `if/else` statements**, not
-   two arms of one branch — the fix must be applied at BOTH sites independently. A third condition
-   collapses into the same skip message: build succeeded but no `.exe` found. CI inherits the hole
-   confirmed: `ci.yml:142` and `release.yml:70` are single `build.ps1` steps with no artifact
-   assertion. Partial mitigation only: `dll_helpers_test` compiles `Radar.cpp`/`Denken.cpp`, so a
-   break in those two files fails the DLL phase — a break in a test .cpp or a header-only signature
-   is fully silent, and `utf8_helpers_test` shares no .cpp at all.*
+~~1. **AD1** / 2. **AD2**~~ — ✅ **FIXED, build 2914, 2026-08-15.** Both collapsed into one
+`Invoke-CppSelfTest` helper (two hand-copied blocks were themselves root cause #4), the three
+outcomes that shared the "skip" line are now three distinct failures, the C# phase's same-class
+sibling was fixed at the same time, and a negative control proved the check can now fail. Record in
+T1b's block, §2. *Nothing about the remaining HIGHs changed.*
 
-2. **AD2** — `build.ps1:692 (Test phase — dll_helpers_test / utf8_helpers_tes)`
-   A C++ test target that FAILS TO COMPILE is reported as "skip" and leaves exitCode 0 — the whole C++ suite silently stops running, in CI too
-   *(see AD1's note — same defect class, second required edit)*
-
-3. **AB2** — `Methode.cpp:307 (OnInjectAndConnect)`
+1. **AB2** — `Methode.cpp:307 (OnInjectAndConnect)`
    InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread
    *Re-verify (mechanism CONFIRMED in CE's own source, `CEFuncProc.pas:1346-1388`), three corrections:
    (a) the free is **not unconditional** — CE waits a hard, unconfigurable **10 s** ceiling
@@ -2351,7 +2389,7 @@ shipped, the in-session half is deliberately deferred to cluster ③). Open: **6
    `UE5_AutoStart` must spawn-and-return (publish via `Mimic::InitState`, which `UE5CEDumper.CT`
    already polls), so the remote thread exits inside the 10 s window.*
 
-4. **AA1** — `ue5_freeze_helper.lua:153 (writeBool)`
+2. **AA1** — `ue5_freeze_helper.lua:153 (writeBool)`
    Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit
    *Re-verify: worse than stated — when `ByteMask != 0x01` the intended bool is **never set at all**
    (writing 1 sets bit 0), so the feature silently no-ops while corrupting up to 7 neighbours. The
@@ -2361,7 +2399,7 @@ shipped, the in-session half is deliberately deferred to cluster ③). Open: **6
    repair (`required` on the params record) is the template. The DLL sibling reached from the same
    row is correct and exhaustively tested (`Solitar::ApplyBoolBit`, `dll_helpers_test.cpp:2629`).*
 
-5. **AA2** — `ue5_freeze_helper.lua:452 (freezeProperty -> tick)`
+3. **AA2** — `ue5_freeze_helper.lua:452 (freezeProperty -> tick)`
    The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds
    *Re-verify: mechanism exact (the wire carries **raw addresses only** — `Mimic::HandleListInstances`
    packs 8-byte pointers, no `InternalIndex`/`SerialNumber`, though `Aura::GetSerialNumber` exists).
@@ -2370,7 +2408,7 @@ shipped, the in-session half is deliberately deferred to cluster ③). Open: **6
    comment, never measured), and "up to 5 s" is the BEST case — a slow rescan extends it (5 s timeout
    × up to 16 pages, synchronous), and a failed one hands over to AA3.*
 
-6. **AA3** — `ue5_freeze_helper.lua:461 (rescan / tick)`
+4. **AA3** — `ue5_freeze_helper.lua:461 (rescan / tick)`
    A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely
    *Re-verify: "indefinitely" is **conditional on a persistent failure** — a transient
    `mailbox busy` self-heals on the next 5 s rescan; the unbounded cases are real and ordinary (DLL
@@ -2387,7 +2425,7 @@ shipped, the in-session half is deliberately deferred to cluster ③). Open: **6
 |---------|-----:|----:|----:|-----:|-----:|
 | S1 early Lua scripts | **3** | 17 | 14 | 2 | **36** |
 | T1c VMs + Core + Models | – | 10 | 15 | 4 | **29** |
-| T1b DLL headers + C++ tests | **2** | 4 | 15 | 6 | **27** |
+| T1b DLL headers + C++ tests | – | 4 | 15 | 6 | **25** (AD1+AD2 fixed b2914) |
 | T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
 | T1a Radar + entry points | **1** | 5 | 12 | 4 | **22** |
 | U5 remaining VMs / Models / Core | – | 3 | 13 | 1 | **17** |
@@ -2407,13 +2445,13 @@ shipped, the in-session half is deliberately deferred to cluster ③). Open: **6
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | **6** | **73** | **133** | **27** | **239** |
+| **TOTAL** | **4** | **73** | **133** | **27** | **237** |
 
 ### Fix order recommended
 
-1. **AD1/AD2** — one defect class, **two separate sites** (not two arms of one branch — both need
-   the edit), and it is *meta*: while it stands, every other fix's "tests green" is one compile
-   error away from meaning nothing. Fix it before the rest.
+1. ~~**AD1/AD2**~~ — ✅ **DONE, build 2914.** It was first because it is *meta*: while it stood,
+   every other fix's "tests green" was one compile error away from meaning nothing. That is no
+   longer true, so the fixes below now rest on a test phase that can actually fail.
 2. **AA1** — a wrong WRITE into the game, ~16×/sec per address, and the DLL sibling reached from the
    **same Property Search row** already does it correctly (`Solitar::ApplyBoolBit`). Small and
    well-defined — but note the mask must first be ADDED to the freeze pipeline's wire/params (it is
@@ -2530,7 +2568,8 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 > re-derive itself after a fix. **All six open HIGHs were re-verified against the source
 > 2026-08-15 PM (zero line drift)** — per-finding correction notes sit inline in §3c's HIGH list.
 >
-> ✅ **AB1 is FIXED in build 2913** — see dev-log. The remaining must-fix is AD1/AD2.
+> ✅ **AB1 is FIXED (2913) and AD1/AD2 are FIXED (2914)** — see dev-log. **The next must-fix is
+> AA1**, then AA2/AA3, then AB2; §3c's fix-order list is current.
 >
 > 🔴 **The two most consequential findings, both hand-verified against the source:**
 > - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path. ✅ FIXED (2913).** `DllMain` starts a
@@ -2541,9 +2580,11 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 >   the thread it should have prevented. Fix is two small guards; **do not** join threads from DETACH.
 >   Fix verified in-tree 2026-08-15; three stale comments survived it — see §3c's double-check block.
 > - **T1b/AD1 — a C++ test target that fails to COMPILE is reported as "skip" and the build exits 0**,
->   CI included (`build.ps1:691-693`; the `else` arm never touches `$exitCode`). **Latent** — the
->   control was run and the suite does execute today — but it silently disarms ~700 assertions the
->   moment a test stops compiling.
+>   CI included (`build.ps1:691-693`; the `else` arm never touches `$exitCode`). It was **latent** —
+>   the control was run and the suite did execute — but it silently disarmed ~700 assertions the
+>   moment a test stopped compiling. **✅ FIXED with AD2 (2914):** both sites are now one
+>   `Invoke-CppSelfTest` helper, the "skip" arm is gone, the C# phase's same-class sibling was fixed
+>   with them, and a negative control (a deliberately broken test source) now fails the build.
 >
 > ⚠ **Vetting is uneven and the doc says so per segment.** Kill rates ran 10–35% across the T1
 > phases against the audit's own 33–73% band. **Everything hand-verified is marked as such in its
