@@ -58,7 +58,7 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **D5** | Fern + Frieren | `Fern.cpp` 2490/6028, `Frieren.cpp` 816/1784 | ~3,306 | partly audited before |
 | **U1** ✅ | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
 | **U2** ✅ | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
-| **U3** | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
+| **U3** ✅ | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
 | **U4** | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
 | **U5** | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
 | **S1** | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
@@ -837,7 +837,93 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 
 -----
 
+### U3 — Dump services + MainWindow VM — ✅ scanned 2026-08-15
+
+**11 agents** (5 lenses → 4 refute batches → 2 second-lens), 0 errors. Run `wf_bf7170d4-f18`.
+19 raw claims → 18 after dedupe → **6 refuted (33%)** → 12 confirmed → **11 distinct** after merging
+the two reports of the same Dump-All completion line (`:3373` — "success derived from the file's byte
+length" and "the MB figure uses integer division" are one statement), **+1 found by hand** = **12**.
+
+**Tally: 3 MEDIUM · 9 LOW · 0 HIGH.** The finders claimed **no HIGHs at all** — the first C# segment
+where that happened, and it matches what is left: this segment's defects are missing caveats and
+unread flags, not wrong writes.
+
+> **The headline is that this audit's OWN fix was applied to one of its two sites.** X1 is the D5/F4
+> truncation fix: the DLL side covered **both** the single and the batch property-search paths — the
+> comment at `Fern.cpp:2822-2825` cites *"audit #5 D5/F4"* by name — while the C# side was applied to
+> the single path only. The two parsers sit ~80 lines apart in the same file. That is the **third**
+> recurrence of the same meta-pattern in three segments: V2 (fixed one side of the wire), W4/W6
+> (applied at some call sites), X1 (applied at one of two twins). **A fix in this codebase is not
+> done until you have grepped for its siblings** — across languages, across call sites, and across
+> single/batch twins.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **X1** | MED | `DumpService.cs:1746` (`SearchPropertiesBatchAsync`) | The batch property search parses `query` + `match_count` only, dropping the per-query `truncated` and batch `aborted` the DLL emits for exactly this purpose — `PropertySearchQueryEnvelope` has no such field to parse into. Interesting Properties sends all 51 seed queries at 200 rows each, so common seeds (`Max`, `Count`, `Time`, `Level`, `Hit`) cap routinely and the panel reports *"N unique properties"* with no cap note. **This is the exact report class the F4 fix was written to end**, surviving at F4's other site. `DetectStatsViewModel` makes the same call with the same blind spot. | S / low |
+| **X2** | MED | `MainWindowViewModel.cs:1650` | Class-address lookups scan a single 5,000-row `list_classes` page and report a real class as **"not found"** when it falls past the cap. | S / low |
+| **X3** | MED | *(hand-found)* `DumpService.cs` / `Models/EngineState.cs` | The DLL computes and publishes a three-flag offset-validation verdict (`validated`, `probe_ran`, `case_preserving`, plus `fallback_reason`) and **the UI never issues `get_offsets` at all**, so nothing can tell the user the walker is running on unvalidated default offsets. | S / low |
+| **X4** | LOW | `MainWindowViewModel.cs:3373` | The Dump All completion line is derived from the **file's byte length** rather than from what the dump did, so a zero-class or half-failed dump still announces an export — and the figure itself is integer division (`Length / 1024 / 1024:F1`), so a 3.7 MB dump prints `3.0 MB` and anything under 1 MB prints `0.0 MB`. | S / low |
+| **X5** | LOW | `MainWindowViewModel.cs:2003` | The disconnect fan-out resets **3 of 15** panels; every other panel keeps its rows across a reconnect and goes on offering jumps to addresses from the previous process. | M / med |
+| **X6** | LOW | `MainWindowViewModel.cs:3336` | The three long-running export commands take no `CancellationToken`, so every `ct` check inside the services they drive is dead code. | M / low |
+| **X7** | LOW | `MainWindowViewModel.cs:2026` | The "game thread paused" banner is a level rebuilt from two independent per-lane edge latches, so it sticks ON after the game resumes. | S / low |
+| **X8** | LOW | `MainWindowViewModel.cs:1915` | The Console tab's two AOBMaker actions assert *"AOBMaker not connected"* from a cached flag nothing on their path refreshes. | S / low |
+| **X9** | LOW | `MainWindowViewModel.cs:132` | The competing-dumper-host banner lists the game you are connected to among the "also loaded" competitors when the DLL reports no PID. | S / low |
+| **X10** | LOW | `MainWindowViewModel.cs:2315` | Time-dilation values are in `ApplyOptions` and `BuildOptions` but missing from `TeleportPersist`, so changing them never schedules a save. | S / low |
+| **X11** | LOW | `MainWindowViewModel.cs:3368` | Dump All streams onto the destination with `FileMode.Create` and no temp-then-rename, so an abort leaves a truncated `.jsonl` at the final name, and no consumer checks the trailing summary line that is written only on success. **Scope corrected by hand — see below.** | S / low |
+| **X12** | LOW | `MainWindowViewModel.cs:3145` | Install-CE-autorun skips its own manual-placement fallback in exactly the case where the write was denied. | S / low |
+
+**Verified independently (not agent-reported):**
+
+1. **X3 was found by hand, by a sweep the agents did not run — and the sweep's blind spot is worth
+   recording.** Diffing every JSON key the DLL *writes* (`X["key"] =` in `dll/src/*.cpp`) against
+   every key the C# *reads* (`["key"]` in `ui/UE5DumpUI/**/*.cs`) gives 508 written / 544 read and
+   **38 never read**. Three sit together: `validated`, `probe_ran`, `case_preserving`
+   (`Fern.cpp:4644-4648`). No C# file mentions any of them, and **the UI never sends `get_offsets`**;
+   `EngineState` has no equivalent (its `IsLowConfidence` is about UE *version* detection). The DLL's
+   own comment says why the split exists — *"A user reading the honest-looking summary had no way to
+   know the walker was about to be useless"* (`Grimoire.h:238-241`) — and **nothing gates serving on
+   the flag**: only `FindGEngineSlot` reads it, deliberately using the ProbeRan-ish semantics for
+   ordering. So a user can browse a game whose offsets are all guesses with no indication, on the one
+   panel that already carries a low-confidence badge, a version-too-old banner and per-pointer
+   warnings. `fallback_reason` — the *why* — is unread too.
+   **Negative control:** deleting the known-good `map_stride` read from a scratch copy made the sweep
+   flag it, so the 38 is a measurement.
+   ⚠ **The sweep is key-name-GLOBAL, so it structurally cannot find X1**: `truncated`/`aborted` *are*
+   read on the single-query path, which marks them "read" everywhere. The agents found the defect the
+   detector was blind to, and the detector found the one they missed. Neither subsumes the other —
+   **run both.**
+2. **X1 re-derived at both ends.** `Fern.cpp:2822-2825` emits `envelope["truncated"]` per query under
+   a comment naming *audit #5 D5/F4*; `Fern.cpp:2834` emits `data["aborted"]`;
+   `Models/PropertySearchResult.cs:179-184` shows `PropertySearchQueryEnvelope` with only
+   `Query`/`MatchCount`/`Results`, while the single-query `PropertySearchResult` in the same file has
+   both flags *with the F4 doc comment on them*.
+3. **X11's scope was corrected by hand after a split verdict — and the refutation was right on the
+   part that matters.** A near-identical claim against `DumpAllService.cs:463` was **refuted** while
+   this one was confirmed. The code settles it: the non-atomic write is real (`FileMode.Create`
+   straight to `filePath`, `MainWindowViewModel.cs:3368`), **but
+   `DumpExplorer.SetLastExportPath(filePath)` is inside the `try`, after the success line**, so on
+   failure the app never advertises the partial file — the `catch` sets *"Dump failed"* and stops.
+   The harm is therefore "a truncated file sits at the name the user chose, with no marker check if
+   they open it manually", not "the app hands the user a corrupt dump". Filed at LOW with that scope.
+   **Do not re-raise the larger version.**
+
+-----
+
 ## 3. Refuted — do not re-raise
+
+### From U3 (6 of 18 — 33%)
+
+- **`DumpAllService.cs:463`** — the completeness-marker claim, refuted on the harm chain (see X11
+  above; the narrower half survives as X11, so this does not clear the whole area).
+- **`MainWindowViewModel.cs:674`** — the Extra Scan / version-override fan-out never recording the
+  AOB scan result.
+- **`MainWindowViewModel.cs:1191`** — seven handoffs calling a class "not resolvable" from a
+  truncated class list. Refuted here, but note **X2 is the surviving, narrower form of the same
+  underlying cap** — the truncation is real; what was refuted is this framing of its blast radius.
+- **`MainWindowViewModel.cs:2222`** and **`:2604`** — two framings of the debounced options save
+  copying `ProxyDeploy` collections off the UI thread. Both refuted.
+- **`MainWindowViewModel.cs:1163`** — panel→Live-Walker handoffs reporting a navigation the
+  `AsyncRelayCommand` refused.
 
 ### From U2 (4 of 16 — 25%)
 
@@ -1038,13 +1124,19 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session picks up at U3
+## 3b. START HERE — next session picks up at U4
 
-*State as of 2026-08-14, after U2. Read this section first; it is written for a session with no
+*State as of 2026-08-15, after U3. Read this section first; it is written for a session with no
 memory of the previous one.*
 
-> ✅ **Both U2 HIGHs are fixed. U3 is genuinely next.** W1+W7 (build 2853) and W2+W3 (build 2842)
-> shipped, along with W4 (build 2836). **Nothing open in the audit is rated HIGH.**
+> ✅ **Nothing open in the audit is rated HIGH.** All three real HIGHs shipped: V1 (2830), W2+W3
+> (2842), W1+W7 (2853), plus W4 (2836) and W6 (2857). U3 claimed no HIGHs at all.
+>
+> 🔁 **Read this before fixing anything from U3.** X1 is the D5/**F4 fix applied to one of its two
+> sites** — the DLL covered both the single and batch property-search paths, the C# covered only the
+> single one. That is the **third** time this audit has found its own fix half-applied (V2 = one side
+> of the wire, W4/W6 = some call sites, X1 = one of two twins). Before closing any fix, grep for its
+> siblings across languages, call sites, and single/batch twins.
 >
 > **What is owed instead is verification, and it is the cheapest work available.** Three separate
 > items are queued in
@@ -1067,14 +1159,17 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 
 ### What is done
 
-**Scanning: 8 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2. Still open:
-**U3-U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
+**Scanning: 9 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3. Still open:
+**U4, U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
 
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs remain.
+**Still open: X1–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs remain.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
+U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
+other half of a fix this audit already paid for).
+(Note the ID collision: `U2`/`U3` in that list are D1 findings in `Ubel.cpp`, *not* segment names.)
 (Note the ID collision: `U2`/`U3` are D1 findings in `Ubel.cpp`, *not* segment names.)
 
 ### The C# lens set — as run in U1, with what it actually yielded
@@ -1108,27 +1203,42 @@ the skeptics, and the AOT-specific refutation guidance; the D5 script
 (`audit5-seg-d5-fern-frieren-wf_39143753-6df.js`) remains the C++ flavour. Both are 5 finders ->
 skeptic batches -> second lens on surviving HIGH/MED, and log a wipeout warning when a finder dies.
 
-**U3 scope** (from section 1): dump services + MainWindow VM — 1517 + 437 + 1366 early lines =
-**~3,320**. `MainWindowViewModel` is the composition root and command surface, so the U1 lens set
-(mvvm-lifetime / async-cancel / domain-correctness / status-honesty) fits it better than U2's emitter
-lenses did. Keep U2's **round-trip instinct** though: ask of every dump artifact whether anything ever
-reads back what was written.
+**U4 scope** (from section 1): dialogs + CE script generators — `InvokeParamDialog` 1020 (96%
+early), `Baked` 503, `Invoke` 399, `ObjInstancePicker` 295, `ParamBuffer` 258, `CheatTable` 245,
+`FreezeDialog` 242, `FreezeGen` 210 = **~3,172**.
 
-**What U2 proved about lens choice, carry it forward:** `aot-trim` was dropped for U2 (it found
-nothing in U1) and nothing was lost. `domain-correctness`/`pointer-chain` and `status-honesty` were
-the two productive lenses in both C# segments — weight them, and give one lens the *consumer's*
-point of view (in U2 that was "does the artifact parse in the tool that reads it", which produced
-both HIGHs).
+**U4 needs a lens the earlier C# segments did not have: CE Lua output hygiene.** CLAUDE.md carries a
+long MUST-follow rule set for every script this project emits — the `DEBUG`/`dbg()` gating, the
+auto-close-on-success that must be **unreachable on every error path**, the untick-the-record rule
+with its two *non-interchangeable* shapes (stateful toggles return early; momentary actions flag
+`hadError` and fall through so the deferred untick still runs), the mailbox contract-version range
+check **before the first write**, and the rule that a mailbox failure must never be reported by
+guessing (`status==0` = stale address, `0xFF` = wedged) with a real `getTickCount()` deadline because
+`sleep(1)` is 15.47 ms. `CeMailboxBailoutTests` asserts the two bail-out shapes. **Point one lens
+squarely at that rule set** — it is unusually well specified, which makes violations decidable rather
+than arguable. `CeLuaHygiene` is the shared emitter; the finding shape to hunt is a generator that
+hand-rolls what `CeLuaHygiene` provides.
 
-**Put in every agent prompt** (measured to improve output): the calibration — *156 raw claims, 75
-refuted (**25–73% per segment**, ~48% overall; the two C# segments are the two lowest at 33% and 25%),
-eighteen HIGHs claimed, fifteen died and three were real* — plus *"read the surrounding comments and
-the callers first"* (five of D4b's nine refutations were won by finding a comment naming the defect
-the code already prevents), the **seam** instruction above, and **REPORT ONLY, no edits**.
+**What the C# segments proved about lens choice:** `aot-trim` was dropped after U1 (it found nothing)
+and nothing was lost. `domain-correctness` and `status-honesty` were productive in all three. Give one
+lens the **consumer's** point of view — in U2 that was "does the artifact parse in the tool that reads
+it" and it produced both HIGHs; in U4 the consumer is **Cheat Engine's Lua engine**, so
+docs/CE-Bugs-Minesweeper.md and docs/ce-plugin-sdk-notes.md are the grounding.
 
-**Do not re-derive:** everything already in sections 2 and 3, especially D5's `Fern.cpp` /
-`Frieren.cpp` findings, the six shipped D5 fixes, U1's eleven findings + six refutations (V1/V2/V5
-now fixed), and U2's eight findings + four refutations.
+**Run the unread-wire-key sweep again for U4/U5 — but know its blind spot.** Diffing DLL-written vs
+C#-read JSON keys found X3; it structurally could NOT find X1, because a key read on ONE command's
+path counts as read everywhere. A per-command version of that sweep would find both, and would be
+worth writing once.
+
+**Put in every agent prompt** (measured to improve output): the calibration — *175 raw claims, 81
+refuted (**25–73% per segment**, ~46% overall; the three C# segments are the lowest at 33% / 25% /
+33%), eighteen HIGHs claimed, fifteen died and three were real* — plus *"read the surrounding comments
+and the callers first"* (five of D4b's nine refutations were won by finding a comment naming the
+defect the code already prevents), the **seam** instruction above, and **REPORT ONLY, no edits**.
+
+**Do not re-derive:** everything already in sections 2 and 3 — D5's `Fern.cpp`/`Frieren.cpp`
+findings and its six shipped fixes, U1's eleven (V1/V2/V5 fixed), U2's eight (six fixed), and U3's
+twelve findings + six refutations.
 
 ### One tree, two sessions
 
@@ -1188,8 +1298,8 @@ be the default for any DLL fix:
 
 ## 4. Cross-segment rollup — read this before fixing anything
 
-**Status: 8 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5, U1, U2). **68 distinct findings:
-3 HIGH · 39 MEDIUM · 25 LOW · 1 INFO.** 156 raw claims, **75 refuted (48%)**. Remaining: U3–U5, S1, T1.
+**Status: 9 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5, U1, U2, U3). **80 distinct findings:
+3 HIGH · 42 MEDIUM · 34 LOW · 1 INFO.** 175 raw claims, **81 refuted (46%)**. Remaining: U4, U5, S1, T1.
 **The DLL is fully scanned; everything left is C# and Lua.**
 
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
@@ -1202,6 +1312,7 @@ be the default for any DLL fix:
 | D5 Fern+Frieren | 14 | 19 | 11 (58%) | 8 **+1** ¤ | 1 → **0** |
 | U1 LiveWalker+Pointer+ObjectTree | 16 | 19 | 6 (33%) | 11 | 1 → **1** |
 | U2 export services | 21 | 20 | 4 (25%) | 8 | 7 → **2** ◊ |
+| U3 dump services + MainWindow VM | 11 | 19 | 6 (33%) | 11 **+1** ✧ | 0 → 0 |
 
 ¤ **D5's section holds 9 rows but its run produced 8** — F8 came from verifying F6, not from a
 finder (same as D2's G7 below).
@@ -1210,11 +1321,14 @@ finder (same as D2's G7 below).
 version/layout desync seen through different lenses, one was downgraded to MEDIUM by the second lens.
 The Distinct column counts findings, not claims.
 
+✧ **U3's section holds 12 rows but its run produced 11** — X3 came from a hand-run sweep of
+DLL-written vs C#-read JSON keys, not from a finder (same as D2's G7 and D5's F8).
+
 ✦ **D2's section holds 7 rows but its run produced 6.** G7 did not come from any finder — it was
 found during the 2026-08-14 live-verification session and filed into the D2 section because that is
 where it belongs by subject. The Raw/Refuted columns describe the *runs*; the totals above count
 *rows*, so the two reconcile only through this row. (Counted directly: `grep -cE '^\| \*\*[A-Z]+[0-9]+\*\*'`
-scoped to §2 = **68**, of which 3 HIGH / 39 MED / 25 LOW / 1 INFO. Re-derive it rather than trusting
+scoped to §2 = **80**, of which 3 HIGH / 42 MED / 34 LOW / 1 INFO. Re-derive it rather than trusting
 the table — and **scope the grep to §2**, because over the whole file it also catches §4's cluster
 tables and returns 71. ⚠ The severity column does **not** parse uniformly: five rows carry a footnote
 marker between the ID and the severity (`G7` †=LOW, `PX1` ‡=MED, `MB3` †=INFO, `F1` ‡=MED, `F8` ¤=MED),
@@ -1235,12 +1349,16 @@ export output is consumed by *other programs* — Cheat Engine, a C++ compiler, 
 nothing in this project runs. A defect there produces a successful-looking export and is discovered
 only by a user, if ever. W1 went undetected for 5½ months.
 
-**The refutation rate is 25–73% across eight segments and is NOT a constant — and it is TRENDING
-DOWN as the audit moves into C#.** The six DLL segments sat at ~44–73%; U1 came in at 33% and U2 at
-**25%**, the two lowest. Two things move it, and they point the same way: the C# skeptics are the first
-with **real test coverage** to refute *with* (their kills are visibly better argued), and the C# code
-under audit is genuinely denser in real defects because its output is validated by programs we never
-run. Quote the range to finders, not a constant, and do not budget U3–U5 on the DLL's ~50%.
+**The refutation rate is 25–73% across nine segments and is NOT a constant.** The six DLL segments
+sat at ~44–73%; the three C# segments came in at 33% / 25% / 33%, i.e. consistently lower. Two things
+move it and they point the same way: the C# skeptics are the first with **real test coverage** to
+refute *with* (their kills are visibly better argued), and the C# code is genuinely denser in real
+defects because much of its output is validated by programs we never run. Quote the range to finders,
+not a constant, and budget U4/U5 on ~30%, not the DLL's ~50%.
+
+**Severity is falling as the C# segments proceed** — U1 produced a HIGH, U2 two, U3 **none claimed at
+all**. That is not the code improving so much as the *kind* of defect changing: U1/U2 were wrong
+writes and unreadable artifacts, U3 is missing caveats and unread flags. Expect U4/U5 to look like U3.
 
 ### The clusters, in the order worth fixing
 
@@ -1298,6 +1416,14 @@ read and discarded the real one), D5/**F7** (the `-7` string names an execution 
 happened). **D5 makes this the largest cluster (8 members) and the one with the clearest user cost:**
 F4 is the exact shape behind four "the scan missed my field" reports, and its fix is the cheapest in
 the audit — Fern can detect the cap locally, since `SearchProperties` stops *exactly* at `maxResults`.
+
+**U3 makes the cluster's recurrence undeniable: the fix for one of its own members was half-applied.**
+U3/**X1** is the D5/F4 truncation fix present on the DLL for both property-search paths and on the C#
+for one, so the batch path — which is what the two *discovery* panels use — still presents a capped
+pool as the pool. U3 adds three more: **X3** (the DLL publishes a three-flag verdict that the walker
+may be running on unvalidated default offsets, and the UI never asks for it), **X4** (a Dump All
+completion line derived from the file's byte length rather than from what the dump did) and **X2**
+(a real class reported "not found" because the lookup reads one capped page).
 
 **U2 adds the cluster's most extreme member and a new sub-shape.** U2/**W8** is the familiar one — a
 USMAP export silently drops every Blueprint-generated class (thousands on a normal title) and reports
