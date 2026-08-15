@@ -80,7 +80,7 @@ contract, not by line count**, so the established method applies unchanged.
 |-------|----------|------:|
 | **T1a** ✅ | DLL value-scan engine — `Radar.cpp` 696, `Radar.h` 354, `Methode.cpp` 269, `Heiter.cpp` 185 | 1,504 |
 | **T1b** ✅ | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
-| **T1c** | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
+| **T1c** ✅ | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
 | **T1d** ✅ | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
 | **T1e** | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
 
@@ -1384,6 +1384,91 @@ MEDIUM.
    even aliases it). The offsets are correct today; this is cluster ④ waiting to happen the next time
    the mailbox layout moves. `TeleportScriptGenerator` is outside U4's scope — fix it in the same
    sweep.
+
+-----
+
+### T1c — remaining UI ViewModels + Core + Model DTOs — ✅ scanned 2026-08-15
+
+**13 agents** (5 lenses → 4 refute batches → 4 second-lens batches), 0 errors, over 22 files /
+2,889 early lines. **46 raw → 34 distinct** (**12 folded in-script — the highest yet**) **→ 3 refuted
+→ 2 killed by the second lens → 29 confirmed. Kill rate 15%.**
+
+**Tally: 0 HIGH · 10 MED · 15 LOW · 4 INFO.** No inflated HIGHs this time — the first phase where the
+finders did not over-rate anything. Three MEDs re-derived by hand.
+
+> ### ⚠ 15% kill rate — low again, and the LOWs are unvetted
+>
+> Only S1 (14%) was lower. **Nothing below MED here has been re-derived**; treat the 15 LOWs and 4
+> INFOs as leads, not findings. What *did* work well is the pipeline's ability to **correct a
+> mechanism instead of passing it through**: on AE1 both the skeptic and the second lens killed the
+> finder's headline race (both commands route to the same FIFO interactive lane, so the interleaving
+> it needed cannot occur) and kept the finder's *own* secondary trigger, which is real. That is the
+> stage doing its job even at a low kill count.
+
+> ### The two patterns that keep recurring, now at four and seven occurrences
+>
+> **AE9 — the width family reaches a FOURTH subsystem.** `FieldValueConverter.cs:198` writes an
+> enum-backed field as `1 => new[] { (byte)(rawValue & 0xFF) }` (and `& 0xFFFF` / `& 0xFFFFFFFF` for
+> the wider cases) — verified by hand. An out-of-range value is **masked to the field width and the
+> untruncated number is reported as written**, which is Y9's defect (`9999` accepted for a `uint8`,
+> game gets `15`) in a different file. The family now spans **W6, Y2, Y15, Y16, Y9 and AE9**, and in
+> every case the correct width was in scope and simply not enforced.
+>
+> **AE10 — root cause #4's SEVENTH occurrence.** The "stop gating Locate-in-GWorld on the client
+> `IsGWorldAvailable` flag" fix is applied at Value Search only. Verified: `IsGWorldAvailable` has
+> **37 references across 12 ViewModels**. The running list is now V2, W4/W6, X1, Y16, AC2 (the
+> audit's own Y7 fix at 1 of 5) and AE10. §3b's "grep for siblings before closing a fix" rule was
+> written after the fourth; the fact that three more have appeared since says the rule is still not
+> being applied *at fix time*.
+
+> **AE1 is worth reading before fixing anything in Class/Struct.** `ClassStructViewModel.cs:218`
+> latches `_lastLoadedNodeAddress = node.Address` **before** dispatching the walk, and
+> `LoadClassAsync`'s `catch` never resets `HasClass`. So a failed walk leaves the key naming node B
+> while the grid still shows class A's names, offsets and FProperty addresses — and the entry guard
+> `if (_lastLoadedNodeAddress == node.Address && HasClass) return;` then makes **re-selecting B a
+> no-op**. Two aggravations the second lens established independently: the panel binds **no**
+> ErrorMessage/HasError at all, so `SetError` writes to a property this panel never renders (the
+> failure is completely silent); and nothing resets either field on connect/disconnect, so it
+> **survives a reconnect**. The user copies A's offsets into CE believing they are B's.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AE1** | MED | `FieldValueConverter.cs:198` (FieldValueConverter.TryConvertByte / TryConver) | An enum-backed field silently truncates an out-of-range value and reports the untruncated number as written | S / low |
+| **AE2** | MED | `ClassStructViewModel.cs:192` (OnObjectSelected) | Object-Tree selection drives Class/Struct through an async-void handler with NO generation guard, and the two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node | S / low |
+| **AE3** | MED | `ClassStructViewModel.cs:218` (OnObjectSelected) | The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry **[2 lenses]** | S / low |
+| **AE4** | MED | `ProxyDeployViewModel.cs:236` (OnSelectedProxyTypeChanged / RefreshAfterTypeC) | Two rapid proxy-radio clicks race two fire-and-forget refreshes; the loser's proxy type wins the grid and nothing ever re-runs | S / low |
+| **AE5** | MED | `ProxyDeployViewModel.cs:1073` (RefreshAsync) | IsScanning is READ as a global busy flag by six guards but WRITTEN by only three of eight operations - Refresh/Deploy/Undeploy/UpdateAll are invisible to every guard | S / low |
+| **AE6** | MED | `ProxyDeployViewModel.cs:1106` (DeploySelectedAsync / UndeploySelectedAsync / ) | The four file-mutating Proxy Deploy commands set no busy flag, only TEST one — so Deploy and Undeploy run concurrently over the same Binaries folder and both write the single result line | S / low |
+| **AE7** | MED | `ProxyDeployViewModel.cs:1233` (UpdateAllAsync) | UpdateAllAsync iterates the live Games ObservableCollection across awaits while a concurrent scan can Games.Clear() it - and the method has no catch, so the tally is never reported **[2 lenses]** | S / low |
+| **AE8** | MED | `ValueSearchViewModel.cs:752` (FirstScanAsync / NextScanAsync) | The DiagnosticsProbe is opened BEFORE the input validation, so every rejected click costs two get_diagnostics round-trips and logs a "Value Scan (First)" measurement for a scan that never ran | S / low |
+| **AE9** | MED | `ValueSearchViewModel.cs:906` (NewScanAsync / GroupNewScanAsync) | New Scan resets the internal sort key but not the bound Sort picker, and re-selecting the option the picker already shows is a silent no-op | S / low |
+| **AE10** | MED | `ValueSearchViewModel.cs:951` (ValueSearchViewModel.IsGWorldAvailable) | The "stop gating Locate-in-GWorld on the client IsGWorldAvailable flag" fix is applied at Value Search only — 9 sibling VMs still gate on it | M / low |
+| **AE11** | LOW | `AddressHelper.cs:41` (AddressHelper.FormatAddress (AddressFormat.Mod) | ModuleOffset formats a heap address as a wrapped RVA with no in-module check, producing a module-relative address that breaks on relaunch | S / low |
+| **AE12** | LOW | `IDumpService.cs:264` (IDumpService.BeginValueScanAsync) | Three doc comments assert native (non-UPROPERTY) fields are unreachable — 18 lines above the `nativeC` parameter that reaches them | S / low |
+| **AE13** | LOW | `ValueScanModels.cs:462` (GroupScanBeginResult) | The group scan's per-slot leaf-cap truncation is computed by the DLL and only LOGGED — no wire key, so no DTO can carry it | M / low |
+| **AE14** | LOW | `ClassStructViewModel.cs:70` (ApplyFieldFilter) | Fields.Clear() on a selection-bound DataGrid with no SelectedField = null detach - the one panel missing the line the other four carry verbatim **[3 lenses]** | S / low |
+| **AE15** | LOW | `GameClassFilterViewModel.cs:81` (RebuildSuggestions) | The Super / Package suggestion lists are built from a truncated class page and presented as complete, ten lines above the code that reads the truncation flag | S / low |
+| **AE16** | LOW | `GameClassFilterViewModel.cs:194` (ClearFilters) | ClearFilters blanks the filter box without _filterMemory.Flush(), discarding the keyword the user just typed | S / low |
+| **AE17** | LOW | `GameClassFilterViewModel.cs:267` (BatchFindFuncAsync) | Batch Find Func discards res.Scan.DeadlineHit, so a class whose reflection sweep timed out is written as "0" - indistinguishable from "no function takes this class" | S / low |
+| **AE18** | LOW | `GameClassFilterViewModel.cs:268` (BatchFindFuncAsync) | Batch Find Func writes "0" for a class whose 30 s reflection sweep was cut short **[2 lenses]** | S / low |
+| **AE19** | LOW | `GameClassFilterViewModel.cs:283` (BatchFindFuncAsync) | Batch Find Func reports a pipe disconnect as "you cancelled" — audit #3's L14 at a third unfixed site **[5 lenses]** | S / low |
+| **AE20** | LOW | `ProxyDeployViewModel.cs:786` (DeleteSelectedOrphansAsync (and ScanAsync / De) | Six commands accept a CancellationToken, check it in their loops and carry a whole "cancelled" reporting path — and none of them can be cancelled, including the destructive Recycle-Bin delete | S / low |
+| **AE21** | LOW | `ValueSearchViewModel.cs:439` (LoadWindowAsync) | "Load More" cancels an in-flight page-0 reload and then derives its offset from Candidates.Count, which still holds the SUPERSEDED window — producing a grid that concatenates two different filters/sorts | S / low |
+| **AE22** | LOW | `ValueSearchViewModel.cs:729` (SetEngineState) | Nothing clears the Value Search session on disconnect, so a dead game's session id and candidate rows survive a full reconnect | S / low |
+| **AE23** | LOW | `ValueSearchViewModel.cs:820` (FirstScanAsync / NextScanAsync / GroupFirstSca) | Eight bare OperationCanceledException catches report a token-less pipe-disconnect OCE as "you cancelled", two of them silently **[2 lenses]** | S / low |
+| **AE24** | LOW | `ValueSearchViewModel.cs:875` (NextScanAsync / GroupNextScanAsync) | A Next Scan erases both truncation signals from a truncated First Scan - the status note and the "Counts are partial" badge - though the survivor set is still a subset of a truncated scan **[3 lenses]** | S / low |
+| **AE25** | LOW | `ValueSearchViewModel.cs:1063` (ValueSearchViewModel.GroupScanTypeOptions) | Doc says Between is "intentionally excluded" from the group scan-type picker; Between is the 4th element of that same initializer | S / low |
+| **AE26** | INFO | `FieldValueConverter.cs:11` (T1c AOT/trim + Core-purity sweep (negative res) | NEGATIVE RESULT — all 22 T1c files are AOT-clean and Core contains zero platform-specific code | S / low |
+| **AE27** | INFO | `ClassListResult.cs:32` (GameClassEntry.Package) | `Package` is documented as "Pre-computed once so the DataGrid binding doesn't recompute per repaint" but is an expression-bodied property that recomputes on every read | S / low |
+| **AE28** | INFO | `ProxyDeployViewModel.cs:513` (ProxyDeployViewModel.NotifyOrphanSelectionChan) | `NotifyOrphanSelectionChanged`'s doc names a View call-site that does not exist; the real trigger is the per-row PropertyChanged subscription | S / low |
+| **AE29** | INFO | `ProxyDeployViewModel.cs:1310` (ProxyDeployViewModel.NotifySelectionChanged) | `NotifySelectionChanged` documents itself as "called from View" and has no caller anywhere; the `HasSelection` it raises has no per-row hook, unlike its sibling in the same file | S / low |
+
+> **Also worth noting among the refuted:** the claim that `ClassListResult.TotalClasses` is rendered
+> as a pool census died — correctly, because **X2 already fixed exactly that** (build 2888 added the
+> `truncated` flag and the cap note). A refutation landing on this audit's own shipped fix is the
+> pipeline confirming a fix took, which is worth as much as a finding.
+>
+> **Hand-verified:** AE1, AE9, AE10. **Not re-derived:** the other 7 MEDs, 15 LOWs and 4 INFOs.
 
 -----
 
