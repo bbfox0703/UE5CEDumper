@@ -47,19 +47,30 @@ public partial class LiveWalkerPanel : UserControl
         DetachedFromVisualTree += OnDetached;
     }
 
-    private void OnDataContextChanged(object? sender, System.EventArgs e)
+    /// <summary>
+    /// Detach the six VM callbacks, if any are currently attached. Idempotent.
+    /// </summary>
+    private void UnsubscribeVm()
     {
-        // Unsubscribe from previous VM first (if any)
-        if (_subscribedVm != null)
-        {
-            _subscribedVm.ScrollToFieldRequested -= OnScrollToFieldRequested;
-            _subscribedVm.ScrollToFirstSearchMatch -= OnScrollToFirstSearchMatch;
-            _subscribedVm.ScrollToFunctionRequested -= OnScrollToFunctionRequested;
-            _subscribedVm.ScrollFieldIntoView -= OnScrollFieldIntoView;
-            _subscribedVm.CaptureViewAnchor -= OnCaptureViewAnchor;
-            _subscribedVm.RestoreBookmarkView -= OnRestoreBookmarkView;
-            _subscribedVm = null;
-        }
+        if (_subscribedVm == null) return;
+        _subscribedVm.ScrollToFieldRequested -= OnScrollToFieldRequested;
+        _subscribedVm.ScrollToFirstSearchMatch -= OnScrollToFirstSearchMatch;
+        _subscribedVm.ScrollToFunctionRequested -= OnScrollToFunctionRequested;
+        _subscribedVm.ScrollFieldIntoView -= OnScrollFieldIntoView;
+        _subscribedVm.CaptureViewAnchor -= OnCaptureViewAnchor;
+        _subscribedVm.RestoreBookmarkView -= OnRestoreBookmarkView;
+        _subscribedVm = null;
+    }
+
+    /// <summary>
+    /// Attach the six VM callbacks to the current DataContext, replacing any previous
+    /// subscription. Idempotent — safe to call from both DataContextChanged and
+    /// AttachedToVisualTree, which is the point.
+    /// </summary>
+    private void SubscribeVm()
+    {
+        if (ReferenceEquals(_subscribedVm, DataContext)) return;   // already wired to this VM
+        UnsubscribeVm();
 
         if (DataContext is LiveWalkerViewModel vm)
         {
@@ -73,19 +84,16 @@ public partial class LiveWalkerPanel : UserControl
         }
     }
 
+    private void OnDataContextChanged(object? sender, System.EventArgs e) => SubscribeVm();
+
     private void OnDetached(object? sender, Avalonia.VisualTreeAttachmentEventArgs e)
     {
-        // Final cleanup when the panel leaves the visual tree.
-        if (_subscribedVm != null)
-        {
-            _subscribedVm.ScrollToFieldRequested -= OnScrollToFieldRequested;
-            _subscribedVm.ScrollToFirstSearchMatch -= OnScrollToFirstSearchMatch;
-            _subscribedVm.ScrollToFunctionRequested -= OnScrollToFunctionRequested;
-            _subscribedVm.ScrollFieldIntoView -= OnScrollFieldIntoView;
-            _subscribedVm.CaptureViewAnchor -= OnCaptureViewAnchor;
-            _subscribedVm.RestoreBookmarkView -= OnRestoreBookmarkView;
-            _subscribedVm = null;
-        }
+        // Cleanup when the panel leaves the visual tree — NOT final. A TabControl detaches
+        // and re-attaches the panel on every tab switch, and re-attaching does not raise
+        // DataContextChanged (the VM is the same object), so this used to be a one-way door:
+        // after one round trip through another tab, scroll-to-field, scroll-to-match and the
+        // bookmark view restore were all silently dead. OnAttached re-subscribes. (audit #5 AF4)
+        UnsubscribeVm();
 
         if (_shineTimer != null)
         {
@@ -107,6 +115,10 @@ public partial class LiveWalkerPanel : UserControl
 
     private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
     {
+        // Re-wire the VM callbacks OnDetached tore down. Idempotent, so the common case
+        // (DataContextChanged already ran) costs a reference compare. (audit #5 AF4)
+        SubscribeVm();
+
         _shineTimer ??= new DispatcherTimer
         {
             Interval = TimeSpan.FromSeconds(ShineTimerIntervalSeconds),
