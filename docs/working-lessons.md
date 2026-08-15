@@ -71,6 +71,18 @@ that the value was computed right.
 **Corollary: when the outcome is already saturated, assert the mechanism, not the outcome.** A ranking
 assertion on an item already ranked #1 passes before and after and proves nothing.
 
+**Corollary: before writing the test, ask whether the CALL SITE can fail it.** Audit #5 Y15 (build
+2904) plumbed an engine-reported width into a mapping. The mapping was easy to cover. The two places
+that *used* it were not reachable from a test at all — `FreezeValueDialog`'s helper-type choice sat
+in an Avalonia constructor, and `PropertySearchViewModel`'s equivalent inside a command needing the
+AOBMaker bridge and a modal dialog — so the width could have been dropped at either with **zero**
+failures, and a negative control aimed there would have reported "0 red" as if the code were fine.
+Two `internal static` seams later, those controls red 3 and 3. A control that cannot fail is
+indistinguishable from a passing one; **an untestable call site turns §1.2 off silently.** When a
+value has to survive several hops, assert the two ENDS against each other (there: the type the
+dialog validates against == the type the generated script writes with) — that single assertion fails
+no matter which hop drops it.
+
 ### 1.4 Measure with two independent detectors, or you are measuring the detector
 
 AOBMaker's vtable-slot numbers swung up to **14×** across three detection variants on the same
