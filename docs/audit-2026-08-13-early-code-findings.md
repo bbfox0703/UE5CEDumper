@@ -155,6 +155,11 @@ Map/Set defect; D1-3/D1-10 the same struct-preview defect; D1-8/D1-11 the same F
 
 **Tally: 8 MEDIUM · 3 LOW · 0 HIGH.** Both claimed HIGHs were refuted — see §3.
 
+> **U12–U15 were added on 2026-08-16 and are NOT part of the tally above** — they came from
+> re-deriving the parked UNVETTED lead at fix time, not from this scan. The scan missed all four,
+> which is worth knowing about D1's coverage: the lead was raised by hand while fixing a *different*
+> finding (W5) in a *different* segment. See the verdict block at the end of §3c.
+
 > **Three root causes, each worth fixing as a pattern rather than site-by-site:**
 > 1. **A validation helper exists and is applied at only some of its sites.** `ValidateArrayElemSize`
 >    was written *because* `FPROPERTY_ELEMSIZE` is documented in this very file to return garbage — and
@@ -179,6 +184,10 @@ Map/Set defect; D1-3/D1-10 the same struct-preview defect; D1-8/D1-11 the same F
 | **U9** | LOW | `Ubel.cpp:2238` | Byte-enum read casts through `int8_t`, so enumerators ≥ 128 (incl. the standard UHT `MAX = 255` sentinel) sign-extend, miss the UEnum lookup and render as a negative integer. Four sibling sites read it unsigned. | S / low |
 | **U10** | LOW | `Ubel.cpp:198` | `ReadFString` **rejects** on `count > 256` and returns `""`, which callers map to the literal label `(empty)` — a 400-character description is displayed as empty while `hexValue` on the adjacent row shows `Count=0x191`. | M / low |
 | **U11** | LOW | `Ubel.cpp:4934` | `TOptional<FText>` is decoded as an inline FString at `FText+0x10`, where stock UE stores the `uint32 Flags`. The correct decoder (`ReadFTextString`) already exists ~4,400 lines earlier in the same file and is used by the plain TextProperty path. | S / low |
+| **U12** | MED | `Ubel.cpp:2301-2303` (`ReadStructArrayElements`) | `WeakObjectProperty` sits in the raw-pointer arm beside `ObjectProperty`/`ClassProperty`, so the `cf.size == 8` branch memcpys an `FWeakObjectPtr { int32 ObjectIndex; int32 SerialNumber; }` into a `uintptr_t`, publishes `Serial<<32 \| Index` as `sf.ptrAddr` and feeds it to `GetName`/`GetClass`. A **stale** ref (index live, serial mismatched) is asserted as a live one — both correct routes (`ResolveWeakObjectPtr` `:2004`, `ReadWeakObjectArrayElements` `:2026`) report it dead as `"null (stale)"`. A null ref is right only by accident, which is why it never looked broken. | S / low |
+| **U13** | MED | `Ubel.cpp:5701-5703` (`ResolvePropertyPreviews`) | The same misclassification, **worse on two counts**: `WeakObjectProperty` + `LazyObjectProperty` + `SoftClassProperty` are read as raw 8-byte pointers with **no size gate at all**, and the trigger is a plain top-level `TWeakObjectPtr` UPROPERTY on any searched class — far commoner than U12's `TArray<FStruct>`. Feeds the Property Search preview column via `Aura.cpp`. Beside it, `SoftObjectProperty` and `InterfaceProperty` have no branch anywhere in the function (it ends at `:5789`), so they silently get **no preview** — a copy/paste omission next to the copy/paste defect. | S / low |
+| **U14** | LOW | `Ubel.cpp:2303` (`InterfaceProperty`, U12's arm) | Mirror-image symptom, same root shape. `FScriptInterface` is `{ UObject* +0x00; void* +0x08 }` = 16 bytes — this file's own `InferScalarSize` says exactly that at `:1388` — so `cf.size == 16` matches neither the `== 8` nor the `== 4` arm, `ptr` stays 0, and every **bound** interface sub-field renders `"null"`. Its first 8 bytes ARE a genuine `UObject*` (`CeXmlExportService.IsRawObjectPtrSlot` includes it for precisely this reason), so the repair is a width relaxation, not a re-route. | S / low |
+| **U15** | LOW | `Ubel.cpp:2157` (`GetCachedStructFields`) | `cf.size = fi.Size` takes `FPROPERTY_ELEMSIZE` raw. **Both** sibling struct-sub-field interpreters in this same file normalise it first (`int32_t expected = InferScalarSize(sf.TypeName); if (expected > 0 && sfSize != expected) sfSize = expected;` at `:4647` and `:5118`); this one does not. **D1 root cause #1 again** — a helper exists and is applied at only some of its sites. A garbage-large ELEMSIZE makes the outer `cf.offset + cf.size > readSize` guard drop the sub-field silently; a garbage-small one emits a flat `"null"` before any type branch runs. Enables U14 and hardens U12. | S / low |
 
 † **G7 was reframed after being wrong once — worth reading as a method note.** It was first filed as *"a give-up path that reports failure with no reason"*, from a live `validated=NO (DEFAULTS) reason=` on Solarpunk. **That was my own misreading of a TRANSIENT state**: `probe_ran` was `false` at that moment, i.e. the probe had not run *yet* — an empty reason is correct for "not started", and the flag pair expressed it exactly as designed. Re-querying the same still-running process later returned `validated=true, probe_ran=true`. **The original finding is refuted.** What survives is smaller and different: the *log* never re-emits its summary, so it still claims `DEFAULTS` while the DLL is validated. Two lessons, both already in this audit's own record: **the base rate applies to me too, not just the finder agents** (this is the ninth-plus claim to die), and **sampling an initialising system early yields a state that is real but not a verdict** — which is precisely what `probe_ran` exists to disambiguate, and I read past it.
 
@@ -907,6 +916,7 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 | **W5** ✅ | MED | `CeXmlExportService.cs:2141` (`EmitDrilledPointer`) | The scalar pointer-drill branch gates on the broad `IsObjectPropertyType`, which includes `WeakObjectProperty` / `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty`, and emits `Offsets=[0]` for slots whose first 8 bytes are **not** a `UObject*` — a weak pointer is an index+serial pair. The array path has an explicit regression test against exactly this. (Claimed HIGH, cut to MEDIUM by the second lens.) | S / low |
 | **W6** ✅ | MED | `CeXmlExportService.cs:2665` (`MapInnerTypeToCeField`) | `EnumProperty` is hardcoded to CE type `"4 Bytes"` while element **addresses** are laid out with the DLL's real `ArrayElemSize`/`SetElemSize` (1 for the standard `enum class : uint8`), so CE reads 4 bytes at every 1-byte-spaced element. `CeWidthForSize` exists to fix precisely this and the Map and struct-array emitters already route through it. | S / low |
 | **W7** ✅ | MED | `UsmapExportService.cs:323` | The name table is serialized first, from a snapshot of the pre-registration pass, but the struct-writing pass then calls `GetOrAdd(… : "None")` in four places. `"None"` is never pre-registered, so it is appended at index N **after** the file already declared exactly N names, and every affected property references an out-of-range index. | S / low |
+| **W9** | MED | `CsxExportService.cs:338-340` (+`:212-217`) | **W5's shape in the export format the W5 commit did not touch.** `SoftObjectProperty`/`SoftClassProperty`/`LazyObjectProperty` map to `new CsxTypeInfo("Pointer", 8, …)` under the section comment *"Pointer types — Vartype=Pointer so CE can dereference"*, and the same three appear in the child-`<Structure>` switch gated on `field.PtrAddress` resolving. Those slots hold an `FWeakObjectPtr` / `FSoftObjectPath` at +0, not an address. `git show --stat 10334b89` touched only `CeXmlExportService.cs`, so this is an omission rather than a decision — `WeakObjectProperty` itself is already correctly `"8 Bytes"`/hexadecimal at `:349`. Finished predicate to copy: `CeXmlExportService.IsRawObjectPtrSlot`. | S / low |
 | **W8** | LOW | `UsmapExportService.cs:90` | The class collector accepts only `ClassName is "Class" or "ScriptStruct"`, so every `BlueprintGeneratedClass` / `AnimBlueprintGeneratedClass` / `WidgetBlueprintGeneratedClass` is silently dropped — on a normal shipped title that is thousands of classes vs a few hundred native ones. Both sibling exporters use the whitelist predicate, and `SdkExportService` carries a comment naming this exact bare-`"Class"` check as a bug fixed in DLL build 673. | S / low |
 
 **Verified independently (not agent-reported):**
@@ -2347,6 +2357,43 @@ five lens-duplicate pairs the skeptic failed to mark.
 
 ## 3. Refuted — do not re-raise
 
+### From the 2026-08-16 re-derivation of the UNVETTED lead (9 killed → U12–U15 + W9)
+
+Not a scan — a **fix-time re-derivation** of the single lead §3c parked, run at the same standard as
+a segment (5 lenses → 2 refute-mandated skeptics each → judge). Nine claims died, several of them the
+lead's own. Worth reading as calibration: **the base rate applies to a maintainer-flagged lead too.**
+
+- **"`ReadStructArrayElements` is the sole/lone outlier that admits `WeakObjectProperty`."** FALSE,
+  and *both* of its skeptics caught it independently. `Ubel::ResolvePropertyPreviews` (`:5701`)
+  commits the same misclassification with no size gate at all — now U13. **Do not file U12 as an
+  isolated one-liner.**
+- **"The fabricated address is a drill-down / CE-export / Locate navigation target."** REFUTED by
+  re-reading every consumer. No ViewModel or `.axaml` reads `elem.StructFields`; CE-XML emits an
+  8-byte hex leaf via `MapInnerTypeToCeField` and addresses sub-fields by `+Offset`; CSX's
+  `IsObjectPropertyType` excludes `WeakObjectProperty` so `ResolvePointerInstancesAsync` never walks
+  it. **Do not re-raise this as a wrong-write-target or CE-dereference bug** — that is what makes it
+  MED rather than HIGH.
+- **"`cf.size` is 8 because `InferScalarSize` returns 8 for `WeakObjectProperty`."** MISATTRIBUTED —
+  `InferScalarSize` is not applied on this path at all (that omission is U15); the 8 is the engine's
+  own `ElementSize`. It matters: there are **two** failure modes, not one.
+- **"The `cf.size == 8` arm always executes / the branch fires unconditionally."** OVERSTATED. It
+  fires only when ELEMSIZE probes correctly **and** `cf.offset + 8 <= min(elemSize, 1024)`.
+- **"`InterfaceProperty` renders `null` unconditionally."** Only when it renders *at all* — a
+  garbage-large size makes the outer guard skip the field entirely and nothing is emitted.
+- **"`DelegateProperty` gets `Vartype=Pointer` plus a child `<Structure>` in CSX."** FALSE, verified:
+  `CsxExportService.cs` maps it to `("8 Bytes", 8, "hexadecimal")` and it is absent from the
+  child-structure switch. Its only cost is wasted `WalkInstanceAsync` round trips.
+- **"UE `Reset()` writes `{ObjectIndex = -1, Serial = 0}`, so a cleared weak ref renders as a non-null
+  ptr."** ASSERTED, NOT ESTABLISHED — and backwards for the vendored engine, where
+  `UE_WEAKOBJECTPTR_ZEROINIT_FIX` defaults to 1 and the members default-initialise to `{0,0}`. Dropped
+  as a severity justification; the stale-ref case carries the argument on its own.
+- **"The CE-XML pointer-drill will dereference the weak slot."** Already disarmed by W5 — the emitter
+  gate uses the narrow `IsRawObjectPtrSlot`. Only the *resolver* call sites still use the broad set,
+  on correctly-resolved top-level `PtrAddress`. (Kept as an open question, not a finding.)
+- **"`WalkFFieldChain` / `WalkUPropertyChain` apply no type filtering."** The UProperty path does have
+  one (`if (fi.TypeName.find("Property") == std::string::npos) continue;`). It does not change the
+  verdict — the substring matches — but the path is not filter-free.
+
 ### From U5 (6 of 30 — 20%, the audit's lowest; see the leniency warning in §2)
 
 Only four of these died on the merits; read the caveat before treating the survivors as vetted.
@@ -2607,14 +2654,22 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**229 of 272 findings are still open** (43 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 69 MED ·
-133 LOW · 27 INFO**.
+**234 of 277 findings are still open** (43 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 72 MED ·
+135 LOW · 27 INFO**.
 
-> **BOTH named families are now closed** apart from the parked Y16 — the width family (b2950) and
-> root cause #4 (b2961). What remains in MED is no longer family-grouped; pick by segment or by
-> subsystem, and keep applying the sibling grep at fix time (it found two new occurrences in these
-> two batches alone).
+> **Updated 2026-08-16: +5 findings (272 → 277), from re-deriving the parked UNVETTED lead, not from
+> a new scan.** Scanning is still complete at 12/12. `U12`–`U15` (D1 Ubel) and `W9` (U2 export
+> services) are the confirmed survivors of that pass; nine sibling claims died and are in §3. The
+> lead's own framing — *one line, one fix* — was the first thing refuted: see the verdict block at
+> the end of this section.
+
+> **The two ORIGINAL named families are closed** apart from the parked Y16 — the width family (b2950)
+> and root cause #4 (b2961) — but **a third opened on 2026-08-16**: the *pointer-family* family
+> (W5 + U12 + U13 + U14 + W9), see the family block below. Outside it, MED is no longer
+> family-grouped; pick by segment or by subsystem, and keep applying the sibling grep at fix time.
+> It has now paid twice: two new occurrences during the width/root-cause-#4 batches, and three more
+> when a single parked lead was re-derived.
 
 > **The width family is CLOSED** (build 2950) apart from the parked Y16 — see the family block below,
 > which also records one refuted lead and one new sibling found at fix time. Fixed HIGHs: **11 of 11** (V1, W1, W2, Y1, AB1, AD1, AD2, AA1, AA2, AA3, AB2).
@@ -2672,21 +2727,21 @@ block, §2.
 | U5 remaining VMs / Models / Core | – | 3 | 13 | 1 | **17** |
 | T1d UI Services | – | 2 | 10 | 5 | **17** |
 | U3 Dump services + MainWindow VM | – | 1 | 9 | 0 | **10** |
-| D1 Ubel | – | 6 | 3 | 0 | **9** (U1, U2 fixed) |
+| D1 Ubel | – | 8 | 5 | 0 | **13** (U1, U2 fixed; +U12–U15 filed 2026-08-16) |
 | D3 Aura | – | 5 | 4 | 0 | **9** (A2 fixed) |
 | U1 LiveWalker / Pointer / ObjectTree | – | 4 | 4 | 0 | **8** |
 | D2 Genau+Serie | – | 3 | 4 | 0 | **7** (incl. G7 †) |
 | U4 Dialogs + CE generators | – | 1 | 5 | 0 | **6** |
 | D5 Fern | – | 3 | 1 | 0 | **4** (open: F2, F3's in-session half, F8 ¤, F5) |
 | D4b Mimic | – | 0 | 2 | 1 | **3** (incl. MB3 †) |
-| U2 Export services | – | 0 | 1 | 0 | **1** (W5 fixed b2966) |
+| U2 Export services | – | 1 | 1 | 0 | **2** (W5 fixed b2966; +W9 = W5's shape in CSX) |
 | D4b Flamme | – | 0 | 2 | 0 | **2** |
 | D4b Sein | – | 0 | 2 | 0 | **2** |
 | D4b Stark | – | 1 | 0 | 0 | **1** |
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | – | **69** | **133** | **27** | **229** |
+| **TOTAL** | – | **72** | **135** | **27** | **234** |
 
 ### Fix order recommended
 
@@ -2711,6 +2766,26 @@ block, §2.
 ### Fix by FAMILY, not by ID — this is the audit's strongest recommendation
 
 The two recurring families are both greppable. Status as of the 2026-08-15 double-check:
+
+- 🆕 **The pointer-family family — OPEN, 5 members, opened 2026-08-16** (W5 was its first member, and
+  at the time it looked like a one-off). The rule: **a type name sitting in a list of "pointer types"
+  whose in-memory layout is not a bare pointer.** `WeakObjectProperty` is
+  `FWeakObjectPtr {int32 ObjectIndex; int32 SerialNumber;}`, `Soft`/`SoftClass` are `FSoftObjectPath`,
+  `Lazy` is `FWeakObjectPtr` + tag + `FGuid`, and `InterfaceProperty` *is* a pointer at +0 but is 16
+  bytes wide — so it fails a `size == 8` gate the other way. Members: **W5** ✅ b2966 (CE-XML emitter),
+  **U12** (DLL struct-sub-field read), **U13** (DLL property-preview read, no size gate at all),
+  **U14** (Interface width, same arm as U12), **W9** (CSX exporter — W5's shape in the format the W5
+  commit did not touch). **U15** is the enabling condition, not a member.
+  Grep list — run all four before declaring it closed:
+  `rg 'WeakObjectProperty' dll/src ui/UE5DumpUI` · `rg 'LazyObjectProperty|SoftClassProperty'` ·
+  `rg 'IsObjectPropertyType|IsRawObjectPtrSlot|IsPointerArrayType|IsWeakLikeProp'` ·
+  `rg 'Vartype=|"Pointer"' ui/UE5DumpUI/Services/Csx*`.
+  The finished predicates to copy already exist: `CeXmlExportService.IsRawObjectPtrSlot` (C#, with a
+  20-line doc block) and `Aura::IsWeakLikeProp` + the `directPointers`/`weakLikePointers` split at
+  `Aura.cpp:2828`/`:2860` (C++, the correct three-bucket classifier). **Eight other
+  `WeakObjectProperty` memberships in mixed type lists were checked and are BENIGN** — metadata
+  enrichment, a perf-timer bucket, a keyword-scoring weight (`Ubel.cpp:942`, `:1256`, `:1320`,
+  `:3524`, `:4949`; `Aura.cpp:4784`, `:5347`; `Genau.cpp:3386`). Do not re-check those.
 
 - **The width family — ✅ CLOSED except the parked member** (build 2950). Nine occurrences across
   five subsystems: W6 ✅ b2857, Y2 ✅ b2866, Y9 ✅ b3da36ca, Y15 ✅ b2904, **AE1 ✅ b2950**, plus the
@@ -2775,7 +2850,100 @@ The two recurring families are both greppable. Status as of the 2026-08-15 doubl
 limitation or asserting an impossibility, then check it. **6 for 6**, and it produced the lead
 finding in T1a, T1b and T1e.
 
-### ⚠ UNVETTED LEAD — check this FIRST next session (raised 2026-08-15 while fixing W5)
+### ✅ THE UNVETTED LEAD IS RE-DERIVED — CONFIRMED, and it was never one finding (2026-08-16)
+
+**Verdict: CONFIRMED_DEFECT, MED.** Filed as **U12** (the reported line), **U13** (a second, *worse*
+site the lead did not know about), **U14** + **U15** (two siblings found in the same arm), and **W9**
+(W5's shape in the CSX exporter). The `⚠ UNVETTED` block below is kept verbatim as the raised form,
+because the gap between what it claimed and what survived is the point.
+
+Method: 16 agents — 5 diverse lenses (reachability / size / downstream+severity / fix+siblings /
+contrarian-for-the-defence) → **2 skeptics per lens, each ordered to refute, one on evidence and one
+hunting for an alternative explanation** → a judge that re-read every load-bearing line itself. Then
+every load-bearing claim was re-verified by hand before filing. **Nine claims were killed** — listed
+in §3 under *From the 2026-08-16 re-derivation*.
+
+**What the lead got right:** the branch is reachable, `cf.size` is 8, and `WeakObjectProperty` does
+not belong in that list.
+
+**What it got wrong, and this is the durable part:** it framed the site as *the* defect. It is not.
+`Ubel::ResolvePropertyPreviews` (`:5701`) commits the same misclassification **with no size gate at
+all**, adds `LazyObjectProperty` and `SoftClassProperty`, and fires on a plain top-level
+`TWeakObjectPtr` UPROPERTY — a far commoner shape than U12's `TArray<FStruct>` with a weak member.
+Both of the lead's own skeptics caught this independently. **A fix scoped to the reported line leaves
+the worse site standing** — the audit's "fix by family, grep for siblings AT FIX TIME" rule, arriving
+one tier earlier than usual: at *derivation* time.
+
+**Reachability is structural, not observed.** No code gate anywhere on the path can exclude a
+`WeakObjectProperty` struct member: the call sites gate only on `IsStructArrayType` (literally
+`innerTypeName == "StructProperty"`, which never inspects members), the three earlier arms in the
+chain cannot match, and `GetCachedStructFields` copies `typeName`/`size` verbatim. The remaining
+condition is a *content* property — some game must ship a reflected `TArray<FStruct>` whose FStruct
+carries a reflected `TWeakObjectPtr<T>`. In-repo proof such structs exist and that we already depend
+on one: `Schlacht.cpp:260` reads `FHitResult.Actor` with the comment *"UE4: FHitResult.Actor
+(WeakObjectProperty)"*. **Not observed on a live game** — see the pending-verification note below.
+
+**What the user actually sees** (U12): `GetName`/`GetClass` are SEH-guarded (`Macht::ReadSafe` is a
+literal `__try/__except`), so there is **no crash**. The fabricated address almost always fails to
+read, `ptrName` comes back empty, and the arm falls to `sf.value = "ptr"` — which reaches the UI via
+the element's compact string. The genuinely wrong case is a **stale** weak ref: this path emits a
+non-zero `pa` and `"ptr"`, asserting a live reference that does not exist, where both correct routes
+say `"null (stale)"`. Blast radius was checked rather than assumed: nothing dereferences the
+fabricated address (no VM or `.axaml` reads `elem.StructFields`; Live Walker navigates by
+`StructDataAddr`; CE-XML gives it an honest 8-byte hex leaf; CSX's `IsObjectPropertyType` excludes
+Weak). One under-weighted side effect: `GetName` inserts any successful decode into the process-wide
+`s_nameCache` **keyed by the address it was handed**, so a fabricated address that happens to decode
+pollutes the cache until `ClearNameCache`.
+
+**Severity MED, by this audit's own convention.** W5 — which actually told CE to dereference a weak
+slot — was cut from HIGH to MED by its second lens; this is strictly less severe (display only, no CE
+deref, no wrong write target, no crash). It sits with A1 and U8: silent wrong data.
+
+**Fix shape** (reuse, do not invent — every predicate needed already exists):
+
+1. **U12** — split `WeakObjectProperty` into its own arm, read the two `int32`s already sitting in
+   `buf`, call the existing `Ubel::ResolveWeakObjectPtr` (`:2004`). **Force width 8** rather than
+   testing `cf.size == 8`: both `ReadPointerArrayElements` and `ReadWeakObjectArrayElements` already
+   hardcode `elemSize = 8` with comments naming garbage ELEMSIZE as an *observed* failure. Mirror the
+   sibling's wording exactly — `objIdx > 0` → `"null (stale)"`, else `"null"`.
+2. **U13** — same re-route at `:5701`, and it must be in the same change or the fix misses the more
+   likely site. `LazyObjectProperty` and `SoftClassProperty` also start with an `FWeakObjectPtr`.
+   Whether to do this with one shared predicate (`Aura::IsWeakLikeProp` / the `directPointers` split
+   at `Aura.cpp:2828`/`:2860` already models the right three-bucket shape) is an open decision —
+   audit #5's own lesson is that *a finding is evidence a defect exists, not authority on the repair*.
+3. **U14** — relax the gate to read 8 bytes at `cf.offset + 0`; `FScriptInterface.ObjectPointer` is at
+   offset 0. No re-route.
+4. **U15** — normalise `cf.size` through `InferScalarSize` before the outer guard, the way `:4647`
+   and `:5118` already do.
+
+⚠ **`-Target Test` is structurally green over any change here — no test target compiles `Ubel.cpp`**
+(`dll/CMakeLists.txt` builds `utf8_helpers_test` + `dll_helpers_test` = test sources + `Radar.cpp` +
+`Denken.cpp`). This is the exact trap CLAUDE.md records for 2026-08-04. Compile with `-Target DLL`.
+Behaviour needs a live game. Setting `sf.ptrAddr` from `ResolveWeakObjectPtr` does **not** re-open
+W5: CSX's `IsObjectPropertyType` excludes Weak and CE-XML gives it a hex leaf regardless.
+
+**Open questions carried forward** (none blocks the fix):
+
+- Does any tested game actually expose a reflected `TArray<FStruct>` with a reflected weak member?
+  Structural reachability is proven; observation is not. This is the one check that moves U12 from
+  *provable by construction* to *seen* → belongs in `docs/todo.md`'s pending-verification list.
+- How often does `Serial<<32 | Index` land on mapped memory and decode to a plausible-but-**wrong**
+  name (rather than empty → the honest `"ptr"`)? If not rare, the `s_nameCache` pollution is the
+  bigger half. **Unmeasured — and a number without its conditions is not a measurement.**
+- `ParamBufferBuilder.cs:284-290` runs the same premise on a **write** path: `case
+  "WeakObjectProperty":` (with Soft/SoftClass/Lazy/Interface) falls into `ParseULong` +
+  `WriteUInt64LittleEndian`, stuffing a raw `UObject*` into a UFunction param slot, and
+  `IsPickablePointerType` hands the user an instance picker for those types. **Flagged, not filed** —
+  what the engine does with such a param, and whether they occur in practice, was not established.
+- `CeXmlExportService.IsObjectPropertyType` (`:473-476`) still includes `WeakObjectProperty` and
+  gates the drilldown *resolver*. Correct today only because top-level weak fields get their
+  `PtrAddress` from the DLL's correct scalar route. The W5 commit narrowed the **emitter** and left
+  the **resolver** broad; the comment does not say whether that was deliberate. Latent, one predicate
+  thick — do not "fix" without checking what the resolver needs.
+
+---
+
+### ⚠ UNVETTED LEAD — as raised 2026-08-15 while fixing W5 (kept for the record; see the verdict above)
 
 **`Ubel.cpp:2303`, inside `ReadStructArrayElements`' per-element field interpreter.**
 
@@ -2878,7 +3046,13 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 
 ## 3b. START HERE — scanning is DONE; everything left is fixing
 
-*State as of 2026-08-15. Read this first; it is written for a session with no memory of this one.*
+*State as of 2026-08-16. Read this first; it is written for a session with no memory of this one.*
+
+> **2026-08-16 — the one parked lead is settled.** `Ubel.cpp:2303` was re-derived (16 agents, 5
+> lenses × 2 refute-mandated skeptics, judge) and **CONFIRMED at MED** — but it was never one
+> finding: it is now **U12–U15 + W9**, and it opened a third defect family. Nine sibling claims were
+> refuted (§3). The register's counts below are the pre-2026-08-16 numbers; §3c carries the current
+> ones. **There is no unvetted lead left — everything open is a filed finding.**
 
 > ✅ **ALL 12 SEGMENTS ARE SCANNED.** D1–D5, U1–U5, S1, and T1's five phases T1a–T1e. See §2z for the
 > completion summary: per-segment kill rates, the three findings to start from, and the two defect
