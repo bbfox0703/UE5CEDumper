@@ -57,7 +57,7 @@ UE5CEDumper/
 │       ├── Orden.h                 ← GroupMatch — source-agnostic SDR matcher for multi-value group scan (1276)
 │       ├── Tot.h                   ← Cancellation — Tot::Requested() (per-command disconnect flag |
 │       │                              sticky shutdown flag) polled by long loops (936)
-│       ├── Mimic.cpp / .h          ← Mailbox — shared memory mailbox for CE Lua invocation (CMD_* 0-14)
+│       ├── Mimic.cpp / .h          ← Mailbox — shared memory mailbox for CE Lua invocation (CMD_* 0-15; derive the max from the Cmd enum, contract version lives beside it)
 │       ├── Flamme.cpp / .h         ← HintCache — per-game cache (AOB pattern IDs + UE version, keyed by peHash) for faster repeat scans
 │       ├── Lugner.cpp              ← ProxyVersion — version.dll proxy DLL forwarding
 │       ├── Lugner_Dinput8.cpp      ← dinput8.dll proxy variant
@@ -200,7 +200,7 @@ UE5CEDumper/
 | Toolchain discovery | `vswhere -latest` — never hardcoded paths |
 | Dependencies | `nlohmann/json` (header-only), `MinHook` (inline hooking), `ws2_32`, `Shlwapi`, `Psapi`, `Version` |
 
-**Versioning:** Version `1.0.0.x` where `x` is auto-incremented per build and stored in `build_number.txt` (currently ~2144). Git commit hash and dirty-state are embedded via `BuildInfo.h` (generated from `BuildInfo.h.in` at CMake configure time).
+**Versioning:** Version `1.0.0.x` where `x` is auto-incremented per build and stored in `build_number.txt` (a moving number — read the file rather than this line). Git commit hash and dirty-state are embedded via `BuildInfo.h` (generated from `BuildInfo.h.in` at CMake configure time).
 
 ### UI App (C# Avalonia)
 

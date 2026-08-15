@@ -218,6 +218,45 @@ check rather than silently disabling it.
 py tools/check_live_verification.py
 ```
 
+## Behaviour probes (manual — not CI gates)
+
+Neither of these is wired into `build.ps1` or CI, and that is deliberate: each needs something CI does
+not have (a built DLL it can load into its own process; a `lua` interpreter), and **a build step that
+silently skips when its tool is missing is exactly the defect audit #5's AD1/AD2 fixed** in the C++
+test phase. Run them by hand when you touch what they cover.
+
+### `probe_autostart_async.py` — does `UE5_AutoStart` return before its work finishes?
+
+Cheat Engine's injection stub frees the remote page after a hard 10 s (`CEFuncProc.pas:1346-1360`),
+or after 1 s on the APC path, **whether we finished or not** — so a `UE5_AutoStart` that ran its
+multi-second AOB scan to completion had the page it was executing on freed under it, crashing the
+GAME (audit #5 AB2). It now spawns and returns; this measures that. No test target compiles
+`Frieren.cpp`, so there is no other way to check it.
+
+Loads the shipped DLL via `ctypes`, times the export, and reads `Mimic::InitState` at the instant it
+returns. Reference numbers (build 2932): fixed = **2.3 ms** to return with ~3.6 s of work after it;
+the same build with the spawn reverted = **3486 ms**, `initState` already terminal.
+
+```bash
+py tools/probe_autostart_async.py
+```
+
+⚠ Do **not** rewrite this in PowerShell — AMSI blocks a `LoadLibrary`/`GetProcAddress` P/Invoke
+script as "malicious content". Python `ctypes` is not script-scanned.
+
+### `../scripts/tests/freeze_helper_test.lua` — the CE Lua freeze helper, executed
+
+Stubs the CE globals `ue5_freeze_helper.lua` touches (memory reads/writes, timers, symbol lookup)
+over a plain table, runs the real `freezeProperty` / `tick` / `rescan`, and asserts on **what was
+actually written**. The first executable test of any script in the repo; covers audit #5 AA1
+(packed-bitfield bools), AA2 (recycled-slot writes) and AA3 (a stale cache kept forever). 23 checks.
+
+```bash
+lua scripts/tests/freeze_helper_test.lua
+```
+
+`luac -p <file>` also syntax-checks any `.lua` without running it.
+
 ## External (not vendored)
 
 - **[patternsleuth](https://github.com/trumank/patternsleuth)** (`cargo run -p patternsleuth_cli -- scan --path <exe> --resolver <name>`) — confirm whether the standard resolvers match, and get string-anchored candidate functions. Clone on demand; do not vendor (large + rebuilds).

@@ -2775,6 +2775,45 @@ The two recurring families are both greppable. Status as of the 2026-08-15 doubl
 limitation or asserting an impossibility, then check it. **6 for 6**, and it produced the lead
 finding in T1a, T1b and T1e.
 
+### ⚠ UNVETTED LEAD — check this FIRST next session (raised 2026-08-15 while fixing W5)
+
+**`Ubel.cpp:2303`, inside `ReadStructArrayElements`' per-element field interpreter.**
+
+```cpp
+} else if (cf.typeName == "ObjectProperty" || cf.typeName == "ClassProperty"
+        || cf.typeName == "WeakObjectProperty"
+        || cf.typeName == "InterfaceProperty") {
+    // Resolve pointer: read UObject* from element memory
+    uintptr_t ptr = 0;
+    if (cf.size == 8 && cf.offset + 8 <= readSize) {
+        memcpy(&ptr, buf.data() + cf.offset, 8);
+    } else if (cf.size == 4 && cf.offset + 4 <= readSize) { ... }
+    sf.ptrAddr = ptr;
+    if (ptr) { sf.ptrName = GetName(ptr); ... }
+```
+
+**The claim to test: `WeakObjectProperty` does not belong in that list.** `FWeakObjectPtr` is
+`{ int32 ObjectIndex; int32 SerialNumber; }` and is 8 bytes, so the `cf.size == 8` arm memcpys both
+ints into a `uintptr_t` and treats the result as an address — then hands it to `GetName(ptr)` /
+`GetClass(ptr)`. This is **the same shape as W5** (which was the CE-XML *emitter* dereferencing
+Weak/Soft/Lazy slots), one tier lower, on the DLL's own **read** path. `Ubel::IsPointerArrayType`
+in this same file already excludes Weak with a comment saying it "is deferred to Phase E".
+
+**Status: UNVETTED — one observation, no skeptic pass, no second lens.** Per §2's own ~50% raw kill
+rate it must be re-derived before being filed as a finding or fixed. What to check, in order:
+
+1. **Is the branch reachable with `WeakObjectProperty`?** It runs over `CachedStructField`s of a
+   struct-array element type — so it needs a `TArray<FSomeStruct>` where `FSomeStruct` has a
+   `TWeakObjectPtr<T>` member. Confirm such a shape reaches here rather than an earlier branch.
+2. **What is `cf.size` for a `WeakObjectProperty` member?** If the walker reports 8, the 8-byte arm
+   fires. If it reports 4, the `size == 4` arm reads only `ObjectIndex` — still not an address.
+3. **What does the wrong `ptrAddr` do downstream?** `GetName`/`GetClass` are SEH-guarded, so the
+   likely outcome is an empty name rather than a crash — i.e. a **silently wrong or blank pointer
+   column**, not a fault. That would make it MED/LOW, not HIGH.
+4. **Grep for siblings before deciding the fix** — the correct handling for a weak pointer already
+   exists elsewhere in this file (`Aura::GetByIndex` off `ObjectIndex`, the route `Schlacht` uses for
+   UE4 `FHitResult.Actor`). If the fix is "resolve it as an index", that is the code to reuse.
+
 ### 🔎 Double-check pass — 2026-08-15 PM (verification only, no code changed)
 
 Five parallel read-only verifiers re-derived the fix queue's head against tree `8941fb4` before
