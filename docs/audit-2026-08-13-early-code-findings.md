@@ -78,7 +78,7 @@ contract, not by line count**, so the established method applies unchanged.
 
 | Phase | Contents | Early |
 |-------|----------|------:|
-| **T1a** | DLL value-scan engine — `Radar.cpp` 696, `Radar.h` 354, `Methode.cpp` 269, `Heiter.cpp` 185 | 1,504 |
+| **T1a** ✅ | DLL value-scan engine — `Radar.cpp` 696, `Radar.h` 354, `Methode.cpp` 269, `Heiter.cpp` 185 | 1,504 |
 | **T1b** | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
 | **T1c** | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
 | **T1d** | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
@@ -1384,6 +1384,98 @@ MEDIUM.
    even aliases it). The offsets are correct today; this is cluster ④ waiting to happen the next time
    the mailbox layout moves. `TeleportScriptGenerator` is outside U4's scope — fix it in the same
    sweep.
+
+-----
+
+### T1a — Radar value-scan engine + Methode/Heiter entry points — ✅ scanned 2026-08-15
+
+**11 agents** (5 lenses → 3 refute batches → 3 second-lens batches), 0 errors, over 4 files /
+1,504 early lines. **35 raw → 30 distinct** (5 lens-duplicates folded **in-script**) **→ 6 refuted
+→ 1 killed by the second lens → 23 confirmed. Kill rate 23%.**
+
+**Tally: 2 HIGH · 5 MED · 12 LOW · 4 INFO.**
+
+> ### ✅ The harness fix worked — 11 agents where S1 spent 31
+>
+> S1 cost 31 agents because refute/second-lens batches scale with **claims found**, not lines read
+> (65 claims → 25 batches). Two changes: **merge by location in the SCRIPT** rather than asking the
+> model (S1 marked zero duplicates while 14 locations were multi-lens; here 5 folded automatically,
+> *before* the expensive stages), and batches 6→10 / 4→8. Same rigour, **a third of the agents**,
+> and the kill rate rose 14% → 23%. **Do this in every remaining phase.**
+
+> ### 🔴 AB1 is the most consequential finding of this audit — hand-verified in full
+>
+> **Our DLL crashes Cheat Engine, the user's primary tool, on a documented install path.**
+>
+> `DllMain(DLL_PROCESS_ATTACH)` unconditionally starts a **1 ms-poll thread** — `Heiter.cpp:274`
+> `Mimic::StartThread();`, comment *"Runs in both proxy and inject modes"* — plus the auto-start
+> thread at `:279`. Neither is conditional on the host process, and CE loads this DLL as a **plugin**.
+>
+> I verified every link myself rather than taking the agent's word:
+> - **`Heiter.cpp:190` declares `DllMain(HMODULE, DWORD, LPVOID /*reserved*/)` — the parameter is
+>   COMMENTED OUT.** So `DLL_PROCESS_DETACH` structurally *cannot* distinguish a `FreeLibrary`
+>   unload from process exit; both hit the same `break;`. Its own comment claims *"Only the implicit
+>   process-exit DETACH is a no-op"* — a distinction the signature makes impossible to draw.
+> - **`Fern.cpp:533-537` asserts the case away**: *"The only case this gives up on is FreeLibrary of
+>   this DLL with the process still alive … **Nothing in this repo does that** … and Heiter.cpp's
+>   no-op DETACH already relies on the same fact."* Two modules resting on one unverified premise.
+> - **CE's own source refutes it**: `D:/Github/cheat-engine/Cheat Engine/plugin.pas:1525` is
+>   `freelibrary(hmodule);`. And this repo's *own mirrored doc* already records the cycle —
+>   `docs/ce-plugin-api-reference.md:95-102`, *"TRAP — CE opens your DLL twice, and throws the first
+>   pass away … your DllMain(PROCESS_ATTACH) and GetVersion run once against a module that is
+>   immediately unloaded."*
+> - **Nothing pins the module**: `grep GET_MODULE_HANDLE_EX_FLAG_PIN dll/src/` = **0 hits**.
+> - **The guard exists and is applied at the wrong site**: `Grimoire::IsCheatEngineExeName` has
+>   exactly **one** call site in the entire DLL — `Heiter.cpp:158`, *inside the auto-start thread
+>   body*, i.e. inside the very thing it should have prevented from being created.
+> - **`CEPlugin_DisablePlugin` (`Methode.cpp:386`) calls only `UnregisterFunction`** — it never stops
+>   the poller.
+>
+> Net: add the plugin via Settings→Plugins→Add and CE does LoadLibrary → GetVersion → **FreeLibrary**,
+> unmapping the image while a 1 ms thread lives in it. It is also every CE *exit*, via
+> `FormClose → pluginhandler.free → UnloadPlugin → FreeLibrary`, which runs **before** CE writes its
+> settings — so the crash also loses that session's CE settings. Fix is two small guards: call the
+> existing `IsCheatEngineExeName` on the host before creating threads, and pin the module. **Do not**
+> try to join threads from DETACH — the existing comment is right that that deadlocks.
+>
+> This is root cause **#6** in its sharpest form to date: a comment asserting an impossibility,
+> contradicted by a source **mirrored into this same repo**. Every time this audit has followed such
+> a comment it has found a real defect — now 4 for 4.
+
+> **The other root causes, unchanged:** #5 the width family reaches Radar — AB3/AB5 hardcode a
+> 12-byte 3×float `FVector` while accepting UE5 LWC's **24-byte double** struct (the exact shape that
+> cost W6/Y2/Y15/Y16); #7 raw addresses as identity (AB7); #1 the report and the reality by different
+> paths (AB6: the group grid **sorts** by `slotMatches[0][0]` while it **displays**
+> `slotMatches[0][picks[0]]`).
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AB1** | HIGH | `Heiter.cpp:274` (DllMain (DLL_PROCESS_ATTACH) → Mimic::StartThread) | DllMain starts a 1 ms-poll thread in EVERY host, including Cheat Engine — and CE FreeLibrary's plugin DLLs, so the thread runs on after the image is unmapped | S / low |
+| **AB2** | HIGH | `Methode.cpp:307` (OnInjectAndConnect) | InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread **[2 lenses]** | S / low |
+| **AB3** | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
+| **AB4** | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
+| **AB5** | MED | `Radar.cpp:797` (Radar::CompareVectorPredicate) | The FVector/FRotator scan is hardcoded to 3×float / 12 bytes, so it reads junk on every UE5 (LWC double) game — while the reflected 24-byte size is captured and thrown away | M / med |
+| **AB6** | MED | `Radar.cpp:1441` (BuildGroupOrderedView::slot0Num / slot0Offset) | Group sort keys read slotMatches[0][0] while the row displays slotMatches[0][picks[0]] — the grid orders by a leaf the user cannot see | S / low |
+| **AB7** | MED | `Radar.h:384` (Radar::Candidate / Radar::InstanceRecord) | A scan session's candidate addresses are raw addresses used as IDENTITY across RPCs; the GObjects index is captured but never validated and no serial witness is stored | M / med |
+| **AB8** | LOW | `Heiter.cpp:41` (g_hAutoStartThread) | The auto-start thread handle is stored, never waited on and never closed; two comments assert a join that no code performs | S / low |
+| **AB9** | LOW | `Heiter.cpp:234` (DllMain → Sein::Init / Sein::InitProcessMirror) | DllMain does shell32 + unbounded recursive filesystem work (two directory sweeps and possibly a multi-GB remove_all) inline, under the loader lock | M / med |
+| **AB10** | LOW | `Heiter.cpp:268` (DllMain (proxy mutex diagnostic)) | The unarmed-guard warning prints a GetLastError() captured hundreds of API calls after the failure it claims to report | S / low |
+| **AB11** | LOW | `Heiter.cpp:268` (DllMain (UE5_PROXY_BUILD unarmed-mutex warning)) | The B47 diagnostic logs a GetLastError() captured after ~6 intervening Win32/CRT calls, so the error code it blames CreateMutexW for is not CreateMutexW's | S / low |
+| **AB12** | LOW | `Methode.cpp:211` (IsAlreadyLoadedInTarget) | The 1024-entry module array is clamped correctly but its truncation is invisible, and the consequence is no longer just a wasted map | S / low |
+| **AB13** | LOW | `Methode.cpp:293` (OnInjectAndConnect) | The one path whose value is functional still uses GetModuleFileNameA — the fix applied at both display sites in this same file was not applied here **[3 lenses]** | S / low |
+| **AB14** | LOW | `Radar.cpp:335` (Radar::TryDataTypeFromPropertyTypeName) | EnumProperty is absent from the numeric type map, so enum-backed state fields are invisible to every value scan although the DLL resolves their width correctly elsewhere | M / low |
+| **AB15** | LOW | `Radar.cpp:463` (Radar::BuildNumericTargets) | A leading zero makes one user value mean two different numbers inside a single meta scan: octal for the integer widths, decimal for Float/Double | S / low |
+| **AB16** | LOW | `Radar.cpp:996` (CandidateMatchesFilter) | The server-side Value Search filter does not cover the displayed "Origin" column, so filtering for `native` reports zero matches on rows that visibly read "Native-C (Int32)" | S / low |
+| **AB17** | LOW | `Radar.cpp:1154` (Radar::SessionManager::ExpireOldSessions / GroupSess) | The documented 300 s idle expiry is reachable ONLY from `Begin` on the same manager, so it never fires for the case the header says it protects against — a client that goes quiet | S / low |
+| **AB18** | LOW | `Radar.cpp:1353` (PickGroupWitnessAssignment) | Greedy witness picker can show the same leaf in two slots, asserting a pairing the group-scan contract forbids — while Orden already computed a valid assignment and threw it away | M / low |
+| **AB19** | LOW | `Radar.h:687` (Radar::GroupCandidate::slotMatches / GroupSessionMan) | A group session's leaf memory is the unbounded product of three caps and only one of them is bounded against memory; the clamp that exists names the hazard it does not cover | M / low |
+| **AB20** | INFO | `Heiter.cpp:278` (g_hAutoStartThread) | Two comments claim shutdown waits for the auto-start thread via a stored handle; no code anywhere waits on it, and the handle is file-static so UE5_Shutdown cannot reach it | S / low |
+| **AB21** | INFO | `Methode.cpp:352` (CEPlugin_InitializePlugin / CEPlugin_GetVersion / Ex) | Negative result — the static ABI surface itself is correct; no Radar/Radar.h finding from this lens | S / low |
+| **AB22** | INFO | `Radar.h:80` (DataType (enum banner comment)) | The DataType enum's banner says TArray<T> scan "remains deferred" 28 lines after the file header says it shipped in build 757 | S / low |
+| **AB23** | INFO | `Radar.h:676` (Radar::GroupSlotMatch::ownerClass) | `GroupSlotMatch` carries a by-value `std::string` per leaf, re-introducing exactly the per-record heap string that V3-A's interning was built to remove | S / low |
+
+> **Hand-verified:** AB1 in full (above). **Not re-derived:** everything else — the 23% kill rate is
+> better than S1's 14% but still below the 33–73% band, so re-derive before fixing.
 
 -----
 
