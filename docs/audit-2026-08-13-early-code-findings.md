@@ -62,12 +62,12 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **U4** ✅ | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
 | **U5** ✅ | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
 | **S1** | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
-| **T1** | Tail sweep — **SPLIT into T1a–T1f, see below** | every remaining file ≥50 early lines + the never-touched-since-May files | ~10.4k | — |
+| **T1** | Tail sweep — **SPLIT into T1a–T1e, see below** | every remaining file ≥50 early lines + the never-touched-since-May files | ~9.4k | — |
 
-### T1 is split into six phases (decided 2026-08-15, re-measured)
+### T1 is split into five phases (decided 2026-08-15, re-measured twice)
 
-**Why split.** T1's own criterion — every remaining file with ≥50 early lines — is **10,389 early
-lines over 54 files**. That is **1.8× the largest segment ever run** (D1/Ubel, ~5,665) and ~3× the
+**Why split.** T1's own criterion — every remaining file with ≥50 early lines — is **9,390 early
+lines over 53 files**. That is **1.7× the largest segment ever run** (D1/Ubel, ~5,665) and ~3× the
 norm (~3,300). But size is the lesser reason. *Every prior segment was one subsystem*, so a lens
 could hold it in view and cross-check siblings — which is how this audit's best findings were made
 (`countsPartial` applied at some sites, L14 at 2 of 4, the detach line in 3 of 4 panels). T1 as one
@@ -80,10 +80,23 @@ contract, not by line count**, so the established method applies unchanged.
 |-------|----------|------:|
 | **T1a** | DLL value-scan engine — `Radar.cpp` 696, `Radar.h` 354, `Methode.cpp` 269, `Heiter.cpp` 185 | 1,504 |
 | **T1b** | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
-| **T1c** | Remaining UI ViewModels — `PointerPanel` 999, `ValueSearch` 415, `ProxyDeploy` 312, `GameClassFilter` 183, `ClassStruct` 162 | 2,071 |
+| **T1c** | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
 | **T1d** | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
-| **T1e** | UI Core + Models — `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52 + 13 model DTOs | 1,817 |
-| **T1f** | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
+| **T1e** | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
+
+> **Why five and not six, and why the VMs merged.** Two corrections, both from re-measuring rather
+> than re-reasoning:
+> 1. **`PointerPanelViewModel.cs` (999 early) is already covered by U1** — U1's row reads
+>    "LiveWalker / Pointer / ObjectTree, 2900 + 999 + 360", and the 999 *is* this file. The first
+>    T1 sizing put it in the remainder because it checked a filename (`PointerViewModel.cs`) that
+>    **does not exist in the tree**. T1 drops 10,389→**9,390** and the VM phase drops 2,071→1,072.
+>    Validating that every name in a "covered" list actually resolves to a file costs one `os.path`
+>    loop and would have caught it immediately.
+> 2. **Per-phase cost is roughly FLAT, not proportional to lines.** S1 is the datapoint: 1,236 early
+>    lines cost ~25% of a quota window — about what the 3,500-line U5 cost — because the price is the
+>    fixed 5-lens + refute + second-lens structure, not the reading. So a 1,072-line phase costs
+>    nearly as much as a 2,900-line one, and splitting finely *wastes* budget. The 1,072-line VM
+>    group was therefore merged with Core + Models.
 
 **T1b is the one to prioritise if the budget runs out.** §0's entire thesis is that the C++ suite is
 two header-only test files that compile **no `.cpp` at all**. Auditing *those tests* — what they
@@ -104,8 +117,10 @@ they claim to test.
 > The lesson is §0's own: a number recorded without its conditions is not a measurement, and the
 > condition here is the scope predicate. Current totals on §0's rule: **49,612 early / 138,186 total
 > over 331 files** (§0 published 48,950 / 131,522 / 321 at build 2804 — the tree grew ~100 builds).
-> Covered by D1–D5 + U1–U5 + S1: **38,051 early over 51 files**. T1 remainder: **11,561 over 280
-> files**, of which 10,389 clear the ≥50 bar and 1,172 are the sub-50 tail.
+> Covered by D1–D5 + U1–U5 + S1: **39,050 early over 51 files**. T1 remainder: **10,562 over 279
+> files**, of which 9,390 clear the ≥50 bar and 1,172 are the sub-50 tail. (Corrected from an earlier
+> 11,561/10,389 that wrongly counted `PointerPanelViewModel.cs` as unscanned — see the note under the
+> phase table.)
 > The never-touched-since-May list is now **46 files** (§0 recorded 53) — this audit's own fixes
 > touched seven of them.
 
