@@ -5727,12 +5727,11 @@ void ResolvePropertyPreviews(
             if (s.empty()) {
                 m.preview = "(empty)";
             } else {
-                // Truncate long strings
-                if (s.size() > 50) {
-                    s.resize(50);
-                    s += "\xe2\x80\xa6";  // UTF-8 ellipsis '…'
-                }
-                m.preview = "\"" + s + "\"";
+                // Truncate long strings — on a CHARACTER boundary. `s.resize(50)` split
+                // multi-byte sequences (2 CJK strings in 3), and nlohmann's strict dump()
+                // then threw on the invalid UTF-8, turning the entire search_properties
+                // response into {"error":...} — zero rows for a search that matched.
+                m.preview = "\"" + Utf8Helpers::TruncateUtf8(s, 50) + "\"";
             }
             continue;
         }
