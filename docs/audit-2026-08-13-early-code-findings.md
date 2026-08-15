@@ -1377,13 +1377,33 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session picks up at U5
+## 3b. START HERE — next session FIXES X2 (scanning is paused)
 
-*State as of 2026-08-15, after U4. Read this section first; it is written for a session with no
-memory of the previous one.*
+*State as of 2026-08-15, after U4 + eight fix batches. Read this section first; it is written for a
+session with no memory of the previous one.*
+
+> 🔵 **The maintainer's instruction for the next session: fix X2. Do not start U5.**
+> Scanning is deliberately paused with 10 of 12 segments done — the remaining backlog is worth more
+> than another 14 findings. Work the open list one item (or one related group) at a time, and report
+> after each so the maintainer can watch the quota.
+>
+> **X2** — `MainWindowViewModel.cs:1650`, MED, `S`/low. A class-address lookup scans a single
+> 5,000-row `list_classes` page and reports a real class as **"not found"** when it falls past the
+> cap. Same family as X1 (a cap treated as the whole set), and the refuted
+> `MainWindowViewModel.cs:1191` claim is the *wider* framing of the same underlying truncation — read
+> that refutation in §3 before starting, so the fix stays scoped to what survived.
+>
+> **After X2**, the cheapest remaining are **Y9** (`FreezeValueDialog.cs:231`, a `uint8` accepting
+> 9999 and silently writing 15) and **W5** (`CeXmlExportService.cs:2141`, weak/soft/lazy pointers
+> drilled with `Offsets=[0]`, i.e. dereferencing a non-pointer slot).
 
 > ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
-> (2842), W1+W7 (2853), Y1 (2862), plus W4 (2836) and W6 (2857).
+> (2842), W1+W7 (2853), Y1 (2862).
+>
+> **Fixed so far — 18 findings across ten fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: Y6+Y7 (2881), Y8 (2875), X1
+> (2870), Y2+Y3+Y4+Y5 (2866), Y1 (2862), W6 (2857), W1+W7 (2853), W2+W3 (2842), W4 (2836),
+> V1+V2+V5 (2830). Test count went 3590 → 3624 over the session; every fix carries a negative
+> control, and the doc entry for each says what the control proved.
 >
 > **Y1 is the one to read before fixing anything else**, because its verification is the template:
 > a claim about a *runtime we do not control* (Lua inside Cheat Engine) was settled by evaluating the
