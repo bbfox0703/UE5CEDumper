@@ -62,7 +62,52 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **U4** ✅ | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
 | **U5** ✅ | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
 | **S1** | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
-| **T1** | Tail sweep | every remaining file ≥50 early lines + the 53 never-touched-since-May files | ~10k | — |
+| **T1** | Tail sweep — **SPLIT into T1a–T1f, see below** | every remaining file ≥50 early lines + the never-touched-since-May files | ~10.4k | — |
+
+### T1 is split into six phases (decided 2026-08-15, re-measured)
+
+**Why split.** T1's own criterion — every remaining file with ≥50 early lines — is **10,389 early
+lines over 54 files**. That is **1.8× the largest segment ever run** (D1/Ubel, ~5,665) and ~3× the
+norm (~3,300). But size is the lesser reason. *Every prior segment was one subsystem*, so a lens
+could hold it in view and cross-check siblings — which is how this audit's best findings were made
+(`countsPartial` applied at some sites, L14 at 2 of 4, the detach line in 3 of 4 panels). T1 as one
+unit hands each lens **54 unrelated files across the DLL, its headers, the C++ test suite, UI
+ViewModels, Services, Models, Core and Views** — the exact condition that produced U5's failure mode
+(finders pad, skeptic goes lenient), and U5 was only *10* files. Phases are grouped by **shared
+contract, not by line count**, so the established method applies unchanged.
+
+| Phase | Contents | Early |
+|-------|----------|------:|
+| **T1a** | DLL value-scan engine — `Radar.cpp` 696, `Radar.h` 354, `Methode.cpp` 269, `Heiter.cpp` 185 | 1,504 |
+| **T1b** | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
+| **T1c** | Remaining UI ViewModels — `PointerPanel` 999, `ValueSearch` 415, `ProxyDeploy` 312, `GameClassFilter` 183, `ClassStruct` 162 | 2,071 |
+| **T1d** | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
+| **T1e** | UI Core + Models — `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52 + 13 model DTOs | 1,817 |
+| **T1f** | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
+
+**T1b is the one to prioritise if the budget runs out.** §0's entire thesis is that the C++ suite is
+two header-only test files that compile **no `.cpp` at all**. Auditing *those tests* — what they
+assert, and what they structurally cannot catch — belongs beside the headers defining the contracts
+they claim to test.
+
+> **Scope decision, recorded because it is worth 15k lines.** The **UI test project is OUT of scope**
+> and stays out. §0's area table has no `ui-tests` row, and that is not an oversight — reproducing
+> §0's published per-area numbers *requires* excluding both `ui/UE5DumpUI.Tests` and `.axaml`
+> (verified 2026-08-15: the reproduction lands on `scripts` 1,236 and `ui/Core` 806 **exactly**, and
+> within 2% everywhere else). Excluding it leaves **15,541 early lines over 142 test files**
+> unaudited. T1 pulls in only the test files caught by the "+ never-touched-since-May" clause. If the
+> maintainer ever wants the rest, it is a **separate T2**, not a T1 phase — adding it would more than
+> double T1.
+
+> **Re-measurement note (2026-08-15, build 2904).** §0's "~10k" for T1 is accurate *on §0's scope
+> rule*. A first re-measurement said 30,231 and was **wrong** — it had swept in tests and `.axaml`.
+> The lesson is §0's own: a number recorded without its conditions is not a measurement, and the
+> condition here is the scope predicate. Current totals on §0's rule: **49,612 early / 138,186 total
+> over 331 files** (§0 published 48,950 / 131,522 / 321 at build 2804 — the tree grew ~100 builds).
+> Covered by D1–D5 + U1–U5 + S1: **38,051 early over 51 files**. T1 remainder: **11,561 over 280
+> files**, of which 10,389 clear the ≥50 bar and 1,172 are the sub-50 tail.
+> The never-touched-since-May list is now **46 files** (§0 recorded 53) — this audit's own fixes
+> touched seven of them.
 
 ### Method per segment
 
