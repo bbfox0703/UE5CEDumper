@@ -49,6 +49,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private bool _versionDetected = true;
     [ObservableProperty] private bool _isUserOverride;
     [ObservableProperty] private bool _isLowConfidence;
+    // Default true so a DLL that predates get_offsets shows no banner — see EngineState.
+    [ObservableProperty] private bool _offsetsValidated = true;
+    [ObservableProperty] private bool _offsetsProbeRan;
+    [ObservableProperty] private string _offsetsFallbackReason = "";
     [ObservableProperty] private bool _isVersionTooOld;
     [ObservableProperty] private string _publisherThumbprint = "";
     [ObservableProperty] private string _selectedUeVersionOverride = "Auto";
@@ -223,6 +227,34 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     /// <summary>True when detection succeeded but used the low-confidence Tier 3 / publisher-bias path.</summary>
     public bool ShowLowConfidenceWarning => HasData && IsLowConfidence && !IsUserOverride;
+
+    /// <summary>
+    /// True when the DLL says at least one FField/FProperty/UStruct offset is an unmeasured
+    /// UE-version guess. Everything downstream — Live Walker values, every export, every
+    /// Force/Freeze write — is derived from those offsets, and until this banner existed the
+    /// DLL computed the verdict and nobody asked for it. (audit #5 U3/X3)
+    /// <para>
+    /// Suppressed under <see cref="IsVersionTooOld"/>: there the DLL deliberately skipped the
+    /// whole scan, which the refusal banner already explains — a second warning saying the
+    /// offsets are unmeasured would be true, redundant, and read as a separate fault.
+    /// </para>
+    /// </summary>
+    public bool ShowOffsetsUnvalidatedWarning => HasData && !IsVersionTooOld && !OffsetsValidated;
+
+    /// <summary>
+    /// Why the offsets are not trustworthy. Splits on whether detection RAN, because the two
+    /// have different remedies: a give-up mid-probe is a per-game layout problem worth
+    /// reporting, while "never ran" means the walker is on pure defaults.
+    /// </summary>
+    public string OffsetsUnvalidatedText =>
+        !OffsetsProbeRan
+            ? "⚠ Offset detection never ran — the walker is using UE-version DEFAULTS. "
+              + "Values, exports and freezes may all be wrong."
+            : string.IsNullOrEmpty(OffsetsFallbackReason)
+                ? "⚠ Dynamic offsets were not fully measured — some are UE-version defaults. "
+                  + "Values below and every export derived from them may be wrong."
+                : $"⚠ Dynamic offsets only partially measured ({OffsetsFallbackReason}) — the rest "
+                  + "are UE-version defaults. Values below and every export derived from them may be wrong.";
 
     /// <summary>True when version was detected with high confidence and no override is in effect.</summary>
     public bool ShowVersionDetectedBadge => HasData && VersionDetected && !IsUserOverride && !IsLowConfidence;
@@ -499,6 +531,9 @@ public partial class PointerPanelViewModel : ViewModelBase
         IsUserOverride = state.IsUserOverride;
         IsLowConfidence = state.IsLowConfidence;
         IsVersionTooOld = state.IsVersionTooOld;
+        OffsetsValidated = state.OffsetsValidated;
+        OffsetsProbeRan = state.OffsetsProbeRan;
+        OffsetsFallbackReason = state.OffsetsFallbackReason;
         PublisherThumbprint = state.PublisherThumbprint;
         // Re-sync the ComboBox selection to whatever the DLL actually has (override or auto).
         // _suppressOverrideSelectionEvent gates the partial method so this assignment doesn't
@@ -583,6 +618,11 @@ public partial class PointerPanelViewModel : ViewModelBase
         // refresh of an already-attached panel it stayed hidden.
         OnPropertyChanged(nameof(ShowVersionTooOldWarning));
         OnPropertyChanged(nameof(ShowPreUE4Warning));
+        // Same trap the two lines above document: these are [ObservableProperty] with no
+        // NotifyPropertyChangedFor, so the computed pair must be raised by hand or the banner
+        // only ever appears if the binding happens to evaluate first after Update().
+        OnPropertyChanged(nameof(ShowOffsetsUnvalidatedWarning));
+        OnPropertyChanged(nameof(OffsetsUnvalidatedText));
         OnPropertyChanged(nameof(ShowInvokeTimeoutOverrideBadge));
         OnPropertyChanged(nameof(ShowPublisherHint));
         OnPropertyChanged(nameof(PublisherLabel));

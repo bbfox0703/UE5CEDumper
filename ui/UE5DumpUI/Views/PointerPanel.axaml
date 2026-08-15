@@ -96,6 +96,17 @@
                        Foreground="#E88" FontSize="11" TextWrapping="Wrap"/>
           </Border>
 
+          <!-- Dynamic offsets not fully MEASURED. Amber, not red: unlike the two refusals
+               above the dumper still works, but every value it shows and every export it
+               writes is derived from at least one UE-version guess. The text is built in the
+               VM because it names WHICH probe fell back. (audit #5 U3/X3) -->
+          <Border Background="#3A3323" BorderBrush="#E6A817" BorderThickness="1"
+                  CornerRadius="4" Padding="10,8" Margin="0,6,0,0"
+                  IsVisible="{Binding ShowOffsetsUnvalidatedWarning}">
+            <TextBlock Text="{Binding OffsetsUnvalidatedText}"
+                       Foreground="#E6C877" FontSize="11" TextWrapping="Wrap"/>
+          </Border>
+
           <!-- Legacy "version not detected" warning, kept for backward compat -->
           <TextBlock Text="{StaticResource str.Pointers.VersionWarning}"
                      Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"

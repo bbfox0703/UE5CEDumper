@@ -70,6 +70,32 @@ public sealed class EngineState
     /// <summary>Within-item UObject* offset for the two direct layouts (0x00 classic, 0x08 unpacked). 0 under packed.</summary>
     public int ItemObjOffset { get; init; }
 
+    // --- Dynamic offset validation (get_offsets) -------------------------------
+    //
+    // The DLL has always computed and published this verdict and the UI never asked
+    // for it, so nothing could tell the user the walker was running on unmeasured
+    // UE-version defaults — every value in Live Walker, every export, silently
+    // derived from a guess. (audit #5 U3/X3)
+    //
+    // Two flags, not one, and the split is the DLL's (Grimoire.h:243):
+    //   ProbeRan  — detection executed and the offsets are settled (success OR give-up)
+    //   Validated — the values were actually MEASURED and are trustworthy
+
+    /// <summary>
+    /// True when every probed offset was measured. Defaults to TRUE so a DLL that
+    /// predates the field — or a `get_offsets` call that failed — shows no warning,
+    /// the same "absent reads as fine" convention <see cref="VersionDetected"/> uses.
+    /// </summary>
+    public bool OffsetsValidated { get; init; } = true;
+
+    /// <summary>True when offset detection ran at all. False means DynOff still holds
+    /// pure version defaults because detection never executed.</summary>
+    public bool OffsetsProbeRan { get; init; }
+
+    /// <summary>Which probe fell back, e.g. "unmeasured:elemsize" or
+    /// "childprops-probe-failed". Empty when <see cref="OffsetsValidated"/> is true.</summary>
+    public string OffsetsFallbackReason { get; init; } = "";
+
     /// <summary>One-line note embedded into exports generated while <see cref="ItemPacked"/> is true.</summary>
     public static string PackedExportNote =>
         "generated under UNVERIFIED UE5.7+ packed FUObjectItem layout — addresses are best-effort";
