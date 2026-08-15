@@ -60,7 +60,7 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **U2** ✅ | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
 | **U3** ✅ | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
 | **U4** ✅ | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
-| **U5** | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
+| **U5** ✅ | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
 | **S1** | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
 | **T1** | Tail sweep | every remaining file ≥50 early lines + the 53 never-touched-since-May files | ~10k | — |
 
@@ -1327,7 +1327,116 @@ MEDIUM.
 
 -----
 
+### U5 — Remaining VMs / Models / Core / scoring — ✅ scanned 2026-08-15
+
+**11 agents** (5 lenses → 5 refute batches → 1 second-lens batch), 0 errors, over 10 files /
+~5,830 lines (~3,500 early). **30 raw claims → 6 refuted → 24 survived → 19 distinct** after merging
+five lens-duplicate pairs the skeptic failed to mark.
+
+**Tally: 0 HIGH · 3 MED · 14 LOW · 2 INFO.**
+
+> ### ⚠ Read this before trusting the LOWs — U5's refute rate is the audit's LOWEST
+>
+> **6 of 30 (20%) refuted**, against a measured per-segment band of **33–73%** over the eight prior
+> segments (working-lessons §2). Worse, **two of those six did not die on the merits**: one was a
+> duplicate and one was a self-declared *negative result* (the AOT lens correctly reporting that all
+> ten files are clean). The on-the-merits kill rate is therefore **4/30 ≈ 13%** — an outlier by a
+> wide margin, and the honest reading is that this skeptic was lenient, not that this code is clean.
+>
+> **The second lens killed zero.** It ran on all 3 HIGH/MED survivors and confirmed all 3. That is
+> not nothing — see below — but a 0% kill on top of a 13% kill is two lenient stages in a row.
+>
+> **The 14 LOWs never faced a second lens at all** (the method sends only HIGH/MED). They are the
+> least-scrutinised items in this audit. **Re-derive any LOW before fixing it.** The same warning was
+> attached to U4's five LOWs and is repeated here for the same reason.
+>
+> **The skeptic also failed at dedup**, which is a job it was explicitly given (`duplicate_of_idx`).
+> It caught one pair and missed five: `InterestingFunctionsViewModel.cs:439`,
+> `KeywordScoringTable.cs:82`, `InterestingPropertiesViewModel.cs:224`,
+> `InstanceFinderViewModel.cs:466`, and the `InstanceFinderViewModel.cs:274`/`:289` pair (one
+> mechanism — the detach-then-restore cycle — reported as two defects). Merged here by hand; that is
+> why 24 "confirmed" is 19 findings.
+>
+> **What the second lens DID do is the reason to keep the stage.** On Z1 it demolished the mechanism
+> while keeping the finding: the finder claimed a two-toggle race, and the second lens showed that
+> race is not demonstrable (during `LoadAsync` the guard early-returns, so there is no competing run;
+> post-load both runs do byte-identical work with A starting first). It then found the *real* window
+> by asking a different question — can the data reach that branch at all? — and produced a concrete
+> one: the tick is swallowed during the **2-second AOBMaker probe that runs after the grid has
+> already filled and the status line already says "done"**. It also corrected `:383`→`:377` and
+> struck the unobserved-exception half of the claim as having no failing input. A kill count of zero
+> undersold that stage considerably.
+
+> **Two root causes, and both are repeat offenders rather than new ones:**
+>
+> 1. **Cluster ① again — a cap treated as the whole set (5 of the 19).** The `countsPartial`
+>    parameter on `ClassFacetFilter.Rebuild` **exists, defaults to false, and is left unpassed at both
+>    Property Search and Interesting Properties** — in each case *within fifteen lines of the same
+>    method reading the truncation flag to print its own cap warning*. So one toolbar shows
+>    "⚠ 14 of 50 keywords STOPPED at the 200-row cap" while the class picker beside it reports a clean
+>    census of the same data. `ValueSearchViewModel.cs:808` passes it correctly.
+> 2. **Cluster ④ again — a fix applied at some of its sites (6 of the 19).** Audit **#3's L14**
+>    (a bare disconnect-`OperationCanceledException` reported as "you cancelled") is fixed at
+>    Property Search and Instance Finder and **not** at Interesting Properties or Interesting
+>    Functions — L14's own "Where" list named only the two it fixed. `scan.deadline_hit` is displayed
+>    by the single-row xref dialog and dropped by **all three** batch callers. `SelectedResult = null;
+>    // detach before rebuilding the selection-bound list` appears verbatim in three of the four
+>    panels in scope.
+>
+> **A third, new shape worth naming: the fetch list and the score list are two hand-maintained tables
+> that must agree, and don't** (Z3). It is root cause #1 in table form, and it is the only U5 finding
+> whose cost is "the feature silently cannot find your field".
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **Z1** | MED | `InterestingFunctionsViewModel.cs:439` (`RescoreAsync`) | `RescoreAsync` bails on `if (IsLoading \|\| _entries.Count == 0) return;`, and `LoadAsync` holds `IsLoading` true through a trailing `await CheckAobMakerAsync()` (`:377`) that this file's own comment documents as **a 2 s pipe-connect timeout when CE isn't running** — *after* `ApplyFilter()` has filled the grid (`:362`) and the final status text is written (`:368`). The Gameplay-Actions CheckBox has no `IsEnabled` gate, and its `IsChecked` is TwoWay. So a tick in that window **latches ON while the rows stay scored with `includeGameplayActions:false`**, forever: nothing re-runs. The user filters `shop`/`dash`, sees nothing, and concludes the pack found nothing — against a tooltip promising *"Re-scores the loaded set in place"*. Recovery is untick+retick, which is not discoverable. **The covering test never touches this path** — `InterestingFunctionsViewModelTests.cs:233` sets the property and then `await`s `RescoreAsync()` directly (working-lessons §1.3 seam). Fix is a pending-rescore latch, **not** the generation guard the finder proposed. | S / low |
+| **Z2** | MED | `InterestingPropertiesViewModel.cs:409` (`ApplyFilter`) | Bare `Results.Clear();` with `Results` bound as DataGrid `ItemsSource` and `SelectedResult` as its `SelectedItem`. The other **three** panels in scope carry `SelectedResult = null;   // detach before rebuilding the selection-bound list` verbatim (`InterestingFunctions:454`, `PropertySearch:556`, `Console:303`), a convention introduced by the build-879 fix + `Services/UiCollection.Reset` after a shipped Avalonia selection-model crash. ⚠ **Honest caveat carried from the finder:** audit #3's L18/L19 confirmed this same class at two other VMs and **downgraded it to "cosmetic churn, zero functional effect"**. New site, but rank it by that precedent. | S / low |
+| **Z3** | MED | `PropertyScoringTable.cs:509` (`SeedQueries`) | `SeedQueries` is the **only** thing deciding which properties Interesting Properties (and Detect Player Stats) ever see, and the DLL matches each seed as a case-insensitive **substring of the property name** (`Aura.cpp:4624`). The Stats seed line carries `HP, Health, Mana, Stamina, Energy, Level, Experience, Max, Dead, Alive` — while `StatsKeywords` (`:66`) *scores* `MP`, `SP`, `XP`, `Exp`, `Lv`, `Lvl`, and the category doc advertises "HP / MP / Stamina / XP". **`CurrentMP` contains no seed, so it is never fetched and those scoring arms are dead** (`MaxMP` survives only because `Max` is seeded — same field family, opposite outcome). Same drift hits most of Utility (`Save`/`Checkpoint`/`Score`/`NoClip`/`GodMode`), Movement (`Velocity`/`Dash`), and the build-678 Combat additions the table's own comment says were confirmed across 14/15 games. Cost of the fix is near zero — the DLL walks GObjects **once** and tests every field against every query in that pass. | S / low |
+| **Z4** | LOW | `PropertySearchViewModel.cs:498` + `InterestingPropertiesViewModel.cs:359` | `ClassFilter.Rebuild(...)` omits `countsPartial`, so the class-noise picker presents a capped page as a complete class census — **in both cases within fifteen lines of the same method reading the truncation flag to print its own cap warning**. The `⚠ Counts are partial` string exists in `en.axaml` and can never appear on either panel. `ValueSearchViewModel.cs:808` does it right. | S / low |
+| **Z5** | LOW | `InterestingPropertiesViewModel.cs:224` + `InterestingFunctionsViewModel.cs:269` | Bare `catch (OperationCanceledException)` → *"Find Funcs cancelled at N/M"*. `PipeClient.cs:192`/`:198` throw a **token-less** OCE on connection loss, so a game crash or DLL unload reads as "you pressed Cancel", with nothing logged. **This is audit #3's L14, applied at 2 of its 4 sites** — the two siblings carry the fix with an explicit `(L14)` comment. Both files also skip the `oldCts`/`Dispose` half. | S / low |
+| **Z6** | LOW | `InstanceFinderViewModel.cs:466` (`LookupAddressAsync`) | A bare `_searchGen++` steals the generation from an in-flight class search, but `LookupAddressAsync` owns only `IsLookingUp` and never touches `IsSearching`. The superseded search's `finally` (`:452`, *"only the latest op owns the flag"*) then skips its clear, so the indeterminate ProgressBar bound at `InstanceFinderPanel.axaml:65` **animates for the rest of the session** with nothing in flight. The invariant is "whoever bumps the generation takes over the flag"; this is the one bumper that is not itself a search. | S / low |
+| **Z7** | LOW | `InstanceFinderViewModel.cs:274`+`:289` (`ApplyInstanceFilter`) | The method's doc promises it *"Preserves the current selection (and its loaded field grid)"* and *"purely client-side, no server round-trip"*. `UiCollection.Reset` calls its detach callback **unconditionally**, so `SelectedInstance = null` fires `Fields.Clear()`, and the restore at `:289` re-enters the handler and issues a **fresh `walk_instance`** for the address already loaded. Every keystroke pause (200 ms debounce) blanks the field grid and refetches it; one class-noise tick costs **two** walks, since `ApplyInstanceFilter` runs both immediately and again when the server re-run lands. | S / low |
+| **Z8** | LOW | `ConsoleViewModel.cs:238` (`LoadAsync`) | `list_all_functions` inherits `limit = 100000`, and `Aura::EnumerateAllFunctions` breaks out of the GObjects walk at the cap **emitting no truncation marker of any kind** — unlike its `search_properties` sibling. The one field that could expose it is degenerate: `totalFunctions++` sits *inside* the push loop (`Aura.cpp:5080`), so it is identically `entries.size()`, and nothing reads the model property anyway. The panel then states a **positive claim about the game** — *"No UFUNCTION(exec) commands found in this game (scanned 100,000 functions…)"* — from a scan that never reached the classes in question. `InterestingFunctionsViewModel` has the identical blind spot and additionally **cannot** pass `countsPartial` to its `Rebuild` because no flag exists to pass. Needs a DLL change, hence M. | M / low |
+| **Z9** | LOW | `PropertySearchViewModel.cs:675` (+ `InterestingPropertiesViewModel.cs:209`, `InstanceFinderViewModel.cs:827`) | The batch xref loops consume `res.Xrefs` and discard `res.Scan.DeadlineHit`, which the DLL latches on a real 30 s budget. A row whose sweep timed out is written as **`0`** — the signal the user reads as *"no Blueprint function touches this field, so freezing it is safe"*. The single-row dialog built on the same call prints `[DEADLINE HIT — partial]`, so two UI paths over one DLL call disagree. | S / low |
+| **Z10** | LOW | `PropertySearchViewModel.cs:512` | The cap suffix advises *"narrow the query or raise Max"* on a panel with **no Max control** — the string was lifted from Instance Finder, which really does own an `InstanceSearchCap` NumericUpDown. This panel never passes `limit`, so the cap is the compile-time default 200. Either drop the advice or add the lever (the latter is the better fix; 200 is very low for `Health`). | S / low |
+| **Z11** | LOW | `PropertySearchViewModel.cs:396` (`ApplyForceAsync`) | `held == 0` is reported as *"nothing held"*, but `Solide::AddForce` only discards a job when the field was found **and type-refused**; with no live instances yet it keeps the job and **starts the re-assert worker**. So the hold is armed and will begin writing into the game the moment an instance spawns, having told the user it did nothing. The `resolved` field that separates the two zero cases is already on the wire (`Fern.cpp:5457`) and never parsed. The "Forced fields" strip and the status line say opposite things. | S / low |
+| **Z12** | LOW | `InstanceFinderViewModel.cs:518` | The `[scanned X/Y in Zms]` suffix — whose stated purpose is *"so the user can tell a clean miss from a deadline-truncated scan"* — is built from the **shallow** pass's counters. `container_scan.deep_scan` is emitted by the DLL and never parsed, and `Fern.cpp:4013` only swaps in the deep stats when the deep pass found **nothing**. So a deep-scan success reports the shallow pass's 180 ms, and a deep miss never reveals that the 256-element cap, not exhaustion, ended the search. | S / low |
+| **Z13** | LOW | `KeywordScoringTable.cs:82` + `PropertyScoringTable.cs:66` | `StatsKeywords` lists both `"HP"` and `"Hp"`; `CountTokenHits` re-tokenises each keyword and lowercases, so both yield `["hp"]` and **one distinct keyword is counted twice**. This contradicts the method's own documented contract, quoted at `:326`: *"Each keyword counts once total even if multiple tokens would match."* Every HP-named row gets a silent +5 over every other stat keyword in the column the panel sorts on, and the tooltip renders "keywords(2 hits)". Duplicated across both scoring tables. | S / low |
+| **Z14** | LOW | `PropertyScoringTable.cs:74` | `"IsDead"`/`"IsAlive"` can never match without `"Dead"`/`"Alive"` also matching, and the comment justifying their presence describes the tokenisation that makes them redundant. | S / low |
+| **Z15** | LOW | `InterestingFunctionsViewModel.cs:443` | Toggling Gameplay Actions re-scores every row but leaves the status line's *"above threshold: N"* count from the **previous** scoring mode — the counts are written by `LoadAsync` and `RescoreAsync` never updates them. Distinct from Z1 (that is the re-score not running; this is the re-score running and the report not following). | S / low |
+| **Z16** | LOW | `PropertySearchViewModel.cs:606` (`CopyOffset`) | `clipboard?.SetTextAsync(...)` — a Task returned and dropped inside a `void` command, reaching into `Application.Current` by hand even though `IPlatformService` is **injected into this very VM and used by every other copy site**. A clipboard failure (another process holding it open) surfaces nowhere, logs nothing, and sets no status, so the user pastes a stale offset into CE. It is the only unawaited `SetTextAsync` in the UI. | S / low |
+| **Z17** | INFO | `LoggingService.cs:18` + `ILoggingService.cs:46` | Two doc comments on the logging surface state a **generation-count** rotation policy ("2-version rotation") — the exact policy CLAUDE.md's app-data rule replaced with age-based retention, and which it explains at length *cannot* express the requirement. The code follows the age rule; only the docs are stale. Per this audit's own §1.11 lesson a comment admitting/asserting the wrong contract is worth filing, but there is no behavioural defect. | S / low |
+
+> **Negative result worth recording** (it reproduces, and an absence is the cheapest thing to produce
+> by accident): the AOT/trim lens swept all ten files for `Activator.`, `MakeGeneric`,
+> `GetCustomAttribute`, `typeof(…).Get*`, `Type.GetType`, `Assembly.`, `Expression.`, `dynamic`,
+> `Convert.ChangeType`, `Enum.Parse/GetValues/GetNames` and non-source-generated `JsonSerializer`
+> calls, and found **none**. The two `ComboBox` bindings in scope do not bind a boxed value to
+> `SelectedItem`. U5's C# is AOT-clean.
+
+-----
+
 ## 3. Refuted — do not re-raise
+
+### From U5 (6 of 30 — 20%, the audit's lowest; see the leniency warning in §2)
+
+Only four of these died on the merits; read the caveat before treating the survivors as vetted.
+
+- **`ConsoleViewModel.cs:72`** — the sticky-instance pin surviving a reconnect to a *different* game.
+  Refuted: the self-heal is designed for exactly this and names it — *"A pinned address can go stale
+  (object freed, level change, PIPE RECONNECT) … drop the pin and retry once with a fresh classname
+  resolution"* — and the code delivers it.
+- **`ConsoleViewModel.cs:161`** — three VMs own an `IDisposable KeywordSearchMemory` without being
+  `IDisposable` themselves. Refuted: every code fact is correct and **no bad outcome follows** — the
+  700 ms debounce timer is harmless at process exit. Worth remembering as the shape of a true
+  "correct but inconsequential" claim.
+- **`InterestingPropertiesViewModel.cs:224`** — died as a **duplicate** of the async-thread lens's
+  better-evidenced report of the same defect, *not* on the merits. The surviving copy is **Z5**.
+- **`InterestingFunctionsViewModel.cs:269`** — the L14 twin, refuted on its stated failure input
+  ("the game crashes at…") while the underlying site is real; folded into **Z5**, which cites it.
+- **`InterestingPropertiesViewModel.cs:409`** — duplicate of the claim recorded as **Z2**.
+- **`InterestingPropertiesViewModel.cs:593`** — the AOT lens's self-declared **negative result**,
+  correctly not a finding. Recorded as a negative result in §2 instead.
 
 ### From U4 (0 of 15 — 0%)
 
@@ -1554,13 +1663,18 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 ## 3b. START HERE — next session FIXES W5 (scanning is paused)
 
-*State as of 2026-08-15, after U4 + ten fix batches. Read this section first; it is written for a
+*State as of 2026-08-15, after U5 + ten fix batches. Read this section first; it is written for a
 session with no memory of the previous one.*
 
-> 🔵 **Y9 shipped in 2895, Y15 in 2904. Next up is W5. Do not start U5.**
-> Scanning is deliberately paused with 10 of 12 segments done — the remaining backlog is worth more
-> than another 14 findings. Work the open list one item (or one related group) at a time, and report
-> after each so the maintainer can watch the quota.
+> 🔵 **Y9 shipped in 2895, Y15 in 2904. U5 was SCANNED on 2026-08-15 (no fixes — scanning applies
+> none). Next up is W5.** The maintainer asked to stop after U5, so **S1 has not been started**.
+> 11 of 12 segments are done; the remaining backlog is worth more than another scan. Work the open
+> list one item (or one related group) at a time, and report after each so the quota is watchable.
+>
+> ⚠ **U5's findings need re-derivation before they are fixed.** Its skeptic refuted only 20% against
+> a 33–73% band, its second lens killed nothing, and its 14 LOWs never saw a second lens at all. The
+> full warning is at the head of §2's U5 block. The three MEDs (Z1/Z2/Z3) *were* re-derived by hand
+> against the source and hold; nothing below MED was.
 >
 > **W5** — `CeXmlExportService.cs:2141`, `S`/low. Weak/soft/lazy pointers are drilled with
 > `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer.
@@ -1631,13 +1745,14 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 
 ### What is done
 
-**Scanning: 10 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3, U4. Still
-open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
+**Scanning: 11 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3, U4, U5.
+Still open: **S1, T1**. **The DLL and the C# are fully scanned; everything left is Lua (S1) plus the
+T1 tail sweep.**
 
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y10–Y14, Y16, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+**Still open: Z1–Z17, Y10–Y14, Y16, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
 remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875), **Y6+Y7** (2881),
 **Y9** (2895) and **Y15** (2904) — 10 of its 16 (Y15 was hand-found while fixing Y9, and Y16 while
 fixing Y15); U3 shipped **X1** (2870) and **X2** (2888) — 2 of its 12.
