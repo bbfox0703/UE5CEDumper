@@ -168,8 +168,8 @@ Map/Set defect; D1-3/D1-10 the same struct-preview defect; D1-8/D1-11 the same F
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **U1** | MED | `Ubel.cpp:4079`,`4103`,`4127`,`4155`,`4342`,`4374` (+UProperty twins `4212`,`4253`,`4277`,`4417`,`4446`) | Map/Set element sizes are read raw from `FPROPERTY_ELEMSIZE` and gated only on `> 0`, then used as a **per-element `std::vector` size** *and* as the TSparseArray stride. Every `ArrayProperty` path routes the identical read through `ValidateArrayElemSize` (cap 65536) precisely because this read is documented to return garbage. | S / low |
-| **U2** | MED | `Ubel.cpp:1373` + `1403` | `InferScalarSize` returns a hardcoded `8` for `NameProperty`, and `ValidateArrayElemSize` treats that as authoritative and **overrides the engine's correct 16** on `bCasePreservingName` games. | S / med |
+| **U1** ✅ | MED | `Ubel.cpp:4079`,`4103`,`4127`,`4155`,`4342`,`4374` (+UProperty twins `4212`,`4253`,`4277`,`4417`,`4446`) | Map/Set element sizes are read raw from `FPROPERTY_ELEMSIZE` and gated only on `> 0`, then used as a **per-element `std::vector` size** *and* as the TSparseArray stride. Every `ArrayProperty` path routes the identical read through `ValidateArrayElemSize` (cap 65536) precisely because this read is documented to return garbage. | S / low |
+| **U2** ✅ | MED | `Ubel.cpp:1373` + `1403` | `InferScalarSize` returns a hardcoded `8` for `NameProperty`, and `ValidateArrayElemSize` treats that as authoritative and **overrides the engine's correct 16** on `bCasePreservingName` games. | S / med |
 | **U3** | MED | `Ubel.cpp:1662` | `InterpretValue`'s StructProperty preview skips 8 bytes as a "vtable preamble" (USTRUCTs generally have no vtable) and reads UE5 LWC **doubles as floats**. Prints plausible-looking numbers that are not the struct's values. | M / low |
 | **U4** | MED | `Ubel.cpp:818` (+`1055`, `149`) | `WalkClass` `try_emplace`s its result **unconditionally**, including a zero-field `ClassInfo` from a transient read failure or a not-yet-`Link`ed UClass — and no `erase`/`clear` for either class cache exists anywhere in `dll/src`. The poisoned entry is returned for the rest of the process lifetime. | S / low |
 | **U5** | MED | `Ubel.cpp:683` | `s_walkClassCache` and `s_walkClassExCache` each retain a **full flattened** `ClassInfo` (14 `std::string`s per `FieldInfo`) per class ever walked, twice, unbounded, for the process lifetime. | M / med |
@@ -249,7 +249,7 @@ end-to-end; the raw output came back correspondingly disciplined (18 claims from
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **A1** | MED | `Aura.cpp:1370` | `GetSerialNumber` picks the serial offset with `s_itemSize >= 24 ? 0x10 : 0x0C`, a two-way split covering only strides 16 and 24 — but **stride 20 is reachable** (Avowed's packed `FUObjectItem`, via both `InitWithExtendedLayout` and the `{16,24,32,20}` sweep). At 20 it reads **`ClusterRootIndex`**, so `Ubel::ResolveWeakObjectPtr`'s bare `if (actualSerial != serialNumber) return 0;` declares **every** weak reference stale. Silent — nothing logs a mismatch. | S / low |
-| **A2** | MED | `Macht.h:302` *(D4 scope)* | `IsSparseIndexAllocated` judges slots 0..127 from the **stale inline bit words** once a `TSet`/`TMap` has spilled its `TBitArray` to the heap — affecting **13 Aura call sites + 6 in Ubel**, while `Aura::ResolveTMapBitArrayBase` gets the same rule right. A freed slot reads as live, so Find Refs can emit a phantom reference and `ScanForValue` admits a dead element's value. | S / low |
+| **A2** ✅ | MED | `Macht.h:302` *(D4 scope)* | `IsSparseIndexAllocated` judges slots 0..127 from the **stale inline bit words** once a `TSet`/`TMap` has spilled its `TBitArray` to the heap — affecting **13 Aura call sites + 6 in Ubel**, while `Aura::ResolveTMapBitArrayBase` gets the same rule right. A freed slot reads as live, so Find Refs can emit a phantom reference and `ScanForValue` admits a dead element's value. | S / low |
 | **A3** | MED | `Aura.cpp:6170` | `ScanForValue`'s struct-expansion cycle guard is **whole-walk instead of path-scoped**, so the 2nd and 3rd field of a repeated struct type are dropped from the scan index. Hits GAS directly — `FGameplayAttributeData Health/MaxHealth/Mana` share one `UScriptStruct`, so only `Health` is indexed. `CollectSchemaLeaves` (`4109`) already does it correctly. | S / low |
 | **A4** | MED | `Aura.cpp:6791` | Value Search's deep-container pass **drops every depth-1 leaf**, so values inside `TSet<FStruct>` / `TMap<K,FStruct>` elements are unreachable *even with Deep on* — the static index doesn't cover them either (`collectStructArrayInner` is only reached from the ArrayProperty branch). An everyday `TMap<FName, FItemData>` inventory count is unfindable. | M / low |
 | **A5** | MED | `Aura.cpp:4436` | Property Search's inline **Preview samples the CDO**, not a live instance, so the column shows the Blueprint default forever (Health = 100 while the player is at 37). `Solide.cpp:282`, `Wirbel.cpp:328` and `Edel.cpp:94` all already filter `Default__`. | S / low |
@@ -297,9 +297,9 @@ Run `wf_8f75b7cb-452`, 10 agents, 0 errors. 9 raw claims → **5 refuted** → 4
 > `int16_t`, which is correct on **both** on little-endian x64. Reading it as `int32` as originally
 > proposed would have picked up the flags on newer engines.
 
-| **M1** | MED | `Macht.h:314` | `ComputeSetElementStride` aligns to **4** and cannot express `alignof(T)`, so the documented `TMap` recipe omits the `TPair`'s **trailing padding**. Real stride is `Align(sizeof(TTuple<K,V>) + 8, max(alignof K, alignof V))`. `TMap<AActor*,float>` → computes **20**, real **24**; `TMap<FString,int32>` → **28** vs **32**; `TMap<UObject*,uint8>` → **20** vs **24**. Every element past index 0 is read at a wrong address. `TSet<T>` is unaffected (a bare `elemSize` is always a multiple of `alignof(T)`). | S / med |
-| **M2** | MED | `Macht.h:293` | `ReadTSparseArray` reads `NumFreeIndices` at **`+0x3C`**. The PDB-verified layout in this repo (`Aura.cpp:3037-3038`, Everspace 2 UE 5.4) puts `FirstFreeIndex` at `+0x30` and `NumFreeIndices` at **`+0x34`**; `+0x3C` is padding before the Hash allocator at `+0x40`, zero-initialised and never written. So it always reads **0**, and `Ubel.cpp:4045`'s `mapCount = MaxIndex - NumFreeIndices` **over-reports** the count of any `TMap`/`TSet` that has had entries removed (10 shown, 6 rows rendered). The header comment claiming `TSparseArray` is `0x40` bytes is also wrong — it is `0x38`. | S / low |
-| **M3** | MED | `Macht.h:332` | `ComputeMapValueOffset`'s size-guess fallback is taken for **every struct-valued TMap**, because `Scharf::RequiredAlignment` returns **0** for `StructProperty` (`Scharf.h:76-78`). It then guesses `valueSize >= 8 → align 8`. For `TMap<int32,FVector>` the real value sits at **+4** (alignof 4) but it reads **+8**, so *even element 0* shows a wrong vector; `TMap<int32,FGuid>` reads every value 4 bytes late. **A validation helper is being reused as a layout oracle.** | M / med |
+| **M1** ✅ | MED | `Macht.h:314` | `ComputeSetElementStride` aligns to **4** and cannot express `alignof(T)`, so the documented `TMap` recipe omits the `TPair`'s **trailing padding**. Real stride is `Align(sizeof(TTuple<K,V>) + 8, max(alignof K, alignof V))`. `TMap<AActor*,float>` → computes **20**, real **24**; `TMap<FString,int32>` → **28** vs **32**; `TMap<UObject*,uint8>` → **20** vs **24**. Every element past index 0 is read at a wrong address. `TSet<T>` is unaffected (a bare `elemSize` is always a multiple of `alignof(T)`). | S / med |
+| **M2** ✅ | MED | `Macht.h:293` | `ReadTSparseArray` reads `NumFreeIndices` at **`+0x3C`**. The PDB-verified layout in this repo (`Aura.cpp:3037-3038`, Everspace 2 UE 5.4) puts `FirstFreeIndex` at `+0x30` and `NumFreeIndices` at **`+0x34`**; `+0x3C` is padding before the Hash allocator at `+0x40`, zero-initialised and never written. So it always reads **0**, and `Ubel.cpp:4045`'s `mapCount = MaxIndex - NumFreeIndices` **over-reports** the count of any `TMap`/`TSet` that has had entries removed (10 shown, 6 rows rendered). The header comment claiming `TSparseArray` is `0x40` bytes is also wrong — it is `0x38`. | S / low |
+| **M3** ✅ | MED | `Macht.h:332` | `ComputeMapValueOffset`'s size-guess fallback is taken for **every struct-valued TMap**, because `Scharf::RequiredAlignment` returns **0** for `StructProperty` (`Scharf.h:76-78`). It then guesses `valueSize >= 8 → align 8`. For `TMap<int32,FVector>` the real value sits at **+4** (alignof 4) but it reads **+8**, so *even element 0* shows a wrong vector; `TMap<int32,FGuid>` reads every value 4 bytes late. **A validation helper is being reused as a layout oracle.** | M / med |
 
 **Why the composite was never caught:** `dll_helpers_test.cpp:2013-2033` exercises
 `ComputeSetElementStride` and `ComputeMapValueOffset` **separately**, and every case it picks happens
@@ -402,15 +402,15 @@ the old core instead, and that is where all eight landed.
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **F1** ‡ | MED | `Fern.h:30` (+ `Frieren.cpp:92`) | `~Fern() { Stop(); }` on a namespace-scope static makes the **entire pipe teardown** — cancel sweeps, watch joins, a **5-second** condition-variable drain and two thread joins — run from the CRT's static-destructor pass during `DLL_PROCESS_DETACH`: precisely the heavy work `Heiter.cpp:288-301` deliberately refuses to do there, and precisely the hazard `Routine.h:51-56` already documents for every *other* module's worker. At process exit `ExitProcess` has already terminated the connection threads, so they can never erase themselves from `m_conns` and the drain predicate is **unsatisfiable by construction** — the full budget burns every time. `Stop` also takes `m_connMutex`, Sein's log mutex and both Radar session mutexes *after* their holders were killed, which is the documented shape of a permanent exit hang. | S / low |
+| **F1** ✅ ‡ | MED | `Fern.h:30` (+ `Frieren.cpp:92`) | `~Fern() { Stop(); }` on a namespace-scope static makes the **entire pipe teardown** — cancel sweeps, watch joins, a **5-second** condition-variable drain and two thread joins — run from the CRT's static-destructor pass during `DLL_PROCESS_DETACH`: precisely the heavy work `Heiter.cpp:288-301` deliberately refuses to do there, and precisely the hazard `Routine.h:51-56` already documents for every *other* module's worker. At process exit `ExitProcess` has already terminated the connection threads, so they can never erase themselves from `m_conns` and the drain predicate is **unsatisfiable by construction** — the full budget burns every time. `Stop` also takes `m_connMutex`, Sein's log mutex and both Radar session mutexes *after* their holders were killed, which is the documented shape of a permanent exit hang. | S / low |
 | **F2** | MED | `Fern.cpp:854` (+ `:779`) | `Tot::ResetPerCommand()` runs **only** when a connection is accepted into an *empty* registry (`firstConn = m_conns.empty()`). The monitor latches `g_perCommand` when a pipe breaks, and nothing else ever clears it — so a reconnect that arrives while a dead session's connection is still registered (a bulk lane parked in `EnqueueInvoke`'s wait, up to the 600 s invoke timeout) carries the latch into the **new** session, permanently: the registry cannot go empty again until that session ends. Every cancellable loop then bails on its first poll and returns an empty or partial result **inside a successful response** — `find_instances` 0 rows, `search_properties` truncated, `begin_value_scan` empty. Second lens confirmed it and called it understated: `Stark.h:87-89` advertises the very guard that would have killed the claim, and it does not cover this path. | M / med |
-| **FR1** | MED | `Frieren.cpp:767` | `UE5_AutoStart` **discards `UE5_Init`'s return** behind the comment `// Always succeeds (partial init is OK …)` and unconditionally starts the pipe server and publishes `initState = INIT_READY` — a state the enum defines as "init finished **and** the pipe server is up". `UE5_Init` has a real `return false` (a shutdown landing during the multi-second scan; pointers partial, nothing latched). End state: a serving pipe, `s_initialized == false`, engine pointers from an aborted scan, and **no mailbox poller** (`Mimic::StopThread` already ran and `StartThread`'s only other caller is `DllMain`) — so every CE `.CT` feature row writes a command nobody collects and `status` stays `0`, which CLAUDE.md's own rule tells the user means *"stale `g_invokeMailbox` address"*. Sends the user to the wrong diagnosis. Second lens proved the comment stale **by history**: `af7ff3a` (2026-03-02) deleted the old `if (!UE5_Init()) return false;` when it was correct; `ab66d54` (2026-08-04, audit #4 B49) added the `return false` five months later without revisiting the call site. | S / low |
+| **FR1** ✅ | MED | `Frieren.cpp:767` | `UE5_AutoStart` **discards `UE5_Init`'s return** behind the comment `// Always succeeds (partial init is OK …)` and unconditionally starts the pipe server and publishes `initState = INIT_READY` — a state the enum defines as "init finished **and** the pipe server is up". `UE5_Init` has a real `return false` (a shutdown landing during the multi-second scan; pointers partial, nothing latched). End state: a serving pipe, `s_initialized == false`, engine pointers from an aborted scan, and **no mailbox poller** (`Mimic::StopThread` already ran and `StartThread`'s only other caller is `DllMain`) — so every CE `.CT` feature row writes a command nobody collects and `status` stays `0`, which CLAUDE.md's own rule tells the user means *"stale `g_invokeMailbox` address"*. Sends the user to the wrong diagnosis. Second lens proved the comment stale **by history**: `af7ff3a` (2026-03-02) deleted the old `if (!UE5_Init()) return false;` when it was correct; `ab66d54` (2026-08-04, audit #4 B49) added the `return false` five months later without revisiting the call site. | S / low |
 | **F3** | MED | `Fern.cpp:1068` (+ `:1717`, `:4773`) | `Ubel`'s per-UObject name cache is keyed by a **raw `uintptr_t` with no generation/serial**, is never revalidated on hit, and Fern owns its only two purge sites — `begin_snapshot` and `trigger_scan`, neither reachable from ordinary browsing. The last-connection teardown at `:1068` drops Radar sessions, Linie, Sense and Schlacht but **not** this; nor does `Fern::Stop`, nor a CE Disable/Enable. After a level change recycles a UObject slot, every name-bearing response — Object Tree rows, `walk_instance`'s own/outer name, every ObjectProperty target — serves the **destroyed** object's name for the rest of the process's life, while the class is read fresh, so the two disagree with no error anywhere. Only restarting the game clears it. **Cluster ③, exactly.** | S / low |
-| **F4** | MED | `Fern.cpp:2645` (+ batch twin) | `Aura::SearchProperties` stops the GObjects walk the instant `results.size()` reaches `maxResults` (**200** by default from the UI) and also breaks on `Tot::Requested()`; the reply carries `total` = the capped row count with **no `truncated` and no aborted flag**. Worse, `scanned_objects` is echoed from a field Aura assigns to the **full** object count *before* the loop starts (`Aura.cpp:4179`), so a walk that stopped a few percent in reports the whole pool as scanned. The panel prints *"Found 200 properties in 3,412 classes (scanned 1,204,338 objects)"*; the user's client-side filter then finds nothing and they conclude the field does not exist. **This is the exact shape behind four "the scan missed my field" reports.** | S / low |
+| **F4** ✅ | MED | `Fern.cpp:2645` (+ batch twin) | `Aura::SearchProperties` stops the GObjects walk the instant `results.size()` reaches `maxResults` (**200** by default from the UI) and also breaks on `Tot::Requested()`; the reply carries `total` = the capped row count with **no `truncated` and no aborted flag**. Worse, `scanned_objects` is echoed from a field Aura assigns to the **full** object count *before* the loop starts (`Aura.cpp:4179`), so a walk that stopped a few percent in reports the whole pool as scanned. The panel prints *"Found 200 properties in 3,412 classes (scanned 1,204,338 objects)"*; the user's client-side filter then finds nothing and they conclude the field does not exist. **This is the exact shape behind four "the scan missed my field" reports.** | S / low |
 | **F5** | LOW | `Renge.h:282` (+ `Fern::WriteLine`) | `MakeResponse` builds a 3-key envelope then `res.merge_patch(data)`; nlohmann's merge_patch assigns non-object values **by copy**, so a payload a handler carefully built with `std::move` is deep-copied in full — then `WriteLine` materialises a second copy of the serialized string solely to append `"\n"`. Peak ≈ 2× DOM + 2× string, **in the game process's heap**, on `snapshot_chunk` (8192 objects), `find_instances` (50000 cap) and `list_all_functions` (100000 default). | S / low |
-| **F6** | LOW | `Fern.cpp:2510` | `walk_world` clamps the Actors loop to the caller's `limit` (the UI sends **500**) and reports `actors.size()` as the level's actor count — the real `actorArr.Count` is read one line earlier and **discarded** — with no `truncated`/`total`, so a 500-actor page is indistinguishable from a 500-actor level and an actor at index 1877 simply is not there. Two sibling failures in the same block (Actors field unresolved; `ReadTArray` fails) also return `actors: []` with `ok:true` and **no `error`**, even though this same handler sets `data["error"]` for the two failures directly above. | S / low |
+| **F6** ✅ | LOW | `Fern.cpp:2510` | `walk_world` clamps the Actors loop to the caller's `limit` (the UI sends **500**) and reports `actors.size()` as the level's actor count — the real `actorArr.Count` is read one line earlier and **discarded** — with no `truncated`/`total`, so a 500-actor page is indistinguishable from a 500-actor level and an actor at index 1877 simply is not there. Two sibling failures in the same block (Actors field unresolved; `ReadTArray` fails) also return `actors: []` with `ok:true` and **no `error`**, even though this same handler sets `data["error"]` for the two failures directly above. | S / low |
 | **F8** ¤ | MED | `Fern.cpp:2510` (same handler as F6) | **`ULevel` has no reflected `Actors` property on this engine, so `walk_world` enumerates nothing — always.** Found while verifying F6: the fix's new error string named the branch (`actorsOffset < 0`, not a failed read), and walking the live `ULevel` instance confirms it — **29 fields, 7 `ArrayProperty`, none called `Actors`** (`ModelComponents` @208, `NavDataChunks` @264, `StreamingTextures` @320, `DestroyedReplicatedStaticActors` @768; the only `*Actor*` names are `ActorCluster` and `LevelScriptActor`, both `ObjectProperty`). `walk_world`'s entire actor enumeration is built on finding that property by reflection, so on this engine Live Walker's "Load GWorld" shows a populated level as empty. `ULevel::Actors` is a real native member — the fix is a native-offset read (the `Ubel::GuessGapTypes` machinery already exists for exactly this), not more reflection. **CONFIRMED AT THE SOURCE.** `vendor/UnrealEngine/Engine/Source/Runtime/Engine/Classes/Engine/Level.h:428-429` declares `TArray<TObjectPtr<AActor>> Actors;` with **no `UPROPERTY()`** — a plain C++ member the engine never reflects. Our walker is not dropping it: `DestroyedReplicatedStaticActors` (`Level.h:887`), which IS a `UPROPERTY`, appears in the field list we read. So `walk_world`'s reflection-based lookup **cannot ever have worked**, on any engine matching this source, and the feature has been silently returning an empty world since it was written. The alternative hypothesis — "our class walker is truncating the field list", which would have been far worse — is dead. **Reproduced on a second, unrelated title.** Solarpunk (commercial, different engine build) in the 2026-08-14 session: `TX {"cmd":"walk_world","limit":500,...}` → `RX {"actor_count":0,"actors":[],"ok":true,"world_name":"MainLevel",...}`. **2 of 2 games tested return nothing**, so this is not a DumperTest artifact and may not be version-specific at all. *Honest limit: two captures is not a survey — what is established is that it fails on both engines we have evidence for, not the size of the affected range.* | M / med |
-| **F7** | LOW | `Fern.cpp:5042` | The `-7` response text reads *"(hook not active, direct call used)"*. `-7` is produced **only** by `Stark::EnqueueInvoke`'s inactive-hook guard or by `Stark::Shutdown` draining the queue — **neither executes ProcessEvent by any route**; the direct fallback lives on the other side of the `if (Stark::IsHookActive())` branch and returns 0/-2/-3/-4/-8. The string reports an execution that provably did not happen, and the dialog still shows `result_hex` — the untouched pre-call buffer. `-8` has no mapping at all. | S / low |
+| **F7** ✅ | LOW | `Fern.cpp:5042` | The `-7` response text reads *"(hook not active, direct call used)"*. `-7` is produced **only** by `Stark::EnqueueInvoke`'s inactive-hook guard or by `Stark::Shutdown` draining the queue — **neither executes ProcessEvent by any route**; the direct fallback lives on the other side of the `if (Stark::IsHookActive())` branch and returns 0/-2/-3/-4/-8. The string reports an execution that provably did not happen, and the dialog still shows `result_hex` — the untouched pre-call buffer. `-8` has no mapping at all. | S / low |
 
 ### D5 — LIVE VERIFIED 2026-08-14, headless, on packaged `DumperTest` (Shipping, DLL build 2812)
 
@@ -1497,8 +1497,10 @@ Every segment in §1's plan has been scanned. **No segment remains.**
 
 **Two defect FAMILIES account for more findings than any single subsystem**, and both are greppable:
 - **The width family** (an out-of-range value masked to the field width and reported as written):
-  **W6, Y2, Y9, Y15, Y16, AE9** — six findings, four subsystems. At every site the correct width was
-  in scope and simply not enforced.
+  **W6, Y2, Y9, Y15, Y16, AE1** — six findings, four subsystems. At every site the correct width was
+  in scope and simply not enforced. *(This line originally said "AE9" — a misnumbering; T1c's table
+  assigns the `FieldValueConverter.cs` width finding the ID **AE1**, and AE9 is the Sort-picker
+  no-op. Corrected 2026-08-15.)*
 - **Root cause #4, a fix applied at only some of its sites**: **V2, W4/W6, X1, Y16, AC2, AE10** —
   seven occurrences, and **AC2 is this audit's own Y7 fix at 1 of 5 consumers**.
 
@@ -1533,7 +1535,8 @@ finders did not over-rate anything. Three MEDs re-derived by hand.
 
 > ### The two patterns that keep recurring, now at four and seven occurrences
 >
-> **AE9 — the width family reaches a FOURTH subsystem.** `FieldValueConverter.cs:198` writes an
+> **AE1 — the width family reaches a FOURTH subsystem** *(this paragraph originally said "AE9", but
+> the table above numbers this finding AE1 — corrected 2026-08-15)*. `FieldValueConverter.cs:198` writes an
 > enum-backed field as `1 => new[] { (byte)(rawValue & 0xFF) }` (and `& 0xFFFF` / `& 0xFFFFFFFF` for
 > the wider cases) — verified by hand. An out-of-range value is **masked to the field width and the
 > untruncated number is reported as written**, which is Y9's defect (`9999` accepted for a `uint8`,
@@ -1568,7 +1571,7 @@ finders did not over-rate anything. Three MEDs re-derived by hand.
 | **AE7** | MED | `ProxyDeployViewModel.cs:1233` (UpdateAllAsync) | UpdateAllAsync iterates the live Games ObservableCollection across awaits while a concurrent scan can Games.Clear() it - and the method has no catch, so the tally is never reported **[2 lenses]** | S / low |
 | **AE8** | MED | `ValueSearchViewModel.cs:752` (FirstScanAsync / NextScanAsync) | The DiagnosticsProbe is opened BEFORE the input validation, so every rejected click costs two get_diagnostics round-trips and logs a "Value Scan (First)" measurement for a scan that never ran | S / low |
 | **AE9** | MED | `ValueSearchViewModel.cs:906` (NewScanAsync / GroupNewScanAsync) | New Scan resets the internal sort key but not the bound Sort picker, and re-selecting the option the picker already shows is a silent no-op | S / low |
-| **AE10** | MED | `ValueSearchViewModel.cs:951` (ValueSearchViewModel.IsGWorldAvailable) | The "stop gating Locate-in-GWorld on the client IsGWorldAvailable flag" fix is applied at Value Search only — 9 sibling VMs still gate on it | M / low |
+| **AE10** | MED | `ValueSearchViewModel.cs:951` (ValueSearchViewModel.IsGWorldAvailable) | The "stop gating Locate-in-GWorld on the client IsGWorldAvailable flag" fix is applied at Value Search only — **7** sibling VMs still gate on it, at 19 sites: 14 C# + 5 XAML (recounted 2026-08-15; the earlier "9" counted `LiveWalkerViewModel`'s write-only dead flag and `MainWindowViewModel`'s propagation assignments as gates) | M / low |
 | **AE11** | LOW | `AddressHelper.cs:41` (AddressHelper.FormatAddress (AddressFormat.Mod) | ModuleOffset formats a heap address as a wrapped RVA with no in-module check, producing a module-relative address that breaks on relaunch | S / low |
 | **AE12** | LOW | `IDumpService.cs:264` (IDumpService.BeginValueScanAsync) | Three doc comments assert native (non-UPROPERTY) fields are unreachable — 18 lines above the `nativeC` parameter that reaches them | S / low |
 | **AE13** | LOW | `ValueScanModels.cs:462` (GroupScanBeginResult) | The group scan's per-slot leaf-cap truncation is computed by the DLL and only LOGGED — no wire key, so no DTO can carry it | M / low |
@@ -1736,7 +1739,7 @@ second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside t
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **AC1** | MED | `ProxyDeployService.cs:916` (ProxyDeployService.DeployAsync) | A persisted global "Force Overwrite" silently destroys a third party's DLL that the grid is simultaneously naming on screen | S / low |
-| **AC2** | MED | `StructReturnDecoder.cs:55` (StructReturnDecoder.Decode / StructReturnDecoder.C) | Audit #5's own Y7 fix (ResolveTrustedLayout) is applied at 1 of its 3 sites — the invoke dialog refuses a size-contradicted layout for the INPUT boxes and accepts it for the RESULT grid **[2 lenses]** | S / low |
+| **AC2** | MED | `StructReturnDecoder.cs:55` (StructReturnDecoder.Decode / StructReturnDecoder.C) | Audit #5's own Y7 fix (ResolveTrustedLayout) is applied at **1 of 4 `GetLayout` call sites** (recounted 2026-08-15; unguarded: `InvokeParamDialog.cs:693`, `StructReturnDecoder.cs:55` + `:79`) — the invoke dialog refuses a size-contradicted layout for the INPUT boxes and accepts it for the RESULT grid **[2 lenses]** | S / low |
 | **AC3** | LOW | `AobMakerBridgeService.cs:470` (AobMakerBridgeService.ReconnectAsync) | ReconnectAsync's bare `catch` swallows every connect failure with no logging, so all seven "AOBMaker not connected" outcomes reach the user with zero diagnostics | S / low |
 | **AC4** | LOW | `AobUsageService.cs:121` (AobUsageService.LoadFileAsync) | A corrupt usage file is silently replaced with an empty one, wiping every other game's cached scan record — while the DELIBERATE reset of the same file keeps ten numbered backups | S / low |
 | **AC5** | LOW | `AobUsageService.cs:124` (AobUsageService.LoadFileAsync / RecordScanAsync) | A corrupt cache file is answered by writing a one-game file over it — every OTHER game's user-set UE-version override and invoke timeout are destroyed, with no backup, from a Warn nobody reads | S / low |
@@ -1910,8 +1913,8 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **AA1** | HIGH | `ue5_freeze_helper.lua:153` (writeBool) | Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit **[2 lenses]** | M / med |
-| **AA2** | HIGH | `ue5_freeze_helper.lua:452` (freezeProperty -> tick) | The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds | M / med |
-| **AA3** | HIGH | `ue5_freeze_helper.lua:461` (rescan / tick) | A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely **[2 lenses]** | M / med |
+| **AA2** | HIGH | `ue5_freeze_helper.lua:452` (freezeProperty -> tick) | The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds *(re-measured 2026-08-15: ~16/s per cached address — TTimer 50 ms quantised to ~62.5 ms; 5 s is the BEST case — see §3c)* | M / med |
+| **AA3** | HIGH | `ue5_freeze_helper.lua:461` (rescan / tick) | A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely **[2 lenses]** *(2026-08-15: "indefinitely" holds under PERSISTENT failure — DLL re-inject / contract mismatch / wedged `_ue5_invoke_busy`; transient busy self-heals in 5 s; `_lastError` is write-only — see §3c)* | M / med |
 | **AA4** | MED | `ue5_dissect.lua:53` (callDLL) | Bare getAddress RAISES on a missing symbol (CE source-verified), so the 'DLL function not found' message is dead code and the registered dissect override breaks CE's dissect for unrelated addresses **[2 lenses]** | S / low |
 | **AA5** | MED | `ue5_dissect.lua:63` (callDLL) | callDLL returns nil on every executeCodeEx failure and not one of its 14 call sites handles nil: `<= 0` raises, `~= 0` inverts **[2 lenses]** | S / low |
 | **AA6** | MED | `ue5_dissect.lua:173` (addFieldsToStruct / walkClassFields) | callDLL returns nil on failure and every caller treats nil as SUCCESS — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as a duplicate of the previous field **[2 lenses]** | S / low |
@@ -2290,10 +2293,21 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 *Generated from §2's tables, not hand-tallied. Re-derive after any fix with:*
 
 ```bash
-python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encoding='utf-8').read();r=re.findall(r'^\| \*\*([A-Z]{1,2}\d+)\*\*( ✅)? \| (HIGH|MED|LOW|INFO) \|',s,re.M);print(len([x for x in r if not x[1]]),'open /',len(r),'total')"
+python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encoding='utf-8').read();r=re.findall(r'^\| \*\*([A-Z]{1,2}\d+)\*\*( ✅)?(?: †| ‡| ¤)? \| (?:\*\*)?(HIGH|MED|LOW|INFO)(?:\*\*)? \|',s,re.M);print(len([x for x in r if not x[1]]),'open /',len(r),'total')"
 ```
 
-**245 of 263 findings are still open** (18 fixed). Open: **6 HIGH · 79 MED · 134 LOW · 26 INFO**.
+> ⚠ **The first version of this command (2026-08-15 AM) undercounted — 263 total instead of 272.**
+> Two parser traps, both now tolerated above: (a) the five dagger-marked rows (`G7`†, `PX1`‡, `MB3`†,
+> `F1`‡, `F8`¤) that §4's own footnote at "allow an optional marker" had already documented, and
+> (b) the four rows whose severity cell is **bold** (`| **V1** ✅ | **HIGH** |` — V1, W1, W2, Y1, all
+> fixed HIGHs), which nothing had documented. On top of that, eleven findings fixed in §2's
+> prose blocks (M1–M3, A2, U1, U2, F1, F4, F6, F7, FR1 — commits `5ef4c2b`, `c65fdfc`, `0d9fcfa`,
+> `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
+> register counted them open. Rows are now marked; the numbers below are the corrected derivation.
+
+**239 of 272 findings are still open** (33 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **6 HIGH · 73 MED ·
+133 LOW · 27 INFO**. Fixed HIGHs: 5 (V1, W1, W2, Y1, AB1).
 
 > ⚠ **The LOW and INFO tiers are NOT vetted to this audit's standard.** Kill rates ran 10–35%
 > against the audit's own 33–73% band, and only HIGH/MED got a second lens in most segments. Each
@@ -2302,23 +2316,69 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 
 ### The 6 open HIGHs — start here
 
+> ✅ **All six re-verified against the source 2026-08-15 (PM double-check pass — see the block at the
+> end of this section). Zero line drift on all six.** The per-finding corrections below are from that
+> pass; the original one-line claims stand, but several details a fixer would code against changed.
+
 1. **AD1** — `build.ps1:666 (Unit Tests block — utf8_helpers_test / dll_helpe)`
    A C++ test target that fails to COMPILE is reported as "skip", not as a failure — the whole C++ suite can go silent, including in CI
+   *Re-verify: AD1 (`:644-667`) and AD2 (`:669-693`) are **two separate `if/else` statements**, not
+   two arms of one branch — the fix must be applied at BOTH sites independently. A third condition
+   collapses into the same skip message: build succeeded but no `.exe` found. CI inherits the hole
+   confirmed: `ci.yml:142` and `release.yml:70` are single `build.ps1` steps with no artifact
+   assertion. Partial mitigation only: `dll_helpers_test` compiles `Radar.cpp`/`Denken.cpp`, so a
+   break in those two files fails the DLL phase — a break in a test .cpp or a header-only signature
+   is fully silent, and `utf8_helpers_test` shares no .cpp at all.*
 
 2. **AD2** — `build.ps1:692 (Test phase — dll_helpers_test / utf8_helpers_tes)`
    A C++ test target that FAILS TO COMPILE is reported as "skip" and leaves exitCode 0 — the whole C++ suite silently stops running, in CI too
+   *(see AD1's note — same defect class, second required edit)*
 
 3. **AB2** — `Methode.cpp:307 (OnInjectAndConnect)`
    InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread
+   *Re-verify (mechanism CONFIRMED in CE's own source, `CEFuncProc.pas:1346-1388`), three corrections:
+   (a) the free is **not unconditional** — CE waits a hard, unconfigurable **10 s** ceiling
+   (`waitforsingleobject` loop) and the `finally` then `VirtualFreeEx`es the stub page; the hazard is
+   "total remote work > 10 s" (DllMain + Sein::Init + 2–8 s AOB scan + pipe start), which is why it
+   does not always reproduce. (b) **The victim is the GAME process, not CE** — AB1 crashed CE, AB2
+   crashes the game (the `ret` lands on the freed stub page). (c) A worse sibling path: with CE's
+   Settings checkbox `cbInjectDLLWithAPC` ticked, the stub is freed after **1 s unconditionally**
+   (`CEFuncProc.pas:1332-1343`) — near-certain crash. Two secondary costs: CE's GUI freezes for the
+   whole scan (Type-5 callback on the main thread, no message pump), and the 10 s timeout surfaces as
+   our misleading "Injection failed. Ensure the target is a 64-bit UE5 process…" dialog while the DLL
+   is in fact loaded and scanning. **AB1's fix does NOT mitigate this** — the pin protects our image
+   in our address space; the freed memory is CE's own `VirtualAllocEx` stub in the game. Fix shape:
+   `UE5_AutoStart` must spawn-and-return (publish via `Mimic::InitState`, which `UE5CEDumper.CT`
+   already polls), so the remote thread exits inside the 10 s window.*
 
 4. **AA1** — `ue5_freeze_helper.lua:153 (writeBool)`
    Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit
+   *Re-verify: worse than stated — when `ByteMask != 0x01` the intended bool is **never set at all**
+   (writing 1 sets bit 0), so the feature silently no-ops while corrupting up to 7 neighbours. The
+   mask is structurally absent from the whole freeze pipeline (`PropertySearchMatch` /
+   `FreezeScriptParams` carry no mask field) but already exists on neighbouring wires
+   (`FieldInfoModel.BoolFieldMask`, `bool_mask`) — a dropped field, the Y15 shape, and Y15's own
+   repair (`required` on the params record) is the template. The DLL sibling reached from the same
+   row is correct and exhaustively tested (`Solitar::ApplyBoolBit`, `dll_helpers_test.cpp:2629`).*
 
 5. **AA2** — `ue5_freeze_helper.lua:452 (freezeProperty -> tick)`
    The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds
+   *Re-verify: mechanism exact (the wire carries **raw addresses only** — `Mimic::HandleListInstances`
+   packs 8-byte pointers, no `InternalIndex`/`SerialNumber`, though `Aura::GetSerialNumber` exists).
+   Two number corrections: the tick is a CE `TTimer` at `Interval=50`, quantised by the ~15.6 ms
+   scheduler tick to **~16 writes/sec per cached address** (the "20/sec" was the file's own header
+   comment, never measured), and "up to 5 s" is the BEST case — a slow rescan extends it (5 s timeout
+   × up to 16 pages, synchronous), and a failed one hands over to AA3.*
 
 6. **AA3** — `ue5_freeze_helper.lua:461 (rescan / tick)`
    A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely
+   *Re-verify: "indefinitely" is **conditional on a persistent failure** — a transient
+   `mailbox busy` self-heals on the next 5 s rescan; the unbounded cases are real and ordinary (DLL
+   unloaded/re-injected → `g_invokeMailbox` unresolvable forever; contract mismatch after a DLL
+   update; a wedged shared `_ue5_invoke_busy`). `_lastError` is **write-only** (3 occurrences
+   repo-wide, zero readers) so nothing ever surfaces the failure. The vtable-nonzero guard is weaker
+   than even AA2 implies: a pooled free block keeps old bytes or a free-list link in qword 0, both
+   non-zero — in practice it catches only decommitted pages (i.e. game exit).*
 
 
 ### Where the rest live
@@ -2326,55 +2386,131 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 | Segment | HIGH | MED | LOW | INFO | Open |
 |---------|-----:|----:|----:|-----:|-----:|
 | S1 early Lua scripts | **3** | 17 | 14 | 2 | **36** |
-| T1b DLL headers + C++ tests | **2** | 4 | 15 | 6 | **27** |
-| T1a Radar + entry points | **1** | 5 | 12 | 4 | **22** |
 | T1c VMs + Core + Models | – | 10 | 15 | 4 | **29** |
-| D1 Ubel | – | 8 | 3 | 0 | **11** |
-| D3 Aura | – | 6 | 4 | 0 | **10** |
+| T1b DLL headers + C++ tests | **2** | 4 | 15 | 6 | **27** |
 | T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
-| U1 LiveWalker / Pointer / ObjectTree | – | 4 | 4 | 0 | **8** |
-| D2 Genau+Serie | – | 3 | 3 | 0 | **6** |
-| D4a Macht | – | 3 | 0 | 0 | **3** |
-| D5 Fern | – | 3 | 3 | 0 | **6** |
+| T1a Radar + entry points | **1** | 5 | 12 | 4 | **22** |
 | U5 remaining VMs / Models / Core | – | 3 | 13 | 1 | **17** |
 | T1d UI Services | – | 2 | 10 | 5 | **17** |
-| D4b Stark | – | 1 | 0 | 0 | **1** |
-| D5 Frieren | – | 1 | 0 | 0 | **1** |
-| U2 Export services | – | 1 | 1 | 0 | **2** |
 | U3 Dump services + MainWindow VM | – | 1 | 9 | 0 | **10** |
+| D1 Ubel | – | 6 | 3 | 0 | **9** (U1, U2 fixed) |
+| D3 Aura | – | 5 | 4 | 0 | **9** (A2 fixed) |
+| U1 LiveWalker / Pointer / ObjectTree | – | 4 | 4 | 0 | **8** |
+| D2 Genau+Serie | – | 3 | 4 | 0 | **7** (incl. G7 †) |
 | U4 Dialogs + CE generators | – | 1 | 5 | 0 | **6** |
+| D5 Fern | – | 3 | 1 | 0 | **4** (open: F2, F3's in-session half, F8 ¤, F5) |
+| D4b Mimic | – | 0 | 2 | 1 | **3** (incl. MB3 †) |
+| U2 Export services | – | 1 | 1 | 0 | **2** |
 | D4b Flamme | – | 0 | 2 | 0 | **2** |
-| D4b Mimic | – | 0 | 2 | 0 | **2** |
 | D4b Sein | – | 0 | 2 | 0 | **2** |
-| **TOTAL** | **6** | **79** | **134** | **26** | **245** |
+| D4b Stark | – | 1 | 0 | 0 | **1** |
+| D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
+| D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
+| D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
+| **TOTAL** | **6** | **73** | **133** | **27** | **239** |
 
 ### Fix order recommended
 
-1. **AD1/AD2** — one defect, two arms, and it is *meta*: while it stands, every other fix's "tests
-   green" is one compile error away from meaning nothing. Fix it before the rest.
-2. **AA1** — a wrong WRITE into the game, 20×/sec, and the DLL sibling reached from the **same
-   Property Search row** already does it correctly (`Solitar::ApplyBoolBit`). Small and well-defined.
+1. **AD1/AD2** — one defect class, **two separate sites** (not two arms of one branch — both need
+   the edit), and it is *meta*: while it stands, every other fix's "tests green" is one compile
+   error away from meaning nothing. Fix it before the rest.
+2. **AA1** — a wrong WRITE into the game, ~16×/sec per address, and the DLL sibling reached from the
+   **same Property Search row** already does it correctly (`Solitar::ApplyBoolBit`). Small and
+   well-defined — but note the mask must first be ADDED to the freeze pipeline's wire/params (it is
+   absent end-to-end; `FieldInfoModel.BoolFieldMask` shows where to copy from).
 3. **AA2/AA3** — one defect (the freeze tick's liveness guard) at two sites. Bigger: the honest fix
-   needs an identity witness the Lua tier does not currently receive.
-4. **AB2** — CE frees the remote stub under a still-running thread. Same family as AB1 (already
-   fixed): we assume CE will not unload something it routinely unloads.
+   needs an identity witness (`InternalIndex`,`SerialNumber`) the Lua tier does not currently
+   receive — `Mimic::HandleListInstances` would have to widen its 8-byte entries, which is a
+   mailbox-contract change (bump rules in `dll/src/Mimic.h`).
+4. **AB2** — CE frees the remote stub after its hard 10 s inject ceiling while our scan still runs;
+   the GAME crashes. Same root assumption as AB1 (CE unloads what we assume it won't) but **AB1's
+   fix does not touch it** — the fix is spawn-and-return in `UE5_AutoStart` (see the AB2 note above).
 5. Then the MED tier, **grouped by family rather than by segment** — see below.
 
 ### Fix by FAMILY, not by ID — this is the audit's strongest recommendation
 
-Two families account for more open findings than any single subsystem, and both are greppable:
+The two recurring families are both greppable. Status as of the 2026-08-15 double-check:
 
 - **The width family** — an out-of-range value masked to the field width and reported as written.
-  Six occurrences (W6, Y2, Y9, Y15, Y16, AE1) across four subsystems. **At every site the correct
-  width was already in scope and simply not enforced.**
-- **Root cause #4 — a fix applied at only some of its sites.** Seven occurrences (V2, W4/W6, X1,
-  Y16, AC2, AE10), and **AC2 is this audit's own Y7 fix at 1 of 5 consumers**. The rule "grep for
-  siblings before closing a fix" has been in §3b since the fourth occurrence and three more have
-  appeared since — so it is not being applied *at fix time*. Make it part of the fix.
+  Six audited occurrences across four subsystems, of which **four are already fixed** (W6 ✅ b2857,
+  Y2 ✅ b2866, Y9 ✅ b3da36ca, Y15 ✅ b2904). Still open: **AE1** (`FieldValueConverter.cs:196-207`,
+  re-confirmed: `9999` → `(byte)(9999 & 0xFF)` = 15, then the caller logs `Written: … = 9999`) and
+  **Y16 (PARKED — do not pick up, ask first)**. **At every site the correct width was already in
+  scope and simply not enforced.** ⚠ The double-check's focused grep found **three NEW unvetted
+  leads** in this family — see the double-check block below; re-derive before filing or fixing.
+- **Root cause #4 — a fix applied at only some of its sites.** Seven audited occurrences (V2, W4/W6,
+  X1, Y16, AC2, AE10), of which **four are fixed** (V2 ✅, W4 ✅, W6 ✅, X1 ✅ — all verified in-tree
+  2026-08-15). Still open: **AC2** (recounted: `ResolveTrustedLayout` guards **1 of 4
+  `KnownStructLayouts.GetLayout` call sites** — the doc's earlier "1 of 5 consumers" counted two
+  non-consumers, and "1 of 3 sites" missed `InvokeParamDialog.cs:693`, the same file as the fix),
+  **AE10** (recounted: **7** sibling VMs still gate on `IsGWorldAvailable` at 19 sites — 14 C# + 5
+  XAML — not 9; `LiveWalkerViewModel`'s flag is write-only dead, not a gate), and **Y16 (parked)**.
+  The rule "grep for siblings before closing a fix" has been in §3b since the fourth occurrence and
+  three more have appeared since — so it is not being applied *at fix time*. Make it part of the fix.
 
 **The single most productive technique was the comment sweep** — grep for a comment admitting a
 limitation or asserting an impossibility, then check it. **6 for 6**, and it produced the lead
 finding in T1a, T1b and T1e.
+
+### 🔎 Double-check pass — 2026-08-15 PM (verification only, no code changed)
+
+Five parallel read-only verifiers re-derived the fix queue's head against tree `8941fb4` before
+handing it to the fixing session. Scope: the 6 open HIGHs, the open family members (AE1, AC2, AE10),
+W5 (next in queue), the Y16 parked survey, and **every ✅ mark in §2** (all 22 row-marked + the 11
+prose-fixed rows now marked). Everything below was verified by locating code by IDENTIFIER, not by
+the row's line number.
+
+**Verdicts:**
+
+| Finding | Verdict | Key correction (details inline above where load-bearing) |
+|---|---|---|
+| AD1, AD2 | CONFIRMED, zero drift | Two independent sites; CI hole confirmed end-to-end |
+| AB2 | CONFIRMED, zero drift | 10 s ceiling gate; victim is the game; APC path = 1 s |
+| AA1 | CONFIRMED, zero drift | Also no-ops the intended bool when mask ≠ 0x01 |
+| AA2 | CONFIRMED, details drifted | ~16 writes/s per address (TTimer quantised), not 20; 5 s is best case |
+| AA3 | CONFIRMED, details drifted | "Indefinitely" = persistent-failure cases only; `_lastError` write-only |
+| W5 | CONFIRMED, exact line | The look-alike test (`…EmitsLeafWith8BytesNotGroupHeader`) passes **no `resolvedInstances`**, so the drill branch is untested; the correct predicate `IsRawObjectPtrArrayInner` + the refusing comment sit at `:478-486` of the same file |
+| AE1 | CONFIRMED, unfixed | Untouched by the Y9/Y15 fixes (`FieldValueConverter.cs` has exactly one commit ever); defect is specific to the enum-backed branch — plain `ByteProperty` correctly rejects 9999 |
+| AC2 | CONFIRMED, counts corrected | 1 of **4** `GetLayout` call sites guarded (3 distinct consumers); unguarded: `InvokeParamDialog.cs:693`, `StructReturnDecoder.cs:55` + `:79`; size in scope at all three; `StructReturnDecoder.cs` already `using UE5DumpUI.Views;` |
+| AE10 | CONFIRMED, counts corrected | **7** VMs / 19 sites still gate (ClassPivot, Snapshot(+Group), SpcQuery(+Group), InstanceFinder, InterestingFunctions, InterestingProperties, DetectStats); todo.md's pending list under-names them |
+| Y16 (parked) | Survey re-verified, no drift | All three sites + the cosmetic straggler exist exactly as surveyed (`CeInvokeReturn.cs` lives in `Services\`) |
+| All 33 ✅ fixes | **VERIFIED-FIXED in tree, 0 failures** | Includes the 11 newly row-marked (M1–M3, A2, U1, U2, F1, F4, F6, F7, FR1) |
+
+**Residuals left inside shipped fixes (string/comment-level, worth sweeping with the next commit in
+each file):**
+
+- **AB1 (✅ 2913):** the helpers are at **global scope**, not `namespace Grimoire` (`Grimoire.h`
+  closes the namespace at `:347` before declaring them — `Grimoire::HostAllowsBackgroundThreads`
+  would not compile; §3b's bullet and the memory files say otherwise). Three stale comments
+  survived the fix: `Heiter.cpp:353` ("Only the implicit process-exit DETACH is a no-op" — the
+  unnamed `lpReserved` still can't tell), `Heiter.cpp:329` ("Store the handle so DETACH can wait" —
+  nothing waits), and `Fern.cpp:533-537` (cites `Heiter.cpp:288-301`, now the middle of the new
+  comment block, and justifies safety by the falsified premise instead of the new PIN).
+- **V2 (✅ 2830):** `ContainerGeometry.FallbackStride` deliberately keeps the old
+  `Align(elemSize,4)+8` for pre-2830 DLLs (documented, correct only for `alignof(T) <= 4`), and
+  `CsxExportService.cs:623` still carries a doc comment asserting the dead formula directly above
+  code that calls `ContainerGeometry.MapStrideOf`.
+
+**Three NEW width-family leads (⚠ single-agent finds, NO skeptic pass — re-derive before filing as
+findings, per §2's own ~50% raw kill rate):**
+
+1. `InvokeParamDialog.cs:992` — `DecodeParamValue` reads a 1-byte enum as 4 bytes when
+   `available >= 4` (the C# read side of the invoke result grid; NOT one of Y16's three sites, which
+   are all on the generated-Lua side). Tell: a 1-byte enum at the END of the buffer decodes right
+   (guard fails → correct size fallback), one mid-buffer doesn't.
+2. `SdkExportService.cs` — the generated enum's declared width comes from
+   `InferEnumUnderlyingType(entries)` while the layout cursor advances by the real `f.Size`
+   (`:264-265`, `:319` hardcode `uint8_t`) — a header that silently mis-lays out members after a
+   wide enum.
+3. `ParamBufferBuilder.cs` — the FIRE path masks out-of-range values (`(short)`, `(int)`,
+   `unchecked((byte)u)`) with zero validation in `InvokeParamDialog` — Y9's defect in the invoke
+   dialog. Caveat: the byte wrap is PARTLY deliberate (Y5's `-1` → `0xFF`), so the repair is a
+   signed/unsigned-aware range check, not removing the cast.
+
+**Bookkeeping corrected in this pass:** the register command + counts (263→272 total, see the
+header note), the 11 unmarked fixed rows, the segment table, and one misnumbering: the width-family
+member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T1c's prose called it
+"AE9" (which is actually the Sort-picker no-op finding). Both prose sites now corrected.
 
 -----
 
@@ -2387,9 +2523,12 @@ finding in T1a, T1b and T1e.
 > families that account for more findings than any single subsystem.
 >
 > 📋 **The complete open list is §3c, "THE OPEN REGISTER" — read that first.** It is generated
-> from §2's tables (245 open of 263; 6 HIGH / 79 MED / 134 LOW / 26 INFO), names the six open HIGHs
-> with file:line, says where every remaining finding lives, gives a recommended fix order, and
-> carries the command to re-derive itself after a fix.
+> from §2's tables (**239 open of 272; 6 HIGH / 73 MED / 133 LOW / 27 INFO** — corrected 2026-08-15
+> PM: the earlier "245 of 263" came from a regex that dropped nine rows and from eleven fixed rows
+> that were never ✅-marked; see §3c's header note), names the six open HIGHs with file:line, says
+> where every remaining finding lives, gives a recommended fix order, and carries the command to
+> re-derive itself after a fix. **All six open HIGHs were re-verified against the source
+> 2026-08-15 PM (zero line drift)** — per-finding correction notes sit inline in §3c's HIGH list.
 >
 > ✅ **AB1 is FIXED in build 2913** — see dev-log. The remaining must-fix is AD1/AD2.
 >
@@ -2397,8 +2536,10 @@ finding in T1a, T1b and T1e.
 > - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path. ✅ FIXED (2913).** `DllMain` starts a
 >   1 ms-poll thread unconditionally; CE `FreeLibrary`s plugin DLLs on Settings→Add and on every exit;
 >   `DllMain`'s `lpReserved` is commented out so DETACH cannot distinguish unload from process-exit;
->   nothing pins the module; and `Grimoire::IsCheatEngineExeName` has exactly one call site — *inside*
+>   nothing pins the module; and `IsCheatEngineExeName` (global scope in `Grimoire.h` — NOT
+>   `Grimoire::`, the namespace closes before it is declared) had exactly one call site — *inside*
 >   the thread it should have prevented. Fix is two small guards; **do not** join threads from DETACH.
+>   Fix verified in-tree 2026-08-15; three stale comments survived it — see §3c's double-check block.
 > - **T1b/AD1 — a C++ test target that fails to COMPILE is reported as "skip" and the build exits 0**,
 >   CI included (`build.ps1:691-693`; the `else` arm never touches `$exitCode`). **Latent** — the
 >   control was run and the suite does execute today — but it silently disarms ~700 assertions the
@@ -2409,13 +2550,21 @@ finding in T1a, T1b and T1e.
 > block; re-derive anything else before fixing it.**
 >
 > 🔁 **Before closing ANY fix, grep for its siblings.** Root cause #4 is at **seven** occurrences
-> (V2, W4/W6, X1, Y16, AC2, AE10) and **AC2 is this audit's own Y7 fix applied at 1 of 5 consumers**.
+> (V2, W4/W6, X1, Y16, AC2, AE10 — four now fixed, see §3c's family block) and **AC2 is this
+> audit's own Y7 fix applied at 1 of 4 `GetLayout` call sites** (recounted 2026-08-15 — the earlier
+> "1 of 5 consumers" counted two non-consumers and "1 of 3 sites" missed `InvokeParamDialog.cs:693`).
 > The rule has been in this section since the fourth; three more have appeared since, which means it
 > is still not being applied *at fix time*. Treat "where else does this predicate belong?" as part of
 > the fix.
 
 > **Next fix in the queue: W5** — `CeXmlExportService.cs:2141`, `S`/low: weak/soft/lazy pointers
-> drilled with `Offsets=[0]`, i.e. dereferencing a slot that is not a pointer.
+> drilled with `Offsets=[0]`, i.e. dereferencing a slot that is not a pointer. Re-confirmed
+> 2026-08-15 (exact line): the branch predicate is the broad `IsObjectPropertyType` family while the
+> correct narrow predicate `IsRawObjectPtrArrayInner` + the refusing comment already exist at
+> `:478-486` of the same file. ⚠ The existing test
+> `GenerateInstanceXml_WeakObjectProperty_EmitsLeafWith8BytesNotGroupHeader` passes **no
+> `resolvedInstances`**, so the drill branch is currently untestable-by-accident — extending that
+> test IS the regression test for this fix.
 > **Y16 remains PARKED at the maintainer's request** (2026-08-15) — surveyed in full in §2, three
 > sites, M/low. Do not pick it up as filler; ask first.
 
