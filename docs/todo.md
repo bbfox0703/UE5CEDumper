@@ -2,6 +2,22 @@
 
 Open work only. **Read this when deciding what to do next.**
 
+> ## ▶ If the ask is "carry on fixing bugs", do NOT start here
+>
+> The bug queue is **not** in this file. It lives in
+> [audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md) →
+> **§3b "▶ THE NEXT FIX SESSION STARTS HERE"**, which carries an ordered, already-vetted list of
+> the next six fix groups (① – ⑥) with file:line and the reason each group is one job. Start at ①;
+> no re-derivation is needed to begin.
+>
+> **What IS in this file, and is not in that one:**
+> - `## Pending live-game verification` — 10 steps needing a running game (4 are free from any
+>   ordinary session, 1 needs no game at all). **Offer these whenever the maintainer has a game up.**
+> - Everything below that is ordinary feature/infra work, unrelated to the audit.
+>
+> State as of 2026-08-16 (evening): **215 audit findings open of 277 · 0 HIGH · 55 MED**, and
+> **one item (A6) is blocked on a maintainer decision, not on effort** — see §3b.
+
 > **2026-06-06 cleanup.** This file was slimmed to open items only. The full
 > pre-cleanup history (every shipped build's effort/risk retrospective, files
 > touched, test counts, decision rationale) is frozen in

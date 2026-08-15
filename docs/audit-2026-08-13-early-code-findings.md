@@ -3204,7 +3204,69 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 
 ## 3b. START HERE — scanning is DONE; everything left is fixing
 
-*State as of 2026-08-16. Read this first; it is written for a session with no memory of this one.*
+*State as of 2026-08-16 (evening). Read this first; it is written for a session with no memory of
+this one. If the maintainer says "繼續修正" / "carry on fixing", the ordered queue is the very next
+block — start at ①, no re-derivation needed.*
+
+### ▶ THE NEXT FIX SESSION STARTS HERE
+
+**Current register: 215 open of 277 · 0 HIGH · 55 MED · 133 LOW · 27 INFO.** Re-derive before
+trusting it (the command is at the top of §3c) — never hand-tally.
+
+**Everything below is an already-vetted MED.** They are grouped so each ① – ⑥ is ONE fix pass over
+ONE file or one shared root cause, ordered by (user impact × how testable it is). Take them in order
+unless the maintainer says otherwise; each group is a session's worth or less.
+
+| # | Findings | Where | Why these are one job, and why here |
+|---|---|---|---|
+| ① | **AB3 + AB5** | `Radar.cpp:288`, `:797` | **One defect, two sites.** The FVector/FRotator scan hardcodes 3×float / 12 bytes but ACCEPTS UE5's 24-byte LWC `Vector`/`Rotator`, so **every UE5 game's vector scan compares junk** — and the reflected 24-byte size is captured and thrown away. Highest user impact left, and `Radar.cpp` IS compiled by `dll_helpers_test`, so it can be pinned with a real negative control. |
+| ② | **AA4 + AA5 + AA6 + AA7** | `ue5_dissect.lua:53, 63, 173, 289` | One file, one root cause: `callDLL` returns `nil` on every `executeCodeEx` failure and **not one of its 14 call sites handles it** — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as SUCCESS (a duplicate of the previous field). AA4 is the same function (a bare `getAddress` RAISES, so the "DLL function not found" message is dead code, and the registered dissect override breaks CE's dissect for unrelated addresses); AA7 is `fillGaps` — advertised in the file header, never called. **`lua` is installed locally** (`C:\Users\Andyc\AppData\Local\Programs\Lua\bin\lua`, 5.4.6), so these are *executable* against stubbed CE globals — copy the rig from `scripts/tests/freeze_helper_test.lua`. |
+| ③ | **AE4 + AE5 + AE6 + AE7** | `ProxyDeployViewModel.cs:236, 1073, 1106, 1233` | One file, one root cause: **`IsScanning` is READ as a global busy flag by six guards and WRITTEN by three of eight operations.** So Deploy and Undeploy can run concurrently over the same `Binaries` folder and both write the single result line, two rapid radio clicks race two fire-and-forget refreshes (the loser's proxy type wins the grid and nothing re-runs), and `UpdateAllAsync` iterates the live `Games` collection across awaits while a concurrent scan can `Clear()` it — with no `catch`, so the tally is never reported. Pure C#, fully testable. |
+| ④ | **AA14 – AA20** | `ue5_invoke_helper.lua:215, 223, 293, 308, 363, 464, 512` | Seven findings, one file, all on the same invoke path: unchecked `allocateMemory` shipping `{Data=nullptr, Num=n+1}` into a live UFunction call (AA14/15); five param-type tokens `BakedScriptGenerator` can emit that `writeParams` never accepted, aborting the whole invoke at CE runtime (AA16); a params buffer zeroed only to the CALLER's `parmsSize` while the DLL hands ProcessEvent all 1024 bytes, so stale bytes become live parameters (AA17); a timeout that reports the STALE `errorMsg` left by an earlier command (AA18 — the guessed diagnosis CLAUDE.md forbids); the reentrancy flag cleared on the timeout path *while the DLL still owns the mailbox* (AA19); and unsigned int32/int16 return decoding, so a UFunction returning -1 reads as 4295067295 (AA20). Also locally executable. |
+| ⑤ | **U4 + U5 + U6 + F3** | `Ubel.cpp:818, 683, 411` · `Fern.cpp:1068` | §4's **cluster ③** — *a cache keyed by an address the engine recycles, never invalidated*. The audit's own verdict: **"One fix pattern, not five"** — store an `(InternalIndex, SerialNumber)` witness and validate it on hit, the pair UE itself uses to detect a recycled slot. F3 additionally wants a one-line `Ubel::ClearNameCache()` in Fern's `if (last)` teardown, which the witness pattern does not cover. Bigger than ① – ④ (M/med), which is why it is not first. |
+| ⑥ | **AE2 + AE3** | `ClassStructViewModel.cs:192, 218` | One handler. Object-Tree selection drives Class/Struct through an `async void` with **no generation guard**, and its two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node. The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry. |
+
+**After ⑥, pick by subsystem from §3c's "Where the rest live".** Remaining MED clumps worth knowing:
+`Radar` still has AB4 + AB7, `Genau` has G2 (the whole-image sweep never polls `Tot::Requested()`,
+so `UE5_Shutdown` blocks ~14 s and CE reads as hung) and G3, `Fern` has F2 + F8, and
+`ue5_freeze_helper.lua` has AA9 – AA13.
+
+#### The five rules that are not optional — each one caught something in the last batch
+
+1. **Grep for siblings AT FIX TIME.** It grew **8 of the 14** fixes on 2026-08-16, and in no case did
+   the finding's own text mention the sibling. Budget a minute per fix.
+2. **Prove the check can FAIL.** Revert the fix in the tree, watch the suite go red, restore. An
+   unexpected failure *count* is itself a finding — that is how a test fixture that silently aliased
+   and reported coverage it did not have was caught (AF1).
+3. **One commit per finding**, with the negative control's result written into the message.
+4. **`-Mode Publish` before calling any UI change ready** (CLAUDE.md). Bindings are the
+   reflection-shaped thing that compiles and runs fine untrimmed and fails only after trimming.
+5. **Re-derive a LOW before fixing it.** LOW/INFO were never vetted to this audit's standard
+   (10–35% kill rates against its own 33–73% band).
+
+#### ⛔ One item is blocked on the maintainer, not on effort
+
+**A6** — Property Search "Force" resolves an empty pool on inherited rows. Confirmed, and the doc
+comment that claimed otherwise is already corrected in the tree. The repair is a **product
+decision**: defining class **+ every subclass** (semantically what the row says, but it changes what
+the shipped, in-game-verified Stealth Meter path writes to and targets a far larger live pool) vs
+the one most-derived subclass observed (arbitrary). Today's failure is HONEST — the status line says
+*"0 live instances of Actor matched — nothing held."* — so this is a capability gap, not a
+corruption. **Ask before touching it.** Full block at the end of §3c.
+
+#### ⚠ One lead is filed but NOT vetted to this audit's standard
+
+Instance names drop `FName::Number` at ~19 sites — bigger than U8 was. It makes the Instance Finder
+show every instance of a class under one name, and its name gate substring-matches that same
+truncated string. **Mechanism verified against the source; blast radius NOT measured. Do not `sed`
+it** — class-name reads in the same loops are correct by construction. Full block near the end of §3c.
+
+#### ⏳ And 10 verification steps are waiting for a session with a game running
+
+`docs/todo.md` → `## Pending live-game verification`. Four are free from any ordinary session and
+**one needs no game at all** (AF4: Live Walker → another tab → back → confirm Locate/bookmark still
+scrolls the grid). Offer them whenever the maintainer has a game up — **none of the last 14 fixes
+has been seen on a real target.**
 
 > **2026-08-16 — the one parked lead is settled.** `Ubel.cpp:2303` was re-derived (16 agents, 5
 > lenses × 2 refute-mandated skeptics, judge) and **CONFIRMED at MED** — but it was never one
@@ -3216,13 +3278,13 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 > completion summary: per-segment kill rates, the three findings to start from, and the two defect
 > families that account for more findings than any single subsystem.
 >
-> 📋 **The complete open list is §3c, "THE OPEN REGISTER" — read that first.** It is generated
-> from §2's tables (**239 open of 272; 6 HIGH / 73 MED / 133 LOW / 27 INFO** — corrected 2026-08-15
-> PM: the earlier "245 of 263" came from a regex that dropped nine rows and from eleven fixed rows
-> that were never ✅-marked; see §3c's header note), names the six open HIGHs with file:line, says
-> where every remaining finding lives, gives a recommended fix order, and carries the command to
-> re-derive itself after a fix. **All six open HIGHs were re-verified against the source
-> 2026-08-15 PM (zero line drift)** — per-finding correction notes sit inline in §3c's HIGH list.
+> 📋 **The complete open list is §3c, "THE OPEN REGISTER".** It is generated from §2's tables, says
+> where every remaining finding lives, and carries the command to re-derive itself after a fix.
+> ⚠ **The counts that used to be quoted here (`239 of 272`, 6 HIGH / 73 MED) are HISTORY** — they
+> were true on 2026-08-15 and are two fix sessions out of date. The current figures are in the
+> ordered-queue block above, and the only trustworthy source is the command at the top of §3c.
+> All HIGHs were re-verified against the source on 2026-08-15 (zero line drift) before being fixed;
+> per-finding correction notes sit inline in §3c's HIGH list.
 >
 > ## ✅ ALL ELEVEN HIGHs ARE FIXED (builds 2913 - 2932). There is no HIGH work left.
 >
@@ -3266,16 +3328,10 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 > is still not being applied *at fix time*. Treat "where else does this predicate belong?" as part of
 > the fix.
 
-> **Next fix in the queue: W5** — `CeXmlExportService.cs:2141`, `S`/low: weak/soft/lazy pointers
-> drilled with `Offsets=[0]`, i.e. dereferencing a slot that is not a pointer. Re-confirmed
-> 2026-08-15 (exact line): the branch predicate is the broad `IsObjectPropertyType` family while the
-> correct narrow predicate `IsRawObjectPtrArrayInner` + the refusing comment already exist at
-> `:478-486` of the same file. ⚠ The existing test
-> `GenerateInstanceXml_WeakObjectProperty_EmitsLeafWith8BytesNotGroupHeader` passes **no
-> `resolvedInstances`**, so the drill branch is currently untestable-by-accident — extending that
-> test IS the regression test for this fix.
-> **Y16 remains PARKED at the maintainer's request** (2026-08-15) — surveyed in full in §2, three
-> sites, M/low. Do not pick it up as filler; ask first.
+> ~~**Next fix in the queue: W5**~~ — ✅ **shipped, build 2966**, and the whole
+> pointer-family family closed with it (b2974). Kept only so a reader who remembers this
+> line does not go looking: **the live queue is the ordered table at the top of this
+> section.**
 
 ### The pacing rule, learned by hitting it
 
