@@ -307,6 +307,18 @@ All eleven HIGHs are fixed. These are what generalised out of doing them.
   that could not be read — one break made an unrelated case fail for its own reason. Separately:
   AA1→4 failures, AA2→11, AA3→6, all detected. The same run exposed the harness aborting on its first
   failure and hiding every later case.
+- **A predicate that guards X belongs WITH X.** Audit #5's Y7 wrote a struct-layout guard as a
+  private helper inside a View; its two other consumers were in a Service, which cannot depend on a
+  View, so the guard could not spread even in principle and the same dialog refused a bad layout for
+  its inputs while accepting it for its results (AC2). Before writing a guard, ask which callers must
+  reach it — if any of them is in a lower layer, the guard is already in the wrong place.
+- **When you find a fix under-applied, expect its siblings to have TESTS defending them.** Three of
+  the four sites closed in the AC2/AE10 batch had a green test asserting the defect, and one carried
+  a written justification for it. That is *how* the sibling survived a fix: the code was wrong and
+  the suite said it was fine. Read such a test as evidence about the **belief** at the time, not
+  about the code — then check the belief's premise. (AE10's premise was that
+  `IsGWorldAvailable` means "GWorld is resolved"; its own definition is "the AOB scan produced a
+  slot address", which is not the same claim.)
 - **When no test target compiles the file, measure the behaviour instead of arguing about it.**
   Nothing compiles `Frieren.cpp`, so AB2's async property was measured: 2.3 ms to return with the fix
   versus 3486 ms with the spawn reverted (`tools/probe_autostart_async.py`). Two reusable pieces —
