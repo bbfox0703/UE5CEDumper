@@ -81,8 +81,18 @@ public partial class GameClassFilterViewModel : ViewModelBase
             RebuildSuggestions();
             ApplyFilter();
 
-            StatusText = $"{result.Total} classes (scanned {result.ScannedObjects:N0} objects, {result.TotalClasses} total UClasses)";
-            _log.Info($"ListClasses: {result.Total} results (gameOnly={GameClassesOnly}, scanned={result.ScannedObjects})");
+            // A capped list must SAY so. The DLL stops walking GObjects the moment it has
+            // `limit` rows, and `TotalClasses` is incremented in lockstep with the results
+            // vector — so on a truncated walk BOTH numbers here are the cap, and the line
+            // reads as "that is all of them" (audit #5 X2, same cap as the class-address
+            // lookups). Filtering a page and finding nothing is then indistinguishable
+            // from the class not existing.
+            var capNote = result.Truncated
+                ? $"  ⚠ STOPPED at the {result.RequestedLimit:N0}-row cap — more classes exist"
+                : "";
+            StatusText = $"{result.Total} classes (scanned {result.ScannedObjects:N0} objects, {result.TotalClasses} total UClasses){capNote}";
+            _log.Info($"ListClasses: {result.Total} results (gameOnly={GameClassesOnly}, " +
+                      $"scanned={result.ScannedObjects}, truncated={result.Truncated})");
         }
         catch (Exception ex)
         {

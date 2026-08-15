@@ -1405,6 +1405,97 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-15 — freeze a 1-byte enum and check its neighbours survive (audit #5 Y15, build 2904)
+
+Freezing an `EnumProperty` now picks its writer from the width the engine reported instead of always
+using a 4-byte `writeInteger`. The mapping and both call sites are unit-tested with four negative
+controls, **but nobody has watched a real 1-byte enum freeze leave the following bytes alone** —
+which is the actual damage the finding is about.
+
+Needs any connected game with an `enum class : uint8` field (Property Search → type filter
+`EnumProperty`; almost every UE game has several — states, stances, difficulty, team).
+
+1. **Property Search** → type filter `EnumProperty` → pick a row. **Live Walker** the owning class
+   and write down the values of the **three fields immediately after** it (or read the raw bytes at
+   `offset+1..offset+3`). This is the baseline; without it the rest proves nothing.
+2. Back in Property Search, **Freeze** that row. The dialog's **Type** line must read
+   `EnumProperty -> uint8`, *not* `-> int32`, and the value box must pre-fill **`255`**, not `9999`.
+   Those two are the only places the fix is visible before the script runs.
+3. Type `9999` → expect *"uint8 holds 0 to 255 — 9999 would be written as 15"* (Y9's check now
+   reaching enums). Correct it to a valid enum value and generate.
+4. Enable the script in CE, let it tick a few seconds, then **re-read the three neighbouring fields
+   from step 1. They must be unchanged.** Before this build they were overwritten 20x/sec.
+5. Confirm the CE script's CFG line reads `valueType = 'uint8'`.
+6. If the game has a **4-byte** enum (rarer — a plain `enum`, not `enum class : uint8`), repeat: it
+   must still map to `int32`. That is the no-regression half; 4 is the one width the old code was
+   right about.
+
+### ⬜ NEW 2026-08-15 — freeze a byte-wide property and try to overflow it (audit #5 Y9, build 2895)
+
+The freeze / force value dialog now rejects values wider than the target property instead of letting
+them wrap. The arithmetic is measured against the writers' own masking in unit tests, **but nobody
+has run the dialog against a real property** — and the pre-fill change is only observable in the UI.
+
+Needs any connected game with a `ByteProperty` (Property Search → `byte`, or any `bEnabled`-style
+flag stored as one).
+
+1. **Property Search** → find a `ByteProperty` row → **Freeze**. The value box must open pre-filled
+   with **`255`**, not `9999`. That is the pre-fill half of the fix and nothing else surfaces it.
+2. Type `9999` and press OK. Expect the inline error
+   *"uint8 holds 0 to 255 — 9999 would be written as 15"*, and the dialog must **stay open**.
+3. Correct it to `200`, confirm the script generates as before — the check must not have broken the
+   ordinary path.
+4. Repeat step 2 via the **Force** submenu on the same row (Property Search → row context → Force →
+   value…), which reuses this dialog. Same error expected; that consumer is Solide, not the Lua
+   helper.
+5. Worth one **float** case: on a `FloatProperty`, `1e300` should now be refused with
+   *"would be written as infinity"*, while the same value on a `DoubleProperty` must still be
+   accepted. If the double case is refused, the narrowing check leaked into the 8-byte path.
+
+### ⬜ NEW 2026-08-15 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
+
+The three handoffs that need a class address stopped re-deriving it from the capped `list_classes`
+page and now use the address the row already carries. The pure logic is unit-tested with three
+negative controls, **but the end-to-end path is not**: no test issues a real `walk_functions` against
+an address sourced from `list_all_functions`.
+
+Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogwarts Legacy, FF7R).
+
+1. **Game Class Filter → Load.** Confirm the status line ends with
+   *"⚠ STOPPED at the 5,000-row cap — more classes exist"*. If it does not, this game is too small
+   and the rest of the check proves nothing — pick another title.
+2. **Interesting Funcs → Load**, then pick a row whose class is **absent** from the Game Class Filter
+   list (that is what "past the cap" means; filter by the class name there to confirm the absence).
+3. Click **AA(B)** on that row. Success = the script generates / reaches CE. Before this build it
+   aborted on *"Class X not found"*.
+4. Repeat on the **Console** tab with an exec command taking parameters (**Run** → the FIRE dialog)
+   and with its own **AA(B)** — those two twins were not named by the finding and share the fix.
+5. Worth one negative case: a class that genuinely does not exist should still report plainly
+   *"not found"*, not the "may still exist" caveat. The Live-handoff path (no live instance +
+   an unknown class name) is where that text appears.
+
+### ⬜ NEW 2026-08-15 — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
+
+The invoke form passed **0** for every `UObject*` / `FName` argument since the feature shipped;
+`tonumber(s, 16)` was handed a string still carrying its `0x`. Fixed, and the Lua semantics are
+measured in three independent interpreters (CE's own `lua53-64.dll`, a 5.4 CLI, and CE's bundled
+`lbaselib.c`).
+
+**What that does NOT prove is that the corrected value reaches the function.** The measurement stops
+at the Lua expression; everything after it — the mailbox write, the DLL's `CMD_INVOKE`, `ProcessEvent`
+— is untested end-to-end.
+
+1. In Live Walker, pick a UFunction taking an object parameter (`K2_AttachToActor`, or any
+   `BlueprintCallable` with an `AActor*`), and use **Copy AA Script** / push to CE.
+2. Paste an instance address from any panel — i.e. the app's own `0x`+uppercase-hex format — into the
+   `[UObject*: …]` field and FIRE.
+3. Success is **not** `INVOKED OK`: that was printed by the broken version too. Confirm the *effect*
+   in-game, or set `UE5_DEBUG=1` and read the decoded return.
+4. Worth one negative case: FIRE with the untouched `0x0` default and confirm it behaves as a null
+   argument — that path was the only one that ever worked, so it should be unchanged.
+
+
+
 ### ⬜ NEW 2026-08-14 — open the exported .usmap in a real consumer (audit #5 W1/W7, build 2853)
 
 The `.usmap` export declared v3 and wrote the v0 body; it has been unopenable since the feature

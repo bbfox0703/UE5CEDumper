@@ -101,13 +101,17 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     //   non-CDO instance of `className`; on hit, switch to LiveWalker
     //   tab + walk to instance + auto-scroll to `funcName` row. On
     //   miss, switch to ClassStruct tab + walk class metadata.
-    // - RequestCopyBakedScript(className, funcName): fetch full
+    // - RequestCopyBakedScript(className, funcName, classAddr): fetch full
     //   FunctionInfoModel via walk_functions, then open the Copy AA
-    //   Script dialog (or fast-path no-arg generation).
+    //   Script dialog (or fast-path no-arg generation). classAddr comes
+    //   straight off the row (list_all_functions supplies it) so the
+    //   handler never has to re-derive it from the CAPPED list_classes
+    //   page, which used to fail the whole action for any class past the
+    //   cap (audit #5 X2).
     // ------------------------------------------------------------------
 
     public event Action<string, string>? NavigateToFunction;
-    public event Action<string, string>? RequestCopyBakedScript;
+    public event Action<string, string, string>? RequestCopyBakedScript;
 
     /// <summary>Raised by the per-row "inst" button to open the function's class
     /// in the Instance Finder tab. Payload = class name.</summary>
@@ -537,7 +541,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     private void CopyAaScript(ScoredFunctionRow? row)
     {
         if (row == null) return;
-        RequestCopyBakedScript?.Invoke(row.ClassName, row.FuncName);
+        RequestCopyBakedScript?.Invoke(row.ClassName, row.FuncName, row.ClassAddr);
     }
 
     /// <summary>Per-row action: copy the function name (no class prefix)

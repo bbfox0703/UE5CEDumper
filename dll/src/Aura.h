@@ -650,6 +650,13 @@ struct ClassListEntry {
 struct ClassListResult {
     int scannedObjects = 0;
     int totalClasses = 0;
+    // True when the walk STOPPED at maxResults instead of reaching the end of
+    // GObjects — i.e. this list is a page, not the pool. Same contract as
+    // SearchResultSet::truncated. Callers that resolve a class BY NAME must
+    // surface it: without it, a class sitting past the cap is indistinguishable
+    // from one that does not exist, and every consumer reported the latter
+    // (audit #5 X2).
+    bool truncated = false;
     std::vector<ClassListEntry> results;
 };
 

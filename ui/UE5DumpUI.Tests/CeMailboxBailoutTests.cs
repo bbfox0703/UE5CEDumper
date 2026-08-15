@@ -725,8 +725,13 @@ public class CeMailboxBailoutTests
         // Scan from the mailbox lookup. Everything above it is helper DEFINITIONS, and
         // one of those bodies (`writeMbStr`) does write to `mb + offset` — but only when
         // it is called, which is always inside a guarded window below.
+        // Anchored on the SYMBOL, not on the lookup function: the generator moved from
+        // getAddress to getAddressSafe (audit #5 Y8, since the bare form raises on the very
+        // case the block handles), and an anchor spelling one of them silently loses the
+        // window it is supposed to scan. This scan is about ORDER, so it must survive a change
+        // of lookup function.
         int start = Array.FindIndex(lines,
-            l => l.Contains("getAddress('g_invokeMailbox')", StringComparison.Ordinal));
+            l => l.Contains("g_invokeMailbox')", StringComparison.Ordinal));
         Assert.True(start >= 0,
             $"{name}: no mailbox lookup — the anchor this scan starts from is gone");
 

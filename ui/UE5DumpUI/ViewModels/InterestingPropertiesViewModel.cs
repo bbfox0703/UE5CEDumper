@@ -283,6 +283,8 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                     Total          = env.MatchCount,
                     ScannedClasses = batch.ScannedClasses,
                     ScannedObjects = batch.ScannedObjects,
+                    Truncated      = env.Truncated,
+                    Aborted        = batch.Aborted,
                     Results        = env.Results,
                 };
             }
@@ -365,10 +367,22 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 if (r.IsUnusualLocation) unusual++;
             }
 
+            // A capped sweep must SAY so. Without this the panel reports a row count that
+            // reads as "this is the pool", the user filters it, does not find their field and
+            // concludes it does not exist -- the exact report class the D5/F4 fix was written
+            // to end, surviving here because the batch path never parsed the flag (audit #5 X1).
+            var capped = batch.TruncatedQueries;
+            var capSuffix = batch.Aborted
+                ? "  ⚠ SCAN CANCELLED - this list is partial"
+                : capped.Count > 0
+                    ? $"  ⚠ {capped.Count} of {queries.Length} keywords STOPPED at the " +
+                      $"{PerQueryLimit}-row cap ({string.Join(", ", capped.Take(3))}" +
+                      $"{(capped.Count > 3 ? ", …" : "")}) - more matches exist"
+                    : "";
             StatusText =
                 $"{_allRows.Count:N0} unique properties  " +
                 $"(threshold {PropertyScoringTable.InterestingThreshold}+: {interesting:N0}, " +
-                $"⚠ unusual: {unusual:N0})";
+                $"⚠ unusual: {unusual:N0}){capSuffix}";
             _log.Info($"InterestingProperties load: queries={queries.Length} " +
                       $"unique={_allRows.Count} interesting={interesting} unusual={unusual} " +
                       $"(gameOnly={GameOnly})");
@@ -556,6 +570,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 PropertyName    = sr.PropName,
                 PropertyOffset  = sr.PropOffset,
                 UeTypeName      = sr.PropType,
+                PropertySize    = sr.PropSize,
                 ValueLiteral    = DefaultFreezeLiteral(sr.PropType),
             };
             string desc = targetClass == sr.ClassName

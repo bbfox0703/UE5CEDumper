@@ -1178,18 +1178,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     SelectedTabIndex = (int)MainTabIndex.ClassStruct; // ClassStruct fallback
                     // Look up the class address via ListClasses since Find Instances came back empty.
                     var classes = await _dump.ListClassesAsync(gameOnly: false);
-                    var match = classes.Classes.FirstOrDefault(
-                        c => c.ClassName.Equals(className, StringComparison.Ordinal));
-                    if (match != null && !string.IsNullOrEmpty(match.ClassAddr))
+                    var match = classes.FindClassAddr(className);
+                    if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.ClassAddr);
+                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata";
                         _log.Info($"InterestingFunctions -> ClassStruct fallback: {className}::{funcName}");
                     }
                     else
                     {
-                        StatusText = $"Class {className} not resolvable (Find Instances + ListClasses both empty)";
-                        _log.Warn($"InterestingFunctions navigate: {className} not found");
+                        StatusText = $"No live instance of {className}, and the class {match.MissReason}";
+                        _log.Warn($"InterestingFunctions navigate: {className} {match.MissReason}");
                     }
                 }
             }
@@ -1233,16 +1232,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 {
                     SelectedTabIndex = (int)MainTabIndex.ClassStruct;
                     var classes = await _dump.ListClassesAsync(gameOnly: false);
-                    var match = classes.Classes.FirstOrDefault(
-                        c => c.ClassName.Equals(className, StringComparison.Ordinal));
-                    if (match != null && !string.IsNullOrEmpty(match.ClassAddr))
+                    var match = classes.FindClassAddr(className);
+                    if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.ClassAddr);
+                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata";
                     }
                     else
                     {
-                        StatusText = $"Class {className} not resolvable (Find Instances + ListClasses both empty)";
+                        StatusText = $"No live instance of {className}, and the class {match.MissReason}";
                     }
                 }
             }
@@ -1394,18 +1392,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 {
                     SelectedTabIndex = (int)MainTabIndex.ClassStruct; // ClassStruct fallback
                     var classes = await _dump.ListClassesAsync(gameOnly: false);
-                    var match = classes.Classes.FirstOrDefault(
-                        c => c.ClassName.Equals(className, StringComparison.Ordinal));
-                    if (match != null && !string.IsNullOrEmpty(match.ClassAddr))
+                    var match = classes.FindClassAddr(className);
+                    if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.ClassAddr);
+                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata (look for {propName})";
                         _log.Info($"InterestingProperties -> ClassStruct fallback: {className}.{propName}");
                     }
                     else
                     {
-                        StatusText = $"Class {className} not resolvable";
-                        _log.Warn($"InterestingProperties navigate: {className} not found");
+                        StatusText = $"No live instance of {className}, and the class {match.MissReason}";
+                        _log.Warn($"InterestingProperties navigate: {className} {match.MissReason}");
                     }
                 }
             }
@@ -1640,23 +1637,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Walks the class to fetch the chosen UFunction's full param metadata, then either
         // generates a no-arg script directly (fast path) or opens InvokeParamDialog in
         // CopyBakedScript mode for the user to fill values.
-        InterestingFunctions.RequestCopyBakedScript += async (className, funcName) =>
+        InterestingFunctions.RequestCopyBakedScript += async (className, funcName, rowClassAddr) =>
         {
             try
             {
                 if (string.IsNullOrEmpty(className) || string.IsNullOrEmpty(funcName)) return;
 
-                // Need a class address to walk_functions. Reuse ListClasses (cached game class list).
-                var classes = await _dump.ListClassesAsync(gameOnly: false);
-                var classMatch = classes.Classes.FirstOrDefault(
-                    c => c.ClassName.Equals(className, StringComparison.Ordinal));
-                if (classMatch == null || string.IsNullOrEmpty(classMatch.ClassAddr))
-                {
-                    StatusText = $"Class {className} not found";
-                    return;
-                }
+                // Need a class address to walk_functions. The row already has one — it
+                // came from list_all_functions — so use it. See ResolveClassAddrAsync
+                // for why re-deriving it from list_classes was a bug (audit #5 X2).
+                var classAddr = await ResolveClassAddrAsync(className, rowClassAddr);
+                if (string.IsNullOrEmpty(classAddr)) return;
 
-                var functions = await _dump.WalkFunctionsAsync(classMatch.ClassAddr);
+                var functions = await _dump.WalkFunctionsAsync(classAddr);
                 var funcMatch = functions.FirstOrDefault(
                     f => f.Name.Equals(funcName, StringComparison.Ordinal));
                 if (funcMatch == null)
@@ -1782,19 +1775,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 {
                     SelectedTabIndex = (int)MainTabIndex.ClassStruct; // ClassStruct fallback
                     var classes = await _dump.ListClassesAsync(gameOnly: false);
-                    var match = classes.Classes.FirstOrDefault(
-                        c => c.ClassName.Equals(className, StringComparison.Ordinal));
-                    if (match != null && !string.IsNullOrEmpty(match.ClassAddr))
+                    var match = classes.FindClassAddr(className);
+                    if (match.Found)
                     {
-                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.ClassAddr);
+                        await ClassStruct.LoadClassCommand.ExecuteAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata " +
                                      $"(exec '{funcName}' — UCheatManager subclasses often need an active PlayerController)";
                         _log.Info($"Console -> ClassStruct fallback: {className}::{funcName}");
                     }
                     else
                     {
-                        StatusText = $"Class {className} not resolvable (Find Instances + ListClasses both empty)";
-                        _log.Warn($"Console navigate: {className} not found");
+                        StatusText = $"No live instance of {className}, and the class {match.MissReason}";
+                        _log.Warn($"Console navigate: {className} {match.MissReason}");
                     }
                 }
             }
@@ -1807,22 +1799,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Console -> RequestParameterInvoke fires when a multi-param exec
         // command is selected. Opens the standard InvokeParamDialog in
         // PipeInvoke mode so the user fills values + presses FIRE to run.
-        Console.RequestParameterInvoke += async (className, funcName) =>
+        Console.RequestParameterInvoke += async (className, funcName, rowClassAddr) =>
         {
             try
             {
                 if (string.IsNullOrEmpty(className) || string.IsNullOrEmpty(funcName)) return;
 
-                var classes = await _dump.ListClassesAsync(gameOnly: false);
-                var classMatch = classes.Classes.FirstOrDefault(
-                    c => c.ClassName.Equals(className, StringComparison.Ordinal));
-                if (classMatch == null || string.IsNullOrEmpty(classMatch.ClassAddr))
-                {
-                    StatusText = $"Class {className} not found";
-                    return;
-                }
+                var classAddr = await ResolveClassAddrAsync(className, rowClassAddr);
+                if (string.IsNullOrEmpty(classAddr)) return;
 
-                var functions = await _dump.WalkFunctionsAsync(classMatch.ClassAddr);
+                var functions = await _dump.WalkFunctionsAsync(classAddr);
                 var funcMatch = functions.FirstOrDefault(
                     f => f.Name.Equals(funcName, StringComparison.Ordinal));
                 if (funcMatch == null)
@@ -1869,22 +1855,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // Console -> RequestCopyBakedScript reuses the InterestingFunctions
         // logic body. Same shape as above (no-arg fast path + dialog path).
-        Console.RequestCopyBakedScript += async (className, funcName) =>
+        Console.RequestCopyBakedScript += async (className, funcName, rowClassAddr) =>
         {
             try
             {
                 if (string.IsNullOrEmpty(className) || string.IsNullOrEmpty(funcName)) return;
 
-                var classes = await _dump.ListClassesAsync(gameOnly: false);
-                var classMatch = classes.Classes.FirstOrDefault(
-                    c => c.ClassName.Equals(className, StringComparison.Ordinal));
-                if (classMatch == null || string.IsNullOrEmpty(classMatch.ClassAddr))
-                {
-                    StatusText = $"Class {className} not found";
-                    return;
-                }
+                var classAddr = await ResolveClassAddrAsync(className, rowClassAddr);
+                if (string.IsNullOrEmpty(classAddr)) return;
 
-                var functions = await _dump.WalkFunctionsAsync(classMatch.ClassAddr);
+                var functions = await _dump.WalkFunctionsAsync(classAddr);
                 var funcMatch = functions.FirstOrDefault(
                     f => f.Name.Equals(funcName, StringComparison.Ordinal));
                 if (funcMatch == null)
@@ -2847,6 +2827,36 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _log.Error("Export CE Helper Lua failed", ex);
             StatusText = $"Export CE helper failed: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Resolve a class NAME to its UClass address for the cross-panel handoffs.
+    ///
+    /// <paramref name="rowClassAddr"/> is the address the raising panel already holds
+    /// (Interesting Funcs and Console both build their rows from
+    /// <c>list_all_functions</c>, which carries <c>class_addr</c> per entry). When it is
+    /// present this returns it unchanged and issues NO pipe call at all.
+    ///
+    /// The fallback path exists for callers with no address, and it is the reason this
+    /// helper exists: <c>list_classes</c> returns at most <c>limit</c> rows and the DLL
+    /// stops walking GObjects the moment it has them, so on a large title a real class is
+    /// simply not in the page. Every one of these handlers used to re-derive the address
+    /// from that page and abort with "Class X not found" — about the class whose own row
+    /// the user had just clicked (audit #5 X2). A miss now says WHICH kind of miss it was.
+    /// </summary>
+    /// <returns>The class address, or "" when it could not be resolved (StatusText set).</returns>
+    private async Task<string> ResolveClassAddrAsync(string className, string rowClassAddr = "")
+    {
+        if (!string.IsNullOrEmpty(rowClassAddr)) return rowClassAddr;
+
+        var classes = await _dump.ListClassesAsync(gameOnly: false);
+        var lookup = classes.FindClassAddr(className);
+        if (lookup.Found) return lookup.Addr;
+
+        StatusText = $"Class {className} {lookup.MissReason}";
+        _log.Warn($"ResolveClassAddr: {className} {lookup.MissReason} " +
+                  $"(list_classes returned {classes.Classes.Count} rows, truncated={lookup.Truncated})");
+        return "";
     }
 
     /// <summary>

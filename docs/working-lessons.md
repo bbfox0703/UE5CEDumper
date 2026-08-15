@@ -71,6 +71,18 @@ that the value was computed right.
 **Corollary: when the outcome is already saturated, assert the mechanism, not the outcome.** A ranking
 assertion on an item already ranked #1 passes before and after and proves nothing.
 
+**Corollary: before writing the test, ask whether the CALL SITE can fail it.** Audit #5 Y15 (build
+2904) plumbed an engine-reported width into a mapping. The mapping was easy to cover. The two places
+that *used* it were not reachable from a test at all — `FreezeValueDialog`'s helper-type choice sat
+in an Avalonia constructor, and `PropertySearchViewModel`'s equivalent inside a command needing the
+AOBMaker bridge and a modal dialog — so the width could have been dropped at either with **zero**
+failures, and a negative control aimed there would have reported "0 red" as if the code were fine.
+Two `internal static` seams later, those controls red 3 and 3. A control that cannot fail is
+indistinguishable from a passing one; **an untestable call site turns §1.2 off silently.** When a
+value has to survive several hops, assert the two ENDS against each other (there: the type the
+dialog validates against == the type the generated script writes with) — that single assertion fails
+no matter which hop drops it.
+
 ### 1.4 Measure with two independent detectors, or you are measuring the detector
 
 AOBMaker's vtable-slot numbers swung up to **14×** across three detection variants on the same
@@ -143,6 +155,30 @@ write *call*), committed inside a test written to catch exactly that class of er
   kept because the shape recurs: a `cores/4 ÷ SWEEP_XMX` concurrency formula that yielded a value
   *forbidding the shipped default* (budgeting on `-Xmx`, a reservation ceiling, not a working set);
   and a prediction that a bug would "collapse concurrency to 1" when it measured at **+42%**.
+
+### 1.11 The recurring-defect sweep is not "grep the symbol" — it is "grep the argument nobody used"
+
+Audit #5's most expensive family was `EnumProperty` being written as 4 bytes when UE's dominant
+`enum class E : uint8` is one. It cost **four findings across seven sites in four subsystems**: W6
+(CE XML export), Y2 (FIRE param buffer), Y15 (freeze/force), Y16 (interactive CE invoke form, baked
+AA script, and the return decode). Each was found only when someone happened to be standing in that
+file.
+
+Two properties made it recur, and both generalise past enums:
+
+- **At all seven sites the correct width was already in scope and simply not passed.** Not one was a
+  case of "we could not know" — `p.Size`, `v.Size`, `PropertySearchMatch.PropSize` and a `size`
+  parameter were right there. So the productive grep is not the type name; it is *a method that
+  accepts a size and never reads it*, or a mapping keyed on a type name when a size is available at
+  every call site.
+- **Three of the seven carried a code comment describing the gap before anyone reported it** —
+  `"out of v1 scope"` (Y15), `"writes by type, not size"` (Y16), and for W6 a correctly-written
+  `CeWidthForSize` helper that the defective path simply did not call. A comment admitting a
+  limitation is an unfiled bug; treat it as a finding, not as documentation.
+
+Corollary for the read side: Y16's third site *reads* four bytes for a one-byte enum return. Width
+bugs are not only write bugs, and the read half tends to be filed later because it corrupts nothing
+— it just reports a number that is wrong.
 
 -----
 

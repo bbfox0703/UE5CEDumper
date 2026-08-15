@@ -58,8 +58,8 @@ holds. Ordered by (early-line count × blast radius ÷ existing coverage).
 | **D5** | Fern + Frieren | `Fern.cpp` 2490/6028, `Frieren.cpp` 816/1784 | ~3,306 | partly audited before |
 | **U1** ✅ | LiveWalker / Pointer / ObjectTree VMs | 2900 + 999 + 360 | ~4,259 | good |
 | **U2** ✅ | Export services | CeXml 1699, Csx 678, Sdk 569, Usmap 397, Symbol 215 | ~3,558 | mixed |
-| **U3** | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
-| **U4** | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
+| **U3** ✅ | Dump services + MainWindow VM | 1517 + 437 + 1366 | ~3,320 | good |
+| **U4** ✅ | Dialogs + CE script generators | InvokeParamDialog 1020 (96%), Baked 503, Invoke 399, ObjInstancePicker 295, ParamBuffer 258, CheatTable 245, FreezeDialog 242, FreezeGen 210 | ~3,172 | mixed |
 | **U5** | Remaining VMs / Models / Core / scoring | Console 445, InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478, Logging 362, scoring tables ~800 | ~3,500 | mixed |
 | **S1** | Early Lua scripts | `ue5_dissect` 531/555, `ue5_freeze_helper` 417/508, `ue5_invoke_helper` 288/605 | ~1,236 | none |
 | **T1** | Tail sweep | every remaining file ≥50 early lines + the 53 never-touched-since-May files | ~10k | — |
@@ -837,7 +837,521 @@ survived** and one (`CeXmlExportService.cs:2141`) was downgraded to MEDIUM.
 
 -----
 
+### U3 — Dump services + MainWindow VM — ✅ scanned 2026-08-15
+
+**11 agents** (5 lenses → 4 refute batches → 2 second-lens), 0 errors. Run `wf_bf7170d4-f18`.
+19 raw claims → 18 after dedupe → **6 refuted (33%)** → 12 confirmed → **11 distinct** after merging
+the two reports of the same Dump-All completion line (`:3373` — "success derived from the file's byte
+length" and "the MB figure uses integer division" are one statement), **+1 found by hand** = **12**.
+
+**Tally: 3 MEDIUM · 9 LOW · 0 HIGH.** The finders claimed **no HIGHs at all** — the first C# segment
+where that happened, and it matches what is left: this segment's defects are missing caveats and
+unread flags, not wrong writes.
+
+> **The headline is that this audit's OWN fix was applied to one of its two sites.** X1 is the D5/F4
+> truncation fix: the DLL side covered **both** the single and the batch property-search paths — the
+> comment at `Fern.cpp:2822-2825` cites *"audit #5 D5/F4"* by name — while the C# side was applied to
+> the single path only. The two parsers sit ~80 lines apart in the same file. That is the **third**
+> recurrence of the same meta-pattern in three segments: V2 (fixed one side of the wire), W4/W6
+> (applied at some call sites), X1 (applied at one of two twins). **A fix in this codebase is not
+> done until you have grepped for its siblings** — across languages, across call sites, and across
+> single/batch twins.
+
+> ### ✅ X1 FIXED — build 2870, 2026-08-15
+>
+> **This was the D5/F4 fix reaching its second site.** The DLL had emitted per-query `truncated` and
+> batch `aborted` since F4 — the comment at `Fern.cpp:2822-2825` names *"audit #5 D5/F4"* — and the
+> C# read them on the single-query path only. The two parsers sit ~80 lines apart in the same file.
+>
+> `PropertySearchQueryEnvelope` gained `Truncated`, `PropertySearchBatchResult` gained `Aborted` and
+> a `TruncatedQueries` convenience, and both discovery panels now say so:
+> **Interesting Properties** appends *"⚠ N of 51 keywords STOPPED at the 200-row cap (Max, Count,
+> Time, …) — more matches exist"*, and **Detect Player Stats** — which makes the same call at the
+> same limit — appends its own shorter form. Both mirror the wording the single-query path has used
+> since F4.
+>
+> **A test hook came out of it, and that is the durable part.** The batch parse was inlined in an
+> `async` method that needs a live pipe, so *nothing could reach it* — which is precisely why a
+> missing field survived two builds. It is now
+> `internal static ParseSearchPropertiesBatch(JsonObject)` with a string-taking test hook, so the
+> wire contract is testable without a pipe.
+>
+> **Negative control:** removing the two parse lines turns the two flag tests red. The third test —
+> an older DLL that omits both keys — passes in **both** directions, which is correct and is the
+> point of having it: the fix must not start warning on every scan against a pre-2818 DLL.
+> 3613 tests, 0 failed.
+>
+> ⬜ **Not verified in-game.** Nobody has yet run a real batch scan on a title where a seed keyword
+> caps and confirmed the strip appears.
+
+> ✅ **X2 fixed in build 2888** — `d2c34d1`-era; the handoffs stopped re-deriving an address they
+> were already holding.
+>
+> **The lookup should never have existed.** Interesting Funcs and Console build their rows from
+> `list_all_functions`, which supplies `class_addr` **per row** — and then the three handlers threw
+> that away, called `list_classes`, searched the returned page by NAME, and aborted on
+> *"Class X not found"* about the class whose own row the user had just clicked. The three events now
+> carry `classAddr`, so the common path issues **no pipe call at all**.
+>
+> **Two twins came with it, and they are the reason this is not a one-line change.**
+> `Console.RequestParameterInvoke` (the FIRE dialog for any exec taking parameters) and
+> `Console.RequestCopyBakedScript` are byte-for-byte the same body as the cited site, with the same
+> `"Class {className} not found"` and the same hard `return`. This is the fourth time this audit has
+> found its own defect shape half-covered; the §3b rule caught it this time.
+>
+> **The cap is now detected at the source, per D5/F4's own lesson.** `Aura::ClassListResult` gained
+> `truncated` (set the same way as `SearchResultSet::truncated`) and `list_classes` emits it. The C#
+> falls back to inferring it from a full page so a **pre-2888 DLL still gets the honest message**
+> rather than silently degrading to "not found".
+>
+> **What a miss now says.** `ClassListResult.FindClassAddr` is a pure, unit-testable lookup returning
+> `ClassAddrLookup`, whose `MissReason` is *"not in the class list — it was CAPPED at 5,000 rows, so
+> the class may still exist"* on a truncated walk and plainly *"not found"* on a complete one. The
+> four **refuted-blast-radius** sites (`:1191` and siblings) were left behaving exactly as before but
+> re-pointed at that helper — their old text asserted *"Find Instances + ListClasses both empty"*,
+> which is a false statement about a capped list. **Game Class Filter** appends
+> *"⚠ STOPPED at the 5,000-row cap — more classes exist"*, which matters because its
+> `total_classes` moves in lockstep with the results vector, so on a truncated walk the line printed
+> the cap twice and read as a pool size.
+>
+> **Negative controls, three, each isolating one claim:** forcing `Truncated = false` in the parser
+> reds exactly the 2 truncation tests (the "full walk is not truncated" test correctly stays green —
+> it asserts an absence); passing `""` instead of `row.ClassAddr` reds exactly the 3 address-carrying
+> tests; flattening `MissReason` to `"not found"` reds exactly the capped-wording test. 3631 tests,
+> 0 failed (3624 → 3631). `dist` is the 54.4 MB AOT-trimmed binary, launch-verified, no `crash.log`.
+>
+> ⬜ **Not verified in-game.** Nobody has yet clicked AA(B) on a class past the cap in a real title
+> and watched the script generate. The pure logic is covered; the end-to-end path is not.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **X1** ✅ | MED | `DumpService.cs:1746` (`SearchPropertiesBatchAsync`) | The batch property search parses `query` + `match_count` only, dropping the per-query `truncated` and batch `aborted` the DLL emits for exactly this purpose — `PropertySearchQueryEnvelope` has no such field to parse into. Interesting Properties sends all 51 seed queries at 200 rows each, so common seeds (`Max`, `Count`, `Time`, `Level`, `Hit`) cap routinely and the panel reports *"N unique properties"* with no cap note. **This is the exact report class the F4 fix was written to end**, surviving at F4's other site. `DetectStatsViewModel` makes the same call with the same blind spot. | S / low |
+| **X2** ✅ | MED | `MainWindowViewModel.cs:1650` | Class-address lookups scan a single 5,000-row `list_classes` page and report a real class as **"not found"** when it falls past the cap. | S / low |
+| **X3** | MED | *(hand-found)* `DumpService.cs` / `Models/EngineState.cs` | The DLL computes and publishes a three-flag offset-validation verdict (`validated`, `probe_ran`, `case_preserving`, plus `fallback_reason`) and **the UI never issues `get_offsets` at all**, so nothing can tell the user the walker is running on unvalidated default offsets. | S / low |
+| **X4** | LOW | `MainWindowViewModel.cs:3373` | The Dump All completion line is derived from the **file's byte length** rather than from what the dump did, so a zero-class or half-failed dump still announces an export — and the figure itself is integer division (`Length / 1024 / 1024:F1`), so a 3.7 MB dump prints `3.0 MB` and anything under 1 MB prints `0.0 MB`. | S / low |
+| **X5** | LOW | `MainWindowViewModel.cs:2003` | The disconnect fan-out resets **3 of 15** panels; every other panel keeps its rows across a reconnect and goes on offering jumps to addresses from the previous process. | M / med |
+| **X6** | LOW | `MainWindowViewModel.cs:3336` | The three long-running export commands take no `CancellationToken`, so every `ct` check inside the services they drive is dead code. | M / low |
+| **X7** | LOW | `MainWindowViewModel.cs:2026` | The "game thread paused" banner is a level rebuilt from two independent per-lane edge latches, so it sticks ON after the game resumes. | S / low |
+| **X8** | LOW | `MainWindowViewModel.cs:1915` | The Console tab's two AOBMaker actions assert *"AOBMaker not connected"* from a cached flag nothing on their path refreshes. | S / low |
+| **X9** | LOW | `MainWindowViewModel.cs:132` | The competing-dumper-host banner lists the game you are connected to among the "also loaded" competitors when the DLL reports no PID. | S / low |
+| **X10** | LOW | `MainWindowViewModel.cs:2315` | Time-dilation values are in `ApplyOptions` and `BuildOptions` but missing from `TeleportPersist`, so changing them never schedules a save. | S / low |
+| **X11** | LOW | `MainWindowViewModel.cs:3368` | Dump All streams onto the destination with `FileMode.Create` and no temp-then-rename, so an abort leaves a truncated `.jsonl` at the final name, and no consumer checks the trailing summary line that is written only on success. **Scope corrected by hand — see below.** | S / low |
+| **X12** | LOW | `MainWindowViewModel.cs:3145` | Install-CE-autorun skips its own manual-placement fallback in exactly the case where the write was denied. | S / low |
+
+**Verified independently (not agent-reported):**
+
+1. **X3 was found by hand, by a sweep the agents did not run — and the sweep's blind spot is worth
+   recording.** Diffing every JSON key the DLL *writes* (`X["key"] =` in `dll/src/*.cpp`) against
+   every key the C# *reads* (`["key"]` in `ui/UE5DumpUI/**/*.cs`) gives 508 written / 544 read and
+   **38 never read**. Three sit together: `validated`, `probe_ran`, `case_preserving`
+   (`Fern.cpp:4644-4648`). No C# file mentions any of them, and **the UI never sends `get_offsets`**;
+   `EngineState` has no equivalent (its `IsLowConfidence` is about UE *version* detection). The DLL's
+   own comment says why the split exists — *"A user reading the honest-looking summary had no way to
+   know the walker was about to be useless"* (`Grimoire.h:238-241`) — and **nothing gates serving on
+   the flag**: only `FindGEngineSlot` reads it, deliberately using the ProbeRan-ish semantics for
+   ordering. So a user can browse a game whose offsets are all guesses with no indication, on the one
+   panel that already carries a low-confidence badge, a version-too-old banner and per-pointer
+   warnings. `fallback_reason` — the *why* — is unread too.
+   **Negative control:** deleting the known-good `map_stride` read from a scratch copy made the sweep
+   flag it, so the 38 is a measurement.
+   ⚠ **The sweep is key-name-GLOBAL, so it structurally cannot find X1**: `truncated`/`aborted` *are*
+   read on the single-query path, which marks them "read" everywhere. The agents found the defect the
+   detector was blind to, and the detector found the one they missed. Neither subsumes the other —
+   **run both.**
+2. **X1 re-derived at both ends.** `Fern.cpp:2822-2825` emits `envelope["truncated"]` per query under
+   a comment naming *audit #5 D5/F4*; `Fern.cpp:2834` emits `data["aborted"]`;
+   `Models/PropertySearchResult.cs:179-184` shows `PropertySearchQueryEnvelope` with only
+   `Query`/`MatchCount`/`Results`, while the single-query `PropertySearchResult` in the same file has
+   both flags *with the F4 doc comment on them*.
+3. **X11's scope was corrected by hand after a split verdict — and the refutation was right on the
+   part that matters.** A near-identical claim against `DumpAllService.cs:463` was **refuted** while
+   this one was confirmed. The code settles it: the non-atomic write is real (`FileMode.Create`
+   straight to `filePath`, `MainWindowViewModel.cs:3368`), **but
+   `DumpExplorer.SetLastExportPath(filePath)` is inside the `try`, after the success line**, so on
+   failure the app never advertises the partial file — the `catch` sets *"Dump failed"* and stops.
+   The harm is therefore "a truncated file sits at the name the user chose, with no marker check if
+   they open it manually", not "the app hands the user a corrupt dump". Filed at LOW with that scope.
+   **Do not re-raise the larger version.**
+
+-----
+
+### U4 — Dialogs + CE script generators — ✅ scanned 2026-08-15
+
+**18 agents** (5 lenses → 3 refute batches → 10 second-lens), 0 errors. Run `wf_be335f2c-7b7`.
+20 raw claims → 15 after dedupe → **0 refuted** → 15 confirmed → **14 distinct** after merging the two
+lens-duplicate reports of the same `EnumProperty` defect (`ParamBufferBuilder.cs:221`/`:224`).
+
+**Tally: 1 HIGH · 8 MEDIUM · 5 LOW.** Four HIGHs were claimed; one survived and three were cut to
+MEDIUM.
+
+> ⚠ **A 0% refutation rate is an outlier and must not be read as a quality signal.** Every other
+> segment killed 25–73%. Two readings are available and they are not exclusive: this is the densest
+> early code in the tree (`InvokeParamDialog` is **96% early**, and the whole segment emits code that
+> runs against a live game), or the skeptics underperformed. **Because the rate could not be used as a
+> check here, three findings were re-derived by hand** — the HIGH, the merged enum pair, and V-lens
+> item Y10 — and all three held, which is why the tally is recorded as-is. Treat the five LOWs as the
+> least-scrutinised rows in this audit.
+
+> **The HIGH is a capability that has never worked, for the third time in this audit.** Y1 makes the
+> generated CE invoke form pass **0** for every `UObject*` / `FName` parameter the user actually fills
+> in — joining W1 (a `.usmap` that never parsed) and V1 (a map edit that wrote to the key). The
+> pattern across all three: *the default value happens to work*, so any smoke test passes.
+
+> ### ✅ Y2, Y3, Y4 and Y5 FIXED — build 2866, 2026-08-15
+>
+> One commit, because they are one defect wearing four hats: **`ParamBufferBuilder` (the FIRE path)
+> re-implemented, more weakly, the parsing `BakedScriptGenerator` (Copy AA Script) already did
+> correctly.** The same dialog therefore produced two different calls into a live game depending on
+> which button the user pressed.
+>
+> | | typed | FIRE sent | exported script sent |
+> |---|---|---|---|
+> | **Y2** | `3` into a 1-byte enum | **nothing at all** (game got 0) | 3 |
+> | **Y3** | `true` | **0** | 1 |
+> | **Y4** | `1,5` | **15.0** | refused |
+> | **Y5** | `-1` into an `Int8` | **0** | −1 |
+>
+> Y2 is the sharpest: `EnumProperty` was grouped with `IntProperty` and gated on
+> `available >= 4`, so a 1-byte `enum class : uint8` param failed the guard and **was never written**.
+>
+> **The fix is to share, not to re-copy.** `BakedScriptGenerator.ParseBoolLiteral` and
+> `TryParseHexOrDecimal` became `internal` and the FIRE path now calls them; `EnumProperty` routes
+> through a new `WriteBySize` that the size-driven fallback also uses, so those two cannot drift
+> apart either. Writing a fifth parser was the obvious move and the wrong one — this audit has now
+> found its own fixes half-applied three times (V2, W4/W6, X1), and *sharing the implementation* is
+> the only repair that does not depend on a future editor remembering.
+>
+> Y4's guard is copied verbatim in intent from the sibling's own comment: `TryParse(text,
+> IFormatProvider, out _)` defaults to `NumberStyles.Float | AllowThousands` **and accepts `NaN` /
+> `Infinity`**, so those reached the game as real floats. The baked path had documented this (as
+> B23) and guarded it; the FIRE path had not.
+>
+> **Negative control:** reverting `ParamBufferBuilder.cs` to its pre-fix state turns **11** tests
+> red, mapping to all four defects — 2 for the enum widths, 4 bool spellings (`true`/`TRUE`/`yes`/
+> `on`; `1`/`0`/`false`/`no` pass either way, since the old byte parser handled digits), 4 float
+> cases, 1 signed byte. 3610 tests, 0 failed.
+>
+> ⬜ **Not exercised against a live game.** The bytes are unit-verified; nobody has yet watched a
+> UFunction receive a 1-byte enum or a `true` from the FIRE button.
+
+> ### ✅ Y6 and Y7 FIXED — build 2881, 2026-08-15
+>
+> Both are struct params, and both come down to the same question: **what do you do when you cannot
+> know the layout?** They answer it in opposite places and the fixes differ accordingly.
+>
+> **Y6 — the CE form cannot edit a struct, so it must stop pretending to.** The form has one edit box
+> per param; `StructProperty` has no scalar spelling, so it fell through `GetMailboxWriteStatement`'s
+> size switch to `writeInteger` — **four bytes** of a 12-byte (UE4) or 24-byte (UE5 LWC) `FVector`,
+> taken from `math.floor(tonumber(text))`, with the rest left zero. A garbage vector went into a live
+> call and nothing said so. The write is now skipped: the params buffer is already zero-filled, so the
+> callee receives a well-defined zeroed struct instead of a mangled one, the emitted script carries a
+> `-- <name>: struct (N B) left ZEROED` line, and **the box keeps its place but its label says
+> `NOT EDITABLE - sent as zeroes`**. The box is kept deliberately — `edits[i]` is indexed by param
+> position, so removing it would silently shift every later param's box.
+>
+> **Y7 — the engine's size overrules the version guess.** `KnownStructLayouts.GetLayout` is keyed on a
+> **detected** UE version, and the dialog expanded sub-field editors from it without ever comparing it
+> to the size the engine reported for that param. When the two disagree the guess is wrong — a
+> mis-detected version (LWC turns `FVector`'s floats into doubles, doubling every offset) or a
+> licensee fork with a modified struct, and this project has met both. The layout is now refused on
+> mismatch and the caller falls through to the DLL-discovered fields, which came from the actual
+> `UScriptStruct`.
+>
+> **Y7's rule was extracted to `InvokeParamDialog.ResolveTrustedLayout` so it could be tested at
+> all.** It had been an inline condition inside a View's control-building loop — unreachable from a
+> test, which is the same structural reason X1's missing field survived two builds. Five tests now
+> cover it, including both directions of the mismatch and the `engineSize <= 0` case where nothing
+> contradicts the guess and keeping it is correct.
+>
+> **Negative control:** reverting both turns 4 tests red — 2 for Y6 (each struct size) and 2 for Y7
+> (each direction of the mismatch). Note `Generate_StructParam_LabelsTheBoxAsInert` stayed green,
+> correctly: the label and the write-skip are separate changes and only the latter was reverted.
+> 3624 tests, 0 failed.
+>
+> ⬜ **Not verified in-game.** Nobody has yet passed a struct param through either path against a live
+> UFunction.
+
+> ### ✅ Y8 FIXED — build 2875, 2026-08-15
+>
+> `celua.txt` settles it: `getAddress` *"returns the address of a symbol"* while `getAddressSafe`
+> *"returns the address of a symbol, **or nil if not found**"*. The bare form **raises** on a missing
+> symbol — which is the exact case the block exists to handle — so when the DLL was not loaded the
+> first call aborted the chunk and took three things with it:
+> - the **module-prefixed fallback** on the next line (never reached, though both spellings are
+>   mandatory: which one resolves depends on how CE picked the module up — lessons-learned B33),
+> - the **diagnostic** `showMessage` (the user saw CE's raw Lua error instead of *"make sure
+>   UE5Dumper DLL is loaded"*), and
+> - the **cleanup timer**, so the memory record stayed **ticked** after a bail-out that applied
+>   nothing — against CLAUDE.md's untick rule.
+>
+> This was the last bare `getAddress` the repo emitted. Both sibling generators already did it
+> correctly — `BakedScriptGenerator` via `getAddressSafe`, `CeReadinessLua` via
+> `pcall(getAddress, …)` — so this is the same sibling-divergence shape as W4/W6/X1.
+>
+> **A pre-existing test broke, and it was the RIGHT kind of break.**
+> `CeMailboxBailoutTests.NoMailboxWriteEscapesTheIdleWait` uses the mailbox lookup as a *textual
+> anchor* for its window scan, and the rename lost the anchor — the test's own failure message had
+> predicted exactly that (*"the anchor this scan starts from is gone"*). It now anchors on the
+> **symbol** rather than the lookup function, so it survives a change of lookup. Note the
+> distinction from Y1, where an actual **assertion** had to change: here only an anchor moved, and
+> the test's subject (write ordering) is untouched.
+>
+> **Negative control:** reverting to `getAddress` turns the two new tests red while
+> `CeMailboxBailoutTests` stays **green** — which is the proof the re-anchoring is genuinely
+> spelling-agnostic rather than retuned to the new spelling. One of the two new tests was also
+> hardened mid-flight: it had anchored on `getAddressSafe(`, so on revert it failed because
+> `IndexOf` returned −1 rather than because the untick had gone. It now anchors on the symbol too.
+> 3615 tests, 0 failed.
+
+> ### ✅ Y1 FIXED — build 2862, 2026-08-15
+>
+> The prefix is stripped before the base-16 parse. The emitted expression now matches
+> `^0[xX](%x+)$` and parses the **captured digits**, falling back to decimal and then to bare hex:
+>
+> ```lua
+> local s = edits[N].Text or ''; s = s:gsub('%s+','')
+> local h = s:match('^0[xX](%x+)$')
+> if h then return tonumber(h,16) or 0 end
+> return tonumber(s) or tonumber(s,16) or 0
+> ```
+>
+> **Decimal is tried before bare hex deliberately.** This branch also serves `NameProperty`, whose
+> value is an FName index a user may well type in decimal — reading `1234` as hex would silently
+> change its meaning. That ordering is pinned by a test.
+>
+> **Verified with three independent detectors** (working-lessons §1.4), because a claim about Lua
+> semantics is not settled by reasoning about Lua:
+> 1. **Runtime** — the expression was evaluated verbatim in **Cheat Engine's own `lua53-64.dll`**
+>    (`_VERSION` = Lua 5.3) against a stub `edits` table. Before: `0x1F2A3B4C5D0` → **0**,
+>    `0X7FF6CD120000` → **0**, bare hex → **0**, and only a *decimal* address survived — which nothing
+>    in this project produces, since `Renge::AddrToStr` formats every address as `0x` + uppercase hex.
+>    After: every form resolves correctly, `1234` stays 1234, junk → 0, and every result is a Lua
+>    **integer** (`math.type`), which `writeQword` requires.
+> 2. **A standalone Lua 5.4.6 CLI** reproduced all ten inputs **identically** to CE's 5.3 DLL, which
+>    also establishes that the behaviour is stable across 5.3 → 5.4 — worth knowing if CE ever
+>    updates its bundled Lua.
+> 3. **Source** — CE's bundled `Cheat Engine/lua53/lua53/src/lbaselib.c:48-65` shows the mechanism:
+>    `int digit = isdigit(*s) ? *s - '0' : toupper(*s) - 'A' + 10; if (digit >= base) return NULL;`
+>    For `'x'` that is `'X' - 'A' + 10 = 33`, and `33 >= 16`, so the conversion returns `NULL` → `nil`
+>    → `or 0`.
+>
+> **A detail worth keeping:** the old code accidentally *worked* for padded input — `  0x40  ` made
+> `s:sub(1,2)` miss the prefix and fall into the `else`, where plain `tonumber` handles `0x` fine. So
+> the same field succeeded or silently returned null depending on stray whitespace.
+>
+> **Negative control:** reverting the fix turns all four new tests red. One of those tests was itself
+> wrong on the first attempt — it asserted the script contains no `tonumber(s,16)` at all, which fails
+> the *correct* code, because the fix legitimately uses that form as the bare-hex fallback once the
+> prefix is known absent. Corrected to assert the old prefix-detection idiom (`s:sub(1,2)`) is gone,
+> which is the defect's precise signature. 3594 tests, 0 failed.
+>
+> ⬜ **Not verified in Cheat Engine itself.** The Lua semantics are measured, but nobody has yet run
+> the generated script against a live game and watched a UFunction receive the right pointer — see
+> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
+> ✅ **Y9 fixed in build 2895** — the dialog is the only place that can tell the user, so it now does.
+>
+> **Why the dialog and not the writer.** Everything downstream narrows in silence and reports
+> success: `ue5_freeze_helper.lua`'s byte writer is `writeByte(addr, math.floor(v) % 256)` and
+> `Solide::WriteNumeric` is `static_cast<uint8_t>(llround(value))`. Neither has a channel to say
+> "that did not fit" — the freeze is a background timer and the force-hold is a re-assert worker.
+> So `9999` on a `ByteProperty` became `15` in the game with nothing on screen, and the user is left
+> debugging the game rather than the input.
+>
+> **`ValidateAndConvert` now checks the WIDTH, not just the parse.** It had only ever asked "does
+> this fit a `long`/`ulong`", which is the wrong question for seven of its eight integer types.
+> `IntegerRange` is the inclusive per-type table, and the error names both the range and the value
+> that would have landed: *"uint8 holds 0 to 255 — 9999 would be written as 15"*. `WrapToRange`
+> computes that number with the same modular arithmetic the writers perform, and a test cross-checks
+> it, so the quoted number cannot drift from the one that lands.
+>
+> **Two more sites of the same defect came with it, both inside the same method.** `float` was
+> validated as a **double** — the check that rejects `NaN`/`Infinity` (B23) passed `1e300` straight
+> through, and CE's `writeFloat` / Solide's `WriteFloatAt` narrow it to `+inf`; `1e-300` collapses to
+> `0`. Both are now rejected for `float` and still accepted for `double`, which a test asserts in
+> both directions.
+>
+> **The pre-filled default was half the finding and is inseparable from the fix.** `SuggestedDefault`
+> returned a flat `"9999"` for every integer type, so adding the range check alone would have opened
+> every `ByteProperty` dialog holding a value its own OK button rejects. It is now derived from the
+> same `IntegerRange` table (`min(9999, Max)`), and a test asserts every helper type's suggestion
+> survives `ValidateAndConvert` — a property that cannot drift, rather than a list that can.
+>
+> **One check covers two features.** `PropertySearchPanel.PromptForceValueAsync` reuses this dialog
+> for Solide's Force value precisely for its per-type validation, so Force gained the same guard.
+>
+> **Negative controls, three, each isolating one claim:** deleting the two integer range checks reds
+> exactly the 11 width tests (the boundary-acceptance and default tests stay green); deleting the
+> float narrowing check reds exactly the 3 float tests; reverting `SuggestedDefault` to the flat
+> `"9999"` reds exactly the 4 default tests — **and only for `int8`/`uint8`**, which is the predicted
+> shape, since 9999 fits every wider type. That third control also demonstrates the interaction:
+> without it the new range check would reject the app's own pre-fill. 3674 tests, 0 failed
+> (3631 → 3674). `dist` is the 54.4 MB AOT-trimmed binary, launch-verified, no `crash.log`.
+>
+> 🆕 **Found while fixing it: Y15**, the *third* site of the `EnumProperty`-is-not-4-bytes family this
+> audit has already fixed twice (W6, Y2). Recorded, not fixed — it needs a size plumbed through
+> `FreezeScriptParams`, so it is M, not S. **Fixed in 2904; see below.**
+>
+> ⬜ **Not verified in-game.** The arithmetic is measured against the writers' own masking, but nobody
+> has typed 9999 into a real `ByteProperty` freeze and watched the new error instead of a 15.
+
+> ### ✅ Y15 FIXED — build 2904, 2026-08-15
+>
+> **The engine reported the width all along; the model dropped it.** `MapToHelperType` answered
+> `int32` for every `EnumProperty`, and the freeze helper's `int32` writer is `writeInteger` — four
+> bytes into UE's dominant one-byte `enum class E : uint8`, 20 times a second, silently destroying
+> the three fields after it. The mapping's own comment admitted the gap. `PropertySearchMatch.PropSize`
+> carries the real width, but `FreezeScriptParams` had no size field, so the generator **could not**
+> know better. The finding is the dropped field, not the guess.
+>
+> **The repair is the shape W6 and Y2 established**: `HelperTypeForSize(int)` — the direct sibling of
+> `CeXmlExportService.CeWidthForSize` — with 1 → `uint8`, 2 → `uint16`, 4 → `int32`, 8 → `int64`, and
+> the legacy `int32` for an unreported/nonsense size. Only `EnumProperty` consults it, because it is
+> the only type whose width its name does not fix; a test asserts every other type **ignores** the
+> size argument, so a bogus value from the wire cannot turn a float into a byte. `PropertySize` is
+> `required` rather than defaulted — the compiler now asks the question at every construction site,
+> which is the same *"do not depend on a future editor remembering"* reasoning as Y2, with the type
+> system doing the enforcing.
+>
+> **The reusable lesson is about the tests, not the mapping.** The mapping was already covered. The
+> two places that USE it were not reachable from a test at all — `FreezeValueDialog`'s constructor
+> needs an Avalonia runtime, and `PropertySearchViewModel`'s freeze command needs the AOBMaker bridge
+> plus a modal — so the width could have been dropped at either call site with **zero failures**.
+> Before writing the test, ask whether the call site can fail it. Two `internal static` seams
+> (`FreezeValueDialog.HelperTypeFor`, `PropertySearchViewModel.BuildFreezeParams`, matching the
+> existing `BuildRowsFromSelection` precedent) made the end-to-end assertion possible: **the type the
+> dialog validates the user's input against is the type the generated script writes with** — this
+> audit's recurring root cause (4a: *the report and the reality computed by different code paths*),
+> now pinned instead of assumed.
+>
+> **Four negative controls, each applied alone:** reverting the mapping to flat `"int32"` reds **17**
+> — every enum test at widths 1/2/8 across all four test files, while sizes **4 and 0 stay green**
+> (`int32` *is* right there) and every non-enum type stays green, so the controls are sensitive to
+> the defect rather than to the edit; dropping the size at the dialog reds **3**; at the single-row
+> params **3**; at the batch-CT params **4**. **The middle two would have produced zero failures
+> without the new seams** — which is the whole argument for extracting them. 3724 tests, 0 failed
+> (3674 → 3724). `dist` is the 54.4 MB AOT-trimmed binary, launch-verified, no `crash.log`.
+>
+> 🆕 **Found while fixing it: Y16**, the *fourth* site of the same family —
+> `InvokeScriptGenerator.GetMailboxWriteStatement` writes a 1-byte enum **param** with a 4-byte
+> `writeInteger`, clobbering the next param. Recorded, not fixed: it is one line (the method already
+> takes `p.Size` and already has a correct `size switch` fallback that `EnumProperty` short-circuits
+> past), but it is the invoke subsystem with its own helper Lua and tests, so it deserves its own
+> control rather than a ride on this commit.
+>
+> ⬜ **Not verified in-game.** The widths are unit-verified against the helper's writer table, but
+> nobody has frozen a real `enum class : uint8` and confirmed its neighbours survive. Queued in
+> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **Y1** ✅ | **HIGH** | `InvokeScriptGenerator.cs:603` (`GetParseExpression`) | The pointer/FName branch detects a leading `0x` and then passes the **still-prefixed** string to Lua's `tonumber(s, 16)`, which rejects the `x` and returns `nil`; `or 0` then writes a **null pointer** into the params buffer. The DLL memcpys that straight into `ProcessEvent`, so the UFunction is called with `nullptr` — an access violation for any callee that dereferences it — and the script still reports `INVOKED OK` (or closes the Lua window silently when `DEBUG == 0`). The `else` branch's bare `tonumber(s)` **would have worked**: the special case is the only thing breaking it. The default `'0x0'` yields 0 correctly by accident, so a smoke test with unmodified defaults always passes. | S / low |
+| **Y2** ✅ | MED | `ParamBufferBuilder.cs:221` (+`:224`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` and written as 4 bytes gated on `available >= 4`, so a **1-byte enum param is not written at all** and the game receives 0. FIRE and the exported AA Script therefore send different values for the same dialog input. | S / low |
+| **Y3** ✅ | MED | `ParamBufferBuilder.cs:165` | Typing `true` for a bool param: **FIRE sends 0, Copy AA Script bakes 1** — one dialog, two opposite calls. | S / low |
+| **Y4** ✅ | MED | `ParamBufferBuilder.cs:185` | Float params: FIRE parses with `AllowThousands` and accepts `NaN`/`Infinity`; the baked generator does neither, so `1,5` **fires as 15.0 and bakes as 0**. | M / low |
+| **Y5** ✅ | MED | `ParamBufferBuilder.cs:254` (`ParseByte`) | Rejects the very inputs the sibling baked generator accepts, so `true` and negative int8 values silently become 0 on FIRE. | S / low |
+| **Y6** ✅ | MED | `InvokeScriptGenerator.cs:528` | Struct params in the interactive CE form collapse to a **single 4-byte `writeInteger`**, so an `FVector` param is filled with garbage. | M / low |
+| **Y7** ✅ | MED | `InvokeParamDialog.cs:328` | Struct params pick their sub-field layout from the **guessed UE version** and never cross-check it against the size the engine reported for the param. | S / low |
+| **Y8** ✅ | MED | `InvokeScriptGenerator.cs:164` | The last site in the repo still using bare `getAddress` — its module-prefixed fallback is unreachable, so a wrong-address result is reported as a real one. | S / low |
+| **Y9** ✅ | MED | `FreezeValueDialog.cs:231` | Accepts (and pre-fills) values wider than the property — `uint8` 9999 is silently written as 15. | S / low |
+| **Y10** | LOW | `BakedScriptGenerator.cs:223` | Verify mode writes into the mailbox (`writeByte(_PD_dbg + i, 0)` over `parmsSize`) **before any contract check** — `BakedScriptGenerator` is the only mailbox-touching generator with no `AppendContractCheck`, and CLAUDE.md's rule is explicit that the check comes *before the first write* because the layout is what is in question. | S / low |
+| **Y11** | LOW | `ParamBufferBuilder.cs:228` | FIRE has no unsupported-param-type gate: an `FText`/`TArray`/`TMap` param's textbox is written as a raw int32 into the struct's pointer field. | M / low |
+| **Y12** | LOW | `InvokeParamDialog.cs:856` | The baked-invoke clipboard fallback still copies a raw AA body — the build-1986 `WrapAaScriptXml` sweep reached the no-arg sibling **two lines away** and not this one. | S / low |
+| **Y13** | LOW | `BakedScriptGenerator.cs:195` | Verify mode's 32-byte dump window cannot contain the complex return it tells the user to read. | S / low |
+| **Y14** | LOW | `InvokeParamDialog.cs:850` | *"AA Script created in CE … (N baked param(s))"* is reported even when a param failed to parse and was baked as 0. | M / low |
+| **Y15** ✅ | MED | *(hand-found while fixing Y9)* `FreezeScriptGenerator.cs:193` + `Models/FreezeScriptParams.cs` | `MapToHelperType` maps **`EnumProperty` → `int32` unconditionally**, so freezing / force-holding an `enum class : uint8` field emits a **4-byte `writeInteger`** and clobbers the three bytes after it. `FreezeScriptParams` carries no size at all, so the generator *cannot* know better — the DLL's real width is on `PropertySearchMatch.PropSize` and is dropped at the model boundary. **Third site of a family this audit has already fixed twice**: W6 (CE XML export hardcoded `"4 Bytes"`) and Y2 (invoke param buffer gated on `available >= 4`). The code comment at the mapping admits it — *"if a future game has a 1-byte enum we'd want to surface the size and pick uint8 instead. Out of v1 scope."* — which is the whole finding. Needs plumbing, hence M not S. | M / low |
+| **Y16** | MED | *(hand-found while fixing Y15)* `InvokeScriptGenerator.cs:558` (`GetMailboxWriteStatement`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` → **`writeInteger`**, so the **interactive CE invoke form** writes 4 bytes for a 1-byte enum param and clobbers the next param in `params_data`. Same defect Y2 fixed in `ParamBufferBuilder` (the FIRE path), surviving in a third path — so for one dialog input the three ways of calling a UFunction still do not agree. **Fourth site of the enum-width family** (W6, Y2, Y15). One line: the method already receives `p.Size` and its `_ => size switch` fallback already maps 1/2/8 correctly — `EnumProperty` short-circuits past it, so deleting it from that arm is the fix. **⚠ NOT a one-liner — see Y16's scope note below; it is three sites, not one.** | M / low |
+
+> ### 📋 Y16 scope note — surveyed 2026-08-15, DELIBERATELY NOT FIXED
+>
+> The maintainer asked for this to be recorded rather than fixed. Recorded here because the survey
+> found **the row above understates it**: Y16 is *three* sites, not one, and the sizing rule was
+> already at hand at every one of them. Re-rated **M / low**.
+>
+> **Every call site already holds the size and does not pass it.** That is the whole shape, and it is
+> Y15's shape exactly — *the finding is the dropped field, not the guess*:
+>
+> | # | Site | What it does today | Size in scope? |
+> |---|------|--------------------|----------------|
+> | 1 | `InvokeScriptGenerator.cs:558` `GetMailboxWriteStatement` — **interactive CE form, WRITE** | `EnumProperty` shares the `IntProperty`/`UInt32Property` arm → `writeInteger`, 4 bytes over the next param | **yes**, `size` is a parameter, and the `_ => size switch` fallback below it already maps 1/2/8 correctly |
+> | 2 | `BakedScriptGenerator.cs:385` `MapToHelperType`, reached via `MapInputType` (`:430`) from the baked emit (`:154`) — **Copy AA Script (Baked), WRITE** | emits the token `'int32'`; `writeParams` in `scripts/ue5_invoke_helper.lua:250` is `elseif t == 'int32' or t == 'uint32' or t == 'enum' then writeInteger(...)`, so **even the `'enum'` token is 4 bytes** | **yes**, `v.Size` is in hand at `:154` and used only for the `fstruct` arm |
+> | 3 | `CeInvokeReturn.cs:75` (+ the display type at `BakedScriptGenerator.cs:242`) — **RETURN, READ** | classifies via the same sizeless `MapToHelperType` → `ScalarRead("int32")` → `readInteger`, so a 1-byte enum **return** is reported from 4 bytes | **yes**, `size` is already a parameter of the enclosing method; `returnParam.Size` at `:242` |
+>
+> Sites 1–2 corrupt memory; site 3 only misreports. Fixing site 1 alone would leave the three ways of
+> invoking a UFunction from one dialog input **still disagreeing**, which is the row's own complaint.
+>
+> **`BakedParamValue.Size`'s doc comment states the defective assumption outright** — *"Used for
+> sanity checks; the helper allocates from `FunctionInfoModel.ParmsSize` and writes by type, not
+> size."* That is the third time in this family a comment has documented the gap before anyone
+> reported it (`MapToHelperType`'s "out of v1 scope" for Y15; `CeWidthForSize` existing-but-unused
+> for W6).
+>
+> **The repair needs no Lua change**, which is worth knowing before scoping it: the helper already
+> accepts `byte` / `int16` / `int64` tokens (`ue5_invoke_helper.lua:246-253`), so site 2 is a C#-only
+> mapping change and no user has to re-embed the helper. Y15 already built the precedent to copy —
+> a `(string, int)` overload plus a sizeless overload that behaves as size 0, with only
+> `EnumProperty` consulting the size and a test asserting every other type **ignores** it.
+>
+> **One cosmetic straggler**, to fold in rather than file separately:
+> `BakedScriptGenerator.ShortTypeNameForComment` (`:571`) hardcodes `"enum(int32)"`, so the generated
+> script's own trailing comment would keep asserting `int32` after the write was corrected.
+>
+> The family now stands at **4 findings across 7 sites in 4 subsystems** — W6 (CE XML export) ✅,
+> Y2 (FIRE param buffer) ✅, Y15 (freeze/force) ✅, Y16 (three invoke sites + one comment) open.
+
+**Verified independently (not agent-reported):**
+
+1. **Y1's second lens MEASURED it rather than arguing it** — the strongest verification any agent has
+   produced in this audit. Instead of reasoning about Lua semantics it loaded **CE's own
+   `lua53-64.dll`** via ctypes and evaluated the emitted expression verbatim against a stub `edits`
+   table: `0x1F2A3B4C5D0` → **0**, `0X…` → 0, bare hex → 0, and only a *decimal* address survives —
+   which nothing in this project ever produces, since `Renge::AddrToStr` formats every address as
+   `0x` + uppercase hex. Branch isolation confirmed the untaken `else` would have worked. That is a
+   negative control in the form this project demands, run by an agent.
+2. **A hand-run CeLuaHygiene usage matrix found Y10 before the agents reported, and corrected my own
+   analysis.** Cross-tabulating every CE-Lua emitter against the shared helpers showed
+   `BakedScriptGenerator` alone hand-rolling `close-on-success` and carrying **no contract check**
+   while its twin `InvokeScriptGenerator` uses `AppendContractCheck`. My first pass then wrongly
+   concluded Baked performs no mailbox *writes* — the grep covered
+   `writeInteger|writeQword|writeBytes|writeFloat` and **missed `writeByte`**, which is exactly what
+   `:223` emits. The agents caught what the too-narrow pattern hid, so Y10 is a write-before-check,
+   not the cosmetic duplication I had downgraded it to. *(The matrix's control passed:
+   `CeLuaHygiene.cs` and 10+ reference generators show as helper users, so its negatives mean
+   something.)*
+3. **A related duplication the matrix surfaced, filed here so it is not lost:** `0x328` is hardcoded
+   at `BakedScriptGenerator.cs:194`/`:309` and `TeleportScriptGenerator.cs:173`/`:185`, while **five
+   generators across eight sites** interpolate `CeMailboxLayout.OffParamsData` (`InvokeScriptGenerator`
+   even aliases it). The offsets are correct today; this is cluster ④ waiting to happen the next time
+   the mailbox layout moves. `TeleportScriptGenerator` is outside U4's scope — fix it in the same
+   sweep.
+
+-----
+
 ## 3. Refuted — do not re-raise
+
+### From U4 (0 of 15 — 0%)
+
+**Nothing was refuted**, which is itself the entry: no U4 claim has been cleared, so nothing from this
+segment is on the do-not-re-raise list. See the outlier warning in §2 — the three rows re-derived by
+hand held, but the five LOWs are the least-scrutinised findings in this audit and a future session
+should not treat their survival as confirmation.
+
+### From U3 (6 of 18 — 33%)
+
+- **`DumpAllService.cs:463`** — the completeness-marker claim, refuted on the harm chain (see X11
+  above; the narrower half survives as X11, so this does not clear the whole area).
+- **`MainWindowViewModel.cs:674`** — the Extra Scan / version-override fan-out never recording the
+  AOB scan result.
+- **`MainWindowViewModel.cs:1191`** — seven handoffs calling a class "not resolvable" from a
+  truncated class list. Refuted here, but note **X2 is the surviving, narrower form of the same
+  underlying cap** — the truncation is real; what was refuted is this framing of its blast radius.
+  *(Post-X2 note, build 2888: these four sites were left BEHAVING as before — the refutation stands —
+  but their message was re-pointed at `ClassListResult.FindClassAddr`, because the old text asserted
+  "Find Instances + ListClasses both empty", which is a false statement about a capped list.)*
+- **`MainWindowViewModel.cs:2222`** and **`:2604`** — two framings of the debounced options save
+  copying `ProxyDeploy` collections off the UI thread. Both refuted.
+- **`MainWindowViewModel.cs:1163`** — panel→Live-Walker handoffs reporting a navigation the
+  `AsyncRelayCommand` refused.
 
 ### From U2 (4 of 16 — 25%)
 
@@ -1038,13 +1552,63 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session picks up at U3
+## 3b. START HERE — next session FIXES W5 (scanning is paused)
 
-*State as of 2026-08-14, after U2. Read this section first; it is written for a session with no
-memory of the previous one.*
+*State as of 2026-08-15, after U4 + ten fix batches. Read this section first; it is written for a
+session with no memory of the previous one.*
 
-> ✅ **Both U2 HIGHs are fixed. U3 is genuinely next.** W1+W7 (build 2853) and W2+W3 (build 2842)
-> shipped, along with W4 (build 2836). **Nothing open in the audit is rated HIGH.**
+> 🔵 **Y9 shipped in 2895, Y15 in 2904. Next up is W5. Do not start U5.**
+> Scanning is deliberately paused with 10 of 12 segments done — the remaining backlog is worth more
+> than another 14 findings. Work the open list one item (or one related group) at a time, and report
+> after each so the maintainer can watch the quota.
+>
+> **W5** — `CeXmlExportService.cs:2141`, `S`/low. Weak/soft/lazy pointers are drilled with
+> `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer.
+>
+> **Y16 is surveyed but DELIBERATELY NOT FIXED** — the maintainer's call, 2026-08-15. Do not pick it
+> up as filler work; ask first. The survey is worth reading anyway (§2, "Y16 scope note"): it is
+> **three** sites, not the one the row cites, and re-rated M/low. Every one of them already holds the
+> size and does not pass it.
+>
+> **Read Y15's and Y9's entries in §2 before either.** Their lessons are the reusable ones:
+> Y15 — before writing a test, ask **whether the call site can fail the test at all**. Its mapping
+> was already covered; the two places that *used* it were unreachable from a test (an Avalonia
+> constructor, a command needing a bridge and a modal), so the width could have been dropped at
+> either with zero failures. Two `internal static` seams later, the controls actually fire.
+> Y9 — the check belongs where the user can still see it, because everything downstream narrows in
+> silence; and a validator tightened without its **pre-fill** produces a dialog that rejects its own
+> default.
+>
+> ⚠ **The enum-width family has now cost four findings across SEVEN sites in four subsystems**
+> (W6 ✅ CE XML export, Y2 ✅ FIRE param buffer, Y15 ✅ freeze/force, Y16 open = three invoke sites +
+> one stale comment). If you touch any code that decides how many bytes to write — or **read** — for
+> an `EnumProperty`, the answer is *the size the engine reported*, never the type name.
+>
+> Its second-order lesson is sharper than the rule itself: at all seven sites **the size was already
+> in scope and simply not passed**. Three of them carried a code comment describing the gap before
+> anyone reported it. So the cheap sweep is not "grep `EnumProperty`" — it is *grep for a method that
+> takes a size argument and does not use it*.
+
+> ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
+> (2842), W1+W7 (2853), Y1 (2862).
+>
+> **Fixed so far — 21 findings across thirteen fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: Y15 (2904), Y9 (2895), X2 (2888), Y6+Y7 (2881), Y8 (2875), X1
+> (2870), Y2+Y3+Y4+Y5 (2866), Y1 (2862), W6 (2857), W1+W7 (2853), W2+W3 (2842), W4 (2836),
+> V1+V2+V5 (2830). Test count went 3590 → 3724 over the session; every fix carries a negative
+> control, and the doc entry for each says what the control proved.
+>
+> **Y1 is the one to read before fixing anything else**, because its verification is the template:
+> a claim about a *runtime we do not control* (Lua inside Cheat Engine) was settled by evaluating the
+> emitted expression in **CE's own `lua53-64.dll`** and cross-checking CE's **bundled Lua source** —
+> two independent detectors, neither of which is "reasoning about Lua". `celua.txt` in the CE install
+> is the API reference to consult first for any CE-side call; `D:/Github/cheat-engine` is the last
+> public source (7.5) when the reference is not enough.
+>
+> 🔁 **Read this before fixing anything from U3.** X1 is the D5/**F4 fix applied to one of its two
+> sites** — the DLL covered both the single and batch property-search paths, the C# covered only the
+> single one. That is the **third** time this audit has found its own fix half-applied (V2 = one side
+> of the wire, W4/W6 = some call sites, X1 = one of two twins). Before closing any fix, grep for its
+> siblings across languages, call sites, and single/batch twins.
 >
 > **What is owed instead is verification, and it is the cheapest work available.** Three separate
 > items are queued in
@@ -1067,14 +1631,20 @@ is cheap and compounds — not on starting the next segment, which will be cut o
 
 ### What is done
 
-**Scanning: 8 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2. Still open:
-**U3-U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
+**Scanning: 10 of 12** — D1, D2, D3, D4a, D4b (`8198309`), D5 (`e131c8a`), U1, U2, U3, U4. Still
+open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.**
 
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs remain.
+**Still open: Y10–Y14, Y16, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875), **Y6+Y7** (2881),
+**Y9** (2895) and **Y15** (2904) — 10 of its 16 (Y15 was hand-found while fixing Y9, and Y16 while
+fixing Y15); U3 shipped **X1** (2870) and **X2** (2888) — 2 of its 12.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
+U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
+other half of a fix this audit already paid for).
+(Note the ID collision: `U2`/`U3` in that list are D1 findings in `Ubel.cpp`, *not* segment names.)
 (Note the ID collision: `U2`/`U3` are D1 findings in `Ubel.cpp`, *not* segment names.)
 
 ### The C# lens set — as run in U1, with what it actually yielded
@@ -1108,27 +1678,50 @@ the skeptics, and the AOT-specific refutation guidance; the D5 script
 (`audit5-seg-d5-fern-frieren-wf_39143753-6df.js`) remains the C++ flavour. Both are 5 finders ->
 skeptic batches -> second lens on surviving HIGH/MED, and log a wipeout warning when a finder dies.
 
-**U3 scope** (from section 1): dump services + MainWindow VM — 1517 + 437 + 1366 early lines =
-**~3,320**. `MainWindowViewModel` is the composition root and command surface, so the U1 lens set
-(mvvm-lifetime / async-cancel / domain-correctness / status-honesty) fits it better than U2's emitter
-lenses did. Keep U2's **round-trip instinct** though: ask of every dump artifact whether anything ever
-reads back what was written.
+**U5 scope** (from section 1): the remaining VMs / Models / Core / scoring — Console 445,
+InstanceFinder 405, InterestingProps 380, PropertySearch 356, InterestingFuncs 345, LiveFieldValue 478,
+Logging 362, scoring tables ~800 = **~3,500**. It is the last UI segment; S1 (early Lua scripts) and
+T1 (tail sweep) follow.
 
-**What U2 proved about lens choice, carry it forward:** `aot-trim` was dropped for U2 (it found
-nothing in U1) and nothing was lost. `domain-correctness`/`pointer-chain` and `status-honesty` were
-the two productive lenses in both C# segments — weight them, and give one lens the *consumer's*
-point of view (in U2 that was "does the artifact parse in the tool that reads it", which produced
-both HIGHs).
+**Two U3/U4 findings land in U5's files — do not re-derive, but DO check their siblings:** X1's
+consumers are `InterestingPropertiesViewModel` and `DetectStatsViewModel` (the panels that present a
+capped pool as complete), and the scoring tables are what feed them. Ask instead what *else* those
+panels report as complete.
 
-**Put in every agent prompt** (measured to improve output): the calibration — *156 raw claims, 75
-refuted (**25–73% per segment**, ~48% overall; the two C# segments are the two lowest at 33% and 25%),
-eighteen HIGHs claimed, fifteen died and three were real* — plus *"read the surrounding comments and
-the callers first"* (five of D4b's nine refutations were won by finding a comment naming the defect
-the code already prevents), the **seam** instruction above, and **REPORT ONLY, no edits**.
+**What U4 proved about lens design, and it is the most transferable result so far.** The
+`ce-lua-hygiene` lens — pointed at CLAUDE.md's MUST-follow rule block as a *specification* — produced
+the HIGH. A rule set precise enough to make violations **decidable rather than arguable** is worth a
+lens of its own. For U5 the equivalent specifications are CLAUDE.md's **keyword-search-box contract**
+(space = AND via `ObjectTreeFilter.MatchesAllTerms`, never a single `.Contains` over a concatenated
+string; per-keyword memory via `KeywordSearchMemory` with `Schedule` vs `Commit` for async counts;
+`Flush()` before clearing on navigation) and the **UI-strings rule** (English only, in
+`Resources/Strings/en.axaml`, referenced via `StaticResource` — CI-gated by `check_axaml_strings`, so
+a violation is decidable). Point one lens at each.
 
-**Do not re-derive:** everything already in sections 2 and 3, especially D5's `Fern.cpp` /
-`Frieren.cpp` findings, the six shipped D5 fixes, U1's eleven findings + six refutations (V1/V2/V5
-now fixed), and U2's eight findings + four refutations.
+**What the C# segments proved about lens choice:** `aot-trim` was dropped after U1 (it found nothing)
+and nothing was lost. `domain-correctness` and `status-honesty` were productive in all three. Give one
+lens the **consumer's** point of view — in U2 that was "does the artifact parse in the tool that reads
+it" and it produced both HIGHs; in U4 the consumer is **Cheat Engine's Lua engine**, so
+docs/CE-Bugs-Minesweeper.md and docs/ce-plugin-sdk-notes.md are the grounding.
+
+**Run the unread-wire-key sweep again for U4/U5 — but know its blind spot.** Diffing DLL-written vs
+C#-read JSON keys found X3; it structurally could NOT find X1, because a key read on ONE command's
+path counts as read everywhere. A per-command version of that sweep would find both, and would be
+worth writing once.
+
+**Put in every agent prompt** (measured to improve output): the calibration — *195 raw claims, 81
+refuted (**0–73% per segment**, ~42% overall; U4 refuted nothing, which is an outlier and not a
+target), twenty-two HIGHs claimed, eighteen died and four were real* — plus *"read the surrounding
+comments and the callers first"*, the **seam** instruction above, and **REPORT ONLY, no edits**.
+
+**And add U4's lesson about what hides a defect:** all four real HIGHs lived in code whose happy path
+is only ever exercised with **default or absent input** — a `'0x0'` default that parses correctly, a
+map row whose first element is at offset 0, a `.usmap` nobody opened. Ask of each finding: *would a
+smoke test with default values catch this?* If not, that is the finding to chase.
+
+**Do not re-derive:** everything already in sections 2 and 3 — D5's `Fern.cpp`/`Frieren.cpp`
+findings and its six shipped fixes, U1's eleven (V1/V2/V5 fixed), U2's eight (six fixed), U3's twelve
++ six refutations, and U4's fourteen (nothing refuted — see the outlier warning).
 
 ### One tree, two sessions
 
@@ -1188,9 +1781,9 @@ be the default for any DLL fix:
 
 ## 4. Cross-segment rollup — read this before fixing anything
 
-**Status: 8 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5, U1, U2). **68 distinct findings:
-3 HIGH · 39 MEDIUM · 25 LOW · 1 INFO.** 156 raw claims, **75 refuted (48%)**. Remaining: U3–U5, S1, T1.
-**The DLL is fully scanned; everything left is C# and Lua.**
+**Status: 10 of 12 segments scanned** (D1, D2, D3, D4a, D4b, D5, U1, U2, U3, U4). **94 distinct
+findings: 4 HIGH · 50 MEDIUM · 39 LOW · 1 INFO.** 195 raw claims, **81 refuted (42%)**. Remaining:
+U5, S1, T1. **The DLL is fully scanned; everything left is C# and Lua.**
 
 | Segment | Agents | Raw | Refuted | Distinct | HIGH claimed → survived |
 |---|--:|--:|--:|--:|---|
@@ -1202,6 +1795,8 @@ be the default for any DLL fix:
 | D5 Fern+Frieren | 14 | 19 | 11 (58%) | 8 **+1** ¤ | 1 → **0** |
 | U1 LiveWalker+Pointer+ObjectTree | 16 | 19 | 6 (33%) | 11 | 1 → **1** |
 | U2 export services | 21 | 20 | 4 (25%) | 8 | 7 → **2** ◊ |
+| U3 dump services + MainWindow VM | 11 | 19 | 6 (33%) | 11 **+1** ✧ | 0 → 0 |
+| U4 dialogs + CE generators | 18 | 20 | **0 (0%)** ⚠ | 14 | 4 → **1** |
 
 ¤ **D5's section holds 9 rows but its run produced 8** — F8 came from verifying F6, not from a
 finder (same as D2's G7 below).
@@ -1210,11 +1805,18 @@ finder (same as D2's G7 below).
 version/layout desync seen through different lenses, one was downgraded to MEDIUM by the second lens.
 The Distinct column counts findings, not claims.
 
+✧ **U3's section holds 12 rows but its run produced 11** — X3 came from a hand-run sweep of
+DLL-written vs C#-read JSON keys, not from a finder (same as D2's G7 and D5's F8).
+
+⚠ **U4 refuted NOTHING, which is an outlier, not a result.** Every other segment killed 25–73%. The
+rate is therefore unusable as a quality signal for U4; three of its rows were re-derived by hand
+instead and held. Its five LOWs are the least-scrutinised findings in this audit.
+
 ✦ **D2's section holds 7 rows but its run produced 6.** G7 did not come from any finder — it was
 found during the 2026-08-14 live-verification session and filed into the D2 section because that is
 where it belongs by subject. The Raw/Refuted columns describe the *runs*; the totals above count
 *rows*, so the two reconcile only through this row. (Counted directly: `grep -cE '^\| \*\*[A-Z]+[0-9]+\*\*'`
-scoped to §2 = **68**, of which 3 HIGH / 39 MED / 25 LOW / 1 INFO. Re-derive it rather than trusting
+scoped to §2 = **94**, of which 4 HIGH / 50 MED / 39 LOW / 1 INFO. Re-derive it rather than trusting
 the table — and **scope the grep to §2**, because over the whole file it also catches §4's cluster
 tables and returns 71. ⚠ The severity column does **not** parse uniformly: five rows carry a footnote
 marker between the ID and the severity (`G7` †=LOW, `PX1` ‡=MED, `MB3` †=INFO, `F1` ‡=MED, `F8` ¤=MED),
@@ -1235,12 +1837,19 @@ export output is consumed by *other programs* — Cheat Engine, a C++ compiler, 
 nothing in this project runs. A defect there produces a successful-looking export and is discovered
 only by a user, if ever. W1 went undetected for 5½ months.
 
-**The refutation rate is 25–73% across eight segments and is NOT a constant — and it is TRENDING
-DOWN as the audit moves into C#.** The six DLL segments sat at ~44–73%; U1 came in at 33% and U2 at
-**25%**, the two lowest. Two things move it, and they point the same way: the C# skeptics are the first
-with **real test coverage** to refute *with* (their kills are visibly better argued), and the C# code
-under audit is genuinely denser in real defects because its output is validated by programs we never
-run. Quote the range to finders, not a constant, and do not budget U3–U5 on the DLL's ~50%.
+**The refutation rate is 25–73% across nine segments and is NOT a constant.** The six DLL segments
+sat at ~44–73%; the three C# segments came in at 33% / 25% / 33%, i.e. consistently lower. Two things
+move it and they point the same way: the C# skeptics are the first with **real test coverage** to
+refute *with* (their kills are visibly better argued), and the C# code is genuinely denser in real
+defects because much of its output is validated by programs we never run. Quote the range to finders,
+not a constant, and budget U4/U5 on ~30%, not the DLL's ~50%.
+
+**Severity does NOT decay monotonically — that prediction was wrong and is worth keeping as a
+correction.** After U1 (one HIGH), U2 (two) and U3 (none claimed), the note here predicted U4 would
+"look like U3". **U4 produced a HIGH**, and the same kind as U1's and W1's: a capability that has never
+worked, hidden because its *default value happens to be correct*. The lesson is not about severity
+trending but about **what makes a defect invisible** — all four real HIGHs in this audit were in code
+whose happy path is exercised only with default or absent input.
 
 ### The clusters, in the order worth fixing
 
@@ -1298,6 +1907,14 @@ read and discarded the real one), D5/**F7** (the `-7` string names an execution 
 happened). **D5 makes this the largest cluster (8 members) and the one with the clearest user cost:**
 F4 is the exact shape behind four "the scan missed my field" reports, and its fix is the cheapest in
 the audit — Fern can detect the cap locally, since `SearchProperties` stops *exactly* at `maxResults`.
+
+**U3 makes the cluster's recurrence undeniable: the fix for one of its own members was half-applied.**
+U3/**X1** is the D5/F4 truncation fix present on the DLL for both property-search paths and on the C#
+for one, so the batch path — which is what the two *discovery* panels use — still presents a capped
+pool as the pool. U3 adds three more: **X3** (the DLL publishes a three-flag verdict that the walker
+may be running on unvalidated default offsets, and the UI never asks for it), **X4** (a Dump All
+completion line derived from the file's byte length rather than from what the dump did) and **X2**
+(a real class reported "not found" because the lookup reads one capped page).
 
 **U2 adds the cluster's most extreme member and a new sub-shape.** U2/**W8** is the familiar one — a
 USMAP export silently drops every Blueprint-generated class (thousands on a normal title) and reports

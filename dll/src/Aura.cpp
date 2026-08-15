@@ -4896,6 +4896,11 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
         result.results.push_back(std::move(entry));
     }
 
+    // The loop above exits on `results.size() == maxResults` as well as on the end
+    // of the array, so a full page means the walk stopped early. Same test (and the
+    // same one-index-of-slack ambiguity) as SearchByName / SearchProperties.
+    result.truncated = static_cast<int>(result.results.size()) >= maxResults;
+
     // Sort by heuristic score descending, then alphabetically for ties
     std::sort(result.results.begin(), result.results.end(),
         [](const ClassListEntry& a, const ClassListEntry& b) {
@@ -4904,8 +4909,9 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
             return a.className < b.className;
         });
 
-    Sein::Info("PIPE:list", "ListClasses: %d classes (gameOnly=%d, scanned %d objects)",
-                 static_cast<int>(result.results.size()), gameOnly ? 1 : 0, result.scannedObjects);
+    Sein::Info("PIPE:list", "ListClasses: %d classes (gameOnly=%d, scanned %d objects)%s",
+                 static_cast<int>(result.results.size()), gameOnly ? 1 : 0, result.scannedObjects,
+                 result.truncated ? ", STOPPED at the result cap — more classes exist" : "");
     return result;
 }
 

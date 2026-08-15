@@ -50,6 +50,125 @@ public class FreezeScriptGeneratorTests
         Assert.False(FreezeScriptGenerator.IsTypeSupported(ue));
     }
 
+    // ==================================================================
+    // Audit #5 Y15 — an EnumProperty's width comes from the ENGINE.
+    //
+    // The mapping used to answer "int32" for every enum, so freezing the
+    // dominant UE shape (`enum class E : uint8`) emitted a 4-byte
+    // writeInteger over a 1-byte field — destroying the three bytes after
+    // it, 20 times a second, for as long as the freeze was active.
+    // ==================================================================
+
+    [Theory]
+    [InlineData(1, "uint8")]
+    [InlineData(2, "uint16")]
+    [InlineData(4, "int32")]
+    [InlineData(8, "int64")]
+    [InlineData(0, "int32")]   // unreported (older DLL) → legacy default
+    [InlineData(3, "int32")]   // nonsense width → legacy default, never a partial write
+    [InlineData(-1, "int32")]
+    public void HelperTypeForSize_PicksWriterByWidth(int size, string expected)
+    {
+        Assert.Equal(expected, FreezeScriptGenerator.HelperTypeForSize(size));
+    }
+
+    [Theory]
+    [InlineData(1, "uint8")]
+    [InlineData(2, "uint16")]
+    [InlineData(4, "int32")]
+    [InlineData(8, "int64")]
+    [InlineData(0, "int32")]
+    public void MapToHelperType_EnumProperty_FollowsReportedSize(int size, string expected)
+    {
+        Assert.Equal(expected, FreezeScriptGenerator.MapToHelperType("EnumProperty", size));
+        // Supported at every width — the gate is a property of the TYPE.
+        Assert.True(FreezeScriptGenerator.IsTypeSupported("EnumProperty"));
+    }
+
+    [Theory]
+    // Every type whose width its NAME already fixes must ignore the size argument —
+    // a bogus/missing size from the wire must not turn a float into a byte. Only
+    // EnumProperty is width-ambiguous, so only EnumProperty consults it.
+    [InlineData("BoolProperty",   "bool")]
+    [InlineData("ByteProperty",   "uint8")]
+    [InlineData("Int8Property",   "int8")]
+    [InlineData("Int16Property",  "int16")]
+    [InlineData("IntProperty",    "int32")]
+    [InlineData("Int64Property",  "int64")]
+    [InlineData("UInt64Property", "uint64")]
+    [InlineData("FloatProperty",  "float")]
+    [InlineData("DoubleProperty", "double")]
+    public void MapToHelperType_NonEnumTypes_IgnoreReportedSize(string ue, string expected)
+    {
+        foreach (var size in new[] { 0, 1, 2, 4, 8, 99 })
+            Assert.Equal(expected, FreezeScriptGenerator.MapToHelperType(ue, size));
+    }
+
+    [Fact]
+    public void MapToHelperType_SizelessOverload_MatchesSizeZero()
+    {
+        // The 1-arg form is what IsTypeSupported and the row gates call. It must be
+        // exactly the legacy behaviour, not a second table that can drift.
+        foreach (var ue in new[]
+                 {
+                     "BoolProperty", "ByteProperty", "Int8Property", "Int16Property",
+                     "UInt16Property", "IntProperty", "UInt32Property", "EnumProperty",
+                     "Int64Property", "UInt64Property", "FloatProperty", "DoubleProperty",
+                     "StructProperty", "NopeProperty",
+                 })
+        {
+            Assert.Equal(FreezeScriptGenerator.MapToHelperType(ue, 0),
+                         FreezeScriptGenerator.MapToHelperType(ue));
+        }
+    }
+
+    [Fact]
+    public void Generate_OneByteEnum_EmitsUint8NotInt32()
+    {
+        var p = new FreezeScriptParams
+        {
+            ClassName      = "ABP_Player_C",
+            PropertyName   = "CurrentStance",
+            PropertyOffset = 0x2C1,
+            UeTypeName     = "EnumProperty",
+            PropertySize   = 1,
+            ValueLiteral   = "3",
+        };
+
+        var script = FreezeScriptGenerator.Generate(p);
+
+        Assert.Contains("valueType          = 'uint8',", script);
+        // The defect verbatim: a 4-byte writer aimed at a 1-byte field.
+        Assert.DoesNotContain("valueType          = 'int32',", script);
+    }
+
+    [Theory]
+    [InlineData(1, "uint8")]
+    [InlineData(2, "uint16")]
+    [InlineData(4, "int32")]
+    [InlineData(8, "int64")]
+    public void Generate_Enum_CfgValueTypeAlwaysMatchesTheMapping(int size, string expected)
+    {
+        var p = new FreezeScriptParams
+        {
+            ClassName      = "AFoo",
+            PropertyName   = "Bar",
+            PropertyOffset = 0x10,
+            UeTypeName     = "EnumProperty",
+            PropertySize   = size,
+            ValueLiteral   = "0",
+        };
+
+        var script = FreezeScriptGenerator.Generate(p);
+
+        Assert.Equal(expected, FreezeScriptGenerator.MapToHelperType("EnumProperty", size));
+        Assert.Contains($"valueType          = '{expected}',", script);
+        // The debug line names the same type — the CFG and the log must not disagree
+        // about what is being written (audit #4's root cause: report and reality
+        // computed by different code paths).
+        Assert.Contains($"({expected}@0x10)", script);
+    }
+
     [Theory]
     [InlineData("plain",          "plain")]
     [InlineData(@"back\slash",    @"back\\slash")]
@@ -71,6 +190,7 @@ public class FreezeScriptGeneratorTests
             PropertyName   = "CurrentHealth",
             PropertyOffset = 0x4F8,
             UeTypeName     = "FloatProperty",
+            PropertySize   = 4,
             ValueLiteral   = "9999.0",
         };
 
@@ -113,6 +233,7 @@ public class FreezeScriptGeneratorTests
             PropertyName   = "bCanBeDamaged",
             PropertyOffset = 0x328,
             UeTypeName     = "BoolProperty",
+            PropertySize   = 1,
             ValueLiteral   = "false",
         };
 
@@ -131,6 +252,7 @@ public class FreezeScriptGeneratorTests
             PropertyName   = "X",
             PropertyOffset = 0x10,
             UeTypeName     = "IntProperty",
+            PropertySize   = 4,
             ValueLiteral   = "1",
         };
 
@@ -150,6 +272,7 @@ public class FreezeScriptGeneratorTests
             PropertyName   = "Bar",
             PropertyOffset = 256,
             UeTypeName     = "IntProperty",
+            PropertySize   = 4,
             ValueLiteral   = "0",
         };
 

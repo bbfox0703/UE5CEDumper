@@ -225,9 +225,19 @@ public partial class DetectStatsViewModel : ViewModelBase
             ApplyFilter();
 
             int confirmedCount = results.Count(r => r.IsConfirmed);
+            // Same cap caveat as Interesting Properties: this panel drives the SAME batch call at
+            // the same 200-row-per-query limit, so a common seed ("Max", "Count", "Health") caps
+            // routinely and the candidate list is a page, not the pool (audit #5 X1).
+            int cappedQueries = batch.TruncatedQueries.Count;
+            var capSuffix = batch.Aborted
+                ? "  ⚠ scan cancelled — partial"
+                : cappedQueries > 0
+                    ? $"  ⚠ {cappedQueries} keyword(s) hit the 200-row cap — more candidates exist"
+                    : "";
             StatusText =
                 $"{results.Count} candidates · {confirmedCount} confirmed"
                 + (UseSnapshotSignal ? $" · snapshot: {snapNote}" : "")
+                + capSuffix
                 + "  — reference only, verify before use.";
         }
         catch (Exception ex)

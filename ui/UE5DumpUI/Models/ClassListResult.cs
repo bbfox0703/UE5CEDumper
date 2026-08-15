@@ -69,5 +69,57 @@ public class ClassListResult
     public int Total { get; set; }
     public int ScannedObjects { get; set; }
     public int TotalClasses { get; set; }
+
+    /// <summary>
+    /// True when the DLL stopped walking GObjects at <see cref="RequestedLimit"/>
+    /// instead of reaching the end — this list is a PAGE, not the pool.
+    /// </summary>
+    public bool Truncated { get; set; }
+
+    /// <summary>The row cap this result was requested with — named in the
+    /// "capped" message so the user knows which number to raise.</summary>
+    public int RequestedLimit { get; set; }
+
     public List<GameClassEntry> Classes { get; set; } = new();
+
+    /// <summary>
+    /// Exact-name class-address lookup that reports WHICH KIND of miss a miss was.
+    ///
+    /// Why this is not a bare <c>FirstOrDefault</c>: list_classes returns at most
+    /// <see cref="RequestedLimit"/> rows and the DLL stops the moment it has them, so
+    /// on a large title a perfectly real class simply is not in the page. Every caller
+    /// used to render that as "Class X not found", which reads as "X does not exist" —
+    /// the exact conclusion that costs a user the afternoon (audit #5 X2).
+    /// </summary>
+    public ClassAddrLookup FindClassAddr(string className)
+    {
+        if (string.IsNullOrEmpty(className))
+            return new ClassAddrLookup("", Truncated, RequestedLimit);
+
+        foreach (var c in Classes)
+        {
+            if (!c.ClassName.Equals(className, StringComparison.Ordinal)) continue;
+            if (string.IsNullOrEmpty(c.ClassAddr)) continue;
+            return new ClassAddrLookup(c.ClassAddr, Truncated, RequestedLimit);
+        }
+        return new ClassAddrLookup("", Truncated, RequestedLimit);
+    }
+}
+
+/// <summary>
+/// Outcome of <see cref="ClassListResult.FindClassAddr"/>. A hit carries the address;
+/// a miss carries enough context to say honestly whether the class is absent or merely
+/// past the cap.
+/// </summary>
+public readonly record struct ClassAddrLookup(string Addr, bool Truncated, int Limit)
+{
+    public bool Found => !string.IsNullOrEmpty(Addr);
+
+    /// <summary>
+    /// Predicate half of a miss message — meaningless on a hit. Caller renders it as
+    /// <c>$"Class {name} {MissReason}"</c> so the two shapes stay one sentence apart.
+    /// </summary>
+    public string MissReason => Truncated
+        ? $"not in the class list — it was CAPPED at {Limit:N0} rows, so the class may still exist"
+        : "not found";
 }
