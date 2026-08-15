@@ -79,7 +79,7 @@ contract, not by line count**, so the established method applies unchanged.
 | Phase | Contents | Early |
 |-------|----------|------:|
 | **T1a** ✅ | DLL value-scan engine — `Radar.cpp` 696, `Radar.h` 354, `Methode.cpp` 269, `Heiter.cpp` 185 | 1,504 |
-| **T1b** | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
+| **T1b** ✅ | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
 | **T1c** | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
 | **T1d** ✅ | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
 | **T1e** | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
@@ -1384,6 +1384,95 @@ MEDIUM.
    even aliases it). The offsets are correct today; this is cluster ④ waiting to happen the next time
    the mailbox layout moves. `TeleportScriptGenerator` is outside U4's scope — fix it in the same
    sweep.
+
+-----
+
+### T1b — DLL contract headers + the entire C++ test suite — ✅ scanned 2026-08-15
+
+**13 agents** (5 lenses → 4 refute batches → 4 second-lens batches), 0 errors, over 10 files /
+2,394 early lines. **40 raw → 34 distinct** (6 folded in-script) **→ 7 refuted → 0 killed by the
+second lens → 27 confirmed. Kill rate 21%.**
+
+**Tally: 2 HIGH · 4 MED · 15 LOW · 6 INFO.** The two HIGHs are **one defect** reported by two lenses
+at the two arms of the same branch; both were re-derived by hand.
+
+> ### 🔴 AD1/AD2 — a C++ test target that FAILS TO COMPILE is reported as "skip", and the build exits 0
+>
+> This is what putting the tests in scope as *subjects* was for. **The pass/fail signal is derived
+> from "did an exe path get assigned", not from "did the build succeed"** — and one failure mode of
+> the former is indistinguishable from a benign one. Verified line by line:
+>
+> - `build.ps1:351-357` — `$cppTargets` is **UE5Dumper + the four proxies only**. Neither test target
+>   is ever built by the DLL phase, so a break confined to a test target cannot fail any other phase.
+> - `build.ps1:184` — `if ($LASTEXITCODE -ne 0) { return $false }`, so a compile error makes
+>   `$dllBuildOk` false.
+> - `build.ps1:670-677` — `$dllTestExe = $null`, assigned **only inside `if ($dllBuildOk)`**.
+> - `build.ps1:691-693` — the `else` arm is **exactly one line**:
+>   `Write-Info "dll_helpers_test.exe not available (skip — run -Target DLL or All first)"`.
+>   **`$exitCode` is never touched.** The identical shape sits at `:665-667` for the utf8 suite.
+> - `.github/workflows/ci.yml:142` — `./build.ps1 -Mode Publish -Clean -NoBumpBuildNumber`, and
+>   `build.ps1:43` is `[string]$Target = "All"`, so **CI runs straight through this branch**, with
+>   `-Clean` guaranteeing no stale exe can rescue it.
+>
+> Rename a symbol, update the one DLL caller and not the test, and: the five shipping targets build
+> clean, `dll_helpers_test` fails to compile, the script prints an INFO line, `Status: SUCCESS`, CI
+> green — and **~700 assertions across Radar/Orden/GraphPath/Lineal/Denken/Solitar/Solide/Macht stop
+> executing with no signal**, including the memory-corruption class `Test_Solitar_ApplyBoolBit` and
+> `Test_Packed_*` exist to catch.
+>
+> **The message actively misdirects.** "not available (skip — run -Target DLL or All first)" tells the
+> operator they forgot a prerequisite — when they ran the *right* target and a compile error scrolled
+> past in the same transcript. The correct diagnosis is the one the text argues against.
+>
+> ✅ **Negative control, run rather than assumed:** `build.ps1 -Target Test` on the current tree prints
+> `>> Running utf8_helpers_test... [OK] utf8_helpers_test passed` and `>> Running dll_helpers_test...`,
+> so **the C++ suite really is executing today** and every "tests green" claim in this session's
+> commits is backed by a real run. This defect is **latent, not currently biting** — which is the
+> distinction that decides its priority: it is a trap for the next person who breaks a test's
+> compilation, not an active hole.
+>
+> Fix is small and splits the two causes: set `$exitCode = 1` + `Write-Fail` when `$xxxBuildOk` is
+> false, and keep the benign "skip" only for the genuinely-absent-`$BUILD_DIR` case at `:645`/`:671`.
+>
+> **Scope note:** `build.ps1` is not one of T1b's ten files. It is recorded here because it is the
+> **sole enforcement path** for the two files that *are* in scope — a property of the suite under
+> audit, not a stray finding. Two in-repo comments assert the opposite contract in writing
+> (`dll/CMakeLists.txt:503-504` "a non-zero exit fails the test phase";
+> `dll/tests/utf8_helpers_test.cpp:8-9` "any failure short-circuits the test phase") — both describe
+> the **run** path, and the **build** path has no failure channel at all. Root cause #6 again.
+
+| ID | Sev | Location | Defect | Effort/Risk |
+|----|-----|----------|--------|-------------|
+| **AD1** | HIGH | `build.ps1:666` (Unit Tests block — utf8_helpers_test / dll_helpe) | A C++ test target that fails to COMPILE is reported as "skip", not as a failure — the whole C++ suite can go silent, including in CI **[2 lenses]** | S / low |
+| **AD2** | HIGH | `build.ps1:692` (Test phase — dll_helpers_test / utf8_helpers_tes) | A C++ test target that FAILS TO COMPILE is reported as "skip" and leaves exitCode 0 — the whole C++ suite silently stops running, in CI too | S / low |
+| **AD3** | MED | `Genau.cpp:1120` (ScanForTarget — hint phase `sorted.erase(it)`) | The cached-hint fast path inspects only the FIRST match, then deletes the pattern from the full scan | S / low |
+| **AD4** | MED | `Renge.h:106` (Renge::CMD_GET_PROTECT_STATE / UE5_GetProtectSta) | The GodMode want/live/resolvable command is fully shipped in the DLL and has zero clients; the UI reads the live-only proxy instead | S / low |
+| **AD5** | MED | `Utf8Helpers.h:324` (DecodeFStringBuffer (KNOWN RESIDUAL)) | The header's own "KNOWN RESIDUAL" mis-decodes an ASCII FUtf8String as UTF-16 and produces a CJK glyph — and no test pins the boundary it admits | M / low |
+| **AD6** | MED | `dll_helpers_test.cpp:243` (Test_Mimic_PollLatency_OneMillisecond) | The mailbox poll-latency test exercises ZERO Mimic code — it re-implements the mechanism inside the test process, while its own comment claims it "covers the actual mechanism" **[2 lenses]** | M / low |
+| **AD7** | LOW | `Frieren.h:5` (Frieren.h file header comment (and Fern.h:5)) | The two headers the CI derived-count gate DERIVES FROM carry stale counts of their own contents, and are the only claim sites the gate does not check | S / low |
+| **AD8** | LOW | `Frieren.h:84` (UE5_CallProcessEvent) | The exported invoke's documented error table stops at -4, omitting -5/-7/-8 — including the one code that means "do not free your params buffer" | S / low |
+| **AD9** | LOW | `Genau.h:174` (Genau::FindGEngineSlot) | The declaration names bOffsetsValidated as the enforced precondition; the code gates on bOffsetsProbeRan, and Grimoire.h records that swapping to the strict flag regresses &GEngine | S / low |
+| **AD10** | LOW | `Himmel.h:209` (IsCeReplayableAob) | IsCeReplayableAob approves RipDeref and the deref half of RipBoth, which the published (pattern, pos, len) triple cannot express | M / low |
+| **AD11** | LOW | `Himmel.h:1552` (Sig::GOBJECTS_PATTERNS GOBJ_DI427_1 / Sig::GWORL) | Two table entries can never win: a broader sibling with identical resolve geometry sits at a lower priority number and matches everywhere they do **[2 lenses]** | S / low |
+| **AD12** | LOW | `Himmel.h:1581` (GOBJECTS_PATTERNS[] entry "GOBJ_PS1") | GOBJ_PS1's instrOffset points 2 bytes inside its LEA, so every match resolves to garbage | S / low |
+| **AD13** | LOW | `Himmel.h:1611` (GOBJECTS_PATTERNS[] entry "GOBJ_PS6") | GOBJ_PS6's instrOffset names the displacement, so the arithmetic anchor never resolves | S / low |
+| **AD14** | LOW | `Himmel.h:1808` (GWORLD_PATTERNS[] entry "GWLD_G427_2") | GWLD_G427_2 is strictly subsumed by GWLD_SF_4 at a lower priority number, so it can never be reached | S / low |
+| **AD15** | LOW | `Himmel.h:1814` (Sig::GWORLD_PATTERNS — GWLD_TQ_3 / GWLD_TQ_4) | GWLD_TQ_3 and GWLD_TQ_4 put the DISPLACEMENT offset (3) in the instrOffset field, so both resolve to a garbage address — and TQ_4 can publish it as &GWorld **[2 lenses]** | S / low |
+| **AD16** | LOW | `Himmel.h:1815` (GWORLD_PATTERNS[] entry "GWLD_TQ_4") | GWLD_TQ_4 resolves off the displacement instead of the instruction, and its allowNull flag lets the resulting arbitrary address validate | S / low |
+| **AD17** | LOW | `Himmel.h:2019` (ASSERT_TABLE_ORDER / the compile-time table inva) | Nothing validates a signature's (instrOffset, opcodeLen, totalLen) against its own pattern text — the blocktest oracle covers 35 of 158 entries | S / low |
+| **AD18** | LOW | `Lugner_Dinput8.cpp:33` (LoadRealDinput8) | GetSystemDirectoryW's return value is discarded and the path is built with the unbounded wsprintfW — on failure the proxy LoadLibraryW's a drive-root-relative "\dinput8.dll" | S / low |
+| **AD19** | LOW | `Renge.h:215` (Renge::StrToAddr) | Renge ships a strict and a lenient address parser with a documented preference; the strict one is used at 8 sites and the lenient one at 22, including write_mem's own address | M / low |
+| **AD20** | LOW | `Utf8Helpers.h:34` (Utf8Helpers::Sanitize / the header's published c) | Utf8Helpers is the repo's declared defence against nlohmann's strict validator yet offers no LENGTH-BOUNDED variant, and its test file has zero truncation tests — which is exactly how U7 shipped **[2 lenses]** | M / low |
+| **AD21** | LOW | `dll_helpers_test.cpp:3363` (Test_Routine_SafeThread) | The SafeThread test detaches a thread that keeps writing to a stack local after the frame is gone, corrupting the three tests that run after it | S / low |
+| **AD22** | INFO | `Fern.h:5` (Fern (file banner)) | The Fern.h banner still says "~30 commands" against a real 99 — the seventh stale copy the derived-count CI gate was built for, and the gate does not cover source files | S / low |
+| **AD23** | INFO | `Himmel.h:156` (file-header UE 5.8 note ("back into a base ancho) | The header says the -0x14 and +0x0C adjustments produce an FUObjectArray base anchor; the entries themselves say they land on ObjObjects | S / low |
+| **AD24** | INFO | `Renge.h:268` (Renge::MakeResponse / MakeError / MakeEvent / Ad) | Enumerated coverage gaps in the in-scope headers — including the pipe response envelope, which is structurally UNLINKABLE from the only test target that includes it | M / low |
+| **AD25** | INFO | `Utf8Helpers.h:236` (IsWellFormedUtf8) | hasMultiByte is left true when the function returns false, and nothing documents that the out-param is only meaningful on a true return | S / low |
+| **AD26** | INFO | `utf8_helpers_test.cpp:204` (Test_EncodeUtf16_OutputAlwaysValidUtf8 / Test_De) | Two test comments describe coverage the tests do not provide — one input is not the pathological case it is named for, the other's deliberate setup is inert | S / low |
+| **AD27** | INFO | `utf8_helpers_test.cpp:358` (Test_Decode_Utf8CjkWithTrailingHeapBytes) | The test's deliberately-non-zero UTF-16 terminator bytes are unreachable setup, and its comment is contradicted by the test 80 lines below | S / low |
+
+> **Hand-verified:** AD1/AD2 in full, including running the negative control. **Not re-derived:** the
+> 4 MEDs, 15 LOWs and 6 INFOs — 21% kill rate, below the 33–73% band, so re-derive before fixing.
 
 -----
 
