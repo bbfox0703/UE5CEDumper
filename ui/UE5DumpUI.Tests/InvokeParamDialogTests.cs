@@ -387,4 +387,72 @@ public class InvokeParamDialogTests
         Assert.Null(InvokeParamDialog.ResolveTrustedLayout("StructProperty", "", 24, 505));
         Assert.Null(InvokeParamDialog.ResolveTrustedLayout("StructProperty", "FSomeGameStruct", 40, 505));
     }
+
+    // ── audit #5: the width family's READ side ──────────────────────────────
+    //
+    // DecodeParamValue grouped "EnumProperty" with "IntProperty" behind an
+    // `available >= 4` guard, so UE's dominant shape — `enum class E : uint8` —
+    // was decoded as FOUR bytes whenever four bytes of buffer remained: the value
+    // shown was the enum byte plus three bytes belonging to whatever followed it.
+    // This is the read half of the mistake Y2 fixed on the write side of the same
+    // file, and the read half is the one that corrupts nothing and just lies.
+
+    [Fact]
+    public void DecodeParamValue_OneByteEnum_MidBuffer_ReadsOnlyItsOwnByte()
+    {
+        // 0x07 is the enum; the three bytes after it belong to the NEXT param.
+        var buf = new byte[] { 0x07, 0xAA, 0xBB, 0xCC, 0, 0, 0, 0 };
+        var p = new FunctionParamModel
+        {
+            Name = "E", TypeName = "EnumProperty", Offset = 0, Size = 1,
+        };
+
+        // Before the fix this returned the int32 at offset 0: -860116473.
+        Assert.Equal("7", InvokeParamDialog.DecodeParamValue(buf, p));
+    }
+
+    [Fact]
+    public void DecodeParamValue_OneByteEnum_AtBufferEnd_WasAlreadyCorrect()
+    {
+        // The tell that identified the defect: with fewer than 4 bytes left the old
+        // guard failed and it fell through to the size switch, so the LAST param
+        // decoded correctly while the same enum mid-buffer did not. Pinned so the
+        // two paths cannot diverge again.
+        var buf = new byte[] { 0x07 };
+        var p = new FunctionParamModel
+        {
+            Name = "E", TypeName = "EnumProperty", Offset = 0, Size = 1,
+        };
+
+        Assert.Equal("7", InvokeParamDialog.DecodeParamValue(buf, p));
+    }
+
+    [Theory]
+    [InlineData(1, "7")]
+    [InlineData(2, "-22009")]       // 0xAA07 as a signed int16
+    [InlineData(4, "-860116473")]  // 0xCCBBAA07 as a signed int32
+    public void DecodeParamValue_EnumDecodesAtTheEngineReportedWidth(int size, string expected)
+    {
+        var buf = new byte[] { 0x07, 0xAA, 0xBB, 0xCC, 0, 0, 0, 0 };
+        var p = new FunctionParamModel
+        {
+            Name = "E", TypeName = "EnumProperty", Offset = 0, Size = size,
+        };
+
+        Assert.Equal(expected, InvokeParamDialog.DecodeParamValue(buf, p));
+    }
+
+    [Fact]
+    public void DecodeParamValue_IntProperty_StillReadsFourBytes()
+    {
+        // Negative control for the fix itself: splitting EnumProperty out of the
+        // IntProperty group must not change IntProperty.
+        var buf = new byte[] { 0x07, 0xAA, 0xBB, 0xCC, 0, 0, 0, 0 };
+        var p = new FunctionParamModel
+        {
+            Name = "I", TypeName = "IntProperty", Offset = 0, Size = 4,
+        };
+
+        Assert.Equal("-860116473", InvokeParamDialog.DecodeParamValue(buf, p));
+    }
 }

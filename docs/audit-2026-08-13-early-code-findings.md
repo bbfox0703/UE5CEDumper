@@ -1552,7 +1552,36 @@ finders did not over-rate anything. Three MEDs re-derived by hand.
 > written after the fourth; the fact that three more have appeared since says the rule is still not
 > being applied *at fix time*.
 
-> **AE1 is worth reading before fixing anything in Class/Struct.** `ClassStructViewModel.cs:218`
+> ### ✅ AE1 FIXED — build 2950, 2026-08-15 — and with it the whole width family bar Y16
+>
+> `TryConvertEnum` wrote `(byte)(rawValue & 0xFF)` (and `& 0xFFFF` / `& 0xFFFFFFFF`) and reported
+> success, so `9999` into a 1-byte enum put **15** in the game while LiveWalker's status line said
+> `Written: Field = 9999`. Every sibling converter in that same file already refused out-of-range and
+> named the range — `TryConvertByte` returns *"Invalid byte (range: 0 to 255)"* — so the fix is the
+> file's own established idiom, applied to the one path that had never adopted it.
+>
+> **The predicate now exists once**, as `FieldValueConverter.FitsInWidth(value, sizeBytes)`, because
+> five hand-written range checks are five things that drift. It is deliberately
+> **signedness-tolerant**: a field of N bytes accepts the union `[-2^(8N-1), 2^(8N)-1]`, since the
+> engine reports a width but not always a signedness and both readings are things users legitimately
+> type (`-1` into a byte means `0xFF` — Y5's rule, which must not regress; `255` into a signed byte
+> is the same bit pattern from the other side). What the union still catches is the case every
+> finding in this family was about: a value that fits in **neither** reading.
+>
+> **Three fixes shipped together** because they are one family and the audit's rule is to fix the
+> family at fix time: AE1 here, the confirmed `DecodeParamValue` read-side lead, and the confirmed
+> `ParamBufferBuilder` FIRE-path lead — plus the `ParseULong` sibling the tests exposed. See the
+> family block in §3c for the per-lead rulings, including the one that was **refuted**.
+>
+> ✅ **Negative-controlled one break at a time** (3751 → **3820** tests, 0 failures): AE1 reverted →
+> 6 failures; the enum-read revert → 3; the FIRE range check → 8; `ParseULong` → 3.
+>
+> ⚠ **The first control run was itself wrong and had to be redone** — two of the four reverts did not
+> compile, so no test ran, and the harness's `'error CS' in out` fallback reported that as
+> "DETECTED". A compile error is **inconclusive**, not detection. Worth remembering: a negative
+> control needs a revert that BUILDS, or it measures the compiler instead of the tests.
+>
+> > **AE1 is worth reading before fixing anything in Class/Struct.** `ClassStructViewModel.cs:218`
 > latches `_lastLoadedNodeAddress = node.Address` **before** dispatching the walk, and
 > `LoadClassAsync`'s `catch` never resets `HasClass`. So a failed walk leaves the key naming node B
 > while the grid still shows class A's names, offsets and FProperty addresses — and the entry guard
@@ -1564,7 +1593,7 @@ finders did not over-rate anything. Three MEDs re-derived by hand.
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **AE1** | MED | `FieldValueConverter.cs:198` (FieldValueConverter.TryConvertByte / TryConver) | An enum-backed field silently truncates an out-of-range value and reports the untruncated number as written | S / low |
+| **AE1** ✅ | MED | `FieldValueConverter.cs:198` (FieldValueConverter.TryConvertByte / TryConver) | An enum-backed field silently truncates an out-of-range value and reports the untruncated number as written | S / low |
 | **AE2** | MED | `ClassStructViewModel.cs:192` (OnObjectSelected) | Object-Tree selection drives Class/Struct through an async-void handler with NO generation guard, and the two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node | S / low |
 | **AE3** | MED | `ClassStructViewModel.cs:218` (OnObjectSelected) | The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry **[2 lenses]** | S / low |
 | **AE4** | MED | `ProxyDeployViewModel.cs:236` (OnSelectedProxyTypeChanged / RefreshAfterTypeC) | Two rapid proxy-radio clicks race two fire-and-forget refreshes; the loser's proxy type wins the grid and nothing ever re-runs | S / low |
@@ -2170,7 +2199,7 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 | **AA17** | MED | `ue5_invoke_helper.lua:308` (writeBakedParams) | The params buffer is zeroed only up to the CALLER'S parmsSize while the DLL hands ProcessEvent all 1024 bytes — stale bytes from an earlier command become live parameters **[2 lenses]** | S / low |
 | **AA18** | MED | `ue5_invoke_helper.lua:363` (waitDone) | A mailbox timeout reports the STALE errorMsg left by an earlier command as this command's reason — the guessed diagnosis CLAUDE.md forbids | S / low |
 | **AA19** | MED | `ue5_invoke_helper.lua:464` (invokeUFunction) | The reentrancy flag is cleared on the timeout path — exactly when the DLL still owns the mailbox — so the next invoke scribbles on an in-flight command and is reported OK though it never ran | M / med |
-| **AA20** | MED | `ue5_invoke_helper.lua:512` (readUFunctionReturn) | readUFunctionReturn decodes int32/int16 returns UNSIGNED, so a UFunction returning -1 reads as 4294967295 -- while the same file passes the signed flag two functions earlier **[2 lenses]** | S / low |
+| **AA20** | MED | `ue5_invoke_helper.lua:512` (readUFunctionReturn) | readUFunctionReturn decodes int32/int16 returns UNSIGNED, so a UFunction returning -1 reads as 4295067295 -- while the same file passes the signed flag two functions earlier **[2 lenses]** | S / low |
 | **AA21** | LOW | `ue5_dissect.lua:23` (module state (structList / structCache)) | Module state is per-dofile while CE's structure list and Lua state are global and never rebuilt, so a re-load duplicates every structure and orphans the old ones | S / low |
 | **AA22** | LOW | `ue5_dissect.lua:24` (dissect.enableAutoCallback) | The already-registered guard is a chunk-local, so a second dofile double-registers the dissect override and disableAutoCallback can only unregister the newest one | S / low |
 | **AA23** | LOW | `ue5_dissect.lua:208` (addFieldsToStruct) | The struct-recursion depth cap returns silently, so a nested StructProperty deeper than 6 levels is simply absent from the dissect with no marker | S / low |
@@ -2544,9 +2573,12 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**233 of 272 findings are still open** (39 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 73 MED ·
-133 LOW · 27 INFO**. Fixed HIGHs: **11 of 11** (V1, W1, W2, Y1, AB1, AD1, AD2, AA1, AA2, AA3, AB2).
+**232 of 272 findings are still open** (40 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 72 MED ·
+133 LOW · 27 INFO**.
+
+> **The width family is CLOSED** (build 2950) apart from the parked Y16 — see the family block below,
+> which also records one refuted lead and one new sibling found at fix time. Fixed HIGHs: **11 of 11** (V1, W1, W2, Y1, AB1, AD1, AD2, AA1, AA2, AA3, AB2).
 
 > ## ✅ THERE ARE NO OPEN HIGHs. Every HIGH this audit raised is fixed.
 >
@@ -2594,7 +2626,7 @@ block, §2.
 | Segment | HIGH | MED | LOW | INFO | Open |
 |---------|-----:|----:|----:|-----:|-----:|
 | S1 early Lua scripts | – | 17 | 14 | 2 | **33** (AA1/AA2/AA3 fixed b2922-2926) |
-| T1c VMs + Core + Models | – | 10 | 15 | 4 | **29** |
+| T1c VMs + Core + Models | – | 9 | 15 | 4 | **28** (AE1 fixed b2950) |
 | T1b DLL headers + C++ tests | – | 4 | 15 | 6 | **25** (AD1+AD2 fixed b2914) |
 | T1e Views + app root + tail | – | 6 | 17 | 4 | **27** |
 | T1a Radar + entry points | – | 5 | 12 | 4 | **21** (AB2 fixed b2932) |
@@ -2615,7 +2647,7 @@ block, §2.
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
 | D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
-| **TOTAL** | – | **73** | **133** | **27** | **233** |
+| **TOTAL** | – | **72** | **133** | **27** | **232** |
 
 ### Fix order recommended
 
@@ -2641,13 +2673,30 @@ block, §2.
 
 The two recurring families are both greppable. Status as of the 2026-08-15 double-check:
 
-- **The width family** — an out-of-range value masked to the field width and reported as written.
-  Six audited occurrences across four subsystems, of which **four are already fixed** (W6 ✅ b2857,
-  Y2 ✅ b2866, Y9 ✅ b3da36ca, Y15 ✅ b2904). Still open: **AE1** (`FieldValueConverter.cs:196-207`,
-  re-confirmed: `9999` → `(byte)(9999 & 0xFF)` = 15, then the caller logs `Written: … = 9999`) and
-  **Y16 (PARKED — do not pick up, ask first)**. **At every site the correct width was already in
-  scope and simply not enforced.** ⚠ The double-check's focused grep found **three NEW unvetted
-  leads** in this family — see the double-check block below; re-derive before filing or fixing.
+- **The width family — ✅ CLOSED except the parked member** (build 2950). Nine occurrences across
+  five subsystems: W6 ✅ b2857, Y2 ✅ b2866, Y9 ✅ b3da36ca, Y15 ✅ b2904, **AE1 ✅ b2950**, plus the
+  two double-check leads that survived re-derivation and one sibling found while fixing them (all
+  ✅ b2950, detailed below). Only **Y16 remains — PARKED, do not pick up, ask first**.
+  **At every site the correct width was already in scope and simply not enforced**, so the repair
+  is now a single predicate — `FieldValueConverter.FitsInWidth(value, sizeBytes)` — rather than N
+  hand-written range checks that can drift apart again.
+
+  **The three double-check leads, re-derived by hand before any of them was treated as a finding**
+  (they were single-agent finds with no skeptic pass, so §2's ~50% base rate applied):
+
+  | lead | verdict |
+  |---|---|
+  | `InvokeParamDialog.cs` `DecodeParamValue` reads a 1-byte enum as 4 | **CONFIRMED** — `"EnumProperty"` was grouped with `"IntProperty"` behind `available >= 4`, so a 1-byte enum mid-buffer returned its own byte plus three belonging to the next param. The READ side of what Y2 fixed on the write side of the same file. Fixed via a shared `DecodeBySize`, the mirror of `WriteBySize`. |
+  | `SdkExportService` enum declared width vs the layout cursor | **REFUTED — do not re-raise.** The premise requires `InferEnumUnderlyingType` and the layout cursor to meet, and they never do: `GenerateEnumDefinition`/`InferEnumUnderlyingType` have **zero production callers** (grep across `ui/` returns only `SdkExportServiceTests`). The class layout goes through `MapCppType`, which emits the enum's NAME, not a width. |
+  | `ParamBufferBuilder` FIRE path masks with no validation | **CONFIRMED, and the caveat was the whole story.** `WriteBySize` masks at every width (`unchecked((byte)u)`, `(short)`, `(int)`), so 9999 into a 1-byte param fired 15 silently. The masks are Y5's fix (a signed `-1` must arrive as `0xFF`) and are **kept**; the repair is a signedness-aware range check in front of them, surfaced through the dialog's existing red result label. Removing the cast would have re-introduced Y5. |
+
+  **A NEW sibling was found at fix time, by the test rather than by a finder** — root cause #4's
+  **eighth** occurrence. `ParseULong("-1")` returns **0**, because `ulong.TryParse` rejects the
+  sign: so typing `-1` for a `UInt16Property` / `UInt64Property` / pointer param fired **0** at the
+  live game while *Copy AA Script* baked `0xFFFF…`. That is **precisely the defect Y5 fixed**, and
+  Y5 fixed it in `ParseByteOrSByte` only, leaving every unsigned path with the original bug. It
+  surfaced because a test asserted `EffectiveIntWidth` against how many bytes `WriteParam` really
+  touches — i.e. it was caught by testing the SEAM, not the helper (§1.3).
 - **Root cause #4 — a fix applied at only some of its sites.** Seven audited occurrences (V2, W4/W6,
   X1, Y16, AC2, AE10), of which **four are fixed** (V2 ✅, W4 ✅, W6 ✅, X1 ✅ — all verified in-tree
   2026-08-15). Still open: **AC2** (recounted: `ResolveTrustedLayout` guards **1 of 4

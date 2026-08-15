@@ -22,6 +22,69 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - The width family, closed: out-of-range values are refused instead of silently masked (build 2950)
+
+**Audit #5 T1c finding AE1**, plus the two double-check leads that survived re-derivation and one
+sibling the tests exposed. First MED-tier batch, and it takes the width family from five open
+occurrences to **one — the parked Y16**.
+
+### The family
+
+Nine occurrences across five subsystems, all the same mistake: **an out-of-range value masked down to
+the field width, and the untruncated number reported as if it had been written.** W6, Y2, Y9 and Y15
+were fixed in earlier builds; this closes the rest.
+
+**AE1** — `FieldValueConverter.TryConvertEnum` wrote `(byte)(rawValue & 0xFF)` and returned success,
+so typing `9999` for a 1-byte enum put **15** in the game while LiveWalker's status line said
+`Written: Field = 9999`. Every sibling converter in that same file already refused out-of-range and
+named the range (`TryConvertByte` → *"Invalid byte (range: 0 to 255)"*); the enum path was the one
+that never adopted the idiom.
+
+**The predicate now exists once**, as `FieldValueConverter.FitsInWidth(value, sizeBytes)` — five
+hand-written range checks are five things that drift apart, which is how this family got to nine.
+It is deliberately **signedness-tolerant**: N bytes accept the union `[-2^(8N-1), 2^(8N)-1]`, because
+the engine reports a width but not always a signedness and both readings are things users
+legitimately type (`-1` into a byte means `0xFF` — Y5's rule, which must not regress; `255` into a
+signed byte is that bit pattern from the other direction). The union still catches what every
+finding here was about: a value that fits **neither** reading.
+
+### The three leads from the double-check, re-derived by hand first
+
+They were single-agent finds with no skeptic pass, so §2's ~50% base rate applied and none was
+treated as a finding until re-derived:
+
+| lead | verdict |
+|---|---|
+| `InvokeParamDialog.DecodeParamValue` reads a 1-byte enum as 4 | **CONFIRMED** — `"EnumProperty"` sat in the `"IntProperty"` group behind `available >= 4`, so a 1-byte enum **mid-buffer** returned its own byte plus three belonging to the next param, while the same enum at the buffer's END decoded correctly (the guard failed and it fell through to the size switch). That asymmetry is what identified it. This is the READ side of the mistake Y2 fixed on the write side of the same file. Fixed with a shared `DecodeBySize`, the mirror of `WriteBySize`. |
+| `SdkExportService` enum width vs the layout cursor | **REFUTED — do not re-raise.** The premise needs `InferEnumUnderlyingType` and the layout cursor to meet, and they never do: `GenerateEnumDefinition` / `InferEnumUnderlyingType` have **zero production callers** (grep across `ui/` returns only `SdkExportServiceTests`). The class layout goes through `MapCppType`, which emits the enum's NAME, not a width. |
+| `ParamBufferBuilder` FIRE path masks with no validation | **CONFIRMED, and its caveat was the whole story.** `WriteBySize` masks at every width, so 9999 into a 1-byte param fired 15 silently. The masks are Y5's fix and are **kept**; the repair is a signedness-aware range check in front of them (`ParamBufferBuilder.TryValidateScalar`), surfaced through the dialog's existing red result label, refusing the invoke rather than calling a UFunction with one silently-wrong argument. |
+
+### A new sibling, found by a test rather than by a finder — root cause #4's eighth occurrence
+
+`ParseULong("-1")` returns **0**, because `ulong.TryParse` rejects the sign. So typing `-1` for a
+`UInt16Property` / `UInt64Property` / pointer param fired **0** at the live game while *Copy AA
+Script* baked `0xFFFF…` — one dialog, two opposite calls. **That is exactly the defect Y5 fixed**,
+and Y5 fixed it in `ParseByteOrSByte` only, leaving every unsigned path with the original bug.
+
+It surfaced because a new test asserts `EffectiveIntWidth` against how many bytes `WriteParam`
+*actually touches* — i.e. it was caught by testing the **seam**, not the helper. That test also
+exists to pin the two together permanently: `EffectiveIntWidth`'s table mirrors `WriteParam`'s
+switch, which is a drift risk by construction.
+
+### Verified by negative control — and the control was wrong the first time
+
+3751 → **3820** tests, 0 failures. Each fix then reverted **alone**: AE1 → 6 failures, the enum-read
+revert → 3, the FIRE range check → 8, `ParseULong` → 3.
+
+⚠ **The first control run reported two of those as detected when nothing had been detected.** Those
+two reverts did not compile, so no test ran, and the harness's `'error CS' in out` fallback counted
+the compile error as a catch. A compile error is **inconclusive**, not detection. The reverts were
+redone so they build, and the harness now says INCONCLUSIVE for that case. Worth carrying: *a
+negative control needs a revert that BUILDS, or it measures the compiler instead of the tests* — and
+it is the same defect class as AD1, in the tool being used to verify the fix for it.
+
+-----
+
 ## 2026-08-15 - Cheat Engine freed the injection stub out from under our still-running scan, crashing the GAME (build 2932) — AUDIT #5 HAS NO OPEN HIGHs LEFT
 
 **Audit #5 phase T1a, finding AB2** — the eleventh and last HIGH. Every HIGH this audit raised is now
