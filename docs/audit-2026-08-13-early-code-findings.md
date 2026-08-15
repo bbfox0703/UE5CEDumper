@@ -1190,10 +1190,58 @@ MEDIUM.
 >
 > 🆕 **Found while fixing it: Y15**, the *third* site of the `EnumProperty`-is-not-4-bytes family this
 > audit has already fixed twice (W6, Y2). Recorded, not fixed — it needs a size plumbed through
-> `FreezeScriptParams`, so it is M, not S.
+> `FreezeScriptParams`, so it is M, not S. **Fixed in 2904; see below.**
 >
 > ⬜ **Not verified in-game.** The arithmetic is measured against the writers' own masking, but nobody
 > has typed 9999 into a real `ByteProperty` freeze and watched the new error instead of a 15.
+
+> ### ✅ Y15 FIXED — build 2904, 2026-08-15
+>
+> **The engine reported the width all along; the model dropped it.** `MapToHelperType` answered
+> `int32` for every `EnumProperty`, and the freeze helper's `int32` writer is `writeInteger` — four
+> bytes into UE's dominant one-byte `enum class E : uint8`, 20 times a second, silently destroying
+> the three fields after it. The mapping's own comment admitted the gap. `PropertySearchMatch.PropSize`
+> carries the real width, but `FreezeScriptParams` had no size field, so the generator **could not**
+> know better. The finding is the dropped field, not the guess.
+>
+> **The repair is the shape W6 and Y2 established**: `HelperTypeForSize(int)` — the direct sibling of
+> `CeXmlExportService.CeWidthForSize` — with 1 → `uint8`, 2 → `uint16`, 4 → `int32`, 8 → `int64`, and
+> the legacy `int32` for an unreported/nonsense size. Only `EnumProperty` consults it, because it is
+> the only type whose width its name does not fix; a test asserts every other type **ignores** the
+> size argument, so a bogus value from the wire cannot turn a float into a byte. `PropertySize` is
+> `required` rather than defaulted — the compiler now asks the question at every construction site,
+> which is the same *"do not depend on a future editor remembering"* reasoning as Y2, with the type
+> system doing the enforcing.
+>
+> **The reusable lesson is about the tests, not the mapping.** The mapping was already covered. The
+> two places that USE it were not reachable from a test at all — `FreezeValueDialog`'s constructor
+> needs an Avalonia runtime, and `PropertySearchViewModel`'s freeze command needs the AOBMaker bridge
+> plus a modal — so the width could have been dropped at either call site with **zero failures**.
+> Before writing the test, ask whether the call site can fail it. Two `internal static` seams
+> (`FreezeValueDialog.HelperTypeFor`, `PropertySearchViewModel.BuildFreezeParams`, matching the
+> existing `BuildRowsFromSelection` precedent) made the end-to-end assertion possible: **the type the
+> dialog validates the user's input against is the type the generated script writes with** — this
+> audit's recurring root cause (4a: *the report and the reality computed by different code paths*),
+> now pinned instead of assumed.
+>
+> **Four negative controls, each applied alone:** reverting the mapping to flat `"int32"` reds **17**
+> — every enum test at widths 1/2/8 across all four test files, while sizes **4 and 0 stay green**
+> (`int32` *is* right there) and every non-enum type stays green, so the controls are sensitive to
+> the defect rather than to the edit; dropping the size at the dialog reds **3**; at the single-row
+> params **3**; at the batch-CT params **4**. **The middle two would have produced zero failures
+> without the new seams** — which is the whole argument for extracting them. 3724 tests, 0 failed
+> (3674 → 3724). `dist` is the 54.4 MB AOT-trimmed binary, launch-verified, no `crash.log`.
+>
+> 🆕 **Found while fixing it: Y16**, the *fourth* site of the same family —
+> `InvokeScriptGenerator.GetMailboxWriteStatement` writes a 1-byte enum **param** with a 4-byte
+> `writeInteger`, clobbering the next param. Recorded, not fixed: it is one line (the method already
+> takes `p.Size` and already has a correct `size switch` fallback that `EnumProperty` short-circuits
+> past), but it is the invoke subsystem with its own helper Lua and tests, so it deserves its own
+> control rather than a ride on this commit.
+>
+> ⬜ **Not verified in-game.** The widths are unit-verified against the helper's writer table, but
+> nobody has frozen a real `enum class : uint8` and confirmed its neighbours survive. Queued in
+> [todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
@@ -1211,7 +1259,8 @@ MEDIUM.
 | **Y12** | LOW | `InvokeParamDialog.cs:856` | The baked-invoke clipboard fallback still copies a raw AA body — the build-1986 `WrapAaScriptXml` sweep reached the no-arg sibling **two lines away** and not this one. | S / low |
 | **Y13** | LOW | `BakedScriptGenerator.cs:195` | Verify mode's 32-byte dump window cannot contain the complex return it tells the user to read. | S / low |
 | **Y14** | LOW | `InvokeParamDialog.cs:850` | *"AA Script created in CE … (N baked param(s))"* is reported even when a param failed to parse and was baked as 0. | M / low |
-| **Y15** | MED | *(hand-found while fixing Y9)* `FreezeScriptGenerator.cs:193` + `Models/FreezeScriptParams.cs` | `MapToHelperType` maps **`EnumProperty` → `int32` unconditionally**, so freezing / force-holding an `enum class : uint8` field emits a **4-byte `writeInteger`** and clobbers the three bytes after it. `FreezeScriptParams` carries no size at all, so the generator *cannot* know better — the DLL's real width is on `PropertySearchMatch.PropSize` and is dropped at the model boundary. **Third site of a family this audit has already fixed twice**: W6 (CE XML export hardcoded `"4 Bytes"`) and Y2 (invoke param buffer gated on `available >= 4`). The code comment at the mapping admits it — *"if a future game has a 1-byte enum we'd want to surface the size and pick uint8 instead. Out of v1 scope."* — which is the whole finding. Needs plumbing, hence M not S. | M / low |
+| **Y15** ✅ | MED | *(hand-found while fixing Y9)* `FreezeScriptGenerator.cs:193` + `Models/FreezeScriptParams.cs` | `MapToHelperType` maps **`EnumProperty` → `int32` unconditionally**, so freezing / force-holding an `enum class : uint8` field emits a **4-byte `writeInteger`** and clobbers the three bytes after it. `FreezeScriptParams` carries no size at all, so the generator *cannot* know better — the DLL's real width is on `PropertySearchMatch.PropSize` and is dropped at the model boundary. **Third site of a family this audit has already fixed twice**: W6 (CE XML export hardcoded `"4 Bytes"`) and Y2 (invoke param buffer gated on `available >= 4`). The code comment at the mapping admits it — *"if a future game has a 1-byte enum we'd want to surface the size and pick uint8 instead. Out of v1 scope."* — which is the whole finding. Needs plumbing, hence M not S. | M / low |
+| **Y16** | MED | *(hand-found while fixing Y15)* `InvokeScriptGenerator.cs:558` (`GetMailboxWriteStatement`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` → **`writeInteger`**, so the **interactive CE invoke form** writes 4 bytes for a 1-byte enum param and clobbers the next param in `params_data`. Same defect Y2 fixed in `ParamBufferBuilder` (the FIRE path), surviving in a third path — so for one dialog input the three ways of calling a UFunction still do not agree. **Fourth site of the enum-width family** (W6, Y2, Y15). One line: the method already receives `p.Size` and its `_ => size switch` fallback already maps 1/2/8 correctly — `EnumProperty` short-circuits past it, so deleting it from that arm is the fix. | S / low |
 
 **Verified independently (not agent-reported):**
 
@@ -1471,28 +1520,34 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 *State as of 2026-08-15, after U4 + ten fix batches. Read this section first; it is written for a
 session with no memory of the previous one.*
 
-> 🔵 **X2 shipped in 2888, Y9 in 2895. Next up is W5. Do not start U5.**
+> 🔵 **Y9 shipped in 2895, Y15 in 2904. Next up is W5. Do not start U5.**
 > Scanning is deliberately paused with 10 of 12 segments done — the remaining backlog is worth more
 > than another 14 findings. Work the open list one item (or one related group) at a time, and report
 > after each so the maintainer can watch the quota.
 >
 > **W5** — `CeXmlExportService.cs:2141`, `S`/low. Weak/soft/lazy pointers are drilled with
-> `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer. Then **Y15** (M/low), the
-> newest hand-found item and the *third* site of a family this audit has already fixed twice.
+> `Offsets=[0]`, i.e. the export dereferences a slot that is not a pointer. Then **Y16** (S/low), the
+> newest hand-found item — the *fourth* site of the enum-width family, and a one-liner.
 >
-> **Read X2's and Y9's entries in §2 before either.** Their lessons are the reusable ones:
-> X2 — the fix was not the truncation caveat, it was noticing the panels *already had the address*
-> and had thrown it away. Ask that first: is the value being re-derived one the caller already holds?
+> **Read Y15's and Y9's entries in §2 before either.** Their lessons are the reusable ones:
+> Y15 — before writing a test, ask **whether the call site can fail the test at all**. Its mapping
+> was already covered; the two places that *used* it were unreachable from a test (an Avalonia
+> constructor, a command needing a bridge and a modal), so the width could have been dropped at
+> either with zero failures. Two `internal static` seams later, the controls actually fire.
 > Y9 — the check belongs where the user can still see it, because everything downstream narrows in
 > silence; and a validator tightened without its **pre-fill** produces a dialog that rejects its own
 > default.
+>
+> ⚠ **The enum-width family has now cost four findings** (W6, Y2, Y15, Y16) in three subsystems.
+> If you touch any code that decides how many bytes to write for a `EnumProperty`, the answer is
+> *the size the engine reported*, never the type name.
 
 > ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
 > (2842), W1+W7 (2853), Y1 (2862).
 >
-> **Fixed so far — 20 findings across twelve fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: Y9 (2895), X2 (2888), Y6+Y7 (2881), Y8 (2875), X1
+> **Fixed so far — 21 findings across thirteen fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: Y15 (2904), Y9 (2895), X2 (2888), Y6+Y7 (2881), Y8 (2875), X1
 > (2870), Y2+Y3+Y4+Y5 (2866), Y1 (2862), W6 (2857), W1+W7 (2853), W2+W3 (2842), W4 (2836),
-> V1+V2+V5 (2830). Test count went 3590 → 3674 over the session; every fix carries a negative
+> V1+V2+V5 (2830). Test count went 3590 → 3724 over the session; every fix carries a negative
 > control, and the doc entry for each says what the control proved.
 >
 > **Y1 is the one to read before fixing anything else**, because its verification is the template:
@@ -1535,10 +1590,10 @@ open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y10–Y15, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
-remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875), **Y6+Y7** (2881) and
-**Y9** (2895) — 9 of its 15 (Y15 was hand-found while fixing Y9); U3 shipped **X1** (2870) and
-**X2** (2888) — 2 of its 12.
+**Still open: Y10–Y14, Y16, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875), **Y6+Y7** (2881),
+**Y9** (2895) and **Y15** (2904) — 10 of its 16 (Y15 was hand-found while fixing Y9, and Y16 while
+fixing Y15); U3 shipped **X1** (2870) and **X2** (2888) — 2 of its 12.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).

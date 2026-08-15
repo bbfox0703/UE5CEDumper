@@ -69,6 +69,10 @@ public sealed partial class ScoredPropertyRow : ObservableObject
     public string TypeDisplay       => Match.TypeDisplay;
     public string OffsetHex         => Match.OffsetHex;
     public int    PropOffset        => Match.PropOffset;
+    /// <summary>Engine-reported byte width — carried through to
+    /// <c>FreezeScriptParams.PropertySize</c> so the batch-CT path picks an
+    /// EnumProperty's writer by its real width (audit #5 Y15).</summary>
+    public int    PropSize          => Match.PropSize;
     public string DefiningClassName => Match.DefiningClassName;
     public int    InheritedByCount  => Match.InheritedByCount;
     public string InheritanceBadge  => Match.InheritanceBadge;

@@ -505,6 +505,7 @@ public class CeLuaHygieneTests
             PropertyName   = "CurrentHealth",
             PropertyOffset = 0x4F8,
             UeTypeName     = "FloatProperty",
+            PropertySize   = 4,
             ValueLiteral   = "9999.0",
         };
         var s = FreezeScriptGenerator.Generate(p);

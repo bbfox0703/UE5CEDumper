@@ -265,18 +265,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         }
         if (literal == null) return;  // user cancelled
 
-        var p = new FreezeScriptParams
-        {
-            // Prefer the defining class — that's where the property is
-            // actually declared; freezing on it covers all subclasses.
-            ClassName      = !string.IsNullOrEmpty(match.DefiningClassName)
-                             ? match.DefiningClassName
-                             : match.ClassName,
-            PropertyName   = match.PropName,
-            PropertyOffset = match.PropOffset,
-            UeTypeName     = match.PropType,
-            ValueLiteral   = literal,
-        };
+        var p = BuildFreezeParams(match, literal);
         var script = FreezeScriptGenerator.Generate(p);
         var description = $"Freeze: {p.ClassName}::{p.PropertyName} = {literal}";
 
@@ -300,6 +289,34 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             ? $"Freeze script created in CE: {description}"
             : "Freeze script not sent — AOBMaker rejected the request";
     }
+
+    /// <summary>
+    /// Map one search-result row + the dialog's validated literal onto the generator's
+    /// input bundle.
+    ///
+    /// <para><c>internal static</c> so a test can assert the mapping directly, rather
+    /// than needing the AOBMaker bridge and a modal dialog. It carries
+    /// <see cref="PropertySearchMatch.PropSize"/> through, which is the whole of audit
+    /// #5 Y15: the engine-reported width used to stop here, so an
+    /// <c>enum class : uint8</c> was frozen with a 4-byte writer. <paramref name="literal"/>
+    /// was validated by <see cref="Views.FreezeValueDialog"/> against
+    /// <see cref="Views.FreezeValueDialog.HelperTypeFor"/> of this same match, so the
+    /// value and the writer agree only as long as this keeps passing the size.</para>
+    /// </summary>
+    internal static FreezeScriptParams BuildFreezeParams(PropertySearchMatch match, string literal)
+        => new()
+        {
+            // Prefer the defining class — that's where the property is
+            // actually declared; freezing on it covers all subclasses.
+            ClassName      = !string.IsNullOrEmpty(match.DefiningClassName)
+                             ? match.DefiningClassName
+                             : match.ClassName,
+            PropertyName   = match.PropName,
+            PropertyOffset = match.PropOffset,
+            UeTypeName     = match.PropType,
+            PropertySize   = match.PropSize,
+            ValueLiteral   = literal,
+        };
 
     // ── Force field (Solide) — hold a discovered field across live instances ──
 

@@ -22,6 +22,94 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - Freezing a 1-byte enum wrote four bytes and destroyed its three neighbours (build 2904)
+
+**Audit #5 segment U4 finding Y15** — the third site of a family this audit has now closed three
+times.
+
+### The defect
+
+`FreezeScriptGenerator.MapToHelperType` mapped **`EnumProperty` → `int32` unconditionally**. The
+freeze helper's `int32` writer is `writeInteger` — four bytes. UE's dominant enum shape is
+`enum class E : uint8`, **one** byte. So freezing one wrote over the three bytes that follow it,
+20 times a second, for as long as the freeze stayed enabled — and there is no error channel, so the
+user sees three unrelated fields quietly changing and goes looking for the game's logic.
+
+The mapping's own comment admitted the gap: *"if a future game has a 1-byte enum we'd want to
+surface the size and pick uint8 instead. Out of v1 scope."* The engine had been reporting the real
+width all along (`PropertySearchMatch.PropSize`, on the wire since the DLL emits `prop_size`) —
+`FreezeScriptParams` simply carried no size field, so the generator **could not** know better. The
+finding is the dropped field, not the guess.
+
+### The fix is the one W6 and Y2 already established
+
+Let the engine-reported size overrule the type-name guess. `HelperTypeForSize(int)` is the direct
+sibling of `CeXmlExportService.CeWidthForSize` — 1 → `uint8`, 2 → `uint16`, 4 → `int32`,
+8 → `int64`, anything else → the legacy `int32` default. `MapToHelperType` gained a
+`(typeName, size)` overload; only `EnumProperty` consults the size, because it is the only type
+whose width its name does not fix, and a test asserts every other type **ignores** the argument so a
+bogus size from the wire can never turn a float into a byte.
+
+Signedness follows what C++ actually produces at each width — `enum class : uint8`/`: uint16` are
+unsigned, while a plain 4-byte `enum` has a signed `int` underlying type — and it only affects which
+values the dialog accepts: the helper's signed and unsigned writers of one width are literally the
+same function. 4 stays `int32`, which is also the only width the old mapping was ever right about,
+so nothing that worked before changes.
+
+### `PropertySize` is `required` on purpose
+
+Making it optional would let the next call site silently re-create the bug. `required` makes the
+compiler ask the question at every construction, which is the same reasoning as Y2's *"sharing the
+implementation is the only repair that does not depend on a future editor remembering"* — here the
+enforcement is the type system rather than a shared helper.
+
+### Two new test seams, because the call sites had none
+
+The mapping was already testable; the two places that *use* it were not. `FreezeValueDialog`'s
+constructor needs an Avalonia runtime, and `PropertySearchViewModel`'s freeze command needs the
+AOBMaker bridge plus a modal. So the width could have been dropped at either call site with **zero
+test failures**. Extracted `FreezeValueDialog.HelperTypeFor(match)` and
+`PropertySearchViewModel.BuildFreezeParams(match, literal)` — both `internal static`, matching the
+existing `BuildRowsFromSelection` precedent — and added the end-to-end assertion that matters: **the
+type the dialog validates the user's input against is the type the generated script writes with.**
+That pairing is this audit's recurring root cause (audit 4a: *the report and the reality are
+computed by different code paths*), and it is now pinned rather than assumed.
+
+### Negative controls — four, each isolating one hop
+
+Each was applied alone and the suite re-run:
+
+| Control | Reverted | Red | Shape |
+|---|---|---|---|
+| A | the mapping → flat `"int32"` | **17** | every enum test at widths 1/2/8, across all four test files |
+| B | dialog drops the size | **3** | only the chain test, only where the two sides now disagree |
+| C | single-row params drop the size | **3** | same three |
+| D | batch-CT params drop the size | **4** | the batch chain test at every width |
+
+Control A's green half is the point: sizes **4 and 0 stayed passing** (`int32` *is* correct there)
+and every non-enum type stayed passing, so the control demonstrates the tests are sensitive to the
+defect and not merely to the edit. **B and C would have produced zero failures without the new
+seams** — that is exactly the regression class the extraction was for.
+
+3724 tests, 0 failed (3674 → 3724). `dist` is the 54.4 MB AOT-trimmed binary, launch-verified
+(window up, clean `init-0.log`, no `crash.log`).
+
+### Found while fixing it, recorded not fixed: Y16
+
+`InvokeScriptGenerator.GetMailboxWriteStatement` (`:558`) groups `EnumProperty` with
+`IntProperty`/`UInt32Property` → `writeInteger`, so the **interactive CE invoke form** writes 4 bytes
+for a 1-byte enum param and clobbers the next param in the buffer. It is the same defect Y2 fixed in
+`ParamBufferBuilder` (the FIRE path) surviving in a third path, and the repair is one line — the
+method already takes `p.Size` and already has a `size switch` fallback that handles 1/2/8 correctly;
+`EnumProperty` just short-circuits past it. Filed rather than folded in: it is the invoke subsystem,
+with its own helper Lua and its own tests, and it deserves its own control.
+
+⬜ **Not verified in-game.** The widths are unit-verified against the helper's writer table, but
+nobody has frozen a real `enum class : uint8` and confirmed its neighbours survive. Queued in
+[todo.md](todo.md#pending-live-game-verification-verify-only--no-code).
+
+-----
+
 ## 2026-08-15 - The freeze dialog took 9999 for a byte and the game got 15 (build 2895)
 
 **Audit #5 segment U4 finding Y9.**

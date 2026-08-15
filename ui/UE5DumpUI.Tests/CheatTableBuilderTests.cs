@@ -37,7 +37,8 @@ public class CheatTableBuilderTests
 
     private static CtPropertyRow MakeFreezeRow(
         string category, string className, string propName,
-        string ueType = "FloatProperty", int offset = 0x40, string value = "9999.0")
+        string ueType = "FloatProperty", int offset = 0x40, string value = "9999.0",
+        int propSize = 4)
         => new()
         {
             Category    = category,
@@ -48,6 +49,7 @@ public class CheatTableBuilderTests
                 PropertyName   = propName,
                 PropertyOffset = offset,
                 UeTypeName     = ueType,
+                PropertySize   = propSize,
                 ValueLiteral   = value,
             },
         };
@@ -349,6 +351,34 @@ public class CheatTableBuilderTests
     }
 
     // ------------------------------------------------------------------
+    // Audit #5 Y15 — the batch CT path must carry the engine-reported width.
+    //
+    // BuildRowsFromSelection is the second of the two places a FreezeScriptParams
+    // is built. Asserting the SCRIPT (not just the params) is deliberate: it fails
+    // whether the width is dropped at the row forward, at the params, or at the
+    // mapping — anywhere along the chain the user's bytes travel.
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(1, "uint8")]
+    [InlineData(2, "uint16")]
+    [InlineData(4, "int32")]
+    [InlineData(8, "int64")]
+    public void PropsBuildRows_EnumWidthReachesTheGeneratedScript(int propSize, string expected)
+    {
+        var row = MakeScoredProp("Stance", "EnumProperty", PropertyCategory.Stats,
+                                 propSize: propSize);
+
+        var (rows, _, _) = InterestingPropertiesViewModel
+            .BuildRowsFromSelection(new[] { row });
+
+        Assert.Single(rows);
+        var freeze = ((CtPropertyRow)rows[0]).FreezeParams;
+        Assert.Equal(propSize, freeze.PropertySize);
+        Assert.Contains($"valueType          = '{expected}',", rows[0].GenerateScript());
+    }
+
+    // ------------------------------------------------------------------
     // VM layer — Interesting Functions row mapping
     // ------------------------------------------------------------------
 
@@ -405,7 +435,7 @@ public class CheatTableBuilderTests
 
     private static ScoredPropertyRow MakeScoredProp(
         string propName, string propType, PropertyCategory cat,
-        string className = "BP_Player_C", int offset = 0x40)
+        string className = "BP_Player_C", int offset = 0x40, int propSize = 4)
     {
         var match = new PropertySearchMatch
         {
@@ -413,6 +443,7 @@ public class CheatTableBuilderTests
             PropName          = propName,
             PropType          = propType,
             PropOffset        = offset,
+            PropSize          = propSize,
             DefiningClassName = className,  // tests override per case
         };
         return new ScoredPropertyRow

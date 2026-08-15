@@ -1405,6 +1405,31 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-15 — freeze a 1-byte enum and check its neighbours survive (audit #5 Y15, build 2904)
+
+Freezing an `EnumProperty` now picks its writer from the width the engine reported instead of always
+using a 4-byte `writeInteger`. The mapping and both call sites are unit-tested with four negative
+controls, **but nobody has watched a real 1-byte enum freeze leave the following bytes alone** —
+which is the actual damage the finding is about.
+
+Needs any connected game with an `enum class : uint8` field (Property Search → type filter
+`EnumProperty`; almost every UE game has several — states, stances, difficulty, team).
+
+1. **Property Search** → type filter `EnumProperty` → pick a row. **Live Walker** the owning class
+   and write down the values of the **three fields immediately after** it (or read the raw bytes at
+   `offset+1..offset+3`). This is the baseline; without it the rest proves nothing.
+2. Back in Property Search, **Freeze** that row. The dialog's **Type** line must read
+   `EnumProperty -> uint8`, *not* `-> int32`, and the value box must pre-fill **`255`**, not `9999`.
+   Those two are the only places the fix is visible before the script runs.
+3. Type `9999` → expect *"uint8 holds 0 to 255 — 9999 would be written as 15"* (Y9's check now
+   reaching enums). Correct it to a valid enum value and generate.
+4. Enable the script in CE, let it tick a few seconds, then **re-read the three neighbouring fields
+   from step 1. They must be unchanged.** Before this build they were overwritten 20x/sec.
+5. Confirm the CE script's CFG line reads `valueType = 'uint8'`.
+6. If the game has a **4-byte** enum (rarer — a plain `enum`, not `enum class : uint8`), repeat: it
+   must still map to `int32`. That is the no-regression half; 4 is the one width the old code was
+   right about.
+
 ### ⬜ NEW 2026-08-15 — freeze a byte-wide property and try to overflow it (audit #5 Y9, build 2895)
 
 The freeze / force value dialog now rejects values wider than the target property instead of letting

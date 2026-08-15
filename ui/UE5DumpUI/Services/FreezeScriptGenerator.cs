@@ -30,7 +30,7 @@ public static class FreezeScriptGenerator
     /// </summary>
     public static string Generate(FreezeScriptParams p)
     {
-        var helperType = MapToHelperType(p.UeTypeName);
+        var helperType = MapToHelperType(p.UeTypeName, p.PropertySize);
         var sb = new StringBuilder(2048);
 
         Line(sb, "[ENABLE]");
@@ -171,12 +171,54 @@ public static class FreezeScriptGenerator
     // ------------------------------------------------------------------
 
     /// <summary>
+    /// Freeze-helper <c>valueType</c> for an integer field of a given engine-reported
+    /// byte width. The sibling of <c>CeXmlExportService.CeWidthForSize</c>: the engine
+    /// tells us how wide the field really is, and that beats any guess made from the
+    /// type name.
+    ///
+    /// <para>Width is the whole safety story — <c>ue5_freeze_helper.lua</c>'s writers
+    /// are <c>writeByte</c> / <c>writeSmallInteger</c> / <c>writeInteger</c> /
+    /// <c>writeQword</c>, so naming a type 4 bytes wide when the field is 1 byte writes
+    /// over the three neighbouring bytes on every tick, 20x a second.</para>
+    ///
+    /// <para>Signedness follows what C++ actually produces for each width, and only
+    /// affects which values <c>FreezeValueDialog</c> accepts (the helper's signed and
+    /// unsigned writers of one width are the same function): UE's
+    /// <c>enum class E : uint8</c> / <c>: uint16</c> are unsigned, while a 4-byte enum
+    /// is a plain <c>enum</c> whose implementation-defined underlying type is signed
+    /// <c>int</c>. 4 also stays <c>int32</c> because that is what this mapping already
+    /// emitted — the only width it was ever right about.</para>
+    /// </summary>
+    public static string HelperTypeForSize(int size) => size switch
+    {
+        1 => "uint8",
+        2 => "uint16",
+        4 => "int32",
+        8 => "int64",
+        _ => "int32",   // unknown / unreported size → legacy default
+    };
+
+    /// <summary>
     /// Map a UE property type string (e.g. "FloatProperty") to the
     /// freeze helper's <c>valueType</c> string. Unsupported / unknown
     /// types map to the empty string so callers can detect them and
     /// gray out the freeze button at the row level.
+    ///
+    /// <para>Size-less overload: every type whose width is fixed by its NAME maps
+    /// identically, and <c>EnumProperty</c> — the one type whose width is not — falls
+    /// back to the legacy <c>int32</c>. Callers holding a real property should pass its
+    /// size to <see cref="MapToHelperType(string,int)"/>; this form exists for the
+    /// callers that only ask "is this type supported at all".</para>
     /// </summary>
-    public static string MapToHelperType(string ueTypeName) => ueTypeName switch
+    public static string MapToHelperType(string ueTypeName)
+        => MapToHelperType(ueTypeName, 0);
+
+    /// <summary>
+    /// Size-aware mapping. <paramref name="propSize"/> is the engine-reported byte
+    /// width of the field (<c>PropertySearchMatch.PropSize</c>); pass 0 when it is
+    /// unknown.
+    /// </summary>
+    public static string MapToHelperType(string ueTypeName, int propSize) => ueTypeName switch
     {
         "BoolProperty"   => "bool",
         "ByteProperty"   => "uint8",
@@ -185,12 +227,14 @@ public static class FreezeScriptGenerator
         "UInt16Property" => "uint16",
         "IntProperty"    => "int32",
         "UInt32Property" => "uint32",
-        // EnumProperty stores the underlying integer; UE almost always uses
-        // a 1-byte or 4-byte underlying type but the SizeOf is what matters
-        // and the helper handles either via the int writers. Default to
-        // int32 here -- if a future game has a 1-byte enum we'd want to
-        // surface the size and pick uint8 instead. Out of v1 scope.
-        "EnumProperty"   => "int32",
+        // EnumProperty stores the underlying integer, and UE's dominant shape is the
+        // 1-byte `enum class E : uint8`. This used to be a flat "int32" whose own
+        // comment admitted the gap ("if a future game has a 1-byte enum we'd want to
+        // surface the size") -- so freezing one emitted a 4-byte writeInteger that
+        // clobbered the three following bytes. The engine reported the real width all
+        // along; it was dropped at the FreezeScriptParams boundary. (audit #5 Y15 --
+        // third site of the family behind W6 and Y2.)
+        "EnumProperty"   => HelperTypeForSize(propSize),
         "Int64Property"  => "int64",
         "UInt64Property" => "uint64",
         "FloatProperty"  => "float",
@@ -202,6 +246,8 @@ public static class FreezeScriptGenerator
     /// Whether the given UE property type is supported by v1 of the
     /// freeze pipeline. Used by the row-level button enablement so
     /// users don't get a script that the helper would reject.
+    /// Support is a property of the TYPE, so no size is needed —
+    /// an EnumProperty is supported at every width.
     /// </summary>
     public static bool IsTypeSupported(string ueTypeName)
         => !string.IsNullOrEmpty(MapToHelperType(ueTypeName));

@@ -1,4 +1,7 @@
-﻿using UE5DumpUI.Views;
+﻿using UE5DumpUI.Models;
+using UE5DumpUI.Services;
+using UE5DumpUI.ViewModels;
+using UE5DumpUI.Views;
 using Xunit;
 
 namespace UE5DumpUI.Tests;
@@ -263,4 +266,114 @@ public class FreezeValueDialogValidationTests
         var range = FreezeValueDialog.IntegerRange(helperType);
         Assert.Equal(expected, FreezeValueDialog.WrapToRange(value, range));
     }
+
+    // ------------------------------------------------------------------
+    // Audit #5 Y15 — the dialog and the generated script must agree.
+    //
+    // The dialog validates the typed value against the helper type it computes
+    // from (PropType, PropSize); FreezeScriptGenerator writes with the helper type
+    // it computes from the SAME pair. If those two calls ever diverge, the value
+    // is checked against one writer and handed to another — which is what this
+    // audit's recurring root cause looks like (the report and the reality computed
+    // by different code paths). These tests pin the pair together.
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(1, "uint8",  "255",   "256")]
+    [InlineData(2, "uint16", "65535", "65536")]
+    [InlineData(4, "int32",  "9999",  "99999999999")]
+    [InlineData(8, "int64",  "9999",  "99999999999999999999")]
+    public void Validate_EnumProperty_ChecksTheWidthTheEngineReported(
+        int propSize, string expectedHelper, string highestAccepted, string firstRejected)
+    {
+        // Same call the dialog constructor makes.
+        var helperType = FreezeScriptGenerator.MapToHelperType("EnumProperty", propSize);
+        Assert.Equal(expectedHelper, helperType);
+
+        Assert.NotNull(FreezeValueDialog.ValidateAndConvert(highestAccepted, helperType, out var okErr));
+        Assert.Equal("", okErr);
+
+        Assert.Null(FreezeValueDialog.ValidateAndConvert(firstRejected, helperType, out var badErr));
+        Assert.NotEqual("", badErr);
+    }
+
+    [Fact]
+    public void Validate_OneByteEnum_NamesTheValueThatWouldHaveLanded()
+    {
+        // The whole point of Y15 + Y9 together: before the width was plumbed through,
+        // a 1-byte enum was validated as int32, so 9999 was ACCEPTED here and then
+        // written by a 4-byte writer over three neighbouring bytes.
+        var helperType = FreezeScriptGenerator.MapToHelperType("EnumProperty", 1);
+        var literal = FreezeValueDialog.ValidateAndConvert("9999", helperType, out var err);
+
+        Assert.Null(literal);
+        Assert.Contains("uint8", err);
+        Assert.Contains("would be written as 15", err);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(4)]
+    [InlineData(8)]
+    [InlineData(0)]
+    public void SuggestedDefault_ForEveryEnumWidth_SurvivesItsOwnValidator(int propSize)
+    {
+        // Y9's lesson applied to the new types this fix can now select: tightening a
+        // validator without its pre-fill yields a dialog that rejects its own default.
+        var helperType = FreezeValueDialog.HelperTypeFor(MakeMatch("EnumProperty", propSize));
+        var suggested = FreezeValueDialog.SuggestedDefault(helperType);
+        Assert.NotNull(FreezeValueDialog.ValidateAndConvert(suggested, helperType, out var err));
+        Assert.Equal("", err);
+    }
+
+    // ------------------------------------------------------------------
+    // The whole chain, end to end: the type the DIALOG validates against is the type
+    // the GENERATED SCRIPT writes with. Every hop the width has to survive — the
+    // dialog's mapping call, PropertySearchViewModel's params bundle, the generator's
+    // own mapping — is exercised here, so dropping the size at ANY of them reds this.
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("EnumProperty",   1, "uint8")]
+    [InlineData("EnumProperty",   2, "uint16")]
+    [InlineData("EnumProperty",   4, "int32")]
+    [InlineData("EnumProperty",   8, "int64")]
+    [InlineData("EnumProperty",   0, "int32")]   // size unreported → legacy default
+    [InlineData("ByteProperty",   1, "uint8")]
+    [InlineData("FloatProperty",  4, "float")]
+    [InlineData("BoolProperty",   1, "bool")]
+    [InlineData("Int64Property",  8, "int64")]
+    public void DialogAndGeneratedScript_AgreeOnTheWriter(
+        string propType, int propSize, string expectedHelper)
+    {
+        var match = MakeMatch(propType, propSize);
+
+        // 1. What the dialog validates the user's input against.
+        var helperType = FreezeValueDialog.HelperTypeFor(match);
+        Assert.Equal(expectedHelper, helperType);
+
+        // 2. A value it accepts for that type.
+        var literal = FreezeValueDialog.ValidateAndConvert(
+            FreezeValueDialog.SuggestedDefault(helperType), helperType, out var err);
+        Assert.NotNull(literal);
+        Assert.Equal("", err);
+
+        // 3. What the script the user actually gets will write with.
+        var script = FreezeScriptGenerator.Generate(
+            PropertySearchViewModel.BuildFreezeParams(match, literal!));
+
+        Assert.Contains($"valueType          = '{helperType}',", script);
+        Assert.Contains($"value              = {literal},", script);
+    }
+
+    private static PropertySearchMatch MakeMatch(string propType, int propSize) => new()
+    {
+        ClassName         = "BP_Player_C",
+        DefiningClassName = "BP_Player_C",
+        PropName          = "Stance",
+        PropType          = propType,
+        PropOffset        = 0x2C1,
+        PropSize          = propSize,
+    };
 }

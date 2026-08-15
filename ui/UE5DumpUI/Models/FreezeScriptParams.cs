@@ -29,8 +29,22 @@ public sealed class FreezeScriptParams
 
     /// <summary>UE property type string (e.g. "FloatProperty", "BoolProperty").
     /// Mapped to the freeze helper's <c>valueType</c> via
-    /// <see cref="Services.FreezeScriptGenerator.MapToHelperType"/>.</summary>
+    /// <see cref="Services.FreezeScriptGenerator.MapToHelperType(string,int)"/>,
+    /// together with <see cref="PropertySize"/>.</summary>
     public required string UeTypeName { get; init; }
+
+    /// <summary>
+    /// Engine-reported byte width of the property (<c>PropertySearchMatch.PropSize</c>).
+    /// 0 when the DLL did not report one (older DLL, or a row built without a search
+    /// match) — the mapping then falls back to its legacy 4-byte default.
+    ///
+    /// <para><b>Required on purpose.</b> <see cref="UeTypeName"/> alone does not
+    /// determine the width of an <c>EnumProperty</c>, so a freeze script built without
+    /// this wrote 4 bytes into a 1-byte <c>enum class : uint8</c> and destroyed its
+    /// three neighbours (audit #5 Y15). Leaving it optional would let the next call
+    /// site silently re-create that bug; <c>required</c> makes the compiler ask.</para>
+    /// </summary>
+    public required int PropertySize { get; init; }
 
     /// <summary>User-supplied value as a literal Lua expression (already
     /// validated by <c>FreezeValueDialog</c>). For numerics this is a

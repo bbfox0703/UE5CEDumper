@@ -46,7 +46,7 @@ public sealed class FreezeValueDialog : Window
     public FreezeValueDialog(PropertySearchMatch match)
     {
         _match = match;
-        _helperType = FreezeScriptGenerator.MapToHelperType(match.PropType);
+        _helperType = HelperTypeFor(match);
 
         Title = "Freeze property value";
         Width = 520;
@@ -159,6 +159,22 @@ public sealed class FreezeValueDialog : Window
         });
         return row;
     }
+
+    /// <summary>
+    /// The helper type this dialog validates against, for one search-result row.
+    ///
+    /// <para>Size-aware because an <c>EnumProperty</c>'s width comes from the engine and
+    /// not from its type name. This MUST stay the same call
+    /// <see cref="FreezeScriptGenerator.Generate"/> makes: the value is checked here
+    /// against the writer the generated script will use, so a divergence would validate
+    /// against one width and write with another (audit #5 Y15).</para>
+    ///
+    /// <para>A named method rather than an inline expression in the constructor, because
+    /// the constructor needs an Avalonia runtime and cannot be unit-tested — this is the
+    /// seam that lets the agreement be asserted.</para>
+    /// </summary>
+    internal static string HelperTypeFor(PropertySearchMatch match)
+        => FreezeScriptGenerator.MapToHelperType(match.PropType, match.PropSize);
 
     /// <summary>
     /// The "big number" a freeze usually wants. Clamped to what the target type can
