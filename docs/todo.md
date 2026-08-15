@@ -1405,6 +1405,30 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-15 — install the plugin into a REAL Cheat Engine (audit #5 AB1, build 2913)
+
+We were crashing CE by leaving a 1 ms-poll thread running in an image CE unloads. The fix stops
+creating threads in a CE host and pins the module elsewhere. **The unload paths were read out of CE's
+published 7.5 source; the shipping binary is 7.7.0.10568, and nobody has run this.**
+
+This is the one verification in the register that needs **no game at all**.
+
+1. Copy `dist/UE5Dumper.dll` into Cheat Engine's `plugins\` folder (or anywhere), open CE →
+   **Settings → Plugins → Add** and select it. **Before the fix this is the crash.** Success = the
+   dialog accepts it and CE is still running.
+2. Tick the plugin to enable it, then **close CE normally**. Success = clean exit — and re-open CE and
+   confirm your settings survived, since the unload runs *before* CE writes them.
+3. Check `%LOCALAPPDATA%\UE5CEDumper\Logs` for the new line
+   *"host is Cheat Engine — NOT starting the mailbox poller or the auto-start thread"*. Its absence
+   means the guard did not fire and the rest of the check proves nothing.
+4. **Then prove the fix did not break the feature**: with the plugin enabled, use its
+   *"UE5CEDumper: Inject & Connect"* menu item against a running game and confirm the DLL still
+   injects, the pipe opens, and the CE Lua mailbox works. The poller is *supposed* to run in the
+   game — only CE's own process is refused.
+5. Worth one negative case: a game whose folder is named e.g. `...\Cheat Engine 7.7\Game.exe` must
+   still get its poller. Only the executable leaf is tested, and there is a unit test for it.
+
+
 ### ⬜ NEW 2026-08-15 — freeze a 1-byte enum and check its neighbours survive (audit #5 Y15, build 2904)
 
 Freezing an `EnumProperty` now picks its writer from the width the engine reported instead of always

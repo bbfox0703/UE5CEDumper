@@ -1821,7 +1821,7 @@ second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside t
 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
-| **AB1** | HIGH | `Heiter.cpp:274` (DllMain (DLL_PROCESS_ATTACH) → Mimic::StartThread) | DllMain starts a 1 ms-poll thread in EVERY host, including Cheat Engine — and CE FreeLibrary's plugin DLLs, so the thread runs on after the image is unmapped | S / low |
+| **AB1** ✅ | HIGH | `Heiter.cpp:274` (DllMain (DLL_PROCESS_ATTACH) → Mimic::StartThread) | DllMain starts a 1 ms-poll thread in EVERY host, including Cheat Engine — and CE FreeLibrary's plugin DLLs, so the thread runs on after the image is unmapped | S / low |
 | **AB2** | HIGH | `Methode.cpp:307` (OnInjectAndConnect) | InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread **[2 lenses]** | S / low |
 | **AB3** | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
 | **AB4** | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
@@ -2293,8 +2293,10 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 > completion summary: per-segment kill rates, the three findings to start from, and the two defect
 > families that account for more findings than any single subsystem.
 >
-> 🔴 **The two most consequential open findings, both hand-verified against the source:**
-> - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path.** `DllMain` starts a
+> ✅ **AB1 is FIXED in build 2913** — see dev-log. The remaining must-fix is AD1.
+>
+> 🔴 **The two most consequential findings, both hand-verified against the source:**
+> - **T1a/AB1 — our DLL crashes Cheat Engine on a documented install path. ✅ FIXED (2913).** `DllMain` starts a
 >   1 ms-poll thread unconditionally; CE `FreeLibrary`s plugin DLLs on Settings→Add and on every exit;
 >   `DllMain`'s `lpReserved` is commented out so DETACH cannot distinguish unload from process-exit;
 >   nothing pins the module; and `Grimoire::IsCheatEngineExeName` has exactly one call site — *inside*

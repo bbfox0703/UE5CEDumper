@@ -374,6 +374,34 @@ inline bool IsCheatEngineExeName(const wchar_t* exeLeafName) {
     return false;
 }
 
+/// May this DLL create BACKGROUND THREADS in the given host process?
+///
+/// Takes the full host-executable path (what `GetModuleFileNameW(nullptr, …)` returns) and
+/// answers the one question `DllMain` has to settle *before* any thread exists. It is a
+/// separate function from `IsCheatEngineExeName` for a reason that cost a HIGH finding:
+/// `DllMain` cannot be reached from a test, so the decision it makes has to live somewhere
+/// a test CAN reach, taking exactly the value Windows hands us (audit #5 AB1).
+///
+/// **False for Cheat Engine, and only for Cheat Engine.** CE loads a plugin DLL and then
+/// unloads it — `Settings → Plugins → Add` does LoadLibrary → `CEPlugin_GetVersion` →
+/// FreeLibrary, and every CE exit unloads every plugin before writing its settings. A
+/// thread of ours still running in that image executes unmapped memory and takes CE down.
+/// `DLL_PROCESS_DETACH` cannot save us: it cannot distinguish a FreeLibrary unload from
+/// process exit, and joining threads under the loader lock would deadlock.
+///
+/// **Fails OPEN.** An empty or unreadable host path returns `true`, preserving the
+/// behaviour that shipped for every non-CE host rather than silently disabling the DLL on
+/// a path we failed to read.
+inline bool HostAllowsBackgroundThreads(const wchar_t* hostExePath) {
+    if (!hostExePath || !*hostExePath) return true;
+    // Take the last separator of EITHER kind — a path can arrive with '/' on Windows.
+    const wchar_t* back = wcsrchr(hostExePath, L'\\');
+    const wchar_t* fwd  = wcsrchr(hostExePath, L'/');
+    const wchar_t* sep  = (fwd && (!back || fwd > back)) ? fwd : back;
+    const wchar_t* leaf = sep ? sep + 1 : hostExePath;
+    return !IsCheatEngineExeName(leaf);
+}
+
 namespace Grimoire {
 
 // Every re-assert worker sleeps its period in slices of this, so StopWorker()'s join
