@@ -1405,6 +1405,28 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-15 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
+
+The three handoffs that need a class address stopped re-deriving it from the capped `list_classes`
+page and now use the address the row already carries. The pure logic is unit-tested with three
+negative controls, **but the end-to-end path is not**: no test issues a real `walk_functions` against
+an address sourced from `list_all_functions`.
+
+Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogwarts Legacy, FF7R).
+
+1. **Game Class Filter → Load.** Confirm the status line ends with
+   *"⚠ STOPPED at the 5,000-row cap — more classes exist"*. If it does not, this game is too small
+   and the rest of the check proves nothing — pick another title.
+2. **Interesting Funcs → Load**, then pick a row whose class is **absent** from the Game Class Filter
+   list (that is what "past the cap" means; filter by the class name there to confirm the absence).
+3. Click **AA(B)** on that row. Success = the script generates / reaches CE. Before this build it
+   aborted on *"Class X not found"*.
+4. Repeat on the **Console** tab with an exec command taking parameters (**Run** → the FIRE dialog)
+   and with its own **AA(B)** — those two twins were not named by the finding and share the fix.
+5. Worth one negative case: a class that genuinely does not exist should still report plainly
+   *"not found"*, not the "may still exist" caveat. The Live-handoff path (no live instance +
+   an unknown class name) is where that text appears.
+
 ### ⬜ NEW 2026-08-15 — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
 
 The invoke form passed **0** for every `UObject*` / `FName` argument since the feature shipped;

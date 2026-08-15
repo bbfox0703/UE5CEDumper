@@ -115,22 +115,25 @@ public class ConsoleViewModelTests
     private const uint FUNC_BlueprintCallable  = 0x0400_0000;
     private const uint FUNC_Native             = 0x0000_0400;
 
+    // ClassAddr is populated because list_all_functions really does supply it per row —
+    // and the handoff events now carry it so MainWindow never re-derives an address from
+    // the CAPPED list_classes page (audit #5 X2).
     private static List<AllFunctionEntry> BuildSampleEntries() => new()
     {
         // 4 exec entries — different classes + arities
-        new() { ClassName="UCheatManager", FuncName="Fly",
+        new() { ClassName="UCheatManager", ClassAddr="0x1000", FuncName="Fly",
                 FunctionFlags=FUNC_Exec | FUNC_Native, NumParms=0, ParmsSize=0 },
-        new() { ClassName="UCheatManager", FuncName="God",
+        new() { ClassName="UCheatManager", ClassAddr="0x1000", FuncName="God",
                 FunctionFlags=FUNC_Exec | FUNC_Native, NumParms=0, ParmsSize=0 },
-        new() { ClassName="MyGameCheatMgr", FuncName="GiveItem",
+        new() { ClassName="MyGameCheatMgr", ClassAddr="0x2000", FuncName="GiveItem",
                 FunctionFlags=FUNC_Exec, NumParms=1, ParmsSize=4 },
-        new() { ClassName="PlayerController", FuncName="DebugTeleport",
+        new() { ClassName="PlayerController", ClassAddr="0x3000", FuncName="DebugTeleport",
                 FunctionFlags=FUNC_Exec | FUNC_BlueprintCallable, NumParms=3, ParmsSize=12 },
 
         // Non-exec — should be excluded from the results
-        new() { ClassName="PlayerCharacter", FuncName="AddMoney",
+        new() { ClassName="PlayerCharacter", ClassAddr="0x4000", FuncName="AddMoney",
                 FunctionFlags=FUNC_BlueprintCallable, NumParms=2, ParmsSize=8 },
-        new() { ClassName="GameMode", FuncName="StartPlay",
+        new() { ClassName="GameMode", ClassAddr="0x5000", FuncName="StartPlay",
                 FunctionFlags=FUNC_BlueprintCallable, NumParms=0, ParmsSize=0 },
     };
 
@@ -276,10 +279,12 @@ public class ConsoleViewModelTests
 
         string? capturedClass = null;
         string? capturedFunc = null;
-        vm.RequestParameterInvoke += (cls, fn) =>
+        string? capturedAddr = null;
+        vm.RequestParameterInvoke += (cls, fn, addr) =>
         {
             capturedClass = cls;
             capturedFunc = fn;
+            capturedAddr = addr;
         };
 
         // GiveItem (NumParms=1) is the first row after the sort.
@@ -290,6 +295,9 @@ public class ConsoleViewModelTests
 
         Assert.Equal("MyGameCheatMgr", capturedClass);
         Assert.Equal("GiveItem", capturedFunc);
+        // The row's own UClass address rides along, so the handler never has to look the
+        // class up in the capped list_classes page (audit #5 X2).
+        Assert.Equal("0x2000", capturedAddr);
         Assert.Equal(0, fake.InvokeCallCount);
         Assert.Empty(vm.History);
     }
@@ -352,7 +360,8 @@ public class ConsoleViewModelTests
         await vm.LoadCommand.ExecuteAsync(null);
 
         string? capturedFunc = null;
-        vm.RequestParameterInvoke += (_, fn) => capturedFunc = fn;
+        string? capturedAddr = null;
+        vm.RequestParameterInvoke += (_, fn, addr) => { capturedFunc = fn; capturedAddr = addr; };
 
         // "giveitem 5" — GiveItem takes 1 param; we don't parse "5"
         // yet (FString-input gap), so route to dialog.
@@ -360,6 +369,7 @@ public class ConsoleViewModelTests
         await vm.RunCommandTextCommand.ExecuteAsync(null);
 
         Assert.Equal("GiveItem", capturedFunc);
+        Assert.Equal("0x2000", capturedAddr);   // typed-command path carries it too (X2)
         Assert.Equal(0, fake.InvokeCallCount);
     }
 

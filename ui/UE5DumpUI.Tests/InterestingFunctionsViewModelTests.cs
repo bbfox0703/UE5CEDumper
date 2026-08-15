@@ -61,27 +61,30 @@ public class InterestingFunctionsViewModelTests
     // threshold filter independently of the categorisation logic.
     // ------------------------------------------------------------------
 
+    // ClassAddr is populated because list_all_functions supplies it per row — the Copy AA
+    // Script handoff carries it so the handler never re-derives an address out of the
+    // CAPPED list_classes page (audit #5 X2).
     private static List<AllFunctionEntry> BuildSampleEntries() => new()
     {
         // High-score, multi-bucket: Inventory category, score ~10
-        new() { ClassName="PlayerCharacter", FuncName="AddMoney",
+        new() { ClassName="PlayerCharacter", ClassAddr="0x1000", FuncName="AddMoney",
                 FunctionFlags=0x0400_0000, NumParms=2, ParmsSize=5 },
         // Stats
-        new() { ClassName="PlayerState", FuncName="SetMaxHealth",
+        new() { ClassName="PlayerState", ClassAddr="0x2000", FuncName="SetMaxHealth",
                 FunctionFlags=0x0400_0000, NumParms=2, ParmsSize=4 },
         // Movement
-        new() { ClassName="MyPawn", FuncName="TeleportPlayer",
+        new() { ClassName="MyPawn", ClassAddr="0x3000", FuncName="TeleportPlayer",
                 FunctionFlags=0x0400_0000, NumParms=4, ParmsSize=12 },
         // Combat
-        new() { ClassName="WeaponComp", FuncName="FireWeapon",
+        new() { ClassName="WeaponComp", ClassAddr="0x4000", FuncName="FireWeapon",
                 FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=4 },
         // Utility
-        new() { ClassName="GameMode", FuncName="SaveGame",
+        new() { ClassName="GameMode", ClassAddr="0x5000", FuncName="SaveGame",
                 FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=4 },
         // Noise -- below threshold
-        new() { ClassName="AnimNotify", FuncName="DoTick",
+        new() { ClassName="AnimNotify", ClassAddr="0x6000", FuncName="DoTick",
                 FunctionFlags=0, NumParms=0, ParmsSize=0 },
-        new() { ClassName="ParticleSystem", FuncName="UpdateInternal",
+        new() { ClassName="ParticleSystem", ClassAddr="0x7000", FuncName="UpdateInternal",
                 FunctionFlags=0, NumParms=0, ParmsSize=0 },
     };
 
@@ -339,12 +342,19 @@ public class InterestingFunctionsViewModelTests
 
         string? capturedClass = null;
         string? capturedFunc = null;
-        vm.RequestCopyBakedScript += (cls, fn) => { capturedClass = cls; capturedFunc = fn; };
+        string? capturedAddr = null;
+        vm.RequestCopyBakedScript += (cls, fn, addr) =>
+        {
+            capturedClass = cls; capturedFunc = fn; capturedAddr = addr;
+        };
 
         vm.CopyAaScriptCommand.Execute(save);
 
         Assert.Equal("GameMode", capturedClass);
         Assert.Equal("SaveGame", capturedFunc);
+        // The address the row already carries — without it the handler falls back to the
+        // capped list_classes page and aborts on "Class GameMode not found" (audit #5 X2).
+        Assert.Equal("0x5000", capturedAddr);
     }
 
     [Fact]

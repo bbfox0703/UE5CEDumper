@@ -2526,6 +2526,13 @@ public sealed class DumpService : IDumpService
             Total = res["total"]?.GetValue<int>() ?? 0,
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             TotalClasses = res["total_classes"]?.GetValue<int>() ?? 0,
+            RequestedLimit = limit,
+            // Cap detection is the DLL's job (it is the only side that knows whether the
+            // walk reached the end of GObjects), but a pre-2882 DLL omits the key. Fall
+            // back to the same inference the DLL makes — a full page means it stopped —
+            // so an older DLL still gets an honest "capped", not a silent "not found".
+            Truncated = res["truncated"]?.GetValue<bool>()
+                        ?? ((res["classes"] as JsonArray)?.Count ?? 0) >= limit,
         };
 
         if (res["classes"] is JsonArray arr)

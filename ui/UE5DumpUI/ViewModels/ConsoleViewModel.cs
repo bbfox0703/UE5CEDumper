@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -123,8 +123,14 @@ public partial class ConsoleViewModel : ViewModelBase
     /// supply values. No-arg exec commands run directly via
     /// <see cref="IDumpService.InvokeFunctionAsync"/> and don't fire this
     /// event.
+    ///
+    /// Payload is (className, funcName, classAddr). The address rides along
+    /// because <c>list_all_functions</c> already supplies it per row: the
+    /// handler used to re-derive it from <c>list_classes</c>, which returns a
+    /// CAPPED page, so every exec on a class past the cap died on
+    /// "Class X not found" (audit #5 X2).
     /// </summary>
-    public event Action<string, string>? RequestParameterInvoke;
+    public event Action<string, string, string>? RequestParameterInvoke;
 
     /// <summary>Per-row "Live" action — same contract as Interesting
     /// Funcs. MainWindow tries find_instance → LiveWalker → ClassStruct
@@ -133,8 +139,9 @@ public partial class ConsoleViewModel : ViewModelBase
 
     /// <summary>Per-row "AA(B)" action — same contract as Interesting
     /// Funcs. MainWindow handler fetches params + opens InvokeParamDialog
-    /// in CopyBakedScript mode.</summary>
-    public event Action<string, string>? RequestCopyBakedScript;
+    /// in CopyBakedScript mode. Carries the row's class address for the
+    /// same reason as <see cref="RequestParameterInvoke"/>.</summary>
+    public event Action<string, string, string>? RequestCopyBakedScript;
 
     /// <summary>"Copy CE Script" on the Debug Camera row — MainWindow builds
     /// the [ENABLE]/[DISABLE] setDebugCamera memory-record script via
@@ -389,7 +396,7 @@ public partial class ConsoleViewModel : ViewModelBase
         {
             StatusText = $"'{commandName}' takes {match.NumParms} param(s); " +
                          $"inline args not yet supported — opening param dialog.";
-            RequestParameterInvoke?.Invoke(match.ClassName, match.FuncName);
+            RequestParameterInvoke?.Invoke(match.ClassName, match.FuncName, match.ClassAddr);
             return;
         }
 
@@ -407,7 +414,7 @@ public partial class ConsoleViewModel : ViewModelBase
         {
             StatusText = $"{entry.FuncName} takes {entry.NumParms} param(s) — " +
                          $"opening param dialog.";
-            RequestParameterInvoke?.Invoke(entry.ClassName, entry.FuncName);
+            RequestParameterInvoke?.Invoke(entry.ClassName, entry.FuncName, entry.ClassAddr);
             return;
         }
 
@@ -526,7 +533,7 @@ public partial class ConsoleViewModel : ViewModelBase
     private void CopyAaScript(AllFunctionEntry? row)
     {
         if (row == null) return;
-        RequestCopyBakedScript?.Invoke(row.ClassName, row.FuncName);
+        RequestCopyBakedScript?.Invoke(row.ClassName, row.FuncName, row.ClassAddr);
     }
 
     /// <summary>Re-run a history entry — looks up the same class+func in

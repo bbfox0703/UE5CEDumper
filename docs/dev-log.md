@@ -22,6 +22,61 @@ builds ≤696 in
 
 -----
 
+## 2026-08-15 - "Class not found" about the class you just clicked on (build 2888)
+
+**Audit #5 segment U3 finding X2**, plus two twins the finding did not cite.
+
+### The lookup should never have existed
+
+Interesting Funcs and Console build their rows from `list_all_functions`, which supplies
+`class_addr` **per row**. The three handlers that need a class address to call `walk_functions`
+threw that away, issued `list_classes`, searched the returned page by NAME, and bailed with
+`"Class {className} not found"` — about the class whose own row the user had just clicked.
+
+`list_classes` returns at most `limit` rows (5,000) and `Aura::ListClasses` stops walking GObjects
+the moment it has them, so on a large title a perfectly real class is simply not in the page. The
+three events now carry `classAddr` and the common path issues **no pipe call at all** — it is both
+the correct fix and one fewer full-GObjects walk per button click.
+
+### The finding cited one site; there were three
+
+`Console.RequestParameterInvoke` (the FIRE dialog for any exec taking parameters) and
+`Console.RequestCopyBakedScript` are byte-for-byte the same body as the cited
+`InterestingFunctions.RequestCopyBakedScript`, with the same message and the same hard `return`.
+That is the fourth time this audit has found its own defect shape half-covered — §3b's
+"grep for its siblings before closing a fix" rule is what caught it.
+
+### The cap is detected at the source now
+
+Per D5/F4's own lesson, the DLL is the only side that knows whether the walk reached the end.
+`Aura::ClassListResult` gained `truncated` (set exactly as `SearchResultSet::truncated` is), and
+`list_classes` emits it. The C# falls back to inferring it from a full page, so a **pre-2888 DLL
+still produces the honest message** instead of silently degrading to "not found".
+
+`ClassListResult.FindClassAddr` is now a pure, unit-testable lookup returning `ClassAddrLookup`.
+Its `MissReason` is *"not in the class list — it was CAPPED at 5,000 rows, so the class may still
+exist"* on a truncated walk, and plainly *"not found"* on a complete one — the second half matters
+as much as the first, or the caveat becomes noise on every genuine miss.
+
+Four further handoff sites (the ones whose wider "blast radius" framing this audit **refuted**) keep
+their behaviour but were re-pointed at the same helper: their old text asserted *"Find Instances +
+ListClasses both empty"*, which is a false statement about a capped list. **Game Class Filter** now
+appends *"⚠ STOPPED at the 5,000-row cap — more classes exist"* — worth it because its
+`total_classes` moves in lockstep with the results vector, so on a truncated walk that status line
+printed the cap twice and read as a pool size.
+
+**Negative controls, three, each isolating one claim.** Forcing `Truncated = false` in the parser
+reds exactly the 2 truncation tests — and the "full walk is not truncated" test correctly stays
+green, because it asserts an absence. Passing `""` instead of `row.ClassAddr` reds exactly the 3
+address-carrying tests. Flattening `MissReason` to `"not found"` reds exactly the capped-wording
+test. 3631 tests, 0 failed. `dist` is the 54.4 MB AOT-trimmed binary, launch-verified, no
+`crash.log`.
+
+⬜ **Not verified in-game** — nobody has clicked AA(B) on a class past the cap in a real title and
+watched the script generate.
+
+-----
+
 ## 2026-08-15 - Struct parameters: one path wrote four bytes of a vector, the other trusted a guessed layout (build 2881)
 
 **Audit #5 segment U4 fixes Y6 and Y7.** Both are struct params, and both come down to the same

@@ -150,7 +150,13 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 // (e.g. SaveSlotList[].MsTuneData.GP).
 { "id": 20, "cmd": "search_properties", "query": "Health", "limit": 100, "deep": false }
 
-// List all classes (UClass objects)
+// List all classes (UClass objects). Response adds "truncated": true when the walk
+// STOPPED at "limit" instead of reaching the end of GObjects — the list is then a PAGE,
+// not the pool. Callers that resolve a class BY NAME out of it must surface this: a class
+// past the cap is otherwise indistinguishable from one that does not exist, which is what
+// made the UI report "Class X not found" about a class it was displaying (audit #5 X2).
+// Note "total_classes" is NOT a pool size — it moves in lockstep with the returned
+// results, so on a truncated walk it equals "total".
 { "id": 21, "cmd": "list_classes", "limit": 500 }
 
 // List all enum definitions

@@ -884,10 +884,49 @@ unread flags, not wrong writes.
 > ⬜ **Not verified in-game.** Nobody has yet run a real batch scan on a title where a seed keyword
 > caps and confirmed the strip appears.
 
+> ✅ **X2 fixed in build 2888** — `d2c34d1`-era; the handoffs stopped re-deriving an address they
+> were already holding.
+>
+> **The lookup should never have existed.** Interesting Funcs and Console build their rows from
+> `list_all_functions`, which supplies `class_addr` **per row** — and then the three handlers threw
+> that away, called `list_classes`, searched the returned page by NAME, and aborted on
+> *"Class X not found"* about the class whose own row the user had just clicked. The three events now
+> carry `classAddr`, so the common path issues **no pipe call at all**.
+>
+> **Two twins came with it, and they are the reason this is not a one-line change.**
+> `Console.RequestParameterInvoke` (the FIRE dialog for any exec taking parameters) and
+> `Console.RequestCopyBakedScript` are byte-for-byte the same body as the cited site, with the same
+> `"Class {className} not found"` and the same hard `return`. This is the fourth time this audit has
+> found its own defect shape half-covered; the §3b rule caught it this time.
+>
+> **The cap is now detected at the source, per D5/F4's own lesson.** `Aura::ClassListResult` gained
+> `truncated` (set the same way as `SearchResultSet::truncated`) and `list_classes` emits it. The C#
+> falls back to inferring it from a full page so a **pre-2888 DLL still gets the honest message**
+> rather than silently degrading to "not found".
+>
+> **What a miss now says.** `ClassListResult.FindClassAddr` is a pure, unit-testable lookup returning
+> `ClassAddrLookup`, whose `MissReason` is *"not in the class list — it was CAPPED at 5,000 rows, so
+> the class may still exist"* on a truncated walk and plainly *"not found"* on a complete one. The
+> four **refuted-blast-radius** sites (`:1191` and siblings) were left behaving exactly as before but
+> re-pointed at that helper — their old text asserted *"Find Instances + ListClasses both empty"*,
+> which is a false statement about a capped list. **Game Class Filter** appends
+> *"⚠ STOPPED at the 5,000-row cap — more classes exist"*, which matters because its
+> `total_classes` moves in lockstep with the results vector, so on a truncated walk the line printed
+> the cap twice and read as a pool size.
+>
+> **Negative controls, three, each isolating one claim:** forcing `Truncated = false` in the parser
+> reds exactly the 2 truncation tests (the "full walk is not truncated" test correctly stays green —
+> it asserts an absence); passing `""` instead of `row.ClassAddr` reds exactly the 3 address-carrying
+> tests; flattening `MissReason` to `"not found"` reds exactly the capped-wording test. 3631 tests,
+> 0 failed (3624 → 3631). `dist` is the 54.4 MB AOT-trimmed binary, launch-verified, no `crash.log`.
+>
+> ⬜ **Not verified in-game.** Nobody has yet clicked AA(B) on a class past the cap in a real title
+> and watched the script generate. The pure logic is covered; the end-to-end path is not.
+
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **X1** ✅ | MED | `DumpService.cs:1746` (`SearchPropertiesBatchAsync`) | The batch property search parses `query` + `match_count` only, dropping the per-query `truncated` and batch `aborted` the DLL emits for exactly this purpose — `PropertySearchQueryEnvelope` has no such field to parse into. Interesting Properties sends all 51 seed queries at 200 rows each, so common seeds (`Max`, `Count`, `Time`, `Level`, `Hit`) cap routinely and the panel reports *"N unique properties"* with no cap note. **This is the exact report class the F4 fix was written to end**, surviving at F4's other site. `DetectStatsViewModel` makes the same call with the same blind spot. | S / low |
-| **X2** | MED | `MainWindowViewModel.cs:1650` | Class-address lookups scan a single 5,000-row `list_classes` page and report a real class as **"not found"** when it falls past the cap. | S / low |
+| **X2** ✅ | MED | `MainWindowViewModel.cs:1650` | Class-address lookups scan a single 5,000-row `list_classes` page and report a real class as **"not found"** when it falls past the cap. | S / low |
 | **X3** | MED | *(hand-found)* `DumpService.cs` / `Models/EngineState.cs` | The DLL computes and publishes a three-flag offset-validation verdict (`validated`, `probe_ran`, `case_preserving`, plus `fallback_reason`) and **the UI never issues `get_offsets` at all**, so nothing can tell the user the walker is running on unvalidated default offsets. | S / low |
 | **X4** | LOW | `MainWindowViewModel.cs:3373` | The Dump All completion line is derived from the **file's byte length** rather than from what the dump did, so a zero-class or half-failed dump still announces an export — and the figure itself is integer division (`Length / 1024 / 1024:F1`), so a 3.7 MB dump prints `3.0 MB` and anything under 1 MB prints `0.0 MB`. | S / low |
 | **X5** | LOW | `MainWindowViewModel.cs:2003` | The disconnect fan-out resets **3 of 15** panels; every other panel keeps its rows across a reconnect and goes on offering jumps to addresses from the previous process. | M / med |
@@ -1173,6 +1212,9 @@ should not treat their survival as confirmation.
 - **`MainWindowViewModel.cs:1191`** — seven handoffs calling a class "not resolvable" from a
   truncated class list. Refuted here, but note **X2 is the surviving, narrower form of the same
   underlying cap** — the truncation is real; what was refuted is this framing of its blast radius.
+  *(Post-X2 note, build 2888: these four sites were left BEHAVING as before — the refutation stands —
+  but their message was re-pointed at `ClassListResult.FindClassAddr`, because the old text asserted
+  "Find Instances + ListClasses both empty", which is a false statement about a capped list.)*
 - **`MainWindowViewModel.cs:2222`** and **`:2604`** — two framings of the debounced options save
   copying `ProxyDeploy` collections off the UI thread. Both refuted.
 - **`MainWindowViewModel.cs:1163`** — panel→Live-Walker handoffs reporting a navigation the
@@ -1377,32 +1419,30 @@ inaccuracy, not a defect); `ReadStructArrayElements` negative-size bypass; `Find
 
 -----
 
-## 3b. START HERE — next session FIXES X2 (scanning is paused)
+## 3b. START HERE — next session FIXES Y9 (scanning is paused)
 
-*State as of 2026-08-15, after U4 + eight fix batches. Read this section first; it is written for a
+*State as of 2026-08-15, after U4 + nine fix batches. Read this section first; it is written for a
 session with no memory of the previous one.*
 
-> 🔵 **The maintainer's instruction for the next session: fix X2. Do not start U5.**
+> 🔵 **X2 shipped in build 2888. Next up is Y9. Do not start U5.**
 > Scanning is deliberately paused with 10 of 12 segments done — the remaining backlog is worth more
 > than another 14 findings. Work the open list one item (or one related group) at a time, and report
 > after each so the maintainer can watch the quota.
 >
-> **X2** — `MainWindowViewModel.cs:1650`, MED, `S`/low. A class-address lookup scans a single
-> 5,000-row `list_classes` page and reports a real class as **"not found"** when it falls past the
-> cap. Same family as X1 (a cap treated as the whole set), and the refuted
-> `MainWindowViewModel.cs:1191` claim is the *wider* framing of the same underlying truncation — read
-> that refutation in §3 before starting, so the fix stays scoped to what survived.
+> **Y9** — `FreezeValueDialog.cs:231`, `S`/low. A `uint8` field accepts `9999` and silently writes
+> `15` (the truncated low byte). Then **W5** — `CeXmlExportService.cs:2141`, weak/soft/lazy pointers
+> drilled with `Offsets=[0]`, i.e. dereferencing a slot that is not a pointer.
 >
-> **After X2**, the cheapest remaining are **Y9** (`FreezeValueDialog.cs:231`, a `uint8` accepting
-> 9999 and silently writing 15) and **W5** (`CeXmlExportService.cs:2141`, weak/soft/lazy pointers
-> drilled with `Offsets=[0]`, i.e. dereferencing a non-pointer slot).
+> **Read X2's entry in §2 before either.** Its lesson is the reusable one: the fix was not the
+> truncation caveat, it was noticing that the panels *already had the address* and had thrown it
+> away. Ask that question first — is the value being re-derived one the caller already holds?
 
 > ✅ **Nothing open in the audit is rated HIGH.** All four real HIGHs shipped: V1 (2830), W2+W3
 > (2842), W1+W7 (2853), Y1 (2862).
 >
-> **Fixed so far — 18 findings across ten fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: Y6+Y7 (2881), Y8 (2875), X1
+> **Fixed so far — 19 findings across eleven fix commits** (counted from the ✅ rows in §2, not tallied by hand), newest first: X2 (2888), Y6+Y7 (2881), Y8 (2875), X1
 > (2870), Y2+Y3+Y4+Y5 (2866), Y1 (2862), W6 (2857), W1+W7 (2853), W2+W3 (2842), W4 (2836),
-> V1+V2+V5 (2830). Test count went 3590 → 3624 over the session; every fix carries a negative
+> V1+V2+V5 (2830). Test count went 3590 → 3631 over the session; every fix carries a negative
 > control, and the doc entry for each says what the control proved.
 >
 > **Y1 is the one to read before fixing anything else**, because its verification is the template:
@@ -1445,9 +1485,9 @@ open: **U5, S1, T1**. **The DLL is fully scanned; everything left is C# and Lua.
 **Fixing:** cluster ① is 6 of 7 shipped, now on **both** sides of the wire (`5ef4c2b`, `c65fdfc`,
 and build 2830 for the C# half U1/V2 exposed); A4 deliberately open. D5 shipped **F1, F3(a), F4, F6,
 F7, FR1** across `0d9fcfa` / `a2b616a` / `cfaa5cd` / `1e5ab21`. U1 shipped **V1 (the HIGH), V2, V5**.
-**Still open: Y9–Y14, X2–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
+**Still open: Y9–Y14, X3–X12, W5, W8, V3, V4, V6–V11, F2, F5, F8, A4, U3, G7, U2** — no HIGHs
 remain. U4 shipped **Y1** (2862), **Y2+Y3+Y4+Y5** (2866), **Y8** (2875) and **Y6+Y7** (2881) —
-8 of its 14; U3 shipped **X1** (2870) — 1 of its 12.
+8 of its 14; U3 shipped **X1** (2870) and **X2** (2888) — 2 of its 12.
 U2 shipped **W4** (2836), **W2+W3** (2842), **W1+W7** (2853), **W6** (2857) — 6 of its 8 findings.
 U3 shipped nothing yet; **X1 is the cheapest and closes a known-recurring gap** (S/low, and it is the
 other half of a fix this audit already paid for).

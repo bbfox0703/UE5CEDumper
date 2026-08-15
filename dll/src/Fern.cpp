@@ -3711,6 +3711,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["total"]           = static_cast<int>(listResult.results.size());
             data["scanned_objects"] = listResult.scannedObjects;
             data["total_classes"]   = listResult.totalClasses;
+            // The walk stopped at the cap — this is a page, not the pool. The UI
+            // resolves class NAMES out of it, so without this flag a class past the
+            // cap is reported as one that does not exist (audit #5 X2).
+            data["truncated"]       = listResult.truncated;
             data["classes"]         = classes;
             return Renge::MakeResponse(id, data).dump();
         }
