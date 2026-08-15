@@ -744,12 +744,6 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         if (IsScanning) return;
 
-        // Record what this heavy operation costs the DLL dispatcher. Automatic
-        // rather than a measurement session: the evidence then accumulates from
-        // real use instead of only the scenario somebody thought to test. Degrades
-        // to a no-op when not connected; never affects the operation.
-        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (First)");
-
         if (!IsFirstScanType(SelectedScanType))
         {
             ErrorMessage = "First Scan supports targeted predicates only (Exact / " +
@@ -773,6 +767,18 @@ public partial class ValueSearchViewModel : ViewModelBase
             ErrorMessage = "Between requires Value and Value2.";
             return;
         }
+
+        // Record what this heavy operation costs the DLL dispatcher. Automatic rather than
+        // a measurement session: the evidence then accumulates from real use instead of only
+        // the scenario somebody thought to test. Degrades to a no-op when not connected;
+        // never affects the operation.
+        //
+        // AFTER validation, deliberately. Opening it above the four early returns cost two
+        // get_diagnostics round-trips on every rejected click and filed a "Value Scan (First)"
+        // measurement for a scan that never ran — polluting the very dataset the probe exists
+        // to collect, with samples whose duration is the validation, not the scan.
+        // (audit #5 AE8)
+        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (First)");
 
         var cts = _scanCts = new System.Threading.CancellationTokenSource();
         try
@@ -837,12 +843,6 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         if (IsScanning || !HasSession) return;
 
-        // Record what this heavy operation costs the DLL dispatcher. Automatic
-        // rather than a measurement session: the evidence then accumulates from
-        // real use instead of only the scenario somebody thought to test. Degrades
-        // to a no-op when not connected; never affects the operation.
-        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (Next)");
-
         bool needsValue = !IsPrevValueScanType(SelectedScanType);
         if (needsValue && string.IsNullOrWhiteSpace(Value))
         {
@@ -854,6 +854,10 @@ public partial class ValueSearchViewModel : ViewModelBase
             ErrorMessage = "Between requires Value and Value2.";
             return;
         }
+
+        // Same ordering as First Scan above, and for the same reason — this site has the
+        // identical defect and the finding named only First. (audit #5 AE8)
+        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (Next)");
 
         var cts = _scanCts = new System.Threading.CancellationTokenSource();
         try

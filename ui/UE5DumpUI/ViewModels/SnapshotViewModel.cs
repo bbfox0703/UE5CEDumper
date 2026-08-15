@@ -573,9 +573,6 @@ public partial class SnapshotViewModel : ViewModelBase
         // rather than a measurement session: the evidence then accumulates from
         // real use instead of only the scenario somebody thought to test. Labelled
         // manual vs auto because the auto loop's cadence is its own question.
-        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(
-            _dump, _log, isAuto ? "Snapshot capture (auto)" : "Snapshot capture");
-
         // Free-disk-space guard — refuse ALL captures (manual + auto) when the DB
         // drive is below the required free space, so a multi-GB capture can't fill it.
         if (!DiskGuardPasses())
@@ -585,6 +582,13 @@ public partial class SnapshotViewModel : ViewModelBase
             _log.Warn(Constants.LogCatView, "Snapshot: " + msg);
             return CaptureOutcome.DiskLow;
         }
+
+        // Probe opened AFTER the guard: a refused capture used to cost two get_diagnostics
+        // round-trips and file a "Snapshot capture" sample for a capture that never started.
+        // Worse here than elsewhere because the AUTO loop retries on a timer, so a full disk
+        // produced a steady stream of fake samples. (audit #5 AE8, sibling site)
+        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(
+            _dump, _log, isAuto ? "Snapshot capture (auto)" : "Snapshot capture");
 
         var engine = _engineState!;
         var dataType = SelectedScope;

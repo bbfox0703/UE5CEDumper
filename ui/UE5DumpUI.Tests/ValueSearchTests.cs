@@ -1202,6 +1202,16 @@ public class ValueSearchTests
         public List<(ulong, int, int, string?, string?, bool)> Queries { get; } = new();
         public List<ulong> Ends { get; } = new();
 
+        // AE8: how many times DiagnosticsProbe reached the pipe. StubDumpService throws
+        // NotImplementedException here and the probe swallows it, so counting is the only
+        // way to see whether the probe was opened at all.
+        public int DiagnosticsCalls { get; private set; }
+        public override Task<DiagnosticsResult> GetDiagnosticsAsync(int limit = 25, CancellationToken ct = default)
+        {
+            DiagnosticsCalls++;
+            return Task.FromResult(new DiagnosticsResult());
+        }
+
         public bool? LastParallel { get; private set; }
         public bool? LastBatchRead { get; private set; }
 
@@ -2420,6 +2430,48 @@ public class ValueSearchTests
         vm.SelectedSortOption = vm.SortOptions.First(o => o.Key == "value");
 
         Assert.Contains(fake.Queries, q => q.Item5 == "value");
+    }
+
+    /// <summary>
+    /// A REJECTED scan click must not open the diagnostics probe — audit #5 AE8.
+    ///
+    /// The probe sat above four early returns, so every invalid click cost two
+    /// get_diagnostics round-trips AND filed a "Value Scan (First)" measurement whose
+    /// duration was the validation, not a scan. The probe exists to accumulate evidence
+    /// about what heavy operations cost; samples from operations that never ran are worse
+    /// than no samples.
+    /// </summary>
+    [Fact]
+    public async Task RejectedFirstScan_DoesNotOpenTheDiagnosticsProbe()
+    {
+        var (vm, fake) = MakeVm();
+        // Changed is a Next-Scan predicate — First Scan rejects it before doing any work.
+        vm.SelectedDataType = ValueScanDataType.Int32;
+        vm.SelectedScanType = ValueScanType.Changed;
+        vm.Value = "1";
+
+        await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.NotEqual("", vm.ErrorMessage);      // it really was rejected...
+        Assert.Empty(fake.Begins);                 // ...and no scan started...
+        Assert.Equal(0, fake.DiagnosticsCalls);    // ...so nothing was measured.
+    }
+
+    [Fact]
+    public async Task AcceptedFirstScan_StillOpensTheDiagnosticsProbe()
+    {
+        // The other half: moving the probe must not have disabled it.
+        var (vm, fake) = MakeVm();
+        fake.NextBeginResult  = new ValueScanBeginResult  { SessionId = 1UL, Total = 1 };
+        fake.NextWindowResult = new ValueScanWindowResult { SessionId = 1UL, Total = 1, FilteredTotal = 1 };
+        vm.SelectedDataType = ValueScanDataType.Int32;
+        vm.SelectedScanType = ValueScanType.Exact;
+        vm.Value = "1";
+
+        await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.Single(fake.Begins);
+        Assert.True(fake.DiagnosticsCalls > 0);
     }
 
     [Fact]

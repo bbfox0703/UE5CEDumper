@@ -4192,12 +4192,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task ExportCeFieldXmlAsync()
     {
-        // Record what this heavy operation costs the DLL dispatcher. Automatic
-        // rather than a measurement session: the evidence then accumulates from
-        // real use instead of only the scenario somebody thought to test. Degrades
-        // to a no-op when not connected; never affects the operation.
-        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Copy CE Field");
-
         // Use the multi-selection snapshot; fall back to SelectedField for
         // robustness if SelectionChanged hasn't synced yet (e.g. when the
         // command fires programmatically right after a single-row selection).
@@ -4206,6 +4200,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             : (SelectedField != null ? new List<LiveFieldValue> { SelectedField } : new List<LiveFieldValue>());
 
         if (selectedSnapshot.Count == 0 || string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;
+
+        // Record what this heavy operation costs the DLL dispatcher. Automatic
+        // rather than a measurement session: the evidence then accumulates from
+        // real use instead of only the scenario somebody thought to test. Degrades
+        // to a no-op when not connected; never affects the operation.
+        //
+        // AFTER the early return, like ExportCeXmlAsync above — opening it first spent two
+        // get_diagnostics round-trips and filed a "Copy CE Field" sample every time the
+        // command fired with nothing selected. (audit #5 AE8, sibling site)
+        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Copy CE Field");
         if (IsExporting) return;   // an export is already running — its Cancel button is showing
 
         // Guessed ("Guess?") fields export only when the user explicitly focuses
