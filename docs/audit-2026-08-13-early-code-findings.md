@@ -3338,8 +3338,23 @@ block — start at ①, no re-derivation needed.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**Start at ⑥ in the table below.** ① – ⑤ shipped on 2026-08-17 (builds 3035–3065); their rows say
-what landed and what is still unproven. Nothing is blocked on the maintainer.
+**The pre-vetted queue ① – ⑥ is EXHAUSTED — all six shipped on 2026-08-17 (builds 3035–3068).**
+Nothing is blocked on the maintainer.
+
+**Pick the next item from §3c's "Where the rest live", by subsystem.** The MED tier is down to 32
+and the known clumps are: `Radar` (AB4 + AB7), `Genau` (**G2** — the whole-image sweep never polls
+`Tot::Requested()`, so `UE5_Shutdown` blocks ~14 s and CE reads as hung; the most user-visible one
+left — and G3), `Fern` (F2 + F8), and `ue5_freeze_helper.lua` (AA9 – AA13, which already has an
+executable rig waiting in `scripts/tests/`). **U5 is deliberately NOT a candidate** — see the
+cluster ③ block below for the refactor it is actually blocked behind.
+
+> ### ⚠ Queue ⑥ (AE2 + AE3) — one clause REFUTED, do not re-raise it
+>
+> The companion prose claimed *"the panel binds no `ErrorMessage` at all … completely silent."*
+> `Views/ClassStructPanel.axaml` **binds it today**, explicitly ungated by `HasClass` — audit #5's
+> own V7 fix. AE3's *"with no way to retry"* is also too broad: selecting a **different** node always
+> recovered; only the same-node retry was refused, and only after a prior success. Two new findings
+> were filed from that pass (**AE11**, **AE12**).
 
 > ### ⛔ Before you touch anything in cluster ③ (the recycled-address caches), read this
 >
@@ -3384,15 +3399,18 @@ now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three tim
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —
 do not hand-adjust the digits, which is how it drifted every previous time.
 
-> **What the 2026-08-17 session established, so it is not re-derived.** FIVE queue groups plus the
-> parked A6, 15 commits, register 215 → 193 and the MED tier 55 → 34.
+> **What the 2026-08-17 session established, so it is not re-derived.** ALL SIX queue groups plus
+> the parked A6, 18 commits, register 215 → 193 and the MED tier 55 → 32. (The register TOTAL
+> grew 277 → 280: three defects were found *while fixing* — U16, AE11, AE12 — which is the
+> fix-time sibling grep doing its job, not scope creep.)
 >
-> - **Re-deriving before fixing paid for itself in EVERY group — five for five.** ②: two of four
+> - **Re-deriving before fixing paid for itself in EVERY group — six for six.** ②: two of four
 >   premises refuted, one in the direction that would have DELETED a live guard. ③: two narrowed,
 >   plus a new defect in the same handler. ④: the finding got AA14's bytes right and its OUTCOME
 >   wrong. ⑤: the audit's PRESCRIBED REPAIR was unsound *and* U4's filed mechanism was wrong, and
->   a new finding (U16) fell out of the same function. If a session skips this step to save time,
->   it will spend the time undoing a fix instead.
+>   a new finding (U16) fell out of the same function. ⑥: AE3's "no way to retry" was too broad
+>   and a companion claim was refuted outright by a fix this same audit had already shipped
+>   (V7). If a session skips this step to save time, it will spend the time undoing a fix instead.
 > - **Negative-control each finding SEPARATELY.** In ③ two controls *passed*, which is how a bug in
 >   the fix itself was found; in ④ a control exposed that the test stub was hiding the defect. A
 >   control that passes is a finding about the test.

@@ -738,6 +738,35 @@ Two riders that generalise with it:
   use-after-free with **no race required**. Those got an insert-time gate instead, and bounding their
   growth is now blocked behind a return-type refactor.
 
+### 4.3b A negative control that reds MORE than predicted has found a COUPLING
+
+Audit #5 AE3 (build 3068) shipped two changes to one guard: release the dedupe key on every failed
+load, and drop the `&& HasClass` conjunct that had been keeping cold-start failures retryable.
+Reverting the release alone was predicted to red one test. It red **two** — the extra one being the
+test asserting that a *cold* failure had always been retryable.
+
+That was not a broken control and not a broken test. The two halves are **coupled**: dropping the
+conjunct is only safe *because* the release now covers every failure, so removing the release while
+keeping the drop produces a state strictly worse than either the before or the after — a state that
+never shipped and never could.
+
+**How to apply.** §1.2 says run the control; this is what to do when its result surprises you. An
+unexpected red is a claim about the *shape of the fix*, not about the test:
+
+- **More tests red than predicted** ⇒ the reverted piece is load-bearing for something else you
+  changed. Find the partner and record the dependency, or a later "simplification" will delete one
+  half and the suite will still look fine on the other.
+- **Fewer red than predicted** ⇒ the assertion cannot see the change (§1.3's seam problem), or the
+  finding's premise was wrong.
+- Either way the honest baseline is **reverting the change as a WHOLE** and recording that count.
+  For AE3 that was exactly 3 red with 2 deliberately green, and the two green ones are what proved
+  the finding's "with no way to retry" was too broad.
+
+Corollary already paid for twice: **when a control's patch target is not found, that is a broken
+control, not a passing one.** In the same session a control silently no-op'd because the search
+string used a hyphen where the source had an em-dash. A harness that reports "0 red" for a revert it
+never applied is indistinguishable from a fix that works.
+
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when
