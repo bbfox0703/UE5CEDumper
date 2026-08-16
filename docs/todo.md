@@ -1421,6 +1421,33 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-17 — AA4–AA7: ue5_dissect.lua in a real Cheat Engine
+
+*Needs CE + a game, and **step 2 needs no DLL at all** — it is the fastest check here. See dev-log
+build 3037. The Lua rig (`lua scripts/tests/dissect_test.lua`, 40 checks) covers the logic against
+stubs; what it cannot cover is CE's real dissect machinery.*
+
+1. **The happy path still builds.** CE → inject the DLL via `UE5CEDumper.CT` → Lua Engine →
+   `local d = dofile("ue5_dissect.lua"); d.createFromPath("/Script/Engine.Actor")`. A structure
+   appears in the Structure Dissect list with named fields at plausible offsets. **This is the
+   regression half — `callDLL` now raises where it used to return nil.**
+2. **⚠ The one that needs NO DLL, and the one AA4 is about.** In a fresh CE with the DLL *not*
+   injected: `local d = dofile("ue5_dissect.lua"); d.enableAutoCallback()`, then open
+   "Dissect data/structure" on **any ordinary address** (a plain allocation, not a UObject).
+   CE must dissect it **normally**. Before this fix the callback raised, CE re-raised it as a Pascal
+   exception, and its own `autoGuessStruct` never ran — so Structure Dissect was broken for every
+   address until the user found `disableAutoCallback()`. Expect at most ONE
+   `[UE5Dissect WARN] auto-dissect … failed` line, not one per node.
+3. **The failure message names the export and CE's reason.** With the DLL not injected, run
+   `d.createFromPath("/Script/Engine.Actor")` and confirm the error says
+   `DLL function not found: UE5_WalkClassBegin` — not `attempt to compare nil with number`.
+4. **A mid-walk failure leaves nothing behind.** Harder to stage: build a structure, then close the
+   game and re-run `createFromClass` on the same class. It must fail cleanly, and the CE structure
+   list must not gain a half-built or empty entry.
+5. **No gap rows.** `fillGaps` was deleted; confirm no unnamed `Pointer` rows appear between fields
+   (there never were any — it was never called — so this is just confirming the deletion changed
+   nothing visible).
+
 ### ⬜ NEW 2026-08-17 — A6: Force now holds the class AND its subclasses
 
 *Any game. See dev-log build 3036. This one changes what an already-shipped, in-game-verified

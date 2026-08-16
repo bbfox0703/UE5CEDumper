@@ -2980,6 +2980,47 @@ W5: CSX's `IsObjectPropertyType` excludes Weak and CE-XML gives it a hex leaf re
 
 ---
 
+### ⚠ AA4 — its PREMISE was REFUTED; the CONSEQUENCE was real (fixed build 3037)
+
+*Re-derived 2026-08-17 before fixing, per this audit's own rule that MED rows carry the
+"not re-derived by hand" caveat. Two of the four premises in queue ② were wrong, and this one was
+wrong in the direction that would have made a "fix" delete working code.*
+
+**REFUTED — do not re-raise.** AA4 asserts, as "CE source-verified", that a bare `getAddress`
+RAISES on a missing symbol and that `ue5_dissect.lua`'s `if fn == nil or fn == 0 then error(...)`
+is therefore dead code. It is not. `TSymhandler.getAddressFromNameL` gates its raise on
+`ExceptionOnLuaLookup` (`symbolhandler.pas:5076-5087`) and `TSymhandler.create` sets that **FALSE**
+(`:6688`). An exhaustive search of the CE clone returns four hits for that flag — the declaration,
+that use, the constructor, and nothing else — and the only writer is the Lua-facing
+`errorOnLookupFailure()` setter (`LuaHandler.pas:9093-9111`). **`getAddress` returns `0`**, so the
+guard is LIVE and is the only thing that turns "the DLL was never injected" into a message naming
+the export rather than an `executeCodeEx` call to address 0. It stays.
+
+Where the premise came from is worth knowing: the Lua *wrapper* at `LuaHandler.pas:4374-4391` does
+contain `lua_pushstring` + `lua_error`, so reading only the wrapper makes "getAddress raises" look
+proven. The resolver underneath it is what decides, and it does not throw by default.
+CE's own `celua.txt` says the default is TRUE — a doc-vs-source contradiction now recorded as
+[CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md) §6.
+
+**CONFIRMED, and it is the real defect.** A Lua error inside a registered dissect callback does not
+stay in Lua: `TLuaCaller.StructureDissectEvent` pcalls it and then **re-raises as a Pascal
+exception** (`LuaCaller.pas:1229-1232`) into a dispatch loop with no handler
+(`StructuresFrm2.pas:1451-1458`), skipping the next line — CE's own `autoGuessStruct` fallback at
+`:1460`. Nothing auto-unregisters the callback and CE never rebuilds its Lua state, so one raise
+breaks Structure Dissect for every address, UObject or not, for the rest of the session.
+
+**Two more corrections measured while fixing:**
+- The "**14 call sites**" in AA5 is **19** (`:163 :165 :171 :188 :218 :222 :242 :360 :361 :363 :373
+  :398 :413 :441 :451 :471 :476 :501 :505`). A fixer working to 14 stops five short.
+- AA5 cites `:63` and AA6 cites `:173`, but the first `nil` comparison to blow up is
+  **`createFromClass:362`** — the instance-detection probe runs before the walk is entered, so a fix
+  that hardened `walkClassFields` alone would never have executed.
+- **AA6's impact is worse than "a duplicate of the previous field."** Measured against the unfixed
+  file: with every `GetField` call failing, `pcall` returned **ok=true** and the run built a
+  45-element structure of empty-named, offset-0 rows, **registered it with CE**, cached it, and
+  logged "Struct created". A total DLL failure was reported as a successfully built structure. That
+  is the sentence a fix should be judged against, and it is what `dissect_test.lua` asserts.
+
 ### ✅ A6 — DECIDED by the maintainer and FIXED (build 3036). Kept for the decision trail.
 
 > **Resolved 2026-08-17.** The maintainer chose **(a)** — defining class + every subclass — and
@@ -3231,7 +3272,7 @@ unless the maintainer says otherwise; each group is a session's worth or less.
 | # | Findings | Where | Why these are one job, and why here |
 |---|---|---|---|
 | ~~①~~ ✅ | ~~**AB3 + AB5**~~ | `Radar.cpp:288`, `:797` | ✅ **SHIPPED build 3035.** Width is now read per FIELD from the reflected `ElementSize` (`Radar::DecodeVectorBytes` + `FieldDescriptor::vectorWidth`), `SizeOf` returns 0 for vectors, the predicate takes decoded triples, and `prevValue` holds one canonical 3-double form. Negative control: 7 assertions red on revert. **Unproven on a UE5 game — 5 steps in todo.md.** |
-| ② | **AA4 + AA5 + AA6 + AA7** | `ue5_dissect.lua:53, 63, 173, 289` | One file, one root cause: `callDLL` returns `nil` on every `executeCodeEx` failure and **not one of its 14 call sites handles it** — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as SUCCESS (a duplicate of the previous field). AA4 is the same function (a bare `getAddress` RAISES, so the "DLL function not found" message is dead code, and the registered dissect override breaks CE's dissect for unrelated addresses); AA7 is `fillGaps` — advertised in the file header, never called. **`lua` is installed locally** (`C:\Users\Andyc\AppData\Local\Programs\Lua\bin\lua`, 5.4.6), so these are *executable* against stubbed CE globals — copy the rig from `scripts/tests/freeze_helper_test.lua`. |
+| ~~②~~ ✅ | ~~**AA4 + AA5 + AA6 + AA7**~~ | `ue5_dissect.lua:53, 63, 173, 289` | ✅ **SHIPPED build 3037.** `callDLL` now RAISES rather than returning nil (one contract, no call site needs a check), both CE-registered callbacks are barriered so nothing escapes into CE, `createFromClass` unwinds a failed build, and `fillGaps` + its three doc claims are deleted. Pinned by the new `scripts/tests/dissect_test.lua` (40 checks); **13 failures against the unfixed file.** ⚠ **Two premises were REFUTED on re-derivation — see the AA4 block below.** |
 | ③ | **AE4 + AE5 + AE6 + AE7** | `ProxyDeployViewModel.cs:236, 1073, 1106, 1233` | One file, one root cause: **`IsScanning` is READ as a global busy flag by six guards and WRITTEN by three of eight operations.** So Deploy and Undeploy can run concurrently over the same `Binaries` folder and both write the single result line, two rapid radio clicks race two fire-and-forget refreshes (the loser's proxy type wins the grid and nothing re-runs), and `UpdateAllAsync` iterates the live `Games` collection across awaits while a concurrent scan can `Clear()` it — with no `catch`, so the tally is never reported. Pure C#, fully testable. |
 | ④ | **AA14 – AA20** | `ue5_invoke_helper.lua:215, 223, 293, 308, 363, 464, 512` | Seven findings, one file, all on the same invoke path: unchecked `allocateMemory` shipping `{Data=nullptr, Num=n+1}` into a live UFunction call (AA14/15); five param-type tokens `BakedScriptGenerator` can emit that `writeParams` never accepted, aborting the whole invoke at CE runtime (AA16); a params buffer zeroed only to the CALLER's `parmsSize` while the DLL hands ProcessEvent all 1024 bytes, so stale bytes become live parameters (AA17); a timeout that reports the STALE `errorMsg` left by an earlier command (AA18 — the guessed diagnosis CLAUDE.md forbids); the reentrancy flag cleared on the timeout path *while the DLL still owns the mailbox* (AA19); and unsigned int32/int16 return decoding, so a UFunction returning -1 reads as 4295067295 (AA20). Also locally executable. |
 | ⑤ | **U4 + U5 + U6 + F3** | `Ubel.cpp:818, 683, 411` · `Fern.cpp:1068` | §4's **cluster ③** — *a cache keyed by an address the engine recycles, never invalidated*. The audit's own verdict: **"One fix pattern, not five"** — store an `(InternalIndex, SerialNumber)` witness and validate it on hit, the pair UE itself uses to detect a recycled slot. F3 additionally wants a one-line `Ubel::ClearNameCache()` in Fern's `if (last)` teardown, which the witness pattern does not cover. Bigger than ① – ④ (M/med), which is why it is not first. |
