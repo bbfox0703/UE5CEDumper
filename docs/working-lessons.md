@@ -647,6 +647,43 @@ an unrelated stack frame `0x7FFEE5453602 − 0x193602` both gave `0x7FFEE52C0000
 `1` = write, `8` = DEP. WER's `P9` is not that field; taking it for one turned a read into a write in
 the first write-up.
 
+### 3.7b A DETACHED thread must not capture a stack local by reference — and ASAN will not tell you
+
+`dll_helpers_test` died on CI with **`0xC0000409` (STATUS_STACK_BUFFER_OVERRUN), no output at all**,
+and passed locally every way it was run: Release, Debug, `-Clean`, and under ASAN. Two of three CI
+runs on the same tree passed. The cause was found by **reading**, not by any tool:
+
+```cpp
+std::atomic<int> ran{0};                 // this function's stack frame
+{
+    Routine::SafeThread t;
+    t = std::thread([&] { for (int i = 0; i < 50; ++i) { ran.fetch_add(1); sleep_for(1ms); } });
+}   // ~SafeThread DETACHES (Routine.h:82) -- that is the behaviour under test
+```
+
+`sleep_for(1ms)` is quantised to Windows' ~15.6 ms tick (§4.2 has the same fact for CE's `sleep`), so
+the worker lives **~780 ms** while the function returns in **~25 ms**. For the remaining ~750 ms it
+does `lock xadd` into a **reclaimed stack frame** — through the frames of every later test and then
+the CRT exit path. Land one of those on a `/GS` cookie and the process fast-fails. The status name
+is exactly right for once, and **the intermittency is structural**: which byte gets hit depends on
+stack layout and timing, so unrelated edits (27 new assertions) can surface a latent defect.
+
+**Three traps, all of which cost time here:**
+
+1. **A clean ASAN run is NOT evidence against a stack use-after-return.** MSVC's ASAN *parses*
+   `detect_stack_use_after_return=1` — `verbosity=1` proves options are read — but **does not
+   implement it** (a clang-only feature). The buggy code and the fixed code produce identical,
+   silent ASAN runs. Confirm a sanitizer actually covers your bug class before trusting its silence.
+2. **A test harness that buffers stdout tells you nothing at the only moment it matters.** The CI log
+   held not one line, not even the banner, because stdout to a pipe is fully buffered and the buffer
+   dies with the process. `setvbuf(stdout, nullptr, _IONBF, 0)` is now main's first statement, plus a
+   `DLL_TEST_TRACE` per-test trace that `build.ps1` enables under CI.
+3. **One green run after a red one is not a fix**, especially when the change between them altered
+   timing. Re-run CI on the *same* commit to measure flakiness before believing it.
+
+**The fix is `shared_ptr` captured BY VALUE**, not `static`: the worker owns a share, so no lifetime
+dependency is left to get wrong, and the test stays re-entrant.
+
 ### 3.7 NuGet cannot express "and not a different major"
 
 `Avalonia.Skia 12.1.1` depends on `SkiaSharp >= 3.119.4` — an **open-ended minimum**, which is the

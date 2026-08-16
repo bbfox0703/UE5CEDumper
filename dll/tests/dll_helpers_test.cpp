@@ -45,7 +45,8 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <cstdlib>   // getenv for DLL_TEST_TRACE
+#include <cstdlib>
+#include <memory>   // getenv for DLL_TEST_TRACE
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -4303,15 +4304,34 @@ static bool PatMatchAt(const Macht::ParsedPattern& pat,
 static void Test_Routine_SafeThread() {
     std::printf("Test_Routine_SafeThread\n");
 
-    std::atomic<int> ran{0};
+    // shared_ptr, captured BY VALUE, because the worker MUST outlive this frame.
+    //
+    // SafeThread's destructor DETACHES (Routine.h:82) — that is the behaviour under
+    // test — so the thread below keeps running after its scope ends AND after this
+    // whole function returns. Its loop is 50 x sleep_for(1ms), but Windows quantises
+    // that to the ~15.6 ms timer tick, so it lives ~780 ms while the function returns
+    // in ~25 ms.
+    //
+    // A by-reference capture of a plain local therefore left it doing `lock xadd`
+    // into a RECLAIMED STACK FRAME for ~750 ms — across the frames of every later
+    // test and then the CRT exit path. When one of those increments lands on a /GS
+    // cookie the process dies with STATUS_STACK_BUFFER_OVERRUN (0xC0000409), with no
+    // output and no assertion. That is exactly what PR #503's CI hit, twice
+    // unreproducible locally: which byte gets hit depends on stack layout and timing,
+    // so it is intermittent by construction. Adding unrelated tests moved the layout
+    // enough to surface a defect that had been latent.
+    //
+    // ⚠ ASAN does NOT catch this by default — `detect_stack_use_after_return` is off
+    // unless asked for. A clean ASAN run is not evidence against a stack UAF.
+    auto ran = std::make_shared<std::atomic<int>>(0);
 
     // 1. Destructed while STILL RUNNING. This is the game-close case: the worker is
     //    mid-tick, nothing joined it, and the static destructor runs.
     {
         Routine::SafeThread t;
-        t = std::thread([&] {
-            for (int i = 0; i < 50 && ran.load() < 1000; ++i) {
-                ran.fetch_add(1);
+        t = std::thread([ran] {
+            for (int i = 0; i < 50 && ran->load() < 1000; ++i) {
+                ran->fetch_add(1);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });
@@ -4350,7 +4370,7 @@ static void Test_Routine_SafeThread() {
         EXPECT("not joinable after join", !t.joinable());
     }   // destructor on a joined thread is a no-op for both types
 
-    EXPECT("the running thread actually started", ran.load() > 0);
+    EXPECT("the running thread actually started", ran->load() > 0);
 }
 
 // B34 — Cheat Engine must never be auto-scanned as if it were the game.
