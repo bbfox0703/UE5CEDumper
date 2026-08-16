@@ -3332,8 +3332,30 @@ block — start at ①, no re-derivation needed.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**Current register: 196 open of 277 · 0 HIGH · 37 MED · 132 LOW · 27 INFO.** Re-derive before
-trusting it (the command is at the top of §3c) — never hand-tally.
+**Start at ⑤ in the table below.** ① – ④ shipped on 2026-08-17 (builds 3035–3039); their rows say
+what landed and what is still unproven. Nothing is blocked on the maintainer.
+
+**Current register: 196 open of 277 · 0 HIGH · 37 MED · 132 LOW · 27 INFO.** Re-derive with
+`py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
+now exists.
+
+> **What the 2026-08-17 session established, so it is not re-derived.** Four queue groups plus the
+> parked A6, ten commits, register 215 → 196 and the MED tier 55 → 37.
+>
+> - **Re-deriving before fixing paid for itself in every group.** ②: two of four premises refuted,
+>   one in the direction that would have DELETED a live guard. ③: two narrowed, plus a new defect in
+>   the same handler. ④: the finding got AA14's bytes right and its OUTCOME wrong. If a session
+>   skips this step to save time, it will spend the time undoing a fix instead.
+> - **Negative-control each finding SEPARATELY.** In ③ two controls *passed*, which is how a bug in
+>   the fix itself was found; in ④ a control exposed that the test stub was hiding the defect. A
+>   control that passes is a finding about the test.
+> - **Three executable Lua rigs now exist** (`scripts/tests/`, run with the local `lua`). ② and ④
+>   were both written to fail first — 13 and 23 failures against the unfixed files. Any further work
+>   on `ue5_freeze_helper.lua` (AA9–AA13) has a rig waiting.
+> - **A stale git worktree is still checked out** at `.claude/worktrees/suspicious-cannon-a8dec8`
+>   (detached at PR #497, older than `dev`). It carries its own copy of `scripts/` and `build.ps1`,
+>   and `CeExecuteCodeExArityTests.FindRepoFile` walks up 8 parents — so a test run rooted inside it
+>   would assert against the WRONG copy. Harmless today; delete it if it is not wanted.
 
 **Everything below is an already-vetted MED.** They are grouped so each ① – ⑥ is ONE fix pass over
 ONE file or one shared root cause, ordered by (user impact × how testable it is). Take them in order
@@ -3394,12 +3416,20 @@ show every instance of a class under one name, and its name gate substring-match
 truncated string. **Mechanism verified against the source; blast radius NOT measured. Do not `sed`
 it** — class-name reads in the same loops are correct by construction. Full block near the end of §3c.
 
-#### ⏳ And 10 verification steps are waiting for a session with a game running
+#### ⏳ And 21 verification batches are waiting for a session with a game running
 
-`docs/todo.md` → `## Pending live-game verification`. Four are free from any ordinary session and
-**one needs no game at all** (AF4: Live Walker → another tab → back → confirm Locate/bookmark still
-scrolls the grid). Offer them whenever the maintainer has a game up — **none of the last 14 fixes
-has been seen on a real target.**
+`docs/todo.md` → `## Pending live-game verification`. Offer them whenever the maintainer has a game
+up — **not one of this session's or the last one's fixes has been seen on a real target.**
+
+Three need less than a full session, and two of those need no game at all:
+
+- **AE4–AE7 (all six steps) need no game** — just the Proxy Deploy panel.
+- **AA4–AA7 step 2 needs no DLL** — enable the dissect auto-callback with the DLL absent and confirm
+  CE still dissects an ordinary address. That is the step AA4 is actually about.
+- **AF4 needs no game** — Live Walker → another tab → back → confirm Locate/bookmark still scrolls.
+
+One cannot be done on most machines: **AB3/AB5 needs a UE5 (LWC) title specifically.** A UE4 game
+structurally cannot test it, and it is the highest-user-impact fix of the batch.
 
 > **2026-08-16 — the one parked lead is settled.** `Ubel.cpp:2303` was re-derived (16 agents, 5
 > lenses × 2 refute-mandated skeptics, judge) and **CONFIRMED at MED** — but it was never one

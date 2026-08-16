@@ -11,8 +11,12 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — 10 steps needing a running game (4 are free from any
->   ordinary session, 1 needs no game at all). **Offer these whenever the maintainer has a game up.**
+> - `## Pending live-game verification` — **21 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
+>   on a real target; two of those need less than a full session:
+>   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
+>   confirm CE still dissects an ordinary address), and **all six AE4–AE7 steps need no game** —
+>   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
 > State as of 2026-08-17: **196 audit findings open of 277 · 0 HIGH · 37 MED**. Nothing is
