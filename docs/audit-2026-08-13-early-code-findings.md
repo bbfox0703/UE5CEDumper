@@ -3342,20 +3342,50 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 
 ## 3b. START HERE — scanning is DONE; everything left is fixing
 
-*State as of 2026-08-16 (evening). Read this first; it is written for a session with no memory of
-this one. If the maintainer says "繼續修正" / "carry on fixing", the ordered queue is the very next
-block — start at ①, no re-derivation needed.*
+*State as of 2026-08-17 (end of the fix session that closed queue ① – ⑥ plus G2, MA1, G8, G9, G11,
+G3). Read this first; it is written for a session with no memory of that one.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**The pre-vetted queue ① – ⑥ is EXHAUSTED — all six shipped on 2026-08-17 (builds 3035–3068).**
-Nothing is blocked on the maintainer.
+**There is NO ordered queue left.** The pre-vetted ① – ⑥ is exhausted and so are every named
+follow-up it produced. Everything remaining is picked **by subsystem** from §3c's "Where the rest
+live". Nothing is blocked on the maintainer.
 
-**Pick the next item from §3c's "Where the rest live", by subsystem.** The MED tier is down to 32
-and the known clumps are: `Radar` (AB4 + AB7), `Genau` (G3; **G2 is ✅ done** — and its
-re-derivation re-raised **MA1**, the same defect one layer down in `Macht`, which is strictly larger), `Fern` (F2 + F8), and `ue5_freeze_helper.lua` (AA9 – AA13, which already has an
-executable rig waiting in `scripts/tests/`). **U5 is deliberately NOT a candidate** — see the
-cluster ③ block below for the refactor it is actually blocked behind.
+**Remaining clumps**, in the order I would take them:
+
+| clump | why |
+|---|---|
+| `ue5_freeze_helper.lua` **AA9 – AA13** | the cheapest by a distance — an **executable rig already exists** in `scripts/tests/`, and `lua` is installed. Write the test to fail first, as the three existing rigs were. |
+| `Radar` **AB4 + AB7** | `Radar.cpp` is one of only two `.cpp` files a test target actually compiles, so a fix there can be pinned properly. |
+| `Fern` **F2 + F8** | no test target compiles `Fern.cpp`; live-only. |
+| `Macht` **MA2** | latent-only today (the underflow needs `AOBScanBatch` to be given a `moduleBase`), two lines. |
+
+**⛔ `U5` is NOT a candidate**, and this is the third time it has to be said: it is blocked behind a
+`WalkClassEx` return-type refactor across 25 call sites, not an LRU. See the cluster ③ block below.
+
+> ### 🔑 THE ONE METHOD LESSON FROM THE 2026-08-17 SESSION — read before picking anything
+>
+> **Budget the re-derivation, not the fix.** Across ten consecutive items, *every single one* needed
+> a premise corrected — including two I raised myself. More importantly, **four of the last five
+> produced a defect BIGGER than the one filed**, and in two cases the filed finding was downgraded
+> on measurement:
+>
+> | filed | what re-deriving it actually found |
+> |---|---|
+> | **G2** (cancellation) | it is a **cost** defect — 29.3 s → 0.35 s by gating the needle; the prescribed poll would have left all 29.3 s in place |
+> | **MA1** (my own re-raise, premise wrong) | **G10**, a HIGH: the hint fast path was destroying working scans on every second launch, live-reproducible from logs already on disk |
+> | **G8 / G9** (tier-rule tweaks) | **G11** — Tier 2 had *never fired on any of 170 images*; both fixes were tuning the parameters of a dead branch |
+> | **G3** (MED, "seconds", L-effort) | measured at **1–3 ms** and downgraded to **LOW**; the real defect was **G12**, a split offset family shipping deterministically on a first run |
+>
+> Two techniques did most of that work, and both are free from an ordinary session:
+> **grep the log corpus** in `%LOCALAPPDATA%\UE5CEDumper\Logs` (G10 was proved from two of the
+> maintainer's own scan logs five minutes apart), and **model the rule offline over the PE corpus**
+> in `D:\UE_Analyze_data` (G8/G9/G11 were all settled over 85–170 images with no game running).
+>
+> And the recurring trap: **a negative control that PASSES is usually a broken control.** It
+> happened four times — a `break` exiting the wrong loop, an anchor planted outside its own window,
+> a buffer that could not exercise the gate under test, and a hyphen typed where the source had an
+> em-dash. See working-lessons §4.3b.
 
 > ### ⚠ Queue ⑥ (AE2 + AE3) — one clause REFUTED, do not re-raise it
 >
@@ -3408,10 +3438,12 @@ now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three tim
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —
 do not hand-adjust the digits, which is how it drifted every previous time.
 
-> **What the 2026-08-17 session established, so it is not re-derived.** ALL SIX queue groups plus
-> the parked A6, 18 commits, register 215 → 193 and the MED tier 55 → 32. (The register TOTAL
-> grew 277 → 280: three defects were found *while fixing* — U16, AE11, AE12 — which is the
-> fix-time sibling grep doing its job, not scope creep.)
+> **What the 2026-08-17 session established, so it is not re-derived.** All six queue groups plus
+> the parked A6, then G2, MA1, G8, G9, G11 and G3 — **33 commits**, register 215 → **192** and
+> the MED tier 55 → **30**. (The register TOTAL grew 277 → 287: **ten** defects were found
+> *while fixing* — U16, AE11, AE12, MA1, G8, G9, G10, G11, MA2, G12 — which is the fix-time
+> sibling grep and the re-derivation rule doing their job, not scope creep. Two of the ten,
+> G10 and G12, were bigger than the finding that led to them.)
 >
 > - **Re-deriving before fixing paid for itself in EVERY group — six for six.** ②: two of four
 >   premises refuted, one in the direction that would have DELETED a live guard. ③: two narrowed,
