@@ -447,6 +447,103 @@ do
 end
 
 -- ============================================================
+-- AA9 -- the header's own SAMPLE must actually work
+-- ============================================================
+-- The samples used to hold the handle in a chunk `local`, which CE makes
+-- unreachable from [DISABLE]: each {$lua} block is compiled as its own chunk
+-- (autoassembler.pas hands the block's text to luaL_loadstring) inside ONE
+-- shared Lua state, so globals cross and locals do not. A handle parked in a
+-- local can never be stopped -- its two timers belong to CE's main form, so
+-- unticking and even deleting the record leave them writing ~20x/sec until CE
+-- itself is restarted.
+--
+-- Asserting on the doc's TEXT would be tautological. Instead: EXTRACT the
+-- sample from the header comment and RUN it, under a faithful model of CE's
+-- two-chunk compilation. If the sample is wrong, this fails.
+
+-- Line-based and EXACT, because that is what CE does: autoassembler uppercases
+-- and trims each line and compares it to '{$LUA}' / '{$ASM}' whole. A substring
+-- search is not the same thing, and the difference is not academic -- the first
+-- version of this extractor used `src:gmatch('{%$lua}(.-){%$asm}')` and captured
+-- the PROSE in the lifetime box above, which mentions `{$lua}` in a sentence.
+-- Modelling CE faithfully is also what fixes it.
+local function extractSampleBlocks(path)
+  local blocks, body = {}, nil
+  for line in io.lines(path) do
+    local t = line:match('^%s*(.-)%s*$'):upper()
+    if t == '{$LUA}' then
+      body = {}
+    elseif t == '{$ASM}' then
+      if body then blocks[#blocks + 1] = table.concat(body, '\n') end
+      body = nil
+    elseif body then
+      body[#body + 1] = line
+    end
+  end
+  return blocks
+end
+
+--- Run one block the way CE does: its own chunk, in the shared global state,
+--- with `syntaxcheck` and `memrec` injected as CHUNK LOCALS (autoassembler
+--- prepends `local syntaxcheck,memrec=...` and passes them as varargs).
+local function runAsCeChunk(body, memrec)
+  local chunk, err = load('local syntaxcheck,memrec=...\n' .. body, 'ce-block')
+  if not chunk then return false, 'compile: ' .. tostring(err) end
+  return pcall(chunk, false, memrec)
+end
+
+function showMessage(s) PRINTS[#PRINTS + 1] = 'showMessage: ' .. tostring(s) end
+
+case('AA9: the header SAMPLE compiles, starts, and is STOPPABLE from a second chunk')
+do
+  resetWorld()
+  installMailbox{ pages = { { 0x2000, 0x3000 } } }
+
+  local blocks = extractSampleBlocks(HELPER)
+  check(#blocks >= 2, 'AA9: the header carries an [ENABLE] and a [DISABLE] block',
+        string.format('found %d {$lua} block(s)', #blocks))
+
+  if #blocks >= 2 then
+    local memrec = { Active = true }
+    local okE, errE = runAsCeChunk(blocks[1], memrec)
+    check(okE, 'AA9: the [ENABLE] sample runs without error', errE)
+    eq(#TIMERS, 2, 'AA9: it started the tick + rescan pair')
+    eq(memrec.Active, true, 'AA9: a successful freeze leaves the record ticked')
+
+    -- THE POINT: a SEPARATE chunk, sharing only globals -- exactly what CE does.
+    local okD, errD = runAsCeChunk(blocks[2], memrec)
+    check(okD, 'AA9: the [DISABLE] sample runs without error', errD)
+    check(TIMERS[1] and TIMERS[1].destroyed == true,
+          'AA9: the tick timer was actually destroyed by the second chunk')
+    check(TIMERS[2] and TIMERS[2].destroyed == true,
+          'AA9: the rescan timer was actually destroyed by the second chunk')
+  end
+end
+
+case('AA9: the OLD sample shape (a chunk `local`) is unstoppable -- the control')
+do
+  -- The negative control for the doc itself. This is what SAMPLES 1-3 taught
+  -- before the rewrite; it must fail, or the rewrite fixed nothing.
+  resetWorld()
+  installMailbox{ pages = { { 0x2000 } } }
+
+  local okE = runAsCeChunk([[
+    local h = freezeProperty({ className='C', propOffset=0x10,
+                               valueType='float', value=1.0 })
+    h.start()
+  ]], { Active = true })
+  eq(okE, true, 'the old ENABLE shape does run')
+  eq(#TIMERS, 2, 'and it does start two timers')
+
+  local okD, errD = runAsCeChunk([[ h.stop() ]], { Active = true })
+  eq(okD, false, 'AA9 control: stopping via the local FAILS in a second chunk')
+  check(type(errD) == 'string' and errD:find('nil value', 1, true) ~= nil,
+        'AA9 control: and it fails as a nil global, which is the whole defect', tostring(errD))
+  check(TIMERS[1] and TIMERS[1].destroyed ~= true,
+        'AA9 control: the timers are STILL RUNNING -- unreachable forever')
+end
+
+-- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
 os.exit(failures == 0 and 0 or 1)

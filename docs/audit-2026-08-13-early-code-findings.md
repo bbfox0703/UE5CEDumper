@@ -2242,7 +2242,7 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 | **AA6** ✅ | MED | `ue5_dissect.lua:173` (addFieldsToStruct / walkClassFields) | callDLL returns nil on failure and every caller treats nil as SUCCESS — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as a duplicate of the previous field **[2 lenses]** | S / low |
 | **AA7** ✅ | MED | `ue5_dissect.lua:289` (fillGaps) | "Gap filling" is advertised in the header but fillGaps is never called — and its coverage test would emit overlapping elements if it were **[2 lenses]** | S / low |
 | **AA8** | MED | `ue5_dissect.lua:341` (addUObjectHeader) | UObject header offsets are hardcoded (Outer=0x20) while the DLL detects and switches them (DynOff::UOBJECT_OUTER = 0x28 on case-preserving-FName games) **[2 lenses]** | M / low |
-| **AA9** | MED | `ue5_freeze_helper.lua:95` (header SAMPLES block) | The file's own copy/paste samples produce a freeze that cannot be stopped: `local h` in [ENABLE] is invisible to [DISABLE], and SAMPLES 1-3 show no stop at all | S / low |
+| **AA9** ✅ | MED | `ue5_freeze_helper.lua:95` (header SAMPLES block) | The file's own copy/paste samples produce a freeze that cannot be stopped: `local h` in [ENABLE] is invisible to [DISABLE], and SAMPLES 1-3 show no stop at all | S / low |
 | **AA10** | MED | `ue5_freeze_helper.lua:341` (fetchInstancePage) | The mailbox has two mutually-blind concurrency guards: generated scripts wait for cmd==IDLE, the standalone helpers use a Lua flag no generated script sets | M / low |
 | **AA11** | MED | `ue5_freeze_helper.lua:386` (rescanInstances) | A page-fetch failure after page 0 is thrown away, so a PARTIAL instance list is returned as a clean success and replaces the freeze cache **[2 lenses]** | S / low |
 | **AA12** ✅ | MED | `ue5_freeze_helper.lua:471` (freezeProperty -> handle.start) | A freeze that applied NOTHING reports clean success: start() cannot raise, so the generated script's pcall succeeds, the Lua window auto-closes and the CE record stays ticked | S / low |
@@ -3355,7 +3355,7 @@ live". Nothing is blocked on the maintainer.
 
 | clump | why |
 |---|---|
-| ~~`ue5_freeze_helper.lua` **AA9 – AA13**~~ | 🟡 **AA12 + AA13 SHIPPED build 3125** (they collapse into ONE defect — see the AA12/AA13 block below). **AA9 is next and is a DOC + SAMPLES rewrite, not a code fix.** AA10 and AA11 were both **downgraded to LOW** on re-derivation and are no longer part of this clump. |
+| ~~`ue5_freeze_helper.lua` **AA9 – AA13**~~ | ✅ **AA9 + AA12 + AA13 ALL SHIPPED (builds 3125 / 3129)** (they collapse into ONE defect — see the AA12/AA13 block below). AA9 was a DOC + SAMPLES rewrite, pinned by EXECUTING the sample. **AA10 and AA11 were downgraded to LOW** on re-derivation; this clump is closed. |
 | `Radar` **AB4 + AB7** | `Radar.cpp` is one of only two `.cpp` files a test target actually compiles, so a fix there can be pinned properly. |
 | `Fern` **F2 + F8** | no test target compiles `Fern.cpp`; live-only. |
 | `Macht` **MA2** | latent-only today (the underflow needs `AOBScanBatch` to be given a `moduleBase`), two lines. |
@@ -3478,7 +3478,7 @@ live". Nothing is blocked on the maintainer.
 > **Unproven on a real Cheat Engine** — the rig stubs CE, so the emitted script's behaviour in a live
 > CE (window stays open, record stays ticked/unticked correctly) is in todo.md's register.
 
-**Current register: 190 open of 287 · 0 HIGH · 28 MED · 135 LOW · 27 INFO.** Re-derive with
+**Current register: 189 open of 287 · 0 HIGH · 27 MED · 135 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —

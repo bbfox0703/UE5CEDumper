@@ -22,6 +22,46 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AA9: the helper's own samples taught a freeze that cannot be stopped (build 3129)
+
+**`ue5_freeze_helper.lua`'s header told users to hold the handle in a `local`.** Cheat Engine
+compiles **each `{$lua}` block as its own chunk** — verified in CE's source, not assumed:
+`autoassembler.pas` matches a *trimmed, uppercased, whole* line against `{$LUA}`, prepends
+`local syntaxcheck,memrec=...`, takes the one shared `GetLuaState`, and hands the block's text to
+`luaL_loadstring` on its own. So globals cross between `[ENABLE]` and `[DISABLE]`; locals do not.
+
+A handle parked in a `local` is therefore **unreachable forever**. Not awkward — unreachable:
+`start()` gives two timers to CE's **main form**, so unticking the record does not stop them and
+neither does deleting it, because the timers do not belong to the record. Re-enabling adds another
+orphaned pair. Only restarting Cheat Engine ends it. SAMPLES 1–3 showed no stop at all, and SAMPLE 4
+was worse than silent: `-- In [DISABLE]: hp.stop(); mp.stop()` is advice that **cannot work**.
+
+Rewritten so SAMPLE 1 is the complete shape — keyed **global** table, defensive pre-stop, the
+outcome check from build 3125, and the matching `[DISABLE]` half — with 2–4 reduced to cfg deltas so
+the lifecycle is stated exactly once. This is the shape `FreezeScriptGenerator` already emits; the
+header had been contradicting the shipped generator both by demonstration and by omission.
+
+**A bare global `h` is NOT the fix** and is worse than the bug: CE shares one Lua state across every
+open table, so a second script using `h` steals the first's slot — and then the *first* script's
+`[DISABLE]` stops the *second* script's freeze. The lifetime box says so explicitly.
+
+### The test RUNS the documentation
+
+Asserting on a doc's text is tautological, so the rig now **extracts the sample from the header
+comment and executes it** under a faithful model of CE's two-chunk compilation (`load()` per block,
+`syntaxcheck`/`memrec` injected as chunk locals, only globals shared). It asserts the timers are
+really destroyed by the *second* chunk — plus a control that runs the OLD shape and asserts it fails
+as a nil global with the timers still live.
+
+**The extractor's own first version was wrong, and the test caught it.** `gmatch('{%$lua}(.-){%$asm}')`
+captured the prose of the new lifetime box, which mentions `{$lua}` in a sentence. The fix was to do
+what CE does — exact whole-line match — so modelling the real thing faithfully also removed the bug.
+Rig 38 → **50 checks**; negative control (sample stops publishing the handle) 2 red.
+
+⚠ **Not verified in a real Cheat Engine.** The rig models CE's chunk rule; it is not CE.
+
+-----
+
 ## 2026-08-17 - The UI's heap corruption was SkiaSharp, one major ahead of Avalonia (build 3127)
 
 **The UI died twice in 14 minutes with `0xC0000374` STATUS_HEAP_CORRUPTION**, minutes after a
