@@ -22,6 +22,80 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AA4/AA5/AA6: ue5_dissect.lua stops reporting failure as success (build 3037)
+
+**Audit #5 queue ②**, and the first fix in this repo written against a Lua test rig that RUNS the
+script (`scripts/tests/dissect_test.lua`, 40 checks). The C# suite can only assert on this file's
+source TEXT, so every claim below was measured, including the pre-fix behaviour.
+
+### Two of the four premises were wrong, and one was wrong dangerously
+
+These were MED rows carrying the audit's own *"not re-derived by hand"* caveat. Re-deriving them
+first was not ceremony:
+
+- **AA4's premise is REFUTED.** It asserted, as "CE source-verified", that a bare `getAddress`
+  raises on a missing symbol and that `ue5_dissect.lua:54`'s `if fn == nil or fn == 0` is therefore
+  dead code. `TSymhandler.getAddressFromNameL` gates its raise on `ExceptionOnLuaLookup`
+  (`symbolhandler.pas:5082`) and `TSymhandler.create` sets that **FALSE** (`:6688`) — nothing in
+  CE's Pascal ever sets it true. **`getAddress` returns 0, and that guard is the only thing turning
+  "the DLL was never injected" into a message naming the export.** Acting on the finding would have
+  deleted it. CE's own `celua.txt` claims the opposite default; that contradiction is now
+  [CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md) §6.
+- **AA4's *consequence* is real, and is the actual defect.** A Lua error inside a registered dissect
+  callback does not stay in Lua: `TLuaCaller.StructureDissectEvent` re-raises it as a **Pascal
+  exception** (`LuaCaller.pas:1229-1232`) into a dispatch loop with no handler
+  (`StructuresFrm2.pas:1451-1458`), which skips the next line — CE's own
+  `autoGuessStruct` fallback (`:1460`). Nothing auto-unregisters the callback and CE never rebuilds
+  its Lua state, so **one raise breaks Structure Dissect for every address, UObject or not, for the
+  rest of the session.**
+- **AA5/AA6 are real and worse than filed.** The audit said a failed field read is recorded as "a
+  duplicate of the previous field". Measured: that is the *mild* case. With the DLL failing
+  outright, `pcall` returned **ok=true** and the run built a 45-element structure whose every walked
+  field had an empty name and offset 0, **registered it with CE, cached it, and logged "Struct
+  created"**. A total failure was reported to the user as a successfully built structure.
+- The audit's "14 call sites" is **19**, and the first `nil` comparison to blow up is
+  `createFromClass:362`, not the `:164`/`:173` the findings cite — the instance-detection probe runs
+  before the walk is ever entered.
+
+### The repair
+
+`callDLL` now has one contract: **it returns the DLL's value or it RAISES. It never returns nil, and
+no caller needs a nil check.** The two ways Lua treats `nil` were both wrong and in opposite
+directions — `count <= 0` raises with a Lua type error naming a line instead of the failed call,
+while `success ~= 0` is **true** for nil, so a failed read counted as a success and re-read the
+previous field's buffers (`UE5_WalkClassGetField` leaves its out-params untouched on failure,
+`Frieren.cpp:712-731`).
+
+Raising is only safe because of the other half, and the two must not be separated:
+
+- **Both CE-registered callbacks are now barriered** (`callbackBarrier`). A failure declines —
+  `false`/`nil`, the contract that lets CE fall through to its own dissect — and warns **once per
+  session**, because CE calls these per expanded node.
+- **`createFromClass` unwinds a failed build**: `endUpdate()` always runs, the partial structure is
+  destroyed, and nothing is registered or cached. Previously `beginUpdate()` had no match and the
+  orphan was never in `structList`, so `clearAll()` could not free it either — survivable while a
+  failed call returned nil, but this fix makes raising the *normal* failure path, so leaving it
+  would have shipped a regression (audit #5 AA25, promoted from latent by this change).
+- The per-call `warn()` is gone: it fired once per FIELD, so a dead DLL printed **40 ungated lines**
+  over CE's Lua Engine window — the exact thing CLAUDE.md's hygiene rule exists to prevent.
+
+### Negative controls (two, one per half)
+
+Reverting `callDLL`'s raise to the old `warn()` → **9 checks red**, including *"NOTHING was
+registered with CE"* and *"at most one line printed, not one per field"* (40). Reverting the
+callback barrier alone → **2 checks red**. Both green on restore. Against the unfixed file the rig
+reported **13 failures**, so the defects are reproduced, not argued.
+
+C++ 246 + 1073, C# 3885 (the source-text assertions in `CeExecuteCodeExArityTests.cs` still pass —
+`local ret, why = executeCodeEx(` and the `DLL_CALL_TIMEOUT_MS` shape are unchanged),
+`luac -p` clean.
+
+**Checked and clean — do not re-raise:** the `.CT`'s sibling `ue5_callDLL`
+(`scripts/UE5CEDumper.CT:448`) also returns nil on failure, but both of its call sites (`:619`,
+`:781`) test `== nil` explicitly.
+
+-----
+
 ## 2026-08-17 - A6: Force holds the class AND its subclasses (build 3036)
 
 **Audit #5 A6 — unparked by a maintainer decision, not by new evidence.** The finding was confirmed
