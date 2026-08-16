@@ -4016,6 +4016,58 @@ static void Test_VersionTier2_BareNeedle_G11() {
     }
 }
 
+// ── audit #5 G12: the sizeof(FProperty) family must move as ONE ─────────────
+//
+// FSTRUCTPROP_STRUCT / FARRAYPROP_INNER / FBOOLPROP_FIELDSIZE / FBYTEPROP_ENUM all name the
+// same slot (the first subclass field, == sizeof(FProperty)); FENUMPROP_ENUM sits 8 bytes
+// later because FEnumProperty declares FNumericProperty* UnderlyingProp first.
+//
+// They had FOUR independent writers and one of them — Genau's Step 2.5 default block — set
+// only TWO members, leaving the other three at the UE5.0-era 0x78/0x78/0x80. Any run taking
+// a "keeping defaults" exit then shipped a SPLIT family for the whole session: TArray
+// element descriptors and every enum-name read 8 bytes off while struct reads were correct.
+// Deterministic, first run, no concurrency. docs/test-games.md records Solarpunk resolving
+// through exactly that heuristic fallback.
+//
+// This pins the INVARIANT. It cannot pin the wiring — no test target compiles Genau.cpp or
+// Ubel.cpp — but making the helper the only sane way to express the family is the
+// structural half, and this is the half a build can check.
+static void Test_PropertyFamilyIsCoherent() {
+    // Every real Offset_Internal this repo has measured, plus the neighbours a future
+    // engine could plausibly land on.
+    for (int propOff : { 0x40, 0x44, 0x48, 0x4C, 0x50 }) {
+        DynOff::PropertyFamily f = DynOff::PropertyFamilyFor(propOff);
+        EXPECT("G12: ArrayProperty::Inner shares the struct slot",     f.arrayInner    == f.structProp);
+        EXPECT("G12: BoolProperty::FieldSize shares the struct slot",  f.boolFieldSize == f.structProp);
+        EXPECT("G12: ByteProperty::Enum shares the struct slot",       f.byteEnum      == f.structProp);
+        EXPECT("G12: EnumProperty::Enum is exactly 8 past ByteProperty's",
+               f.enumEnum == f.byteEnum + 8);
+    }
+
+    // The two concrete layouts this repo actually ships against. 0x44 is the UE5.1.1+
+    // default Step 2.5 writes; 0x48 is TQ2's measured value.
+    DynOff::PropertyFamily ue5 = DynOff::PropertyFamilyFor(0x44);
+    EXPECT("G12: Offset_Internal 0x44 -> family base 0x70", ue5.structProp == 0x70);
+    EXPECT("G12: Offset_Internal 0x44 -> EnumProperty 0x78", ue5.enumEnum == 0x78);
+
+    DynOff::PropertyFamily tq2 = DynOff::PropertyFamilyFor(0x48);
+    EXPECT("G12: Offset_Internal 0x48 -> family base 0x74", tq2.structProp == 0x74);
+
+    // The base-taking overload must agree with the offset-taking one — Ubel's corrector has
+    // the base in hand, Genau has Offset_Internal, and the two must not diverge.
+    EXPECT("G12: the two spellings agree",
+           DynOff::PropertyFamilyAtBase(0x70).enumEnum == DynOff::PropertyFamilyFor(0x44).enumEnum);
+
+    // ⚠ THE HISTORICAL SPLIT, asserted as a shape that must never be producible: the shipped
+    // defect was STRUCT/BOOLSIZE at 0x70 with INNER/BYTEENUM at 0x78 and ENUMENUM at 0x80.
+    // No input may yield a family whose members disagree like that.
+    for (int propOff : { 0x40, 0x44, 0x48, 0x4C, 0x50 }) {
+        DynOff::PropertyFamily f = DynOff::PropertyFamilyFor(propOff);
+        const bool splitShape = (f.arrayInner == f.structProp + 8) || (f.byteEnum == f.structProp + 8);
+        EXPECT("G12: the historical split shape is unreachable", !splitShape);
+    }
+}
+
 static void Test_ShouldPublishEnumTable() {
     // audit #5, found while fixing U4: ResolveEnumValue's entry loop `break`s on a
     // mid-table read failure and the PARTIAL vector was published unconditionally
@@ -4631,6 +4683,7 @@ int main() {
     Test_VersionNeedleScan_GateStillGates();
     Test_VersionTierRules_G8_G9();
     Test_VersionTier2_BareNeedle_G11();
+    Test_PropertyFamilyIsCoherent();
     Test_NameWitness();
     Test_Holes_NormalizeGuessedType();
 

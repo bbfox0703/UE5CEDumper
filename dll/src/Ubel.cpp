@@ -3192,14 +3192,13 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                 int corrected = DynOff::FSTRUCTPROP_STRUCT + delta;
                 Sein::Info("WALK", "CorrectSubclassOffsets: delta=%d, FSTRUCTPROP 0x%X -> 0x%X (validated with '%s' -> '%s')",
                     delta, DynOff::FSTRUCTPROP_STRUCT, corrected, fi.Name.c_str(), sname.c_str());
-                DynOff::FSTRUCTPROP_STRUCT  = corrected;
-                // Note: FARRAYPROP_INNER may differ from FSTRUCTPROP_STRUCT (UE5.7 has
-                // EArrayPropertyFlags before Inner). Set it to same base; the ArrayProperty
-                // probe will try delta=8 to account for this.
-                DynOff::FARRAYPROP_INNER   = corrected;
-                DynOff::FBOOLPROP_FIELDSIZE = corrected;
-                DynOff::FBYTEPROP_ENUM     = corrected;
-                DynOff::FENUMPROP_ENUM     = corrected + 8;  // +8: FEnumProperty::UnderlyingProp precedes Enum
+                // (G12) Fourth writer of the sizeof(FProperty) family — one expression, so it
+                // cannot drift from Genau's three. Note FARRAYPROP_INNER may legitimately
+                // differ later (UE5.7 puts EArrayPropertyFlags before Inner); the helper only
+                // sets the shared STARTING point, and the ArrayProperty probe further down
+                // this file re-probes it with delta=8. That probe is deliberately NOT routed
+                // through the helper for exactly that reason.
+                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(corrected));
             }
             s_checked.store(true, std::memory_order_release);
             return;

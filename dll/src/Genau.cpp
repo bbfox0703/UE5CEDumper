@@ -3312,8 +3312,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                 DynOff::FPROPERTY_ELEMSIZE = 0x34;
                 DynOff::FPROPERTY_FLAGS    = 0x38;
                 DynOff::FPROPERTY_OFFSET   = 0x44;
-                DynOff::FSTRUCTPROP_STRUCT  = 0x70;
-                DynOff::FBOOLPROP_FIELDSIZE = 0x70;
+                // (G12) All FIVE members of the sizeof(FProperty) family, not two. This
+                // block used to set only STRUCT and BOOLSIZE, leaving FARRAYPROP_INNER /
+                // FBYTEPROP_ENUM at 0x78 and FENUMPROP_ENUM at 0x80 — a SPLIT family that
+                // any "keeping defaults" exit path then shipped for the whole session.
+                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(DynOff::FPROPERTY_OFFSET));
                 Sein::Info("DYNO", "ValidateAndFixOffsets: Set UE5.1.1+ defaults (FFieldVariant=0x08)");
                 // UE5.3+ uses tagged FFieldVariant: LSB=1 means UObject, LSB=0 means FField
                 if (ueVersion >= 503) {
@@ -3576,11 +3579,9 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                     DynOff::FPROPERTY_OFFSET = bestProbe;
                     DynOff::FPROPERTY_ELEMSIZE = bestProbe - 0x10;
                     DynOff::FPROPERTY_FLAGS    = bestProbe - 0x0C;
-                    DynOff::FSTRUCTPROP_STRUCT  = bestProbe + 0x2C;
-                    DynOff::FARRAYPROP_INNER   = bestProbe + 0x2C;
-                    DynOff::FBOOLPROP_FIELDSIZE = bestProbe + 0x2C;
-                    DynOff::FBYTEPROP_ENUM     = bestProbe + 0x2C;
-                    DynOff::FENUMPROP_ENUM     = DynOff::FBYTEPROP_ENUM + 8;  // Enum follows UnderlyingProp
+                    // (G12) Third writer of the same family — coherent, but hand-rolled,
+                    // which is precisely how it and Step 2.5 drifted apart. One expression now.
+                    DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(bestProbe));
                 } else if (bestProbe >= 0) {
                     Sein::Info("DYNO", "Phase B: Confirmed default FPROPERTY_OFFSET=0x%02X", DynOff::FPROPERTY_OFFSET);
                 } else {
@@ -4088,14 +4089,10 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // FStructProperty::Struct = Offset_Internal + 0x2C
     if (DynOff::bUseFProperty && propOffsetOff >= 0) {
-        DynOff::FSTRUCTPROP_STRUCT  = propOffsetOff + 0x2C;
-        DynOff::FARRAYPROP_INNER   = propOffsetOff + 0x2C;  // Same subclass extension offset
-        DynOff::FBOOLPROP_FIELDSIZE = DynOff::FSTRUCTPROP_STRUCT;
-        // FByteProperty::Enum is the first subclass field (== sizeof(FProperty), same place
-        // as FStructProperty::Struct). FEnumProperty has FNumericProperty* UnderlyingProp
-        // BEFORE its UEnum* Enum, so its Enum sits 8 bytes later (UE5.7.4 EnumProperty.h).
-        DynOff::FBYTEPROP_ENUM     = DynOff::FSTRUCTPROP_STRUCT;
-        DynOff::FENUMPROP_ENUM     = DynOff::FBYTEPROP_ENUM + 8;
+        // (G12) One expression for all five — see DynOff::PropertyFamilyFor. This site was
+        // already coherent; routing it through the helper is what stops it and Step 2.5's
+        // default block from drifting apart again.
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff));
     }
 
     // Infer tagged FFieldVariant from probed offsets:

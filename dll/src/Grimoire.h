@@ -217,6 +217,52 @@ inline int FBYTEPROP_ENUM       = 0x78;  // FByteProperty::Enum (UEnum*) — fir
 // (Detection keeps this = FBYTEPROP_ENUM + 8; default mirrors that.)
 inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTEPROP_ENUM + 8
 
+// ── The sizeof(FProperty) subclass-extension FAMILY (audit #5 G12) ───────────
+//
+// FSTRUCTPROP_STRUCT / FARRAYPROP_INNER / FBOOLPROP_FIELDSIZE / FBYTEPROP_ENUM all name
+// the SAME slot — the first subclass field, i.e. sizeof(FProperty) — and FENUMPROP_ENUM
+// sits 8 bytes later because FEnumProperty declares FNumericProperty* UnderlyingProp
+// before its UEnum* (UE5.7.4 EnumProperty.h). They are five names for one measurement and
+// must move together.
+//
+// ⚠ WHY THIS HELPER EXISTS. They did NOT move together. Genau's Step 2.5 default block set
+// only FSTRUCTPROP_STRUCT and FBOOLPROP_FIELDSIZE to 0x70 and left the other three at the
+// UE5.0-era 0x78/0x78/0x80 — so any run that took one of the three "keeping defaults" exit
+// paths shipped a SPLIT family for the whole session: TArray element descriptors and every
+// enum-name read 8 bytes off, while struct reads were correct. Deterministic, first run, no
+// concurrency needed. `docs/test-games.md` records Solarpunk resolving via exactly that
+// heuristic fallback with FProperty::Offset +0x44.
+//
+// Both writers now go through here so the two cannot drift again. Pure and constexpr, so
+// dll_helpers_test can pin the invariant — which matters because no test target compiles
+// Genau.cpp.
+struct PropertyFamily {
+    int structProp;     // FStructProperty::Struct
+    int arrayInner;     // FArrayProperty::Inner
+    int boolFieldSize;  // FBoolProperty::FieldSize
+    int byteEnum;       // FByteProperty::Enum
+    int enumEnum;       // FEnumProperty::Enum  (== byteEnum + 8)
+};
+
+inline constexpr PropertyFamily PropertyFamilyAtBase(int base) {
+    return PropertyFamily{ base, base, base, base, base + 8 };
+}
+
+// `propOffsetOff` is FProperty::Offset_Internal's offset; the subclass extension begins
+// 0x2C past it on every UE4.25-5.8 layout measured.
+inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff) {
+    return PropertyFamilyAtBase(propOffsetOff + 0x2C);
+}
+
+// Publish all five together. Never assign a member of this family directly.
+inline void ApplyPropertyFamily(const PropertyFamily& f) {
+    FSTRUCTPROP_STRUCT  = f.structProp;
+    FARRAYPROP_INNER    = f.arrayInner;
+    FBOOLPROP_FIELDSIZE = f.boolFieldSize;
+    FBYTEPROP_ENUM      = f.byteEnum;
+    FENUMPROP_ENUM      = f.enumEnum;
+}
+
 // === UEnum — lazy-detected by DetectUEnumNames() ===
 inline int UENUM_NAMES          = 0x40;  // UEnum::Names (Neu::EnumNamesLayout region offset)
 inline int UENUM_ENTRY_SIZE     = 0x10;  // legacy sizeof(TPair<FName,int64>) = 8+8 = 16 bytes
