@@ -6355,10 +6355,10 @@ ValueScanResult ScanForValue(
                     // For TArray<FVector> the inner element size IS the triple's
                     // width — elements are packed, so stride == the vector.
                     // (`f.Size` here is the 16-byte TArray header, not the value.)
-                    int32_t vecWidth = 0;
+                    int32_t arrVecWidth = 0;
                     if (!acceptedStructNames.empty()) {
                         if (!Radar::IsSupportedVectorWidth(stride)) stride = 0;  // refuse
-                        else vecWidth = stride;
+                        else arrVecWidth = stride;
                     }
                     // Skip arrays whose inner-element size couldn't be
                     // resolved (rare; defensive). Without stride we
@@ -6374,7 +6374,7 @@ ValueScanResult ScanForValue(
                         sf.container     = ScanContainer::Array;
                         sf.elemStride    = stride;
                         sf.elemTypeName  = f.innerType;
-                        sf.vectorWidth   = vecWidth;
+                        sf.vectorWidth   = arrVecWidth;
                         out.push_back(std::move(sf));
                         continue;
                     }
@@ -6429,10 +6429,10 @@ ValueScanResult ScanForValue(
                     // TOptional<FVector>: the width is the WRAPPED type's, not
                     // f.Size — which is the optional's whole footprint and
                     // includes the trailing bIsSet byte plus padding.
-                    int32_t vecWidth = 0;
+                    int32_t optVecWidth = 0;
                     if (!acceptedStructNames.empty()) {
                         if (!Radar::IsSupportedVectorWidth(innerSize)) continue;  // refuse
-                        vecWidth = innerSize;
+                        optVecWidth = innerSize;
                     }
                     ScanField sf;
                     sf.offset        = baseOffset + f.Offset;   // value at field+0
@@ -6443,7 +6443,7 @@ ValueScanResult ScanForValue(
                     sf.boolFieldMask = 0xFF;                    // optionals never bitfield-pack
                     sf.optionalFlagOffset =
                         Radar::OptionalFlagOffset(f.Size, innerSize);
-                    sf.vectorWidth   = vecWidth;
+                    sf.vectorWidth   = optVecWidth;
                     out.push_back(std::move(sf));
                     continue;
                 }
@@ -6463,11 +6463,11 @@ ValueScanResult ScanForValue(
                 // FSetProperty's ElementProp lives at the same offset as
                 // FArrayProperty's Inner (GetSetElementStride probes exactly
                 // there), so the array helper reads the right property.
-                int32_t vecWidth = 0;
+                int32_t setVecWidth = 0;
                 if (!acceptedStructNames.empty()) {
                     int32_t elemSize = Ubel::GetArrayInnerElemSize(f.Address);
                     if (!Radar::IsSupportedVectorWidth(elemSize)) stride = 0;  // refuse
-                    else vecWidth = elemSize;
+                    else setVecWidth = elemSize;
                 }
                 if (stride > 0) {
                     ScanField sf;
@@ -6480,7 +6480,7 @@ ValueScanResult ScanForValue(
                     sf.container     = ScanContainer::Set;
                     sf.elemStride    = stride;
                     sf.elemTypeName  = f.elemType;
-                    sf.vectorWidth   = vecWidth;
+                    sf.vectorWidth   = setVecWidth;
                     out.push_back(std::move(sf));
                     // fall through is unnecessary; a SetProperty is never
                     // also a leaf/array/struct, so continue.
