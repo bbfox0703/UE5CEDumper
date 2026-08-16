@@ -78,7 +78,6 @@ A standalone CE Lua module that creates **Structure Dissect** entries from UE cl
 - **StructProperty flattening** — recursively resolves inner struct fields (up to 6 levels)
 - **BoolProperty bitmask** — sets CE `ChildStructStart` for bitfield display
 - **Array/Map/Set helpers** — emits pointer + `_count` + `_capacity` elements
-- **Gap filling** — fills unused byte ranges with `vtPointer` placeholders
 - **UObject header** — auto-adds VTable, ObjectFlags, Class, FNameIndex, Outer
 - **Auto callback** — registers `registerStructureDissectOverride` so CE auto-fills when you open Structure Dissect on any UObject address
 - **Caching** — structures are cached by class name to avoid redundant DLL calls

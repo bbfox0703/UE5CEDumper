@@ -12,7 +12,6 @@
 --   * StructProperty    — recursive flattening via UE5_GetFieldStructClass
 --   * BoolProperty      — ChildStructStart bitmask via UE5_GetFieldBoolMask
 --   * Array/Map/Set     — pointer child stubs
---   * Gap filling       — unused bytes shown as vtPointer
 -- ============================================================
 
 -- ----------------------------------------------------------------
@@ -315,36 +314,24 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
 end
 
 -- ----------------------------------------------------------------
--- Fill gaps: insert vtPointer every 4 bytes where no element exists
+-- REMOVED 2026-08-17: fillGaps ("unused bytes shown as vtPointer").
+--
+-- It was defined, advertised in this header and in scripts/README.md +
+-- DEPLOY_README.html, and never called from anywhere in the repo. It was also
+-- wrong: it built its coverage set from element START offsets only
+-- (`existing[Element[i].Offset] = true`) and then tested four consecutive
+-- offsets, so an 8-byte field at 0x10 marked only 0x10 — 0x14 read as
+-- uncovered and the loop would have emitted a vtPointer OVERLAPPING it. On a
+-- real class it would add hundreds of unnamed rows, some of them overlaps.
+--
+-- Deleted rather than repaired (maintainer's call, audit #5 AA7): CE's own
+-- autoGuessStruct already covers the no-override case, and a correct version
+-- would have to track each field's real byte span while elements are added —
+-- new, untested, visible behaviour in a shipped script that nobody asked for.
+-- If it ever comes back, that is the shape to build: the DLL already hands us
+-- f.size per field, so the coverage set must never be re-derived from CE's
+-- element list.
 -- ----------------------------------------------------------------
-local function fillGaps(ceStruct, totalSize)
-    if ceStruct.Count < 1 then return end
-
-    -- Collect existing offsets into a set
-    local existing = {}
-    for i = 0, ceStruct.Count - 1 do
-        existing[ceStruct.Element[i].Offset] = true
-    end
-
-    -- Determine end boundary
-    local lastElem = ceStruct.Element[ceStruct.Count - 1]
-    local endBound = totalSize
-    if endBound <= 0 then
-        endBound = lastElem.Offset + (lastElem.Bytesize > 0 and lastElem.Bytesize or 4)
-    end
-
-    ceStruct.beginUpdate()
-    for off = 0, endBound - 1, 4 do
-        -- Check if this 4-byte slot is covered by any existing element
-        if not existing[off] and not existing[off + 1]
-            and not existing[off + 2] and not existing[off + 3] then
-            local e = ceStruct.addElement()
-            e.Offset  = off
-            e.Vartype = vtPointer
-        end
-    end
-    ceStruct.endUpdate()
-end
 
 -- ----------------------------------------------------------------
 -- Add standard UObject header fields (VTable, index, class, name, outer)

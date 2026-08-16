@@ -22,7 +22,7 @@ builds ≤696 in
 
 -----
 
-## 2026-08-17 - AA4/AA5/AA6: ue5_dissect.lua stops reporting failure as success (build 3037)
+## 2026-08-17 - AA4-AA7: ue5_dissect.lua stops reporting failure as success (build 3037)
 
 **Audit #5 queue ②**, and the first fix in this repo written against a Lua test rig that RUNS the
 script (`scripts/tests/dissect_test.lua`, 40 checks). The C# suite can only assert on this file's
@@ -93,6 +93,20 @@ C++ 246 + 1073, C# 3885 (the source-text assertions in `CeExecuteCodeExArityTest
 **Checked and clean — do not re-raise:** the `.CT`'s sibling `ue5_callDLL`
 (`scripts/UE5CEDumper.CT:448`) also returns nil on failure, but both of its call sites (`:619`,
 `:781`) test `== nil` explicitly.
+
+### AA7 — `fillGaps` deleted (maintainer's call)
+
+Defined, advertised in three places (this file's header, `scripts/README.md`,
+`scripts/DEPLOY_README.html`), and **never called from anywhere in the repo**. It was also wrong:
+the coverage set was built from element START offsets only, so an 8-byte field at `0x10` marked
+only `0x10` — `0x14` read as uncovered and the loop would have emitted a `vtPointer` **overlapping
+a real field**. On a real class that is hundreds of unnamed rows, some of them overlaps.
+
+Deleted rather than repaired. CE's own `autoGuessStruct` already covers the no-override case, and a
+correct version would need to track each field's real byte span while elements are added — new,
+untested, visible behaviour in a shipped script that nobody asked for. The three doc claims are
+gone with it, and the removal comment records the shape to build if it ever returns (the DLL hands
+us `f.size` per field, so the coverage set must never be re-derived from CE's element list).
 
 -----
 
