@@ -4853,12 +4853,36 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 applied = true;
             }
 
-            // If we now have both GObjects+GNames, run full offset detection
-            if (g_cachedGObjects && g_cachedGNames) {
+            // Run full offset detection — but ONLY if it never ran (audit #5 G3).
+            //
+            // ValidateAndFixOffsets writes unmeasured version defaults into the LIVE DynOff
+            // globals before probing and corrects them at the end, with no staging and no
+            // reader fence. On this path that window is open while the UI is connected and
+            // the bulk lane is serving, so a re-run republishes defaults over already-probed
+            // values. Measured on the retained logs: 1-3 ms, and only 3 of the family differ
+            // from their defaults on 1 of 16 targets — small, but free to avoid.
+            //
+            // ⚠ The predicate is `!bOffsetsProbeRan`, NOT `applied`. `applied` is true on
+            // every reachable path here — CMD_RESCAN only scans pointers that are already 0
+            // and the UI only sends apply_rescan when something was found — so gating on it
+            // would be a never-firing predicate (see G11's lesson). `!bOffsetsProbeRan` says
+            // exactly "init never probed", because UE5_Init skips detection when GObjects was
+            // 0, and EVERY exit from ValidateAndFixOffsets stores the flag true
+            // (Genau.cpp: two early returns each preceded by a store, plus the success tail).
+            // ⚠ If a future edit adds an exit without that store, this gate silently inverts.
+            if (g_cachedGObjects && g_cachedGNames
+                && !DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) {
                 if (!Genau::ValidateAndFixOffsets(g_cachedUEVersion)) {
                     Sein::Warn("PIPE:cmd", "apply_rescan: ValidateAndFixOffsets returned false");
                 }
+            }
 
+            // GEngine's second pass is HOISTED out of the block above (G3): it must still run
+            // when the offsets were already probed at init, which is exactly the GWorld-only
+            // recovery case the gate now skips. Keeping it nested would have traded one defect
+            // for another — "GEngine reports AOB not found forever" is the bug the comment
+            // below was written to fix.
+            if (g_cachedGObjects && g_cachedGNames) {
                 // Same second pass UE5_Init does: &GEngine can only be VALIDATED once the
                 // offsets exist, so a recovery rescan that revives GObjects/GNames has to
                 // retry it too — otherwise this path keeps reporting "AOB not found" for
