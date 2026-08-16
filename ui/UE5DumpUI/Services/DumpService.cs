@@ -49,7 +49,8 @@ public sealed class DumpService : IDumpService
         // the build-number probe; assume stale".
         var dllBuildNumber  = res["build_number"]?.GetValue<int>() ?? 0;
 
-        return BuildEngineState(ptrs, ueVersion, versionDetected, isUserOverride, isLowConfidence, dllBuildNumber);
+        return BuildEngineState(ptrs, ueVersion, versionDetected, isUserOverride, isLowConfidence,
+                                dllBuildNumber, await TryGetOffsetsAsync(ct));
     }
 
     public async Task<EngineState> GetPointersAsync(CancellationToken ct = default)
@@ -57,7 +58,29 @@ public sealed class DumpService : IDumpService
         var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "get_pointers" }, ct);
         CheckResponse(res);
 
-        return BuildEngineState(res);
+        return BuildEngineState(res, offsets: await TryGetOffsetsAsync(ct));
+    }
+
+    /// <summary>
+    /// Fetch the dynamic-offset verdict. Best-effort: a DLL that does not know
+    /// <c>get_offsets</c> — or a pipe hiccup on what is only a diagnostic — returns null and
+    /// <see cref="BuildEngineState"/> falls back to "validated", i.e. no warning. The
+    /// alternative (letting this throw) would turn a missing diagnostic into a failed
+    /// connect, which is a much worse trade for the thing it is diagnosing.
+    /// (audit #5 U3/X3 — the command shipped in the DLL with zero clients.)
+    /// </summary>
+    private async Task<JsonObject?> TryGetOffsetsAsync(CancellationToken ct)
+    {
+        try
+        {
+            var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "get_offsets" }, ct);
+            return res["error"] is null ? res : null;
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"get_offsets failed ({ex.Message}) — offset-validation banner unavailable");
+            return null;
+        }
     }
 
     public async Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default)
@@ -113,7 +136,7 @@ public sealed class DumpService : IDumpService
     /// </summary>
     private static EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool? versionDetected = null,
                                                  bool? isUserOverride = null, bool? isLowConfidence = null,
-                                                 int dllBuildNumber = 0)
+                                                 int dllBuildNumber = 0, JsonObject? offsets = null)
     {
         if (ueVersion == 0)
             ueVersion = ptrs["ue_version"]?.GetValue<int>() ?? 0;
@@ -132,6 +155,12 @@ public sealed class DumpService : IDumpService
             // Only the pointers payload carries this — an older DLL omits it, which reads as
             // false, i.e. "not gated", which is the right default for a DLL that predates the gate.
             IsVersionTooOld = ptrs["is_version_too_old"]?.GetValue<bool>() ?? false,
+            // Absent (old DLL, or get_offsets unavailable) reads as validated — no banner,
+            // matching the version_detected convention above. Only a DLL that positively
+            // says "false" produces the warning. (audit #5 U3/X3)
+            OffsetsValidated      = offsets?["validated"]?.GetValue<bool>() ?? true,
+            OffsetsProbeRan       = offsets?["probe_ran"]?.GetValue<bool>() ?? false,
+            OffsetsFallbackReason = offsets?["fallback_reason"]?.GetValue<string>() ?? "",
             PublisherThumbprint = ptrs["publisher_thumbprint"]?.GetValue<string>() ?? "",
             GObjectsAddr = ptrs["gobjects"]?.GetValue<string>() ?? "",
             GNamesAddr = ptrs["gnames"]?.GetValue<string>() ?? "",

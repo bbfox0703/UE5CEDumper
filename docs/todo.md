@@ -2,6 +2,22 @@
 
 Open work only. **Read this when deciding what to do next.**
 
+> ## ▶ If the ask is "carry on fixing bugs", do NOT start here
+>
+> The bug queue is **not** in this file. It lives in
+> [audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md) →
+> **§3b "▶ THE NEXT FIX SESSION STARTS HERE"**, which carries an ordered, already-vetted list of
+> the next six fix groups (① – ⑥) with file:line and the reason each group is one job. Start at ①;
+> no re-derivation is needed to begin.
+>
+> **What IS in this file, and is not in that one:**
+> - `## Pending live-game verification` — 10 steps needing a running game (4 are free from any
+>   ordinary session, 1 needs no game at all). **Offer these whenever the maintainer has a game up.**
+> - Everything below that is ordinary feature/infra work, unrelated to the audit.
+>
+> State as of 2026-08-16 (evening): **215 audit findings open of 277 · 0 HIGH · 55 MED**, and
+> **one item (A6) is blocked on a maintainer decision, not on effort** — see §3b.
+
 > **2026-06-06 cleanup.** This file was slimmed to open items only. The full
 > pre-cleanup history (every shipped build's effort/risk retrospective, files
 > touched, test counts, decision rationale) is frozen in
@@ -1404,6 +1420,57 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-16 — the fourteen-MED batch, all UI-visible (builds 3016-3031)
+
+None of this session's twelve fixes has been seen on a running game. They are cheap to check because
+each has a *visible* pass/fail, and four of them only ever show up when something ELSE goes wrong.
+
+**Free from any ordinary session (just look):**
+
+1. **A5 — Preview shows a LIVE value.** Property Search a field you can change in-game (Health).
+   The Preview column must track the real value, not the Blueprint default. A row whose class has no
+   live instance must read `… (CDO default)` — the marker is the fix's honesty half, so confirm both.
+2. **V6 — the search highlight survives a Refresh.** Live Walker → type a field-search keyword →
+   press Refresh (and leave auto-refresh on for a few ticks). Highlights must stay, the ↑/↓ stepper
+   must still land on highlighted rows, and **the grid must not jump to the top** — that last one is
+   what the fix deliberately avoided by not re-using `ApplySearch`.
+3. **AE9 — New Scan resets the Sort picker.** Value Search → First Scan → sort by Value → New Scan.
+   The picker must read *"Scan order"*, and picking *"Value"* again must actually re-sort.
+4. **U8 — `FName::Number` is back.** Live Walker a `NameProperty` whose value has a numeric suffix
+   (`Slot_1`, `Slot_2`). Panel and Value Search must agree on the same 8 bytes. ⚠ Object/instance
+   NAMES are a separate, unfixed lead — do not read a truncated instance name as a failure here.
+
+**Needs a specific condition (worth doing when it arises):**
+
+5. **G1 + X3 — the offset banner.** On a game where offset detection partially fails, the Pointers
+   tab must show the amber *"Dynamic offsets only partially measured (unmeasured:…)"* banner naming
+   the probe. The pair is only observable together. ⚠ On a game where everything measures cleanly
+   the correct result is **no banner at all** — absence proves nothing unless `get_offsets` on the
+   same process reports `validated: true`, so check that too before concluding.
+6. **V7 — failures are visible.** Live Walker an object, then destroy/unload it in-game and press
+   Refresh. Expect the salmon error line under the status line (10 s timeout). Before this fix a
+   dead refresh looked exactly like a live one.
+7. **U7 — a CJK string preview.** Property Search a `StrProperty` holding non-ASCII text longer than
+   50 bytes on a localized game. Before the fix the whole search returned zero rows with an error;
+   success = rows come back and the preview ends in `…`.
+8. **AB6 — group sort follows the visible column.** Group Scan with a filter that makes a slot keep
+   many leaves, then sort by Value. The order must match the Value column on screen.
+
+9. **AF4 — the Live Walker survives a tab round trip.** This one has NO unit test by design (it is
+   an Avalonia visual-tree lifecycle fact). Open Live Walker on an object → switch to another tab →
+   switch back → then use **🌍 Locate in GWorld**, a bookmark restore, or the ↑/↓ match stepper.
+   The grid must still scroll. Before the fix all six callbacks were dead after one round trip and
+   nothing errored — the buttons just stopped moving the view.
+10. **AF2 — unchecked rows say so.** Experimental → Detect Player Stats on a game with more than 30
+    candidate classes. Rows past the cap must read **"? not checked"** in amber, not "· guess", and
+    the status line must say *"30 of N classes live-probed"*. On a small game with under 30 classes
+    the correct result is that the suffix is ABSENT — check both, or you have only tested one branch.
+
+**Trivially checkable, low value alone:** AF6 (type a huge integer into Force → expect an explicit
+refusal naming the substitute, NOT a silent nothing), AE8 (a rejected scan click should no longer
+appear in the diagnostics measurement list), AF1 (needs a malformed UEnum — not reproducible on
+demand), U7's sibling paths.
 
 ### ⬜ NEW 2026-08-15 — install the plugin into a REAL Cheat Engine (audit #5 AB1, build 2913)
 

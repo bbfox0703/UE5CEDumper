@@ -239,6 +239,40 @@ inline bool IsWellFormedUtf8(const uint8_t* p, size_t n, bool& hasMultiByte) {
     return true;
 }
 
+// TruncateUtf8 — shorten `s` to at most `maxBytes` bytes WITHOUT splitting a
+// multi-byte sequence, appending `ellipsis` when anything was cut.
+//
+// Exists because a bare `s.resize(50)` on a validated UTF-8 preview cuts at a raw
+// byte boundary. A CJK string is 3 bytes per character, so 50 lands mid-sequence
+// two times in three, and the result is no longer well-formed UTF-8. nlohmann's
+// default `dump()` is STRICT: it throws type_error.316 on invalid UTF-8, and the
+// throw is caught far enough up that the whole response becomes {"error":...} —
+// so a search that genuinely matched returns zero results. (audit #5 U7)
+//
+// Cutting is done by walking BACK from the limit over continuation bytes
+// (0b10xxxxxx), which is the standard boundary test and needs no decoder: a lead
+// byte is anything that is not 0b10xxxxxx. Bounded to 3 steps because that is the
+// longest possible continuation run in UTF-8; more than that means the input was
+// already malformed, in which case the byte-exact cut is kept — this helper
+// shortens strings, it does not repair them.
+//
+// `maxBytes` is a budget for the TEXT only; the ellipsis is added on top, exactly
+// as the open-coded version it replaces did.
+inline std::string TruncateUtf8(const std::string& s, size_t maxBytes,
+                                const char* ellipsis = "\xe2\x80\xa6" /* U+2026 */) {
+    if (s.size() <= maxBytes) return s;
+
+    size_t cut = maxBytes;
+    for (int back = 0; back < 3 && cut > 0; ++back) {
+        if ((static_cast<uint8_t>(s[cut]) & 0xC0) != 0x80) break;  // s[cut] starts a new char
+        --cut;
+    }
+    // cut now indexes a lead byte (or 0), so [0, cut) ends on a character boundary.
+    std::string out = s.substr(0, cut);
+    if (ellipsis) out += ellipsis;
+    return out;
+}
+
 // ============================================================
 // DecodeFStringBuffer — decode a raw FString / FUtf8String buffer whose
 // element WIDTH is unknown, choosing UTF-8 (1-byte: FUtf8String, or a game

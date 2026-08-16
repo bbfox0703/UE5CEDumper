@@ -85,6 +85,27 @@ static std::string ReadFName(uintptr_t fnameAddr) {
     return Serie::GetString(compIndex, number);
 }
 
+// The same decode, from BYTES already in hand rather than from a live address.
+//
+// Three call sites open-coded this as `memcpy(&idx, p, 4); Serie::GetString(idx)` and
+// all three dropped FName::Number, so Slot_1 / Slot_2 / Slot_3 every rendered as "Slot"
+// — while ReadFNameAt, reading the same 8 bytes through the function above, returned the
+// suffix. The panel and value search disagreed about one field. (audit #5 U8)
+//
+// Number sits at +4 in EVERY configuration: UE declares it immediately after
+// ComparisonIndex, and the case-preserving DisplayIndex is appended AFTER it (verified in
+// vendor/UnrealEngine .../UObject/NameTypes.h:1258-1267). That is why this takes a byte
+// count and not DynOff::bCasePreservingName — the 0x10 FName is wider at the TAIL, so the
+// two fields we read are at fixed offsets. `size` still gates the Number read, because a
+// caller holding only 4 bytes has no Number to decode and must keep the old behaviour.
+static std::string DecodeFNameBytes(const uint8_t* bytes, int32_t size) {
+    if (!bytes || size < 4) return "";
+    int32_t compIndex = 0, number = 0;
+    memcpy(&compIndex, bytes, 4);
+    if (size >= 8) memcpy(&number, bytes + 4, 4);
+    return Serie::GetString(compIndex, number);
+}
+
 // ============================================================
 // ResolveEnumValue — resolve an enum integer value to its name string.
 // Uses a per-UEnum cache (static unordered_map) for performance.
@@ -1702,10 +1723,8 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
         return bytes[0] ? "true" : "false";
     }
     if (typeName == "NameProperty" && size >= 4) {
-        // FName — resolve via FNamePool
-        int32_t nameIdx;
-        memcpy(&nameIdx, bytes, 4);
-        return Serie::GetString(nameIdx);
+        // FName — resolve via FNamePool, Number included (audit #5 U8)
+        return DecodeFNameBytes(bytes, size);
     }
 
     // StructProperty: for small structs, show inline float hints
@@ -2154,7 +2173,34 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
         cf.name     = fi.Name;
         cf.typeName = fi.TypeName;
         cf.offset   = fi.Offset;
+
+        // Audit #5 U15: fi.Size is FPROPERTY_ELEMSIZE read RAW, which this file
+        // documents (ValidateArrayElemSize, ReadPointerArrayElements,
+        // ReadWeakObjectArrayElements, ReadLazyObjectArrayElements) as returning
+        // garbage for members of certain UScriptStruct layouts. A garbage size makes
+        // ReadStructArrayElements' bounds guard either drop the sub-field silently
+        // (too large) or mis-size it (too small), before any type branch can run.
+        //
+        // The fallback fires ONLY when the engine's own number is implausible — the
+        // hardcoded table is a garbage-ELEMSIZE backstop, NOT an authority over the
+        // engine. The two sibling interpreters in this file DO override
+        // unconditionally, and that is deliberately not copied here: at least one of
+        // InferScalarSize's constants is too large. TLazyObjectPtr is
+        // TPersistentObjectPtr<FUniqueObjectGuid>, and our own vendored UE 5.8 declares
+        // that as { FWeakObjectPtr WeakPtr; TObjectID ObjectID; } — 8 + 16 = 0x18, or
+        // 0x1C on the older layout that still carried `int32 TagAtLastTest`. Neither is
+        // the 0x20 InferScalarSize returns, and an inflated width pushes
+        // cf.offset + cf.size past the element buffer, silently DROPPING a sub-field
+        // the engine had sized correctly. (The 0x20 itself is a separate, pre-existing,
+        // still-unvetted question — see the audit doc; do not "fix" it from here.)
+        //
+        // The plausibility bound matches the one WalkInstance already uses for the
+        // same judgement on a field size.
         cf.size     = fi.Size;
+        if (cf.size <= 0 || cf.size > 256) {
+            if (int32_t expected = InferScalarSize(fi.TypeName); expected > 0)
+                cf.size = expected;
+        }
 
         // BoolProperty: read FieldMask from FBoolProperty/UBoolProperty
         if (fi.TypeName == "BoolProperty" && fi.Address) {
@@ -2298,17 +2344,56 @@ ReadArrayResult ReadStructArrayElements(
                 if (sf.value.empty()) sf.value = std::to_string(rawVal);
             } else if (cf.typeName == "StructProperty") {
                 sf.value = cf.nestedTypeName.empty() ? "{Struct}" : "{" + cf.nestedTypeName + "}";
+            } else if (cf.typeName == "WeakObjectProperty") {
+                // Audit #5 U12: FWeakObjectPtr is { int32 ObjectIndex; int32
+                // SerialNumber } — two ints, NOT an address. This used to share the
+                // raw-pointer arm below, which memcpy'd both ints into a uintptr_t and
+                // published Serial<<32|Index as sf.ptrAddr. A null ref was right only
+                // by accident (both ints zero), and a STALE ref — live index, serial no
+                // longer matching — was reported as a live one. Resolve it the way the
+                // rest of this file already does; the bytes are already in buf.
+                //
+                // Bounds are checked HERE against the 8 bytes actually read, not
+                // inherited from cf.size: the loop's guard uses the engine's declared
+                // width, which this file documents as sometimes garbage, so a
+                // garbage-SMALL width would let the guard pass and this memcpy overrun.
+                int32_t objIdx = 0, serial = 0;
+                if (cf.offset + 8 <= readSize) {
+                    memcpy(&objIdx, buf.data() + cf.offset,     4);
+                    memcpy(&serial, buf.data() + cf.offset + 4, 4);
+                }
+                uintptr_t ptr = ResolveWeakObjectPtr(objIdx, serial);
+                sf.ptrAddr = ptr;
+                if (ptr) {
+                    sf.ptrName = GetName(ptr);
+                    uintptr_t cls = GetClass(ptr);
+                    if (cls) {
+                        sf.ptrClassName = GetName(cls);
+                        sf.ptrClassAddr = cls;
+                    }
+                    sf.value = !sf.ptrName.empty() ? sf.ptrName : "ptr";
+                } else {
+                    // Same wording as ReadWeakObjectArrayElements: a live index whose
+                    // serial no longer matches is a DEAD reference, not a null one.
+                    sf.value = (objIdx > 0) ? "null (stale)" : "null";
+                }
             } else if (cf.typeName == "ObjectProperty" || cf.typeName == "ClassProperty"
-                    || cf.typeName == "WeakObjectProperty"
                     || cf.typeName == "InterfaceProperty") {
-                // Resolve pointer: read UObject* from element memory
+                // Raw UObject* at field+0. InterfaceProperty belongs here (and only
+                // here): FScriptInterface is { UObject* +0x00; void* +0x08 } = 16 bytes,
+                // so the old `cf.size == 8` gate matched neither arm and reported every
+                // BOUND interface as "null" (audit #5 U14). The declared width is 16,
+                // the pointer is still 8 bytes at offset 0.
+                //
+                // The gate is now BOUNDS, not width: all three hold a UObject* at
+                // field+0, so the only question is whether those 8 bytes are inside the
+                // element buffer. That is also what makes the fix independent of
+                // cf.size, which the engine sometimes reports as garbage. The old
+                // 4-byte arm is gone — it claimed a 32-bit pointer case that does not
+                // exist on x64, and it fired only on a garbage width.
                 uintptr_t ptr = 0;
-                if (cf.size == 8 && cf.offset + 8 <= readSize) {
+                if (cf.offset + 8 <= readSize) {
                     memcpy(&ptr, buf.data() + cf.offset, 8);
-                } else if (cf.size == 4 && cf.offset + 4 <= readSize) {
-                    uint32_t p32 = 0;
-                    memcpy(&p32, buf.data() + cf.offset, 4);
-                    ptr = p32;
                 }
                 sf.ptrAddr = ptr;
                 if (ptr) {
@@ -4665,8 +4750,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         } else if (sf.TypeName == "ByteProperty" || sf.TypeName == "Int8Property") {
                             val = std::to_string(p[0]);
                         } else if (sf.TypeName == "NameProperty" && sfSize >= 4) {
-                            int32_t nameIdx; memcpy(&nameIdx, p, 4);
-                            val = Serie::GetString(nameIdx);
+                            val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
                             if (val.empty()) val = "None";
                         } else if ((sf.TypeName == "ObjectProperty" || sf.TypeName == "ClassProperty") && sfSize >= 8) {
                             uintptr_t ptr; memcpy(&ptr, p, 8);
@@ -5140,8 +5224,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             val = std::to_string(p[0]);
                         } else if (sf.TypeName == "NameProperty"
                                    && sfSize >= 4) {
-                            int32_t nameIdx; memcpy(&nameIdx, p, 4);
-                            val = Serie::GetString(nameIdx);
+                            val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
                             if (val.empty()) val = "None";
                         } else if ((sf.TypeName == "ObjectProperty"
                                     || sf.TypeName == "ClassProperty")
@@ -5661,12 +5744,11 @@ void ResolvePropertyPreviews(
             if (s.empty()) {
                 m.preview = "(empty)";
             } else {
-                // Truncate long strings
-                if (s.size() > 50) {
-                    s.resize(50);
-                    s += "\xe2\x80\xa6";  // UTF-8 ellipsis '…'
-                }
-                m.preview = "\"" + s + "\"";
+                // Truncate long strings — on a CHARACTER boundary. `s.resize(50)` split
+                // multi-byte sequences (2 CJK strings in 3), and nlohmann's strict dump()
+                // then threw on the invalid UTF-8, turning the entire search_properties
+                // response into {"error":...} — zero rows for a search that matched.
+                m.preview = "\"" + Utf8Helpers::TruncateUtf8(s, 50) + "\"";
             }
             continue;
         }
@@ -5697,11 +5779,68 @@ void ResolvePropertyPreviews(
             continue;
         }
 
-        // --- ObjectProperty / ClassProperty: read pointer, resolve name ---
-        if (t == "ObjectProperty" || t == "ClassProperty" ||
-            t == "WeakObjectProperty" || t == "LazyObjectProperty" ||
-            t == "SoftClassProperty")
-        {
+        // --- WeakObjectProperty / LazyObjectProperty: FWeakObjectPtr at +0x00 ---
+        // Audit #5 U13. Both used to sit in the raw-pointer branch below, which read
+        // 8 bytes as a UObject* with NO size gate at all — so an FWeakObjectPtr
+        // { int32 ObjectIndex; int32 SerialNumber } was published as the address
+        // Serial<<32|Index and printed as a plausible-looking "0x…". TLazyObjectPtr
+        // begins with the same FWeakObjectPtr (+0x08 Tag, +0x10 FGuid), so it resolves
+        // identically; its FGuid is the honest fallback when nothing is loaded, which
+        // is what ReadLazyObjectArrayElements already displays.
+        if (t == "WeakObjectProperty" || t == "LazyObjectProperty") {
+            int32_t objIdx = 0, serial = 0;
+            Macht::ReadSafe(inst + off,     objIdx);
+            Macht::ReadSafe(inst + off + 4, serial);
+            uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
+            if (resolved) {
+                std::string name = GetName(resolved);
+                m.preview = name.empty() ? "(loaded)" : name;
+            } else if (t == "LazyObjectProperty") {
+                uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
+                Macht::ReadSafe(inst + off + 0x10,      ga);
+                Macht::ReadSafe(inst + off + 0x10 + 4,  gb);
+                Macht::ReadSafe(inst + off + 0x10 + 8,  gc);
+                Macht::ReadSafe(inst + off + 0x10 + 12, gd);
+                char gs[48];
+                snprintf(gs, sizeof(gs), "{%08X-%08X-%08X-%08X}", ga, gb, gc, gd);
+                m.preview = gs;
+            } else {
+                // Same wording as ReadWeakObjectArrayElements: a live index whose
+                // serial no longer matches is a DEAD reference, not a null one.
+                m.preview = (objIdx > 0) ? "null (stale)" : "null";
+            }
+            continue;
+        }
+
+        // --- SoftObjectProperty / SoftClassProperty: FSoftObjectPath asset path ---
+        // TSoftObjectPtr = FWeakObjectPtr(8) + Tag(4) + pad(4) + FSoftObjectPath(0x10),
+        // so the readable value is the asset path at +0x10, never a pointer.
+        // SoftClassProperty was read as a raw pointer here and SoftObjectProperty had
+        // no branch at all (so it silently got NO preview) — audit #5 U13. Display
+        // order matches WalkInstance's own soft-pointer handler: path, then the
+        // resolved target when the asset happens to be loaded, then "(none)".
+        if (t == "SoftObjectProperty" || t == "SoftClassProperty") {
+            std::string assetPath = ReadSoftObjectPath(inst + off + 0x10);
+            if (!assetPath.empty()) {
+                m.preview = assetPath;
+                continue;
+            }
+            int32_t objIdx = 0, serial = 0;
+            Macht::ReadSafe(inst + off,     objIdx);
+            Macht::ReadSafe(inst + off + 4, serial);
+            uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
+            std::string name = target ? GetName(target) : std::string();
+            m.preview = name.empty() ? "(none)" : name;
+            continue;
+        }
+
+        // --- ObjectProperty / ClassProperty / InterfaceProperty: raw UObject* at +0 ---
+        // InterfaceProperty had no branch anywhere in this function, so it got no
+        // preview at all (audit #5 U13). FScriptInterface is { UObject* +0x00;
+        // void* +0x08 }, so its first 8 bytes ARE a genuine object pointer — the same
+        // reason CeXmlExportService.IsRawObjectPtrSlot includes it and the weak-like
+        // types above it does not.
+        if (t == "ObjectProperty" || t == "ClassProperty" || t == "InterfaceProperty") {
             uintptr_t ptr = 0;
             Macht::ReadSafe(inst + off, ptr);
             if (!ptr) {

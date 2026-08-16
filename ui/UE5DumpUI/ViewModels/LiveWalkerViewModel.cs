@@ -4192,12 +4192,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task ExportCeFieldXmlAsync()
     {
-        // Record what this heavy operation costs the DLL dispatcher. Automatic
-        // rather than a measurement session: the evidence then accumulates from
-        // real use instead of only the scenario somebody thought to test. Degrades
-        // to a no-op when not connected; never affects the operation.
-        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Copy CE Field");
-
         // Use the multi-selection snapshot; fall back to SelectedField for
         // robustness if SelectionChanged hasn't synced yet (e.g. when the
         // command fires programmatically right after a single-row selection).
@@ -4206,6 +4200,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             : (SelectedField != null ? new List<LiveFieldValue> { SelectedField } : new List<LiveFieldValue>());
 
         if (selectedSnapshot.Count == 0 || string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;
+
+        // Record what this heavy operation costs the DLL dispatcher. Automatic
+        // rather than a measurement session: the evidence then accumulates from
+        // real use instead of only the scenario somebody thought to test. Degrades
+        // to a no-op when not connected; never affects the operation.
+        //
+        // AFTER the early return, like ExportCeXmlAsync above — opening it first spent two
+        // get_diagnostics round-trips and filed a "Copy CE Field" sample every time the
+        // command fired with nothing selected. (audit #5 AE8, sibling site)
+        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Copy CE Field");
         if (IsExporting) return;   // an export is already running — its Cancel button is showing
 
         // Guessed ("Guess?") fields export only when the user explicitly focuses
@@ -5509,7 +5513,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         SearchText = "";
     }
 
-    private void ApplySearch(string query)
+    /// <summary>
+    /// Stamp <see cref="LiveFieldValue.IsSearchMatch"/> across <paramref name="target"/>
+    /// for <paramref name="query"/> and return the match count.
+    /// <para>
+    /// The matcher ONLY — none of the two side effects <see cref="ApplySearch"/> adds on
+    /// top (the scroll-to-first-match, and the whole-collection swap that forces the
+    /// DataGrid to re-realize rows). <see cref="UpdateDisplay"/> needs the matcher without
+    /// either: it is installing brand-new row objects anyway, so the rows re-realize on
+    /// their own, and the swap would reset the scroll position its in-place replacement
+    /// exists to preserve.
+    /// </para>
+    /// <para>
+    /// <c>internal</c> for the tests (InternalsVisibleTo): the V6 defect was that this
+    /// step did not run on a refresh, which is a fact about a pure function over a field
+    /// list and needs no live pipe to pin.
+    /// </para>
+    /// </summary>
+    internal static int MarkSearchMatches(IEnumerable<LiveFieldValue> target, string query)
     {
         // Space-separated terms are ANDed: each term must hit at least one of the
         // scanned fields (term-level AND, field-level OR) — the shared Object Tree
@@ -5518,30 +5539,35 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var terms = ObjectTreeFilter.SplitTerms(query);
 
         // Require at least 2 characters — single char matches too broadly
+        bool active = !string.IsNullOrWhiteSpace(query)
+                      && query.Trim().Length >= 2
+                      && terms.Length > 0;
+
+        int count = 0;
+        foreach (var f in target)
+        {
+            bool match = active
+                && ObjectTreeFilter.MatchesAllTerms(
+                    terms, f.Name, f.TypeName, f.DisplayValue, f.PtrClassName, f.StructTypeName);
+
+            f.IsSearchMatch = match;
+            if (match) count++;
+        }
+        return count;
+    }
+
+    private void ApplySearch(string query)
+    {
+        int count = MarkSearchMatches(Fields, query);
+        SearchMatchCount = count;
+        HasSearchResults = count > 0;
+
         if (string.IsNullOrWhiteSpace(query) || query.Trim().Length < 2)
         {
-            foreach (var f in Fields) f.IsSearchMatch = false;
-            SearchMatchCount = 0;
-            HasSearchResults = false;
             _lastScrolledSearchText = "";
         }
         else
         {
-            int count = 0;
-            foreach (var f in Fields)
-            {
-                bool match = terms.Length == 0
-                    ? false
-                    : ObjectTreeFilter.MatchesAllTerms(
-                        terms, f.Name, f.TypeName, f.DisplayValue, f.PtrClassName, f.StructTypeName);
-
-                f.IsSearchMatch = match;
-                if (match) count++;
-            }
-
-            SearchMatchCount = count;
-            HasSearchResults = count > 0;
-
             // Scroll to first match when search text changes and has results
             if (count > 0 && query != _lastScrolledSearchText)
             {
@@ -5938,6 +5964,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (baseAddr != 0)
                 f.FieldAddress = $"0x{baseAddr + (ulong)f.Offset:X}";
         }
+
+        // Re-apply the field-search highlight to the NEW row objects.
+        //
+        // Refresh / auto-refresh pass clearFieldSearch:false precisely so the keyword
+        // survives — but these are fresh LiveFieldValue instances whose IsSearchMatch
+        // defaults to false, and nothing re-ran the matcher. Highlights vanished on
+        // every refresh while SearchMatchCount and the ↑/↓ match-stepper kept
+        // advertising the previous walk's N matches. (audit #5 U1/V6)
+        //
+        // Marked BEFORE the rows are installed, and via MarkSearchMatches rather than
+        // ApplySearch: the row background is painted from LoadingRow when a row is
+        // realized, so replacing the row object is enough to repaint it, whereas
+        // ApplySearch's trailing whole-collection swap would reset the scroll position
+        // the in-place replacement below exists to preserve — and with a filter active,
+        // auto-refresh would then jerk the grid to the top on every tick.
+        //
+        // When clearFieldSearch is true, ClearFieldSearchForNavigation above has already
+        // emptied SearchText, so this correctly clears the flags and zeroes the counts.
+        int searchMatches = MarkSearchMatches(newFields, SearchText);
+        SearchMatchCount = searchMatches;
+        HasSearchResults = searchMatches > 0;
 
         if (Fields.Count == newFields.Count && Fields.Count > 0
             && Fields[0].Name == newFields[0].Name)

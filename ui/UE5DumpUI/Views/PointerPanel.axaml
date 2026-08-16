@@ -8,6 +8,13 @@
 
   <ScrollViewer VerticalScrollBarVisibility="Auto">
   <StackPanel Margin="16" Spacing="16">
+    <!-- Failure surface — see the note in LiveWalkerPanel.axaml (audit #5 V7).
+         First in the StackPanel so it is visible with or without HasData: a
+         failed pointer refresh leaves the cards showing the PREVIOUS scan. -->
+    <TextBlock Text="{Binding ErrorMessage}"
+               Foreground="#F48771" FontSize="12.5" TextWrapping="Wrap"
+               IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
     <!-- Not connected message -->
     <TextBlock Text="{StaticResource str.Pointers.NotConnected}"
                Foreground="#666" FontSize="14"
@@ -87,6 +94,17 @@
                   IsVisible="{Binding ShowPreUE4Warning}">
             <TextBlock Text="{StaticResource str.Pointers.EnginePreUE4}"
                        Foreground="#E88" FontSize="11" TextWrapping="Wrap"/>
+          </Border>
+
+          <!-- Dynamic offsets not fully MEASURED. Amber, not red: unlike the two refusals
+               above the dumper still works, but every value it shows and every export it
+               writes is derived from at least one UE-version guess. The text is built in the
+               VM because it names WHICH probe fell back. (audit #5 U3/X3) -->
+          <Border Background="#3A3323" BorderBrush="#E6A817" BorderThickness="1"
+                  CornerRadius="4" Padding="10,8" Margin="0,6,0,0"
+                  IsVisible="{Binding ShowOffsetsUnvalidatedWarning}">
+            <TextBlock Text="{Binding OffsetsUnvalidatedText}"
+                       Foreground="#E6C877" FontSize="11" TextWrapping="Wrap"/>
           </Border>
 
           <!-- Legacy "version not detected" warning, kept for backward compat -->

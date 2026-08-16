@@ -1202,6 +1202,16 @@ public class ValueSearchTests
         public List<(ulong, int, int, string?, string?, bool)> Queries { get; } = new();
         public List<ulong> Ends { get; } = new();
 
+        // AE8: how many times DiagnosticsProbe reached the pipe. StubDumpService throws
+        // NotImplementedException here and the probe swallows it, so counting is the only
+        // way to see whether the probe was opened at all.
+        public int DiagnosticsCalls { get; private set; }
+        public override Task<DiagnosticsResult> GetDiagnosticsAsync(int limit = 25, CancellationToken ct = default)
+        {
+            DiagnosticsCalls++;
+            return Task.FromResult(new DiagnosticsResult());
+        }
+
         public bool? LastParallel { get; private set; }
         public bool? LastBatchRead { get; private set; }
 
@@ -2379,6 +2389,104 @@ public class ValueSearchTests
         var before = vm.SelectedSortOption;
         vm.ApplyColumnSort("not-a-real-key");
         Assert.Same(before, vm.SelectedSortOption);
+    }
+
+    /// <summary>
+    /// New Scan must reset the BOUND sort picker, not just the private key — audit #5 AE9.
+    ///
+    /// Assigning only the private key left the combo showing "Value" while the next scan ran
+    /// in scan order, and re-selecting the option the combo already displays raises no change
+    /// notification, so the user could not get that sort back without picking a third option
+    /// first. The second half of this test is what makes it a real check: it re-selects the
+    /// SAME key afterwards and requires the query to come back.
+    /// </summary>
+    [Fact]
+    public async Task NewScan_ResetsTheBoundSortPicker_SoTheSameSortCanBeChosenAgain()
+    {
+        var (vm, fake) = MakeVm();
+        fake.NextBeginResult  = new ValueScanBeginResult  { SessionId = 1UL, Total = 5 };
+        fake.NextWindowResult = new ValueScanWindowResult { SessionId = 1UL, Total = 5, FilteredTotal = 5 };
+        vm.SelectedDataType = ValueScanDataType.Int32;
+        vm.SelectedScanType = ValueScanType.Exact;
+        vm.Value = "1";
+        await vm.FirstScanCommand.ExecuteAsync(null);
+
+        vm.ApplyColumnSort("value");
+        vm.SortDescending = true;
+        Assert.Equal("value", vm.SelectedSortOption?.Key);
+
+        await vm.NewScanCommand.ExecuteAsync(null);
+
+        Assert.Equal("scan", vm.SelectedSortOption?.Key);   // the picker, not just the key
+        Assert.False(vm.SortDescending);
+
+        // And the previously-chosen sort is reachable again: start a new session, pick
+        // "value", and the server query must actually carry it.
+        fake.NextBeginResult  = new ValueScanBeginResult  { SessionId = 2UL, Total = 5 };
+        fake.NextWindowResult = new ValueScanWindowResult { SessionId = 2UL, Total = 5, FilteredTotal = 5 };
+        await vm.FirstScanCommand.ExecuteAsync(null);
+        fake.Queries.Clear();
+
+        vm.SelectedSortOption = vm.SortOptions.First(o => o.Key == "value");
+
+        Assert.Contains(fake.Queries, q => q.Item5 == "value");
+    }
+
+    /// <summary>
+    /// A REJECTED scan click must not open the diagnostics probe — audit #5 AE8.
+    ///
+    /// The probe sat above four early returns, so every invalid click cost two
+    /// get_diagnostics round-trips AND filed a "Value Scan (First)" measurement whose
+    /// duration was the validation, not a scan. The probe exists to accumulate evidence
+    /// about what heavy operations cost; samples from operations that never ran are worse
+    /// than no samples.
+    /// </summary>
+    [Fact]
+    public async Task RejectedFirstScan_DoesNotOpenTheDiagnosticsProbe()
+    {
+        var (vm, fake) = MakeVm();
+        // Changed is a Next-Scan predicate — First Scan rejects it before doing any work.
+        vm.SelectedDataType = ValueScanDataType.Int32;
+        vm.SelectedScanType = ValueScanType.Changed;
+        vm.Value = "1";
+
+        await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.NotEqual("", vm.ErrorMessage);      // it really was rejected...
+        Assert.Empty(fake.Begins);                 // ...and no scan started...
+        Assert.Equal(0, fake.DiagnosticsCalls);    // ...so nothing was measured.
+    }
+
+    [Fact]
+    public async Task AcceptedFirstScan_StillOpensTheDiagnosticsProbe()
+    {
+        // The other half: moving the probe must not have disabled it.
+        var (vm, fake) = MakeVm();
+        fake.NextBeginResult  = new ValueScanBeginResult  { SessionId = 1UL, Total = 1 };
+        fake.NextWindowResult = new ValueScanWindowResult { SessionId = 1UL, Total = 1, FilteredTotal = 1 };
+        vm.SelectedDataType = ValueScanDataType.Int32;
+        vm.SelectedScanType = ValueScanType.Exact;
+        vm.Value = "1";
+
+        await vm.FirstScanCommand.ExecuteAsync(null);
+
+        Assert.Single(fake.Begins);
+        Assert.True(fake.DiagnosticsCalls > 0);
+    }
+
+    [Fact]
+    public async Task GroupNewScan_ResetsTheBoundGroupSortPicker()
+    {
+        // The group mode carried the identical defect; the finding named only the single
+        // side, so this pins the twin found by grepping at fix time.
+        var (vm, _) = MakeVm();
+        vm.SelectedGroupSortOption = vm.GroupSortOptions.First(o => o.Key == "value");
+        vm.GroupSortDescending = true;
+
+        await vm.GroupNewScanCommand.ExecuteAsync(null);
+
+        Assert.Equal("scan", vm.SelectedGroupSortOption?.Key);
+        Assert.False(vm.GroupSortDescending);
     }
 
     // --- V3-C: server-side window / filter / sort / paging ---

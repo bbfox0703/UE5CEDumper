@@ -50,10 +50,12 @@ public partial class PropertySearchPanel : UserControl
         _ = vm.RefreshForcedFieldsAsync();
     }
 
-    private async System.Threading.Tasks.Task<double?> PromptForceValueAsync(PropertySearchMatch match)
+    private async System.Threading.Tasks.Task<ForceValuePromptResult> PromptForceValueAsync(
+        PropertySearchMatch match)
     {
-        // Reuse the Freeze value dialog (per-type validation), then parse the
-        // returned literal to the double the force_field command carries.
+        // Reuse the Freeze value dialog (per-type validation), then convert the returned
+        // literal to the double the force_field command carries — DLL-side too:
+        // Solide::AddForce takes a double, so this is the wire's width, not a UI choice.
         var dialog = new FreezeValueDialog(match);
         Window? owner = null;
         if (Avalonia.Application.Current?.ApplicationLifetime
@@ -64,10 +66,67 @@ public partial class PropertySearchPanel : UserControl
         else
             dialog.Show();
         var literal = dialog.ValueLiteral;
-        if (string.IsNullOrWhiteSpace(literal)) return null;
-        return double.TryParse(literal, System.Globalization.NumberStyles.Any,
-                               System.Globalization.CultureInfo.InvariantCulture, out var v)
-            ? v : (double?)null;
+        if (string.IsNullOrWhiteSpace(literal)) return ForceValuePromptResult.Cancel();
+        return ParseForceLiteral(literal);
+    }
+
+    /// <summary>
+    /// Convert a value the Freeze dialog already accepted for this property's type into the
+    /// double the force_field path carries — and REFUSE rather than write a different number.
+    ///
+    /// <para>
+    /// Two failures used to look identical to a cancel (audit #5 AF6): an unconvertible
+    /// literal, and a 64-bit integer beyond a double's 53-bit mantissa. The second is the
+    /// nastier one — <c>double.TryParse</c> SUCCEEDS on 9223372036854775807 and hands back
+    /// 9223372036854775808, so Force would have silently held the field at a value the user
+    /// never typed. Refusing is the honest answer while the wire is a double end-to-end;
+    /// widening it is a DLL + protocol change, not a UI one.
+    /// </para>
+    /// </summary>
+    internal static ForceValuePromptResult ParseForceLiteral(string literal)
+    {
+        var s = literal.Trim();
+        // Try integer first: only an exact integral literal can suffer the precision trap,
+        // and only for integers is "the value I typed" exactly representable in the first place.
+        if (long.TryParse(s, System.Globalization.NumberStyles.Integer,
+                          System.Globalization.CultureInfo.InvariantCulture, out var i64))
+        {
+            var asDouble = (double)i64;
+            // Range-guard FIRST, then cast back. Three tempting one-liners are all wrong here:
+            //   (long)asDouble != i64        — an out-of-range double->long SATURATES in .NET
+            //                                  Core, so long.MaxValue reports itself unchanged
+            //                                  and the check passes on the one input it is for;
+            //   asDouble.ToString("F0")      — a formatting question, answered differently at
+            //                                  the ends of the range;
+            //   (decimal)asDouble != i64     — the double->decimal conversion ROUNDS TO 15
+            //                                  SIGNIFICANT DIGITS, so it rejects 2^53, which a
+            //                                  double holds exactly.
+            // Guarded, the cast is exact and this is a true representability test.
+            const double kLongMin = -9223372036854775808.0;   // -2^63, exact
+            const double kLongMax =  9223372036854775808.0;   //  2^63, exact, EXCLUSIVE
+            bool inRange = asDouble >= kLongMin && asDouble < kLongMax;
+            if (!inRange || (long)asDouble != i64)
+            {
+                var wouldBe = inRange
+                    ? ((long)asDouble).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : "a different number";
+                return ForceValuePromptResult.Reject(
+                    $"{i64} cannot be held exactly — force_field carries a double, which has 53 " +
+                    $"bits of mantissa, so it would be held at {wouldBe} instead. Refused.");
+            }
+            return ForceValuePromptResult.Accept(asDouble);
+        }
+
+        if (double.TryParse(s, System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out var v))
+        {
+            // NaN / ±Infinity parse cleanly and would be written straight into game memory.
+            if (double.IsNaN(v) || double.IsInfinity(v))
+                return ForceValuePromptResult.Reject($"'{s}' is not a finite number.");
+            return ForceValuePromptResult.Accept(v);
+        }
+
+        return ForceValuePromptResult.Reject($"'{s}' is not a number this field can be forced to.");
     }
 
     private async System.Threading.Tasks.Task<bool> ConfirmForceNullAsync(PropertySearchMatch match)

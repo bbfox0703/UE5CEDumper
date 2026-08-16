@@ -29,6 +29,14 @@
       </StackPanel>
     </StackPanel>
 
+    <!-- Failure surface — see the note in LiveWalkerPanel.axaml (audit #5 V7).
+         Not gated on HasClass: a failed walk is exactly the case where there is
+         no class to show, which is when the reason matters most. -->
+    <TextBlock DockPanel.Dock="Top" Text="{Binding ErrorMessage}"
+               Foreground="#F48771" FontSize="11.5" TextWrapping="Wrap"
+               Margin="0,0,0,6"
+               IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
     <!-- Field filter (client-side; no DLL roundtrip) -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8"
                 Margin="0,0,0,8" IsVisible="{Binding HasClass}">

@@ -376,6 +376,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     // direction, so the two property-change handlers don't each kick off a
     // (superseded) server query — ApplyColumnSort issues exactly one reload.
     private bool _suppressSortReload;
+    private bool _suppressGroupSortReload;
 
     // Rows fetched per window (begin/refine first page + Load More + reloads).
     private const int PageSize = 1000;
@@ -743,12 +744,6 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         if (IsScanning) return;
 
-        // Record what this heavy operation costs the DLL dispatcher. Automatic
-        // rather than a measurement session: the evidence then accumulates from
-        // real use instead of only the scenario somebody thought to test. Degrades
-        // to a no-op when not connected; never affects the operation.
-        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (First)");
-
         if (!IsFirstScanType(SelectedScanType))
         {
             ErrorMessage = "First Scan supports targeted predicates only (Exact / " +
@@ -772,6 +767,18 @@ public partial class ValueSearchViewModel : ViewModelBase
             ErrorMessage = "Between requires Value and Value2.";
             return;
         }
+
+        // Record what this heavy operation costs the DLL dispatcher. Automatic rather than
+        // a measurement session: the evidence then accumulates from real use instead of only
+        // the scenario somebody thought to test. Degrades to a no-op when not connected;
+        // never affects the operation.
+        //
+        // AFTER validation, deliberately. Opening it above the four early returns cost two
+        // get_diagnostics round-trips on every rejected click and filed a "Value Scan (First)"
+        // measurement for a scan that never ran — polluting the very dataset the probe exists
+        // to collect, with samples whose duration is the validation, not the scan.
+        // (audit #5 AE8)
+        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (First)");
 
         var cts = _scanCts = new System.Threading.CancellationTokenSource();
         try
@@ -836,12 +843,6 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         if (IsScanning || !HasSession) return;
 
-        // Record what this heavy operation costs the DLL dispatcher. Automatic
-        // rather than a measurement session: the evidence then accumulates from
-        // real use instead of only the scenario somebody thought to test. Degrades
-        // to a no-op when not connected; never affects the operation.
-        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (Next)");
-
         bool needsValue = !IsPrevValueScanType(SelectedScanType);
         if (needsValue && string.IsNullOrWhiteSpace(Value))
         {
@@ -853,6 +854,10 @@ public partial class ValueSearchViewModel : ViewModelBase
             ErrorMessage = "Between requires Value and Value2.";
             return;
         }
+
+        // Same ordering as First Scan above, and for the same reason — this site has the
+        // identical defect and the finding named only First. (audit #5 AE8)
+        await using var _perf = await Services.DiagnosticsProbe.BeginAsync(_dump, _log, "Value Scan (Next)");
 
         var cts = _scanCts = new System.Threading.CancellationTokenSource();
         try
@@ -901,8 +906,16 @@ public partial class ValueSearchViewModel : ViewModelBase
         Candidates = new ObservableCollection<ValueCandidate>();
         Total = 0;
         FilteredTotal = 0;
-        _sortKey = "";
-        _sortDesc = false;
+        // Reset the bound PICKER, not just the private key. Assigning `_sortKey` alone left
+        // the combo still displaying the previous sort while the next scan ran in scan order,
+        // and re-selecting the option the combo already shows raises no change notification —
+        // so the user could not get that sort back without picking something else first.
+        // (audit #5 AE9)
+        _suppressSortReload = true;
+        SelectedSortOption = SortOptions[0];   // "Scan order"
+        SortDescending = false;
+        _suppressSortReload = false;
+        ApplyUiSort();   // re-syncs _sortKey/_sortDesc even when the picker was already at [0]
         // ClassFilter is reset by EndSessionIfAnyAsync above (single source of truth).
         UpdateWindowStatus();
         StatusText = "Session ended. Configure a new scan and click First Scan.";
@@ -1256,8 +1269,13 @@ public partial class ValueSearchViewModel : ViewModelBase
         GroupCandidates = new ObservableCollection<GroupCandidate>();
         GroupTotal = 0;
         GroupFilteredTotal = 0;
-        _groupSortKey = "";
-        _groupSortDesc = false;
+        // Same picker reset as NewScanAsync — the group mode had the identical defect and
+        // the finding named only the single-scan side. (audit #5 AE9)
+        _suppressGroupSortReload = true;
+        SelectedGroupSortOption = GroupSortOptions[0];   // "Scan order"
+        GroupSortDescending = false;
+        _suppressGroupSortReload = false;
+        ApplyGroupUiSort();
         // GroupClassFilter is reset by EndGroupSessionIfAnyAsync above.
         UpdateGroupWindowStatus();
         StatusText = "Group session ended. Configure values and click Group First Scan.";
@@ -1343,6 +1361,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         _groupSortKey  = SelectedGroupSortOption?.Key ?? "";
         _groupSortDesc = GroupSortDescending;
+        if (_suppressGroupSortReload) return;
         if (HasGroupSession) _ = LoadGroupWindowAsync(reset: true);
     }
 

@@ -205,7 +205,12 @@ public class DumpServiceTests
         Assert.True(state.VersionDetected);  // Default when field absent
         Assert.Equal("0x7FF600A12340", state.GObjectsAddr);
         Assert.Equal(58432, state.ObjectCount);
-        Assert.Equal(2, callCount);
+        // init + get_pointers + get_offsets. The third is new in the X3 fix (audit #5):
+        // the DLL's offset-validation verdict had been published and never fetched, so
+        // nothing could tell the user the walker was running on unmeasured defaults.
+        // Kept as an exact count deliberately — this assertion is what would catch an
+        // accidental extra round-trip being added to the connect path.
+        Assert.Equal(3, callCount);
     }
 
     [Fact]

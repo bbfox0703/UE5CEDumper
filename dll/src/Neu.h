@@ -91,7 +91,14 @@ inline bool BuildLayout(ReadFn&& read, uintptr_t regionAddr, EnumNamesFormat for
         int32_t  probeName = 0;
         int64_t  probeVal  = 0;
         if (!read(regionAddr + 0x10, &numNew, sizeof(numNew))) return false;
-        if (numNew == 0 || static_cast<int32_t>(numNew) > maxCount) return false;
+        // Range-check BEFORE the narrowing cast, in a type that can hold every input.
+        // `static_cast<int32_t>(numNew) > maxCount` let the whole upper half of the
+        // uint32 range through: 0x80000000 casts to -2147483648, which is not greater
+        // than maxCount, so the guard passed and `out.count` below became NEGATIVE. The
+        // Legacy branch never had this because its `num <= 0` test catches the wrapped
+        // value; this branch only tested `== 0`. (audit #5 AF1)
+        if (numNew == 0 || static_cast<int64_t>(numNew) > static_cast<int64_t>(maxCount))
+            return false;
         // Both arrays must be readable (rejects a Legacy Num|Max word that merely
         // looks pointer-shaped — its masked value points at unmapped memory).
         if (!read(nPtr, &probeName, sizeof(probeName))) return false;

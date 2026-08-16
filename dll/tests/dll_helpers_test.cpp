@@ -1840,6 +1840,107 @@ static void Test_Radar_PickGroupWitnessAssignment() {
            seen.size() == 3 && seen[0] == 0 && seen[1] == 1 && seen[2] == 2);
 }
 
+// The grid must order by the leaf the ROW SHOWS — audit #5 AB6.
+//
+// BuildGroupOrderedView's Value/Offset/ClassName keys read slotMatches[0][0], the first
+// leaf the scan happened to keep, while Fern renders slotMatches[0][picks[0]] from
+// PickGroupWitnessAssignment. With per_slot_cap at 256 a slot routinely keeps dozens, so
+// "sort by Value" produced an order with no visible relationship to the Value column.
+//
+// The fixture is built so the two disagree: in each candidate the leaf at index 0 is
+// deliberately ranked in the OPPOSITE order to the leaf the witness picker chooses, so a
+// view still keyed on [0] returns the reverse of the expected order rather than
+// coincidentally agreeing.
+static void Test_Radar_GroupSortUsesTheDisplayedLeaf() {
+    using namespace Radar;
+
+    auto desc = [](const char* field, const char* cls) {
+        FieldDescriptor d;
+        d.className = cls;
+        d.definingClassName = cls;   // own-class => the picker's preferred tier
+        d.fieldName = field;
+        d.fieldType = "IntProperty";
+        return d;
+    };
+    std::vector<FieldDescriptor> descs = {
+        desc("Bookkeeping", "Actor"),        // 0 — inherited noise, value 0
+        desc("Health",      "BP_Enemy_C"),   // 1
+        desc("Health",      "BP_Boss_C"),    // 2
+    };
+    descs[0].definingClassName = "Actor";
+    descs[0].className         = "BP_Enemy_C";   // inherited => second tier for the picker
+
+    auto leaf = [](uint32_t descIdx, int32_t offset, int32_t value) {
+        GroupSlotMatch m;
+        m.descriptorIdx = descIdx;
+        m.leafAddr      = static_cast<uintptr_t>(offset);
+        m.offset        = offset;
+        std::memcpy(m.prevValue, &value, sizeof(value));
+        return m;
+    };
+
+    std::vector<SlotSpec> slots(1);
+    slots[0].dt = DataType::Int32;
+    slots[0].st = ScanType::Changed;
+
+    std::vector<InstanceRecord> instances(2);
+    instances[0].instanceName = "Enemy_0"; instances[0].instanceIndex = 10;
+    instances[1].instanceName = "Enemy_1"; instances[1].instanceIndex = 11;
+
+    // Candidate A: leaf[0] is the inherited zero (offset 8), the DISPLAYED leaf is
+    // Health=900 at offset 0x200. Candidate B: leaf[0] is the inherited zero too, and
+    // its displayed leaf is Health=100 at offset 0x100.
+    //
+    // Keyed on [0] both candidates tie at value 0 / offset 8 and keep scan order (A, B).
+    // Keyed on the DISPLAYED leaf, ascending Value and ascending Offset both put B first.
+    std::vector<GroupCandidate> candidates(2);
+    candidates[0].instanceIdx = 0;
+    candidates[0].slotMatches = { { leaf(0, 8, 0), leaf(1, 0x200, 900) } };
+    candidates[1].instanceIdx = 1;
+    candidates[1].slotMatches = { { leaf(0, 8, 0), leaf(2, 0x100, 100) } };
+
+    auto view = [&](SortKey k) {
+        return BuildGroupOrderedView(candidates, slots, descs, instances,
+                                     /*filter=*/"", k, /*sortDesc=*/false, {});
+    };
+
+    // Guard the premise: keyed on [0] these tie, so a passing result below cannot be
+    // an accident of the fixture already being in the right order.
+    auto byScan = view(SortKey::ScanOrder);
+    EXPECT("groupsort: fixture starts in scan order A,B",
+           byScan.size() == 2 && byScan[0] == 0 && byScan[1] == 1);
+
+    auto byValue = view(SortKey::Value);
+    EXPECT("groupsort: Value orders by the DISPLAYED leaf (100 before 900)",
+           byValue.size() == 2 && byValue[0] == 1 && byValue[1] == 0);
+
+    auto byOffset = view(SortKey::Offset);
+    EXPECT("groupsort: Offset orders by the DISPLAYED leaf (0x100 before 0x200)",
+           byOffset.size() == 2 && byOffset[0] == 1 && byOffset[1] == 0);
+
+    // ClassName reads the descriptor of the displayed leaf too: BP_Boss_C < BP_Enemy_C.
+    auto byClass = view(SortKey::ClassName);
+    EXPECT("groupsort: ClassName reads the DISPLAYED leaf's descriptor",
+           byClass.size() == 2 && byClass[0] == 1 && byClass[1] == 0);
+
+    // Descending must be the exact reverse — the flip is applied to the same key.
+    auto desc2 = BuildGroupOrderedView(candidates, slots, descs, instances,
+                                       "", SortKey::Value, /*sortDesc=*/true, {});
+    EXPECT("groupsort: descending reverses the same key",
+           desc2.size() == 2 && desc2[0] == 0 && desc2[1] == 1);
+
+    // A slot that kept nothing must not index anything: keys fall back to 0/"" and the
+    // view still returns every candidate.
+    std::vector<GroupCandidate> withEmpty(2);
+    withEmpty[0].instanceIdx = 0;
+    withEmpty[0].slotMatches = { {} };
+    withEmpty[1].instanceIdx = 1;
+    withEmpty[1].slotMatches = { { leaf(1, 0x100, 100) } };
+    auto emptied = BuildGroupOrderedView(withEmpty, slots, descs, instances,
+                                         "", SortKey::Value, false, {});
+    EXPECT("groupsort: an empty slot is survivable and drops nobody", emptied.size() == 2);
+}
+
 // Group-scan server-side class filter: exclude skip + histogram bucket on the
 // candidate's OBJECT-level class (first non-empty slot's match), including the
 // defensive case where slot 0 is empty so the class comes from a later slot.
@@ -2909,6 +3010,59 @@ static void Test_Neu_Edge() {
         Neu::EnumNamesLayout L3;
         EXPECT("edge unmapped arrays -> false", !Neu::DetectLayout(rd, 0x10000000, 8, 16384, L3));
     }
+    {   // audit #5 AF1 — the count is range-checked BEFORE the narrowing cast.
+        //
+        // The FNameData57 branch tested `static_cast<int32_t>(numNew) > maxCount`, so the
+        // entire upper half of the uint32 range slipped past: 0x80000000 casts to
+        // -2147483648, which is not greater than maxCount. `out.count` then came back
+        // NEGATIVE from a function whose contract is "parses sanely".
+        //
+        // The arrays ARE mapped here, so the only thing that can reject these headers is
+        // the count check itself — a fixture with unmapped arrays would pass for the
+        // wrong reason and prove nothing.
+        NeuFakeMem fm;
+        uint8_t names[64] = {}, vals[64] = {};
+        fm.Put(0x30000000, names, sizeof(names));
+        fm.Put(0x40000000, vals,  sizeof(vals));
+
+        auto putHdr = [&](uintptr_t region, uint32_t rawCount) {
+            uint8_t hdr[0x18] = {};
+            uint64_t tn = 0x30000000ull | 1, tv = 0x40000000ull | 1;
+            std::memcpy(hdr + 0,  &tn, 8);
+            std::memcpy(hdr + 8,  &tv, 8);
+            std::memcpy(hdr + 16, &rawCount, 4);
+            fm.Put(region, hdr, sizeof(hdr));
+        };
+        auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
+
+        // Sanity: the same fixture with a PLAUSIBLE count is accepted, so a rejection
+        // below is about the count and not about the fixture being unreadable.
+        putHdr(0x10000000, 4);
+        Neu::EnumNamesLayout ok;
+        EXPECT("AF1 control: a sane count on this fixture is accepted",
+               Neu::BuildLayout(rd, 0x10000000, Neu::EnumNamesFormat::FNameData57, 8, 16384, ok)
+               && ok.count == 4);
+
+        // The sign-bit case, and the two neighbours that bracket it.
+        //
+        // A DISTINCT region per case, deliberately: NeuFakeMem::Put appends and Read
+        // returns the FIRST region that covers the address, so re-using one address
+        // would have silently re-read case 1 three times — a loop that reports three
+        // passes while testing one value.
+        const uint32_t cases[] = { 0x80000000u, 0xFFFFFFFFu, 0x7FFFFFFFu };
+        uintptr_t region = 0x11000000;
+        for (uint32_t raw : cases) {
+            region += 0x1000;
+            putHdr(region, raw);
+            Neu::EnumNamesLayout bad;
+            bool built = Neu::BuildLayout(rd, region,
+                                          Neu::EnumNamesFormat::FNameData57, 8, 16384, bad);
+            EXPECT("AF1: an implausible uint32 count is rejected", !built);
+            // Belt and braces: even if some future change accepts one, it must never
+            // publish a negative count — that is the value that reaches the callers.
+            EXPECT("AF1: count is never negative", !built || bad.count > 0);
+        }
+    }
 }
 
 // ----- Orden::MatchGroup — multi-value group scan SDR matcher --------------
@@ -3790,6 +3944,7 @@ int main() {
     Test_NumericFamily_Filter();
     Test_GroupScan_ExcludeAndHistogram();
     Test_Radar_PickGroupWitnessAssignment();
+    Test_Radar_GroupSortUsesTheDisplayedLeaf();
     Test_ValueScan_OrderedViewScale();
     Test_Macht_IsRipRelativeModRM();
     Test_ValueScan_SparseContainerGeometry();

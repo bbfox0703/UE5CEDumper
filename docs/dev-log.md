@@ -22,6 +22,69 @@ builds ≤696 in
 
 -----
 
+## 2026-08-16 - Fourteen audit-#5 MEDs, fixed in cluster order (builds 3016-3031)
+
+**Audit #5, MED tier.** The three named families were already closed, so this run followed §4's
+*"clusters, in the order worth fixing"* instead of picking by segment. Fourteen findings, fourteen
+commits, each with its own negative control. The open MED tier went **69 → 55**.
+
+### What was fixed
+
+| ID | Where | The defect |
+|----|-------|-----------|
+| **G1** | `Genau.cpp` | `bOffsetsValidated = true` stored unconditionally on the success tail, though four in-path probes give up and keep a version guess. `get_offsets` reported `{"validated": true, "fallback_reason": ""}` over unmeasured offsets. |
+| **A5** | `Aura.cpp` | Property Search's Preview sampled the **CDO**, so the column showed the Blueprint default forever (Health = 100 while the player is at 37). |
+| **U7** | `Ubel.cpp` | `s.resize(50)` split a UTF-8 sequence; nlohmann's strict `dump()` then threw and the ENTIRE `search_properties` response became `{"error":...}`. |
+| **U8** | `Ubel.cpp` | Three open-coded FName decoders dropped `FName::Number`, so `Slot_1/2/3` all rendered as `Slot` — disagreeing with `ReadFNameAt` on the same 8 bytes. |
+| **V7** | 6 × `*.axaml` | `ViewModelBase.SetError` wrote `ErrorMessage` and **six panels never bound it**. A dead Live Walker refresh — 10 s timeout included — was pixel-identical to a live one. |
+| **V6** | `LiveWalkerViewModel.cs` | Refresh kept the field-search keyword but installed new row objects and never re-ran the matcher: highlights vanished while the count kept advertising N matches. |
+| **X3** | `DumpService` + Pointers | The DLL's offset-validation verdict had **zero clients** — the string `get_offsets` did not appear in `ui/` at all. |
+| **AB6** | `Radar.cpp` | Group-scan sort keys read `slotMatches[0][0]` while the row displays `slotMatches[0][picks[0]]` — the grid ordered by a leaf the user cannot see. |
+| **AF1** | `Neu.h` | UEnum member count range-checked AFTER a signed cast, so the whole upper `uint32` half passed and `out.count` came back negative. |
+| **AF6** | `PropertySearchPanel` | A REFUSED force value was reported as a cancel; and `double.TryParse` silently rounds a wide `Int64Property`, so Force would hold a number the user never typed. |
+| **AE9** | `ValueSearchViewModel.cs` | New Scan reset the private sort key but not the bound picker, and re-selecting the option the combo already shows is a no-op. |
+| **AE8** | 4 sites | `DiagnosticsProbe` opened BEFORE validation, filing measurements for operations that never ran — into the dataset the probe exists to collect. |
+| **AF2** | `DetectStatsViewModel.cs` | Detect stops live-probing after 30 classes, and past the cap every signal is false for a DIFFERENT reason than on a rejected row — both rendered "· guess", so a real stat at rank 31 looked disproven. |
+| **AF4** | `LiveWalkerPanel.axaml.cs` | All six VM callbacks were torn down on visual-tree detach and only ever re-subscribed from `DataContextChanged` — which a tab switch does not raise, so one round trip silently killed every scroll-to and the bookmark view restore. |
+
+### Two things worth carrying forward
+
+**G1 → X3 is a pair, and the order mattered.** G1 made `bOffsetsValidated` mean what `Grimoire.h:243`
+says it means; X3 then gave that verdict its first client (an amber Pointers banner). Wiring X3
+first would have rendered a banner driven by a flag that was itself lying.
+
+**The fix-time sibling grep paid off in EIGHT of the fourteen** (and cleared two more: AF4's shape exists in exactly one view, and AE8's fourth site was already correct). V7 named one panel and six were
+unbound; AE8 named one probe site and four had the shape; AE9, G1, U8 and AF6 each grew a second
+site the finding never listed. In no case did the finding's own text mention the sibling.
+
+### Deliberately NOT fixed
+
+**A6** was re-derived and CONFIRMED — including that `PropertySearchViewModel`'s doc comment
+asserted the opposite of what the code does (that comment is corrected). But the repair is a
+product decision: Force on the defining class **plus every subclass** (semantically right, changes
+the pool the shipped Stealth Meter card writes to) or on the one most-derived subclass observed
+(arbitrary). Today's failure is at least honest — *"0 live instances of Actor matched"* — so it is a
+capability gap, not a corruption. Parked for the maintainer.
+
+One **new lead** was opened by U8's sibling grep and is the larger half of it: ~19 sites read an
+instance's `FName` and drop `Number`, so the Instance Finder renders every instance of a class under
+one name — and its name gate substring-matches against that same truncated string. Mechanism
+verified; blast radius not measured. Full block in the audit doc.
+
+### Verification
+
+Every fix was proved able to fail by reverting it in the tree and watching the suite go red, then
+restored. Every UI/binding change additionally ran `-Mode Publish` (Native AOT, trimmed) per
+CLAUDE.md. Test counts moved **246/1029 → 246/1042** (C++) and **3847 → 3884** (C#).
+
+**AF4 is deliberately NOT unit-tested** — the defect lives in Avalonia's visual-tree lifecycle, and
+a test driving the private handlers would assert my model of when Avalonia raises them rather than
+the behaviour. It is a live-verification step instead.
+
+⚠ **Nothing here is verified on a running game.** See todo.md's pending-verification section.
+
+-----
+
 ## 2026-08-15 - CE XML told CE to dereference slots that hold no pointer (build 2966)
 
 **Audit #5 U2 finding W5.** First MED after both named families closed.

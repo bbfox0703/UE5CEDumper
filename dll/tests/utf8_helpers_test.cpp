@@ -457,6 +457,83 @@ static void Test_Decode_Utf8MultiByteBeatsZeroHeapTail() {
                   "\xE4\xBD\xA0\xE5\xA5\xBD");
 }
 
+// ============================================================
+// TruncateUtf8 — audit #5 U7
+//
+// The property-search preview used to cut with a bare s.resize(50). These tests
+// pin the property that actually matters: the RESULT is still well-formed UTF-8,
+// checked with IsWellFormedUtf8 rather than by comparing against a hand-written
+// expected string — a byte-exact expectation would pass for a helper that cut
+// correctly at 50 and still says nothing about limits 49 and 51.
+// ============================================================
+static void Test_TruncateUtf8_ShorterThanLimitUntouched() {
+    EXPECT_EQ_STR("ascii under limit is returned verbatim",
+                  Utf8Helpers::TruncateUtf8("hello", 50), "hello");
+    // Exactly at the limit is NOT truncation — no ellipsis.
+    std::string exact(50, 'x');
+    EXPECT_EQ_STR("exactly-at-limit is untouched",
+                  Utf8Helpers::TruncateUtf8(exact, 50), exact);
+}
+
+static void Test_TruncateUtf8_AsciiCutsExactlyAtLimit() {
+    std::string s(80, 'a');
+    std::string out = Utf8Helpers::TruncateUtf8(s, 50);
+    EXPECT("ascii keeps the full byte budget", out.size() == 50 + 3);  // + U+2026
+    EXPECT_EQ_STR("ascii tail is the ellipsis", out.substr(50), "\xe2\x80\xa6");
+}
+
+static void Test_TruncateUtf8_NeverSplitsAMultiByteSequence() {
+    // "中" is 3 bytes (E4 B8 AD). A 60-byte string of them means every limit that
+    // is not a multiple of 3 lands INSIDE a sequence — 2 of every 3 limits.
+    std::string cjk;
+    for (int i = 0; i < 20; ++i) cjk += "\xe4\xb8\xad";
+    EXPECT("fixture is 60 bytes", cjk.size() == 60);
+
+    int splitLimits = 0;
+    for (size_t limit = 1; limit < 60; ++limit) {
+        std::string out = Utf8Helpers::TruncateUtf8(cjk, limit);
+        bool multi = false;
+        bool ok = Utf8Helpers::IsWellFormedUtf8(
+            reinterpret_cast<const uint8_t*>(out.data()), out.size(), multi);
+        if (!ok) ++splitLimits;
+        // The cut must never EXCEED the budget, and must lose at most 2 bytes to
+        // boundary alignment (the longest back-walk for a 3-byte sequence).
+        size_t textBytes = out.size() - 3;   // minus the ellipsis
+        EXPECT("cut respects the byte budget", textBytes <= limit);
+        EXPECT("cut loses at most 2 bytes to alignment", limit - textBytes <= 2);
+    }
+    EXPECT("no limit produces invalid UTF-8", splitLimits == 0);
+
+    // The negative control this test exists for: the OLD behaviour, byte-exact
+    // resize, must be demonstrably detectable by the same check — otherwise the
+    // check above proves nothing. 50 is the limit the shipped call site uses.
+    std::string naive = cjk.substr(0, 50);
+    naive += "\xe2\x80\xa6";
+    bool m2 = false;
+    EXPECT("negative control: the old byte-exact cut IS invalid UTF-8",
+           !Utf8Helpers::IsWellFormedUtf8(
+               reinterpret_cast<const uint8_t*>(naive.data()), naive.size(), m2));
+}
+
+static void Test_TruncateUtf8_FourByteSequenceAndMalformedInput() {
+    // U+1F600 is 4 bytes — the longest sequence, i.e. the deepest back-walk.
+    std::string emoji;
+    for (int i = 0; i < 10; ++i) emoji += "\xf0\x9f\x98\x80";
+    for (size_t limit = 1; limit < 40; ++limit) {
+        std::string out = Utf8Helpers::TruncateUtf8(emoji, limit);
+        bool multi = false;
+        EXPECT("4-byte sequences survive every limit",
+               Utf8Helpers::IsWellFormedUtf8(
+                   reinterpret_cast<const uint8_t*>(out.data()), out.size(), multi));
+    }
+
+    // Malformed input: a run of continuation bytes longer than any real sequence.
+    // The helper must terminate and shorten, not loop or hang — it is not a repairer.
+    std::string junk(80, '\x80');
+    std::string out = Utf8Helpers::TruncateUtf8(junk, 50);
+    EXPECT("malformed input is still shortened", out.size() < junk.size());
+}
+
 static void Test_IsWellFormedUtf8() {
     bool multi = false;
     EXPECT("ASCII is well-formed",
@@ -564,6 +641,12 @@ int main() {
     Test_Decode_Utf8MultiByteBeatsZeroHeapTail();
     Test_IsWellFormedUtf8();
     Test_LooksLikeDecodedText();
+
+    // U7 — character-boundary truncation for the property-search preview
+    Test_TruncateUtf8_ShorterThanLimitUntouched();
+    Test_TruncateUtf8_AsciiCutsExactlyAtLimit();
+    Test_TruncateUtf8_NeverSplitsAMultiByteSequence();
+    Test_TruncateUtf8_FourByteSequenceAndMalformedInput();
 
     std::printf("---------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

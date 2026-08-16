@@ -64,6 +64,13 @@
     <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                  IsVisible="{Binding IsSearching}" Height="2" Margin="0,0,0,4"/>
 
+    <!-- Failure surface — see the note in LiveWalkerPanel.axaml (audit #5 V7).
+         This VM sets ErrorMessage and nothing rendered it. -->
+    <TextBlock DockPanel.Dock="Top" Text="{Binding ErrorMessage}"
+               Foreground="#F48771" FontSize="11.5" TextWrapping="Wrap"
+               Margin="0,0,0,4"
+               IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
     <!-- Address-to-Instance reverse lookup -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
       <TextBox PlaceholderText="{StaticResource str.InstanceFinder.AddressHint}"
