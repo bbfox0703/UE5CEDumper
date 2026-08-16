@@ -1406,10 +1406,58 @@ uintptr_t FindByName(const std::string& name) {
 }
 
 uintptr_t FindByFullName(const std::string& fullName) {
-    // Forward declared — uses Ubel::GetFullName
-    // This is implemented after UStructWalker is available
-    (void)fullName;
-    return 0;
+    // Resolve an object written as a PATH ("/Script/Engine.Actor"), as opposed to
+    // FindByName's bare-FName match ("Actor").
+    //
+    // This was a stub returning 0 from the day it was declared, while `Aura.h`,
+    // `docs/dll-spec.md` and `UE5_FindObject`'s own `fullPath` parameter name all
+    // advertised it as working. Nothing called it, so nothing failed loudly — the
+    // path capability simply did not exist, and `ue5_dissect.lua`'s
+    // `createFromPath` (whose interactive dialog is PRE-FILLED with
+    // "/Script/Engine.Actor") could never have resolved anything.
+    //
+    // Two-stage match, and the order is the point: `Ubel::GetFullName` walks the
+    // whole Outer chain and allocates, so running it on all ~85K objects would make
+    // this far slower than the scan it supports. The FName pre-filter reduces that
+    // to the handful of objects that share the leaf name.
+    const std::string wantPath = CanonicalizeObjectPath(fullName);
+    if (wantPath.empty()) return 0;
+    const std::string wantLeaf = PathLeafName(fullName);
+    if (wantLeaf.empty()) return 0;
+
+    uintptr_t result = 0;
+    ForEach([&](int32_t /*idx*/, uintptr_t obj) -> bool {
+        uint32_t nameIndex = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIndex)) return true;
+
+        // Cheap gate first — see above.
+        if (Serie::GetString(nameIndex) != wantLeaf) return true;
+
+        if (CanonicalizeObjectPath(Ubel::GetFullName(obj)) == wantPath) {
+            result = obj;
+            return false;  // Stop iteration
+        }
+        return true;
+    });
+    return result;
+}
+
+uintptr_t FindByNameOrPath(const std::string& query) {
+    // The single entry point every "find me this object" caller should use.
+    //
+    // A path is tried FIRST when the query carries a separator, because a path is
+    // the more specific request: "/Game/Maps/Foo.Foo" and "/Game/Other/Foo.Foo"
+    // share the leaf name "Foo", and answering either with whichever FName the
+    // GObjects walk reached first is a wrong answer that looks like a right one.
+    // Bare names keep their old single-pass cost — LooksLikeObjectPath is false, so
+    // FindByName runs directly and nothing about the historical behaviour changes.
+    if (LooksLikeObjectPath(query)) {
+        if (uintptr_t byPath = FindByFullName(query)) return byPath;
+        // Deliberate fallback: an object whose FName legitimately contains a '.'
+        // (asset names do) would otherwise become unreachable through this path.
+        return FindByName(query);
+    }
+    return FindByName(query);
 }
 
 SearchResultSet SearchByName(const std::string& query, int maxResults, bool instancesOnly) {

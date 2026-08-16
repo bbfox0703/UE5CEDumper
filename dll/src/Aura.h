@@ -86,6 +86,13 @@ uintptr_t FindByName(const std::string& name);
 // Find first object matching full path (linear scan)
 uintptr_t FindByFullName(const std::string& fullName);
 
+// Resolve a query that may be EITHER a bare FName ("Actor") or a path
+// ("/Script/Engine.Actor" / "Class /Script/Engine.Actor" / "//Script/Engine/Actor").
+// Path first when the query carries a separator, then bare-name fallback. This is
+// what `UE5_FindObject` and the pipe's `find_object` call; prefer it over calling
+// FindByName directly, or path-shaped input silently resolves to nothing.
+uintptr_t FindByNameOrPath(const std::string& query);
+
 // Get the detected FUObjectItem stride in bytes (16 or 24)
 int GetItemSize();
 
@@ -757,6 +764,69 @@ inline bool IsEnginePackage(const std::string& rawPath) {
         }
     }
     return false;
+}
+
+// CanonicalizeObjectPath — reduce every spelling of a UObject path to ONE form so
+// they can be compared. Pure / string-only (unit-tested); header-inline for the same
+// reason as IsEnginePackage above.
+//
+// Three spellings of the SAME object are in circulation, and this was measured on a
+// live UE 5.4 title (Elliot, 2026-08-16), not assumed:
+//   1. `Ubel::GetFullName` emits  "//Script/Engine/Actor"  — DOUBLE leading slash,
+//      '/' between package and object. This is what our own DLL produces.
+//   2. UE itself (and every doc, .CT and Lua caller) writes "/Script/Engine.Actor"
+//      — single leading slash, '.' before the object name.
+//   3. UE's fully-qualified form prepends the class: "Class /Script/Engine.Actor".
+// Comparing (1) against (2) with == is false for every object in the process, which
+// is exactly why find-by-path found nothing at all before build 3157.
+//
+// Canonical form = leading slash run collapsed to one, '.' and ':' (subobject
+// separator) rewritten to '/', any leading "ClassName " qualifier dropped.
+// Both examples above canonicalize to "/Script/Engine/Actor".
+//
+// Case is PRESERVED: UE FNames are case-insensitively *compared* but exactly cased,
+// and every other name compare in this file (FindByName, ClassDerivesFromAny) is
+// exact — a case-folding path compare here would be the only one in the module that
+// disagrees with its siblings.
+inline std::string CanonicalizeObjectPath(const std::string& raw) {
+    // Drop a leading class qualifier ("Class /Script/Engine.Actor"). Object paths
+    // never contain a space, so the text after the LAST space is the path.
+    size_t start = raw.find_last_of(' ');
+    start = (start == std::string::npos) ? 0 : start + 1;
+
+    // Collapse the leading slash run (handles GetFullName's "//").
+    size_t firstNonSlash = raw.find_first_not_of('/', start);
+    if (firstNonSlash == std::string::npos) return std::string();  // empty / all slashes
+
+    std::string out;
+    out.reserve(raw.size() - firstNonSlash + 1);
+    out.push_back('/');
+    for (size_t i = firstNonSlash; i < raw.size(); ++i) {
+        const char c = raw[i];
+        // '.' = package→object, ':' = object→subobject. Both are path separators.
+        out.push_back((c == '.' || c == ':') ? '/' : c);
+    }
+    return out;
+}
+
+// True when `raw` is written as a PATH rather than a bare object name — i.e. it
+// carries a separator. Callers use this to decide whether a path resolve is worth
+// attempting before falling back to the (much cheaper) bare-name match, so a plain
+// "Actor" keeps its original single-pass cost.
+inline bool LooksLikeObjectPath(const std::string& raw) {
+    return raw.find('/') != std::string::npos ||
+           raw.find('.') != std::string::npos ||
+           raw.find(':') != std::string::npos;
+}
+
+// PathLeafName — the final segment of a path ("/Script/Engine.Actor" -> "Actor").
+// Used as a CHEAP PRE-FILTER: comparing an object's FName against this costs one
+// FName read, whereas building its full name walks the whole Outer chain. Only
+// objects whose leaf name already matches are worth the expensive compare.
+inline std::string PathLeafName(const std::string& raw) {
+    const std::string canon = CanonicalizeObjectPath(raw);
+    const size_t slash = canon.find_last_of('/');
+    return (slash == std::string::npos) ? canon : canon.substr(slash + 1);
 }
 
 // IsReflectionMetaClass — true when a UObject's CLASS name denotes the reflection /

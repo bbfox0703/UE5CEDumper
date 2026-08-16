@@ -1443,12 +1443,40 @@ reports them identical. Nothing has desynced.)*
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
-### ⬜ NEW 2026-08-17 — AB4: the Aura half of the ordered-predicate width fix
+### ✅ CLOSED 2026-08-16 `[ELLIOT-PIPE-2026-08-16]` — AB4: the Aura half of the ordered-predicate width fix
 
 *Needs a connected game. See dev-log build 3133. **The Radar half is unit-pinned (16 new assertions,
 negative control 6 red); this batch is exactly the half that could not be** — no test target compiles
 `Aura.cpp`, so the wiring from `Find()` to `FindEntry()` across the first-scan, native-C and refine
 paths has never executed against a real object pool.*
+
+> **✅ ALL SIX CHECKABLE STEPS PASS. Steps 2 and 4 are a PAIRED control and step 4 is EXHAUSTIVE.**
+>
+> **Conditions.** Elliot (`Elliot-Win64-Shipping.exe`, PE `6A577F4E1D91B000`), DLL build **3156**
+> loaded as `proxy:dxgi.dll`, scan resolved by AOB — `GObjects 0x149BFC140` / `GNames 0x149B18600`
+> (`GNAM_V8`) / `GWorld 0x149D8BDA0` / `GEngine 0x149D8E290` (`GENG_X1`), `ue_version=504`,
+> `item_size=24`, **84,990 objects / 84,387 scanned**.
+> **Driven straight over the named pipe, NOT through the UI** — a deliberate choice: this batch is
+> about `Aura`'s `Find()`→`FieldDescriptor` wiring, and going pipe-direct removes the Avalonia layer
+> as a variable. The trade is that it does **not** exercise the Value Search panel's own binding;
+> that half rides on the separate 14-MED UI batch below.
+>
+> | step | request | result | verdict |
+> |---|---|---|---|
+> | 1 regression | `NumericNoByte` Exact `100` | **34,117 rows, `deadline_hit=false`** (complete, untruncated) — Float 24,361 / Double 9,695 / Int 61, **0 one-byte rows** | ✅ Exact unchanged, and correctly excludes 1-byte widths |
+> | 2 the fix | `NumericAll` Smaller `500` | **81,547 one-byte rows** (`ByteProperty` 81,283 + `Int8Property` 264) out of 1,000,000 | ✅ these were structurally impossible before |
+> | 3 sign leak | `NumericNoByte` Bigger `-5` | `UInt32Property` 240 + `UInt16Property` 26 = **266 unsigned rows** | ✅ a negative target no longer suppresses the unsigned parse |
+> | 4 ⚠ control | `NumericAll` Bigger `500` | **total 367,401, `deadline_hit=false`, all 367,401 paged, one-byte rows = 0** | ✅ **the pruning half still prunes — over the COMPLETE set, not a sample** |
+> | 5 refine | Next Scan, same predicate, on step 2's session | byte rows survive, tally identical (`ByteProperty` 5,238 + `Int8Property` 105 at the 40k cap) | ✅ the `cmpEntry` branch does not drop the new entries |
+> | 6 native-C | step 2 + `native_c`, `native_align=4`, `newest_first` | **8,321 one-byte + 8,628 unsigned rows**; distribution flattens (`UInt16`=`UInt32`=3,205) exactly as hole-scanning at multiple widths predicts | ✅ the separately-wired `&e`/`&me` path took |
+> | 7 `Between` | not run | known-unfixed by design | — |
+>
+> **Why 2-vs-4 is the real evidence and not two loose numbers:** same `data_type` (`NumericAll`, so
+> 1-byte widths are in scope for *both*), same value, same object population — only the predicate
+> direction differs. 81,547 → 0. That is precisely the shape a correct implementation must produce
+> (no byte exceeds 500), and it is the negative control the batch asked for. Step 4 completing with
+> `deadline_hit=false` is what upgrades it from "sampled 40k and saw none" to a claim over the pool.
+> *Honest limit:* steps 2/3/6 hit their result cap, so their counts are lower bounds, not censuses.
 
 1. **⚠ REGRESSION FIRST — an ordinary Exact scan is unchanged.** Value Search → `NumericNoByte` →
    Exact → a value you know exists → First Scan. `ScanType` now reaches `BuildNumericTargets` but
@@ -1887,32 +1915,69 @@ Every step is a click sequence; the unit tests cover the logic, not what the pan
    loading switch back to Steam and to Drives again. Tick some drives. They must stay ticked — a
    second load used to `Clear()` the list and silently drop the selection.
 
-### ⬜ NEW 2026-08-17 — AA4–AA7: ue5_dissect.lua in a real Cheat Engine
+### 🟡 4-of-5 CLOSED 2026-08-16 — AA4–AA7: ue5_dissect.lua in a real Cheat Engine
 
 *Needs CE + a game, and **step 2 needs no DLL at all** — it is the fastest check here. See dev-log
 build 3037. The Lua rig (`lua scripts/tests/dissect_test.lua`, 40 checks) covers the logic against
 stubs; what it cannot cover is CE's real dissect machinery.*
 
-1. **The happy path still builds.** CE → inject the DLL via `UE5CEDumper.CT` → Lua Engine →
+> **Steps 1, 2, 3, 5 ✅ PASS. Step 4 not staged (see it below).** Two sessions, deliberately split:
+> `[CE-NOTEPAD-2026-08-16]` = CE 7.7.0.10568 attached to `Notepad.exe` with **no DLL at all**
+> (steps 2, 3); `[ELLIOT-CE-2026-08-16]` = the same CE against **Elliot** with the DLL injected
+> (steps 1, 5). **The batch paid for itself**: step 1 failed on first run and turned out to be a
+> real, shipped defect (**AU1**, fixed in build 3157) rather than a bad test.
+
+1. **✅ PASS `[ELLIOT-CE-2026-08-16]` — but it FAILED FIRST, and that failure was a real defect.**
+   CE → inject the DLL via `UE5CEDumper.CT` → Lua Engine →
    `local d = dofile("ue5_dissect.lua"); d.createFromPath("/Script/Engine.Actor")`. A structure
    appears in the Structure Dissect list with named fields at plausible offsets. **This is the
    regression half — `callDLL` now raises where it used to return nil.**
-2. **⚠ The one that needs NO DLL, and the one AA4 is about.** In a fresh CE with the DLL *not*
-   injected: `local d = dofile("ue5_dissect.lua"); d.enableAutoCallback()`, then open
-   "Dissect data/structure" on **any ordinary address** (a plain allocation, not a UObject).
-   CE must dissect it **normally**. Before this fix the callback raised, CE re-raised it as a Pascal
-   exception, and its own `autoGuessStruct` never ran — so Structure Dissect was broken for every
-   address until the user found `disableAutoCallback()`. Expect at most ONE
-   `[UE5Dissect WARN] auto-dissect … failed` line, not one per node.
-3. **The failure message names the export and CE's reason.** With the DLL not injected, run
-   `d.createFromPath("/Script/Engine.Actor")` and confirm the error says
-   `DLL function not found: UE5_WalkClassBegin` — not `attempt to compare nil with number`.
+   **First run (build 3156) printed `[UE5Dissect WARN] Object not found: /Script/Engine.Actor`** and
+   created nothing. The exports resolved fine — the DLL genuinely could not find the object. Root
+   cause and fix: **AU1** below / dev-log build 3157; `UE5_FindObject` handed its `fullPath`
+   argument to a bare-FName matcher, so no path ever resolved.
+   **After the fix, same CE session, same command:** `STEP1 ok=true`, `structs before=1 after=2`,
+   `name=Actor fields=129`. The before/after sits in one Lua Engine window.
+5. **✅ PASS `[ELLIOT-CE-2026-08-16]` — No gap rows.** Walking the created `Actor` structure's 129
+   elements: **`unnamed=0`, `unnamedPointer=0`**, and the header reads
+   `0:VTable | 8:ObjectFlags | 12:ObjectIndex | 16:Class | 24:FNameIndex | 32:Outer` — the expected
+   UE5 `UObject` layout, which also satisfies step 1's "named fields at plausible offsets". This is
+   `addFieldsToStruct`'s own output (the DLL was present), so unlike the earlier no-DLL session it
+   really does exercise the builder `fillGaps` was deleted from.
+2. **✅ PASS `[CE-NOTEPAD-2026-08-16]` — ⚠ The one that needs NO DLL, and the one AA4 is about.**
+   In a fresh CE with the DLL *not* injected: `local d = dofile("ue5_dissect.lua");
+   d.enableAutoCallback()`, then open "Dissect data/structure" on **any ordinary address** (a plain
+   allocation, not a UObject). CE must dissect it **normally**. Before this fix the callback raised,
+   CE re-raised it as a Pascal exception, and its own `autoGuessStruct` never ran — so Structure
+   Dissect was broken for every address until the user found `disableAutoCallback()`. Expect at most
+   ONE `[UE5Dissect WARN] auto-dissect … failed` line, not one per node.
+   **Conditions, because a number without them is not a measurement:** CE **7.7.0.10568** 64-bit
+   attached to `Notepad.exe`, `UE5Dumper.dll` never injected, repo copy of `ue5_dissect.lua`
+   (2026-08-16, 27,322 B). Target address was a **`allocateMemory(4096)` block in Notepad**
+   (0x17A41C20000) pre-filled with `writeInteger(a+i*4, i*7+1)` so the readback is self-witnessing.
+   **Result:** Structures → Define new structure → CE's own name/Guess-Field-Types dialog appeared,
+   OK produced a fully populated `unnamed structure 1` — `0000/0004/0008/000C…` at a 4-byte stride
+   reading back **1, 8, 15, 22, 29, 36, 43, 50, 57, 64, 71, 78, 85, 92, 99, 106, 113, 120, 127, 134,
+   141, 148, 155, 162**, i.e. exactly the written pattern. **The whole operation emitted ONE
+   `[UE5Dissect WARN] auto-dissect name lookup failed … (reported once; run
+   dissect.disableAutoCallback() to unregister)` block** naming `UE5_GetObjectClass`, across 24+
+   rows — so the per-node flood is gone and CE's own machinery ran to completion.
+   *The warn line is also the proof the callback was REGISTERED and DID fire; without it, "CE
+   dissected normally" would have been indistinguishable from not running the script at all.*
+3. **✅ PASS `[CE-NOTEPAD-2026-08-16]`, and this batch named the WRONG export.** With the DLL not
+   injected, `pcall(d.createFromPath, "/Script/Engine.Actor")` returned
+   `false, …ue5_dissect.lua:80: [UE5Dissect] DLL function not found: UE5_FindObject` — the fix's
+   whole point (a message naming the export, *not* `attempt to compare nil with number`).
+   The expected name here used to read `UE5_WalkClassBegin`; that was never reachable first —
+   [`ue5_dissect.lua:446`](../scripts/ue5_dissect.lua) resolves the path with **`UE5_FindObject`**
+   before it ever walks a class, so `UE5_FindObject` is the correct expectation. Corrected in place.
+   *Bonus, and it settles an open doubt:* the guard that fired is the `getAddress(name) == nil or 0`
+   test at `:80`, which only exists because CE's `errorOnLookupFailure` really does default **FALSE**
+   despite `celua.txt` claiming TRUE — see [CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md) §6. This
+   is the first live confirmation of that; the guard is not dead code.
 4. **A mid-walk failure leaves nothing behind.** Harder to stage: build a structure, then close the
    game and re-run `createFromClass` on the same class. It must fail cleanly, and the CE structure
    list must not gain a half-built or empty entry.
-5. **No gap rows.** `fillGaps` was deleted; confirm no unnamed `Pointer` rows appear between fields
-   (there never were any — it was never called — so this is just confirming the deletion changed
-   nothing visible).
 
 ### ⬜ NEW 2026-08-17 — A6: Force now holds the class AND its subclasses
 

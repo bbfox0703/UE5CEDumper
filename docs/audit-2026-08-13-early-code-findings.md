@@ -3583,7 +3583,32 @@ so are its named follow-ups, and so are the four subsystem clumps that replaced 
 > **Unproven on a real Cheat Engine** — the rig stubs CE, so the emitted script's behaviour in a live
 > CE (window stays open, record stays ticked/unticked correctly) is in todo.md's register.
 
-**Current register: 187 open of 287 · 0 HIGH · 25 MED · 135 LOW · 27 INFO.** Re-derive with
+### 🔎 Found BY VERIFICATION, not by an audit finder — 2026-08-16 (build 3157)
+
+*This one is worth reading as a method note as much as a defect. It was not raised by any finder; it
+fell out of running todo.md's **AA4–AA7 step 1** against a real Cheat Engine, and it had been shipped
+and silently broken since the API was written. That is the argument for drawing down the verification
+backlog rather than mining for more findings.*
+
+| ID | Sev | Location | Defect | Effort / Risk |
+|---|---|---|---|---|
+| **AU1** ✅ | MED | `Frieren.cpp:691` (`UE5_FindObject`) + `Fern.cpp:1910` (pipe `find_object`) + `Aura.cpp:1408` (`FindByFullName`) | **Find-object-by-path did not exist anywhere in the DLL, while three places advertised it.** `UE5_FindObject(const char* fullPath)` passed its argument to `Aura::FindByName` — a bare-FName match — so every path-shaped query returned 0; the pipe handler did the same on a variable literally named `path`. The one path-shaped API, `Aura::FindByFullName`, was a **stub returning 0** (`(void)fullName; return 0;`) with a comment claiming it "is implemented after UStructWalker is available" — it never was, it had **zero callers**, and `docs/dll-spec.md:218` documented it as real. Root cause is a format mismatch nobody compared: `Ubel::GetFullName` emits `//Script/Engine/Actor` (double leading slash, `/` separators) while every caller, doc and `.CT` writes `/Script/Engine.Actor`. **Measured on Elliot before the fix:** `find_object "Actor"` → `0x7FF4DDE12068`, `find_object "/Script/Engine.Actor"` → `Object not found`. User-visible blast radius: `ue5_dissect.lua`'s `createFromPath` — whose `createInteractive` dialog is **pre-filled with `/Script/Engine.Actor`** — could never resolve anything, so the shipped interactive default failed 100% of the time. | S / low |
+
+**Fix (build 3157).** A pure `CanonicalizeObjectPath` / `LooksLikeObjectPath` / `PathLeafName` trio
+header-inline in `Aura.h` (unit-pinned — `dll_helpers_test.cpp` already includes `Aura.h` for
+`IsEnginePackage`, the MA2 lesson applied), a real `FindByFullName` that gates the expensive
+`GetFullName` walk behind a cheap FName leaf pre-filter, and one `FindByNameOrPath` entry point that
+both callers now use. **Path is tried FIRST** when the query carries a separator: `/Game/A.Foo` and
+`/Game/B.Foo` share a leaf, and answering either with whichever the walk reached first is a wrong
+answer that looks right. Bare names keep their old single-pass cost.
+**Verified live and with a discriminating negative control** — `/Script/Engine.Actor`,
+`Class /Script/Engine.Actor`, `//Script/Engine/Actor` and bare `Actor` all resolve to the *same*
+`0x7FF4DDE12068`, while **`/Script/NoSuchPkg.Actor` correctly returns "not found"** even though the
+leaf `Actor` exists — which is what proves the package half is really being matched and not ignored.
+End-to-end: `createFromPath("/Script/Engine.Actor")` now builds a 129-field `Actor` structure in CE.
+16 new assertions; negative control (dropping the separator rewrite) turns **6** of them red.
+
+**Current register: 187 open of 288 · 0 HIGH · 25 MED · 135 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —

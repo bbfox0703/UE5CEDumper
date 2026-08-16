@@ -1907,7 +1907,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::string path = request.value("path", "");
             if (path.empty()) return Renge::MakeError(id, "Missing path").dump();
 
-            uintptr_t obj = Aura::FindByName(path);
+            // The field is named "path" and clients send real UE paths; FindByName
+            // only ever matched a bare FName, so every path-shaped request failed.
+            uintptr_t obj = Aura::FindByNameOrPath(path);
             if (!obj) return Renge::MakeError(id, "Object not found").dump();
 
             json data;

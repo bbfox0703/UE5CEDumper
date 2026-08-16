@@ -71,6 +71,17 @@ static int g_fail = 0;
     } \
 } while (0)
 
+#define EXPECT_EQ_STR(label, actual, expected) do { \
+    const std::string _a = (actual); \
+    const std::string _e = (expected); \
+    if (_a == _e) { ++g_pass; } \
+    else { \
+        ++g_fail; \
+        std::printf("  FAIL: %s\n    actual=\"%s\" expected=\"%s\"\n    at %s:%d\n", \
+            label, _a.c_str(), _e.c_str(), __FILE__, __LINE__); \
+    } \
+} while (0)
+
 // ----- TryStrToAddr ----------------------------------------------------------
 
 static void Test_TryStrToAddr_AcceptsValidHex() {
@@ -1754,6 +1765,60 @@ static void Test_IsEnginePackage() {
     // Degenerate inputs.
     EXPECT("empty -> not engine", !IsEnginePackage(""));
     EXPECT("all slashes -> not engine", !IsEnginePackage("///"));
+}
+
+// CanonicalizeObjectPath / LooksLikeObjectPath / PathLeafName: the pure half of
+// find-object-by-path. THE case that matters is the cross-convention one — our own
+// Ubel::GetFullName emits "//Script/Engine/Actor" while every caller, doc and .CT
+// writes "/Script/Engine.Actor". Those two are the SAME object and compared unequal,
+// which is why find-by-path resolved nothing at all before build 3157 (measured on
+// Elliot: find_object "Actor" -> 0x7FF4DDE12068, find_object "/Script/Engine.Actor"
+// -> "Object not found").
+static void Test_CanonicalizeObjectPath() {
+    using Aura::CanonicalizeObjectPath;
+    using Aura::LooksLikeObjectPath;
+    using Aura::PathLeafName;
+
+    const std::string kActor = "/Script/Engine/Actor";
+
+    // THE regression this exists for: all three spellings must agree.
+    EXPECT_EQ_STR("canon: GetFullName form", CanonicalizeObjectPath("//Script/Engine/Actor"), kActor);
+    EXPECT_EQ_STR("canon: UE canonical form", CanonicalizeObjectPath("/Script/Engine.Actor"), kActor);
+    EXPECT_EQ_STR("canon: class-qualified form",
+                  CanonicalizeObjectPath("Class /Script/Engine.Actor"), kActor);
+
+    // Subobject separator ':' is a path separator too.
+    EXPECT_EQ_STR("canon: subobject ':'",
+                  CanonicalizeObjectPath("/Game/Maps/Foo.Foo:PersistentLevel"),
+                  "/Game/Maps/Foo/Foo/PersistentLevel");
+
+    // Case is PRESERVED — every sibling name compare in Aura is exact-cased.
+    EXPECT_EQ_STR("canon: case preserved",
+                  CanonicalizeObjectPath("/Script/Engine.actor"), "/Script/Engine/actor");
+
+    // Degenerate inputs must not crash or produce a bare "/".
+    EXPECT("canon: empty", CanonicalizeObjectPath("").empty());
+    EXPECT("canon: all slashes", CanonicalizeObjectPath("///").empty());
+
+    // NEGATIVE CONTROL: two different objects that share a leaf name must NOT
+    // canonicalize equal. If this ever passes, the leaf pre-filter in
+    // FindByFullName would be answering with whichever object it reached first.
+    EXPECT("canon: same leaf, different package differs",
+           CanonicalizeObjectPath("/Game/A.Foo") != CanonicalizeObjectPath("/Game/B.Foo"));
+
+    // LooksLikeObjectPath decides whether the expensive resolve is attempted at all;
+    // a bare FName must stay on the cheap single-pass route.
+    EXPECT("looks: bare name is not a path", !LooksLikeObjectPath("Actor"));
+    EXPECT("looks: slash form is a path",     LooksLikeObjectPath("/Script/Engine/Actor"));
+    EXPECT("looks: dot form is a path",       LooksLikeObjectPath("/Script/Engine.Actor"));
+    EXPECT("looks: colon form is a path",     LooksLikeObjectPath("Foo:Sub"));
+
+    // The pre-filter's leaf must be the FName, or the cheap gate rejects every
+    // candidate and the resolve silently finds nothing.
+    EXPECT_EQ_STR("leaf: canonical form",  PathLeafName("/Script/Engine.Actor"), "Actor");
+    EXPECT_EQ_STR("leaf: GetFullName form", PathLeafName("//Script/Engine/Actor"), "Actor");
+    EXPECT_EQ_STR("leaf: class-qualified",  PathLeafName("Class /Script/Engine.Actor"), "Actor");
+    EXPECT_EQ_STR("leaf: bare name is its own leaf", PathLeafName("Actor"), "Actor");
 }
 
 // IsReflectionMetaClass: the Object Tree "Instances only" server-side gate. MUST match
@@ -4772,6 +4837,7 @@ int main() {
     RUN(Test_ValueScan_OptionalFlagOffset);
     RUN(Test_ValueScan_OrderedView);
     RUN(Test_IsEnginePackage);
+    RUN(Test_CanonicalizeObjectPath);
     RUN(Test_IsReflectionMetaClass);
     RUN(Test_KeywordMatch);
     RUN(Test_SnapshotNoise_GuardrailAndSets);

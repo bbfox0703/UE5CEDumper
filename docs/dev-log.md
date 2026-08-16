@@ -22,6 +22,63 @@ builds ≤696 in
 
 -----
 
+## 2026-08-16 - AU1: find-object-by-path never existed, on three APIs that advertised it (build 3157)
+
+**Found by VERIFICATION, not by a finder.** Running todo.md's AA4-AA7 step 1 against a real Cheat
+Engine on Elliot produced `[UE5Dissect WARN] Object not found: /Script/Engine.Actor`. The DLL exports
+resolved fine, so this was not the AA4 error-reporting fix misbehaving - the DLL genuinely could not
+find `AActor`, a class that is present in every UE process ever built.
+
+**What was wrong.** Three APIs claimed a capability none of them had:
+
+- `Frieren.cpp:691` - `UE5_FindObject(const char* fullPath)` handed `fullPath` straight to
+  `Aura::FindByName`, which matches a **bare FName**. Every path-shaped argument returned 0.
+- `Fern.cpp:1910` - the pipe's `find_object` did the same, on a variable literally named `path`.
+- `Aura.cpp:1408` - `FindByFullName`, the only path-shaped API, was a **stub returning 0**
+  (`(void)fullName; return 0;`) whose comment claimed it "is implemented after UStructWalker is
+  available". It never was. It had **zero callers**, and `docs/dll-spec.md:218` listed it as real
+  API - so nothing failed loudly and the gap survived indefinitely.
+
+**Root cause is a format mismatch nobody ever compared.** `Ubel::GetFullName` emits
+`//Script/Engine/Actor` - double leading slash, `/` between package and object. Every caller, doc,
+`.CT` and Lua script writes UE's own `/Script/Engine.Actor`. Those two strings denote the same object
+and compare unequal, which is why a path resolve found nothing *at all* rather than finding the wrong
+thing. Measured before the fix: `find_object "Actor"` -> `0x7FF4DDE12068`;
+`find_object "/Script/Engine.Actor"` -> `Object not found`.
+
+**User-visible blast radius.** `ue5_dissect.lua`'s `createFromPath` is the documented entry point for
+building a CE structure from a class path, and `createInteractive` **pre-fills its dialog with
+`/Script/Engine.Actor`** - so the shipped default input failed 100% of the time. AA4-AA7 step 1, as
+written, could never have passed on any game.
+
+**The fix.** A pure canonicalizer trio header-inline in `Aura.h` -
+`CanonicalizeObjectPath` / `LooksLikeObjectPath` / `PathLeafName` - reducing all three spellings
+(`//Script/Engine/Actor`, `/Script/Engine.Actor`, `Class /Script/Engine.Actor`) to one form, with
+`.` and `:` treated as separators and case preserved (every sibling name compare in `Aura` is
+exact-cased). `FindByFullName` is now real: it gates the expensive `GetFullName` Outer-chain walk
+behind a **cheap FName leaf pre-filter**, so it costs one FName read per object instead of a string
+build over ~85K objects. One new entry point, `FindByNameOrPath`, is what both callers use.
+
+**Path is tried FIRST when the query carries a separator, and that ordering is the design.**
+`/Game/A.Foo` and `/Game/B.Foo` share the leaf `Foo`; answering either with whichever object the
+GObjects walk reached first is a wrong answer that looks like a right one. Bare names skip the path
+attempt entirely, so `FindByName`'s historical single-pass cost is unchanged.
+
+**Testability, per the MA2 lesson.** No test target compiles `Aura.cpp` - but
+`dll_helpers_test.cpp` **already includes `Aura.h`** (for `IsEnginePackage`), so the pure half is
+directly pinnable. 16 new assertions; the negative control (removing the `.`/`:` rewrite) turns
+**6** of them red, and notably NOT the `//Script/Engine/Actor` case, which needs only slash
+collapsing - the assertions discriminate rather than failing as a block.
+
+**Live verification (Elliot, UE 5.4, 84,990 objects, proxy dxgi build 3157).**
+`/Script/Engine.Actor`, `Class /Script/Engine.Actor`, `//Script/Engine/Actor` and bare `Actor` all
+resolve to the **same** `0x7FF4DDE12068`; `/Script/Engine.Pawn` resolves separately. The negative
+control is the one that matters: **`/Script/NoSuchPkg.Actor` returns "not found"** even though the
+leaf `Actor` exists - proving the package half is genuinely matched and not quietly ignored.
+End-to-end, `createFromPath("/Script/Engine.Actor")` now builds a **129-field `Actor`** structure in
+CE with `unnamed=0` rows and a correct header (`0:VTable | 8:ObjectFlags | 12:ObjectIndex |
+16:Class | 24:FNameIndex | 32:Outer`), closing AA4-AA7 steps 1 and 5.
+
 ## 2026-08-17 - MA2: one predicate for "where can this pattern start" (build 3135)
 
 **`ScanRegionBatch` computed `regionSize - pat.bytes.size()` as an unsigned max-start** while

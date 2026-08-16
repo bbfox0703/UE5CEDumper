@@ -690,7 +690,11 @@ uintptr_t UE5_GetObjectOuter(uintptr_t obj) {
 
 uintptr_t UE5_FindObject(const char* fullPath) {
     if (!fullPath) return 0;
-    return Aura::FindByName(fullPath);
+    // The parameter has always been named `fullPath`, but this called FindByName —
+    // a bare-FName match — so every path-shaped argument returned 0. That is what
+    // made `ue5_dissect.lua`'s createFromPath("/Script/Engine.Actor") report
+    // "Object not found" on a live game (measured on Elliot, 2026-08-16).
+    return Aura::FindByNameOrPath(fullPath);
 }
 
 uintptr_t UE5_FindClass(const char* className) {
