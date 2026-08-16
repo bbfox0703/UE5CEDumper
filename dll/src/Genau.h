@@ -37,7 +37,27 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // already ran under rev 2 is cached as ueVersion=504, and the cache-reuse branch would restore
 // that forever without ever re-detecting — i.e. the fix would silently not apply to the very
 // machine that hit the problem.
-constexpr uint32_t kVersionDetectLogicRev = 3;
+// rev 4 (audit #5 G8 + G9): TIER RULES CHANGED, so this bump is mandatory under the rule
+// above. G8 — Tier 2's context test was an 8-byte strstr while its comment and buffer both
+// said 16; it is now a raw 16-byte clamped search (NUL-immune, unlike a wider strstr) AND
+// carries the same UE-anchor gate Tier 3 always had, so widening cannot manufacture a
+// confident hit out of a "Release Notes 5.4.0". G9 — a Tier 3 candidate no longer retires
+// its pattern, so a later Tier 2 hit on the SAME needle is found; without that, a stray
+// bundled "5.5.0" out-raced a real "Release-4.27" later in the module, which is verbatim
+// the case DetectVersionDetailed's own comment claims the design prevents.
+// Both were measured NO-OPS on all 85 real PE images in the local corpus (Tier 2 has never
+// fired on any of them — see the trailing-dot finding in the audit register), so the bump
+// costs one re-detect per cached game at ~0.35 s, not a re-scan of anything expensive.
+// rev 5 (audit #5 G11): Tier 2 now matches the BARE needle. The table's trailing '.' is a
+// Tier 3 device (it forces a three-component "X.Y.Z"); applying it to Tier 2 meant Tier 2
+// could never match UE's own TWO-component tag "++UE4+Release-4.27", and MEASURED over the
+// 170 PE images in the local corpus it had fired 0 times. Post-fix it fires on 6, and on
+// all six it AGREES with the version Tier 1 independently reports — two detectors
+// cross-validating. Tier 1 answers first on all six, so no effective verdict changed on any
+// binary we own; the gain is a working fallback for images whose full "++UEx+Release-" tag
+// is stripped but a "Release-X.Y" fragment survives. Bump is mandatory: a game cached under
+// rev 4 would keep its old tier/confidence without ever re-detecting.
+constexpr uint32_t kVersionDetectLogicRev = 5;
 
 struct EnginePointers {
     uintptr_t GObjects  = 0;   // FUObjectArray*
@@ -72,6 +92,12 @@ struct EnginePointers {
     /// low-confidence or user-overridden version is never gated, because misdetecting a working
     /// game as "too old" is far worse than wasting a scan.
     bool      bVersionTooOld   = false;
+    // True when any in-FindAll scan bailed on Tot::Requested(), so the pointers below are
+    // PARTIAL and must not be persisted or latched. Sibling of bVersionTooOld — same job,
+    // different reason: both say "the empty result below is not a measurement". (audit #5 MA1)
+    // Deliberately NOT fed by the GEngine report: that resolves outside FindAll via
+    // ResolveGEngineDeferred and is not written to the hint cache.
+    bool      bScanCancelled   = false;
     const char* publisherThumbprint = nullptr; // e.g. "SQUARE_ENIX" (nullptr if no match) — string literal lifetime
     int       ue4StringOffset = 0x10;  // FNameEntry string offset for UE4 mode
     int       fnameEntryHeaderOffset = 0; // Offset to 2-byte header within FNameEntry (0=standard, 4=hash-prefixed UE4.26)

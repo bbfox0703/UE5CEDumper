@@ -11,12 +11,17 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — 10 steps needing a running game (4 are free from any
->   ordinary session, 1 needs no game at all). **Offer these whenever the maintainer has a game up.**
+> - `## Pending live-game verification` — **28 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
+>   on a real target; two of those need less than a full session:
+>   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
+>   confirm CE still dissects an ordinary address), and **all six AE4–AE7 steps need no game** —
+>   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-16 (evening): **215 audit findings open of 277 · 0 HIGH · 55 MED**, and
-> **one item (A6) is blocked on a maintainer decision, not on effort** — see §3b.
+> State as of 2026-08-17: **196 audit findings open of 277 · 0 HIGH · 37 MED**. Nothing is
+> blocked on a maintainer decision any more (A6 was the last, and it is decided and shipped).
+> Re-derive the count with `py tools/check_audit_register.py --list` — never hand-tally.
 
 > **2026-06-06 cleanup.** This file was slimmed to open items only. The full
 > pre-cleanup history (every shipped build's effort/risk retrospective, files
@@ -1420,6 +1425,338 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate
+
+*Needs the DLL injected. See dev-log builds 3119 / 3121. G12's invariant is unit-pinned; its WIRING
+is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
+
+1. **⚠ G12 REGRESSION — enums and TArray elements still read correctly.** Open Live Walker on a
+   class with an **enum** field and a **TArray** field. The enum must show its member NAME (not a
+   raw int) and the array must show its element type. All four writers of the family moved; this is
+   the check that they still agree.
+2. **G12, the case it actually fixes.** Needs a title whose offset validation takes the **heuristic
+   fallback** — `scan-0.log` / `offsets-0.log` shows `Cannot find Guid or Vector struct`. Solarpunk
+   is the documented one (though a later build resolved via `Guid` instead, so it may not reproduce).
+   On such a title, enum names and TArray inner types were previously read 8 bytes off. Confirm they
+   are right now, and **record which branch the log shows** — a run that resolved via `Guid` did not
+   exercise this.
+3. **⚠ G3 REGRESSION — Extra Scan → Apply still works.** Needs a game where something is missing to
+   scan for (all 34 tested games resolve GWorld, so this may not be reachable). If it is: press
+   Extra Scan, then Apply, and confirm `offsets-0.log` still contains exactly **one**
+   `ValidateAndFixOffsets: Starting` line — the gate's whole purpose.
+4. **⚠ G3 REGRESSION — GEngine still resolves after an Apply.** The GEngine second pass was hoisted
+   out of the gated block precisely so it keeps running. If Apply is reachable, confirm
+   `apply_rescan: Applied GEngine=0x…` still appears when GEngine was previously unresolved.
+5. **Free log check, no game needed beyond a normal session.** `walk-0.log` must show no burst of
+   `Misaligned field … possible wrong FPROPERTY_OFFSET`. That line is the direct witness for a split
+   or stale family.
+
+### ⬜ NEW 2026-08-17 — G11: Tier 2 is alive; check it agrees with Tier 1
+
+*Needs the DLL injected. See dev-log build 3112. **Measured 0/170 → 6/170 Tier 2 hits offline, with
+Tier 1 agreeing on all six and masking all six** — so live behaviour should be UNCHANGED. This batch
+exists to catch the case the offline model cannot see: the DLL scans the MAPPED image, the model
+scanned on-disk bytes, and for packed/obfuscated titles those differ.*
+
+1. **⚠ REGRESSION — no game's detected version moves.** `kVersionDetectLogicRev` went 4 → 5, so every
+   cached game re-detects once. Note `ueVersion` / `versionDetected` / `lowConfidence` for two or
+   three titles before running the new build and compare after. **Identical expected.** Any change
+   is a real finding — report the game and the before/after.
+2. **A packed title is the interesting one.** Avowed is the documented packed case. Confirm its
+   detected version is unchanged; this is the population where mapped-vs-on-disk could diverge.
+3. **If a `Tier 2` line ever appears in `scan-0.log`, cross-check it.** Grep for
+   `DetectVersion: Tier 2 Release prefix -> NNN`. On every corpus image Tier 1 answered first, so a
+   Tier 2 line means a stripped-tag title reached the new path — record the game, the version, and
+   whether it matches what the game actually is. That is the first real evidence Tier 2 works.
+4. **⚠ REGRESSION — Tier 3 still behaves.** A title that previously reported `Tier 3 (low
+   confidence)` must still report the same version. The bare-needle change touches Tier 2 only, and
+   two unit rails assert that, but Tier 3 is what stripped-tag games actually land on today.
+
+### ⬜ NEW 2026-08-17 — G8 / G9: version detection after the tier-rule change
+
+*Needs the DLL injected. See dev-log build 3105. **Expect NO visible difference** — both fixes are
+measured no-ops on all 85 PE images in the local corpus, so this batch is a REGRESSION check, not a
+demonstration. Anything that does change is a finding.*
+
+1. **⚠ REGRESSION — every game still detects the same version.** `kVersionDetectLogicRev` went
+   3 → 4, so the first launch after this build **re-detects every cached game once** (~0.35 s).
+   For two or three titles, note `ueVersion` / `versionDetected` / `lowConfidence` in
+   `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json` **before** running the new build, then
+   compare after. **They must be identical.** A changed version is a real finding — report it with
+   the game and the before/after values.
+2. **The re-detect happens once, not every launch.** Launch the same game twice more and confirm
+   `scan-0.log` shows `skipped DetectVersion` on the later runs. If it re-detects every time, the
+   rev stamp is not being written back.
+3. **⚠ REGRESSION — a Tier 1 game is untouched.** G8/G9 only touch Tier 2/3, and Tier 1 returns
+   first on nearly every real title. Confirm `DetectVersion: Tier 1 (ascii|utf16) …` still appears
+   and still names the same version.
+4. **G11 context — do not misread a pass here.** Tier 2 has never fired on any binary we own (the
+   trailing-dot defect), so a green result on steps 1–3 says these fixes did no harm; it says
+   **nothing** about Tier 2 working. Do not close G11 on the strength of this batch.
+
+### ⬜ NEW 2026-08-17 — G10 / MA1: the hint cache must stop destroying itself
+
+*Needs the DLL injected. See dev-log builds 3091 / 3095. **Step 1's control already exists on disk**
+and is decisive — this is the rare case where the regression was captured before the fix.*
+
+1. **⚠ G10 — THE DECISIVE ONE, and it is a two-launch test.** Pick a title where a pattern has many
+   matches (DumperTest is the documented case, PE `6A7EA60310F17000`). Delete that PE hash's
+   `gNames` entry from `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json`, launch and scan
+   (run #1 writes the hint), then launch and scan **again**.
+   **PASS** = run #2 shows `Hint HIT: 'GNAM_V1'`, or at worst a `Hint MISS` followed by a real
+   winner. **FAIL (the shipped bug)** = `=== GNames: … NONE validated ===`, which is what
+   `Logs/DumperTest/scan-0.log` recorded at 13:34 on 2026-08-14 while `scan-20260814-132936.log`
+   found `winner: GNAM_V1` five minutes earlier on the same binary.
+2. **G10 — the count no longer lies.** In `scan-0.log`, a `Hint MISS` line now reports the real match
+   count (`(%zu matches, none validated; …)`). It must never say `1 match` for a pattern the cold run
+   logged with hundreds — that mismatch is what hid this defect for months.
+3. **⚠ REGRESSION — a warm launch is still FAST.** The hint path now scans all matches instead of
+   stopping at the first, so a genuine `Hint HIT` costs slightly more. Confirm run #2 is still far
+   faster than a cold scan (`[X] AOB scan total: %lld us`), not merely correct.
+4. **MA1 — the cancel actually fires.** On a cold, hint-less title, untick the CE script ~2 s into
+   the scan. `scan-0.log` must show `AOB scan CANCELLED after N/M batches` within ~1 s, and
+   `FindAll: scan was CANCELLED — NOT writing the hint cache`.
+5. **⚠ MA1 — the guards, each checked SEPARATELY** (a control that passes is how a bug in a fix gets
+   found): after that cancelled run, (a) **diff `UE5CEDumper.{Machine}.json`** — it must be
+   *unchanged* for that PE hash; (b) re-enable in the **same** process and confirm a full re-scan
+   runs rather than short-circuiting (the `UE5_Init` latch guard); (c) drill into a
+   `MulticastSparseDelegateProperty` and confirm `FindSparseDelegateStorage: Scanning` appears a
+   **second** time rather than a latched 0 (the sparse latch guard).
+6. **⚠ REGRESSION — a healthy scan still completes and still saves.** Connect the UI, disconnect it
+   mid-command, reconnect, and confirm a fresh scan resolves normally, writes the hint cache, and
+   shows **no** `CANCELLED` line. This is what keeps `bScanCancelled` from being widened to
+   `Tot::Requested()`, which would refuse the latch on a scan that finished fine.
+
+**Not covered:** `Macht` still carries no poll (deliberate — see the comment above its AOB
+declarations), and **MA2**, the `ScanRegionBatch` per-pattern underflow, is unreachable until
+`AOBScanBatch` is given a `moduleBase`.
+
+### ⬜ NEW 2026-08-17 — G2: the version sweep is ~29 s faster, and must still be RIGHT
+
+*Needs the DLL injected. See dev-log builds 3086 / 3088. The 29 new C++ assertions pin the rewrite
+against a naive oracle; what they cannot pin is that it still reads a REAL image correctly, because
+no test target compiles `Genau.cpp`.*
+
+1. **⚠ THE ONLY CONTROL THAT MATTERS — same answer, not just a faster one.** On a title whose PE
+   version resource is stripped (Elliot is the documented one; a game that detects from Tier 1 exits
+   early and measures nothing), **first delete that game's record from
+   `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json`** — otherwise the run takes the
+   `"skipped DetectVersion"` branch. Note `ueVersion` / `versionDetected` / `lowConfidence` before
+   deleting, then re-scan and confirm the values written back are **identical**. A fast-and-wrong
+   detection passes step 2 and fails only this one.
+2. **The speed, with its conditions.** In `Logs\<proc>\scan-0.log`, measure the timestamp delta from
+   `"DetectVersion: PE resource failed, falling back to memory string scan"` to the next `SCAN:Ver`
+   line. Expect sub-second where it was tens of seconds. **Record the game and its image size** — a
+   duration without those is not a measurement.
+3. **⚠ REGRESSION — a Tier 1 game still detects from Tier 1.** Any ordinary UE5 title: confirm
+   `scan-0.log` still shows `DetectVersion: Tier 1 (ascii|utf16) '++UEx+Release-N.N' -> NNN`. The log
+   lines were kept byte-identical on purpose, so any wording change here is itself a defect.
+4. **The three new cancel points actually fire.** Proxy mode: start a scan from the UI, close the UI
+   mid-scan, and confirm `scan-0.log` carries one of the new `aborted (client gone / shutdown)` lines
+   (`DataScanGObjectsCandidates` / `FindGObjectsStaticStruct` / `FindGNamesByStringRef`) rather than
+   the sweep running to completion. These are **compiled but unexercised** — do not read a pass on
+   steps 1–3 as covering them.
+5. **⚠ REGRESSION — recovery still runs on a healthy game.** The polls honour the client-disconnect
+   latch, so a stale one would abort recovery at offset 0. Connect the UI, disconnect it mid-command,
+   reconnect, and confirm a fresh scan still resolves GObjects/GNames normally and that **no**
+   `aborted` line appears. This is exactly what `Tot::ResetPerCommand()` in `AutoStartWork` is for.
+
+**Not covered by this batch:** version detection is still uncancellable (by design — see the block
+comment in `DetectVersionDetailed`), and **MA1** — `Macht.cpp`'s AOB family has zero cancellation, so
+once a scan enters `AOBScanAllModules` every poll added here is unreachable.
+
+### ⬜ NEW 2026-08-17 — AE2 / AE3: the Class/Struct panel under fast selection
+
+*Needs a game connected, but nothing else — the Object Tree is a permanent left pane beside the
+Class/Struct panel, so every check is "do the two halves agree". See dev-log builds 3067 / 3068. The
+11 new tests drive the ViewModel directly and therefore bypass Avalonia's ListBox entirely; what is
+unproven is the real gesture under key repeat.*
+
+1. **⚠ REGRESSION FIRST — ordinary selection still works.** Click a handful of tree nodes, both
+   instances and class-like rows (`*_C`, `ScriptStruct`, `Function`). The header must track each
+   click, and fields must populate. Everything below changed this path.
+2. **AE2, the actual race.** Keyword-filter the tree so instances and class-like rows are
+   **interleaved**, then hold ↓ to scroll through them fast and release on a class-like row. The
+   Class/Struct header must match the highlighted row. The old failure needed exactly
+   instance-then-class-like, so a list of only one kind cannot show it — **record what the filter
+   was**, since a run over a homogeneous list proves nothing.
+3. **AE2, the spinner.** During the same fast scroll the loading indicator must not stick on after
+   the panel settles, and must not flicker off while a load is still running.
+4. **AE3 — the retry that used to be refused.** Get a walk to fail on a node *after* a successful
+   load (easiest: select a node, then travel/unload so its class address goes stale, then re-select
+   it). The error line must appear, and **clicking the same row again must retry** — previously it
+   was silently ignored and the panel stayed on the earlier class.
+5. **AE3 — the cross-tab path, which needs no failure at all.** Select tree node P → use any
+   handoff that pushes a class into Class/Struct (Interesting Funcs, Property Search, Dump Explorer)
+   → click node P again. It must reload P. Before the fix the panel stayed on the handed-off class.
+6. **The dedupe still holds.** Type in the tree's filter box while a node is selected (each
+   keystroke nulls the selection) — this must NOT re-walk the class repeatedly, and must not blank
+   the panel.
+
+### ⬜ NEW 2026-08-17 — U4 / U16 / U6 / F3: the three never-erased caches in `Ubel`
+
+*Needs the DLL injected. See dev-log builds 3052 / 3058 / 3065. The C++ suite pins all three predicates
+(21 new assertions, 1073 → 1094); what it structurally cannot pin is the WIRING, because no test
+target compiles `Ubel.cpp`. **Every step below is about the call sites, not the predicates.***
+
+1. **⚠ REGRESSION FIRST — ordinary browsing is unchanged.** Object Tree loads, Live Walker drills
+   into an actor and shows its fields, Property Search returns hits, an enum-typed field still shows
+   its member NAME (not a raw int). All three caches are on this path; if anything here is worse,
+   stop and read `walk-0.log`.
+2. **U4 — a non-UStruct address no longer poisons the cache.** From CE Lua pick an address `A` that
+   is not a class, call `UE5_WalkClassBegin(A)` then `UE5_WalkClassEnd()`, **twice**. `walk-0.log`
+   must show **two** `WalkClass:` DEBUG lines for `0x<A>` (before the fix the second was served from
+   the poisoned entry and logged nothing), plus a `WALK:safe` line naming `A`. **Record `A` and the
+   `size=` the first line reported** — a number without its conditions is not a measurement.
+3. **U4 — the honest half.** Confirm a legitimately field-less class (or an `FDateTime` /
+   `FTimespan` struct, which `InjectIntrinsicStructFields` covers) still walks and still caches:
+   exactly ONE cold-walk log line across repeated visits. The gate must reject garbage, not emptiness.
+4. **U6/F3 — the in-session recycle, the point of the whole commit.** Bookmark an actor, travel to
+   another level **while staying connected**, then re-walk the bookmark. It must show the new
+   occupant's name or `""` — never the destroyed actor's name. This is the failure that previously
+   needed a game restart to clear, and the reconnect-only fix (2819) could not reach it.
+   *Deterministic alternative, no level change:* note an inert object's name and the 4 bytes at
+   `+0x18`, write a different valid `ComparisonIndex` there from CE, refresh the same address — the
+   new name must appear. Read the name off `get_object` / `walk_instance`'s own `name` field, **not**
+   off a panel that renders a class-cache name; those are frozen copies and will look stale either
+   way (see the open finding below).
+5. **U16 — enums are unaffected in the normal case.** Open a class with a large enum field
+   (`EPhysicalSurface` or any Blueprint enum) and confirm the CE DropDownList still lists every
+   member. The truncation path is not stageable on demand; what this checks is that the new
+   publish gate did not stop caching healthy tables. Grep `walk-0.log` for
+   `ResolveEnumValue: UEnum` — the line now reports `read N of M`, and **N must equal M**.
+   Any `GetEnumEntries: ... truncated read` line is a real find, so record it.
+
+**Still open after this batch, deliberately** — do not read a pass here as closing them:
+**U5** (nothing is freed; eviction is illegal while `WalkClassEx` returns a reference),
+class-to-class recycling (a recycled address whose new occupant has a *sane* `PropertiesSize`),
+**A10** (`Aura`'s two reference-returning caches), and names baked into `ClassInfo::Name` /
+`FullPath` / `SuperName`, which are never witnessed.
+
+### ⬜ NEW 2026-08-17 — AA14–AA20: the CE Lua invoke path in a real game
+
+*Needs CE + a game + the DLL injected. See dev-log build 3039. The Lua rig (63 checks) covers the
+logic against stubs; what it cannot cover is a real ProcessEvent.*
+
+1. **⚠ REGRESSION FIRST — an ordinary invoke still works.** UE5DumpUI → Interesting Funcs → pick a
+   no-arg or int-arg function → **Copy AA Script (Baked)** → paste into CE → enable. It must still
+   fire. Everything below changed this path, so this is the check that matters most.
+2. **The one that was impossible before.** Export a baked script for a function with a
+   `TArray<...>&` OUT param — `GetAllActorsOfClass` or `GetOverlappingActors` is the easy one.
+   Before this it failed with *"Unknown param type 'tarray'"* and never called the game at all;
+   it must now invoke, with the array param left empty.
+3. **An FText param is refused, clearly.** A function taking an `FText` (a UI/dialogue setter) must
+   fail with a message naming `ftext` and saying an FText cannot be built from CE Lua — **not** a
+   crash. This one is deliberately still a refusal.
+4. **A negative return reads as negative.** Verify Return Value mode on a function returning a
+   negative int32 (or invoke one you know returns -1). It must print `-1`, not `4294967295`.
+5. **A timeout says something true.** Hard to stage deliberately — pause the game hard (a loading
+   screen, or break in a debugger) and invoke. The message must not quote an error from an earlier
+   command, and the NEXT invoke must refuse with *"the DLL is STILL holding the mailbox"* rather
+   than firing. Once the game recovers, a further invoke must work again (the guard clears itself).
+
+### ⬜ NEW 2026-08-17 — AE4–AE7: the Proxy Deploy panel, two buttons at once
+
+*No game needed — just the UI and a folder with a couple of detected games. See dev-log build 3038.
+Every step is a click sequence; the unit tests cover the logic, not what the panel looks like doing it.*
+
+1. **Two operations no longer overlap.** Scan for games, tick a couple, press **Deploy** and then
+   immediately **Remove**. The second must refuse with a line naming what is running
+   (*"Busy: Deploy is running…"*) — not the old *"Wait for scan to finish"* when no scan is running,
+   and not both operations writing over the same `Binaries` folder.
+2. **The busy indicator finally appears for them.** The panel's progress bar is bound to
+   `IsScanning`, which Deploy / Remove / Refresh / Update All never set — so they used to look like
+   nothing was happening. Confirm the bar now runs during each of the four.
+3. **⚠ REGRESSION — the three scans still work and still cancel.** Scan Steam, Scan drives (+ its
+   Cancel button), Find leftovers (+ its Cancel). The gate took over `IsScanning` from all three, and
+   `IsScanningDrives` / `IsScanningOrphans` still drive the two Cancel buttons independently — a
+   ghost Cancel on the wrong card is the failure to watch for (it is what B45 fixed originally).
+4. **⚠ REGRESSION — leftover removal is unaffected.** Find leftovers → tick one → Delete. It uses
+   `IsRemovingOrphans`, which the gate now also tests; confirm a delete still blocks a scan and vice
+   versa.
+5. **The proxy-type radios.** Click through version → dinput8 → dxgi quickly. The grid's Status /
+   Installed Version columns must end up showing the type the radio shows. Before this they could
+   settle on a type nobody selected, with nothing to re-run it.
+6. **The drive-selection reset.** Switch source to **Scan drives**, and while the drive list is
+   loading switch back to Steam and to Drives again. Tick some drives. They must stay ticked — a
+   second load used to `Clear()` the list and silently drop the selection.
+
+### ⬜ NEW 2026-08-17 — AA4–AA7: ue5_dissect.lua in a real Cheat Engine
+
+*Needs CE + a game, and **step 2 needs no DLL at all** — it is the fastest check here. See dev-log
+build 3037. The Lua rig (`lua scripts/tests/dissect_test.lua`, 40 checks) covers the logic against
+stubs; what it cannot cover is CE's real dissect machinery.*
+
+1. **The happy path still builds.** CE → inject the DLL via `UE5CEDumper.CT` → Lua Engine →
+   `local d = dofile("ue5_dissect.lua"); d.createFromPath("/Script/Engine.Actor")`. A structure
+   appears in the Structure Dissect list with named fields at plausible offsets. **This is the
+   regression half — `callDLL` now raises where it used to return nil.**
+2. **⚠ The one that needs NO DLL, and the one AA4 is about.** In a fresh CE with the DLL *not*
+   injected: `local d = dofile("ue5_dissect.lua"); d.enableAutoCallback()`, then open
+   "Dissect data/structure" on **any ordinary address** (a plain allocation, not a UObject).
+   CE must dissect it **normally**. Before this fix the callback raised, CE re-raised it as a Pascal
+   exception, and its own `autoGuessStruct` never ran — so Structure Dissect was broken for every
+   address until the user found `disableAutoCallback()`. Expect at most ONE
+   `[UE5Dissect WARN] auto-dissect … failed` line, not one per node.
+3. **The failure message names the export and CE's reason.** With the DLL not injected, run
+   `d.createFromPath("/Script/Engine.Actor")` and confirm the error says
+   `DLL function not found: UE5_WalkClassBegin` — not `attempt to compare nil with number`.
+4. **A mid-walk failure leaves nothing behind.** Harder to stage: build a structure, then close the
+   game and re-run `createFromClass` on the same class. It must fail cleanly, and the CE structure
+   list must not gain a half-built or empty entry.
+5. **No gap rows.** `fillGaps` was deleted; confirm no unnamed `Pointer` rows appear between fields
+   (there never were any — it was never called — so this is just confirming the deletion changed
+   nothing visible).
+
+### ⬜ NEW 2026-08-17 — A6: Force now holds the class AND its subclasses
+
+*Any game. See dev-log build 3036. This one changes what an already-shipped, in-game-verified
+feature WRITES TO (the Stealth Meter card), so the regression half matters as much as the fix.*
+
+1. **The capability that did not exist before.** Property Search a field on a base class — anything
+   whose row shows an "inherited by N" badge (`bCanBeDamaged @ Actor` is the easy one) → right-click
+   → Force. Before this it said *"0 live instances of Actor … — nothing held"*; it must now hold on
+   a real, non-zero count. **That message is the whole finding — if it still appears, stop.**
+2. **The held instances are the SUBCLASSES.** Property Search's "Forced fields (N held)" strip
+   should show a count in the hundreds for a broad base, not 1. If the pool is capped the status
+   line must say *"cap reached, more exist unheld"* — a broad base hits the 256 cap easily, so
+   confirm the badge appears rather than a bare "on 256 instance(s)".
+3. **Derivation, not substring.** Force a field on a class with a same-prefix sibling (`Enemy` vs
+   `EnemyProjectile`, or any `Foo` / `FooComponent` pair in the game). The unrelated class must NOT
+   be held — check the ForcedFields strip / the DLL log line `FindInstancesDerivedFrom base=…`,
+   which reports the distinct class count it walked.
+4. **⚠ REGRESSION — Stealth Meter still works.** Teleport tab → Stealth card → Detect → Hold @0 →
+   Reset. It resolves a CONCRETE class, so subclass semantics should be additive — but this is the
+   shipped, previously in-game-verified path that A6 deliberately changed, and it is the one thing
+   here that could get *worse*. Confirm Hold reports a non-zero count and Reset restores.
+5. **⚠ REGRESSION — no CDO is written.** After forcing a bool on a base class, the game must not
+   show every future spawn already carrying the forced value in a way that survives
+   `reset_all_fields` — that would mean a class-default object was written. (The CDO skip moved
+   inside Aura's walk; the local skip in `Solide` stayed as the invariant.)
+
+### ⬜ NEW 2026-08-17 — AB3/AB5: the vector scan on a UE5 (LWC) game
+
+*Needs a **UE5** game — this is the one check a UE4 title structurally cannot make. See dev-log
+build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a real target**.
+
+1. **A UE5 world-position scan returns real hits.** Value Search → data type **FVector** → Exact →
+   type the player's current X,Y,Z (read them off the Teleport panel's POV/marker readout, which is
+   already width-aware) → First Scan. Before this fix a UE5 game returned **zero** plausible hits
+   because every 24-byte `Vector` was compared as three floats; it must now return the player pawn's
+   location among the candidates. **This is the whole point of the fix — if it still returns nothing,
+   stop and report, do not "narrow the search".**
+2. **The value column reads back as the coordinates you typed**, not a huge/tiny number. That proves
+   the *display* decoder agrees with the *compare* decoder about the width (they were one hardcoded
+   12 before, and are now one canonical 3-double form).
+3. **Next Scan (refine) survives.** Move the character, then Changed → the surviving candidates must
+   include the pawn location. This is the half that needs `FieldDescriptor::vectorWidth`: refine has
+   no access to the class index, so a session that lost the width would drop every candidate here.
+4. **A UE4 game still works.** Same scan on any UE4 title (12-byte `Vector`) — this is the
+   regression half; the width gate must not have narrowed what UE4 accepts.
+5. **A `Vector3f` field on a UE5 game** (float-backed, 12B, in the same process as 24B `Vector`
+   fields) also matches. That is the case a version-keyed fix would have got wrong, and the reason
+   the width is read per field rather than per game.
 
 ### ⬜ NEW 2026-08-16 — the fourteen-MED batch, all UI-visible (builds 3016-3031)
 

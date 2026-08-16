@@ -12,7 +12,6 @@
 --   * StructProperty    — recursive flattening via UE5_GetFieldStructClass
 --   * BoolProperty      — ChildStructStart bitmask via UE5_GetFieldBoolMask
 --   * Array/Map/Set     — pointer child stubs
---   * Gap filling       — unused bytes shown as vtPointer
 -- ============================================================
 
 -- ----------------------------------------------------------------
@@ -49,7 +48,34 @@ local function warn(fmt, ...) print(string.format("[UE5Dissect WARN] " .. fmt, .
 -- FIELD, so the exposure multiplied. See docs/ce-plugin-sdk-notes.md 13.2-13.3.
 local DLL_CALL_TIMEOUT_MS = 5000   -- keep in step with CeLuaHygiene.DllCallTimeoutMs
 
+-- CONTRACT: callDLL either returns the DLL's value or RAISES. It never returns
+-- nil, and no caller needs a nil check.
+--
+-- It used to return CE's nil straight through after a warn(), and not one of the
+-- 19 call sites handled that. The two ways Lua treats nil are both wrong here and
+-- in opposite directions: `count <= 0` RAISES ("attempt to compare nil with
+-- number", naming a line rather than the DLL call that failed), while
+-- `success ~= 0` is TRUE for nil, so a failed field read counted as a SUCCESS.
+-- Since UE5_WalkClassGetField leaves its out-params untouched when it fails
+-- (Frieren.cpp:712-731), that success then re-read the PREVIOUS field's buffers
+-- and recorded it twice -- and with the DLL failing outright, the walk built a
+-- full-size structure of empty-named, offset-0 rows, registered it with CE,
+-- cached it and logged "Struct created". A total failure was reported to the
+-- user as a successfully built structure. (audit #5 AA5 / AA6)
+--
+-- Raising is only safe because the two CE-REGISTERED callbacks now barrier it --
+-- see dissectOverrideCallback. Do not remove one without the other.
 local function callDLL(name, ...)
+    -- Under CE's DEFAULT configuration getAddress RETURNS 0 for an unresolved
+    -- symbol -- it does not raise. getAddressFromNameL gates its raise on
+    -- ExceptionOnLuaLookup (symbolhandler.pas:5076-5087) and TSymhandler.create
+    -- sets that FALSE (:6688); nothing in CE's Pascal ever sets it true, only the
+    -- Lua-facing errorOnLookupFailure(). So this guard is LIVE, and it is the only
+    -- thing that turns "the DLL was never injected" into a message naming the
+    -- export instead of a call to address 0. Keep it.
+    -- (CE's own celua.txt claims the default is true. The source disagrees; a
+    -- user script CAN flip it, and then getAddress raises first with CE's message,
+    -- which is equally fine -- both paths fail loudly. Do not "simplify" to one.)
     local fn = getAddress(name)
     if fn == nil or fn == 0 then error("[UE5Dissect] DLL function not found: " .. name) end
     -- On failure CE returns nil PLUS a reason string, and the six reasons point at
@@ -58,7 +84,11 @@ local function callDLL(name, ...)
     -- instead of guessing -- docs/ce-plugin-sdk-notes.md 13.5.
     local ret, why = executeCodeEx(1, DLL_CALL_TIMEOUT_MS, fn, ...)
     if ret == nil then
-        warn("%s failed: %s", name, tostring(why))
+        -- Level 0: no "file:line:" prefix. The useful coordinates are the export
+        -- name and CE's reason, not a line of this script. Raising here also
+        -- replaces the old per-call warn(), which fired once per FIELD -- 40
+        -- fields meant 40 ungated lines over CE's Lua Engine window.
+        error(string.format("[UE5Dissect] %s failed: %s", name, tostring(why)), 0)
     end
     return ret
 end
@@ -284,36 +314,24 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
 end
 
 -- ----------------------------------------------------------------
--- Fill gaps: insert vtPointer every 4 bytes where no element exists
+-- REMOVED 2026-08-17: fillGaps ("unused bytes shown as vtPointer").
+--
+-- It was defined, advertised in this header and in scripts/README.md +
+-- DEPLOY_README.html, and never called from anywhere in the repo. It was also
+-- wrong: it built its coverage set from element START offsets only
+-- (`existing[Element[i].Offset] = true`) and then tested four consecutive
+-- offsets, so an 8-byte field at 0x10 marked only 0x10 — 0x14 read as
+-- uncovered and the loop would have emitted a vtPointer OVERLAPPING it. On a
+-- real class it would add hundreds of unnamed rows, some of them overlaps.
+--
+-- Deleted rather than repaired (maintainer's call, audit #5 AA7): CE's own
+-- autoGuessStruct already covers the no-override case, and a correct version
+-- would have to track each field's real byte span while elements are added —
+-- new, untested, visible behaviour in a shipped script that nobody asked for.
+-- If it ever comes back, that is the shape to build: the DLL already hands us
+-- f.size per field, so the coverage set must never be re-derived from CE's
+-- element list.
 -- ----------------------------------------------------------------
-local function fillGaps(ceStruct, totalSize)
-    if ceStruct.Count < 1 then return end
-
-    -- Collect existing offsets into a set
-    local existing = {}
-    for i = 0, ceStruct.Count - 1 do
-        existing[ceStruct.Element[i].Offset] = true
-    end
-
-    -- Determine end boundary
-    local lastElem = ceStruct.Element[ceStruct.Count - 1]
-    local endBound = totalSize
-    if endBound <= 0 then
-        endBound = lastElem.Offset + (lastElem.Bytesize > 0 and lastElem.Bytesize or 4)
-    end
-
-    ceStruct.beginUpdate()
-    for off = 0, endBound - 1, 4 do
-        -- Check if this 4-byte slot is covered by any existing element
-        if not existing[off] and not existing[off + 1]
-            and not existing[off + 2] and not existing[off + 3] then
-            local e = ceStruct.addElement()
-            e.Offset  = off
-            e.Vartype = vtPointer
-        end
-    end
-    ceStruct.endUpdate()
-end
 
 -- ----------------------------------------------------------------
 -- Add standard UObject header fields (VTable, index, class, name, outer)
@@ -386,16 +404,31 @@ function dissect.createFromClass(classAddr, structName, maxDepth)
     local ceStruct = createStructure(structName)
     ceStruct.beginUpdate()
 
-    -- Walk class fields recursively
-    addFieldsToStruct(ceStruct, classAddr, 0, "", 0, maxDepth)
-
-    -- Add UObject base fields
-    addUObjectHeader(ceStruct)
+    -- The walk raises on any DLL failure (see callDLL), so the build has to be
+    -- unwound rather than left where it stopped. Without this, beginUpdate() had
+    -- no matching endUpdate() and a half-walked structure was orphaned: never in
+    -- structList, so clearAll() could never free it either. That was survivable
+    -- while a failed call merely returned nil; it is the NORMAL failure path now.
+    -- (audit #5 AA25, promoted from latent by the AA5/AA6 fix above.)
+    local built, buildErr = pcall(function()
+        addFieldsToStruct(ceStruct, classAddr, 0, "", 0, maxDepth)   -- walk class fields recursively
+        addUObjectHeader(ceStruct)                                   -- add UObject base fields
+    end)
 
     ceStruct.endUpdate()
 
-    -- Get PropertiesSize for struct size reporting
-    local propsSize = callDLL("UE5_GetClassPropsSize", classAddr)
+    if not built then
+        -- Never register or cache a partial structure. The whole point of AA6 is
+        -- that a garbage structure presented as a success is worse than no
+        -- structure: the user cannot tell it apart from a real one.
+        pcall(function() ceStruct:Destroy() end)
+        error(buildErr, 0)
+    end
+
+    -- Struct size, for the log line only -- a class whose PropertiesSize cannot be
+    -- read is still a perfectly good dissect, so this must not undo the build.
+    local okSize, propsSize = pcall(callDLL, "UE5_GetClassPropsSize", classAddr)
+    if not okSize then propsSize = -1 end
 
     -- Register globally
     ceStruct.addToGlobalStructureList()
@@ -464,7 +497,7 @@ end
 -- ----------------------------------------------------------------
 -- Callback: auto-fill Structure Dissect when CE opens it on an address
 -- ----------------------------------------------------------------
-local function dissectOverrideCallback(ceStruct, instanceAddr)
+local function dissectOverrideBody(ceStruct, instanceAddr)
     if not instanceAddr or instanceAddr == 0 then return nil end
 
     -- Get the UClass of this instance
@@ -492,10 +525,48 @@ local function dissectOverrideCallback(ceStruct, instanceAddr)
     return false      -- empty struct, rejected
 end
 
+-- Barrier for the two callbacks CE itself invokes.
+--
+-- A Lua error raised inside one of these does NOT stay in Lua.
+-- TLuaCaller.StructureDissectEvent pcalls our function, and then re-raises the
+-- failure as a PASCAL exception (LuaCaller.pas:1229-1232) into a dispatch loop
+-- that has no handler at all (StructuresFrm2.pas:1451-1458). That skips the very
+-- next line -- `if not UsedOverride then c.autoGuessStruct(...)` (:1460) -- so
+-- CE's OWN structure guessing never runs either.
+--
+-- The blast radius is the whole session and every address: CE calls these for
+-- ANY address the user opens Structure Dissect on, nothing auto-unregisters the
+-- callback, and CE never rebuilds its Lua state. So an un-injected DLL (or a game
+-- that exits) turns Structure Dissect into an error dialog for UObjects and plain
+-- allocations alike until the user remembers dissect.disableAutoCallback().
+--
+-- Declining (false / nil) is the contract for "not mine" -- it is what lets CE
+-- fall through -- so that is what a failure reports. Warned ONCE per session:
+-- these fire per expanded node, and the hygiene rule exists so the Lua Engine
+-- window never covers Cheat Engine. (audit #5 AA4)
+local warnedCallbackFailure = false
+local function callbackBarrier(what, fn, ...)
+    local ok, a, b = pcall(fn, ...)
+    if ok then return a, b end
+    if not warnedCallbackFailure then
+        warnedCallbackFailure = true
+        warn("auto-dissect %s failed, letting CE handle it: %s\n" ..
+             "         (reported once; run dissect.disableAutoCallback() to unregister)",
+             what, tostring(a))
+    end
+    return nil
+end
+
+local function dissectOverrideCallback(ceStruct, instanceAddr)
+    -- false, not nil: both make CE fall through, and false is what the success
+    -- path already returns for "empty struct, rejected".
+    return callbackBarrier("override", dissectOverrideBody, ceStruct, instanceAddr) or false
+end
+
 -- ----------------------------------------------------------------
 -- Callback: resolve address to a UObject name for dissect title bar
 -- ----------------------------------------------------------------
-local function nameLookupCallback(address)
+local function nameLookupBody(address)
     if not address or address == 0 then return nil end
 
     local classAddr = callDLL("UE5_GetObjectClass", address)
@@ -509,6 +580,11 @@ local function nameLookupCallback(address)
         return name, address
     end
     return nil
+end
+
+local function nameLookupCallback(address)
+    -- Same barrier, same reason -- see callbackBarrier. nil = "no name from me".
+    return callbackBarrier("name lookup", nameLookupBody, address)
 end
 
 -- ----------------------------------------------------------------

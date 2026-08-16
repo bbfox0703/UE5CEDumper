@@ -407,6 +407,64 @@ them.
   right move was to update the number and say why in a comment, keeping it exact so an accidental
   fourth is still caught — not to relax it to `>= 2`.
 
+### 2.4 Re-derive the PREMISE, not just the location (audit #5 queue ②, build 3037)
+
+Queue ② was four MED rows the audit's §3b called "already-vetted". Of its four premises, **two were
+wrong**, and one was wrong in the direction that makes a fix *destructive*.
+
+**AA4 asserted, as "CE source-verified", that `getAddress` raises on a missing symbol** — and
+therefore that a `if fn == nil or fn == 0 then error(...) end` guard was dead code to be removed.
+It is not. The Lua *wrapper* (`LuaHandler.pas:4374-4391`) genuinely does contain `lua_pushstring` +
+`lua_error`, so reading only the wrapper makes the claim look proven. The resolver underneath it
+decides, and it does not throw by default: `getAddressFromNameL` gates the raise on
+`ExceptionOnLuaLookup`, which `TSymhandler.create` sets **FALSE**. Acting on the finding would have
+deleted the only thing that turns "the DLL was never injected" into a message naming the export.
+
+The rules this pays for:
+
+- **A finding's LOCATION is usually right; its MECHANISM often is not.** All four rows pointed at
+  real code. Two described what that code does incorrectly. Re-deriving cost ~20 minutes against a
+  fix that would have shipped a regression.
+- **Follow the call chain to the thing that DECIDES.** A wrapper that contains an error path is not
+  proof the path is reachable. Stop at the function that owns the condition, not the first one that
+  mentions the outcome.
+- **A "kill rate" is not uniform across a finding's parts.** AA4's premise was refuted and its
+  *consequence* ("this breaks CE's dissect for unrelated addresses") was confirmed — and the
+  consequence was the part worth fixing. Judge the halves separately; a refuted premise does not
+  close the row.
+- **The measured impact was WORSE than filed, in the same batch that refuted two premises.** AA6
+  said "a duplicate of the previous field". Running it showed a total DLL failure builds a
+  45-element structure of empty rows, registers it with CE and logs "Struct created". Under-statement
+  and over-statement live side by side; neither is the default.
+- **A counted claim in a finding is a claim.** "14 call sites" was 19. Cheap to check, and a fixer
+  working to the wrong number stops short.
+
+**The general form:** treat a finding as *evidence that something is wrong here*, never as an
+account of what. That is the same lesson §2.2 drew from the HIGH tier ("a finding is evidence a
+defect exists, not authority on the repair") — this is its earlier half: it is not authority on the
+diagnosis either.
+
+### 2.5 A rig that RUNS the thing beats any number of assertions about its text
+
+The C# suite could only assert on `ue5_dissect.lua`'s **source text**, so every one of its
+assertions passed over a script that reported a total DLL failure as a successfully built structure.
+A 40-check Lua rig stubbing CE's globals found 13 real failures in the unfixed file on its first run.
+
+- **`lua` is installed on this machine** (`%LOCALAPPDATA%\Programs\Lua\bin\lua`, 5.4.6) and
+  `luac -p` syntax-checks any script. Both rigs live in `scripts/tests/` and are documented in
+  `scripts/README.md`. They are deliberately **not** in CI — a test step that silently skips when
+  its tool is missing is the AD1/AD2 defect.
+- **Write the rig BEFORE the fix and run it against the unfixed file.** The failure list is the
+  finding, restated as behaviour. It is also the only honest way to claim a fix works.
+- **Two load-order traps, both measured:** `ue5_dissect.lua` *returns* its table and defines no
+  globals while `ue5_freeze_helper.lua` does the opposite; and CE's `vt*` constants must exist
+  **before** the chunk runs, or mapped types silently get `Vartype = nil` while `EnumProperty`, the
+  unknown-type fallback and the header rows still resolve — a partly-correct result is harder to
+  diagnose than a uniformly broken one.
+- **Keep the check COUNT independent of how far the code got.** A per-element assertion loop shrinks
+  its own coverage as the fix improves things (48 checks → 39 on the first green run). Count into one
+  assertion instead. Same family as AF1's aliasing fixture in §2.3.
+
 -----
 
 ## 3. Traps in our own stack
@@ -642,7 +700,224 @@ shelling out to `reg.exe`, which renders MULTI_SZ separators as the literal two 
 rounds of being wrong here were each corrected by a **probe**, not by re-reading `celua.txt` — which had
 advertised both a non-existent capability and a working one it had first denied.
 
-### 4.3 Do not use KismetMathLibrary as a verification target
+### 4.3 `FUObjectItem::SerialNumber` is NOT an identity witness — witness the INPUT BYTES instead
+
+**Two audit registers in a row prescribed an `(InternalIndex, SerialNumber)` witness** for caches
+keyed by a recycled address (audit #5's cluster ③, and AA2 before it), each calling it *"the same
+pair UE itself uses to detect a recycled slot"*. **It is not, for a passive observer, and shipping
+it would have produced a validator that is silent in exactly the case it exists to catch.**
+
+`FUObjectArray::FreeUObjectIndex` sets `SerialNumber = 0`, and `AllocateSerialNumber` assigns only
+inside `if (!SerialNumber)` — essentially only from `FWeakObjectPtr::operator=`. So **most objects
+carry serial 0 for their entire life**, and the free list is LIFO. A stored witness of `(i, 0)`
+therefore matches the recycled slot's `(i, 0)` and reports "fresh". UE gets away with the pair
+because `FWeakObjectPtr` *forces* the serial to be non-zero at creation; a cache that merely
+*observes* objects never does. In this repo it would also have rested on `Aura::GetSerialNumber`,
+whose own comment marks the packed `FUObjectItem` layout `*** UNVERIFIED ***`.
+
+**How to apply — the generalisable rule, and it is the better fix anyway:**
+
+> **Witness the INPUT BYTES of a memoized decode, not the identity of the object that held them.**
+
+A memo whose value is a pure function of a few bytes can be validated by re-reading exactly those
+bytes. It is *total* rather than heuristic (equal inputs ⇒ the cached output is still correct, no
+matter who owns the address now), and it is usually **cheaper than the thing it guards** — `GetName`
+now compares two `int32`s where the audit's version would have walked GObjects. Shipped as
+`Ubel::NameWitness` (build 3065).
+
+Two riders that generalise with it:
+
+- **Cover every byte the decode consumes.** `Serie::GetString(comparisonIndex, number)` takes two, so
+  the witness holds two. Dropping `Number` is audit #5's U8 — a defect that already shipped once and
+  rendered `Slot_1`/`Slot_2`/`Slot_3` all as `Slot`.
+- **Check whether the memo hands out a VALUE or a REFERENCE before designing any invalidation.** The
+  same register grouped three caches as "one fix pattern, not five". They split by return type, not
+  by key type: `GetName` returns a copy, so it can validate-and-replace; `WalkClass`/`WalkClassEx`
+  hand out `const ClassInfo&` into their maps to 25 call sites, several of which re-enter while
+  iterating the referenced `Fields` **on one thread**, so any erase/clear/assign there is a
+  use-after-free with **no race required**. Those got an insert-time gate instead, and bounding their
+  growth is now blocked behind a return-type refactor.
+
+### 4.3b A negative control that reds MORE than predicted has found a COUPLING
+
+Audit #5 AE3 (build 3068) shipped two changes to one guard: release the dedupe key on every failed
+load, and drop the `&& HasClass` conjunct that had been keeping cold-start failures retryable.
+Reverting the release alone was predicted to red one test. It red **two** — the extra one being the
+test asserting that a *cold* failure had always been retryable.
+
+That was not a broken control and not a broken test. The two halves are **coupled**: dropping the
+conjunct is only safe *because* the release now covers every failure, so removing the release while
+keeping the drop produces a state strictly worse than either the before or the after — a state that
+never shipped and never could.
+
+**How to apply.** §1.2 says run the control; this is what to do when its result surprises you. An
+unexpected red is a claim about the *shape of the fix*, not about the test:
+
+- **More tests red than predicted** ⇒ the reverted piece is load-bearing for something else you
+  changed. Find the partner and record the dependency, or a later "simplification" will delete one
+  half and the suite will still look fine on the other.
+- **Fewer red than predicted** ⇒ the assertion cannot see the change (§1.3's seam problem), or the
+  finding's premise was wrong.
+- Either way the honest baseline is **reverting the change as a WHOLE** and recording that count.
+  For AE3 that was exactly 3 red with 2 deliberately green, and the two green ones are what proved
+  the finding's "with no way to retry" was too broad.
+
+Corollary already paid for twice: **when a control's patch target is not found, that is a broken
+control, not a passing one.** In the same session a control silently no-op'd because the search
+string used a hyphen where the source had an em-dash. A harness that reports "0 red" for a revert it
+never applied is indistinguishable from a fix that works.
+
+### 4.3c A refutation recorded in a "do-not-re-raise" list is where a wrong call does the most damage
+
+Audit #5's §3 listed the claim *"`Macht.cpp`'s AOB scan family never polls `Tot::Requested()`"* as
+**refuted**, with the parenthetical *"here the guards exist"*. Re-derived while fixing G2 (build
+3086): `grep -c "Tot::" dll/src/Macht.cpp` = **0**. The `__try`/`__except` blocks in `Macht.h` are
+SEH **read** guards — they stop a fault, they do not stop a loop. The entry had been suppressing a
+finding *larger* than the one it was contrasted against, for two weeks, in the one place nobody
+re-checks by design.
+
+The refutation was plausible because the same claim shape had been correctly refuted elsewhere in the
+same pass, and because "guards" is ambiguous between the two kinds.
+
+**How to apply:**
+
+- **Re-derive a refutation the same way you re-derive a finding**, and with the same suspicion. A
+  do-not-re-raise row is a *negative* claim, and §1.2's rule applies to it too: ask what evidence
+  would show it wrong, then go and look. Here that was one `grep -c`.
+- **A refutation that names a mechanism must name the RIGHT one.** "The guards exist" was true of
+  some guards. Write which symbol, at which line, doing which job — a refutation with no `file:line`
+  is an opinion.
+- **Re-check any refutation that was decided by analogy** ("same shape as the one we just killed").
+  Analogy is how the correct verdict next door leaks into the wrong one here.
+- When you overturn one, **strike the row rather than deleting it**, re-file under a new ID, and say
+  in both places why the original was wrong. The next reader needs to know the row was examined, not
+  merely that it vanished.
+
+### 4.3d A fast path must never use a WEAKER test than the slow path it shortcuts
+
+Audit #5 G10 (build 3091), and it is the sharpest instance of this repo's dominant defect family.
+`Genau::ScanForTarget` cached a winning AOB pattern, then on the next launch re-checked it with
+`Macht::AOBScan` — **first match only** — where the scan that produced the hint had used
+`AOBScanBatch` and walked **every** match until one validated. A pattern whose first match failed
+validation was therefore declared a MISS and *erased from the pattern set*, hiding it from the one
+path that would have succeeded. The false "not found" was then persisted over the good hint, so it
+oscillated: fail → hint destroyed → cold scan succeeds → hint saved → fail again.
+
+It survived because two things agreed with each other and neither agreed with reality: the fast path
+reported `hitCount = matchAddr ? 1 : 0`, so a 166-match pattern logged `hits=1`, and the log
+therefore *corroborated* the wrong answer.
+
+**How to apply:**
+
+- **A cache/fast path is a claim that two computations agree.** Write the check so they cannot
+  diverge: same helper, same cap, same tie-break. Here the repair was literally to call the same
+  function the slow path calls and reuse its `kMaxValidate…` rule.
+- **Never let a fast-path failure DELETE work the slow path would have done.** Falling back is
+  cheap; excluding a candidate is not. Erase only on the strongest possible evidence — here, zero
+  matches, not "matched but did not validate".
+- **A confirming log line is not confirmation if the log is computed by the shortcut.** This is
+  audit #4's root cause #1 (the report and the reality computed by different code paths) wearing a
+  new hat, and it is why the count is now the real one.
+- **Look for this shape wherever a "hint", "cache", "quick check", or "fast path" exists.** The
+  question is not "is it faster" but *"can it return a different verdict than the thing it replaces
+  — and if so, in which direction does it fail?"*
+
+The instance that made it visible was a pair of log files five minutes apart on the maintainer's own
+machine, which is worth its own note: **the regression corpus you already have on disk is evidence.**
+Before estimating whether a defect is real, grep the logs.
+
+### 4.3e "Widen the window" is not monotone when the search is `strstr` over a copy
+
+Audit #5 G8 (build 3105). A context test copied 8 bytes into a `char ctx[17]` and ran `strstr`,
+while its comment and its buffer both said 16. The obvious repair — copy 16 — would have shipped
+**two** regressions, and a five-line probe found both before any production code was written:
+
+- `strstr` stops at the **first NUL in the copy**. A neighbouring string's terminator inside the
+  *wider* window truncates the search, so the wider window **loses** matches the narrower one found.
+  Widening is therefore *not* a superset. (Measured: 12.2% of 14,823 `[Rr]elease` occurrences across
+  a 33-binary corpus have a NUL in the preceding 8 bytes.)
+- Widening the guard to match (`off >= 16`) silently drops every offset in 8..15 — which included
+  the single most common real shape, whose needle sits at offset 8.
+
+**How to apply:**
+
+- **Before widening any window, ask what TERMINATES the search.** `strstr`/`strlen`/`strcmp` over
+  raw image bytes are NUL-sensitive; raw memory is not NUL-free. A window search over binary data
+  should be an explicit byte loop with a clamped length, never a C-string call on a copy.
+- **A widened predicate is only a superset if nothing in it is length- or terminator-sensitive.**
+  State that as a claim and check it; "more bytes can only match more" is an intuition, not a proof.
+- **Widening a LOOSE predicate needs a compensating gate.** G8's window sat on the only tier with no
+  anchor requirement, so widening it alone manufactured a confident version out of a release-notes
+  heading. The fix added the gate its sibling tier already had — the "the correct predicate already
+  exists next door" pattern from §2.2, again.
+- **Probe the layouts before editing.** Four hand-built strings run through a five-line model
+  answered this completely, cost a minute, and were more decisive than the reasoning they replaced.
+
+Bonus, and it is the fourth instance this week: **the fix's own negative control passed first time
+because the control was broken** — a `break` exited the pattern loop rather than the offset loop and
+retired nothing. See §4.3b; when a control passes, suspect the control.
+
+### 4.3f A predicate that has NEVER fired is a defect, not a rarely-used feature
+
+Audit #5 G11 (build 3112). Genau's Tier-2 version detector had never matched anything on any binary
+this project owns — 0 hits across 170 PE images. Nobody noticed, because "no Tier 2 hit" is
+indistinguishable from "this image has no Tier 2 evidence", and Tier 3 quietly absorbed the traffic
+with a `lowConfidence` badge nobody chased.
+
+The cause was one character. The needle table's trailing `.` is a *Tier 3* device (it forces a
+three-component `X.Y.Z`); Tier 2 inherited it and therefore demanded `Release-5.4.2`, while UE's own
+tag is two-component, `++UE4+Release-4.27`. **The identical bug had already been found and fixed for
+Tier 1** and written into the version-rev changelog — Tier 2 simply never received the same repair.
+
+**How to apply:**
+
+- **Count the hits of every branch you rely on, at least once.** A predicate with zero observed
+  firings is either dead code or a defect; "it is for rare cases" is a hypothesis, and the corpus can
+  test it in minutes. G8/G9 were both tuning this predicate's *parameters* while it could not fire at
+  all — real work spent on a branch with no reachable input.
+- **When a fix is recorded for one tier/path, grep the siblings THEN.** This is §2.3's fix-time
+  sibling grep, and here the evidence was sitting in the file's own changelog: the rev-2 note says
+  "Tier 1 no longer requires the trailing '.'", which names the exact shape of the bug still present
+  next door.
+- **Validate a newly-live predicate against an INDEPENDENT one, not against itself.** Tier 2 now
+  fires on 6 images and agrees with Tier 1's version on all six. That agreement — two detectors,
+  same answer — is worth far more than any number of hand-built unit cases, and it is §1.4 applied
+  to a fix rather than to a measurement.
+- **A fix that turns a dead branch live must state what it does NOT change.** Here: Tier 1 answers
+  first on all six, so no shipped verdict moved. Saying that plainly is the difference between an
+  honest report and an oversold one.
+
+### 4.3g Values that are five names for ONE measurement need one writer, not four
+
+Audit #5 G12 (build 3119). `FSTRUCTPROP_STRUCT` / `FARRAYPROP_INNER` / `FBOOLPROP_FIELDSIZE` /
+`FBYTEPROP_ENUM` all name the same slot (`sizeof(FProperty)`), and `FENUMPROP_ENUM` is that slot + 8.
+They had **four independent writers**, and one of them set only **two** of the five. Three exit paths
+then shipped the split for a whole session: struct reads correct, TArray element descriptors and
+every enum-name read 8 bytes off.
+
+Nobody caught it because the split is *plausible* — each writer looked locally coherent, and the two
+values it did set were the two that most code exercises.
+
+**How to apply:**
+
+- **If N constants are derived from one measurement, express the derivation ONCE** and make that the
+  only way to publish them. A helper that returns the whole family beats N assignments however
+  carefully those assignments are commented — this is the "make the helper impossible to bypass"
+  half of §2.3's cluster ④, applied to data rather than to a predicate.
+- **Count the writers before trusting any one of them.** The finding named one site; the fix-time
+  grep found four. Two of the extra three were already coherent — which is exactly why they were
+  never suspected, and exactly how they drifted from the fourth.
+- **A partial write is worse than a wrong one.** A uniformly wrong family fails loudly (nothing
+  resolves); a split family resolves the common paths and quietly corrupts the rest, which is the
+  "names resolve, values are garbage" shape that costs the most debugging time.
+- **Assert the bad SHAPE, not just the good value.** The unit test pins the invariant across every
+  plausible input *and* asserts the historical split as a shape that must be unreachable. The second
+  form survives a future refactor that changes the numbers.
+- **Leave the deliberate exception, and comment it at both ends.** One site genuinely must diverge
+  (UE5.7 puts `EArrayPropertyFlags` before `Inner`, so `FARRAYPROP_INNER` is re-probed separately).
+  An unexplained exception is indistinguishable from the bug.
+
+### 4.4 Do not use KismetMathLibrary as a verification target
 
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when
 invoked via ProcessEvent from a reflection-driven dumper on UE 5.5+ cooked Shipping. Likely UE's

@@ -93,6 +93,36 @@ struct FunctionInfo {
 
 namespace Ubel {
 
+// The exact inputs Ubel::GetName's decode consumes: the FName at UObject+0x18 is
+// read as { int32 ComparisonIndex; int32 Number } and handed to Serie::GetString,
+// so the resolved string is a pure function of these two int32s.
+//
+// That is what makes them a sound witness for the per-UObject name cache, which is
+// keyed by a raw address the engine recycles (audit #5 U6/F3). FNamePool entries are
+// append-only for the life of the process — only ~FNameEntryAllocator frees them —
+// so if these bytes still read the same, the cached string is still the correct
+// answer, whoever owns the address now. It is also strictly cheaper than the FNamePool
+// lookup it guards: two int32 reads against a pool walk.
+//
+// Deliberately NOT the (InternalIndex, SerialNumber) pair the audit prescribed. UE
+// zeroes SerialNumber in FreeUObjectIndex and allocates it lazily, essentially only
+// on weak-pointer creation, so most objects carry 0 for life and a stale witness of
+// (i, 0) matches a recycled (i, 0) — silent in exactly the case it exists to catch.
+// It would also have rested on Aura::GetSerialNumber, whose own comment marks the
+// packed FUObjectItem layout *** UNVERIFIED ***.
+//
+// `number` is load-bearing: dropping it is precisely audit #5 U8, which shipped once
+// already and rendered Slot_1 / Slot_2 / Slot_3 all as "Slot".
+struct NameWitness {
+    int32_t comparisonIndex = 0;
+    int32_t number = 0;
+
+    bool operator==(const NameWitness& other) const {
+        return comparisonIndex == other.comparisonIndex && number == other.number;
+    }
+    bool operator!=(const NameWitness& other) const { return !(*this == other); }
+};
+
 // Walk a UClass/UStruct and enumerate all fields (including inherited)
 ClassInfo WalkClass(uintptr_t uclassAddr);
 
@@ -102,9 +132,16 @@ ClassInfo WalkClass(uintptr_t uclassAddr);
 //
 // MEMOIZED, and returns a REFERENCE into that memo — bind it with `const auto&`
 // unless you actually need a mutable copy. The entry is immortal for the process
-// (node-based map, never erased or cleared), so the reference stays valid; a null
-// uclassAddr yields a reference to a shared empty ClassInfo. Do not cast away the
-// const: mutating the returned object would corrupt every later caller's view.
+// (node-based map, never erased or cleared), so the reference stays valid. Do not
+// cast away the const: mutating the returned object would corrupt every later
+// caller's view.
+//
+// Yields a reference to a shared EMPTY ClassInfo — never a cached one — for a null
+// uclassAddr and for any address that fails ShouldPublishClassWalk (unmapped, or an
+// implausible PropertiesSize). Callers must treat an empty Fields as "skip this
+// address", which is what every existing call site already does; it is NOT a signal
+// that the class genuinely declares nothing, because a field-less UCLASS is
+// legitimate and IS memoized. (audit #5 U4)
 const ClassInfo& WalkClassEx(uintptr_t uclassAddr);
 
 // --- Shared reflection field lookup ---
@@ -383,6 +420,41 @@ inline constexpr int32_t kMaxSanePropertiesSize = 1 * 1024 * 1024;  // 1 MB
 // Pure — unit-tested in dll_helpers_test so the bound is locked at build time.
 inline bool IsSanePropertiesSize(int32_t propertiesSize) {
     return propertiesSize >= 0 && propertiesSize <= kMaxSanePropertiesSize;
+}
+
+// True when a completed WalkClass result may be MEMOIZED. The class caches are
+// keyed by a raw UClass* the engine recycles and are never erased (see the B10
+// note at WalkClass's try_emplace), so a single bad walk is served for the rest
+// of the process — WalkInstance already owns the identical predicate but applies
+// it AFTER the walk has been published, i.e. the one code path that knows the
+// address is garbage has already poisoned the cache. Gate on the identity read
+// instead of on the result:
+//   * NEVER gate on Fields.empty() — InjectIntrinsicStructFields exists precisely
+//     because an empty field list is a legitimate outcome (FDateTime/FTimespan and
+//     every UCLASS that declares no own UPROPERTYs).
+//   * NEVER gate on Name.empty() — Serie::GetString returns "" for an unresolved
+//     obfuscated-fork tag key, so a name gate would disable class caching outright
+//     on MindsEye-class forks.
+// `propsSizeReadOk` is Macht::ReadSafe's discarded return: on failure it zeroes its
+// out-param, and 0 is a *sane* PropertiesSize, so the size test alone cannot see an
+// unmapped address. Pure — unit-tested in dll_helpers_test.
+inline bool ShouldPublishClassWalk(bool propsSizeReadOk, int32_t propertiesSize) {
+    return propsSizeReadOk && IsSanePropertiesSize(propertiesSize);
+}
+
+// True when a UEnum member table may be MEMOIZED into the (never-erased) enum cache.
+// The two failure modes look alike and must NOT be treated alike:
+//   * BuildLayout FAILED (buildLayoutOk == false) -> publish. That is a COMPLETE
+//     answer, not a truncated one: Neu rejects count == 0 / num <= 0, so a
+//     legitimately member-less UEnum and any address that is not a UEnum both land
+//     here, and refusing to cache them would re-probe on every single lookup.
+//   * The entry loop BROKE mid-table (readCount < intendedCount) -> do not publish.
+//     Caching a half-read table permanently splits one UEnum: values below the break
+//     point resolve, values above render as raw integers, everywhere, with no retry.
+// Pure — unit-tested in dll_helpers_test. (audit #5, found while fixing U4)
+inline bool ShouldPublishEnumTable(bool buildLayoutOk, int32_t intendedCount, size_t readCount) {
+    if (!buildLayoutOk) return true;
+    return intendedCount >= 0 && readCount == static_cast<size_t>(intendedCount);
 }
 
 // Result of walking a live instance

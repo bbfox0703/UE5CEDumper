@@ -90,9 +90,17 @@ namespace {
 
 // Vector value parser. Accepts "X,Y,Z" or "X Y Z" with optional spaces;
 // rejects malformed input (wrong component count, non-numeric tokens).
-// Writes 12 little-endian bytes (3 floats) into `out`. Phase 2B.
-bool ParseVectorBytes(const std::string& raw, uint8_t out[12]) {
-    std::memset(out, 0, 12);
+//
+// Writes the CANONICAL target form Aura's scan expects — 3 little-endian
+// DOUBLES (Radar::VECTOR_CANON_BYTES). It cannot be encoded at the field's own
+// width because the target is parsed once per scan while the width is a
+// per-field fact: one UE5 game holds 24-byte "Vector" and 12-byte "Vector3f"
+// fields side by side, so the scan decodes each field UP to the target's
+// precision rather than the target DOWN to a guessed width. Parsing through
+// double also stops a large coordinate losing precision before the compare
+// (std::stof of "1234567.8" already rounds).  Phase 2B; widened build 3035.
+bool ParseVectorBytes(const std::string& raw, uint8_t out[Radar::VECTOR_CANON_BYTES]) {
+    std::memset(out, 0, Radar::VECTOR_CANON_BYTES);
     if (raw.empty()) return false;
 
     // Tokenise on commas + whitespace. Resilient to "1, 2, 3" /
@@ -109,13 +117,13 @@ bool ParseVectorBytes(const std::string& raw, uint8_t out[12]) {
     flush();
     if (toks.size() != 3) return false;
 
-    float floats[3] = {0.0f, 0.0f, 0.0f};
+    double vals[3] = {0.0, 0.0, 0.0};
     try {
-        for (int i = 0; i < 3; ++i) floats[i] = std::stof(toks[static_cast<size_t>(i)]);
+        for (int i = 0; i < 3; ++i) vals[i] = std::stod(toks[static_cast<size_t>(i)]);
     } catch (...) {
         return false;
     }
-    std::memcpy(out, floats, 12);
+    Radar::StoreVectorCanonical(vals, out);
     return true;
 }
 
@@ -1116,20 +1124,22 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // "un-hidden on disable / disconnect", and there's no UI left to toggle it.
         // Cheap no-op when see-through was never enabled. (M3)
         Schlacht::SetEnabled(false);
-        // Ubel's per-UObject name cache is keyed by a raw address with no
-        // generation/serial and is never revalidated on hit, so once UE recycles a
-        // UObject slot every name-bearing reply serves the DESTROYED object's name.
-        // Its only two purge sites were begin_snapshot and trigger_scan — neither
-        // reachable from ordinary browsing — so this teardown dropped every other
-        // per-session resource and left the one that can serve wrong data. A UI
-        // reconnect is now a full reset. (audit #5 D5/F3)
+        // Ubel's per-UObject name cache is keyed by a raw address the engine recycles.
+        // This teardown dropped every other per-session resource and left the one that
+        // could serve wrong data, so a UI reconnect is now a full reset. (audit #5 F3)
         //
-        // This does NOT fix the in-session case (a level change while connected);
-        // that needs the (InternalIndex, SerialNumber) witness that cluster ③ shares
-        // with D1/U4-U6 and D3/A10, and is deliberately left to that pass.
+        // The IN-SESSION case (a level change while connected) is closed too, but not
+        // here: Ubel::GetName now revalidates every hit against the FName bytes the
+        // cached string was decoded from. The (InternalIndex, SerialNumber) witness
+        // this comment used to promise was evaluated and REJECTED — UE zeroes
+        // SerialNumber in FreeUObjectIndex and allocates it lazily on weak-pointer
+        // creation, so most objects carry 0 for life and a stale (i, 0) matches a
+        // recycled (i, 0). See Ubel::NameWitness. (audit #5 U6)
         //
-        // Cost is a lazy repopulate on the next connect, which is what every other
-        // line in this block already accepts.
+        // This call now earns its place on growth alone — one entry per GObjects slot
+        // ever named — plus a Serie::Init re-run, which the per-entry witness cannot
+        // see. Cost is a lazy repopulate on the next connect, which is what every
+        // other line in this block already accepts.
         Ubel::ClearNameCache();
     }
 
@@ -2935,8 +2945,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             const bool isVector = Radar::IsVectorDataType(dt);
             const bool isMulti  = Radar::IsMultiNumericDataType(dt);
 
-            uint8_t targetBytes[12] = {};
-            uint8_t target2Bytes[12] = {};
+            // Sized for the widest target that crosses into Aura: a canonical
+            // 3-double vector (24B). Scalar targets use the low 8 bytes.
+            uint8_t targetBytes[Radar::VECTOR_CANON_BYTES] = {};
+            uint8_t target2Bytes[Radar::VECTOR_CANON_BYTES] = {};
             std::string targetString;
             const uint8_t* target2Ptr = nullptr;
             // Multi-numeric meta scan: per-width target sets replace the
@@ -3089,8 +3101,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     const bool isVector = Radar::IsVectorDataType(dt);
                     const bool isMulti  = Radar::IsMultiNumericDataType(dt);
 
-                    uint8_t targetBytes[12] = {};
-                    uint8_t target2Bytes[12] = {};
+                    // Canonical 3-double vector target (24B); scalars use the
+                    // low 8 bytes. See the first-scan handler above.
+                    uint8_t targetBytes[Radar::VECTOR_CANON_BYTES] = {};
+                    uint8_t target2Bytes[Radar::VECTOR_CANON_BYTES] = {};
                     const uint8_t* tgtPtr  = nullptr;
                     const uint8_t* tgt2Ptr = nullptr;
                     std::string targetString;
@@ -4839,12 +4853,36 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 applied = true;
             }
 
-            // If we now have both GObjects+GNames, run full offset detection
-            if (g_cachedGObjects && g_cachedGNames) {
+            // Run full offset detection — but ONLY if it never ran (audit #5 G3).
+            //
+            // ValidateAndFixOffsets writes unmeasured version defaults into the LIVE DynOff
+            // globals before probing and corrects them at the end, with no staging and no
+            // reader fence. On this path that window is open while the UI is connected and
+            // the bulk lane is serving, so a re-run republishes defaults over already-probed
+            // values. Measured on the retained logs: 1-3 ms, and only 3 of the family differ
+            // from their defaults on 1 of 16 targets — small, but free to avoid.
+            //
+            // ⚠ The predicate is `!bOffsetsProbeRan`, NOT `applied`. `applied` is true on
+            // every reachable path here — CMD_RESCAN only scans pointers that are already 0
+            // and the UI only sends apply_rescan when something was found — so gating on it
+            // would be a never-firing predicate (see G11's lesson). `!bOffsetsProbeRan` says
+            // exactly "init never probed", because UE5_Init skips detection when GObjects was
+            // 0, and EVERY exit from ValidateAndFixOffsets stores the flag true
+            // (Genau.cpp: two early returns each preceded by a store, plus the success tail).
+            // ⚠ If a future edit adds an exit without that store, this gate silently inverts.
+            if (g_cachedGObjects && g_cachedGNames
+                && !DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) {
                 if (!Genau::ValidateAndFixOffsets(g_cachedUEVersion)) {
                     Sein::Warn("PIPE:cmd", "apply_rescan: ValidateAndFixOffsets returned false");
                 }
+            }
 
+            // GEngine's second pass is HOISTED out of the block above (G3): it must still run
+            // when the offsets were already probed at init, which is exactly the GWorld-only
+            // recovery case the gate now skips. Keeping it nested would have traded one defect
+            // for another — "GEngine reports AOB not found forever" is the bug the comment
+            // below was written to fix.
+            if (g_cachedGObjects && g_cachedGNames) {
                 // Same second pass UE5_Init does: &GEngine can only be VALIDATED once the
                 // offsets exist, so a recovery rescan that revives GObjects/GNames has to
                 // retry it too — otherwise this path keeps reporting "AOB not found" for

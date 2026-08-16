@@ -1618,6 +1618,100 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
     return rset;
 }
 
+// True when `cls` itself, or any class in its super chain, is named
+// `lowerName` (already lowercased). The case-insensitive sibling of
+// ClassDerivesFromAny — that one takes a set of correctly-cased engine base
+// names, this one takes a single name that reached us over the pipe, where
+// FindInstancesByClass has always folded case. Bounded at 64 levels for the
+// same reason: real super-chains are ~5-10 deep, so a longer one means a
+// corrupt or recycled UClass pointer, not a deep hierarchy.
+static bool ClassChainMatchesLower(uintptr_t cls, const std::string& lowerName) {
+    for (int guard = 0; cls && guard < 64; ++guard) {
+        std::string n = Ubel::GetName(cls);
+        for (auto& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (n == lowerName) return true;
+        uintptr_t super = 0;
+        if (!Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super)
+            || !super || super == cls)
+            break;
+        cls = super;
+    }
+    return false;
+}
+
+SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults) {
+    SearchResultSet rset;
+    if (baseClassName.empty() || maxResults <= 0) return rset;
+
+    std::string lowerQuery = baseClassName;
+    for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    // Per-UClass verdict cache. The chain walk costs one FName resolve per
+    // level, and GObjects holds 10^5-10^6 objects spread over 10^3-10^4
+    // distinct classes — caching by UClass* turns a per-OBJECT walk into a
+    // per-CLASS one, which is what makes "AActor and everything under it"
+    // affordable at all.
+    std::unordered_map<uintptr_t, bool> derivedCache;
+
+    int32_t count = GetCount();
+    rset.scanned = count;
+    for (int32_t i = 0; i < count; ++i) {
+        if (static_cast<int>(rset.results.size()) >= maxResults) break;
+        if ((i & 0xFFF) == 0 && Tot::Requested()) {
+            Sein::Warn("PIPE:find", "FindInstancesDerivedFrom: aborted (client gone / shutdown)");
+            break;   // return partial result
+        }
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+        rset.nonNull++;
+
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        bool isDerived;
+        auto it = derivedCache.find(cls);
+        if (it != derivedCache.end()) {
+            isDerived = it->second;
+        } else {
+            isDerived = ClassChainMatchesLower(cls, lowerQuery);
+            derivedCache.emplace(cls, isDerived);
+        }
+        if (!isDerived) continue;
+
+        std::string objName;
+        uint32_t nameIdx = 0;
+        if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx))
+            objName = Serie::GetString(nameIdx);
+        if (objName.empty()) continue;
+        rset.named++;
+
+        // CDO skip, and it has to happen HERE — before the cap. A base like
+        // AActor is the ancestor of thousands of classes, EVERY one of which
+        // contributes a Default__ object, and CDOs are constructed at
+        // class-load time so they sit at the LOW GObjects indices this walk
+        // reaches first. A caller that filtered afterwards would be handed
+        // maxResults class-default rows and not one live instance.
+        if (objName.rfind("Default__", 0) == 0) continue;
+
+        SearchResult sr;
+        sr.addr      = obj;
+        sr.index     = i;
+        sr.name      = objName;
+        sr.className = Ubel::GetName(cls);   // the CONCRETE class, not the queried base
+        sr.classAddr = cls;
+        Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
+        rset.results.push_back(std::move(sr));
+    }
+
+    rset.truncated = (static_cast<int>(rset.results.size()) >= maxResults);
+
+    Sein::Info("PIPE:find", "FindInstancesDerivedFrom base='%s': %d live instance(s)%s over %d distinct class(es), scanned=%d, nonNull=%d",
+                 baseClassName.c_str(), (int)rset.results.size(),
+                 rset.truncated ? " (capped)" : "",
+                 (int)derivedCache.size(), rset.scanned, rset.nonNull);
+    return rset;
+}
+
 // Helper: populate an AddressLookupResult from a UObject pointer.
 // `kind` distinguishes confidence levels — see AddressLookupResult comment.
 // A genuine FName resolves to non-empty printable ASCII. Serie::GetString
@@ -6010,6 +6104,14 @@ ValueScanResult ScanForValue(
         if (!multiTargets || multiTargets->entries.empty()) return result;
         if (st == Radar::ScanType::Between
             && (!multiTargets2 || multiTargets2->entries.empty())) return result;
+    } else if (isVector) {
+        // Vector targets arrive in the CANONICAL form — 3 doubles in
+        // targetBytes — because the per-FIELD source width (12 or 24) is not
+        // known until the index is built and differs between fields of one
+        // scan. SizeOf() is 0 for vectors for exactly that reason, so the
+        // dtSize check below would reject every vector scan.
+        if (!targetBytes) return result;
+        if (st == Radar::ScanType::Between && !target2Bytes) return result;
     } else {
         if (dtSize == 0 || !targetBytes) return result;
         if (st == Radar::ScanType::Between && !target2Bytes) return result;
@@ -6017,6 +6119,18 @@ ValueScanResult ScanForValue(
     // Prev-value scan types have no meaning on a first scan -- caller (pipe
     // handler) is responsible for rejecting these, but be defensive.
     if (Radar::IsPrevValueScanType(st)) return result;
+
+    // Decode the vector target(s) ONCE. Every per-candidate compare then runs
+    // against doubles, so a 12-byte field and a 24-byte field in the same scan
+    // are both compared against the same target without re-encoding it.
+    double targetVec[3]  = { 0.0, 0.0, 0.0 };
+    double targetVec2[3] = { 0.0, 0.0, 0.0 };
+    if (isVector) {
+        Radar::DecodeVectorBytes(targetBytes, Radar::VECTOR_CANON_BYTES, targetVec);
+        if (target2Bytes)
+            Radar::DecodeVectorBytes(target2Bytes, Radar::VECTOR_CANON_BYTES, targetVec2);
+    }
+    const double* targetVec2Ptr = target2Bytes ? targetVec2 : nullptr;
 
     const auto& acceptedTypes = Radar::PropertyTypeNames(dt);
     // Vector types match by StructProperty + inner struct name (e.g.
@@ -6059,6 +6173,14 @@ ValueScanResult ScanForValue(
         // flag is 0 (unset). -1 = ordinary leaf / container (no gate).
         int32_t       optionalFlagOffset = -1;
         std::string   elemTypeName;       // Inner/elem/key/value type name (e.g. "IntProperty")
+        // Vector scans only: the REFLECTED width of the value this ScanField
+        // reads — 12 (3xfloat) or 24 (3xdouble LWC). Sourced from the property
+        // that actually holds the triple, which is NOT the same field for every
+        // container shape: a leaf uses its own ElementSize, a TArray/TSet its
+        // inner element size (`size` there is the 16-byte container header, and
+        // `elemStride` for a TSet is the padded sparse-array slot), and a TMap
+        // the key or value half of the pair. 0 for non-vector scans.
+        int32_t       vectorWidth = 0;
         // V3-A: lazily-resolved index into the worker thread's
         // FieldDescriptor pool (the field's interned class/defining-class/
         // name/type/offset/mask). -1 until the first candidate of this
@@ -6265,14 +6387,21 @@ ValueScanResult ScanForValue(
             // Vector data types additionally require the inner struct
             // name to match (e.g. "Vector" / "Vector3f"). This both
             // filters out unrelated StructProperty fields (which are
-            // numerous) and avoids the cost of reading 12 bytes from
+            // numerous) and avoids the cost of reading a triple from
             // every non-vector struct on every scan.
+            //
+            // The name is only half the gate: it says "X/Y/Z triple", not how
+            // wide. The property's own reflected ElementSize settles that (12 =
+            // 3xfloat, 24 = 3xdouble LWC) and a size that is neither is refused
+            // here rather than read at a guessed width. (audit #5 AB3)
+            int32_t vecWidth = 0;
             if (accepted && !acceptedStructNames.empty() && f.TypeName == "StructProperty") {
                 bool nameMatch = false;
                 for (const auto& name : acceptedStructNames) {
                     if (f.structType == name) { nameMatch = true; break; }
                 }
-                accepted = nameMatch;
+                accepted = nameMatch && Radar::IsSupportedVectorWidth(f.Size);
+                if (accepted) vecWidth = f.Size;
             }
 
             if (accepted) {
@@ -6282,6 +6411,7 @@ ValueScanResult ScanForValue(
                 sf.name          = namePrefix.empty() ? f.Name : (namePrefix + "." + f.Name);
                 sf.typeName      = f.TypeName;
                 sf.boolFieldMask = f.boolFieldMask;
+                sf.vectorWidth   = vecWidth;
                 out.push_back(std::move(sf));
                 continue;
             }
@@ -6316,6 +6446,14 @@ ValueScanResult ScanForValue(
                 }
                 if (innerAccepted) {
                     int32_t stride = Ubel::GetArrayInnerElemSize(f.Address);
+                    // For TArray<FVector> the inner element size IS the triple's
+                    // width — elements are packed, so stride == the vector.
+                    // (`f.Size` here is the 16-byte TArray header, not the value.)
+                    int32_t arrVecWidth = 0;
+                    if (!acceptedStructNames.empty()) {
+                        if (!Radar::IsSupportedVectorWidth(stride)) stride = 0;  // refuse
+                        else arrVecWidth = stride;
+                    }
                     // Skip arrays whose inner-element size couldn't be
                     // resolved (rare; defensive). Without stride we
                     // can't iterate safely.
@@ -6330,6 +6468,7 @@ ValueScanResult ScanForValue(
                         sf.container     = ScanContainer::Array;
                         sf.elemStride    = stride;
                         sf.elemTypeName  = f.innerType;
+                        sf.vectorWidth   = arrVecWidth;
                         out.push_back(std::move(sf));
                         continue;
                     }
@@ -6378,6 +6517,17 @@ ValueScanResult ScanForValue(
                     innerAccepted = nameMatch;
                 }
                 if (innerAccepted) {
+                    // FOptionalProperty shares TArray's Inner-at-FARRAYPROP_INNER
+                    // shape, so GetArrayInnerElemSize yields sizeof(T) here.
+                    int32_t innerSize = Ubel::GetArrayInnerElemSize(f.Address);
+                    // TOptional<FVector>: the width is the WRAPPED type's, not
+                    // f.Size — which is the optional's whole footprint and
+                    // includes the trailing bIsSet byte plus padding.
+                    int32_t optVecWidth = 0;
+                    if (!acceptedStructNames.empty()) {
+                        if (!Radar::IsSupportedVectorWidth(innerSize)) continue;  // refuse
+                        optVecWidth = innerSize;
+                    }
                     ScanField sf;
                     sf.offset        = baseOffset + f.Offset;   // value at field+0
                     sf.size          = f.Size;
@@ -6385,11 +6535,9 @@ ValueScanResult ScanForValue(
                         ? f.Name : (namePrefix + "." + f.Name);
                     sf.typeName      = f.innerType;             // read as the inner leaf type
                     sf.boolFieldMask = 0xFF;                    // optionals never bitfield-pack
-                    // FOptionalProperty shares TArray's Inner-at-FARRAYPROP_INNER
-                    // shape, so GetArrayInnerElemSize yields sizeof(T) here.
-                    int32_t innerSize = Ubel::GetArrayInnerElemSize(f.Address);
                     sf.optionalFlagOffset =
                         Radar::OptionalFlagOffset(f.Size, innerSize);
+                    sf.vectorWidth   = optVecWidth;
                     out.push_back(std::move(sf));
                     continue;
                 }
@@ -6403,6 +6551,18 @@ ValueScanResult ScanForValue(
                 && ContainerInnerAccepted(f.elemType, f.elemStructType,
                                           acceptedTypes, acceptedStructNames)) {
                 int32_t stride = Ubel::GetSetElementStride(f.Address);
+                // TSet<FVector>: the SLOT stride is padded out by the sparse
+                // array's hash bookkeeping, so it is NOT the triple's width —
+                // the element itself sits at slot+0 with its own element size.
+                // FSetProperty's ElementProp lives at the same offset as
+                // FArrayProperty's Inner (GetSetElementStride probes exactly
+                // there), so the array helper reads the right property.
+                int32_t setVecWidth = 0;
+                if (!acceptedStructNames.empty()) {
+                    int32_t elemSize = Ubel::GetArrayInnerElemSize(f.Address);
+                    if (!Radar::IsSupportedVectorWidth(elemSize)) stride = 0;  // refuse
+                    else setVecWidth = elemSize;
+                }
                 if (stride > 0) {
                     ScanField sf;
                     sf.offset        = baseOffset + f.Offset;
@@ -6414,6 +6574,7 @@ ValueScanResult ScanForValue(
                     sf.container     = ScanContainer::Set;
                     sf.elemStride    = stride;
                     sf.elemTypeName  = f.elemType;
+                    sf.vectorWidth   = setVecWidth;
                     out.push_back(std::move(sf));
                     // fall through is unnecessary; a SetProperty is never
                     // also a leaf/array/struct, so continue.
@@ -6439,7 +6600,11 @@ ValueScanResult ScanForValue(
                     if (Ubel::GetMapPairLayout(f.Address, layout) && layout.pairStride > 0) {
                         const std::string base = namePrefix.empty()
                             ? f.Name : (namePrefix + "." + f.Name);
-                        if (keyOk) {
+                        // A TMap half's vector width is that half's own size
+                        // from the pair layout — the pair stride spans both
+                        // halves plus the sparse-array bookkeeping.
+                        const bool vecScan = !acceptedStructNames.empty();
+                        if (keyOk && (!vecScan || Radar::IsSupportedVectorWidth(layout.keySize))) {
                             ScanField sf;
                             sf.offset        = baseOffset + f.Offset;
                             sf.size          = f.Size;
@@ -6450,9 +6615,10 @@ ValueScanResult ScanForValue(
                             sf.elemStride    = layout.pairStride;
                             sf.valueOffset   = 0;
                             sf.elemTypeName  = f.keyType;
+                            sf.vectorWidth   = vecScan ? layout.keySize : 0;
                             out.push_back(std::move(sf));
                         }
-                        if (valOk) {
+                        if (valOk && (!vecScan || Radar::IsSupportedVectorWidth(layout.valueSize))) {
                             ScanField sf;
                             sf.offset        = baseOffset + f.Offset;
                             sf.size          = f.Size;
@@ -6463,6 +6629,7 @@ ValueScanResult ScanForValue(
                             sf.elemStride    = layout.pairStride;
                             sf.valueOffset   = layout.valueOffset;
                             sf.elemTypeName  = f.valueType;
+                            sf.vectorWidth   = vecScan ? layout.valueSize : 0;
                             out.push_back(std::move(sf));
                         }
                         continue;
@@ -6754,6 +6921,9 @@ ValueScanResult ScanForValue(
                                 ? sf.elemTypeName : sf.typeName;
             d.fieldOffset   = sf.offset;
             d.boolFieldMask = sf.boolFieldMask;
+            // Vector scans only: the source width the refine path can no longer
+            // re-derive (fieldType is the bare "StructProperty").
+            d.vectorWidth   = sf.vectorWidth;
 
             DefKey dk{ cls, sf.offset };
             auto dit = definingNameCache.find(dk);
@@ -6806,7 +6976,8 @@ ValueScanResult ScanForValue(
         // a match. Mirrors the direct-field read/compare branches; the
         // descriptor is interned lazily on the first match of this field.
         auto scanElement = [&](ScanField& sf, uintptr_t elemAddr, int32_t elemIndex) {
-            uint8_t     readBuf[16] = {};
+            // Sized for the widest value read through it: a 24-byte LWC vector.
+            uint8_t     readBuf[Radar::VECTOR_CANON_BYTES] = {};
             std::string readStr;
             if (isString) {
                 if (dt == Radar::DataType::FString) {
@@ -6819,9 +6990,18 @@ ValueScanResult ScanForValue(
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) return;
                 emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, nullptr, 0, &readStr);
             } else if (isVector) {
-                if (!Macht::ReadBytesSafe(elemAddr, readBuf, 12)) return;
-                if (!Radar::CompareVectorPredicate(st, readBuf, targetBytes, target2Bytes, roundMode)) return;
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, readBuf, 12, nullptr);
+                // Read the field's OWN width, decode to the canonical triple,
+                // then store the canonical form so display + refine never have
+                // to re-ask how wide the source was.
+                double cur[3];
+                if (!Macht::ReadBytesSafe(elemAddr, readBuf,
+                                          static_cast<size_t>(sf.vectorWidth))) return;
+                if (!Radar::DecodeVectorBytes(readBuf, sf.vectorWidth, cur)) return;
+                if (!Radar::CompareVectorPredicate(st, cur, targetVec, targetVec2Ptr, roundMode)) return;
+                uint8_t canon[Radar::VECTOR_CANON_BYTES];
+                Radar::StoreVectorCanonical(cur, canon);
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex,
+                              canon, sizeof(canon), nullptr);
             } else if (isMulti) {
                 // Resolve the element's own width (key/value/elem type) + target.
                 Radar::DataType elemDt = dt;
@@ -7050,7 +7230,8 @@ ValueScanResult ScanForValue(
             }
 
             uintptr_t valueAddr = obj + sf.offset;
-            uint8_t  readBuf[16] = {};
+            // Sized for the widest value read through it: a 24-byte LWC vector.
+            uint8_t  readBuf[Radar::VECTOR_CANON_BYTES] = {};
             std::string readStr;
 
             if (isString) {
@@ -7069,12 +7250,16 @@ ValueScanResult ScanForValue(
                 continue;
             }
             if (isVector) {
-                // Vector / Rotator: read 12 bytes (3 floats) from the
-                // struct start. Caller's targetBytes already encodes
-                // the 12-byte (X,Y,Z) layout.
-                if (!readBody(sf.offset, readBuf, 12)) continue;
-                if (!Radar::CompareVectorPredicate(st, readBuf, targetBytes, target2Bytes, roundMode)) continue;
-                emitCandidate(valueAddr, ensureDescriptor(sf), -1, readBuf, 12, nullptr);
+                // Vector / Rotator: read the field's OWN reflected width from
+                // the struct start — 12 (3xfloat) or 24 (3xdouble LWC) — and
+                // decode to the canonical triple the target is already in.
+                double cur[3];
+                if (!readBody(sf.offset, readBuf, static_cast<size_t>(sf.vectorWidth))) continue;
+                if (!Radar::DecodeVectorBytes(readBuf, sf.vectorWidth, cur)) continue;
+                if (!Radar::CompareVectorPredicate(st, cur, targetVec, targetVec2Ptr, roundMode)) continue;
+                uint8_t canon[Radar::VECTOR_CANON_BYTES];
+                Radar::StoreVectorCanonical(cur, canon);
+                emitCandidate(valueAddr, ensureDescriptor(sf), -1, canon, sizeof(canon), nullptr);
                 continue;
             }
 
@@ -7440,7 +7625,10 @@ ValueScanStats RefineCandidates(
     const bool isVector = Radar::IsVectorDataType(dt);
     const bool isMulti  = Radar::IsMultiNumericDataType(dt);
     const size_t dtSize = Radar::SizeOf(dt);
-    if (!isString && !isMulti && dtSize == 0) return stats;
+    // Vectors report SizeOf 0 (variable per field — see Radar::SizeOf); their
+    // width comes from each candidate's descriptor, so they must not be caught
+    // by the fixed-width guard.
+    if (!isString && !isMulti && !isVector && dtSize == 0) return stats;
 
     const bool usePrev = Radar::IsPrevValueScanType(st);
     if (isMulti) {
@@ -7453,6 +7641,19 @@ ValueScanStats RefineCandidates(
         if (!usePrev && !targetBytes) return stats;
         if (st == Radar::ScanType::Between && !target2Bytes) return stats;
     }
+
+    // Canonical (3-double) vector target, decoded once — same contract as the
+    // first scan. On a prev-value refine the comparison target is the
+    // candidate's own stored snapshot, which is already canonical.
+    double targetVec[3]  = { 0.0, 0.0, 0.0 };
+    double targetVec2[3] = { 0.0, 0.0, 0.0 };
+    if (isVector) {
+        if (targetBytes)
+            Radar::DecodeVectorBytes(targetBytes, Radar::VECTOR_CANON_BYTES, targetVec);
+        if (target2Bytes)
+            Radar::DecodeVectorBytes(target2Bytes, Radar::VECTOR_CANON_BYTES, targetVec2);
+    }
+    const double* targetVec2Ptr = target2Bytes ? targetVec2 : nullptr;
 
     const int32_t initialSize = static_cast<int32_t>(candidates.size());
 
@@ -7529,11 +7730,28 @@ ValueScanStats RefineCandidates(
         }
 
         if (isVector) {
-            uint8_t readBuf[16] = {};
-            if (!Macht::ReadBytesSafe(c.addr, readBuf, 12)) continue;
-            const uint8_t* cmpTarget = usePrev ? c.prevValue : targetBytes;
-            if (!Radar::CompareVectorPredicate(st, readBuf, cmpTarget, target2Bytes, roundMode)) continue;
-            std::memcpy(c.prevValue, readBuf, 12);
+            // The source width is a per-FIELD fact the descriptor carries; it
+            // cannot be re-derived from desc.fieldType, which is the bare
+            // "StructProperty" for every vector. A session captured before the
+            // width was recorded (or a descriptor that failed the width gate)
+            // has 0 here, and the candidate is dropped rather than re-read at a
+            // guessed width.
+            uint8_t readBuf[Radar::VECTOR_CANON_BYTES] = {};
+            double  cur[3];
+            if (!Radar::IsSupportedVectorWidth(desc.vectorWidth)) continue;
+            if (!Macht::ReadBytesSafe(c.addr, readBuf,
+                                      static_cast<size_t>(desc.vectorWidth))) continue;
+            if (!Radar::DecodeVectorBytes(readBuf, desc.vectorWidth, cur)) continue;
+            // A prev-value predicate compares against the candidate's stored
+            // snapshot, which is ALREADY canonical — no width involved.
+            double prev[3];
+            const double* cmpTarget = targetVec;
+            if (usePrev) {
+                Radar::DecodeVectorBytes(c.prevValue, Radar::VECTOR_CANON_BYTES, prev);
+                cmpTarget = prev;
+            }
+            if (!Radar::CompareVectorPredicate(st, cur, cmpTarget, targetVec2Ptr, roundMode)) continue;
+            Radar::StoreVectorCanonical(cur, c.prevValue);
             kept.push_back(std::move(c));
             continue;
         }

@@ -332,9 +332,78 @@ Two things compound this:
 
 ---
 
+## 6. `errorOnLookupFailure` — `celua.txt` says the default is TRUE, the source sets it FALSE
+
+**Checked against:** the 7.5-195 **source** (both branches read); the 7.7 **binary** was NOT run, so
+the source's behaviour is proven for 7.5 and *inferred* for 7.7. That gap is the whole reason the fix
+described below covers both possibilities instead of picking one.
+
+CE's own Lua documentation states:
+
+> `errorOnLookupFailure(state)`: If set to true (default) address lookups in stringform will raise an error…
+
+— `celua.txt:229` in the installed 7.7, byte-identical at `Cheat Engine/bin/celua.txt:196` in the
+7.5 clone. **The source does the opposite.** `TSymhandler.create` ends with
+
+```pascal
+  ExceptionOnLuaLookup:=FALSE;          // symbolhandler.pas:6688
+```
+
+and that flag is what gates the raise:
+
+```pascal
+function TSymhandler.getAddressFromNameL(name: string; ...):ptrUint;  //Lua
+begin
+  result:=getAddressFromName(name, waitforsymbols, e);
+  if e then
+  begin
+    if ExceptionOnLuaLookup then                          // symbolhandler.pas:5082
+      raise symexception.Create(...)
+    else
+      result:=0;                                          // <- the DEFAULT
+  end;
+end;
+```
+
+An exhaustive search of the clone (`grep -rn -i exceptiononlualookup`) returns four hits — the field
+declaration at `symbolhandler.pas:300`, that use at `:5082`, the constructor at `:6688`, and nothing
+else. The **only** writer is the Lua-facing setter `errorOnLookupFailure`
+(`LuaHandler.pas:9093-9111`, registered at `:16813`). Nothing in CE's Pascal ever sets it true.
+
+**So by default `getAddress("NoSuchSymbol")` returns the integer `0`.** It raises only if a script
+somewhere in the session called `errorOnLookupFailure(true)` — and *then* the exception is converted
+to a real Lua error by the wrapper's `except` arm (`LuaHandler.pas:4374-4391`,
+`lua_pushstring` + `lua_error` on Windows/x64).
+
+### Why this cost us something
+
+Audit #5's finding AA4 asserted, as "CE source-verified", that a bare `getAddress` **raises** on a
+missing symbol and that `scripts/ue5_dissect.lua`'s `if fn == nil or fn == 0 then error(…)` was
+therefore dead code. Acting on that would have **deleted a live guard** — the only thing that turns
+"the DLL was never injected" into a message naming the export, rather than an `executeCodeEx` call
+to address 0 reporting `Failure launching thread`. The premise came from reading the wrapper's
+`except` block (which does raise) without checking whether the resolver beneath it ever throws.
+
+### What to do about it
+
+**Handle both.** A script cannot know which state CE is in — any table or AA script the user loaded
+can have flipped the flag, and it is global and never reset. The correct shape is the one
+`ue5_dissect.lua` now uses:
+
+```lua
+local fn = getAddress(name)                    -- 0 by default, raises if the flag is on
+if fn == nil or fn == 0 then error("… not found: " .. name) end
+```
+
+`getAddressSafe` is **not** a drop-in replacement: it returns **nil**, not 0
+(`LuaHandler.pas:4329-4332` sets the C-function's *result count* to 0, so Lua receives no value),
+which is why the `fn == nil` half of that test is doing real work too.
+
+---
+
 ## Appendix: other CE defects, and who owns them
 
-The five entries above are **bugs we hit** — each has a symptom we saw and a workaround we used.
+The six entries above are **bugs we hit** — each has a symptom we saw and a workaround we used.
 A 2026-08-07 re-audit of the CE 7.5-195 source turned up roughly eighteen more genuine CE-side
 defects. **None is listed here as an entry**, for two reasons: we have not hit any of them, and
 each already has an owner in a reference doc that explains it at the point of use. Duplicating

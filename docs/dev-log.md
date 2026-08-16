@@ -22,6 +22,954 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - G12 + G3: one offset family, and a re-probe that should not happen (builds 3119 / 3121)
+
+**The finding I set out to fix turned out to be a LOW; the one found while re-deriving it is the
+real defect.** C++ 1137 → **1166**.
+
+### G12 (MED, new) — the `sizeof(FProperty)` family was published SPLIT
+
+`FSTRUCTPROP_STRUCT` / `FARRAYPROP_INNER` / `FBOOLPROP_FIELDSIZE` / `FBYTEPROP_ENUM` all name the
+**same** slot — the first subclass field, `== sizeof(FProperty)` — and `FENUMPROP_ENUM` sits 8 bytes
+later because `FEnumProperty` declares `FNumericProperty* UnderlyingProp` first. Five names, one
+measurement, and **four independent writers**.
+
+Genau's Step 2.5 default block set only **two** of them (`STRUCT`/`BOOLSIZE` → 0x70), leaving
+`INNER`/`BYTEENUM` at 0x78 and `ENUMENUM` at 0x80. Three *"keeping defaults"* exit paths then shipped
+that split **for the whole session**: TArray element descriptors and every enum-name read 8 bytes
+off, while struct reads stayed correct — the "names resolve, values are garbage" shape.
+
+Deterministic, first run, **no concurrency and no re-entry required**. And it has fired on a real
+game: `docs/test-games.md` records Solarpunk (UE5.7) resolving through exactly that heuristic
+fallback with `FProp Offset +0x44` — which *is* the Step 2.5 default, i.e. the branch that writes two
+of five.
+
+The one mechanism that could have harmonised them latches shut on precisely this case:
+`Ubel::CorrectSubclassOffsets` only rewrites the other four when `delta != 0`, and here delta is 0
+because `FSTRUCTPROP_STRUCT` is already right.
+
+Fixed with a single `DynOff::PropertyFamilyFor` / `PropertyFamilyAtBase` / `ApplyPropertyFamily`
+helper, with **all four** writers routed through it. **The fix-time sibling grep found the third and
+fourth — the finding named neither**, and the third was coherent-but-hand-rolled, which is exactly
+how it and Step 2.5 drifted apart. Deliberately *not* routed: Ubel's ArrayProperty self-heal probe,
+which re-probes `FARRAYPROP_INNER` independently because UE5.7 puts `EArrayPropertyFlags` before
+`Inner`; that exception is now commented at both ends.
+
+30 new assertions pin the invariant across five plausible `Offset_Internal` values, both shipped
+layouts (0x44 → base 0x70; TQ2's 0x48 → 0x74), agreement between the two spellings, and the
+historical split asserted as a **shape that must be unreachable**. Controls: reproducing the split in
+the helper → **16 red**; dropping the `FEnumProperty` +8 → 6 red.
+
+### G3 — confirmed as a mechanism, and four premises wrong
+
+| filed | measured |
+|---|---|
+| "for the **seconds** a re-run takes" | **1–3 ms**, all 16 `offsets*.log` on this machine |
+| "the DynOff **set**" | **3 globals** — and **15 of 16** runs are byte-identical to the defaults |
+| "`UFIELD_NEXT` reset 0x38 → 0x28" | requires UE4 **pre-4.25**; on UE5 it is never written |
+| CE `[DISABLE]`/`[ENABLE]` "poller survives" | **false** — `Mimic::StopThread` joins. The real mechanism is restart-*before*-scan |
+
+And reachability is zero: every one of the 16 logs contains exactly **one**
+`ValidateAndFixOffsets: Starting`. On the CE path CE's single Lua thread is parked in
+`processMessagesPaintOnly` for the entire window — documented as not handling keyboard/mouse — so no
+CE-side writer can drive the poller anyway.
+
+**So G3 is a LOW, not a MED, and emphatically not the filed L-effort fix.** Refuted as repairs:
+build-then-publish (~200 lines, and naive staging is *wrong* — Step 2.5's defaults are probe **seeds**
+read back by the heuristic phase); a reader seqlock (426 `DynOff::` sites, 265 outside Genau.cpp,
+mostly inline in 486K-node loops); quiescing consumers (`Tot` means cancel, not pause).
+
+What shipped is a 5-line gate removing the one genuinely exposed case: an `apply_rescan` re-probe
+when init already probed.
+
+> ⚠ The predicate is `!bOffsetsProbeRan`, **not** `applied`. `applied` is true on every reachable
+> path — `CMD_RESCAN` only scans pointers already 0, and the UI only sends `apply_rescan` when
+> something was found — so gating on it would be a **never-firing predicate**, the defect class
+> recorded one commit earlier as G11's lesson.
+
+GEngine's second pass is **hoisted out** of that block: it must still run when the offsets were
+already probed, which is exactly the GWorld-only recovery the gate now skips, or the fix would trade
+G3 for "GEngine reports AOB not found forever".
+
+-----
+
+## 2026-08-17 - G11: Tier 2 matches the bare needle, so it can finally fire (build 3112)
+
+**Tier 2 had never fired on any binary this project owns.** The needle table's trailing `.` is a
+*Tier 3* device — it forces a three-component `X.Y.Z` so a bare `5.4` cannot match `15.40`. Applying
+it to Tier 2 as well meant Tier 2 could never match UE's own tag, which is **two-component**:
+`++UE4+Release-4.27`. That is verbatim the defect `Genau.h`'s rev-2 note records fixing **for Tier 1**
+via the dot-strip in `ScanVersionTier1` — Tier 2 never received it.
+
+### Measured, before and after
+
+A faithful model of the header's semantics (same table, bounds, window and anchor rules) run over the
+**170 PE images** in the local analyze corpus. Conditions are part of the number: on-disk PE bytes,
+whereas the DLL scans the *mapped* image — for unpacked titles the string content is the same.
+
+| | Tier 2 fired |
+|---|---|
+| before | **0 / 170** |
+| after | **6 / 170** |
+
+And on **all six**, Tier 2's answer agrees exactly with the version **Tier 1 independently reports**
+(418, 420, 418, 420, 420, 418) — two detectors cross-validating rather than one asserting.
+
+Tier 1 returns first on all six, so **no effective verdict changed on any binary we own**. What is
+gained is a Tier 2 that works as a *fallback* for images whose full `++UEx+Release-` tag is stripped
+but a `Release-X.Y` fragment survives — exactly the population Tier 2/3 exists for, and none of our
+170 is one.
+
+### The two guards that make a shorter match safe
+
+- **Whole-token**: the byte after the bare needle may not be a digit. That admits both real shapes —
+  two-component `Release-4.27\0` and three-component `Release-5.4.2`, whose next byte is `.` — while
+  rejecting `Release 5.40`, which is a game version, not an engine one.
+- **Preceding digit/dot**, hoisted out of Tier 3 so Tier 2 gets it too. Tier 3 always had it; Tier 2
+  never did, and needs it far more now that it matches the shorter form (`15.4` and `1.5.4` both
+  contain `5.4`).
+
+Tier 3 is untouched — it still demands the trailing dot *and* a digit after it, restated now that the
+match above is on the bare form. Two rails assert exactly that.
+
+`kVersionDetectLogicRev` 4 → **5**, mandatory. C++ 1130 → **1137**. Three controls, each reverted
+alone: match the full needle again → 1 red; drop the whole-token guard → 1 red; un-hoist the
+preceding-digit guard → 3 red.
+
+-----
+
+## 2026-08-17 - G8 + G9: Tier 2's context window, and the Tier 3 retire (build 3105)
+
+Both were reproduced **deliberately** in build 3086 so the needle-gate rewrite could stay
+equivalence-preserving. Fixed now, together, because they interact. C++ 1123 → **1130**;
+`kVersionDetectLogicRev` 3 → **4** (mandatory under its own rule — tier rules changed).
+
+### G8 — and the obvious repair is wrong in *both* directions
+
+Three things disagreed and the code was the narrowest: the comment said *"within the preceding 16
+bytes"*, the buffer was `char ctx[17]`, the `memcpy` copied **8**. The audit's literal patch
+(`off >= 16` + `memcpy(…, 16)`) would have shipped two regressions, both measured first:
+
+- **`strstr` stops at the first NUL in the copied bytes.** A neighbouring string's terminator inside
+  the *wider* window truncates the search and **loses a match the narrow window found** — so a wider
+  `strstr` is not a superset of a narrower one. (12.2% of the 14,823 `[Rr]elease` occurrences across
+  the 33-binary corpus have a NUL in the preceding 8 bytes.)
+- **`off >= 16` drops offsets 8–15 entirely**, which includes the *canonical* `Release-5.4.0`, whose
+  needle sits at offset 8.
+
+So it is a raw byte search over a **clamped** window, which has neither problem.
+
+G8 also **adds the UE-anchor gate Tier 3 always had**. Tier 2 was the loosest predicate in the
+system — no anchor, no preceding-digit check — so widening it without one manufactures a confident
+`504` out of an ordinary `Release Notes 5.4.0` that the narrow form rejected outright. With the
+anchor, the widening is a strict superset on every regression case and still returns nothing on
+anchorless noise.
+
+### G9 — the retire defeated the design's own stated promise
+
+A Tier 3 candidate retired its pattern, so a later Tier 2 hit on the **same needle** was never seen.
+The deferral comment says the design exists to stop a stray bundled `5.5.0` *"out-racing a real
+'Release-4.27' string later in the module"* — that held across patterns and failed within one. Two
+facts are now kept per pattern, and a pattern retires only once a Tier 2 is known.
+
+There is now a test asserting that exact promised scenario. **It returned the wrong VERSION before
+this commit — 505 instead of 427 — not merely a wrong confidence badge.**
+
+### Measured scope, stated so this is not oversold
+
+**Both fixes are no-ops on all 85 real PE images in the local corpus.** Tier 2 has never fired on any
+of them — see **G11**: the needle table's trailing dot means Tier 2 demands a three-component
+`Release-5.4.2` while UE's tag is the two-component `++UE4+Release-4.27`. Tier 1 got that dot-strip
+at rev 2; Tier 2 never did. That, not the window, is why Tier 2 is dead.
+
+### Controls
+
+The naive oracle moves in the **same** commit (it encoded the old rules and would otherwise go red
+for the wrong reason), and 8 new **absolute** cases pin the difference, since equivalence alone
+cannot see a change both sides made. Four controls, each reverted alone: window back to 8 → 2 red;
+the naive `strstr` repair → 1 red (the NUL case, which is the whole argument); drop the anchor gate →
+6 red; restore the G9 retire → 1 red.
+
+⚠ The retire control **passed first time** — my patch's `break` exited the *pattern* loop rather than
+the offset loop and retired nothing. A broken control, not a passing one (working-lessons §4.3b).
+
+-----
+
+## 2026-08-17 - G10 + MA1: the hint fast path was destroying working scans, and AOB scanning can now be cancelled (builds 3091 / 3095)
+
+Two commits. **The bigger one was not the finding I set out to fix** — it was found while
+re-deriving it, is HIGH, and was live-reproducible from logs already on this machine.
+
+### G10 (HIGH) — the hint fast path used a weaker test than the scan that made the hint
+
+`Genau::ScanForTarget`'s hint phase called `Macht::AOBScan`, which returns the **first** match only.
+The batch path it shortcuts hands Pass 1 **every** match and walks them until one validates. So a
+pattern whose first match failed validation was logged `Hint MISS` and then **erased from the pattern
+set** — hiding it from the one path that would have found the later, valid match.
+
+Same binary (PE `6A7EA60310F17000`), five minutes apart, from `Logs/DumperTest/`:
+
+```
+13:29 (cold)  === GNames: 31 patterns tried, 10 with hits, winner: GNAM_V1 -> 0x7FF63CD568C0 ===
+13:34 (hint)  [GNames] Hint MISS: 'GNAM_V1' (scan 1545 us) — falling back to full scan
+              === GNames: 33 patterns tried, 12 with hits, NONE validated ===
+```
+
+GNames not found on a binary where it demonstrably resolves. `GNAM_V1` had **166** matches on that
+image and the winner was not the first. GObjects showed the same shape in the same run and went
+**0.66 s → 6.14 s**.
+
+Three consequences, in order:
+
+1. **The false "not found" is PERSISTED.** `Flamme` writes `method="not_found"` over a good
+   `method="aob"` hint, and `ExtractHint` then refuses anything but `"aob"`. This week's dominant
+   defect family — a failed operation memoized as a real answer — already shipping, with no
+   cancellation involved.
+2. **It oscillates**: fail → hint destroyed → next launch cold-scans successfully → hint saved →
+   fail again.
+3. **It is the largest contributor to the worst scan time in the corpus.** The 16.3 s `FindAll` that
+   made MA1 look urgent is largely this, not `Macht`.
+
+Fix: `AOBScanAll` walked with the **same cap and same first-validated-wins rule as Pass 1**, so the
+two paths cannot disagree; `pr.hitCount` reports the real count (it was `matchAddr ? 1 : 0`, so a
+166-match pattern logged `hits=1` — the report and the reality computed by different code paths,
+which is what hid this); and the pattern is erased **only** when it produced zero matches.
+
+### MA1 — confirmed, narrowed, and my own re-raise had a wrong premise
+
+I wrote *"once control enters Macht, every poll G2 added to Genau is unreachable."* **Wrong.** None
+of Genau's 7 polls was ever on `ScanForTarget`'s call path — `Macht` does not shadow them, the AOB
+phase simply never had a poll at any level. Impact is also smaller than "larger than G2" implied: CE
+gives up at its own 5000 ms ceiling, so the user gets a bounded freeze plus a leaked stub, not a hang.
+
+**The poll alone would have been a net regression**, which is why it shipped as one commit with four
+guards. Today nothing aborts, so a scan always completes and writes a real record; add a poll and
+`*Method` stays `"not_found"`, `FindAll` still reaches `Flamme::SaveResults`, and the write is
+unconditional — one impatient untick destroys the hint cache permanently.
+
+- `ScanReport::cancelled`, recorded **at the bail** and never re-derived by calling
+  `Tot::Requested()` again (`Fern::AcceptLoop` resets the per-command flag on firstConn, so a
+  reconnect during unwind would make the run look complete).
+- `FindSparseDelegateStorage` no longer latches on a cancelled run — `s_sparseDelegatesScanned` has
+  three references in the whole tree and **nothing resets it**, so latching a cancelled scan would
+  kill sparse drill-down for the game process, surviving a CE Disable/Enable.
+- `EnginePointers::bScanCancelled`, OR-ed in the **one** block that already reads all four reports
+  rather than at four call sites — C++ has no `required`, and a missed target reintroduces hint
+  destruction for that target only.
+- `UE5_Init`'s latch guard now also refuses on it. ⚠ **Not** widened to `Tot::Requested()`:
+  `g_perCommand` stays latched until firstConn, so a stale flag would refuse the latch on a scan
+  that completed fine and permanently disable the DLL for that process.
+
+Polls sit at the **pattern boundary**, deliberately not inside `Macht`: the largest indivisible unit
+below is one `AOBScanBatch` (max measured 0.64 s on a 213 MB `.text`) or one `AOBScanAllModules`
+(max 2.34 s on a 593-module title), both inside CE's ceiling. `Macht.h` now records that reasoning —
+plus the correction that the earlier refutation was wrong for a *stronger* reason than MA1 gave
+(there is no `__try` in any scan core at all), and that a future poll there must discard partials,
+since `ResolveNameKeyTable` reads the list as a **uniqueness** test.
+
+### Also filed
+
+**MA2 (LOW)** — `ScanRegionBatch` guards on `minPatLen` across the batch but computes
+`regionSize - pat.bytes.size()` per pattern; for a pattern longer than the region that `size_t`
+subtraction underflows and the loop walks off the end, in a function with no SEH. Unreachable today
+(the sole call site passes no `moduleBase`), live the moment one is passed. `AOBScan`/`AOBScanAll`
+already carry the correct guard.
+
+-----
+
+## 2026-08-17 - G2: gate the version needle sweep, and let the recovery sweeps be cancelled (builds 3086 / 3088)
+
+**Audit #5 G2 — CONFIRMED, but its framing was wrong.** Filed as a *cancellation* defect; it is a
+**cost** defect the file already knew how to fix, and the poll it prescribed would have been both
+insufficient and, on the version sweep specifically, dangerous. Two commits. C++ 1094 → **1123**.
+
+### Measured, not estimated
+
+Conditions are part of the number — `Elliot-Win64-Shipping.exe`, 460.0 MiB = 482,344,960 bytes,
+MSVC 2022 `/O2` x64:
+
+| loop | naive | gated |
+|---|---|---|
+| Tier 1 (4 whole-image passes) | 4.348 s | 0.2245 s |
+| Tier 2/3 (19 whole-image passes) | 24.465 s · **9,165,424,620** memcmp calls | 0.0957 s · 39,351 |
+| `CountPreUE4Markers` | 0.489 s | — |
+| **contiguous unpolled stretch** | **~29.3 s** | **~0.35 s** |
+
+The audit's `~9.2e9` reproduces **exactly**; its `~14 s` implied 1.5 ns/iteration against a measured
+2.67 ns, so 14 s was a floor nothing reaches. A poll would have left all 29.3 s in place.
+
+> ⚠ **The measurement trap, recorded because it cost a rebuild:** benchmarking with a string
+> *literal* needle lets the compiler constant-fold `strlen` and inline the `memcmp`, understating the
+> cost by ~5×. The production loop takes `needleLen` from a table at runtime.
+
+### Why the gate is safe rather than merely fast
+
+Every needle begins `'4'` or `'5'` **and** has `'.'` at index 1; both Tier 1 prefixes begin `'+'` in
+narrow and UTF-16LE. Skipping an offset whose first byte is not in that set cannot change any
+`memcmp` result — exact by construction. `static_assert`s enforce it, so adding a `"6.0."` row
+without extending the walked set **fails the build**.
+
+Logic moved to `dll/src/VersionNeedleScan.h` (pure, header-only) for one reason: **no test target
+compiles `Genau.cpp`**, so none of this had a build-time check. `dll_helpers_test` now carries naive
+references transcribed from the pre-change loops and asserts agreement.
+
+### Version detection stays UNCANCELLABLE — deliberately
+
+Recorded in a block comment so the next session does not "finish G2" by pasting the `(B18)` idiom in.
+The verdict is **persisted** by `Flamme` per PE hash and skipped on later launches, so a cancelled
+sweep would be memoized as the fallback guess forever — the exact never-invalidated-cache shape this
+audit removed from `Ubel` three times over (U4/U16/U6). `CountPreUE4Markers` is worse: a truncated
+marker count is not a smaller answer but a **wrong** one, in the direction that refuses a supported
+game.
+
+### The three sweeps that DID get polls (build 3088)
+
+`DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`, `FindGNamesByStringRef` — Genau goes from
+4 poll sites to 7. Each abort was verified benign **at the caller**: none publishes or memoizes a
+not-found result. `Frieren::AutoStartWork` also gains `Tot::ResetPerCommand()`, which is load-bearing
+rather than tidy — `Tot::Requested()` is true for the client-disconnect latch too, and that latch is
+cleared only *after* this scan, so without it a stale latch would abort a healthy game's recovery at
+offset 0.
+
+### Three findings this pass, one of them a correction to the audit itself
+
+- **MA1 (MED, re-raised)** — a prior refutation recorded the `Macht.cpp` AOB family as *"here the
+  guards exist"*. **They do not**: `grep -c "Tot::" dll/src/Macht.cpp` = **0**; the `__try/__except`
+  blocks are SEH *read* guards, not cancellation. `ScanForTarget`'s Pass 2 feeds every zero-hit
+  pattern into `AOBScanAllModules` from five call sites. **That is what G2's word "multi-module"
+  actually pointed at**, and once control enters `Macht` every poll added here is unreachable. A
+  do-not-re-raise row is where a wrong refutation does the most damage.
+- **G8 (LOW)** — Tier 2's context window: the comment says 16 bytes, the buffer is `char ctx[17]`,
+  the `memcpy` copies **8**. Fails silently (falls to Tier 3, sets `bLowConfidence`).
+- **G9 (LOW)** — the Tier 3 `break` retires a pattern before a later Tier 2 hit for the same needle
+  can be seen. Both reproduced deliberately so the rewrite stayed equivalence-preserving.
+
+### Two negative controls PASSED first time, and both were bugs in my tests
+
+Per working-lessons §4.3b. Deleting the `'.'` gate stayed green because the perf buffer had no
+`'4'`/`'5'` at all, so the first-byte gate alone satisfied it. Tightening the walk bound stayed green
+**twice** — first because the bound-edge needles qualified as neither tier so the difference was
+invisible, then because the anchor was planted 1080 bytes from the needle when the window is 256, so
+it still qualified as nothing. Both now red (1 and 3).
+
+-----
+
+## 2026-08-17 - AE3: a dedupe key that names what the panel is showing OR loading (build 3068)
+
+**Audit #5 queue ⑥, part 2.** One filed clause **REFUTED**, the rest materially narrowed. 5 new
+tests (C# 3902 → **3907**); baseline control reds exactly 3.
+
+`_lastLoadedNodeAddress` was written *before* the awaited load, so a walk that failed left the key
+naming a node the panel never showed — and the guard then refused to reload it.
+
+### What the finding got wrong, and it matters
+
+- **REFUTED: "with no way to retry."** Selecting a *different* node overwrites the key and the
+  original reloads fine. Only the **same-node** retry was blocked — which is still the defect, since
+  clicking the same row again is the natural gesture after an error, but it is not a dead end.
+- **NARROWED: it needs a PRIOR SUCCESSFUL LOAD.** The guard was
+  `_lastLoadedNodeAddress == node.Address && HasClass`, and `HasClass = true` is the **only**
+  assignment to that property in all of `ui/` — a one-way latch. On a cold panel `HasClass` is
+  `false`, so the retry already worked. `ColdFailure_WasAlreadyRetryable` asserts exactly this and is
+  green before and after; without it a reviewer trims the priming step from the real test and gets a
+  silently-green test against broken code.
+- **REFUTED, companion prose** (`§2` of the audit): *"the panel binds no ErrorMessage at all …
+  completely silent."* `ClassStructPanel.axaml` binds it today, explicitly ungated by `HasClass`
+  (audit #5 V7 already fixed that). **Do not re-raise it.**
+
+### The fix
+
+The field is renamed to `_shownNodeAddress` — deliberately, so every diff hunk re-reads the
+invariant. The old name *was* the false premise: it is written when a load is **claimed**, so it
+names an attempt, and reading it as "last loaded" invites the natural repair (move the write after
+the walk) which would break the dedupe it exists for.
+
+New contract: *the node whose class the panel is showing **or is loading**; `null` when the content
+did not come from a tree selection, or when the newest tree-driven load failed.* One writer,
+`BeginLoad(nodeAddr)`, which also takes the ticket — so "you cannot take a ticket without recording
+whose panel this is" is true by construction. Cross-tab loads pass `null`, which is **AE3's third
+path** and needs neither a failure nor any concurrency: two ordinary clicks pinned the panel.
+
+`&& HasClass` is dropped. Its only job was keeping a cold failure retryable, which the release now
+does for **every** failure. Keeping it preserved two defects: the permanent-`true` latch armed the
+pin, and while the *first* walk is in flight it is still `false`, so a `node → null → node` re-fire
+(`ApplyFilter` nulls `SelectedNode` on every filter keystroke) issued a **second** walk for the same
+class.
+
+### The control found a coupling worth recording
+
+`ColdFailure_WasAlreadyRetryable` was predicted green under every control. It goes **red** under a
+*partial* revert that removes the key release while keeping the `&& HasClass` drop — the two changes
+are coupled, and that combination never shipped. The honest baseline is reverting the AE3 change as a
+whole: exactly 3 red (`FailedWalkAfterPriorSuccess`, `CrossTabLoad`, `DuplicateSelectionDuringFirstWalk`),
+with `ColdFailure` and `RepeatedSelectionOfSameNode` green.
+
+-----
+
+## 2026-08-17 - AE2: give the Class/Struct panel one owner per load (build 3067)
+
+**Audit #5 queue ⑥, part 1.** Narrowed from the filed text. 6 new tests on a VM that had **zero**
+coverage (C# 3896 → 3902); five negative controls, each reverted alone, each reding exactly its own
+test.
+
+Object-Tree selection could leave the panel showing a class that is not the selected node. Nothing
+upstream serializes the handler — `ObjectTreeViewModel` raises `SelectionChanged` as a bare
+`Action`, so MainWindowViewModel's `async` subscriber returns to the message loop at its first await
+— and `AsyncRelayCommand` does not block re-entrancy either (`CanExecute` goes false so a bound
+Button self-disables, but `ExecuteAsync` runs anyway; measured build 3038).
+
+### Narrowings
+
+- **Not "any two overlapping selections."** Only **instance-then-class-like** loses, and it loses by
+  **ordering**, not timing: the two branches issue a different NUMBER of round-trips (an instance
+  needs `get_object` before its walk, a UClass does not) over one strictly FIFO pipe lane, so the
+  older gesture's walk is issued third and answered third — deterministic, not a flake. Equal-hop
+  pairs settle in order and are safe.
+- **"async-void handler" is inaccurate as filed.** `OnObjectSelected` is `async Task`; the async void
+  is one level up, at the subscription. The mechanism is unaffected, but the label points a fixer at
+  the wrong file.
+
+### The fix, and the part an obvious implementation gets backwards
+
+Reuses the four-guard idiom from `InstanceFinderViewModel.LoadInstanceFieldsAsync` — the one site in
+this repo that guards all four points — and the existing counter spelling (`_loadGen` /
+`_fieldLoadId` / `_classLoadId`) rather than inventing a fourth.
+
+⚠ **The ticket is claimed at GESTURE time in `OnObjectSelected`, not inside `LoadClassAsync`.**
+Claimed in the command it would *invert* the fix: the stale instance selection **enters the command
+last**, because its `get_object` hop delays entry, so it would take the **highest** ticket and win
+legitimately. Bailing right after `get_object` also means the stale walk is never put on the wire —
+saving a hop on a contended lane rather than adding one.
+
+`LoadClassAsync` keeps its exact signature (five cross-tab callers untouched) and delegates to a new
+`LoadClassCoreAsync(classAddr, gen)`. The no-op `classAddr` check stays **before** the claim: a
+request that does no work must not supersede a live load, or the spinner is left owned by a ticket
+nobody retires.
+
+### Prerequisite
+
+`StubDumpService.GetObjectAsync` gains `virtual`. Without it the two-round-trip branch — the whole of
+AE2 — is unreachable from a test, and its negative control reports green against broken code.
+Additive; the ~13 subclassing test files inherit the unchanged throwing body.
+
+-----
+
+## 2026-08-17 - U6 + F3: witness the name cache on the bytes it decoded (build 3065)
+
+**Audit #5 queue ⑤, part 3 — and the fix is NOT the one the audit prescribed.** Pinned by 7 new
+assertions (C++ 1087 → **1094**); negative control 2 red.
+
+`Ubel::GetName` memoizes per `UObject*` — an address the engine recycles — and served every hit
+unvalidated. After a level change, every name-bearing response (Object Tree rows, `walk_instance`'s
+own/outer name, every ObjectProperty target) returned the **destroyed** object's name for the rest of
+the process, while the class was read fresh, so the two disagreed with no error anywhere. Only
+restarting the game cleared it. F3's *reconnect* half shipped in build 2819; this is the in-session
+half it deferred.
+
+### Why not the prescribed `(InternalIndex, SerialNumber)` witness
+
+The audit called that pair *"the same pair UE itself uses to detect a recycled slot"*. It is not, for
+a passive observer: `FUObjectArray::FreeUObjectIndex` sets `SerialNumber = 0`, and
+`AllocateSerialNumber` assigns only inside `if (!SerialNumber)` — essentially only from
+`FWeakObjectPtr::operator=`. **Most objects carry serial 0 for life**, and the free list is LIFO, so
+a stale witness of `(i, 0)` matches the new state `(i, 0)` — silent in exactly the recycle it exists
+to catch. It would also have rested on `Aura::GetSerialNumber`, whose own comment marks the packed
+`FUObjectItem` layout `*** UNVERIFIED ***`. **Do not re-propose it.**
+
+### What shipped instead
+
+Witness the **input bytes of the decode**, not the identity of the object. The cached string is a
+pure function of `{ int32 ComparisonIndex; int32 Number }` at `UObject+0x18`, and FNamePool entries
+are append-only for the life of the process — so if those two int32s still read the same, the cached
+string is still the correct answer, whoever owns the address now. Total, not heuristic, and *cheaper*
+than what it guards: two int32 reads against a pool walk. It also replaces the read `GetName` already
+did rather than adding one.
+
+`number` is load-bearing and has its own assertion: dropping it is exactly U8, which shipped once and
+rendered `Slot_1`/`Slot_2`/`Slot_3` all as `Slot`. `NAME_None` is `{0,0}` and a **real** name, so a
+witness treating zero as "unset" would never serve it from cache — also asserted.
+
+Assign-over-stale is legal here and only here: this cache hands out **copies** (the hit returns by
+value with the copy made under the lock), so no reference into it escapes. The two class caches hand
+out references, which is why they get an insert-time gate instead (U4, build 3052).
+
+`ClearNameCache` keeps all four call sites but its rationale changed — staleness is no longer one of
+them. What is left is bounding growth, and covering a `Serie::Init` re-run, the one event that can
+remap a `ComparisonIndex` and so make an unchanged witness decode to a different string.
+
+-----
+
+## 2026-08-17 - U16: a truncated UEnum table was cached forever, and the log said it was full (build 3058)
+
+**New finding, hand-found while fixing U4** — same file, same never-erased-cache shape, in none of
+queue ⑤'s four findings. Pinned by 7 new assertions (C++ 1080 → **1087**); two negative controls,
+3 red and 1 red.
+
+`ResolveEnumValue`'s entry loop `break`s on a mid-table `Neu::ReadEntry` failure, and the **partial**
+vector was then published unconditionally into `s_enumCache`. Nothing in `dll/src` erases that cache,
+so **one truncated read permanently splits a single UEnum**: values below the break point resolve,
+values above render as raw integers — Live Walker, Property Grid and every CE export — for the rest
+of the process, with no retry.
+
+The log actively concealed it. `LOG_DEBUG` printed `layout.count`, the *intended* count, never
+`entries.size()`, so a truncated table logged as a full one. That is audit #4's own root cause
+verbatim — **the report and the reality computed by different code paths**.
+
+### The fix, and the distinction it turns on
+
+New `Ubel::ShouldPublishEnumTable(buildLayoutOk, intendedCount, readCount)`. The two failure modes
+look alike and must **not** be treated alike, in either direction:
+
+- **`BuildLayout` failed → publish.** That is a *complete* answer. `Neu.h:100`/`:116` reject
+  `count == 0` / `num <= 0`, so a legitimately member-less UEnum and any address that is not a UEnum
+  both land there; refusing to cache them would re-probe on every lookup. (This is also why U4's own
+  filed enum claim was correctly refuted — do not re-raise it.)
+- **The loop broke mid-table → do not publish.** Answer this call from the partial table, cache
+  nothing, let the next call recover.
+
+`GetEnumEntries` now warns when it finds no cached table, because post-fix that means exactly one
+thing — a truncated read — and an empty CE DropDownList is otherwise indistinguishable from a
+member-less UEnum.
+
+-----
+
+## 2026-08-17 - U4: refuse to memoize a class walk whose identity read failed (build 3052)
+
+**Audit #5 queue ⑤, part 1.** The filed mechanism was **refuted and replaced** — see below. Pinned by
+7 new assertions in `dll_helpers_test` (C++ 1073 → **1080**); two independent negative controls,
+4 red and 2 red.
+
+### The filed premise was wrong; the real one is worse
+
+U4 said a zero-field `ClassInfo` gets cached "from a transient read failure or a not-yet-`Link`ed
+UClass". Both halves are wrong: `Macht::ReadSafe` is an in-process SEH deref that fails only on an
+access violation, and `UStruct::Link` *iterates* `ChildProperties` rather than creating it, so a
+pre-`Link` walk yields every field with correct names and wrong offsets — never an empty list.
+
+The real mechanism is deterministic and already shipped. `WalkInstance` calls `WalkClass(classAddr)`
+(`Ubel.cpp:3561`) and only **then** applies its recycled-object gate `IsSanePropertiesSize`
+(`:3576`), whose own comment reads *"an implausible value means classAddr points at recycled
+memory"*. **The one code path that knows the address is garbage had already published it
+permanently** — the class caches are keyed by a raw `UClass*` and nothing in `dll/src` erases them.
+Reachable with no GC at all: `UE5_WalkClassBegin` (`Frieren.cpp:706`) takes a raw address with zero
+validation, and `scripts/ue5_dissect.lua:378` uses it as its *is-this-an-instance?* probe — so the
+shipped workflow keys `s_walkClassCache` by **instance** addresses by design. `UE5_WalkClassEnd`
+clears only Frieren's own local copy.
+
+### The fix
+
+New `Ubel::ShouldPublishClassWalk(propsSizeReadOk, propertiesSize)` beside the `IsSanePropertiesSize`
+it reuses — **the predicate already existed; only the read-ok term was missing.** `Macht::ReadSafe`
+zeroes its out-param on fault and 0 is a *sane* PropertiesSize, so the value test alone cannot see an
+unmapped address; `WalkClass` now carries that discarded `bool`.
+
+Two gates, deliberately different, because the two conditions are not equally trustworthy:
+
+- **Read fault → bail before the field walk.** `USTRUCT_PROPSSIZE` is a small in-object offset, so
+  only an unmapped page faults — a verdict that is *offset-independent*, hence safe on a forked
+  layout. Skips 4096 bounded-but-real FNamePool lookups down a garbage FField chain.
+- **Implausible value → complete the walk, refuse to memoize.** `DynOff::USTRUCT_PROPSSIZE` is
+  *derived* (`childPropsOff + 8`, `Genau.cpp:3348/4010/4016`), never independently probed, so a
+  pre-walk bail on the value would turn "fields fine, size wrong" into "no fields at all" on a fork.
+  Refusing to cache costs only a re-walk.
+
+`WalkClassEx` gets the same gate — it is the more widely consulted cache (Property/Value Search,
+snapshot capture, CE export, Solitar, Solide), so fixing only `WalkClass` would close the smaller
+half. Placed **before** `CorrectSubclassOffsets` so a garbage class cannot calibrate the
+process-wide `FSTRUCTPROP_STRUCT` offset off its own bogus fields.
+
+### Corrected in passing
+
+The B10 comment claimed *"WalkClassEx hands out a `const ClassInfo&` into this map"* about
+`s_walkClassCache`. It does not — `WalkClassEx` copies, and both of that map's readers copy under
+its mutex. The reference-return belongs to `s_walkClassExCache`. The rule (try_emplace, never
+assign) is right for both and both now say why.
+
+### Not fixed here
+
+**U5 stays open** and its row stays unticked: not one byte is freed. Eviction is impossible while
+`WalkClassEx` returns `const ClassInfo&` to 25 call sites, several of which re-enter it while
+iterating `ci.Fields` on one thread — so the item is "change the return type, THEN bound the cache",
+not "add an LRU". Class-to-class recycling (a recycled address whose new occupant has a *sane*
+PropertiesSize) is also still open — that needs a layout fingerprint over an append-only arena.
+
+-----
+
+## 2026-08-17 - AA14-AA20: seven fixes on the CE Lua invoke path (build 3039)
+
+**Audit #5 queue ④** — all seven on one path: the mailbox round-trip CE Lua uses to call a UFunction
+in the game. Pinned by a new `scripts/tests/invoke_helper_test.lua` (63 checks), the third rig in
+`scripts/tests/`. **Written to fail first: 23 failures against the unfixed file.**
+
+### What was wrong
+
+| | |
+|---|---|
+| **AA14/15** | `allocateMemory`'s nil return was unchecked, so a failed allocation still wrote `ArrayNum = ArrayMax = n+1` beside `Data = 0` — an FString **promising n+1 characters at address 0**, handed to a live UFunction. |
+| **AA16** | `BakedScriptGenerator.MapToHelperType` can emit `ftext` / `tarray` / `tmap` / `tset` / `delegate`; `writeParams` accepted **none** of them, so the error aborted the WHOLE invoke before the DLL was ever triggered. |
+| **AA17** | The params buffer was zeroed only to the CALLER's `parmsSize`, while the DLL passes `sizeof(paramsData)` — a flat **1024** — to `UE5_CallProcessEventEx`. |
+| **AA18** | A timeout reported the STALE `errorMsg` from an earlier command. |
+| **AA19** | The reentrancy flag was cleared unconditionally, including on the timeout path — exactly when the DLL still owns the mailbox. |
+| **AA20** | `readUFunctionReturn` decoded int32/int16 UNSIGNED, so a UFunction returning `-1` read as `4294967295`. |
+
+### Two things the measurement changed
+
+- **AA14 is worse than filed, and the rig nearly hid it.** CE does *not* raise on a nil address —
+  `lua_toaddress` falls through to `lua_tointeger`, and `lua_tointeger(nil)` is `0`, so
+  `writeBytes(nil, …)` writes to address **0** and returns. The first version of the rig modelled it
+  as a raise, which made three of AA14's five assertions pass for the wrong reason. With a
+  CE-accurate stub the real behaviour appears: `ok = true, err = nil` — a **silent success** that
+  sends the invoke. The finding described the bytes correctly and the *outcome* not at all.
+- **AA16's most likely victim is `tarray`, not `ftext`.** `InvokeParamDialog.CollectBakedValues`
+  skips OUT params only when they are STRING types, so the ubiquitous
+  `GetAllActorsOfClass(…, TArray<AActor*>& OutActors)` shape is collected and aborts the export —
+  a plain getter the user supplied nothing for.
+
+### The repair
+
+- **AA14/15**: raise before *any* of the three field writes. A length is never published for a
+  buffer that does not exist.
+- **AA16**: `tarray`/`tmap`/`tset`/`delegate` are accepted and **write nothing** — after AA17 the
+  whole buffer is zeroed first, and all-zero *is* the default-constructed empty value for each
+  (`{Data=nullptr, Num=0, Max=0}`; an unbound `FScriptDelegate`). A value the caller actually
+  supplied is refused rather than silently dropped. **`ftext` stays refused, deliberately**: an
+  all-zero FText is not an empty FText — it holds a `TSharedRef` the engine dereferences, so a
+  zeroed one is a crash, not a default. The error message also listed 11 of the 23 tokens
+  `writeParams` really accepts; it now lists them all.
+- **AA17**: one `writeBytes` over the full 1024. Also *faster* than before — the old form was one CE
+  round trip per byte, so covering the whole region this way beats covering part of it the old way.
+  `writeParams` still gets `parmsSize` as its region size, so the `fstruct` size-inference fallback
+  is unchanged.
+- **AA18**: wipe `errorMsg` before sending. Nothing else does — the DLL's pickup sets
+  `status = PROCESSING` and leaves the field alone. Incidental: the existing `or 'timeout'` fallback
+  was **unreachable**, because `'' or x` is `''` in Lua.
+- **AA19**: the guard is released only when the mailbox is ours again. A timeout records the mailbox
+  address, and the next call asks the **DLL's own published state** (`status == DONE && cmd == IDLE`)
+  rather than latching a Lua-local boolean for the session.
+- **AA20**: `int32` (the default) and `int16` decode signed; `uint32`/`dword` and `uint16`/`word`
+  are the unsigned spellings. The docblock and `scripts/README.md` both listed a token set that
+  omitted them.
+
+### Negative controls — one per finding, all discriminating
+
+AA14/15 → **7 red** · AA16 → **13** · AA17 → **2** · AA18 → **1** · AA19 → **2** · AA20 → **2**.
+All green on restore. C++ 246 + 1073, C# 3896 (the eleven source-text assertions on the embedded
+helper still pass — it ships as a manifest resource, not a file).
+
+`scripts/README.md` gains the third rig and, more usefully, a fourth trap for whoever writes the
+next one: **a stub stricter than CE hides exactly the defects worth finding.**
+
+-----
+
+## 2026-08-17 - AE4-AE7: the Proxy Deploy panel gets a guard that is actually one (build 3038)
+
+**Audit #5 queue ③.** `IsScanning`'s own declaration already called itself *"the mutual-exclusion
+guard"* — it just was not one. Three of the eight long operations **set** it while six **tested**
+it, so the guard was one-directional: a scan blocked a deploy, a deploy blocked nothing.
+
+### What re-deriving changed about the fix
+
+Two premises needed narrowing before any code was written, and one new defect turned up in the same
+handler:
+
+- **AE6's scope was too wide.** `AsyncRelayCommand` reports `CanExecute == false` while it runs and
+  Avalonia's Button gates on that, so a command already could not re-enter **itself** from its own
+  button. Measured against the resolved package (8.4.2) with a scratch probe rather than recalled:
+  `ExecuteAsync` twice → both bodies entered, but `CanExecute` was `false` throughout. So
+  Deploy-vs-Deploy was never reachable from the UI; the gap is strictly **cross-command** — two
+  different buttons, plus the paths no button owns (a property-changed handler, a hotkey, a test).
+- **AE4's mechanism was "the loser's proxy type wins".** Not derivable: each refresh captures its
+  arguments at call time and applies its whole batch in one synchronous pass, so rows never mix.
+  The true claim is **last writer wins, with nothing checking that the winner matches the radio.**
+- **AE5's "six guards" is right but three of them are well-formed** self-exclusion. Only four
+  readers never set it.
+- **Found while verifying, in the same handler:** `OnScanDrivesModeChanged` fires
+  `LoadDrivesCommand.Execute(null)`, and `ICommand.Execute` does not consult `CanExecute` either.
+  `LoadDrivesAsync` sets no flag and its trigger condition (`Drives.Count == 0`) stays true until
+  the load *completes*, so toggling the source radio off and on during it starts a second load
+  whose `Drives.Clear()` discards the `DetectedDrive` instances the user has already ticked —
+  **the drive selection silently resets.**
+
+### The repair
+
+- **One gate, `TryBeginExclusive`, held by all eight operations** via an `IDisposable` scope, so an
+  early return or a throw cannot leave the panel wedged — which is how the flag came to be set by
+  only three of the operations that test it. `IsScanning` now has exactly **one** writer.
+  `ScanAsync` gains an entry guard it never had, which is what let it `Games.Clear()` under a
+  running Update All. The refusal message names the operation actually running, instead of always
+  saying *"Wait for scan to finish"* when no scan was running.
+- **AE4: cancel the superseded refresh, then correct the grid if the radio moved on.** The CTS
+  supersede is the idiom `InstanceFinderViewModel:242` already uses. The correction is the half the
+  negative control forced: cancellation stops a refresh that is still *computing*, but the service
+  writes the grid **after** its cancellable worker returns, so a cancel landing in that window is
+  too late and the stale write goes through anyway.
+- **AE7: snapshot `Games` before the loop, and catch.** `UpdateAllAsync` had no `catch` at all and
+  is an `AsyncRelayCommand`, so a faulted task on the button path is rethrown onto the UI thread —
+  a crash risk, not merely a tally that never appeared. Cancelling now reports what *did* get
+  updated, because N folders are no longer uniform and the user needs to know.
+- **`LoadDrivesAsync` gets a re-entry guard.**
+
+### The negative controls did real work
+
+Four controls, one per finding — and **two of them found bugs in the fix**:
+
+1. **The AE4 control passed**, which meant the test was not pinning the correction at all: the stub
+   completed refreshes synchronously, so two were never in flight. Rebuilt so the test parks both
+   and releases them in **reverse** order — and the fix then failed, because the guard I had
+   written (`!ct.IsCancellationRequested`) blocked the correction on precisely the call that needs
+   it: the superseded one, whose token is by definition the cancelled one.
+2. **The AE7 snapshot control passed** because the new `catch` masked it. Tightened to assert the
+   *success* tally, which is the only wording that means the loop ran to the end.
+3. The first gate control **deadlocked the suite** rather than failing — a refused command that
+   stops being refused parks on the same test gate. The refusal awaits are now bounded, so a
+   regression fails in 10 s with a clear message instead of hanging.
+
+Final: reverting the gate → **3 red**; reverting AE4's correction → **1 red**; reverting AE7's
+snapshot → **1 red**. All green on restore. C# **3896** (was 3885), C++ 246 + 1073, AOT publish
+clean.
+
+**Not in this change, deliberately:** `DeleteSelectedOrphansAsync` was already well-formed (it sets
+`IsRemovingOrphans`, which the gate now tests), and the three other fire-and-forget
+`_ = ApplyProxySuggestionsAsync()` sites plus their siblings in `InterestingFunctionsViewModel` and
+`RelatedObjectsViewModel` are separate findings — `ApplyProxySuggestionsAsync` also has four
+legitimately-awaited callers, so a generation guard there must supersede only the fire-and-forget
+path or the awaited ones silently no-op.
+
+-----
+
+## 2026-08-17 - AA4-AA7: ue5_dissect.lua stops reporting failure as success (build 3037)
+
+**Audit #5 queue ②**, and the first fix in this repo written against a Lua test rig that RUNS the
+script (`scripts/tests/dissect_test.lua`, 40 checks). The C# suite can only assert on this file's
+source TEXT, so every claim below was measured, including the pre-fix behaviour.
+
+### Two of the four premises were wrong, and one was wrong dangerously
+
+These were MED rows carrying the audit's own *"not re-derived by hand"* caveat. Re-deriving them
+first was not ceremony:
+
+- **AA4's premise is REFUTED.** It asserted, as "CE source-verified", that a bare `getAddress`
+  raises on a missing symbol and that `ue5_dissect.lua:54`'s `if fn == nil or fn == 0` is therefore
+  dead code. `TSymhandler.getAddressFromNameL` gates its raise on `ExceptionOnLuaLookup`
+  (`symbolhandler.pas:5082`) and `TSymhandler.create` sets that **FALSE** (`:6688`) — nothing in
+  CE's Pascal ever sets it true. **`getAddress` returns 0, and that guard is the only thing turning
+  "the DLL was never injected" into a message naming the export.** Acting on the finding would have
+  deleted it. CE's own `celua.txt` claims the opposite default; that contradiction is now
+  [CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md) §6.
+- **AA4's *consequence* is real, and is the actual defect.** A Lua error inside a registered dissect
+  callback does not stay in Lua: `TLuaCaller.StructureDissectEvent` re-raises it as a **Pascal
+  exception** (`LuaCaller.pas:1229-1232`) into a dispatch loop with no handler
+  (`StructuresFrm2.pas:1451-1458`), which skips the next line — CE's own
+  `autoGuessStruct` fallback (`:1460`). Nothing auto-unregisters the callback and CE never rebuilds
+  its Lua state, so **one raise breaks Structure Dissect for every address, UObject or not, for the
+  rest of the session.**
+- **AA5/AA6 are real and worse than filed.** The audit said a failed field read is recorded as "a
+  duplicate of the previous field". Measured: that is the *mild* case. With the DLL failing
+  outright, `pcall` returned **ok=true** and the run built a 45-element structure whose every walked
+  field had an empty name and offset 0, **registered it with CE, cached it, and logged "Struct
+  created"**. A total failure was reported to the user as a successfully built structure.
+- The audit's "14 call sites" is **19**, and the first `nil` comparison to blow up is
+  `createFromClass:362`, not the `:164`/`:173` the findings cite — the instance-detection probe runs
+  before the walk is ever entered.
+
+### The repair
+
+`callDLL` now has one contract: **it returns the DLL's value or it RAISES. It never returns nil, and
+no caller needs a nil check.** The two ways Lua treats `nil` were both wrong and in opposite
+directions — `count <= 0` raises with a Lua type error naming a line instead of the failed call,
+while `success ~= 0` is **true** for nil, so a failed read counted as a success and re-read the
+previous field's buffers (`UE5_WalkClassGetField` leaves its out-params untouched on failure,
+`Frieren.cpp:712-731`).
+
+Raising is only safe because of the other half, and the two must not be separated:
+
+- **Both CE-registered callbacks are now barriered** (`callbackBarrier`). A failure declines —
+  `false`/`nil`, the contract that lets CE fall through to its own dissect — and warns **once per
+  session**, because CE calls these per expanded node.
+- **`createFromClass` unwinds a failed build**: `endUpdate()` always runs, the partial structure is
+  destroyed, and nothing is registered or cached. Previously `beginUpdate()` had no match and the
+  orphan was never in `structList`, so `clearAll()` could not free it either — survivable while a
+  failed call returned nil, but this fix makes raising the *normal* failure path, so leaving it
+  would have shipped a regression (audit #5 AA25, promoted from latent by this change).
+- The per-call `warn()` is gone: it fired once per FIELD, so a dead DLL printed **40 ungated lines**
+  over CE's Lua Engine window — the exact thing CLAUDE.md's hygiene rule exists to prevent.
+
+### Negative controls (two, one per half)
+
+Reverting `callDLL`'s raise to the old `warn()` → **9 checks red**, including *"NOTHING was
+registered with CE"* and *"at most one line printed, not one per field"* (40). Reverting the
+callback barrier alone → **2 checks red**. Both green on restore. Against the unfixed file the rig
+reported **13 failures**, so the defects are reproduced, not argued.
+
+C++ 246 + 1073, C# 3885 (the source-text assertions in `CeExecuteCodeExArityTests.cs` still pass —
+`local ret, why = executeCodeEx(` and the `DLL_CALL_TIMEOUT_MS` shape are unchanged),
+`luac -p` clean.
+
+**Checked and clean — do not re-raise:** the `.CT`'s sibling `ue5_callDLL`
+(`scripts/UE5CEDumper.CT:448`) also returns nil on failure, but both of its call sites (`:619`,
+`:781`) test `== nil` explicitly.
+
+### AA7 — `fillGaps` deleted (maintainer's call)
+
+Defined, advertised in three places (this file's header, `scripts/README.md`,
+`scripts/DEPLOY_README.html`), and **never called from anywhere in the repo**. It was also wrong:
+the coverage set was built from element START offsets only, so an 8-byte field at `0x10` marked
+only `0x10` — `0x14` read as uncovered and the loop would have emitted a `vtPointer` **overlapping
+a real field**. On a real class that is hundreds of unnamed rows, some of them overlaps.
+
+Deleted rather than repaired. CE's own `autoGuessStruct` already covers the no-override case, and a
+correct version would need to track each field's real byte span while elements are added — new,
+untested, visible behaviour in a shipped script that nobody asked for. The three doc claims are
+gone with it, and the removal comment records the shape to build if it ever returns (the DLL hands
+us `f.size` per field, so the coverage set must never be re-derived from CE's element list).
+
+-----
+
+## 2026-08-17 - A6: Force holds the class AND its subclasses (build 3036)
+
+**Audit #5 A6 — unparked by a maintainer decision, not by new evidence.** The finding was confirmed
+and deliberately left unfixed because the repair was a product choice with no right default. The
+maintainer chose **option (a)**: the defining class **plus every subclass**, and asked for the
+Stealth Meter to move to the same semantics.
+
+### The defect
+
+Property Search reports the **defining** class for an inherited property — `Aura` sets
+`match.className = definingName` so dedup can collapse ~4,800 `AActor` subclasses into one row
+badged *"inherited by 4822"* instead of listing them. `Solide::ApplyJobLocked` then resolved the
+pool with `FindInstancesByClass(name, exactMatch=true)`, so forcing an inherited field looked up
+instances of `Actor` **itself** and found essentially none. The failure was at least honest —
+*"0 live instances of Actor matched — nothing held."* — which is why it was a capability gap rather
+than a corruption.
+
+`exactMatch=false` was never the answer: it is a case-insensitive **substring** match on the class
+NAME, so `"Actor"` would capture everything with "actor" anywhere in its name and still miss every
+subclass that does not contain the word.
+
+### The repair
+
+New `Aura::FindInstancesDerivedFrom(baseClassName, maxResults)` — a **derivation** test that walks
+the UClass super chain, with a **per-UClass verdict cache** so the walk is paid once per distinct
+class rather than once per object (GObjects holds 10^5–10^6 objects over 10^3–10^4 classes, which
+is what makes "AActor and everything under it" affordable). `Solide::ApplyJobLocked` calls it.
+`"Enemy"` still excludes `"EnemyProjectile"` — the reason the old exact match existed — because
+derivation is not substring.
+
+**The non-obvious half: the CDO skip had to move INSIDE the walk, before the cap.** A base like
+`AActor` is the ancestor of thousands of classes, every one contributing a `Default__` object, and
+CDOs are constructed at class-load time so they occupy the LOW GObjects indices this walk reaches
+first. Filtering them in the caller — which is what `Solide` did — would have handed it 256
+class-default rows and not one live instance, turning the fix into a different zero. `Solide`'s own
+skip stayed as the local invariant (`ApplyToInstance` must never write a class default).
+
+`ApplyToInstance` already resolved the field against each instance's **own** class
+(`Ubel::FindField(cls, …)`), so an inherited field resolves correctly across the subclasses and an
+instance that genuinely lacks it is simply not counted as held.
+
+**Stealth Meter is covered by the same change** — it goes through `ForceFieldAsync` → `force_field`
+→ `AddForce` → `ApplyJobLocked`. It resolves a concrete class, so the semantics are additive there,
+but it is the shipped, in-game-verified path this deliberately altered and is registered as a
+regression check.
+
+The cap (`SOLIDE_MAX_INSTANCES` = 256) is now reached routinely rather than exceptionally, so
+`truncated` is load-bearing UI: both status lines already said it and still do.
+
+### What is NOT in this change
+
+- `ResolveLocalPC` and the other `FindInstancesByClass("PlayerController", false, …)` callers keep
+  their substring match — a different concern (resolve ONE object, not a pool) in modules with their
+  own verified behaviour. `Hemmung::ResolveWorldSettings` is the one worth revisiting: its comment
+  calls the substring match "subclass-tolerant", which `FindInstancesDerivedFrom` would now do
+  properly. **Left alone deliberately; not silently widened.**
+
+### Negative control
+
+The DLL half **cannot be unit-tested** — no test target compiles `Aura.cpp` or `Solide.cpp`
+(`dll_helpers_test` compiles `Radar.cpp` + `Denken.cpp` only), so it is registered for live
+verification with an explicit regression half. The UI half IS pinned: a new
+`Force_zero_held_says_the_pool_included_subclasses` test; reverting the status string to the
+class-only wording fails exactly that test (1 of 3885) and passes again when restored. C++ 246 +
+1073, C# 3885, `-Target DLL` clean.
+
+-----
+
+## 2026-08-17 - AB3+AB5: the vector scan learns UE5's LWC width (build 3035)
+
+**Audit #5 queue ①.** The first entry of §3b's ordered fix queue, and the highest-user-impact MED
+left: *every UE5 game's FVector/FRotator value scan compared junk.*
+
+### The defect
+
+UE5's Large World Coordinates made the default `FVector` / `FRotator` **3 doubles (24 bytes)** while
+the explicit float variants (`FVector3f` / `Rotator3f`) stayed **3 floats (12 bytes)**. The scan
+accepted both spellings by NAME — `Radar::VectorStructNames` lists `"Vector"` and `"Vector3f"` in
+one table — and then read a flat **12 bytes as three floats** at every stage:
+
+- `Radar::SizeOf` answered a constant `12` for all three vector DataTypes (`Radar.cpp:27`).
+- `Radar::CompareVectorPredicate` decoded `float c[3], a[3], b[3]` (`Radar.cpp:797`).
+- `FormatVectorBytes12` rendered the same 12 bytes as floats — so the display and the compare were
+  wrong *together*, which is why this never looked like a bug in the value column.
+- Every read site in `Aura.cpp` passed a literal `12`.
+
+On a 24-byte field that reads the low four bytes of X plus the low four bytes of Y as one "float" —
+a bit pattern that can never equal what the user typed. The scan returned zero plausible hits and
+looked like "the value isn't a UPROPERTY".
+
+**The width was already in hand and thrown away.** `ScanField::size` captured the property's
+reflected `ElementSize` at index-build time and was **written seven times and read nowhere**.
+
+### The repair
+
+The width is now read per FIELD from the property's own reflected size — which is the rule
+[teleport-spec.md](teleport-spec.md) §5.3 already fixed for this repo (*"Never key this off a
+version number"*) and which `Wirbel`/`Laufen`/`Dunste`/`Schlacht` each already applied locally.
+A version-keyed fix would have been wrong anyway: **one UE5 game holds fields of both widths.**
+
+- `Radar::SizeOf` returns **0** for the vector types — the same "variable" signal the string and
+  multi-numeric families already use. A single constant cannot be true here, and pretending
+  otherwise is what the defect was.
+- New shared, tested statement of the rule: `Radar::IsSupportedVectorWidth` /
+  `DecodeVectorBytes` / `StoreVectorCanonical` + `VECTOR_WIDTH_FLOAT` / `_DOUBLE` / `_CANON_BYTES`.
+- `CompareVectorPredicate` now takes **decoded triples** (`const double*`) rather than raw bytes.
+  Deliberate: the three buffers no longer share a width (a 24-byte field vs a target typed as text),
+  so a byte-level predicate would need a width per argument and would silently mis-read if one drifted.
+- One **canonical in-memory form**: 3 doubles. `Candidate::prevValue` (16 → 24 bytes) and every
+  vector target buffer hold it, so the renderer, the server-side filter/sort, the refine compare and
+  the wire can never disagree about the source width again.
+- `FieldDescriptor::vectorWidth` carries the source width into the session, because **refine
+  structurally cannot re-derive it** — `fieldType` is the bare string `"StructProperty"` for every
+  vector (the multi-numeric family's re-resolve trick has no vector equivalent).
+- The index builder resolves the width from the property that actually holds the triple, which is a
+  *different* field per container shape: a leaf uses its own `ElementSize`; `TArray` its inner
+  element size (`size` there is the 16-byte header); `TSet` its element size, **not** `elemStride`
+  (the sparse-array slot is padded by hash bookkeeping); `TMap` the `keySize`/`valueSize` half;
+  `TOptional` the *wrapped* type's size (`f.Size` includes the trailing `bIsSet` byte).
+- **AB3's real repair**: a reflected size that is neither 12 nor 24 is now **refused** rather than
+  read at a guessed width — that is what keeps an `FVector2D`/`FVector4`/game-namesake out of the
+  candidate set. `"Vector"` stays accepted on both engines, because the name gate no longer implies
+  a width.
+- `ParseVectorBytes` parses through `std::stod` into the canonical form. Incidental: `std::stof`
+  was already rounding a large coordinate before it reached the compare.
+
+**Found while fixing** (the fix-time sibling grep): `GroupSlotValueString` and its sibling lambda
+copied `sizeof(tmp.prevValue)` bytes out of a `GroupSlotMatch` — destination-bounded. Benign while
+both arrays were 16, an **8-byte out-of-bounds read** the moment `Candidate` grew. Now
+source-bounded with a `static_assert`.
+
+### Negative control
+
+`DecodeVectorBytes` reverted to the pre-fix "always three floats": **7 assertions red**, including
+`LWC field Exact-matches the typed target`. Restored → green. C++ **246** + **1073** (was 1042;
++31), C# suite green, `-Target DLL` clean.
+
+### Not verified on a game
+
+This needs a **UE5** title and cannot be checked on UE4 — five steps are registered in
+[todo.md](todo.md) `## Pending live-game verification`. **No wire or UI change**: vector targets and
+values cross the pipe as text, so the width is entirely a DLL-side fact.
+
+-----
+
 ## 2026-08-16 - Fourteen audit-#5 MEDs, fixed in cluster order (builds 3016-3031)
 
 **Audit #5, MED tier.** The three named families were already closed, so this run followed §4's

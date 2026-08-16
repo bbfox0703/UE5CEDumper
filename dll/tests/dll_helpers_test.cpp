@@ -28,6 +28,7 @@
 #include "../src/Lineal.h"  // UE5.7+ packed FUObjectItem reconstruction (Reconstruct/Encode)
 #include "../src/Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.6+ FNameData)
 #include "../src/GraphPath.h"   // Pure BFS shortest-path core ("Locate in GWorld")
+#include "../src/VersionNeedleScan.h"  // Gated UE-version needle sweep (audit #5 G2)
 #include "../src/Solitar.h"     // GodMode FBoolProperty bit write (ApplyBoolBit, header-inline)
 #include "../src/Grimoire.h"    // DynOff FFieldClass::Name probe (UE5.8 virtual-dtor shift)
 #include "../src/Solide.h"      // Force-field / stealth-meter matcher (MatchStealthField, header-inline)
@@ -320,10 +321,13 @@ static void Test_ValueScan_DataTypeSizes() {
     EXPECT("SizeOf FString = 0", Radar::SizeOf(Radar::DataType::FString) == 0);
     EXPECT("SizeOf FName = 0",   Radar::SizeOf(Radar::DataType::FName)   == 0);
     EXPECT("SizeOf FText = 0",   Radar::SizeOf(Radar::DataType::FText)   == 0);
-    // Phase 2B: vector types — three floats = 12 bytes.
-    EXPECT("SizeOf FVector = 12",    Radar::SizeOf(Radar::DataType::FVector)    == 12);
-    EXPECT("SizeOf FRotator = 12",   Radar::SizeOf(Radar::DataType::FRotator)   == 12);
-    EXPECT("SizeOf FTransform = 12", Radar::SizeOf(Radar::DataType::FTransform) == 12);
+    // Phase 2B: vector types — VARIABLE width, signalled by SizeOf = 0 like the
+    // string + multi-numeric families. UE5's LWC made "FVector" 3xdouble (24B)
+    // while "FVector3f" stayed 3xfloat (12B), so no single constant is true;
+    // the per-field width lives in FieldDescriptor::vectorWidth. (audit #5 AB5)
+    EXPECT("SizeOf FVector = 0 (variable)",    Radar::SizeOf(Radar::DataType::FVector)    == 0);
+    EXPECT("SizeOf FRotator = 0 (variable)",   Radar::SizeOf(Radar::DataType::FRotator)   == 0);
+    EXPECT("SizeOf FTransform = 0 (variable)", Radar::SizeOf(Radar::DataType::FTransform) == 0);
     // Multi-numeric meta types — variable width, signalled by SizeOf = 0.
     EXPECT("SizeOf NumericNoByte = 0", Radar::SizeOf(Radar::DataType::NumericNoByte) == 0);
     EXPECT("SizeOf NumericAll = 0",    Radar::SizeOf(Radar::DataType::NumericAll)    == 0);
@@ -1060,83 +1064,96 @@ static void Test_ValueScan_StringPredicate_RejectsNumericOrdering() {
 
 // ----- Radar: CompareVectorPredicate (Phase 2B) -------------------------
 
-static void WriteVector(uint8_t buf[12], float x, float y, float z) {
+// CompareVectorPredicate now takes DECODED triples (see Radar.h) — the raw
+// bytes no longer share a width between the field and the target once LWC is
+// in play, so the decode happens at the call site.
+static void WriteVector(double v[3], double x, double y, double z) {
+    v[0] = x; v[1] = y; v[2] = z;
+}
+
+// Raw source bytes as a game would hold them, at each of the two real widths.
+static void WriteVectorBytesFloat(uint8_t buf[12], float x, float y, float z) {
     std::memcpy(buf + 0, &x, 4);
     std::memcpy(buf + 4, &y, 4);
     std::memcpy(buf + 8, &z, 4);
+}
+static void WriteVectorBytesDouble(uint8_t buf[24], double x, double y, double z) {
+    std::memcpy(buf +  0, &x, 8);
+    std::memcpy(buf +  8, &y, 8);
+    std::memcpy(buf + 16, &z, 8);
 }
 
 static void Test_ValueScan_VectorPredicate_Exact() {
     using ST = Radar::ScanType;
     using RM = Radar::RoundMode;
-    uint8_t cur[12], tgt[12];
-    WriteVector(cur, 100.0f, 200.0f, 300.0f);
-    WriteVector(tgt, 100.0f, 200.0f, 300.0f);
+    double cur[3], tgt[3];
+    WriteVector(cur, 100.0, 200.0, 300.0);
+    WriteVector(tgt, 100.0, 200.0, 300.0);
     EXPECT("Vec Exact all match", Radar::CompareVectorPredicate(ST::Exact, cur, tgt));
     // Per-axis displayed-integer reduce: X=100.6 rounds to 101, so a whole target
     // axis of 100 no longer matches that axis.
-    WriteVector(cur, 100.6f, 200.0f, 300.0f);
+    WriteVector(cur, 100.6, 200.0, 300.0);
     EXPECT("Vec Exact rejects axis that rounds away (100.6 -> 101 vs 100)",
            !Radar::CompareVectorPredicate(ST::Exact, cur, tgt, nullptr, RM::Round));
     // X=100.4 rounds back to 100 -> all axes match the displayed integer.
-    WriteVector(cur, 100.4f, 200.0f, 300.0f);
+    WriteVector(cur, 100.4, 200.0, 300.0);
     EXPECT("Vec Exact Round accepts axis that rounds back (100.4 -> 100)",
            Radar::CompareVectorPredicate(ST::Exact, cur, tgt, nullptr, RM::Round));
 }
 
 static void Test_ValueScan_VectorPredicate_Ordering() {
     using ST = Radar::ScanType;
-    uint8_t cur[12], tgt[12];
-    WriteVector(cur, 10.0f, 20.0f, 30.0f);
-    WriteVector(tgt, 5.0f,  10.0f, 15.0f);
+    double cur[3], tgt[3];
+    WriteVector(cur, 10.0, 20.0, 30.0);
+    WriteVector(tgt, 5.0,  10.0, 15.0);
     EXPECT("Vec Bigger: all axes above", Radar::CompareVectorPredicate(ST::Bigger, cur, tgt));
     EXPECT("Vec Smaller (10,20,30) NOT < (5,10,15)",
            !Radar::CompareVectorPredicate(ST::Smaller, cur, tgt));
 
     // One axis equal kills Bigger
-    WriteVector(cur, 10.0f, 10.0f, 30.0f);
+    WriteVector(cur, 10.0, 10.0, 30.0);
     EXPECT("Vec Bigger fails when one axis equals",
            !Radar::CompareVectorPredicate(ST::Bigger, cur, tgt));
 }
 
 static void Test_ValueScan_VectorPredicate_Between() {
     using ST = Radar::ScanType;
-    uint8_t cur[12], lo[12], hi[12];
-    WriteVector(lo, 0.0f,   0.0f,   0.0f);
-    WriteVector(hi, 100.0f, 100.0f, 100.0f);
-    WriteVector(cur, 50.0f, 50.0f, 50.0f);
+    double cur[3], lo[3], hi[3];
+    WriteVector(lo, 0.0,   0.0,   0.0);
+    WriteVector(hi, 100.0, 100.0, 100.0);
+    WriteVector(cur, 50.0, 50.0, 50.0);
     EXPECT("Vec Between: (50,50,50) in [(0,0,0),(100,100,100)]",
            Radar::CompareVectorPredicate(ST::Between, cur, lo, hi));
-    WriteVector(cur, 50.0f, 150.0f, 50.0f);
+    WriteVector(cur, 50.0, 150.0, 50.0);
     EXPECT("Vec Between rejects Y outside",
            !Radar::CompareVectorPredicate(ST::Between, cur, lo, hi));
 }
 
 static void Test_ValueScan_VectorPredicate_PrevValue() {
     using ST = Radar::ScanType;
-    uint8_t cur[12], prev[12];
-    WriteVector(prev, 100.0f, 100.0f, 100.0f);
+    double cur[3], prev[3];
+    WriteVector(prev, 100.0, 100.0, 100.0);
 
     // Movement on any single axis = Changed
-    WriteVector(cur, 100.0f, 100.0f, 105.0f);
+    WriteVector(cur, 100.0, 100.0, 105.0);
     EXPECT("Vec Changed: one axis moved",
            Radar::CompareVectorPredicate(ST::Changed, cur, prev));
     EXPECT("Vec Unchanged rejects when axis differs",
            !Radar::CompareVectorPredicate(ST::Unchanged, cur, prev));
 
     // No movement
-    WriteVector(cur, 100.0f, 100.0f, 100.0f);
+    WriteVector(cur, 100.0, 100.0, 100.0);
     EXPECT("Vec Unchanged accepts identical",
            Radar::CompareVectorPredicate(ST::Unchanged, cur, prev));
     EXPECT("Vec Changed rejects identical",
            !Radar::CompareVectorPredicate(ST::Changed, cur, prev));
 
     // Increased: ANY axis moved up beyond tolerance
-    WriteVector(cur, 100.0f, 100.0f, 110.0f);
+    WriteVector(cur, 100.0, 100.0, 110.0);
     EXPECT("Vec Increased: Z went up",
            Radar::CompareVectorPredicate(ST::Increased, cur, prev));
     // All went down — Increased rejects
-    WriteVector(cur, 90.0f, 90.0f, 90.0f);
+    WriteVector(cur, 90.0, 90.0, 90.0);
     EXPECT("Vec Increased rejects when all axes down",
            !Radar::CompareVectorPredicate(ST::Increased, cur, prev));
     EXPECT("Vec Decreased: all axes down",
@@ -1145,7 +1162,7 @@ static void Test_ValueScan_VectorPredicate_PrevValue() {
 
 static void Test_ValueScan_VectorPredicate_RejectsSubstring() {
     using ST = Radar::ScanType;
-    uint8_t cur[12], tgt[12];
+    double cur[3], tgt[3];
     WriteVector(cur, 0,0,0); WriteVector(tgt, 0,0,0);
     EXPECT("Vec Contains rejects",
            !Radar::CompareVectorPredicate(ST::Contains, cur, tgt));
@@ -1153,6 +1170,107 @@ static void Test_ValueScan_VectorPredicate_RejectsSubstring() {
            !Radar::CompareVectorPredicate(ST::StartsWith, cur, tgt));
     EXPECT("Vec EndsWith rejects",
            !Radar::CompareVectorPredicate(ST::EndsWith, cur, tgt));
+}
+
+// ----- Radar: LWC vector width (audit #5 AB3 / AB5) ------------------------
+
+static void Test_ValueScan_VectorWidth_Accepted() {
+    EXPECT("width 12 (3xfloat, UE4 / FVector3f) supported",
+           Radar::IsSupportedVectorWidth(Radar::VECTOR_WIDTH_FLOAT));
+    EXPECT("width 24 (3xdouble, UE5 LWC FVector) supported",
+           Radar::IsSupportedVectorWidth(Radar::VECTOR_WIDTH_DOUBLE));
+    // A struct that passes the NAME gate but is not an X/Y/Z triple must be
+    // refused, not read at a guessed width: FVector2D is 8 (float) or 16
+    // (double), FVector4 is 16 or 32.
+    EXPECT("width 8 (FVector2D float) refused",  !Radar::IsSupportedVectorWidth(8));
+    EXPECT("width 16 (FVector2D LWC / FVector4 float) refused",
+           !Radar::IsSupportedVectorWidth(16));
+    EXPECT("width 32 (FVector4 LWC) refused",    !Radar::IsSupportedVectorWidth(32));
+    EXPECT("width 0 (unresolved) refused",       !Radar::IsSupportedVectorWidth(0));
+    EXPECT("negative width refused",             !Radar::IsSupportedVectorWidth(-12));
+}
+
+static void Test_ValueScan_DecodeVectorBytes() {
+    uint8_t f12[12] = {};
+    WriteVectorBytesFloat(f12, 1.5f, -2.5f, 3.25f);
+    double out[3] = { 9, 9, 9 };
+    EXPECT("decode 12B succeeds", Radar::DecodeVectorBytes(f12, 12, out));
+    EXPECT("decode 12B X", out[0] == 1.5);
+    EXPECT("decode 12B Y", out[1] == -2.5);
+    EXPECT("decode 12B Z", out[2] == 3.25);
+
+    uint8_t d24[24] = {};
+    WriteVectorBytesDouble(d24, 1.5, -2.5, 3.25);
+    double out2[3] = { 9, 9, 9 };
+    EXPECT("decode 24B succeeds", Radar::DecodeVectorBytes(d24, 24, out2));
+    EXPECT("decode 24B X", out2[0] == 1.5);
+    EXPECT("decode 24B Y", out2[1] == -2.5);
+    EXPECT("decode 24B Z", out2[2] == 3.25);
+
+    // Unsupported widths refuse AND leave the caller's buffer untouched, so a
+    // caller that ignores the bool cannot silently compare stale values.
+    double untouched[3] = { 7, 7, 7 };
+    EXPECT("decode width 16 refuses", !Radar::DecodeVectorBytes(d24, 16, untouched));
+    EXPECT("decode width 16 leaves out untouched",
+           untouched[0] == 7 && untouched[1] == 7 && untouched[2] == 7);
+    EXPECT("decode width 0 refuses", !Radar::DecodeVectorBytes(d24, 0, untouched));
+    EXPECT("decode null src refuses", !Radar::DecodeVectorBytes(nullptr, 24, untouched));
+}
+
+static void Test_ValueScan_StoreVectorCanonical() {
+    double v[3] = { 10.25, -20.5, 30.75 };
+    uint8_t canon[Radar::VECTOR_CANON_BYTES] = {};
+    Radar::StoreVectorCanonical(v, canon);
+    EXPECT("canonical form is 24 bytes", Radar::VECTOR_CANON_BYTES == 24);
+    double back[3] = {};
+    EXPECT("canonical round-trips through the 24B decoder",
+           Radar::DecodeVectorBytes(canon, Radar::VECTOR_CANON_BYTES, back));
+    EXPECT("canonical round-trip X", back[0] == 10.25);
+    EXPECT("canonical round-trip Y", back[1] == -20.5);
+    EXPECT("canonical round-trip Z", back[2] == 30.75);
+    // The candidate snapshot buffer has to hold one.
+    EXPECT("Candidate::prevValue fits a canonical vector",
+           sizeof(Radar::Candidate::prevValue) >= Radar::VECTOR_CANON_BYTES);
+}
+
+// THE negative control for AB5. A UE5 LWC field holds three DOUBLES; the scan
+// used to read a flat 12 bytes and reinterpret them as three floats, which is
+// the low half of X plus the low half of Y — a bit pattern that can never equal
+// the value the user typed. Reverting DecodeVectorBytes to a fixed 12-byte
+// float read turns the second half of this test red.
+static void Test_ValueScan_LwcVectorIsNotReadAsFloats() {
+    using ST = Radar::ScanType;
+    // A plausible world position in a UE5 (LWC, double) game.
+    const double X = 1024.5, Y = -2048.25, Z = 512.125;
+    uint8_t lwcField[24] = {};
+    WriteVectorBytesDouble(lwcField, X, Y, Z);
+
+    double target[3];
+    WriteVector(target, X, Y, Z);
+
+    // Read at the field's REAL reflected width -> exact match.
+    double cur[3] = {};
+    EXPECT("LWC field decodes at its reflected width 24",
+           Radar::DecodeVectorBytes(lwcField, Radar::VECTOR_WIDTH_DOUBLE, cur));
+    EXPECT("LWC field Exact-matches the typed target",
+           Radar::CompareVectorPredicate(ST::Exact, cur, target));
+
+    // The pre-fix behaviour: same bytes, read as 3 floats. Whatever that
+    // produces, it is not the value the user typed.
+    double asFloats[3] = {};
+    EXPECT("same bytes also decode at width 12 (the old, wrong path)",
+           Radar::DecodeVectorBytes(lwcField, Radar::VECTOR_WIDTH_FLOAT, asFloats));
+    EXPECT("reading an LWC field as 3 floats does NOT match the target",
+           !Radar::CompareVectorPredicate(ST::Exact, asFloats, target));
+
+    // And the converse still holds: a genuine 12-byte float field must match.
+    uint8_t floatField[12] = {};
+    WriteVectorBytesFloat(floatField, 1024.5f, -2048.25f, 512.125f);
+    double curF[3] = {};
+    EXPECT("float field decodes at its reflected width 12",
+           Radar::DecodeVectorBytes(floatField, Radar::VECTOR_WIDTH_FLOAT, curF));
+    EXPECT("float field Exact-matches the same typed target",
+           Radar::CompareVectorPredicate(ST::Exact, curF, target));
 }
 
 // ----- VectorStructNames (Phase 2B) ----------------------------------------
@@ -3463,6 +3581,550 @@ static void Test_IsSanePropertiesSize() {
     EXPECT("the 827 MB garbage value is NOT sane", !Ubel::IsSanePropertiesSize(867763776));
 }
 
+static void Test_ShouldPublishClassWalk() {
+    // audit #5 U4: the class caches are keyed by a raw UClass* the engine recycles
+    // and nothing in dll/src ever erases them, so one bad walk is served for the rest
+    // of the process. WalkInstance owned the identical predicate but ran it AFTER
+    // WalkClass had already published — and two shipped call sites hand in addresses
+    // that are not UStructs at all (WalkInstance's own pre-gate walk, and
+    // UE5_WalkClassBegin, which ue5_dissect.lua uses as its is-this-an-instance probe).
+
+    // The read-ok term is the half IsSanePropertiesSize cannot express: Macht::ReadSafe
+    // ZEROES its out-param on an access violation, and 0 is a legitimate
+    // PropertiesSize, so an unmapped address is indistinguishable from a UCLASS that
+    // declares no own UPROPERTYs unless the return value is carried.
+    EXPECT("failed read is never published, even with a sane-looking 0",
+           !Ubel::ShouldPublishClassWalk(false, 0));
+    EXPECT("failed read is never published, even with a plausible size",
+           !Ubel::ShouldPublishClassWalk(false, 512));
+
+    // With a successful read the bound is exactly IsSanePropertiesSize's.
+    EXPECT("read ok + real UWorld size is published", Ubel::ShouldPublishClassWalk(true, 2536));
+    EXPECT("read ok + zero is published (a field-less UCLASS is legitimate)",
+           Ubel::ShouldPublishClassWalk(true, 0));
+    EXPECT("read ok + exactly the cap is published",
+           Ubel::ShouldPublishClassWalk(true, Ubel::kMaxSanePropertiesSize));
+    EXPECT("read ok + negative is NOT published", !Ubel::ShouldPublishClassWalk(true, -1));
+    EXPECT("read ok + the 827 MB garbage value is NOT published",
+           !Ubel::ShouldPublishClassWalk(true, 867763776));
+}
+
+// ── audit #5 G2: the gated version sweep must return EXACTLY what the naive one did ──
+//
+// The naive references below are transcribed from Genau.cpp as it stood BEFORE the gate
+// (pattern-major, unconditional memcmp at every offset, per-pattern break, no first-byte
+// reject). They are the oracle: the rewrite's whole safety argument is "same answers,
+// 29 s less work", and nothing else in this repo can check the first half — no test
+// target compiles Genau.cpp.
+
+struct NaiveResult { uint32_t value = 0; int tier = 0; };
+
+// Updated for G8 + G9 (build 3099). It still models the NAIVE shape — pattern-major, no
+// first-byte gate, unconditional memcmp at every offset — so it remains an independent
+// oracle for the gated implementation. What changed is the RULES it encodes:
+//   * Tier 2's context is a raw 16-byte clamped search, not an 8-byte strstr (G8), and it
+//     now requires the same UE anchor Tier 3 always did.
+//   * a Tier 3 candidate records the pattern's first-T3 fact but does NOT retire it, so a
+//     later Tier 2 hit on the same needle is still found (G9).
+// The pre-fix reference is preserved in git history; the cases below pin the DIFFERENCE.
+static NaiveResult NaiveTier23Reference(const uint8_t* scan, size_t size) {
+    bool     hasT2[Genau::kVersionNeedleCount] = {};
+    bool     hasT3[Genau::kVersionNeedleCount] = {};
+    for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k) {
+        const char* needle = Genau::kVersionNeedles[k].needle;
+        size_t needleLen = strlen(needle);
+        for (size_t off = 0; off + needleLen + 10 < size; ++off) {
+            const size_t bareLen = needleLen - 1;             // G11: match the BARE needle
+            if (memcmp(scan + off, needle, bareLen) != 0) continue;
+            if (off > 0) {                                    // G11: guard hoisted out of Tier 3
+                uint8_t prev = scan[off - 1];
+                if ((prev >= '0' && prev <= '9') || prev == '.') continue;
+            }
+            const uint8_t afterBare = scan[off + bareLen];
+            const bool whole = !(afterBare >= '0' && afterBare <= '9');
+            if (whole && Genau::HasReleaseBefore(scan, off, 16) &&
+                Genau::HasUEAnchorNearby(scan, size, off, 256)) {
+                hasT2[k] = true;
+                break;                                        // best this pattern can do
+            }
+            if (scan[off + bareLen] == '.' &&
+                scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
+                if (!Genau::HasUEAnchorNearby(scan, size, off, 256)) continue;
+                hasT3[k] = true;                              // recorded, NOT retired (G9)
+            }
+        }
+    }
+    for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k)
+        if (hasT2[k]) return NaiveResult{ Genau::kVersionNeedles[k].value, 2 };
+    for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k)
+        if (hasT3[k]) return NaiveResult{ Genau::kVersionNeedles[k].value, 3 };
+    return NaiveResult{};
+}
+
+static NaiveResult NaiveTier1Reference(const uint8_t* scan, size_t size) {
+    const char* prefixes[] = { "++UE5+Release-", "++UE4+Release-" };
+    auto widen = [](const std::string& s) {
+        std::vector<uint8_t> w;
+        for (char c : s) { w.push_back(static_cast<uint8_t>(c)); w.push_back(0); }
+        return w;
+    };
+    for (int wide = 0; wide <= 1; ++wide) {
+        for (const char* prefix : prefixes) {
+            std::vector<uint8_t> pre = wide ? widen(prefix)
+                : std::vector<uint8_t>(prefix, prefix + strlen(prefix));
+            if (pre.empty() || size <= pre.size() + 8) continue;
+            for (size_t off = 0; off + pre.size() + 8 < size; ++off) {
+                if (memcmp(scan + off, pre.data(), pre.size()) != 0) continue;
+                for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k) {
+                    std::string bare = Genau::kVersionNeedles[k].needle;
+                    if (!bare.empty() && bare.back() == '.') bare.pop_back();
+                    std::vector<uint8_t> nd = wide ? widen(bare)
+                        : std::vector<uint8_t>(bare.begin(), bare.end());
+                    if (off + pre.size() + nd.size() <= size &&
+                        memcmp(scan + off + pre.size(), nd.data(), nd.size()) == 0)
+                        return NaiveResult{ Genau::kVersionNeedles[k].value, 1 };
+                }
+            }
+        }
+    }
+    return NaiveResult{};
+}
+
+static uint32_t GatedValue(const Genau::NeedleScanResult& r) {
+    return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
+}
+
+// Build a buffer of `size` filler bytes with `what` planted at `at`.
+static void Plant(std::vector<uint8_t>& buf, size_t at, const char* what) {
+    size_t n = strlen(what);
+    for (size_t i = 0; i < n; ++i) buf[at + i] = static_cast<uint8_t>(what[i]);
+}
+
+static void ExpectEquivalent23(const char* label, std::vector<uint8_t>& buf) {
+    NaiveResult naive = NaiveTier23Reference(buf.data(), buf.size());
+    Genau::NeedleScanResult gated = Genau::ScanVersionTier23(buf.data(), buf.size());
+    bool ok = (naive.value == GatedValue(gated)) && (naive.tier == gated.tier);
+    EXPECT(label, ok);
+}
+
+static void Test_VersionNeedleScan_Equivalence() {
+    // Filler is 'x': not '4', not '5', no '.', no anchor — so nothing matches by accident.
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+
+    {   // plain Tier 2
+        auto b = fresh(4096); Plant(b, 1000, "Release-5.4.0");
+        ExpectEquivalent23("G2 equiv: plain Tier 2 Release-5.4.", b);
+    }
+    {   // ⚠ THE CASE THAT DISCRIMINATES. Two needles in the SAME first-byte group, the
+        // table-LATER one ("5.4.", index 4) at a LOWER address than the table-EARLIER one
+        // ("5.8.", index 0). Table order must win -> 508.
+        //
+        // A cross-group case (4.27 low vs 5.8 high) CANNOT catch an address-order
+        // regression, because two separate first-byte walks preserve UE5-before-UE4
+        // ordering by construction. Only this intra-group shape fires. Do not "simplify"
+        // it away — see the note in VersionNeedleScan.h.
+        auto b = fresh(8192);
+        Plant(b, 1000, "Release-5.4.0");
+        Plant(b, 5000, "Release-5.8.0");
+        ExpectEquivalent23("G2 equiv: intra-group table order (5.4@low vs 5.8@high) -> 508", b);
+    }
+    {   // cross-group, kept as the weaker companion so the contrast is on record
+        auto b = fresh(8192);
+        Plant(b, 1000, "Release-4.27.0");
+        Plant(b, 5000, "Release-5.8.0");
+        ExpectEquivalent23("G2 equiv: cross-group table order -> 508", b);
+    }
+    {   // bare Tier 3 with an anchor in the window
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 5.4.0 ");
+        ExpectEquivalent23("G2 equiv: Tier 3 bare + anchor", b);
+    }
+    {   // Tier 3 with NO anchor -> rejected entirely
+        auto b = fresh(4096); Plant(b, 1000, " 5.4.0 ");
+        ExpectEquivalent23("G2 equiv: Tier 3 without anchor is rejected", b);
+    }
+    {   // preceding digit -> a game version, not an engine version
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "15.4.0 ");
+        ExpectEquivalent23("G2 equiv: preceding digit rejected (game version)", b);
+    }
+    {   // a Tier 2 hit must beat a deferred Tier 3 from an EARLIER table entry
+        auto b = fresh(8192);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 5.8.0 ");        // Tier 3 for index 0
+        Plant(b, 5000, "Release-4.27.0"); // Tier 2 for index 9
+        ExpectEquivalent23("G2 equiv: Tier 2 beats a deferred Tier 3 -> 427/t2", b);
+    }
+    {   // same-pattern retirement: a Tier 3 at a LOW offset hides a Tier 2 at a HIGH one.
+        // Reproduces a real (separately filed) quirk of the original `break`; the point
+        // here is only that the rewrite reproduces it rather than silently "fixing" it.
+        auto b = fresh(8192);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 4.27.0 ");
+        Plant(b, 5000, "Release-4.27.0");
+        ExpectEquivalent23("G2 equiv: same-pattern Tier 3 retires before a later Tier 2", b);
+    }
+    {   // ⚠ Trailing bound edge. The needle must actually QUALIFY (digit after it, anchor
+        // in window, no digit/dot before) or the bound difference is INVISIBLE and this
+        // case silently proves nothing — which is exactly what a first version of it did:
+        // tightening the walk bound to `off + 16` left it green.
+        //
+        // The naive 4-char bound is `off + 14 < size`; offsets size-16 and size-15 are
+        // inside it and outside a `off + 16` bound, so those are the discriminating spots.
+        for (size_t back = 14; back <= 17; ++back) {
+            const size_t S = 4096;
+            auto b = fresh(S);
+            // The anchor must be within 256 bytes OF THE NEEDLE, not merely somewhere in
+            // the buffer — planting it far away made this case qualify as nothing at all
+            // and silently stopped it discriminating.
+            Plant(b, S - back - 100, "Unreal");
+            Plant(b, S - back, "5.4.0");       // qualifies as Tier 3 when in bounds
+            ExpectEquivalent23("G2 equiv: trailing bound edge, qualifying needle", b);
+        }
+        // 5-char needles have a tighter bound than 4-char ones by exactly one offset;
+        // a shared bound would change which trailing offsets are examined.
+        for (size_t back = 14; back <= 17; ++back) {
+            const size_t S = 4096;
+            auto b = fresh(S);
+            Plant(b, S - back - 100, "Unreal");
+            Plant(b, S - back, "4.27.0");
+            ExpectEquivalent23("G2 equiv: trailing bound edge, 5-char needle", b);
+        }
+    }
+    {   // needle at offset 0 (the `off > 0` / `off >= 8` guards)
+        auto b = fresh(4096);
+        Plant(b, 0, "5.4.0");
+        Plant(b, 100, "Unreal");
+        ExpectEquivalent23("G2 equiv: needle at offset 0", b);
+    }
+    {   // Tier 1, narrow and wide
+        auto b = fresh(4096); Plant(b, 1500, "++UE5+Release-5.4");
+        NaiveResult naive = NaiveTier1Reference(b.data(), b.size());
+        Genau::NeedleScanResult g = Genau::ScanVersionTier1(b.data(), b.size());
+        EXPECT("G2 equiv: Tier 1 ascii", naive.value == GatedValue(g) && naive.tier == g.tier);
+        EXPECT("G2 equiv: Tier 1 ascii finds 504", GatedValue(g) == 504 && g.tier == 1);
+    }
+    {
+        auto b = fresh(4096);
+        const char* tag = "++UE4+Release-4.27";
+        for (size_t i = 0; tag[i]; ++i) { b[1500 + i * 2] = (uint8_t)tag[i]; b[1500 + i * 2 + 1] = 0; }
+        NaiveResult naive = NaiveTier1Reference(b.data(), b.size());
+        Genau::NeedleScanResult g = Genau::ScanVersionTier1(b.data(), b.size());
+        EXPECT("G2 equiv: Tier 1 utf16", naive.value == GatedValue(g) && naive.tier == g.tier);
+        EXPECT("G2 equiv: Tier 1 utf16 finds 427", GatedValue(g) == 427 && g.tier == 1);
+    }
+    {   // deterministic pseudo-random fuzz over a biased alphabet that makes hits likely.
+        // NOTE: fuzz alone did NOT catch the address-order regression — the intra-group
+        // case above is what does. Kept for coverage breadth, not as the control.
+        uint32_t seed = 0x5EED1234u;
+        auto next = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed >> 16; };
+        static const char alphabet[] = "45.0123RelaseUnrx ";
+        for (int iter = 0; iter < 400; ++iter) {
+            std::vector<uint8_t> b(512);
+            for (auto& c : b) c = (uint8_t)alphabet[next() % (sizeof(alphabet) - 1)];
+            NaiveResult naive = NaiveTier23Reference(b.data(), b.size());
+            Genau::NeedleScanResult g = Genau::ScanVersionTier23(b.data(), b.size());
+            if (naive.value != GatedValue(g) || naive.tier != g.tier) {
+                EXPECT("G2 equiv: fuzz buffer mismatch", false);
+                break;
+            }
+        }
+        EXPECT("G2 equiv: 400 fuzz buffers agree", true);
+    }
+}
+
+static void Test_VersionNeedleScan_GateStillGates() {
+    // The PERFORMANCE property, made deterministic — no wall clock, so no CI flake.
+    // A buffer with no '4' and no '5' byte anywhere must cost ZERO needle compares.
+    // Delete the first-byte reject in ScanVersionTier23 and this jumps to ~19x size.
+    std::vector<uint8_t> b(1u << 20, 'x');
+    Genau::NeedleScanResult r = Genau::ScanVersionTier23(b.data(), b.size());
+    EXPECT("G2 gate: no '4'/'5' byte -> zero needle compares", r.needlesCompared == 0);
+    EXPECT("G2 gate: and no detection", !r.found());
+
+    // ⚠ The FIRST-byte gate alone satisfies the buffer above, so that case cannot see the
+    // SECOND-byte ('.') gate at all — deleting it left the suite green. This buffer is all
+    // '5' with no '.' anywhere: the first-byte gate passes at every offset and only the
+    // '.' gate can keep the compare count at zero.
+    std::vector<uint8_t> allFives(1u << 20, '5');
+    Genau::NeedleScanResult f = Genau::ScanVersionTier23(allFives.data(), allFives.size());
+    EXPECT("G2 gate: all-'5' but no '.' -> zero needle compares", f.needlesCompared == 0);
+    EXPECT("G2 gate: all-'5' finds nothing", !f.found());
+
+    // Same for Tier 1's '+' gate.
+    Genau::NeedleScanResult t1 = Genau::ScanVersionTier1(b.data(), b.size());
+    EXPECT("G2 gate: no '+' byte -> zero prefix compares", t1.needlesCompared == 0);
+
+    // And the gate must not be so aggressive that a real hit costs nothing to find:
+    // a planted needle MUST produce at least one compare, or the counter is measuring
+    // a code path that never runs.
+    std::vector<uint8_t> hit(4096, 'x');
+    Plant(hit, 900, "Unreal");                 // Tier 2 now requires an anchor too (G8)
+    Plant(hit, 1000, "Release-5.4.0");
+    Genau::NeedleScanResult h = Genau::ScanVersionTier23(hit.data(), hit.size());
+    EXPECT("G2 gate: a real hit still issues compares", h.needlesCompared > 0);
+    EXPECT("G2 gate: a real hit is still found", h.found() && h.tier == 2);
+}
+
+// ── audit #5 G8 + G9: the two Tier 2/3 rule defects, and what changed ────────
+//
+// These assert ABSOLUTE answers, not just naive/gated agreement — the equivalence oracle
+// alone cannot see these fixes, because BOTH sides moved. Each case states what the
+// pre-fix code returned.
+static void Test_VersionTierRules_G8_G9() {
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+    auto tier23 = [](std::vector<uint8_t>& b) { return Genau::ScanVersionTier23(b.data(), b.size()); };
+    auto val = [](const Genau::NeedleScanResult& r) {
+        return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
+    };
+
+    // ── G8: the window was 8 bytes while its comment and buffer both said 16 ──
+    {   // "Release" separated by more than one byte. Pre-fix: Tier 3 (the "Release" ended
+        // more than 8 bytes before the needle, so the context test never saw it).
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "Release v5.4.0");
+        auto r = tier23(b);
+        EXPECT("G8: 'Release v5.4.0' is now Tier 2", r.tier == 2 && val(r) == 504);
+    }
+    {   auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "Release_Build_5.4.0");
+        auto r = tier23(b);
+        EXPECT("G8: 'Release_Build_5.4.0' is now Tier 2", r.tier == 2 && val(r) == 504);
+    }
+    {   // ⚠ NUL-IMMUNITY — the case that makes the naive `memcpy(...,16)+strstr` repair WRONG.
+        // A neighbouring string's terminator sits inside the wider window; strstr would stop
+        // there and LOSE a match the 8-byte window found. The raw search must still find it.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "AAAAAAA");
+        b[1007] = 0x00;                       // NUL inside the 16-byte window
+        Plant(b, 1008, "Release-5.4.0");
+        auto r = tier23(b);
+        EXPECT("G8: a NUL in the wider window does not lose the hit", r.tier == 2 && val(r) == 504);
+    }
+    {   // ⚠ THE SAFETY HALF. Widening without an anchor gate manufactures a confident
+        // detection from ordinary text. Tier 2 had NO anchor requirement; it does now.
+        // Pre-fix (and with a naive widening): Tier 2 / 504 from a release-notes heading.
+        auto b = fresh(4096);
+        Plant(b, 1000, "Release Notes 5.4.0");   // no Engine/Unreal/UE anywhere
+        auto r = tier23(b);
+        EXPECT("G8: anchorless 'Release Notes 5.4.0' is NOT detected", !r.found());
+    }
+
+    // ── G9: a Tier 3 candidate retired the pattern before a later Tier 2 was seen ──
+    {   // Same needle: Tier 3 at a low offset, Tier 2 later. Pre-fix: 427 / Tier 3.
+        auto b = fresh(8192);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 4.27.0 ");
+        Plant(b, 5000, "Unreal");
+        Plant(b, 5100, "Release-4.27.2");
+        auto r = tier23(b);
+        EXPECT("G9: a later Tier 2 on the same needle now wins", r.tier == 2 && val(r) == 427);
+    }
+    {   // ⚠ THE ONE THE DESIGN COMMENT PROMISES AND THE CODE DID NOT DELIVER: a stray SDK
+        // "5.5.0" near the start out-racing a real "Release-4.27" later in the module.
+        // Pre-fix: 505 / Tier 3 — the wrong VERSION, not merely the wrong confidence.
+        auto b = fresh(8192);
+        Plant(b, 900, "Engine");
+        Plant(b, 1000, " 5.5.0 ");            // bundled PhysX-style banner -> Tier 3
+        Plant(b, 5000, "Unreal Engine");
+        Plant(b, 5100, "Release-4.27.2");     // the real tag -> Tier 2
+        auto r = tier23(b);
+        EXPECT("G9: a real Release-4.27 beats a stray 5.5.0 SDK string", r.tier == 2 && val(r) == 427);
+    }
+    {   // REGRESSION RAIL: the canonical shape must be unaffected by either change.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "Release-5.4.0");
+        auto r = tier23(b);
+        EXPECT("G8/G9 rail: canonical 'Release-5.4.0' is still Tier 2", r.tier == 2 && val(r) == 504);
+    }
+}
+
+// ── audit #5 G11: Tier 2 required a THREE-component version, so it never fired ──
+//
+// MEASURED before and after over the 170 PE images in the local analyze corpus:
+// Tier 2 fired 0/170 before and 6/170 after, and on all six its answer AGREES EXACTLY
+// with the version Tier 1 independently reports (418/420/418/420/420/418) — two
+// detectors cross-validating. Tier 1 returns first on all six, so no effective verdict
+// changed on any binary we own; what changed is that Tier 2 now works as a fallback for
+// images where the full "++UEx+Release-" tag is stripped but "Release-X.Y" survives.
+static void Test_VersionTier2_BareNeedle_G11() {
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+    auto tier23 = [](std::vector<uint8_t>& b) { return Genau::ScanVersionTier23(b.data(), b.size()); };
+    auto val = [](const Genau::NeedleScanResult& r) {
+        return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
+    };
+
+    {   // THE WHOLE FINDING. UE's real tag is TWO-component: no trailing dot, so the
+        // needle "4.27." could never match it. Pre-G11 this was NOT detected at all.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release-4.27");        // nothing after — two-component
+        auto r = tier23(b);
+        EXPECT("G11: two-component 'Release-4.27' is now Tier 2", r.tier == 2 && val(r) == 427);
+    }
+    {   // REGRESSION RAIL: the three-component form must still work, unchanged.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release-5.4.2");
+        auto r = tier23(b);
+        EXPECT("G11 rail: three-component 'Release-5.4.2' is still Tier 2", r.tier == 2 && val(r) == 504);
+    }
+    {   // ⚠ THE GUARD THAT MAKES THE BARE MATCH SAFE. Without the "next byte is not a
+        // digit" test, "5.4" matches inside "5.40" and reports a UE version from a GAME
+        // version string. UE 5.40 does not exist; "Release 5.40" in a shipped binary does.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release 5.40 build");
+        auto r = tier23(b);
+        EXPECT("G11: 'Release 5.40' does NOT match the bare 5.4 needle", !r.found());
+    }
+    {   // ⚠ THE HOISTED GUARD. Tier 3 always rejected a preceding digit; Tier 2 never did,
+        // and needs it far more now that it matches the shorter bare form.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release 15.4 patch");
+        auto r = tier23(b);
+        EXPECT("G11: a preceding digit ('15.4') is rejected by Tier 2 too", !r.found());
+    }
+    {   // and the dot form of the same trap
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release 1.5.4 patch");
+        auto r = tier23(b);
+        EXPECT("G11: a preceding dot ('1.5.4') is rejected by Tier 2 too", !r.found());
+    }
+    {   // Tier 3 is untouched: it still demands the full three-component form.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 5.4.0 ");             // no "Release" -> Tier 3 only
+        auto r = tier23(b);
+        EXPECT("G11 rail: bare three-component is still Tier 3", r.tier == 3 && val(r) == 504);
+    }
+    {   // ...and a two-component token with NO "Release" must not become Tier 3, because
+        // Tier 3's whole point is the three-component shape.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 5.4 ");
+        auto r = tier23(b);
+        EXPECT("G11 rail: two-component without 'Release' is NOT Tier 3", !r.found());
+    }
+}
+
+// ── audit #5 G12: the sizeof(FProperty) family must move as ONE ─────────────
+//
+// FSTRUCTPROP_STRUCT / FARRAYPROP_INNER / FBOOLPROP_FIELDSIZE / FBYTEPROP_ENUM all name the
+// same slot (the first subclass field, == sizeof(FProperty)); FENUMPROP_ENUM sits 8 bytes
+// later because FEnumProperty declares FNumericProperty* UnderlyingProp first.
+//
+// They had FOUR independent writers and one of them — Genau's Step 2.5 default block — set
+// only TWO members, leaving the other three at the UE5.0-era 0x78/0x78/0x80. Any run taking
+// a "keeping defaults" exit then shipped a SPLIT family for the whole session: TArray
+// element descriptors and every enum-name read 8 bytes off while struct reads were correct.
+// Deterministic, first run, no concurrency. docs/test-games.md records Solarpunk resolving
+// through exactly that heuristic fallback.
+//
+// This pins the INVARIANT. It cannot pin the wiring — no test target compiles Genau.cpp or
+// Ubel.cpp — but making the helper the only sane way to express the family is the
+// structural half, and this is the half a build can check.
+static void Test_PropertyFamilyIsCoherent() {
+    // Every real Offset_Internal this repo has measured, plus the neighbours a future
+    // engine could plausibly land on.
+    for (int propOff : { 0x40, 0x44, 0x48, 0x4C, 0x50 }) {
+        DynOff::PropertyFamily f = DynOff::PropertyFamilyFor(propOff);
+        EXPECT("G12: ArrayProperty::Inner shares the struct slot",     f.arrayInner    == f.structProp);
+        EXPECT("G12: BoolProperty::FieldSize shares the struct slot",  f.boolFieldSize == f.structProp);
+        EXPECT("G12: ByteProperty::Enum shares the struct slot",       f.byteEnum      == f.structProp);
+        EXPECT("G12: EnumProperty::Enum is exactly 8 past ByteProperty's",
+               f.enumEnum == f.byteEnum + 8);
+    }
+
+    // The two concrete layouts this repo actually ships against. 0x44 is the UE5.1.1+
+    // default Step 2.5 writes; 0x48 is TQ2's measured value.
+    DynOff::PropertyFamily ue5 = DynOff::PropertyFamilyFor(0x44);
+    EXPECT("G12: Offset_Internal 0x44 -> family base 0x70", ue5.structProp == 0x70);
+    EXPECT("G12: Offset_Internal 0x44 -> EnumProperty 0x78", ue5.enumEnum == 0x78);
+
+    DynOff::PropertyFamily tq2 = DynOff::PropertyFamilyFor(0x48);
+    EXPECT("G12: Offset_Internal 0x48 -> family base 0x74", tq2.structProp == 0x74);
+
+    // The base-taking overload must agree with the offset-taking one — Ubel's corrector has
+    // the base in hand, Genau has Offset_Internal, and the two must not diverge.
+    EXPECT("G12: the two spellings agree",
+           DynOff::PropertyFamilyAtBase(0x70).enumEnum == DynOff::PropertyFamilyFor(0x44).enumEnum);
+
+    // ⚠ THE HISTORICAL SPLIT, asserted as a shape that must never be producible: the shipped
+    // defect was STRUCT/BOOLSIZE at 0x70 with INNER/BYTEENUM at 0x78 and ENUMENUM at 0x80.
+    // No input may yield a family whose members disagree like that.
+    for (int propOff : { 0x40, 0x44, 0x48, 0x4C, 0x50 }) {
+        DynOff::PropertyFamily f = DynOff::PropertyFamilyFor(propOff);
+        const bool splitShape = (f.arrayInner == f.structProp + 8) || (f.byteEnum == f.structProp + 8);
+        EXPECT("G12: the historical split shape is unreachable", !splitShape);
+    }
+}
+
+static void Test_ShouldPublishEnumTable() {
+    // audit #5, found while fixing U4: ResolveEnumValue's entry loop `break`s on a
+    // mid-table read failure and the PARTIAL vector was published unconditionally
+    // into a cache nothing in dll/src ever erases — permanently splitting one UEnum
+    // so values below the break point resolve and values above render as raw ints.
+
+    // The distinction this predicate exists to hold: a FAILED BuildLayout is a
+    // complete answer, a BROKEN loop is not. Getting these backwards is the easy
+    // mistake, and it is wrong in both directions — refusing to cache a member-less
+    // UEnum re-probes on every lookup; caching a truncated one is the original bug.
+    EXPECT("BuildLayout failed -> publish (member-less UEnum / not a UEnum at all)",
+           Ubel::ShouldPublishEnumTable(false, 0, 0));
+    EXPECT("BuildLayout failed -> publish, whatever the count args say",
+           Ubel::ShouldPublishEnumTable(false, 12, 0));
+
+    EXPECT("full table is published", Ubel::ShouldPublishEnumTable(true, 12, 12));
+    EXPECT("a single-member table is published", Ubel::ShouldPublishEnumTable(true, 1, 1));
+    EXPECT("truncated at the last entry is NOT published",
+           !Ubel::ShouldPublishEnumTable(true, 12, 11));
+    EXPECT("truncated at the first entry is NOT published",
+           !Ubel::ShouldPublishEnumTable(true, 12, 0));
+
+    // Neu range-checks count before the narrowing cast (its own AF1 fix), but this
+    // predicate must not sign-convert a negative into a huge size_t and call it equal.
+    EXPECT("a negative intended count is never published",
+           !Ubel::ShouldPublishEnumTable(true, -1, 0));
+}
+
+static void Test_NameWitness() {
+    // audit #5 U6 + F3's in-session half: the per-UObject name cache is keyed by an
+    // address UE recycles, so after a level change every name-bearing reply served the
+    // DESTROYED object's name while the class was read fresh — the two disagreed with
+    // no error anywhere, and only restarting the game cleared it.
+    using Ubel::NameWitness;
+
+    EXPECT("identical witnesses match", (NameWitness{1234, 0} == NameWitness{1234, 0}));
+
+    // `number` is load-bearing. Dropping it is exactly audit #5 U8, which shipped once
+    // and made Slot_1 / Slot_2 / Slot_3 all render as "Slot" — so a witness that
+    // ignored it would serve Slot_1's cached string for Slot_2 at a recycled address.
+    EXPECT("differing only in Number is NOT a match",
+           (NameWitness{1234, 1} != NameWitness{1234, 2}));
+    EXPECT("differing only in ComparisonIndex is NOT a match",
+           (NameWitness{1234, 7} != NameWitness{5678, 7}));
+    EXPECT("differing in both is NOT a match", (NameWitness{1, 1} != NameWitness{2, 2}));
+
+    // NAME_None is {0,0} and is a REAL name, not an "unset" sentinel — a witness that
+    // treated zero as "no witness" would refuse to ever serve it from cache.
+    EXPECT("NAME_None {0,0} is a legitimate matching witness",
+           (NameWitness{0, 0} == NameWitness{0, 0}));
+    EXPECT("a default-constructed witness equals NAME_None", (NameWitness{} == NameWitness{0, 0}));
+
+    // Number is int32 and UE uses the full range; no sign-collapse in the compare.
+    EXPECT("negative Number is distinguished from its positive twin",
+           (NameWitness{9, -1} != NameWitness{9, 1}));
+}
+
 static void Test_Holes_NormalizeGuessedType() {
     using DT = Radar::DataType;
     // Every label GuessGapTypes can emit must normalize to a canonical property
@@ -3922,6 +4584,10 @@ int main() {
     Test_ValueScan_VectorPredicate_Between();
     Test_ValueScan_VectorPredicate_PrevValue();
     Test_ValueScan_VectorPredicate_RejectsSubstring();
+    Test_ValueScan_VectorWidth_Accepted();
+    Test_ValueScan_DecodeVectorBytes();
+    Test_ValueScan_StoreVectorCanonical();
+    Test_ValueScan_LwcVectorIsNotReadAsFloats();
     Test_ValueScan_VectorStructNames();
     // build 794 — multi-numeric (NumericNoByte) meta type
     Test_ValueScan_MultiNumericMembers();
@@ -4011,6 +4677,14 @@ int main() {
     Test_Holes_ClampsOutOfWindow();
     Test_Holes_ComputeClassHoles_ArrayDim();
     Test_IsSanePropertiesSize();
+    Test_ShouldPublishClassWalk();
+    Test_ShouldPublishEnumTable();
+    Test_VersionNeedleScan_Equivalence();
+    Test_VersionNeedleScan_GateStillGates();
+    Test_VersionTierRules_G8_G9();
+    Test_VersionTier2_BareNeedle_G11();
+    Test_PropertyFamilyIsCoherent();
+    Test_NameWitness();
     Test_Holes_NormalizeGuessedType();
 
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection

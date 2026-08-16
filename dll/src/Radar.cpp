@@ -22,12 +22,19 @@ size_t SizeOf(DataType dt) {
         case DataType::Int16:  case DataType::UInt16:                        return 2;
         case DataType::Int32:  case DataType::UInt32: case DataType::Float:  return 4;
         case DataType::Int64:  case DataType::UInt64: case DataType::Double: return 8;
-        // Vector primitives: 3 floats packed = 12 bytes. FTransform's
-        // candidate-stored bytes are the Translation FVector only.
-        case DataType::FVector: case DataType::FRotator: case DataType::FTransform: return 12;
         // String types use the candidate's prevStr field instead of
         // the byte buffer — return 0 so callers can branch on it.
         case DataType::FString: case DataType::FName: case DataType::FText: return 0;
+        // Vector primitives have NO single width: UE5's LWC made "FVector" /
+        // "FRotator" 3xdouble (24B) while "FVector3f" / "FRotator3f" stayed
+        // 3xfloat (12B), and one game holds both. 0 = variable, the same
+        // signal the string + multi-numeric families use; the authoritative
+        // per-field width is FieldDescriptor::vectorWidth, read from the
+        // property's reflected ElementSize at index-build time.
+        // This used to answer a flat 12, which made every LWC vector scan
+        // compare the first four bytes of each double against a float — junk
+        // that could never match. (audit #5 AB5)
+        case DataType::FVector: case DataType::FRotator: case DataType::FTransform: return 0;
         // Multi-numeric meta types have no single width — the scan engine
         // resolves SizeOf per member; 0 signals "variable" like strings.
         case DataType::NumericNoByte:
@@ -167,6 +174,36 @@ bool IsVectorDataType(DataType dt) {
     return dt == DataType::FVector || dt == DataType::FRotator || dt == DataType::FTransform;
 }
 
+bool IsSupportedVectorWidth(int32_t width) {
+    return width == VECTOR_WIDTH_FLOAT || width == VECTOR_WIDTH_DOUBLE;
+}
+
+bool DecodeVectorBytes(const uint8_t* src, int32_t width, double out[3]) {
+    if (!src || !out) return false;
+    if (width == VECTOR_WIDTH_FLOAT) {
+        float v[3];
+        std::memcpy(v, src, sizeof(v));
+        out[0] = static_cast<double>(v[0]);
+        out[1] = static_cast<double>(v[1]);
+        out[2] = static_cast<double>(v[2]);
+        return true;
+    }
+    if (width == VECTOR_WIDTH_DOUBLE) {
+        std::memcpy(out, src, sizeof(double) * 3);
+        return true;
+    }
+    // Refuse rather than guess. A struct that passed the NAME gate but reports
+    // some other size is not an X/Y/Z triple we can read (FVector2D, FVector4,
+    // or a game's own namesake) — reading it at a guessed width would emit
+    // candidates whose value is nonsense.
+    return false;
+}
+
+void StoreVectorCanonical(const double v[3], uint8_t* dst) {
+    if (!v || !dst) return;
+    std::memcpy(dst, v, sizeof(double) * 3);
+}
+
 bool IsSubstringScanType(ScanType st) {
     return st == ScanType::Contains || st == ScanType::StartsWith || st == ScanType::EndsWith;
 }
@@ -279,12 +316,16 @@ const std::vector<std::string>& VectorStructNames(DataType dt) {
     // UE5 introduced Large World Coordinate variants — FVector became
     // double-precision (kept as "Vector"), with explicit float variants
     // FVector3f / FVector4f. Cooked-game StructProperty inner names
-    // vary by version + variant. Accept the common shapes for each
-    // logical type; the scan engine reads only 12 bytes regardless so
-    // it'll grab the first 3 floats (UE5 double-vector reads as the
-    // first 3 doubles' first 4 bytes each = junk; we accept Vector3f
-    // as the safe primary match and add "Vector" for UE4 + cases where
-    // the struct still names itself Vector despite being float-backed).
+    // vary by version + variant, so this list is a NAME gate only: it says
+    // "this struct is an X/Y/Z triple", never how wide it is.
+    //
+    // The width is settled separately, per field, from the property's own
+    // reflected ElementSize (IsSupportedVectorWidth / DecodeVectorBytes), so
+    // "Vector" is correct to accept on BOTH engines — 12 bytes on UE4, 24 on
+    // an LWC UE5 build — and a struct here whose size is neither is refused
+    // by the index builder instead of being read at a guessed width.
+    // Before build 3035 the scan read a flat 12 bytes from whatever this list
+    // matched, so on UE5 it compared the low four bytes of three doubles.
     static const std::vector<std::string> kVec  = { "Vector", "Vector3f", "Vector_NetQuantize", "Vector_NetQuantizeNormal" };
     static const std::vector<std::string> kRot  = { "Rotator", "Rotator3f" };
     // FTransform deferred: layout starts with FQuat Rotation (16B UE4 /
@@ -785,26 +826,22 @@ bool CompareStringPredicate(ScanType           st,
 
 // --- Vector predicate ---
 
-bool CompareVectorPredicate(ScanType       st,
-                            const uint8_t* rawBytes,
-                            const uint8_t* targetBytes,
-                            const uint8_t* target2Bytes,
-                            RoundMode      roundMode) {
-    if (!rawBytes || !targetBytes) return false;
-    if (st == ScanType::Between && !target2Bytes) return false;
+bool CompareVectorPredicate(ScanType      st,
+                            const double* cur,
+                            const double* target,
+                            const double* target2,
+                            RoundMode     roundMode) {
+    if (!cur || !target) return false;
+    if (st == ScanType::Between && !target2) return false;
     if (IsSubstringScanType(st)) return false;
 
-    float c[3], a[3], b[3] = {0.0f, 0.0f, 0.0f};
-    std::memcpy(c, rawBytes,     sizeof(c));
-    std::memcpy(a, targetBytes,  sizeof(a));
-    if (target2Bytes) std::memcpy(b, target2Bytes, sizeof(b));
+    const double kZero[3] = { 0.0, 0.0, 0.0 };
+    const double* b = target2 ? target2 : kZero;
 
     // Each axis runs the SAME scalar displayed-integer compare; combine per the
     // scan type (ALL axes for match/range/unchanged, ANY axis for change/dir).
     auto axisOk = [&](int i) {
-        return CompareFloatScalar(st, static_cast<double>(c[i]),
-                                  static_cast<double>(a[i]),
-                                  static_cast<double>(b[i]), roundMode);
+        return CompareFloatScalar(st, cur[i], target[i], b[i], roundMode);
     };
     switch (st) {
         case ScanType::Exact:
@@ -907,9 +944,13 @@ std::string FormatScalarBytes(DataType dt, const uint8_t* b) {
     return oss.str();
 }
 
-std::string FormatVectorBytes12(const uint8_t* b) {
-    float v[3] = { 0.0f, 0.0f, 0.0f };
-    std::memcpy(v, b, 12);
+// Render a candidate's CANONICAL vector snapshot (3 doubles — see
+// Candidate::prevValue). Width-free by construction: the source width was
+// resolved and decoded away at read time, so this renderer cannot disagree
+// with the predicate about how wide the field was.
+std::string FormatVectorCanonical(const uint8_t* b) {
+    double v[3] = { 0.0, 0.0, 0.0 };
+    std::memcpy(v, b, sizeof(v));
     // Per-component fixed-point (no scientific notation), matching the scalar path.
     return FormatNoSci(v[0], 6) + ", " + FormatNoSci(v[1], 6) + ", " + FormatNoSci(v[2], 6);
 }
@@ -924,7 +965,7 @@ std::string ToLower(std::string s) {
 std::string FormatCandidateValue(const Candidate& c, DataType dt,
                                  const FieldDescriptor& desc) {
     if (IsStringDataType(dt)) return c.prevStr;
-    if (IsVectorDataType(dt)) return FormatVectorBytes12(c.prevValue);
+    if (IsVectorDataType(dt)) return FormatVectorCanonical(c.prevValue);
     if (IsMultiNumericDataType(dt)) {
         DataType m;
         if (TryDataTypeFromPropertyTypeName(desc.fieldType, m))
@@ -1202,7 +1243,13 @@ std::string GroupSlotValueString(const GroupSlotMatch& sm, const SlotSpec& spec,
     if (sm.descriptorIdx >= descriptors.size()) return {};
     const FieldDescriptor& d = descriptors[sm.descriptorIdx];
     Candidate tmp;
-    std::memcpy(tmp.prevValue, sm.prevValue, sizeof(tmp.prevValue));
+    // Bound by the SOURCE buffer, not the destination: a group leaf is numeric
+    // (<= 8 bytes) while a Candidate's buffer must hold a canonical vector
+    // triple, so the two arrays are no longer the same size. Copying
+    // sizeof(tmp.prevValue) read 8 bytes past the end of `sm`.
+    static_assert(sizeof(GroupSlotMatch::prevValue) <= sizeof(Candidate::prevValue),
+                  "a group leaf must fit in a candidate's value buffer");
+    std::memcpy(tmp.prevValue, sm.prevValue, sizeof(sm.prevValue));
     tmp.descriptorIdx = sm.descriptorIdx;
     tmp.elementIndex  = sm.elementIndex;
     return FormatCandidateValue(tmp, spec.dt, d);
@@ -1383,7 +1430,8 @@ std::vector<uint32_t> BuildGroupOrderedView(
     auto slotValue = [&](const GroupSlotMatch& sm, const SlotSpec& spec) -> std::string {
         const FieldDescriptor& d = descriptors[sm.descriptorIdx];
         Candidate tmp;
-        std::memcpy(tmp.prevValue, sm.prevValue, sizeof(tmp.prevValue));
+        // Source-bounded — see GroupSlotValueString for why.
+        std::memcpy(tmp.prevValue, sm.prevValue, sizeof(sm.prevValue));
         tmp.descriptorIdx = sm.descriptorIdx;
         tmp.elementIndex  = sm.elementIndex;
         return FormatCandidateValue(tmp, spec.dt, d);

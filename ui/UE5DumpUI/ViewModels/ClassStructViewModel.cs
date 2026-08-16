@@ -79,11 +79,71 @@ public partial class ClassStructViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Address of the UObject whose class is currently displayed. Used to
-    /// dedupe the "selection bounces twice" Avalonia ListBox behaviour and
-    /// to ignore a stale null-fire that would otherwise blank the panel.
+    /// The tree node whose class the panel is showing <b>or is loading</b>, as of
+    /// the newest request. <c>null</c> when the content did not come from a tree
+    /// selection (a cross-tab handoff) or when the newest tree-driven load failed
+    /// or loaded nothing.
+    ///
+    /// Renamed from <c>_lastLoadedNodeAddress</c> (audit #5 AE3), because that name
+    /// was the false premise: it is written when a load is CLAIMED, so it names an
+    /// attempt, not an accomplished display. Read as "last LOADED", the natural
+    /// repair is to move the write after the walk — which would break the dedupe
+    /// this exists for, since a duplicate arriving while the first walk is still in
+    /// flight would no longer be caught.
+    ///
+    /// Written only via <see cref="BeginLoad"/>, and released again by whichever
+    /// path ends up showing nothing new, so a failed load can always be retried by
+    /// re-selecting the same node.
     /// </summary>
-    private string? _lastLoadedNodeAddress;
+    private string? _shownNodeAddress;
+
+    /// <summary>
+    /// Claim the panel for a new request: record whose it is and take the next
+    /// ticket. Both entry points go through here, which makes "you cannot take a
+    /// ticket without recording whose panel this is" true by construction.
+    /// </summary>
+    /// <param name="nodeAddr">
+    /// The tree node this load is for, or <c>null</c> for a cross-tab load — which
+    /// deliberately shows a class that no tree node selected, so the key must be
+    /// CLEARED rather than left naming the previously selected node. Leaving it
+    /// stale is AE3's third path and needs neither a failure nor any concurrency:
+    /// two ordinary clicks pin the panel.
+    /// </param>
+    private int BeginLoad(string? nodeAddr)
+    {
+        _shownNodeAddress = nodeAddr;
+        return ++_loadId;
+    }
+
+    /// <summary>
+    /// Monotonic ticket for "which request owns the panel". Same idiom (and
+    /// spelling family) as <c>ObjectTreeViewModel._loadGen</c>,
+    /// <c>InstanceFinderViewModel._fieldLoadId</c> and
+    /// <c>ClassPivotViewModel._classLoadId</c>; plain <c>++</c> like all three,
+    /// because every entry point is reached on the UI thread.
+    ///
+    /// Why it is needed here, which is NOT guessable from the code (audit #5 AE2):
+    /// nothing upstream serializes this handler. <c>ObjectTreeViewModel</c> raises
+    /// <c>SelectionChanged</c> as a bare <c>Action</c>, so MainWindowViewModel's
+    /// <c>async</c> subscriber returns to the message loop at its first await and
+    /// the next selection runs straight into <see cref="OnObjectSelected"/>.
+    /// <c>AsyncRelayCommand</c> is no help either: <c>CanExecute</c> goes false
+    /// while running (so a bound Button self-disables) but <c>ExecuteAsync</c>
+    /// runs anyway — measured build 3038, see <c>ProxyDeployConcurrencyTests</c>.
+    ///
+    /// The losing pair is specifically **instance-then-class-like**, and it loses
+    /// by ORDERING rather than by timing: the two branches of
+    /// <see cref="OnObjectSelected"/> issue a different NUMBER of round-trips
+    /// (an instance needs <c>get_object</c> first, a UClass does not) over one
+    /// strictly FIFO pipe lane, so the older gesture's walk is issued third and
+    /// answered third — deterministically last.
+    ///
+    /// ⚠ The ticket MUST be claimed here at GESTURE time, not inside
+    /// <see cref="LoadClassAsync"/>. Claiming it in the command inverts the fix:
+    /// the stale instance selection ENTERS the command last (its <c>get_object</c>
+    /// hop delays entry), so it would take the HIGHEST ticket and win legitimately.
+    /// </summary>
+    private int _loadId;
 
     public ClassStructViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
     {
@@ -128,17 +188,45 @@ public partial class ClassStructViewModel : ViewModelBase
             ClassName, LoadedClassAddr, _dump, _platform);
     }
 
+    /// <summary>
+    /// Cross-tab entry point ("show me this class"), bound as
+    /// <c>LoadClassCommand</c> and invoked from five handoff sites in
+    /// MainWindowViewModel as well as from <see cref="OnObjectSelected"/>.
+    /// Signature deliberately unchanged so those callers keep compiling.
+    /// </summary>
     [RelayCommand]
     private async Task LoadClassAsync(string? classAddr)
     {
+        // Order is load-bearing: reject the no-op BEFORE claiming a ticket.
+        // A request that does no work must not supersede a live load — it would
+        // bail without ever reaching the `finally`, leaving the spinner owned by
+        // a ticket nobody will retire. InstanceFinderViewModel documents the same
+        // rule on its null branch.
         if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0") return;
 
+        await LoadClassCoreAsync(classAddr, BeginLoad(nodeAddr: null));
+    }
+
+    /// <summary>
+    /// The actual walk + panel write, executed on behalf of ticket
+    /// <paramref name="gen"/>. Every write to the panel is gated on that ticket
+    /// still being the newest, so a superseded request returns silently instead
+    /// of repainting over the selection the user actually made (audit #5 AE2).
+    /// Four guard points, ported from <c>InstanceFinderViewModel</c>'s
+    /// <c>LoadInstanceFieldsAsync</c> — the one site in this repo that guards all
+    /// four (success write, failure write, the loading flag, and the early exit).
+    /// </summary>
+    private async Task LoadClassCoreAsync(string classAddr, int gen)
+    {
         try
         {
+            // Both of these precede the only await, so no stale request can reach
+            // them — a superseded load can never wipe a newer error or spinner.
             ClearError();
             IsLoading = true;
 
             var ci = await _dump.WalkClassAsync(classAddr);
+            if (gen != _loadId) return;   // a newer selection / handoff superseded us
 
             ClassName = ci.Name;
             ClassPath = ci.FullPath;
@@ -150,19 +238,32 @@ public partial class ClassStructViewModel : ViewModelBase
             _allFields.Clear();
             _allFields.AddRange(ci.Fields);
             ApplyFieldFilter();
-            // Fields.Count change doesn't fire HasNoFields; nudge it.
+            // Fields.Count change doesn't fire HasNoFields; nudge it. (Note this
+            // particular nudge is inert — HasNoFields also requires !IsLoading,
+            // still true here — the real notification arrives via
+            // OnIsLoadingChanged when the finally clears it. Kept because the
+            // dependency it names is genuine; harmless either way.)
             OnPropertyChanged(nameof(HasNoFields));
 
             _log.Info($"Loaded class: {ci.Name} ({ci.Fields.Count} fields)");
         }
         catch (Exception ex)
         {
-            SetError(ex);
+            // Log unconditionally — a superseded request that failed is still a
+            // real diagnostic — but only the newest may PAINT the failure, or a
+            // stale error banner lands over a panel that loaded fine.
             _log.Error($"Failed to load class at {classAddr}", ex);
+            if (gen != _loadId) return;
+            // Nothing new is on screen, so release the dedupe key — otherwise
+            // re-selecting the same node is refused forever and the panel stays
+            // pinned on whatever it happened to be showing (audit #5 AE3).
+            _shownNodeAddress = null;
+            SetError(ex);
         }
         finally
         {
-            IsLoading = false;
+            if (gen == _loadId)   // only the latest load owns the flag
+                IsLoading = false;
         }
     }
 
@@ -185,14 +286,39 @@ public partial class ClassStructViewModel : ViewModelBase
     /// We keep the last successfully-loaded class visible until another
     /// real selection arrives.
     ///
-    /// We also dedupe consecutive selections of the same node — the
-    /// listbox occasionally fires a second SelectionChanged for the same
-    /// item right after a click, and re-walking the class is wasteful.
+    /// We also dedupe consecutive selections of the same node, which is
+    /// reachable mainly as node → null → same-node: <c>ApplyFilter</c> nulls
+    /// <c>SelectedNode</c> on every debounced filter keystroke, and a reload
+    /// can hand back a different <see cref="UObjectNode"/> instance for the
+    /// same address. The key is claimed BEFORE the load, so a duplicate that
+    /// arrives while the first walk is still in flight is caught too — and it
+    /// is RELEASED by any path that ends up showing nothing new, so a failed
+    /// load can always be retried by re-selecting the same node (audit #5 AE3).
+    ///
+    /// The <c>node == null</c> early return deliberately does NOT supersede an
+    /// in-flight load. Contrast <c>InstanceFinderViewModel</c>, which does bump
+    /// its counter on its null branch — there a null is a real deselect, here it
+    /// is filter-typing noise, and superseding would cancel a legitimate load on
+    /// every character typed. Do not "harmonise" the two.
     /// </summary>
     public async Task OnObjectSelected(UObjectNode? node)
     {
         if (node == null) return;
-        if (_lastLoadedNodeAddress == node.Address && HasClass) return;
+        // Dedupe. `&& HasClass` used to be here; it was dropped with AE3, because
+        // its only job was keeping a COLD-start failure retryable and the key is
+        // now released on every failure instead. Keeping it preserved two defects:
+        // HasClass is assigned in exactly one place in all of ui/ and never reset,
+        // so after the first success it is permanently true and armed the pin; and
+        // while the FIRST walk is still in flight it is still false, so a
+        // node -> null -> node re-fire fell through and issued a second walk for
+        // the same class, whose earlier-finishing load then retired the spinner.
+        if (_shownNodeAddress == node.Address) return;
+
+        // Claim the panel for THIS gesture, before any await. See _loadId — doing
+        // it here rather than inside LoadClassAsync is what makes the guard work
+        // at all, because the losing request is the one that enters the command
+        // LAST.
+        int gen = BeginLoad(node.Address);
 
         try
         {
@@ -210,18 +336,24 @@ public partial class ClassStructViewModel : ViewModelBase
                 // Instance: walk its UClass. Fall back to the object
                 // address only if the metaclass lookup fails.
                 var detail = await _dump.GetObjectAsync(node.Address);
+                // Superseded while we were resolving the metaclass. Bail BEFORE
+                // issuing the walk, so the stale round-trip is never put on the
+                // wire at all — this is the exact asymmetry AE2 describes, and
+                // skipping it saves a hop on a contended lane rather than adding one.
+                if (gen != _loadId) return;
                 classAddr = detail.ClassAddr;
                 if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
                     classAddr = node.Address;
             }
 
-            _lastLoadedNodeAddress = node.Address;
-            await LoadClassCommand.ExecuteAsync(classAddr);
+            await LoadClassCoreAsync(classAddr, gen);
         }
         catch (Exception ex)
         {
-            SetError(ex);
             _log.Error($"Failed to load class for object at {node.Address}", ex);
+            if (gen != _loadId) return;   // stale failure — don't paint over a newer panel
+            _shownNodeAddress = null;     // retryable: see the release in LoadClassCoreAsync
+            SetError(ex);
         }
     }
 

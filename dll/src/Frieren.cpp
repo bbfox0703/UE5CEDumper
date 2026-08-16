@@ -525,9 +525,20 @@ bool UE5_Init() {
     // Latching true now would make the next enable's UE5_Init short-circuit and run the
     // whole session on them. Refuse the latch instead; the next enable re-scans. Safe
     // against a false positive: UE5_AutoStart calls Tot::ResetShutdown() before this.
-    if (Tot::ShutdownRequested()) {
-        LOG_WARN("UE5_Init: shutdown was requested during the scan — results are partial, "
-                 "NOT latching initialized so the next enable re-scans");
+    //
+    // (MA1) The same argument now covers a PER-COMMAND cancel — a pipe client dropping
+    // mid-scan — which this guard could not see, because it tests g_shutdown only.
+    // ⚠ Do NOT "simplify" the added term to Tot::Requested(). g_perCommand stays latched
+    // until Fern::AcceptLoop's firstConn calls ResetPerCommand, so a stale flag from an
+    // EARLIER disconnect would make the auto-start UE5_Init refuse the latch on a scan that
+    // completed perfectly — permanently disabling the DLL for that process. The note above
+    // about ResetShutdown protecting against a false positive has no g_perCommand
+    // equivalent; that asymmetry is the trap. `ptrs.bScanCancelled` says "THIS run actually
+    // aborted", which is the predicate the guard wanted all along.
+    if (Tot::ShutdownRequested() || ptrs.bScanCancelled) {
+        LOG_WARN("UE5_Init: scan was cancelled (%s) — results are partial, "
+                 "NOT latching initialized so the next enable re-scans",
+                 Tot::ShutdownRequested() ? "shutdown" : "client disconnect");
         Sein::SetChannel(LogChannel::Pipe);
         return false;
     }
@@ -792,6 +803,16 @@ static bool AutoStartWork() {
     // and every module's StartWorker* would refuse to spawn, since that gate reads
     // the same flag. Both calls are no-ops on a first start.
     Tot::ResetShutdown();
+    // (G2) Same argument, other flag — and it is now load-bearing rather than tidy.
+    // Tot::Requested() is ALSO true for g_perCommand, the mid-command client-disconnect
+    // latch, which Tot deliberately keeps set until a fresh session connects into an
+    // empty registry (Fern AcceptLoop firstConn) so an orphaned scan keeps aborting.
+    // That reset therefore runs AFTER this scan, exactly like ResetShutdown's. Genau's
+    // recovery sweeps now honour Tot::Requested(), so without this line a stale latch
+    // from a previous session's UI disconnect would abort a healthy game's GObjects/
+    // GNames recovery at offset 0 — a scan that never ran, reported as one that found
+    // nothing. No-op on a first start.
+    Tot::ResetPerCommand();
     Mimic::StartThread();   // early-returns when the poller is already running
     // Publish progress into the mailbox so a CE Lua poller can stop sleeping a
     // fixed budget and react the moment we are actually ready (Mimic::InitState).

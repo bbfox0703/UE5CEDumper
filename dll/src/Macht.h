@@ -151,8 +151,37 @@ inline bool ParsePattern(const char* patStr, ParsedPattern& out) {
     return true;
 }
 
+// ── Why this module carries NO Tot::Requested() poll (audit #5 MA1) ──────────
+//
+// Recorded here because the absence has now been raised three times, and refuted
+// once for the WRONG reason. To be exact: it is not that the `__try`/`__except`
+// blocks are cancellation — there is no `__try` in any scan core at all. The four
+// SEH sites are ReadSafe / ReadBytesSafe / WriteBytes / GetFunctionExtent; the
+// scan cores dereference the image with no guard of any kind.
+//
+// Cancellation lives one level up, at the PATTERN boundary in
+// Genau::ScanForTarget (its batch loop and its multi-module Pass 2). That is
+// where it belongs because the largest indivisible unit below this line is one
+// AOBScanBatch — measured at most 0.64 s on a 213 MB .text — or one
+// AOBScanAllModules — measured at most 2.34 s on a 593-module title. Both sit
+// inside CE's 5000 ms call ceiling, so a poll here would buy no measurable
+// responsiveness while costing a relaxed atomic load per 32-byte AVX2 stride, in
+// a file NO test target compiles.
+//
+// ⚠ If a poll is ever added here anyway, it MUST discard the partial result —
+// return 0 / an EMPTY vector, never what was found so far. Two callers read these
+// lists as complete: Genau::ResolveNameKeyTable tests `hits.size() != 1` as a
+// UNIQUENESS check (a truncated list reads as "unique"), and Pass 2 anchor-sorts
+// the full match set. Returning partials there is silently wrong, not merely
+// incomplete.
+//
 // AOB (Array of Bytes) pattern scan in module memory
-// Returns first match address, or 0 on failure
+// Returns first match address, or 0 on failure.
+// ⚠ FIRST match only. If the caller needs the match that VALIDATES rather than
+// the one that comes first, use AOBScanAll and walk it — a pattern can have
+// hundreds of hits with the real site nowhere near the front (GNAM_V1: 166).
+// Using this where the batch path uses AOBScanAll is what made a resolvable
+// GNames report "NONE validated" (see Genau::ScanForTarget's hint phase).
 uintptr_t AOBScan(const char* pattern, uintptr_t start = 0, size_t size = 0);
 
 // AOBScanAll: returns ALL match addresses for the given pattern.

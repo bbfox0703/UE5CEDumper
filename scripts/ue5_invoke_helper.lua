@@ -101,6 +101,7 @@ local OFF_PARAMS    = 0x328  -- uint8[1024]: inline params buffer
 local CMD_INVOKE_BY_NAME = 4
 local STATUS_DONE        = 1
 local STATUS_IDLE        = 0    -- untouched: the DLL never picked the command up
+local CMD_IDLE           = 0    -- the DLL clears cmd back to this when it finishes
 
 -- Default invoke timeout (ms). UE5DumpUI's per-game override only
 -- affects the DLL side; this Lua-side timeout guards against the
@@ -220,6 +221,17 @@ local function writeFStringInline(pd, off, s, wide)
     bytes[#bytes + 1] = 0                 -- '\0'
     buf = allocateMemory(n + 1)
   end
+  -- CE returns nil when the target-process allocation fails. Unchecked, the three
+  -- writes below still ran: Data = 0 with ArrayNum = ArrayMax = n+1, i.e. an FString
+  -- that PROMISES n+1 characters at address 0, handed straight to a live UFunction.
+  -- The length must never be published for a buffer that does not exist, so this
+  -- raises before any of them. (audit #5 AA14 / AA15)
+  if buf == nil or buf == 0 then
+    error(string.format(
+      "[ue5_invoke] could not allocate %d bytes in the target process for the " ..
+      "string param at +%d -- the invoke was NOT sent (no partial FString written)",
+      #bytes, off))
+  end
   writeBytes(buf, bytes)
   writeQword(pd + off, buf)               -- Data
   writeInteger(pd + off + 8,  n + 1)      -- ArrayNum (incl null)
@@ -265,6 +277,38 @@ local function writeParams(base, regionSize, params)
     elseif t == 'fstringn' then
       -- Narrow FUtf8String / FAnsiString INPUT param (value = Lua string).
       writeFStringInline(base, off, v, false)
+    elseif t == 'tarray' or t == 'tmap' or t == 'tset' or t == 'delegate' then
+      -- BakedScriptGenerator.MapToHelperType CAN emit these (a TArray/TMap/TSet or
+      -- a delegate INPUT param), and writeParams accepted none of them -- so the
+      -- error at the bottom of this chain aborted the WHOLE invoke, and such a
+      -- UFunction could not be called at all from an exported script. (audit #5 AA16)
+      --
+      -- Nothing is written, deliberately: writeBakedParams zeroes the entire params
+      -- buffer first, and all-zero IS the default-constructed empty value for each of
+      -- these -- TArray/TSet/TMap { Data = nullptr, Num = 0, Max = 0 } and an unbound
+      -- FScriptDelegate { null object, NAME_None }. A nested fstruct recursion zeroes
+      -- its own sub-region too, so the same holds there.
+      --
+      -- A value the caller actually supplied cannot be honoured (it would need
+      -- engine-allocated storage), so it is refused rather than silently dropped:
+      -- passing the empty default when the caller asked for contents is a different
+      -- wrong answer, not a better one.
+      if v ~= 0 and v ~= nil and v ~= false then
+        error(string.format(
+          "[ue5_invoke] param '%s' is a %s -- an EMPTY one is passed by leaving " ..
+          "value=0; a populated %s cannot be built from CE Lua (it needs " ..
+          "engine-allocated storage)",
+          tostring(p.name or '?'), t, t))
+      end
+    elseif t == 'ftext' then
+      -- NOT grouped with the containers above. An all-zero FText is not an empty
+      -- FText: it holds a TSharedRef the engine dereferences on use, so a zeroed one
+      -- is a crash rather than a default. Refusing is the honest answer.
+      error(string.format(
+        "[ue5_invoke] param '%s' is an ftext -- an FText cannot be built from CE Lua " ..
+        "(it holds a shared reference the engine allocates), and passing a zeroed one " ..
+        "crashes the game. Invoke a wrapper that takes an FString instead.",
+        tostring(p.name or '?')))
     elseif t == 'fstruct' then
       -- By-value UE struct param. Size resolution: explicit p.size wins
       -- (the generator now emits it); else infer from the next member's
@@ -293,8 +337,9 @@ local function writeParams(base, regionSize, params)
     else
       error(string.format(
         "[ue5_invoke] Unknown param type '%s' for '%s' -- " ..
-        "supported: bool/byte/int16/int32/int64/float/double/pointer/" ..
-        "fstring/fstringn/fstruct",
+        "supported: bool/byte/int16/uint16/int32/uint32/enum/int64/uint64/qword/" ..
+        "float/double/pointer/object/class/name/soft/weak/lazy/interface/" ..
+        "fstring/fstringn/fstruct/tarray/tmap/tset/delegate",
         tostring(t), tostring(p.name or '?')))
     end
   end
@@ -303,11 +348,28 @@ end
 -- Zero the whole params buffer (clears stale data from the previous invoke --
 -- the mailbox is a single shared slot reused across every call) then stamp
 -- the baked params.
+-- The whole 1024-byte region, not the caller's parmsSize. The DLL passes
+-- sizeof(MailboxData::paramsData) -- a flat 1024 -- to UE5_CallProcessEventEx
+-- (dll/src/Mimic.cpp), which copies all of it into the request it owns and hands
+-- that to ProcessEvent. Zeroing only parmsSize left every byte past it holding the
+-- PREVIOUS command's data, and whenever parmsSize understates the UFunction's real
+-- ParmsSize -- stale metadata, or a generator that counted only the params it knew
+-- about -- those bytes are read as live parameters. (audit #5 AA17)
+--
+-- One writeBytes rather than a per-byte loop: the old form cost one CE round trip
+-- PER BYTE, so covering the full region this way is also faster than covering part
+-- of it the old way.
+--
+-- writeParams still gets `parmsSize` as its region size: that is the CALLER's
+-- declared extent and drives the fstruct size-inference fallback, which must not
+-- silently grow to 1024.
+local PARAMS_REGION_BYTES = 1024   -- sizeof(MailboxData::paramsData), dll/src/Mimic.h
+
 local function writeBakedParams(mb, parmsSize, params)
   local PD = mb + OFF_PARAMS
-  for i = 0, parmsSize - 1 do
-    writeByte(PD + i, 0)
-  end
+  local zeros = {}
+  for i = 1, PARAMS_REGION_BYTES do zeros[i] = 0 end
+  writeBytes(PD, zeros)
   writeParams(PD, parmsSize, params)
 end
 
@@ -360,7 +422,14 @@ local function waitDone(mb, timeoutMs)
           'Mailbox timeout after %dms -- the DLL never picked this up ' ..
           '(stale g_invokeMailbox address? re-inject, or re-enable the table)', limit)
       end
-      local err = readString(mb + OFF_ERR, 256) or 'timeout'
+      -- The DLL never clears errorMsg: its pickup sets status = PROCESSING and
+      -- leaves the field alone (dll/src/Mimic.cpp), and only a FAILURE writes it.
+      -- So this read returns the PREVIOUS command's message unless the caller wiped
+      -- it -- which invokeUFunction now does before every send. Keep the empty-string
+      -- arm anyway: `x or 'timeout'` does NOT fire for '' (an empty string is truthy
+      -- in Lua), so the old fallback was unreachable. (audit #5 AA18)
+      local err = readString(mb + OFF_ERR, 256)
+      if err == nil or err == '' then err = 'no message from the DLL' end
       return false, string.format(
         'Mailbox timeout after %dms -- the DLL took the command but did not ' ..
         'finish it (status=%d, %s)', limit, st, err)
@@ -418,7 +487,26 @@ if not invokeUFunction then
     -- Reentrancy guard: refuse to touch the mailbox if another
     -- invoke is mid-flight in this Lua engine. Returning a clean
     -- 'busy' error beats silently corrupting the in-flight call.
+    -- A previous call that TIMED OUT left the flag set on purpose: the DLL had taken
+    -- the command and not finished, so the mailbox was still its. Ask the DLL whether
+    -- it has finished since, rather than latching this Lua-local boolean for the rest
+    -- of the session -- it publishes status and cmd itself. (audit #5 AA19)
+    if _ue5_invoke_busy and _ue5_invoke_stale_mb then
+      local st  = readInteger(_ue5_invoke_stale_mb + OFF_STATUS)
+      local cmd = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
+      if st == STATUS_DONE and cmd == CMD_IDLE then
+        _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
+      end
+    end
+
     if _ue5_invoke_busy then
+      if _ue5_invoke_stale_mb then
+        return false,
+          '[ue5_invoke] the previous invoke timed out and the DLL is STILL holding ' ..
+          'the mailbox -- sending now would overwrite the class/function/params of a ' ..
+          'call that is mid-flight. Wait for the game thread to come back (this ' ..
+          'clears itself once the DLL reports done), or re-inject if it never does.'
+      end
       return false,
         '[ue5_invoke] busy -- another script is mid-call. ' ..
         'Serialize your AA Scripts or guard with synchronize().'
@@ -442,6 +530,13 @@ if not invokeUFunction then
         return false, tostring(err_p)
       end
 
+      -- Wipe the DLL's error field before sending. Nothing else does: the DLL's
+      -- pickup sets status = PROCESSING and leaves errorMsg untouched, so a timeout
+      -- would report whatever the LAST failure left there as THIS command's reason --
+      -- the guessed diagnosis CLAUDE.md forbids. One NUL is enough; the DLL writes
+      -- from byte 0 whenever it has something real to say. (audit #5 AA18)
+      writeByte(mb + OFF_ERR, 0)
+
       -- Clear status, then write CMD last to trigger the DLL.
       writeInteger(mb + OFF_STATUS, 0)
       writeInteger(mb + OFF_CMD, CMD_INVOKE_BY_NAME)
@@ -449,6 +544,11 @@ if not invokeUFunction then
       -- Poll until the DLL's mailbox handler reports done.
       local ok_w, err_w = waitDone(mb, DEFAULT_TIMEOUT_MS)
       if not ok_w then
+        -- Remember that the mailbox may still be the DLL's. The flag was cleared
+        -- unconditionally below, INCLUDING here -- so the next invoke overwrote
+        -- className / funcName / params underneath an in-flight ProcessEvent and
+        -- was reported OK though it never ran. (audit #5 AA19)
+        _ue5_invoke_stale_mb = mb
         return false, err_w
       end
 
@@ -461,7 +561,12 @@ if not invokeUFunction then
 
       return true
     end)
-    _ue5_invoke_busy = false
+    -- Released only when the mailbox is ours again. A timeout sets
+    -- _ue5_invoke_stale_mb above and the guard stays up until the DLL publishes
+    -- status=DONE / cmd=IDLE, which the entry check re-tests on the next call.
+    if not _ue5_invoke_stale_mb then
+      _ue5_invoke_busy = false
+    end
 
     if not pok then
       -- Hard error inside the body (raised, not returned). pcall
@@ -486,9 +591,15 @@ if not readUFunctionReturn then
   --- @param offset    number  Byte offset within params_data
   ---                          (typically the function's return-value
   ---                          offset from UFunction metadata)
-  --- @param valueType string  One of: 'int32' (default), 'float',
-  ---                          'double', 'bool', 'byte', 'uint64',
-  ---                          'qword', 'int16', 'word'
+  --- @param valueType string  One of: 'int32' (default, SIGNED), 'int16'
+  ---                          (SIGNED), 'uint32'/'dword', 'uint16'/'word',
+  ---                          'float', 'double', 'bool', 'byte',
+  ---                          'uint64'/'qword'.
+  ---                          The signed spellings are the ones a UFunction
+  ---                          return value normally wants: CE reads unsigned
+  ---                          unless told otherwise, so -1 used to come back
+  ---                          as 4294967295. The unsigned spellings are kept
+  ---                          for callers that want the raw magnitude.
   --- @return number|nil       The decoded value, or nil if the
   ---                          mailbox cannot be located
   function readUFunctionReturn(offset, valueType)
@@ -505,11 +616,21 @@ if not readUFunctionReturn then
       return readByte(addr)
     elseif valueType == 'uint64' or valueType == 'qword' then
       return readQword(addr)
-    elseif valueType == 'int16' or valueType == 'word' then
-      return readSmallInteger(addr)
+    elseif valueType == 'int16' then
+      return readSmallInteger(addr, true)          -- SIGNED
+    elseif valueType == 'word' or valueType == 'uint16' then
+      return readSmallInteger(addr)                -- unsigned, as asked
+    elseif valueType == 'uint32' or valueType == 'dword' then
+      return readInteger(addr)                     -- unsigned, as asked
     else
-      -- Default: int32
-      return readInteger(addr)
+      -- Default: int32, SIGNED.
+      --
+      -- CE's readInteger/readSmallInteger interpret the bytes as UNSIGNED unless the
+      -- second argument is true, so a UFunction returning -1 read back as 4294967295
+      -- (or 65535 for an int16) -- while this same file already passes the flag for
+      -- the mailbox result code two functions up. The unsigned spellings above keep
+      -- working for callers that genuinely want the raw magnitude. (audit #5 AA20)
+      return readInteger(addr, true)
     end
   end
 

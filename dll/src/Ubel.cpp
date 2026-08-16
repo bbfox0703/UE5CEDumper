@@ -49,10 +49,21 @@ static std::atomic<bool> s_sawUtf8OrAnsiStr{false};
 // Shared between ResolveEnumValue (lookup) and GetEnumEntries (full list export).
 static std::unordered_map<uintptr_t, std::vector<std::pair<int64_t, std::string>>> s_enumCache;
 
-// File-scope GetName cache: keyed by UObject* → resolved name string.
+// File-scope GetName cache: keyed by UObject* → (witness, resolved name string).
 // Dramatically reduces FNamePool lookups for ObjectProperty fields that
 // reference the same UClass repeatedly (e.g., many fields pointing to the same class).
-static std::unordered_map<uintptr_t, std::string> s_nameCache;
+//
+// The key is an address the engine RECYCLES, so every hit is revalidated against the
+// FName bytes the string was decoded from (Ubel::NameWitness — see its comment in
+// Ubel.h for why those bytes, and not an (InternalIndex, SerialNumber) pair). Without
+// that, a level change made every name-bearing response serve the DESTROYED object's
+// name for the rest of the process, while the class was read fresh — so the two
+// disagreed with no error anywhere. (audit #5 U6 + F3's in-session half)
+struct NameCacheEntry {
+    Ubel::NameWitness witness;
+    std::string       name;
+};
+static std::unordered_map<uintptr_t, NameCacheEntry> s_nameCache;
 
 // ── Cache mutexes (thread-safety for parallel GObjects walks) ──────────────
 // Aura's value/reference/container scans walk the whole GObjects array across
@@ -148,6 +159,12 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
 
     std::vector<std::pair<int64_t, std::string>> entries;
     Neu::EnumNamesLayout layout;
+    // False ONLY when a mid-table read broke the loop below. BuildLayout returning
+    // false is a COMPLETE answer, not a truncated one: Neu rejects count == 0 /
+    // num <= 0 (Neu.h), so a legitimately member-less UEnum — and any address that
+    // is not a UEnum — lands there, and caching "" for it is correct and must stay
+    // cached, or every lookup re-probes. A half-read table is the opposite case.
+    bool tableComplete = true;
     if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameStride, 16384, layout)) {
         entries.reserve(layout.count);
         for (int32_t i = 0; i < layout.count; ++i) {
@@ -157,9 +174,15 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
             std::string name = Serie::GetString(nameIdx);
             entries.push_back({val, std::move(name)});
         }
-        LOG_DEBUG("ResolveEnumValue: Cached UEnum 0x%llX with %d entries (%s)",
-            static_cast<unsigned long long>(enumAddr), layout.count,
-            fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy");
+        tableComplete = ShouldPublishEnumTable(true, layout.count, entries.size());
+        // Report what was STORED, not what was intended. This used to print
+        // layout.count unconditionally, so a truncated table logged as a full one —
+        // the report and the reality computed by different code paths (audit #4's
+        // own root cause), which is what hid this defect.
+        LOG_DEBUG("ResolveEnumValue: UEnum 0x%llX — read %zu of %d entries (%s)%s",
+            static_cast<unsigned long long>(enumAddr), entries.size(), layout.count,
+            fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy",
+            tableComplete ? "" : " — TRUNCATED, not cached");
     }
 
     // Insert (another thread may have built the same enum meanwhile — emplace
@@ -167,8 +190,25 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     {
         std::lock_guard<std::mutex> lk(s_enumCacheMutex);
         auto it = s_enumCache.find(enumAddr);
-        if (it == s_enumCache.end())
-            it = s_enumCache.emplace(enumAddr, std::move(entries)).first;
+        if (it != s_enumCache.end()) {
+            for (const auto& [v, n] : it->second)
+                if (v == value) return n;
+            return "";  // Value not in this (cached) enum
+        }
+
+        // A TRUNCATED table is answered from but never published. Nothing in dll/src
+        // erases s_enumCache, so caching a half-read table permanently splits one
+        // UEnum: values below the break point resolve, values above it render as raw
+        // integers — in the Live Walker, the Property Grid and every CE export, for
+        // the rest of the process, with no retry. Leaving it uncached costs a re-read
+        // per lookup and lets the next one recover. (audit #5, found while fixing U4)
+        if (!tableComplete) {
+            for (const auto& [v, n] : entries)
+                if (v == value) return n;
+            return "";
+        }
+
+        it = s_enumCache.emplace(enumAddr, std::move(entries)).first;
         for (const auto& [v, n] : it->second)
             if (v == value) return n;
         return "";  // Value not in enum
@@ -188,7 +228,17 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
 
     std::lock_guard<std::mutex> lk(s_enumCacheMutex);
     auto it = s_enumCache.find(enumAddr);
-    if (it == s_enumCache.end()) return {};
+    if (it == s_enumCache.end()) {
+        // ResolveEnumValue above ran and still published nothing, which since the
+        // truncation fix means exactly one thing: a mid-table read failed, so there
+        // is no trustworthy full list to hand CE. Say so — an empty DropDownList is
+        // otherwise indistinguishable from a member-less UEnum, and unlike the old
+        // behaviour (a silently partial list cached forever) the next call retries.
+        Sein::Warn("WALK:safe",
+            "GetEnumEntries: UEnum 0x%llx has no cached table — truncated read, retry pending",
+            (unsigned long long)enumAddr);
+        return {};
+    }
 
     std::vector<LiveFieldValue::EnumEntry> result;
     result.reserve(it->second.size());
@@ -426,19 +476,36 @@ uintptr_t GetOuter(uintptr_t uobjectAddr) {
 std::string GetName(uintptr_t uobjectAddr) {
     if (!uobjectAddr) return "";
 
-    // Check name cache first — avoids repeated FNamePool lookups
+    // Read the FName bytes FIRST — they are both the cache's witness and the decode's
+    // input, so this replaces ReadFName rather than adding a read. Same tolerance
+    // ReadFName has and for the same reason: ComparisonIndex must read, Number may
+    // fail and default to 0. Kept as two reads, not one 8-byte load, so an unaligned
+    // or half-mapped address behaves exactly as it did before.
+    const uintptr_t fnameAddr = uobjectAddr + Grimoire::OFF_UOBJECT_NAME;
+    NameWitness live{};
+    if (!Macht::ReadSafe(fnameAddr, live.comparisonIndex)) return "";
+    Macht::ReadSafe(fnameAddr + 4, live.number);
+
+    // Check name cache first — avoids repeated FNamePool lookups. The key is an
+    // address the engine recycles, so a hit is only served when the bytes it was
+    // decoded from still read the same; otherwise fall through and re-decode.
     {
         std::lock_guard<std::mutex> lk(s_nameCacheMutex);
         auto it = s_nameCache.find(uobjectAddr);
-        if (it != s_nameCache.end()) return it->second;
+        if (it != s_nameCache.end() && it->second.witness == live)
+            return it->second.name;
     }
 
-    std::string name = ReadFName(uobjectAddr + Grimoire::OFF_UOBJECT_NAME);
+    std::string name = Serie::GetString(live.comparisonIndex, live.number);
 
-    // Only cache non-empty names (empty could be transient read failure)
+    // Only cache non-empty names (empty could be transient read failure).
+    // Assign, not try_emplace: a stale entry MUST be replaced, and that is safe here
+    // precisely because this cache hands out copies — the hit above returns by value
+    // with the copy made under the lock, so no reference into this map ever escapes.
+    // (The two class caches do hand out references, which is why they cannot do this.)
     if (!name.empty()) {
         std::lock_guard<std::mutex> lk(s_nameCacheMutex);
-        s_nameCache[uobjectAddr] = name;
+        s_nameCache[uobjectAddr] = NameCacheEntry{live, name};
     }
 
     return name;
@@ -446,14 +513,23 @@ std::string GetName(uintptr_t uobjectAddr) {
 
 void ClearNameCache() {
     // Release the per-UObject name cache. Called at the start of each snapshot
-    // capture / engine re-scan so a long session doesn't accumulate one entry
-    // per GObjects slot (millions of strings, ~150-200MB on a 2M-object game)
-    // and so a recycled UObject address can't return a destroyed object's stale
-    // name. swap()-with-empty frees the bucket array too, not just the strings.
-    // The class/struct/enum layout caches are intentionally kept: they are
-    // per-class (small, layout-stable) and expensive to rebuild.
+    // capture / engine re-scan, and from Fern's last-connection teardown / Fern::Stop.
+    // swap()-with-empty frees the bucket array too, not just the strings.
+    //
+    // Two reasons remain, and STALENESS IS NO LONGER ONE OF THEM: every hit is now
+    // witnessed against the FName bytes it was decoded from, so a recycled address
+    // cannot return a destroyed object's name even between purges (audit #5 U6/F3).
+    // What is left is (a) bounding growth — one entry per GObjects slot ever named,
+    // millions of strings and ~150-200 MB on a 2M-object game — and (b) covering a
+    // Serie::Init re-run, the one event that can remap a ComparisonIndex and so make
+    // an unchanged witness decode to a different string.
+    //
+    // The class/struct/enum layout caches are intentionally kept: they are per-class
+    // (small, layout-stable) and expensive to rebuild. Note they are NOT witnessed,
+    // so a name baked into ClassInfo::Name/FullPath/SuperName by WalkClass can still
+    // be stale after a recycle — that is a separate open finding, not an oversight.
     std::lock_guard<std::mutex> lk(s_nameCacheMutex);
-    std::unordered_map<uintptr_t, std::string>().swap(s_nameCache);
+    std::unordered_map<uintptr_t, NameCacheEntry>().swap(s_nameCache);
 }
 
 bool SawUtf8OrAnsiStr() {
@@ -750,8 +826,26 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         Macht::ReadSafe(info.SuperClass + DynOff::USTRUCT_PROPSSIZE, info.SuperPropertiesSize);
     }
 
-    // Read PropertiesSize
-    Macht::ReadSafe(uclassAddr + DynOff::USTRUCT_PROPSSIZE, info.PropertiesSize);
+    // Read PropertiesSize. The return is NOT discarded: it is half of the
+    // memoization gate below (ReadSafe zeroes its out-param on failure, and 0 is a
+    // legitimate PropertiesSize, so the value alone cannot distinguish "this class
+    // declares nothing" from "this address is not mapped").
+    const bool propsSizeReadOk =
+        Macht::ReadSafe(uclassAddr + DynOff::USTRUCT_PROPSSIZE, info.PropertiesSize);
+
+    // A FAULT here means uclassAddr is not mapped at all, which is a different fact
+    // from "the value looks wrong": USTRUCT_PROPSSIZE is a small in-object offset
+    // (childPropsOff + 8), so even a mis-derived one still lands inside a mapped
+    // object. Only an unmapped page faults — and that verdict is offset-independent,
+    // which is why bailing on it is safe on a forked layout where the value test
+    // would not be. Skips 4096 bounded-but-real FNamePool lookups down a garbage
+    // FField chain. Falls through to the same un-memoized exit as the value gate.
+    if (!propsSizeReadOk) {
+        Sein::Warn("WALK:safe",
+            "WalkClass: 0x%llx is not readable at +0x%X — not a UStruct, or freed memory",
+            (unsigned long long)uclassAddr, DynOff::USTRUCT_PROPSSIZE);
+        return info;
+    }
 
     LOG_DEBUG("WalkClass: %s (super=%s, size=%d) at 0x%llX",
               info.Name.c_str(), info.SuperName.c_str(), info.PropertiesSize,
@@ -831,14 +925,32 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     // Cache the result for subsequent WalkInstance calls. Concurrent builders of the
     // same class produce an equal ClassInfo (idempotent), so first-writer wins just as
     // harmlessly as last-writer — but try_emplace is NOT interchangeable with
-    // `cache[addr] = info` here. WalkClassEx hands out a `const ClassInfo&` into this
-    // map, and an assign-over-existing destroys the entry's Fields vector while a
-    // reader may still hold that reference. try_emplace leaves an existing entry
-    // untouched, which is what makes reference-return safe (node-based map, and there
-    // is no erase/clear of either cache anywhere in dll/src). (B10)
-    {
+    // `cache[addr] = info` here, because an assign-over-existing destroys the entry's
+    // Fields vector. No reference into THIS map escapes (the hit at the top of this
+    // function and the super-chain reuse below both COPY under s_walkClassCacheMutex);
+    // it is s_walkClassExCache that hands out `const ClassInfo&`, and both maps follow
+    // the same rule so the two cannot drift. Node-based map + no erase/clear anywhere
+    // in dll/src ⇒ entries never move. (B10)
+    //
+    // The publish is GATED (audit #5 U4). It used to be unconditional, so any caller
+    // handing in a non-UStruct address poisoned the cache permanently — and the caller
+    // that does exactly that is in-tree and shipped: WalkInstance walks the class FIRST
+    // and only then applies IsSanePropertiesSize to decide the address is recycled, and
+    // UE5_WalkClassBegin (Frieren) is used by ue5_dissect.lua as its is-this-an-instance
+    // probe, so it feeds raw INSTANCE addresses in by design. Deliberately gating the
+    // PUBLISH and not the walk: DynOff::USTRUCT_PROPSSIZE is derived (childPropsOff+8,
+    // Genau), never independently probed, so on a forked layout a pre-walk bail would
+    // turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
+    // costs a re-walk.
+    if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         s_walkClassCache.try_emplace(uclassAddr, info);
+    } else {
+        Sein::Warn("WALK:safe",
+            "WalkClass: refusing to cache 0x%llx — PropertiesSize=%d (read %s); "
+            "not a UStruct, or recycled memory",
+            (unsigned long long)uclassAddr, info.PropertiesSize,
+            propsSizeReadOk ? "ok" : "FAILED");
     }
 
     return info;
@@ -933,6 +1045,23 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     }
 
     ClassInfo info = WalkClass(uclassAddr);
+
+    // Same memoization gate WalkClass applies, for the same reason (audit #5 U4) —
+    // this cache is the more widely consulted of the two (Property/Value Search,
+    // snapshot capture, CE export, Solitar, Solide), so leaving it poisonable while
+    // fixing only WalkClass would close the smaller half. `propsSizeReadOk` is true
+    // by construction here: WalkClass returns early on a read fault, so an unmapped
+    // address arrives with PropertiesSize == 0 and no fields, and only the value test
+    // can fire. Refusing to memoize means refusing to RETURN too — the signature is a
+    // reference into this map — so a rejected class reads as empty rather than as
+    // garbage fields. That trade is bounded: WalkInstance already hard-fails on this
+    // exact predicate, so an engine fork that mis-derives USTRUCT_PROPSSIZE is broken
+    // before reaching here; this widens an existing failure rather than creating one.
+    // Placed BEFORE CorrectSubclassOffsets so a garbage class cannot calibrate the
+    // process-wide FSTRUCTPROP_STRUCT offset off its own bogus fields.
+    if (!ShouldPublishClassWalk(true, info.PropertiesSize)) {
+        return s_emptyClassInfo;
+    }
 
     // Calibrate FSTRUCTPROP_STRUCT (and the FProperty subclass extension
     // offsets that share its slot) BEFORE reading them. Historically this
@@ -1074,6 +1203,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // results are equal (the enrichment is a pure function of the same reads), so
     // keeping the existing one costs nothing and keeps every handed-out reference
     // valid. Node-based map + no erase/clear anywhere ⇒ entries never move. (B10)
+    // Only reachable for a class that passed the memoization gate above.
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
     return s_walkClassExCache.try_emplace(uclassAddr, std::move(info)).first->second;
 }
@@ -3062,14 +3192,13 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                 int corrected = DynOff::FSTRUCTPROP_STRUCT + delta;
                 Sein::Info("WALK", "CorrectSubclassOffsets: delta=%d, FSTRUCTPROP 0x%X -> 0x%X (validated with '%s' -> '%s')",
                     delta, DynOff::FSTRUCTPROP_STRUCT, corrected, fi.Name.c_str(), sname.c_str());
-                DynOff::FSTRUCTPROP_STRUCT  = corrected;
-                // Note: FARRAYPROP_INNER may differ from FSTRUCTPROP_STRUCT (UE5.7 has
-                // EArrayPropertyFlags before Inner). Set it to same base; the ArrayProperty
-                // probe will try delta=8 to account for this.
-                DynOff::FARRAYPROP_INNER   = corrected;
-                DynOff::FBOOLPROP_FIELDSIZE = corrected;
-                DynOff::FBYTEPROP_ENUM     = corrected;
-                DynOff::FENUMPROP_ENUM     = corrected + 8;  // +8: FEnumProperty::UnderlyingProp precedes Enum
+                // (G12) Fourth writer of the sizeof(FProperty) family — one expression, so it
+                // cannot drift from Genau's three. Note FARRAYPROP_INNER may legitimately
+                // differ later (UE5.7 puts EArrayPropertyFlags before Inner); the helper only
+                // sets the shared STARTING point, and the ArrayProperty probe further down
+                // this file re-probes it with delta=8. That probe is deliberately NOT routed
+                // through the helper for exactly that reason.
+                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(corrected));
             }
             s_checked.store(true, std::memory_order_release);
             return;

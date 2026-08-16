@@ -275,10 +275,23 @@ bool ApplyToInstance(Job& job, uintptr_t obj, uintptr_t cls, bool restore,
 void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
     int32_t held = 0, refusal = 0;
     uintptr_t sampleOwner = 0; int32_t sampleOffset = -1;
-    // Exact class match (L3): forcing "Enemy" must not also capture "EnemyProjectile".
-    auto rset = Aura::FindInstancesByClass(job.className, /*exactMatch=*/true, Grimoire::SOLIDE_MAX_INSTANCES);
+    // The class AND every subclass of it (A6). A Property Search row for an
+    // INHERITED field is keyed to the class that DECLARES it — `Aura` sets
+    // match.className = definingName so the row can say "inherited by 4822"
+    // instead of listing 4822 near-identical rows — so an exact-name pool for
+    // e.g. "Actor" resolved essentially nothing and the hold silently held
+    // nothing. Subclass semantics are what the row already claims.
+    //
+    // NOT exactMatch=false: that is a case-insensitive SUBSTRING match on the
+    // class NAME, so "Enemy" would capture "EnemyProjectile" — the very thing
+    // the old exact match existed to prevent. FindInstancesDerivedFrom walks
+    // the super chain, so "EnemyProjectile" is captured only if it genuinely
+    // derives from "Enemy", which is when it SHOULD be.
+    auto rset = Aura::FindInstancesDerivedFrom(job.className, Grimoire::SOLIDE_MAX_INSTANCES);
     std::unordered_set<uintptr_t> seen;
     for (const auto& r : rset.results) {
+        // Aura already drops CDOs (it has to, before its cap). Kept as the
+        // local invariant: ApplyToInstance must never write a class default.
         if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
         uintptr_t cls = r.classAddr ? r.classAddr : Ubel::GetClass(r.addr);
         if (!cls) continue;

@@ -70,7 +70,12 @@ public class StubDumpService : IDumpService
     public Task<EngineState> SetInvokeTimeoutAsync(int timeoutMs, bool persist = true, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<int> GetObjectCountAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false) => throw new NotImplementedException();
-    public Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
+    // virtual: ClassStructViewModelConcurrencyTests overrides this to gate the
+    // metaclass lookup, which is the extra round-trip that makes an instance
+    // selection lose to a later class-like one (audit #5 AE2). Without the
+    // keyword that branch is unreachable from a test and its negative control
+    // reports green against broken code.
+    public virtual Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ObjectDetail> FindObjectAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<ObjectListResult> SearchObjectsAsync(string query, int limit = 200, bool instancesOnly = false, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default) => throw new NotImplementedException();

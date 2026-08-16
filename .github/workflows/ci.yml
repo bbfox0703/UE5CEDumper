@@ -134,6 +134,15 @@ jobs:
           # Stdlib-only, no engine, <1s. Skips cleanly if the sample folder is absent.
           & $py tools/check_ue_sample_values.py
           if ($LASTEXITCODE -ne 0) { throw "check_ue_sample_values FAILED ($LASTEXITCODE) - tools/ue-sample/README.md and the DumperTest sources disagree. Run 'py tools/check_ue_sample_values.py --list'." }
+          # The audit register's open/closed count is DERIVED from a per-row tick, and a fix
+          # session has twice marked the grouped queue row (1 2 3) while leaving the individual
+          # finding rows it covered unmarked - so the register kept reporting shipped work as
+          # open. Eleven rows the first time (2026-08-15), eight more on 2026-08-17. Both times
+          # the fix itself was fine and the dev-log was right; only the marker was missing, which
+          # is why nothing noticed. Same family as check_derived_counts: a number in a doc that
+          # nothing re-derives. Stdlib-only, <1s.
+          & $py tools/check_audit_register.py
+          if ($LASTEXITCODE -ne 0) { throw "check_audit_register FAILED ($LASTEXITCODE) - a finding docs/dev-log.md reports fixed has no tick on its row in the audit doc, so the open count over-reports. The failure names each one. Marking the grouped queue row is not enough." }
 
       - name: Build + test + AOT publish (the gate)
         shell: pwsh
