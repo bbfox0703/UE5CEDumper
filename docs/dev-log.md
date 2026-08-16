@@ -22,6 +22,77 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - G12 + G3: one offset family, and a re-probe that should not happen (builds 3119 / 3121)
+
+**The finding I set out to fix turned out to be a LOW; the one found while re-deriving it is the
+real defect.** C++ 1137 → **1166**.
+
+### G12 (MED, new) — the `sizeof(FProperty)` family was published SPLIT
+
+`FSTRUCTPROP_STRUCT` / `FARRAYPROP_INNER` / `FBOOLPROP_FIELDSIZE` / `FBYTEPROP_ENUM` all name the
+**same** slot — the first subclass field, `== sizeof(FProperty)` — and `FENUMPROP_ENUM` sits 8 bytes
+later because `FEnumProperty` declares `FNumericProperty* UnderlyingProp` first. Five names, one
+measurement, and **four independent writers**.
+
+Genau's Step 2.5 default block set only **two** of them (`STRUCT`/`BOOLSIZE` → 0x70), leaving
+`INNER`/`BYTEENUM` at 0x78 and `ENUMENUM` at 0x80. Three *"keeping defaults"* exit paths then shipped
+that split **for the whole session**: TArray element descriptors and every enum-name read 8 bytes
+off, while struct reads stayed correct — the "names resolve, values are garbage" shape.
+
+Deterministic, first run, **no concurrency and no re-entry required**. And it has fired on a real
+game: `docs/test-games.md` records Solarpunk (UE5.7) resolving through exactly that heuristic
+fallback with `FProp Offset +0x44` — which *is* the Step 2.5 default, i.e. the branch that writes two
+of five.
+
+The one mechanism that could have harmonised them latches shut on precisely this case:
+`Ubel::CorrectSubclassOffsets` only rewrites the other four when `delta != 0`, and here delta is 0
+because `FSTRUCTPROP_STRUCT` is already right.
+
+Fixed with a single `DynOff::PropertyFamilyFor` / `PropertyFamilyAtBase` / `ApplyPropertyFamily`
+helper, with **all four** writers routed through it. **The fix-time sibling grep found the third and
+fourth — the finding named neither**, and the third was coherent-but-hand-rolled, which is exactly
+how it and Step 2.5 drifted apart. Deliberately *not* routed: Ubel's ArrayProperty self-heal probe,
+which re-probes `FARRAYPROP_INNER` independently because UE5.7 puts `EArrayPropertyFlags` before
+`Inner`; that exception is now commented at both ends.
+
+30 new assertions pin the invariant across five plausible `Offset_Internal` values, both shipped
+layouts (0x44 → base 0x70; TQ2's 0x48 → 0x74), agreement between the two spellings, and the
+historical split asserted as a **shape that must be unreachable**. Controls: reproducing the split in
+the helper → **16 red**; dropping the `FEnumProperty` +8 → 6 red.
+
+### G3 — confirmed as a mechanism, and four premises wrong
+
+| filed | measured |
+|---|---|
+| "for the **seconds** a re-run takes" | **1–3 ms**, all 16 `offsets*.log` on this machine |
+| "the DynOff **set**" | **3 globals** — and **15 of 16** runs are byte-identical to the defaults |
+| "`UFIELD_NEXT` reset 0x38 → 0x28" | requires UE4 **pre-4.25**; on UE5 it is never written |
+| CE `[DISABLE]`/`[ENABLE]` "poller survives" | **false** — `Mimic::StopThread` joins. The real mechanism is restart-*before*-scan |
+
+And reachability is zero: every one of the 16 logs contains exactly **one**
+`ValidateAndFixOffsets: Starting`. On the CE path CE's single Lua thread is parked in
+`processMessagesPaintOnly` for the entire window — documented as not handling keyboard/mouse — so no
+CE-side writer can drive the poller anyway.
+
+**So G3 is a LOW, not a MED, and emphatically not the filed L-effort fix.** Refuted as repairs:
+build-then-publish (~200 lines, and naive staging is *wrong* — Step 2.5's defaults are probe **seeds**
+read back by the heuristic phase); a reader seqlock (426 `DynOff::` sites, 265 outside Genau.cpp,
+mostly inline in 486K-node loops); quiescing consumers (`Tot` means cancel, not pause).
+
+What shipped is a 5-line gate removing the one genuinely exposed case: an `apply_rescan` re-probe
+when init already probed.
+
+> ⚠ The predicate is `!bOffsetsProbeRan`, **not** `applied`. `applied` is true on every reachable
+> path — `CMD_RESCAN` only scans pointers already 0, and the UI only sends `apply_rescan` when
+> something was found — so gating on it would be a **never-firing predicate**, the defect class
+> recorded one commit earlier as G11's lesson.
+
+GEngine's second pass is **hoisted out** of that block: it must still run when the offsets were
+already probed, which is exactly the GWorld-only recovery the gate now skips, or the fix would trade
+G3 for "GEngine reports AOB not found forever".
+
+-----
+
 ## 2026-08-17 - G11: Tier 2 matches the bare needle, so it can finally fire (build 3112)
 
 **Tier 2 had never fired on any binary this project owns.** The needle table's trailing `.` is a

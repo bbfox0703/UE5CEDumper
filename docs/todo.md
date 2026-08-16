@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **27 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **28 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1425,6 +1425,32 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate
+
+*Needs the DLL injected. See dev-log builds 3119 / 3121. G12's invariant is unit-pinned; its WIRING
+is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
+
+1. **⚠ G12 REGRESSION — enums and TArray elements still read correctly.** Open Live Walker on a
+   class with an **enum** field and a **TArray** field. The enum must show its member NAME (not a
+   raw int) and the array must show its element type. All four writers of the family moved; this is
+   the check that they still agree.
+2. **G12, the case it actually fixes.** Needs a title whose offset validation takes the **heuristic
+   fallback** — `scan-0.log` / `offsets-0.log` shows `Cannot find Guid or Vector struct`. Solarpunk
+   is the documented one (though a later build resolved via `Guid` instead, so it may not reproduce).
+   On such a title, enum names and TArray inner types were previously read 8 bytes off. Confirm they
+   are right now, and **record which branch the log shows** — a run that resolved via `Guid` did not
+   exercise this.
+3. **⚠ G3 REGRESSION — Extra Scan → Apply still works.** Needs a game where something is missing to
+   scan for (all 34 tested games resolve GWorld, so this may not be reachable). If it is: press
+   Extra Scan, then Apply, and confirm `offsets-0.log` still contains exactly **one**
+   `ValidateAndFixOffsets: Starting` line — the gate's whole purpose.
+4. **⚠ G3 REGRESSION — GEngine still resolves after an Apply.** The GEngine second pass was hoisted
+   out of the gated block precisely so it keeps running. If Apply is reachable, confirm
+   `apply_rescan: Applied GEngine=0x…` still appears when GEngine was previously unresolved.
+5. **Free log check, no game needed beyond a normal session.** `walk-0.log` must show no burst of
+   `Misaligned field … possible wrong FPROPERTY_OFFSET`. That line is the direct witness for a split
+   or stale family.
 
 ### ⬜ NEW 2026-08-17 — G11: Tier 2 is alive; check it agrees with Tier 1
 

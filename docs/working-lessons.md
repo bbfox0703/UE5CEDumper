@@ -887,6 +887,36 @@ Tier 1** and written into the version-rev changelog — Tier 2 simply never rece
   first on all six, so no shipped verdict moved. Saying that plainly is the difference between an
   honest report and an oversold one.
 
+### 4.3g Values that are five names for ONE measurement need one writer, not four
+
+Audit #5 G12 (build 3119). `FSTRUCTPROP_STRUCT` / `FARRAYPROP_INNER` / `FBOOLPROP_FIELDSIZE` /
+`FBYTEPROP_ENUM` all name the same slot (`sizeof(FProperty)`), and `FENUMPROP_ENUM` is that slot + 8.
+They had **four independent writers**, and one of them set only **two** of the five. Three exit paths
+then shipped the split for a whole session: struct reads correct, TArray element descriptors and
+every enum-name read 8 bytes off.
+
+Nobody caught it because the split is *plausible* — each writer looked locally coherent, and the two
+values it did set were the two that most code exercises.
+
+**How to apply:**
+
+- **If N constants are derived from one measurement, express the derivation ONCE** and make that the
+  only way to publish them. A helper that returns the whole family beats N assignments however
+  carefully those assignments are commented — this is the "make the helper impossible to bypass"
+  half of §2.3's cluster ④, applied to data rather than to a predicate.
+- **Count the writers before trusting any one of them.** The finding named one site; the fix-time
+  grep found four. Two of the extra three were already coherent — which is exactly why they were
+  never suspected, and exactly how they drifted from the fourth.
+- **A partial write is worse than a wrong one.** A uniformly wrong family fails loudly (nothing
+  resolves); a split family resolves the common paths and quietly corrupts the rest, which is the
+  "names resolve, values are garbage" shape that costs the most debugging time.
+- **Assert the bad SHAPE, not just the good value.** The unit test pins the invariant across every
+  plausible input *and* asserts the historical split as a shape that must be unreachable. The second
+  form survives a future refactor that changes the numbers.
+- **Leave the deliberate exception, and comment it at both ends.** One site genuinely must diverge
+  (UE5.7 puts `EArrayPropertyFlags` before `Inner`, so `FARRAYPROP_INNER` is re-probed separately).
+  An unexplained exception is indistinguishable from the bug.
+
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when
