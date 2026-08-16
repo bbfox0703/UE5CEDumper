@@ -16,6 +16,7 @@
 #include "Serie.h"
 #include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.6+ FNameData)
 #include "Tot.h"     // Tot::Requested — Extra Scan must bail so Fern::Stop's join is bounded (B18)
+#include "VersionNeedleScan.h"  // gated needle sweep + HasUEAnchorNearby (audit #5 G2)
 
 #include <string>
 #include <cstring>
@@ -2790,28 +2791,10 @@ static int CountPreUE4Markers() {
 // "Unreal", "UE4", "UE5", "++UE") near a bare version pattern, so that
 // stray SDK strings like "PhysX 5.5.0" / "DirectX 12.5" can no longer
 // fool the bare-pattern path.
-static bool HasUEAnchorNearby(const uint8_t* scan, size_t size,
-                              size_t off, size_t windowBytes) {
-    static const char* kAnchors[] = {
-        "Engine",  "engine",
-        "Unreal",  "unreal",
-        "++UE",
-        "UE4",     "UE5",
-    };
-    size_t lo = (off > windowBytes) ? off - windowBytes : 0;
-    size_t hi = off + windowBytes;
-    if (hi > size) hi = size;
-    if (hi <= lo) return false;
-    size_t winLen = hi - lo;
-    for (const char* a : kAnchors) {
-        size_t aLen = strlen(a);
-        if (aLen >= winLen) continue;
-        for (size_t i = 0; i + aLen <= winLen; ++i) {
-            if (memcmp(scan + lo + i, a, aLen) == 0) return true;
-        }
-    }
-    return false;
-}
+// HasUEAnchorNearby moved to VersionNeedleScan.h (audit #5 G2) so it can be unit-tested
+// and so the gated Tier 2/3 pass can share it. Behaviour is identical apart from a
+// first-byte reject inside the window, which matters because the fused pass no longer
+// returns the instant it sees a Tier 2 hit and so reaches more anchor calls.
 
 // Detection result. tier:
 //   1 = Tier 1 exact "++UE?+Release-X.Y" → highest confidence
@@ -2840,7 +2823,7 @@ static VersionScanResult DetectVersionDetailed() {
         // fall through to the memory scan and let it agree or not. If it cannot corroborate, the
         // terminal branch keeps the PE value but marks it tier 3, which sets bLowConfidence, which
         // the refusal gate requires to be false. The cost of being wrong that way is a wasted
-        // ~4-second sweep; the cost of being wrong the other way is refusing to scan a game that
+        // sweep (~0.35 s since the G2 gate, was ~29 s); the cost of being wrong the other way is refusing to scan a game that
         // works. (Audit #4 B25. Note the memory needle table floors at "4.18.", so a GENUINE
         // 4.0-4.10 title will not be corroborated and will pay that sweep — accepted.)
         if (ver >= Grimoire::MIN_SUPPORTED_UE_VERSION) { r.version = ver; r.tier = 1; return r; }
@@ -2861,17 +2844,41 @@ static VersionScanResult DetectVersionDetailed() {
         return r;
     }
 
-    struct { const char* needle; uint32_t value; } patterns[] = {
-        { "5.8.", 508 }, { "5.7.", 507 }, { "5.6.", 506 }, { "5.5.", 505 },
-        { "5.4.", 504 }, { "5.3.", 503 }, { "5.2.", 502 },
-        { "5.1.", 501 }, { "5.0.", 500 },
-        { "4.27.", 427 }, { "4.26.", 426 }, { "4.25.", 425 },
-        { "4.24.", 424 }, { "4.23.", 423 }, { "4.22.", 422 },
-        { "4.21.", 421 }, { "4.20.", 420 }, { "4.19.", 419 },
-        { "4.18.", 418 },
-    };
-
     const uint8_t* scan = reinterpret_cast<const uint8_t*>(base);
+
+    // === Tier 1 + Tier 2/3 — see VersionNeedleScan.h ==========================
+    // Both sweeps used to be written inline here as naive whole-image memcmp passes:
+    // 4 for Tier 1, 19 for Tier 2/3. MEASURED on Elliot-Win64-Shipping.exe (460.0 MiB,
+    // MSVC /O2 x64) that was 4.348 s + 24.465 s and 9,165,424,620 memcmp calls, all of
+    // it uninterruptible — which is what audit #5 G2 filed. Gated on the first needle
+    // byte the same cost is 0.2245 s + 0.0957 s and 39,351 compares, with identical
+    // results on 7 real binaries plus a unit oracle. (audit #5 G2)
+    //
+    // The needle table, the tier rules and the anchor helper now live in the header so
+    // dll_helpers_test can compile them against a naive reference — nothing in
+    // dll/CMakeLists.txt compiles Genau.cpp, so this logic had no build-time check at all.
+    //
+    // Log lines below are deliberately byte-identical to the old inline versions:
+    // scan-0.log is the only instrument that can verify this function on a real game.
+    //
+    // ⚠ VERSION DETECTION IS DELIBERATELY NOT CANCELLABLE. Do not "finish G2" by pasting
+    // the (B18) `if ((off & 0xFFF) == 0 && Tot::Requested()) return 0;` idiom in here.
+    // Three reasons, in order of severity:
+    //   1. The verdict is PERSISTED. Flamme writes ueVersion / versionDetected /
+    //      lowConfidence into UE5CEDumper.{Machine}.json keyed by PE hash, and FindAll
+    //      skips detection entirely on every later launch ("skipped DetectVersion"). A
+    //      cancelled sweep returning "nothing found" would therefore be memoized as the
+    //      fallback guess FOREVER for that game — the exact never-invalidated-cache shape
+    //      this audit just spent three commits removing from Ubel (U4/U16/U6).
+    //   2. CountPreUE4Markers below feeds the PRE-UE4 REFUSAL. A truncated marker count is
+    //      not a smaller answer, it is a WRONG one, and in the direction that can refuse to
+    //      scan a supported game.
+    //   3. After the gate the whole stretch is ~0.35 s on a 482 MB image, down from ~29 s.
+    //      There is nothing left worth interrupting.
+    // If it ever must become cancellable, the shape is: a `cancelled` flag on
+    // VersionScanResult, plumbed through EnginePointers into Flamme::SaveResults so the
+    // four version fields are SKIPPED rather than written, plus a distinguishable (not
+    // merely truncated) return from CountPreUE4Markers — all in the SAME commit.
 
     // === Tier 1: Exact UE build strings "++UE5+Release-5.X" / "++UE4+Release-4.XX" ===
     // Run TWICE: once narrow, once UTF-16LE. Some builds keep the engine tag only as a wide
@@ -2879,90 +2886,36 @@ static VersionScanResult DetectVersionDetailed() {
     // the narrow-only scan was blind to it (and Tier 2/3 miss too: the ASCII "4.27" strings
     // in that image are build paths like "4.27\Engine\Source\...", with no trailing dot).
     {
-        const char* prefixes[] = { "++UE5+Release-", "++UE4+Release-" };
-
-        // widen: "abc" -> 'a',0,'b',0,'c',0 — a UTF-16LE literal of an ASCII string.
-        auto widen = [](const char* s) {
-            std::vector<uint8_t> w;
-            for (const char* p = s; *p; ++p) { w.push_back(static_cast<uint8_t>(*p)); w.push_back(0); }
-            return w;
-        };
-
-        for (int wide = 0; wide <= 1; ++wide) {
-            for (const char* prefix : prefixes) {
-                std::vector<uint8_t> pre = wide ? widen(prefix)
-                                                : std::vector<uint8_t>(prefix, prefix + strlen(prefix));
-                if (pre.empty() || size <= pre.size() + 8) continue;
-                for (size_t off = 0; off + pre.size() + 8 < size; ++off) {
-                    if (memcmp(scan + off, pre.data(), pre.size()) != 0) continue;
-                    for (auto& p : patterns) {
-                        // Tier 1 must NOT require the table's trailing '.': the real engine
-                        // tag is "++UE4+Release-4.27" / "++UE5+Release-5.4" with nothing
-                        // after the minor. The dot exists only to disambiguate the BARE
-                        // "5.4" needle in Tiers 2/3, and here the "++UEx+Release-" prefix
-                        // already supplies all the context we need.
-                        std::string bare = p.needle;
-                        if (!bare.empty() && bare.back() == '.') bare.pop_back();
-                        std::vector<uint8_t> nd = wide ? widen(bare.c_str())
-                                                       : std::vector<uint8_t>(bare.begin(), bare.end());
-                        if (off + pre.size() + nd.size() <= size &&
-                            memcmp(scan + off + pre.size(), nd.data(), nd.size()) == 0) {
-                            Sein::Info("SCAN:Ver", "DetectVersion: Tier 1 (%s) '%s%s' -> %u at 0x%zX",
-                                     wide ? "utf16" : "ascii", prefix, bare.c_str(), p.value, off);
-                            r.version = p.value; r.tier = 1; return r;
-                        }
-                    }
-                }
-            }
+        static const char* kPrefixNames[] = { "++UE5+Release-", "++UE4+Release-" };
+        NeedleScanResult t1 = ScanVersionTier1(scan, size);
+        if (t1.found()) {
+            std::string bare = kVersionNeedles[t1.index].needle;
+            if (!bare.empty() && bare.back() == '.') bare.pop_back();
+            Sein::Info("SCAN:Ver", "DetectVersion: Tier 1 (%s) '%s%s' -> %u at 0x%zX",
+                     t1.wide ? "utf16" : "ascii", kPrefixNames[t1.prefixIndex], bare.c_str(),
+                     kVersionNeedles[t1.index].value, t1.offset);
+            r.version = kVersionNeedles[t1.index].value; r.tier = 1; return r;
         }
     }
 
-    // === Tier 2 + 3: Per-pattern scan with context checks ===
+    // === Tier 2 + 3: needle scan with context checks ===
     // Tier 3 hardening: defer first hit and prefer Tier 2 hits across all
-    // patterns. If we exit the outer loop without a Tier 2 hit, the deferred
-    // Tier 3 hit is returned (low confidence). This stops a stray "5.5.0"
-    // SDK string near the start of the module from out-racing a real
-    // "Release-4.27" string later in the module.
+    // patterns. If no Tier 2 hit exists, the deferred Tier 3 hit is returned (low
+    // confidence). This stops a stray "5.5.0" SDK string near the start of the
+    // module from out-racing a real "Release-4.27" string later in the module.
     VersionScanResult bestTier3{};
-    for (auto& p : patterns) {
-        size_t needleLen = strlen(p.needle);
-        for (size_t off = 0; off + needleLen + 10 < size; ++off) {
-            if (memcmp(scan + off, p.needle, needleLen) != 0) continue;
-
-            // Tier 2: "Release" prefix within the preceding 16 bytes
-            if (off >= 8) {
-                char ctx[17] = {};
-                memcpy(ctx, scan + off - 8, 8);
-                if (strstr(ctx, "Release") || strstr(ctx, "release")) {
-                    Sein::Info("SCAN:Ver", "DetectVersion: Tier 2 Release prefix -> %u at 0x%zX",
-                             p.value, off);
-                    r.version = p.value; r.tier = 2; return r;
-                }
-            }
-
-            // Tier 3: bare "X.Y.D" — only accept if preceding char is NOT a digit or period
-            // AND a UE-related anchor word exists within a 256-byte window. The anchor
-            // requirement filters out PhysX / DirectX / SDK version strings shipped alongside
-            // the real engine.
-            if (scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
-                if (off > 0) {
-                    uint8_t prev = scan[off - 1];
-                    if ((prev >= '0' && prev <= '9') || prev == '.') {
-                        continue;  // game version "15.6.0" / "v2.5.6.1"
-                    }
-                }
-                if (!HasUEAnchorNearby(scan, size, off, /*windowBytes=*/256)) {
-                    continue;  // no Engine/Unreal/UE4/UE5/++UE within window — likely SDK noise
-                }
-                if (bestTier3.tier == 0) {
-                    bestTier3.version = p.value;
-                    bestTier3.tier    = 3;
-                    Sein::Info("SCAN:Ver", "DetectVersion: Tier 3 candidate (deferred) -> %u at 0x%zX",
-                             p.value, off);
-                }
-                // do NOT return immediately — keep looking for a Tier 2 hit
-                break;  // first Tier 3 hit per pattern is enough
-            }
+    {
+        NeedleScanResult t23 = ScanVersionTier23(scan, size);
+        if (t23.tier == 2) {
+            Sein::Info("SCAN:Ver", "DetectVersion: Tier 2 Release prefix -> %u at 0x%zX",
+                     kVersionNeedles[t23.index].value, t23.offset);
+            r.version = kVersionNeedles[t23.index].value; r.tier = 2; return r;
+        }
+        if (t23.tier == 3) {
+            Sein::Info("SCAN:Ver", "DetectVersion: Tier 3 candidate (deferred) -> %u at 0x%zX",
+                     kVersionNeedles[t23.index].value, t23.offset);
+            bestTier3.version = kVersionNeedles[t23.index].value;
+            bestTier3.tier    = 3;
         }
     }
 
@@ -4732,7 +4685,10 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     //   3. Fresh detection (PE VERSIONINFO + Tier 1/2 string scan + Tier 3 anchored fallback).
     //   4. Hard fallback (504 by default, or publisher-biased if we can identify the shipper).
     //
-    // DetectVersion() can take 5+ seconds on large games. The version is NOT used during
+    // DetectVersion() costs ~0.35 s on a 482 MB image since the needle gate (audit #5 G2);
+    // it was ~29 s before, so this cache used to be load-bearing and is now merely nice.
+    // (Measured on Elliot-Win64-Shipping.exe, 460.0 MiB, MSVC /O2 x64 — the conditions are
+    // part of the number.) The version is NOT used during
     // AOB scanning (completely version-agnostic), only post-scan for DynOff offset selection.
     // Structural findings (UE4 TNameEntryArray, hash-prefixed headers) override the version
     // later anyway, so a cached value is safe.

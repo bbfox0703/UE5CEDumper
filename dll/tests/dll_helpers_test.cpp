@@ -28,6 +28,7 @@
 #include "../src/Lineal.h"  // UE5.7+ packed FUObjectItem reconstruction (Reconstruct/Encode)
 #include "../src/Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.6+ FNameData)
 #include "../src/GraphPath.h"   // Pure BFS shortest-path core ("Locate in GWorld")
+#include "../src/VersionNeedleScan.h"  // Gated UE-version needle sweep (audit #5 G2)
 #include "../src/Solitar.h"     // GodMode FBoolProperty bit write (ApplyBoolBit, header-inline)
 #include "../src/Grimoire.h"    // DynOff FFieldClass::Name probe (UE5.8 virtual-dtor shift)
 #include "../src/Solide.h"      // Force-field / stealth-meter matcher (MatchStealthField, header-inline)
@@ -3608,6 +3609,250 @@ static void Test_ShouldPublishClassWalk() {
            !Ubel::ShouldPublishClassWalk(true, 867763776));
 }
 
+// ── audit #5 G2: the gated version sweep must return EXACTLY what the naive one did ──
+//
+// The naive references below are transcribed from Genau.cpp as it stood BEFORE the gate
+// (pattern-major, unconditional memcmp at every offset, per-pattern break, no first-byte
+// reject). They are the oracle: the rewrite's whole safety argument is "same answers,
+// 29 s less work", and nothing else in this repo can check the first half — no test
+// target compiles Genau.cpp.
+
+struct NaiveResult { uint32_t value = 0; int tier = 0; };
+
+static NaiveResult NaiveTier23Reference(const uint8_t* scan, size_t size) {
+    NaiveResult best3{};
+    for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k) {
+        const char* needle = Genau::kVersionNeedles[k].needle;
+        const uint32_t value = Genau::kVersionNeedles[k].value;
+        size_t needleLen = strlen(needle);
+        for (size_t off = 0; off + needleLen + 10 < size; ++off) {
+            if (memcmp(scan + off, needle, needleLen) != 0) continue;
+            if (off >= 8) {
+                char ctx[17] = {};
+                memcpy(ctx, scan + off - 8, 8);
+                if (strstr(ctx, "Release") || strstr(ctx, "release"))
+                    return NaiveResult{ value, 2 };          // immediate return, table order
+            }
+            if (scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
+                if (off > 0) {
+                    uint8_t prev = scan[off - 1];
+                    if ((prev >= '0' && prev <= '9') || prev == '.') continue;
+                }
+                if (!Genau::HasUEAnchorNearby(scan, size, off, 256)) continue;
+                if (best3.tier == 0) { best3.value = value; best3.tier = 3; }
+                break;                                        // first Tier 3 per pattern
+            }
+        }
+    }
+    return best3;
+}
+
+static NaiveResult NaiveTier1Reference(const uint8_t* scan, size_t size) {
+    const char* prefixes[] = { "++UE5+Release-", "++UE4+Release-" };
+    auto widen = [](const std::string& s) {
+        std::vector<uint8_t> w;
+        for (char c : s) { w.push_back(static_cast<uint8_t>(c)); w.push_back(0); }
+        return w;
+    };
+    for (int wide = 0; wide <= 1; ++wide) {
+        for (const char* prefix : prefixes) {
+            std::vector<uint8_t> pre = wide ? widen(prefix)
+                : std::vector<uint8_t>(prefix, prefix + strlen(prefix));
+            if (pre.empty() || size <= pre.size() + 8) continue;
+            for (size_t off = 0; off + pre.size() + 8 < size; ++off) {
+                if (memcmp(scan + off, pre.data(), pre.size()) != 0) continue;
+                for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k) {
+                    std::string bare = Genau::kVersionNeedles[k].needle;
+                    if (!bare.empty() && bare.back() == '.') bare.pop_back();
+                    std::vector<uint8_t> nd = wide ? widen(bare)
+                        : std::vector<uint8_t>(bare.begin(), bare.end());
+                    if (off + pre.size() + nd.size() <= size &&
+                        memcmp(scan + off + pre.size(), nd.data(), nd.size()) == 0)
+                        return NaiveResult{ Genau::kVersionNeedles[k].value, 1 };
+                }
+            }
+        }
+    }
+    return NaiveResult{};
+}
+
+static uint32_t GatedValue(const Genau::NeedleScanResult& r) {
+    return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
+}
+
+// Build a buffer of `size` filler bytes with `what` planted at `at`.
+static void Plant(std::vector<uint8_t>& buf, size_t at, const char* what) {
+    size_t n = strlen(what);
+    for (size_t i = 0; i < n; ++i) buf[at + i] = static_cast<uint8_t>(what[i]);
+}
+
+static void ExpectEquivalent23(const char* label, std::vector<uint8_t>& buf) {
+    NaiveResult naive = NaiveTier23Reference(buf.data(), buf.size());
+    Genau::NeedleScanResult gated = Genau::ScanVersionTier23(buf.data(), buf.size());
+    bool ok = (naive.value == GatedValue(gated)) && (naive.tier == gated.tier);
+    EXPECT(label, ok);
+}
+
+static void Test_VersionNeedleScan_Equivalence() {
+    // Filler is 'x': not '4', not '5', no '.', no anchor — so nothing matches by accident.
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+
+    {   // plain Tier 2
+        auto b = fresh(4096); Plant(b, 1000, "Release-5.4.0");
+        ExpectEquivalent23("G2 equiv: plain Tier 2 Release-5.4.", b);
+    }
+    {   // ⚠ THE CASE THAT DISCRIMINATES. Two needles in the SAME first-byte group, the
+        // table-LATER one ("5.4.", index 4) at a LOWER address than the table-EARLIER one
+        // ("5.8.", index 0). Table order must win -> 508.
+        //
+        // A cross-group case (4.27 low vs 5.8 high) CANNOT catch an address-order
+        // regression, because two separate first-byte walks preserve UE5-before-UE4
+        // ordering by construction. Only this intra-group shape fires. Do not "simplify"
+        // it away — see the note in VersionNeedleScan.h.
+        auto b = fresh(8192);
+        Plant(b, 1000, "Release-5.4.0");
+        Plant(b, 5000, "Release-5.8.0");
+        ExpectEquivalent23("G2 equiv: intra-group table order (5.4@low vs 5.8@high) -> 508", b);
+    }
+    {   // cross-group, kept as the weaker companion so the contrast is on record
+        auto b = fresh(8192);
+        Plant(b, 1000, "Release-4.27.0");
+        Plant(b, 5000, "Release-5.8.0");
+        ExpectEquivalent23("G2 equiv: cross-group table order -> 508", b);
+    }
+    {   // bare Tier 3 with an anchor in the window
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 5.4.0 ");
+        ExpectEquivalent23("G2 equiv: Tier 3 bare + anchor", b);
+    }
+    {   // Tier 3 with NO anchor -> rejected entirely
+        auto b = fresh(4096); Plant(b, 1000, " 5.4.0 ");
+        ExpectEquivalent23("G2 equiv: Tier 3 without anchor is rejected", b);
+    }
+    {   // preceding digit -> a game version, not an engine version
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "15.4.0 ");
+        ExpectEquivalent23("G2 equiv: preceding digit rejected (game version)", b);
+    }
+    {   // a Tier 2 hit must beat a deferred Tier 3 from an EARLIER table entry
+        auto b = fresh(8192);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 5.8.0 ");        // Tier 3 for index 0
+        Plant(b, 5000, "Release-4.27.0"); // Tier 2 for index 9
+        ExpectEquivalent23("G2 equiv: Tier 2 beats a deferred Tier 3 -> 427/t2", b);
+    }
+    {   // same-pattern retirement: a Tier 3 at a LOW offset hides a Tier 2 at a HIGH one.
+        // Reproduces a real (separately filed) quirk of the original `break`; the point
+        // here is only that the rewrite reproduces it rather than silently "fixing" it.
+        auto b = fresh(8192);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 4.27.0 ");
+        Plant(b, 5000, "Release-4.27.0");
+        ExpectEquivalent23("G2 equiv: same-pattern Tier 3 retires before a later Tier 2", b);
+    }
+    {   // ⚠ Trailing bound edge. The needle must actually QUALIFY (digit after it, anchor
+        // in window, no digit/dot before) or the bound difference is INVISIBLE and this
+        // case silently proves nothing — which is exactly what a first version of it did:
+        // tightening the walk bound to `off + 16` left it green.
+        //
+        // The naive 4-char bound is `off + 14 < size`; offsets size-16 and size-15 are
+        // inside it and outside a `off + 16` bound, so those are the discriminating spots.
+        for (size_t back = 14; back <= 17; ++back) {
+            const size_t S = 4096;
+            auto b = fresh(S);
+            // The anchor must be within 256 bytes OF THE NEEDLE, not merely somewhere in
+            // the buffer — planting it far away made this case qualify as nothing at all
+            // and silently stopped it discriminating.
+            Plant(b, S - back - 100, "Unreal");
+            Plant(b, S - back, "5.4.0");       // qualifies as Tier 3 when in bounds
+            ExpectEquivalent23("G2 equiv: trailing bound edge, qualifying needle", b);
+        }
+        // 5-char needles have a tighter bound than 4-char ones by exactly one offset;
+        // a shared bound would change which trailing offsets are examined.
+        for (size_t back = 14; back <= 17; ++back) {
+            const size_t S = 4096;
+            auto b = fresh(S);
+            Plant(b, S - back - 100, "Unreal");
+            Plant(b, S - back, "4.27.0");
+            ExpectEquivalent23("G2 equiv: trailing bound edge, 5-char needle", b);
+        }
+    }
+    {   // needle at offset 0 (the `off > 0` / `off >= 8` guards)
+        auto b = fresh(4096);
+        Plant(b, 0, "5.4.0");
+        Plant(b, 100, "Unreal");
+        ExpectEquivalent23("G2 equiv: needle at offset 0", b);
+    }
+    {   // Tier 1, narrow and wide
+        auto b = fresh(4096); Plant(b, 1500, "++UE5+Release-5.4");
+        NaiveResult naive = NaiveTier1Reference(b.data(), b.size());
+        Genau::NeedleScanResult g = Genau::ScanVersionTier1(b.data(), b.size());
+        EXPECT("G2 equiv: Tier 1 ascii", naive.value == GatedValue(g) && naive.tier == g.tier);
+        EXPECT("G2 equiv: Tier 1 ascii finds 504", GatedValue(g) == 504 && g.tier == 1);
+    }
+    {
+        auto b = fresh(4096);
+        const char* tag = "++UE4+Release-4.27";
+        for (size_t i = 0; tag[i]; ++i) { b[1500 + i * 2] = (uint8_t)tag[i]; b[1500 + i * 2 + 1] = 0; }
+        NaiveResult naive = NaiveTier1Reference(b.data(), b.size());
+        Genau::NeedleScanResult g = Genau::ScanVersionTier1(b.data(), b.size());
+        EXPECT("G2 equiv: Tier 1 utf16", naive.value == GatedValue(g) && naive.tier == g.tier);
+        EXPECT("G2 equiv: Tier 1 utf16 finds 427", GatedValue(g) == 427 && g.tier == 1);
+    }
+    {   // deterministic pseudo-random fuzz over a biased alphabet that makes hits likely.
+        // NOTE: fuzz alone did NOT catch the address-order regression — the intra-group
+        // case above is what does. Kept for coverage breadth, not as the control.
+        uint32_t seed = 0x5EED1234u;
+        auto next = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed >> 16; };
+        static const char alphabet[] = "45.0123RelaseUnrx ";
+        for (int iter = 0; iter < 400; ++iter) {
+            std::vector<uint8_t> b(512);
+            for (auto& c : b) c = (uint8_t)alphabet[next() % (sizeof(alphabet) - 1)];
+            NaiveResult naive = NaiveTier23Reference(b.data(), b.size());
+            Genau::NeedleScanResult g = Genau::ScanVersionTier23(b.data(), b.size());
+            if (naive.value != GatedValue(g) || naive.tier != g.tier) {
+                EXPECT("G2 equiv: fuzz buffer mismatch", false);
+                break;
+            }
+        }
+        EXPECT("G2 equiv: 400 fuzz buffers agree", true);
+    }
+}
+
+static void Test_VersionNeedleScan_GateStillGates() {
+    // The PERFORMANCE property, made deterministic — no wall clock, so no CI flake.
+    // A buffer with no '4' and no '5' byte anywhere must cost ZERO needle compares.
+    // Delete the first-byte reject in ScanVersionTier23 and this jumps to ~19x size.
+    std::vector<uint8_t> b(1u << 20, 'x');
+    Genau::NeedleScanResult r = Genau::ScanVersionTier23(b.data(), b.size());
+    EXPECT("G2 gate: no '4'/'5' byte -> zero needle compares", r.needlesCompared == 0);
+    EXPECT("G2 gate: and no detection", !r.found());
+
+    // ⚠ The FIRST-byte gate alone satisfies the buffer above, so that case cannot see the
+    // SECOND-byte ('.') gate at all — deleting it left the suite green. This buffer is all
+    // '5' with no '.' anywhere: the first-byte gate passes at every offset and only the
+    // '.' gate can keep the compare count at zero.
+    std::vector<uint8_t> allFives(1u << 20, '5');
+    Genau::NeedleScanResult f = Genau::ScanVersionTier23(allFives.data(), allFives.size());
+    EXPECT("G2 gate: all-'5' but no '.' -> zero needle compares", f.needlesCompared == 0);
+    EXPECT("G2 gate: all-'5' finds nothing", !f.found());
+
+    // Same for Tier 1's '+' gate.
+    Genau::NeedleScanResult t1 = Genau::ScanVersionTier1(b.data(), b.size());
+    EXPECT("G2 gate: no '+' byte -> zero prefix compares", t1.needlesCompared == 0);
+
+    // And the gate must not be so aggressive that a real hit costs nothing to find:
+    // a planted needle MUST produce at least one compare, or the counter is measuring
+    // a code path that never runs.
+    std::vector<uint8_t> hit(4096, 'x');
+    Plant(hit, 1000, "Release-5.4.0");
+    Genau::NeedleScanResult h = Genau::ScanVersionTier23(hit.data(), hit.size());
+    EXPECT("G2 gate: a real hit still issues compares", h.needlesCompared > 0);
+    EXPECT("G2 gate: a real hit is still found", h.found() && h.tier == 2);
+}
+
 static void Test_ShouldPublishEnumTable() {
     // audit #5, found while fixing U4: ResolveEnumValue's entry loop `break`s on a
     // mid-table read failure and the PARTIAL vector was published unconditionally
@@ -4219,6 +4464,8 @@ int main() {
     Test_IsSanePropertiesSize();
     Test_ShouldPublishClassWalk();
     Test_ShouldPublishEnumTable();
+    Test_VersionNeedleScan_Equivalence();
+    Test_VersionNeedleScan_GateStillGates();
     Test_NameWitness();
     Test_Holes_NormalizeGuessedType();
 
