@@ -22,6 +22,83 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - G2: gate the version needle sweep, and let the recovery sweeps be cancelled (builds 3086 / 3088)
+
+**Audit #5 G2 — CONFIRMED, but its framing was wrong.** Filed as a *cancellation* defect; it is a
+**cost** defect the file already knew how to fix, and the poll it prescribed would have been both
+insufficient and, on the version sweep specifically, dangerous. Two commits. C++ 1094 → **1123**.
+
+### Measured, not estimated
+
+Conditions are part of the number — `Elliot-Win64-Shipping.exe`, 460.0 MiB = 482,344,960 bytes,
+MSVC 2022 `/O2` x64:
+
+| loop | naive | gated |
+|---|---|---|
+| Tier 1 (4 whole-image passes) | 4.348 s | 0.2245 s |
+| Tier 2/3 (19 whole-image passes) | 24.465 s · **9,165,424,620** memcmp calls | 0.0957 s · 39,351 |
+| `CountPreUE4Markers` | 0.489 s | — |
+| **contiguous unpolled stretch** | **~29.3 s** | **~0.35 s** |
+
+The audit's `~9.2e9` reproduces **exactly**; its `~14 s` implied 1.5 ns/iteration against a measured
+2.67 ns, so 14 s was a floor nothing reaches. A poll would have left all 29.3 s in place.
+
+> ⚠ **The measurement trap, recorded because it cost a rebuild:** benchmarking with a string
+> *literal* needle lets the compiler constant-fold `strlen` and inline the `memcmp`, understating the
+> cost by ~5×. The production loop takes `needleLen` from a table at runtime.
+
+### Why the gate is safe rather than merely fast
+
+Every needle begins `'4'` or `'5'` **and** has `'.'` at index 1; both Tier 1 prefixes begin `'+'` in
+narrow and UTF-16LE. Skipping an offset whose first byte is not in that set cannot change any
+`memcmp` result — exact by construction. `static_assert`s enforce it, so adding a `"6.0."` row
+without extending the walked set **fails the build**.
+
+Logic moved to `dll/src/VersionNeedleScan.h` (pure, header-only) for one reason: **no test target
+compiles `Genau.cpp`**, so none of this had a build-time check. `dll_helpers_test` now carries naive
+references transcribed from the pre-change loops and asserts agreement.
+
+### Version detection stays UNCANCELLABLE — deliberately
+
+Recorded in a block comment so the next session does not "finish G2" by pasting the `(B18)` idiom in.
+The verdict is **persisted** by `Flamme` per PE hash and skipped on later launches, so a cancelled
+sweep would be memoized as the fallback guess forever — the exact never-invalidated-cache shape this
+audit removed from `Ubel` three times over (U4/U16/U6). `CountPreUE4Markers` is worse: a truncated
+marker count is not a smaller answer but a **wrong** one, in the direction that refuses a supported
+game.
+
+### The three sweeps that DID get polls (build 3088)
+
+`DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`, `FindGNamesByStringRef` — Genau goes from
+4 poll sites to 7. Each abort was verified benign **at the caller**: none publishes or memoizes a
+not-found result. `Frieren::AutoStartWork` also gains `Tot::ResetPerCommand()`, which is load-bearing
+rather than tidy — `Tot::Requested()` is true for the client-disconnect latch too, and that latch is
+cleared only *after* this scan, so without it a stale latch would abort a healthy game's recovery at
+offset 0.
+
+### Three findings this pass, one of them a correction to the audit itself
+
+- **MA1 (MED, re-raised)** — a prior refutation recorded the `Macht.cpp` AOB family as *"here the
+  guards exist"*. **They do not**: `grep -c "Tot::" dll/src/Macht.cpp` = **0**; the `__try/__except`
+  blocks are SEH *read* guards, not cancellation. `ScanForTarget`'s Pass 2 feeds every zero-hit
+  pattern into `AOBScanAllModules` from five call sites. **That is what G2's word "multi-module"
+  actually pointed at**, and once control enters `Macht` every poll added here is unreachable. A
+  do-not-re-raise row is where a wrong refutation does the most damage.
+- **G8 (LOW)** — Tier 2's context window: the comment says 16 bytes, the buffer is `char ctx[17]`,
+  the `memcpy` copies **8**. Fails silently (falls to Tier 3, sets `bLowConfidence`).
+- **G9 (LOW)** — the Tier 3 `break` retires a pattern before a later Tier 2 hit for the same needle
+  can be seen. Both reproduced deliberately so the rewrite stayed equivalence-preserving.
+
+### Two negative controls PASSED first time, and both were bugs in my tests
+
+Per working-lessons §4.3b. Deleting the `'.'` gate stayed green because the perf buffer had no
+`'4'`/`'5'` at all, so the first-byte gate alone satisfied it. Tightening the walk bound stayed green
+**twice** — first because the bound-edge needles qualified as neither tier so the difference was
+invisible, then because the anchor was planted 1080 bytes from the needle when the window is 256, so
+it still qualified as nothing. Both now red (1 and 3).
+
+-----
+
 ## 2026-08-17 - AE3: a dedupe key that names what the panel is showing OR loading (build 3068)
 
 **Audit #5 queue ⑥, part 2.** One filed clause **REFUTED**, the rest materially narrowed. 5 new

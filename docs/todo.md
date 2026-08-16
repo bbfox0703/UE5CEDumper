@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **23 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **24 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1425,6 +1425,40 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — G2: the version sweep is ~29 s faster, and must still be RIGHT
+
+*Needs the DLL injected. See dev-log builds 3086 / 3088. The 29 new C++ assertions pin the rewrite
+against a naive oracle; what they cannot pin is that it still reads a REAL image correctly, because
+no test target compiles `Genau.cpp`.*
+
+1. **⚠ THE ONLY CONTROL THAT MATTERS — same answer, not just a faster one.** On a title whose PE
+   version resource is stripped (Elliot is the documented one; a game that detects from Tier 1 exits
+   early and measures nothing), **first delete that game's record from
+   `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json`** — otherwise the run takes the
+   `"skipped DetectVersion"` branch. Note `ueVersion` / `versionDetected` / `lowConfidence` before
+   deleting, then re-scan and confirm the values written back are **identical**. A fast-and-wrong
+   detection passes step 2 and fails only this one.
+2. **The speed, with its conditions.** In `Logs\<proc>\scan-0.log`, measure the timestamp delta from
+   `"DetectVersion: PE resource failed, falling back to memory string scan"` to the next `SCAN:Ver`
+   line. Expect sub-second where it was tens of seconds. **Record the game and its image size** — a
+   duration without those is not a measurement.
+3. **⚠ REGRESSION — a Tier 1 game still detects from Tier 1.** Any ordinary UE5 title: confirm
+   `scan-0.log` still shows `DetectVersion: Tier 1 (ascii|utf16) '++UEx+Release-N.N' -> NNN`. The log
+   lines were kept byte-identical on purpose, so any wording change here is itself a defect.
+4. **The three new cancel points actually fire.** Proxy mode: start a scan from the UI, close the UI
+   mid-scan, and confirm `scan-0.log` carries one of the new `aborted (client gone / shutdown)` lines
+   (`DataScanGObjectsCandidates` / `FindGObjectsStaticStruct` / `FindGNamesByStringRef`) rather than
+   the sweep running to completion. These are **compiled but unexercised** — do not read a pass on
+   steps 1–3 as covering them.
+5. **⚠ REGRESSION — recovery still runs on a healthy game.** The polls honour the client-disconnect
+   latch, so a stale one would abort recovery at offset 0. Connect the UI, disconnect it mid-command,
+   reconnect, and confirm a fresh scan still resolves GObjects/GNames normally and that **no**
+   `aborted` line appears. This is exactly what `Tot::ResetPerCommand()` in `AutoStartWork` is for.
+
+**Not covered by this batch:** version detection is still uncancellable (by design — see the block
+comment in `DetectVersionDetailed`), and **MA1** — `Macht.cpp`'s AOB family has zero cancellation, so
+once a scan enters `AOBScanAllModules` every poll added here is unreachable.
 
 ### ⬜ NEW 2026-08-17 — AE2 / AE3: the Class/Struct panel under fast selection
 

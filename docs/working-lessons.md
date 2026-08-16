@@ -767,6 +767,32 @@ control, not a passing one.** In the same session a control silently no-op'd bec
 string used a hyphen where the source had an em-dash. A harness that reports "0 red" for a revert it
 never applied is indistinguishable from a fix that works.
 
+### 4.3c A refutation recorded in a "do-not-re-raise" list is where a wrong call does the most damage
+
+Audit #5's §3 listed the claim *"`Macht.cpp`'s AOB scan family never polls `Tot::Requested()`"* as
+**refuted**, with the parenthetical *"here the guards exist"*. Re-derived while fixing G2 (build
+3086): `grep -c "Tot::" dll/src/Macht.cpp` = **0**. The `__try`/`__except` blocks in `Macht.h` are
+SEH **read** guards — they stop a fault, they do not stop a loop. The entry had been suppressing a
+finding *larger* than the one it was contrasted against, for two weeks, in the one place nobody
+re-checks by design.
+
+The refutation was plausible because the same claim shape had been correctly refuted elsewhere in the
+same pass, and because "guards" is ambiguous between the two kinds.
+
+**How to apply:**
+
+- **Re-derive a refutation the same way you re-derive a finding**, and with the same suspicion. A
+  do-not-re-raise row is a *negative* claim, and §1.2's rule applies to it too: ask what evidence
+  would show it wrong, then go and look. Here that was one `grep -c`.
+- **A refutation that names a mechanism must name the RIGHT one.** "The guards exist" was true of
+  some guards. Write which symbol, at which line, doing which job — a refutation with no `file:line`
+  is an opinion.
+- **Re-check any refutation that was decided by analogy** ("same shape as the one we just killed").
+  Analogy is how the correct verdict next door leaks into the wrong one here.
+- When you overturn one, **strike the row rather than deleting it**, re-file under a new ID, and say
+  in both places why the original was wrong. The next reader needs to know the row was examined, not
+  merely that it vanished.
+
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when

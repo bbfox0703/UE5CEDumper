@@ -231,7 +231,10 @@ six refuted outright, one (`Genau.cpp:4007`) downgraded to MEDIUM by the second 
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **G1** ✅ | MED | `Genau.cpp:4005-4007` | `ValidateAndFixOffsets` stores `bOffsetsValidated = true` **unconditionally on the success tail**, though three in-path give-up branches (`3701` FField::Name, `3761` FField::Next, `3915` Offset_Internal) fall through to it after logging *"keeping default"*. Provable by construction: `nextOff < 0` ⇒ Step 7 collects 1 field ⇒ Step 8's `matches >= 2` is unsatisfiable ⇒ `FPROPERTY_OFFSET`/`ELEMSIZE`/`FLAGS` keep Step-2.5's blind version guesses ⇒ `Fern.cpp:4543` reports `{"validated": true, "fallback_reason": ""}`. **This is the root of D1's U1** (`FPROPERTY_ELEMSIZE` garbage). | S / low |
-| **G2** | MED | `Genau.cpp:2929` (+`CountPreUE4Markers`, `DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`, `FindGNamesByStringRef`) | The whole-image and multi-module sweeps **never poll `Tot::Requested()`** — three sibling scans in the same file do, for exactly this reason. On a ~482 MB image, Tier 2/3 alone is ~9.2e9 runtime-length `memcmp`s (~14 s), and `UE5_Shutdown`'s join blocks for all of it. Per `docs/ce-plugin-sdk-notes.md` §13 the CE-side wait has **no message pump**, so CE reads as hung. | S / low |
+| **G2** ✅ | MED | `Genau.cpp:2929` (+`CountPreUE4Markers`, `DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`, `FindGNamesByStringRef`) | The whole-image and multi-module sweeps **never poll `Tot::Requested()`** — three sibling scans in the same file do, for exactly this reason. On a ~482 MB image, Tier 2/3 alone is ~9.2e9 runtime-length `memcmp`s (~14 s), and `UE5_Shutdown`'s join blocks for all of it. Per `docs/ce-plugin-sdk-notes.md` §13 the CE-side wait has **no message pump**, so CE reads as hung. | S / low |
+| **MA1** | MED | `Macht.cpp` (`AOBScan` / `AOBScanAll` / `AOBScanBatch` / `AOBScanAllModules`) | *(re-raised 2026-08-17 — a prior refutation was wrong, see the struck row in §3)* **The AOB scan family has NO cancellation of any kind**: `grep -c "Tot::" dll/src/Macht.cpp` = **0**. `Genau::ScanForTarget`'s Pass 2 hands every zero-hit pattern into `AOBScanAllModules`, from five call sites (GObjects / GNames / GWorld / SparseDelegates / GEngine), each with `tryMultiModule=true`. **This is what G2's word "multi-module" actually points at** — and once control enters `Macht`, every poll G2 added to `Genau` is unreachable. Strictly larger than G2 was. | M / med |
+| **G8** | LOW | `Genau.cpp` (`DetectVersionDetailed`, the Tier 2 context window) | *(hand-found while fixing G2)* Three things disagree and the code is the narrowest: the comment says *"within the preceding 16 bytes"*, the buffer is `char ctx[17]`, and the `memcpy` copies **8**. `"Release"` is 7 chars, so in an 8-byte window it can only start at index 0 or 1 — the literal must sit at exactly `off-8` or `off-7`. Fine for the canonical `"Release-5.4."` (`"Release-"` is exactly 8), wrong for anything with an extra separator (`"Engine Release 5.4.0"` → `ctx = "elease "` → miss). Memory-safe, so it fails **silently**: the build falls through to Tier 3, which sets `bLowConfidence`. Fix is `off >= 16` + `memcpy(..., 16)` — which CHANGES behaviour, so it was deliberately excluded from build 3070's equivalence-preserving rewrite. | S / low |
+| **G9** | LOW | `Genau.cpp` (`DetectVersionDetailed`, the Tier 3 `break`) | *(hand-found while fixing G2)* The deferral design exists so a stray early hit cannot *"out-race a real 'Release-4.27' string later in the module"* — that holds ACROSS patterns and fails WITHIN one. The `break` retires a pattern on its first anchor-qualified Tier 3 candidate, so a **later Tier 2 hit for the same needle is never seen**. Demonstrated by an oracle case now in `dll_helpers_test` (*"same-pattern Tier 3 retires before a later Tier 2"*), which returns `427/t3` from the unmodified production logic where the documented intent is `427/t2`. Consequence is a spurious `bLowConfidence`. Pre-existing; build 3070's rewrite reproduces it **deliberately** so the change stayed equivalence-preserving. | S / low |
 | **G3** | MED | `Genau.cpp:3242`, `3167`, `3261` | `ValidateAndFixOffsets` rewrites the DynOff set **in place**, republishing unmeasured version defaults over already-probed values for the seconds a re-run takes. Reachable on a CE `[DISABLE]`/`[ENABLE]` cycle: `UE5_Shutdown` never clears `g_cachedGObjects`/`g_cachedGNames`, so `Mimic`'s poller gate (`Mimic.cpp:388`) is satisfied by **stale** addresses and keeps servicing mailbox commands while `UFIELD_NEXT` is reset 0x38 → 0x28 mid-flight. | L / med |
 | **G4** | LOW | `Serie.cpp:303-314` | `DetectBlockOffsetBits` **cannot detect anything**: at `testIdx = 1` both candidate widths compute `ci = 0`, `co = 1*stride`, so 16 always wins and the 14-bit arm is unreachable — yet `Init` logs the result as a measurement. On a real 14-bit pool every FName ≥ `0x4000` reads past the end of a 32 KB block, so engine names resolve and the **game-specific tail comes back blank**. *(Overturned refutation — see the note above.)* | M / med |
 | **G5** | LOW | `Serie.cpp:498` | UE4 `TNameEntryArray` mode indexes the chunk with a **negative** element index; the bounds guard the UE5 path has is absent. A poison `ComparisonIndex` of `0xFFFFFFFF` with a non-zero Number skips `GetString`'s `nameIndex <= 0 && number == 0` early-out, so `chunkPtr + (size_t)(-1)*8` is dereferenced as an `FNameEntry*` and a **fabricated name** can be returned as real. | S / low |
@@ -2585,10 +2588,13 @@ SEH-guard contract and the AOB scanner was refuted.**
 
 - **`Macht.cpp:57` — "`WriteBytes` restores only the FIRST page's protection to the whole range, and
   can leave game memory writable."** The most dangerous-sounding claim in the segment; refuted.
-- **`Macht.cpp:461`/`520` — the AOB scan family never polling `Tot::Requested()`, and
-  `AOBScanAllModules` faulting on a `FreeLibrary` mid-sweep.** Refuted (note this is the *same claim
-  shape* that was CONFIRMED against `Genau` as D2/G2 and against `Aura::FindByAddress` as D3/A7 —
-  here the guards exist).
+- ~~**`Macht.cpp:461`/`520` — the AOB scan family never polling `Tot::Requested()`.**~~
+  ⚠ **THIS REFUTATION IS ITSELF WRONG — RE-RAISED as `MA1` below (2026-08-17).** It was recorded as
+  *"here the guards exist"*; they do not. `grep -c "Tot::" dll/src/Macht.cpp` = **0**. The
+  `__try`/`__except` blocks in `Macht.h` are SEH **read** guards, not cancellation. As written, this
+  entry suppressed a true finding *larger* than the G2 it was contrasted against — a do-not-re-raise
+  row is exactly where a wrong refutation does the most damage, because nobody looks twice.
+  (The `FreeLibrary`-mid-sweep half of the original claim is untouched and stays refuted.)
 - **`Macht.cpp:556`/`629` — two `ScanRegionBatch` region-size off-by-ones** against the batch's
   shortest vs longest pattern. Refuted.
 
@@ -3342,9 +3348,8 @@ block — start at ①, no re-derivation needed.*
 Nothing is blocked on the maintainer.
 
 **Pick the next item from §3c's "Where the rest live", by subsystem.** The MED tier is down to 32
-and the known clumps are: `Radar` (AB4 + AB7), `Genau` (**G2** — the whole-image sweep never polls
-`Tot::Requested()`, so `UE5_Shutdown` blocks ~14 s and CE reads as hung; the most user-visible one
-left — and G3), `Fern` (F2 + F8), and `ue5_freeze_helper.lua` (AA9 – AA13, which already has an
+and the known clumps are: `Radar` (AB4 + AB7), `Genau` (G3; **G2 is ✅ done** — and its
+re-derivation re-raised **MA1**, the same defect one layer down in `Macht`, which is strictly larger), `Fern` (F2 + F8), and `ue5_freeze_helper.lua` (AA9 – AA13, which already has an
 executable rig waiting in `scripts/tests/`). **U5 is deliberately NOT a candidate** — see the
 cluster ③ block below for the refactor it is actually blocked behind.
 
@@ -3393,7 +3398,7 @@ cluster ③ block below for the refactor it is actually blocked behind.
 > dangles) plus an atomic refcount per call on the very path B10 was written to speed up. Anyone
 > picking this up must budget the refactor, not the LRU.
 
-**Current register: 193 open of 280 · 0 HIGH · 32 MED · 134 LOW · 27 INFO.** Re-derive with
+**Current register: 195 open of 283 · 0 HIGH · 32 MED · 136 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —
