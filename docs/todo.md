@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **25 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **26 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1425,6 +1425,28 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — G8 / G9: version detection after the tier-rule change
+
+*Needs the DLL injected. See dev-log build 3105. **Expect NO visible difference** — both fixes are
+measured no-ops on all 85 PE images in the local corpus, so this batch is a REGRESSION check, not a
+demonstration. Anything that does change is a finding.*
+
+1. **⚠ REGRESSION — every game still detects the same version.** `kVersionDetectLogicRev` went
+   3 → 4, so the first launch after this build **re-detects every cached game once** (~0.35 s).
+   For two or three titles, note `ueVersion` / `versionDetected` / `lowConfidence` in
+   `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json` **before** running the new build, then
+   compare after. **They must be identical.** A changed version is a real finding — report it with
+   the game and the before/after values.
+2. **The re-detect happens once, not every launch.** Launch the same game twice more and confirm
+   `scan-0.log` shows `skipped DetectVersion` on the later runs. If it re-detects every time, the
+   rev stamp is not being written back.
+3. **⚠ REGRESSION — a Tier 1 game is untouched.** G8/G9 only touch Tier 2/3, and Tier 1 returns
+   first on nearly every real title. Confirm `DetectVersion: Tier 1 (ascii|utf16) …` still appears
+   and still names the same version.
+4. **G11 context — do not misread a pass here.** Tier 2 has never fired on any binary we own (the
+   trailing-dot defect), so a green result on steps 1–3 says these fixes did no harm; it says
+   **nothing** about Tier 2 working. Do not close G11 on the strength of this batch.
 
 ### ⬜ NEW 2026-08-17 — G10 / MA1: the hint cache must stop destroying itself
 

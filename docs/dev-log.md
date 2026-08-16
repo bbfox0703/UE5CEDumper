@@ -22,6 +22,63 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - G8 + G9: Tier 2's context window, and the Tier 3 retire (build 3105)
+
+Both were reproduced **deliberately** in build 3086 so the needle-gate rewrite could stay
+equivalence-preserving. Fixed now, together, because they interact. C++ 1123 → **1130**;
+`kVersionDetectLogicRev` 3 → **4** (mandatory under its own rule — tier rules changed).
+
+### G8 — and the obvious repair is wrong in *both* directions
+
+Three things disagreed and the code was the narrowest: the comment said *"within the preceding 16
+bytes"*, the buffer was `char ctx[17]`, the `memcpy` copied **8**. The audit's literal patch
+(`off >= 16` + `memcpy(…, 16)`) would have shipped two regressions, both measured first:
+
+- **`strstr` stops at the first NUL in the copied bytes.** A neighbouring string's terminator inside
+  the *wider* window truncates the search and **loses a match the narrow window found** — so a wider
+  `strstr` is not a superset of a narrower one. (12.2% of the 14,823 `[Rr]elease` occurrences across
+  the 33-binary corpus have a NUL in the preceding 8 bytes.)
+- **`off >= 16` drops offsets 8–15 entirely**, which includes the *canonical* `Release-5.4.0`, whose
+  needle sits at offset 8.
+
+So it is a raw byte search over a **clamped** window, which has neither problem.
+
+G8 also **adds the UE-anchor gate Tier 3 always had**. Tier 2 was the loosest predicate in the
+system — no anchor, no preceding-digit check — so widening it without one manufactures a confident
+`504` out of an ordinary `Release Notes 5.4.0` that the narrow form rejected outright. With the
+anchor, the widening is a strict superset on every regression case and still returns nothing on
+anchorless noise.
+
+### G9 — the retire defeated the design's own stated promise
+
+A Tier 3 candidate retired its pattern, so a later Tier 2 hit on the **same needle** was never seen.
+The deferral comment says the design exists to stop a stray bundled `5.5.0` *"out-racing a real
+'Release-4.27' string later in the module"* — that held across patterns and failed within one. Two
+facts are now kept per pattern, and a pattern retires only once a Tier 2 is known.
+
+There is now a test asserting that exact promised scenario. **It returned the wrong VERSION before
+this commit — 505 instead of 427 — not merely a wrong confidence badge.**
+
+### Measured scope, stated so this is not oversold
+
+**Both fixes are no-ops on all 85 real PE images in the local corpus.** Tier 2 has never fired on any
+of them — see **G11**: the needle table's trailing dot means Tier 2 demands a three-component
+`Release-5.4.2` while UE's tag is the two-component `++UE4+Release-4.27`. Tier 1 got that dot-strip
+at rev 2; Tier 2 never did. That, not the window, is why Tier 2 is dead.
+
+### Controls
+
+The naive oracle moves in the **same** commit (it encoded the old rules and would otherwise go red
+for the wrong reason), and 8 new **absolute** cases pin the difference, since equivalence alone
+cannot see a change both sides made. Four controls, each reverted alone: window back to 8 → 2 red;
+the naive `strstr` repair → 1 red (the NUL case, which is the whole argument); drop the anchor gate →
+6 red; restore the G9 retire → 1 red.
+
+⚠ The retire control **passed first time** — my patch's `break` exited the *pattern* loop rather than
+the offset loop and retired nothing. A broken control, not a passing one (working-lessons §4.3b).
+
+-----
+
 ## 2026-08-17 - G10 + MA1: the hint fast path was destroying working scans, and AOB scanning can now be cancelled (builds 3091 / 3095)
 
 Two commits. **The bigger one was not the finding I set out to fix** — it was found while

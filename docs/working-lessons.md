@@ -826,6 +826,37 @@ The instance that made it visible was a pair of log files five minutes apart on 
 machine, which is worth its own note: **the regression corpus you already have on disk is evidence.**
 Before estimating whether a defect is real, grep the logs.
 
+### 4.3e "Widen the window" is not monotone when the search is `strstr` over a copy
+
+Audit #5 G8 (build 3105). A context test copied 8 bytes into a `char ctx[17]` and ran `strstr`,
+while its comment and its buffer both said 16. The obvious repair — copy 16 — would have shipped
+**two** regressions, and a five-line probe found both before any production code was written:
+
+- `strstr` stops at the **first NUL in the copy**. A neighbouring string's terminator inside the
+  *wider* window truncates the search, so the wider window **loses** matches the narrower one found.
+  Widening is therefore *not* a superset. (Measured: 12.2% of 14,823 `[Rr]elease` occurrences across
+  a 33-binary corpus have a NUL in the preceding 8 bytes.)
+- Widening the guard to match (`off >= 16`) silently drops every offset in 8..15 — which included
+  the single most common real shape, whose needle sits at offset 8.
+
+**How to apply:**
+
+- **Before widening any window, ask what TERMINATES the search.** `strstr`/`strlen`/`strcmp` over
+  raw image bytes are NUL-sensitive; raw memory is not NUL-free. A window search over binary data
+  should be an explicit byte loop with a clamped length, never a C-string call on a copy.
+- **A widened predicate is only a superset if nothing in it is length- or terminator-sensitive.**
+  State that as a claim and check it; "more bytes can only match more" is an intuition, not a proof.
+- **Widening a LOOSE predicate needs a compensating gate.** G8's window sat on the only tier with no
+  anchor requirement, so widening it alone manufactured a confident version out of a release-notes
+  heading. The fix added the gate its sibling tier already had — the "the correct predicate already
+  exists next door" pattern from §2.2, again.
+- **Probe the layouts before editing.** Four hand-built strings run through a five-line model
+  answered this completely, cost a minute, and were more decisive than the reasoning they replaced.
+
+Bonus, and it is the fourth instance this week: **the fix's own negative control passed first time
+because the control was broken** — a `break` exited the pattern loop rather than the offset loop and
+retired nothing. See §4.3b; when a control passes, suspect the control.
+
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when
