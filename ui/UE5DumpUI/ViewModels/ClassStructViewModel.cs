@@ -85,6 +85,36 @@ public partial class ClassStructViewModel : ViewModelBase
     /// </summary>
     private string? _lastLoadedNodeAddress;
 
+    /// <summary>
+    /// Monotonic ticket for "which request owns the panel". Same idiom (and
+    /// spelling family) as <c>ObjectTreeViewModel._loadGen</c>,
+    /// <c>InstanceFinderViewModel._fieldLoadId</c> and
+    /// <c>ClassPivotViewModel._classLoadId</c>; plain <c>++</c> like all three,
+    /// because every entry point is reached on the UI thread.
+    ///
+    /// Why it is needed here, which is NOT guessable from the code (audit #5 AE2):
+    /// nothing upstream serializes this handler. <c>ObjectTreeViewModel</c> raises
+    /// <c>SelectionChanged</c> as a bare <c>Action</c>, so MainWindowViewModel's
+    /// <c>async</c> subscriber returns to the message loop at its first await and
+    /// the next selection runs straight into <see cref="OnObjectSelected"/>.
+    /// <c>AsyncRelayCommand</c> is no help either: <c>CanExecute</c> goes false
+    /// while running (so a bound Button self-disables) but <c>ExecuteAsync</c>
+    /// runs anyway — measured build 3038, see <c>ProxyDeployConcurrencyTests</c>.
+    ///
+    /// The losing pair is specifically **instance-then-class-like**, and it loses
+    /// by ORDERING rather than by timing: the two branches of
+    /// <see cref="OnObjectSelected"/> issue a different NUMBER of round-trips
+    /// (an instance needs <c>get_object</c> first, a UClass does not) over one
+    /// strictly FIFO pipe lane, so the older gesture's walk is issued third and
+    /// answered third — deterministically last.
+    ///
+    /// ⚠ The ticket MUST be claimed here at GESTURE time, not inside
+    /// <see cref="LoadClassAsync"/>. Claiming it in the command inverts the fix:
+    /// the stale instance selection ENTERS the command last (its <c>get_object</c>
+    /// hop delays entry), so it would take the HIGHEST ticket and win legitimately.
+    /// </summary>
+    private int _loadId;
+
     public ClassStructViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
     {
         _dump = dump;
@@ -128,17 +158,45 @@ public partial class ClassStructViewModel : ViewModelBase
             ClassName, LoadedClassAddr, _dump, _platform);
     }
 
+    /// <summary>
+    /// Cross-tab entry point ("show me this class"), bound as
+    /// <c>LoadClassCommand</c> and invoked from five handoff sites in
+    /// MainWindowViewModel as well as from <see cref="OnObjectSelected"/>.
+    /// Signature deliberately unchanged so those callers keep compiling.
+    /// </summary>
     [RelayCommand]
     private async Task LoadClassAsync(string? classAddr)
     {
+        // Order is load-bearing: reject the no-op BEFORE claiming a ticket.
+        // A request that does no work must not supersede a live load — it would
+        // bail without ever reaching the `finally`, leaving the spinner owned by
+        // a ticket nobody will retire. InstanceFinderViewModel documents the same
+        // rule on its null branch.
         if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0") return;
 
+        await LoadClassCoreAsync(classAddr, ++_loadId);
+    }
+
+    /// <summary>
+    /// The actual walk + panel write, executed on behalf of ticket
+    /// <paramref name="gen"/>. Every write to the panel is gated on that ticket
+    /// still being the newest, so a superseded request returns silently instead
+    /// of repainting over the selection the user actually made (audit #5 AE2).
+    /// Four guard points, ported from <c>InstanceFinderViewModel</c>'s
+    /// <c>LoadInstanceFieldsAsync</c> — the one site in this repo that guards all
+    /// four (success write, failure write, the loading flag, and the early exit).
+    /// </summary>
+    private async Task LoadClassCoreAsync(string classAddr, int gen)
+    {
         try
         {
+            // Both of these precede the only await, so no stale request can reach
+            // them — a superseded load can never wipe a newer error or spinner.
             ClearError();
             IsLoading = true;
 
             var ci = await _dump.WalkClassAsync(classAddr);
+            if (gen != _loadId) return;   // a newer selection / handoff superseded us
 
             ClassName = ci.Name;
             ClassPath = ci.FullPath;
@@ -150,19 +208,28 @@ public partial class ClassStructViewModel : ViewModelBase
             _allFields.Clear();
             _allFields.AddRange(ci.Fields);
             ApplyFieldFilter();
-            // Fields.Count change doesn't fire HasNoFields; nudge it.
+            // Fields.Count change doesn't fire HasNoFields; nudge it. (Note this
+            // particular nudge is inert — HasNoFields also requires !IsLoading,
+            // still true here — the real notification arrives via
+            // OnIsLoadingChanged when the finally clears it. Kept because the
+            // dependency it names is genuine; harmless either way.)
             OnPropertyChanged(nameof(HasNoFields));
 
             _log.Info($"Loaded class: {ci.Name} ({ci.Fields.Count} fields)");
         }
         catch (Exception ex)
         {
-            SetError(ex);
+            // Log unconditionally — a superseded request that failed is still a
+            // real diagnostic — but only the newest may PAINT the failure, or a
+            // stale error banner lands over a panel that loaded fine.
             _log.Error($"Failed to load class at {classAddr}", ex);
+            if (gen != _loadId) return;
+            SetError(ex);
         }
         finally
         {
-            IsLoading = false;
+            if (gen == _loadId)   // only the latest load owns the flag
+                IsLoading = false;
         }
     }
 
@@ -194,6 +261,12 @@ public partial class ClassStructViewModel : ViewModelBase
         if (node == null) return;
         if (_lastLoadedNodeAddress == node.Address && HasClass) return;
 
+        // Claim the panel for THIS gesture, before any await. See _loadId — doing
+        // it here rather than inside LoadClassAsync is what makes the guard work
+        // at all, because the losing request is the one that enters the command
+        // LAST.
+        int gen = ++_loadId;
+
         try
         {
             ClearError();
@@ -210,18 +283,24 @@ public partial class ClassStructViewModel : ViewModelBase
                 // Instance: walk its UClass. Fall back to the object
                 // address only if the metaclass lookup fails.
                 var detail = await _dump.GetObjectAsync(node.Address);
+                // Superseded while we were resolving the metaclass. Bail BEFORE
+                // issuing the walk, so the stale round-trip is never put on the
+                // wire at all — this is the exact asymmetry AE2 describes, and
+                // skipping it saves a hop on a contended lane rather than adding one.
+                if (gen != _loadId) return;
                 classAddr = detail.ClassAddr;
                 if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
                     classAddr = node.Address;
             }
 
             _lastLoadedNodeAddress = node.Address;
-            await LoadClassCommand.ExecuteAsync(classAddr);
+            await LoadClassCoreAsync(classAddr, gen);
         }
         catch (Exception ex)
         {
-            SetError(ex);
             _log.Error($"Failed to load class for object at {node.Address}", ex);
+            if (gen != _loadId) return;   // stale failure — don't paint over a newer panel
+            SetError(ex);
         }
     }
 
