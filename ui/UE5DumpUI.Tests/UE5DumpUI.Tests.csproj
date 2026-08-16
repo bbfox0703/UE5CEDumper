@@ -60,4 +60,26 @@
          already globs it into None; this only flags it for copy-to-output. -->
     <None Update="TestData\sample-dump.jsonl" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- Turn the comment at the top of this file into an enforced rule.
+       It said "must NOT be re-pinned here" and was ignored three times: git blame
+       puts SIX transitive pins (SkiaSharp.*, HarfBuzzSharp.*, Newtonsoft.Json,
+       Microsoft.Bcl.AsyncInterfaces) in three separate "Update all packages"
+       commits. The SkiaSharp/HarfBuzzSharp ones then sat at 4.151.1 / 14.2.1.2
+       while the app moved to 3.119.4 / 8.3.1.3 — a second, silently-wrong copy of
+       a version the app owns via <SkiaSharpVersion>/<HarfBuzzSharpVersion>.
+
+       build.ps1 checks this too, but only on the -Target Test path. This target
+       fires on ANY build of this project, including from an IDE, which is where
+       a package-manager UI actually adds them. -->
+  <Target Name="_FailOnForbiddenTransitivePin" BeforeTargets="CollectPackageReferences">
+    <ItemGroup>
+      <_ForbiddenPin Include="@(PackageReference)"
+                     Condition="$([System.String]::Copy('%(Identity)').StartsWith('SkiaSharp'))
+                             Or $([System.String]::Copy('%(Identity)').StartsWith('HarfBuzzSharp'))
+                             Or $([System.String]::Copy('%(Identity)').StartsWith('Microsoft.Testing.'))" />
+    </ItemGroup>
+    <Error Condition="'@(_ForbiddenPin)' != ''"
+           Text="Forbidden transitive PackageReference(s) in the test project: @(_ForbiddenPin).%0A  SkiaSharp/HarfBuzzSharp flow in from the UE5DumpUI ProjectReference, which owns their version via &lt;SkiaSharpVersion&gt;/&lt;HarfBuzzSharpVersion&gt; — a second copy here silently disagrees with the app's.%0A  Microsoft.Testing.* is resolved by xunit.v3; pinning it crashes the runner at startup (MissingMethodException on IOutputDevice.DisplayAsync).%0A  Delete them; see the comment at the top of this file." />
+  </Target>
 </Project>

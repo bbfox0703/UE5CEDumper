@@ -198,9 +198,8 @@ static const uint8_t* ScanRegion(
     const ParsedPattern& pat)
 {
     const size_t patLen = pat.bytes.size();
-    if (regionSize < patLen) return nullptr;
-
-    const size_t maxStart = regionSize - patLen; // last valid pattern-start offset
+    size_t maxStart = 0;  // last valid pattern-start offset
+    if (!PatternScanRange(regionSize, patLen, maxStart)) return nullptr;
 
     // All-wildcard pattern — no anchor byte to search for
     if (pat.anchorOffset < 0) {
@@ -364,9 +363,8 @@ static void ScanRegionAll(
     std::vector<uintptr_t>& results)
 {
     const size_t patLen = pat.bytes.size();
-    if (regionSize < patLen) return;
-
-    const size_t maxStart = regionSize - patLen;
+    size_t maxStart = 0;
+    if (!PatternScanRange(regionSize, patLen, maxStart)) return;
 
     // All-wildcard pattern — no anchor byte to search for
     if (pat.anchorOffset < 0) {
@@ -568,6 +566,30 @@ static void ScanRegionBatch(
 
     for (int k = 0; k < static_cast<int>(entries.size()); ++k) {
         const auto& pat = entries[k].parsed;
+        // A pattern LONGER than this region cannot match in it — and letting it
+        // through is not merely wasteful, it is a walk off the end of the buffer.
+        // Both scalar loops below compute `regionSize - pat.bytes.size()` as an
+        // unsigned max-start; for such a pattern that underflows to ~1.8e19 and
+        // `pos <= patMaxStart` scans the whole address space. There is no SEH in
+        // this function, so it is an access violation, not a caught read failure.
+        //
+        // The batch guard above cannot catch this: it compares the region against
+        // `minPatLen`, the SHORTEST pattern in the batch, so a batch of a 60-byte
+        // and a 200-byte pattern clears a 100-byte region and then underflows on
+        // the second. Per-pattern is the only correct granularity — which is
+        // exactly what the single-pattern scanners in this same file already do
+        // (`if (regionSize < patLen) return;` before computing maxStart, at
+        // ScanRegion and ScanRegionAll). This is that predicate, per entry.
+        //
+        // Placed HERE, at classification, so it covers BOTH scalar loops at once:
+        // a skipped pattern reaches neither `simdEntries` nor `scalarOnlyIndices`,
+        // and its results list correctly stays empty for this region. Guarding the
+        // two loops separately would be two chances to fix only one. (audit #5 MA2)
+        //
+        // Latent today — the sole caller (Genau.cpp) omits `moduleBase`, so regions
+        // are main-exe exec sections (>= 3,660 B) and patterns are <= ~60 B — and
+        // live the moment AOBScanBatch is given a small module to scan.
+        if (pat.bytes.size() > regionSize) continue;
         if (pat.anchorOffset < 0) {
             scalarOnlyIndices.push_back(k);
             continue;
@@ -626,7 +648,8 @@ static void ScanRegionBatch(
     // pushed the SIMD window past regionSize for that pattern.
     for (const auto& se : simdEntries) {
         const auto& pat = entries[se.entryIdx].parsed;
-        const size_t patMaxStart = regionSize - pat.bytes.size();
+        size_t patMaxStart = 0;
+        if (!PatternScanRange(regionSize, pat.bytes.size(), patMaxStart)) continue;
 
         // Calculate the first uncovered position for this pattern.
         // SIMD covered positions where the anchor window fit:
@@ -659,7 +682,8 @@ static void ScanRegionBatch(
     // ── Full scalar scan for all-wildcard patterns ───────────────
     for (int k : scalarOnlyIndices) {
         const auto& pat = entries[k].parsed;
-        const size_t patMaxStart = regionSize - pat.bytes.size();
+        size_t patMaxStart = 0;
+        if (!PatternScanRange(regionSize, pat.bytes.size(), patMaxStart)) continue;
         for (size_t pos = 0; pos <= patMaxStart; ++pos) {
             bool matched = true;
             for (size_t j = 0; j < pat.bytes.size(); ++j) {

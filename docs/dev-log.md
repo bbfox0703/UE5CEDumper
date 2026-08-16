@@ -22,6 +22,45 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - MA2: one predicate for "where can this pattern start" (build 3135)
+
+**`ScanRegionBatch` computed `regionSize - pat.bytes.size()` as an unsigned max-start** while
+guarding only against `minPatLen`, the batch's **shortest** pattern. A batch mixing a 60-byte and a
+200-byte pattern therefore cleared a 100-byte region and then underflowed on the second: `100 - 200`
+as `size_t` is ~1.8e19, and `for (pos = …; pos <= patMaxStart; ++pos)` walks the address space — in a
+function with **no SEH**, so an access violation rather than a caught read failure.
+
+**Latent, and the reachability claim was verified rather than repeated:** the sole caller
+(`Genau.cpp:1312`) passes three arguments, so `AOBScanBatch`'s `moduleBase` defaults to 0 → the main
+module, whose exec sections are ≥ 3,660 B against patterns ≤ ~60 B. It goes live the moment that
+call site is given a small module.
+
+### The correct predicate already existed twice in the same file
+
+`ScanRegion` and `ScanRegionAll` each did `if (regionSize < patLen) return;` **before** computing
+`maxStart`. The batch version had the same idea at the wrong granularity — per batch instead of per
+pattern. So this did not need a new rule, it needed the existing one applied.
+
+**Shipped as one shared `Macht::PatternScanRange(regionSize, patLen, maxStartOut)`** — header-inline
+and pure — now feeding **all four** scan loops (both single-pattern scanners and both of the batch's
+scalar loops), plus an early skip at the batch's classification step so a too-long pattern reaches
+neither `simdEntries` nor `scalarOnlyIndices`. The underflow is now impossible by construction, not
+guarded in three places out of four, and the next copy of this loop inherits the guard.
+
+`patLen == 0` is refused rather than accepted: the old arithmetic gave `maxStart == regionSize`,
+which reports a match one past the end. `ParsePattern` cannot currently produce an empty pattern, so
+that is belt-and-braces — but it is the branch a future caller gets wrong.
+
+### It is testable after all, which was worth checking before assuming
+
+No test target compiles `Macht.cpp` and `ScanRegionBatch` is `static`, so the first read was "this
+cannot be pinned". But `dll_helpers_test.cpp` **already includes `Macht.h`** (it exercises the real
+`ParsePattern` for the same reason), so a header-inline predicate is directly reachable. 11 new
+assertions (1182 → **1193**) including the exact-fit and one-byte-too-long boundaries and the full
+batch scenario; negative control (predicate reverted to the bare arithmetic) **5 red**.
+
+-----
+
 ## 2026-08-17 - AB4: a width gate that is right for Exact and wrong for ordering (build 3133)
 
 **`BuildNumericTargets` asked "does the target FIT this width".** Correct for `Exact` — a value that

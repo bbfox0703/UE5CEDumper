@@ -544,6 +544,54 @@ static void Test_ValueScan_PropertyTypeNameOf_Inverse() {
 
 // Helper: does the set contain an entry for `dt`, and (optionally) does
 // it decode to the expected scalar value?
+// ============================================================
+// Macht::PatternScanRange — audit #5 MA2
+// ============================================================
+// The batch scanner guarded its scalar loops with `regionSize - patLen` as an
+// unsigned max-start, checked only against the batch's SHORTEST pattern. For any
+// pattern LONGER than the region that subtraction underflows to ~1.8e19 and the
+// `pos <= maxStart` loop walks off the end — in a function with no SEH.
+//
+// The bound now comes from one shared predicate, so the underflow is structurally
+// impossible in all four scan loops rather than guarded in three of them.
+static void Test_Macht_PatternScanRange() {
+    size_t maxStart = 0;
+
+    // Ordinary case: 10-byte pattern in a 100-byte region starts anywhere in 0..90.
+    maxStart = 12345;
+    EXPECT("MA2 ordinary fit is allowed", Macht::PatternScanRange(100, 10, maxStart));
+    EXPECT("MA2 ordinary maxStart is regionSize - patLen", maxStart == 90);
+
+    // Exactly-fits: one valid start position, offset 0.
+    maxStart = 12345;
+    EXPECT("MA2 exact fit is allowed", Macht::PatternScanRange(10, 10, maxStart));
+    EXPECT("MA2 exact fit maxStart is 0", maxStart == 0);
+
+    // THE DEFECT: a pattern longer than the region must be refused, not wrapped.
+    maxStart = 12345;
+    EXPECT("MA2 over-long pattern is refused", !Macht::PatternScanRange(100, 200, maxStart));
+    EXPECT("MA2 refusal leaves maxStart untouched (no underflow leaks out)",
+           maxStart == 12345);
+
+    // One byte too long — the boundary the old arithmetic turned into SIZE_MAX.
+    EXPECT("MA2 one-byte-too-long is refused", !Macht::PatternScanRange(10, 11, maxStart));
+
+    // Empty pattern: the old arithmetic gave maxStart == regionSize, i.e. a
+    // reported match one past the end of the region.
+    EXPECT("MA2 empty pattern is refused", !Macht::PatternScanRange(100, 0, maxStart));
+
+    // The batch scenario in full: the whole-batch guard compares the region against
+    // the SHORTEST pattern, so it clears — and the long one must still be refused
+    // individually. This is the combination that made it a latent crash.
+    const size_t regionSize = 100, shortPat = 60, longPat = 200;
+    const size_t minPatLen = shortPat < longPat ? shortPat : longPat;
+    EXPECT("MA2 batch guard passes on the shortest pattern", regionSize >= minPatLen);
+    EXPECT("MA2 ...but the short pattern is still individually allowed",
+           Macht::PatternScanRange(regionSize, shortPat, maxStart));
+    EXPECT("MA2 ...and the long one is individually refused",
+           !Macht::PatternScanRange(regionSize, longPat, maxStart));
+}
+
 static void Test_ValueScan_BuildNumericTargets() {
     using DT = Radar::DataType;
 
@@ -4677,6 +4725,7 @@ int main() {
     Test_ValueScan_MultiNumericMembers();
     Test_ValueScan_DataTypeFromPropertyTypeName();
     Test_ValueScan_PropertyTypeNameOf_Inverse();
+    Test_Macht_PatternScanRange();
     Test_ValueScan_BuildNumericTargets();
     // Phase A1a — snapshot field selection
     Test_ValueScan_SelectSnapshotNumericFields();

@@ -91,6 +91,31 @@ struct ParsedPattern {
     uint8_t  anchorByte   = 0;    // value at anchorOffset
 };
 
+// Where may a pattern of `patLen` bytes START inside a region of `regionSize`?
+//
+// Returns false when it may not start anywhere — the caller must then scan NOTHING
+// for that pattern. `maxStartOut` is only written on true.
+//
+// This exists as ONE predicate because the arithmetic it replaces is a `size_t`
+// subtraction that UNDERFLOWS: `regionSize - patLen` for a pattern longer than the
+// region is ~1.8e19, and a `for (pos = 0; pos <= maxStart; ++pos)` loop then walks
+// the address space. The single-pattern scanners each guarded it correctly and
+// separately; `ScanRegionBatch` guarded only the batch's SHORTEST pattern, so a
+// batch mixing a 60-byte and a 200-byte pattern cleared a 100-byte region and then
+// underflowed on the second — in a function with no SEH. (audit #5 MA2)
+//
+// patLen == 0 is refused rather than treated as "matches everywhere": the old
+// arithmetic gave `maxStart = regionSize`, which reported a match at one-past-the-end
+// of the region. ParsePattern cannot currently produce an empty pattern, so this is
+// belt-and-braces — but it is the branch a future caller would get wrong.
+//
+// Inline and pure so the leaf unit test can exercise the real rule rather than a copy.
+inline bool PatternScanRange(size_t regionSize, size_t patLen, size_t& maxStartOut) {
+    if (patLen == 0 || patLen > regionSize) return false;
+    maxStartOut = regionSize - patLen;
+    return true;
+}
+
 // Parse an AOB pattern string into a ParsedPattern.
 // Pattern format: "48 8B 05 ?? ?? ?? ??" where ?? is a full-byte wildcard.
 // Nibble wildcards are supported: "4?" fixes the high nibble (matches 40-4F),
