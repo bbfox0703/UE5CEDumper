@@ -22,6 +22,40 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - U16: a truncated UEnum table was cached forever, and the log said it was full (build 3041)
+
+**New finding, hand-found while fixing U4** — same file, same never-erased-cache shape, in none of
+queue ⑤'s four findings. Pinned by 7 new assertions (C++ 1080 → **1087**); two negative controls,
+3 red and 1 red.
+
+`ResolveEnumValue`'s entry loop `break`s on a mid-table `Neu::ReadEntry` failure, and the **partial**
+vector was then published unconditionally into `s_enumCache`. Nothing in `dll/src` erases that cache,
+so **one truncated read permanently splits a single UEnum**: values below the break point resolve,
+values above render as raw integers — Live Walker, Property Grid and every CE export — for the rest
+of the process, with no retry.
+
+The log actively concealed it. `LOG_DEBUG` printed `layout.count`, the *intended* count, never
+`entries.size()`, so a truncated table logged as a full one. That is audit #4's own root cause
+verbatim — **the report and the reality computed by different code paths**.
+
+### The fix, and the distinction it turns on
+
+New `Ubel::ShouldPublishEnumTable(buildLayoutOk, intendedCount, readCount)`. The two failure modes
+look alike and must **not** be treated alike, in either direction:
+
+- **`BuildLayout` failed → publish.** That is a *complete* answer. `Neu.h:100`/`:116` reject
+  `count == 0` / `num <= 0`, so a legitimately member-less UEnum and any address that is not a UEnum
+  both land there; refusing to cache them would re-probe on every lookup. (This is also why U4's own
+  filed enum claim was correctly refuted — do not re-raise it.)
+- **The loop broke mid-table → do not publish.** Answer this call from the partial table, cache
+  nothing, let the next call recover.
+
+`GetEnumEntries` now warns when it finds no cached table, because post-fix that means exactly one
+thing — a truncated read — and an empty CE DropDownList is otherwise indistinguishable from a
+member-less UEnum.
+
+-----
+
 ## 2026-08-17 - U4: refuse to memoize a class walk whose identity read failed (build 3040)
 
 **Audit #5 queue ⑤, part 1.** The filed mechanism was **refuted and replaced** — see below. Pinned by

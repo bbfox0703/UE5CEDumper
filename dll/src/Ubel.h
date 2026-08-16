@@ -412,6 +412,21 @@ inline bool ShouldPublishClassWalk(bool propsSizeReadOk, int32_t propertiesSize)
     return propsSizeReadOk && IsSanePropertiesSize(propertiesSize);
 }
 
+// True when a UEnum member table may be MEMOIZED into the (never-erased) enum cache.
+// The two failure modes look alike and must NOT be treated alike:
+//   * BuildLayout FAILED (buildLayoutOk == false) -> publish. That is a COMPLETE
+//     answer, not a truncated one: Neu rejects count == 0 / num <= 0, so a
+//     legitimately member-less UEnum and any address that is not a UEnum both land
+//     here, and refusing to cache them would re-probe on every single lookup.
+//   * The entry loop BROKE mid-table (readCount < intendedCount) -> do not publish.
+//     Caching a half-read table permanently splits one UEnum: values below the break
+//     point resolve, values above render as raw integers, everywhere, with no retry.
+// Pure — unit-tested in dll_helpers_test. (audit #5, found while fixing U4)
+inline bool ShouldPublishEnumTable(bool buildLayoutOk, int32_t intendedCount, size_t readCount) {
+    if (!buildLayoutOk) return true;
+    return intendedCount >= 0 && readCount == static_cast<size_t>(intendedCount);
+}
+
 // Result of walking a live instance
 struct InstanceWalkResult {
     uintptr_t   addr      = 0;

@@ -148,6 +148,12 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
 
     std::vector<std::pair<int64_t, std::string>> entries;
     Neu::EnumNamesLayout layout;
+    // False ONLY when a mid-table read broke the loop below. BuildLayout returning
+    // false is a COMPLETE answer, not a truncated one: Neu rejects count == 0 /
+    // num <= 0 (Neu.h), so a legitimately member-less UEnum — and any address that
+    // is not a UEnum — lands there, and caching "" for it is correct and must stay
+    // cached, or every lookup re-probes. A half-read table is the opposite case.
+    bool tableComplete = true;
     if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameStride, 16384, layout)) {
         entries.reserve(layout.count);
         for (int32_t i = 0; i < layout.count; ++i) {
@@ -157,9 +163,15 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
             std::string name = Serie::GetString(nameIdx);
             entries.push_back({val, std::move(name)});
         }
-        LOG_DEBUG("ResolveEnumValue: Cached UEnum 0x%llX with %d entries (%s)",
-            static_cast<unsigned long long>(enumAddr), layout.count,
-            fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy");
+        tableComplete = ShouldPublishEnumTable(true, layout.count, entries.size());
+        // Report what was STORED, not what was intended. This used to print
+        // layout.count unconditionally, so a truncated table logged as a full one —
+        // the report and the reality computed by different code paths (audit #4's
+        // own root cause), which is what hid this defect.
+        LOG_DEBUG("ResolveEnumValue: UEnum 0x%llX — read %zu of %d entries (%s)%s",
+            static_cast<unsigned long long>(enumAddr), entries.size(), layout.count,
+            fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy",
+            tableComplete ? "" : " — TRUNCATED, not cached");
     }
 
     // Insert (another thread may have built the same enum meanwhile — emplace
@@ -167,8 +179,25 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     {
         std::lock_guard<std::mutex> lk(s_enumCacheMutex);
         auto it = s_enumCache.find(enumAddr);
-        if (it == s_enumCache.end())
-            it = s_enumCache.emplace(enumAddr, std::move(entries)).first;
+        if (it != s_enumCache.end()) {
+            for (const auto& [v, n] : it->second)
+                if (v == value) return n;
+            return "";  // Value not in this (cached) enum
+        }
+
+        // A TRUNCATED table is answered from but never published. Nothing in dll/src
+        // erases s_enumCache, so caching a half-read table permanently splits one
+        // UEnum: values below the break point resolve, values above it render as raw
+        // integers — in the Live Walker, the Property Grid and every CE export, for
+        // the rest of the process, with no retry. Leaving it uncached costs a re-read
+        // per lookup and lets the next one recover. (audit #5, found while fixing U4)
+        if (!tableComplete) {
+            for (const auto& [v, n] : entries)
+                if (v == value) return n;
+            return "";
+        }
+
+        it = s_enumCache.emplace(enumAddr, std::move(entries)).first;
         for (const auto& [v, n] : it->second)
             if (v == value) return n;
         return "";  // Value not in enum
@@ -188,7 +217,17 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
 
     std::lock_guard<std::mutex> lk(s_enumCacheMutex);
     auto it = s_enumCache.find(enumAddr);
-    if (it == s_enumCache.end()) return {};
+    if (it == s_enumCache.end()) {
+        // ResolveEnumValue above ran and still published nothing, which since the
+        // truncation fix means exactly one thing: a mid-table read failed, so there
+        // is no trustworthy full list to hand CE. Say so — an empty DropDownList is
+        // otherwise indistinguishable from a member-less UEnum, and unlike the old
+        // behaviour (a silently partial list cached forever) the next call retries.
+        Sein::Warn("WALK:safe",
+            "GetEnumEntries: UEnum 0x%llx has no cached table — truncated read, retry pending",
+            (unsigned long long)enumAddr);
+        return {};
+    }
 
     std::vector<LiveFieldValue::EnumEntry> result;
     result.reserve(it->second.size());

@@ -3608,6 +3608,34 @@ static void Test_ShouldPublishClassWalk() {
            !Ubel::ShouldPublishClassWalk(true, 867763776));
 }
 
+static void Test_ShouldPublishEnumTable() {
+    // audit #5, found while fixing U4: ResolveEnumValue's entry loop `break`s on a
+    // mid-table read failure and the PARTIAL vector was published unconditionally
+    // into a cache nothing in dll/src ever erases — permanently splitting one UEnum
+    // so values below the break point resolve and values above render as raw ints.
+
+    // The distinction this predicate exists to hold: a FAILED BuildLayout is a
+    // complete answer, a BROKEN loop is not. Getting these backwards is the easy
+    // mistake, and it is wrong in both directions — refusing to cache a member-less
+    // UEnum re-probes on every lookup; caching a truncated one is the original bug.
+    EXPECT("BuildLayout failed -> publish (member-less UEnum / not a UEnum at all)",
+           Ubel::ShouldPublishEnumTable(false, 0, 0));
+    EXPECT("BuildLayout failed -> publish, whatever the count args say",
+           Ubel::ShouldPublishEnumTable(false, 12, 0));
+
+    EXPECT("full table is published", Ubel::ShouldPublishEnumTable(true, 12, 12));
+    EXPECT("a single-member table is published", Ubel::ShouldPublishEnumTable(true, 1, 1));
+    EXPECT("truncated at the last entry is NOT published",
+           !Ubel::ShouldPublishEnumTable(true, 12, 11));
+    EXPECT("truncated at the first entry is NOT published",
+           !Ubel::ShouldPublishEnumTable(true, 12, 0));
+
+    // Neu range-checks count before the narrowing cast (its own AF1 fix), but this
+    // predicate must not sign-convert a negative into a huge size_t and call it equal.
+    EXPECT("a negative intended count is never published",
+           !Ubel::ShouldPublishEnumTable(true, -1, 0));
+}
+
 static void Test_Holes_NormalizeGuessedType() {
     using DT = Radar::DataType;
     // Every label GuessGapTypes can emit must normalize to a canonical property
@@ -4161,6 +4189,7 @@ int main() {
     Test_Holes_ComputeClassHoles_ArrayDim();
     Test_IsSanePropertiesSize();
     Test_ShouldPublishClassWalk();
+    Test_ShouldPublishEnumTable();
     Test_Holes_NormalizeGuessedType();
 
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
