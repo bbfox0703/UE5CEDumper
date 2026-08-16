@@ -1426,6 +1426,15 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+> **Session evidence tag `[ELLIOT-2026-08-16]`.** Three launches of **Elliot** (`Elliot-Win64-Shipping`,
+> UE5.4 runtime-reconciled, PE `6A577F4E1D91B000`, 482,390,784-byte image) on 2026-08-16 — 20:12
+> (`scan #1`, cold), 20:26 (`scan #4`) and 20:49 (`scan #7`, build **3127**). **This is the most
+> productive single evening on this register**, because Elliot is the *stripped-PE-version* title
+> that DSA structurally could not stand in for, and because three launches of one binary give
+> cold-vs-warm pairs with **two unhinted targets acting as a built-in negative control**. It closes
+> G10 steps 1 and 3, G8/G9 steps 1 and 2, G11 step 1, and G2 step 1 — and it produced one honest
+> non-result: G2's speed is real but **2.4 s, not the predicted sub-second** (step 2, with a lead).
+>
 > **Session evidence tag `[DSA-2026-08-16]`.** A real session on **DragonSword Awakening**
 > (`DSClient-Win64-Shipping`, UE5.4, PE `691B0D9809EB2000`) under **build 3122** settled a few steps
 > below; each is ticked in place and tagged, so grep `DSA-2026-08-16` for everything it covered.
@@ -1466,6 +1475,10 @@ almost nothing; re-run it under page heap.**
 3. **⚠ Do not close this on one clean session.** The old build ran for many sessions before anyone
    saw it. A pass is several sessions of ordinary use. **A crash is a definitive FAIL** — capture the
    WER dump and say whether the faulting module is still `libSkiaSharp`.
+   **Session 1 of N `[ELLIOT-2026-08-16]`: no crash.** Build **3127** (the aligned one — confirmed
+   from `Logs\UE5DumpUI\init-0.log` `Version: 1.0.0.3127`, not assumed), Elliot, 20:49–20:50, a full
+   connect + scan + walk. **This is one data point and closes nothing** — the old build survived
+   many sessions before the first crash, and this one was shorter than the session that crashed.
 4. **Turn page heap OFF before judging performance.** `reg delete "HKLM\SOFTWARE\Microsoft\Windows
    NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /f`. With it on, everything is slow
    and memory-hungry; that is the tool, not the build.
@@ -1554,7 +1567,8 @@ scanned on-disk bytes, and for packed/obfuscated titles those differ.*
    cached game re-detects once. Note `ueVersion` / `versionDetected` / `lowConfidence` for two or
    three titles before running the new build and compare after. **Identical expected.** Any change
    is a real finding — report the game and the before/after.
-   **PASS on ONE title `[DSA-2026-08-16]`** — and the "before" is on disk, not from memory:
+   **✅ PASS on TWO titles — see the identical step under G8/G9 below for Elliot.** The DSA half,
+   whose "before" is on disk rather than from memory:
    [test-games.md](test-games.md) records DragonSword Awakening as *"PE: 503 → runtime-raised to
    **504** by the `CMC::GravityDirection` property marker"*, and build 3122 produced exactly
    `DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503` → `UE Version = 503 (tier=1, detected=yes,
@@ -1586,12 +1600,19 @@ demonstration. Anything that does change is a finding.*
    `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json` **before** running the new build, then
    compare after. **They must be identical.** A changed version is a real finding — report it with
    the game and the before/after values.
-   **PASS on ONE title `[DSA-2026-08-16]`** — same evidence as G11 step 1 above (503 → 504 on
-   DragonSword Awakening under build 3122, matching what test-games.md recorded at build 2779).
-   Stays 🟡 pending a second title.
-2. **The re-detect happens once, not every launch.** Launch the same game twice more and confirm
+   **✅ PASS on TWO titles — the batch's own bar.** DSA `[DSA-2026-08-16]`: 503 → 504, matching
+   test-games.md's build-2779 record. Elliot `[ELLIOT-2026-08-16]`: the cold `scan #1` produced
+   `UE Version = 427 (tier=0, detected=no, lowConfidence=yes, publisher=SQUARE_ENIX)` and
+   `UE5_Init: Complete (UE504…)` — **word for word** what test-games.md records for it ("PE version
+   stripped → publisher fallback 427, upgraded via tagged FFieldVariant→503 + CMC::GravityDirection
+   →504"). Two titles, two exact matches, under `rev=5`.
+2. **✅ The re-detect happens once, not every launch.** Launch the same game twice more and confirm
    `scan-0.log` shows `skipped DetectVersion` on the later runs. If it re-detects every time, the
    rev stamp is not being written back.
+   **PASS `[ELLIOT-2026-08-16]`** — three launches of Elliot in one evening: 20:12 ran the full
+   `DetectVersion`, then **both** 20:26 and 20:49 logged
+   `UE Version = 504 (cached, **rev=5**, detected=no, lowConf=yes) — skipped DetectVersion`. The rev
+   stamp is written back and honoured.
 3. **⚠ REGRESSION — a Tier 1 game is untouched.** G8/G9 only touch Tier 2/3, and Tier 1 returns
    first on nearly every real title. Confirm `DetectVersion: Tier 1 (ascii|utf16) …` still appears
    and still names the same version.
@@ -1612,18 +1633,34 @@ and is decisive — this is the rare case where the regression was captured befo
    winner. **FAIL (the shipped bug)** = `=== GNames: … NONE validated ===`, which is what
    `Logs/DumperTest/scan-0.log` recorded at 13:34 on 2026-08-14 while `scan-20260814-132936.log`
    found `winner: GNAM_V1` five minutes earlier on the same binary.
-   **🡒 RUN #1 IS ALREADY ON DISK `[DSA-2026-08-16]` — this batch is now one relaunch from closing.**
-   The session ended at `HintCache: Saved results for PE=691B0D9809EB2000 (DSClient-Win64-Shipping.exe,
-   **scan #1**)` with **no `Hint HIT` and no `Hint MISS` line anywhere**, i.e. the hint fast path was
-   written but never read. DragonSword Awakening is a *good* subject for it: `GOBJ_ES53_1` won with
-   **40 matches**, so the "stops at the first match" defect has 39 wrong candidates to fall into.
-   **Just launch that game again and scan** — run #2 settles steps 1, 2 and 3 in one go.
+   **✅ PASS, decisively `[ELLIOT-2026-08-16]`.** Not DumperTest but a better subject: on Elliot
+   (`PE=6A577F4E1D91B000`) the cold run (`scan #1`, 20:12) logged
+   `[GObjects] GOBJ_ES53_1 hits=74 [WINNER]` — **74 matches**, i.e. 73 wrong candidates for a
+   "stops at the first match" fast path to fall into. Both warm runs (`scan #4` 20:26 and `scan #7`
+   20:49) answered `Hint HIT: 'GOBJ_ES53_1'`, plus `Hint HIT` on `GNAM_V8` and `GWLD_TQ_1`, and
+   **`NONE validated` appears nowhere in any of the three logs.** That is the shipped bug's exact
+   shape, exercised and clean.
 2. **G10 — the count no longer lies.** In `scan-0.log`, a `Hint MISS` line now reports the real match
    count (`(%zu matches, none validated; …)`). It must never say `1 match` for a pattern the cold run
    logged with hundreds — that mismatch is what hid this defect for months.
-3. **⚠ REGRESSION — a warm launch is still FAST.** The hint path now scans all matches instead of
+3. **✅ REGRESSION — a warm launch is still FAST.** The hint path now scans all matches instead of
    stopping at the first, so a genuine `Hint HIT` costs slightly more. Confirm run #2 is still far
    faster than a cold scan (`[X] AOB scan total: %lld us`), not merely correct.
+   **PASS `[ELLIOT-2026-08-16]`, and the run carries its own negative control** — same binary, same
+   machine, cold `scan #1` (20:12) vs warm `scan #7` (20:49):
+
+   | target | cold | warm | ratio |
+   |---|---|---|---|
+   | GObjects *(hinted)* | 1,199,277 µs | 275,868 µs | **4.3×** |
+   | GNames *(hinted)* | 1,125,987 µs | 287,709 µs | **3.9×** |
+   | GWorld *(hinted)* | 1,239,921 µs | 264,492 µs | **4.7×** |
+   | **SparseDelegates *(NOT hinted)*** | 1,449,253 µs | 1,462,536 µs | **1.00×** |
+   | **GEngine *(NOT hinted)*** | 1,086,361 µs | 1,111,045 µs | **1.02×** |
+
+   The two unhinted targets are the control that makes this a measurement rather than a number: they
+   sit in the *same* process, on the *same* warm page cache, and did **not** speed up. So the 4× is
+   the hint path and not disk caching or machine warm-up. Conditions: `Elliot-Win64-Shipping.exe`,
+   **482,390,784 bytes**, build 3122.
 4. **MA1 — the cancel actually fires.** On a cold, hint-less title, untick the CE script ~2 s into
    the scan. `scan-0.log` must show `AOB scan CANCELLED after N/M batches` within ~1 s, and
    `FindAll: scan was CANCELLED — NOT writing the hint cache`.
@@ -1648,17 +1685,36 @@ declarations), and **MA2**, the `ScanRegionBatch` per-pattern underflow, is unre
 against a naive oracle; what they cannot pin is that it still reads a REAL image correctly, because
 no test target compiles `Genau.cpp`.*
 
-1. **⚠ THE ONLY CONTROL THAT MATTERS — same answer, not just a faster one.** On a title whose PE
+1. **✅ THE ONLY CONTROL THAT MATTERS — same answer, not just a faster one.** On a title whose PE
    version resource is stripped (Elliot is the documented one; a game that detects from Tier 1 exits
    early and measures nothing), **first delete that game's record from
    `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json`** — otherwise the run takes the
    `"skipped DetectVersion"` branch. Note `ueVersion` / `versionDetected` / `lowConfidence` before
    deleting, then re-scan and confirm the values written back are **identical**. A fast-and-wrong
    detection passes step 2 and fails only this one.
-2. **The speed, with its conditions.** In `Logs\<proc>\scan-0.log`, measure the timestamp delta from
+   **PASS `[ELLIOT-2026-08-16]`** — the 20:12 run was `scan #1`, i.e. genuinely cold, and the
+   rewritten sweep ran end to end: `PE VERSIONINFO Product=1.2 File=1.2 — unrecognised` →
+   `PE resource failed, falling back to memory string scan` → `Could not detect UE version from PE
+   or memory (pre-UE4 markers 0/4, below the 2 needed)` → `UE Version = 427 (tier=0, detected=no,
+   lowConfidence=yes, publisher=SQUARE_ENIX)`, reconciled by `UE5_Init` to **UE504**. Identical to
+   test-games.md's record. **This is also the first real evidence G2's rewritten sweep executes
+   correctly on a live image** — it is the branch DSA never entered.
+2. **🟡 The speed, with its conditions — MEASURED, and it does NOT meet this batch's own prediction.**
+   In `Logs\<proc>\scan-0.log`, measure the timestamp delta from
    `"DetectVersion: PE resource failed, falling back to memory string scan"` to the next `SCAN:Ver`
    line. Expect sub-second where it was tens of seconds. **Record the game and its image size** — a
    duration without those is not a measurement.
+   **`[ELLIOT-2026-08-16]`: 20:12:37.431 → 20:12:39.831 = 2.400 s.** Conditions:
+   `Elliot-Win64-Shipping.exe`, **482,390,784 bytes (460 MB)**, build 3122, warm page cache (third
+   launch of the evening). So the fix unquestionably took — this was *tens of seconds* — but 2.4 s is
+   **~7× the 0.35 s the dev-log claims for G2**, and the batch predicted "sub-second".
+   **LEAD, not yet a finding:** that interval does not contain only the version needle. The terminal
+   line reports `pre-UE4 markers 0/4`, so `CountPreUE4Markers` — a *separate* whole-image sweep added
+   by the pre-UE4 refusal work — is inside the same window and may not have been gated the way the
+   version needle was. Before filing anything, split the measurement: add or find a `SCAN:Ver` line
+   between the two sweeps, or re-measure on a title where the pre-UE4 check exits early. Do **not**
+   record "G2 is slower than claimed" until the two are separated — the 0.35 s figure may simply have
+   been measured on a much smaller image, which would make this no defect at all.
 3. **⚠ REGRESSION — a Tier 1 game still detects from Tier 1.** Any ordinary UE5 title: confirm
    `scan-0.log` still shows `DetectVersion: Tier 1 (ascii|utf16) '++UEx+Release-N.N' -> NNN`. The log
    lines were kept byte-identical on purpose, so any wording change here is itself a defect.
