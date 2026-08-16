@@ -3336,8 +3336,45 @@ block — start at ①, no re-derivation needed.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**Start at ⑤ in the table below.** ① – ④ shipped on 2026-08-17 (builds 3035–3039); their rows say
+**Start at ⑥ in the table below.** ① – ⑤ shipped on 2026-08-17 (builds 3035–3042); their rows say
 what landed and what is still unproven. Nothing is blocked on the maintainer.
+
+> ### ⛔ Before you touch anything in cluster ③ (the recycled-address caches), read this
+>
+> Queue ⑤ closed U4/U6/F3 (+ a new **U16**) — but **both** the audit's prescribed repair and U4's
+> filed mechanism were refuted on re-derivation, and re-proposing either would cost a session.
+>
+> - **`(InternalIndex, SerialNumber)` is NOT a sound witness for a passive observer.** The audit
+>   called it *"the same pair UE itself uses to detect a recycled slot"*. UE zeroes `SerialNumber` in
+>   `FreeUObjectIndex` and allocates it lazily, essentially only on weak-pointer creation, so **most
+>   objects carry 0 for life**; the free list is LIFO, so a stale `(i, 0)` matches a recycled
+>   `(i, 0)` — silent in exactly the case it exists to catch. It also rests on
+>   `Aura::GetSerialNumber`, whose own comment marks the packed `FUObjectItem` layout `*** UNVERIFIED
+>   ***`. **Do not re-propose it.** What shipped is the generalisable rule: *witness the INPUT BYTES
+>   of a memoized decode, not the identity of the object that held them.*
+> - **U4's filed mechanism was wrong twice.** "A transient read failure or a not-yet-`Link`ed
+>   UClass" — `Macht::ReadSafe` is an in-process SEH deref that fails only on an access violation,
+>   and `UStruct::Link` *iterates* `ChildProperties` rather than creating it, so a pre-`Link` walk
+>   yields every field with correct names and wrong offsets, never an empty list. The real trigger is
+>   `WalkInstance` walking the class **before** applying its own recycled-object gate, plus
+>   `UE5_WalkClassBegin` taking raw addresses that `ue5_dissect.lua` feeds it as an
+>   *is-this-an-instance?* probe.
+> - **"One fix pattern, not five" is FALSE, and the split is by RETURN TYPE.** `GetName` hands out
+>   **copies**, so it can validate-and-replace. `WalkClass`/`WalkClassEx` hand out **references** into
+>   their maps (25 call sites, several re-entering while iterating `ci.Fields` on one thread), so any
+>   erase/clear/assign there is a use-after-free with no race required — they get an insert-time gate
+>   and nothing more.
+> - **Still open in this cluster, and each needs the same prerequisite:** **U5** (below), the
+>   class-to-class recycle, **A10**, and the names baked into `ClassInfo`.
+>
+> #### 🔁 U5 is RE-FILED with its prerequisite attached — it is not "add an LRU"
+>
+> U5 stays open and **not one byte is freed** by queue ⑤. Eviction is *illegal* while `WalkClassEx`
+> returns `const ClassInfo&`, so the real item is: **change the return type first** — to a value, a
+> `shared_ptr`, or an append-only arena — across all 25 call sites, **then** bound the cache.
+> `shared_ptr` carries its own footgun (`const ClassInfo& ci = *WalkClassEx(...)` compiles and
+> dangles) plus an atomic refcount per call on the very path B10 was written to speed up. Anyone
+> picking this up must budget the refactor, not the LRU.
 
 **Current register: 196 open of 277 · 0 HIGH · 37 MED · 132 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
@@ -3371,8 +3408,8 @@ unless the maintainer says otherwise; each group is a session's worth or less.
 | ~~②~~ ✅ | ~~**AA4 + AA5 + AA6 + AA7**~~ | `ue5_dissect.lua:53, 63, 173, 289` | ✅ **SHIPPED build 3037.** `callDLL` now RAISES rather than returning nil (one contract, no call site needs a check), both CE-registered callbacks are barriered so nothing escapes into CE, `createFromClass` unwinds a failed build, and `fillGaps` + its three doc claims are deleted. Pinned by the new `scripts/tests/dissect_test.lua` (40 checks); **13 failures against the unfixed file.** ⚠ **Two premises were REFUTED on re-derivation — see the AA4 block below.** |
 | ~~③~~ ✅ | ~~**AE4 + AE5 + AE6 + AE7**~~ | `ProxyDeployViewModel.cs:236, 1073, 1106, 1233` | ✅ **SHIPPED build 3038.** One `TryBeginExclusive` gate held by all eight operations via an IDisposable scope; `IsScanning` now has ONE writer. AE4 = CTS supersede + a post-await correction. AE7 = snapshot + the catch it never had. Pinned by the new `ProxyDeployConcurrencyTests` (11 cases). ⚠ **Two premises were narrowed on re-derivation and the controls found two bugs in the fix** — see the AE6 block below. |
 | ~~④~~ ✅ | ~~**AA14 – AA20**~~ | `ue5_invoke_helper.lua:215, 223, 293, 308, 363, 464, 512` | ✅ **SHIPPED build 3039.** All seven, pinned by the new `scripts/tests/invoke_helper_test.lua` (63 checks; **23 failures against the unfixed file**). Six independent negative controls: 7 / 13 / 2 / 1 / 2 / 2 red. ⚠ **AA14 is worse than filed and the rig nearly hid it** — see the block below. |
-| ⑤ | **U4 + U5 + U6 + F3** | `Ubel.cpp:818, 683, 411` · `Fern.cpp:1068` | §4's **cluster ③** — *a cache keyed by an address the engine recycles, never invalidated*. The audit's own verdict: **"One fix pattern, not five"** — store an `(InternalIndex, SerialNumber)` witness and validate it on hit, the pair UE itself uses to detect a recycled slot. F3 additionally wants a one-line `Ubel::ClearNameCache()` in Fern's `if (last)` teardown, which the witness pattern does not cover. Bigger than ① – ④ (M/med), which is why it is not first. |
-| ⑥ | **AE2 + AE3** | `ClassStructViewModel.cs:192, 218` | One handler. Object-Tree selection drives Class/Struct through an `async void` with **no generation guard**, and its two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node. The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry. |
+| ~~⑤~~ ✅ | ~~**U4 + U6 + F3**~~ (+ new **U16**) | `Ubel.cpp:841, 426, 153` · `Fern.cpp:1141` | ✅ **SHIPPED builds 3040–3042.** ⚠ **The audit's own prescription was REFUTED, and so was U4's filed mechanism** — see the block below before touching anything in this cluster. Three commits, 21 new C++ assertions (1073 → **1094**), five independent negative controls (4/2/3/1/2 red). **U5 is NOT closed and its row stays unticked** — see the re-file below. |
+| ⑥ | **AE2 + AE3** | `ClassStructViewModel.cs:192, 218` | ← **START HERE.** One handler. Object-Tree selection drives Class/Struct through an `async void` with **no generation guard**, and its two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node. The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry. |
 
 **After ⑥, pick by subsystem from §3c's "Where the rest live".** Remaining MED clumps worth knowing:
 `Radar` still has AB4 + AB7, `Genau` has G2 (the whole-image sweep never polls `Tot::Requested()`,

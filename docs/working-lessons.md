@@ -700,7 +700,45 @@ shelling out to `reg.exe`, which renders MULTI_SZ separators as the literal two 
 rounds of being wrong here were each corrected by a **probe**, not by re-reading `celua.txt` — which had
 advertised both a non-existent capability and a working one it had first denied.
 
-### 4.3 Do not use KismetMathLibrary as a verification target
+### 4.3 `FUObjectItem::SerialNumber` is NOT an identity witness — witness the INPUT BYTES instead
+
+**Two audit registers in a row prescribed an `(InternalIndex, SerialNumber)` witness** for caches
+keyed by a recycled address (audit #5's cluster ③, and AA2 before it), each calling it *"the same
+pair UE itself uses to detect a recycled slot"*. **It is not, for a passive observer, and shipping
+it would have produced a validator that is silent in exactly the case it exists to catch.**
+
+`FUObjectArray::FreeUObjectIndex` sets `SerialNumber = 0`, and `AllocateSerialNumber` assigns only
+inside `if (!SerialNumber)` — essentially only from `FWeakObjectPtr::operator=`. So **most objects
+carry serial 0 for their entire life**, and the free list is LIFO. A stored witness of `(i, 0)`
+therefore matches the recycled slot's `(i, 0)` and reports "fresh". UE gets away with the pair
+because `FWeakObjectPtr` *forces* the serial to be non-zero at creation; a cache that merely
+*observes* objects never does. In this repo it would also have rested on `Aura::GetSerialNumber`,
+whose own comment marks the packed `FUObjectItem` layout `*** UNVERIFIED ***`.
+
+**How to apply — the generalisable rule, and it is the better fix anyway:**
+
+> **Witness the INPUT BYTES of a memoized decode, not the identity of the object that held them.**
+
+A memo whose value is a pure function of a few bytes can be validated by re-reading exactly those
+bytes. It is *total* rather than heuristic (equal inputs ⇒ the cached output is still correct, no
+matter who owns the address now), and it is usually **cheaper than the thing it guards** — `GetName`
+now compares two `int32`s where the audit's version would have walked GObjects. Shipped as
+`Ubel::NameWitness` (build 3042).
+
+Two riders that generalise with it:
+
+- **Cover every byte the decode consumes.** `Serie::GetString(comparisonIndex, number)` takes two, so
+  the witness holds two. Dropping `Number` is audit #5's U8 — a defect that already shipped once and
+  rendered `Slot_1`/`Slot_2`/`Slot_3` all as `Slot`.
+- **Check whether the memo hands out a VALUE or a REFERENCE before designing any invalidation.** The
+  same register grouped three caches as "one fix pattern, not five". They split by return type, not
+  by key type: `GetName` returns a copy, so it can validate-and-replace; `WalkClass`/`WalkClassEx`
+  hand out `const ClassInfo&` into their maps to 25 call sites, several of which re-enter while
+  iterating the referenced `Fields` **on one thread**, so any erase/clear/assign there is a
+  use-after-free with **no race required**. Those got an insert-time gate instead, and bounding their
+  growth is now blocked behind a return-type refactor.
+
+### 4.4 Do not use KismetMathLibrary as a verification target
 
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when
 invoked via ProcessEvent from a reflection-driven dumper on UE 5.5+ cooked Shipping. Likely UE's
