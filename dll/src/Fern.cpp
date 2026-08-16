@@ -2976,7 +2976,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     target2Ptr = target2Bytes;
                 }
             } else if (isMulti) {
-                if (!Radar::BuildNumericTargets(dt, valStr, multiTargets, roundMode)) {
+                if (!Radar::BuildNumericTargets(dt, valStr, multiTargets, roundMode, st)) {
                     return Renge::MakeError(id, "Invalid 'value' for data_type " + dtStr +
                         " (does not fit any numeric width)").dump();
                 }
@@ -3129,7 +3129,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                 tgt2Ptr = target2Bytes;
                             }
                         } else if (isMulti) {
-                            if (!Radar::BuildNumericTargets(dt, valStr, multiTargets, roundMode)) {
+                            if (!Radar::BuildNumericTargets(dt, valStr, multiTargets, roundMode, st)) {
                                 parseFailed = true;
                                 return;
                             }
@@ -3344,7 +3344,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // tolerance). Parsed BEFORE BuildNumericTargets so a fractional
                 // group value/bound coerces to an integer via the slot's mode.
                 Radar::TryParseRoundMode(vj.value("rounding_mode", "Round"), sp.roundMode);
-                if (!Radar::BuildNumericTargets(dt, valStr, sp.targets, sp.roundMode)) {
+                if (!Radar::BuildNumericTargets(dt, valStr, sp.targets, sp.roundMode, st)) {
                     return Renge::MakeError(id, "Invalid group value '" + valStr + "' (fits no numeric width)").dump();
                 }
                 if (st == Radar::ScanType::Between) {
@@ -3461,7 +3461,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             sess.slots[s].targets2 = Radar::NumericTargetSet{};
                         } else {
                             Radar::NumericTargetSet nt;
-                            if (!Radar::BuildNumericTargets(sess.slots[s].dt, valStr, nt, sess.slots[s].roundMode)) {
+                            if (!Radar::BuildNumericTargets(sess.slots[s].dt, valStr, nt, sess.slots[s].roundMode, sess.slots[s].st)) {
                                 parseFailed = true;
                                 return;
                             }

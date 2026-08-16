@@ -269,7 +269,7 @@ every 5 s, so respawns / new spawns / destroys are handled transparently.
 | Component | What it does |
 |---|---|
 | `Mimic::CMD_LIST_INSTANCES` (mailbox cmd 6) | Paginates live (non-CDO) `UObject*` pointers of a class via `Aura::FindInstancesByClass(exactMatch=true)`. 128 ptrs / page, hard cap 2000 instances. |
-| `scripts/ue5_freeze_helper.lua` (embedded) | `freezeProperty(cfg) → handle` API; tick timer (50 ms default) + rescan timer (5 s default); type writers for bool / int8-64 / uint8-64 / float / double; shares `_ue5_invoke_busy` reentrancy flag with invoke helper. |
+| `scripts/ue5_freeze_helper.lua` (embedded, **v1.2**) | `freezeProperty(cfg) → handle` API; tick timer (50 ms default) + rescan timer (5 s default); type writers for bool / int8-64 / uint8-64 / float / double; shares `_ue5_invoke_busy` reentrancy flag with invoke helper. **`handle.start()` returns `(ok, err, count)`** (1.2, build 3125) so a caller can separate a HARD failure (no DLL / contract mismatch → untick + keep the window open) from a freeze that is legitimately **armed with no live instances yet** (stays ticked; applies as they spawn). A pre-1.2 helper returns `nil` there and generated scripts report that as "cannot report", never as a verdict. *In-game verification pending (key: FreezeOutcome)* |
 | `FreezeScriptGenerator` | Renders AA Script with editable `CFG = {...}` block, per-script keyed handle table so multiple Freeze scripts coexist. |
 | `FreezeValueDialog` | Single-input modal with type-aware validation (bool accepts true/false/1/0). |
 | `Tools -> Inject/Export Freeze Helper Lua` | Sister entries to the invoke-helper Tools menu — one-click AOBMaker inject or manual file export. |

@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **28 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **31 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1426,6 +1426,135 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+> **Session evidence tag `[ELLIOT-2026-08-16]`.** Three launches of **Elliot** (`Elliot-Win64-Shipping`,
+> UE5.4 runtime-reconciled, PE `6A577F4E1D91B000`, 482,390,784-byte image) on 2026-08-16 — 20:12
+> (`scan #1`, cold), 20:26 (`scan #4`) and 20:49 (`scan #7`, build **3127**). **This is the most
+> productive single evening on this register**, because Elliot is the *stripped-PE-version* title
+> that DSA structurally could not stand in for, and because three launches of one binary give
+> cold-vs-warm pairs with **two unhinted targets acting as a built-in negative control**. It closes
+> G10 steps 1 and 3, G8/G9 steps 1 and 2, G11 step 1, and G2 step 1 — and it produced one honest
+> non-result: G2's speed is real but **2.4 s, not the predicted sub-second** (step 2, with a lead).
+>
+> **Session evidence tag `[DSA-2026-08-16]`.** A real session on **DragonSword Awakening**
+> (`DSClient-Win64-Shipping`, UE5.4, PE `691B0D9809EB2000`) under **build 3122** settled a few steps
+> below; each is ticked in place and tagged, so grep `DSA-2026-08-16` for everything it covered.
+> **Read what it did NOT reach as carefully as what it did** — the session detected its version from
+> the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
+> tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
+> was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ NEW 2026-08-17 — AB4: the Aura half of the ordered-predicate width fix
+
+*Needs a connected game. See dev-log build 3133. **The Radar half is unit-pinned (16 new assertions,
+negative control 6 red); this batch is exactly the half that could not be** — no test target compiles
+`Aura.cpp`, so the wiring from `Find()` to `FindEntry()` across the first-scan, native-C and refine
+paths has never executed against a real object pool.*
+
+1. **⚠ REGRESSION FIRST — an ordinary Exact scan is unchanged.** Value Search → `NumericNoByte` →
+   Exact → a value you know exists → First Scan. `ScanType` now reaches `BuildNumericTargets` but
+   defaults to `Exact`, and Exact must be byte-identical. Compare the row count against a pre-3133
+   build if you can; any change here is a real finding.
+2. **THE FIX, first scan.** `NumericAll` → **Smaller** → `500` → First Scan. The results must now
+   contain **`ByteProperty` / `Int8Property` rows**, which they never did before — every 1-byte field
+   holds a value below 500 by definition. If 1-byte rows are still absent, the Aura wiring did not
+   take. **Record the row count and whether byte-width rows appear**; a count alone proves nothing.
+3. **The sign leak, which the finding never mentioned.** `NumericNoByte` → **Bigger** → `-5`. Every
+   unsigned field satisfies it, so `UInt16`/`UInt32`/`UInt64` rows must appear. They were dropped
+   wholesale before, because a negative string suppresses the entire unsigned parse.
+4. **⚠ The opposite direction must still PRUNE.** `NumericAll` → **Bigger** → `500`: 1-byte rows must
+   be **absent** (no byte exceeds 500). That half of the old gate was correct and the fix must not
+   have widened it into a false-positive machine. This is the control for step 2.
+5. **Refine still works on the new entries.** After step 2's scan, do a **Next Scan** with the same
+   predicate and confirm the byte rows survive and the count narrows sanely. The refine path takes a
+   different branch (`cmpEntry` vs the prev-value `cmpTarget`) and is separately wired.
+6. **Native-C scanning.** Repeat step 2 with **native-C enabled**. Those paths enumerate
+   `multiTargets->entries` directly rather than resolving per member, and were wired separately
+   (`&e` / `&me` instead of `e.bytes`) — a distinct code path with the same intent.
+7. **`Between` is KNOWN-UNFIXED, do not report it as a bug.** Its two bounds are built by two
+   independent calls, so `Between -100 100` still drops unsigned widths. A correct fix needs a joint
+   builder; it is filed, not forgotten.
+
+### ⬜ NEW 2026-08-17 — SkiaSharp/HarfBuzzSharp ABI alignment: the UI must stop crashing
+
+*Needs the UI running for a while. See dev-log build 3127. **This is the one item on this whole
+register where a PASS is "nothing happened for a few sessions"** — so it cannot be closed by a single
+run, and a crash is worth more than a green session.*
+
+**What was wrong.** `Avalonia.Skia 12.1.1` is built against **SkiaSharp 3.119.4** and
+`Avalonia.HarfBuzz 12.1.1` against **HarfBuzzSharp 8.3.1.3**. Routine `chore(deps)` bumps
+(`5346f907` and two before it) had carried the project to **SkiaSharp 4.151.1** (one major ahead) and
+**HarfBuzzSharp 14.2.1.2** (six ahead). NuGet cannot warn about this — Avalonia's constraint is an
+open-ended minimum, so a major jump *satisfies* it: no NU1608, no NU1605, and
+`TreatWarningsAsErrors=true` never had anything to catch.
+
+**How it was caught, and why the first dump was not enough.** The UI died with
+`0xC0000374` **STATUS_HEAP_CORRUPTION** ~2.3 s after a Copy CE XML on Elliot. That dump named
+nothing: heap corruption surfaces at the *next* heap operation, so its stack is the **detector, not
+the culprit** — it showed only ntdll's heap-error path on the UI thread. Full **page heap**
+(IFEO `GlobalFlag=0x02000000` + `PageHeapFlags=0x3`) converted the next occurrence into an immediate
+`0xC0000005` at **`libSkiaSharp.dll+0x102B8D`** (WER event `AutoVerifierV2`, `verifier.dll` on the
+stack, target address a guard page). That is the whole method: **a heap-corruption dump is worth
+almost nothing; re-run it under page heap.**
+
+1. **⚠ THE REGRESSION CHECK COMES FIRST, AND IT IS BROAD.** Skia and HarfBuzz are what draw and shape
+   *everything*, so a downgrade touches every pixel. Open each tab in turn; look for missing glyphs,
+   wrong metrics, clipped text, DataGrid rows that fail to paint, and check a 繁中 string renders
+   (HarfBuzz went back **six** majors — text shaping is where breakage would show first).
+2. **The original repro, now expected to survive.** Elliot → Live Walker → `GameState` → **Copy CE
+   XML** with AOB on and depth 4, then leave the UI up for several minutes. Two crashes happened
+   within ~14 minutes of each other on the old versions.
+3. **⚠ Do not close this on one clean session.** The old build ran for many sessions before anyone
+   saw it. A pass is several sessions of ordinary use. **A crash is a definitive FAIL** — capture the
+   WER dump and say whether the faulting module is still `libSkiaSharp`.
+   **Session 1 of N `[ELLIOT-2026-08-16]`: no crash.** Build **3127** (the aligned one — confirmed
+   from `Logs\UE5DumpUI\init-0.log` `Version: 1.0.0.3127`, not assumed), Elliot, 20:49–20:50, a full
+   connect + scan + walk. **This is one data point and closes nothing** — the old build survived
+   many sessions before the first crash, and this one was shorter than the session that crashed.
+4. **Turn page heap OFF before judging performance.** `reg delete "HKLM\SOFTWARE\Microsoft\Windows
+   NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /f`. With it on, everything is slow
+   and memory-hungry; that is the tool, not the build.
+5. **What this does NOT prove — updated, the fault IS symbolized now.** `SkiaSharp.NativeAssets.Win32`
+   **ships `libSkiaSharp.pdb`**, so the earlier "faulting function unknown" was an assumption, not a
+   fact. `libSkiaSharp+0x102B8D` (4.151.1 win-x64, binary identity confirmed by an exact 12,272,440-byte
+   match with `dist/`) resolves to `skia_private::TArray<SkPathVerb,1>::size` inlined through
+   `SkSpan` → `SkPathBuilder::verbs` → **`SkPathBuilder::computeFiniteBounds`**. So the fault is
+   **path geometry, not text shaping — HarfBuzz is exonerated for this crash** — and `SkPathBuilder`
+   is precisely what Skia restructured across this major.
+   What is still unproven is the **caller**: naming the callee does not name who handed it a
+   mis-shaped path. If crashes continue at the aligned versions the ABI hypothesis is refuted and the
+   next step is a Skia-side bug. If one does recur, capture a page-heap dump and symbolize the FULL
+   stack — now known to be possible (use the **x64** `llvm-symbolizer` under
+   `VC\Tools\Llvm\x64\bin`; a recursive search finds the ARM64 copy first and it will not run).
+
+### ⬜ NEW 2026-08-17 — AA12 / AA13: the freeze script must stop lying about success (key: FreezeOutcome)
+
+*Needs a **real Cheat Engine** plus a connected game. See dev-log build 3125. The Lua rig stubs every
+CE global, so what is unproven is precisely the CE-side behaviour: whether the window stays up and
+whether the record ends ticked or unticked.*
+
+1. **⚠ REGRESSION FIRST — a normal freeze still works and still closes.** Property Search → a numeric
+   field on a class with live instances → Copy Freeze Script → paste into CE → tick. The value must
+   hold, the Lua Engine window must **close**, and the record must stay ticked. Everything below
+   changed this path.
+2. **The hard failure — the whole point.** Tick the same script with **UE5Dumper.dll NOT injected**.
+   Expect: a `showMessage` naming the reason, the record **unticked by itself**, and the Lua window
+   **still open**. Before this it silently reported success, closed the window, and stayed ticked.
+3. **⚠ The legitimate empty case must NOT untick.** Freeze a class with **zero live instances right
+   now** (an enemy type not yet spawned). Expect: record **stays ticked**, window **stays open**, and
+   one line — `[Freeze] armed: no live instances of X right now`. Then make one spawn and confirm the
+   freeze takes hold within ~5 s. **If this unticks, the fix broke the feature and that is worse than
+   the bug** — report it.
+4. **A misspelled class is indistinguishable from (3), by design.** Edit `CFG.className` to nonsense
+   and tick. It must behave exactly like step 3 — armed, 0. This is not a defect: the DLL answers
+   `SetDone(0)` for both, so claiming a typo would be a guess. Confirm it does not claim one.
+5. **An OLD helper is reported as unknown, not as a verdict.** Embed a **pre-1.2** `ue5_freeze_helper.lua`
+   (any copy from before build 3125) and tick a newly generated script. Expect the "older
+   ue5_freeze_helper.lua … re-inject it" line, the window left open, and the record **left ticked** —
+   it must neither close over it nor untick a freeze that may well be running.
+6. **Two freeze scripts still coexist.** Tick two different freezes at once, untick one: the other
+   must keep working. The keyed-handle table is untouched by this change, and this is the check that
+   proves it.
+
 ### ⬜ NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate
 
 *Needs the DLL injected. See dev-log builds 3119 / 3121. G12's invariant is unit-pinned; its WIRING
@@ -1435,12 +1564,21 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    class with an **enum** field and a **TArray** field. The enum must show its member NAME (not a
    raw int) and the array must show its element type. All four writers of the family moved; this is
    the check that they still agree.
+   **🟡 TArray half ✅, enum half still open `[DSA-2026-08-16]`.** The session walked arrays cleanly
+   — `{"array_elem_size":8,"array_inner_addr":"0x1B59CB7FD80","array_inner_type":"ObjectProperty",
+   …,"name":"ModelComponents","type":"ArrayProperty"}` — so `FARRAYPROP_INNER` is not 8 bytes off.
+   **Zero `EnumProperty` appeared in the entire session**, so `FENUMPROP_ENUM` / `FBYTEPROP_ENUM`
+   are untested. Pick a class with an enum field next time; that is the half that can still be wrong.
 2. **G12, the case it actually fixes.** Needs a title whose offset validation takes the **heuristic
    fallback** — `scan-0.log` / `offsets-0.log` shows `Cannot find Guid or Vector struct`. Solarpunk
    is the documented one (though a later build resolved via `Guid` instead, so it may not reproduce).
    On such a title, enum names and TArray inner types were previously read 8 bytes off. Confirm they
    are right now, and **record which branch the log shows** — a run that resolved via `Guid` did not
    exercise this.
+   **⬜ Branch recorded, and it is the WRONG one `[DSA-2026-08-16]`:** `FindStructByName: Found
+   'Guid' at 0x1B5FB6840C0` → `ValidateAndFixOffsets: Using struct 'Guid'`, i.e. the validated path,
+   with `FStructProp::Struct = +0x70` published from a real measurement. The Step 2.5 default block
+   G12 repaired was never entered. Still needs a heuristic-fallback title.
 3. **⚠ G3 REGRESSION — Extra Scan → Apply still works.** Needs a game where something is missing to
    scan for (all 34 tested games resolve GWorld, so this may not be reachable). If it is: press
    Extra Scan, then Apply, and confirm `offsets-0.log` still contains exactly **one**
@@ -1448,9 +1586,14 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
 4. **⚠ G3 REGRESSION — GEngine still resolves after an Apply.** The GEngine second pass was hoisted
    out of the gated block precisely so it keeps running. If Apply is reachable, confirm
    `apply_rescan: Applied GEngine=0x…` still appears when GEngine was previously unresolved.
-5. **Free log check, no game needed beyond a normal session.** `walk-0.log` must show no burst of
+5. **✅ Free log check, no game needed beyond a normal session.** `walk-0.log` must show no burst of
    `Misaligned field … possible wrong FPROPERTY_OFFSET`. That line is the direct witness for a split
    or stale family.
+   **PASS `[DSA-2026-08-16]`** — a 2.4 MB `walk-0.log` covering a full snapshot capture (35,891
+   objects, **2,917,264 fields**) contains **zero** `Misaligned` lines and zero `[WARN]` lines of any
+   kind. Conditions matter here, so record them: this is the *validated-`Guid`* branch (step 2), so
+   it proves the family is coherent on the path that was already coherent — it is a regression check,
+   not evidence for the repair.
 
 ### ⬜ NEW 2026-08-17 — G11: Tier 2 is alive; check it agrees with Tier 1
 
@@ -1459,16 +1602,27 @@ Tier 1 agreeing on all six and masking all six** — so live behaviour should be
 exists to catch the case the offline model cannot see: the DLL scans the MAPPED image, the model
 scanned on-disk bytes, and for packed/obfuscated titles those differ.*
 
-1. **⚠ REGRESSION — no game's detected version moves.** `kVersionDetectLogicRev` went 4 → 5, so every
+1. **🟡 REGRESSION — no game's detected version moves.** `kVersionDetectLogicRev` went 4 → 5, so every
    cached game re-detects once. Note `ueVersion` / `versionDetected` / `lowConfidence` for two or
    three titles before running the new build and compare after. **Identical expected.** Any change
    is a real finding — report the game and the before/after.
+   **✅ PASS on TWO titles — see the identical step under G8/G9 below for Elliot.** The DSA half,
+   whose "before" is on disk rather than from memory:
+   [test-games.md](test-games.md) records DragonSword Awakening as *"PE: 503 → runtime-raised to
+   **504** by the `CMC::GravityDirection` property marker"*, and build 3122 produced exactly
+   `DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503` → `UE Version = 503 (tier=1, detected=yes,
+   lowConfidence=no)` → `raising version 503 -> 504`. **Identical. The batch asks for two or three
+   titles, so this stays 🟡 until a second one is checked.**
 2. **A packed title is the interesting one.** Avowed is the documented packed case. Confirm its
    detected version is unchanged; this is the population where mapped-vs-on-disk could diverge.
 3. **If a `Tier 2` line ever appears in `scan-0.log`, cross-check it.** Grep for
    `DetectVersion: Tier 2 Release prefix -> NNN`. On every corpus image Tier 1 answered first, so a
    Tier 2 line means a stripped-tag title reached the new path — record the game, the version, and
    whether it matches what the game actually is. That is the first real evidence Tier 2 works.
+   **⬜ Not reachable from an ordinary session, and `[DSA-2026-08-16]` shows why:** a title whose PE
+   VERSIONINFO is intact answers at `DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503` and **never
+   enters the tier ladder at all** — no `Tier 1 (ascii|utf16)` line either. Steps 3–4 here, step 3 of
+   G8/G9, and every step of the G2 batch need a title with a **stripped version resource** (Elliot).
 4. **⚠ REGRESSION — Tier 3 still behaves.** A title that previously reported `Tier 3 (low
    confidence)` must still report the same version. The bare-needle change touches Tier 2 only, and
    two unit rails assert that, but Tier 3 is what stripped-tag games actually land on today.
@@ -1479,15 +1633,25 @@ scanned on-disk bytes, and for packed/obfuscated titles those differ.*
 measured no-ops on all 85 PE images in the local corpus, so this batch is a REGRESSION check, not a
 demonstration. Anything that does change is a finding.*
 
-1. **⚠ REGRESSION — every game still detects the same version.** `kVersionDetectLogicRev` went
+1. **🟡 REGRESSION — every game still detects the same version.** `kVersionDetectLogicRev` went
    3 → 4, so the first launch after this build **re-detects every cached game once** (~0.35 s).
    For two or three titles, note `ueVersion` / `versionDetected` / `lowConfidence` in
    `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json` **before** running the new build, then
    compare after. **They must be identical.** A changed version is a real finding — report it with
    the game and the before/after values.
-2. **The re-detect happens once, not every launch.** Launch the same game twice more and confirm
+   **✅ PASS on TWO titles — the batch's own bar.** DSA `[DSA-2026-08-16]`: 503 → 504, matching
+   test-games.md's build-2779 record. Elliot `[ELLIOT-2026-08-16]`: the cold `scan #1` produced
+   `UE Version = 427 (tier=0, detected=no, lowConfidence=yes, publisher=SQUARE_ENIX)` and
+   `UE5_Init: Complete (UE504…)` — **word for word** what test-games.md records for it ("PE version
+   stripped → publisher fallback 427, upgraded via tagged FFieldVariant→503 + CMC::GravityDirection
+   →504"). Two titles, two exact matches, under `rev=5`.
+2. **✅ The re-detect happens once, not every launch.** Launch the same game twice more and confirm
    `scan-0.log` shows `skipped DetectVersion` on the later runs. If it re-detects every time, the
    rev stamp is not being written back.
+   **PASS `[ELLIOT-2026-08-16]`** — three launches of Elliot in one evening: 20:12 ran the full
+   `DetectVersion`, then **both** 20:26 and 20:49 logged
+   `UE Version = 504 (cached, **rev=5**, detected=no, lowConf=yes) — skipped DetectVersion`. The rev
+   stamp is written back and honoured.
 3. **⚠ REGRESSION — a Tier 1 game is untouched.** G8/G9 only touch Tier 2/3, and Tier 1 returns
    first on nearly every real title. Confirm `DetectVersion: Tier 1 (ascii|utf16) …` still appears
    and still names the same version.
@@ -1508,12 +1672,34 @@ and is decisive — this is the rare case where the regression was captured befo
    winner. **FAIL (the shipped bug)** = `=== GNames: … NONE validated ===`, which is what
    `Logs/DumperTest/scan-0.log` recorded at 13:34 on 2026-08-14 while `scan-20260814-132936.log`
    found `winner: GNAM_V1` five minutes earlier on the same binary.
+   **✅ PASS, decisively `[ELLIOT-2026-08-16]`.** Not DumperTest but a better subject: on Elliot
+   (`PE=6A577F4E1D91B000`) the cold run (`scan #1`, 20:12) logged
+   `[GObjects] GOBJ_ES53_1 hits=74 [WINNER]` — **74 matches**, i.e. 73 wrong candidates for a
+   "stops at the first match" fast path to fall into. Both warm runs (`scan #4` 20:26 and `scan #7`
+   20:49) answered `Hint HIT: 'GOBJ_ES53_1'`, plus `Hint HIT` on `GNAM_V8` and `GWLD_TQ_1`, and
+   **`NONE validated` appears nowhere in any of the three logs.** That is the shipped bug's exact
+   shape, exercised and clean.
 2. **G10 — the count no longer lies.** In `scan-0.log`, a `Hint MISS` line now reports the real match
    count (`(%zu matches, none validated; …)`). It must never say `1 match` for a pattern the cold run
    logged with hundreds — that mismatch is what hid this defect for months.
-3. **⚠ REGRESSION — a warm launch is still FAST.** The hint path now scans all matches instead of
+3. **✅ REGRESSION — a warm launch is still FAST.** The hint path now scans all matches instead of
    stopping at the first, so a genuine `Hint HIT` costs slightly more. Confirm run #2 is still far
    faster than a cold scan (`[X] AOB scan total: %lld us`), not merely correct.
+   **PASS `[ELLIOT-2026-08-16]`, and the run carries its own negative control** — same binary, same
+   machine, cold `scan #1` (20:12) vs warm `scan #7` (20:49):
+
+   | target | cold | warm | ratio |
+   |---|---|---|---|
+   | GObjects *(hinted)* | 1,199,277 µs | 275,868 µs | **4.3×** |
+   | GNames *(hinted)* | 1,125,987 µs | 287,709 µs | **3.9×** |
+   | GWorld *(hinted)* | 1,239,921 µs | 264,492 µs | **4.7×** |
+   | **SparseDelegates *(NOT hinted)*** | 1,449,253 µs | 1,462,536 µs | **1.00×** |
+   | **GEngine *(NOT hinted)*** | 1,086,361 µs | 1,111,045 µs | **1.02×** |
+
+   The two unhinted targets are the control that makes this a measurement rather than a number: they
+   sit in the *same* process, on the *same* warm page cache, and did **not** speed up. So the 4× is
+   the hint path and not disk caching or machine warm-up. Conditions: `Elliot-Win64-Shipping.exe`,
+   **482,390,784 bytes**, build 3122.
 4. **MA1 — the cancel actually fires.** On a cold, hint-less title, untick the CE script ~2 s into
    the scan. `scan-0.log` must show `AOB scan CANCELLED after N/M batches` within ~1 s, and
    `FindAll: scan was CANCELLED — NOT writing the hint cache`.
@@ -1538,17 +1724,36 @@ declarations), and **MA2**, the `ScanRegionBatch` per-pattern underflow, is unre
 against a naive oracle; what they cannot pin is that it still reads a REAL image correctly, because
 no test target compiles `Genau.cpp`.*
 
-1. **⚠ THE ONLY CONTROL THAT MATTERS — same answer, not just a faster one.** On a title whose PE
+1. **✅ THE ONLY CONTROL THAT MATTERS — same answer, not just a faster one.** On a title whose PE
    version resource is stripped (Elliot is the documented one; a game that detects from Tier 1 exits
    early and measures nothing), **first delete that game's record from
    `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json`** — otherwise the run takes the
    `"skipped DetectVersion"` branch. Note `ueVersion` / `versionDetected` / `lowConfidence` before
    deleting, then re-scan and confirm the values written back are **identical**. A fast-and-wrong
    detection passes step 2 and fails only this one.
-2. **The speed, with its conditions.** In `Logs\<proc>\scan-0.log`, measure the timestamp delta from
+   **PASS `[ELLIOT-2026-08-16]`** — the 20:12 run was `scan #1`, i.e. genuinely cold, and the
+   rewritten sweep ran end to end: `PE VERSIONINFO Product=1.2 File=1.2 — unrecognised` →
+   `PE resource failed, falling back to memory string scan` → `Could not detect UE version from PE
+   or memory (pre-UE4 markers 0/4, below the 2 needed)` → `UE Version = 427 (tier=0, detected=no,
+   lowConfidence=yes, publisher=SQUARE_ENIX)`, reconciled by `UE5_Init` to **UE504**. Identical to
+   test-games.md's record. **This is also the first real evidence G2's rewritten sweep executes
+   correctly on a live image** — it is the branch DSA never entered.
+2. **🟡 The speed, with its conditions — MEASURED, and it does NOT meet this batch's own prediction.**
+   In `Logs\<proc>\scan-0.log`, measure the timestamp delta from
    `"DetectVersion: PE resource failed, falling back to memory string scan"` to the next `SCAN:Ver`
    line. Expect sub-second where it was tens of seconds. **Record the game and its image size** — a
    duration without those is not a measurement.
+   **`[ELLIOT-2026-08-16]`: 20:12:37.431 → 20:12:39.831 = 2.400 s.** Conditions:
+   `Elliot-Win64-Shipping.exe`, **482,390,784 bytes (460 MB)**, build 3122, warm page cache (third
+   launch of the evening). So the fix unquestionably took — this was *tens of seconds* — but 2.4 s is
+   **~7× the 0.35 s the dev-log claims for G2**, and the batch predicted "sub-second".
+   **LEAD, not yet a finding:** that interval does not contain only the version needle. The terminal
+   line reports `pre-UE4 markers 0/4`, so `CountPreUE4Markers` — a *separate* whole-image sweep added
+   by the pre-UE4 refusal work — is inside the same window and may not have been gated the way the
+   version needle was. Before filing anything, split the measurement: add or find a `SCAN:Ver` line
+   between the two sweeps, or re-measure on a title where the pre-UE4 check exits early. Do **not**
+   record "G2 is slower than claimed" until the two are separated — the 0.35 s figure may simply have
+   been measured on a much smaller image, which would make this no defect at all.
 3. **⚠ REGRESSION — a Tier 1 game still detects from Tier 1.** Any ordinary UE5 title: confirm
    `scan-0.log` still shows `DetectVersion: Tier 1 (ascii|utf16) '++UEx+Release-N.N' -> NNN`. The log
    lines were kept byte-identical on purpose, so any wording change here is itself a defect.
@@ -1739,6 +1944,14 @@ feature WRITES TO (the Stealth Meter card), so the regression half matters as mu
 
 *Needs a **UE5** game — this is the one check a UE4 title structurally cannot make. See dev-log
 build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a real target**.
+
+> **🡒 A suitable target was live and the scan type was wrong `[DSA-2026-08-16]`.** DragonSword
+> Awakening is **UE5.4**, i.e. exactly the LWC population this batch needs, and the session ran both
+> a `begin_value_scan` and a `begin_group_scan` — but **both used `"data_type":"NumericNoByte"`**, so
+> the vector decode path never executed. Nothing here is settled. Next time that title is up,
+> **one `FVector` Exact scan closes steps 1–3.** (Its `Rotator` / `Vector_NetQuantize100` struct
+> fields already render correctly in the walker — `"value":"{X=0, Y=0, Z=0}"` — but that is the
+> *walker's* struct decoder, a different code path from the scan predicate this batch is about.)
 
 1. **A UE5 world-position scan returns real hits.** Value Search → data type **FVector** → Exact →
    type the player's current X,Y,Z (read them off the Teleport panel's POV/marker readout, which is

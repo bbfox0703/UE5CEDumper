@@ -254,6 +254,24 @@ live one. Put "read the surrounding comments and the callers first" in every fin
   wrong address. "A test asserts the opposite" becomes an available refutation at the same time, so
   say so in the skeptic prompt.
 
+### 2.0b A subagent reads the WORKING TREE — do not run one while an experiment is applied
+
+The crash-hunt workflow for the `0xC0000409` fast-fail got the mechanism exactly right and then
+built a corroboration out of thin air: *"`dll/CMakeLists.txt:545` builds this target with
+`/fsanitize=address` — I confirmed it from the binary's import table … yet CI printed no ASan
+report."* Both halves were true **of my machine at that moment** and false of CI, because I had a
+temporary `/fsanitize=address` edit applied while the agent was running. It then reasoned about why
+CI's ASAN stayed silent for a binary CI never built.
+
+**How to apply:** a subagent sees the tree as it is *now*, not as it is committed. Before launching
+one, either revert experimental edits or say explicitly in the prompt which files are dirty and that
+`git diff origin/main...HEAD` is the authority. Same rule for a temporary edit made *while* an agent
+is already running — that is a race against your own reviewer.
+
+It also predicted `ASAN_OPTIONS=detect_stack_use_after_return=1` would name the bug. It does not:
+MSVC parses the option and does not implement it (§3.7b). **An agent's "how to confirm" is a
+hypothesis too.**
+
 ### 2.1 What audit #5 measured across all 12 segments (2026-08-13 → 2026-08-15)
 
 Recorded when scanning completed. These are measurements, not opinions — do not re-derive them.
@@ -581,6 +599,128 @@ Quote the fresh build number in the test instructions.
 build (`-Mode Publish`, ~54 MB), never the plain self-contained one (~107 MB). Reflection-shaped code
 compiles and runs fine untrimmed and fails **only** after trimming — and a stale/oversized
 `dist/UE5DumpUI.exe` is how that reaches the maintainer.
+
+-----
+
+### 3.6 A heap-corruption dump names nothing — re-run it under page heap
+
+`0xC0000374` (STATUS_HEAP_CORRUPTION) is raised by the NT heap manager at the **next heap
+operation**, not at the write that broke it. So the faulting stack is the **detector, not the
+culprit**, and reading it harder does not help. Ours (build 3122, UI CTD after a Copy CE XML) showed
+ntdll's heap-error path on the UI thread with Skia/DWrite/user32 frames below — enough to say "native
+code on the render thread", which is motive and opportunity, never the act.
+
+**What actually names it:** full page heap, which puts a guard page after every allocation so the
+overrun faults **immediately, in the guilty module**.
+
+```
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /v GlobalFlag /t REG_DWORD /d 0x02000000 /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /v PageHeapFlags /t REG_DWORD /d 0x3 /f
+```
+
+The next crash came back as `0xC0000005` at `libSkiaSharp.dll+0x102B8D`, WER event **`AutoVerifierV2`**
+(not `APPCRASH`) with `verifier.dll` on the stack. Delete the key to disable; leave it on and
+everything is slow and memory-hungry, which is the tool, not the build. **`gflags` and Application
+Verifier are NOT installed on this machine** — the registry route needs no tools, and it is a system
+setting, so the maintainer runs it.
+
+**Ruling our own code out is structural, not a search.** The UI project has no `AllowUnsafeBlocks`,
+no `Marshal.AllocHGlobal` / `Marshal.Copy`, and its only `stackalloc`s are bounded `Span`s — and a
+stack overrun is `0xC00000FD`, a different code. That took one grep and eliminated ~277 files.
+
+**CHECK THE PACKAGE FOR A PDB BEFORE DECLARING A NATIVE CRASH UNSYMBOLIZABLE.** This was written up
+twice saying "there is no PDB for `libSkiaSharp`, so the faulting function is unknown" — an
+assumption, never a `dir`. `SkiaSharp.NativeAssets.Win32` **ships `libSkiaSharp.pdb`** next to the
+DLL in the NuGet cache (every version), and so does `HarfBuzzSharp.NativeAssets.Win32`. Look:
+
+```
+%USERPROFILE%\.nuget\packages\skiasharp.nativeassets.win32\<ver>\runtimes\win-x64\native\
+```
+
+Then symbolize the RVA — and use the **x64** binary, not the one a recursive search finds first:
+
+```
+"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin\llvm-symbolizer.exe" --obj=<dll> --demangle --functions=linkage --relative-address
+```
+
+(`VC\Tools\Llvm\` holds `ARM64\` *and* `x64\`; the ARM64 copy sorts first and will not run on an x64
+host.) Feed it `CODE 0x<rva>` on stdin. It prints the whole INLINE chain, which is the useful part —
+ours resolved a bare offset into `TArray<SkPathVerb>::size` → `SkSpan` → `SkPathBuilder::verbs` →
+`SkPathBuilder::computeFiniteBounds`, i.e. path geometry, which exonerated HarfBuzz in one command.
+**Confirm binary identity first** (byte size of the shipped DLL vs the package payload) or you have
+symbolized a different build.
+
+**Reading the dump without symbols:** `py -m pip install minidump`, then walk the faulting thread's
+stack region and attribute every 8-byte-aligned qword to a loaded module's `[base, base+size)`. It
+over-reports (stale frames, spilled pointers) but **cannot miss the guilty module**, which is the
+only question at that stage. Two gotchas in that library: it logs a PEB parse failure that is
+harmless, and `ExceptionRecord.ExceptionCode` is a **str-valued** Enum with no entry for
+`0xC0000374`, so it degrades to `EXCEPTION_UNKNOWN` and `int()`/`"%X"` both raise on it — read the
+real code from the Event Log instead.
+
+**Cross-check the module base two ways** before trusting an offset: `0x7FFEE53C2B8D − 0x102B8D` and
+an unrelated stack frame `0x7FFEE5453602 − 0x193602` both gave `0x7FFEE52C0000`.
+
+**And read the AV subtype from the dump, not from WER.** `ExceptionInformation[0]` is `0` = read,
+`1` = write, `8` = DEP. WER's `P9` is not that field; taking it for one turned a read into a write in
+the first write-up.
+
+### 3.7b A DETACHED thread must not capture a stack local by reference — and ASAN will not tell you
+
+`dll_helpers_test` died on CI with **`0xC0000409` (STATUS_STACK_BUFFER_OVERRUN), no output at all**,
+and passed locally every way it was run: Release, Debug, `-Clean`, and under ASAN. Two of three CI
+runs on the same tree passed. The cause was found by **reading**, not by any tool:
+
+```cpp
+std::atomic<int> ran{0};                 // this function's stack frame
+{
+    Routine::SafeThread t;
+    t = std::thread([&] { for (int i = 0; i < 50; ++i) { ran.fetch_add(1); sleep_for(1ms); } });
+}   // ~SafeThread DETACHES (Routine.h:82) -- that is the behaviour under test
+```
+
+`sleep_for(1ms)` is quantised to Windows' ~15.6 ms tick (§4.2 has the same fact for CE's `sleep`), so
+the worker lives **~780 ms** while the function returns in **~25 ms**. For the remaining ~750 ms it
+does `lock xadd` into a **reclaimed stack frame** — through the frames of every later test and then
+the CRT exit path. Land one of those on a `/GS` cookie and the process fast-fails. The status name
+is exactly right for once, and **the intermittency is structural**: which byte gets hit depends on
+stack layout and timing, so unrelated edits (27 new assertions) can surface a latent defect.
+
+**Three traps, all of which cost time here:**
+
+1. **A clean ASAN run is NOT evidence against a stack use-after-return.** MSVC's ASAN *parses*
+   `detect_stack_use_after_return=1` — `verbosity=1` proves options are read — but **does not
+   implement it** (a clang-only feature). The buggy code and the fixed code produce identical,
+   silent ASAN runs. Confirm a sanitizer actually covers your bug class before trusting its silence.
+2. **A test harness that buffers stdout tells you nothing at the only moment it matters.** The CI log
+   held not one line, not even the banner, because stdout to a pipe is fully buffered and the buffer
+   dies with the process. `setvbuf(stdout, nullptr, _IONBF, 0)` is now main's first statement, plus a
+   `DLL_TEST_TRACE` per-test trace that `build.ps1` enables under CI.
+3. **One green run after a red one is not a fix**, especially when the change between them altered
+   timing. Re-run CI on the *same* commit to measure flakiness before believing it.
+
+**The fix is `shared_ptr` captured BY VALUE**, not `static`: the worker owns a share, so no lifetime
+dependency is left to get wrong, and the test stays re-entrant.
+
+### 3.7 NuGet cannot express "and not a different major"
+
+`Avalonia.Skia 12.1.1` depends on `SkiaSharp >= 3.119.4` — an **open-ended minimum**, which is the
+NuGet default. A `chore(deps)` bump to `SkiaSharp 4.151.1` therefore *satisfies* the constraint:
+**no NU1608, no NU1605**, and `TreatWarningsAsErrors=true` has nothing to fail on. The build is
+green, the app starts, the managed API is close enough — and the native side reads off the end of a
+buffer sometime later, somewhere else. `HarfBuzzSharp` was **six** majors ahead by the same route.
+
+**How to apply:** when a package is pinned ABOVE what its consumer was built against, that is a
+decision and it needs a comment saying why — the `SQLitePCLRaw` pin in the same csproj has a full
+paragraph; these two had nothing, which is how three consecutive bumps walked past them. Read the
+truth out of the resolved graph, never from the version you typed:
+
+```
+py -c "import json;d=json.load(open('ui/UE5DumpUI/obj/project.assets.json'));t=list(d['targets'].values())[0];print(t['Avalonia.Skia/12.1.1']['dependencies'])"
+```
+
+Put the version in **one** MSBuild property feeding every reference. Seven scattered references are
+how a bump gets applied to some and not the others — the variant that hides longest.
 
 -----
 
@@ -952,7 +1092,14 @@ is identical (the user sees a field in Live Walker, no scan returns it) but one 
 never enumerated" and the other is "it matched and the row could not show it". Neither logs an error;
 both read as a healthy scan.
 
-**Check these two, in this order:**
+> ⚠ **UPDATED 2026-08-17 (build 3133): there is now a THIRD cause and it IS in the scanner.** The
+> "neither of them in the scanner" line above was true when written and is no longer a safe prior —
+> audit #5 **AB4** was a real scanner defect with this exact symptom. Check cause 3 below **when the
+> scan type is `Smaller` or `Bigger`**, because it is free to rule out and it is width-shaped: the
+> missing rows are all of one WIDTH (every `ByteProperty`, or every `UInt32Property`), not one class
+> or one object. Causes 1 and 2 lose rows by object; this one loses them by type.
+
+**Check these three, in this order:**
 
 1. **Was the object even enumerated?** `find_by_address` on the live object settles it in one call.
    `index: -1, match_kind: "backward"` for the instance while its CDO resolves
@@ -977,9 +1124,24 @@ both read as a healthy scan.
    the other reads as missing. Two rules did survive as tie-breaks: prefer a same-struct sibling, and
    **non-zero beats zero** ("a 0 has little real meaning in a game", maintainer, 2026-08-05).
 
+3. **Is the scan type ORDERED, and are the missing rows all one WIDTH?** (audit #5 AB4, fixed 3133 —
+   listed because the *shape* recurs, not because this instance is still live.) `BuildNumericTargets`
+   asked "does the target fit this width", which is right for `Exact` and wrong for `Smaller`/`Bigger`:
+   every `Int16` field is smaller than 70000, but 70000 has no int16 encoding, so no `Int16` entry was
+   emitted and every 2-byte field was skipped. **The tell is that the loss is by TYPE, not by object**
+   — all byte fields gone, or all unsigned fields gone, while the same scan finds 32-bit fields on the
+   same objects. Two live gaps of the same shape remain: **`Between`** still drops widths its upper
+   bound cannot encode (its two bounds are built independently — see todo.md), and a **hex** input
+   (`0x1F4`) still emits no Float/Double entries.
+   The lesson underneath: **a range gate that is correct for equality is usually wrong for ordering,
+   and it is invisible because it is right half the time** — pruning `Bigger 70000` off Int16 is a
+   genuine optimisation produced by the very same line, so the code reads as working.
+
 The witness rule lives in `Radar::PickGroupWitnessAssignment`, deliberately beside the filter it must
 agree with, because while it sat in `Fern.cpp`'s JSON encoder **no test target compiled it** and it kept
-drifting. **Check that a rule you are about to move is somewhere a test can reach.**
+drifting. **Check that a rule you are about to move is somewhere a test can reach.** AB4 was split the
+same way and for the same reason: the verdict logic went into `Radar.cpp` (compiled by
+`dll_helpers_test`) so `Aura.cpp` — compiled by nothing — was left a mechanical substitution.
 
 -----
 

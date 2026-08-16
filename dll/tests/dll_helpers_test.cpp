@@ -45,6 +45,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <memory>   // getenv for DLL_TEST_TRACE
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -544,6 +546,54 @@ static void Test_ValueScan_PropertyTypeNameOf_Inverse() {
 
 // Helper: does the set contain an entry for `dt`, and (optionally) does
 // it decode to the expected scalar value?
+// ============================================================
+// Macht::PatternScanRange — audit #5 MA2
+// ============================================================
+// The batch scanner guarded its scalar loops with `regionSize - patLen` as an
+// unsigned max-start, checked only against the batch's SHORTEST pattern. For any
+// pattern LONGER than the region that subtraction underflows to ~1.8e19 and the
+// `pos <= maxStart` loop walks off the end — in a function with no SEH.
+//
+// The bound now comes from one shared predicate, so the underflow is structurally
+// impossible in all four scan loops rather than guarded in three of them.
+static void Test_Macht_PatternScanRange() {
+    size_t maxStart = 0;
+
+    // Ordinary case: 10-byte pattern in a 100-byte region starts anywhere in 0..90.
+    maxStart = 12345;
+    EXPECT("MA2 ordinary fit is allowed", Macht::PatternScanRange(100, 10, maxStart));
+    EXPECT("MA2 ordinary maxStart is regionSize - patLen", maxStart == 90);
+
+    // Exactly-fits: one valid start position, offset 0.
+    maxStart = 12345;
+    EXPECT("MA2 exact fit is allowed", Macht::PatternScanRange(10, 10, maxStart));
+    EXPECT("MA2 exact fit maxStart is 0", maxStart == 0);
+
+    // THE DEFECT: a pattern longer than the region must be refused, not wrapped.
+    maxStart = 12345;
+    EXPECT("MA2 over-long pattern is refused", !Macht::PatternScanRange(100, 200, maxStart));
+    EXPECT("MA2 refusal leaves maxStart untouched (no underflow leaks out)",
+           maxStart == 12345);
+
+    // One byte too long — the boundary the old arithmetic turned into SIZE_MAX.
+    EXPECT("MA2 one-byte-too-long is refused", !Macht::PatternScanRange(10, 11, maxStart));
+
+    // Empty pattern: the old arithmetic gave maxStart == regionSize, i.e. a
+    // reported match one past the end of the region.
+    EXPECT("MA2 empty pattern is refused", !Macht::PatternScanRange(100, 0, maxStart));
+
+    // The batch scenario in full: the whole-batch guard compares the region against
+    // the SHORTEST pattern, so it clears — and the long one must still be refused
+    // individually. This is the combination that made it a latent crash.
+    const size_t regionSize = 100, shortPat = 60, longPat = 200;
+    const size_t minPatLen = shortPat < longPat ? shortPat : longPat;
+    EXPECT("MA2 batch guard passes on the shortest pattern", regionSize >= minPatLen);
+    EXPECT("MA2 ...but the short pattern is still individually allowed",
+           Macht::PatternScanRange(regionSize, shortPat, maxStart));
+    EXPECT("MA2 ...and the long one is individually refused",
+           !Macht::PatternScanRange(regionSize, longPat, maxStart));
+}
+
 static void Test_ValueScan_BuildNumericTargets() {
     using DT = Radar::DataType;
 
@@ -580,6 +630,90 @@ static void Test_ValueScan_BuildNumericTargets() {
         EXPECT("-5 has NO UInt32", ts.Find(DT::UInt32) == nullptr);
         EXPECT("-5 has NO UInt64", ts.Find(DT::UInt64) == nullptr);
     }
+    // ---- audit #5 AB4 -------------------------------------------------------
+    // "Does the target fit this width" is right for Exact and WRONG for the
+    // ordered predicates. Every Int16 field is smaller than 70000, but 70000 has
+    // no int16 encoding, so the old set emitted no Int16 entry and the engines
+    // skipped every 2-byte field. The four directions are NOT symmetric.
+    {
+        using ST = Radar::ScanType;
+        using Fit = Radar::NumericTargetSet::Fit;
+
+        // Smaller: a target ABOVE the width's max matches every value of it.
+        Radar::NumericTargetSet lo;
+        EXPECT("AB4 Smaller(70000) ok",
+               Radar::BuildNumericTargets(DT::NumericNoByte, "70000", lo,
+                                          Radar::RoundMode::Round, ST::Smaller));
+        const auto* i16 = lo.FindEntry(DT::Int16);
+        EXPECT("AB4 Smaller(70000) keeps Int16", i16 != nullptr);
+        EXPECT("AB4 Smaller(70000) Int16 is AlwaysTrue",
+               i16 && i16->fit == Fit::AlwaysTrue);
+        EXPECT("AB4 Smaller(70000) UInt16 is AlwaysTrue",
+               lo.FindEntry(DT::UInt16) &&
+               lo.FindEntry(DT::UInt16)->fit == Fit::AlwaysTrue);
+        // An in-range width is untouched — still a real encoded target.
+        EXPECT("AB4 Smaller(70000) Int32 still Encoded",
+               lo.FindEntry(DT::Int32) &&
+               lo.FindEntry(DT::Int32)->fit == Fit::Encoded);
+        // Find() must NOT hand out the zeroed buffer of an AlwaysTrue entry:
+        // comparing against 0 would be wrong in a quieter way than the bug.
+        EXPECT("AB4 Find() hides an AlwaysTrue entry", lo.Find(DT::Int16) == nullptr);
+
+        // Bigger with the SAME value is the opposite answer: nothing 16-bit
+        // exceeds 70000, so skipping is correct and must be preserved.
+        Radar::NumericTargetSet hi;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "70000", hi,
+                                   Radar::RoundMode::Round, ST::Bigger);
+        EXPECT("AB4 Bigger(70000) still drops Int16", hi.FindEntry(DT::Int16) == nullptr);
+        EXPECT("AB4 Bigger(70000) still drops UInt16", hi.FindEntry(DT::UInt16) == nullptr);
+
+        // The sign leak the finding did not mention: a negative string suppresses
+        // the unsigned parse entirely, so `Bigger -5` used to drop every unsigned
+        // width. Every unsigned value IS bigger than -5.
+        Radar::NumericTargetSet neg;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-5", neg,
+                                   Radar::RoundMode::Round, ST::Bigger);
+        EXPECT("AB4 Bigger(-5) keeps UInt16 as AlwaysTrue",
+               neg.FindEntry(DT::UInt16) &&
+               neg.FindEntry(DT::UInt16)->fit == Fit::AlwaysTrue);
+        EXPECT("AB4 Bigger(-5) keeps UInt32 as AlwaysTrue",
+               neg.FindEntry(DT::UInt32) &&
+               neg.FindEntry(DT::UInt32)->fit == Fit::AlwaysTrue);
+        // ...and Smaller(-5) is the opposite: no unsigned value is below -5.
+        Radar::NumericTargetSet neg2;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-5", neg2,
+                                   Radar::RoundMode::Round, ST::Smaller);
+        EXPECT("AB4 Smaller(-5) still drops UInt16", neg2.FindEntry(DT::UInt16) == nullptr);
+
+        // Exact is the default and must be byte-identical to before: no verdicts.
+        Radar::NumericTargetSet ex;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "70000", ex);
+        EXPECT("AB4 Exact(70000) unchanged: no Int16", ex.FindEntry(DT::Int16) == nullptr);
+        EXPECT("AB4 Exact(70000) unchanged: Int32 Encoded",
+               ex.FindEntry(DT::Int32) &&
+               ex.FindEntry(DT::Int32)->fit == Fit::Encoded);
+
+        // The predicate honours the verdict without reading a target, and the
+        // boundary value that CLAMPING would have dropped is kept: an int16 of
+        // exactly 32767 is smaller than 70000.
+        int16_t edge = 32767;
+        EXPECT("AB4 predicate: 32767 < 70000 via AlwaysTrue",
+               Radar::ComparePredicate(DT::Int16, ST::Smaller,
+                                       reinterpret_cast<const uint8_t*>(&edge),
+                                       lo.FindEntry(DT::Int16)));
+        // A null entry stays false rather than matching everything.
+        EXPECT("AB4 predicate: null entry is false",
+               !Radar::ComparePredicate(DT::Int16, ST::Bigger,
+                                        reinterpret_cast<const uint8_t*>(&edge),
+                                        hi.FindEntry(DT::Int16)));
+        // An Encoded entry still compares normally through the same overload.
+        int32_t v32 = 69999;
+        EXPECT("AB4 predicate: Encoded path still compares",
+               Radar::ComparePredicate(DT::Int32, ST::Smaller,
+                                       reinterpret_cast<const uint8_t*>(&v32),
+                                       lo.FindEntry(DT::Int32)));
+    }
+
     // "100.5" is non-integral. Float/Double keep the exact 100.5; integer widths
     // are COERCED to the displayed integer via the rounding mode (build 1672) —
     // default Round: round(100.5)=101 (half-away). So it now fits all 8 widths.
@@ -4170,15 +4304,34 @@ static bool PatMatchAt(const Macht::ParsedPattern& pat,
 static void Test_Routine_SafeThread() {
     std::printf("Test_Routine_SafeThread\n");
 
-    std::atomic<int> ran{0};
+    // shared_ptr, captured BY VALUE, because the worker MUST outlive this frame.
+    //
+    // SafeThread's destructor DETACHES (Routine.h:82) — that is the behaviour under
+    // test — so the thread below keeps running after its scope ends AND after this
+    // whole function returns. Its loop is 50 x sleep_for(1ms), but Windows quantises
+    // that to the ~15.6 ms timer tick, so it lives ~780 ms while the function returns
+    // in ~25 ms.
+    //
+    // A by-reference capture of a plain local therefore left it doing `lock xadd`
+    // into a RECLAIMED STACK FRAME for ~750 ms — across the frames of every later
+    // test and then the CRT exit path. When one of those increments lands on a /GS
+    // cookie the process dies with STATUS_STACK_BUFFER_OVERRUN (0xC0000409), with no
+    // output and no assertion. That is exactly what PR #503's CI hit, twice
+    // unreproducible locally: which byte gets hit depends on stack layout and timing,
+    // so it is intermittent by construction. Adding unrelated tests moved the layout
+    // enough to surface a defect that had been latent.
+    //
+    // ⚠ ASAN does NOT catch this by default — `detect_stack_use_after_return` is off
+    // unless asked for. A clean ASAN run is not evidence against a stack UAF.
+    auto ran = std::make_shared<std::atomic<int>>(0);
 
     // 1. Destructed while STILL RUNNING. This is the game-close case: the worker is
     //    mid-tick, nothing joined it, and the static destructor runs.
     {
         Routine::SafeThread t;
-        t = std::thread([&] {
-            for (int i = 0; i < 50 && ran.load() < 1000; ++i) {
-                ran.fetch_add(1);
+        t = std::thread([ran] {
+            for (int i = 0; i < 50 && ran->load() < 1000; ++i) {
+                ran->fetch_add(1);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });
@@ -4217,7 +4370,7 @@ static void Test_Routine_SafeThread() {
         EXPECT("not joinable after join", !t.joinable());
     }   // destructor on a joined thread is a no-op for both types
 
-    EXPECT("the running thread actually started", ran.load() > 0);
+    EXPECT("the running thread actually started", ran->load() > 0);
 }
 
 // B34 — Cheat Engine must never be auto-scanned as if it were the game.
@@ -4535,177 +4688,192 @@ static void Test_FFieldClassName_Probe() {
            !DynOff::LooksLikeFieldClassName(std::string(60, 'x') + "Property"));
 }
 
+// Print the test about to run, when DLL_TEST_TRACE is set. build.ps1 sets it under
+// CI. Off locally so the ordinary run stays two lines.
+static bool g_trace = false;
+#define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
+
 int main() {
+    // UNBUFFERED, and this is not a style choice. When this exe died on CI with
+    // 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) the log contained NOT ONE LINE of its
+    // output -- not even the banner below -- because stdout to a pipe is fully
+    // buffered and the buffer dies with the process. A harness whose output vanishes
+    // exactly when something goes wrong tells you nothing at the only moment it
+    // matters, and it passed locally, so there was nothing else to go on.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    g_trace = std::getenv("DLL_TEST_TRACE") != nullptr;
+
     std::printf("dll_helpers_test (Renge + Scharf + Radar)\n");
     std::printf("------------------------------------------\n");
 
-    Test_TryStrToAddr_AcceptsValidHex();
-    Test_TryStrToAddr_RejectsCePlaceholder();
-    Test_TryStrToAddr_RejectsTrailingGarbage();
-    Test_TryStrToAddr_RejectsEmpty();
-    Test_TryStrToAddr_RejectsNonHex();
-    Test_StrToAddr_NoexceptZeroOnFailure();
+    RUN(Test_TryStrToAddr_AcceptsValidHex);
+    RUN(Test_TryStrToAddr_RejectsCePlaceholder);
+    RUN(Test_TryStrToAddr_RejectsTrailingGarbage);
+    RUN(Test_TryStrToAddr_RejectsEmpty);
+    RUN(Test_TryStrToAddr_RejectsNonHex);
+    RUN(Test_StrToAddr_NoexceptZeroOnFailure);
 
-    Test_Alignment_PointerProperties_Need8();
-    Test_Alignment_EnumProperty_RespectsElemSize();
-    Test_Alignment_NameProperty_RespectsCpnMode();
-    Test_Alignment_ScalarPrimitives();
-    Test_Alignment_OffsetZeroNeverSuspicious();
-    Test_Alignment_UnknownTypesNotValidated();
-    Test_Alignment_WeakAndSparseDelegate();
+    RUN(Test_Alignment_PointerProperties_Need8);
+    RUN(Test_Alignment_EnumProperty_RespectsElemSize);
+    RUN(Test_Alignment_NameProperty_RespectsCpnMode);
+    RUN(Test_Alignment_ScalarPrimitives);
+    RUN(Test_Alignment_OffsetZeroNeverSuspicious);
+    RUN(Test_Alignment_UnknownTypesNotValidated);
+    RUN(Test_Alignment_WeakAndSparseDelegate);
 
-    Test_Mimic_PollLatency_OneMillisecond();
+    RUN(Test_Mimic_PollLatency_OneMillisecond);
 
-    Test_ValueScan_DataTypeSizes();
-    Test_ValueScan_ParseDataTypeRoundTrip();
-    Test_ValueScan_ScanTypePartitioning();
-    Test_ValueScan_Predicate_Int32();
-    Test_ValueScan_Predicate_Int8Negative();
-    Test_ValueScan_Predicate_Float();
-    Test_ValueScan_Predicate_Double();
-    Test_ValueScan_Predicate_Bool();
-    Test_ValueScan_Predicate_UInt64_RangeBoundary();
-    Test_ValueScan_FloatRoundMode_Exact();
-    Test_ValueScan_FloatRoundMode_Ordered();
-    Test_ValueScan_FloatRoundMode_PrevValue();
-    Test_ValueScan_FloatRoundMode_Between();
-    Test_ValueScan_RoundMode_IntegerNoOp();
+    RUN(Test_ValueScan_DataTypeSizes);
+    RUN(Test_ValueScan_ParseDataTypeRoundTrip);
+    RUN(Test_ValueScan_ScanTypePartitioning);
+    RUN(Test_ValueScan_Predicate_Int32);
+    RUN(Test_ValueScan_Predicate_Int8Negative);
+    RUN(Test_ValueScan_Predicate_Float);
+    RUN(Test_ValueScan_Predicate_Double);
+    RUN(Test_ValueScan_Predicate_Bool);
+    RUN(Test_ValueScan_Predicate_UInt64_RangeBoundary);
+    RUN(Test_ValueScan_FloatRoundMode_Exact);
+    RUN(Test_ValueScan_FloatRoundMode_Ordered);
+    RUN(Test_ValueScan_FloatRoundMode_PrevValue);
+    RUN(Test_ValueScan_FloatRoundMode_Between);
+    RUN(Test_ValueScan_RoundMode_IntegerNoOp);
 
     // Phase 2A — string predicates + family predicates
-    Test_ValueScan_TypeFamilyPredicates();
-    Test_ValueScan_IsScanTypeValidFor();
-    Test_ValueScan_StringPredicate_Exact();
-    Test_ValueScan_StringPredicate_Substring();
-    Test_ValueScan_StringPredicate_PrevValue();
-    Test_ValueScan_StringPredicate_RejectsNumericOrdering();
+    RUN(Test_ValueScan_TypeFamilyPredicates);
+    RUN(Test_ValueScan_IsScanTypeValidFor);
+    RUN(Test_ValueScan_StringPredicate_Exact);
+    RUN(Test_ValueScan_StringPredicate_Substring);
+    RUN(Test_ValueScan_StringPredicate_PrevValue);
+    RUN(Test_ValueScan_StringPredicate_RejectsNumericOrdering);
     // Phase 2B — vector predicates
-    Test_ValueScan_VectorPredicate_Exact();
-    Test_ValueScan_VectorPredicate_Ordering();
-    Test_ValueScan_VectorPredicate_Between();
-    Test_ValueScan_VectorPredicate_PrevValue();
-    Test_ValueScan_VectorPredicate_RejectsSubstring();
-    Test_ValueScan_VectorWidth_Accepted();
-    Test_ValueScan_DecodeVectorBytes();
-    Test_ValueScan_StoreVectorCanonical();
-    Test_ValueScan_LwcVectorIsNotReadAsFloats();
-    Test_ValueScan_VectorStructNames();
+    RUN(Test_ValueScan_VectorPredicate_Exact);
+    RUN(Test_ValueScan_VectorPredicate_Ordering);
+    RUN(Test_ValueScan_VectorPredicate_Between);
+    RUN(Test_ValueScan_VectorPredicate_PrevValue);
+    RUN(Test_ValueScan_VectorPredicate_RejectsSubstring);
+    RUN(Test_ValueScan_VectorWidth_Accepted);
+    RUN(Test_ValueScan_DecodeVectorBytes);
+    RUN(Test_ValueScan_StoreVectorCanonical);
+    RUN(Test_ValueScan_LwcVectorIsNotReadAsFloats);
+    RUN(Test_ValueScan_VectorStructNames);
     // build 794 — multi-numeric (NumericNoByte) meta type
-    Test_ValueScan_MultiNumericMembers();
-    Test_ValueScan_DataTypeFromPropertyTypeName();
-    Test_ValueScan_PropertyTypeNameOf_Inverse();
-    Test_ValueScan_BuildNumericTargets();
+    RUN(Test_ValueScan_MultiNumericMembers);
+    RUN(Test_ValueScan_DataTypeFromPropertyTypeName);
+    RUN(Test_ValueScan_PropertyTypeNameOf_Inverse);
+    RUN(Test_Macht_PatternScanRange);
+    RUN(Test_ValueScan_BuildNumericTargets);
     // Phase A1a — snapshot field selection
-    Test_ValueScan_SelectSnapshotNumericFields();
+    RUN(Test_ValueScan_SelectSnapshotNumericFields);
     // Phase A1b — struct-array inner-key selection
-    Test_ValueScan_SelectArrayInnerKey();
+    RUN(Test_ValueScan_SelectArrayInnerKey);
 
-    Test_ValueScan_SessionLifecycle();
-    Test_ValueScan_FieldDisplayName();
-    Test_ValueScan_OptionalFlagOffset();
-    Test_ValueScan_OrderedView();
-    Test_IsEnginePackage();
-    Test_IsReflectionMetaClass();
-    Test_KeywordMatch();
-    Test_SnapshotNoise_GuardrailAndSets();
-    Test_NumericFamily_Filter();
-    Test_GroupScan_ExcludeAndHistogram();
-    Test_Radar_PickGroupWitnessAssignment();
-    Test_Radar_GroupSortUsesTheDisplayedLeaf();
-    Test_ValueScan_OrderedViewScale();
-    Test_Macht_IsRipRelativeModRM();
-    Test_ValueScan_SparseContainerGeometry();
+    RUN(Test_ValueScan_SessionLifecycle);
+    RUN(Test_ValueScan_FieldDisplayName);
+    RUN(Test_ValueScan_OptionalFlagOffset);
+    RUN(Test_ValueScan_OrderedView);
+    RUN(Test_IsEnginePackage);
+    RUN(Test_IsReflectionMetaClass);
+    RUN(Test_KeywordMatch);
+    RUN(Test_SnapshotNoise_GuardrailAndSets);
+    RUN(Test_NumericFamily_Filter);
+    RUN(Test_GroupScan_ExcludeAndHistogram);
+    RUN(Test_Radar_PickGroupWitnessAssignment);
+    RUN(Test_Radar_GroupSortUsesTheDisplayedLeaf);
+    RUN(Test_ValueScan_OrderedViewScale);
+    RUN(Test_Macht_IsRipRelativeModRM);
+    RUN(Test_ValueScan_SparseContainerGeometry);
 
     // Path 2 — native x64 disassembly (Denken decoder core)
-    Test_Denken_BasicAccesses();
-    Test_Denken_ExcludesStackAndZeroDisp();
-    Test_Denken_FollowsCallHandoff();
-    Test_Denken_DoesNotFollowNonThisCall();
-    Test_Denken_TerminatesAndGuards();
+    RUN(Test_Denken_BasicAccesses);
+    RUN(Test_Denken_ExcludesStackAndZeroDisp);
+    RUN(Test_Denken_FollowsCallHandoff);
+    RUN(Test_Denken_DoesNotFollowNonThisCall);
+    RUN(Test_Denken_TerminatesAndGuards);
 
     // UE5.7+ packed FUObjectItem reconstruction (math-only; no live game exists)
-    Test_Packed_RoundTrip_Basic();
-    Test_Packed_RoundTrip_HighBits();
-    Test_Packed_ZeroAndNull();
-    Test_Packed_FlagsDoNotLeak();
-    Test_Packed_AlignBitsKnob();
-    Test_Packed_PtrMaskKnob();
+    RUN(Test_Packed_RoundTrip_Basic);
+    RUN(Test_Packed_RoundTrip_HighBits);
+    RUN(Test_Packed_ZeroAndNull);
+    RUN(Test_Packed_FlagsDoNotLeak);
+    RUN(Test_Packed_AlignBitsKnob);
+    RUN(Test_Packed_PtrMaskKnob);
 
     // GraphPath BFS core — "Locate in GWorld" shortest-path search (mock graph)
-    Test_GraphPath_DirectChild();
-    Test_GraphPath_RootEqualsTarget();
-    Test_GraphPath_ShortestAmongTwo();
-    Test_GraphPath_Cycle();
-    Test_GraphPath_DepthBound();
-    Test_GraphPath_Unreachable();
-    Test_GraphPath_Abort();
-    Test_GraphPath_VisitedCap();
-    Test_GraphPath_ContainerEdgePreserved();
-    Test_GraphPath_MapSetElementGeometryRoundTrip();
-    Test_GraphPath_Reconstruction();
+    RUN(Test_GraphPath_DirectChild);
+    RUN(Test_GraphPath_RootEqualsTarget);
+    RUN(Test_GraphPath_ShortestAmongTwo);
+    RUN(Test_GraphPath_Cycle);
+    RUN(Test_GraphPath_DepthBound);
+    RUN(Test_GraphPath_Unreachable);
+    RUN(Test_GraphPath_Abort);
+    RUN(Test_GraphPath_VisitedCap);
+    RUN(Test_GraphPath_ContainerEdgePreserved);
+    RUN(Test_GraphPath_MapSetElementGeometryRoundTrip);
+    RUN(Test_GraphPath_Reconstruction);
 
     // Solitar GodMode — FBoolProperty single-bit read-modify-write
-    Test_Solitar_ApplyBoolBit();
-    Test_Solitar_MatchProtectionBool();
-    Test_Solide_MatchStealthField();
+    RUN(Test_Solitar_ApplyBoolBit);
+    RUN(Test_Solitar_MatchProtectionBool);
+    RUN(Test_Solide_MatchStealthField);
 
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
-    Test_Neu_Legacy_Basic();
-    Test_Neu_Legacy_CasePreserving();
-    Test_Neu_FNameData_Basic();
-    Test_Neu_FNameData_CasePreserving();
-    Test_Neu_FNameData_SparseValues();
-    Test_Neu_TagBitMasked();
-    Test_Neu_Disambiguation();
-    Test_Neu_Edge();
+    RUN(Test_Neu_Legacy_Basic);
+    RUN(Test_Neu_Legacy_CasePreserving);
+    RUN(Test_Neu_FNameData_Basic);
+    RUN(Test_Neu_FNameData_CasePreserving);
+    RUN(Test_Neu_FNameData_SparseValues);
+    RUN(Test_Neu_TagBitMasked);
+    RUN(Test_Neu_Disambiguation);
+    RUN(Test_Neu_Edge);
 
     // Orden — multi-value group scan SDR matcher (synthetic leaves, no game)
-    Test_Orden_PerSlotCap();
-    Test_Orden_DistinctValues();
-    Test_Orden_MissingValueRejected();
-    Test_Orden_DuplicateValuesSDR();
-    Test_Orden_MultiWidthMatch();
-    Test_Orden_ConvergenceAndAssignment();
-    Test_Orden_OrderedFirstScan();
-    Test_Orden_BetweenFirstScan();
-    Test_Orden_RoundedFloatExact();
-    Test_Orden_PrevValueRejectedOnFirstScan();
+    RUN(Test_Orden_PerSlotCap);
+    RUN(Test_Orden_DistinctValues);
+    RUN(Test_Orden_MissingValueRejected);
+    RUN(Test_Orden_DuplicateValuesSDR);
+    RUN(Test_Orden_MultiWidthMatch);
+    RUN(Test_Orden_ConvergenceAndAssignment);
+    RUN(Test_Orden_OrderedFirstScan);
+    RUN(Test_Orden_BetweenFirstScan);
+    RUN(Test_Orden_RoundedFloatExact);
+    RUN(Test_Orden_PrevValueRejectedOnFirstScan);
 
     // Ubel — Native-C scan P0: hole computation + Guess-type normalization (pure)
-    Test_Holes_ComputeHoles_Basic();
-    Test_Holes_LeadingGapSurvives();
-    Test_Holes_FullyCovered();
-    Test_Holes_ClampsOutOfWindow();
-    Test_Holes_ComputeClassHoles_ArrayDim();
-    Test_IsSanePropertiesSize();
-    Test_ShouldPublishClassWalk();
-    Test_ShouldPublishEnumTable();
-    Test_VersionNeedleScan_Equivalence();
-    Test_VersionNeedleScan_GateStillGates();
-    Test_VersionTierRules_G8_G9();
-    Test_VersionTier2_BareNeedle_G11();
-    Test_PropertyFamilyIsCoherent();
-    Test_NameWitness();
-    Test_Holes_NormalizeGuessedType();
+    RUN(Test_Holes_ComputeHoles_Basic);
+    RUN(Test_Holes_LeadingGapSurvives);
+    RUN(Test_Holes_FullyCovered);
+    RUN(Test_Holes_ClampsOutOfWindow);
+    RUN(Test_Holes_ComputeClassHoles_ArrayDim);
+    RUN(Test_IsSanePropertiesSize);
+    RUN(Test_ShouldPublishClassWalk);
+    RUN(Test_ShouldPublishEnumTable);
+    RUN(Test_VersionNeedleScan_Equivalence);
+    RUN(Test_VersionNeedleScan_GateStillGates);
+    RUN(Test_VersionTierRules_G8_G9);
+    RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_PropertyFamilyIsCoherent);
+    RUN(Test_NameWitness);
+    RUN(Test_Holes_NormalizeGuessedType);
 
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
-    Test_Sig_IsCeReplayableAob();
-    Test_Macht_ParsePattern_Nibble();
+    RUN(Test_Sig_IsCeReplayableAob);
+    RUN(Test_Macht_ParsePattern_Nibble);
 
     // Tot — per-command cancel immunity is independent of "is a background worker"
-    Test_Tot_CancelImmunityVsBackgroundWorker();
+    RUN(Test_Tot_CancelImmunityVsBackgroundWorker);
 
     // Routine — SafeThread: ~std::thread on a joinable thread terminates the process
-    Test_Routine_SafeThread();
+    RUN(Test_Routine_SafeThread);
 
     // Grimoire — Cheat Engine host detection (prefix, not an exact-name list)
-    Test_Grimoire_IsCheatEngineExeName();
-    Test_Grimoire_HostAllowsBackgroundThreads();
+    RUN(Test_Grimoire_IsCheatEngineExeName);
+    RUN(Test_Grimoire_HostAllowsBackgroundThreads);
 
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
-    Test_Renge_TryHexToBytes();
+    RUN(Test_Renge_TryHexToBytes);
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
-    Test_FFieldClassName_Probe();
+    RUN(Test_FFieldClassName_Probe);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

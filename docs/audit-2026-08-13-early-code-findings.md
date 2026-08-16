@@ -234,7 +234,7 @@ six refuted outright, one (`Genau.cpp:4007`) downgraded to MEDIUM by the second 
 | **G2** ✅ | MED | `Genau.cpp:2929` (+`CountPreUE4Markers`, `DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`, `FindGNamesByStringRef`) | The whole-image and multi-module sweeps **never poll `Tot::Requested()`** — three sibling scans in the same file do, for exactly this reason. On a ~482 MB image, Tier 2/3 alone is ~9.2e9 runtime-length `memcmp`s (~14 s), and `UE5_Shutdown`'s join blocks for all of it. Per `docs/ce-plugin-sdk-notes.md` §13 the CE-side wait has **no message pump**, so CE reads as hung. | S / low |
 | **MA1** ✅ | MED | `Macht.cpp` (`AOBScan` / `AOBScanAll` / `AOBScanBatch` / `AOBScanAllModules`) | *(re-raised 2026-08-17 — a prior refutation was wrong, see the struck row in §3)* **The AOB scan family has NO cancellation of any kind**: `grep -c "Tot::" dll/src/Macht.cpp` = **0**. `Genau::ScanForTarget`'s Pass 2 hands every zero-hit pattern into `AOBScanAllModules`, from five call sites (GObjects / GNames / GWorld / SparseDelegates / GEngine), each with `tryMultiModule=true`. **This is what G2's word "multi-module" actually points at** — and once control enters `Macht`, every poll G2 added to `Genau` is unreachable. Strictly larger than G2 was. | M / med |
 | **G10** ✅ | HIGH | *(hand-found while re-deriving MA1)* `Genau.cpp` (`ScanForTarget`, hint phase) | **The hint fast path used a strictly WEAKER test than the scan that created the hint, then deleted the pattern.** `Macht::AOBScan` returns the FIRST match only; the batch path it shortcuts hands Pass 1 EVERY match and walks them until one validates. A pattern whose first match failed validation was logged `Hint MISS` and **erased from the pattern set**, hiding it from the path that would have found the later valid match. **Live-reproduced from the maintainer's own logs, same binary, 5 minutes apart**: `GNames: 31 patterns tried … winner: GNAM_V1 -> 0x7FF63CD568C0` then, using the hint that run saved, `Hint MISS: 'GNAM_V1'` → `GNames: 33 patterns tried, 12 with hits, NONE validated`. GNAM_V1 had **166** matches and the winner was not the first; GObjects went 0.66 s → 6.14 s in the same run. The false "not found" was then **persisted** over a good `"aob"` hint, so it **oscillates**. Also the largest contributor to the 16.3 s worst-case scan MA1 was blamed for. ✅ **FIXED build 3092.** | S / low |
-| **MA2** | LOW | `Macht.cpp` (`ScanRegionBatch`) | *(hand-found while re-deriving MA1)* The batch guard tests `minPatLen` across the whole batch, but the per-pattern start bound computes `regionSize - pat.bytes.size()` — for any pattern LONGER than the region that `size_t` subtraction **underflows** and the `pos <= patMaxStart` loop walks off the end, in a function with **no SEH**. Unreachable today (the sole call site passes no `moduleBase`, so regions are main-exe exec sections ≥ 3,660 B and patterns are ≤ ~60 B) but live the moment `AOBScanBatch` is given a `moduleBase`. `AOBScan` and `AOBScanAll` already carry the correct per-pattern guard; this is one line each to match them. | S / low |
+| **MA2** ✅ | LOW | `Macht.cpp` (`ScanRegionBatch`) | *(hand-found while re-deriving MA1)* The batch guard tests `minPatLen` across the whole batch, but the per-pattern start bound computes `regionSize - pat.bytes.size()` — for any pattern LONGER than the region that `size_t` subtraction **underflows** and the `pos <= patMaxStart` loop walks off the end, in a function with **no SEH**. Unreachable today (the sole call site passes no `moduleBase`, so regions are main-exe exec sections ≥ 3,660 B and patterns are ≤ ~60 B) but live the moment `AOBScanBatch` is given a `moduleBase`. `AOBScan` and `AOBScanAll` already carry the correct per-pattern guard; this is one line each to match them. | S / low |
 | **G8** ✅ | LOW | `Genau.cpp` (`DetectVersionDetailed`, the Tier 2 context window) | *(hand-found while fixing G2)* Three things disagree and the code is the narrowest: the comment says *"within the preceding 16 bytes"*, the buffer is `char ctx[17]`, and the `memcpy` copies **8**. `"Release"` is 7 chars, so in an 8-byte window it can only start at index 0 or 1 — the literal must sit at exactly `off-8` or `off-7`. Fine for the canonical `"Release-5.4."` (`"Release-"` is exactly 8), wrong for anything with an extra separator (`"Engine Release 5.4.0"` → `ctx = "elease "` → miss). Memory-safe, so it fails **silently**: the build falls through to Tier 3, which sets `bLowConfidence`. Fix is `off >= 16` + `memcpy(..., 16)` — which CHANGES behaviour, so it was deliberately excluded from build 3070's equivalence-preserving rewrite. | S / low |
 | **G9** ✅ | LOW | `Genau.cpp` (`DetectVersionDetailed`, the Tier 3 `break`) | *(hand-found while fixing G2)* The deferral design exists so a stray early hit cannot *"out-race a real 'Release-4.27' string later in the module"* — that holds ACROSS patterns and fails WITHIN one. The `break` retires a pattern on its first anchor-qualified Tier 3 candidate, so a **later Tier 2 hit for the same needle is never seen**. Demonstrated by an oracle case now in `dll_helpers_test` (*"same-pattern Tier 3 retires before a later Tier 2"*), which returns `427/t3` from the unmodified production logic where the documented intent is `427/t2`. Consequence is a spurious `bLowConfidence`. Pre-existing; build 3070's rewrite reproduces it **deliberately** so the change stayed equivalence-preserving. | S / low |
 | **G11** ✅ | MED | *(hand-found while fixing G8/G9, and MEASURED)* `VersionNeedleScan.h` (`kVersionNeedles` vs `ScanVersionTier23`) | **Tier 2 has never fired on any binary this project owns, and the context window was never the reason.** The needle table carries a **trailing dot** (`\"5.4.\"`, `\"4.27.\"`), so a Tier-2 hit needs a **three-component** token right after `Release`+separator (`Release-5.4.2`) — while UE's own engine tag is **two-component**, `++UE4+Release-4.27`. That is verbatim the defect `Genau.h`'s rev-2 note records being fixed **for Tier 1** (*\"Tier 1 no longer requires the needle table's trailing '.'\"*), implemented by the dot-strip in `ScanVersionTier1`. **Tier 2 never received it.** Measured over the **85 PE images** in the local analyze corpus (70 UE, including every locally-backed corpus game plus the packaged reference builds, and 15 non-UE controls): Tier 2 fires **0 times on 85/85** under the current code AND under every G8/G9 variant. Only two DebugGame images produce any Tier 2/3 fact at all, and Tier 1 answers first in both. Fixing it means stripping the dot for Tier 2 as Tier 1 does — a **much larger** behaviour change than G8/G9, since it makes Tier 2 reachable for the first time — so it needs its own commit, its own oracle update, and another `kVersionDetectLogicRev` bump. ⚠ It is also the reason G8/G9 are measured no-ops: do **not** read a green live check on them as evidence that Tier 2 works. | M / med |
@@ -2015,10 +2015,10 @@ second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside t
 | **AB1** ✅ | HIGH | `Heiter.cpp:274` (DllMain (DLL_PROCESS_ATTACH) → Mimic::StartThread) | DllMain starts a 1 ms-poll thread in EVERY host, including Cheat Engine — and CE FreeLibrary's plugin DLLs, so the thread runs on after the image is unmapped | S / low |
 | **AB2** ✅ | HIGH | `Methode.cpp:307` (OnInjectAndConnect) | InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread **[2 lenses]** | S / low |
 | **AB3** ✅ | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
-| **AB4** | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
+| **AB4** ✅ | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
 | **AB5** ✅ | MED | `Radar.cpp:797` (Radar::CompareVectorPredicate) | The FVector/FRotator scan is hardcoded to 3×float / 12 bytes, so it reads junk on every UE5 (LWC double) game — while the reflected 24-byte size is captured and thrown away | M / med |
 | **AB6** ✅ | MED | `Radar.cpp:1441` (BuildGroupOrderedView::slot0Num / slot0Offset) | Group sort keys read slotMatches[0][0] while the row displays slotMatches[0][picks[0]] — the grid orders by a leaf the user cannot see | S / low |
-| **AB7** | MED | `Radar.h:384` (Radar::Candidate / Radar::InstanceRecord) | A scan session's candidate addresses are raw addresses used as IDENTITY across RPCs; the GObjects index is captured but never validated and no serial witness is stored | M / med |
+| **AB7** | LOW | `Radar.h:384` (Radar::Candidate / Radar::InstanceRecord) | *(MED→LOW on re-derivation, build 3133 — clause 1 REFUTED, and its prescribed fix is the thrice-refused serial witness; see the AB4/AB7 block in §3b. Still OPEN.)* A scan session's candidate addresses are raw addresses used as IDENTITY across RPCs; the GObjects index is captured but never validated and no serial witness is stored | M / med |
 | **AB8** | LOW | `Heiter.cpp:41` (g_hAutoStartThread) | The auto-start thread handle is stored, never waited on and never closed; two comments assert a join that no code performs | S / low |
 | **AB9** | LOW | `Heiter.cpp:234` (DllMain → Sein::Init / Sein::InitProcessMirror) | DllMain does shell32 + unbounded recursive filesystem work (two directory sweeps and possibly a multi-GB remove_all) inline, under the loader lock | M / med |
 | **AB10** | LOW | `Heiter.cpp:268` (DllMain (proxy mutex diagnostic)) | The unarmed-guard warning prints a GetLastError() captured hundreds of API calls after the failure it claims to report | S / low |
@@ -2242,11 +2242,11 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 | **AA6** ✅ | MED | `ue5_dissect.lua:173` (addFieldsToStruct / walkClassFields) | callDLL returns nil on failure and every caller treats nil as SUCCESS — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as a duplicate of the previous field **[2 lenses]** | S / low |
 | **AA7** ✅ | MED | `ue5_dissect.lua:289` (fillGaps) | "Gap filling" is advertised in the header but fillGaps is never called — and its coverage test would emit overlapping elements if it were **[2 lenses]** | S / low |
 | **AA8** | MED | `ue5_dissect.lua:341` (addUObjectHeader) | UObject header offsets are hardcoded (Outer=0x20) while the DLL detects and switches them (DynOff::UOBJECT_OUTER = 0x28 on case-preserving-FName games) **[2 lenses]** | M / low |
-| **AA9** | MED | `ue5_freeze_helper.lua:95` (header SAMPLES block) | The file's own copy/paste samples produce a freeze that cannot be stopped: `local h` in [ENABLE] is invisible to [DISABLE], and SAMPLES 1-3 show no stop at all | S / low |
+| **AA9** ✅ | MED | `ue5_freeze_helper.lua:95` (header SAMPLES block) | The file's own copy/paste samples produce a freeze that cannot be stopped: `local h` in [ENABLE] is invisible to [DISABLE], and SAMPLES 1-3 show no stop at all | S / low |
 | **AA10** | MED | `ue5_freeze_helper.lua:341` (fetchInstancePage) | The mailbox has two mutually-blind concurrency guards: generated scripts wait for cmd==IDLE, the standalone helpers use a Lua flag no generated script sets | M / low |
 | **AA11** | MED | `ue5_freeze_helper.lua:386` (rescanInstances) | A page-fetch failure after page 0 is thrown away, so a PARTIAL instance list is returned as a clean success and replaces the freeze cache **[2 lenses]** | S / low |
-| **AA12** | MED | `ue5_freeze_helper.lua:471` (freezeProperty -> handle.start) | A freeze that applied NOTHING reports clean success: start() cannot raise, so the generated script's pcall succeeds, the Lua window auto-closes and the CE record stays ticked | S / low |
-| **AA13** | MED | `ue5_freeze_helper.lua:474` (handle.start) | Every freeze failure is silent: start() discards rescan()'s error, nothing reads _lastError, and the generated script then auto-closes the Lua window over a ticked record that froze nothing **[2 lenses]** | S / low |
+| **AA12** ✅ | MED | `ue5_freeze_helper.lua:471` (freezeProperty -> handle.start) | A freeze that applied NOTHING reports clean success: start() cannot raise, so the generated script's pcall succeeds, the Lua window auto-closes and the CE record stays ticked | S / low |
+| **AA13** ✅ | MED | `ue5_freeze_helper.lua:474` (handle.start) | Every freeze failure is silent: start() discards rescan()'s error, nothing reads _lastError, and the generated script then auto-closes the Lua window over a ticked record that froze nothing **[2 lenses]** | S / low |
 | **AA14** ✅ | MED | `ue5_invoke_helper.lua:215` (writeFStringInline) | allocateMemory's nil return is unchecked, so a failed allocation ships an FString of { Data = nullptr, Num = n+1 } into the game **[2 lenses]** | S / low |
 | **AA15** ✅ | MED | `ue5_invoke_helper.lua:223` (writeFStringInline) | allocateMemory's nil return is never checked, so a failed allocation stamps an FString with Data=nullptr and ArrayNum=n+1 into a live UFunction call | S / low |
 | **AA16** ✅ | MED | `ue5_invoke_helper.lua:293` (writeParams) | BakedScriptGenerator can emit five param-type tokens writeParams has never accepted, so the exported script aborts the whole invoke at CE runtime | S / low |
@@ -3347,22 +3347,59 @@ G3). Read this first; it is written for a session with no memory of that one.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**There is NO ordered queue left.** The pre-vetted ① – ⑥ is exhausted and so are every named
-follow-up it produced. Everything remaining is picked **by subsystem** from §3c's "Where the rest
-live". Nothing is blocked on the maintainer.
+> ## ⚠ THE BOTTLENECK IS NO LONGER FINDING OR FIXING — IT IS VERIFICATION
+>
+> **Do not open this file looking for the next fix.** Every named clump is closed, the register is
+> down to **0 HIGH / 25 MED**, and **31 batches** are stacked in
+> [todo.md](todo.md)'s `## Pending live-game verification` — the largest backlog it has ever held.
+> Shipping a 26th unverified MED makes the tree *less* trustworthy, not more.
+>
+> **Start in [todo.md](todo.md), not here**, unless the maintainer names a finding.
+> The three worth doing first, and why:
+>
+> | batch | why it is first |
+> |---|---|
+> | **AB4 — the Aura half** | 7 steps, needs only a connected game. It is the half that *structurally could not* be unit-pinned (no target compiles `Aura.cpp`), so it is the only evidence that will ever exist. Step 4 is the control that the pruning half still prunes. |
+> | **SkiaSharp/HarfBuzzSharp ABI alignment** | it needs **several quiet sessions**, so it can only ever close by *starting early*. Session 1 of N is already logged. Nothing else on the register has that shape. |
+> | **AA12/AA13 + AA9** (freeze) | needs a real Cheat Engine, which no rig can stand in for. Step 3 is the one that matters: if an armed-but-empty freeze unticks itself, the fix broke the feature and that is worse than the bug. |
+>
+> Two are **free from an ordinary session**: `AE4–AE7` (Proxy Deploy panel, no game) and
+> `AA4–AA7` step 2 (dissect with the DLL absent).
 
-**Remaining clumps**, in the order I would take them:
+**There is NO ordered queue left, and every clump is now closed.** The pre-vetted ① – ⑥ is exhausted,
+so are its named follow-ups, and so are the four subsystem clumps that replaced them:
 
-| clump | why |
+| clump | state |
 |---|---|
-| `ue5_freeze_helper.lua` **AA9 – AA13** | the cheapest by a distance — an **executable rig already exists** in `scripts/tests/`, and `lua` is installed. Write the test to fail first, as the three existing rigs were. |
-| `Radar` **AB4 + AB7** | `Radar.cpp` is one of only two `.cpp` files a test target actually compiles, so a fix there can be pinned properly. |
-| `Fern` **F2 + F8** | no test target compiles `Fern.cpp`; live-only. |
-| `Macht` **MA2** | latent-only today (the underflow needs `AOBScanBatch` to be given a `moduleBase`), two lines. |
+| ~~`ue5_freeze_helper.lua` **AA9 – AA13**~~ | ✅ **AA9 + AA12 + AA13 shipped** (3125 / 3129) — AA12 and AA13 collapse into ONE defect. **AA10 + AA11 downgraded to LOW** on re-derivation. |
+| ~~`Radar` **AB4 + AB7**~~ | ✅ **AB4 shipped** (3133). ⛔ **AB7 downgraded MED→LOW and STILL OPEN** — clause 1 refuted, and its prescribed fix is the thrice-refused serial witness. **Read its block below before touching it.** |
+| ~~`Macht` **MA2**~~ | ✅ **shipped** (3135) — one shared predicate across all four scan loops, not the "two lines" the finding proposed. |
+| `Fern` **F2 + F8** | **the only clump left, and it is the worst-conditioned one**: no test target compiles `Fern.cpp`, so it is live-only — i.e. it would *add* to the verification backlog above rather than draw it down. Take it after the backlog, or when a session already has a game running. |
 
-**⛔ `U5` is NOT a candidate**, and this is the third time it has to be said: it is blocked behind a
+**⛔ `U5` is NOT a candidate**, and this is the fourth time it has to be said: it is blocked behind a
 `WalkClassEx` return-type refactor across 25 call sites, not an LRU. See the cluster ③ block below.
 
+> ### 🔑 WHAT THE 2026-08-16 SESSION ADDED TO THE METHOD (builds 3125 – 3135)
+>
+> The re-derivation rule held again — **four of five AB4/AB7 premises needed correcting** — but three
+> newer lessons cost real time and are not in the block below:
+>
+> - **A finding's PRESCRIBED FIX can be broken even when its DIAGNOSIS is right.** AB4's
+>   re-derivation put a verdict flag on a struct whose consumers look it up through a function
+>   returning `const uint8_t*` — the flag could never have been seen — and its *own*
+>   `wrong_obvious_fix` section argued against exactly that. **Read the fix shape as critically as
+>   the mechanism**; the skeptic caught this, not the finder.
+> - **"It cannot be tested" is a claim to CHECK, not a conclusion.** MA2 looked unpinnable (no target
+>   compiles `Macht.cpp`, and the function is `static`) — but `dll_helpers_test.cpp` **already
+>   includes `Macht.h`**, so a header-inline predicate was directly reachable. Ask what the test file
+>   already includes before accepting that something is unreachable.
+> - **A guard you add is code, so negative-control IT too.** The build-time renderer-drift guard
+>   written this session was a **no-op that shipped green**: `PSObject.Properties[0]` returns `$null`
+>   (that collection indexes by name), and `foreach` over `$null` iterates zero times, so it compared
+>   nothing and reported success. Only reverting the thing it guards and watching it *stay green*
+>   exposed it. It now counts the pairs it checked and fails when that count is short. **A check that
+>   examined nothing must FAIL, not pass** — the same shape as §4.3f's never-firing predicate.
+>
 > ### 🔑 THE ONE METHOD LESSON FROM THE 2026-08-17 SESSION — read before picking anything
 >
 > **Budget the re-derivation, not the fix.** Across ten consecutive items, *every single one* needed
@@ -3432,7 +3469,121 @@ live". Nothing is blocked on the maintainer.
 > dangles) plus an atomic refcount per call on the very path B10 was written to speed up. Anyone
 > picking this up must budget the refactor, not the LRU.
 
-**Current register: 192 open of 287 · 0 HIGH · 30 MED · 135 LOW · 27 INFO.** Re-derive with
+> ### ⛔ AB7 — DOWNGRADED to LOW, still OPEN, and its prescribed fix is REFUSED (third time)
+>
+> **`SerialNumber` is not an identity witness, and AB7's own text prescribes one** — its defect
+> clause ends *"and no serial witness is stored"*. That is the same prescription
+> [working-lessons.md](working-lessons.md) §4.3 and the cluster-③ STOP-BLOCK above already refuse:
+> UE zeroes it in `FreeUObjectIndex` and allocates it lazily, so most objects carry 0 for life and a
+> stored `(i, 0)` matches a recycled `(i, 0)`. **AB7 makes the trap sharper than AA2 did**, and that
+> is the part worth remembering: `InstanceRecord::instanceIndex` is *already* stored at
+> `Radar.h:435`, so *"we already keep the index — just add the serial next to it"* is a one-line,
+> obvious-looking change that would produce a validator passing on every recycled slot.
+> *(Calibration: §4.3 counts REGISTERS; AB7 is a third FINDING inside audit #5, not a third register.)*
+>
+> **What survives, after two lenses:**
+> - **Clause 1 — "raw addresses used as IDENTITY across RPCs" — REFUTED as stated.** Identity across
+>   RPCs is the POOL INDEX (`Candidate::descriptorIdx` / `instanceIdx`), and the one command that
+>   does key on an address (`CMD_QUERY_GROUP_SLOT_LEAVES`) is careful about it, with a `leaf_addr`
+>   tie-break and an explicit `staleHint` refusal. The address is the *input to the refine's re-read*,
+>   not an identity key.
+> - **Clause 2 — the GObjects index is captured and never validated — VERBATIM TRUE.**
+>   `Radar.h:435` writes it; every read is display or sort. Nothing ever asks
+>   `Aura::GetByIndex(idx) == instanceAddr`.
+> - **Severity is LOW, not MED.** The re-derivation's harm chain over-claimed twice and the skeptic
+>   caught both: a phantom row does **not** survive "every subsequent refine forever" (MallocBinned2
+>   writes an `FFreeBlock` canary into freed small-pool blocks), and the *"Open in Live Walker"*
+>   harm is **already closed in-tree** — `Ubel::WalkInstance` has an explicit recycled-slot gate.
+> - **If it is ever fixed, the shape is known and is NOT a serial:** compose `Aura::GetByIndex(idx)
+>   == instanceAddr` (slot witness) with the **name-bytes** witness build 3065 already shipped
+>   (`Ubel::NameWitness`) — *witness the INPUT BYTES of a memoized decode*. Both per `InstanceRecord`,
+>   not per `Candidate`, which the V3-A interning makes nearly free.
+>
+> ### ✅ AB4 (build 3133) — the gate is right half the time, which is why it reads as an optimisation
+>
+> **`BuildNumericTargets` asked "does the target FIT this width", which is correct for `Exact` and
+> wrong for the ordered predicates.** Every Int16 field is smaller than 70000, but 70000 has no int16
+> encoding, so no `Int16` entry was emitted and `Aura`'s `multiResolve` skipped **every 2-byte field
+> in the pool** — no error, no warning, no log line. The four cases are **not symmetric**, and the old
+> code was right in exactly two of them, which is why the gate reads like a working optimisation:
+>
+> | | target above the width's max | target below its min |
+> |---|---|---|
+> | **Smaller** | every value matches → **was dropped (the bug)** | none match → dropped ✓ |
+> | **Bigger** | none match → dropped ✓ | every value matches → **was dropped (the bug)** |
+>
+> - **Clamping is the trap, and it looks like it works.** `Smaller 500` clamped to Int8's 127 becomes
+>   `cur < 127` — `ApplyOrdered`'s `Smaller` is a **strict** `<` — so it silently drops the field
+>   holding exactly 127. It restores ~99.6% of the missing rows and re-introduces the same class of
+>   silent loss in a form far harder to see. **There is no int8 byte pattern meaning `cur <= 127`**,
+>   so the answer cannot live in a fixed-width buffer at all. Hence a *verdict*: `Fit::AlwaysTrue`.
+> - **The re-derivation's own fix shape was broken and the skeptic caught it:** it put the verdict on
+>   `Entry` while the consumers look up through `Find()`, which returns `const uint8_t*` — the flag
+>   could never have been seen. Shipped instead as `FindEntry()` plus an `Entry`-taking
+>   `ComparePredicate` overload, so the verdict is honoured **once, in `Radar.cpp`** — the file
+>   `dll_helpers_test` compiles — and `Aura.cpp`, which no test target compiles, gets a mechanical
+>   `Find` → `FindEntry` substitution with nothing to get wrong.
+> - **The SIGN domain was the bigger leak and the finding never mentioned it.** A negative string
+>   suppresses the whole unsigned parse, so `Bigger -5` used to drop every `UInt16`/`UInt32`/`UInt64`
+>   field although every unsigned value satisfies it. The same verdict covers it for free: the
+>   member's minimum is 0, the target is below it.
+> - **`Between` is deliberately NOT fixed** — its two bounds are built by two *independent*
+>   `BuildNumericTargets` calls at four call sites, and `ApplyOrdered` normalises reversed bounds at
+>   compare time, so which one is the lower bound is not even known at build time. A correct fix needs
+>   a joint builder. Recorded in todo.md rather than half-done.
+> - `Fit::AlwaysTrue` entries are hidden from `Find()` on purpose: handing out their zeroed buffer
+>   would compare against 0, which is wrong in a newer and quieter way than the bug being fixed.
+>
+> 16 new C++ assertions (1166 → **1182**); negative control (verdict forced to `false`) **6 red**.
+> ⚠ **The Aura half is unverified** — no test target compiles `Aura.cpp`. See todo.md.
+>
+> ### ✅ AA12 + AA13 (build 3125) — they are ONE defect, and two of their neighbours moved
+>
+> Re-derived with five agents + five refute-mandated skeptics before a line was changed, and the
+> usual thing happened: **four of the five filed premises needed correcting.**
+>
+> - **AA13 has no independent content left.** Its unique clause — *"nothing reads `_lastError`"* — is
+>   **stale**: the AA3 fix (build 2926) added `handle.lastError()` / `handle.isAbandoned()`. What is
+>   still true is one level up: those accessors have **zero shipped callers**, and the C# test that
+>   "guards" them only asserts their *source text* (`FreezeScriptGeneratorTests.cs:424-425`). AA3
+>   moved the defect from *write-only field* to *accessor nobody calls* without changing the
+>   observable outcome. Its other clause (*"EVERY freeze failure is silent"*) is **REFUTED** for the
+>   persistent case — AA3's abandonment `print` fires ~10 s in, and CE's `print2` **re-opens** the
+>   window the generator just auto-closed (`LuaHandler.pas:1521-1522`, and `cbShowOnPrint` ships
+>   `Checked = True`). Tracked under AA12 alone from here.
+> - **AA10 and AA11 are LOW, not MED.** AA10's headline interleaving is effectively unreachable at
+>   the DLL's polling cadence; what survives is that a nested rescan can clobber a generated
+>   script's *output* fields. AA11 was confirmed by EXECUTION (not by reading) but its blast radius
+>   is one narrow target class. Neither belongs in the AA9–AA13 clump any more.
+> - **The crux is a TENSION, and the obvious fix fails it.** `count == 0` is **not** a failure: a
+>   class-wide freeze armed before its instances spawn is the helper's advertised purpose (header
+>   `:16-20`), so unticking there converts the feature into the bug. And the DLL **cannot** tell a
+>   misspelled class from a live-but-empty one — `HandleListInstances` answers `SetDone(0)` for both
+>   — so neither can the Lua side. *"Armed, 0 right now"* is the only honest report.
+> - **Three obvious fixes are wrong, and each was refuted at the source:** (a) untick on
+>   `count == 0` → breaks the feature; (b) untick whenever `lastError() ~= nil` → `_lastError`
+>   carries the transient `'mailbox busy'` on the same channel as fatal errors, which is exactly why
+>   `MAX_FAIL_STREAK` exists; (c) put the untick in the *helper* → `memrec` is a chunk **local**
+>   (`autoassembler.pas:1419`) and the helper is a separately-`load`ed chunk, so that guard could
+>   never fire — a never-firing predicate, the defect shape this audit already has a lesson about.
+> - **Making `start()` RAISE would strand two timers.** The generated script stores the handle
+>   *before* calling start (`FreezeScriptGenerator.cs:82`) and its failure branch nils the slot
+>   **without** stopping — so a raise thrown after `createTimer` leaves two timers writing into the
+>   game with nothing able to reach them. Reporting by VALUE is what keeps the cleanup reachable.
+> - **A negative control caught a weak TEST, not a weak fix.** Reverting the hard-failure branch
+>   alone left the AA13 case GREEN, because it only asserted the two outcomes *differ* — and
+>   `nil ~= true` differs. Strengthened to assert the concrete triple on both sides; the same control
+>   then went 2 red → 5 red. *A control that passes is a finding about the test.*
+> - **The rig was blinder than the API and hid the whole success path.** `freeze_helper_test.lua`'s
+>   write stubs only appended to a log and never touched `MEM`, so `waitDone`'s status poll could
+>   never be satisfied and **every case in the file exercised the no-symbol failure path**. Fixed by
+>   making writes land in `MEM` plus an `installMailbox()` that models `HandleListInstances`. This is
+>   the second time a stub that disagrees with the real API hid the defect under test.
+>
+> **Unproven on a real Cheat Engine** — the rig stubs CE, so the emitted script's behaviour in a live
+> CE (window stays open, record stays ticked/unticked correctly) is in todo.md's register.
+
+**Current register: 187 open of 287 · 0 HIGH · 25 MED · 135 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —

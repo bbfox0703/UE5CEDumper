@@ -29,7 +29,14 @@
 
   Public API (re-declaration-safe, syntax-highlighted):
     handle = freezeProperty(cfg)
-    handle.start()       -- begin tick + rescan timers
+    ok, err, n = handle.start()   -- begin tick + rescan timers, and REPORT:
+                                  --   false, err, 0  hard failure (no DLL /
+                                  --                  contract mismatch) -- nothing
+                                  --                  is frozen; tell the user
+                                  --   true,  nil, 0  armed, no live instances YET
+                                  --                  (normal -- spawns get picked
+                                  --                  up on the next rescan)
+                                  --   true,  nil, n  frozen on n instances
     handle.stop()        -- cancel both timers cleanly
 
   cfg fields:
@@ -52,73 +59,139 @@
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.1'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+    UE5_FREEZE_HELPER_VERSION = '1.2'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+                                        -- 1.2 start() returns (ok, err, count)
 
   =========================================================================
-  SAMPLES -- copy/paste into your AA Script's [ENABLE] block, modify in place.
+  SAMPLES
   =========================================================================
 
-  ----- SAMPLE 1: Basic teammate HP freeze -----
+  #########################################################################
+  #  READ THIS BEFORE COPYING ANYTHING BELOW -- HANDLE LIFETIME           #
+  #########################################################################
+  #                                                                       #
+  #  A handle kept in a `local` CANNOT BE STOPPED. Not "is awkward to      #
+  #  stop" -- cannot, ever, for the life of the Cheat Engine process.      #
+  #                                                                       #
+  #  Cheat Engine compiles EACH {$lua} block as its own chunk             #
+  #  (autoassembler.pas: the [ENABLE] block's text is handed to            #
+  #  luaL_loadstring on its own) inside ONE shared Lua state. So a         #
+  #  GLOBAL set in [ENABLE] is visible in [DISABLE]; a `local` is not.     #
+  #  [ENABLE] and [DISABLE] are separate compilations besides.             #
+  #                                                                       #
+  #  handle.start() creates two timers owned by CE's main form and hands   #
+  #  their callbacks to CE. Those callbacks keep the handle alive, but     #
+  #  nothing you can NAME still refers to it -- so the freeze keeps        #
+  #  writing ~20x/sec into the game, and re-enabling the script just adds  #
+  #  another orphaned pair. Unticking the record does not stop it. Nor     #
+  #  does deleting the record: the timers belong to the main form, not to  #
+  #  the memory record. Only restarting Cheat Engine ends it.              #
+  #                                                                       #
+  #  So: PUT THE HANDLE IN A GLOBAL TABLE, KEYED. Never a bare global      #
+  #  `h` either -- CE shares one Lua state across every table you have     #
+  #  open, so a second script using `h` silently steals the first one's    #
+  #  slot, and then the FIRST script's [DISABLE] stops the SECOND          #
+  #  script's freeze. SAMPLE 1 is the shape to copy; it is the same shape  #
+  #  UE5DumpUI's own generated scripts use.                               #
+  #########################################################################
+
+  ----- SAMPLE 1: THE COMPLETE SHAPE -- copy this whole thing -----
+    Both blocks. The [DISABLE] half is not optional; it is the only way the
+    freeze ever stops.
+
+    [ENABLE]
+    {$lua}
+    if syntaxcheck then return end
+    _ue5_freeze_handles = _ue5_freeze_handles or {}      -- GLOBAL: crosses blocks
+    local KEY = 'Teammate_HP'                             -- unique per script
+
+    -- Defensive stop: an AA Script reloaded while active would otherwise
+    -- leak the previous handle exactly as a `local` does.
+    if _ue5_freeze_handles[KEY] then
+      pcall(_ue5_freeze_handles[KEY].stop)
+      _ue5_freeze_handles[KEY] = nil
+    end
+
     local h = freezeProperty({
       className  = 'BP_Teammate_C',
       propOffset = 0x4F8,
       valueType  = 'float',
       value      = 100.0,
     })
-    h.start()
+    _ue5_freeze_handles[KEY] = h        -- <-- reachable from [DISABLE]
+
+    local ok, err, n = h.start()
+    if not ok then                       -- hard failure: nothing is frozen
+      pcall(h.stop)
+      _ue5_freeze_handles[KEY] = nil
+      showMessage('[Freeze] ' .. tostring(err))
+      if memrec then memrec.Active = false end
+      return
+    end
+    if n == 0 then
+      -- Not an error: armed, and it applies as instances spawn.
+      print('[Freeze] armed -- no live instances yet')
+    end
+    {$asm}
+
+    [DISABLE]
+    {$lua}
+    if syntaxcheck then return end
+    _ue5_freeze_handles = _ue5_freeze_handles or {}
+    local KEY = 'Teammate_HP'                             -- re-declared: locals do NOT cross
+    local h = _ue5_freeze_handles[KEY]
+    if h then
+      pcall(h.stop)
+      _ue5_freeze_handles[KEY] = nil
+    end
+    {$asm}
+
+  ----- SAMPLES 2-4: ONLY the cfg differs -----
+    Keep SAMPLE 1's wrapper exactly as it is (both blocks, the keyed global,
+    the defensive stop, the outcome check) and swap the table passed to
+    freezeProperty. Give each script its OWN unique KEY.
 
   ----- SAMPLE 2: God mode (bool) -----
-    local h = freezeProperty({
       className  = 'PlayerCharacter',
       propOffset = 0x328,
       valueType  = 'bool',
       value      = false,    -- e.g. bCanBeDamaged = false  (or 0)
-    })
-    h.start()
 
   ----- SAMPLE 2b: PACKED bitfield bool (shares a byte with siblings) -----
-    -- UE packs `uint8 bFoo:1` bools eight to a byte. Pass the FieldMask and
-    -- only that bit is touched; omit it and the other seven get wiped.
-    local h = freezeProperty({
+    UE packs `uint8 bFoo:1` bools eight to a byte. Pass the FieldMask and only
+    that bit is touched; omit it and the other seven get wiped.
       className  = 'PlayerCharacter',
       propOffset = 0x328,
       valueType  = 'bool',
       value      = true,
       boolMask   = 0x04,     -- this bool owns bit 2 of the byte at 0x328
-    })
-    h.start()
 
   ----- SAMPLE 3: Filter -- only freeze teammates, NOT the local player -----
-    -- localPawn is whatever pointer identifies "me". You'd discover
-    -- this either by reading a known LocalPlayer chain or by capturing
-    -- the address from CE before starting the freeze. Adjust the
-    -- filter body to your game.
-    local localPawn = 0x12345678  -- resolved elsewhere
-    local h = freezeProperty({
+    localPawn is whatever pointer identifies "me" -- read it off a known
+    LocalPlayer chain, or capture the address from CE before starting.
+    Declare it ABOVE the freezeProperty call in the same [ENABLE] block; the
+    filter closes over it, so a `local` is correct here (it never has to
+    outlive the block).
       className  = 'BP_Teammate_C',
       propOffset = 0x4F8,
       valueType  = 'float',
       value      = 9999.0,
       filter     = function(addr) return addr ~= localPawn end,
-    })
-    h.start()
 
-  ----- SAMPLE 4: Multi-property freeze in one script (HP + MP) -----
-    local hp = freezeProperty({
-      className='BP_Teammate_C', propOffset=0x4F8, valueType='float', value=100,
-    })
-    local mp = freezeProperty({
-      className='BP_Teammate_C', propOffset=0x4FC, valueType='float', value=50,
-    })
-    hp.start(); mp.start()
-    -- In [DISABLE]: hp.stop(); mp.stop()
+  ----- SAMPLE 4: Two properties in one script (HP + MP) -----
+    Two handles, so TWO keys -- and [DISABLE] must stop both. Everything else
+    is SAMPLE 1 twice over:
+      _ue5_freeze_handles['Teammate_HP'] = hp   -- propOffset 0x4F8
+      _ue5_freeze_handles['Teammate_MP'] = mp   -- propOffset 0x4FC
+    and in [DISABLE], look BOTH up from the global table and stop each.
+    (Stopping them via the [ENABLE] block's locals cannot work -- see the
+    lifetime box above.)
 
   ----- SAMPLE 5: Editing className / offset / value after generation -----
-    -- Generated AA Scripts contain a `local CFG = { ... }` block near
-    -- the top. Edit any field there and reactivate the script -- the
-    -- new cfg is read fresh on every [ENABLE]. Use UE5DumpUI's
-    -- PropertySearch panel to discover a new offset, copy the value
-    -- into CFG, done.
+    Generated AA Scripts contain a `local CFG = { ... }` block near the top.
+    Edit any field there and reactivate the script -- the new cfg is read
+    fresh on every [ENABLE]. Use UE5DumpUI's PropertySearch panel to discover
+    a new offset, copy the value into CFG, done.
 ]]
 
 -- 1.1: cfg.boolMask -- packed bitfield bools are written bit-wise instead of
@@ -126,8 +199,13 @@
 -- (it just ignores boolMask and keeps the old whole-byte behaviour), and a
 -- 1.1 helper runs every 1.0 script unchanged -- so this is informational,
 -- not a compatibility gate.
+-- 1.2: handle.start() returns (ok, err, count) instead of nothing, so a caller can
+-- tell a HARD failure (no DLL / contract mismatch) from a freeze that is armed with
+-- no live instances yet. Generated scripts read it; a 1.1 helper returns nil there
+-- and the generated script treats that as "cannot report" rather than as a verdict,
+-- so an old helper still runs a new script -- it just cannot diagnose it. (AA12/AA13)
 if not UE5_FREEZE_HELPER_VERSION then
-  UE5_FREEZE_HELPER_VERSION = '1.1'
+  UE5_FREEZE_HELPER_VERSION = '1.2'
 end
 
 -- ============================================================
@@ -600,6 +678,26 @@ if not freezeProperty then
       end
     end
 
+    -- Returns ok, err, count -- an OUTCOME, not nothing.
+    --
+    -- Three results, and they are NOT two (audit #5 AA12/AA13):
+    --   false, err, 0   a HARD failure: no DLL, contract mismatch, stale mailbox.
+    --                   Nothing is frozen and nothing will be until it is fixed.
+    --   true,  nil, 0   ARMED, nothing alive yet. A valid class with no live
+    --                   instances is the helper's advertised purpose (header
+    --                   :16-20 -- newly spawned NPCs get picked up), so this must
+    --                   never be reported as a failure or the feature IS the bug.
+    --   true,  nil, n   frozen on n instances.
+    -- Before this, start() returned nothing at all, so the generated script's only
+    -- signal was `pcall(start)` -- which answers "did Lua raise", and no mailbox
+    -- error can raise (they are all caught in fetchInstancePage's own pcall). Every
+    -- one of the three came out as success, over a ticked record and a Lua window
+    -- the generator then auto-closed.
+    --
+    -- The DLL cannot distinguish a MISSPELLED class from a live-but-empty one --
+    -- Mimic.cpp's HandleListInstances answers SetDone(0) for both -- so neither can
+    -- this. "Armed, 0 right now" is the honest report; claiming a typo would be a
+    -- guess, which is the thing CLAUDE.md's mailbox rule forbids.
     local function rescan()
       local addrs, err, cPtr, cOff =
         rescanInstances(handle.cfg.className, handle.cfg.filter)
@@ -623,6 +721,7 @@ if not freezeProperty then
             'writing (last error: %s). Re-enable the record after fixing it.',
             tostring(handle.cfg.className), handle._failStreak, tostring(err)))
         end
+        return false, err, 0
       else
         handle._cache = addrs
         handle._lastError = nil
@@ -633,6 +732,7 @@ if not freezeProperty then
         -- stale class pointer paired with fresh addresses, so they move together.
         handle._classPtr = cPtr or 0
         handle._classOff = cOff or 0
+        return true, nil, #addrs
       end
     end
 
@@ -643,10 +743,20 @@ if not freezeProperty then
     --- True once consecutive rescan failures made the handle stop writing.
     handle.isAbandoned = function() return handle._abandoned end
 
+    --- Begin the tick + rescan timers. Returns rescan()'s (ok, err, count) so the
+    --- caller can tell a hard failure from an armed-but-empty freeze -- see rescan.
+    ---
+    --- The timers are started in ALL THREE cases, deliberately. A hard failure is
+    --- still owned by the failure-streak logic, and a caller that wants to abandon
+    --- calls handle.stop(). start() must not RAISE instead: the generated script
+    --- stores the handle before calling start, and its failure branch nils that slot
+    --- WITHOUT stopping -- so a raise thrown after the timers exist would strand two
+    --- of them writing into the game with no reachable handle. Reporting by value is
+    --- what keeps the cleanup path available.
     handle.start = function()
       -- Initial scan happens synchronously so tick has data on the
       -- very first fire.
-      rescan()
+      local ok, err, count = rescan()
 
       local tickMs   = handle.cfg.tickIntervalMs or 50
       local rescanMs = (handle.cfg.refreshIntervalSec or 5) * 1000
@@ -660,6 +770,8 @@ if not freezeProperty then
       handle._rescanTimer.Interval = rescanMs
       handle._rescanTimer.OnTimer  = rescan
       handle._rescanTimer.Enabled  = true
+
+      return ok, err, count
     end
 
     handle.stop = function()

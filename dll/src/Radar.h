@@ -332,17 +332,54 @@ int SelectArrayInnerKey(const std::vector<std::string>& typeNames,
 // field's resolved DataType — a missing entry means "value can't fit
 // this width" and the field is skipped (no candidate / pruned).
 struct NumericTargetSet {
+    // Why an entry can exist without a usable byte pattern (audit #5 AB4).
+    //
+    // "Does the target fit this width" is the right question for Exact and the
+    // WRONG one for the ordered predicates. Every Int8 field is smaller than 500,
+    // but 500 has no int8 encoding, so the old set emitted no Int8 entry and the
+    // engines skipped every 1-byte field — a Smaller/Bigger scan silently lost a
+    // whole width class, with no marker anywhere.
+    //
+    // Clamping is NOT the fix and looks like it is: `Smaller 500` clamped to 127
+    // becomes `cur < 127` (ApplyOrdered's Smaller is a STRICT <), which drops the
+    // field holding exactly 127. It restores almost all the missing rows and
+    // re-introduces the same silent single-row loss in a form far harder to see.
+    // There is no int8 byte pattern meaning "cur <= 127", so the answer cannot
+    // live in a fixed-width buffer at all — it has to be a verdict.
+    enum class Fit : uint8_t {
+        Encoded,     // `bytes` holds the target at this width — compare normally.
+        AlwaysTrue,  // No encoding exists, but EVERY value of this width satisfies
+                     // the predicate (e.g. Smaller 500 over Int8). Match without
+                     // reading a target.
+    };
     struct Entry {
         DataType dt;
         uint8_t  bytes[8];
+        Fit      fit = Fit::Encoded;
     };
     std::vector<Entry> entries;
 
     // Return the buffer for `dt`, or nullptr if the value didn't fit
     // that width.
+    //
+    // ⚠ This CANNOT express an AlwaysTrue entry — it hands out a pointer into
+    // `bytes`, and the verdict is not in `bytes`. It is kept for the call sites
+    // that only ever deal with encoded targets; anything on the scan/refine path
+    // must use FindEntry so the verdict survives the lookup. Returning `bytes`
+    // for an AlwaysTrue entry would compare against a zeroed buffer, which is
+    // wrong in a new and quieter way than the bug this fixes.
     const uint8_t* Find(DataType dt) const {
         for (const auto& e : entries) {
-            if (e.dt == dt) return e.bytes;
+            if (e.dt == dt && e.fit == Fit::Encoded) return e.bytes;
+        }
+        return nullptr;
+    }
+
+    // The entry itself, verdict included, or nullptr when this width cannot
+    // satisfy the predicate at all (the field really is skipped then).
+    const Entry* FindEntry(DataType dt) const {
+        for (const auto& e : entries) {
+            if (e.dt == dt) return &e;
         }
         return nullptr;
     }
@@ -360,8 +397,16 @@ struct NumericTargetSet {
 // Trunc->10, Ceil->11) so integer fields can still match a fractional target/
 // bound. Float/Double members always keep the exact fractional value. A clean
 // integer string is unaffected (the integer parse wins; the mode is a no-op).
+// `st` decides what a value that does NOT fit a member's width means (audit #5 AB4):
+// for Exact it means "no field of this width can match" and the member is dropped;
+// for Smaller/Bigger it may instead mean "EVERY field of this width matches", which
+// is emitted as a Fit::AlwaysTrue entry. Defaulted to Exact so the existing callers
+// and every Exact/Changed/Unchanged path keep byte-identical behaviour.
+// Between is deliberately NOT handled — its two bounds are built by two independent
+// calls at four call sites, so a correct fix has to build them jointly. See todo.md.
 bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetSet& out,
-                         RoundMode roundMode = RoundMode::Round);
+                         RoundMode roundMode = RoundMode::Round,
+                         ScanType  st        = ScanType::Exact);
 
 // True when the (DataType, ScanType) pair is a legal combination.
 // Used by the pipe handler to reject Bigger/Smaller on strings and
@@ -980,6 +1025,22 @@ private:
 bool ComparePredicate(DataType dt, ScanType st,
                       const uint8_t* rawBytes,
                       const uint8_t* targetBytes,
+                      const uint8_t* target2Bytes = nullptr,
+                      RoundMode      roundMode     = RoundMode::Round);
+
+// Entry-taking overload — the one the scan/refine engines must use (audit #5 AB4).
+//
+// It exists so the AlwaysTrue verdict is honoured in ONE place, here in Radar,
+// rather than at each consumer. That split is deliberate: `Radar.cpp` is compiled
+// by `dll_helpers_test` and `Aura.cpp` is compiled by no test target at all, so
+// putting the decision here makes it unit-testable and leaves the engines with a
+// mechanical `Find` -> `FindEntry` substitution that has nothing to get wrong.
+//
+// `target` may be null — that is "this width cannot satisfy the predicate", and
+// the caller should already have skipped the field; returning false keeps it safe.
+bool ComparePredicate(DataType dt, ScanType st,
+                      const uint8_t* rawBytes,
+                      const NumericTargetSet::Entry* target,
                       const uint8_t* target2Bytes = nullptr,
                       RoundMode      roundMode     = RoundMode::Round);
 

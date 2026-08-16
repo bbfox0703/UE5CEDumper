@@ -6787,10 +6787,15 @@ ValueScanResult ScanForValue(
         // targeted first-scan path (prev-value scan types never get here).
         auto multiResolve = [&](const std::string& propTypeName,
                                 Radar::DataType& memberDt,
-                                const uint8_t*&      tgt,
+                                const Radar::NumericTargetSet::Entry*& tgt,
                                 const uint8_t*&      tgt2) -> bool {
             if (!Radar::TryDataTypeFromPropertyTypeName(propTypeName, memberDt)) return false;
-            const uint8_t* e = multiTargets ? multiTargets->Find(memberDt) : nullptr;
+            // FindEntry, not Find: a width the target cannot ENCODE may still be one
+            // every field of satisfies (Smaller 500 over Int8). Find() hides that
+            // verdict by design, so using it here is what dropped whole width
+            // classes from every ordered scan. (audit #5 AB4)
+            const Radar::NumericTargetSet::Entry* e =
+                multiTargets ? multiTargets->FindEntry(memberDt) : nullptr;
             if (!e) return false;
             tgt  = e;
             tgt2 = nullptr;
@@ -7005,7 +7010,7 @@ ValueScanResult ScanForValue(
             } else if (isMulti) {
                 // Resolve the element's own width (key/value/elem type) + target.
                 Radar::DataType elemDt = dt;
-                const uint8_t* mtgt = nullptr;
+                const Radar::NumericTargetSet::Entry* mtgt = nullptr;
                 const uint8_t* mtgt2 = nullptr;
                 if (!multiResolve(sf.elemTypeName, elemDt, mtgt, mtgt2)) return;
                 size_t sz = Radar::SizeOf(elemDt);
@@ -7069,7 +7074,7 @@ ValueScanResult ScanForValue(
                 emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType), -1, nullptr, 0, &readStr);
             } else if (isMulti) {
                 Radar::DataType mdt = dt;
-                const uint8_t* mtgt = nullptr; const uint8_t* mtgt2 = nullptr;
+                const Radar::NumericTargetSet::Entry* mtgt = nullptr; const uint8_t* mtgt2 = nullptr;
                 if (!multiResolve(lf.leafType, mdt, mtgt, mtgt2)) return;
                 size_t sz = Radar::SizeOf(mdt);
                 if (!Macht::ReadBytesSafe(lf.leafAddr, readBuf, sz)) return;
@@ -7269,7 +7274,7 @@ ValueScanResult ScanForValue(
                 // DataType so an int field compares as int, a float field
                 // as float — no byte-reinterpret.
                 Radar::DataType memberDt;
-                const uint8_t* mtgt = nullptr;
+                const Radar::NumericTargetSet::Entry* mtgt = nullptr;
                 const uint8_t* mtgt2 = nullptr;
                 if (!multiResolve(sf.typeName, memberDt, mtgt, mtgt2)) continue;
                 size_t msz = Radar::SizeOf(memberDt);
@@ -7387,7 +7392,7 @@ ValueScanResult ScanForValue(
                                     mtgt2 = multiTargets2 ? multiTargets2->Find(e.dt) : nullptr;
                                     if (!mtgt2) continue;
                                 }
-                                if (!Radar::ComparePredicate(e.dt, st, p, e.bytes, mtgt2, roundMode)) continue;
+                                if (!Radar::ComparePredicate(e.dt, st, p, &e, mtgt2, roundMode)) continue;
                                 emitCandidate(obj + off, ensureRawDescriptor(off, e.dt), -1, p, msz, nullptr);
                                 if (++rawEmitted >= kMaxRawPerObj) break;
                             }
@@ -7524,7 +7529,7 @@ ValueScanResult ScanForValue(
                                         mtgt2 = multiTargets2 ? multiTargets2->Find(me.dt) : nullptr;
                                         if (!mtgt2) continue;
                                     }
-                                    if (!Radar::ComparePredicate(me.dt, st, p, me.bytes, mtgt2, roundMode)) continue;
+                                    if (!Radar::ComparePredicate(me.dt, st, p, &me, mtgt2, roundMode)) continue;
                                     emitCandidate(elemBase + off,
                                                   ensureDeepRawDescriptor(cfe.name, e, off, me.dt),
                                                   -1, p, msz, nullptr);
@@ -7675,19 +7680,27 @@ ValueScanStats RefineCandidates(
             uint8_t readBuf[16] = {};
             if (!Macht::ReadBytesSafe(c.addr, readBuf, msz)) continue;
 
+            // Two shapes, and they cannot share a variable: a prev-value refine
+            // compares against raw stored bytes, everything else against a target
+            // ENTRY whose verdict may be "every value of this width matches"
+            // (audit #5 AB4 — Find() cannot express that, FindEntry can).
             const uint8_t* cmpTarget = nullptr;
+            const Radar::NumericTargetSet::Entry* cmpEntry = nullptr;
             const uint8_t* cmp2      = nullptr;
             if (usePrev) {
                 cmpTarget = c.prevValue;
             } else {
-                cmpTarget = multiTargets ? multiTargets->Find(memberDt) : nullptr;
-                if (!cmpTarget) continue;  // value can't fit this width
+                cmpEntry = multiTargets ? multiTargets->FindEntry(memberDt) : nullptr;
+                if (!cmpEntry) continue;  // no value of this width can satisfy it
                 if (st == Radar::ScanType::Between) {
                     cmp2 = multiTargets2 ? multiTargets2->Find(memberDt) : nullptr;
                     if (!cmp2) continue;
                 }
             }
-            if (!Radar::ComparePredicate(memberDt, st, readBuf, cmpTarget, cmp2, roundMode)) continue;
+            const bool keep = cmpEntry
+                ? Radar::ComparePredicate(memberDt, st, readBuf, cmpEntry, cmp2, roundMode)
+                : Radar::ComparePredicate(memberDt, st, readBuf, cmpTarget, cmp2, roundMode);
+            if (!keep) continue;
             std::memcpy(c.prevValue, readBuf, msz);
             kept.push_back(std::move(c));
             continue;

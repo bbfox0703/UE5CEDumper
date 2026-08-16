@@ -439,6 +439,125 @@ public class FreezeScriptGeneratorTests
             $"local UE5_SCRIPT_CONTRACT = {CeMailboxLayout.ContractVersion}", lua);
     }
 
+    // ==================================================================
+    // Audit #5 AA12 + AA13 — a freeze that applied NOTHING used to report
+    // a clean success.
+    //
+    // `pcall` answers "did Lua raise", never "did anything get frozen", and
+    // no mailbox failure can raise (they are all caught inside the helper's
+    // own pcall). So the old `pcall(handleOrErr.start)` was true for a DLL
+    // that was not injected, a contract mismatch, and a stale mailbox alike
+    // — and the generator then auto-closed the Lua window over a CE record
+    // left ticked. start() now returns (ok, err, count).
+    // ==================================================================
+
+    private static string EnableBlockOf(string script)
+    {
+        var e = script.IndexOf("[ENABLE]", System.StringComparison.Ordinal);
+        var d = script.IndexOf("[DISABLE]", System.StringComparison.Ordinal);
+        return script.Substring(e, d - e);
+    }
+
+    private static FreezeScriptParams SampleParams() => new()
+    {
+        ClassName      = "BP_Teammate_C",
+        PropertyName   = "CurrentHealth",
+        PropertyOffset = 0x4F8,
+        UeTypeName     = "FloatProperty",
+        PropertySize   = 4,
+        BoolFieldMask  = 0,
+        ValueLiteral   = "9999.0",
+    };
+
+    [Fact]
+    public void Generate_ReadsStartOutcome_NotJustThePcallStatus()
+    {
+        var script = FreezeScriptGenerator.Generate(SampleParams());
+
+        // Four captures: pcall status, then start()'s own (ok, err, count).
+        Assert.Contains("local sok, sok2, serr, scount = pcall(handleOrErr.start)", script);
+    }
+
+    [Fact]
+    public void Generate_HardFailure_StopsTimersUnticksAndReturns()
+    {
+        var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
+
+        // The handle slot must not be dropped without stopping first: start() has
+        // already created both timers, so nil'ing the slot alone strands them
+        // writing into the game with nothing able to reach them.
+        var stopIdx   = enable.IndexOf("pcall(handleOrErr.stop)", System.StringComparison.Ordinal);
+        var clearIdx  = enable.IndexOf("_ue5_freeze_handles[FREEZE_KEY] = nil",
+                                       stopIdx < 0 ? 0 : stopIdx, System.StringComparison.Ordinal);
+        Assert.True(stopIdx >= 0, "hard-failure branch must stop the timers");
+        Assert.True(clearIdx > stopIdx, "stop() must come before the slot is cleared");
+        Assert.Contains("if memrec then memrec.Active = false end", enable);
+    }
+
+    [Fact]
+    public void Generate_HardFailurePath_ReturnsBeforeTheWindowClose()
+    {
+        // CLAUDE.md: "On ANY error path the close MUST be unreachable." A reorder
+        // that moved the close above the bail-out would still compile and still
+        // pass every "contains" assertion — this is the one that catches it.
+        var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
+
+        var bailIdx  = enable.IndexOf("'[Freeze] nothing was frozen:", System.StringComparison.Ordinal);
+        var closeIdx = enable.IndexOf(CeLuaHygiene.CloseCall, System.StringComparison.Ordinal);
+        Assert.True(bailIdx >= 0, "the hard-failure message must be emitted");
+        Assert.True(closeIdx >= 0, "the success close must still be emitted");
+        Assert.True(bailIdx < closeIdx,
+            "the hard-failure bail-out must precede the close, or the window shuts over an error");
+
+        // And the return that makes it unreachable sits between the two.
+        var returnIdx = enable.IndexOf("return", bailIdx, System.StringComparison.Ordinal);
+        Assert.True(returnIdx > bailIdx && returnIdx < closeIdx,
+            "the bail-out must return before reaching the close");
+    }
+
+    [Fact]
+    public void Generate_ArmedButEmpty_DoesNotUntick_AndKeepsTheWindowOpen()
+    {
+        // A class-wide freeze armed before its instances spawn is the helper's
+        // advertised purpose, so zero live instances must NOT untick the record —
+        // that would turn the feature into the bug. It must still be visible, and
+        // the window must stay up to show it.
+        var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
+
+        Assert.Contains("elseif scount == 0 then", enable);
+        Assert.Contains("[Freeze] armed: no live instances of BP_Teammate_C", enable);
+
+        // The close is gated on BOTH a reported outcome and a non-zero count.
+        Assert.Contains("if sok2 == true and scount ~= 0 and DEBUG == 0 then", enable);
+
+        // The armed branch must not carry an untick. Slice from the branch to the
+        // end of the if-chain and assert the untick is not inside it.
+        var armedIdx = enable.IndexOf("elseif scount == 0 then", System.StringComparison.Ordinal);
+        var endIdx   = enable.IndexOf("\nend", armedIdx, System.StringComparison.Ordinal);
+        var armedBranch = enable.Substring(armedIdx, endIdx - armedIdx);
+        Assert.DoesNotContain("memrec.Active = false", armedBranch);
+    }
+
+    [Fact]
+    public void Generate_OlderHelper_IsReportedAsUnknown_NotAsSuccessOrFailure()
+    {
+        // A helper at <= 1.1 returns nothing from start(), so sok2 is nil. Calling
+        // that a success (close the window, stay ticked) or a failure (untick a
+        // freeze that may well be running) would both be invented verdicts.
+        var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
+
+        var nilIdx = enable.IndexOf("if sok2 == nil then", System.StringComparison.Ordinal);
+        Assert.True(nilIdx >= 0, "the old-helper state must be handled first");
+
+        var failIdx = enable.IndexOf("elseif not sok2 then", System.StringComparison.Ordinal);
+        Assert.True(failIdx > nilIdx,
+            "nil must be tested BEFORE `not sok2`, or an old helper is misread as a hard failure");
+
+        Assert.Contains("older ue5_freeze_helper.lua", enable);
+        // `sok2 == true` in the close condition is what keeps nil from closing.
+        Assert.Contains("sok2 == true", enable);
+    }
+
     [Fact]
     public void Generate_ClassNameWithQuote_IsEscaped()
     {

@@ -22,6 +22,292 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - MA2: one predicate for "where can this pattern start" (build 3135)
+
+**`ScanRegionBatch` computed `regionSize - pat.bytes.size()` as an unsigned max-start** while
+guarding only against `minPatLen`, the batch's **shortest** pattern. A batch mixing a 60-byte and a
+200-byte pattern therefore cleared a 100-byte region and then underflowed on the second: `100 - 200`
+as `size_t` is ~1.8e19, and `for (pos = …; pos <= patMaxStart; ++pos)` walks the address space — in a
+function with **no SEH**, so an access violation rather than a caught read failure.
+
+**Latent, and the reachability claim was verified rather than repeated:** the sole caller
+(`Genau.cpp:1312`) passes three arguments, so `AOBScanBatch`'s `moduleBase` defaults to 0 → the main
+module, whose exec sections are ≥ 3,660 B against patterns ≤ ~60 B. It goes live the moment that
+call site is given a small module.
+
+### The correct predicate already existed twice in the same file
+
+`ScanRegion` and `ScanRegionAll` each did `if (regionSize < patLen) return;` **before** computing
+`maxStart`. The batch version had the same idea at the wrong granularity — per batch instead of per
+pattern. So this did not need a new rule, it needed the existing one applied.
+
+**Shipped as one shared `Macht::PatternScanRange(regionSize, patLen, maxStartOut)`** — header-inline
+and pure — now feeding **all four** scan loops (both single-pattern scanners and both of the batch's
+scalar loops), plus an early skip at the batch's classification step so a too-long pattern reaches
+neither `simdEntries` nor `scalarOnlyIndices`. The underflow is now impossible by construction, not
+guarded in three places out of four, and the next copy of this loop inherits the guard.
+
+`patLen == 0` is refused rather than accepted: the old arithmetic gave `maxStart == regionSize`,
+which reports a match one past the end. `ParsePattern` cannot currently produce an empty pattern, so
+that is belt-and-braces — but it is the branch a future caller gets wrong.
+
+### It is testable after all, which was worth checking before assuming
+
+No test target compiles `Macht.cpp` and `ScanRegionBatch` is `static`, so the first read was "this
+cannot be pinned". But `dll_helpers_test.cpp` **already includes `Macht.h`** (it exercises the real
+`ParsePattern` for the same reason), so a header-inline predicate is directly reachable. 11 new
+assertions (1182 → **1193**) including the exact-fit and one-byte-too-long boundaries and the full
+batch scenario; negative control (predicate reverted to the bare arithmetic) **5 red**.
+
+-----
+
+## 2026-08-17 - AB4: a width gate that is right for Exact and wrong for ordering (build 3133)
+
+**`BuildNumericTargets` asked "does the target FIT this width".** Correct for `Exact` — a value that
+does not fit cannot equal a field of that width — and **wrong for `Smaller`/`Bigger`**, where the
+question is whether *any* value of the width can satisfy the comparison. Every `Int16` field is
+smaller than 70000, but 70000 has no int16 encoding, so no `Int16` entry was emitted and `Aura`'s
+`multiResolve` skipped **every 2-byte field in the pool**. No error, no warning, no log line.
+
+The four cases are **not symmetric**, and the old code was right in exactly two — which is why the
+gate reads like a working optimisation:
+
+| | target above the width's max | target below its min |
+|---|---|---|
+| **Smaller** | every value matches → **dropped (the bug)** | none match → dropped ✓ |
+| **Bigger** | none match → dropped ✓ | every value matches → **dropped (the bug)** |
+
+**The SIGN domain was the bigger leak and the finding never mentioned it.** A negative string
+suppresses the whole unsigned parse, so `Bigger -5` dropped every `UInt16`/`UInt32`/`UInt64` field
+although every unsigned value satisfies it.
+
+### Clamping is the trap, and it looks like it works
+
+`Smaller 500` clamped to Int8's 127 becomes `cur < 127` — `ApplyOrdered`'s `Smaller` is a **strict**
+`<` — so it silently drops the field holding exactly 127. It restores ~99.6% of the missing rows and
+re-introduces the same class of silent loss in a form far harder to find. **There is no int8 byte
+pattern meaning `cur <= 127`**, so the answer cannot live in a fixed-width buffer: it has to be a
+verdict. Hence `Fit::AlwaysTrue`, and `Find()` deliberately **hides** such entries — handing out
+their zeroed buffer would compare against 0, wrong in a quieter way than the bug.
+
+### The re-derivation's own fix shape was broken, and the skeptic caught it
+
+It put the verdict on `Entry` while every consumer looks up through `Find()`, which returns
+`const uint8_t*` — the flag could never have been seen. (Its own `wrong_obvious_fix` section argued
+the repair "cannot live inside the fixed-width buffer" and then put it there.) Shipped instead as
+`FindEntry()` plus an `Entry`-taking `ComparePredicate` overload, so **the verdict is honoured once,
+in `Radar.cpp`** — the file `dll_helpers_test` compiles — and `Aura.cpp`, which no test target
+compiles, gets a mechanical `Find` → `FindEntry` substitution with nothing to get wrong. That split
+was the maintainer's call and it is the right general rule for this tree.
+
+`Between` is **deliberately not fixed**: its two bounds are built by two *independent* calls at four
+call sites, and `ApplyOrdered` normalises reversed bounds at compare time, so which is the lower
+bound is not known at build time. A correct fix needs a joint builder — filed, not half-done.
+
+16 new C++ assertions (1166 → **1182**), including the boundary case clamping would have dropped.
+Negative control (verdict forced to `false`) **6 red**. ⚠ The Aura half is unverified — 7 steps in
+todo.md, with step 4 as the control that the pruning half still prunes.
+
+### AB7 was downgraded, not fixed — and its prescription refused for the third time
+
+Its defect text ends *"no serial witness is stored"*, i.e. it prescribes storing one. That is the
+prescription working-lessons §4.3 already refuses twice. **AB7 makes the trap sharper**:
+`InstanceRecord::instanceIndex` is *already* stored, so "just add the serial next to it" is a
+one-line change that would produce a validator passing on every recycled slot. Clause 1 ("raw
+addresses used as identity across RPCs") is **refuted** — identity is the pool index. Clause 2 (the
+index is captured and never validated) is verbatim true, but the harm chain over-claimed twice and
+one downstream harm is already closed in-tree by `Ubel::WalkInstance`'s recycled-slot gate.
+**MED → LOW, still open**, with the correct shape recorded for whoever takes it.
+
+-----
+
+## 2026-08-17 - CORRECTION: the Skia crash IS symbolizable, and it is path geometry (build 3131)
+
+**Correcting build 3127's entry, which said "there is no PDB for `libSkiaSharp`, so the faulting
+function is unknown".** That was wrong. `SkiaSharp.NativeAssets.Win32` **ships `libSkiaSharp.pdb`**
+in the NuGet package — for 3.119.4, 4.150.1 and 4.151.1 alike — and `HarfBuzzSharp.NativeAssets.Win32`
+ships one too. The maintainer checked the NuGet cache; I had assumed rather than looked.
+
+Symbolizing `libSkiaSharp+0x102B8D` against the **4.151.1 win-x64** binary
+(`llvm-symbolizer --obj=… --relative-address`, from
+`VC\Tools\Llvm\**x64**\bin` — the recursive search finds the ARM64 copy first and it will not run):
+
+```
+skia_private::TArray<SkPathVerb,1>::size      include/private/SkTArray.h:419
+  -> SkSpan<const SkPathVerb>::SkSpan         include/core/SkSpan.h:99
+  -> SkPathBuilder::verbs                     include/core/SkPathBuilder.h:986
+  -> SkPathBuilder::computeFiniteBounds       src/core/SkPathBuilder.cpp:1102
+  -> SkPathPriv::Raw                          src/core/SkPathPriv.h:393
+```
+
+**Binary identity confirmed, not assumed:** the `libSkiaSharp.dll` in `dist/` at crash time was
+12,272,440 bytes and the NuGet 4.151.1 win-x64 payload is 12,272,440 bytes — the same file.
+
+**What this changes.** The out-of-bounds read is in **path geometry**, reading a `TArray<SkPathVerb>`'s
+size through an `SkSpan` while computing a path's bounds. So **HarfBuzz is exonerated for this fault**
+— it is not text shaping — and the ABI hypothesis gets materially stronger rather than staying a
+guess: `SkPathBuilder` is exactly the area Skia restructured across this major, and a caller built
+against the old layout reading a `TArray` header at the wrong offset yields a bogus `size`, after
+which `SkSpan` walks off the end. That is the observed fault, not a story about it.
+
+**Still not proven:** that Avalonia.Skia is the caller which supplied the mis-shaped path. Naming the
+callee is not naming the caller. The next step, if it ever recurs, is a page-heap dump with the full
+stack symbolized — now known to be possible.
+
+**Method lesson recorded in working-lessons §3.6:** *check the package for a PDB before declaring a
+native crash unsymbolizable*, and use the **x64** llvm-symbolizer.
+
+-----
+
+## 2026-08-17 - AA9: the helper's own samples taught a freeze that cannot be stopped (build 3129)
+
+**`ue5_freeze_helper.lua`'s header told users to hold the handle in a `local`.** Cheat Engine
+compiles **each `{$lua}` block as its own chunk** — verified in CE's source, not assumed:
+`autoassembler.pas` matches a *trimmed, uppercased, whole* line against `{$LUA}`, prepends
+`local syntaxcheck,memrec=...`, takes the one shared `GetLuaState`, and hands the block's text to
+`luaL_loadstring` on its own. So globals cross between `[ENABLE]` and `[DISABLE]`; locals do not.
+
+A handle parked in a `local` is therefore **unreachable forever**. Not awkward — unreachable:
+`start()` gives two timers to CE's **main form**, so unticking the record does not stop them and
+neither does deleting it, because the timers do not belong to the record. Re-enabling adds another
+orphaned pair. Only restarting Cheat Engine ends it. SAMPLES 1–3 showed no stop at all, and SAMPLE 4
+was worse than silent: `-- In [DISABLE]: hp.stop(); mp.stop()` is advice that **cannot work**.
+
+Rewritten so SAMPLE 1 is the complete shape — keyed **global** table, defensive pre-stop, the
+outcome check from build 3125, and the matching `[DISABLE]` half — with 2–4 reduced to cfg deltas so
+the lifecycle is stated exactly once. This is the shape `FreezeScriptGenerator` already emits; the
+header had been contradicting the shipped generator both by demonstration and by omission.
+
+**A bare global `h` is NOT the fix** and is worse than the bug: CE shares one Lua state across every
+open table, so a second script using `h` steals the first's slot — and then the *first* script's
+`[DISABLE]` stops the *second* script's freeze. The lifetime box says so explicitly.
+
+### The test RUNS the documentation
+
+Asserting on a doc's text is tautological, so the rig now **extracts the sample from the header
+comment and executes it** under a faithful model of CE's two-chunk compilation (`load()` per block,
+`syntaxcheck`/`memrec` injected as chunk locals, only globals shared). It asserts the timers are
+really destroyed by the *second* chunk — plus a control that runs the OLD shape and asserts it fails
+as a nil global with the timers still live.
+
+**The extractor's own first version was wrong, and the test caught it.** `gmatch('{%$lua}(.-){%$asm}')`
+captured the prose of the new lifetime box, which mentions `{$lua}` in a sentence. The fix was to do
+what CE does — exact whole-line match — so modelling the real thing faithfully also removed the bug.
+Rig 38 → **50 checks**; negative control (sample stops publishing the handle) 2 red.
+
+⚠ **Not verified in a real Cheat Engine.** The rig models CE's chunk rule; it is not CE.
+
+-----
+
+## 2026-08-17 - The UI's heap corruption was SkiaSharp, one major ahead of Avalonia (build 3127)
+
+**The UI died twice in 14 minutes with `0xC0000374` STATUS_HEAP_CORRUPTION**, minutes after a
+Copy CE XML on Elliot. Fixed by aligning `SkiaSharp` **4.151.1 → 3.119.4** and `HarfBuzzSharp`
+**14.2.1.2 → 8.3.1.3** — the versions `Avalonia.Skia` / `Avalonia.HarfBuzz` 12.1.1 are built against.
+
+### The method matters more than the fix: a heap-corruption dump names nothing
+
+The first dump was useless and *had* to be. Heap corruption is detected at the **next heap
+operation**, so its stack is the **detector, not the culprit** — ours showed ntdll's heap-error path
+on the UI thread with Skia/DWrite/user32 frames below it, which is motive and opportunity, not the
+act. Our own C# was ruled out on structure alone: no `AllowUnsafeBlocks`, no `Marshal.AllocHGlobal`
+or `Marshal.Copy` anywhere in the UI, and the only `stackalloc`s are bounded `Span`s — a stack
+overrun is `0xC000_00FD`, not `0xC000_0374`.
+
+**Full page heap** (IFEO `GlobalFlag=0x02000000` + `PageHeapFlags=0x3`) converted the next
+occurrence into an immediate `0xC0000005` at **`libSkiaSharp.dll+0x102B8D`** — WER event
+`AutoVerifierV2`, `verifier.dll` on the stack, faulting address a guard page. Base cross-checked two
+ways (`0x7FFEE53C2B8D − 0x102B8D` and `0x7FFEE5453602 − 0x193602` both give `0x7FFEE52C0000`).
+**Re-run a heap-corruption crash under page heap; do not try to read the first dump.**
+
+### Why nothing in the build caught it
+
+`Avalonia.Skia` declares an **open-ended minimum** (`SkiaSharp >= 3.119.4`), so a major-version jump
+*satisfies* the constraint: no NU1608, no NU1605, and `TreatWarningsAsErrors=true` had nothing to
+fail on. NuGet's dependency model cannot express "and not a different major". Three routine
+`chore(deps)` bumps had walked Skia 4.148 → 4.150.1 → 4.151.1 while Avalonia stayed on 3.x, and the
+csproj carried **no comment** saying why those two were pinned above what Avalonia asked for — unlike
+the `SQLitePCLRaw` pin two lines below, which has a full paragraph of rationale.
+
+Both versions now live in **one** `PropertyGroup` (`$(SkiaSharpVersion)` / `$(HarfBuzzSharpVersion)`)
+feeding all seven references, so a future bump cannot be applied to some of them and not the others,
+with the recovery command and this incident recorded next to them.
+
+### What is proven, and what is not
+
+Proven: libSkiaSharp accessed out of bounds, caught red-handed. **Not** proven: that the version gap
+*caused* it — there is no PDB for `libSkiaSharp`, so the faulting function is unknown. If crashes
+continue at the aligned versions the hypothesis is refuted and the next step is a Skia bug, not
+another dependency change. Verified so far only that the AOT publish is clean (54.4 MB trimmed, zero
+NuGet warnings, full suite green) and that the native assets really swapped (`libSkiaSharp.dll`
+11.7 → 11.1 MB, `libHarfBuzzSharp.dll` 1.9 → 1.7 MB). ⚠ **A pass here is several quiet sessions, not
+one** — see todo.md, and note the broad rendering regression check: HarfBuzz went back *six* majors.
+
+-----
+
+## 2026-08-17 - AA12 + AA13: a freeze that applied NOTHING reported clean success (build 3125)
+
+**`pcall` answers "did Lua raise", never "did anything get frozen"** — and on the shipped path no
+mailbox failure *can* raise, because every one of them is caught inside `fetchInstancePage`'s own
+`pcall`. So `pcall(handleOrErr.start)` was `true` for a DLL that was never injected, for a contract
+mismatch, and for a stale mailbox alike; the generator then auto-closed the CE Lua window over a
+record it left ticked. The user is told a freeze is active while nothing is being written.
+
+### The two findings are one defect, and two neighbours moved
+
+**AA13 has no independent content left.** Its unique clause — *"nothing reads `_lastError`"* — is
+stale: AA3 (build 2926) added `handle.lastError()` / `handle.isAbandoned()`. What survives is one
+level up — those accessors have **zero shipped callers**, and the C# test that "guards" them asserts
+only their *source text*. AA3 moved the defect from *write-only field* to *accessor nobody calls*.
+Its other clause is refuted outright: the persistent case is **not** silent (AA3's abandonment
+`print` fires ~10 s in, and CE's `print2` re-opens the window the generator just closed).
+**AA10 and AA11 were downgraded to LOW** on the same pass and are no longer part of this clump.
+
+### The crux is a tension, and every obvious fix fails it
+
+`count == 0` is **not** a failure. A class-wide freeze armed before its instances spawn is the
+helper's advertised purpose, so unticking there converts the feature into the bug. And the DLL
+cannot separate a *misspelled* class from a *live-but-empty* one — `HandleListInstances` answers
+`SetDone(0)` for both — so neither can the Lua side. *"Armed, 0 right now"* is the only honest report.
+
+Three refuted repairs, each at the source: unticking on `count == 0` (breaks the feature); unticking
+whenever `lastError() ~= nil` (`_lastError` carries the transient `'mailbox busy'` on the same
+channel as fatal errors — which is precisely why `MAX_FAIL_STREAK` exists); and putting the untick in
+the **helper**, where `memrec` is a chunk *local* (`autoassembler.pas:1419`) and the helper is a
+separately-`load`ed chunk — a guard that could never fire.
+
+### What shipped
+
+`rescan()` / `handle.start()` now return **`(ok, err, count)`** — three outcomes, not two. Helper
+**1.1 → 1.2**. The timers still start in all three cases and `start()` deliberately does **not**
+raise: the generated script stores the handle *before* calling start and its failure branch nils the
+slot **without** stopping, so a raise thrown after `createTimer` would strand two timers writing into
+the game with nothing able to reach them. Reporting by value is what keeps the cleanup reachable.
+
+`FreezeScriptGenerator` reads the outcome instead of the `pcall` status: hard failure → `stop()` →
+clear the slot → `showMessage` → untick → **return before the close**; `count == 0` → keep running,
+print once, keep the window open; and a **fourth** state — an older embedded helper returns `nil`,
+which is neither success nor failure, so it says exactly that rather than inventing a verdict.
+
+### Verification
+
+`scripts/tests/freeze_helper_test.lua` 23 → **38 checks**, written to fail first (**8 red**). Five new
+C# tests, including two ORDERING assertions — a reorder that moved the close above the bail-out would
+still pass every `Contains` check. **Four independent negative controls**: success branch 5 red,
+hard-failure branch 5 red, close condition 2 red, `nil`-check order 1 red.
+
+**Two things the controls found that the fix did not.** The hard-failure control left the AA13 case
+GREEN: it asserted only that the two outcomes *differ*, and `nil ~= true` differs — so it tolerated
+the very regression it existed to catch. Strengthened to the concrete triple; the control then went
+2 → 5 red. And the rig itself was **blinder than the real API**: its write stubs only appended to a
+log and never touched `MEM`, so `waitDone`'s status poll could never be satisfied and *every case in
+the file* had been exercising the no-symbol failure path. Fixed with `MEM`-backed writes and an
+`installMailbox()` that models `HandleListInstances`.
+
+⚠ **Not verified in a real Cheat Engine** — the rig stubs CE. See todo.md's register.
+
+-----
+
 ## 2026-08-17 - G12 + G3: one offset family, and a re-probe that should not happen (builds 3119 / 3121)
 
 **The finding I set out to fix turned out to be a LOW; the one found while re-deriving it is the
