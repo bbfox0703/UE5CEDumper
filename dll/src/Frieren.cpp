@@ -792,6 +792,16 @@ static bool AutoStartWork() {
     // and every module's StartWorker* would refuse to spawn, since that gate reads
     // the same flag. Both calls are no-ops on a first start.
     Tot::ResetShutdown();
+    // (G2) Same argument, other flag — and it is now load-bearing rather than tidy.
+    // Tot::Requested() is ALSO true for g_perCommand, the mid-command client-disconnect
+    // latch, which Tot deliberately keeps set until a fresh session connects into an
+    // empty registry (Fern AcceptLoop firstConn) so an orphaned scan keeps aborting.
+    // That reset therefore runs AFTER this scan, exactly like ResetShutdown's. Genau's
+    // recovery sweeps now honour Tot::Requested(), so without this line a stale latch
+    // from a previous session's UI disconnect would abort a healthy game's GObjects/
+    // GNames recovery at offset 0 — a scan that never ran, reported as one that found
+    // nothing. No-op on a first start.
+    Tot::ResetPerCommand();
     Mimic::StartThread();   // early-returns when the poller is already running
     // Publish progress into the mailbox so a CE Lua poller can stop sleeping a
     // fixed budget and react the moment we are actually ready (Mimic::InitState).

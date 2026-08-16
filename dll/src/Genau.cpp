@@ -554,6 +554,14 @@ static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t av
     std::vector<StaticPtr> bag;
 
     for (uintptr_t scan = codeStart; scan + 7 < codeEnd; ++scan) {
+        // (G2) Whole-.text walk. RECOVERY path (reached only when the normal GObjects
+        // resolve came back empty), so an abort means "recovery did not run" and the user
+        // sees an unexplained empty object list — which is why the log line is not
+        // decoration. void: the caller reads the (partial) bag and reports no winner.
+        if ((scan & 0xFFF) == 0 && Tot::Requested()) {
+            Sein::Warn("SCAN:GObj", "DataScanGObjectsCandidates: aborted (client gone / shutdown)");
+            return;
+        }
         uint8_t b0 = 0, b1 = 0, b2 = 0;
         if (!Macht::ReadSafe(scan, b0)) continue;
         if (b0 != 0x48 && b0 != 0x4C) continue;
@@ -730,6 +738,14 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride) {
     std::vector<uintptr_t> targets;
     targets.reserve(1u << 16);
     for (uintptr_t scan = codeStart; scan + 7 < codeEnd; ++scan) {
+        // (G2) Whole-.text walk, and the sibling of DataScanGObjectsCandidates' above.
+        // Also a RECOVERY path; returning 0 makes Frieren fall through to the heap
+        // fallback, and Flamme::UpdateGObjectsMethod is inside the success branch only,
+        // so an aborted run memoizes nothing.
+        if ((scan & 0xFFF) == 0 && Tot::Requested()) {
+            Sein::Warn("SCAN:GObj", "FindGObjectsStaticStruct: aborted (client gone / shutdown)");
+            return 0;
+        }
         uint8_t b0 = 0, b1 = 0, b2 = 0;
         if (!Macht::ReadSafe(scan, b0)) continue;
         if (b0 != 0x48 && b0 != 0x4C) continue;
@@ -2158,8 +2174,17 @@ static uintptr_t FindGNamesByStringRef() {
     for (const char* marker : markerStrings) {
         size_t markerLen = strlen(marker);
 
-        // Search .rdata for the ASCII string
+        // Search .rdata for the ASCII string.
+        // (G2) The heaviest byte-walk in this file: it calls the OUT-OF-LINE SEH-guarded
+        // ReadBytesSafe once per offset, not the inline ReadSafe the sibling walks use,
+        // and its break fires only when a marker is FOUND — an absent marker walks the
+        // whole section. Bailing here is benign: FindGNames falls through to the next
+        // strategy and nothing memoizes a not-found result.
         for (uintptr_t scan = rdataStart; scan + markerLen < rdataEnd; ++scan) {
+            if ((scan & 0xFFF) == 0 && Tot::Requested()) {
+                Sein::Warn("SCAN:GNam", "FindGNamesByStringRef: aborted (client gone / shutdown)");
+                return 0;
+            }
             char buf[64] = {};
             size_t readLen = (markerLen < 63) ? markerLen + 1 : 63;
             if (!Macht::ReadBytesSafe(scan, buf, readLen)) continue;
