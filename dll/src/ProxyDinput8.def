@@ -1,22 +1,39 @@
 ; ============================================================
 ; ProxyDinput8.def — Module definition for dinput8.dll proxy
 ;
-; Maps the 5 dinput8 exports to internal Proxy_* implementations,
+; Maps all 6 dinput8 exports to internal Proxy_* implementations,
 ; and re-exports the UE5 C ABI so CE Lua's getAddress() can
 ; resolve the dumper functions through the proxy DLL.
 ;
-; The /DEF: linker flag suppresses default exports, so UE5_*
-; entries must be listed explicitly here.
+; THE @ORDINALS ARE MANDATORY, NOT DECORATION. link.exe hands
+; unpinned exports out in name-sorted order starting at
+; (highest PINNED ordinal + 1) — so with nothing pinned, our
+; UE5_* block began at @6 and an ordinal-6 import (the real
+; GetdfDIJoystick slot) landed on UE5_AutoStart: a bool returned
+; where an LPCDIDATAFORMAT is expected, dereferenced as address 1.
+; Pinning @1..@6 pushes the whole UE5_* block to @7+ by itself;
+; pinning only SOME of them is worse than pinning none, because
+; the unpinned real forwards would then move OFF their ordinals.
+; tools/check_proxy_exports.py re-derives this against the real
+; System32 export table so it cannot drift again. (Audit PX1.)
+;
+; Note the UE5_* block below does NOT need to list everything:
+; /DEF: does not suppress __declspec(dllexport) symbols, it MERGES
+; with them (the shipped binary exports ~66 names; this file lists
+; 37). Conversely, a line here exports nothing on its own — it
+; needs an implementation, which is why GetdfDIJoystick required a
+; new forwarder in Lugner_Dinput8.cpp rather than just this entry.
 ; ============================================================
 
 LIBRARY dinput8
 EXPORTS
-    ; --- Windows dinput8.dll forwarding ---
-    DirectInput8Create  = Proxy_DirectInput8Create
-    DllCanUnloadNow     = Proxy_DllCanUnloadNow
-    DllGetClassObject   = Proxy_DllGetClassObject
-    DllRegisterServer   = Proxy_DllRegisterServer
-    DllUnregisterServer = Proxy_DllUnregisterServer
+    ; --- Windows dinput8.dll forwarding (export = impl @ real-ordinal) ---
+    DirectInput8Create  = Proxy_DirectInput8Create  @1
+    DllCanUnloadNow     = Proxy_DllCanUnloadNow     @2
+    DllGetClassObject   = Proxy_DllGetClassObject   @3
+    DllRegisterServer   = Proxy_DllRegisterServer   @4
+    DllUnregisterServer = Proxy_DllUnregisterServer @5
+    GetdfDIJoystick     = Proxy_GetdfDIJoystick     @6
 
     ; --- UE5 Dumper C ABI exports (for CE Lua getAddress) ---
     UE5_Init
