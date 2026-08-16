@@ -857,6 +857,36 @@ Bonus, and it is the fourth instance this week: **the fix's own negative control
 because the control was broken** — a `break` exited the pattern loop rather than the offset loop and
 retired nothing. See §4.3b; when a control passes, suspect the control.
 
+### 4.3f A predicate that has NEVER fired is a defect, not a rarely-used feature
+
+Audit #5 G11 (build 3112). Genau's Tier-2 version detector had never matched anything on any binary
+this project owns — 0 hits across 170 PE images. Nobody noticed, because "no Tier 2 hit" is
+indistinguishable from "this image has no Tier 2 evidence", and Tier 3 quietly absorbed the traffic
+with a `lowConfidence` badge nobody chased.
+
+The cause was one character. The needle table's trailing `.` is a *Tier 3* device (it forces a
+three-component `X.Y.Z`); Tier 2 inherited it and therefore demanded `Release-5.4.2`, while UE's own
+tag is two-component, `++UE4+Release-4.27`. **The identical bug had already been found and fixed for
+Tier 1** and written into the version-rev changelog — Tier 2 simply never received the same repair.
+
+**How to apply:**
+
+- **Count the hits of every branch you rely on, at least once.** A predicate with zero observed
+  firings is either dead code or a defect; "it is for rare cases" is a hypothesis, and the corpus can
+  test it in minutes. G8/G9 were both tuning this predicate's *parameters* while it could not fire at
+  all — real work spent on a branch with no reachable input.
+- **When a fix is recorded for one tier/path, grep the siblings THEN.** This is §2.3's fix-time
+  sibling grep, and here the evidence was sitting in the file's own changelog: the rev-2 note says
+  "Tier 1 no longer requires the trailing '.'", which names the exact shape of the bug still present
+  next door.
+- **Validate a newly-live predicate against an INDEPENDENT one, not against itself.** Tier 2 now
+  fires on 6 images and agrees with Tier 1's version on all six. That agreement — two detectors,
+  same answer — is worth far more than any number of hand-built unit cases, and it is §1.4 applied
+  to a fix rather than to a measurement.
+- **A fix that turns a dead branch live must state what it does NOT change.** Here: Tier 1 answers
+  first on all six, so no shipped verdict moved. Saying that plainly is the difference between an
+  honest report and an oversold one.
+
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when

@@ -22,6 +22,51 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - G11: Tier 2 matches the bare needle, so it can finally fire (build 3112)
+
+**Tier 2 had never fired on any binary this project owns.** The needle table's trailing `.` is a
+*Tier 3* device — it forces a three-component `X.Y.Z` so a bare `5.4` cannot match `15.40`. Applying
+it to Tier 2 as well meant Tier 2 could never match UE's own tag, which is **two-component**:
+`++UE4+Release-4.27`. That is verbatim the defect `Genau.h`'s rev-2 note records fixing **for Tier 1**
+via the dot-strip in `ScanVersionTier1` — Tier 2 never received it.
+
+### Measured, before and after
+
+A faithful model of the header's semantics (same table, bounds, window and anchor rules) run over the
+**170 PE images** in the local analyze corpus. Conditions are part of the number: on-disk PE bytes,
+whereas the DLL scans the *mapped* image — for unpacked titles the string content is the same.
+
+| | Tier 2 fired |
+|---|---|
+| before | **0 / 170** |
+| after | **6 / 170** |
+
+And on **all six**, Tier 2's answer agrees exactly with the version **Tier 1 independently reports**
+(418, 420, 418, 420, 420, 418) — two detectors cross-validating rather than one asserting.
+
+Tier 1 returns first on all six, so **no effective verdict changed on any binary we own**. What is
+gained is a Tier 2 that works as a *fallback* for images whose full `++UEx+Release-` tag is stripped
+but a `Release-X.Y` fragment survives — exactly the population Tier 2/3 exists for, and none of our
+170 is one.
+
+### The two guards that make a shorter match safe
+
+- **Whole-token**: the byte after the bare needle may not be a digit. That admits both real shapes —
+  two-component `Release-4.27\0` and three-component `Release-5.4.2`, whose next byte is `.` — while
+  rejecting `Release 5.40`, which is a game version, not an engine one.
+- **Preceding digit/dot**, hoisted out of Tier 3 so Tier 2 gets it too. Tier 3 always had it; Tier 2
+  never did, and needs it far more now that it matches the shorter form (`15.4` and `1.5.4` both
+  contain `5.4`).
+
+Tier 3 is untouched — it still demands the trailing dot *and* a digit after it, restated now that the
+match above is on the bare form. Two rails assert exactly that.
+
+`kVersionDetectLogicRev` 4 → **5**, mandatory. C++ 1130 → **1137**. Three controls, each reverted
+alone: match the full needle again → 1 red; drop the whole-token guard → 1 red; un-hoist the
+preceding-digit guard → 3 red.
+
+-----
+
 ## 2026-08-17 - G8 + G9: Tier 2's context window, and the Tier 3 retire (build 3105)
 
 Both were reproduced **deliberately** in build 3086 so the needle-gate rewrite could stay

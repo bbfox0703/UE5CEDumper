@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **26 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **27 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1425,6 +1425,27 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — G11: Tier 2 is alive; check it agrees with Tier 1
+
+*Needs the DLL injected. See dev-log build 3112. **Measured 0/170 → 6/170 Tier 2 hits offline, with
+Tier 1 agreeing on all six and masking all six** — so live behaviour should be UNCHANGED. This batch
+exists to catch the case the offline model cannot see: the DLL scans the MAPPED image, the model
+scanned on-disk bytes, and for packed/obfuscated titles those differ.*
+
+1. **⚠ REGRESSION — no game's detected version moves.** `kVersionDetectLogicRev` went 4 → 5, so every
+   cached game re-detects once. Note `ueVersion` / `versionDetected` / `lowConfidence` for two or
+   three titles before running the new build and compare after. **Identical expected.** Any change
+   is a real finding — report the game and the before/after.
+2. **A packed title is the interesting one.** Avowed is the documented packed case. Confirm its
+   detected version is unchanged; this is the population where mapped-vs-on-disk could diverge.
+3. **If a `Tier 2` line ever appears in `scan-0.log`, cross-check it.** Grep for
+   `DetectVersion: Tier 2 Release prefix -> NNN`. On every corpus image Tier 1 answered first, so a
+   Tier 2 line means a stripped-tag title reached the new path — record the game, the version, and
+   whether it matches what the game actually is. That is the first real evidence Tier 2 works.
+4. **⚠ REGRESSION — Tier 3 still behaves.** A title that previously reported `Tier 3 (low
+   confidence)` must still report the same version. The bare-needle change touches Tier 2 only, and
+   two unit rails assert that, but Tier 3 is what stripped-tag games actually land on today.
 
 ### ⬜ NEW 2026-08-17 — G8 / G9: version detection after the tier-rule change
 
