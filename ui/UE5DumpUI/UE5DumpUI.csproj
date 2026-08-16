@@ -6,6 +6,32 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <!-- ⚠ THESE MUST MATCH WHAT Avalonia.Skia / Avalonia.HarfBuzz WERE BUILT AGAINST.
+         Read the required versions out of the resolved graph, do NOT bump them to
+         "latest" with the rest of the dependencies:
+
+           py -c "import json;d=json.load(open('obj/project.assets.json'));t=list(d['targets'].values())[0];
+                  print(t['Avalonia.Skia/12.1.1']['dependencies'])"
+
+         NuGet cannot protect this. Avalonia declares an open-ended minimum
+         (SkiaSharp >= 3.119.4), so a major-version jump SATISFIES the constraint —
+         no NU1608, no NU1605, nothing for TreatWarningsAsErrors to catch. The build
+         stays green and the app starts; what breaks is native, later, and elsewhere.
+
+         This is not hypothetical. Routine chore(deps) bumps had carried SkiaSharp to
+         4.151.1 (one major ahead) and HarfBuzzSharp to 14.2.1.2 (six ahead), and the
+         UI died with STATUS_HEAP_CORRUPTION (0xC0000374) minutes after a Copy CE XML.
+         Full page heap named the culprit outright: an out-of-bounds access inside
+         libSkiaSharp.dll+0x102B8D (0xC0000005, WER event AutoVerifierV2). See
+         docs/todo.md "SkiaSharp/HarfBuzzSharp ABI alignment".
+
+         The version lives here ONCE so a future bump cannot be applied to some of the
+         seven references and not the others — which is the shape that hides longest. -->
+    <SkiaSharpVersion>3.119.4</SkiaSharpVersion>
+    <HarfBuzzSharpVersion>8.3.1.3</HarfBuzzSharpVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
@@ -74,16 +100,16 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
-    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" Version="14.2.1.2" />
-    <PackageReference Include="HarfBuzzSharp.NativeAssets.WebAssembly" Version="14.2.1.2" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" Version="$(HarfBuzzSharpVersion)" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.WebAssembly" Version="$(HarfBuzzSharpVersion)" />
 
     <!-- SQLite (experimental Snapshot store). Raw ADO.NET only — no EF Core
          (its reflection query pipeline breaks trim/AOT). Microsoft.Data.Sqlite
          pulls SQLitePCLRaw.bundle_e_sqlite3, whose native e_sqlite3 must be
          bundled into the self-contained / AOT publish. -->
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.*" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="$(SkiaSharpVersion)" />
+    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" Version="$(SkiaSharpVersion)" />
     <!-- SQLitePCLRaw 3.0.x: Microsoft.Data.Sqlite 10.0.x only requires
          SQLitePCLRaw.* >= 2.1.11 (open-ended), so it would otherwise drag in the
          legacy 2.1.11 chain — including the now-DEPRECATED SQLitePCLRaw.lib.e_sqlite3.
@@ -97,15 +123,15 @@
 
     <!-- MVVM -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
-    <PackageReference Include="HarfBuzzSharp" Version="14.2.1.2" />
+    <PackageReference Include="HarfBuzzSharp" Version="$(HarfBuzzSharpVersion)" />
     <PackageReference Include="MicroCom.Runtime" Version="0.11.6" />
 
     <!-- Logging -->
     <PackageReference Include="Serilog" Version="4.4.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.*" />
-    <PackageReference Include="SkiaSharp" Version="4.151.1" />
-    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="4.151.1" />
+    <PackageReference Include="SkiaSharp" Version="$(SkiaSharpVersion)" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="$(SkiaSharpVersion)" />
   </ItemGroup>
 
   <ItemGroup>

@@ -22,6 +22,52 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - The UI's heap corruption was SkiaSharp, one major ahead of Avalonia (build 3127)
+
+**The UI died twice in 14 minutes with `0xC0000374` STATUS_HEAP_CORRUPTION**, minutes after a
+Copy CE XML on Elliot. Fixed by aligning `SkiaSharp` **4.151.1 → 3.119.4** and `HarfBuzzSharp`
+**14.2.1.2 → 8.3.1.3** — the versions `Avalonia.Skia` / `Avalonia.HarfBuzz` 12.1.1 are built against.
+
+### The method matters more than the fix: a heap-corruption dump names nothing
+
+The first dump was useless and *had* to be. Heap corruption is detected at the **next heap
+operation**, so its stack is the **detector, not the culprit** — ours showed ntdll's heap-error path
+on the UI thread with Skia/DWrite/user32 frames below it, which is motive and opportunity, not the
+act. Our own C# was ruled out on structure alone: no `AllowUnsafeBlocks`, no `Marshal.AllocHGlobal`
+or `Marshal.Copy` anywhere in the UI, and the only `stackalloc`s are bounded `Span`s — a stack
+overrun is `0xC000_00FD`, not `0xC000_0374`.
+
+**Full page heap** (IFEO `GlobalFlag=0x02000000` + `PageHeapFlags=0x3`) converted the next
+occurrence into an immediate `0xC0000005` at **`libSkiaSharp.dll+0x102B8D`** — WER event
+`AutoVerifierV2`, `verifier.dll` on the stack, faulting address a guard page. Base cross-checked two
+ways (`0x7FFEE53C2B8D − 0x102B8D` and `0x7FFEE5453602 − 0x193602` both give `0x7FFEE52C0000`).
+**Re-run a heap-corruption crash under page heap; do not try to read the first dump.**
+
+### Why nothing in the build caught it
+
+`Avalonia.Skia` declares an **open-ended minimum** (`SkiaSharp >= 3.119.4`), so a major-version jump
+*satisfies* the constraint: no NU1608, no NU1605, and `TreatWarningsAsErrors=true` had nothing to
+fail on. NuGet's dependency model cannot express "and not a different major". Three routine
+`chore(deps)` bumps had walked Skia 4.148 → 4.150.1 → 4.151.1 while Avalonia stayed on 3.x, and the
+csproj carried **no comment** saying why those two were pinned above what Avalonia asked for — unlike
+the `SQLitePCLRaw` pin two lines below, which has a full paragraph of rationale.
+
+Both versions now live in **one** `PropertyGroup` (`$(SkiaSharpVersion)` / `$(HarfBuzzSharpVersion)`)
+feeding all seven references, so a future bump cannot be applied to some of them and not the others,
+with the recovery command and this incident recorded next to them.
+
+### What is proven, and what is not
+
+Proven: libSkiaSharp accessed out of bounds, caught red-handed. **Not** proven: that the version gap
+*caused* it — there is no PDB for `libSkiaSharp`, so the faulting function is unknown. If crashes
+continue at the aligned versions the hypothesis is refuted and the next step is a Skia bug, not
+another dependency change. Verified so far only that the AOT publish is clean (54.4 MB trimmed, zero
+NuGet warnings, full suite green) and that the native assets really swapped (`libSkiaSharp.dll`
+11.7 → 11.1 MB, `libHarfBuzzSharp.dll` 1.9 → 1.7 MB). ⚠ **A pass here is several quiet sessions, not
+one** — see todo.md, and note the broad rendering regression check: HarfBuzz went back *six* majors.
+
+-----
+
 ## 2026-08-17 - AA12 + AA13: a freeze that applied NOTHING reported clean success (build 3125)
 
 **`pcall` answers "did Lua raise", never "did anything get frozen"** — and on the shipped path no

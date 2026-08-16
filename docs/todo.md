@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **29 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **30 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1433,6 +1433,46 @@ reports them identical. Nothing has desynced.)*
 > the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ NEW 2026-08-17 — SkiaSharp/HarfBuzzSharp ABI alignment: the UI must stop crashing
+
+*Needs the UI running for a while. See dev-log build 3127. **This is the one item on this whole
+register where a PASS is "nothing happened for a few sessions"** — so it cannot be closed by a single
+run, and a crash is worth more than a green session.*
+
+**What was wrong.** `Avalonia.Skia 12.1.1` is built against **SkiaSharp 3.119.4** and
+`Avalonia.HarfBuzz 12.1.1` against **HarfBuzzSharp 8.3.1.3**. Routine `chore(deps)` bumps
+(`5346f907` and two before it) had carried the project to **SkiaSharp 4.151.1** (one major ahead) and
+**HarfBuzzSharp 14.2.1.2** (six ahead). NuGet cannot warn about this — Avalonia's constraint is an
+open-ended minimum, so a major jump *satisfies* it: no NU1608, no NU1605, and
+`TreatWarningsAsErrors=true` never had anything to catch.
+
+**How it was caught, and why the first dump was not enough.** The UI died with
+`0xC0000374` **STATUS_HEAP_CORRUPTION** ~2.3 s after a Copy CE XML on Elliot. That dump named
+nothing: heap corruption surfaces at the *next* heap operation, so its stack is the **detector, not
+the culprit** — it showed only ntdll's heap-error path on the UI thread. Full **page heap**
+(IFEO `GlobalFlag=0x02000000` + `PageHeapFlags=0x3`) converted the next occurrence into an immediate
+`0xC0000005` at **`libSkiaSharp.dll+0x102B8D`** (WER event `AutoVerifierV2`, `verifier.dll` on the
+stack, target address a guard page). That is the whole method: **a heap-corruption dump is worth
+almost nothing; re-run it under page heap.**
+
+1. **⚠ THE REGRESSION CHECK COMES FIRST, AND IT IS BROAD.** Skia and HarfBuzz are what draw and shape
+   *everything*, so a downgrade touches every pixel. Open each tab in turn; look for missing glyphs,
+   wrong metrics, clipped text, DataGrid rows that fail to paint, and check a 繁中 string renders
+   (HarfBuzz went back **six** majors — text shaping is where breakage would show first).
+2. **The original repro, now expected to survive.** Elliot → Live Walker → `GameState` → **Copy CE
+   XML** with AOB on and depth 4, then leave the UI up for several minutes. Two crashes happened
+   within ~14 minutes of each other on the old versions.
+3. **⚠ Do not close this on one clean session.** The old build ran for many sessions before anyone
+   saw it. A pass is several sessions of ordinary use. **A crash is a definitive FAIL** — capture the
+   WER dump and say whether the faulting module is still `libSkiaSharp`.
+4. **Turn page heap OFF before judging performance.** `reg delete "HKLM\SOFTWARE\Microsoft\Windows
+   NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /f`. With it on, everything is slow
+   and memory-hungry; that is the tool, not the build.
+5. **What this does NOT prove.** The page-heap dump proves libSkiaSharp accessed out of bounds. It
+   does **not** prove the version gap *caused* it — there is no PDB for `libSkiaSharp`, so the
+   faulting function is unknown. If crashes continue at the aligned versions, that hypothesis is
+   refuted and the next step is a Skia-side bug, not another dependency change.
 
 ### ⬜ NEW 2026-08-17 — AA12 / AA13: the freeze script must stop lying about success (key: FreezeOutcome)
 
