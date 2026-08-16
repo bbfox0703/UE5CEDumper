@@ -483,6 +483,48 @@ A 40-check Lua rig stubbing CE's globals found 13 real failures in the unfixed f
   its own coverage as the fix improves things (48 checks → 39 on the first green run). Count into one
   assertion instead. Same family as AF1's aliasing fixture in §2.3.
 
+### 2.6 Verify the DLL through the PIPE, not the UI — and check `build_number` first
+
+Learned 2026-08-16 closing the AB4 batch, which had been the top-ranked unverified item.
+
+**The UI is a client, not the subject.** Every DLL-side batch on the verification register can be
+driven by a ~50-line Python client speaking the pipe protocol directly: open the `UE5DumpBfx` named
+pipe as `'r+b', buffering=0`, write `{"id":N,"cmd":...}` + `\n`, read newline-delimited replies and
+match on `id` (async events interleave, so a blind readline will hand you the wrong message). AB4's
+seven steps went from "needs a UI session and a human" to a few minutes of scripted scans. It is also
+**stronger evidence** for a DLL-side claim, because it removes Avalonia as a variable — but say so
+explicitly in the register, since it correspondingly proves nothing about the panel's own bindings.
+
+**Three traps, each of which produces a confident wrong answer:**
+
+- **A game with a deployed proxy IGNORES a fresh injection.** `injectDLL` returns `true`, and then
+  the log says `DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skip`.
+  The OLD proxy keeps serving the pipe. On 2026-08-16 that meant a build-**3122** proxy answering
+  while the freshly built 3156 DLL sat loaded and inert in the same process — i.e. the batch would
+  have "verified" a fix the running code did not contain. **Read `get_pointers.build_number` and
+  compare it against what you just built, before believing any result.** To test a new build, replace
+  the proxy in the game's `Binaries\Win64` and restart the game.
+- **Proxy mode does not scan on load, and `init` does not make it.** A proxy is loaded long before
+  the engine exists, so it deliberately starts the pipe server only
+  (`DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)`). `init` returns
+  `ok:true` in ~0 ms and scans nothing. The client must send **`trigger_scan`** and then poll until
+  `gobjects_method == "aob"`. Skip it and every pointer reads `not_found`, which looks exactly like a
+  broken AOB table on a game that in fact resolves fine.
+- **A result cap silently turns an absence claim into a sample.** `max_results` truncation sets
+  `deadline_hit: true`. "I paged 40,000 rows and saw no 1-byte fields" is not the same claim as
+  "there are none". Re-run with a cap high enough to finish, confirm `deadline_hit:false`, and only
+  then assert over the population. AB4's control step is decisive *only* because it completed —
+  367,401 rows over the full 84,387-object pool, zero 1-byte rows, against 81,547 for the opposite
+  predicate on the same data type. Same pool, same value, opposite predicate: that pairing is the
+  evidence, not either number alone (§1.6).
+
+**And the reason to do this work at all:** running AA4–AA7 step 1 for the first time surfaced
+**AU1** — find-object-by-path had never worked, on any of three APIs that advertised it, because
+`Ubel::GetFullName` emits `//Script/Engine/Actor` while every caller, doc and `.CT` writes
+`/Script/Engine.Actor`. No finder had raised it across five audits, and one of the three was a stub
+returning 0 that `dll-spec.md` documented as working. **Executing a shipped path finds defects that
+reading it does not.**
+
 -----
 
 ## 3. Traps in our own stack

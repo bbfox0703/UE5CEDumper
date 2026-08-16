@@ -3347,6 +3347,21 @@ G3). Read this first; it is written for a session with no memory of that one.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
+> ## ⭐ SIX MEDs ARE PRE-VETTED AND READY TO FIX — 2026-08-16
+>
+> **[audit-2026-08-16-med-rederivation.md](audit-2026-08-16-med-rederivation.md)** holds **PX1, A3,
+> AF3, U3, V3, V4**, each re-derived from source and passed through a refute-mandated skeptic. All
+> six survived; **none is fixed**. The derivation is the expensive half and it is already done —
+> start there rather than re-deriving, but treat each `fix_shape` as a proposal, not an instruction.
+>
+> **Take `PX1` first.** It is the only one whose verification is *offline* (rebuild the proxies,
+> re-parse the export tables), so it does not add to the backlog below. It also grew on
+> re-derivation: the same ordinal-aliasing defect sits on **`version.dll`, the UI's DEFAULT proxy**,
+> with 8 real ordinals bound to our `UE5_*` functions.
+>
+> **`V3` and `V4` must ship together**, and `V4`'s residual-risk section is mandatory reading — the
+> obvious fix silently kills the Go box, Find Refs and every cross-tab handoff.
+
 > ## ⚠ THE BOTTLENECK IS NO LONGER FINDING OR FIXING — IT IS VERIFICATION
 >
 > **Do not open this file looking for the next fix.** Every named clump is closed, the register is
