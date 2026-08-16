@@ -472,8 +472,34 @@ double ReduceRounded(double x, RoundMode m) {
     }
 }
 
+namespace {
+
+// Inclusive value range of an INTEGER member, as exact doubles.
+//
+// Only the 8/16/32-bit members are listed, and that is the whole point: those
+// are the ONLY ones whose fit test can reject a value that parsed at all. A
+// string that parsed as signed already fits Int64 by construction, one that
+// parsed as unsigned fits UInt64, and Float/Double accept anything that parsed
+// as a float — so those four can never reach the "doesn't fit" branch, and there
+// is no case where a double would have to represent a 64-bit bound imprecisely.
+// Returning false means "no verdict is possible here", which keeps today's
+// behaviour rather than guessing.
+bool IntegerMemberRange(DataType dt, double& lo, double& hi) {
+    switch (dt) {
+        case DataType::Int8:   lo = INT8_MIN;  hi = INT8_MAX;   return true;
+        case DataType::UInt8:  lo = 0;         hi = UINT8_MAX;  return true;
+        case DataType::Int16:  lo = INT16_MIN; hi = INT16_MAX;  return true;
+        case DataType::UInt16: lo = 0;         hi = UINT16_MAX; return true;
+        case DataType::Int32:  lo = INT32_MIN; hi = INT32_MAX;  return true;
+        case DataType::UInt32: lo = 0;         hi = UINT32_MAX; return true;
+        default:               return false;
+    }
+}
+
+}  // namespace
+
 bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetSet& out,
-                         RoundMode roundMode) {
+                         RoundMode roundMode, ScanType st) {
     out.entries.clear();
     const auto& members = MultiNumericMembers(metaDt);
     if (members.empty()) return false;
@@ -546,7 +572,16 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
         out.entries.push_back(e);
     };
 
+    // The target as a single comparable number, for the ordered-predicate verdict
+    // below. Preference order matches the parse: an explicit integer reading beats
+    // the float one, which only exists to let "10.9" reach integer members at all.
+    bool   haveScalar = hasSigned || hasUnsigned || hasFloat;
+    double scalar     = hasSigned   ? static_cast<double>(sv)
+                      : hasUnsigned ? static_cast<double>(uv)
+                                    : dv;
+
     for (DataType m : members) {
+        const size_t beforeCount = out.entries.size();
         switch (m) {
             case DataType::Int8:
                 if (hasSigned && sv >= INT8_MIN && sv <= INT8_MAX) {
@@ -592,6 +627,42 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
                 break;
             default:
                 break;
+        }
+
+        // The member emitted nothing: the value has no encoding at this width.
+        // For Exact that is the end of it — nothing of this width can equal the
+        // target. For the ordered predicates it may instead mean the opposite of
+        // "skip": that EVERY value of this width satisfies the comparison.
+        //
+        //   Smaller 500 over Int8   -> every int8 is < 500      -> AlwaysTrue
+        //   Smaller -500 over Int8  -> no int8 is < -500        -> skip (correct)
+        //   Bigger  500 over Int8   -> no int8 is > 500         -> skip (correct)
+        //   Bigger  -500 over Int8  -> every int8 is > -500     -> AlwaysTrue
+        //
+        // The two directions are NOT symmetric, and the old code was right in
+        // exactly half of the four cases — which is why the gate reads like a
+        // working optimisation. It is one, half the time. (audit #5 AB4)
+        //
+        // This also covers the sign leak the finding did not mention: a negative
+        // string suppresses the unsigned parse entirely (see `if (!isNeg)` above),
+        // so `Bigger -5` used to drop every UInt8/UInt16/UInt32 field. Here the
+        // member's own minimum is 0, the target is below it, and the verdict is
+        // AlwaysTrue — which is exactly right.
+        if (out.entries.size() == beforeCount && haveScalar) {
+            // memLo/memHi, not lo/hi: the whitespace trim above already owns those
+            // names in this scope and shadowing them is a C4456.
+            double memLo = 0.0, memHi = 0.0;
+            if (IntegerMemberRange(m, memLo, memHi)) {
+                const bool always = (st == ScanType::Smaller && scalar > memHi)
+                                 || (st == ScanType::Bigger  && scalar < memLo);
+                if (always) {
+                    NumericTargetSet::Entry e;
+                    e.dt  = m;
+                    e.fit = NumericTargetSet::Fit::AlwaysTrue;
+                    std::memset(e.bytes, 0, sizeof(e.bytes));
+                    out.entries.push_back(e);
+                }
+            }
         }
     }
 
@@ -706,6 +777,21 @@ bool CompareFloatScalar(ScanType st, double cur, double a, double b, RoundMode m
 }
 
 }  // namespace
+
+// Entry-taking overload. The AlwaysTrue verdict is honoured HERE, once, so the
+// scan and refine engines in Aura.cpp — which no test target compiles — need only
+// swap Find() for FindEntry() and pass the entry through. (audit #5 AB4)
+bool ComparePredicate(DataType dt, ScanType st,
+                      const uint8_t* rawBytes,
+                      const NumericTargetSet::Entry* target,
+                      const uint8_t* target2Bytes,
+                      RoundMode      roundMode) {
+    // Null is "this width cannot satisfy the predicate" — the caller should have
+    // skipped the field already; false keeps it safe if it did not.
+    if (!target) return false;
+    if (target->fit == NumericTargetSet::Fit::AlwaysTrue) return true;
+    return ComparePredicate(dt, st, rawBytes, target->bytes, target2Bytes, roundMode);
+}
 
 bool ComparePredicate(DataType dt, ScanType st,
                       const uint8_t* rawBytes,

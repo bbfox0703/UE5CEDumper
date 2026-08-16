@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **30 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **31 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1442,6 +1442,37 @@ reports them identical. Nothing has desynced.)*
 > the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ NEW 2026-08-17 — AB4: the Aura half of the ordered-predicate width fix
+
+*Needs a connected game. See dev-log build 3133. **The Radar half is unit-pinned (16 new assertions,
+negative control 6 red); this batch is exactly the half that could not be** — no test target compiles
+`Aura.cpp`, so the wiring from `Find()` to `FindEntry()` across the first-scan, native-C and refine
+paths has never executed against a real object pool.*
+
+1. **⚠ REGRESSION FIRST — an ordinary Exact scan is unchanged.** Value Search → `NumericNoByte` →
+   Exact → a value you know exists → First Scan. `ScanType` now reaches `BuildNumericTargets` but
+   defaults to `Exact`, and Exact must be byte-identical. Compare the row count against a pre-3133
+   build if you can; any change here is a real finding.
+2. **THE FIX, first scan.** `NumericAll` → **Smaller** → `500` → First Scan. The results must now
+   contain **`ByteProperty` / `Int8Property` rows**, which they never did before — every 1-byte field
+   holds a value below 500 by definition. If 1-byte rows are still absent, the Aura wiring did not
+   take. **Record the row count and whether byte-width rows appear**; a count alone proves nothing.
+3. **The sign leak, which the finding never mentioned.** `NumericNoByte` → **Bigger** → `-5`. Every
+   unsigned field satisfies it, so `UInt16`/`UInt32`/`UInt64` rows must appear. They were dropped
+   wholesale before, because a negative string suppresses the entire unsigned parse.
+4. **⚠ The opposite direction must still PRUNE.** `NumericAll` → **Bigger** → `500`: 1-byte rows must
+   be **absent** (no byte exceeds 500). That half of the old gate was correct and the fix must not
+   have widened it into a false-positive machine. This is the control for step 2.
+5. **Refine still works on the new entries.** After step 2's scan, do a **Next Scan** with the same
+   predicate and confirm the byte rows survive and the count narrows sanely. The refine path takes a
+   different branch (`cmpEntry` vs the prev-value `cmpTarget`) and is separately wired.
+6. **Native-C scanning.** Repeat step 2 with **native-C enabled**. Those paths enumerate
+   `multiTargets->entries` directly rather than resolving per member, and were wired separately
+   (`&e` / `&me` instead of `e.bytes`) — a distinct code path with the same intent.
+7. **`Between` is KNOWN-UNFIXED, do not report it as a bug.** Its two bounds are built by two
+   independent calls, so `Between -100 100` still drops unsigned widths. A correct fix needs a joint
+   builder; it is filed, not forgotten.
 
 ### ⬜ NEW 2026-08-17 — SkiaSharp/HarfBuzzSharp ABI alignment: the UI must stop crashing
 

@@ -2015,10 +2015,10 @@ second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside t
 | **AB1** ✅ | HIGH | `Heiter.cpp:274` (DllMain (DLL_PROCESS_ATTACH) → Mimic::StartThread) | DllMain starts a 1 ms-poll thread in EVERY host, including Cheat Engine — and CE FreeLibrary's plugin DLLs, so the thread runs on after the image is unmapped | S / low |
 | **AB2** ✅ | HIGH | `Methode.cpp:307` (OnInjectAndConnect) | InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread **[2 lenses]** | S / low |
 | **AB3** ✅ | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
-| **AB4** | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
+| **AB4** ✅ | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
 | **AB5** ✅ | MED | `Radar.cpp:797` (Radar::CompareVectorPredicate) | The FVector/FRotator scan is hardcoded to 3×float / 12 bytes, so it reads junk on every UE5 (LWC double) game — while the reflected 24-byte size is captured and thrown away | M / med |
 | **AB6** ✅ | MED | `Radar.cpp:1441` (BuildGroupOrderedView::slot0Num / slot0Offset) | Group sort keys read slotMatches[0][0] while the row displays slotMatches[0][picks[0]] — the grid orders by a leaf the user cannot see | S / low |
-| **AB7** | MED | `Radar.h:384` (Radar::Candidate / Radar::InstanceRecord) | A scan session's candidate addresses are raw addresses used as IDENTITY across RPCs; the GObjects index is captured but never validated and no serial witness is stored | M / med |
+| **AB7** | LOW | `Radar.h:384` (Radar::Candidate / Radar::InstanceRecord) | *(MED→LOW on re-derivation, build 3133 — clause 1 REFUTED, and its prescribed fix is the thrice-refused serial witness; see the AB4/AB7 block in §3b. Still OPEN.)* A scan session's candidate addresses are raw addresses used as IDENTITY across RPCs; the GObjects index is captured but never validated and no serial witness is stored | M / med |
 | **AB8** | LOW | `Heiter.cpp:41` (g_hAutoStartThread) | The auto-start thread handle is stored, never waited on and never closed; two comments assert a join that no code performs | S / low |
 | **AB9** | LOW | `Heiter.cpp:234` (DllMain → Sein::Init / Sein::InitProcessMirror) | DllMain does shell32 + unbounded recursive filesystem work (two directory sweeps and possibly a multi-GB remove_all) inline, under the loader lock | M / med |
 | **AB10** | LOW | `Heiter.cpp:268` (DllMain (proxy mutex diagnostic)) | The unarmed-guard warning prints a GetLastError() captured hundreds of API calls after the failure it claims to report | S / low |
@@ -3355,6 +3355,7 @@ live". Nothing is blocked on the maintainer.
 
 | clump | why |
 |---|---|
+| ~~`Radar` **AB4 + AB7**~~ | ✅ **AB4 SHIPPED build 3133.** **AB7 was DOWNGRADED MED→LOW and is still OPEN** — its filed clause 1 is refuted and its prescribed fix is the thrice-refused serial witness. See the block below before touching it. |
 | ~~`ue5_freeze_helper.lua` **AA9 – AA13**~~ | ✅ **AA9 + AA12 + AA13 ALL SHIPPED (builds 3125 / 3129)** (they collapse into ONE defect — see the AA12/AA13 block below). AA9 was a DOC + SAMPLES rewrite, pinned by EXECUTING the sample. **AA10 and AA11 were downgraded to LOW** on re-derivation; this clump is closed. |
 | `Radar` **AB4 + AB7** | `Radar.cpp` is one of only two `.cpp` files a test target actually compiles, so a fix there can be pinned properly. |
 | `Fern` **F2 + F8** | no test target compiles `Fern.cpp`; live-only. |
@@ -3432,6 +3433,74 @@ live". Nothing is blocked on the maintainer.
 > dangles) plus an atomic refcount per call on the very path B10 was written to speed up. Anyone
 > picking this up must budget the refactor, not the LRU.
 
+> ### ⛔ AB7 — DOWNGRADED to LOW, still OPEN, and its prescribed fix is REFUSED (third time)
+>
+> **`SerialNumber` is not an identity witness, and AB7's own text prescribes one** — its defect
+> clause ends *"and no serial witness is stored"*. That is the same prescription
+> [working-lessons.md](working-lessons.md) §4.3 and the cluster-③ STOP-BLOCK above already refuse:
+> UE zeroes it in `FreeUObjectIndex` and allocates it lazily, so most objects carry 0 for life and a
+> stored `(i, 0)` matches a recycled `(i, 0)`. **AB7 makes the trap sharper than AA2 did**, and that
+> is the part worth remembering: `InstanceRecord::instanceIndex` is *already* stored at
+> `Radar.h:435`, so *"we already keep the index — just add the serial next to it"* is a one-line,
+> obvious-looking change that would produce a validator passing on every recycled slot.
+> *(Calibration: §4.3 counts REGISTERS; AB7 is a third FINDING inside audit #5, not a third register.)*
+>
+> **What survives, after two lenses:**
+> - **Clause 1 — "raw addresses used as IDENTITY across RPCs" — REFUTED as stated.** Identity across
+>   RPCs is the POOL INDEX (`Candidate::descriptorIdx` / `instanceIdx`), and the one command that
+>   does key on an address (`CMD_QUERY_GROUP_SLOT_LEAVES`) is careful about it, with a `leaf_addr`
+>   tie-break and an explicit `staleHint` refusal. The address is the *input to the refine's re-read*,
+>   not an identity key.
+> - **Clause 2 — the GObjects index is captured and never validated — VERBATIM TRUE.**
+>   `Radar.h:435` writes it; every read is display or sort. Nothing ever asks
+>   `Aura::GetByIndex(idx) == instanceAddr`.
+> - **Severity is LOW, not MED.** The re-derivation's harm chain over-claimed twice and the skeptic
+>   caught both: a phantom row does **not** survive "every subsequent refine forever" (MallocBinned2
+>   writes an `FFreeBlock` canary into freed small-pool blocks), and the *"Open in Live Walker"*
+>   harm is **already closed in-tree** — `Ubel::WalkInstance` has an explicit recycled-slot gate.
+> - **If it is ever fixed, the shape is known and is NOT a serial:** compose `Aura::GetByIndex(idx)
+>   == instanceAddr` (slot witness) with the **name-bytes** witness build 3065 already shipped
+>   (`Ubel::NameWitness`) — *witness the INPUT BYTES of a memoized decode*. Both per `InstanceRecord`,
+>   not per `Candidate`, which the V3-A interning makes nearly free.
+>
+> ### ✅ AB4 (build 3133) — the gate is right half the time, which is why it reads as an optimisation
+>
+> **`BuildNumericTargets` asked "does the target FIT this width", which is correct for `Exact` and
+> wrong for the ordered predicates.** Every Int16 field is smaller than 70000, but 70000 has no int16
+> encoding, so no `Int16` entry was emitted and `Aura`'s `multiResolve` skipped **every 2-byte field
+> in the pool** — no error, no warning, no log line. The four cases are **not symmetric**, and the old
+> code was right in exactly two of them, which is why the gate reads like a working optimisation:
+>
+> | | target above the width's max | target below its min |
+> |---|---|---|
+> | **Smaller** | every value matches → **was dropped (the bug)** | none match → dropped ✓ |
+> | **Bigger** | none match → dropped ✓ | every value matches → **was dropped (the bug)** |
+>
+> - **Clamping is the trap, and it looks like it works.** `Smaller 500` clamped to Int8's 127 becomes
+>   `cur < 127` — `ApplyOrdered`'s `Smaller` is a **strict** `<` — so it silently drops the field
+>   holding exactly 127. It restores ~99.6% of the missing rows and re-introduces the same class of
+>   silent loss in a form far harder to see. **There is no int8 byte pattern meaning `cur <= 127`**,
+>   so the answer cannot live in a fixed-width buffer at all. Hence a *verdict*: `Fit::AlwaysTrue`.
+> - **The re-derivation's own fix shape was broken and the skeptic caught it:** it put the verdict on
+>   `Entry` while the consumers look up through `Find()`, which returns `const uint8_t*` — the flag
+>   could never have been seen. Shipped instead as `FindEntry()` plus an `Entry`-taking
+>   `ComparePredicate` overload, so the verdict is honoured **once, in `Radar.cpp`** — the file
+>   `dll_helpers_test` compiles — and `Aura.cpp`, which no test target compiles, gets a mechanical
+>   `Find` → `FindEntry` substitution with nothing to get wrong.
+> - **The SIGN domain was the bigger leak and the finding never mentioned it.** A negative string
+>   suppresses the whole unsigned parse, so `Bigger -5` used to drop every `UInt16`/`UInt32`/`UInt64`
+>   field although every unsigned value satisfies it. The same verdict covers it for free: the
+>   member's minimum is 0, the target is below it.
+> - **`Between` is deliberately NOT fixed** — its two bounds are built by two *independent*
+>   `BuildNumericTargets` calls at four call sites, and `ApplyOrdered` normalises reversed bounds at
+>   compare time, so which one is the lower bound is not even known at build time. A correct fix needs
+>   a joint builder. Recorded in todo.md rather than half-done.
+> - `Fit::AlwaysTrue` entries are hidden from `Find()` on purpose: handing out their zeroed buffer
+>   would compare against 0, which is wrong in a newer and quieter way than the bug being fixed.
+>
+> 16 new C++ assertions (1166 → **1182**); negative control (verdict forced to `false`) **6 red**.
+> ⚠ **The Aura half is unverified** — no test target compiles `Aura.cpp`. See todo.md.
+>
 > ### ✅ AA12 + AA13 (build 3125) — they are ONE defect, and two of their neighbours moved
 >
 > Re-derived with five agents + five refute-mandated skeptics before a line was changed, and the
@@ -3478,7 +3547,7 @@ live". Nothing is blocked on the maintainer.
 > **Unproven on a real Cheat Engine** — the rig stubs CE, so the emitted script's behaviour in a live
 > CE (window stays open, record stays ticked/unticked correctly) is in todo.md's register.
 
-**Current register: 189 open of 287 · 0 HIGH · 27 MED · 135 LOW · 27 INFO.** Re-derive with
+**Current register: 188 open of 287 · 0 HIGH · 25 MED · 136 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —

@@ -22,6 +22,66 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AB4: a width gate that is right for Exact and wrong for ordering (build 3133)
+
+**`BuildNumericTargets` asked "does the target FIT this width".** Correct for `Exact` — a value that
+does not fit cannot equal a field of that width — and **wrong for `Smaller`/`Bigger`**, where the
+question is whether *any* value of the width can satisfy the comparison. Every `Int16` field is
+smaller than 70000, but 70000 has no int16 encoding, so no `Int16` entry was emitted and `Aura`'s
+`multiResolve` skipped **every 2-byte field in the pool**. No error, no warning, no log line.
+
+The four cases are **not symmetric**, and the old code was right in exactly two — which is why the
+gate reads like a working optimisation:
+
+| | target above the width's max | target below its min |
+|---|---|---|
+| **Smaller** | every value matches → **dropped (the bug)** | none match → dropped ✓ |
+| **Bigger** | none match → dropped ✓ | every value matches → **dropped (the bug)** |
+
+**The SIGN domain was the bigger leak and the finding never mentioned it.** A negative string
+suppresses the whole unsigned parse, so `Bigger -5` dropped every `UInt16`/`UInt32`/`UInt64` field
+although every unsigned value satisfies it.
+
+### Clamping is the trap, and it looks like it works
+
+`Smaller 500` clamped to Int8's 127 becomes `cur < 127` — `ApplyOrdered`'s `Smaller` is a **strict**
+`<` — so it silently drops the field holding exactly 127. It restores ~99.6% of the missing rows and
+re-introduces the same class of silent loss in a form far harder to find. **There is no int8 byte
+pattern meaning `cur <= 127`**, so the answer cannot live in a fixed-width buffer: it has to be a
+verdict. Hence `Fit::AlwaysTrue`, and `Find()` deliberately **hides** such entries — handing out
+their zeroed buffer would compare against 0, wrong in a quieter way than the bug.
+
+### The re-derivation's own fix shape was broken, and the skeptic caught it
+
+It put the verdict on `Entry` while every consumer looks up through `Find()`, which returns
+`const uint8_t*` — the flag could never have been seen. (Its own `wrong_obvious_fix` section argued
+the repair "cannot live inside the fixed-width buffer" and then put it there.) Shipped instead as
+`FindEntry()` plus an `Entry`-taking `ComparePredicate` overload, so **the verdict is honoured once,
+in `Radar.cpp`** — the file `dll_helpers_test` compiles — and `Aura.cpp`, which no test target
+compiles, gets a mechanical `Find` → `FindEntry` substitution with nothing to get wrong. That split
+was the maintainer's call and it is the right general rule for this tree.
+
+`Between` is **deliberately not fixed**: its two bounds are built by two *independent* calls at four
+call sites, and `ApplyOrdered` normalises reversed bounds at compare time, so which is the lower
+bound is not known at build time. A correct fix needs a joint builder — filed, not half-done.
+
+16 new C++ assertions (1166 → **1182**), including the boundary case clamping would have dropped.
+Negative control (verdict forced to `false`) **6 red**. ⚠ The Aura half is unverified — 7 steps in
+todo.md, with step 4 as the control that the pruning half still prunes.
+
+### AB7 was downgraded, not fixed — and its prescription refused for the third time
+
+Its defect text ends *"no serial witness is stored"*, i.e. it prescribes storing one. That is the
+prescription working-lessons §4.3 already refuses twice. **AB7 makes the trap sharper**:
+`InstanceRecord::instanceIndex` is *already* stored, so "just add the serial next to it" is a
+one-line change that would produce a validator passing on every recycled slot. Clause 1 ("raw
+addresses used as identity across RPCs") is **refuted** — identity is the pool index. Clause 2 (the
+index is captured and never validated) is verbatim true, but the harm chain over-claimed twice and
+one downstream harm is already closed in-tree by `Ubel::WalkInstance`'s recycled-slot gate.
+**MED → LOW, still open**, with the correct shape recorded for whoever takes it.
+
+-----
+
 ## 2026-08-17 - CORRECTION: the Skia crash IS symbolizable, and it is path geometry (build 3131)
 
 **Correcting build 3127's entry, which said "there is no PDB for `libSkiaSharp`, so the faulting

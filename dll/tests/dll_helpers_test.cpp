@@ -580,6 +580,90 @@ static void Test_ValueScan_BuildNumericTargets() {
         EXPECT("-5 has NO UInt32", ts.Find(DT::UInt32) == nullptr);
         EXPECT("-5 has NO UInt64", ts.Find(DT::UInt64) == nullptr);
     }
+    // ---- audit #5 AB4 -------------------------------------------------------
+    // "Does the target fit this width" is right for Exact and WRONG for the
+    // ordered predicates. Every Int16 field is smaller than 70000, but 70000 has
+    // no int16 encoding, so the old set emitted no Int16 entry and the engines
+    // skipped every 2-byte field. The four directions are NOT symmetric.
+    {
+        using ST = Radar::ScanType;
+        using Fit = Radar::NumericTargetSet::Fit;
+
+        // Smaller: a target ABOVE the width's max matches every value of it.
+        Radar::NumericTargetSet lo;
+        EXPECT("AB4 Smaller(70000) ok",
+               Radar::BuildNumericTargets(DT::NumericNoByte, "70000", lo,
+                                          Radar::RoundMode::Round, ST::Smaller));
+        const auto* i16 = lo.FindEntry(DT::Int16);
+        EXPECT("AB4 Smaller(70000) keeps Int16", i16 != nullptr);
+        EXPECT("AB4 Smaller(70000) Int16 is AlwaysTrue",
+               i16 && i16->fit == Fit::AlwaysTrue);
+        EXPECT("AB4 Smaller(70000) UInt16 is AlwaysTrue",
+               lo.FindEntry(DT::UInt16) &&
+               lo.FindEntry(DT::UInt16)->fit == Fit::AlwaysTrue);
+        // An in-range width is untouched — still a real encoded target.
+        EXPECT("AB4 Smaller(70000) Int32 still Encoded",
+               lo.FindEntry(DT::Int32) &&
+               lo.FindEntry(DT::Int32)->fit == Fit::Encoded);
+        // Find() must NOT hand out the zeroed buffer of an AlwaysTrue entry:
+        // comparing against 0 would be wrong in a quieter way than the bug.
+        EXPECT("AB4 Find() hides an AlwaysTrue entry", lo.Find(DT::Int16) == nullptr);
+
+        // Bigger with the SAME value is the opposite answer: nothing 16-bit
+        // exceeds 70000, so skipping is correct and must be preserved.
+        Radar::NumericTargetSet hi;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "70000", hi,
+                                   Radar::RoundMode::Round, ST::Bigger);
+        EXPECT("AB4 Bigger(70000) still drops Int16", hi.FindEntry(DT::Int16) == nullptr);
+        EXPECT("AB4 Bigger(70000) still drops UInt16", hi.FindEntry(DT::UInt16) == nullptr);
+
+        // The sign leak the finding did not mention: a negative string suppresses
+        // the unsigned parse entirely, so `Bigger -5` used to drop every unsigned
+        // width. Every unsigned value IS bigger than -5.
+        Radar::NumericTargetSet neg;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-5", neg,
+                                   Radar::RoundMode::Round, ST::Bigger);
+        EXPECT("AB4 Bigger(-5) keeps UInt16 as AlwaysTrue",
+               neg.FindEntry(DT::UInt16) &&
+               neg.FindEntry(DT::UInt16)->fit == Fit::AlwaysTrue);
+        EXPECT("AB4 Bigger(-5) keeps UInt32 as AlwaysTrue",
+               neg.FindEntry(DT::UInt32) &&
+               neg.FindEntry(DT::UInt32)->fit == Fit::AlwaysTrue);
+        // ...and Smaller(-5) is the opposite: no unsigned value is below -5.
+        Radar::NumericTargetSet neg2;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "-5", neg2,
+                                   Radar::RoundMode::Round, ST::Smaller);
+        EXPECT("AB4 Smaller(-5) still drops UInt16", neg2.FindEntry(DT::UInt16) == nullptr);
+
+        // Exact is the default and must be byte-identical to before: no verdicts.
+        Radar::NumericTargetSet ex;
+        Radar::BuildNumericTargets(DT::NumericNoByte, "70000", ex);
+        EXPECT("AB4 Exact(70000) unchanged: no Int16", ex.FindEntry(DT::Int16) == nullptr);
+        EXPECT("AB4 Exact(70000) unchanged: Int32 Encoded",
+               ex.FindEntry(DT::Int32) &&
+               ex.FindEntry(DT::Int32)->fit == Fit::Encoded);
+
+        // The predicate honours the verdict without reading a target, and the
+        // boundary value that CLAMPING would have dropped is kept: an int16 of
+        // exactly 32767 is smaller than 70000.
+        int16_t edge = 32767;
+        EXPECT("AB4 predicate: 32767 < 70000 via AlwaysTrue",
+               Radar::ComparePredicate(DT::Int16, ST::Smaller,
+                                       reinterpret_cast<const uint8_t*>(&edge),
+                                       lo.FindEntry(DT::Int16)));
+        // A null entry stays false rather than matching everything.
+        EXPECT("AB4 predicate: null entry is false",
+               !Radar::ComparePredicate(DT::Int16, ST::Bigger,
+                                        reinterpret_cast<const uint8_t*>(&edge),
+                                        hi.FindEntry(DT::Int16)));
+        // An Encoded entry still compares normally through the same overload.
+        int32_t v32 = 69999;
+        EXPECT("AB4 predicate: Encoded path still compares",
+               Radar::ComparePredicate(DT::Int32, ST::Smaller,
+                                       reinterpret_cast<const uint8_t*>(&v32),
+                                       lo.FindEntry(DT::Int32)));
+    }
+
     // "100.5" is non-integral. Float/Double keep the exact 100.5; integer widths
     // are COERCED to the displayed integer via the rounding mode (build 1672) —
     // default Round: round(100.5)=101 (half-away). So it now fits all 8 widths.

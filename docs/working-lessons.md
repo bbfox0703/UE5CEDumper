@@ -1037,7 +1037,14 @@ is identical (the user sees a field in Live Walker, no scan returns it) but one 
 never enumerated" and the other is "it matched and the row could not show it". Neither logs an error;
 both read as a healthy scan.
 
-**Check these two, in this order:**
+> ⚠ **UPDATED 2026-08-17 (build 3133): there is now a THIRD cause and it IS in the scanner.** The
+> "neither of them in the scanner" line above was true when written and is no longer a safe prior —
+> audit #5 **AB4** was a real scanner defect with this exact symptom. Check cause 3 below **when the
+> scan type is `Smaller` or `Bigger`**, because it is free to rule out and it is width-shaped: the
+> missing rows are all of one WIDTH (every `ByteProperty`, or every `UInt32Property`), not one class
+> or one object. Causes 1 and 2 lose rows by object; this one loses them by type.
+
+**Check these three, in this order:**
 
 1. **Was the object even enumerated?** `find_by_address` on the live object settles it in one call.
    `index: -1, match_kind: "backward"` for the instance while its CDO resolves
@@ -1062,9 +1069,24 @@ both read as a healthy scan.
    the other reads as missing. Two rules did survive as tie-breaks: prefer a same-struct sibling, and
    **non-zero beats zero** ("a 0 has little real meaning in a game", maintainer, 2026-08-05).
 
+3. **Is the scan type ORDERED, and are the missing rows all one WIDTH?** (audit #5 AB4, fixed 3133 —
+   listed because the *shape* recurs, not because this instance is still live.) `BuildNumericTargets`
+   asked "does the target fit this width", which is right for `Exact` and wrong for `Smaller`/`Bigger`:
+   every `Int16` field is smaller than 70000, but 70000 has no int16 encoding, so no `Int16` entry was
+   emitted and every 2-byte field was skipped. **The tell is that the loss is by TYPE, not by object**
+   — all byte fields gone, or all unsigned fields gone, while the same scan finds 32-bit fields on the
+   same objects. Two live gaps of the same shape remain: **`Between`** still drops widths its upper
+   bound cannot encode (its two bounds are built independently — see todo.md), and a **hex** input
+   (`0x1F4`) still emits no Float/Double entries.
+   The lesson underneath: **a range gate that is correct for equality is usually wrong for ordering,
+   and it is invisible because it is right half the time** — pruning `Bigger 70000` off Int16 is a
+   genuine optimisation produced by the very same line, so the code reads as working.
+
 The witness rule lives in `Radar::PickGroupWitnessAssignment`, deliberately beside the filter it must
 agree with, because while it sat in `Fern.cpp`'s JSON encoder **no test target compiled it** and it kept
-drifting. **Check that a rule you are about to move is somewhere a test can reach.**
+drifting. **Check that a rule you are about to move is somewhere a test can reach.** AB4 was split the
+same way and for the same reason: the verdict logic went into `Radar.cpp` (compiled by
+`dll_helpers_test`) so `Aura.cpp` — compiled by nothing — was left a mechanical substitution.
 
 -----
 
