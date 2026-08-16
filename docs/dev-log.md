@@ -22,6 +22,82 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AE4-AE7: the Proxy Deploy panel gets a guard that is actually one (build 3038)
+
+**Audit #5 queue ③.** `IsScanning`'s own declaration already called itself *"the mutual-exclusion
+guard"* — it just was not one. Three of the eight long operations **set** it while six **tested**
+it, so the guard was one-directional: a scan blocked a deploy, a deploy blocked nothing.
+
+### What re-deriving changed about the fix
+
+Two premises needed narrowing before any code was written, and one new defect turned up in the same
+handler:
+
+- **AE6's scope was too wide.** `AsyncRelayCommand` reports `CanExecute == false` while it runs and
+  Avalonia's Button gates on that, so a command already could not re-enter **itself** from its own
+  button. Measured against the resolved package (8.4.2) with a scratch probe rather than recalled:
+  `ExecuteAsync` twice → both bodies entered, but `CanExecute` was `false` throughout. So
+  Deploy-vs-Deploy was never reachable from the UI; the gap is strictly **cross-command** — two
+  different buttons, plus the paths no button owns (a property-changed handler, a hotkey, a test).
+- **AE4's mechanism was "the loser's proxy type wins".** Not derivable: each refresh captures its
+  arguments at call time and applies its whole batch in one synchronous pass, so rows never mix.
+  The true claim is **last writer wins, with nothing checking that the winner matches the radio.**
+- **AE5's "six guards" is right but three of them are well-formed** self-exclusion. Only four
+  readers never set it.
+- **Found while verifying, in the same handler:** `OnScanDrivesModeChanged` fires
+  `LoadDrivesCommand.Execute(null)`, and `ICommand.Execute` does not consult `CanExecute` either.
+  `LoadDrivesAsync` sets no flag and its trigger condition (`Drives.Count == 0`) stays true until
+  the load *completes*, so toggling the source radio off and on during it starts a second load
+  whose `Drives.Clear()` discards the `DetectedDrive` instances the user has already ticked —
+  **the drive selection silently resets.**
+
+### The repair
+
+- **One gate, `TryBeginExclusive`, held by all eight operations** via an `IDisposable` scope, so an
+  early return or a throw cannot leave the panel wedged — which is how the flag came to be set by
+  only three of the operations that test it. `IsScanning` now has exactly **one** writer.
+  `ScanAsync` gains an entry guard it never had, which is what let it `Games.Clear()` under a
+  running Update All. The refusal message names the operation actually running, instead of always
+  saying *"Wait for scan to finish"* when no scan was running.
+- **AE4: cancel the superseded refresh, then correct the grid if the radio moved on.** The CTS
+  supersede is the idiom `InstanceFinderViewModel:242` already uses. The correction is the half the
+  negative control forced: cancellation stops a refresh that is still *computing*, but the service
+  writes the grid **after** its cancellable worker returns, so a cancel landing in that window is
+  too late and the stale write goes through anyway.
+- **AE7: snapshot `Games` before the loop, and catch.** `UpdateAllAsync` had no `catch` at all and
+  is an `AsyncRelayCommand`, so a faulted task on the button path is rethrown onto the UI thread —
+  a crash risk, not merely a tally that never appeared. Cancelling now reports what *did* get
+  updated, because N folders are no longer uniform and the user needs to know.
+- **`LoadDrivesAsync` gets a re-entry guard.**
+
+### The negative controls did real work
+
+Four controls, one per finding — and **two of them found bugs in the fix**:
+
+1. **The AE4 control passed**, which meant the test was not pinning the correction at all: the stub
+   completed refreshes synchronously, so two were never in flight. Rebuilt so the test parks both
+   and releases them in **reverse** order — and the fix then failed, because the guard I had
+   written (`!ct.IsCancellationRequested`) blocked the correction on precisely the call that needs
+   it: the superseded one, whose token is by definition the cancelled one.
+2. **The AE7 snapshot control passed** because the new `catch` masked it. Tightened to assert the
+   *success* tally, which is the only wording that means the loop ran to the end.
+3. The first gate control **deadlocked the suite** rather than failing — a refused command that
+   stops being refused parks on the same test gate. The refusal awaits are now bounded, so a
+   regression fails in 10 s with a clear message instead of hanging.
+
+Final: reverting the gate → **3 red**; reverting AE4's correction → **1 red**; reverting AE7's
+snapshot → **1 red**. All green on restore. C# **3896** (was 3885), C++ 246 + 1073, AOT publish
+clean.
+
+**Not in this change, deliberately:** `DeleteSelectedOrphansAsync` was already well-formed (it sets
+`IsRemovingOrphans`, which the gate now tests), and the three other fire-and-forget
+`_ = ApplyProxySuggestionsAsync()` sites plus their siblings in `InterestingFunctionsViewModel` and
+`RelatedObjectsViewModel` are separate findings — `ApplyProxySuggestionsAsync` also has four
+legitimately-awaited callers, so a generation guard there must supersede only the fire-and-forget
+path or the awaited ones silently no-op.
+
+-----
+
 ## 2026-08-17 - AA4-AA7: ue5_dissect.lua stops reporting failure as success (build 3037)
 
 **Audit #5 queue ②**, and the first fix in this repo written against a Lua test rig that RUNS the

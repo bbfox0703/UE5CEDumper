@@ -1640,10 +1640,10 @@ finders did not over-rate anything. Three MEDs re-derived by hand.
 | **AE1** ✅ | MED | `FieldValueConverter.cs:198` (FieldValueConverter.TryConvertByte / TryConver) | An enum-backed field silently truncates an out-of-range value and reports the untruncated number as written | S / low |
 | **AE2** | MED | `ClassStructViewModel.cs:192` (OnObjectSelected) | Object-Tree selection drives Class/Struct through an async-void handler with NO generation guard, and the two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node | S / low |
 | **AE3** | MED | `ClassStructViewModel.cs:218` (OnObjectSelected) | The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry **[2 lenses]** | S / low |
-| **AE4** | MED | `ProxyDeployViewModel.cs:236` (OnSelectedProxyTypeChanged / RefreshAfterTypeC) | Two rapid proxy-radio clicks race two fire-and-forget refreshes; the loser's proxy type wins the grid and nothing ever re-runs | S / low |
-| **AE5** | MED | `ProxyDeployViewModel.cs:1073` (RefreshAsync) | IsScanning is READ as a global busy flag by six guards but WRITTEN by only three of eight operations - Refresh/Deploy/Undeploy/UpdateAll are invisible to every guard | S / low |
-| **AE6** | MED | `ProxyDeployViewModel.cs:1106` (DeploySelectedAsync / UndeploySelectedAsync / ) | The four file-mutating Proxy Deploy commands set no busy flag, only TEST one — so Deploy and Undeploy run concurrently over the same Binaries folder and both write the single result line | S / low |
-| **AE7** | MED | `ProxyDeployViewModel.cs:1233` (UpdateAllAsync) | UpdateAllAsync iterates the live Games ObservableCollection across awaits while a concurrent scan can Games.Clear() it - and the method has no catch, so the tally is never reported **[2 lenses]** | S / low |
+| **AE4** ✅ | MED | `ProxyDeployViewModel.cs:236` (OnSelectedProxyTypeChanged / RefreshAfterTypeC) | Two rapid proxy-radio clicks race two fire-and-forget refreshes; the loser's proxy type wins the grid and nothing ever re-runs | S / low |
+| **AE5** ✅ | MED | `ProxyDeployViewModel.cs:1073` (RefreshAsync) | IsScanning is READ as a global busy flag by six guards but WRITTEN by only three of eight operations - Refresh/Deploy/Undeploy/UpdateAll are invisible to every guard | S / low |
+| **AE6** ✅ | MED | `ProxyDeployViewModel.cs:1106` (DeploySelectedAsync / UndeploySelectedAsync / ) | The four file-mutating Proxy Deploy commands set no busy flag, only TEST one — so Deploy and Undeploy run concurrently over the same Binaries folder and both write the single result line | S / low |
+| **AE7** ✅ | MED | `ProxyDeployViewModel.cs:1233` (UpdateAllAsync) | UpdateAllAsync iterates the live Games ObservableCollection across awaits while a concurrent scan can Games.Clear() it - and the method has no catch, so the tally is never reported **[2 lenses]** | S / low |
 | **AE8** ✅ | MED | `ValueSearchViewModel.cs:752` (FirstScanAsync / NextScanAsync) | The DiagnosticsProbe is opened BEFORE the input validation, so every rejected click costs two get_diagnostics round-trips and logs a "Value Scan (First)" measurement for a scan that never ran | S / low |
 | **AE9** ✅ | MED | `ValueSearchViewModel.cs:906` (NewScanAsync / GroupNewScanAsync) | New Scan resets the internal sort key but not the bound Sort picker, and re-selecting the option the picker already shows is a silent no-op | S / low |
 | **AE10** ✅ | MED | `ValueSearchViewModel.cs:951` (ValueSearchViewModel.IsGWorldAvailable) | The "stop gating Locate-in-GWorld on the client IsGWorldAvailable flag" fix is applied at Value Search only — **7** sibling VMs still gate on it, at 19 sites: 14 C# + 5 XAML (recounted 2026-08-15; the earlier "9" counted `LiveWalkerViewModel`'s write-only dead flag and `MainWindowViewModel`'s propagation assignments as gates) | M / low |
@@ -2654,8 +2654,8 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**207 of 277 findings are still open** (70 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 48 MED ·
+**203 of 277 findings are still open** (74 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 44 MED ·
 132 LOW · 27 INFO**.
 
 > ⚠ **This drifted a SECOND time, 2026-08-17, the same way as the first.** Queue items ① and ②
@@ -2989,6 +2989,41 @@ W5: CSX's `IsObjectPropertyType` excludes Weak and CE-XML gives it a hex leaf re
 
 ---
 
+### ⚠ AE4/AE6 — narrowed on re-derivation, and one NEW defect in the same handler (fixed 3038)
+
+*Queue ③, re-derived 2026-08-17 before fixing. Nothing here was refuted outright, but two scopes
+were wrong in ways that would have produced the wrong fix.*
+
+- **AE6's scope was too WIDE.** `AsyncRelayCommand` reports `CanExecute == false` while it runs and
+  Avalonia's Button gates on that, so a command already could not re-enter **itself** from its own
+  button. Measured against the resolved package (CommunityToolkit.Mvvm **8.4.2**, from
+  `obj/project.assets.json` — the csproj pins only `8.*`) with a scratch console probe, because a
+  remembered library default is not evidence: `ExecuteAsync` twice → **both bodies entered**, but
+  `CanExecute` was `false` throughout. So "Deploy and Undeploy run concurrently" is real while
+  "two Deploys" is not, and the gate only needs to cover **cross-command** overlap plus the paths
+  no button owns.
+- **AE4's mechanism, "the loser's proxy type wins", is not derivable.** Each refresh captures its
+  arguments at call time and applies its whole batch in one synchronous pass, so rows never
+  interleave. The accurate claim is **last writer wins, and nothing checks the winner against the
+  radio** — which is also why the repair needs a post-await correction and not just a cancel.
+- **AE5's "six guards" is right, but three are well-formed.** `:414` and `:547` belong to
+  operations that DO set the flag (self-exclusion), and `:757` pairs with `IsRemovingOrphans`. Only
+  four readers never set anything.
+- **NEW, found while verifying AE4, same handler:** `OnScanDrivesModeChanged` fires
+  `LoadDrivesCommand.Execute(null)`, and `ICommand.Execute` does not consult `CanExecute` either.
+  `LoadDrivesAsync` sets no flag and its trigger (`Drives.Count == 0`) stays true until the load
+  COMPLETES, so toggling the source radio off and on mid-load starts a second one whose
+  `Drives.Clear()` throws away the `DetectedDrive` instances the user has already ticked —
+  **the drive selection silently resets.** Fixed with the group.
+
+**The negative controls found two bugs in the fix itself**, which is the part worth carrying
+forward. The AE4 control PASSED, meaning the test was not pinning the correction: the stub
+completed refreshes synchronously so two were never in flight. Rebuilt to park both and release in
+reverse order, the fix then FAILED — the guard `!ct.IsCancellationRequested` blocked the correction
+on precisely the call that needs it, the superseded one, whose token is by definition the cancelled
+one. Separately the AE7 snapshot control passed because the new `catch` masked it; the assertion
+now demands the SUCCESS tally, the only wording that means the loop ran to the end.
+
 ### ⚠ AA4 — its PREMISE was REFUTED; the CONSEQUENCE was real (fixed build 3037)
 
 *Re-derived 2026-08-17 before fixing, per this audit's own rule that MED rows carry the
@@ -3271,7 +3306,7 @@ block — start at ①, no re-derivation needed.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**Current register: 207 open of 277 · 0 HIGH · 48 MED · 132 LOW · 27 INFO.** Re-derive before
+**Current register: 203 open of 277 · 0 HIGH · 44 MED · 132 LOW · 27 INFO.** Re-derive before
 trusting it (the command is at the top of §3c) — never hand-tally.
 
 **Everything below is an already-vetted MED.** They are grouped so each ① – ⑥ is ONE fix pass over
@@ -3282,7 +3317,7 @@ unless the maintainer says otherwise; each group is a session's worth or less.
 |---|---|---|---|
 | ~~①~~ ✅ | ~~**AB3 + AB5**~~ | `Radar.cpp:288`, `:797` | ✅ **SHIPPED build 3035.** Width is now read per FIELD from the reflected `ElementSize` (`Radar::DecodeVectorBytes` + `FieldDescriptor::vectorWidth`), `SizeOf` returns 0 for vectors, the predicate takes decoded triples, and `prevValue` holds one canonical 3-double form. Negative control: 7 assertions red on revert. **Unproven on a UE5 game — 5 steps in todo.md.** |
 | ~~②~~ ✅ | ~~**AA4 + AA5 + AA6 + AA7**~~ | `ue5_dissect.lua:53, 63, 173, 289` | ✅ **SHIPPED build 3037.** `callDLL` now RAISES rather than returning nil (one contract, no call site needs a check), both CE-registered callbacks are barriered so nothing escapes into CE, `createFromClass` unwinds a failed build, and `fillGaps` + its three doc claims are deleted. Pinned by the new `scripts/tests/dissect_test.lua` (40 checks); **13 failures against the unfixed file.** ⚠ **Two premises were REFUTED on re-derivation — see the AA4 block below.** |
-| ③ | **AE4 + AE5 + AE6 + AE7** | `ProxyDeployViewModel.cs:236, 1073, 1106, 1233` | One file, one root cause: **`IsScanning` is READ as a global busy flag by six guards and WRITTEN by three of eight operations.** So Deploy and Undeploy can run concurrently over the same `Binaries` folder and both write the single result line, two rapid radio clicks race two fire-and-forget refreshes (the loser's proxy type wins the grid and nothing re-runs), and `UpdateAllAsync` iterates the live `Games` collection across awaits while a concurrent scan can `Clear()` it — with no `catch`, so the tally is never reported. Pure C#, fully testable. |
+| ~~③~~ ✅ | ~~**AE4 + AE5 + AE6 + AE7**~~ | `ProxyDeployViewModel.cs:236, 1073, 1106, 1233` | ✅ **SHIPPED build 3038.** One `TryBeginExclusive` gate held by all eight operations via an IDisposable scope; `IsScanning` now has ONE writer. AE4 = CTS supersede + a post-await correction. AE7 = snapshot + the catch it never had. Pinned by the new `ProxyDeployConcurrencyTests` (11 cases). ⚠ **Two premises were narrowed on re-derivation and the controls found two bugs in the fix** — see the AE6 block below. |
 | ④ | **AA14 – AA20** | `ue5_invoke_helper.lua:215, 223, 293, 308, 363, 464, 512` | Seven findings, one file, all on the same invoke path: unchecked `allocateMemory` shipping `{Data=nullptr, Num=n+1}` into a live UFunction call (AA14/15); five param-type tokens `BakedScriptGenerator` can emit that `writeParams` never accepted, aborting the whole invoke at CE runtime (AA16); a params buffer zeroed only to the CALLER's `parmsSize` while the DLL hands ProcessEvent all 1024 bytes, so stale bytes become live parameters (AA17); a timeout that reports the STALE `errorMsg` left by an earlier command (AA18 — the guessed diagnosis CLAUDE.md forbids); the reentrancy flag cleared on the timeout path *while the DLL still owns the mailbox* (AA19); and unsigned int32/int16 return decoding, so a UFunction returning -1 reads as 4295067295 (AA20). Also locally executable. |
 | ⑤ | **U4 + U5 + U6 + F3** | `Ubel.cpp:818, 683, 411` · `Fern.cpp:1068` | §4's **cluster ③** — *a cache keyed by an address the engine recycles, never invalidated*. The audit's own verdict: **"One fix pattern, not five"** — store an `(InternalIndex, SerialNumber)` witness and validate it on hit, the pair UE itself uses to detect a recycled slot. F3 additionally wants a one-line `Ubel::ClearNameCache()` in Fern's `if (last)` teardown, which the witness pattern does not cover. Bigger than ① – ④ (M/med), which is why it is not first. |
 | ⑥ | **AE2 + AE3** | `ClassStructViewModel.cs:192, 218` | One handler. Object-Tree selection drives Class/Struct through an `async void` with **no generation guard**, and its two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node. The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry. |

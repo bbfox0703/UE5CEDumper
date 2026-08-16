@@ -15,7 +15,7 @@ Open work only. **Read this when deciding what to do next.**
 >   ordinary session, 1 needs no game at all). **Offer these whenever the maintainer has a game up.**
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-17: **207 audit findings open of 277 · 0 HIGH · 48 MED**. Nothing is
+> State as of 2026-08-17: **203 audit findings open of 277 · 0 HIGH · 44 MED**. Nothing is
 > blocked on a maintainer decision any more (A6 was the last, and it is decided and shipped).
 > Re-derive the count with `py tools/check_audit_register.py --list` — never hand-tally.
 
@@ -1421,6 +1421,32 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — AE4–AE7: the Proxy Deploy panel, two buttons at once
+
+*No game needed — just the UI and a folder with a couple of detected games. See dev-log build 3038.
+Every step is a click sequence; the unit tests cover the logic, not what the panel looks like doing it.*
+
+1. **Two operations no longer overlap.** Scan for games, tick a couple, press **Deploy** and then
+   immediately **Remove**. The second must refuse with a line naming what is running
+   (*"Busy: Deploy is running…"*) — not the old *"Wait for scan to finish"* when no scan is running,
+   and not both operations writing over the same `Binaries` folder.
+2. **The busy indicator finally appears for them.** The panel's progress bar is bound to
+   `IsScanning`, which Deploy / Remove / Refresh / Update All never set — so they used to look like
+   nothing was happening. Confirm the bar now runs during each of the four.
+3. **⚠ REGRESSION — the three scans still work and still cancel.** Scan Steam, Scan drives (+ its
+   Cancel button), Find leftovers (+ its Cancel). The gate took over `IsScanning` from all three, and
+   `IsScanningDrives` / `IsScanningOrphans` still drive the two Cancel buttons independently — a
+   ghost Cancel on the wrong card is the failure to watch for (it is what B45 fixed originally).
+4. **⚠ REGRESSION — leftover removal is unaffected.** Find leftovers → tick one → Delete. It uses
+   `IsRemovingOrphans`, which the gate now also tests; confirm a delete still blocks a scan and vice
+   versa.
+5. **The proxy-type radios.** Click through version → dinput8 → dxgi quickly. The grid's Status /
+   Installed Version columns must end up showing the type the radio shows. Before this they could
+   settle on a type nobody selected, with nothing to re-run it.
+6. **The drive-selection reset.** Switch source to **Scan drives**, and while the drive list is
+   loading switch back to Steam and to Drives again. Tick some drives. They must stay ticked — a
+   second load used to `Clear()` the list and silently drop the selection.
 
 ### ⬜ NEW 2026-08-17 — AA4–AA7: ue5_dissect.lua in a real Cheat Engine
 

@@ -108,6 +108,65 @@ public partial class ProxyDeployViewModel : ViewModelBase
         _log.Info("ProxyDeploy", text);
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // The panel-wide exclusive gate
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>What the panel is doing right now; null when idle. Exists so a refused
+    /// operation can say what it is waiting FOR — the old message was always
+    /// "Wait for scan to finish" even when the thing running was a deploy.</summary>
+    private string? _busyWith;
+
+    /// <summary>
+    /// Take the panel's exclusive lock, or return null if something else holds it.
+    /// <para>
+    /// <see cref="IsScanning"/>'s own declaration already called itself "the mutual-exclusion
+    /// guard" — it just was not one. Three of the eight long operations SET it while six
+    /// TESTED it, so the guard was one-directional: a scan blocked a deploy, a deploy blocked
+    /// nothing. Deploy and Undeploy could therefore run over the same <c>Binaries</c> folder at
+    /// once and both write the single result line, and <see cref="ScanAsync"/> — which has no
+    /// entry guard at all — could <c>Games.Clear()</c> the collection <see cref="UpdateAllAsync"/>
+    /// was mid-way through. (audit #5 AE5 / AE6 / AE7)
+    /// </para>
+    /// <para>
+    /// This does NOT replace what the MVVM toolkit already does. <c>AsyncRelayCommand</c> reports
+    /// <c>CanExecute == false</c> while it is running and Avalonia's Button gates on that, so a
+    /// command cannot re-enter ITSELF from its own button — measured, not assumed. The gap this
+    /// closes is strictly CROSS-command: two different buttons, two different commands, no shared
+    /// state between them. It also covers the paths no button owns (a property-changed handler,
+    /// a hotkey, a test calling ExecuteAsync directly), where CanExecute is never consulted.
+    /// </para>
+    /// <para>
+    /// No lock: every caller runs on the UI thread and the test-then-set is synchronous, before
+    /// any await. If an operation is ever started from a worker this becomes a real race.
+    /// </para>
+    /// </summary>
+    private BusyScope? TryBeginExclusive(string what)
+    {
+        if (IsScanning || IsRemovingOrphans) return null;
+        _busyWith = what;
+        IsScanning = true;
+        return new BusyScope(this);
+    }
+
+    /// <summary>Releases the exclusive gate on dispose, so an early return or a throw cannot
+    /// leave the panel wedged — which is how the flag came to be set by only three of the
+    /// operations that test it.</summary>
+    private sealed class BusyScope : IDisposable
+    {
+        private readonly ProxyDeployViewModel _vm;
+        internal BusyScope(ProxyDeployViewModel vm) => _vm = vm;
+        public void Dispose()
+        {
+            _vm.IsScanning = false;
+            _vm._busyWith = null;
+        }
+    }
+
+    /// <summary>The line a refused operation shows. Names the operation actually running.</summary>
+    private string BusyMessage()
+        => $"Busy: {_busyWith ?? "another operation"} is running — wait for it to finish";
+
     /// <summary>
     /// Which proxy DLL the user wants to deploy. Bound to the RadioButtons
     /// at the top of the panel. Changing this triggers a status refresh so
@@ -233,21 +292,50 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // the new proxy type. Fire-and-forget — UI doesn't block on toggle.
         if (Games.Count > 0 && File.Exists(SourceDllPath))
         {
-            _ = RefreshAfterTypeChangeAsync();
+            // Supersede any in-flight refresh. The radios carry no IsEnabled binding and this
+            // is a property-changed handler rather than a command, so nothing throttled it:
+            // two quick clicks started two refreshes over the same Games, and whichever
+            // CONTINUATION resumed last wrote the grid — which may be the one for the type the
+            // radio no longer shows. Cancel + re-check, the idiom InstanceFinderViewModel:242
+            // already uses for its own re-run. (audit #5 AE4)
+            _typeRefreshCts?.Cancel();
+            _typeRefreshCts?.Dispose();
+            _typeRefreshCts = new CancellationTokenSource();
+            _ = RefreshAfterTypeChangeAsync(value, _typeRefreshCts.Token);
         }
     }
+
+    /// <summary>Cancels the previous type-change refresh so only the newest one applies.</summary>
+    private CancellationTokenSource? _typeRefreshCts;
 
     /// <summary>A set of <c>DetectedGame.BinariesDir</c> keys for the games an operation
     /// failed on, handed to the refresh that follows it so the failure reason survives.
     /// Case-insensitive because it is compared against a Windows path.</summary>
     private static HashSet<string> NewBinariesDirSet() => new(StringComparer.OrdinalIgnoreCase);
 
-    private async Task RefreshAfterTypeChangeAsync()
+    private async Task RefreshAfterTypeChangeAsync(ProxyType forType, CancellationToken ct)
     {
         try
         {
-            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType);
+            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, forType, ct: ct);
+
+            // Cancellation stops a superseded refresh that is still COMPUTING, but not one that
+            // had already finished and was about to apply — the service does its I/O in a
+            // cancellable worker and then writes the grid AFTER that await returns. A cancel
+            // landing in that window is too late, and the stale write goes through. So any
+            // refresh that finds the radio has moved on corrects what it just wrote; without
+            // this the grid keeps showing a type nobody selected and, as the finding put it,
+            // "nothing ever re-runs".
+            //
+            // It must NOT gate on `ct`, and must not reuse it: the call that needs to correct
+            // itself is by definition the SUPERSEDED one, so its own token is exactly the one
+            // that was cancelled. Take the current one instead. One correction, not a loop — a
+            // type change during it starts its own handler, which owns the outcome from there.
+            if (forType != SelectedProxyType)
+                await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType,
+                                                       ct: _typeRefreshCts?.Token ?? default);
         }
+        catch (OperationCanceledException) { /* superseded by a newer type change */ }
         catch (Exception ex)
         {
             _log.Warn("ProxyDeploy", $"Refresh after type change failed: {ex.Message}");
@@ -328,10 +416,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [RelayCommand]
     private async Task ScanAsync(CancellationToken ct)
     {
+        // No entry guard at all before this. That made Scan the one operation able to start
+        // while UpdateAll was suspended at an await — and its Games.Clear() below is exactly
+        // what invalidated UpdateAll's enumerator. (AE7's trigger)
+        using var busy = TryBeginExclusive("Scan Steam");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
+
         try
         {
             ClearError();
-            IsScanning = true;
             StatusColor = StatusNeutral;
             StatusText = "Detecting Steam libraries...";
             LastOperationResult = null;
@@ -340,8 +433,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             if (libraries.Count == 0)
             {
                 StatusText = "No Steam libraries found";
-                IsScanning = false;
-                return;
+                return;   // the gate releases on dispose
             }
 
             StatusText = $"Scanning {libraries.Count} library folder(s)...";
@@ -373,10 +465,6 @@ public partial class ProxyDeployViewModel : ViewModelBase
             SetError(ex);
             _log.Error("ProxyDeploy", $"Scan failed: {ex.Message}");
         }
-        finally
-        {
-            IsScanning = false;
-        }
     }
 
     /// <summary>Triggered by the source-generated ScanDrivesMode setter. Keeps
@@ -390,9 +478,18 @@ public partial class ProxyDeployViewModel : ViewModelBase
             LoadDrivesCommand.Execute(null);
     }
 
+    /// <summary>Guards <see cref="LoadDrivesAsync"/> against itself. The condition that fires it —
+    /// <c>Drives.Count == 0</c> — stays true until the load COMPLETES, and ICommand.Execute does
+    /// not consult CanExecute, so toggling the source radio off and on during the load starts a
+    /// second one. Its <c>Drives.Clear()</c> then throws away the DetectedDrive instances the user
+    /// has already ticked (IsSelected lives on them), silently resetting the drive selection.</summary>
+    private bool _loadingDrives;
+
     [RelayCommand]
     private async Task LoadDrivesAsync(CancellationToken ct)
     {
+        if (_loadingDrives) return;
+        _loadingDrives = true;
         try
         {
             var drives = await _deploy.GetScannableDrivesAsync(ct);
@@ -406,13 +503,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
         {
             _log.Warn("ProxyDeploy", $"LoadDrives failed: {ex.Message}");
         }
+        finally
+        {
+            _loadingDrives = false;
+        }
     }
 
     [RelayCommand(IncludeCancelCommand = true)]
     private async Task ScanDrivesAsync(CancellationToken ct)
     {
-        if (IsScanning) { LastOperationResult = "Wait for scan to finish"; return; }
-
         var selected = Drives.Where(d => d.IsSelected).ToList();
         if (selected.Count == 0)
         {
@@ -420,10 +519,12 @@ public partial class ProxyDeployViewModel : ViewModelBase
             return;
         }
 
+        using var busy = TryBeginExclusive("Scan drives");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
+
         try
         {
             ClearError();
-            IsScanning = true;
             IsScanningDrives = true;
             StatusColor = StatusNeutral;
             StatusText = "Scanning drives for UE games...";
@@ -463,8 +564,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
         finally
         {
-            IsScanning = false;
-            IsScanningDrives = false;
+            IsScanningDrives = false;   // IsScanning is the gate's; it releases on dispose
         }
     }
 
@@ -543,17 +643,14 @@ public partial class ProxyDeployViewModel : ViewModelBase
     private async Task ScanOrphansAsync(CancellationToken ct)
     {
         // Also blocked during a removal: a scan clears Orphans, which would pull the rows out from
-        // under a running delete and erase its per-row report.
-        if (IsScanning || IsRemovingOrphans)
-        {
-            LastOperationResult = "Wait for the current operation to finish";
-            return;
-        }
+        // under a running delete and erase its per-row report. TryBeginExclusive tests
+        // IsRemovingOrphans too, so that half of the rule is now stated in one place.
+        using var busy = TryBeginExclusive("Find leftovers");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
         try
         {
             ClearError();
-            IsScanning = true;
             IsScanningOrphans = true;
             StatusColor = StatusNeutral;
             StatusText = "Looking for leftover proxy DLLs...";
@@ -623,8 +720,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
         finally
         {
-            IsScanning = false;
-            IsScanningOrphans = false;
+            IsScanningOrphans = false;   // IsScanning is the gate's; it releases on dispose
         }
     }
 
@@ -1074,6 +1170,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
     {
         if (Games.Count == 0) return;
 
+        // Refresh neither tested nor set the guard, so it could run under a scan that was
+        // about to Games.Clear() beneath it, and a deploy could start on top of it. (AE5)
+        using var busy = TryBeginExclusive("Refresh");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
+
         try
         {
             ClearError();
@@ -1103,7 +1204,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     {
         StatusColor = StatusNeutral;
         LastOperationColor = StatusNeutral;
-        if (IsScanning) { LastOperationResult = "Wait for scan to finish"; return; }
+        using var busy = TryBeginExclusive("Deploy");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
         if (!File.Exists(SourceDllPath))
         {
@@ -1163,7 +1265,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
     {
         StatusColor = StatusNeutral;
         LastOperationColor = StatusNeutral;
-        if (IsScanning) { LastOperationResult = "Wait for scan to finish"; return; }
+        // Deploy and Undeploy are DIFFERENT commands, so the toolkit's per-command
+        // CanExecute block never applied between them — they could run over the same
+        // Binaries folder at once and both write the single result line. (AE6)
+        using var busy = TryBeginExclusive("Remove");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
         var selected = Games.Where(g => g.IsSelected).ToList();
         if (selected.Count == 0)
@@ -1202,11 +1308,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     {
         StatusColor = StatusNeutral;
         LastOperationColor = StatusNeutral;
-        if (IsScanning)
-        {
-            LastOperationResult = "Wait for scan to finish";
-            return;
-        }
+        using var busy = TryBeginExclusive("Update All");
+        if (busy is null) { LastOperationResult = BusyMessage(); return; }
 
         // Resolve the source DLL for EVERY proxy type (all are built side-by-
         // side into <exeDir>/proxy/). Update All updates each game's already-
@@ -1230,52 +1333,77 @@ public partial class ProxyDeployViewModel : ViewModelBase
         int updated = 0, fail = 0, upToDate = 0;
         var failedDirs = NewBinariesDirSet();
 
-        foreach (var game in Games)
+        // Snapshot. This used to enumerate the live bound ObservableCollection across an await,
+        // so a Scan completing mid-loop (Games.Clear() + re-Add) invalidated the enumerator and
+        // the next MoveNext threw InvalidOperationException. The gate above now stops the two
+        // from overlapping at all; the snapshot is the belt to that braces, and costs one list.
+        // Every other loop in this file already snapshots (`.Where(...).ToList()`). (AE7)
+        var targets = Games.ToList();
+
+        try
         {
-            ct.ThrowIfCancellationRequested();
-
-            foreach (var (type, srcPath) in sources)
+            foreach (var game in targets)
             {
-                string targetDll = Path.Combine(game.BinariesDir, type.GetDllName());
+                ct.ThrowIfCancellationRequested();
 
-                // Only update a proxy that is ALREADY deployed (and ours) for
-                // this game — never push a fresh type the user didn't choose.
-                if (!File.Exists(targetDll) || !_deploy.IsOurProxyDll(targetDll))
-                    continue;
-
-                string? srcVer = _deploy.GetDllVersion(srcPath);
-                string? tgtVer = _deploy.GetDllVersion(targetDll);
-                if (srcVer != null && srcVer == tgtVer)
+                foreach (var (type, srcPath) in sources)
                 {
-                    upToDate++;
-                    continue;
-                }
+                    string targetDll = Path.Combine(game.BinariesDir, type.GetDllName());
 
-                StatusText = $"Updating {game.Name} ({type.GetDisplayName()})...";
-                bool success = await _deploy.DeployAsync(srcPath, game, type, force: true, ct: ct);
-                if (success) updated++;
-                else { fail++; failedDirs.Add(game.BinariesDir); }
+                    // Only update a proxy that is ALREADY deployed (and ours) for
+                    // this game — never push a fresh type the user didn't choose.
+                    if (!File.Exists(targetDll) || !_deploy.IsOurProxyDll(targetDll))
+                        continue;
+
+                    string? srcVer = _deploy.GetDllVersion(srcPath);
+                    string? tgtVer = _deploy.GetDllVersion(targetDll);
+                    if (srcVer != null && srcVer == tgtVer)
+                    {
+                        upToDate++;
+                        continue;
+                    }
+
+                    StatusText = $"Updating {game.Name} ({type.GetDisplayName()})...";
+                    bool success = await _deploy.DeployAsync(srcPath, game, type, force: true, ct: ct);
+                    if (success) updated++;
+                    else { fail++; failedDirs.Add(game.BinariesDir); }
+                }
+            }
+
+            // Refresh status from disk for the currently-selected type's view, keeping the reason
+            // on any game this run failed to update (see DeploySelectedAsync).
+            await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, failedDirs, ct);
+
+            if (updated == 0 && fail == 0)
+            {
+                string msg = upToDate > 0
+                    ? $"All {upToDate} deployed proxy DLL(s) already up-to-date"
+                    : "No deployed proxy DLLs to update";
+                LastOperationResult = msg;
+                StatusText = msg;
+                StatusColor = StatusNeutral;
+                LastOperationColor = StatusNeutral;
+                _log.Info("ProxyDeploy", msg);
+            }
+            else
+            {
+                SetOperationResult($"Updated: {updated}, up-to-date: {upToDate}, failed: {fail}", fail);
             }
         }
-
-        // Refresh status from disk for the currently-selected type's view, keeping the reason
-        // on any game this run failed to update (see DeploySelectedAsync).
-        await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, failedDirs, ct);
-
-        if (updated == 0 && fail == 0)
+        catch (OperationCanceledException)
         {
-            string msg = upToDate > 0
-                ? $"All {upToDate} deployed proxy DLL(s) already up-to-date"
-                : "No deployed proxy DLLs to update";
-            LastOperationResult = msg;
-            StatusText = msg;
-            StatusColor = StatusNeutral;
-            LastOperationColor = StatusNeutral;
-            _log.Info("ProxyDeploy", msg);
+            // Report what DID get updated. Cancelling is not a reason to hide that N games were
+            // already written to — the user needs to know the folders are no longer uniform.
+            SetOperationResult($"Update All cancelled — updated: {updated}, failed: {fail}", fail);
         }
-        else
+        catch (Exception ex)
         {
-            SetOperationResult($"Updated: {updated}, up-to-date: {upToDate}, failed: {fail}", fail);
+            // This method had no catch at all, and it is an AsyncRelayCommand: a faulted task on
+            // the button path is rethrown onto the UI thread, so an exception here was a crash
+            // risk, not merely a tally that never appeared. Sibling commands all catch. (AE7)
+            SetOperationResult($"Update All failed — updated: {updated}, failed: {fail}", fail + 1);
+            SetError(ex);
+            _log.Error("ProxyDeploy", $"Update All failed: {ex.Message}");
         }
     }
 
