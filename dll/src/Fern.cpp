@@ -90,9 +90,17 @@ namespace {
 
 // Vector value parser. Accepts "X,Y,Z" or "X Y Z" with optional spaces;
 // rejects malformed input (wrong component count, non-numeric tokens).
-// Writes 12 little-endian bytes (3 floats) into `out`. Phase 2B.
-bool ParseVectorBytes(const std::string& raw, uint8_t out[12]) {
-    std::memset(out, 0, 12);
+//
+// Writes the CANONICAL target form Aura's scan expects — 3 little-endian
+// DOUBLES (Radar::VECTOR_CANON_BYTES). It cannot be encoded at the field's own
+// width because the target is parsed once per scan while the width is a
+// per-field fact: one UE5 game holds 24-byte "Vector" and 12-byte "Vector3f"
+// fields side by side, so the scan decodes each field UP to the target's
+// precision rather than the target DOWN to a guessed width. Parsing through
+// double also stops a large coordinate losing precision before the compare
+// (std::stof of "1234567.8" already rounds).  Phase 2B; widened build 3035.
+bool ParseVectorBytes(const std::string& raw, uint8_t out[Radar::VECTOR_CANON_BYTES]) {
+    std::memset(out, 0, Radar::VECTOR_CANON_BYTES);
     if (raw.empty()) return false;
 
     // Tokenise on commas + whitespace. Resilient to "1, 2, 3" /
@@ -109,13 +117,13 @@ bool ParseVectorBytes(const std::string& raw, uint8_t out[12]) {
     flush();
     if (toks.size() != 3) return false;
 
-    float floats[3] = {0.0f, 0.0f, 0.0f};
+    double vals[3] = {0.0, 0.0, 0.0};
     try {
-        for (int i = 0; i < 3; ++i) floats[i] = std::stof(toks[static_cast<size_t>(i)]);
+        for (int i = 0; i < 3; ++i) vals[i] = std::stod(toks[static_cast<size_t>(i)]);
     } catch (...) {
         return false;
     }
-    std::memcpy(out, floats, 12);
+    Radar::StoreVectorCanonical(vals, out);
     return true;
 }
 
@@ -2935,8 +2943,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             const bool isVector = Radar::IsVectorDataType(dt);
             const bool isMulti  = Radar::IsMultiNumericDataType(dt);
 
-            uint8_t targetBytes[12] = {};
-            uint8_t target2Bytes[12] = {};
+            // Sized for the widest target that crosses into Aura: a canonical
+            // 3-double vector (24B). Scalar targets use the low 8 bytes.
+            uint8_t targetBytes[Radar::VECTOR_CANON_BYTES] = {};
+            uint8_t target2Bytes[Radar::VECTOR_CANON_BYTES] = {};
             std::string targetString;
             const uint8_t* target2Ptr = nullptr;
             // Multi-numeric meta scan: per-width target sets replace the
@@ -3089,8 +3099,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     const bool isVector = Radar::IsVectorDataType(dt);
                     const bool isMulti  = Radar::IsMultiNumericDataType(dt);
 
-                    uint8_t targetBytes[12] = {};
-                    uint8_t target2Bytes[12] = {};
+                    // Canonical 3-double vector target (24B); scalars use the
+                    // low 8 bytes. See the first-scan handler above.
+                    uint8_t targetBytes[Radar::VECTOR_CANON_BYTES] = {};
+                    uint8_t target2Bytes[Radar::VECTOR_CANON_BYTES] = {};
                     const uint8_t* tgtPtr  = nullptr;
                     const uint8_t* tgt2Ptr = nullptr;
                     std::string targetString;

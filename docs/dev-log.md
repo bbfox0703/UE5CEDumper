@@ -22,6 +22,83 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AB3+AB5: the vector scan learns UE5's LWC width (build 3035)
+
+**Audit #5 queue ①.** The first entry of §3b's ordered fix queue, and the highest-user-impact MED
+left: *every UE5 game's FVector/FRotator value scan compared junk.*
+
+### The defect
+
+UE5's Large World Coordinates made the default `FVector` / `FRotator` **3 doubles (24 bytes)** while
+the explicit float variants (`FVector3f` / `Rotator3f`) stayed **3 floats (12 bytes)**. The scan
+accepted both spellings by NAME — `Radar::VectorStructNames` lists `"Vector"` and `"Vector3f"` in
+one table — and then read a flat **12 bytes as three floats** at every stage:
+
+- `Radar::SizeOf` answered a constant `12` for all three vector DataTypes (`Radar.cpp:27`).
+- `Radar::CompareVectorPredicate` decoded `float c[3], a[3], b[3]` (`Radar.cpp:797`).
+- `FormatVectorBytes12` rendered the same 12 bytes as floats — so the display and the compare were
+  wrong *together*, which is why this never looked like a bug in the value column.
+- Every read site in `Aura.cpp` passed a literal `12`.
+
+On a 24-byte field that reads the low four bytes of X plus the low four bytes of Y as one "float" —
+a bit pattern that can never equal what the user typed. The scan returned zero plausible hits and
+looked like "the value isn't a UPROPERTY".
+
+**The width was already in hand and thrown away.** `ScanField::size` captured the property's
+reflected `ElementSize` at index-build time and was **written seven times and read nowhere**.
+
+### The repair
+
+The width is now read per FIELD from the property's own reflected size — which is the rule
+[teleport-spec.md](teleport-spec.md) §5.3 already fixed for this repo (*"Never key this off a
+version number"*) and which `Wirbel`/`Laufen`/`Dunste`/`Schlacht` each already applied locally.
+A version-keyed fix would have been wrong anyway: **one UE5 game holds fields of both widths.**
+
+- `Radar::SizeOf` returns **0** for the vector types — the same "variable" signal the string and
+  multi-numeric families already use. A single constant cannot be true here, and pretending
+  otherwise is what the defect was.
+- New shared, tested statement of the rule: `Radar::IsSupportedVectorWidth` /
+  `DecodeVectorBytes` / `StoreVectorCanonical` + `VECTOR_WIDTH_FLOAT` / `_DOUBLE` / `_CANON_BYTES`.
+- `CompareVectorPredicate` now takes **decoded triples** (`const double*`) rather than raw bytes.
+  Deliberate: the three buffers no longer share a width (a 24-byte field vs a target typed as text),
+  so a byte-level predicate would need a width per argument and would silently mis-read if one drifted.
+- One **canonical in-memory form**: 3 doubles. `Candidate::prevValue` (16 → 24 bytes) and every
+  vector target buffer hold it, so the renderer, the server-side filter/sort, the refine compare and
+  the wire can never disagree about the source width again.
+- `FieldDescriptor::vectorWidth` carries the source width into the session, because **refine
+  structurally cannot re-derive it** — `fieldType` is the bare string `"StructProperty"` for every
+  vector (the multi-numeric family's re-resolve trick has no vector equivalent).
+- The index builder resolves the width from the property that actually holds the triple, which is a
+  *different* field per container shape: a leaf uses its own `ElementSize`; `TArray` its inner
+  element size (`size` there is the 16-byte header); `TSet` its element size, **not** `elemStride`
+  (the sparse-array slot is padded by hash bookkeeping); `TMap` the `keySize`/`valueSize` half;
+  `TOptional` the *wrapped* type's size (`f.Size` includes the trailing `bIsSet` byte).
+- **AB3's real repair**: a reflected size that is neither 12 nor 24 is now **refused** rather than
+  read at a guessed width — that is what keeps an `FVector2D`/`FVector4`/game-namesake out of the
+  candidate set. `"Vector"` stays accepted on both engines, because the name gate no longer implies
+  a width.
+- `ParseVectorBytes` parses through `std::stod` into the canonical form. Incidental: `std::stof`
+  was already rounding a large coordinate before it reached the compare.
+
+**Found while fixing** (the fix-time sibling grep): `GroupSlotValueString` and its sibling lambda
+copied `sizeof(tmp.prevValue)` bytes out of a `GroupSlotMatch` — destination-bounded. Benign while
+both arrays were 16, an **8-byte out-of-bounds read** the moment `Candidate` grew. Now
+source-bounded with a `static_assert`.
+
+### Negative control
+
+`DecodeVectorBytes` reverted to the pre-fix "always three floats": **7 assertions red**, including
+`LWC field Exact-matches the typed target`. Restored → green. C++ **246** + **1073** (was 1042;
++31), C# suite green, `-Target DLL` clean.
+
+### Not verified on a game
+
+This needs a **UE5** title and cannot be checked on UE4 — five steps are registered in
+[todo.md](todo.md) `## Pending live-game verification`. **No wire or UI change**: vector targets and
+values cross the pipe as text, so the width is entirely a DLL-side fact.
+
+-----
+
 ## 2026-08-16 - Fourteen audit-#5 MEDs, fixed in cluster order (builds 3016-3031)
 
 **Audit #5, MED tier.** The three named families were already closed, so this run followed §4's

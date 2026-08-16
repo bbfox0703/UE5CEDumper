@@ -98,10 +98,16 @@ enum class DataType : uint8_t {
     FName,
     FText,
 
-    // Vector types (Phase 2B, build 750). prevValue array holds the
-    // first 8 bytes (X), prevValue2 holds Y, prevValue3 holds Z so the
-    // candidate row stays POD-sized. FTransform scans the Translation
-    // FVector only (Rotation + Scale out of scope to keep UI tight).
+    // Vector types (Phase 2B, build 750). The candidate's prevValue array
+    // holds the CANONICAL form — 3 little-endian doubles (24 bytes) — no
+    // matter whether the game's field was 3xfloat or 3xdouble, so one
+    // comparison and one renderer serve both. The SOURCE width is a
+    // per-field fact carried by FieldDescriptor::vectorWidth, never by the
+    // DataType: UE5's LWC made "FVector" 3xdouble while "FVector3f" stayed
+    // 3xfloat, and a single game holds both. SizeOf() therefore returns 0
+    // here (variable, like the string + multi-numeric types).
+    // FTransform scans the Translation FVector only (Rotation + Scale out
+    // of scope to keep UI tight) — no struct name maps to it today.
     FVector,
     FRotator,
     FTransform,
@@ -169,11 +175,46 @@ enum class RoundMode : uint8_t {
     Ceil,       // toward +infinity   (std::ceil)  — e.g. 11.1 -> 12, 99.6 -> 100
 };
 
-// Byte count for a given DataType. 1..8 for numeric primitives;
-// 12 for FVector/FRotator (3 floats); 0 for string types (variable
-// length — the scan engine reads on demand via Ubel::ReadFStringAt /
-// ReadFNameAt / ReadFTextStringAt).
+// Byte count for a given DataType. 1..8 for numeric primitives; 0 for the
+// variable-width families — string types (the scan engine reads on demand via
+// Ubel::ReadFStringAt / ReadFNameAt / ReadFTextStringAt), the multi-numeric
+// meta types, and the VECTOR types (12 or 24 per field — see VectorWidth
+// below; it used to answer a flat 12 and every UE5 LWC scan read junk).
 size_t SizeOf(DataType dt);
+
+// --- Vector width (LWC) ---
+//
+// A vector field is 3xfloat (12B) or 3xdouble (24B). UE5's Large World
+// Coordinates made the *default* spellings — "Vector" / "Rotator" — double
+// backed while the explicit float variants ("Vector3f" / "Rotator3f") stayed
+// 12 bytes, so the STRUCT NAME does not determine the width and neither does
+// the engine version: one UE5 game holds fields of both widths.
+//
+// The width comes from the property's own REFLECTED ElementSize, which is the
+// rule docs/teleport-spec.md §5.3 already fixed for this repo ("Never key this
+// off a version number") and which Wirbel/Laufen/Dunste/Schlacht each already
+// apply locally. These two helpers are the shared, testable statement of it.
+constexpr int32_t VECTOR_WIDTH_FLOAT  = 12;   // 3 x float  (UE4, FVector3f)
+constexpr int32_t VECTOR_WIDTH_DOUBLE = 24;   // 3 x double (UE5 LWC FVector)
+// Bytes of the canonical decoded form stored in Candidate::prevValue and used
+// for every vector target buffer that crosses into Aura.
+constexpr int32_t VECTOR_CANON_BYTES  = 24;   // 3 x double
+
+// True for a reflected struct size we can read as an X/Y/Z triple. Anything
+// else (FVector2D at 8/16, FVector4 at 16/32, a namesake struct that is not a
+// vector at all) must be REFUSED rather than read at a guessed width — that
+// refusal is what stops a same-named-but-different-layout struct entering the
+// candidate set.
+bool IsSupportedVectorWidth(int32_t width);
+
+// Decode `width` bytes at `src` into 3 doubles. width == 12 reads 3 floats and
+// widens; width == 24 reads 3 doubles. Any other width returns false and
+// leaves `out` untouched. `src` must hold at least `width` readable bytes.
+bool DecodeVectorBytes(const uint8_t* src, int32_t width, double out[3]);
+
+// Store a decoded triple in the canonical VECTOR_CANON_BYTES form (3 doubles).
+// `dst` must have room for VECTOR_CANON_BYTES.
+void StoreVectorCanonical(const double v[3], uint8_t* dst);
 
 // Human-readable name (matches the JSON wire shape: "Int32" / "Float" / ...)
 const char* NameOf(DataType dt);
@@ -373,6 +414,16 @@ struct FieldDescriptor {
     // class, fieldName encodes the offset as "<raw@0xNN>", definingClassName "").
     bool        isNativeC = false;
     std::string guessedType;        // human label of the interpreted width (e.g. "Int32")
+    // Vector data types only: the field's REFLECTED source width, 12 (3xfloat)
+    // or 24 (3xdouble LWC). 0 for every non-vector field.
+    //
+    // It has to live here rather than being derived from `fieldType`, which is
+    // the bare string "StructProperty" for a vector: the refine (Next Scan)
+    // path is handed nothing but the candidate + this descriptor, so without
+    // it a second scan cannot know how wide the field it already matched was.
+    // (The multi-numeric family re-resolves its width from fieldType, which is
+    // a concrete property-type name there; vectors have no such equivalent.)
+    int32_t     vectorWidth = 0;
 };
 
 // Per-owning-object metadata. One entry per distinct UObject that owns at
@@ -393,13 +444,17 @@ struct InstanceRecord {
 //
 // For Phase 2 string data types (FString / FName / FText) `prevStr` holds
 // the resolved UTF-8 value and `prevValue` is unused. For vector data
-// types (FVector / FRotator) `prevValue` is 12 bytes (X / Y / Z packed);
-// for FTransform the same 12 bytes hold the Translation FVector.
+// types (FVector / FRotator) `prevValue` holds the CANONICAL decoded triple —
+// VECTOR_CANON_BYTES (3 little-endian doubles), whatever the field's own
+// width was — so the compare, the renderer and the server-side filter/sort
+// never have to re-ask how wide the source was.
 // `elementIndex` is >= 0 for a TArray/container element (display name is
 // descriptor.fieldName + "[elementIndex]") and -1 for a direct field.
 struct Candidate {
     uintptr_t   addr          = 0;   // instance + fieldOffset (the value's address)
-    uint8_t     prevValue[16] = {};  // last-observed bytes; size = SizeOf(dt)
+    // Widest thing stored here is a canonical vector triple (24B); numerics
+    // use SizeOf(dt) <= 8 and strings use prevStr instead.
+    uint8_t     prevValue[24] = {};  // last-observed bytes
     std::string prevStr;             // last-observed string (string DataTypes only)
     uint32_t    descriptorIdx = 0;   // -> Session::descriptors
     uint32_t    instanceIdx   = 0;   // -> Session::instances
@@ -946,21 +1001,28 @@ bool CompareStringPredicate(ScanType           st,
                             const std::string& target,
                             bool               caseSensitive);
 
-// Vector predicate. `rawBytes` is 12 bytes (3 floats X,Y,Z) read from
-// the candidate field. `targetBytes` / `target2Bytes` are 12 bytes
-// each (Between takes a second corner). Each axis runs the SAME displayed-
-// integer-reduction compare as the scalar ComparePredicate (build 1672 —
-// replaces the old per-axis ± tolerance), so a whole target axis matches the
-// reduced axis value and a fractional target axis compares literally (positions
-// typed as decimals keep full precision). The combine across axes is unchanged:
+// Vector predicate over ALREADY-DECODED triples. `cur` is the value read from
+// the candidate field, `target` the user's value, `target2` the second corner
+// (Between only; may be null). All three are 3 doubles — decode the field's
+// own bytes with DecodeVectorBytes(src, FieldDescriptor::vectorWidth, ...)
+// first. Taking doubles rather than raw bytes is deliberate: the three buffers
+// no longer share a width once LWC is in play (a 24-byte field compared against
+// a target typed as text), so a byte-level predicate would need a width per
+// argument and would silently mis-read if any of them drifted.
+//
+// Each axis runs the SAME displayed-integer-reduction compare as the scalar
+// ComparePredicate (build 1672 — replaces the old per-axis ± tolerance), so a
+// whole target axis matches the reduced axis value and a fractional target axis
+// compares literally (positions typed as decimals keep full precision). The
+// combine across axes:
 //   Exact / Bigger / Smaller / Between / Unchanged  ALL three axes satisfy
 //   Changed / Increased / Decreased                 ANY axis satisfies
 // (game movement is rarely uniform across axes — match if ANY component moved.)
 // Substring scan types reject for vectors (return false).
-bool CompareVectorPredicate(ScanType       st,
-                            const uint8_t* rawBytes,
-                            const uint8_t* targetBytes,
-                            const uint8_t* target2Bytes = nullptr,
-                            RoundMode      roundMode     = RoundMode::Round);
+bool CompareVectorPredicate(ScanType      st,
+                            const double* cur,
+                            const double* target,
+                            const double* target2  = nullptr,
+                            RoundMode     roundMode = RoundMode::Round);
 
 }  // namespace Radar

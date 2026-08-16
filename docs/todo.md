@@ -1421,6 +1421,29 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-17 — AB3/AB5: the vector scan on a UE5 (LWC) game
+
+*Needs a **UE5** game — this is the one check a UE4 title structurally cannot make. See dev-log
+build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a real target**.
+
+1. **A UE5 world-position scan returns real hits.** Value Search → data type **FVector** → Exact →
+   type the player's current X,Y,Z (read them off the Teleport panel's POV/marker readout, which is
+   already width-aware) → First Scan. Before this fix a UE5 game returned **zero** plausible hits
+   because every 24-byte `Vector` was compared as three floats; it must now return the player pawn's
+   location among the candidates. **This is the whole point of the fix — if it still returns nothing,
+   stop and report, do not "narrow the search".**
+2. **The value column reads back as the coordinates you typed**, not a huge/tiny number. That proves
+   the *display* decoder agrees with the *compare* decoder about the width (they were one hardcoded
+   12 before, and are now one canonical 3-double form).
+3. **Next Scan (refine) survives.** Move the character, then Changed → the surviving candidates must
+   include the pawn location. This is the half that needs `FieldDescriptor::vectorWidth`: refine has
+   no access to the class index, so a session that lost the width would drop every candidate here.
+4. **A UE4 game still works.** Same scan on any UE4 title (12-byte `Vector`) — this is the
+   regression half; the width gate must not have narrowed what UE4 accepts.
+5. **A `Vector3f` field on a UE5 game** (float-backed, 12B, in the same process as 24B `Vector`
+   fields) also matches. That is the case a version-keyed fix would have got wrong, and the reason
+   the width is read per field rather than per game.
+
 ### ⬜ NEW 2026-08-16 — the fourteen-MED batch, all UI-visible (builds 3016-3031)
 
 None of this session's twelve fixes has been seen on a running game. They are cheap to check because

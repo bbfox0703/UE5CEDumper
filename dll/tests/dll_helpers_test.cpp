@@ -320,10 +320,13 @@ static void Test_ValueScan_DataTypeSizes() {
     EXPECT("SizeOf FString = 0", Radar::SizeOf(Radar::DataType::FString) == 0);
     EXPECT("SizeOf FName = 0",   Radar::SizeOf(Radar::DataType::FName)   == 0);
     EXPECT("SizeOf FText = 0",   Radar::SizeOf(Radar::DataType::FText)   == 0);
-    // Phase 2B: vector types — three floats = 12 bytes.
-    EXPECT("SizeOf FVector = 12",    Radar::SizeOf(Radar::DataType::FVector)    == 12);
-    EXPECT("SizeOf FRotator = 12",   Radar::SizeOf(Radar::DataType::FRotator)   == 12);
-    EXPECT("SizeOf FTransform = 12", Radar::SizeOf(Radar::DataType::FTransform) == 12);
+    // Phase 2B: vector types — VARIABLE width, signalled by SizeOf = 0 like the
+    // string + multi-numeric families. UE5's LWC made "FVector" 3xdouble (24B)
+    // while "FVector3f" stayed 3xfloat (12B), so no single constant is true;
+    // the per-field width lives in FieldDescriptor::vectorWidth. (audit #5 AB5)
+    EXPECT("SizeOf FVector = 0 (variable)",    Radar::SizeOf(Radar::DataType::FVector)    == 0);
+    EXPECT("SizeOf FRotator = 0 (variable)",   Radar::SizeOf(Radar::DataType::FRotator)   == 0);
+    EXPECT("SizeOf FTransform = 0 (variable)", Radar::SizeOf(Radar::DataType::FTransform) == 0);
     // Multi-numeric meta types — variable width, signalled by SizeOf = 0.
     EXPECT("SizeOf NumericNoByte = 0", Radar::SizeOf(Radar::DataType::NumericNoByte) == 0);
     EXPECT("SizeOf NumericAll = 0",    Radar::SizeOf(Radar::DataType::NumericAll)    == 0);
@@ -1060,83 +1063,96 @@ static void Test_ValueScan_StringPredicate_RejectsNumericOrdering() {
 
 // ----- Radar: CompareVectorPredicate (Phase 2B) -------------------------
 
-static void WriteVector(uint8_t buf[12], float x, float y, float z) {
+// CompareVectorPredicate now takes DECODED triples (see Radar.h) — the raw
+// bytes no longer share a width between the field and the target once LWC is
+// in play, so the decode happens at the call site.
+static void WriteVector(double v[3], double x, double y, double z) {
+    v[0] = x; v[1] = y; v[2] = z;
+}
+
+// Raw source bytes as a game would hold them, at each of the two real widths.
+static void WriteVectorBytesFloat(uint8_t buf[12], float x, float y, float z) {
     std::memcpy(buf + 0, &x, 4);
     std::memcpy(buf + 4, &y, 4);
     std::memcpy(buf + 8, &z, 4);
+}
+static void WriteVectorBytesDouble(uint8_t buf[24], double x, double y, double z) {
+    std::memcpy(buf +  0, &x, 8);
+    std::memcpy(buf +  8, &y, 8);
+    std::memcpy(buf + 16, &z, 8);
 }
 
 static void Test_ValueScan_VectorPredicate_Exact() {
     using ST = Radar::ScanType;
     using RM = Radar::RoundMode;
-    uint8_t cur[12], tgt[12];
-    WriteVector(cur, 100.0f, 200.0f, 300.0f);
-    WriteVector(tgt, 100.0f, 200.0f, 300.0f);
+    double cur[3], tgt[3];
+    WriteVector(cur, 100.0, 200.0, 300.0);
+    WriteVector(tgt, 100.0, 200.0, 300.0);
     EXPECT("Vec Exact all match", Radar::CompareVectorPredicate(ST::Exact, cur, tgt));
     // Per-axis displayed-integer reduce: X=100.6 rounds to 101, so a whole target
     // axis of 100 no longer matches that axis.
-    WriteVector(cur, 100.6f, 200.0f, 300.0f);
+    WriteVector(cur, 100.6, 200.0, 300.0);
     EXPECT("Vec Exact rejects axis that rounds away (100.6 -> 101 vs 100)",
            !Radar::CompareVectorPredicate(ST::Exact, cur, tgt, nullptr, RM::Round));
     // X=100.4 rounds back to 100 -> all axes match the displayed integer.
-    WriteVector(cur, 100.4f, 200.0f, 300.0f);
+    WriteVector(cur, 100.4, 200.0, 300.0);
     EXPECT("Vec Exact Round accepts axis that rounds back (100.4 -> 100)",
            Radar::CompareVectorPredicate(ST::Exact, cur, tgt, nullptr, RM::Round));
 }
 
 static void Test_ValueScan_VectorPredicate_Ordering() {
     using ST = Radar::ScanType;
-    uint8_t cur[12], tgt[12];
-    WriteVector(cur, 10.0f, 20.0f, 30.0f);
-    WriteVector(tgt, 5.0f,  10.0f, 15.0f);
+    double cur[3], tgt[3];
+    WriteVector(cur, 10.0, 20.0, 30.0);
+    WriteVector(tgt, 5.0,  10.0, 15.0);
     EXPECT("Vec Bigger: all axes above", Radar::CompareVectorPredicate(ST::Bigger, cur, tgt));
     EXPECT("Vec Smaller (10,20,30) NOT < (5,10,15)",
            !Radar::CompareVectorPredicate(ST::Smaller, cur, tgt));
 
     // One axis equal kills Bigger
-    WriteVector(cur, 10.0f, 10.0f, 30.0f);
+    WriteVector(cur, 10.0, 10.0, 30.0);
     EXPECT("Vec Bigger fails when one axis equals",
            !Radar::CompareVectorPredicate(ST::Bigger, cur, tgt));
 }
 
 static void Test_ValueScan_VectorPredicate_Between() {
     using ST = Radar::ScanType;
-    uint8_t cur[12], lo[12], hi[12];
-    WriteVector(lo, 0.0f,   0.0f,   0.0f);
-    WriteVector(hi, 100.0f, 100.0f, 100.0f);
-    WriteVector(cur, 50.0f, 50.0f, 50.0f);
+    double cur[3], lo[3], hi[3];
+    WriteVector(lo, 0.0,   0.0,   0.0);
+    WriteVector(hi, 100.0, 100.0, 100.0);
+    WriteVector(cur, 50.0, 50.0, 50.0);
     EXPECT("Vec Between: (50,50,50) in [(0,0,0),(100,100,100)]",
            Radar::CompareVectorPredicate(ST::Between, cur, lo, hi));
-    WriteVector(cur, 50.0f, 150.0f, 50.0f);
+    WriteVector(cur, 50.0, 150.0, 50.0);
     EXPECT("Vec Between rejects Y outside",
            !Radar::CompareVectorPredicate(ST::Between, cur, lo, hi));
 }
 
 static void Test_ValueScan_VectorPredicate_PrevValue() {
     using ST = Radar::ScanType;
-    uint8_t cur[12], prev[12];
-    WriteVector(prev, 100.0f, 100.0f, 100.0f);
+    double cur[3], prev[3];
+    WriteVector(prev, 100.0, 100.0, 100.0);
 
     // Movement on any single axis = Changed
-    WriteVector(cur, 100.0f, 100.0f, 105.0f);
+    WriteVector(cur, 100.0, 100.0, 105.0);
     EXPECT("Vec Changed: one axis moved",
            Radar::CompareVectorPredicate(ST::Changed, cur, prev));
     EXPECT("Vec Unchanged rejects when axis differs",
            !Radar::CompareVectorPredicate(ST::Unchanged, cur, prev));
 
     // No movement
-    WriteVector(cur, 100.0f, 100.0f, 100.0f);
+    WriteVector(cur, 100.0, 100.0, 100.0);
     EXPECT("Vec Unchanged accepts identical",
            Radar::CompareVectorPredicate(ST::Unchanged, cur, prev));
     EXPECT("Vec Changed rejects identical",
            !Radar::CompareVectorPredicate(ST::Changed, cur, prev));
 
     // Increased: ANY axis moved up beyond tolerance
-    WriteVector(cur, 100.0f, 100.0f, 110.0f);
+    WriteVector(cur, 100.0, 100.0, 110.0);
     EXPECT("Vec Increased: Z went up",
            Radar::CompareVectorPredicate(ST::Increased, cur, prev));
     // All went down — Increased rejects
-    WriteVector(cur, 90.0f, 90.0f, 90.0f);
+    WriteVector(cur, 90.0, 90.0, 90.0);
     EXPECT("Vec Increased rejects when all axes down",
            !Radar::CompareVectorPredicate(ST::Increased, cur, prev));
     EXPECT("Vec Decreased: all axes down",
@@ -1145,7 +1161,7 @@ static void Test_ValueScan_VectorPredicate_PrevValue() {
 
 static void Test_ValueScan_VectorPredicate_RejectsSubstring() {
     using ST = Radar::ScanType;
-    uint8_t cur[12], tgt[12];
+    double cur[3], tgt[3];
     WriteVector(cur, 0,0,0); WriteVector(tgt, 0,0,0);
     EXPECT("Vec Contains rejects",
            !Radar::CompareVectorPredicate(ST::Contains, cur, tgt));
@@ -1153,6 +1169,107 @@ static void Test_ValueScan_VectorPredicate_RejectsSubstring() {
            !Radar::CompareVectorPredicate(ST::StartsWith, cur, tgt));
     EXPECT("Vec EndsWith rejects",
            !Radar::CompareVectorPredicate(ST::EndsWith, cur, tgt));
+}
+
+// ----- Radar: LWC vector width (audit #5 AB3 / AB5) ------------------------
+
+static void Test_ValueScan_VectorWidth_Accepted() {
+    EXPECT("width 12 (3xfloat, UE4 / FVector3f) supported",
+           Radar::IsSupportedVectorWidth(Radar::VECTOR_WIDTH_FLOAT));
+    EXPECT("width 24 (3xdouble, UE5 LWC FVector) supported",
+           Radar::IsSupportedVectorWidth(Radar::VECTOR_WIDTH_DOUBLE));
+    // A struct that passes the NAME gate but is not an X/Y/Z triple must be
+    // refused, not read at a guessed width: FVector2D is 8 (float) or 16
+    // (double), FVector4 is 16 or 32.
+    EXPECT("width 8 (FVector2D float) refused",  !Radar::IsSupportedVectorWidth(8));
+    EXPECT("width 16 (FVector2D LWC / FVector4 float) refused",
+           !Radar::IsSupportedVectorWidth(16));
+    EXPECT("width 32 (FVector4 LWC) refused",    !Radar::IsSupportedVectorWidth(32));
+    EXPECT("width 0 (unresolved) refused",       !Radar::IsSupportedVectorWidth(0));
+    EXPECT("negative width refused",             !Radar::IsSupportedVectorWidth(-12));
+}
+
+static void Test_ValueScan_DecodeVectorBytes() {
+    uint8_t f12[12] = {};
+    WriteVectorBytesFloat(f12, 1.5f, -2.5f, 3.25f);
+    double out[3] = { 9, 9, 9 };
+    EXPECT("decode 12B succeeds", Radar::DecodeVectorBytes(f12, 12, out));
+    EXPECT("decode 12B X", out[0] == 1.5);
+    EXPECT("decode 12B Y", out[1] == -2.5);
+    EXPECT("decode 12B Z", out[2] == 3.25);
+
+    uint8_t d24[24] = {};
+    WriteVectorBytesDouble(d24, 1.5, -2.5, 3.25);
+    double out2[3] = { 9, 9, 9 };
+    EXPECT("decode 24B succeeds", Radar::DecodeVectorBytes(d24, 24, out2));
+    EXPECT("decode 24B X", out2[0] == 1.5);
+    EXPECT("decode 24B Y", out2[1] == -2.5);
+    EXPECT("decode 24B Z", out2[2] == 3.25);
+
+    // Unsupported widths refuse AND leave the caller's buffer untouched, so a
+    // caller that ignores the bool cannot silently compare stale values.
+    double untouched[3] = { 7, 7, 7 };
+    EXPECT("decode width 16 refuses", !Radar::DecodeVectorBytes(d24, 16, untouched));
+    EXPECT("decode width 16 leaves out untouched",
+           untouched[0] == 7 && untouched[1] == 7 && untouched[2] == 7);
+    EXPECT("decode width 0 refuses", !Radar::DecodeVectorBytes(d24, 0, untouched));
+    EXPECT("decode null src refuses", !Radar::DecodeVectorBytes(nullptr, 24, untouched));
+}
+
+static void Test_ValueScan_StoreVectorCanonical() {
+    double v[3] = { 10.25, -20.5, 30.75 };
+    uint8_t canon[Radar::VECTOR_CANON_BYTES] = {};
+    Radar::StoreVectorCanonical(v, canon);
+    EXPECT("canonical form is 24 bytes", Radar::VECTOR_CANON_BYTES == 24);
+    double back[3] = {};
+    EXPECT("canonical round-trips through the 24B decoder",
+           Radar::DecodeVectorBytes(canon, Radar::VECTOR_CANON_BYTES, back));
+    EXPECT("canonical round-trip X", back[0] == 10.25);
+    EXPECT("canonical round-trip Y", back[1] == -20.5);
+    EXPECT("canonical round-trip Z", back[2] == 30.75);
+    // The candidate snapshot buffer has to hold one.
+    EXPECT("Candidate::prevValue fits a canonical vector",
+           sizeof(Radar::Candidate::prevValue) >= Radar::VECTOR_CANON_BYTES);
+}
+
+// THE negative control for AB5. A UE5 LWC field holds three DOUBLES; the scan
+// used to read a flat 12 bytes and reinterpret them as three floats, which is
+// the low half of X plus the low half of Y — a bit pattern that can never equal
+// the value the user typed. Reverting DecodeVectorBytes to a fixed 12-byte
+// float read turns the second half of this test red.
+static void Test_ValueScan_LwcVectorIsNotReadAsFloats() {
+    using ST = Radar::ScanType;
+    // A plausible world position in a UE5 (LWC, double) game.
+    const double X = 1024.5, Y = -2048.25, Z = 512.125;
+    uint8_t lwcField[24] = {};
+    WriteVectorBytesDouble(lwcField, X, Y, Z);
+
+    double target[3];
+    WriteVector(target, X, Y, Z);
+
+    // Read at the field's REAL reflected width -> exact match.
+    double cur[3] = {};
+    EXPECT("LWC field decodes at its reflected width 24",
+           Radar::DecodeVectorBytes(lwcField, Radar::VECTOR_WIDTH_DOUBLE, cur));
+    EXPECT("LWC field Exact-matches the typed target",
+           Radar::CompareVectorPredicate(ST::Exact, cur, target));
+
+    // The pre-fix behaviour: same bytes, read as 3 floats. Whatever that
+    // produces, it is not the value the user typed.
+    double asFloats[3] = {};
+    EXPECT("same bytes also decode at width 12 (the old, wrong path)",
+           Radar::DecodeVectorBytes(lwcField, Radar::VECTOR_WIDTH_FLOAT, asFloats));
+    EXPECT("reading an LWC field as 3 floats does NOT match the target",
+           !Radar::CompareVectorPredicate(ST::Exact, asFloats, target));
+
+    // And the converse still holds: a genuine 12-byte float field must match.
+    uint8_t floatField[12] = {};
+    WriteVectorBytesFloat(floatField, 1024.5f, -2048.25f, 512.125f);
+    double curF[3] = {};
+    EXPECT("float field decodes at its reflected width 12",
+           Radar::DecodeVectorBytes(floatField, Radar::VECTOR_WIDTH_FLOAT, curF));
+    EXPECT("float field Exact-matches the same typed target",
+           Radar::CompareVectorPredicate(ST::Exact, curF, target));
 }
 
 // ----- VectorStructNames (Phase 2B) ----------------------------------------
@@ -3922,6 +4039,10 @@ int main() {
     Test_ValueScan_VectorPredicate_Between();
     Test_ValueScan_VectorPredicate_PrevValue();
     Test_ValueScan_VectorPredicate_RejectsSubstring();
+    Test_ValueScan_VectorWidth_Accepted();
+    Test_ValueScan_DecodeVectorBytes();
+    Test_ValueScan_StoreVectorCanonical();
+    Test_ValueScan_LwcVectorIsNotReadAsFloats();
     Test_ValueScan_VectorStructNames();
     // build 794 — multi-numeric (NumericNoByte) meta type
     Test_ValueScan_MultiNumericMembers();
