@@ -254,6 +254,24 @@ live one. Put "read the surrounding comments and the callers first" in every fin
   wrong address. "A test asserts the opposite" becomes an available refutation at the same time, so
   say so in the skeptic prompt.
 
+### 2.0b A subagent reads the WORKING TREE — do not run one while an experiment is applied
+
+The crash-hunt workflow for the `0xC0000409` fast-fail got the mechanism exactly right and then
+built a corroboration out of thin air: *"`dll/CMakeLists.txt:545` builds this target with
+`/fsanitize=address` — I confirmed it from the binary's import table … yet CI printed no ASan
+report."* Both halves were true **of my machine at that moment** and false of CI, because I had a
+temporary `/fsanitize=address` edit applied while the agent was running. It then reasoned about why
+CI's ASAN stayed silent for a binary CI never built.
+
+**How to apply:** a subagent sees the tree as it is *now*, not as it is committed. Before launching
+one, either revert experimental edits or say explicitly in the prompt which files are dirty and that
+`git diff origin/main...HEAD` is the authority. Same rule for a temporary edit made *while* an agent
+is already running — that is a race against your own reviewer.
+
+It also predicted `ASAN_OPTIONS=detect_stack_use_after_return=1` would name the bug. It does not:
+MSVC parses the option and does not implement it (§3.7b). **An agent's "how to confirm" is a
+hypothesis too.**
+
 ### 2.1 What audit #5 measured across all 12 segments (2026-08-13 → 2026-08-15)
 
 Recorded when scanning completed. These are measurements, not opinions — do not re-derive them.
