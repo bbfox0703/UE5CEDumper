@@ -48,7 +48,16 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // Both were measured NO-OPS on all 85 real PE images in the local corpus (Tier 2 has never
 // fired on any of them — see the trailing-dot finding in the audit register), so the bump
 // costs one re-detect per cached game at ~0.35 s, not a re-scan of anything expensive.
-constexpr uint32_t kVersionDetectLogicRev = 4;
+// rev 5 (audit #5 G11): Tier 2 now matches the BARE needle. The table's trailing '.' is a
+// Tier 3 device (it forces a three-component "X.Y.Z"); applying it to Tier 2 meant Tier 2
+// could never match UE's own TWO-component tag "++UE4+Release-4.27", and MEASURED over the
+// 170 PE images in the local corpus it had fired 0 times. Post-fix it fires on 6, and on
+// all six it AGREES with the version Tier 1 independently reports — two detectors
+// cross-validating. Tier 1 answers first on all six, so no effective verdict changed on any
+// binary we own; the gain is a working fallback for images whose full "++UEx+Release-" tag
+// is stripped but a "Release-X.Y" fragment survives. Bump is mandatory: a game cached under
+// rev 4 would keep its old tier/confidence without ever re-detecting.
+constexpr uint32_t kVersionDetectLogicRev = 5;
 
 struct EnginePointers {
     uintptr_t GObjects  = 0;   // FUObjectArray*

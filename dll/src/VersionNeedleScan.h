@@ -293,33 +293,58 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
                 if (hasT2[k]) continue;
 
                 const size_t needleLen = strlen(n);
+                // (G11) The needle table's trailing '.' is a TIER 3 device — it forces a
+                // three-component "X.Y.Z" so a bare "5.4" cannot match "15.40". Matching it
+                // for Tier 2 as well is why TIER 2 HAD NEVER FIRED ON ANY BINARY THIS
+                // PROJECT OWNS (measured 0/85 images): UE's own engine tag is TWO-component,
+                // "++UE4+Release-4.27", so "4.27." is simply not present. This is verbatim
+                // the defect Genau.h's rev-2 note records fixing FOR TIER 1 via the dot-strip
+                // in ScanVersionTier1 — Tier 2 never received it.
+                const size_t bareLen = needleLen - 1;   // every needle ends '.', static_assert'd
+
                 // Per-pattern bound, NOT a shared one: 4- and 5-char needles examine a
                 // different set of trailing offsets, and collapsing them changes results.
+                // Kept on needleLen, not bareLen, so the examined offset set is unchanged.
                 if (!(off + needleLen + 10 < size)) continue;
 
                 ++r.needlesCompared;
-                if (memcmp(scan + off, n, needleLen) != 0) continue;
+                if (memcmp(scan + off, n, bareLen) != 0) continue;
+
+                // Structural guard, HOISTED out of Tier 3 (G11): a version token must not be
+                // preceded by a digit or a dot, or "15.42" matches "5.4" and "1.5.4" matches
+                // "5.4". Tier 3 always had this; Tier 2 did not, and it needs it far more now
+                // that it matches the shorter bare form.
+                if (off > 0) {
+                    uint8_t prev = scan[off - 1];
+                    if ((prev >= '0' && prev <= '9') || prev == '.') continue;
+                }
 
                 // Tier 2: "Release" in the preceding window AND a UE anchor nearby.
-                // (G8) The anchor requirement is NEW and deliberate. Tier 2 was the loosest
-                // predicate in the system — unlike Tier 3 it had no anchor gate at all — so
-                // widening its window without one manufactures a confident detection out of
-                // an ordinary "Release Notes 5.4.0" that the narrow form rejected outright.
-                // Measured: with the anchor, the widening is a strict superset on every
-                // regression case and still returns "no detection" on anchorless noise.
-                if (HasReleaseBefore(scan, off, 16) &&
+                // (G8) The anchor requirement is deliberate. Tier 2 was the loosest predicate
+                // in the system — unlike Tier 3 it had no anchor gate at all — so widening
+                // its window without one manufactures a confident detection out of an
+                // ordinary "Release Notes 5.4.0" that the narrow form rejected outright.
+                //
+                // (G11) The bare needle must be a WHOLE token: the next byte may not be a
+                // digit. That admits both real shapes — two-component "Release-4.27 " and
+                // three-component "Release-5.4.2", whose next byte is '.' — while still
+                // rejecting "Release 5.40", which is a game version, not an engine one.
+                const uint8_t afterBare = scan[off + bareLen];
+                const bool bareIsWholeToken = !(afterBare >= '0' && afterBare <= '9');
+                if (bareIsWholeToken &&
+                    HasReleaseBefore(scan, off, 16) &&
                     HasUEAnchorNearby(scan, size, off, /*windowBytes=*/256)) {
                     hasT2[k] = true;
                     offT2[k] = off;
                     continue;
                 }
 
-                // Tier 3: bare "X.Y.D" with a UE anchor nearby and no digit/dot before it.
-                if (scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
-                    if (off > 0) {
-                        uint8_t prev = scan[off - 1];
-                        if ((prev >= '0' && prev <= '9') || prev == '.') continue;
-                    }
+                // Tier 3: bare "X.Y.D" with a UE anchor nearby. Requires the FULL needle —
+                // i.e. the trailing dot AND a digit after it — which is exactly what the
+                // pre-G11 full-needle memcmp plus the digit test expressed, restated now that
+                // the match above is on the bare form.
+                if (scan[off + bareLen] == '.' &&
+                    scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
                     if (!HasUEAnchorNearby(scan, size, off, /*windowBytes=*/256)) continue;
                     if (!hasT3[k]) { hasT3[k] = true; offT3[k] = off; }
                     // NOTE: no `continue`-to-next-pattern and no retire — keep scanning this

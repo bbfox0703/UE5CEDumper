@@ -3634,17 +3634,21 @@ static NaiveResult NaiveTier23Reference(const uint8_t* scan, size_t size) {
         const char* needle = Genau::kVersionNeedles[k].needle;
         size_t needleLen = strlen(needle);
         for (size_t off = 0; off + needleLen + 10 < size; ++off) {
-            if (memcmp(scan + off, needle, needleLen) != 0) continue;
-            if (Genau::HasReleaseBefore(scan, off, 16) &&
+            const size_t bareLen = needleLen - 1;             // G11: match the BARE needle
+            if (memcmp(scan + off, needle, bareLen) != 0) continue;
+            if (off > 0) {                                    // G11: guard hoisted out of Tier 3
+                uint8_t prev = scan[off - 1];
+                if ((prev >= '0' && prev <= '9') || prev == '.') continue;
+            }
+            const uint8_t afterBare = scan[off + bareLen];
+            const bool whole = !(afterBare >= '0' && afterBare <= '9');
+            if (whole && Genau::HasReleaseBefore(scan, off, 16) &&
                 Genau::HasUEAnchorNearby(scan, size, off, 256)) {
                 hasT2[k] = true;
                 break;                                        // best this pattern can do
             }
-            if (scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
-                if (off > 0) {
-                    uint8_t prev = scan[off - 1];
-                    if ((prev >= '0' && prev <= '9') || prev == '.') continue;
-                }
+            if (scan[off + bareLen] == '.' &&
+                scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
                 if (!Genau::HasUEAnchorNearby(scan, size, off, 256)) continue;
                 hasT3[k] = true;                              // recorded, NOT retired (G9)
             }
@@ -3938,6 +3942,77 @@ static void Test_VersionTierRules_G8_G9() {
         Plant(b, 1000, "Release-5.4.0");
         auto r = tier23(b);
         EXPECT("G8/G9 rail: canonical 'Release-5.4.0' is still Tier 2", r.tier == 2 && val(r) == 504);
+    }
+}
+
+// ── audit #5 G11: Tier 2 required a THREE-component version, so it never fired ──
+//
+// MEASURED before and after over the 170 PE images in the local analyze corpus:
+// Tier 2 fired 0/170 before and 6/170 after, and on all six its answer AGREES EXACTLY
+// with the version Tier 1 independently reports (418/420/418/420/420/418) — two
+// detectors cross-validating. Tier 1 returns first on all six, so no effective verdict
+// changed on any binary we own; what changed is that Tier 2 now works as a fallback for
+// images where the full "++UEx+Release-" tag is stripped but "Release-X.Y" survives.
+static void Test_VersionTier2_BareNeedle_G11() {
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+    auto tier23 = [](std::vector<uint8_t>& b) { return Genau::ScanVersionTier23(b.data(), b.size()); };
+    auto val = [](const Genau::NeedleScanResult& r) {
+        return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
+    };
+
+    {   // THE WHOLE FINDING. UE's real tag is TWO-component: no trailing dot, so the
+        // needle "4.27." could never match it. Pre-G11 this was NOT detected at all.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release-4.27");        // nothing after — two-component
+        auto r = tier23(b);
+        EXPECT("G11: two-component 'Release-4.27' is now Tier 2", r.tier == 2 && val(r) == 427);
+    }
+    {   // REGRESSION RAIL: the three-component form must still work, unchanged.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release-5.4.2");
+        auto r = tier23(b);
+        EXPECT("G11 rail: three-component 'Release-5.4.2' is still Tier 2", r.tier == 2 && val(r) == 504);
+    }
+    {   // ⚠ THE GUARD THAT MAKES THE BARE MATCH SAFE. Without the "next byte is not a
+        // digit" test, "5.4" matches inside "5.40" and reports a UE version from a GAME
+        // version string. UE 5.40 does not exist; "Release 5.40" in a shipped binary does.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release 5.40 build");
+        auto r = tier23(b);
+        EXPECT("G11: 'Release 5.40' does NOT match the bare 5.4 needle", !r.found());
+    }
+    {   // ⚠ THE HOISTED GUARD. Tier 3 always rejected a preceding digit; Tier 2 never did,
+        // and needs it far more now that it matches the shorter bare form.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release 15.4 patch");
+        auto r = tier23(b);
+        EXPECT("G11: a preceding digit ('15.4') is rejected by Tier 2 too", !r.found());
+    }
+    {   // and the dot form of the same trap
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal Engine");
+        Plant(b, 1000, "Release 1.5.4 patch");
+        auto r = tier23(b);
+        EXPECT("G11: a preceding dot ('1.5.4') is rejected by Tier 2 too", !r.found());
+    }
+    {   // Tier 3 is untouched: it still demands the full three-component form.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 5.4.0 ");             // no "Release" -> Tier 3 only
+        auto r = tier23(b);
+        EXPECT("G11 rail: bare three-component is still Tier 3", r.tier == 3 && val(r) == 504);
+    }
+    {   // ...and a two-component token with NO "Release" must not become Tier 3, because
+        // Tier 3's whole point is the three-component shape.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 5.4 ");
+        auto r = tier23(b);
+        EXPECT("G11 rail: two-component without 'Release' is NOT Tier 3", !r.found());
     }
 }
 
@@ -4555,6 +4630,7 @@ int main() {
     Test_VersionNeedleScan_Equivalence();
     Test_VersionNeedleScan_GateStillGates();
     Test_VersionTierRules_G8_G9();
+    Test_VersionTier2_BareNeedle_G11();
     Test_NameWitness();
     Test_Holes_NormalizeGuessedType();
 
