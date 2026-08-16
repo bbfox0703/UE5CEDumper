@@ -49,10 +49,21 @@ static std::atomic<bool> s_sawUtf8OrAnsiStr{false};
 // Shared between ResolveEnumValue (lookup) and GetEnumEntries (full list export).
 static std::unordered_map<uintptr_t, std::vector<std::pair<int64_t, std::string>>> s_enumCache;
 
-// File-scope GetName cache: keyed by UObject* → resolved name string.
+// File-scope GetName cache: keyed by UObject* → (witness, resolved name string).
 // Dramatically reduces FNamePool lookups for ObjectProperty fields that
 // reference the same UClass repeatedly (e.g., many fields pointing to the same class).
-static std::unordered_map<uintptr_t, std::string> s_nameCache;
+//
+// The key is an address the engine RECYCLES, so every hit is revalidated against the
+// FName bytes the string was decoded from (Ubel::NameWitness — see its comment in
+// Ubel.h for why those bytes, and not an (InternalIndex, SerialNumber) pair). Without
+// that, a level change made every name-bearing response serve the DESTROYED object's
+// name for the rest of the process, while the class was read fresh — so the two
+// disagreed with no error anywhere. (audit #5 U6 + F3's in-session half)
+struct NameCacheEntry {
+    Ubel::NameWitness witness;
+    std::string       name;
+};
+static std::unordered_map<uintptr_t, NameCacheEntry> s_nameCache;
 
 // ── Cache mutexes (thread-safety for parallel GObjects walks) ──────────────
 // Aura's value/reference/container scans walk the whole GObjects array across
@@ -465,19 +476,36 @@ uintptr_t GetOuter(uintptr_t uobjectAddr) {
 std::string GetName(uintptr_t uobjectAddr) {
     if (!uobjectAddr) return "";
 
-    // Check name cache first — avoids repeated FNamePool lookups
+    // Read the FName bytes FIRST — they are both the cache's witness and the decode's
+    // input, so this replaces ReadFName rather than adding a read. Same tolerance
+    // ReadFName has and for the same reason: ComparisonIndex must read, Number may
+    // fail and default to 0. Kept as two reads, not one 8-byte load, so an unaligned
+    // or half-mapped address behaves exactly as it did before.
+    const uintptr_t fnameAddr = uobjectAddr + Grimoire::OFF_UOBJECT_NAME;
+    NameWitness live{};
+    if (!Macht::ReadSafe(fnameAddr, live.comparisonIndex)) return "";
+    Macht::ReadSafe(fnameAddr + 4, live.number);
+
+    // Check name cache first — avoids repeated FNamePool lookups. The key is an
+    // address the engine recycles, so a hit is only served when the bytes it was
+    // decoded from still read the same; otherwise fall through and re-decode.
     {
         std::lock_guard<std::mutex> lk(s_nameCacheMutex);
         auto it = s_nameCache.find(uobjectAddr);
-        if (it != s_nameCache.end()) return it->second;
+        if (it != s_nameCache.end() && it->second.witness == live)
+            return it->second.name;
     }
 
-    std::string name = ReadFName(uobjectAddr + Grimoire::OFF_UOBJECT_NAME);
+    std::string name = Serie::GetString(live.comparisonIndex, live.number);
 
-    // Only cache non-empty names (empty could be transient read failure)
+    // Only cache non-empty names (empty could be transient read failure).
+    // Assign, not try_emplace: a stale entry MUST be replaced, and that is safe here
+    // precisely because this cache hands out copies — the hit above returns by value
+    // with the copy made under the lock, so no reference into this map ever escapes.
+    // (The two class caches do hand out references, which is why they cannot do this.)
     if (!name.empty()) {
         std::lock_guard<std::mutex> lk(s_nameCacheMutex);
-        s_nameCache[uobjectAddr] = name;
+        s_nameCache[uobjectAddr] = NameCacheEntry{live, name};
     }
 
     return name;
@@ -485,14 +513,23 @@ std::string GetName(uintptr_t uobjectAddr) {
 
 void ClearNameCache() {
     // Release the per-UObject name cache. Called at the start of each snapshot
-    // capture / engine re-scan so a long session doesn't accumulate one entry
-    // per GObjects slot (millions of strings, ~150-200MB on a 2M-object game)
-    // and so a recycled UObject address can't return a destroyed object's stale
-    // name. swap()-with-empty frees the bucket array too, not just the strings.
-    // The class/struct/enum layout caches are intentionally kept: they are
-    // per-class (small, layout-stable) and expensive to rebuild.
+    // capture / engine re-scan, and from Fern's last-connection teardown / Fern::Stop.
+    // swap()-with-empty frees the bucket array too, not just the strings.
+    //
+    // Two reasons remain, and STALENESS IS NO LONGER ONE OF THEM: every hit is now
+    // witnessed against the FName bytes it was decoded from, so a recycled address
+    // cannot return a destroyed object's name even between purges (audit #5 U6/F3).
+    // What is left is (a) bounding growth — one entry per GObjects slot ever named,
+    // millions of strings and ~150-200 MB on a 2M-object game — and (b) covering a
+    // Serie::Init re-run, the one event that can remap a ComparisonIndex and so make
+    // an unchanged witness decode to a different string.
+    //
+    // The class/struct/enum layout caches are intentionally kept: they are per-class
+    // (small, layout-stable) and expensive to rebuild. Note they are NOT witnessed,
+    // so a name baked into ClassInfo::Name/FullPath/SuperName by WalkClass can still
+    // be stale after a recycle — that is a separate open finding, not an oversight.
     std::lock_guard<std::mutex> lk(s_nameCacheMutex);
-    std::unordered_map<uintptr_t, std::string>().swap(s_nameCache);
+    std::unordered_map<uintptr_t, NameCacheEntry>().swap(s_nameCache);
 }
 
 bool SawUtf8OrAnsiStr() {

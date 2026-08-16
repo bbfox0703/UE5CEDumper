@@ -3636,6 +3636,35 @@ static void Test_ShouldPublishEnumTable() {
            !Ubel::ShouldPublishEnumTable(true, -1, 0));
 }
 
+static void Test_NameWitness() {
+    // audit #5 U6 + F3's in-session half: the per-UObject name cache is keyed by an
+    // address UE recycles, so after a level change every name-bearing reply served the
+    // DESTROYED object's name while the class was read fresh — the two disagreed with
+    // no error anywhere, and only restarting the game cleared it.
+    using Ubel::NameWitness;
+
+    EXPECT("identical witnesses match", (NameWitness{1234, 0} == NameWitness{1234, 0}));
+
+    // `number` is load-bearing. Dropping it is exactly audit #5 U8, which shipped once
+    // and made Slot_1 / Slot_2 / Slot_3 all render as "Slot" — so a witness that
+    // ignored it would serve Slot_1's cached string for Slot_2 at a recycled address.
+    EXPECT("differing only in Number is NOT a match",
+           (NameWitness{1234, 1} != NameWitness{1234, 2}));
+    EXPECT("differing only in ComparisonIndex is NOT a match",
+           (NameWitness{1234, 7} != NameWitness{5678, 7}));
+    EXPECT("differing in both is NOT a match", (NameWitness{1, 1} != NameWitness{2, 2}));
+
+    // NAME_None is {0,0} and is a REAL name, not an "unset" sentinel — a witness that
+    // treated zero as "no witness" would refuse to ever serve it from cache.
+    EXPECT("NAME_None {0,0} is a legitimate matching witness",
+           (NameWitness{0, 0} == NameWitness{0, 0}));
+    EXPECT("a default-constructed witness equals NAME_None", (NameWitness{} == NameWitness{0, 0}));
+
+    // Number is int32 and UE uses the full range; no sign-collapse in the compare.
+    EXPECT("negative Number is distinguished from its positive twin",
+           (NameWitness{9, -1} != NameWitness{9, 1}));
+}
+
 static void Test_Holes_NormalizeGuessedType() {
     using DT = Radar::DataType;
     // Every label GuessGapTypes can emit must normalize to a canonical property
@@ -4190,6 +4219,7 @@ int main() {
     Test_IsSanePropertiesSize();
     Test_ShouldPublishClassWalk();
     Test_ShouldPublishEnumTable();
+    Test_NameWitness();
     Test_Holes_NormalizeGuessedType();
 
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection

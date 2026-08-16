@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **21 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **22 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1425,6 +1425,46 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — U4 / U16 / U6 / F3: the three never-erased caches in `Ubel`
+
+*Needs the DLL injected. See dev-log builds 3040–3042. The C++ suite pins all three predicates
+(21 new assertions, 1073 → 1094); what it structurally cannot pin is the WIRING, because no test
+target compiles `Ubel.cpp`. **Every step below is about the call sites, not the predicates.***
+
+1. **⚠ REGRESSION FIRST — ordinary browsing is unchanged.** Object Tree loads, Live Walker drills
+   into an actor and shows its fields, Property Search returns hits, an enum-typed field still shows
+   its member NAME (not a raw int). All three caches are on this path; if anything here is worse,
+   stop and read `walk-0.log`.
+2. **U4 — a non-UStruct address no longer poisons the cache.** From CE Lua pick an address `A` that
+   is not a class, call `UE5_WalkClassBegin(A)` then `UE5_WalkClassEnd()`, **twice**. `walk-0.log`
+   must show **two** `WalkClass:` DEBUG lines for `0x<A>` (before the fix the second was served from
+   the poisoned entry and logged nothing), plus a `WALK:safe` line naming `A`. **Record `A` and the
+   `size=` the first line reported** — a number without its conditions is not a measurement.
+3. **U4 — the honest half.** Confirm a legitimately field-less class (or an `FDateTime` /
+   `FTimespan` struct, which `InjectIntrinsicStructFields` covers) still walks and still caches:
+   exactly ONE cold-walk log line across repeated visits. The gate must reject garbage, not emptiness.
+4. **U6/F3 — the in-session recycle, the point of the whole commit.** Bookmark an actor, travel to
+   another level **while staying connected**, then re-walk the bookmark. It must show the new
+   occupant's name or `""` — never the destroyed actor's name. This is the failure that previously
+   needed a game restart to clear, and the reconnect-only fix (2819) could not reach it.
+   *Deterministic alternative, no level change:* note an inert object's name and the 4 bytes at
+   `+0x18`, write a different valid `ComparisonIndex` there from CE, refresh the same address — the
+   new name must appear. Read the name off `get_object` / `walk_instance`'s own `name` field, **not**
+   off a panel that renders a class-cache name; those are frozen copies and will look stale either
+   way (see the open finding below).
+5. **U16 — enums are unaffected in the normal case.** Open a class with a large enum field
+   (`EPhysicalSurface` or any Blueprint enum) and confirm the CE DropDownList still lists every
+   member. The truncation path is not stageable on demand; what this checks is that the new
+   publish gate did not stop caching healthy tables. Grep `walk-0.log` for
+   `ResolveEnumValue: UEnum` — the line now reports `read N of M`, and **N must equal M**.
+   Any `GetEnumEntries: ... truncated read` line is a real find, so record it.
+
+**Still open after this batch, deliberately** — do not read a pass here as closing them:
+**U5** (nothing is freed; eviction is illegal while `WalkClassEx` returns a reference),
+class-to-class recycling (a recycled address whose new occupant has a *sane* `PropertiesSize`),
+**A10** (`Aura`'s two reference-returning caches), and names baked into `ClassInfo::Name` /
+`FullPath` / `SuperName`, which are never witnessed.
 
 ### ⬜ NEW 2026-08-17 — AA14–AA20: the CE Lua invoke path in a real game
 

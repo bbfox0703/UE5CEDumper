@@ -93,6 +93,36 @@ struct FunctionInfo {
 
 namespace Ubel {
 
+// The exact inputs Ubel::GetName's decode consumes: the FName at UObject+0x18 is
+// read as { int32 ComparisonIndex; int32 Number } and handed to Serie::GetString,
+// so the resolved string is a pure function of these two int32s.
+//
+// That is what makes them a sound witness for the per-UObject name cache, which is
+// keyed by a raw address the engine recycles (audit #5 U6/F3). FNamePool entries are
+// append-only for the life of the process — only ~FNameEntryAllocator frees them —
+// so if these bytes still read the same, the cached string is still the correct
+// answer, whoever owns the address now. It is also strictly cheaper than the FNamePool
+// lookup it guards: two int32 reads against a pool walk.
+//
+// Deliberately NOT the (InternalIndex, SerialNumber) pair the audit prescribed. UE
+// zeroes SerialNumber in FreeUObjectIndex and allocates it lazily, essentially only
+// on weak-pointer creation, so most objects carry 0 for life and a stale witness of
+// (i, 0) matches a recycled (i, 0) — silent in exactly the case it exists to catch.
+// It would also have rested on Aura::GetSerialNumber, whose own comment marks the
+// packed FUObjectItem layout *** UNVERIFIED ***.
+//
+// `number` is load-bearing: dropping it is precisely audit #5 U8, which shipped once
+// already and rendered Slot_1 / Slot_2 / Slot_3 all as "Slot".
+struct NameWitness {
+    int32_t comparisonIndex = 0;
+    int32_t number = 0;
+
+    bool operator==(const NameWitness& other) const {
+        return comparisonIndex == other.comparisonIndex && number == other.number;
+    }
+    bool operator!=(const NameWitness& other) const { return !(*this == other); }
+};
+
 // Walk a UClass/UStruct and enumerate all fields (including inherited)
 ClassInfo WalkClass(uintptr_t uclassAddr);
 

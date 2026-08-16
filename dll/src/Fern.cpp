@@ -1124,20 +1124,22 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // "un-hidden on disable / disconnect", and there's no UI left to toggle it.
         // Cheap no-op when see-through was never enabled. (M3)
         Schlacht::SetEnabled(false);
-        // Ubel's per-UObject name cache is keyed by a raw address with no
-        // generation/serial and is never revalidated on hit, so once UE recycles a
-        // UObject slot every name-bearing reply serves the DESTROYED object's name.
-        // Its only two purge sites were begin_snapshot and trigger_scan — neither
-        // reachable from ordinary browsing — so this teardown dropped every other
-        // per-session resource and left the one that can serve wrong data. A UI
-        // reconnect is now a full reset. (audit #5 D5/F3)
+        // Ubel's per-UObject name cache is keyed by a raw address the engine recycles.
+        // This teardown dropped every other per-session resource and left the one that
+        // could serve wrong data, so a UI reconnect is now a full reset. (audit #5 F3)
         //
-        // This does NOT fix the in-session case (a level change while connected);
-        // that needs the (InternalIndex, SerialNumber) witness that cluster ③ shares
-        // with D1/U4-U6 and D3/A10, and is deliberately left to that pass.
+        // The IN-SESSION case (a level change while connected) is closed too, but not
+        // here: Ubel::GetName now revalidates every hit against the FName bytes the
+        // cached string was decoded from. The (InternalIndex, SerialNumber) witness
+        // this comment used to promise was evaluated and REJECTED — UE zeroes
+        // SerialNumber in FreeUObjectIndex and allocates it lazily on weak-pointer
+        // creation, so most objects carry 0 for life and a stale (i, 0) matches a
+        // recycled (i, 0). See Ubel::NameWitness. (audit #5 U6)
         //
-        // Cost is a lazy repopulate on the next connect, which is what every other
-        // line in this block already accepts.
+        // This call now earns its place on growth alone — one entry per GObjects slot
+        // ever named — plus a Serie::Init re-run, which the per-entry witness cannot
+        // see. Cost is a lazy repopulate on the next connect, which is what every
+        // other line in this block already accepts.
         Ubel::ClearNameCache();
     }
 

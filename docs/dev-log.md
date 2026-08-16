@@ -22,6 +22,51 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - U6 + F3: witness the name cache on the bytes it decoded (build 3042)
+
+**Audit #5 queue ⑤, part 3 — and the fix is NOT the one the audit prescribed.** Pinned by 7 new
+assertions (C++ 1087 → **1094**); negative control 2 red.
+
+`Ubel::GetName` memoizes per `UObject*` — an address the engine recycles — and served every hit
+unvalidated. After a level change, every name-bearing response (Object Tree rows, `walk_instance`'s
+own/outer name, every ObjectProperty target) returned the **destroyed** object's name for the rest of
+the process, while the class was read fresh, so the two disagreed with no error anywhere. Only
+restarting the game cleared it. F3's *reconnect* half shipped in build 2819; this is the in-session
+half it deferred.
+
+### Why not the prescribed `(InternalIndex, SerialNumber)` witness
+
+The audit called that pair *"the same pair UE itself uses to detect a recycled slot"*. It is not, for
+a passive observer: `FUObjectArray::FreeUObjectIndex` sets `SerialNumber = 0`, and
+`AllocateSerialNumber` assigns only inside `if (!SerialNumber)` — essentially only from
+`FWeakObjectPtr::operator=`. **Most objects carry serial 0 for life**, and the free list is LIFO, so
+a stale witness of `(i, 0)` matches the new state `(i, 0)` — silent in exactly the recycle it exists
+to catch. It would also have rested on `Aura::GetSerialNumber`, whose own comment marks the packed
+`FUObjectItem` layout `*** UNVERIFIED ***`. **Do not re-propose it.**
+
+### What shipped instead
+
+Witness the **input bytes of the decode**, not the identity of the object. The cached string is a
+pure function of `{ int32 ComparisonIndex; int32 Number }` at `UObject+0x18`, and FNamePool entries
+are append-only for the life of the process — so if those two int32s still read the same, the cached
+string is still the correct answer, whoever owns the address now. Total, not heuristic, and *cheaper*
+than what it guards: two int32 reads against a pool walk. It also replaces the read `GetName` already
+did rather than adding one.
+
+`number` is load-bearing and has its own assertion: dropping it is exactly U8, which shipped once and
+rendered `Slot_1`/`Slot_2`/`Slot_3` all as `Slot`. `NAME_None` is `{0,0}` and a **real** name, so a
+witness treating zero as "unset" would never serve it from cache — also asserted.
+
+Assign-over-stale is legal here and only here: this cache hands out **copies** (the hit returns by
+value with the copy made under the lock), so no reference into it escapes. The two class caches hand
+out references, which is why they get an insert-time gate instead (U4, build 3040).
+
+`ClearNameCache` keeps all four call sites but its rationale changed — staleness is no longer one of
+them. What is left is bounding growth, and covering a `Serie::Init` re-run, the one event that can
+remap a `ComparisonIndex` and so make an unchanged witness decode to a different string.
+
+-----
+
 ## 2026-08-17 - U16: a truncated UEnum table was cached forever, and the log said it was full (build 3041)
 
 **New finding, hand-found while fixing U4** — same file, same never-erased-cache shape, in none of
