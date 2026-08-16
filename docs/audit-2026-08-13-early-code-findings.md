@@ -3376,17 +3376,21 @@ what landed and what is still unproven. Nothing is blocked on the maintainer.
 > dangles) plus an atomic refcount per call on the very path B10 was written to speed up. Anyone
 > picking this up must budget the refactor, not the LRU.
 
-**Current register: 196 open of 277 · 0 HIGH · 37 MED · 132 LOW · 27 INFO.** Re-derive with
+**Current register: 193 open of 278 · 0 HIGH · 34 MED · 132 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
-now exists.
+now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
+compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —
+do not hand-adjust the digits, which is how it drifted every previous time.
 
-> **What the 2026-08-17 session established, so it is not re-derived.** Four queue groups plus the
-> parked A6, ten commits, register 215 → 196 and the MED tier 55 → 37.
+> **What the 2026-08-17 session established, so it is not re-derived.** FIVE queue groups plus the
+> parked A6, 15 commits, register 215 → 193 and the MED tier 55 → 34.
 >
-> - **Re-deriving before fixing paid for itself in every group.** ②: two of four premises refuted,
->   one in the direction that would have DELETED a live guard. ③: two narrowed, plus a new defect in
->   the same handler. ④: the finding got AA14's bytes right and its OUTCOME wrong. If a session
->   skips this step to save time, it will spend the time undoing a fix instead.
+> - **Re-deriving before fixing paid for itself in EVERY group — five for five.** ②: two of four
+>   premises refuted, one in the direction that would have DELETED a live guard. ③: two narrowed,
+>   plus a new defect in the same handler. ④: the finding got AA14's bytes right and its OUTCOME
+>   wrong. ⑤: the audit's PRESCRIBED REPAIR was unsound *and* U4's filed mechanism was wrong, and
+>   a new finding (U16) fell out of the same function. If a session skips this step to save time,
+>   it will spend the time undoing a fix instead.
 > - **Negative-control each finding SEPARATELY.** In ③ two controls *passed*, which is how a bug in
 >   the fix itself was found; in ④ a control exposed that the test stub was hiding the defect. A
 >   control that passes is a finding about the test.

@@ -89,6 +89,19 @@ def ids_from_heading(text: str) -> set[str]:
     return out
 
 
+SEVERITIES = ("HIGH", "MED", "LOW", "INFO")
+
+# §3b's one-line register summary. Matched loosely enough to CATCH a stale one
+# (any digits) but anchored on the exact wording, so a reworded sentence fails as
+# "missing" rather than silently degrading this gate to a no-op — the failure mode
+# extract_patterns.py --check was hardened against and the reason it works.
+HEADLINE_RE = re.compile(
+    r"\*\*Current register: \d+ open of \d+ · "
+    + " · ".join(rf"\d+ {s}" for s in SEVERITIES)
+    + r"\.\*\*"
+)
+
+
 def main() -> int:
     audit = AUDIT.read_text(encoding="utf-8")
     devlog = DEVLOG.read_text(encoding="utf-8")
@@ -112,9 +125,18 @@ def main() -> int:
     missing = sorted(claimed - marked, key=lambda s: (len(s), s))
 
     total, open_n = len(rows), len(rows) - len(marked)
+
+    # Severity split of the OPEN rows, for the §3b headline sentence below.
+    open_by_sev = {k: 0 for k in SEVERITIES}
+    for _, tick, sev in rows:
+        if not tick:
+            open_by_sev[sev] += 1
+
     if "--list" in sys.argv:
         print(f"register: {open_n} open / {total} total ({len(marked)} marked ✅)")
         print(f"dev-log claims {len(claimed)} finding(s) fixed; {len(claimed & marked)} are marked")
+        print(f"open by severity: " +
+              " · ".join(f"{open_by_sev[k]} {k}" for k in SEVERITIES))
 
     if missing:
         print(f"FAIL: {len(missing)} finding(s) the dev-log says are fixed have NO ✅ on their row:")
@@ -127,8 +149,31 @@ def main() -> int:
               "individual rows.")
         return 1
 
+    # ── §3b's headline sentence must agree with the rows ───────────────────
+    # Added 2026-08-17 because it drifted for the third time. The two counts it
+    # states are DERIVED from the rows this gate already parses, so a stale one is
+    # a lie the gate was standing right next to and not reading. Same model as
+    # check_derived_counts.py: on mismatch, print the exact sentence to paste,
+    # because the doc that paraphrased a generator's output is the one that went
+    # stale while the two that pasted it stayed byte-exact.
+    want = (f"**Current register: {open_n} open of {total} · "
+            + " · ".join(f"{open_by_sev[k]} {k}" for k in SEVERITIES) + ".**")
+    m = HEADLINE_RE.search(audit)
+    if not m:
+        print("FAIL: §3b's `**Current register: ... **` sentence is missing or its shape "
+              "changed, so this gate is blind to it. Restore it as:")
+        print(f"  {want}")
+        return 1
+    if m.group(0) != want:
+        print("FAIL: §3b's register headline disagrees with the finding rows.")
+        print(f"  states: {m.group(0)}")
+        print(f"  actual: {want}")
+        print()
+        print("Paste the `actual` line over it — do not hand-adjust the numbers.")
+        return 1
+
     print(f"CHECK OK: every finding the dev-log reports fixed is ✅ on its row "
-          f"({open_n} open / {total} total).")
+          f"({open_n} open / {total} total), and §3b's headline agrees.")
     return 0
 
 
