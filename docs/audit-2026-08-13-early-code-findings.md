@@ -3347,23 +3347,59 @@ G3). Read this first; it is written for a session with no memory of that one.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**There is NO ordered queue left.** The pre-vetted ① – ⑥ is exhausted and so are every named
-follow-up it produced. Everything remaining is picked **by subsystem** from §3c's "Where the rest
-live". Nothing is blocked on the maintainer.
+> ## ⚠ THE BOTTLENECK IS NO LONGER FINDING OR FIXING — IT IS VERIFICATION
+>
+> **Do not open this file looking for the next fix.** Every named clump is closed, the register is
+> down to **0 HIGH / 25 MED**, and **31 batches** are stacked in
+> [todo.md](todo.md)'s `## Pending live-game verification` — the largest backlog it has ever held.
+> Shipping a 26th unverified MED makes the tree *less* trustworthy, not more.
+>
+> **Start in [todo.md](todo.md), not here**, unless the maintainer names a finding.
+> The three worth doing first, and why:
+>
+> | batch | why it is first |
+> |---|---|
+> | **AB4 — the Aura half** | 7 steps, needs only a connected game. It is the half that *structurally could not* be unit-pinned (no target compiles `Aura.cpp`), so it is the only evidence that will ever exist. Step 4 is the control that the pruning half still prunes. |
+> | **SkiaSharp/HarfBuzzSharp ABI alignment** | it needs **several quiet sessions**, so it can only ever close by *starting early*. Session 1 of N is already logged. Nothing else on the register has that shape. |
+> | **AA12/AA13 + AA9** (freeze) | needs a real Cheat Engine, which no rig can stand in for. Step 3 is the one that matters: if an armed-but-empty freeze unticks itself, the fix broke the feature and that is worse than the bug. |
+>
+> Two are **free from an ordinary session**: `AE4–AE7` (Proxy Deploy panel, no game) and
+> `AA4–AA7` step 2 (dissect with the DLL absent).
 
-**Remaining clumps**, in the order I would take them:
+**There is NO ordered queue left, and every clump is now closed.** The pre-vetted ① – ⑥ is exhausted,
+so are its named follow-ups, and so are the four subsystem clumps that replaced them:
 
-| clump | why |
+| clump | state |
 |---|---|
-| ~~`Radar` **AB4 + AB7**~~ | ✅ **AB4 SHIPPED build 3133.** **AB7 was DOWNGRADED MED→LOW and is still OPEN** — its filed clause 1 is refuted and its prescribed fix is the thrice-refused serial witness. See the block below before touching it. |
-| ~~`ue5_freeze_helper.lua` **AA9 – AA13**~~ | ✅ **AA9 + AA12 + AA13 ALL SHIPPED (builds 3125 / 3129)** (they collapse into ONE defect — see the AA12/AA13 block below). AA9 was a DOC + SAMPLES rewrite, pinned by EXECUTING the sample. **AA10 and AA11 were downgraded to LOW** on re-derivation; this clump is closed. |
-| `Radar` **AB4 + AB7** | `Radar.cpp` is one of only two `.cpp` files a test target actually compiles, so a fix there can be pinned properly. |
-| `Fern` **F2 + F8** | no test target compiles `Fern.cpp`; live-only. |
-| ~~`Macht` **MA2**~~ | ✅ **SHIPPED build 3135.** Not "two lines" in the end — the bound now comes from ONE shared predicate (`Macht::PatternScanRange`) used by all four scan loops, so the underflow is structurally impossible rather than guarded in three places out of four. |
+| ~~`ue5_freeze_helper.lua` **AA9 – AA13**~~ | ✅ **AA9 + AA12 + AA13 shipped** (3125 / 3129) — AA12 and AA13 collapse into ONE defect. **AA10 + AA11 downgraded to LOW** on re-derivation. |
+| ~~`Radar` **AB4 + AB7**~~ | ✅ **AB4 shipped** (3133). ⛔ **AB7 downgraded MED→LOW and STILL OPEN** — clause 1 refuted, and its prescribed fix is the thrice-refused serial witness. **Read its block below before touching it.** |
+| ~~`Macht` **MA2**~~ | ✅ **shipped** (3135) — one shared predicate across all four scan loops, not the "two lines" the finding proposed. |
+| `Fern` **F2 + F8** | **the only clump left, and it is the worst-conditioned one**: no test target compiles `Fern.cpp`, so it is live-only — i.e. it would *add* to the verification backlog above rather than draw it down. Take it after the backlog, or when a session already has a game running. |
 
-**⛔ `U5` is NOT a candidate**, and this is the third time it has to be said: it is blocked behind a
+**⛔ `U5` is NOT a candidate**, and this is the fourth time it has to be said: it is blocked behind a
 `WalkClassEx` return-type refactor across 25 call sites, not an LRU. See the cluster ③ block below.
 
+> ### 🔑 WHAT THE 2026-08-16 SESSION ADDED TO THE METHOD (builds 3125 – 3135)
+>
+> The re-derivation rule held again — **four of five AB4/AB7 premises needed correcting** — but three
+> newer lessons cost real time and are not in the block below:
+>
+> - **A finding's PRESCRIBED FIX can be broken even when its DIAGNOSIS is right.** AB4's
+>   re-derivation put a verdict flag on a struct whose consumers look it up through a function
+>   returning `const uint8_t*` — the flag could never have been seen — and its *own*
+>   `wrong_obvious_fix` section argued against exactly that. **Read the fix shape as critically as
+>   the mechanism**; the skeptic caught this, not the finder.
+> - **"It cannot be tested" is a claim to CHECK, not a conclusion.** MA2 looked unpinnable (no target
+>   compiles `Macht.cpp`, and the function is `static`) — but `dll_helpers_test.cpp` **already
+>   includes `Macht.h`**, so a header-inline predicate was directly reachable. Ask what the test file
+>   already includes before accepting that something is unreachable.
+> - **A guard you add is code, so negative-control IT too.** The build-time renderer-drift guard
+>   written this session was a **no-op that shipped green**: `PSObject.Properties[0]` returns `$null`
+>   (that collection indexes by name), and `foreach` over `$null` iterates zero times, so it compared
+>   nothing and reported success. Only reverting the thing it guards and watching it *stay green*
+>   exposed it. It now counts the pairs it checked and fails when that count is short. **A check that
+>   examined nothing must FAIL, not pass** — the same shape as §4.3f's never-firing predicate.
+>
 > ### 🔑 THE ONE METHOD LESSON FROM THE 2026-08-17 SESSION — read before picking anything
 >
 > **Budget the re-derivation, not the fix.** Across ten consecutive items, *every single one* needed
