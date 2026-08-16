@@ -525,9 +525,20 @@ bool UE5_Init() {
     // Latching true now would make the next enable's UE5_Init short-circuit and run the
     // whole session on them. Refuse the latch instead; the next enable re-scans. Safe
     // against a false positive: UE5_AutoStart calls Tot::ResetShutdown() before this.
-    if (Tot::ShutdownRequested()) {
-        LOG_WARN("UE5_Init: shutdown was requested during the scan — results are partial, "
-                 "NOT latching initialized so the next enable re-scans");
+    //
+    // (MA1) The same argument now covers a PER-COMMAND cancel — a pipe client dropping
+    // mid-scan — which this guard could not see, because it tests g_shutdown only.
+    // ⚠ Do NOT "simplify" the added term to Tot::Requested(). g_perCommand stays latched
+    // until Fern::AcceptLoop's firstConn calls ResetPerCommand, so a stale flag from an
+    // EARLIER disconnect would make the auto-start UE5_Init refuse the latch on a scan that
+    // completed perfectly — permanently disabling the DLL for that process. The note above
+    // about ResetShutdown protecting against a false positive has no g_perCommand
+    // equivalent; that asymmetry is the trap. `ptrs.bScanCancelled` says "THIS run actually
+    // aborted", which is the predicate the guard wanted all along.
+    if (Tot::ShutdownRequested() || ptrs.bScanCancelled) {
+        LOG_WARN("UE5_Init: scan was cancelled (%s) — results are partial, "
+                 "NOT latching initialized so the next enable re-scans",
+                 Tot::ShutdownRequested() ? "shutdown" : "client disconnect");
         Sein::SetChannel(LogChannel::Pipe);
         return false;
     }

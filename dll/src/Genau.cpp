@@ -819,6 +819,17 @@ struct ScanReport {
     const char*                    winningId    = nullptr;
     const AobSignature*            winningSig   = nullptr;  // Winning pattern (for AOB metadata)
     bool                           hintUsed     = false;    // true if winner came from hint cache
+    // We stopped before every pattern had been tried, so `finalAddress == 0` says NOTHING
+    // about whether the target exists in this image. Everything that persists or latches a
+    // scan verdict must consult this first (audit #5 MA1) — a cancelled scan that is written
+    // to the hint cache as method="not_found" destroys a good "aob" hint permanently, which
+    // is strictly worse than the freeze the cancellation exists to prevent.
+    //
+    // Recorded AT THE BAIL, deliberately, and never re-derived later by calling
+    // Tot::Requested() again: Fern::AcceptLoop resets the per-command flag on firstConn, so
+    // a client reconnecting while this scan is still unwinding would clear it and the run
+    // would silently look complete.
+    bool                           cancelled    = false;
 };
 
 // The `*_method` label for a successful scan. Every caller used to hardcode "aob", which
@@ -1273,6 +1284,18 @@ static uintptr_t ScanForTarget(
     auto batchT0 = std::chrono::high_resolution_clock::now();
 
     for (int batchIdx = 0; batchIdx < totalBatches; ++batchIdx) {
+        // (MA1) Cancellation lives HERE, at the pattern boundary, and deliberately not
+        // inside Macht: the largest indivisible unit below this line is one AOBScanBatch,
+        // measured at most 0.64 s on a 213 MB .text, against CE's 5000 ms ceiling. Polling
+        // inside Macht's AVX2 strides would cost a relaxed atomic load per 32 bytes in a
+        // file no test target compiles, for no measurable gain in responsiveness.
+        if (Tot::Requested()) {
+            report.cancelled = true;
+            LOG_WARN("[%s] AOB scan CANCELLED after %d/%d batches (client gone / shutdown) — "
+                     "results are partial and MUST NOT be published",
+                     report.targetName, batchIdx, totalBatches);
+            return 0;
+        }
         const int batchStart = batchIdx * kBatchSize;
         const int batchEnd   = (std::min)(batchStart + kBatchSize, totalAob);
         const int batchCount = batchEnd - batchStart;
@@ -1385,6 +1408,16 @@ static uintptr_t ScanForTarget(
         if (tryMultiModule) {
             for (int j = 0; j < batchCount; ++j) {
                 if (!batchResults[j].matches.empty()) continue; // processed in pass 1
+
+                // (MA1) The expensive half. One AOBScanAllModules re-enumerates every loaded
+                // module and scans each — measured 2.34 s on a 593-module title, and on that
+                // title 99.98% of the whole SparseDelegates phase was spent right here.
+                if (Tot::Requested()) {
+                    report.cancelled = true;
+                    LOG_WARN("[%s] multi-module fallback CANCELLED (client gone / shutdown) — "
+                             "results are partial and MUST NOT be published", report.targetName);
+                    return 0;
+                }
 
                 const AobSignature* sig = aobPatterns[batchStart + j];
                 g_validationDbgCount = 0;
@@ -2508,6 +2541,18 @@ uintptr_t FindSparseDelegateStorage() {
                    static_cast<unsigned long long>(result));
     } else {
         Sein::Warn("SCAN:Sparse", "FindSparseDelegateStorage: All patterns failed (non-critical, sparse drill-down disabled)");
+    }
+
+    // (MA1) The latch means "we looked, and this build has none" — which a CANCELLED run has
+    // not established. Nothing in dll/src ever resets s_sparseDelegatesScanned (declaration,
+    // the fast-path read, and this store are its only three references), so latching a
+    // cancelled scan would permanently disable MulticastSparseDelegateProperty drill-down for
+    // the whole game process, surviving even a CE Disable/Enable. Return the (zero) result
+    // without latching so the next run re-scans.
+    if (s_sparseReport.cancelled) {
+        Sein::Warn("SCAN:Sparse", "FindSparseDelegateStorage: CANCELLED — not latching, "
+                                  "the next scan will retry");
+        return result;
     }
 
     s_sparseDelegatesCache.store(result, std::memory_order_relaxed);
@@ -5005,6 +5050,14 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     out.gworldScanAddr           = s_gworldReport.scanAddr;
     out.sparseDelegatesScanAddr  = s_sparseReport.scanAddr;
 
+    // (MA1) Aggregate the cancel verdict in ONE place, in the same block that already reads
+    // all four reports, rather than at the four call sites — C++ has no `required`, and a
+    // missed target would reintroduce hint destruction for that target only: quiet, per-game,
+    // and invisible until someone notices a warm launch got slow. s_gengineReport is
+    // deliberately absent: GEngine resolves outside FindAll and is not written to the cache.
+    out.bScanCancelled = s_gobjectsReport.cancelled || s_gnamesReport.cancelled
+                      || s_gworldReport.cancelled   || s_sparseReport.cancelled;
+
     ExtractScanStats(s_gobjectsReport, out.gobjectsPatternsTried, out.gobjectsPatternsHit);
     ExtractScanStats(s_gnamesReport,   out.gnamesPatternsTried,   out.gnamesPatternsHit);
     ExtractScanStats(s_gworldReport,   out.gworldPatternsTried,   out.gworldPatternsHit);
@@ -5048,7 +5101,23 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         std::string processName(sz > 0 ? sz - 1 : 0, '\0');
         if (sz > 0)
             WideCharToMultiByte(CP_UTF8, 0, nameW, -1, processName.data(), sz, nullptr, nullptr);
-        Flamme::SaveResults(out.peHash, out, processName.c_str());
+        // (MA1) A cancelled scan must never reach the hint cache. Flamme::SaveResults writes
+        // rec["gObjects"/"gNames"/"gWorld"] unconditionally from ptrs.*Method, and those stay
+        // at their "not_found" reset value when the scan bailed early — while ExtractHint
+        // refuses to load anything whose method is not "aob". So one impatient untick during a
+        // cold scan would overwrite a good hint with a permanent "not_found" and cost every
+        // later launch a full cold scan. That is strictly worse than the freeze the
+        // cancellation exists to prevent, which is why these two ship together.
+        //
+        // Skipping the WHOLE save is deliberate rather than skipping the three scan fields:
+        // version detection runs before the AOB phase and is uncancellable (see
+        // DetectVersionDetailed), so it self-heals on the next launch at ~0.35 s.
+        if (out.bScanCancelled) {
+            LOG_WARN("FindAll: scan was CANCELLED — NOT writing the hint cache "
+                     "(a partial run would overwrite good 'aob' hints with 'not_found')");
+        } else {
+            Flamme::SaveResults(out.peHash, out, processName.c_str());
+        }
     }
 
     return true;

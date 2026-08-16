@@ -72,6 +72,12 @@ struct EnginePointers {
     /// low-confidence or user-overridden version is never gated, because misdetecting a working
     /// game as "too old" is far worse than wasting a scan.
     bool      bVersionTooOld   = false;
+    // True when any in-FindAll scan bailed on Tot::Requested(), so the pointers below are
+    // PARTIAL and must not be persisted or latched. Sibling of bVersionTooOld — same job,
+    // different reason: both say "the empty result below is not a measurement". (audit #5 MA1)
+    // Deliberately NOT fed by the GEngine report: that resolves outside FindAll via
+    // ResolveGEngineDeferred and is not written to the hint cache.
+    bool      bScanCancelled   = false;
     const char* publisherThumbprint = nullptr; // e.g. "SQUARE_ENIX" (nullptr if no match) — string literal lifetime
     int       ue4StringOffset = 0x10;  // FNameEntry string offset for UE4 mode
     int       fnameEntryHeaderOffset = 0; // Offset to 2-byte header within FNameEntry (0=standard, 4=hash-prefixed UE4.26)
