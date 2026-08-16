@@ -407,6 +407,64 @@ them.
   right move was to update the number and say why in a comment, keeping it exact so an accidental
   fourth is still caught — not to relax it to `>= 2`.
 
+### 2.4 Re-derive the PREMISE, not just the location (audit #5 queue ②, build 3037)
+
+Queue ② was four MED rows the audit's §3b called "already-vetted". Of its four premises, **two were
+wrong**, and one was wrong in the direction that makes a fix *destructive*.
+
+**AA4 asserted, as "CE source-verified", that `getAddress` raises on a missing symbol** — and
+therefore that a `if fn == nil or fn == 0 then error(...) end` guard was dead code to be removed.
+It is not. The Lua *wrapper* (`LuaHandler.pas:4374-4391`) genuinely does contain `lua_pushstring` +
+`lua_error`, so reading only the wrapper makes the claim look proven. The resolver underneath it
+decides, and it does not throw by default: `getAddressFromNameL` gates the raise on
+`ExceptionOnLuaLookup`, which `TSymhandler.create` sets **FALSE**. Acting on the finding would have
+deleted the only thing that turns "the DLL was never injected" into a message naming the export.
+
+The rules this pays for:
+
+- **A finding's LOCATION is usually right; its MECHANISM often is not.** All four rows pointed at
+  real code. Two described what that code does incorrectly. Re-deriving cost ~20 minutes against a
+  fix that would have shipped a regression.
+- **Follow the call chain to the thing that DECIDES.** A wrapper that contains an error path is not
+  proof the path is reachable. Stop at the function that owns the condition, not the first one that
+  mentions the outcome.
+- **A "kill rate" is not uniform across a finding's parts.** AA4's premise was refuted and its
+  *consequence* ("this breaks CE's dissect for unrelated addresses") was confirmed — and the
+  consequence was the part worth fixing. Judge the halves separately; a refuted premise does not
+  close the row.
+- **The measured impact was WORSE than filed, in the same batch that refuted two premises.** AA6
+  said "a duplicate of the previous field". Running it showed a total DLL failure builds a
+  45-element structure of empty rows, registers it with CE and logs "Struct created". Under-statement
+  and over-statement live side by side; neither is the default.
+- **A counted claim in a finding is a claim.** "14 call sites" was 19. Cheap to check, and a fixer
+  working to the wrong number stops short.
+
+**The general form:** treat a finding as *evidence that something is wrong here*, never as an
+account of what. That is the same lesson §2.2 drew from the HIGH tier ("a finding is evidence a
+defect exists, not authority on the repair") — this is its earlier half: it is not authority on the
+diagnosis either.
+
+### 2.5 A rig that RUNS the thing beats any number of assertions about its text
+
+The C# suite could only assert on `ue5_dissect.lua`'s **source text**, so every one of its
+assertions passed over a script that reported a total DLL failure as a successfully built structure.
+A 40-check Lua rig stubbing CE's globals found 13 real failures in the unfixed file on its first run.
+
+- **`lua` is installed on this machine** (`%LOCALAPPDATA%\Programs\Lua\bin\lua`, 5.4.6) and
+  `luac -p` syntax-checks any script. Both rigs live in `scripts/tests/` and are documented in
+  `scripts/README.md`. They are deliberately **not** in CI — a test step that silently skips when
+  its tool is missing is the AD1/AD2 defect.
+- **Write the rig BEFORE the fix and run it against the unfixed file.** The failure list is the
+  finding, restated as behaviour. It is also the only honest way to claim a fix works.
+- **Two load-order traps, both measured:** `ue5_dissect.lua` *returns* its table and defines no
+  globals while `ue5_freeze_helper.lua` does the opposite; and CE's `vt*` constants must exist
+  **before** the chunk runs, or mapped types silently get `Vartype = nil` while `EnumProperty`, the
+  unknown-type fallback and the header rows still resolve — a partly-correct result is harder to
+  diagnose than a uniformly broken one.
+- **Keep the check COUNT independent of how far the code got.** A per-element assertion loop shrinks
+  its own coverage as the fix improves things (48 checks → 39 on the first green run). Count into one
+  assertion instead. Same family as AF1's aliasing fixture in §2.3.
+
 -----
 
 ## 3. Traps in our own stack
