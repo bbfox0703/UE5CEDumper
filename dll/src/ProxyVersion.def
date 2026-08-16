@@ -5,31 +5,48 @@
 ; This avoids compile-time conflicts with winver.h declarations
 ; while still exporting the correct symbols for DLL hijacking.
 ;
-; UE5_* exports are listed explicitly so the /DEF: linker flag
-; does not suppress them from the export table.  Without these
-; entries, CE's getAddress() cannot resolve the DLL functions.
+; UE5_* exports are listed explicitly so CE's getAddress() finds
+; them by name.  (They are ALSO reachable because /DEF: merges
+; with __declspec(dllexport) rather than suppressing it -- the
+; shipped binary exports ~76 names while this file lists 49.)
+;
+; THE @ORDINALS ARE MANDATORY, NOT DECORATION. link.exe hands
+; unpinned exports out in name-sorted order starting at
+; (highest PINNED ordinal + 1) -- so with nothing pinned, the
+; nine GetFileVersionInfo* names took @1..@9 alphabetically by
+; luck and our UE5_* block took @10..@17, sitting exactly on
+; VerFindFileA/W, VerInstallFileA/W, VerLanguageNameA/W and
+; VerQueryValueA/W.  An ordinal import of any of those eight did
+; not fail; it called one of ours, with the wrong signature.
+;
+; Name coverage here was already complete, so only the pins are
+; new.  The source order below is NOT ordinal order -- these are
+; the measured real ordinals, deliberately not renumbered into
+; sequence, so this list stays diffable against the .cpp.
+; tools/check_proxy_exports.py re-derives every one of them
+; against the real System32 export table.  (Audit PX1.)
 ; ============================================================
 
 LIBRARY version
 EXPORTS
-    ; --- Windows version.dll forwarding ---
-    GetFileVersionInfoA         = Proxy_GetFileVersionInfoA
-    GetFileVersionInfoW         = Proxy_GetFileVersionInfoW
-    GetFileVersionInfoSizeA     = Proxy_GetFileVersionInfoSizeA
-    GetFileVersionInfoSizeW     = Proxy_GetFileVersionInfoSizeW
-    GetFileVersionInfoExA       = Proxy_GetFileVersionInfoExA
-    GetFileVersionInfoExW       = Proxy_GetFileVersionInfoExW
-    GetFileVersionInfoSizeExA   = Proxy_GetFileVersionInfoSizeExA
-    GetFileVersionInfoSizeExW   = Proxy_GetFileVersionInfoSizeExW
-    GetFileVersionInfoByHandle  = Proxy_GetFileVersionInfoByHandle
-    VerQueryValueA              = Proxy_VerQueryValueA
-    VerQueryValueW              = Proxy_VerQueryValueW
-    VerFindFileA                = Proxy_VerFindFileA
-    VerFindFileW                = Proxy_VerFindFileW
-    VerInstallFileA             = Proxy_VerInstallFileA
-    VerInstallFileW             = Proxy_VerInstallFileW
-    VerLanguageNameA            = Proxy_VerLanguageNameA
-    VerLanguageNameW            = Proxy_VerLanguageNameW
+    ; --- Windows version.dll forwarding (export = impl @ real-ordinal) ---
+    GetFileVersionInfoA         = Proxy_GetFileVersionInfoA         @1
+    GetFileVersionInfoW         = Proxy_GetFileVersionInfoW         @9
+    GetFileVersionInfoSizeA     = Proxy_GetFileVersionInfoSizeA     @5
+    GetFileVersionInfoSizeW     = Proxy_GetFileVersionInfoSizeW     @8
+    GetFileVersionInfoExA       = Proxy_GetFileVersionInfoExA       @3
+    GetFileVersionInfoExW       = Proxy_GetFileVersionInfoExW       @4
+    GetFileVersionInfoSizeExA   = Proxy_GetFileVersionInfoSizeExA   @6
+    GetFileVersionInfoSizeExW   = Proxy_GetFileVersionInfoSizeExW   @7
+    GetFileVersionInfoByHandle  = Proxy_GetFileVersionInfoByHandle  @2
+    VerQueryValueA              = Proxy_VerQueryValueA              @16
+    VerQueryValueW              = Proxy_VerQueryValueW              @17
+    VerFindFileA                = Proxy_VerFindFileA                @10
+    VerFindFileW                = Proxy_VerFindFileW                @11
+    VerInstallFileA             = Proxy_VerInstallFileA             @12
+    VerInstallFileW             = Proxy_VerInstallFileW             @13
+    VerLanguageNameA            = Proxy_VerLanguageNameA            @14
+    VerLanguageNameW            = Proxy_VerLanguageNameW            @15
 
     ; --- UE5 Dumper C ABI exports (for CE Lua getAddress) ---
     UE5_Init
