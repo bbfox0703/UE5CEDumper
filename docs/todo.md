@@ -15,8 +15,9 @@ Open work only. **Read this when deciding what to do next.**
 >   ordinary session, 1 needs no game at all). **Offer these whenever the maintainer has a game up.**
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-16 (evening): **215 audit findings open of 277 · 0 HIGH · 55 MED**, and
-> **one item (A6) is blocked on a maintainer decision, not on effort** — see §3b.
+> State as of 2026-08-17: **207 audit findings open of 277 · 0 HIGH · 48 MED**. Nothing is
+> blocked on a maintainer decision any more (A6 was the last, and it is decided and shipped).
+> Re-derive the count with `py tools/check_audit_register.py --list` — never hand-tally.
 
 > **2026-06-06 cleanup.** This file was slimmed to open items only. The full
 > pre-cleanup history (every shipped build's effort/risk retrospective, files

@@ -262,7 +262,7 @@ end-to-end; the raw output came back correspondingly disciplined (18 claims from
 | **A3** | MED | `Aura.cpp:6170` | `ScanForValue`'s struct-expansion cycle guard is **whole-walk instead of path-scoped**, so the 2nd and 3rd field of a repeated struct type are dropped from the scan index. Hits GAS directly — `FGameplayAttributeData Health/MaxHealth/Mana` share one `UScriptStruct`, so only `Health` is indexed. `CollectSchemaLeaves` (`4109`) already does it correctly. | S / low |
 | **A4** | MED | `Aura.cpp:6791` | Value Search's deep-container pass **drops every depth-1 leaf**, so values inside `TSet<FStruct>` / `TMap<K,FStruct>` elements are unreachable *even with Deep on* — the static index doesn't cover them either (`collectStructArrayInner` is only reached from the ArrayProperty branch). An everyday `TMap<FName, FItemData>` inventory count is unfindable. | M / low |
 | **A5** ✅ | MED | `Aura.cpp:4436` | Property Search's inline **Preview samples the CDO**, not a live instance, so the column shows the Blueprint default forever (Health = 100 while the player is at 37). `Solide.cpp:282`, `Wirbel.cpp:328` and `Edel.cpp:94` all already filter `Default__`. | S / low |
-| **A6** | MED | `Aura.cpp:4282` | `SearchProperties` reports the **defining** class, so dedup collapses ~4,800 `AActor` subclasses into one row named `Actor`; Force then calls `FindInstancesByClass("Actor", exactMatch)` and resolves an **empty pool**. The concrete class is known at row-emission time and thrown away. | M / med |
+| **A6** ✅ | MED | `Aura.cpp:4282` | `SearchProperties` reports the **defining** class, so dedup collapses ~4,800 `AActor` subclasses into one row named `Actor`; Force then calls `FindInstancesByClass("Actor", exactMatch)` and resolves an **empty pool**. The concrete class is known at row-emission time and thrown away. | M / med |
 | **A7** | LOW | `Aura.cpp:1685` | `FindByAddress` is the **only** full-GObjects walk in the file with neither a `Tot::Requested()` poll nor a deadline — same shape as D2/G2. Responsiveness, not correctness. | S / low |
 | **A8** | LOW | `Fern.cpp:4483` *(D5 scope)* | `get_ce_pointer_info` branches on `Aura::IsPacked()` but **never on `Aura::IsFlat()`**, so on a flat `FFixedUObjectArray` (OctoPath, FF7R Intergrade, Extinction, NEKOPALIVE) hop 3 dereferences `Item[0].Object` as a chunk pointer and CE resolves a garbage address **the user can write to**. LOW only because the UI client mitigates. | S / low |
 | **A9** | LOW | `Aura.cpp:8380` | `ScanForValueGroup` sets the per-object element budget but **never passes the counter**, leaving `maxTotalElems` inert on the deep walk — so the very stall it was added for (the recorded SEED ~24 s chunk) is still unbounded; only the global 15 s deadline stops it, consuming the whole scan budget on one object. | S / low |
@@ -2004,9 +2004,9 @@ second lens → 17 confirmed. Kill rate 35% — the FIRST phase to land inside t
 |----|-----|----------|--------|-------------|
 | **AB1** ✅ | HIGH | `Heiter.cpp:274` (DllMain (DLL_PROCESS_ATTACH) → Mimic::StartThread) | DllMain starts a 1 ms-poll thread in EVERY host, including Cheat Engine — and CE FreeLibrary's plugin DLLs, so the thread runs on after the image is unmapped | S / low |
 | **AB2** ✅ | HIGH | `Methode.cpp:307` (OnInjectAndConnect) | InjectDLL is handed the multi-second AOB scan as `functiontocall`; CE frees the remote stub out from under the still-running thread **[2 lenses]** | S / low |
-| **AB3** | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
+| **AB3** ✅ | MED | `Radar.cpp:288` (VectorStructNames / SizeOf / CompareVectorPredicate) | FVector/FRotator scan hardcodes a 12-byte 3xfloat layout but accepts UE5's 24-byte LWC "Vector"/"Rotator" structs, so every UE5 game's vector scan compares junk | M / med |
 | **AB4** | MED | `Radar.cpp:508` (Radar::BuildNumericTargets) | The width-fit gate is right for Exact and wrong for the ordered predicates: fields whose entire range satisfies Smaller/Bigger are silently skipped | M / low |
-| **AB5** | MED | `Radar.cpp:797` (Radar::CompareVectorPredicate) | The FVector/FRotator scan is hardcoded to 3×float / 12 bytes, so it reads junk on every UE5 (LWC double) game — while the reflected 24-byte size is captured and thrown away | M / med |
+| **AB5** ✅ | MED | `Radar.cpp:797` (Radar::CompareVectorPredicate) | The FVector/FRotator scan is hardcoded to 3×float / 12 bytes, so it reads junk on every UE5 (LWC double) game — while the reflected 24-byte size is captured and thrown away | M / med |
 | **AB6** ✅ | MED | `Radar.cpp:1441` (BuildGroupOrderedView::slot0Num / slot0Offset) | Group sort keys read slotMatches[0][0] while the row displays slotMatches[0][picks[0]] — the grid orders by a leaf the user cannot see | S / low |
 | **AB7** | MED | `Radar.h:384` (Radar::Candidate / Radar::InstanceRecord) | A scan session's candidate addresses are raw addresses used as IDENTITY across RPCs; the GObjects index is captured but never validated and no serial witness is stored | M / med |
 | **AB8** | LOW | `Heiter.cpp:41` (g_hAutoStartThread) | The auto-start thread handle is stored, never waited on and never closed; two comments assert a join that no code performs | S / low |
@@ -2227,10 +2227,10 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 | **AA1** ✅ | HIGH | `ue5_freeze_helper.lua:153` (writeBool) | Bool freeze writes a WHOLE BYTE over an FBoolProperty bitfield — clobbers the sibling bits and sets the wrong bit **[2 lenses]** | M / med |
 | **AA2** ✅ | HIGH | `ue5_freeze_helper.lua:452` (freezeProperty -> tick) | The freeze tick's liveness guard cannot detect a recycled UObject slot, so it writes 20x/sec into the wrong live object for up to 5 seconds *(re-measured 2026-08-15: ~16/s per cached address — TTimer 50 ms quantised to ~62.5 ms; 5 s is the BEST case — see §3c)* | M / med |
 | **AA3** ✅ | HIGH | `ue5_freeze_helper.lua:461` (rescan / tick) | A failed rescan KEEPS the stale pointer cache, and tick's only liveness test is a non-zero vtable read — so it writes 20x/s into freed and recycled objects, indefinitely **[2 lenses]** *(2026-08-15: "indefinitely" holds under PERSISTENT failure — DLL re-inject / contract mismatch / wedged `_ue5_invoke_busy`; transient busy self-heals in 5 s; `_lastError` is write-only — see §3c)* | M / med |
-| **AA4** | MED | `ue5_dissect.lua:53` (callDLL) | Bare getAddress RAISES on a missing symbol (CE source-verified), so the 'DLL function not found' message is dead code and the registered dissect override breaks CE's dissect for unrelated addresses **[2 lenses]** | S / low |
-| **AA5** | MED | `ue5_dissect.lua:63` (callDLL) | callDLL returns nil on every executeCodeEx failure and not one of its 14 call sites handles nil: `<= 0` raises, `~= 0` inverts **[2 lenses]** | S / low |
-| **AA6** | MED | `ue5_dissect.lua:173` (addFieldsToStruct / walkClassFields) | callDLL returns nil on failure and every caller treats nil as SUCCESS — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as a duplicate of the previous field **[2 lenses]** | S / low |
-| **AA7** | MED | `ue5_dissect.lua:289` (fillGaps) | "Gap filling" is advertised in the header but fillGaps is never called — and its coverage test would emit overlapping elements if it were **[2 lenses]** | S / low |
+| **AA4** ✅ | MED | `ue5_dissect.lua:53` (callDLL) | Bare getAddress RAISES on a missing symbol (CE source-verified), so the 'DLL function not found' message is dead code and the registered dissect override breaks CE's dissect for unrelated addresses **[2 lenses]** | S / low |
+| **AA5** ✅ | MED | `ue5_dissect.lua:63` (callDLL) | callDLL returns nil on every executeCodeEx failure and not one of its 14 call sites handles nil: `<= 0` raises, `~= 0` inverts **[2 lenses]** | S / low |
+| **AA6** ✅ | MED | `ue5_dissect.lua:173` (addFieldsToStruct / walkClassFields) | callDLL returns nil on failure and every caller treats nil as SUCCESS — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as a duplicate of the previous field **[2 lenses]** | S / low |
+| **AA7** ✅ | MED | `ue5_dissect.lua:289` (fillGaps) | "Gap filling" is advertised in the header but fillGaps is never called — and its coverage test would emit overlapping elements if it were **[2 lenses]** | S / low |
 | **AA8** | MED | `ue5_dissect.lua:341` (addUObjectHeader) | UObject header offsets are hardcoded (Outer=0x20) while the DLL detects and switches them (DynOff::UOBJECT_OUTER = 0x28 on case-preserving-FName games) **[2 lenses]** | M / low |
 | **AA9** | MED | `ue5_freeze_helper.lua:95` (header SAMPLES block) | The file's own copy/paste samples produce a freeze that cannot be stopped: `local h` in [ENABLE] is invisible to [DISABLE], and SAMPLES 1-3 show no stop at all | S / low |
 | **AA10** | MED | `ue5_freeze_helper.lua:341` (fetchInstancePage) | The mailbox has two mutually-blind concurrency guards: generated scripts wait for cmd==IDLE, the standalone helpers use a Lua flag no generated script sets | M / low |
@@ -2248,7 +2248,7 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 | **AA22** | LOW | `ue5_dissect.lua:24` (dissect.enableAutoCallback) | The already-registered guard is a chunk-local, so a second dofile double-registers the dissect override and disableAutoCallback can only unregister the newest one | S / low |
 | **AA23** | LOW | `ue5_dissect.lua:208` (addFieldsToStruct) | The struct-recursion depth cap returns silently, so a nested StructProperty deeper than 6 levels is simply absent from the dissect with no marker | S / low |
 | **AA24** | LOW | `ue5_dissect.lua:222` (addFieldsToStruct) | A CreateRemoteThread round-trip plus a target-process allocation per StructProperty field, whose result is discarded — and it leaks if the call raises | S / low |
-| **AA25** | LOW | `ue5_dissect.lua:243` (addFieldsToStruct) | A failed callDLL mid-walk raises with beginUpdate() unmatched, orphaning a CE structure that is never registered in structList and so can never be freed by clearAll() | S / low |
+| **AA25** ✅ | LOW | `ue5_dissect.lua:243` (addFieldsToStruct) | A failed callDLL mid-walk raises with beginUpdate() unmatched, orphaning a CE structure that is never registered in structList and so can never be freed by clearAll() | S / low |
 | **AA26** | LOW | `ue5_dissect.lua:244` (addFieldsToStruct (BoolProperty branch)) | The bitmask is stored in ChildStructStart, a CE property that means 'byte offset inside a child struct', not a mask **[2 lenses]** | S / low |
 | **AA27** | LOW | `ue5_dissect.lua:522` (dissect.enableAutoCallback) | The CE-global dissect override is registered with no automatic unregister, and CE never rebuilds its Lua state — so after the DLL goes away it breaks CE's 'guess structure' for the rest of the session | S / low |
 | **AA28** | LOW | `ue5_freeze_helper.lua:220` (checkContract) | An unreadable contract symbol is reported as "stale address — re-inject the DLL" when the process is simply gone, though the same file already knows how to say that | S / low |
@@ -2654,9 +2654,18 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**215 of 277 findings are still open** (62 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 55 MED ·
-133 LOW · 27 INFO**.
+**207 of 277 findings are still open** (70 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 48 MED ·
+132 LOW · 27 INFO**.
+
+> ⚠ **This drifted a SECOND time, 2026-08-17, the same way as the first.** Queue items ① and ②
+> shipped and their GROUPED rows (`| ① | AB3 + AB5 |`) were struck through — but the individual
+> finding rows were not marked, so the register kept reporting AB3, AB5, A6, AA4-AA7 and AA25 as
+> open. The count above is the corrected derivation.
+>
+> **`tools/check_audit_register.py` now gates this** (wired into CI): every finding
+> `docs/dev-log.md` reports fixed must carry a ✅ on its table row. Run it after any fix.
+> Marking the queue row is NOT enough — the count reads the individual rows.
 
 > ✅ **Updated 2026-08-16 PM — fourteen MEDs fixed in one session, builds 3016-3031** (the MED tier
 > went 69 → 55). In the recommended CLUSTER order rather than by segment, since the three named
@@ -3262,7 +3271,7 @@ block — start at ①, no re-derivation needed.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**Current register: 215 open of 277 · 0 HIGH · 55 MED · 133 LOW · 27 INFO.** Re-derive before
+**Current register: 207 open of 277 · 0 HIGH · 48 MED · 132 LOW · 27 INFO.** Re-derive before
 trusting it (the command is at the top of §3c) — never hand-tally.
 
 **Everything below is an already-vetted MED.** They are grouped so each ① – ⑥ is ONE fix pass over
@@ -3283,8 +3292,20 @@ unless the maintainer says otherwise; each group is a session's worth or less.
 so `UE5_Shutdown` blocks ~14 s and CE reads as hung) and G3, `Fern` has F2 + F8, and
 `ue5_freeze_helper.lua` has AA9 – AA13.
 
-#### The five rules that are not optional — each one caught something in the last batch
+#### The seven rules that are not optional — each one caught something in a past batch
 
+0. **Mark EVERY individual finding row ✅ when you close it, not just the grouped queue row.**
+   Run `py tools/check_audit_register.py` — it fails the build if a finding the dev-log says is
+   fixed has no ✅. This has now drifted **twice**: eleven rows in 2026-08-15's sweep, then eight
+   more (AB3, AB5, A6, AA4-AA7, AA25) on 2026-08-17, each time because the ① ② ③ row was struck
+   through and the rows it covered were not. **The register's count reads the individual rows**, so
+   the only symptom is a number that quietly over-reports how much work is left — which is exactly
+   the kind of lie this audit exists to catch elsewhere.
+0b. **Re-derive the PREMISE before fixing, not just the location.** Everything MED and below carries
+   the "not re-derived by hand" caveat and it is load-bearing: of queue ②'s four premises, **two
+   were wrong**, and AA4's was wrong in the direction that would have made the fix DELETE a live
+   guard. A finding's location is usually right; its mechanism often is not. See §2.4 of
+   [working-lessons.md](working-lessons.md).
 1. **Grep for siblings AT FIX TIME.** It grew **8 of the 14** fixes on 2026-08-16, and in no case did
    the finding's own text mention the sibling. Budget a minute per fix.
 2. **Prove the check can FAIL.** Revert the fix in the tree, watch the suite go red, restore. An
