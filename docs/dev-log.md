@@ -22,6 +22,88 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - G10 + MA1: the hint fast path was destroying working scans, and AOB scanning can now be cancelled (builds 3091 / 3095)
+
+Two commits. **The bigger one was not the finding I set out to fix** — it was found while
+re-deriving it, is HIGH, and was live-reproducible from logs already on this machine.
+
+### G10 (HIGH) — the hint fast path used a weaker test than the scan that made the hint
+
+`Genau::ScanForTarget`'s hint phase called `Macht::AOBScan`, which returns the **first** match only.
+The batch path it shortcuts hands Pass 1 **every** match and walks them until one validates. So a
+pattern whose first match failed validation was logged `Hint MISS` and then **erased from the pattern
+set** — hiding it from the one path that would have found the later, valid match.
+
+Same binary (PE `6A7EA60310F17000`), five minutes apart, from `Logs/DumperTest/`:
+
+```
+13:29 (cold)  === GNames: 31 patterns tried, 10 with hits, winner: GNAM_V1 -> 0x7FF63CD568C0 ===
+13:34 (hint)  [GNames] Hint MISS: 'GNAM_V1' (scan 1545 us) — falling back to full scan
+              === GNames: 33 patterns tried, 12 with hits, NONE validated ===
+```
+
+GNames not found on a binary where it demonstrably resolves. `GNAM_V1` had **166** matches on that
+image and the winner was not the first. GObjects showed the same shape in the same run and went
+**0.66 s → 6.14 s**.
+
+Three consequences, in order:
+
+1. **The false "not found" is PERSISTED.** `Flamme` writes `method="not_found"` over a good
+   `method="aob"` hint, and `ExtractHint` then refuses anything but `"aob"`. This week's dominant
+   defect family — a failed operation memoized as a real answer — already shipping, with no
+   cancellation involved.
+2. **It oscillates**: fail → hint destroyed → next launch cold-scans successfully → hint saved →
+   fail again.
+3. **It is the largest contributor to the worst scan time in the corpus.** The 16.3 s `FindAll` that
+   made MA1 look urgent is largely this, not `Macht`.
+
+Fix: `AOBScanAll` walked with the **same cap and same first-validated-wins rule as Pass 1**, so the
+two paths cannot disagree; `pr.hitCount` reports the real count (it was `matchAddr ? 1 : 0`, so a
+166-match pattern logged `hits=1` — the report and the reality computed by different code paths,
+which is what hid this); and the pattern is erased **only** when it produced zero matches.
+
+### MA1 — confirmed, narrowed, and my own re-raise had a wrong premise
+
+I wrote *"once control enters Macht, every poll G2 added to Genau is unreachable."* **Wrong.** None
+of Genau's 7 polls was ever on `ScanForTarget`'s call path — `Macht` does not shadow them, the AOB
+phase simply never had a poll at any level. Impact is also smaller than "larger than G2" implied: CE
+gives up at its own 5000 ms ceiling, so the user gets a bounded freeze plus a leaked stub, not a hang.
+
+**The poll alone would have been a net regression**, which is why it shipped as one commit with four
+guards. Today nothing aborts, so a scan always completes and writes a real record; add a poll and
+`*Method` stays `"not_found"`, `FindAll` still reaches `Flamme::SaveResults`, and the write is
+unconditional — one impatient untick destroys the hint cache permanently.
+
+- `ScanReport::cancelled`, recorded **at the bail** and never re-derived by calling
+  `Tot::Requested()` again (`Fern::AcceptLoop` resets the per-command flag on firstConn, so a
+  reconnect during unwind would make the run look complete).
+- `FindSparseDelegateStorage` no longer latches on a cancelled run — `s_sparseDelegatesScanned` has
+  three references in the whole tree and **nothing resets it**, so latching a cancelled scan would
+  kill sparse drill-down for the game process, surviving a CE Disable/Enable.
+- `EnginePointers::bScanCancelled`, OR-ed in the **one** block that already reads all four reports
+  rather than at four call sites — C++ has no `required`, and a missed target reintroduces hint
+  destruction for that target only.
+- `UE5_Init`'s latch guard now also refuses on it. ⚠ **Not** widened to `Tot::Requested()`:
+  `g_perCommand` stays latched until firstConn, so a stale flag would refuse the latch on a scan
+  that completed fine and permanently disable the DLL for that process.
+
+Polls sit at the **pattern boundary**, deliberately not inside `Macht`: the largest indivisible unit
+below is one `AOBScanBatch` (max measured 0.64 s on a 213 MB `.text`) or one `AOBScanAllModules`
+(max 2.34 s on a 593-module title), both inside CE's ceiling. `Macht.h` now records that reasoning —
+plus the correction that the earlier refutation was wrong for a *stronger* reason than MA1 gave
+(there is no `__try` in any scan core at all), and that a future poll there must discard partials,
+since `ResolveNameKeyTable` reads the list as a **uniqueness** test.
+
+### Also filed
+
+**MA2 (LOW)** — `ScanRegionBatch` guards on `minPatLen` across the batch but computes
+`regionSize - pat.bytes.size()` per pattern; for a pattern longer than the region that `size_t`
+subtraction underflows and the loop walks off the end, in a function with no SEH. Unreachable today
+(the sole call site passes no `moduleBase`), live the moment one is passed. `AOBScan`/`AOBScanAll`
+already carry the correct guard.
+
+-----
+
 ## 2026-08-17 - G2: gate the version needle sweep, and let the recovery sweeps be cancelled (builds 3086 / 3088)
 
 **Audit #5 G2 — CONFIRMED, but its framing was wrong.** Filed as a *cancellation* defect; it is a

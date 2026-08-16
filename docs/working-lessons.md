@@ -793,6 +793,39 @@ same pass, and because "guards" is ambiguous between the two kinds.
   in both places why the original was wrong. The next reader needs to know the row was examined, not
   merely that it vanished.
 
+### 4.3d A fast path must never use a WEAKER test than the slow path it shortcuts
+
+Audit #5 G10 (build 3091), and it is the sharpest instance of this repo's dominant defect family.
+`Genau::ScanForTarget` cached a winning AOB pattern, then on the next launch re-checked it with
+`Macht::AOBScan` — **first match only** — where the scan that produced the hint had used
+`AOBScanBatch` and walked **every** match until one validated. A pattern whose first match failed
+validation was therefore declared a MISS and *erased from the pattern set*, hiding it from the one
+path that would have succeeded. The false "not found" was then persisted over the good hint, so it
+oscillated: fail → hint destroyed → cold scan succeeds → hint saved → fail again.
+
+It survived because two things agreed with each other and neither agreed with reality: the fast path
+reported `hitCount = matchAddr ? 1 : 0`, so a 166-match pattern logged `hits=1`, and the log
+therefore *corroborated* the wrong answer.
+
+**How to apply:**
+
+- **A cache/fast path is a claim that two computations agree.** Write the check so they cannot
+  diverge: same helper, same cap, same tie-break. Here the repair was literally to call the same
+  function the slow path calls and reuse its `kMaxValidate…` rule.
+- **Never let a fast-path failure DELETE work the slow path would have done.** Falling back is
+  cheap; excluding a candidate is not. Erase only on the strongest possible evidence — here, zero
+  matches, not "matched but did not validate".
+- **A confirming log line is not confirmation if the log is computed by the shortcut.** This is
+  audit #4's root cause #1 (the report and the reality computed by different code paths) wearing a
+  new hat, and it is why the count is now the real one.
+- **Look for this shape wherever a "hint", "cache", "quick check", or "fast path" exists.** The
+  question is not "is it faster" but *"can it return a different verdict than the thing it replaces
+  — and if so, in which direction does it fail?"*
+
+The instance that made it visible was a pair of log files five minutes apart on the maintainer's own
+machine, which is worth its own note: **the regression corpus you already have on disk is evidence.**
+Before estimating whether a defect is real, grep the logs.
+
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when

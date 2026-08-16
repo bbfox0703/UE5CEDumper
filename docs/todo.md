@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **24 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **25 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1425,6 +1425,43 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — G10 / MA1: the hint cache must stop destroying itself
+
+*Needs the DLL injected. See dev-log builds 3091 / 3095. **Step 1's control already exists on disk**
+and is decisive — this is the rare case where the regression was captured before the fix.*
+
+1. **⚠ G10 — THE DECISIVE ONE, and it is a two-launch test.** Pick a title where a pattern has many
+   matches (DumperTest is the documented case, PE `6A7EA60310F17000`). Delete that PE hash's
+   `gNames` entry from `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json`, launch and scan
+   (run #1 writes the hint), then launch and scan **again**.
+   **PASS** = run #2 shows `Hint HIT: 'GNAM_V1'`, or at worst a `Hint MISS` followed by a real
+   winner. **FAIL (the shipped bug)** = `=== GNames: … NONE validated ===`, which is what
+   `Logs/DumperTest/scan-0.log` recorded at 13:34 on 2026-08-14 while `scan-20260814-132936.log`
+   found `winner: GNAM_V1` five minutes earlier on the same binary.
+2. **G10 — the count no longer lies.** In `scan-0.log`, a `Hint MISS` line now reports the real match
+   count (`(%zu matches, none validated; …)`). It must never say `1 match` for a pattern the cold run
+   logged with hundreds — that mismatch is what hid this defect for months.
+3. **⚠ REGRESSION — a warm launch is still FAST.** The hint path now scans all matches instead of
+   stopping at the first, so a genuine `Hint HIT` costs slightly more. Confirm run #2 is still far
+   faster than a cold scan (`[X] AOB scan total: %lld us`), not merely correct.
+4. **MA1 — the cancel actually fires.** On a cold, hint-less title, untick the CE script ~2 s into
+   the scan. `scan-0.log` must show `AOB scan CANCELLED after N/M batches` within ~1 s, and
+   `FindAll: scan was CANCELLED — NOT writing the hint cache`.
+5. **⚠ MA1 — the guards, each checked SEPARATELY** (a control that passes is how a bug in a fix gets
+   found): after that cancelled run, (a) **diff `UE5CEDumper.{Machine}.json`** — it must be
+   *unchanged* for that PE hash; (b) re-enable in the **same** process and confirm a full re-scan
+   runs rather than short-circuiting (the `UE5_Init` latch guard); (c) drill into a
+   `MulticastSparseDelegateProperty` and confirm `FindSparseDelegateStorage: Scanning` appears a
+   **second** time rather than a latched 0 (the sparse latch guard).
+6. **⚠ REGRESSION — a healthy scan still completes and still saves.** Connect the UI, disconnect it
+   mid-command, reconnect, and confirm a fresh scan resolves normally, writes the hint cache, and
+   shows **no** `CANCELLED` line. This is what keeps `bScanCancelled` from being widened to
+   `Tot::Requested()`, which would refuse the latch on a scan that finished fine.
+
+**Not covered:** `Macht` still carries no poll (deliberate — see the comment above its AOB
+declarations), and **MA2**, the `ScanRegionBatch` per-pattern underflow, is unreachable until
+`AOBScanBatch` is given a `moduleBase`.
 
 ### ⬜ NEW 2026-08-17 — G2: the version sweep is ~29 s faster, and must still be RIGHT
 
