@@ -22,6 +22,72 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AA14-AA20: seven fixes on the CE Lua invoke path (build 3039)
+
+**Audit #5 queue ④** — all seven on one path: the mailbox round-trip CE Lua uses to call a UFunction
+in the game. Pinned by a new `scripts/tests/invoke_helper_test.lua` (63 checks), the third rig in
+`scripts/tests/`. **Written to fail first: 23 failures against the unfixed file.**
+
+### What was wrong
+
+| | |
+|---|---|
+| **AA14/15** | `allocateMemory`'s nil return was unchecked, so a failed allocation still wrote `ArrayNum = ArrayMax = n+1` beside `Data = 0` — an FString **promising n+1 characters at address 0**, handed to a live UFunction. |
+| **AA16** | `BakedScriptGenerator.MapToHelperType` can emit `ftext` / `tarray` / `tmap` / `tset` / `delegate`; `writeParams` accepted **none** of them, so the error aborted the WHOLE invoke before the DLL was ever triggered. |
+| **AA17** | The params buffer was zeroed only to the CALLER's `parmsSize`, while the DLL passes `sizeof(paramsData)` — a flat **1024** — to `UE5_CallProcessEventEx`. |
+| **AA18** | A timeout reported the STALE `errorMsg` from an earlier command. |
+| **AA19** | The reentrancy flag was cleared unconditionally, including on the timeout path — exactly when the DLL still owns the mailbox. |
+| **AA20** | `readUFunctionReturn` decoded int32/int16 UNSIGNED, so a UFunction returning `-1` read as `4294967295`. |
+
+### Two things the measurement changed
+
+- **AA14 is worse than filed, and the rig nearly hid it.** CE does *not* raise on a nil address —
+  `lua_toaddress` falls through to `lua_tointeger`, and `lua_tointeger(nil)` is `0`, so
+  `writeBytes(nil, …)` writes to address **0** and returns. The first version of the rig modelled it
+  as a raise, which made three of AA14's five assertions pass for the wrong reason. With a
+  CE-accurate stub the real behaviour appears: `ok = true, err = nil` — a **silent success** that
+  sends the invoke. The finding described the bytes correctly and the *outcome* not at all.
+- **AA16's most likely victim is `tarray`, not `ftext`.** `InvokeParamDialog.CollectBakedValues`
+  skips OUT params only when they are STRING types, so the ubiquitous
+  `GetAllActorsOfClass(…, TArray<AActor*>& OutActors)` shape is collected and aborts the export —
+  a plain getter the user supplied nothing for.
+
+### The repair
+
+- **AA14/15**: raise before *any* of the three field writes. A length is never published for a
+  buffer that does not exist.
+- **AA16**: `tarray`/`tmap`/`tset`/`delegate` are accepted and **write nothing** — after AA17 the
+  whole buffer is zeroed first, and all-zero *is* the default-constructed empty value for each
+  (`{Data=nullptr, Num=0, Max=0}`; an unbound `FScriptDelegate`). A value the caller actually
+  supplied is refused rather than silently dropped. **`ftext` stays refused, deliberately**: an
+  all-zero FText is not an empty FText — it holds a `TSharedRef` the engine dereferences, so a
+  zeroed one is a crash, not a default. The error message also listed 11 of the 23 tokens
+  `writeParams` really accepts; it now lists them all.
+- **AA17**: one `writeBytes` over the full 1024. Also *faster* than before — the old form was one CE
+  round trip per byte, so covering the whole region this way beats covering part of it the old way.
+  `writeParams` still gets `parmsSize` as its region size, so the `fstruct` size-inference fallback
+  is unchanged.
+- **AA18**: wipe `errorMsg` before sending. Nothing else does — the DLL's pickup sets
+  `status = PROCESSING` and leaves the field alone. Incidental: the existing `or 'timeout'` fallback
+  was **unreachable**, because `'' or x` is `''` in Lua.
+- **AA19**: the guard is released only when the mailbox is ours again. A timeout records the mailbox
+  address, and the next call asks the **DLL's own published state** (`status == DONE && cmd == IDLE`)
+  rather than latching a Lua-local boolean for the session.
+- **AA20**: `int32` (the default) and `int16` decode signed; `uint32`/`dword` and `uint16`/`word`
+  are the unsigned spellings. The docblock and `scripts/README.md` both listed a token set that
+  omitted them.
+
+### Negative controls — one per finding, all discriminating
+
+AA14/15 → **7 red** · AA16 → **13** · AA17 → **2** · AA18 → **1** · AA19 → **2** · AA20 → **2**.
+All green on restore. C++ 246 + 1073, C# 3896 (the eleven source-text assertions on the embedded
+helper still pass — it ships as a manifest resource, not a file).
+
+`scripts/README.md` gains the third rig and, more usefully, a fourth trap for whoever writes the
+next one: **a stub stricter than CE hides exactly the defects worth finding.**
+
+-----
+
 ## 2026-08-17 - AE4-AE7: the Proxy Deploy panel gets a guard that is actually one (build 3038)
 
 **Audit #5 queue ③.** `IsScanning`'s own declaration already called itself *"the mutual-exclusion

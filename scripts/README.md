@@ -159,7 +159,7 @@ The runtime mailbox-protocol shim for **AA Script (Baked)** invocations generate
 | Function | Description |
 |----------|-------------|
 | `invokeUFunction(className, funcName, parmsSize, params)` | Marshal a `CMD_INVOKE_BY_NAME` mailbox request to the DLL: find non-CDO instance → find UFunction → write baked params → ProcessEvent → return ok/err |
-| `readUFunctionReturn(offset, valueType)` | Decode a single scalar from the params buffer (`int32` / `float` / `double` / `bool` / `byte` / `qword` / `int16`). Used by Verify Return Value mode |
+| `readUFunctionReturn(offset, valueType)` | Decode a single scalar from the params buffer. `int32` (the default) and `int16` are **signed** — a UFunction returning `-1` reads as `-1`, not `4294967295`; `uint32`/`dword` and `uint16`/`word` are the unsigned spellings, plus `float` / `double` / `bool` / `byte` / `uint64`/`qword`. Used by Verify Return Value mode |
 
 ### How it lands in your .CT
 
@@ -202,10 +202,12 @@ touches over plain Lua tables, run the **real** functions, and check what actual
 |-----|--------|
 | `tests/freeze_helper_test.lua` | `ue5_freeze_helper.lua` — packed-bitfield bool writes, the recycled-slot identity guard, the failing-rescan stop (audit #5 AA1–AA3) |
 | `tests/dissect_test.lua` | `ue5_dissect.lua` — the `callDLL` raise contract, the CE-callback barriers, and that a failed walk registers nothing (audit #5 AA4–AA7) |
+| `tests/invoke_helper_test.lua` | `ue5_invoke_helper.lua` — the mailbox round-trip: a refused allocation, the param-type tokens the C# generator emits, the params-buffer wipe, timeout diagnosis and reentrancy, signed return decoding (audit #5 AA14–AA20) |
 
 ```bash
 lua scripts/tests/dissect_test.lua
 lua scripts/tests/freeze_helper_test.lua
+lua scripts/tests/invoke_helper_test.lua
 ```
 
 Exit 0 = all pass, 1 = a failure (with the case named). `luac -p <file>` syntax-checks any script.
@@ -215,14 +217,26 @@ this repo, and a test step that silently *skips* when its tool is missing is exa
 #5's AD1/AD2 fixed in the C++ test phase. These fail loudly when run rather than passing quietly when
 not — so run them whenever you touch the script they cover.
 
-Two load-order traps, both measured rather than guessed, if you write a third rig:
+Four traps, all measured rather than guessed, if you write a fourth rig:
 
-- `ue5_dissect.lua` **returns** its public table and defines no globals; `ue5_freeze_helper.lua` does
-  the opposite. Capture the chunk's return value for the former, not for the latter.
-- CE's `vt*` constants must exist **before** the chunk runs — `TYPE_MAP` is a file-scope literal, so
-  it captures them at load time. Stub them afterwards and mapped types silently get `Vartype = nil`
-  while `EnumProperty`, the unknown-type fallback and the UObject header rows still resolve, which is
-  harder to diagnose than a uniform failure.
+- **How the chunk hands you its API differs per file.** `ue5_dissect.lua` **returns** its public
+  table; `ue5_freeze_helper.lua` and `ue5_invoke_helper.lua` define **globals** and return nothing.
+  Capture the return value for the first, not for the other two.
+- **CE's `vt*` constants must exist BEFORE the chunk runs** (dissect only) — `TYPE_MAP` is a
+  file-scope literal, so it captures them at load time. Stub them afterwards and mapped types
+  silently get `Vartype = nil` while `EnumProperty`, the unknown-type fallback and the UObject
+  header rows still resolve, which is harder to diagnose than a uniform failure.
+- **Re-declaration guards make a reload a no-op** (`invoke`, `freeze`). `if not invokeUFunction then`
+  means a second `loadfile()+call` rebinds nothing, so a rig cannot reload between cases for a clean
+  slate — reset the helper's globals by hand instead (`_ue5_invoke_busy`, `_ue5_invoke_str_bufs`).
+  Miss one and state leaks silently from case to case.
+- **⚠ Stub FIDELITY decides what the rig can see.** CE does *not* raise on a nil address:
+  `lua_toaddress` falls through to `lua_tointeger`, and `lua_tointeger(nil)` is `0`, so
+  `writeBytes(nil, t)` writes to address **0** and returns. The first version of the invoke rig
+  raised instead — which turned AA14's *silent success* (an FString with `Data = 0` and
+  `ArrayNum = n+1` sent to a live UFunction, reported as `ok = true`) into a clean failure, and made
+  three of that case's assertions pass for the wrong reason. **A stub that is stricter than CE hides
+  exactly the defects worth finding.**
 
 ---
 

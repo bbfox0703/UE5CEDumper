@@ -15,7 +15,7 @@ Open work only. **Read this when deciding what to do next.**
 >   ordinary session, 1 needs no game at all). **Offer these whenever the maintainer has a game up.**
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-17: **203 audit findings open of 277 · 0 HIGH · 44 MED**. Nothing is
+> State as of 2026-08-17: **196 audit findings open of 277 · 0 HIGH · 37 MED**. Nothing is
 > blocked on a maintainer decision any more (A6 was the last, and it is decided and shipped).
 > Re-derive the count with `py tools/check_audit_register.py --list` — never hand-tally.
 
@@ -1421,6 +1421,28 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — AA14–AA20: the CE Lua invoke path in a real game
+
+*Needs CE + a game + the DLL injected. See dev-log build 3039. The Lua rig (63 checks) covers the
+logic against stubs; what it cannot cover is a real ProcessEvent.*
+
+1. **⚠ REGRESSION FIRST — an ordinary invoke still works.** UE5DumpUI → Interesting Funcs → pick a
+   no-arg or int-arg function → **Copy AA Script (Baked)** → paste into CE → enable. It must still
+   fire. Everything below changed this path, so this is the check that matters most.
+2. **The one that was impossible before.** Export a baked script for a function with a
+   `TArray<...>&` OUT param — `GetAllActorsOfClass` or `GetOverlappingActors` is the easy one.
+   Before this it failed with *"Unknown param type 'tarray'"* and never called the game at all;
+   it must now invoke, with the array param left empty.
+3. **An FText param is refused, clearly.** A function taking an `FText` (a UI/dialogue setter) must
+   fail with a message naming `ftext` and saying an FText cannot be built from CE Lua — **not** a
+   crash. This one is deliberately still a refusal.
+4. **A negative return reads as negative.** Verify Return Value mode on a function returning a
+   negative int32 (or invoke one you know returns -1). It must print `-1`, not `4294967295`.
+5. **A timeout says something true.** Hard to stage deliberately — pause the game hard (a loading
+   screen, or break in a debugger) and invoke. The message must not quote an error from an earlier
+   command, and the NEXT invoke must refuse with *"the DLL is STILL holding the mailbox"* rather
+   than firing. Once the game recovers, a further invoke must work again (the guard clears itself).
 
 ### ⬜ NEW 2026-08-17 — AE4–AE7: the Proxy Deploy panel, two buttons at once
 

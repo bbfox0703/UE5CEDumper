@@ -2237,13 +2237,13 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 | **AA11** | MED | `ue5_freeze_helper.lua:386` (rescanInstances) | A page-fetch failure after page 0 is thrown away, so a PARTIAL instance list is returned as a clean success and replaces the freeze cache **[2 lenses]** | S / low |
 | **AA12** | MED | `ue5_freeze_helper.lua:471` (freezeProperty -> handle.start) | A freeze that applied NOTHING reports clean success: start() cannot raise, so the generated script's pcall succeeds, the Lua window auto-closes and the CE record stays ticked | S / low |
 | **AA13** | MED | `ue5_freeze_helper.lua:474` (handle.start) | Every freeze failure is silent: start() discards rescan()'s error, nothing reads _lastError, and the generated script then auto-closes the Lua window over a ticked record that froze nothing **[2 lenses]** | S / low |
-| **AA14** | MED | `ue5_invoke_helper.lua:215` (writeFStringInline) | allocateMemory's nil return is unchecked, so a failed allocation ships an FString of { Data = nullptr, Num = n+1 } into the game **[2 lenses]** | S / low |
-| **AA15** | MED | `ue5_invoke_helper.lua:223` (writeFStringInline) | allocateMemory's nil return is never checked, so a failed allocation stamps an FString with Data=nullptr and ArrayNum=n+1 into a live UFunction call | S / low |
-| **AA16** | MED | `ue5_invoke_helper.lua:293` (writeParams) | BakedScriptGenerator can emit five param-type tokens writeParams has never accepted, so the exported script aborts the whole invoke at CE runtime | S / low |
-| **AA17** | MED | `ue5_invoke_helper.lua:308` (writeBakedParams) | The params buffer is zeroed only up to the CALLER'S parmsSize while the DLL hands ProcessEvent all 1024 bytes — stale bytes from an earlier command become live parameters **[2 lenses]** | S / low |
-| **AA18** | MED | `ue5_invoke_helper.lua:363` (waitDone) | A mailbox timeout reports the STALE errorMsg left by an earlier command as this command's reason — the guessed diagnosis CLAUDE.md forbids | S / low |
-| **AA19** | MED | `ue5_invoke_helper.lua:464` (invokeUFunction) | The reentrancy flag is cleared on the timeout path — exactly when the DLL still owns the mailbox — so the next invoke scribbles on an in-flight command and is reported OK though it never ran | M / med |
-| **AA20** | MED | `ue5_invoke_helper.lua:512` (readUFunctionReturn) | readUFunctionReturn decodes int32/int16 returns UNSIGNED, so a UFunction returning -1 reads as 4295067295 -- while the same file passes the signed flag two functions earlier **[2 lenses]** | S / low |
+| **AA14** ✅ | MED | `ue5_invoke_helper.lua:215` (writeFStringInline) | allocateMemory's nil return is unchecked, so a failed allocation ships an FString of { Data = nullptr, Num = n+1 } into the game **[2 lenses]** | S / low |
+| **AA15** ✅ | MED | `ue5_invoke_helper.lua:223` (writeFStringInline) | allocateMemory's nil return is never checked, so a failed allocation stamps an FString with Data=nullptr and ArrayNum=n+1 into a live UFunction call | S / low |
+| **AA16** ✅ | MED | `ue5_invoke_helper.lua:293` (writeParams) | BakedScriptGenerator can emit five param-type tokens writeParams has never accepted, so the exported script aborts the whole invoke at CE runtime | S / low |
+| **AA17** ✅ | MED | `ue5_invoke_helper.lua:308` (writeBakedParams) | The params buffer is zeroed only up to the CALLER'S parmsSize while the DLL hands ProcessEvent all 1024 bytes — stale bytes from an earlier command become live parameters **[2 lenses]** | S / low |
+| **AA18** ✅ | MED | `ue5_invoke_helper.lua:363` (waitDone) | A mailbox timeout reports the STALE errorMsg left by an earlier command as this command's reason — the guessed diagnosis CLAUDE.md forbids | S / low |
+| **AA19** ✅ | MED | `ue5_invoke_helper.lua:464` (invokeUFunction) | The reentrancy flag is cleared on the timeout path — exactly when the DLL still owns the mailbox — so the next invoke scribbles on an in-flight command and is reported OK though it never ran | M / med |
+| **AA20** ✅ | MED | `ue5_invoke_helper.lua:512` (readUFunctionReturn) | readUFunctionReturn decodes int32/int16 returns UNSIGNED, so a UFunction returning -1 reads as 4295067295 -- while the same file passes the signed flag two functions earlier **[2 lenses]** | S / low |
 | **AA21** | LOW | `ue5_dissect.lua:23` (module state (structList / structCache)) | Module state is per-dofile while CE's structure list and Lua state are global and never rebuilt, so a re-load duplicates every structure and orphans the old ones | S / low |
 | **AA22** | LOW | `ue5_dissect.lua:24` (dissect.enableAutoCallback) | The already-registered guard is a chunk-local, so a second dofile double-registers the dissect override and disableAutoCallback can only unregister the newest one | S / low |
 | **AA23** | LOW | `ue5_dissect.lua:208` (addFieldsToStruct) | The struct-recursion depth cap returns silently, so a nested StructProperty deeper than 6 levels is simply absent from the dissect with no marker | S / low |
@@ -2654,8 +2654,8 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
-**203 of 277 findings are still open** (74 fixed — F3 counts as open: only its reconnect half
-shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 44 MED ·
+**196 of 277 findings are still open** (81 fixed — F3 counts as open: only its reconnect half
+shipped, the in-session half is deliberately deferred to cluster ③). Open: **0 HIGH · 37 MED ·
 132 LOW · 27 INFO**.
 
 > ⚠ **This drifted a SECOND time, 2026-08-17, the same way as the first.** Queue items ① and ②
@@ -2989,6 +2989,32 @@ W5: CSX's `IsObjectPropertyType` excludes Weak and CE-XML gives it a hex leaf re
 
 ---
 
+### ⚠ AA14 — the finding got the BYTES right and the OUTCOME wrong (fixed 3039)
+
+*Queue ④, measured 2026-08-17. Recorded because it is the clearest case yet of §2.4's rule, and
+because the TEST nearly hid it.*
+
+AA14/AA15 describe "an FString of `{ Data = nullptr, Num = n+1 }` shipped into the game" — the bytes
+are exactly right. What neither row says is what `invokeUFunction` **returns**, and that is the part
+that matters: **`ok = true, err = nil`.** A failed target-process allocation was reported to the
+caller as a successful invoke.
+
+The first version of `scripts/tests/invoke_helper_test.lua` could not see this, because its
+`writeBytes` stub raised on a nil address. **CE does not.** `lua_toaddress` falls through to
+`lua_tointeger` for a non-string and `lua_tointeger(nil)` is `0`, so `writeBytes(nil, t)` writes to
+address 0 and returns; `writeQword`'s value argument does the same, which is why the failure mode is
+`Data = 0` *with* a non-zero `Num` rather than no write at all. With the strict stub, three of that
+case's five assertions passed **for the wrong reason** and the case looked like it was doing its job.
+
+**The rule this pays for, now in `scripts/README.md`'s trap list: a stub STRICTER than the real API
+hides exactly the defects worth finding.** It is the mirror image of §2.3's aliasing fixture — there
+the rig reported coverage it did not have; here it reported a *diagnosis* the system does not make.
+
+**One more scope correction:** AA16's most likely victim is `tarray`, not `ftext`.
+`InvokeParamDialog.CollectBakedValues` skips OUT params only when they are STRING types, so the
+ubiquitous `GetAllActorsOfClass(…, TArray<AActor*>& OutActors)` shape is collected and aborts the
+export — a plain getter the user supplied nothing for.
+
 ### ⚠ AE4/AE6 — narrowed on re-derivation, and one NEW defect in the same handler (fixed 3038)
 
 *Queue ③, re-derived 2026-08-17 before fixing. Nothing here was refuted outright, but two scopes
@@ -3306,7 +3332,7 @@ block — start at ①, no re-derivation needed.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**Current register: 203 open of 277 · 0 HIGH · 44 MED · 132 LOW · 27 INFO.** Re-derive before
+**Current register: 196 open of 277 · 0 HIGH · 37 MED · 132 LOW · 27 INFO.** Re-derive before
 trusting it (the command is at the top of §3c) — never hand-tally.
 
 **Everything below is an already-vetted MED.** They are grouped so each ① – ⑥ is ONE fix pass over
@@ -3318,7 +3344,7 @@ unless the maintainer says otherwise; each group is a session's worth or less.
 | ~~①~~ ✅ | ~~**AB3 + AB5**~~ | `Radar.cpp:288`, `:797` | ✅ **SHIPPED build 3035.** Width is now read per FIELD from the reflected `ElementSize` (`Radar::DecodeVectorBytes` + `FieldDescriptor::vectorWidth`), `SizeOf` returns 0 for vectors, the predicate takes decoded triples, and `prevValue` holds one canonical 3-double form. Negative control: 7 assertions red on revert. **Unproven on a UE5 game — 5 steps in todo.md.** |
 | ~~②~~ ✅ | ~~**AA4 + AA5 + AA6 + AA7**~~ | `ue5_dissect.lua:53, 63, 173, 289` | ✅ **SHIPPED build 3037.** `callDLL` now RAISES rather than returning nil (one contract, no call site needs a check), both CE-registered callbacks are barriered so nothing escapes into CE, `createFromClass` unwinds a failed build, and `fillGaps` + its three doc claims are deleted. Pinned by the new `scripts/tests/dissect_test.lua` (40 checks); **13 failures against the unfixed file.** ⚠ **Two premises were REFUTED on re-derivation — see the AA4 block below.** |
 | ~~③~~ ✅ | ~~**AE4 + AE5 + AE6 + AE7**~~ | `ProxyDeployViewModel.cs:236, 1073, 1106, 1233` | ✅ **SHIPPED build 3038.** One `TryBeginExclusive` gate held by all eight operations via an IDisposable scope; `IsScanning` now has ONE writer. AE4 = CTS supersede + a post-await correction. AE7 = snapshot + the catch it never had. Pinned by the new `ProxyDeployConcurrencyTests` (11 cases). ⚠ **Two premises were narrowed on re-derivation and the controls found two bugs in the fix** — see the AE6 block below. |
-| ④ | **AA14 – AA20** | `ue5_invoke_helper.lua:215, 223, 293, 308, 363, 464, 512` | Seven findings, one file, all on the same invoke path: unchecked `allocateMemory` shipping `{Data=nullptr, Num=n+1}` into a live UFunction call (AA14/15); five param-type tokens `BakedScriptGenerator` can emit that `writeParams` never accepted, aborting the whole invoke at CE runtime (AA16); a params buffer zeroed only to the CALLER's `parmsSize` while the DLL hands ProcessEvent all 1024 bytes, so stale bytes become live parameters (AA17); a timeout that reports the STALE `errorMsg` left by an earlier command (AA18 — the guessed diagnosis CLAUDE.md forbids); the reentrancy flag cleared on the timeout path *while the DLL still owns the mailbox* (AA19); and unsigned int32/int16 return decoding, so a UFunction returning -1 reads as 4295067295 (AA20). Also locally executable. |
+| ~~④~~ ✅ | ~~**AA14 – AA20**~~ | `ue5_invoke_helper.lua:215, 223, 293, 308, 363, 464, 512` | ✅ **SHIPPED build 3039.** All seven, pinned by the new `scripts/tests/invoke_helper_test.lua` (63 checks; **23 failures against the unfixed file**). Six independent negative controls: 7 / 13 / 2 / 1 / 2 / 2 red. ⚠ **AA14 is worse than filed and the rig nearly hid it** — see the block below. |
 | ⑤ | **U4 + U5 + U6 + F3** | `Ubel.cpp:818, 683, 411` · `Fern.cpp:1068` | §4's **cluster ③** — *a cache keyed by an address the engine recycles, never invalidated*. The audit's own verdict: **"One fix pattern, not five"** — store an `(InternalIndex, SerialNumber)` witness and validate it on hit, the pair UE itself uses to detect a recycled slot. F3 additionally wants a one-line `Ubel::ClearNameCache()` in Fern's `if (last)` teardown, which the witness pattern does not cover. Bigger than ① – ④ (M/med), which is why it is not first. |
 | ⑥ | **AE2 + AE3** | `ClassStructViewModel.cs:192, 218` | One handler. Object-Tree selection drives Class/Struct through an `async void` with **no generation guard**, and its two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node. The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry. |
 
