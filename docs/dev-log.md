@@ -22,7 +22,7 @@ builds ≤696 in
 
 -----
 
-## 2026-08-17 - U6 + F3: witness the name cache on the bytes it decoded (build 3042)
+## 2026-08-17 - U6 + F3: witness the name cache on the bytes it decoded (build 3065)
 
 **Audit #5 queue ⑤, part 3 — and the fix is NOT the one the audit prescribed.** Pinned by 7 new
 assertions (C++ 1087 → **1094**); negative control 2 red.
@@ -59,7 +59,7 @@ witness treating zero as "unset" would never serve it from cache — also assert
 
 Assign-over-stale is legal here and only here: this cache hands out **copies** (the hit returns by
 value with the copy made under the lock), so no reference into it escapes. The two class caches hand
-out references, which is why they get an insert-time gate instead (U4, build 3040).
+out references, which is why they get an insert-time gate instead (U4, build 3052).
 
 `ClearNameCache` keeps all four call sites but its rationale changed — staleness is no longer one of
 them. What is left is bounding growth, and covering a `Serie::Init` re-run, the one event that can
@@ -67,7 +67,7 @@ remap a `ComparisonIndex` and so make an unchanged witness decode to a different
 
 -----
 
-## 2026-08-17 - U16: a truncated UEnum table was cached forever, and the log said it was full (build 3041)
+## 2026-08-17 - U16: a truncated UEnum table was cached forever, and the log said it was full (build 3058)
 
 **New finding, hand-found while fixing U4** — same file, same never-erased-cache shape, in none of
 queue ⑤'s four findings. Pinned by 7 new assertions (C++ 1080 → **1087**); two negative controls,
@@ -101,7 +101,7 @@ member-less UEnum.
 
 -----
 
-## 2026-08-17 - U4: refuse to memoize a class walk whose identity read failed (build 3040)
+## 2026-08-17 - U4: refuse to memoize a class walk whose identity read failed (build 3052)
 
 **Audit #5 queue ⑤, part 1.** The filed mechanism was **refuted and replaced** — see below. Pinned by
 7 new assertions in `dll_helpers_test` (C++ 1073 → **1080**); two independent negative controls,

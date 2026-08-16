@@ -1428,7 +1428,7 @@ reports them identical. Nothing has desynced.)*
 
 ### ⬜ NEW 2026-08-17 — U4 / U16 / U6 / F3: the three never-erased caches in `Ubel`
 
-*Needs the DLL injected. See dev-log builds 3040–3042. The C++ suite pins all three predicates
+*Needs the DLL injected. See dev-log builds 3052 / 3058 / 3065. The C++ suite pins all three predicates
 (21 new assertions, 1073 → 1094); what it structurally cannot pin is the WIRING, because no test
 target compiles `Ubel.cpp`. **Every step below is about the call sites, not the predicates.***
 

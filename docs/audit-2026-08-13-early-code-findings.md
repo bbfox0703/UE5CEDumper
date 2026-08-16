@@ -2660,7 +2660,7 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > ⚠ These are the **2026-08-16** figures and queue ⑤ has since moved them (U4, U16, U6, F3 closed;
 > U16 is a NEW finding, so the total grew too). **Never hand-tally — re-derive with
 > `py tools/check_audit_register.py --list`.** The F3 caveat that used to sit here — *"counts as
-> open: only its reconnect half shipped"* — is spent: its in-session half shipped in build 3042.
+> open: only its reconnect half shipped"* — is spent: its in-session half shipped in build 3065.
 
 > ⚠ **This drifted a SECOND time, 2026-08-17, the same way as the first.** Queue items ① and ②
 > shipped and their GROUPED rows (`| ① | AB3 + AB5 |`) were struck through — but the individual
@@ -3336,7 +3336,7 @@ block — start at ①, no re-derivation needed.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-**Start at ⑥ in the table below.** ① – ⑤ shipped on 2026-08-17 (builds 3035–3042); their rows say
+**Start at ⑥ in the table below.** ① – ⑤ shipped on 2026-08-17 (builds 3035–3065); their rows say
 what landed and what is still unproven. Nothing is blocked on the maintainer.
 
 > ### ⛔ Before you touch anything in cluster ③ (the recycled-address caches), read this
@@ -3408,7 +3408,7 @@ unless the maintainer says otherwise; each group is a session's worth or less.
 | ~~②~~ ✅ | ~~**AA4 + AA5 + AA6 + AA7**~~ | `ue5_dissect.lua:53, 63, 173, 289` | ✅ **SHIPPED build 3037.** `callDLL` now RAISES rather than returning nil (one contract, no call site needs a check), both CE-registered callbacks are barriered so nothing escapes into CE, `createFromClass` unwinds a failed build, and `fillGaps` + its three doc claims are deleted. Pinned by the new `scripts/tests/dissect_test.lua` (40 checks); **13 failures against the unfixed file.** ⚠ **Two premises were REFUTED on re-derivation — see the AA4 block below.** |
 | ~~③~~ ✅ | ~~**AE4 + AE5 + AE6 + AE7**~~ | `ProxyDeployViewModel.cs:236, 1073, 1106, 1233` | ✅ **SHIPPED build 3038.** One `TryBeginExclusive` gate held by all eight operations via an IDisposable scope; `IsScanning` now has ONE writer. AE4 = CTS supersede + a post-await correction. AE7 = snapshot + the catch it never had. Pinned by the new `ProxyDeployConcurrencyTests` (11 cases). ⚠ **Two premises were narrowed on re-derivation and the controls found two bugs in the fix** — see the AE6 block below. |
 | ~~④~~ ✅ | ~~**AA14 – AA20**~~ | `ue5_invoke_helper.lua:215, 223, 293, 308, 363, 464, 512` | ✅ **SHIPPED build 3039.** All seven, pinned by the new `scripts/tests/invoke_helper_test.lua` (63 checks; **23 failures against the unfixed file**). Six independent negative controls: 7 / 13 / 2 / 1 / 2 / 2 red. ⚠ **AA14 is worse than filed and the rig nearly hid it** — see the block below. |
-| ~~⑤~~ ✅ | ~~**U4 + U6 + F3**~~ (+ new **U16**) | `Ubel.cpp:841, 426, 153` · `Fern.cpp:1141` | ✅ **SHIPPED builds 3040–3042.** ⚠ **The audit's own prescription was REFUTED, and so was U4's filed mechanism** — see the block below before touching anything in this cluster. Three commits, 21 new C++ assertions (1073 → **1094**), five independent negative controls (4/2/3/1/2 red). **U5 is NOT closed and its row stays unticked** — see the re-file below. |
+| ~~⑤~~ ✅ | ~~**U4 + U6 + F3**~~ (+ new **U16**) | `Ubel.cpp:841, 426, 153` · `Fern.cpp:1141` | ✅ **SHIPPED builds 3052 / 3058 / 3065.** ⚠ **The audit's own prescription was REFUTED, and so was U4's filed mechanism** — see the block below before touching anything in this cluster. Three commits, 21 new C++ assertions (1073 → **1094**), five independent negative controls (4/2/3/1/2 red). **U5 is NOT closed and its row stays unticked** — see the re-file below. |
 | ⑥ | **AE2 + AE3** | `ClassStructViewModel.cs:192, 218` | ← **START HERE.** One handler. Object-Tree selection drives Class/Struct through an `async void` with **no generation guard**, and its two branches issue a different NUMBER of round-trips — so a stale selection can settle last and the panel shows a class that is not the selected node. The dedupe key is latched BEFORE the load, so a failed or out-of-order walk pins the panel on the wrong class with no way to retry. |
 
 **After ⑥, pick by subsystem from §3c's "Where the rest live".** Remaining MED clumps worth knowing:

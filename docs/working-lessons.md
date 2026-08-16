@@ -723,7 +723,7 @@ A memo whose value is a pure function of a few bytes can be validated by re-read
 bytes. It is *total* rather than heuristic (equal inputs ⇒ the cached output is still correct, no
 matter who owns the address now), and it is usually **cheaper than the thing it guards** — `GetName`
 now compares two `int32`s where the audit's version would have walked GObjects. Shipped as
-`Ubel::NameWitness` (build 3042).
+`Ubel::NameWitness` (build 3065).
 
 Two riders that generalise with it:
 
