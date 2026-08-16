@@ -584,6 +584,69 @@ compiles and runs fine untrimmed and fails **only** after trimming — and a sta
 
 -----
 
+### 3.6 A heap-corruption dump names nothing — re-run it under page heap
+
+`0xC0000374` (STATUS_HEAP_CORRUPTION) is raised by the NT heap manager at the **next heap
+operation**, not at the write that broke it. So the faulting stack is the **detector, not the
+culprit**, and reading it harder does not help. Ours (build 3122, UI CTD after a Copy CE XML) showed
+ntdll's heap-error path on the UI thread with Skia/DWrite/user32 frames below — enough to say "native
+code on the render thread", which is motive and opportunity, never the act.
+
+**What actually names it:** full page heap, which puts a guard page after every allocation so the
+overrun faults **immediately, in the guilty module**.
+
+```
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /v GlobalFlag /t REG_DWORD /d 0x02000000 /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /v PageHeapFlags /t REG_DWORD /d 0x3 /f
+```
+
+The next crash came back as `0xC0000005` at `libSkiaSharp.dll+0x102B8D`, WER event **`AutoVerifierV2`**
+(not `APPCRASH`) with `verifier.dll` on the stack. Delete the key to disable; leave it on and
+everything is slow and memory-hungry, which is the tool, not the build. **`gflags` and Application
+Verifier are NOT installed on this machine** — the registry route needs no tools, and it is a system
+setting, so the maintainer runs it.
+
+**Ruling our own code out is structural, not a search.** The UI project has no `AllowUnsafeBlocks`,
+no `Marshal.AllocHGlobal` / `Marshal.Copy`, and its only `stackalloc`s are bounded `Span`s — and a
+stack overrun is `0xC00000FD`, a different code. That took one grep and eliminated ~277 files.
+
+**Reading the dump without symbols:** `py -m pip install minidump`, then walk the faulting thread's
+stack region and attribute every 8-byte-aligned qword to a loaded module's `[base, base+size)`. It
+over-reports (stale frames, spilled pointers) but **cannot miss the guilty module**, which is the
+only question at that stage. Two gotchas in that library: it logs a PEB parse failure that is
+harmless, and `ExceptionRecord.ExceptionCode` is a **str-valued** Enum with no entry for
+`0xC0000374`, so it degrades to `EXCEPTION_UNKNOWN` and `int()`/`"%X"` both raise on it — read the
+real code from the Event Log instead.
+
+**Cross-check the module base two ways** before trusting an offset: `0x7FFEE53C2B8D − 0x102B8D` and
+an unrelated stack frame `0x7FFEE5453602 − 0x193602` both gave `0x7FFEE52C0000`.
+
+**And read the AV subtype from the dump, not from WER.** `ExceptionInformation[0]` is `0` = read,
+`1` = write, `8` = DEP. WER's `P9` is not that field; taking it for one turned a read into a write in
+the first write-up.
+
+### 3.7 NuGet cannot express "and not a different major"
+
+`Avalonia.Skia 12.1.1` depends on `SkiaSharp >= 3.119.4` — an **open-ended minimum**, which is the
+NuGet default. A `chore(deps)` bump to `SkiaSharp 4.151.1` therefore *satisfies* the constraint:
+**no NU1608, no NU1605**, and `TreatWarningsAsErrors=true` has nothing to fail on. The build is
+green, the app starts, the managed API is close enough — and the native side reads off the end of a
+buffer sometime later, somewhere else. `HarfBuzzSharp` was **six** majors ahead by the same route.
+
+**How to apply:** when a package is pinned ABOVE what its consumer was built against, that is a
+decision and it needs a comment saying why — the `SQLitePCLRaw` pin in the same csproj has a full
+paragraph; these two had nothing, which is how three consecutive bumps walked past them. Read the
+truth out of the resolved graph, never from the version you typed:
+
+```
+py -c "import json;d=json.load(open('ui/UE5DumpUI/obj/project.assets.json'));t=list(d['targets'].values())[0];print(t['Avalonia.Skia/12.1.1']['dependencies'])"
+```
+
+Put the version in **one** MSBuild property feeding every reference. Seven scattered references are
+how a bump gets applied to some and not the others — the variant that hides longest.
+
+-----
+
 ## 4. UE and CE facts that cost a session each
 
 ### 4.1 `FProperty` layout is +4, not +8
