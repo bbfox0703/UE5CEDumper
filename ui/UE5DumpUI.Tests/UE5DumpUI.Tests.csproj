@@ -45,18 +45,6 @@
          (the IOutputDevice.DisplayAsync signature changed between MTP versions).
          Let xunit.v3's transitive graph resolve the whole Microsoft.Testing.* set. -->
 
-    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" Version="14.2.1.2" />
-
-    <PackageReference Include="HarfBuzzSharp.NativeAssets.WebAssembly" Version="14.2.1.2" />
-
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.10" />
-
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.1" />
-
-    <PackageReference Include="SkiaSharp.NativeAssets.WebAssembly" Version="4.151.1" />
-
     <PackageReference Include="xunit.v3" Version="3.*" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.*" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />

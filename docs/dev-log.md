@@ -22,6 +22,44 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - CORRECTION: the Skia crash IS symbolizable, and it is path geometry (build 3131)
+
+**Correcting build 3127's entry, which said "there is no PDB for `libSkiaSharp`, so the faulting
+function is unknown".** That was wrong. `SkiaSharp.NativeAssets.Win32` **ships `libSkiaSharp.pdb`**
+in the NuGet package — for 3.119.4, 4.150.1 and 4.151.1 alike — and `HarfBuzzSharp.NativeAssets.Win32`
+ships one too. The maintainer checked the NuGet cache; I had assumed rather than looked.
+
+Symbolizing `libSkiaSharp+0x102B8D` against the **4.151.1 win-x64** binary
+(`llvm-symbolizer --obj=… --relative-address`, from
+`VC\Tools\Llvm\**x64**\bin` — the recursive search finds the ARM64 copy first and it will not run):
+
+```
+skia_private::TArray<SkPathVerb,1>::size      include/private/SkTArray.h:419
+  -> SkSpan<const SkPathVerb>::SkSpan         include/core/SkSpan.h:99
+  -> SkPathBuilder::verbs                     include/core/SkPathBuilder.h:986
+  -> SkPathBuilder::computeFiniteBounds       src/core/SkPathBuilder.cpp:1102
+  -> SkPathPriv::Raw                          src/core/SkPathPriv.h:393
+```
+
+**Binary identity confirmed, not assumed:** the `libSkiaSharp.dll` in `dist/` at crash time was
+12,272,440 bytes and the NuGet 4.151.1 win-x64 payload is 12,272,440 bytes — the same file.
+
+**What this changes.** The out-of-bounds read is in **path geometry**, reading a `TArray<SkPathVerb>`'s
+size through an `SkSpan` while computing a path's bounds. So **HarfBuzz is exonerated for this fault**
+— it is not text shaping — and the ABI hypothesis gets materially stronger rather than staying a
+guess: `SkPathBuilder` is exactly the area Skia restructured across this major, and a caller built
+against the old layout reading a `TArray` header at the wrong offset yields a bogus `size`, after
+which `SkSpan` walks off the end. That is the observed fault, not a story about it.
+
+**Still not proven:** that Avalonia.Skia is the caller which supplied the mis-shaped path. Naming the
+callee is not naming the caller. The next step, if it ever recurs, is a page-heap dump with the full
+stack symbolized — now known to be possible.
+
+**Method lesson recorded in working-lessons §3.6:** *check the package for a PDB before declaring a
+native crash unsymbolizable*, and use the **x64** llvm-symbolizer.
+
+-----
+
 ## 2026-08-17 - AA9: the helper's own samples taught a freeze that cannot be stopped (build 3129)
 
 **`ue5_freeze_helper.lua`'s header told users to hold the handle in a `local`.** Cheat Engine

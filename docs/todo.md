@@ -1482,10 +1482,18 @@ almost nothing; re-run it under page heap.**
 4. **Turn page heap OFF before judging performance.** `reg delete "HKLM\SOFTWARE\Microsoft\Windows
    NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /f`. With it on, everything is slow
    and memory-hungry; that is the tool, not the build.
-5. **What this does NOT prove.** The page-heap dump proves libSkiaSharp accessed out of bounds. It
-   does **not** prove the version gap *caused* it — there is no PDB for `libSkiaSharp`, so the
-   faulting function is unknown. If crashes continue at the aligned versions, that hypothesis is
-   refuted and the next step is a Skia-side bug, not another dependency change.
+5. **What this does NOT prove — updated, the fault IS symbolized now.** `SkiaSharp.NativeAssets.Win32`
+   **ships `libSkiaSharp.pdb`**, so the earlier "faulting function unknown" was an assumption, not a
+   fact. `libSkiaSharp+0x102B8D` (4.151.1 win-x64, binary identity confirmed by an exact 12,272,440-byte
+   match with `dist/`) resolves to `skia_private::TArray<SkPathVerb,1>::size` inlined through
+   `SkSpan` → `SkPathBuilder::verbs` → **`SkPathBuilder::computeFiniteBounds`**. So the fault is
+   **path geometry, not text shaping — HarfBuzz is exonerated for this crash** — and `SkPathBuilder`
+   is precisely what Skia restructured across this major.
+   What is still unproven is the **caller**: naming the callee does not name who handed it a
+   mis-shaped path. If crashes continue at the aligned versions the ABI hypothesis is refuted and the
+   next step is a Skia-side bug. If one does recur, capture a page-heap dump and symbolize the FULL
+   stack — now known to be possible (use the **x64** `llvm-symbolizer` under
+   `VC\Tools\Llvm\x64\bin`; a recursive search finds the ARM64 copy first and it will not run).
 
 ### ⬜ NEW 2026-08-17 — AA12 / AA13: the freeze script must stop lying about success (key: FreezeOutcome)
 

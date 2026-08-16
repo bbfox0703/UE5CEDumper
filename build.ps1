@@ -576,6 +576,92 @@ if ($Target -in "All", "UI", "Test") {
         }
     }
 
+    # Guard: the native-renderer packages must stay on the versions Avalonia was
+    # BUILT against. NuGet structurally cannot enforce this — Avalonia declares an
+    # open-ended minimum ("SkiaSharp >= 3.119.4"), so a jump to a different MAJOR
+    # *satisfies* the constraint and raises no NU1608/NU1605 for
+    # TreatWarningsAsErrors to catch. Three routine "Update all packages" passes
+    # duly walked SkiaSharp to 4.151.1 and HarfBuzzSharp to 14.2.1.2, and the UI
+    # died with STATUS_HEAP_CORRUPTION inside libSkiaSharp (build 3122; see
+    # docs/dev-log.md and docs/todo.md "SkiaSharp/HarfBuzzSharp ABI alignment").
+    #
+    # A comment saying "do not bump these" had already failed three times, which is
+    # why this is a build step. Same reasoning as the Microsoft.Testing.* guard below.
+    #
+    # It compares what Avalonia ASKS FOR against what actually RESOLVED, read out of
+    # the restore graph — deliberately NOT against a hardcoded constant, so upgrading
+    # Avalonia itself moves the target automatically instead of tripping a stale check.
+    if ($exitCode -eq 0) {
+        $assetsPath = Join-Path (Split-Path $UI_PROJ -Parent) "obj\project.assets.json"
+        if (Test-Path $assetsPath) {
+            try {
+                $assets = Get-Content $assetsPath -Raw | ConvertFrom-Json
+                # One target framework in this project; take the first.
+                # NOTE: PSObject.Properties is a PSMemberInfoCollection and indexes by
+                # NAME, not position — `.Properties[0]` returns $null, and `foreach`
+                # over $null iterates zero times, so the whole guard silently PASSED.
+                # That is exactly how it was written first, and the negative control
+                # is the only reason it was caught. Hence the $checked assertion below.
+                $graph = ($assets.targets.PSObject.Properties | Select-Object -First 1).Value
+                # Consumer package -> the dependency whose version it dictates.
+                $watch = @{ 'Avalonia.Skia' = 'SkiaSharp'; 'Avalonia.HarfBuzz' = 'HarfBuzzSharp' }
+                $drift = @()
+                $checked = 0
+                foreach ($entry in $graph.PSObject.Properties) {
+                    $name = $entry.Name.Split('/')[0]
+                    if (-not $watch.ContainsKey($name)) { continue }
+                    $dep = $watch[$name]
+                    $wantedProp = $entry.Value.dependencies.PSObject.Properties[$dep]
+                    if (-not $wantedProp) { continue }
+                    $wanted = $wantedProp.Value
+                    # What actually resolved for that dependency.
+                    $resolved = ($graph.PSObject.Properties |
+                        Where-Object { $_.Name.Split('/')[0] -eq $dep } |
+                        ForEach-Object { $_.Name.Split('/')[1] } | Select-Object -First 1)
+                    $checked++
+                    if ($resolved -and $wanted -and $resolved -ne $wanted) {
+                        $drift += [pscustomobject]@{
+                            Consumer = $entry.Name; Dep = $dep; Wanted = $wanted; Resolved = $resolved
+                        }
+                    }
+                }
+                if ($drift.Count -gt 0) {
+                    Write-Fail "Native renderer package drift — this is what crashed the UI at build 3122:"
+                    $drift | ForEach-Object {
+                        Write-Host ("      {0} was built against {1} {2}, but {3} resolved" `
+                            -f $_.Consumer, $_.Dep, $_.Wanted, $_.Resolved) -ForegroundColor Red
+                    }
+                    Write-Host "      => Set <SkiaSharpVersion> / <HarfBuzzSharpVersion> in" -ForegroundColor Yellow
+                    Write-Host "         ui/UE5DumpUI/UE5DumpUI.csproj to the 'built against' version." -ForegroundColor Yellow
+                    Write-Host "         NuGet cannot warn about this: Avalonia's constraint is an" -ForegroundColor Yellow
+                    Write-Host "         open-ended minimum, so a different MAJOR satisfies it." -ForegroundColor Yellow
+                    $exitCode = 1
+                }
+                elseif ($checked -lt $watch.Count) {
+                    # A check that examined nothing must FAIL, not pass. The first
+                    # version of this guard compared zero pairs and cheerfully
+                    # reported success; only reverting the fix and watching it stay
+                    # green exposed it. If Avalonia is ever split or renamed, this
+                    # says so instead of quietly protecting nothing.
+                    Write-Fail ("Renderer drift guard checked only $checked of $($watch.Count) " +
+                                "package pairs — it is not actually guarding anything.")
+                    Write-Host "      => The consumer package names in `$watch no longer match the" -ForegroundColor Yellow
+                    Write-Host "         restore graph (Avalonia.Skia / Avalonia.HarfBuzz). Fix them." -ForegroundColor Yellow
+                    $exitCode = 1
+                }
+                else {
+                    Write-Ok "Native renderer packages match what Avalonia was built against ($checked pairs)"
+                }
+            }
+            catch {
+                # A parse failure must not silently pass the guard — an unchecked
+                # invariant that reports success is worse than no invariant.
+                Write-Fail "Could not read $assetsPath to check renderer package drift: $_"
+                $exitCode = 1
+            }
+        }
+    }
+
     if ($exitCode -eq 0) {
         $publishDir = Join-Path $DIST_DIR "publish"
 
@@ -737,12 +823,28 @@ if ($Target -in "All", "Test") {
         # resolves the whole Microsoft.Testing.* stack transitively; it must NOT
         # be pinned (see the comment in UE5DumpUI.Tests.csproj).
         $forbiddenMtp = Select-String -Path $TEST_PROJ -Pattern 'PackageReference\s+Include="Microsoft\.Testing\.(Platform|Extensions)' -ErrorAction SilentlyContinue
-        if ($forbiddenMtp) {
-            Write-Fail "Forbidden explicit Microsoft.Testing.* PackageReference(s) in the test csproj:"
-            $forbiddenMtp | ForEach-Object { Write-Host "      line $($_.LineNumber): $($_.Line.Trim())" -ForegroundColor Red }
-            Write-Host "      => Remove them. xunit.v3 resolves Microsoft.Testing.* transitively;" -ForegroundColor Yellow
-            Write-Host "         explicit pins crash the runner (MissingMethodException" -ForegroundColor Yellow
-            Write-Host "         IOutputDevice.DisplayAsync). See the comment in the csproj." -ForegroundColor Yellow
+        # Same sweep, same file, different casualty: it also re-adds SkiaSharp.* /
+        # HarfBuzzSharp.* pins here. They are Linux/WASM native assets that never
+        # load on Windows, so they break nothing TODAY — but they sat at 4.151.1 /
+        # 14.2.1.2 while the app moved to 3.119.4 / 8.3.1.3, i.e. they are a second
+        # copy of a version that is now wrong, in a file whose own comment says not
+        # to pin them. The next person to read them as authoritative is the problem.
+        $forbiddenNative = Select-String -Path $TEST_PROJ -Pattern 'PackageReference\s+Include="(SkiaSharp|HarfBuzzSharp)' -ErrorAction SilentlyContinue
+        if ($forbiddenMtp -or $forbiddenNative) {
+            if ($forbiddenMtp) {
+                Write-Fail "Forbidden explicit Microsoft.Testing.* PackageReference(s) in the test csproj:"
+                $forbiddenMtp | ForEach-Object { Write-Host "      line $($_.LineNumber): $($_.Line.Trim())" -ForegroundColor Red }
+                Write-Host "      => Remove them. xunit.v3 resolves Microsoft.Testing.* transitively;" -ForegroundColor Yellow
+                Write-Host "         explicit pins crash the runner (MissingMethodException" -ForegroundColor Yellow
+                Write-Host "         IOutputDevice.DisplayAsync). See the comment in the csproj." -ForegroundColor Yellow
+            }
+            if ($forbiddenNative) {
+                Write-Fail "Forbidden explicit SkiaSharp/HarfBuzzSharp PackageReference(s) in the test csproj:"
+                $forbiddenNative | ForEach-Object { Write-Host "      line $($_.LineNumber): $($_.Line.Trim())" -ForegroundColor Red }
+                Write-Host "      => Remove them. They flow in from the UE5DumpUI ProjectReference," -ForegroundColor Yellow
+                Write-Host "         which owns the version via <SkiaSharpVersion>/<HarfBuzzSharpVersion>." -ForegroundColor Yellow
+                Write-Host "         A second copy here silently disagrees with the app's." -ForegroundColor Yellow
+            }
             $exitCode = 1
         }
         else {

@@ -610,6 +610,28 @@ setting, so the maintainer runs it.
 no `Marshal.AllocHGlobal` / `Marshal.Copy`, and its only `stackalloc`s are bounded `Span`s — and a
 stack overrun is `0xC00000FD`, a different code. That took one grep and eliminated ~277 files.
 
+**CHECK THE PACKAGE FOR A PDB BEFORE DECLARING A NATIVE CRASH UNSYMBOLIZABLE.** This was written up
+twice saying "there is no PDB for `libSkiaSharp`, so the faulting function is unknown" — an
+assumption, never a `dir`. `SkiaSharp.NativeAssets.Win32` **ships `libSkiaSharp.pdb`** next to the
+DLL in the NuGet cache (every version), and so does `HarfBuzzSharp.NativeAssets.Win32`. Look:
+
+```
+%USERPROFILE%\.nuget\packages\skiasharp.nativeassets.win32\<ver>\runtimes\win-x64\native\
+```
+
+Then symbolize the RVA — and use the **x64** binary, not the one a recursive search finds first:
+
+```
+"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin\llvm-symbolizer.exe" --obj=<dll> --demangle --functions=linkage --relative-address
+```
+
+(`VC\Tools\Llvm\` holds `ARM64\` *and* `x64\`; the ARM64 copy sorts first and will not run on an x64
+host.) Feed it `CODE 0x<rva>` on stdin. It prints the whole INLINE chain, which is the useful part —
+ours resolved a bare offset into `TArray<SkPathVerb>::size` → `SkSpan` → `SkPathBuilder::verbs` →
+`SkPathBuilder::computeFiniteBounds`, i.e. path geometry, which exonerated HarfBuzz in one command.
+**Confirm binary identity first** (byte size of the shipped DLL vs the package payload) or you have
+symbolized a different build.
+
 **Reading the dump without symbols:** `py -m pip install minidump`, then walk the faulting thread's
 stack region and attribute every 8-byte-aligned qword to a loaded module's `[base, base+size)`. It
 over-reports (stale frames, spilled pointers) but **cannot miss the guilty module**, which is the
