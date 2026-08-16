@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **22 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **23 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1425,6 +1425,34 @@ reports them identical. Nothing has desynced.)*
 -----
 
 ## Pending live-game verification (verify only — no code)
+
+### ⬜ NEW 2026-08-17 — AE2 / AE3: the Class/Struct panel under fast selection
+
+*Needs a game connected, but nothing else — the Object Tree is a permanent left pane beside the
+Class/Struct panel, so every check is "do the two halves agree". See dev-log builds 3067 / 3068. The
+11 new tests drive the ViewModel directly and therefore bypass Avalonia's ListBox entirely; what is
+unproven is the real gesture under key repeat.*
+
+1. **⚠ REGRESSION FIRST — ordinary selection still works.** Click a handful of tree nodes, both
+   instances and class-like rows (`*_C`, `ScriptStruct`, `Function`). The header must track each
+   click, and fields must populate. Everything below changed this path.
+2. **AE2, the actual race.** Keyword-filter the tree so instances and class-like rows are
+   **interleaved**, then hold ↓ to scroll through them fast and release on a class-like row. The
+   Class/Struct header must match the highlighted row. The old failure needed exactly
+   instance-then-class-like, so a list of only one kind cannot show it — **record what the filter
+   was**, since a run over a homogeneous list proves nothing.
+3. **AE2, the spinner.** During the same fast scroll the loading indicator must not stick on after
+   the panel settles, and must not flicker off while a load is still running.
+4. **AE3 — the retry that used to be refused.** Get a walk to fail on a node *after* a successful
+   load (easiest: select a node, then travel/unload so its class address goes stale, then re-select
+   it). The error line must appear, and **clicking the same row again must retry** — previously it
+   was silently ignored and the panel stayed on the earlier class.
+5. **AE3 — the cross-tab path, which needs no failure at all.** Select tree node P → use any
+   handoff that pushes a class into Class/Struct (Interesting Funcs, Property Search, Dump Explorer)
+   → click node P again. It must reload P. Before the fix the panel stayed on the handed-off class.
+6. **The dedupe still holds.** Type in the tree's filter box while a node is selected (each
+   keystroke nulls the selection) — this must NOT re-walk the class repeatedly, and must not blank
+   the panel.
 
 ### ⬜ NEW 2026-08-17 — U4 / U16 / U6 / F3: the three never-erased caches in `Ubel`
 

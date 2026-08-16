@@ -40,7 +40,7 @@ public class ClassStructViewModelConcurrencyTests
     // RegisterClass table. That matters for the negative controls — against
     // UNFIXED code the stale branch resolves instantly and the test fails on a
     // clean assertion instead of hanging on a gate nobody releases.
-    private sealed class GatedDumpService : StubDumpService
+    private class GatedDumpService : StubDumpService
     {
         public readonly ConcurrentDictionary<string, TaskCompletionSource<ClassInfoModel>> WalkGates = new();
         public readonly ConcurrentDictionary<string, TaskCompletionSource<ObjectDetail>> ObjectGates = new();
@@ -221,6 +221,134 @@ public class ClassStructViewModelConcurrencyTests
         await t1;
 
         Assert.False(vm.IsLoading);
+    }
+
+    // ── AE3 ─────────────────────────────────────────────────────────────────
+
+    private sealed class ThrowingWalkDumpService : GatedDumpService
+    {
+        public readonly HashSet<string> ThrowFor = new();
+
+        public override Task<ClassInfoModel> WalkClassAsync(string addr, CancellationToken ct = default)
+        {
+            var t = base.WalkClassAsync(addr, ct);   // still records the call
+            if (ThrowFor.Contains(addr))
+                return Task.FromException<ClassInfoModel>(new InvalidOperationException("walk failed"));
+            return t;
+        }
+    }
+
+    [Fact]
+    public async Task FailedWalkAfterPriorSuccess_RetriesOnReselectingSameNode()
+    {
+        // AE3 proper. The pin needs a PRIOR SUCCESS, because the old guard was
+        // `key == addr && HasClass` — see ColdFailure_WasAlreadyRetryable below for
+        // why that priming step is load-bearing and must not be trimmed.
+        var dump = new ThrowingWalkDumpService();
+        dump.RegisterClass("0xP", Class("ClassP"));
+        dump.RegisterClass("0xB", Class("ClassB"));
+
+        var vm = NewVm(dump);
+        await vm.OnObjectSelected(ClassLike("0xP"));
+        Assert.True(vm.HasClass);            // precondition: the pin is now armed
+
+        dump.ThrowFor.Add("0xB");
+        await vm.OnObjectSelected(ClassLike("0xB"));   // fails
+
+        dump.ThrowFor.Remove("0xB");
+        await vm.OnObjectSelected(ClassLike("0xB"));   // the natural user gesture: click it again
+
+        Assert.Equal(2, dump.WalkCountFor("0xB"));
+        Assert.Equal("ClassB", vm.ClassName);
+    }
+
+    [Fact]
+    public async Task ColdFailure_WasAlreadyRetryable()
+    {
+        // Green BEFORE and AFTER the AE3 fix — and it is not filler. Without it, a
+        // reviewer trims the priming step from the test above as "setup noise" and
+        // gets a test that is silently green against unfixed code, because on a cold
+        // panel HasClass is false and the old `&& HasClass` conjunct let the retry
+        // through. Naming this case is what makes that trap un-trimmable, and it is
+        // the assertion that the finding's "with no way to retry" was too broad.
+        //
+        // ⚠ It DOES go red under a PARTIAL revert that removes the key release while
+        // keeping the `&& HasClass` drop — measured. Those two changes are coupled:
+        // dropping the conjunct is only safe because the release covers every
+        // failure, not just cold ones. That combination never shipped; the honest
+        // baseline is reverting the AE3 change as a whole, which reds exactly three
+        // tests and leaves this one green.
+        var dump = new ThrowingWalkDumpService();
+        dump.RegisterClass("0xB", Class("ClassB"));
+        dump.ThrowFor.Add("0xB");
+
+        var vm = NewVm(dump);
+        await vm.OnObjectSelected(ClassLike("0xB"));
+        Assert.False(vm.HasClass);
+
+        dump.ThrowFor.Remove("0xB");
+        await vm.OnObjectSelected(ClassLike("0xB"));
+
+        Assert.Equal("ClassB", vm.ClassName);
+    }
+
+    [Fact]
+    public async Task CrossTabLoad_ReleasesTheTreeDedupeKey()
+    {
+        // AE3's third path: no failure, no concurrency, two ordinary clicks. A
+        // cross-tab handoff shows a class no tree node selected, so it must CLEAR
+        // the key rather than leave it naming the previously selected node.
+        var dump = new GatedDumpService();
+        dump.RegisterClass("0xP", Class("ClassP"));
+        dump.RegisterClass("0xZ", Class("ClassZ"));
+
+        var vm = NewVm(dump);
+        await vm.OnObjectSelected(ClassLike("0xP"));
+        await vm.LoadClassCommand.ExecuteAsync("0xZ");   // e.g. Interesting Funcs handoff
+        Assert.Equal("ClassZ", vm.ClassName);
+
+        await vm.OnObjectSelected(ClassLike("0xP"));     // click the same tree node again
+
+        Assert.Equal(2, dump.WalkCountFor("0xP"));
+        Assert.Equal("ClassP", vm.ClassName);
+    }
+
+    [Fact]
+    public async Task DuplicateSelectionDuringFirstWalk_DoesNotIssueASecondWalk()
+    {
+        // Red today. On a COLD panel HasClass is still false while the first walk
+        // is in flight, so the old guard fell through and a node -> null -> node
+        // re-fire (ApplyFilter nulls SelectedNode on every filter keystroke) issued
+        // a SECOND walk for the same class. Also discriminates this design from
+        // "latch only on success", which would leave that window unguarded.
+        var dump = new GatedDumpService();
+        var gate = dump.GateWalk("0xP");
+
+        var vm = NewVm(dump);
+        var t1 = vm.OnObjectSelected(ClassLike("0xP"));
+        await WaitForGate(dump.WalkGates, "0xP");
+        await vm.OnObjectSelected(null);                 // filter keystroke
+        var t2 = vm.OnObjectSelected(ClassLike("0xP"));  // same node, walk still in flight
+
+        gate.SetResult(Class("ClassP"));
+        await Task.WhenAll(t1, t2);
+
+        Assert.Equal(1, dump.WalkCountFor("0xP"));
+    }
+
+    [Fact]
+    public async Task RepeatedSelectionOfSameNode_WalksOnlyOnce()
+    {
+        // Warm-path rail: the deliberate dedupe must survive the AE3 fix. Without
+        // this, "release the key on failure" can quietly regress into "no dedupe".
+        var dump = new GatedDumpService();
+        dump.RegisterClass("0xP", Class("ClassP"));
+
+        var vm = NewVm(dump);
+        await vm.OnObjectSelected(ClassLike("0xP"));
+        await vm.OnObjectSelected(ClassLike("0xP"));
+
+        Assert.Equal(1, dump.WalkCountFor("0xP"));
     }
 
     [Fact]

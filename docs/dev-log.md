@@ -22,6 +22,106 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AE3: a dedupe key that names what the panel is showing OR loading (build 3068)
+
+**Audit #5 queue ⑥, part 2.** One filed clause **REFUTED**, the rest materially narrowed. 5 new
+tests (C# 3902 → **3907**); baseline control reds exactly 3.
+
+`_lastLoadedNodeAddress` was written *before* the awaited load, so a walk that failed left the key
+naming a node the panel never showed — and the guard then refused to reload it.
+
+### What the finding got wrong, and it matters
+
+- **REFUTED: "with no way to retry."** Selecting a *different* node overwrites the key and the
+  original reloads fine. Only the **same-node** retry was blocked — which is still the defect, since
+  clicking the same row again is the natural gesture after an error, but it is not a dead end.
+- **NARROWED: it needs a PRIOR SUCCESSFUL LOAD.** The guard was
+  `_lastLoadedNodeAddress == node.Address && HasClass`, and `HasClass = true` is the **only**
+  assignment to that property in all of `ui/` — a one-way latch. On a cold panel `HasClass` is
+  `false`, so the retry already worked. `ColdFailure_WasAlreadyRetryable` asserts exactly this and is
+  green before and after; without it a reviewer trims the priming step from the real test and gets a
+  silently-green test against broken code.
+- **REFUTED, companion prose** (`§2` of the audit): *"the panel binds no ErrorMessage at all …
+  completely silent."* `ClassStructPanel.axaml` binds it today, explicitly ungated by `HasClass`
+  (audit #5 V7 already fixed that). **Do not re-raise it.**
+
+### The fix
+
+The field is renamed to `_shownNodeAddress` — deliberately, so every diff hunk re-reads the
+invariant. The old name *was* the false premise: it is written when a load is **claimed**, so it
+names an attempt, and reading it as "last loaded" invites the natural repair (move the write after
+the walk) which would break the dedupe it exists for.
+
+New contract: *the node whose class the panel is showing **or is loading**; `null` when the content
+did not come from a tree selection, or when the newest tree-driven load failed.* One writer,
+`BeginLoad(nodeAddr)`, which also takes the ticket — so "you cannot take a ticket without recording
+whose panel this is" is true by construction. Cross-tab loads pass `null`, which is **AE3's third
+path** and needs neither a failure nor any concurrency: two ordinary clicks pinned the panel.
+
+`&& HasClass` is dropped. Its only job was keeping a cold failure retryable, which the release now
+does for **every** failure. Keeping it preserved two defects: the permanent-`true` latch armed the
+pin, and while the *first* walk is in flight it is still `false`, so a `node → null → node` re-fire
+(`ApplyFilter` nulls `SelectedNode` on every filter keystroke) issued a **second** walk for the same
+class.
+
+### The control found a coupling worth recording
+
+`ColdFailure_WasAlreadyRetryable` was predicted green under every control. It goes **red** under a
+*partial* revert that removes the key release while keeping the `&& HasClass` drop — the two changes
+are coupled, and that combination never shipped. The honest baseline is reverting the AE3 change as a
+whole: exactly 3 red (`FailedWalkAfterPriorSuccess`, `CrossTabLoad`, `DuplicateSelectionDuringFirstWalk`),
+with `ColdFailure` and `RepeatedSelectionOfSameNode` green.
+
+-----
+
+## 2026-08-17 - AE2: give the Class/Struct panel one owner per load (build 3067)
+
+**Audit #5 queue ⑥, part 1.** Narrowed from the filed text. 6 new tests on a VM that had **zero**
+coverage (C# 3896 → 3902); five negative controls, each reverted alone, each reding exactly its own
+test.
+
+Object-Tree selection could leave the panel showing a class that is not the selected node. Nothing
+upstream serializes the handler — `ObjectTreeViewModel` raises `SelectionChanged` as a bare
+`Action`, so MainWindowViewModel's `async` subscriber returns to the message loop at its first await
+— and `AsyncRelayCommand` does not block re-entrancy either (`CanExecute` goes false so a bound
+Button self-disables, but `ExecuteAsync` runs anyway; measured build 3038).
+
+### Narrowings
+
+- **Not "any two overlapping selections."** Only **instance-then-class-like** loses, and it loses by
+  **ordering**, not timing: the two branches issue a different NUMBER of round-trips (an instance
+  needs `get_object` before its walk, a UClass does not) over one strictly FIFO pipe lane, so the
+  older gesture's walk is issued third and answered third — deterministic, not a flake. Equal-hop
+  pairs settle in order and are safe.
+- **"async-void handler" is inaccurate as filed.** `OnObjectSelected` is `async Task`; the async void
+  is one level up, at the subscription. The mechanism is unaffected, but the label points a fixer at
+  the wrong file.
+
+### The fix, and the part an obvious implementation gets backwards
+
+Reuses the four-guard idiom from `InstanceFinderViewModel.LoadInstanceFieldsAsync` — the one site in
+this repo that guards all four points — and the existing counter spelling (`_loadGen` /
+`_fieldLoadId` / `_classLoadId`) rather than inventing a fourth.
+
+⚠ **The ticket is claimed at GESTURE time in `OnObjectSelected`, not inside `LoadClassAsync`.**
+Claimed in the command it would *invert* the fix: the stale instance selection **enters the command
+last**, because its `get_object` hop delays entry, so it would take the **highest** ticket and win
+legitimately. Bailing right after `get_object` also means the stale walk is never put on the wire —
+saving a hop on a contended lane rather than adding one.
+
+`LoadClassAsync` keeps its exact signature (five cross-tab callers untouched) and delegates to a new
+`LoadClassCoreAsync(classAddr, gen)`. The no-op `classAddr` check stays **before** the claim: a
+request that does no work must not supersede a live load, or the spinner is left owned by a ticket
+nobody retires.
+
+### Prerequisite
+
+`StubDumpService.GetObjectAsync` gains `virtual`. Without it the two-round-trip branch — the whole of
+AE2 — is unreachable from a test, and its negative control reports green against broken code.
+Additive; the ~13 subclassing test files inherit the unchanged throwing body.
+
+-----
+
 ## 2026-08-17 - U6 + F3: witness the name cache on the bytes it decoded (build 3065)
 
 **Audit #5 queue ⑤, part 3 — and the fix is NOT the one the audit prescribed.** Pinned by 7 new
