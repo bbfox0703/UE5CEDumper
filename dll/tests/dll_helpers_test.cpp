@@ -3619,19 +3619,26 @@ static void Test_ShouldPublishClassWalk() {
 
 struct NaiveResult { uint32_t value = 0; int tier = 0; };
 
+// Updated for G8 + G9 (build 3099). It still models the NAIVE shape — pattern-major, no
+// first-byte gate, unconditional memcmp at every offset — so it remains an independent
+// oracle for the gated implementation. What changed is the RULES it encodes:
+//   * Tier 2's context is a raw 16-byte clamped search, not an 8-byte strstr (G8), and it
+//     now requires the same UE anchor Tier 3 always did.
+//   * a Tier 3 candidate records the pattern's first-T3 fact but does NOT retire it, so a
+//     later Tier 2 hit on the same needle is still found (G9).
+// The pre-fix reference is preserved in git history; the cases below pin the DIFFERENCE.
 static NaiveResult NaiveTier23Reference(const uint8_t* scan, size_t size) {
-    NaiveResult best3{};
+    bool     hasT2[Genau::kVersionNeedleCount] = {};
+    bool     hasT3[Genau::kVersionNeedleCount] = {};
     for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k) {
         const char* needle = Genau::kVersionNeedles[k].needle;
-        const uint32_t value = Genau::kVersionNeedles[k].value;
         size_t needleLen = strlen(needle);
         for (size_t off = 0; off + needleLen + 10 < size; ++off) {
             if (memcmp(scan + off, needle, needleLen) != 0) continue;
-            if (off >= 8) {
-                char ctx[17] = {};
-                memcpy(ctx, scan + off - 8, 8);
-                if (strstr(ctx, "Release") || strstr(ctx, "release"))
-                    return NaiveResult{ value, 2 };          // immediate return, table order
+            if (Genau::HasReleaseBefore(scan, off, 16) &&
+                Genau::HasUEAnchorNearby(scan, size, off, 256)) {
+                hasT2[k] = true;
+                break;                                        // best this pattern can do
             }
             if (scan[off + needleLen] >= '0' && scan[off + needleLen] <= '9') {
                 if (off > 0) {
@@ -3639,12 +3646,15 @@ static NaiveResult NaiveTier23Reference(const uint8_t* scan, size_t size) {
                     if ((prev >= '0' && prev <= '9') || prev == '.') continue;
                 }
                 if (!Genau::HasUEAnchorNearby(scan, size, off, 256)) continue;
-                if (best3.tier == 0) { best3.value = value; best3.tier = 3; }
-                break;                                        // first Tier 3 per pattern
+                hasT3[k] = true;                              // recorded, NOT retired (G9)
             }
         }
     }
-    return best3;
+    for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k)
+        if (hasT2[k]) return NaiveResult{ Genau::kVersionNeedles[k].value, 2 };
+    for (size_t k = 0; k < Genau::kVersionNeedleCount; ++k)
+        if (hasT3[k]) return NaiveResult{ Genau::kVersionNeedles[k].value, 3 };
+    return NaiveResult{};
 }
 
 static NaiveResult NaiveTier1Reference(const uint8_t* scan, size_t size) {
@@ -3847,10 +3857,88 @@ static void Test_VersionNeedleScan_GateStillGates() {
     // a planted needle MUST produce at least one compare, or the counter is measuring
     // a code path that never runs.
     std::vector<uint8_t> hit(4096, 'x');
+    Plant(hit, 900, "Unreal");                 // Tier 2 now requires an anchor too (G8)
     Plant(hit, 1000, "Release-5.4.0");
     Genau::NeedleScanResult h = Genau::ScanVersionTier23(hit.data(), hit.size());
     EXPECT("G2 gate: a real hit still issues compares", h.needlesCompared > 0);
     EXPECT("G2 gate: a real hit is still found", h.found() && h.tier == 2);
+}
+
+// ── audit #5 G8 + G9: the two Tier 2/3 rule defects, and what changed ────────
+//
+// These assert ABSOLUTE answers, not just naive/gated agreement — the equivalence oracle
+// alone cannot see these fixes, because BOTH sides moved. Each case states what the
+// pre-fix code returned.
+static void Test_VersionTierRules_G8_G9() {
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+    auto tier23 = [](std::vector<uint8_t>& b) { return Genau::ScanVersionTier23(b.data(), b.size()); };
+    auto val = [](const Genau::NeedleScanResult& r) {
+        return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
+    };
+
+    // ── G8: the window was 8 bytes while its comment and buffer both said 16 ──
+    {   // "Release" separated by more than one byte. Pre-fix: Tier 3 (the "Release" ended
+        // more than 8 bytes before the needle, so the context test never saw it).
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "Release v5.4.0");
+        auto r = tier23(b);
+        EXPECT("G8: 'Release v5.4.0' is now Tier 2", r.tier == 2 && val(r) == 504);
+    }
+    {   auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "Release_Build_5.4.0");
+        auto r = tier23(b);
+        EXPECT("G8: 'Release_Build_5.4.0' is now Tier 2", r.tier == 2 && val(r) == 504);
+    }
+    {   // ⚠ NUL-IMMUNITY — the case that makes the naive `memcpy(...,16)+strstr` repair WRONG.
+        // A neighbouring string's terminator sits inside the wider window; strstr would stop
+        // there and LOSE a match the 8-byte window found. The raw search must still find it.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "AAAAAAA");
+        b[1007] = 0x00;                       // NUL inside the 16-byte window
+        Plant(b, 1008, "Release-5.4.0");
+        auto r = tier23(b);
+        EXPECT("G8: a NUL in the wider window does not lose the hit", r.tier == 2 && val(r) == 504);
+    }
+    {   // ⚠ THE SAFETY HALF. Widening without an anchor gate manufactures a confident
+        // detection from ordinary text. Tier 2 had NO anchor requirement; it does now.
+        // Pre-fix (and with a naive widening): Tier 2 / 504 from a release-notes heading.
+        auto b = fresh(4096);
+        Plant(b, 1000, "Release Notes 5.4.0");   // no Engine/Unreal/UE anywhere
+        auto r = tier23(b);
+        EXPECT("G8: anchorless 'Release Notes 5.4.0' is NOT detected", !r.found());
+    }
+
+    // ── G9: a Tier 3 candidate retired the pattern before a later Tier 2 was seen ──
+    {   // Same needle: Tier 3 at a low offset, Tier 2 later. Pre-fix: 427 / Tier 3.
+        auto b = fresh(8192);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, " 4.27.0 ");
+        Plant(b, 5000, "Unreal");
+        Plant(b, 5100, "Release-4.27.2");
+        auto r = tier23(b);
+        EXPECT("G9: a later Tier 2 on the same needle now wins", r.tier == 2 && val(r) == 427);
+    }
+    {   // ⚠ THE ONE THE DESIGN COMMENT PROMISES AND THE CODE DID NOT DELIVER: a stray SDK
+        // "5.5.0" near the start out-racing a real "Release-4.27" later in the module.
+        // Pre-fix: 505 / Tier 3 — the wrong VERSION, not merely the wrong confidence.
+        auto b = fresh(8192);
+        Plant(b, 900, "Engine");
+        Plant(b, 1000, " 5.5.0 ");            // bundled PhysX-style banner -> Tier 3
+        Plant(b, 5000, "Unreal Engine");
+        Plant(b, 5100, "Release-4.27.2");     // the real tag -> Tier 2
+        auto r = tier23(b);
+        EXPECT("G9: a real Release-4.27 beats a stray 5.5.0 SDK string", r.tier == 2 && val(r) == 427);
+    }
+    {   // REGRESSION RAIL: the canonical shape must be unaffected by either change.
+        auto b = fresh(4096);
+        Plant(b, 900, "Unreal");
+        Plant(b, 1000, "Release-5.4.0");
+        auto r = tier23(b);
+        EXPECT("G8/G9 rail: canonical 'Release-5.4.0' is still Tier 2", r.tier == 2 && val(r) == 504);
+    }
 }
 
 static void Test_ShouldPublishEnumTable() {
@@ -4466,6 +4554,7 @@ int main() {
     Test_ShouldPublishEnumTable();
     Test_VersionNeedleScan_Equivalence();
     Test_VersionNeedleScan_GateStillGates();
+    Test_VersionTierRules_G8_G9();
     Test_NameWitness();
     Test_Holes_NormalizeGuessedType();
 

@@ -134,6 +134,34 @@ inline bool HasUEAnchorNearby(const uint8_t* scan, size_t size,
     return false;
 }
 
+// ── Tier 2's context test (audit #5 G8) ─────────────────────────────────────
+//
+// "Release" (or "release") within the preceding `windowBytes`. Three things used to
+// disagree here and the code was the narrowest of the three: the comment said 16, the
+// buffer was `char ctx[17]`, and the memcpy copied 8.
+//
+// ⚠ The obvious repair — widen the memcpy to 16 — is WRONG IN BOTH DIRECTIONS, and both
+// were measured before this was written:
+//   * `strstr` over a NUL-terminated copy stops at the FIRST NUL in the copied bytes. A
+//     neighbouring string's terminator inside the wider window therefore TRUNCATES the
+//     search and LOSES a match the narrow window found (12.2% of the 14,823 [Rr]elease
+//     occurrences across the 33-binary corpus have a NUL in the preceding 8 bytes). So a
+//     wider strstr is not a superset of a narrower one.
+//   * `off >= 16` as the guard drops Tier-2 eligibility for offsets 8..15 that qualify
+//     today — including the canonical "Release-5.4.0", whose needle sits at offset 8.
+// A raw byte search over a CLAMPED window has neither problem and is a strict superset.
+inline bool HasReleaseBefore(const uint8_t* scan, size_t off, size_t windowBytes) {
+    if (off == 0) return false;
+    const size_t win = (off < windowBytes) ? off : windowBytes;   // clamp at image start
+    const uint8_t* w = scan + off - win;
+    for (size_t i = 0; i + 7 <= win; ++i) {
+        // "Release" / "release" — the original accepted exactly these two spellings.
+        if ((w[i] == 'R' || w[i] == 'r') && memcmp(w + i + 1, "elease", 6) == 0)
+            return true;
+    }
+    return false;
+}
+
 // ── Tier 1: exact engine tag "++UE5+Release-5.4" / "++UE4+Release-4.27" ──────
 //
 // Order is preserved exactly from the original nest: encoding-major (narrow, then
@@ -234,8 +262,15 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
     NeedleScanResult r;
     if (!scan) return r;
 
-    int    factTier[kVersionNeedleCount] = {};   // 0 none, 2, or 3
-    size_t factOff [kVersionNeedleCount] = {};
+    // (G9) TWO facts per pattern, not one. The old code kept a single fact and retired the
+    // pattern on whichever came first — so a Tier 3 candidate at a LOW offset hid a Tier 2
+    // hit for the SAME needle later in the image. The deferral design's own comment says it
+    // exists to stop a stray SDK version "out-racing a real Release-4.27 string later in the
+    // module"; that held ACROSS patterns and failed WITHIN one.
+    bool   hasT2[kVersionNeedleCount] = {};
+    size_t offT2 [kVersionNeedleCount] = {};
+    bool   hasT3[kVersionNeedleCount] = {};
+    size_t offT3 [kVersionNeedleCount] = {};
 
     for (int group = 0; group < 2; ++group) {
         const uint8_t firstByte = group == 0 ? uint8_t('5') : uint8_t('4');
@@ -252,7 +287,10 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
             for (size_t k = 0; k < kVersionNeedleCount; ++k) {
                 const char* n = kVersionNeedles[k].needle;
                 if (static_cast<uint8_t>(n[0]) != firstByte) continue;
-                if (factTier[k] != 0) continue;      // retired: its lowest fact is known
+                // Retire only once a Tier 2 is known: that is the best this pattern can do,
+                // so nothing later can improve it. A known Tier 3 must NOT retire it — that
+                // was G9.
+                if (hasT2[k]) continue;
 
                 const size_t needleLen = strlen(n);
                 // Per-pattern bound, NOT a shared one: 4- and 5-char needles examine a
@@ -262,15 +300,18 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
                 ++r.needlesCompared;
                 if (memcmp(scan + off, n, needleLen) != 0) continue;
 
-                // Tier 2: "Release" in the preceding context window.
-                if (off >= 8) {
-                    char ctx[17] = {};
-                    memcpy(ctx, scan + off - 8, 8);
-                    if (strstr(ctx, "Release") || strstr(ctx, "release")) {
-                        factTier[k] = 2;
-                        factOff[k]  = off;
-                        continue;
-                    }
+                // Tier 2: "Release" in the preceding window AND a UE anchor nearby.
+                // (G8) The anchor requirement is NEW and deliberate. Tier 2 was the loosest
+                // predicate in the system — unlike Tier 3 it had no anchor gate at all — so
+                // widening its window without one manufactures a confident detection out of
+                // an ordinary "Release Notes 5.4.0" that the narrow form rejected outright.
+                // Measured: with the anchor, the widening is a strict superset on every
+                // regression case and still returns "no detection" on anchorless noise.
+                if (HasReleaseBefore(scan, off, 16) &&
+                    HasUEAnchorNearby(scan, size, off, /*windowBytes=*/256)) {
+                    hasT2[k] = true;
+                    offT2[k] = off;
+                    continue;
                 }
 
                 // Tier 3: bare "X.Y.D" with a UE anchor nearby and no digit/dot before it.
@@ -280,25 +321,22 @@ inline NeedleScanResult ScanVersionTier23(const uint8_t* scan, size_t size) {
                         if ((prev >= '0' && prev <= '9') || prev == '.') continue;
                     }
                     if (!HasUEAnchorNearby(scan, size, off, /*windowBytes=*/256)) continue;
-                    factTier[k] = 3;
-                    factOff[k]  = off;
+                    if (!hasT3[k]) { hasT3[k] = true; offT3[k] = off; }
+                    // NOTE: no `continue`-to-next-pattern and no retire — keep scanning this
+                    // needle for a Tier 2 hit further along. (G9)
                 }
             }
         }
     }
 
-    // Selection in TABLE order — see the semantics note above.
+    // Selection in TABLE order — see the semantics note above. Any Tier 2 outranks every
+    // Tier 3; among the same tier the earliest table entry wins, and the table is strictly
+    // descending in value, so "earlier entry" means "newer engine".
     for (size_t k = 0; k < kVersionNeedleCount; ++k) {
-        if (factTier[k] == 2) {
-            r.index = k; r.offset = factOff[k]; r.tier = 2;
-            return r;
-        }
+        if (hasT2[k]) { r.index = k; r.offset = offT2[k]; r.tier = 2; return r; }
     }
     for (size_t k = 0; k < kVersionNeedleCount; ++k) {
-        if (factTier[k] == 3) {
-            r.index = k; r.offset = factOff[k]; r.tier = 3;
-            return r;
-        }
+        if (hasT3[k]) { r.index = k; r.offset = offT3[k]; r.tier = 3; return r; }
     }
     return r;
 }
