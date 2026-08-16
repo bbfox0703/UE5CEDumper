@@ -1618,6 +1618,100 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
     return rset;
 }
 
+// True when `cls` itself, or any class in its super chain, is named
+// `lowerName` (already lowercased). The case-insensitive sibling of
+// ClassDerivesFromAny — that one takes a set of correctly-cased engine base
+// names, this one takes a single name that reached us over the pipe, where
+// FindInstancesByClass has always folded case. Bounded at 64 levels for the
+// same reason: real super-chains are ~5-10 deep, so a longer one means a
+// corrupt or recycled UClass pointer, not a deep hierarchy.
+static bool ClassChainMatchesLower(uintptr_t cls, const std::string& lowerName) {
+    for (int guard = 0; cls && guard < 64; ++guard) {
+        std::string n = Ubel::GetName(cls);
+        for (auto& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (n == lowerName) return true;
+        uintptr_t super = 0;
+        if (!Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super)
+            || !super || super == cls)
+            break;
+        cls = super;
+    }
+    return false;
+}
+
+SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults) {
+    SearchResultSet rset;
+    if (baseClassName.empty() || maxResults <= 0) return rset;
+
+    std::string lowerQuery = baseClassName;
+    for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    // Per-UClass verdict cache. The chain walk costs one FName resolve per
+    // level, and GObjects holds 10^5-10^6 objects spread over 10^3-10^4
+    // distinct classes — caching by UClass* turns a per-OBJECT walk into a
+    // per-CLASS one, which is what makes "AActor and everything under it"
+    // affordable at all.
+    std::unordered_map<uintptr_t, bool> derivedCache;
+
+    int32_t count = GetCount();
+    rset.scanned = count;
+    for (int32_t i = 0; i < count; ++i) {
+        if (static_cast<int>(rset.results.size()) >= maxResults) break;
+        if ((i & 0xFFF) == 0 && Tot::Requested()) {
+            Sein::Warn("PIPE:find", "FindInstancesDerivedFrom: aborted (client gone / shutdown)");
+            break;   // return partial result
+        }
+        uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+        rset.nonNull++;
+
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        bool isDerived;
+        auto it = derivedCache.find(cls);
+        if (it != derivedCache.end()) {
+            isDerived = it->second;
+        } else {
+            isDerived = ClassChainMatchesLower(cls, lowerQuery);
+            derivedCache.emplace(cls, isDerived);
+        }
+        if (!isDerived) continue;
+
+        std::string objName;
+        uint32_t nameIdx = 0;
+        if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx))
+            objName = Serie::GetString(nameIdx);
+        if (objName.empty()) continue;
+        rset.named++;
+
+        // CDO skip, and it has to happen HERE — before the cap. A base like
+        // AActor is the ancestor of thousands of classes, EVERY one of which
+        // contributes a Default__ object, and CDOs are constructed at
+        // class-load time so they sit at the LOW GObjects indices this walk
+        // reaches first. A caller that filtered afterwards would be handed
+        // maxResults class-default rows and not one live instance.
+        if (objName.rfind("Default__", 0) == 0) continue;
+
+        SearchResult sr;
+        sr.addr      = obj;
+        sr.index     = i;
+        sr.name      = objName;
+        sr.className = Ubel::GetName(cls);   // the CONCRETE class, not the queried base
+        sr.classAddr = cls;
+        Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
+        rset.results.push_back(std::move(sr));
+    }
+
+    rset.truncated = (static_cast<int>(rset.results.size()) >= maxResults);
+
+    Sein::Info("PIPE:find", "FindInstancesDerivedFrom base='%s': %d live instance(s)%s over %d distinct class(es), scanned=%d, nonNull=%d",
+                 baseClassName.c_str(), (int)rset.results.size(),
+                 rset.truncated ? " (capped)" : "",
+                 (int)derivedCache.size(), rset.scanned, rset.nonNull);
+    return rset;
+}
+
 // Helper: populate an AddressLookupResult from a UObject pointer.
 // `kind` distinguishes confidence levels — see AddressLookupResult comment.
 // A genuine FName resolves to non-empty printable ASCII. Serie::GetString

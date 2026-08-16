@@ -1421,6 +1421,32 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+### ⬜ NEW 2026-08-17 — A6: Force now holds the class AND its subclasses
+
+*Any game. See dev-log build 3036. This one changes what an already-shipped, in-game-verified
+feature WRITES TO (the Stealth Meter card), so the regression half matters as much as the fix.*
+
+1. **The capability that did not exist before.** Property Search a field on a base class — anything
+   whose row shows an "inherited by N" badge (`bCanBeDamaged @ Actor` is the easy one) → right-click
+   → Force. Before this it said *"0 live instances of Actor … — nothing held"*; it must now hold on
+   a real, non-zero count. **That message is the whole finding — if it still appears, stop.**
+2. **The held instances are the SUBCLASSES.** Property Search's "Forced fields (N held)" strip
+   should show a count in the hundreds for a broad base, not 1. If the pool is capped the status
+   line must say *"cap reached, more exist unheld"* — a broad base hits the 256 cap easily, so
+   confirm the badge appears rather than a bare "on 256 instance(s)".
+3. **Derivation, not substring.** Force a field on a class with a same-prefix sibling (`Enemy` vs
+   `EnemyProjectile`, or any `Foo` / `FooComponent` pair in the game). The unrelated class must NOT
+   be held — check the ForcedFields strip / the DLL log line `FindInstancesDerivedFrom base=…`,
+   which reports the distinct class count it walked.
+4. **⚠ REGRESSION — Stealth Meter still works.** Teleport tab → Stealth card → Detect → Hold @0 →
+   Reset. It resolves a CONCRETE class, so subclass semantics should be additive — but this is the
+   shipped, previously in-game-verified path that A6 deliberately changed, and it is the one thing
+   here that could get *worse*. Confirm Hold reports a non-zero count and Reset restores.
+5. **⚠ REGRESSION — no CDO is written.** After forcing a bool on a base class, the game must not
+   show every future spawn already carrying the forced value in a way that survives
+   `reset_all_fields` — that would mean a class-default object was written. (The CDO skip moved
+   inside Aura's walk; the local skip in `Solide` stayed as the invariant.)
+
 ### ⬜ NEW 2026-08-17 — AB3/AB5: the vector scan on a UE5 (LWC) game
 
 *Needs a **UE5** game — this is the one check a UE4 title structurally cannot make. See dev-log

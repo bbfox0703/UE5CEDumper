@@ -171,6 +171,29 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200, boo
 // the tally — so those hot paths are not regressed into a full-array walk.
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false);
 
+// LIVE instances of `baseClassName` AND of every class derived from it.
+//
+// Not expressible through FindInstancesByClass, whose class gate is a NAME test
+// and nothing else: exactMatch=true takes only the class itself, and
+// exactMatch=false is a case-insensitive SUBSTRING over the class name — for
+// "Actor" that captures everything with "actor" anywhere in its name while
+// still missing every subclass that does not contain the word. This walks the
+// UClass super chain instead, which is the actual derivation relation.
+//
+// Two behaviours that are part of the contract, not incidental:
+//   * Class-default objects are skipped INSIDE the walk, before the result cap.
+//     A base like AActor is the ancestor of thousands of classes, each with a
+//     Default__ object, and those are constructed at class-load time so they
+//     occupy the low GObjects indices — filtering them afterwards would leave a
+//     caller with `maxResults` CDOs and zero live instances.
+//   * SearchResult::className is the CONCRETE class of each instance, not the
+//     queried base, so a caller can still tell the subclasses apart.
+//
+// Case-insensitive, matching FindInstancesByClass (the name reaches us over the
+// pipe). Cost is one super-chain walk per DISTINCT UClass, not per object.
+// `truncated` means more derived instances exist than the cap returned.
+SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults = 500);
+
 // Address-to-Instance reverse lookup result.
 //
 // Confidence levels (worst to best):

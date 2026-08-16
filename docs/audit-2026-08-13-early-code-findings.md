@@ -2980,7 +2980,18 @@ W5: CSX's `IsObjectPropertyType` excludes Weak and CE-XML gives it a hex leaf re
 
 ---
 
-### ⛔ A6 — CONFIRMED, and deliberately NOT FIXED. It needs a decision, not code (2026-08-16)
+### ✅ A6 — DECIDED by the maintainer and FIXED (build 3036). Kept for the decision trail.
+
+> **Resolved 2026-08-17.** The maintainer chose **(a)** — defining class + every subclass — and
+> asked for the Stealth Meter to move with it. Shipped as `Aura::FindInstancesDerivedFrom`; see
+> dev-log build 3036. The block below is the original analysis, left intact because it is why the
+> option table looked the way it did. **One thing the table did NOT anticipate** and that the fix
+> had to solve: a base like `AActor` is the ancestor of thousands of classes, each contributing a
+> `Default__` object at a LOW GObjects index, so filtering CDOs in the CALLER (as `Solide` did)
+> would have filled all 256 cap slots with class defaults — subclass semantics with a caller-side
+> CDO skip is still a zero, just a differently-shaped one.
+
+### The original block — ⛔ A6 CONFIRMED, deliberately NOT FIXED, needs a decision (2026-08-16)
 
 Re-derived by hand while fixing the cluster ② batch. Both halves hold:
 
@@ -3219,7 +3230,7 @@ unless the maintainer says otherwise; each group is a session's worth or less.
 
 | # | Findings | Where | Why these are one job, and why here |
 |---|---|---|---|
-| ① | **AB3 + AB5** | `Radar.cpp:288`, `:797` | **One defect, two sites.** The FVector/FRotator scan hardcodes 3×float / 12 bytes but ACCEPTS UE5's 24-byte LWC `Vector`/`Rotator`, so **every UE5 game's vector scan compares junk** — and the reflected 24-byte size is captured and thrown away. Highest user impact left, and `Radar.cpp` IS compiled by `dll_helpers_test`, so it can be pinned with a real negative control. |
+| ~~①~~ ✅ | ~~**AB3 + AB5**~~ | `Radar.cpp:288`, `:797` | ✅ **SHIPPED build 3035.** Width is now read per FIELD from the reflected `ElementSize` (`Radar::DecodeVectorBytes` + `FieldDescriptor::vectorWidth`), `SizeOf` returns 0 for vectors, the predicate takes decoded triples, and `prevValue` holds one canonical 3-double form. Negative control: 7 assertions red on revert. **Unproven on a UE5 game — 5 steps in todo.md.** |
 | ② | **AA4 + AA5 + AA6 + AA7** | `ue5_dissect.lua:53, 63, 173, 289` | One file, one root cause: `callDLL` returns `nil` on every `executeCodeEx` failure and **not one of its 14 call sites handles it** — `nil ~= 0` is true in Lua, so a failed field read is silently recorded as SUCCESS (a duplicate of the previous field). AA4 is the same function (a bare `getAddress` RAISES, so the "DLL function not found" message is dead code, and the registered dissect override breaks CE's dissect for unrelated addresses); AA7 is `fillGaps` — advertised in the file header, never called. **`lua` is installed locally** (`C:\Users\Andyc\AppData\Local\Programs\Lua\bin\lua`, 5.4.6), so these are *executable* against stubbed CE globals — copy the rig from `scripts/tests/freeze_helper_test.lua`. |
 | ③ | **AE4 + AE5 + AE6 + AE7** | `ProxyDeployViewModel.cs:236, 1073, 1106, 1233` | One file, one root cause: **`IsScanning` is READ as a global busy flag by six guards and WRITTEN by three of eight operations.** So Deploy and Undeploy can run concurrently over the same `Binaries` folder and both write the single result line, two rapid radio clicks race two fire-and-forget refreshes (the loser's proxy type wins the grid and nothing re-runs), and `UpdateAllAsync` iterates the live `Games` collection across awaits while a concurrent scan can `Clear()` it — with no `catch`, so the tally is never reported. Pure C#, fully testable. |
 | ④ | **AA14 – AA20** | `ue5_invoke_helper.lua:215, 223, 293, 308, 363, 464, 512` | Seven findings, one file, all on the same invoke path: unchecked `allocateMemory` shipping `{Data=nullptr, Num=n+1}` into a live UFunction call (AA14/15); five param-type tokens `BakedScriptGenerator` can emit that `writeParams` never accepted, aborting the whole invoke at CE runtime (AA16); a params buffer zeroed only to the CALLER's `parmsSize` while the DLL hands ProcessEvent all 1024 bytes, so stale bytes become live parameters (AA17); a timeout that reports the STALE `errorMsg` left by an earlier command (AA18 — the guessed diagnosis CLAUDE.md forbids); the reentrancy flag cleared on the timeout path *while the DLL still owns the mailbox* (AA19); and unsigned int32/int16 return decoding, so a UFunction returning -1 reads as 4295067295 (AA20). Also locally executable. |
@@ -3244,15 +3255,14 @@ so `UE5_Shutdown` blocks ~14 s and CE reads as hung) and G3, `Fern` has F2 + F8,
 5. **Re-derive a LOW before fixing it.** LOW/INFO were never vetted to this audit's standard
    (10–35% kill rates against its own 33–73% band).
 
-#### ⛔ One item is blocked on the maintainer, not on effort
+#### ✅ The item that was blocked on the maintainer is DECIDED and SHIPPED
 
-**A6** — Property Search "Force" resolves an empty pool on inherited rows. Confirmed, and the doc
-comment that claimed otherwise is already corrected in the tree. The repair is a **product
-decision**: defining class **+ every subclass** (semantically what the row says, but it changes what
-the shipped, in-game-verified Stealth Meter path writes to and targets a far larger live pool) vs
-the one most-derived subclass observed (arbitrary). Today's failure is HONEST — the status line says
-*"0 live instances of Actor matched — nothing held."* — so this is a capability gap, not a
-corruption. **Ask before touching it.** Full block at the end of §3c.
+**A6** — the maintainer chose **option (a)** on 2026-08-17: the defining class **+ every subclass**,
+with the Stealth Meter moved to the same semantics. **Shipped build 3036** as
+`Aura::FindInstancesDerivedFrom` (super-chain derivation + per-UClass verdict cache), with the CDO
+skip moved INSIDE the walk — before the cap, or a base like `AActor` would have filled all 256 slots
+with `Default__` rows and produced a different zero. `Solide` is its only caller. See dev-log 3036;
+**unproven on a game, and its regression half (Stealth Meter) is registered in todo.md.**
 
 #### ⚠ One lead is filed but NOT vetted to this audit's standard
 

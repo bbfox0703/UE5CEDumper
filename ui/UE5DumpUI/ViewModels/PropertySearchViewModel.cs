@@ -395,19 +395,21 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         await ApplyForceAsync(m, "numeric", value: r.Value);
     }
 
-    /// <summary>Force <paramref name="m"/>'s field to a value on all live instances
-    /// of its class and hold it (DLL force_field), keyed on
-    /// <see cref="PropertySearchMatch.ClassName"/>.
+    /// <summary>Force <paramref name="m"/>'s field to a value and hold it
+    /// (DLL force_field), keyed on <see cref="PropertySearchMatch.ClassName"/>.
     /// <para>
-    /// ⚠ That name is the DEFINING class, not the concrete one. This comment used to
-    /// assert the opposite ("not the base defining class"); `Aura.cpp` sets
+    /// That name is the DEFINING class — <c>Aura.cpp</c> sets
     /// <c>match.className = definingName</c> so dedup can collapse the inheritors into
-    /// one row, so on an inherited row this resolves an EMPTY pool and holds nothing —
-    /// which the status line does at least say out loud. Corrected here rather than
-    /// fixed, because the fix is a product decision nobody has made: hold on the defining
-    /// class AND every subclass (semantically right, but changes the shipped Stealth Meter
-    /// path and writes to a far larger live pool), or on the one most-derived subclass the
-    /// search happened to observe (arbitrary). See audit #5 A6.
+    /// one row rather than listing thousands of near-identical ones. The DLL therefore
+    /// holds the field across the defining class <b>and every subclass of it</b>
+    /// (<c>Aura::FindInstancesDerivedFrom</c>), which is what the row's own
+    /// "inherited by N" badge already claims. Before build 3036 it resolved an exact-name
+    /// pool, which for an inherited row was essentially empty and held nothing.
+    /// </para>
+    /// <para>
+    /// The pool is capped (<c>SOLIDE_MAX_INSTANCES</c>), and a broad base class reaches
+    /// it easily — so <c>Truncated</c> is not a rare edge case here and the status line
+    /// must keep saying it out loud. See audit #5 A6.
     /// </para></summary>
     private async Task ApplyForceAsync(PropertySearchMatch? m, string kind, double value = 0, bool on = false)
     {
@@ -418,7 +420,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             if (r.Code < 0)
                 StatusText = $"Force {m.PropName}: DLL error {r.Code}.";
             else if (r.Held == 0)
-                StatusText = $"Force {m.PropName}: 0 live instances of {m.ClassName} matched — nothing held.";
+                StatusText = $"Force {m.PropName}: 0 live instances of {m.ClassName} or any subclass matched — nothing held.";
             else
             {
                 var what = kind == "bool" ? (on ? "ON" : "OFF")

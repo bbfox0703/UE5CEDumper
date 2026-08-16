@@ -535,13 +535,26 @@ Hold a *discovered* reflected field at a value across **all live instances** of 
 class via a write-on-drift re-assert worker (the honest subset of "enemies can't
 detect you" — there is no universal detection bool). Pipe-only.
 
+**`class_name` means that class AND every subclass of it** (build 3036, audit #5 A6).
+It has to: a Property Search row for an *inherited* field is keyed to the class that
+DECLARES the field, so an exact-name pool for e.g. `"Actor"` resolved essentially
+nothing and the hold silently held nothing. This is a **derivation** test on the UClass
+super chain, NOT a name-substring match — `"Enemy"` does not capture `"EnemyProjectile"`
+unless that class genuinely derives from `Enemy`.
+
+Two consequences worth planning for: class-default objects are excluded, and the pool is
+capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily —
+`get_forced_fields` / the `force_field` reply carry `truncated` for exactly that, and
+`held` is then a floor rather than a total.
+
 ```jsonc
-// Force a field on all live instances of a class and hold it.
+// Force a field on every live instance of a class (and its subclasses) and hold it.
 // kind = "bool" (uses `on`) | "object_null" (value ignored — strong ObjectProperty
 //        only; weak/soft/lazy refused) | "numeric" (uses `value`, absolute).
 { "cmd": "force_field", "class_name": "BP_Enemy_C", "field_name": "bInvincible",
   "kind": "bool", "on": true }
 // → { "held": 3, "resolved": true, "code": 0 }   // held = live "N held" count (0 = matched nothing)
+//   `"truncated": true` is added when the instance pool hit its cap.
 
 // Release one hold (best-effort restore the captured base; object-null is not reversible).
 { "cmd": "reset_field", "class_name": "BP_Enemy_C", "field_name": "bInvincible" }

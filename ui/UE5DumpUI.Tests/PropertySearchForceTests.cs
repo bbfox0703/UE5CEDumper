@@ -133,6 +133,23 @@ public class PropertySearchForceTests
         Assert.Contains("nothing held", vm.StatusText);
     }
 
+    /// <summary>The class name on a Property Search row is the DEFINING class, and the
+    /// DLL holds the field across it AND every subclass (audit #5 A6, build 3036). A
+    /// zero-held message that names only the class reads as "that exact class had no
+    /// instances", which is a different — and now wrong — diagnosis: it would send the
+    /// user looking for instances of a base class that legitimately has none of its own.
+    /// </summary>
+    [Fact]
+    public async Task Force_zero_held_says_the_pool_included_subclasses()
+    {
+        var dump = new RecordingDump { NextForce = new() { Held = 0, Resolved = false } };
+        var vm = new PropertySearchViewModel(dump, new NoopLog());
+
+        await vm.ForceBoolOnCommand.ExecuteAsync(NewMatch("BoolProperty", "bInvincible"));
+
+        Assert.Contains("subclass", vm.StatusText);
+    }
+
     [Fact]
     public async Task RefreshForcedFields_populates_list_and_flag()
     {

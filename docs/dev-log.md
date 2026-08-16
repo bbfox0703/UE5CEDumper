@@ -22,6 +22,74 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - A6: Force holds the class AND its subclasses (build 3036)
+
+**Audit #5 A6 — unparked by a maintainer decision, not by new evidence.** The finding was confirmed
+and deliberately left unfixed because the repair was a product choice with no right default. The
+maintainer chose **option (a)**: the defining class **plus every subclass**, and asked for the
+Stealth Meter to move to the same semantics.
+
+### The defect
+
+Property Search reports the **defining** class for an inherited property — `Aura` sets
+`match.className = definingName` so dedup can collapse ~4,800 `AActor` subclasses into one row
+badged *"inherited by 4822"* instead of listing them. `Solide::ApplyJobLocked` then resolved the
+pool with `FindInstancesByClass(name, exactMatch=true)`, so forcing an inherited field looked up
+instances of `Actor` **itself** and found essentially none. The failure was at least honest —
+*"0 live instances of Actor matched — nothing held."* — which is why it was a capability gap rather
+than a corruption.
+
+`exactMatch=false` was never the answer: it is a case-insensitive **substring** match on the class
+NAME, so `"Actor"` would capture everything with "actor" anywhere in its name and still miss every
+subclass that does not contain the word.
+
+### The repair
+
+New `Aura::FindInstancesDerivedFrom(baseClassName, maxResults)` — a **derivation** test that walks
+the UClass super chain, with a **per-UClass verdict cache** so the walk is paid once per distinct
+class rather than once per object (GObjects holds 10^5–10^6 objects over 10^3–10^4 classes, which
+is what makes "AActor and everything under it" affordable). `Solide::ApplyJobLocked` calls it.
+`"Enemy"` still excludes `"EnemyProjectile"` — the reason the old exact match existed — because
+derivation is not substring.
+
+**The non-obvious half: the CDO skip had to move INSIDE the walk, before the cap.** A base like
+`AActor` is the ancestor of thousands of classes, every one contributing a `Default__` object, and
+CDOs are constructed at class-load time so they occupy the LOW GObjects indices this walk reaches
+first. Filtering them in the caller — which is what `Solide` did — would have handed it 256
+class-default rows and not one live instance, turning the fix into a different zero. `Solide`'s own
+skip stayed as the local invariant (`ApplyToInstance` must never write a class default).
+
+`ApplyToInstance` already resolved the field against each instance's **own** class
+(`Ubel::FindField(cls, …)`), so an inherited field resolves correctly across the subclasses and an
+instance that genuinely lacks it is simply not counted as held.
+
+**Stealth Meter is covered by the same change** — it goes through `ForceFieldAsync` → `force_field`
+→ `AddForce` → `ApplyJobLocked`. It resolves a concrete class, so the semantics are additive there,
+but it is the shipped, in-game-verified path this deliberately altered and is registered as a
+regression check.
+
+The cap (`SOLIDE_MAX_INSTANCES` = 256) is now reached routinely rather than exceptionally, so
+`truncated` is load-bearing UI: both status lines already said it and still do.
+
+### What is NOT in this change
+
+- `ResolveLocalPC` and the other `FindInstancesByClass("PlayerController", false, …)` callers keep
+  their substring match — a different concern (resolve ONE object, not a pool) in modules with their
+  own verified behaviour. `Hemmung::ResolveWorldSettings` is the one worth revisiting: its comment
+  calls the substring match "subclass-tolerant", which `FindInstancesDerivedFrom` would now do
+  properly. **Left alone deliberately; not silently widened.**
+
+### Negative control
+
+The DLL half **cannot be unit-tested** — no test target compiles `Aura.cpp` or `Solide.cpp`
+(`dll_helpers_test` compiles `Radar.cpp` + `Denken.cpp` only), so it is registered for live
+verification with an explicit regression half. The UI half IS pinned: a new
+`Force_zero_held_says_the_pool_included_subclasses` test; reverting the status string to the
+class-only wording fails exactly that test (1 of 3885) and passes again when restored. C++ 246 +
+1073, C# 3885, `-Target DLL` clean.
+
+-----
+
 ## 2026-08-17 - AB3+AB5: the vector scan learns UE5's LWC width (build 3035)
 
 **Audit #5 queue ①.** The first entry of §3b's ordered fix queue, and the highest-user-impact MED

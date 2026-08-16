@@ -1557,7 +1557,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // A capped pool makes the "you are minimal to detection" claim false for the
             // instances past the cap, so it must not be stated unqualified.
             StatusText = r.Truncated
-                ? $"✓ Holding {c.FieldName} = 0 on {r.Held} instance(s) — but the instance pool hit its cap, so more live instances of {c.ClassName} exist UNHELD and can still detect you."
+                ? $"✓ Holding {c.FieldName} = 0 on {r.Held} instance(s) — but the instance pool hit its cap, so more live instances of {c.ClassName} (or a subclass) exist UNHELD and can still detect you."
                 : $"✓ Holding {c.FieldName} = 0 on {r.Held} instance(s) — you are minimal to detection that reads this meter.";
         }
         catch (Exception ex)
