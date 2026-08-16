@@ -1099,17 +1099,53 @@ static uintptr_t ScanForTarget(
 
                 g_validationDbgCount = 0;
 
+                // ⚠ AOBScanALL, not AOBScan. The hint fast path MUST NOT be weaker than the
+                // full scan that produced the hint, and it was: Macht::AOBScan returns the
+                // FIRST match only (ScanRegion returns on first hit, and AOBScan returns on
+                // the first section that hits), while the batch path this shortcuts hands
+                // Pass 1 EVERY match and walks them until one validates. So a pattern whose
+                // first match failed validation was logged as a MISS and then ERASED from the
+                // pattern set below — hiding it from the very path that would have found the
+                // later, valid match.
+                //
+                // Live-reproduced on the maintainer's own logs, same binary (PE 6A7EA6031...),
+                // five minutes apart: a cold run reported
+                //   "GNames: 31 patterns tried, 10 with hits, winner: GNAM_V1 -> 0x7FF63CD568C0"
+                // and the next run, using the hint that run had just saved, reported
+                //   "Hint MISS: 'GNAM_V1'" ... "GNames: 33 patterns tried, 12 with hits, NONE validated".
+                // GNAM_V1 had 166 matches on that image and the winner was not the first.
+                // GObjects showed the same shape and went 0.66 s -> 6.14 s. Worse, the false
+                // "not found" was then PERSISTED over a good hint, so the failure oscillates:
+                // fail -> hint destroyed -> cold scan succeeds -> hint saved -> fail again.
                 auto hintT0 = std::chrono::high_resolution_clock::now();
-                uintptr_t matchAddr = Macht::AOBScan(hintSig->pattern);
+                std::vector<uintptr_t> hintHits = Macht::AOBScanAll(hintSig->pattern);
                 auto hintT1 = std::chrono::high_resolution_clock::now();
                 auto hintUs = std::chrono::duration_cast<std::chrono::microseconds>(hintT1 - hintT0).count();
 
                 PatternScanResult pr;
                 pr.id = hintSig->id;
-                pr.hitCount = matchAddr ? 1 : 0;
+                // The REPORTED count is the real one. It used to be `matchAddr ? 1 : 0`, so a
+                // 166-match pattern logged "hits=1" — the report and the reality computed by
+                // different code paths (audit #4 root cause #1), which is what hid this.
+                pr.hitCount = static_cast<int>(hintHits.size());   // hitCount is int (see PatternScanResult)
 
-                if (matchAddr) {
-                    uintptr_t resolved = TryResolveMatch(matchAddr, *hintSig, validate);
+                // Same cap and the same "first validated match wins" rule as Pass 1, so the
+                // two paths cannot disagree about what this pattern resolves to.
+                constexpr size_t kMaxValidateHint = 4096;
+                uintptr_t matchAddr = 0;
+                uintptr_t resolved   = 0;
+                size_t    hintTried  = 0;
+                for (uintptr_t cand : hintHits) {
+                    if (++hintTried > kMaxValidateHint) {
+                        LOG_WARN("[%s] %s: %zu matches — hint validation capped at %zu",
+                                 report.targetName, hintSig->id, hintHits.size(), kMaxValidateHint);
+                        break;
+                    }
+                    uintptr_t r2 = TryResolveMatch(cand, *hintSig, validate);
+                    if (r2) { matchAddr = cand; resolved = r2; break; }
+                }
+
+                if (!hintHits.empty()) {
                     pr.selected = resolved;
                     pr.validated = (resolved != 0);
                     report.results.push_back(pr);
@@ -1130,11 +1166,20 @@ static uintptr_t ScanForTarget(
                     report.results.push_back(pr);
                 }
 
-                LOG_INFO("[%s] Hint MISS: '%s' (scan %lld us) — falling back to full scan",
-                         report.targetName, hintPatternId, static_cast<long long>(hintUs));
+                LOG_INFO("[%s] Hint MISS: '%s' (%zu matches, none validated; scan %lld us) — "
+                         "falling back to full scan",
+                         report.targetName, hintPatternId, hintHits.size(),
+                         static_cast<long long>(hintUs));
 
-                // Remove hint from sorted list to avoid re-scanning in Phase 2
-                sorted.erase(it);
+                // Erase ONLY when the pattern genuinely produced no matches at all. A pattern
+                // that matched but failed validation must stay in the batch set: the hint path
+                // and Pass 1 now apply the identical rule, so re-scanning it costs one more
+                // batch entry and buys back the case where the image changed such that a
+                // different match validates. Erasing on a validation failure is what turned a
+                // resolvable target into "NONE validated" (see the block above).
+                if (hintHits.empty()) {
+                    sorted.erase(it);
+                }
             } else {
                 LOG_INFO("[%s] Hint: pattern '%s' is non-AOB type (%d), skipping hint",
                          report.targetName, hintPatternId, static_cast<int>(hintSig->resolve));
