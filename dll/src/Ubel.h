@@ -102,9 +102,16 @@ ClassInfo WalkClass(uintptr_t uclassAddr);
 //
 // MEMOIZED, and returns a REFERENCE into that memo — bind it with `const auto&`
 // unless you actually need a mutable copy. The entry is immortal for the process
-// (node-based map, never erased or cleared), so the reference stays valid; a null
-// uclassAddr yields a reference to a shared empty ClassInfo. Do not cast away the
-// const: mutating the returned object would corrupt every later caller's view.
+// (node-based map, never erased or cleared), so the reference stays valid. Do not
+// cast away the const: mutating the returned object would corrupt every later
+// caller's view.
+//
+// Yields a reference to a shared EMPTY ClassInfo — never a cached one — for a null
+// uclassAddr and for any address that fails ShouldPublishClassWalk (unmapped, or an
+// implausible PropertiesSize). Callers must treat an empty Fields as "skip this
+// address", which is what every existing call site already does; it is NOT a signal
+// that the class genuinely declares nothing, because a field-less UCLASS is
+// legitimate and IS memoized. (audit #5 U4)
 const ClassInfo& WalkClassEx(uintptr_t uclassAddr);
 
 // --- Shared reflection field lookup ---
@@ -383,6 +390,26 @@ inline constexpr int32_t kMaxSanePropertiesSize = 1 * 1024 * 1024;  // 1 MB
 // Pure — unit-tested in dll_helpers_test so the bound is locked at build time.
 inline bool IsSanePropertiesSize(int32_t propertiesSize) {
     return propertiesSize >= 0 && propertiesSize <= kMaxSanePropertiesSize;
+}
+
+// True when a completed WalkClass result may be MEMOIZED. The class caches are
+// keyed by a raw UClass* the engine recycles and are never erased (see the B10
+// note at WalkClass's try_emplace), so a single bad walk is served for the rest
+// of the process — WalkInstance already owns the identical predicate but applies
+// it AFTER the walk has been published, i.e. the one code path that knows the
+// address is garbage has already poisoned the cache. Gate on the identity read
+// instead of on the result:
+//   * NEVER gate on Fields.empty() — InjectIntrinsicStructFields exists precisely
+//     because an empty field list is a legitimate outcome (FDateTime/FTimespan and
+//     every UCLASS that declares no own UPROPERTYs).
+//   * NEVER gate on Name.empty() — Serie::GetString returns "" for an unresolved
+//     obfuscated-fork tag key, so a name gate would disable class caching outright
+//     on MindsEye-class forks.
+// `propsSizeReadOk` is Macht::ReadSafe's discarded return: on failure it zeroes its
+// out-param, and 0 is a *sane* PropertiesSize, so the size test alone cannot see an
+// unmapped address. Pure — unit-tested in dll_helpers_test.
+inline bool ShouldPublishClassWalk(bool propsSizeReadOk, int32_t propertiesSize) {
+    return propsSizeReadOk && IsSanePropertiesSize(propertiesSize);
 }
 
 // Result of walking a live instance

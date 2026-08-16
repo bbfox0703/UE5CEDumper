@@ -22,6 +22,68 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - U4: refuse to memoize a class walk whose identity read failed (build 3040)
+
+**Audit #5 queue ⑤, part 1.** The filed mechanism was **refuted and replaced** — see below. Pinned by
+7 new assertions in `dll_helpers_test` (C++ 1073 → **1080**); two independent negative controls,
+4 red and 2 red.
+
+### The filed premise was wrong; the real one is worse
+
+U4 said a zero-field `ClassInfo` gets cached "from a transient read failure or a not-yet-`Link`ed
+UClass". Both halves are wrong: `Macht::ReadSafe` is an in-process SEH deref that fails only on an
+access violation, and `UStruct::Link` *iterates* `ChildProperties` rather than creating it, so a
+pre-`Link` walk yields every field with correct names and wrong offsets — never an empty list.
+
+The real mechanism is deterministic and already shipped. `WalkInstance` calls `WalkClass(classAddr)`
+(`Ubel.cpp:3561`) and only **then** applies its recycled-object gate `IsSanePropertiesSize`
+(`:3576`), whose own comment reads *"an implausible value means classAddr points at recycled
+memory"*. **The one code path that knows the address is garbage had already published it
+permanently** — the class caches are keyed by a raw `UClass*` and nothing in `dll/src` erases them.
+Reachable with no GC at all: `UE5_WalkClassBegin` (`Frieren.cpp:706`) takes a raw address with zero
+validation, and `scripts/ue5_dissect.lua:378` uses it as its *is-this-an-instance?* probe — so the
+shipped workflow keys `s_walkClassCache` by **instance** addresses by design. `UE5_WalkClassEnd`
+clears only Frieren's own local copy.
+
+### The fix
+
+New `Ubel::ShouldPublishClassWalk(propsSizeReadOk, propertiesSize)` beside the `IsSanePropertiesSize`
+it reuses — **the predicate already existed; only the read-ok term was missing.** `Macht::ReadSafe`
+zeroes its out-param on fault and 0 is a *sane* PropertiesSize, so the value test alone cannot see an
+unmapped address; `WalkClass` now carries that discarded `bool`.
+
+Two gates, deliberately different, because the two conditions are not equally trustworthy:
+
+- **Read fault → bail before the field walk.** `USTRUCT_PROPSSIZE` is a small in-object offset, so
+  only an unmapped page faults — a verdict that is *offset-independent*, hence safe on a forked
+  layout. Skips 4096 bounded-but-real FNamePool lookups down a garbage FField chain.
+- **Implausible value → complete the walk, refuse to memoize.** `DynOff::USTRUCT_PROPSSIZE` is
+  *derived* (`childPropsOff + 8`, `Genau.cpp:3348/4010/4016`), never independently probed, so a
+  pre-walk bail on the value would turn "fields fine, size wrong" into "no fields at all" on a fork.
+  Refusing to cache costs only a re-walk.
+
+`WalkClassEx` gets the same gate — it is the more widely consulted cache (Property/Value Search,
+snapshot capture, CE export, Solitar, Solide), so fixing only `WalkClass` would close the smaller
+half. Placed **before** `CorrectSubclassOffsets` so a garbage class cannot calibrate the
+process-wide `FSTRUCTPROP_STRUCT` offset off its own bogus fields.
+
+### Corrected in passing
+
+The B10 comment claimed *"WalkClassEx hands out a `const ClassInfo&` into this map"* about
+`s_walkClassCache`. It does not — `WalkClassEx` copies, and both of that map's readers copy under
+its mutex. The reference-return belongs to `s_walkClassExCache`. The rule (try_emplace, never
+assign) is right for both and both now say why.
+
+### Not fixed here
+
+**U5 stays open** and its row stays unticked: not one byte is freed. Eviction is impossible while
+`WalkClassEx` returns `const ClassInfo&` to 25 call sites, several of which re-enter it while
+iterating `ci.Fields` on one thread — so the item is "change the return type, THEN bound the cache",
+not "add an LRU". Class-to-class recycling (a recycled address whose new occupant has a *sane*
+PropertiesSize) is also still open — that needs a layout fingerprint over an append-only arena.
+
+-----
+
 ## 2026-08-17 - AA14-AA20: seven fixes on the CE Lua invoke path (build 3039)
 
 **Audit #5 queue ④** — all seven on one path: the mailbox round-trip CE Lua uses to call a UFunction

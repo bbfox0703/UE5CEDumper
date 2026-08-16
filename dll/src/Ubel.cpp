@@ -750,8 +750,26 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         Macht::ReadSafe(info.SuperClass + DynOff::USTRUCT_PROPSSIZE, info.SuperPropertiesSize);
     }
 
-    // Read PropertiesSize
-    Macht::ReadSafe(uclassAddr + DynOff::USTRUCT_PROPSSIZE, info.PropertiesSize);
+    // Read PropertiesSize. The return is NOT discarded: it is half of the
+    // memoization gate below (ReadSafe zeroes its out-param on failure, and 0 is a
+    // legitimate PropertiesSize, so the value alone cannot distinguish "this class
+    // declares nothing" from "this address is not mapped").
+    const bool propsSizeReadOk =
+        Macht::ReadSafe(uclassAddr + DynOff::USTRUCT_PROPSSIZE, info.PropertiesSize);
+
+    // A FAULT here means uclassAddr is not mapped at all, which is a different fact
+    // from "the value looks wrong": USTRUCT_PROPSSIZE is a small in-object offset
+    // (childPropsOff + 8), so even a mis-derived one still lands inside a mapped
+    // object. Only an unmapped page faults — and that verdict is offset-independent,
+    // which is why bailing on it is safe on a forked layout where the value test
+    // would not be. Skips 4096 bounded-but-real FNamePool lookups down a garbage
+    // FField chain. Falls through to the same un-memoized exit as the value gate.
+    if (!propsSizeReadOk) {
+        Sein::Warn("WALK:safe",
+            "WalkClass: 0x%llx is not readable at +0x%X — not a UStruct, or freed memory",
+            (unsigned long long)uclassAddr, DynOff::USTRUCT_PROPSSIZE);
+        return info;
+    }
 
     LOG_DEBUG("WalkClass: %s (super=%s, size=%d) at 0x%llX",
               info.Name.c_str(), info.SuperName.c_str(), info.PropertiesSize,
@@ -831,14 +849,32 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     // Cache the result for subsequent WalkInstance calls. Concurrent builders of the
     // same class produce an equal ClassInfo (idempotent), so first-writer wins just as
     // harmlessly as last-writer — but try_emplace is NOT interchangeable with
-    // `cache[addr] = info` here. WalkClassEx hands out a `const ClassInfo&` into this
-    // map, and an assign-over-existing destroys the entry's Fields vector while a
-    // reader may still hold that reference. try_emplace leaves an existing entry
-    // untouched, which is what makes reference-return safe (node-based map, and there
-    // is no erase/clear of either cache anywhere in dll/src). (B10)
-    {
+    // `cache[addr] = info` here, because an assign-over-existing destroys the entry's
+    // Fields vector. No reference into THIS map escapes (the hit at the top of this
+    // function and the super-chain reuse below both COPY under s_walkClassCacheMutex);
+    // it is s_walkClassExCache that hands out `const ClassInfo&`, and both maps follow
+    // the same rule so the two cannot drift. Node-based map + no erase/clear anywhere
+    // in dll/src ⇒ entries never move. (B10)
+    //
+    // The publish is GATED (audit #5 U4). It used to be unconditional, so any caller
+    // handing in a non-UStruct address poisoned the cache permanently — and the caller
+    // that does exactly that is in-tree and shipped: WalkInstance walks the class FIRST
+    // and only then applies IsSanePropertiesSize to decide the address is recycled, and
+    // UE5_WalkClassBegin (Frieren) is used by ue5_dissect.lua as its is-this-an-instance
+    // probe, so it feeds raw INSTANCE addresses in by design. Deliberately gating the
+    // PUBLISH and not the walk: DynOff::USTRUCT_PROPSSIZE is derived (childPropsOff+8,
+    // Genau), never independently probed, so on a forked layout a pre-walk bail would
+    // turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
+    // costs a re-walk.
+    if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         s_walkClassCache.try_emplace(uclassAddr, info);
+    } else {
+        Sein::Warn("WALK:safe",
+            "WalkClass: refusing to cache 0x%llx — PropertiesSize=%d (read %s); "
+            "not a UStruct, or recycled memory",
+            (unsigned long long)uclassAddr, info.PropertiesSize,
+            propsSizeReadOk ? "ok" : "FAILED");
     }
 
     return info;
@@ -933,6 +969,23 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     }
 
     ClassInfo info = WalkClass(uclassAddr);
+
+    // Same memoization gate WalkClass applies, for the same reason (audit #5 U4) —
+    // this cache is the more widely consulted of the two (Property/Value Search,
+    // snapshot capture, CE export, Solitar, Solide), so leaving it poisonable while
+    // fixing only WalkClass would close the smaller half. `propsSizeReadOk` is true
+    // by construction here: WalkClass returns early on a read fault, so an unmapped
+    // address arrives with PropertiesSize == 0 and no fields, and only the value test
+    // can fire. Refusing to memoize means refusing to RETURN too — the signature is a
+    // reference into this map — so a rejected class reads as empty rather than as
+    // garbage fields. That trade is bounded: WalkInstance already hard-fails on this
+    // exact predicate, so an engine fork that mis-derives USTRUCT_PROPSSIZE is broken
+    // before reaching here; this widens an existing failure rather than creating one.
+    // Placed BEFORE CorrectSubclassOffsets so a garbage class cannot calibrate the
+    // process-wide FSTRUCTPROP_STRUCT offset off its own bogus fields.
+    if (!ShouldPublishClassWalk(true, info.PropertiesSize)) {
+        return s_emptyClassInfo;
+    }
 
     // Calibrate FSTRUCTPROP_STRUCT (and the FProperty subclass extension
     // offsets that share its slot) BEFORE reading them. Historically this
@@ -1074,6 +1127,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // results are equal (the enrichment is a pure function of the same reads), so
     // keeping the existing one costs nothing and keeps every handed-out reference
     // valid. Node-based map + no erase/clear anywhere ⇒ entries never move. (B10)
+    // Only reachable for a class that passed the memoization gate above.
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
     return s_walkClassExCache.try_emplace(uclassAddr, std::move(info)).first->second;
 }

@@ -3580,6 +3580,34 @@ static void Test_IsSanePropertiesSize() {
     EXPECT("the 827 MB garbage value is NOT sane", !Ubel::IsSanePropertiesSize(867763776));
 }
 
+static void Test_ShouldPublishClassWalk() {
+    // audit #5 U4: the class caches are keyed by a raw UClass* the engine recycles
+    // and nothing in dll/src ever erases them, so one bad walk is served for the rest
+    // of the process. WalkInstance owned the identical predicate but ran it AFTER
+    // WalkClass had already published — and two shipped call sites hand in addresses
+    // that are not UStructs at all (WalkInstance's own pre-gate walk, and
+    // UE5_WalkClassBegin, which ue5_dissect.lua uses as its is-this-an-instance probe).
+
+    // The read-ok term is the half IsSanePropertiesSize cannot express: Macht::ReadSafe
+    // ZEROES its out-param on an access violation, and 0 is a legitimate
+    // PropertiesSize, so an unmapped address is indistinguishable from a UCLASS that
+    // declares no own UPROPERTYs unless the return value is carried.
+    EXPECT("failed read is never published, even with a sane-looking 0",
+           !Ubel::ShouldPublishClassWalk(false, 0));
+    EXPECT("failed read is never published, even with a plausible size",
+           !Ubel::ShouldPublishClassWalk(false, 512));
+
+    // With a successful read the bound is exactly IsSanePropertiesSize's.
+    EXPECT("read ok + real UWorld size is published", Ubel::ShouldPublishClassWalk(true, 2536));
+    EXPECT("read ok + zero is published (a field-less UCLASS is legitimate)",
+           Ubel::ShouldPublishClassWalk(true, 0));
+    EXPECT("read ok + exactly the cap is published",
+           Ubel::ShouldPublishClassWalk(true, Ubel::kMaxSanePropertiesSize));
+    EXPECT("read ok + negative is NOT published", !Ubel::ShouldPublishClassWalk(true, -1));
+    EXPECT("read ok + the 827 MB garbage value is NOT published",
+           !Ubel::ShouldPublishClassWalk(true, 867763776));
+}
+
 static void Test_Holes_NormalizeGuessedType() {
     using DT = Radar::DataType;
     // Every label GuessGapTypes can emit must normalize to a canonical property
@@ -4132,6 +4160,7 @@ int main() {
     Test_Holes_ClampsOutOfWindow();
     Test_Holes_ComputeClassHoles_ArrayDim();
     Test_IsSanePropertiesSize();
+    Test_ShouldPublishClassWalk();
     Test_Holes_NormalizeGuessedType();
 
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
