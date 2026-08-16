@@ -237,7 +237,12 @@ function Invoke-CppSelfTest {
     }
 
     Write-Step "Running $TargetName..."
+    # Under CI, ask the harness to name each test as it starts. This exists because a
+    # CI-only crash (0xC0000409 in dll_helpers_test) produced ZERO output — the exe
+    # passed locally, and the log had nothing to locate it with. Local runs stay quiet.
+    if ($env:CI) { $env:DLL_TEST_TRACE = "1" }
     & $exe.FullName | Out-Host
+    if ($env:CI) { Remove-Item Env:\DLL_TEST_TRACE -ErrorAction SilentlyContinue }
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "$TargetName failed ($LASTEXITCODE assertion(s))"
         return $false

@@ -45,6 +45,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>   // getenv for DLL_TEST_TRACE
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -4667,178 +4668,192 @@ static void Test_FFieldClassName_Probe() {
            !DynOff::LooksLikeFieldClassName(std::string(60, 'x') + "Property"));
 }
 
+// Print the test about to run, when DLL_TEST_TRACE is set. build.ps1 sets it under
+// CI. Off locally so the ordinary run stays two lines.
+static bool g_trace = false;
+#define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
+
 int main() {
+    // UNBUFFERED, and this is not a style choice. When this exe died on CI with
+    // 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) the log contained NOT ONE LINE of its
+    // output -- not even the banner below -- because stdout to a pipe is fully
+    // buffered and the buffer dies with the process. A harness whose output vanishes
+    // exactly when something goes wrong tells you nothing at the only moment it
+    // matters, and it passed locally, so there was nothing else to go on.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    g_trace = std::getenv("DLL_TEST_TRACE") != nullptr;
+
     std::printf("dll_helpers_test (Renge + Scharf + Radar)\n");
     std::printf("------------------------------------------\n");
 
-    Test_TryStrToAddr_AcceptsValidHex();
-    Test_TryStrToAddr_RejectsCePlaceholder();
-    Test_TryStrToAddr_RejectsTrailingGarbage();
-    Test_TryStrToAddr_RejectsEmpty();
-    Test_TryStrToAddr_RejectsNonHex();
-    Test_StrToAddr_NoexceptZeroOnFailure();
+    RUN(Test_TryStrToAddr_AcceptsValidHex);
+    RUN(Test_TryStrToAddr_RejectsCePlaceholder);
+    RUN(Test_TryStrToAddr_RejectsTrailingGarbage);
+    RUN(Test_TryStrToAddr_RejectsEmpty);
+    RUN(Test_TryStrToAddr_RejectsNonHex);
+    RUN(Test_StrToAddr_NoexceptZeroOnFailure);
 
-    Test_Alignment_PointerProperties_Need8();
-    Test_Alignment_EnumProperty_RespectsElemSize();
-    Test_Alignment_NameProperty_RespectsCpnMode();
-    Test_Alignment_ScalarPrimitives();
-    Test_Alignment_OffsetZeroNeverSuspicious();
-    Test_Alignment_UnknownTypesNotValidated();
-    Test_Alignment_WeakAndSparseDelegate();
+    RUN(Test_Alignment_PointerProperties_Need8);
+    RUN(Test_Alignment_EnumProperty_RespectsElemSize);
+    RUN(Test_Alignment_NameProperty_RespectsCpnMode);
+    RUN(Test_Alignment_ScalarPrimitives);
+    RUN(Test_Alignment_OffsetZeroNeverSuspicious);
+    RUN(Test_Alignment_UnknownTypesNotValidated);
+    RUN(Test_Alignment_WeakAndSparseDelegate);
 
-    Test_Mimic_PollLatency_OneMillisecond();
+    RUN(Test_Mimic_PollLatency_OneMillisecond);
 
-    Test_ValueScan_DataTypeSizes();
-    Test_ValueScan_ParseDataTypeRoundTrip();
-    Test_ValueScan_ScanTypePartitioning();
-    Test_ValueScan_Predicate_Int32();
-    Test_ValueScan_Predicate_Int8Negative();
-    Test_ValueScan_Predicate_Float();
-    Test_ValueScan_Predicate_Double();
-    Test_ValueScan_Predicate_Bool();
-    Test_ValueScan_Predicate_UInt64_RangeBoundary();
-    Test_ValueScan_FloatRoundMode_Exact();
-    Test_ValueScan_FloatRoundMode_Ordered();
-    Test_ValueScan_FloatRoundMode_PrevValue();
-    Test_ValueScan_FloatRoundMode_Between();
-    Test_ValueScan_RoundMode_IntegerNoOp();
+    RUN(Test_ValueScan_DataTypeSizes);
+    RUN(Test_ValueScan_ParseDataTypeRoundTrip);
+    RUN(Test_ValueScan_ScanTypePartitioning);
+    RUN(Test_ValueScan_Predicate_Int32);
+    RUN(Test_ValueScan_Predicate_Int8Negative);
+    RUN(Test_ValueScan_Predicate_Float);
+    RUN(Test_ValueScan_Predicate_Double);
+    RUN(Test_ValueScan_Predicate_Bool);
+    RUN(Test_ValueScan_Predicate_UInt64_RangeBoundary);
+    RUN(Test_ValueScan_FloatRoundMode_Exact);
+    RUN(Test_ValueScan_FloatRoundMode_Ordered);
+    RUN(Test_ValueScan_FloatRoundMode_PrevValue);
+    RUN(Test_ValueScan_FloatRoundMode_Between);
+    RUN(Test_ValueScan_RoundMode_IntegerNoOp);
 
     // Phase 2A — string predicates + family predicates
-    Test_ValueScan_TypeFamilyPredicates();
-    Test_ValueScan_IsScanTypeValidFor();
-    Test_ValueScan_StringPredicate_Exact();
-    Test_ValueScan_StringPredicate_Substring();
-    Test_ValueScan_StringPredicate_PrevValue();
-    Test_ValueScan_StringPredicate_RejectsNumericOrdering();
+    RUN(Test_ValueScan_TypeFamilyPredicates);
+    RUN(Test_ValueScan_IsScanTypeValidFor);
+    RUN(Test_ValueScan_StringPredicate_Exact);
+    RUN(Test_ValueScan_StringPredicate_Substring);
+    RUN(Test_ValueScan_StringPredicate_PrevValue);
+    RUN(Test_ValueScan_StringPredicate_RejectsNumericOrdering);
     // Phase 2B — vector predicates
-    Test_ValueScan_VectorPredicate_Exact();
-    Test_ValueScan_VectorPredicate_Ordering();
-    Test_ValueScan_VectorPredicate_Between();
-    Test_ValueScan_VectorPredicate_PrevValue();
-    Test_ValueScan_VectorPredicate_RejectsSubstring();
-    Test_ValueScan_VectorWidth_Accepted();
-    Test_ValueScan_DecodeVectorBytes();
-    Test_ValueScan_StoreVectorCanonical();
-    Test_ValueScan_LwcVectorIsNotReadAsFloats();
-    Test_ValueScan_VectorStructNames();
+    RUN(Test_ValueScan_VectorPredicate_Exact);
+    RUN(Test_ValueScan_VectorPredicate_Ordering);
+    RUN(Test_ValueScan_VectorPredicate_Between);
+    RUN(Test_ValueScan_VectorPredicate_PrevValue);
+    RUN(Test_ValueScan_VectorPredicate_RejectsSubstring);
+    RUN(Test_ValueScan_VectorWidth_Accepted);
+    RUN(Test_ValueScan_DecodeVectorBytes);
+    RUN(Test_ValueScan_StoreVectorCanonical);
+    RUN(Test_ValueScan_LwcVectorIsNotReadAsFloats);
+    RUN(Test_ValueScan_VectorStructNames);
     // build 794 — multi-numeric (NumericNoByte) meta type
-    Test_ValueScan_MultiNumericMembers();
-    Test_ValueScan_DataTypeFromPropertyTypeName();
-    Test_ValueScan_PropertyTypeNameOf_Inverse();
-    Test_Macht_PatternScanRange();
-    Test_ValueScan_BuildNumericTargets();
+    RUN(Test_ValueScan_MultiNumericMembers);
+    RUN(Test_ValueScan_DataTypeFromPropertyTypeName);
+    RUN(Test_ValueScan_PropertyTypeNameOf_Inverse);
+    RUN(Test_Macht_PatternScanRange);
+    RUN(Test_ValueScan_BuildNumericTargets);
     // Phase A1a — snapshot field selection
-    Test_ValueScan_SelectSnapshotNumericFields();
+    RUN(Test_ValueScan_SelectSnapshotNumericFields);
     // Phase A1b — struct-array inner-key selection
-    Test_ValueScan_SelectArrayInnerKey();
+    RUN(Test_ValueScan_SelectArrayInnerKey);
 
-    Test_ValueScan_SessionLifecycle();
-    Test_ValueScan_FieldDisplayName();
-    Test_ValueScan_OptionalFlagOffset();
-    Test_ValueScan_OrderedView();
-    Test_IsEnginePackage();
-    Test_IsReflectionMetaClass();
-    Test_KeywordMatch();
-    Test_SnapshotNoise_GuardrailAndSets();
-    Test_NumericFamily_Filter();
-    Test_GroupScan_ExcludeAndHistogram();
-    Test_Radar_PickGroupWitnessAssignment();
-    Test_Radar_GroupSortUsesTheDisplayedLeaf();
-    Test_ValueScan_OrderedViewScale();
-    Test_Macht_IsRipRelativeModRM();
-    Test_ValueScan_SparseContainerGeometry();
+    RUN(Test_ValueScan_SessionLifecycle);
+    RUN(Test_ValueScan_FieldDisplayName);
+    RUN(Test_ValueScan_OptionalFlagOffset);
+    RUN(Test_ValueScan_OrderedView);
+    RUN(Test_IsEnginePackage);
+    RUN(Test_IsReflectionMetaClass);
+    RUN(Test_KeywordMatch);
+    RUN(Test_SnapshotNoise_GuardrailAndSets);
+    RUN(Test_NumericFamily_Filter);
+    RUN(Test_GroupScan_ExcludeAndHistogram);
+    RUN(Test_Radar_PickGroupWitnessAssignment);
+    RUN(Test_Radar_GroupSortUsesTheDisplayedLeaf);
+    RUN(Test_ValueScan_OrderedViewScale);
+    RUN(Test_Macht_IsRipRelativeModRM);
+    RUN(Test_ValueScan_SparseContainerGeometry);
 
     // Path 2 — native x64 disassembly (Denken decoder core)
-    Test_Denken_BasicAccesses();
-    Test_Denken_ExcludesStackAndZeroDisp();
-    Test_Denken_FollowsCallHandoff();
-    Test_Denken_DoesNotFollowNonThisCall();
-    Test_Denken_TerminatesAndGuards();
+    RUN(Test_Denken_BasicAccesses);
+    RUN(Test_Denken_ExcludesStackAndZeroDisp);
+    RUN(Test_Denken_FollowsCallHandoff);
+    RUN(Test_Denken_DoesNotFollowNonThisCall);
+    RUN(Test_Denken_TerminatesAndGuards);
 
     // UE5.7+ packed FUObjectItem reconstruction (math-only; no live game exists)
-    Test_Packed_RoundTrip_Basic();
-    Test_Packed_RoundTrip_HighBits();
-    Test_Packed_ZeroAndNull();
-    Test_Packed_FlagsDoNotLeak();
-    Test_Packed_AlignBitsKnob();
-    Test_Packed_PtrMaskKnob();
+    RUN(Test_Packed_RoundTrip_Basic);
+    RUN(Test_Packed_RoundTrip_HighBits);
+    RUN(Test_Packed_ZeroAndNull);
+    RUN(Test_Packed_FlagsDoNotLeak);
+    RUN(Test_Packed_AlignBitsKnob);
+    RUN(Test_Packed_PtrMaskKnob);
 
     // GraphPath BFS core — "Locate in GWorld" shortest-path search (mock graph)
-    Test_GraphPath_DirectChild();
-    Test_GraphPath_RootEqualsTarget();
-    Test_GraphPath_ShortestAmongTwo();
-    Test_GraphPath_Cycle();
-    Test_GraphPath_DepthBound();
-    Test_GraphPath_Unreachable();
-    Test_GraphPath_Abort();
-    Test_GraphPath_VisitedCap();
-    Test_GraphPath_ContainerEdgePreserved();
-    Test_GraphPath_MapSetElementGeometryRoundTrip();
-    Test_GraphPath_Reconstruction();
+    RUN(Test_GraphPath_DirectChild);
+    RUN(Test_GraphPath_RootEqualsTarget);
+    RUN(Test_GraphPath_ShortestAmongTwo);
+    RUN(Test_GraphPath_Cycle);
+    RUN(Test_GraphPath_DepthBound);
+    RUN(Test_GraphPath_Unreachable);
+    RUN(Test_GraphPath_Abort);
+    RUN(Test_GraphPath_VisitedCap);
+    RUN(Test_GraphPath_ContainerEdgePreserved);
+    RUN(Test_GraphPath_MapSetElementGeometryRoundTrip);
+    RUN(Test_GraphPath_Reconstruction);
 
     // Solitar GodMode — FBoolProperty single-bit read-modify-write
-    Test_Solitar_ApplyBoolBit();
-    Test_Solitar_MatchProtectionBool();
-    Test_Solide_MatchStealthField();
+    RUN(Test_Solitar_ApplyBoolBit);
+    RUN(Test_Solitar_MatchProtectionBool);
+    RUN(Test_Solide_MatchStealthField);
 
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
-    Test_Neu_Legacy_Basic();
-    Test_Neu_Legacy_CasePreserving();
-    Test_Neu_FNameData_Basic();
-    Test_Neu_FNameData_CasePreserving();
-    Test_Neu_FNameData_SparseValues();
-    Test_Neu_TagBitMasked();
-    Test_Neu_Disambiguation();
-    Test_Neu_Edge();
+    RUN(Test_Neu_Legacy_Basic);
+    RUN(Test_Neu_Legacy_CasePreserving);
+    RUN(Test_Neu_FNameData_Basic);
+    RUN(Test_Neu_FNameData_CasePreserving);
+    RUN(Test_Neu_FNameData_SparseValues);
+    RUN(Test_Neu_TagBitMasked);
+    RUN(Test_Neu_Disambiguation);
+    RUN(Test_Neu_Edge);
 
     // Orden — multi-value group scan SDR matcher (synthetic leaves, no game)
-    Test_Orden_PerSlotCap();
-    Test_Orden_DistinctValues();
-    Test_Orden_MissingValueRejected();
-    Test_Orden_DuplicateValuesSDR();
-    Test_Orden_MultiWidthMatch();
-    Test_Orden_ConvergenceAndAssignment();
-    Test_Orden_OrderedFirstScan();
-    Test_Orden_BetweenFirstScan();
-    Test_Orden_RoundedFloatExact();
-    Test_Orden_PrevValueRejectedOnFirstScan();
+    RUN(Test_Orden_PerSlotCap);
+    RUN(Test_Orden_DistinctValues);
+    RUN(Test_Orden_MissingValueRejected);
+    RUN(Test_Orden_DuplicateValuesSDR);
+    RUN(Test_Orden_MultiWidthMatch);
+    RUN(Test_Orden_ConvergenceAndAssignment);
+    RUN(Test_Orden_OrderedFirstScan);
+    RUN(Test_Orden_BetweenFirstScan);
+    RUN(Test_Orden_RoundedFloatExact);
+    RUN(Test_Orden_PrevValueRejectedOnFirstScan);
 
     // Ubel — Native-C scan P0: hole computation + Guess-type normalization (pure)
-    Test_Holes_ComputeHoles_Basic();
-    Test_Holes_LeadingGapSurvives();
-    Test_Holes_FullyCovered();
-    Test_Holes_ClampsOutOfWindow();
-    Test_Holes_ComputeClassHoles_ArrayDim();
-    Test_IsSanePropertiesSize();
-    Test_ShouldPublishClassWalk();
-    Test_ShouldPublishEnumTable();
-    Test_VersionNeedleScan_Equivalence();
-    Test_VersionNeedleScan_GateStillGates();
-    Test_VersionTierRules_G8_G9();
-    Test_VersionTier2_BareNeedle_G11();
-    Test_PropertyFamilyIsCoherent();
-    Test_NameWitness();
-    Test_Holes_NormalizeGuessedType();
+    RUN(Test_Holes_ComputeHoles_Basic);
+    RUN(Test_Holes_LeadingGapSurvives);
+    RUN(Test_Holes_FullyCovered);
+    RUN(Test_Holes_ClampsOutOfWindow);
+    RUN(Test_Holes_ComputeClassHoles_ArrayDim);
+    RUN(Test_IsSanePropertiesSize);
+    RUN(Test_ShouldPublishClassWalk);
+    RUN(Test_ShouldPublishEnumTable);
+    RUN(Test_VersionNeedleScan_Equivalence);
+    RUN(Test_VersionNeedleScan_GateStillGates);
+    RUN(Test_VersionTierRules_G8_G9);
+    RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_PropertyFamilyIsCoherent);
+    RUN(Test_NameWitness);
+    RUN(Test_Holes_NormalizeGuessedType);
 
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
-    Test_Sig_IsCeReplayableAob();
-    Test_Macht_ParsePattern_Nibble();
+    RUN(Test_Sig_IsCeReplayableAob);
+    RUN(Test_Macht_ParsePattern_Nibble);
 
     // Tot — per-command cancel immunity is independent of "is a background worker"
-    Test_Tot_CancelImmunityVsBackgroundWorker();
+    RUN(Test_Tot_CancelImmunityVsBackgroundWorker);
 
     // Routine — SafeThread: ~std::thread on a joinable thread terminates the process
-    Test_Routine_SafeThread();
+    RUN(Test_Routine_SafeThread);
 
     // Grimoire — Cheat Engine host detection (prefix, not an exact-name list)
-    Test_Grimoire_IsCheatEngineExeName();
-    Test_Grimoire_HostAllowsBackgroundThreads();
+    RUN(Test_Grimoire_IsCheatEngineExeName);
+    RUN(Test_Grimoire_HostAllowsBackgroundThreads);
 
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
-    Test_Renge_TryHexToBytes();
+    RUN(Test_Renge_TryHexToBytes);
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
-    Test_FFieldClassName_Probe();
+    RUN(Test_FFieldClassName_Probe);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);
