@@ -80,19 +80,55 @@ public static class FreezeScriptGenerator
         Line(sb, "  return");
         Line(sb, "end");
         Line(sb, "_ue5_freeze_handles[FREEZE_KEY] = handleOrErr");
-        Line(sb, "local sok, serr = pcall(handleOrErr.start)");
+        // `pcall` answers "did Lua raise", NEVER "did anything get frozen" -- and no
+        // mailbox failure can raise, because they are all caught inside the helper's
+        // own pcall. So this used to report a clean success for a freeze that applied
+        // nothing, auto-close the Lua window over it, and leave the record ticked.
+        // start() now returns (ok, err, count); read it. (audit #5 AA12 + AA13)
+        Line(sb, "local sok, sok2, serr, scount = pcall(handleOrErr.start)");
         Line(sb, "if not sok then");
         Line(sb, "  _ue5_freeze_handles[FREEZE_KEY] = nil");
-        Line(sb, "  showMessage('[Freeze] start error:\\n' .. tostring(serr))");
+        Line(sb, "  showMessage('[Freeze] start error:\\n' .. tostring(sok2))");
         Line(sb, "  if memrec then memrec.Active = false end");
         Line(sb, "  return");
         Line(sb, "end");
+        // Three outcomes, and an older embedded helper is a FOURTH state that must not
+        // be guessed at. A helper at <= 1.1 returns nothing from start(), so sok2 is
+        // nil -- neither success nor failure. Reporting either would be an invented
+        // verdict, so say what is actually known and leave the window open.
+        Line(sb, "if sok2 == nil then");
+        Line(sb, "  print('[Freeze] this table has an older ue5_freeze_helper.lua: it " +
+                 "cannot report whether anything was frozen. Re-inject it via " +
+                 "UE5DumpUI -> Tools -> Inject Freeze Helper into Current CE Table.')");
+        // HARD failure: no DLL / contract mismatch / stale mailbox. Nothing is frozen
+        // and nothing will be, so stop the timers start() already created -- the handle
+        // slot must not be nil'd without stopping, or two timers are stranded writing
+        // into the game with nothing able to reach them -- then untick and return
+        // BEFORE the close, so the window stays open on the error (CLAUDE.md: "on ANY
+        // error path the close MUST be unreachable").
+        Line(sb, "elseif not sok2 then");
+        Line(sb, "  pcall(handleOrErr.stop)");
+        Line(sb, "  _ue5_freeze_handles[FREEZE_KEY] = nil");
+        CeLuaHygiene.AppendFailedEnable(
+            sb, "'[Freeze] nothing was frozen:\\n' .. tostring(serr)", "  ");
+        // ARMED BUT EMPTY is NOT a failure: a class-wide freeze exists precisely so
+        // instances that spawn later are picked up (helper header: "newly spawned
+        // teammates / pickups / NPCs are picked up automatically"), so unticking here
+        // would turn the feature into the bug. Say it once, ungated -- this is a
+        // user-facing fact, not a diagnostic -- and keep the window open.
+        Line(sb, "elseif scount == 0 then");
+        Line(sb, $"  print('[Freeze] armed: no live instances of " +
+                 $"{EscapeLua(p.ClassName)} right now -- the freeze applies as they spawn.')");
+        Line(sb, "end");
+        Line(sb);
         Line(sb,
             $"dbg(string.format('[Freeze] Started: {EscapeLua(p.ClassName)}::" +
-            $"{EscapeLua(p.PropertyName)} = %s ({helperType}@0x{p.PropertyOffset:X})', " +
-            "tostring(CFG.value)))");
-        // Freeze timers are now running -- close the Lua Engine window on a clean start.
-        CeLuaHygiene.AppendCloseOnSuccess(sb);
+            $"{EscapeLua(p.PropertyName)} = %s ({helperType}@0x{p.PropertyOffset:X}) " +
+            "on %s instance(s)', tostring(CFG.value), tostring(scount)))");
+        // Close ONLY on a start that both reported an outcome and actually froze
+        // something. nil (old helper) and 0 (armed, empty) both keep the window up,
+        // because both just printed something the user needs to read.
+        CeLuaHygiene.AppendCloseOnSuccess(sb, "sok2 == true and scount ~= 0");
         Line(sb);
         Line(sb, "{$asm}");
         Line(sb, "[DISABLE]");

@@ -11,7 +11,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **28 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **29 batches** needing a running game. **Offer these
 >   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
 >   on a real target; two of those need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -1426,6 +1426,43 @@ reports them identical. Nothing has desynced.)*
 
 ## Pending live-game verification (verify only — no code)
 
+> **Session evidence tag `[DSA-2026-08-16]`.** A real session on **DragonSword Awakening**
+> (`DSClient-Win64-Shipping`, UE5.4, PE `691B0D9809EB2000`) under **build 3122** settled a few steps
+> below; each is ticked in place and tagged, so grep `DSA-2026-08-16` for everything it covered.
+> **Read what it did NOT reach as carefully as what it did** — the session detected its version from
+> the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
+> tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
+> was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ NEW 2026-08-17 — AA12 / AA13: the freeze script must stop lying about success (key: FreezeOutcome)
+
+*Needs a **real Cheat Engine** plus a connected game. See dev-log build 3125. The Lua rig stubs every
+CE global, so what is unproven is precisely the CE-side behaviour: whether the window stays up and
+whether the record ends ticked or unticked.*
+
+1. **⚠ REGRESSION FIRST — a normal freeze still works and still closes.** Property Search → a numeric
+   field on a class with live instances → Copy Freeze Script → paste into CE → tick. The value must
+   hold, the Lua Engine window must **close**, and the record must stay ticked. Everything below
+   changed this path.
+2. **The hard failure — the whole point.** Tick the same script with **UE5Dumper.dll NOT injected**.
+   Expect: a `showMessage` naming the reason, the record **unticked by itself**, and the Lua window
+   **still open**. Before this it silently reported success, closed the window, and stayed ticked.
+3. **⚠ The legitimate empty case must NOT untick.** Freeze a class with **zero live instances right
+   now** (an enemy type not yet spawned). Expect: record **stays ticked**, window **stays open**, and
+   one line — `[Freeze] armed: no live instances of X right now`. Then make one spawn and confirm the
+   freeze takes hold within ~5 s. **If this unticks, the fix broke the feature and that is worse than
+   the bug** — report it.
+4. **A misspelled class is indistinguishable from (3), by design.** Edit `CFG.className` to nonsense
+   and tick. It must behave exactly like step 3 — armed, 0. This is not a defect: the DLL answers
+   `SetDone(0)` for both, so claiming a typo would be a guess. Confirm it does not claim one.
+5. **An OLD helper is reported as unknown, not as a verdict.** Embed a **pre-1.2** `ue5_freeze_helper.lua`
+   (any copy from before build 3125) and tick a newly generated script. Expect the "older
+   ue5_freeze_helper.lua … re-inject it" line, the window left open, and the record **left ticked** —
+   it must neither close over it nor untick a freeze that may well be running.
+6. **Two freeze scripts still coexist.** Tick two different freezes at once, untick one: the other
+   must keep working. The keyed-handle table is untouched by this change, and this is the check that
+   proves it.
+
 ### ⬜ NEW 2026-08-17 — G12 / G3: the offset family, and the apply_rescan gate
 
 *Needs the DLL injected. See dev-log builds 3119 / 3121. G12's invariant is unit-pinned; its WIRING
@@ -1435,12 +1472,21 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    class with an **enum** field and a **TArray** field. The enum must show its member NAME (not a
    raw int) and the array must show its element type. All four writers of the family moved; this is
    the check that they still agree.
+   **🟡 TArray half ✅, enum half still open `[DSA-2026-08-16]`.** The session walked arrays cleanly
+   — `{"array_elem_size":8,"array_inner_addr":"0x1B59CB7FD80","array_inner_type":"ObjectProperty",
+   …,"name":"ModelComponents","type":"ArrayProperty"}` — so `FARRAYPROP_INNER` is not 8 bytes off.
+   **Zero `EnumProperty` appeared in the entire session**, so `FENUMPROP_ENUM` / `FBYTEPROP_ENUM`
+   are untested. Pick a class with an enum field next time; that is the half that can still be wrong.
 2. **G12, the case it actually fixes.** Needs a title whose offset validation takes the **heuristic
    fallback** — `scan-0.log` / `offsets-0.log` shows `Cannot find Guid or Vector struct`. Solarpunk
    is the documented one (though a later build resolved via `Guid` instead, so it may not reproduce).
    On such a title, enum names and TArray inner types were previously read 8 bytes off. Confirm they
    are right now, and **record which branch the log shows** — a run that resolved via `Guid` did not
    exercise this.
+   **⬜ Branch recorded, and it is the WRONG one `[DSA-2026-08-16]`:** `FindStructByName: Found
+   'Guid' at 0x1B5FB6840C0` → `ValidateAndFixOffsets: Using struct 'Guid'`, i.e. the validated path,
+   with `FStructProp::Struct = +0x70` published from a real measurement. The Step 2.5 default block
+   G12 repaired was never entered. Still needs a heuristic-fallback title.
 3. **⚠ G3 REGRESSION — Extra Scan → Apply still works.** Needs a game where something is missing to
    scan for (all 34 tested games resolve GWorld, so this may not be reachable). If it is: press
    Extra Scan, then Apply, and confirm `offsets-0.log` still contains exactly **one**
@@ -1448,9 +1494,14 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
 4. **⚠ G3 REGRESSION — GEngine still resolves after an Apply.** The GEngine second pass was hoisted
    out of the gated block precisely so it keeps running. If Apply is reachable, confirm
    `apply_rescan: Applied GEngine=0x…` still appears when GEngine was previously unresolved.
-5. **Free log check, no game needed beyond a normal session.** `walk-0.log` must show no burst of
+5. **✅ Free log check, no game needed beyond a normal session.** `walk-0.log` must show no burst of
    `Misaligned field … possible wrong FPROPERTY_OFFSET`. That line is the direct witness for a split
    or stale family.
+   **PASS `[DSA-2026-08-16]`** — a 2.4 MB `walk-0.log` covering a full snapshot capture (35,891
+   objects, **2,917,264 fields**) contains **zero** `Misaligned` lines and zero `[WARN]` lines of any
+   kind. Conditions matter here, so record them: this is the *validated-`Guid`* branch (step 2), so
+   it proves the family is coherent on the path that was already coherent — it is a regression check,
+   not evidence for the repair.
 
 ### ⬜ NEW 2026-08-17 — G11: Tier 2 is alive; check it agrees with Tier 1
 
@@ -1459,16 +1510,26 @@ Tier 1 agreeing on all six and masking all six** — so live behaviour should be
 exists to catch the case the offline model cannot see: the DLL scans the MAPPED image, the model
 scanned on-disk bytes, and for packed/obfuscated titles those differ.*
 
-1. **⚠ REGRESSION — no game's detected version moves.** `kVersionDetectLogicRev` went 4 → 5, so every
+1. **🟡 REGRESSION — no game's detected version moves.** `kVersionDetectLogicRev` went 4 → 5, so every
    cached game re-detects once. Note `ueVersion` / `versionDetected` / `lowConfidence` for two or
    three titles before running the new build and compare after. **Identical expected.** Any change
    is a real finding — report the game and the before/after.
+   **PASS on ONE title `[DSA-2026-08-16]`** — and the "before" is on disk, not from memory:
+   [test-games.md](test-games.md) records DragonSword Awakening as *"PE: 503 → runtime-raised to
+   **504** by the `CMC::GravityDirection` property marker"*, and build 3122 produced exactly
+   `DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503` → `UE Version = 503 (tier=1, detected=yes,
+   lowConfidence=no)` → `raising version 503 -> 504`. **Identical. The batch asks for two or three
+   titles, so this stays 🟡 until a second one is checked.**
 2. **A packed title is the interesting one.** Avowed is the documented packed case. Confirm its
    detected version is unchanged; this is the population where mapped-vs-on-disk could diverge.
 3. **If a `Tier 2` line ever appears in `scan-0.log`, cross-check it.** Grep for
    `DetectVersion: Tier 2 Release prefix -> NNN`. On every corpus image Tier 1 answered first, so a
    Tier 2 line means a stripped-tag title reached the new path — record the game, the version, and
    whether it matches what the game actually is. That is the first real evidence Tier 2 works.
+   **⬜ Not reachable from an ordinary session, and `[DSA-2026-08-16]` shows why:** a title whose PE
+   VERSIONINFO is intact answers at `DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503` and **never
+   enters the tier ladder at all** — no `Tier 1 (ascii|utf16)` line either. Steps 3–4 here, step 3 of
+   G8/G9, and every step of the G2 batch need a title with a **stripped version resource** (Elliot).
 4. **⚠ REGRESSION — Tier 3 still behaves.** A title that previously reported `Tier 3 (low
    confidence)` must still report the same version. The bare-needle change touches Tier 2 only, and
    two unit rails assert that, but Tier 3 is what stripped-tag games actually land on today.
@@ -1479,12 +1540,15 @@ scanned on-disk bytes, and for packed/obfuscated titles those differ.*
 measured no-ops on all 85 PE images in the local corpus, so this batch is a REGRESSION check, not a
 demonstration. Anything that does change is a finding.*
 
-1. **⚠ REGRESSION — every game still detects the same version.** `kVersionDetectLogicRev` went
+1. **🟡 REGRESSION — every game still detects the same version.** `kVersionDetectLogicRev` went
    3 → 4, so the first launch after this build **re-detects every cached game once** (~0.35 s).
    For two or three titles, note `ueVersion` / `versionDetected` / `lowConfidence` in
    `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json` **before** running the new build, then
    compare after. **They must be identical.** A changed version is a real finding — report it with
    the game and the before/after values.
+   **PASS on ONE title `[DSA-2026-08-16]`** — same evidence as G11 step 1 above (503 → 504 on
+   DragonSword Awakening under build 3122, matching what test-games.md recorded at build 2779).
+   Stays 🟡 pending a second title.
 2. **The re-detect happens once, not every launch.** Launch the same game twice more and confirm
    `scan-0.log` shows `skipped DetectVersion` on the later runs. If it re-detects every time, the
    rev stamp is not being written back.
@@ -1508,6 +1572,12 @@ and is decisive — this is the rare case where the regression was captured befo
    winner. **FAIL (the shipped bug)** = `=== GNames: … NONE validated ===`, which is what
    `Logs/DumperTest/scan-0.log` recorded at 13:34 on 2026-08-14 while `scan-20260814-132936.log`
    found `winner: GNAM_V1` five minutes earlier on the same binary.
+   **🡒 RUN #1 IS ALREADY ON DISK `[DSA-2026-08-16]` — this batch is now one relaunch from closing.**
+   The session ended at `HintCache: Saved results for PE=691B0D9809EB2000 (DSClient-Win64-Shipping.exe,
+   **scan #1**)` with **no `Hint HIT` and no `Hint MISS` line anywhere**, i.e. the hint fast path was
+   written but never read. DragonSword Awakening is a *good* subject for it: `GOBJ_ES53_1` won with
+   **40 matches**, so the "stops at the first match" defect has 39 wrong candidates to fall into.
+   **Just launch that game again and scan** — run #2 settles steps 1, 2 and 3 in one go.
 2. **G10 — the count no longer lies.** In `scan-0.log`, a `Hint MISS` line now reports the real match
    count (`(%zu matches, none validated; …)`). It must never say `1 match` for a pattern the cold run
    logged with hundreds — that mismatch is what hid this defect for months.
@@ -1739,6 +1809,14 @@ feature WRITES TO (the Stealth Meter card), so the regression half matters as mu
 
 *Needs a **UE5** game — this is the one check a UE4 title structurally cannot make. See dev-log
 build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a real target**.
+
+> **🡒 A suitable target was live and the scan type was wrong `[DSA-2026-08-16]`.** DragonSword
+> Awakening is **UE5.4**, i.e. exactly the LWC population this batch needs, and the session ran both
+> a `begin_value_scan` and a `begin_group_scan` — but **both used `"data_type":"NumericNoByte"`**, so
+> the vector decode path never executed. Nothing here is settled. Next time that title is up,
+> **one `FVector` Exact scan closes steps 1–3.** (Its `Rotator` / `Vector_NetQuantize100` struct
+> fields already render correctly in the walker — `"value":"{X=0, Y=0, Z=0}"` — but that is the
+> *walker's* struct decoder, a different code path from the scan predicate this batch is about.)
 
 1. **A UE5 world-position scan returns real hits.** Value Search → data type **FVector** → Exact →
    type the player's current X,Y,Z (read them off the Teleport panel's POV/marker readout, which is

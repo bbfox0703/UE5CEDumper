@@ -22,6 +22,69 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AA12 + AA13: a freeze that applied NOTHING reported clean success (build 3125)
+
+**`pcall` answers "did Lua raise", never "did anything get frozen"** — and on the shipped path no
+mailbox failure *can* raise, because every one of them is caught inside `fetchInstancePage`'s own
+`pcall`. So `pcall(handleOrErr.start)` was `true` for a DLL that was never injected, for a contract
+mismatch, and for a stale mailbox alike; the generator then auto-closed the CE Lua window over a
+record it left ticked. The user is told a freeze is active while nothing is being written.
+
+### The two findings are one defect, and two neighbours moved
+
+**AA13 has no independent content left.** Its unique clause — *"nothing reads `_lastError`"* — is
+stale: AA3 (build 2926) added `handle.lastError()` / `handle.isAbandoned()`. What survives is one
+level up — those accessors have **zero shipped callers**, and the C# test that "guards" them asserts
+only their *source text*. AA3 moved the defect from *write-only field* to *accessor nobody calls*.
+Its other clause is refuted outright: the persistent case is **not** silent (AA3's abandonment
+`print` fires ~10 s in, and CE's `print2` re-opens the window the generator just closed).
+**AA10 and AA11 were downgraded to LOW** on the same pass and are no longer part of this clump.
+
+### The crux is a tension, and every obvious fix fails it
+
+`count == 0` is **not** a failure. A class-wide freeze armed before its instances spawn is the
+helper's advertised purpose, so unticking there converts the feature into the bug. And the DLL
+cannot separate a *misspelled* class from a *live-but-empty* one — `HandleListInstances` answers
+`SetDone(0)` for both — so neither can the Lua side. *"Armed, 0 right now"* is the only honest report.
+
+Three refuted repairs, each at the source: unticking on `count == 0` (breaks the feature); unticking
+whenever `lastError() ~= nil` (`_lastError` carries the transient `'mailbox busy'` on the same
+channel as fatal errors — which is precisely why `MAX_FAIL_STREAK` exists); and putting the untick in
+the **helper**, where `memrec` is a chunk *local* (`autoassembler.pas:1419`) and the helper is a
+separately-`load`ed chunk — a guard that could never fire.
+
+### What shipped
+
+`rescan()` / `handle.start()` now return **`(ok, err, count)`** — three outcomes, not two. Helper
+**1.1 → 1.2**. The timers still start in all three cases and `start()` deliberately does **not**
+raise: the generated script stores the handle *before* calling start and its failure branch nils the
+slot **without** stopping, so a raise thrown after `createTimer` would strand two timers writing into
+the game with nothing able to reach them. Reporting by value is what keeps the cleanup reachable.
+
+`FreezeScriptGenerator` reads the outcome instead of the `pcall` status: hard failure → `stop()` →
+clear the slot → `showMessage` → untick → **return before the close**; `count == 0` → keep running,
+print once, keep the window open; and a **fourth** state — an older embedded helper returns `nil`,
+which is neither success nor failure, so it says exactly that rather than inventing a verdict.
+
+### Verification
+
+`scripts/tests/freeze_helper_test.lua` 23 → **38 checks**, written to fail first (**8 red**). Five new
+C# tests, including two ORDERING assertions — a reorder that moved the close above the bail-out would
+still pass every `Contains` check. **Four independent negative controls**: success branch 5 red,
+hard-failure branch 5 red, close condition 2 red, `nil`-check order 1 red.
+
+**Two things the controls found that the fix did not.** The hard-failure control left the AA13 case
+GREEN: it asserted only that the two outcomes *differ*, and `nil ~= true` differs — so it tolerated
+the very regression it existed to catch. Strengthened to the concrete triple; the control then went
+2 → 5 red. And the rig itself was **blinder than the real API**: its write stubs only appended to a
+log and never touched `MEM`, so `waitDone`'s status poll could never be satisfied and *every case in
+the file* had been exercising the no-symbol failure path. Fixed with `MEM`-backed writes and an
+`installMailbox()` that models `HandleListInstances`.
+
+⚠ **Not verified in a real Cheat Engine** — the rig stubs CE. See todo.md's register.
+
+-----
+
 ## 2026-08-17 - G12 + G3: one offset family, and a re-probe that should not happen (builds 3119 / 3121)
 
 **The finding I set out to fix turned out to be a LOW; the one found while re-deriving it is the

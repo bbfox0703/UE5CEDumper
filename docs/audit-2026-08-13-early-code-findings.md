@@ -2245,8 +2245,8 @@ by location. **Corrected tally: 3 HIGH · 17 MED · 14 LOW · 2 INFO.**
 | **AA9** | MED | `ue5_freeze_helper.lua:95` (header SAMPLES block) | The file's own copy/paste samples produce a freeze that cannot be stopped: `local h` in [ENABLE] is invisible to [DISABLE], and SAMPLES 1-3 show no stop at all | S / low |
 | **AA10** | MED | `ue5_freeze_helper.lua:341` (fetchInstancePage) | The mailbox has two mutually-blind concurrency guards: generated scripts wait for cmd==IDLE, the standalone helpers use a Lua flag no generated script sets | M / low |
 | **AA11** | MED | `ue5_freeze_helper.lua:386` (rescanInstances) | A page-fetch failure after page 0 is thrown away, so a PARTIAL instance list is returned as a clean success and replaces the freeze cache **[2 lenses]** | S / low |
-| **AA12** | MED | `ue5_freeze_helper.lua:471` (freezeProperty -> handle.start) | A freeze that applied NOTHING reports clean success: start() cannot raise, so the generated script's pcall succeeds, the Lua window auto-closes and the CE record stays ticked | S / low |
-| **AA13** | MED | `ue5_freeze_helper.lua:474` (handle.start) | Every freeze failure is silent: start() discards rescan()'s error, nothing reads _lastError, and the generated script then auto-closes the Lua window over a ticked record that froze nothing **[2 lenses]** | S / low |
+| **AA12** ✅ | MED | `ue5_freeze_helper.lua:471` (freezeProperty -> handle.start) | A freeze that applied NOTHING reports clean success: start() cannot raise, so the generated script's pcall succeeds, the Lua window auto-closes and the CE record stays ticked | S / low |
+| **AA13** ✅ | MED | `ue5_freeze_helper.lua:474` (handle.start) | Every freeze failure is silent: start() discards rescan()'s error, nothing reads _lastError, and the generated script then auto-closes the Lua window over a ticked record that froze nothing **[2 lenses]** | S / low |
 | **AA14** ✅ | MED | `ue5_invoke_helper.lua:215` (writeFStringInline) | allocateMemory's nil return is unchecked, so a failed allocation ships an FString of { Data = nullptr, Num = n+1 } into the game **[2 lenses]** | S / low |
 | **AA15** ✅ | MED | `ue5_invoke_helper.lua:223` (writeFStringInline) | allocateMemory's nil return is never checked, so a failed allocation stamps an FString with Data=nullptr and ArrayNum=n+1 into a live UFunction call | S / low |
 | **AA16** ✅ | MED | `ue5_invoke_helper.lua:293` (writeParams) | BakedScriptGenerator can emit five param-type tokens writeParams has never accepted, so the exported script aborts the whole invoke at CE runtime | S / low |
@@ -3355,7 +3355,7 @@ live". Nothing is blocked on the maintainer.
 
 | clump | why |
 |---|---|
-| `ue5_freeze_helper.lua` **AA9 – AA13** | the cheapest by a distance — an **executable rig already exists** in `scripts/tests/`, and `lua` is installed. Write the test to fail first, as the three existing rigs were. |
+| ~~`ue5_freeze_helper.lua` **AA9 – AA13**~~ | 🟡 **AA12 + AA13 SHIPPED build 3125** (they collapse into ONE defect — see the AA12/AA13 block below). **AA9 is next and is a DOC + SAMPLES rewrite, not a code fix.** AA10 and AA11 were both **downgraded to LOW** on re-derivation and are no longer part of this clump. |
 | `Radar` **AB4 + AB7** | `Radar.cpp` is one of only two `.cpp` files a test target actually compiles, so a fix there can be pinned properly. |
 | `Fern` **F2 + F8** | no test target compiles `Fern.cpp`; live-only. |
 | `Macht` **MA2** | latent-only today (the underflow needs `AOBScanBatch` to be given a `moduleBase`), two lines. |
@@ -3432,7 +3432,53 @@ live". Nothing is blocked on the maintainer.
 > dangles) plus an atomic refcount per call on the very path B10 was written to speed up. Anyone
 > picking this up must budget the refactor, not the LRU.
 
-**Current register: 192 open of 287 · 0 HIGH · 30 MED · 135 LOW · 27 INFO.** Re-derive with
+> ### ✅ AA12 + AA13 (build 3125) — they are ONE defect, and two of their neighbours moved
+>
+> Re-derived with five agents + five refute-mandated skeptics before a line was changed, and the
+> usual thing happened: **four of the five filed premises needed correcting.**
+>
+> - **AA13 has no independent content left.** Its unique clause — *"nothing reads `_lastError`"* — is
+>   **stale**: the AA3 fix (build 2926) added `handle.lastError()` / `handle.isAbandoned()`. What is
+>   still true is one level up: those accessors have **zero shipped callers**, and the C# test that
+>   "guards" them only asserts their *source text* (`FreezeScriptGeneratorTests.cs:424-425`). AA3
+>   moved the defect from *write-only field* to *accessor nobody calls* without changing the
+>   observable outcome. Its other clause (*"EVERY freeze failure is silent"*) is **REFUTED** for the
+>   persistent case — AA3's abandonment `print` fires ~10 s in, and CE's `print2` **re-opens** the
+>   window the generator just auto-closed (`LuaHandler.pas:1521-1522`, and `cbShowOnPrint` ships
+>   `Checked = True`). Tracked under AA12 alone from here.
+> - **AA10 and AA11 are LOW, not MED.** AA10's headline interleaving is effectively unreachable at
+>   the DLL's polling cadence; what survives is that a nested rescan can clobber a generated
+>   script's *output* fields. AA11 was confirmed by EXECUTION (not by reading) but its blast radius
+>   is one narrow target class. Neither belongs in the AA9–AA13 clump any more.
+> - **The crux is a TENSION, and the obvious fix fails it.** `count == 0` is **not** a failure: a
+>   class-wide freeze armed before its instances spawn is the helper's advertised purpose (header
+>   `:16-20`), so unticking there converts the feature into the bug. And the DLL **cannot** tell a
+>   misspelled class from a live-but-empty one — `HandleListInstances` answers `SetDone(0)` for both
+>   — so neither can the Lua side. *"Armed, 0 right now"* is the only honest report.
+> - **Three obvious fixes are wrong, and each was refuted at the source:** (a) untick on
+>   `count == 0` → breaks the feature; (b) untick whenever `lastError() ~= nil` → `_lastError`
+>   carries the transient `'mailbox busy'` on the same channel as fatal errors, which is exactly why
+>   `MAX_FAIL_STREAK` exists; (c) put the untick in the *helper* → `memrec` is a chunk **local**
+>   (`autoassembler.pas:1419`) and the helper is a separately-`load`ed chunk, so that guard could
+>   never fire — a never-firing predicate, the defect shape this audit already has a lesson about.
+> - **Making `start()` RAISE would strand two timers.** The generated script stores the handle
+>   *before* calling start (`FreezeScriptGenerator.cs:82`) and its failure branch nils the slot
+>   **without** stopping — so a raise thrown after `createTimer` leaves two timers writing into the
+>   game with nothing able to reach them. Reporting by VALUE is what keeps the cleanup reachable.
+> - **A negative control caught a weak TEST, not a weak fix.** Reverting the hard-failure branch
+>   alone left the AA13 case GREEN, because it only asserted the two outcomes *differ* — and
+>   `nil ~= true` differs. Strengthened to assert the concrete triple on both sides; the same control
+>   then went 2 red → 5 red. *A control that passes is a finding about the test.*
+> - **The rig was blinder than the API and hid the whole success path.** `freeze_helper_test.lua`'s
+>   write stubs only appended to a log and never touched `MEM`, so `waitDone`'s status poll could
+>   never be satisfied and **every case in the file exercised the no-symbol failure path**. Fixed by
+>   making writes land in `MEM` plus an `installMailbox()` that models `HandleListInstances`. This is
+>   the second time a stub that disagrees with the real API hid the defect under test.
+>
+> **Unproven on a real Cheat Engine** — the rig stubs CE, so the emitted script's behaviour in a live
+> CE (window stays open, record stays ticked/unticked correctly) is in todo.md's register.
+
+**Current register: 190 open of 287 · 0 HIGH · 28 MED · 135 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —

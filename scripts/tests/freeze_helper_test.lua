@@ -38,8 +38,13 @@ local PRINTS   -- captured print() lines
 local SYMBOLS  -- symbol name -> address (0/absent = unresolved)
 local TIMERS   -- every createTimer() handed out, in creation order
 
+-- Set by installMailbox(): a hook the write stubs call so the fake DLL can answer
+-- a command the moment the helper triggers it.
+MAILBOX_ON_WRITE = nil
+
 local function resetWorld()
   MEM, BYTES, WRITES, PRINTS, SYMBOLS, TIMERS = {}, {}, {}, {}, {}, {}
+  MAILBOX_ON_WRITE = nil
 end
 
 function readQword(a)        return MEM[a] end
@@ -53,8 +58,19 @@ function writeByte(a, v)
   BYTES[a] = v
   WRITES[#WRITES + 1] = { addr = a, kind = 'byte', value = v }
 end
+
+-- A write must land in MEM, not only in the WRITES log. The original stubs only
+-- logged, which silently made the whole mailbox SUCCESS path unreachable: waitDone
+-- polls readInteger(mb + OFF_STATUS) and nothing could ever set it, so every case
+-- in this file exercised the no-symbol failure path and nothing else. A stub that
+-- is stricter or blinder than the real API hides exactly the defect under test
+-- (working-lessons §2.3).
 local function logWrite(kind)
-  return function(a, v) WRITES[#WRITES + 1] = { addr = a, kind = kind, value = v } end
+  return function(a, v)
+    MEM[a] = v
+    WRITES[#WRITES + 1] = { addr = a, kind = kind, value = v }
+    if MAILBOX_ON_WRITE then MAILBOX_ON_WRITE(a, v) end
+  end
 end
 writeInteger      = logWrite('int32')
 writeSmallInteger = logWrite('int16')
@@ -129,6 +145,60 @@ end
 
 local function tickTimer()   return TIMERS[#TIMERS - 1] end   -- first of the pair
 local function rescanTimer() return TIMERS[#TIMERS] end       -- second of the pair
+
+-- ============================================================
+-- A fake DLL on the other end of the mailbox
+-- ============================================================
+-- Mirrors dll/src/Mimic.h's MailboxData layout and HandleListInstances' reply, so
+-- the SUCCESS paths (and the "valid class, nothing alive" path that AA12 turns on)
+-- are reachable from this rig at all. Offsets duplicated from the helper on
+-- purpose: if the helper's copy drifts from Mimic.h, this rig must NOT drift with
+-- it, or the two wrongs agree and the test proves nothing.
+local MB          = 0x40000000
+local CONTRACT_MB = 0x40100000
+local OFF_CMD, OFF_STATUS, OFF_RESULT   = 0x000, 0x004, 0x008
+local OFF_INSTANCE, OFF_UFUNC           = 0x010, 0x018
+local OFF_NUM_PARMS, OFF_FUNC_FLAGS     = 0x022, 0x024
+local OFF_ERR, OFF_PARAMS               = 0x228, 0x328
+local CMD_LIST_INSTANCES = 6
+
+--- @param opts table  pages = { {addr,...}, ... } (one entry per page),
+---                    result (rc, default 0), classPtr/classOff (witness),
+---                    failOnPage = n  -> that page answers rc ~= 0 (AA11's shape),
+---                    deadPage   = n  -> that page never answers (waitDone timeout)
+local function installMailbox(opts)
+  opts = opts or {}
+  local pages = opts.pages or { {} }
+  SYMBOLS['g_invokeMailbox']   = MB
+  SYMBOLS['g_mailboxContract'] = CONTRACT_MB
+  -- Contract block: magic, current, minimum. The helper bakes UE5_SCRIPT_CONTRACT=2.
+  MEM[CONTRACT_MB + 0x00] = 1127564629
+  MEM[CONTRACT_MB + 0x04] = opts.contractCur or 2
+  MEM[CONTRACT_MB + 0x08] = opts.contractMin or 1
+
+  MAILBOX_ON_WRITE = function(addr, value)
+    if addr ~= MB + OFF_CMD or value ~= CMD_LIST_INSTANCES then return end
+    -- The helper wrote the page index to paramsData[0] just before the trigger.
+    local pageIndex = MEM[MB + OFF_PARAMS] or 0
+    if opts.deadPage and pageIndex == opts.deadPage then
+      return  -- status stays 0: the DLL never picked it up
+    end
+    if opts.failOnPage and pageIndex == opts.failOnPage then
+      MEM[MB + OFF_RESULT] = -7
+      MEM[MB + OFF_ERR]    = 'simulated page failure'
+      MEM[MB + OFF_STATUS] = 1
+      return
+    end
+    local page = pages[pageIndex + 1] or {}
+    MEM[MB + OFF_RESULT]     = opts.result or 0
+    MEM[MB + OFF_NUM_PARMS]  = #page
+    MEM[MB + OFF_FUNC_FLAGS] = #pages
+    for i = 1, #page do MEM[MB + OFF_PARAMS + ((i - 1) * 8)] = page[i] end
+    MEM[MB + OFF_INSTANCE]   = opts.classPtr or 0xC1A55
+    MEM[MB + OFF_UFUNC]      = opts.classOff or 0x10
+    MEM[MB + OFF_STATUS]     = 1
+  end
+end
 
 -- ============================================================
 -- AA1 -- packed bitfield bools
@@ -300,6 +370,80 @@ do
   check(PRINTS[1] and PRINTS[1]:find('STOPPED', 1, true) ~= nil,
         'AA3: the message says writing stopped', PRINTS[1])
   check(h.lastError() ~= nil, 'AA3: lastError() is readable (it had zero readers before)')
+end
+
+-- ============================================================
+-- AA12 / AA13 -- start() must report an OUTCOME, and the three
+-- outcomes must be told apart
+-- ============================================================
+-- The generated script's only signal was `pcall(handle.start)`, and pcall answers
+-- "did Lua raise", never "did anything get frozen". Every mailbox error is caught
+-- inside fetchInstancePage's own pcall, so start() cannot raise on the shipped path
+-- and the pcall always succeeded -- over a record left ticked and a Lua window
+-- auto-closed. start() now returns (ok, err, count).
+--
+-- The distinction that makes this non-trivial: `count == 0` is NOT a failure. A
+-- class-wide freeze armed before its instances spawn is the helper's advertised
+-- purpose (header :16-20), so a fix that unticks on zero would break the feature.
+
+case('AA12: start() reports a HARD failure (no DLL) instead of returning nothing')
+do
+  resetWorld()
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'ok is false')
+  check(type(err) == 'string' and err:find('g_invokeMailbox', 1, true) ~= nil,
+        'AA12: the error names the missing symbol', tostring(err))
+end
+
+case('AA12: start() reports SUCCESS with the instance count')
+do
+  resetWorld()
+  installMailbox{ pages = { { 0x2000, 0x3000 } } }
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err, count = h.start()
+  eq(ok, true, 'ok is true')
+  eq(err, nil, 'no error')
+  eq(count, 2, 'count is the number of live instances')
+  eq(#h._cache, 2, 'and the cache agrees with the reported count')
+end
+
+case('AA12: a valid class with ZERO live instances is SUCCESS, not failure')
+do
+  -- The case the fix must NOT break: armed now, applies as instances spawn.
+  resetWorld()
+  installMailbox{ pages = { {} } }
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err, count = h.start()
+  eq(ok, true, 'ok is true -- an empty world is not an error')
+  eq(err, nil, 'no error')
+  eq(count, 0, 'count is 0, and that is how the caller knows to keep the window open')
+end
+
+case('AA13: a hard failure is distinguishable from an armed-but-empty freeze')
+do
+  -- The whole point: before this, both produced pcall(start) == true and nothing else,
+  -- so the generated script could not tell "froze nothing because the DLL is gone"
+  -- from "froze nothing because nothing has spawned yet".
+  resetWorld()
+  local hFail = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local okFail, errFail, countFail = hFail.start()
+
+  resetWorld()
+  installMailbox{ pages = { {} } }
+  local hEmpty = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local okEmpty, errEmpty, countEmpty = hEmpty.start()
+
+  -- Assert the CONCRETE triple on both sides, not merely that they differ. A
+  -- "they differ" check passes when the hard-failure path returns nothing at all
+  -- (nil ~= true), which is the exact regression this case exists to catch --
+  -- found by negative-controlling the two branches separately.
+  eq(okFail, false, 'AA13: the hard failure reports ok=false (not nil)')
+  check(type(errFail) == 'string', 'AA13: the hard failure carries a reason', tostring(errFail))
+  eq(countFail, 0, 'AA13: the hard failure reports 0')
+  eq(okEmpty, true, 'AA13: the armed case reports ok=true')
+  eq(errEmpty, nil, 'AA13: the armed case carries no error')
+  eq(countEmpty, 0, 'AA13: the armed case reports 0')
 end
 
 -- ============================================================

@@ -29,7 +29,14 @@
 
   Public API (re-declaration-safe, syntax-highlighted):
     handle = freezeProperty(cfg)
-    handle.start()       -- begin tick + rescan timers
+    ok, err, n = handle.start()   -- begin tick + rescan timers, and REPORT:
+                                  --   false, err, 0  hard failure (no DLL /
+                                  --                  contract mismatch) -- nothing
+                                  --                  is frozen; tell the user
+                                  --   true,  nil, 0  armed, no live instances YET
+                                  --                  (normal -- spawns get picked
+                                  --                  up on the next rescan)
+                                  --   true,  nil, n  frozen on n instances
     handle.stop()        -- cancel both timers cleanly
 
   cfg fields:
@@ -52,7 +59,8 @@
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.1'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+    UE5_FREEZE_HELPER_VERSION = '1.2'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+                                        -- 1.2 start() returns (ok, err, count)
 
   =========================================================================
   SAMPLES -- copy/paste into your AA Script's [ENABLE] block, modify in place.
@@ -126,8 +134,13 @@
 -- (it just ignores boolMask and keeps the old whole-byte behaviour), and a
 -- 1.1 helper runs every 1.0 script unchanged -- so this is informational,
 -- not a compatibility gate.
+-- 1.2: handle.start() returns (ok, err, count) instead of nothing, so a caller can
+-- tell a HARD failure (no DLL / contract mismatch) from a freeze that is armed with
+-- no live instances yet. Generated scripts read it; a 1.1 helper returns nil there
+-- and the generated script treats that as "cannot report" rather than as a verdict,
+-- so an old helper still runs a new script -- it just cannot diagnose it. (AA12/AA13)
 if not UE5_FREEZE_HELPER_VERSION then
-  UE5_FREEZE_HELPER_VERSION = '1.1'
+  UE5_FREEZE_HELPER_VERSION = '1.2'
 end
 
 -- ============================================================
@@ -600,6 +613,26 @@ if not freezeProperty then
       end
     end
 
+    -- Returns ok, err, count -- an OUTCOME, not nothing.
+    --
+    -- Three results, and they are NOT two (audit #5 AA12/AA13):
+    --   false, err, 0   a HARD failure: no DLL, contract mismatch, stale mailbox.
+    --                   Nothing is frozen and nothing will be until it is fixed.
+    --   true,  nil, 0   ARMED, nothing alive yet. A valid class with no live
+    --                   instances is the helper's advertised purpose (header
+    --                   :16-20 -- newly spawned NPCs get picked up), so this must
+    --                   never be reported as a failure or the feature IS the bug.
+    --   true,  nil, n   frozen on n instances.
+    -- Before this, start() returned nothing at all, so the generated script's only
+    -- signal was `pcall(start)` -- which answers "did Lua raise", and no mailbox
+    -- error can raise (they are all caught in fetchInstancePage's own pcall). Every
+    -- one of the three came out as success, over a ticked record and a Lua window
+    -- the generator then auto-closed.
+    --
+    -- The DLL cannot distinguish a MISSPELLED class from a live-but-empty one --
+    -- Mimic.cpp's HandleListInstances answers SetDone(0) for both -- so neither can
+    -- this. "Armed, 0 right now" is the honest report; claiming a typo would be a
+    -- guess, which is the thing CLAUDE.md's mailbox rule forbids.
     local function rescan()
       local addrs, err, cPtr, cOff =
         rescanInstances(handle.cfg.className, handle.cfg.filter)
@@ -623,6 +656,7 @@ if not freezeProperty then
             'writing (last error: %s). Re-enable the record after fixing it.',
             tostring(handle.cfg.className), handle._failStreak, tostring(err)))
         end
+        return false, err, 0
       else
         handle._cache = addrs
         handle._lastError = nil
@@ -633,6 +667,7 @@ if not freezeProperty then
         -- stale class pointer paired with fresh addresses, so they move together.
         handle._classPtr = cPtr or 0
         handle._classOff = cOff or 0
+        return true, nil, #addrs
       end
     end
 
@@ -643,10 +678,20 @@ if not freezeProperty then
     --- True once consecutive rescan failures made the handle stop writing.
     handle.isAbandoned = function() return handle._abandoned end
 
+    --- Begin the tick + rescan timers. Returns rescan()'s (ok, err, count) so the
+    --- caller can tell a hard failure from an armed-but-empty freeze -- see rescan.
+    ---
+    --- The timers are started in ALL THREE cases, deliberately. A hard failure is
+    --- still owned by the failure-streak logic, and a caller that wants to abandon
+    --- calls handle.stop(). start() must not RAISE instead: the generated script
+    --- stores the handle before calling start, and its failure branch nils that slot
+    --- WITHOUT stopping -- so a raise thrown after the timers exist would strand two
+    --- of them writing into the game with no reachable handle. Reporting by value is
+    --- what keeps the cleanup path available.
     handle.start = function()
       -- Initial scan happens synchronously so tick has data on the
       -- very first fire.
-      rescan()
+      local ok, err, count = rescan()
 
       local tickMs   = handle.cfg.tickIntervalMs or 50
       local rescanMs = (handle.cfg.refreshIntervalSec or 5) * 1000
@@ -660,6 +705,8 @@ if not freezeProperty then
       handle._rescanTimer.Interval = rescanMs
       handle._rescanTimer.OnTimer  = rescan
       handle._rescanTimer.Enabled  = true
+
+      return ok, err, count
     end
 
     handle.stop = function()
