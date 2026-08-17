@@ -27,8 +27,8 @@ was written here.
 | ~~1~~ ✅ **DONE** | ~~**PX1**~~ | **Shipped build 3166** (`9ea249b8` dinput8, `ceaff6ad` version, `b0ccae6c` the CI check). Verified offline exactly as predicted — all four proxies diff clean against real System32, zero missing names, zero ordinal mismatches, nothing added to the live backlog. **Two of the filed premises were wrong in the direction that matters**: link.exe assigns unpinned exports from *(highest pinned + 1)*, not "alphabetically from 1" — so the obvious minimal fix (pin only the missing export) would have moved the five *correct* forwards off their ordinals, i.e. **worse than the bug** — and `/DEF:` merges with `__declspec(dllexport)` rather than suppressing it, so the missing name needed an *implementation*, not a `.def` line. Permanently re-derived by [`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py). |
 | ~~1~~ ✅ **DONE** | ~~**AF3**~~ | **Shipped build 3167.** Closed exactly as predicted — pure C#, 8 new tests, five source mutations each observed to fail, nothing added to the live backlog. Confirmed the entry's own warning: reusing `ResultOf` would have made the tests pass while testing nothing, so a separate `TruncatedResultOf` fixture was mandatory. One defect beyond the write-up: `SetBaseline`'s `GroupBy(...).First().Count` made the captured baseline depend on the Earliest-first **view toggle**, because `ApplyDiffAndFilter` re-sorts `_allEntries` in place. Half 2 (a `sort` param on `pe_profile_get`) deliberately deferred, per this entry's own "do NOT do half 2 alone". |
 | ~~1~~ ✅ **DONE** | ~~**A3**~~ | **Shipped build 3168.** The premise corrections all held; the load-bearing one was the *risk* re-rating, not the mechanism — `expandFields` had no output cap unlike both correct siblings, so the filed one-line erase would have removed the only bound besides `depth<=4`. Shipped as RAII path-scoping + `kMaxScanFieldsPerClass`, pinned header-inline in `dll_helpers_test` (7-failure negative control). ⚠ Live check still owed. |
-| 1 ⭐ TAKE FIRST | **U3** | Real and bigger than filed, but `Ubel.cpp` has no test target and the payload is a *display* preview — misleading rather than corrupting. |
-| 5 — SHIP WITH V4 | **V3** | Same root cause as V4, one method apart. Fixing either alone leaves the identical hole next door. |
+| ~~1~~ (half) | ~~**U3**~~ -> **U17** | **Silent-drop half shipped build 3169**; the layout half is now register row `U17` (M/med, still open). The entry's own warning was what mattered: the filed rationale would have deleted a skip that is CORRECT for `FGameplayAttributeData`. |
+| 1 TAKE FIRST - SHIP WITH V4 | **V3** | Same root cause as V4, one method apart. Fixing either alone leaves the identical hole next door. |
 | 5 — SHIP WITH V3 | **V4** | ⚠ **Read `residual_risk` before writing a line.** The obvious fix (a `required` expected-parent parameter) would SILENTLY KILL the Go box, Find Refs and every cross-tab 'Open in Live Walker' handoff — two of `NavigateToAsync`'s three callers `Breadcrumbs.Clear()` first and legitimately have no parent. |
 
 **Do not batch these into one commit.** Negative-control ONE change at a time — the 2026-08-16
@@ -460,7 +460,16 @@ FIX-TIME SIBLING GREP: the same page-vs-table confusion may exist wherever a cap
 
 ---
 
-## U3 — BIGGER_THAN_FILED
+## U3 - BIGGER_THAN_FILED - FIXED (silent-drop half) build 3169; LAYOUT HALF = U17, OPEN
+
+> **Half closed.** The silent-drop half shipped: the 8-byte skip is now gated on
+> `Ubel::LooksLikeVtablePointer` instead of on `size > 8`, so `FVector3f` keeps all three
+> components and `FLinearColor` keeps R and G, while `FGameplayAttributeData` still skips its
+> REAL vtable. This entry's warning was the load-bearing one and it held: the filed
+> parenthetical would have deleted the skip outright and regressed every GAS preview.
+> **The layout half is NOT done** and is now its own register row, `U17` - a 24-byte struct is
+> 3 doubles or 6 floats and the bytes cannot say which, so it needs the `UScriptStruct*` the four
+> call sites already hold. Analysis below preserved verbatim.
 
 ### Premises of the filed finding that are WRONG
 

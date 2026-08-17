@@ -22,6 +22,56 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - U3: a struct preview that dropped leading members, silently (build 3169)
+
+**`size > 8` is not evidence of a vtable.** `InterpretValue`'s StructProperty arm skipped the first 8
+bytes whenever the struct was larger than 8, on the theory that structs begin with a vtable pointer,
+then read the remainder as 4-byte floats. The result was a **silent drop of leading members**, which
+is worse than garbage because it looks correct:
+
+- **`FVector3f`** (12 B, 3 floats) printed **one** number — the *last* component. Live-confirmed:
+  `Map_IntToVec3f` → `f:[6203.0000]`, while the raw hex on the same row held all three.
+- **`FLinearColor`** (16 B, 4 floats) lost **R and G**; only B and A printed. Not in the filed finding.
+
+**The filed rationale was wrong in the dangerous direction.** Its parenthetical — *"USTRUCTs generally
+have no vtable"* — is true in aggregate and **false for the first struct the branch's own comment
+names**. `FGameplayAttributeData` declares a virtual destructor, so GAS attributes really do carry a
+vtable with `BaseValue`/`CurrentValue` at +8/+0xC. The 8-skip is *correct* there, and is why the
+heuristic was written and why it survived. Acting on the finding as written — "remove the bogus skip"
+— would have regressed every GAS attribute preview into `f:[<vtable low>, <vtable high>, 100, 75]`.
+
+So the skip is now gated on **evidence** instead of on size: `Ubel::LooksLikeVtablePointer` requires
+the first 8 bytes to be non-null, 8-byte aligned and inside the x64 user-mode canonical range. Two
+floats (`0x400000003F800000`), a double (`0x40934A0000000000`) and an `FLinearColor`'s first two
+components all fail it; a module address (`0x00007FF6...`) passes.
+
+The whole decode moved into `Ubel.h` as pure `inline` code (`LooksLikeVtablePointer` /
+`InterpretStructBytes`) beside `ComputeHoles`, because **no target compiles `Ubel.cpp`** and
+`dll_helpers_test` already includes `Ubel.h` — the MA2 pattern.
+
+⚠ **HALF THE DEFECT REMAINS, and it is asserted rather than papered over.** A 24-byte struct is three
+doubles (UE5 LWC `FVector`) or six floats, and *the bytes cannot say which* — `Radar.h` states this
+repo rule outright: the struct name does not determine the width and neither does the engine version.
+So an LWC vector still decodes wrongly; the skip no longer eats its X, but the doubles are still split
+into float halves. Only the reflected layout settles it, and swapping one guess for another would be
+the same defect with different numbers. Test case 6 asserts the *current* six-value output precisely
+so this cannot be mistaken for fixed. The layout-driven half — routing the four call sites that
+already hold the `UScriptStruct*` (`fv.mapValueStructAddr`, `fv.setElemStructAddr`, `m.structType`,
+`fi.structType`) into the field-driven decoder that already exists at `Ubel.cpp:4832-4899` — stays
+open on the register.
+
+**Verification.** 246 + **1235** C++ assertions (+14) and 3921 C# tests green. Negative control: the
+gate reverted to the old `size > 8` produced **exactly three** failures — `FVector3f`, `FLinearColor`
+and the LWC component count — while **the GAS regression guard kept passing**, which is what
+demonstrates the suite tells this fix apart from "just delete the skip". Blast radius is one function:
+`f:[` appears in source only in `Ubel.cpp`, nothing parses it, so the output format was free to change.
+
+**Also:** `uint64_t small` does not compile in this test file — `rpcndr.h`, via `Windows.h`, does
+`#define small char`. It fails as *"'uint64_t' followed by 'char' is illegal"*, which names neither
+the macro nor the header.
+
+-----
+
 ## 2026-08-17 - A3: Value Search indexed ONE FVector per class, ever (build 3168)
 
 **A cycle guard that answered the wrong question.** `ScanForValue`'s per-class index builder

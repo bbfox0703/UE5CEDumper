@@ -4695,6 +4695,109 @@ static void Test_Macht_ParsePattern_Nibble() {
 // The picker is reader-templated exactly so it can be tested here with no game.
 // ============================================================
 // ================================================================
+// Ubel::InterpretStructBytes / LooksLikeVtablePointer — audit U3
+//
+// The old branch skipped 8 bytes whenever size > 8, on the theory that structs
+// start with a vtable. True for FGameplayAttributeData (GAS declares a virtual
+// destructor), false for nearly every other USTRUCT — and the cost was a SILENT
+// DROP of leading members, which is worse than garbage because it looks right.
+//
+// The four cases below each fail the OLD code differently, and that is the
+// point: a repair aimed at only one of them regresses another. In particular
+// "just delete the 8-byte skip" — which the filed finding's parenthetical
+// invites — passes the first two and BREAKS the third.
+// ================================================================
+static void Test_Ubel_InterpretStructBytes() {
+    std::printf("Test_Ubel_InterpretStructBytes\n");
+
+    auto putF = [](uint8_t* p, int i, float v) { memcpy(p + i * 4, &v, 4); };
+
+    // --- 1. FVector3f: 12 B, 3 floats. The live-confirmed failure.
+    //     Old code: floatStart=8 -> ONE number, the LAST component.
+    {
+        uint8_t b[12];
+        putF(b, 0, 1.0f); putF(b, 1, 2.0f); putF(b, 2, 6203.0f);
+        EXPECT("FVector3f keeps all three components",
+               Ubel::InterpretStructBytes(b, 12) == "f:[1.0000, 2.0000, 6203.0000]");
+    }
+
+    // --- 2. FLinearColor: 16 B, 4 floats. Old code dropped R and G entirely.
+    {
+        uint8_t b[16];
+        putF(b, 0, 0.25f); putF(b, 1, 0.5f); putF(b, 2, 0.75f); putF(b, 3, 1.0f);
+        EXPECT("FLinearColor keeps R and G",
+               Ubel::InterpretStructBytes(b, 16) == "f:[0.2500, 0.5000, 0.7500, 1.0000]");
+    }
+
+    // --- 3. REGRESSION GUARD: FGameplayAttributeData really does carry a vtable.
+    //     If the skip is deleted outright this yields the two pointer halves
+    //     followed by the values, which is the fix that "looks" right on cases
+    //     1 and 2 and quietly ruins every GAS attribute preview.
+    {
+        uint8_t b[16];
+        uint64_t vt = 0x00007FF6A1B2C3D0ULL;   // module-range, 8-aligned
+        memcpy(b, &vt, 8);
+        putF(b, 2, 100.0f); putF(b, 3, 75.0f);
+        EXPECT("GAS attribute still skips its real vtable",
+               Ubel::InterpretStructBytes(b, 16) == "f:[100.0000, 75.0000]");
+        EXPECT("...and the pointer is recognised as one",
+               Ubel::LooksLikeVtablePointer(b, 16));
+    }
+
+    // --- 4. The gate must REJECT non-pointers, or case 3 is passing by luck.
+    //     Each of these is the first 8 bytes of a real struct that has no vtable.
+    {
+        uint8_t b[8];
+        putF(b, 0, 1.0f); putF(b, 1, 2.0f);
+        EXPECT("two floats are not a vtable pointer", !Ubel::LooksLikeVtablePointer(b, 8));
+
+        double d = 1234.5;                       // UE5 LWC FVector's X
+        memcpy(b, &d, 8);
+        EXPECT("a double is not a vtable pointer", !Ubel::LooksLikeVtablePointer(b, 8));
+
+        uint64_t tiny = 0x1234ULL;   // small integer member ("small" is a Win32 macro: rpcndr.h #define small char)
+        memcpy(b, &tiny, 8);
+        EXPECT("a small integer is not a vtable pointer", !Ubel::LooksLikeVtablePointer(b, 8));
+
+        uint64_t unaligned = 0x00007FF6A1B2C3D1ULL;
+        memcpy(b, &unaligned, 8);
+        EXPECT("an unaligned address is not a vtable pointer",
+               !Ubel::LooksLikeVtablePointer(b, 8));
+
+        uint64_t kernel = 0xFFFF800000000000ULL;
+        memcpy(b, &kernel, 8);
+        EXPECT("a kernel-range address is not a vtable pointer",
+               !Ubel::LooksLikeVtablePointer(b, 8));
+    }
+
+    // --- 5. Honest fallback: nothing decodable must yield "", not a number.
+    {
+        uint8_t zeros[16] = {};
+        EXPECT("all-zero struct yields no hint", Ubel::InterpretStructBytes(zeros, 16).empty());
+        EXPECT("too small yields no hint", Ubel::InterpretStructBytes(zeros, 2).empty());
+        uint8_t big[128] = {};
+        big[0] = 1;
+        EXPECT("beyond 16 floats yields no hint", Ubel::InterpretStructBytes(big, 128).empty());
+    }
+
+    // --- 6. DOCUMENTED REMAINING GAP (U3 half 2), asserted so it cannot be
+    //     mistaken for fixed: a 24-byte LWC FVector is 3 doubles, but the bytes
+    //     cannot say that, so this still decodes 6 floats. Only the reflected
+    //     layout can settle 3-doubles vs 6-floats.
+    {
+        uint8_t b[24];
+        double xyz[3] = { 1234.5, -678.25, 90.0 };
+        memcpy(b, xyz, 24);
+        std::string got = Ubel::InterpretStructBytes(b, 24);
+        EXPECT("LWC vector no longer eats X (skip is gated)", !got.empty());
+        // Six values, not four: the leading double is no longer swallowed. Still
+        // wrong values — that is the layout half, not this one.
+        EXPECT("LWC still decodes as 6 floats (layout half outstanding)",
+               std::count(got.begin(), got.end(), ',') == 5);
+    }
+}
+
+// ================================================================
 // Aura::StructPathGuard — audit A3
 //
 // ScanForValue's index builder threaded ONE unordered_set through the whole
@@ -5016,6 +5119,9 @@ int main() {
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
     RUN(Test_FFieldClassName_Probe);
+
+    // Ubel — byte-blind struct preview: gate the vtable skip on evidence (U3)
+    RUN(Test_Ubel_InterpretStructBytes);
 
     // Aura — the struct-walk cycle guard is scoped to the PATH, not the whole walk
     RUN(Test_Aura_StructPathGuard);

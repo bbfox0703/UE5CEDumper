@@ -1857,40 +1857,14 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
         return DecodeFNameBytes(bytes, size);
     }
 
-    // StructProperty: for small structs, show inline float hints
-    // Many gameplay structs (FGameplayAttributeData, FVector, FRotator, etc.)
-    // contain float fields. Show a summary like "f:[100.0, 100.0]" for quick analysis.
+    // StructProperty: byte-blind float hint, LAST RESORT ONLY (audit U3).
+    // The whole decode — including the vtable-skip decision that used to drop
+    // leading members silently — lives in Ubel.h::InterpretStructBytes so it is
+    // pure and unit-pinned; no target compiles this .cpp. Callers that can
+    // resolve the UScriptStruct* must prefer the reflected-layout preview
+    // (WalkInstance's "{Name=Value}"), which is width-correct and labelled.
     if (typeName == "StructProperty" && size >= 4) {
-        // Skip the first 8 bytes if size > 8 — often a vtable/pointer preamble.
-        // For structs <= 8 bytes, interpret from byte 0.
-        int floatStart = (size > 8) ? 8 : 0;
-        int floatCount = (size - floatStart) / 4;
-        if (floatCount > 0 && floatCount <= 16) {
-            // Check if at least one float in range looks meaningful (not 0, not NaN/garbage)
-            bool anyMeaningful = false;
-            for (int i = 0; i < floatCount; ++i) {
-                float v;
-                memcpy(&v, bytes + floatStart + i * 4, 4);
-                if (v != 0.0f && v == v && v > -1e12f && v < 1e12f) { // not zero, not NaN, reasonable range
-                    anyMeaningful = true;
-                    break;
-                }
-            }
-            if (anyMeaningful) {
-                std::string hint = "f:[";
-                for (int i = 0; i < floatCount; ++i) {
-                    if (i > 0) hint += ", ";
-                    float v;
-                    memcpy(&v, bytes + floatStart + i * 4, 4);
-                    char buf[48];
-                    // No scientific notation — fixed 4 decimal places
-                    snprintf(buf, sizeof(buf), "%.4f", v);
-                    hint += buf;
-                }
-                hint += "]";
-                return hint;
-            }
-        }
+        return InterpretStructBytes(bytes, size);
     }
 
     return ""; // Unknown type — caller shows hex

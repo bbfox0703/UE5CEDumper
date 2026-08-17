@@ -561,6 +561,81 @@ inline std::vector<Interval> ComputeClassHoles(const ClassInfo& ci,
 // Returns "" for labels that have no gameplay-numeric meaning (Padding / Pointer),
 // signalling the caller to DROP the row. The human-readable guessed label is
 // carried separately (never in the property-type field). Pure.
+// === Byte-blind struct preview (audit U3, build 3169) ===
+//
+// LAST RESORT ONLY. When a caller cannot resolve the UScriptStruct* it can ask
+// for a hint decoded from raw bytes. That is a guess by construction and the
+// reflected-layout decoder (Ubel.cpp WalkInstance's `{Name=Value}` preview) is
+// always preferable — see the remaining half of U3 in the register.
+//
+// What this fixes: the old branch skipped 8 bytes unconditionally whenever
+// size > 8, on the theory that structs begin with a vtable. That is true of
+// FGameplayAttributeData (GAS declares a virtual destructor, so BaseValue /
+// CurrentValue really do sit at +8/+0xC — which is why the heuristic was
+// written and why it survived) and FALSE of nearly every other USTRUCT. The
+// cost was a SILENT DROP of leading members, which is worse than garbage
+// because it looks right:
+//   * FVector3f, 12 B, 3 floats  -> printed ONE number, the LAST component
+//     (live-confirmed on Map_IntToVec3f, todo.md)
+//   * FLinearColor, 16 B, 4 floats -> R and G vanish, only B and A print
+//
+// So the skip is now gated on EVIDENCE rather than on size. `size > 8` is not
+// evidence of anything; a pointer-shaped first 8 bytes is.
+//
+// ⚠ KNOWN REMAINING GAP, deliberately not papered over: a 24-byte struct is
+// 3 doubles (UE5 LWC FVector) or 6 floats, and the bytes cannot say which —
+// `Radar.h` states this repo rule outright ("the STRUCT NAME does not
+// determine the width and neither does the engine version"). This function
+// still reads 4-byte floats, so an LWC vector still decodes wrongly. Only the
+// reflected layout can settle it. Swapping one guess for another would be the
+// same defect with different numbers.
+//
+// Pure: bytes in, string out. Lives here so dll_helpers_test can pin it — no
+// target compiles Ubel.cpp.
+
+/// True when the first 8 bytes look like a real vtable pointer: non-null,
+/// 8-byte aligned, and inside the x64 user-mode canonical range. A float pair
+/// (0x400000003F800000), a double (0x40934A0000000000) and an FLinearColor's
+/// first two components all fail it; a module address (0x00007FF6...) passes.
+inline bool LooksLikeVtablePointer(const uint8_t* bytes, int32_t size) {
+    if (!bytes || size < 8) return false;
+    uint64_t v = 0;
+    memcpy(&v, bytes, 8);
+    if (v < 0x10000ULL) return false;                 // null / small integer
+    if (v > 0x00007FFFFFFFFFFFULL) return false;      // above user-mode canonical
+    return (v & 7ULL) == 0;                           // vtable pointers are aligned
+}
+
+/// Decode `size` bytes as consecutive 4-byte floats, skipping a leading vtable
+/// pointer ONLY when one is actually present. Returns "" when nothing
+/// meaningful decodes, so the caller falls back to hex.
+inline std::string InterpretStructBytes(const uint8_t* bytes, int32_t size) {
+    if (!bytes || size < 4) return "";
+    const int floatStart = LooksLikeVtablePointer(bytes, size) ? 8 : 0;
+    const int floatCount = (size - floatStart) / 4;
+    if (floatCount <= 0 || floatCount > 16) return "";
+
+    bool anyMeaningful = false;
+    for (int i = 0; i < floatCount; ++i) {
+        float v;
+        memcpy(&v, bytes + floatStart + i * 4, 4);
+        if (v != 0.0f && v == v && v > -1e12f && v < 1e12f) { anyMeaningful = true; break; }
+    }
+    if (!anyMeaningful) return "";
+
+    std::string hint = "f:[";
+    for (int i = 0; i < floatCount; ++i) {
+        if (i > 0) hint += ", ";
+        float v;
+        memcpy(&v, bytes + floatStart + i * 4, 4);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%.4f", v);   // no scientific notation
+        hint += buf;
+    }
+    hint += "]";
+    return hint;
+}
+
 inline std::string NormalizeGuessedTypeToProperty(const std::string& guessedType) {
     if (guessedType == "Float"  || guessedType == "Float?")  return "FloatProperty";
     if (guessedType == "Double" || guessedType == "Double?") return "DoubleProperty";
