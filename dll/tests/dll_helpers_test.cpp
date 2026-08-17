@@ -4957,6 +4957,94 @@ static void Test_Sig_IsCeReplayableAob() {
 // (The predicate deliberately does NOT take two booleans for the anchor: that shape
 // has 4 combinations of which 1 is unreachable, and the unreachable one is exactly
 // the "meaningless, pass false here" parameter the audit's own lesson forbids.)
+// audit #5 A11 — how refine treats a container-element candidate whose stored
+// ABSOLUTE address may no longer denote the element it was scanned from.
+//
+// Every case below maps to a mechanism in the vendored 5.8 engine source, and the
+// non-regression cases matter as much as the drops: a container-wide "did anything
+// change" rule would drop every candidate in an array that merely APPENDED, and
+// those candidates are correct today.
+static void Test_Radar_RefineContainerAnchor() {
+    std::printf("Test_Radar_RefineContainerAnchor\n");
+    using Radar::ValueAnchor;
+    using Radar::RefineAnchorVerdict;
+    const auto V = &Radar::RefineContainerAnchor;
+
+    constexpr uintptr_t kData = 0x2000;
+    // anchor, idx, numAtScan, dataAtScan, nowData, nowNum, slotAllocated
+
+    // --- non-container anchors are untouched ---------------------------------
+    EXPECT("direct field is never re-anchored",
+           V(ValueAnchor::Direct, -1, -1, 0, 0, 0, true) == RefineAnchorVerdict::KeepAddress);
+    EXPECT("an UNSTAMPED anchor keeps the pre-A11 behaviour",
+           V(ValueAnchor::Unknown, 3, 8, kData, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the NON-REGRESSION cases (these are why the rule is index-aware) -----
+    // Array.h AddUninitialized: `if (ArrayNum == ArrayMax) grow; else ArrayNum++`.
+    // Appending into slack relocates NOTHING, so every existing element address is
+    // still correct and must survive.
+    EXPECT("append with slack does NOT drop",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, kData, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("an unchanged container keeps its address",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, kData, 8, true)
+               == RefineAnchorVerdict::KeepAddress);
+    // A sparse Add into a FREE slot elsewhere leaves our slot exactly where it was.
+    EXPECT("sparse add elsewhere does NOT drop our slot",
+           V(ValueAnchor::SparseElement, 3, 8, kData, kData, 8, /*slotAllocated=*/true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the GAIN: a grown container is recovered, not lost ------------------
+    // Today a growth realloc leaves every element address stale and the candidates
+    // are simply gone. Slot order is preserved, so they are recomputable.
+    EXPECT("growth realloc REPOINTS instead of losing the candidate",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, 0x9000, 12, true)
+               == RefineAnchorVerdict::Repoint);
+    EXPECT("sparse realloc repoints too",
+           V(ValueAnchor::SparseElement, 3, 8, kData, 0x9000, 12, true)
+               == RefineAnchorVerdict::Repoint);
+
+    // --- the DROPS, each an actual silent-wrong-value today ------------------
+    // Array.h RemoveAtImpl -> RelocateConstructItems: the tail shifts DOWN one slot,
+    // so the pinned address stays mapped and now holds the NEIGHBOUR's value.
+    EXPECT("array shrank (RemoveAt shifted the tail) drops",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, kData, 7, true)
+               == RefineAnchorVerdict::Drop);
+    EXPECT("element index past the end drops",
+           V(ValueAnchor::ArrayElement, 9, 8, kData, kData, 5, true)
+               == RefineAnchorVerdict::Drop);
+    // SparseArray.h AddUninitialized reuses FirstFreeIndex: a removed slot is
+    // REFILLED in place, so the address is identical and reads as a live value.
+    // The allocation bit is the only exact witness.
+    EXPECT("sparse slot freed drops (address is identical — only the bit knows)",
+           V(ValueAnchor::SparseElement, 3, 8, kData, kData, 8, /*slotAllocated=*/false)
+               == RefineAnchorVerdict::Drop);
+    // A sparse MaxIndex shrink means Compact() ran, which DOES relocate.
+    EXPECT("sparse compact drops",
+           V(ValueAnchor::SparseElement, 3, 8, kData, kData, 6, true)
+               == RefineAnchorVerdict::Drop);
+
+    // --- missing bookkeeping degrades, it does not destroy -------------------
+    EXPECT("a container anchor with no element index falls back, not drops",
+           V(ValueAnchor::ArrayElement, -1, 8, kData, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("a container anchor with no scan-time count falls back, not drops",
+           V(ValueAnchor::ArrayElement, 3, -1, kData, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the address recomputation ------------------------------------------
+    EXPECT("element address = data + idx*stride + intra",
+           Radar::ContainerElemAddr(0x1000, 3, 16, 4) == 0x1000u + 3u * 16u + 4u);
+    EXPECT("element 0 with no intra offset is the buffer base",
+           Radar::ContainerElemAddr(0x1000, 0, 16, 0) == 0x1000u);
+
+    static_assert(Radar::RefineContainerAnchor(ValueAnchor::ArrayElement, 3, 8,
+                                               0x2000, 0x2000, 7, true)
+                      == RefineAnchorVerdict::Drop,
+                  "RefineContainerAnchor must be constexpr-evaluable");
+}
+
 static void Test_Genau_AdmitMultiModuleCandidate() {
     std::printf("Test_Genau_AdmitMultiModuleCandidate\n");
     using Genau::AnchorState;
@@ -5575,6 +5663,7 @@ int main() {
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
     RUN(Test_Sig_IsCeReplayableAob);
     RUN(Test_Genau_AdmitMultiModuleCandidate);
+    RUN(Test_Radar_RefineContainerAnchor);
     RUN(Test_Macht_ParsePattern_Nibble);
 
     // Tot — per-command cancel immunity is independent of "is a background worker"

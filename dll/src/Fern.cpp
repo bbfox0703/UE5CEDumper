@@ -3197,7 +3197,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     }
 
                     stats = Aura::RefineCandidates(dt, st, tgtPtr, tgt2Ptr, cs,
-                                                   sess.descriptors,
+                                                   sess.descriptors, sess.instances,
                                                    roundMode, targetString, caseSensitive,
                                                    multiPtr, multiPtr2);
                     totalCount = static_cast<int>(cs.size());

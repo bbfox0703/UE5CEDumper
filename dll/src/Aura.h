@@ -1367,6 +1367,10 @@ ValueScanStats RefineCandidates(
     const uint8_t*                               target2Bytes,
     std::vector<Radar::Candidate>&           candidates,
     const std::vector<Radar::FieldDescriptor>& descriptors,
+    // audit #5 A11 — needed to re-derive a container HEADER address
+    // (instanceAddr + descriptor.fieldOffset) so a container-element candidate can
+    // be re-anchored instead of re-read at a possibly stale absolute address.
+    const std::vector<Radar::InstanceRecord>&  instances,
     Radar::RoundMode                             roundMode     = Radar::RoundMode::Round,
     const std::string&                           targetString  = "",
     bool                                         caseSensitive = false,

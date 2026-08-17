@@ -7049,6 +7049,34 @@ ValueScanResult ScanForValue(
                                 ? sf.elemTypeName : sf.typeName;
             d.fieldOffset   = sf.offset;
             d.boolFieldMask = sf.boolFieldMask;
+            // audit #5 A11 — tell refine HOW this field's address was formed, so a
+            // container element can be re-anchored instead of re-read blind. The
+            // switch is exhaustive on purpose: a ScanContainer added later must
+            // state its anchor here or the compiler will not have covered it.
+            switch (sf.container) {
+                case ScanContainer::None:
+                    d.anchor = Radar::ValueAnchor::Direct;
+                    break;
+                case ScanContainer::Array:
+                    d.anchor = Radar::ValueAnchor::ArrayElement;
+                    d.elemStride = sf.elemStride;
+                    break;
+                case ScanContainer::StructArrayInner:
+                    d.anchor = Radar::ValueAnchor::ArrayElement;
+                    d.elemStride = sf.elemStride;
+                    d.elemIntra  = sf.structInnerOffset;
+                    break;
+                case ScanContainer::Set:
+                case ScanContainer::MapKey:
+                    d.anchor = Radar::ValueAnchor::SparseElement;
+                    d.elemStride = sf.elemStride;
+                    break;
+                case ScanContainer::MapValue:
+                    d.anchor = Radar::ValueAnchor::SparseElement;
+                    d.elemStride = sf.elemStride;
+                    d.elemIntra  = sf.valueOffset;
+                    break;
+            }
             // Vector scans only: the source width the refine path can no longer
             // re-derive (fieldType is the bare "StructProperty").
             d.vectorWidth   = sf.vectorWidth;
@@ -7074,9 +7102,14 @@ ValueScanResult ScanForValue(
         // interned instance index; only the value's address + snapshot +
         // element index live on the candidate itself. Used by both the
         // direct-field and per-array-element paths.
+        // `containerNum` has NO default, deliberately (audit #5 A11): every call site
+        // must state the container's element count at scan time, or -1 for "not a
+        // container element". A site that forgets it fails to COMPILE rather than
+        // silently minting a candidate refine cannot re-anchor.
         auto emitCandidate = [&](uintptr_t valueAddr,
                                  uint32_t  descriptorIdx,
                                  int32_t   elementIndex,   // -1 = direct field
+                                 int32_t   containerNum,   // -1 = not a container element
                                  const uint8_t* rawBytes,
                                  size_t   rawByteCount,
                                  const std::string* strValue) {
@@ -7090,6 +7123,7 @@ ValueScanResult ScanForValue(
             cand.descriptorIdx = descriptorIdx;
             cand.instanceIdx   = static_cast<uint32_t>(curInstanceIdx);
             cand.elementIndex  = elementIndex;
+            cand.containerNum  = containerNum;
             if (strValue) {
                 cand.prevStr = *strValue;
             } else if (rawBytes && rawByteCount > 0) {
@@ -7103,7 +7137,10 @@ ValueScanResult ScanForValue(
         // and emit a candidate (elementIndex = the container slot index) on
         // a match. Mirrors the direct-field read/compare branches; the
         // descriptor is interned lazily on the first match of this field.
-        auto scanElement = [&](ScanField& sf, uintptr_t elemAddr, int32_t elemIndex) {
+        // `containerNum` = the container's element count at scan time (TArray::Num /
+        // TSparseArray::MaxIndex). Required, not defaulted — see emitCandidate.
+        auto scanElement = [&](ScanField& sf, uintptr_t elemAddr, int32_t elemIndex,
+                               int32_t containerNum) {
             // Sized for the widest value read through it: a 24-byte LWC vector.
             uint8_t     readBuf[Radar::VECTOR_CANON_BYTES] = {};
             std::string readStr;
@@ -7116,7 +7153,7 @@ ValueScanResult ScanForValue(
                     readStr = Ubel::ReadFTextStringAt(elemAddr, 0);
                 }
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) return;
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, nullptr, 0, &readStr);
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, containerNum, nullptr, 0, &readStr);
             } else if (isVector) {
                 // Read the field's OWN width, decode to the canonical triple,
                 // then store the canonical form so display + refine never have
@@ -7128,7 +7165,7 @@ ValueScanResult ScanForValue(
                 if (!Radar::CompareVectorPredicate(st, cur, targetVec, targetVec2Ptr, roundMode)) return;
                 uint8_t canon[Radar::VECTOR_CANON_BYTES];
                 Radar::StoreVectorCanonical(cur, canon);
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex,
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, containerNum,
                               canon, sizeof(canon), nullptr);
             } else if (isMulti) {
                 // Resolve the element's own width (key/value/elem type) + target.
@@ -7139,14 +7176,14 @@ ValueScanResult ScanForValue(
                 size_t sz = Radar::SizeOf(elemDt);
                 if (!Macht::ReadBytesSafe(elemAddr, readBuf, sz)) return;
                 if (!Radar::ComparePredicate(elemDt, st, readBuf, mtgt, mtgt2, roundMode)) return;
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, readBuf, sz, nullptr);
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, containerNum, readBuf, sz, nullptr);
             } else {
                 // Container elements never share a bitfield byte (TArray /
                 // TSet<bool> + TMap<bool,...> store bool unpacked), so the
                 // boolFieldMask = 0xFF path applies.
                 if (!Macht::ReadBytesSafe(elemAddr, readBuf, dtSize)) return;
                 if (!Radar::ComparePredicate(dt, st, readBuf, targetBytes, target2Bytes, roundMode)) return;
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, readBuf, dtSize, nullptr);
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, containerNum, readBuf, dtSize, nullptr);
             }
         };
 
@@ -7212,7 +7249,7 @@ ValueScanResult ScanForValue(
                 else if (dt == Radar::DataType::FName)    readStr = Ubel::ReadFNameAt(lf.leafAddr, 0);
                 else                                          readStr = Ubel::ReadFTextStringAt(lf.leafAddr, 0);
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, nullptr, 0, &readStr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, /*containerNum=*/-1, nullptr, 0, &readStr);
             } else if (isMulti) {
                 Radar::DataType mdt = dt;
                 const Radar::NumericTargetSet::Entry* mtgt = nullptr; const uint8_t* mtgt2 = nullptr;
@@ -7220,12 +7257,12 @@ ValueScanResult ScanForValue(
                 size_t sz = Radar::SizeOf(mdt);
                 if (!Macht::ReadBytesSafe(lf.leafAddr, readBuf, sz)) return;
                 if (!Radar::ComparePredicate(mdt, st, readBuf, mtgt, mtgt2, roundMode)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, readBuf, sz, nullptr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, /*containerNum=*/-1, readBuf, sz, nullptr);
             } else {
                 if (!typeOk) return;
                 if (!Macht::ReadBytesSafe(lf.leafAddr, readBuf, dtSize)) return;
                 if (!Radar::ComparePredicate(dt, st, readBuf, targetBytes, target2Bytes, roundMode)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, readBuf, dtSize, nullptr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, /*containerNum=*/-1, readBuf, dtSize, nullptr);
             }
         };
 
@@ -7280,7 +7317,8 @@ ValueScanResult ScanForValue(
                             return;
                         }
                     }
-                    scanElement(sf, arrayDataPtr + static_cast<uintptr_t>(idx) * sf.elemStride, idx);
+                    scanElement(sf, arrayDataPtr + static_cast<uintptr_t>(idx) * sf.elemStride, idx,
+                                /*containerNum=*/arrayNum);
                 }
                 continue;
             }
@@ -7323,7 +7361,7 @@ ValueScanResult ScanForValue(
                     scanElement(sf,
                         arrayDataPtr + static_cast<uintptr_t>(idx) * sf.elemStride
                                      + static_cast<uintptr_t>(sf.structInnerOffset),
-                        idx);
+                        idx, /*containerNum=*/arrayNum);
                 }
                 continue;
             }
@@ -7333,8 +7371,11 @@ ValueScanResult ScanForValue(
             // lives at slot_base + slotOff (0 for Set / Map key, valueOffset
             // for Map value). The sparse Data buffer holds freed slots too,
             // so IsSparseIndexAllocated skips them. Element addresses are raw
-            // (like TArray), so refine degrades the same way on a container
-            // reallocation between scans (SEH-safe read drops the candidate).
+            // (like TArray) — refine re-anchors them via Radar::ValueAnchor::
+            // SparseElement, which re-reads the header and re-tests THIS slot's
+            // allocation bit rather than trusting the stored address (audit #5
+            // A11; the old "a realloc just drops the candidate" was wrong — a
+            // freed sparse slot is REUSED in place and reads as a live value).
             if (sf.container == ScanContainer::Set
                 || sf.container == ScanContainer::MapKey
                 || sf.container == ScanContainer::MapValue) {
@@ -7358,7 +7399,8 @@ ValueScanResult ScanForValue(
                     }
                     if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
                     scanElement(sf,
-                        sa.Data + static_cast<int64_t>(e) * sf.elemStride + slotOff, e);
+                        sa.Data + static_cast<int64_t>(e) * sf.elemStride + slotOff, e,
+                        /*containerNum=*/sa.MaxIndex);
                 }
                 continue;
             }
@@ -7392,7 +7434,7 @@ ValueScanResult ScanForValue(
                     readStr = Ubel::ReadFTextStringAt(obj, sf.offset);
                 }
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) continue;
-                emitCandidate(valueAddr, ensureDescriptor(sf), -1, nullptr, 0, &readStr);
+                emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, nullptr, 0, &readStr);
                 continue;
             }
             if (isVector) {
@@ -7405,7 +7447,7 @@ ValueScanResult ScanForValue(
                 if (!Radar::CompareVectorPredicate(st, cur, targetVec, targetVec2Ptr, roundMode)) continue;
                 uint8_t canon[Radar::VECTOR_CANON_BYTES];
                 Radar::StoreVectorCanonical(cur, canon);
-                emitCandidate(valueAddr, ensureDescriptor(sf), -1, canon, sizeof(canon), nullptr);
+                emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, canon, sizeof(canon), nullptr);
                 continue;
             }
 
@@ -7421,7 +7463,7 @@ ValueScanResult ScanForValue(
                 size_t msz = Radar::SizeOf(memberDt);
                 if (!readBody(sf.offset, readBuf, msz)) continue;
                 if (!Radar::ComparePredicate(memberDt, st, readBuf, mtgt, mtgt2, roundMode)) continue;
-                emitCandidate(valueAddr, ensureDescriptor(sf), -1, readBuf, msz, nullptr);
+                emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, readBuf, msz, nullptr);
                 continue;
             }
 
@@ -7438,7 +7480,7 @@ ValueScanResult ScanForValue(
             }
 
             if (!Radar::ComparePredicate(dt, st, readBuf, targetBytes, target2Bytes, roundMode)) continue;
-            emitCandidate(valueAddr, ensureDescriptor(sf), -1, readBuf, dtSize, nullptr);
+            emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, readBuf, dtSize, nullptr);
         }
 
         // Deeply-nested container values (build 1206). The static fields above
@@ -7534,13 +7576,13 @@ ValueScanResult ScanForValue(
                                     if (!mtgt2) continue;
                                 }
                                 if (!Radar::ComparePredicate(e.dt, st, p, &e, mtgt2, roundMode)) continue;
-                                emitCandidate(obj + off, ensureRawDescriptor(off, e.dt), -1, p, msz, nullptr);
+                                emitCandidate(obj + off, ensureRawDescriptor(off, e.dt), -1, /*containerNum=*/-1, p, msz, nullptr);
                                 if (++rawEmitted >= kMaxRawPerObj) break;
                             }
                         } else {
                             if (off + static_cast<int32_t>(dtSize) > hole.end) break;  // width can't fit the hole's tail
                             if (!Radar::ComparePredicate(dt, st, p, targetBytes, target2Bytes, roundMode)) continue;
-                            emitCandidate(obj + off, ensureRawDescriptor(off, dt), -1, p, dtSize, nullptr);
+                            emitCandidate(obj + off, ensureRawDescriptor(off, dt), -1, /*containerNum=*/-1, p, dtSize, nullptr);
                             ++rawEmitted;
                         }
                     }
@@ -7673,7 +7715,7 @@ ValueScanResult ScanForValue(
                                     if (!Radar::ComparePredicate(me.dt, st, p, &me, mtgt2, roundMode)) continue;
                                     emitCandidate(elemBase + off,
                                                   ensureDeepRawDescriptor(cfe.name, e, off, me.dt),
-                                                  -1, p, msz, nullptr);
+                                                  -1, /*containerNum=*/-1, p, msz, nullptr);
                                     if (++deepRawEmitted >= kMaxDeepRawEmit) break;
                                 }
                             } else {
@@ -7681,7 +7723,7 @@ ValueScanResult ScanForValue(
                                 if (!Radar::ComparePredicate(dt, st, p, targetBytes, target2Bytes, roundMode)) continue;
                                 emitCandidate(elemBase + off,
                                               ensureDeepRawDescriptor(cfe.name, e, off, dt),
-                                              -1, p, dtSize, nullptr);
+                                              -1, /*containerNum=*/-1, p, dtSize, nullptr);
                                 ++deepRawEmitted;
                             }
                         }
@@ -7758,6 +7800,7 @@ ValueScanStats RefineCandidates(
     const uint8_t*                                 target2Bytes,
     std::vector<Radar::Candidate>&             candidates,
     const std::vector<Radar::FieldDescriptor>& descriptors,
+    const std::vector<Radar::InstanceRecord>&  instances,
     Radar::RoundMode                               roundMode,
     const std::string&                             targetString,
     bool                                           caseSensitive,
@@ -7806,10 +7849,77 @@ ValueScanStats RefineCandidates(
     std::vector<Radar::Candidate> kept;
     kept.reserve(candidates.size());
 
+    // === audit #5 A11 — re-anchor container-element candidates ================
+    // Read each container header ONCE per pass: N candidates in one TArray share
+    // one header, and a refine over 100K candidates must not pay N reads for it.
+    struct HeaderSnapshot {
+        bool                    ok     = false;
+        uintptr_t               data   = 0;
+        int32_t                 num    = 0;
+        Macht::TSparseArrayView sa;             // populated for sparse only
+    };
+    std::unordered_map<uintptr_t, HeaderSnapshot> headerCache;
+    auto headerFor = [&](uintptr_t headerAddr, bool sparse) -> const HeaderSnapshot& {
+        auto it = headerCache.find(headerAddr);
+        if (it != headerCache.end()) return it->second;
+        HeaderSnapshot hs;
+        if (sparse) {
+            if (Macht::ReadTSparseArray(headerAddr, hs.sa)) {
+                hs.ok = true; hs.data = hs.sa.Data; hs.num = hs.sa.MaxIndex;
+            }
+        } else {
+            Macht::TArrayView av;
+            if (Macht::ReadTArray(headerAddr, av)) {
+                hs.ok = true; hs.data = av.Data; hs.num = av.Count;
+            }
+        }
+        return headerCache.emplace(headerAddr, hs).first->second;
+    };
+    int32_t reanchorDropped = 0, reanchorRepointed = 0;
+
     for (auto& c : candidates) {
         // Per-(class,field) metadata (fieldType / boolFieldMask) lives in
         // the shared descriptor pool the candidate indexes into (V3-A).
         const Radar::FieldDescriptor& desc = descriptors[c.descriptorIdx];
+
+        // Re-anchor BEFORE any read of c.addr — every branch below reads it, and a
+        // container element's stored address can be stale in a way that still reads
+        // cleanly (see Radar::RefineContainerAnchor). `Unknown` (deep / group /
+        // native-raw) and `Direct` fall straight through, unchanged.
+        if (desc.anchor == Radar::ValueAnchor::ArrayElement
+            || desc.anchor == Radar::ValueAnchor::SparseElement) {
+            const bool sparse = (desc.anchor == Radar::ValueAnchor::SparseElement);
+            const uintptr_t headerAddr =
+                instances[c.instanceIdx].instanceAddr + desc.fieldOffset;
+            const HeaderSnapshot& hs = headerFor(headerAddr, sparse);
+            if (!hs.ok) { ++reanchorDropped; continue; }   // container gone / unreadable
+
+            // The scan-time buffer base is EXACT from what we already store —
+            // c.addr was built as base + idx*stride + intra — so it costs no bytes
+            // on the candidate.
+            const uintptr_t dataAtScan = c.addr
+                - static_cast<uintptr_t>(static_cast<int64_t>(c.elementIndex) * desc.elemStride)
+                - static_cast<uintptr_t>(desc.elemIntra);
+            const bool slotAlloc =
+                !sparse || Macht::IsSparseIndexAllocated(hs.sa, c.elementIndex);
+
+            switch (Radar::RefineContainerAnchor(desc.anchor, c.elementIndex,
+                                                 c.containerNum, dataAtScan,
+                                                 hs.data, hs.num, slotAlloc)) {
+                case Radar::RefineAnchorVerdict::Drop:
+                    ++reanchorDropped;
+                    continue;
+                case Radar::RefineAnchorVerdict::Repoint:
+                    c.addr = Radar::ContainerElemAddr(hs.data, c.elementIndex,
+                                                      desc.elemStride, desc.elemIntra);
+                    c.containerNum = hs.num;
+                    ++reanchorRepointed;
+                    break;
+                case Radar::RefineAnchorVerdict::KeepAddress:
+                    c.containerNum = hs.num;   // keep the stamp current for the NEXT refine
+                    break;
+            }
+        }
         if (isMulti) {
             // Re-resolve this candidate's own width from its stored
             // fieldType (concrete property type, e.g. "FloatProperty").
@@ -7936,6 +8046,15 @@ ValueScanStats RefineCandidates(
              static_cast<int>(st), usePrev ? 1 : 0,
              initialSize, static_cast<int>(candidates.size()),
              static_cast<long long>(dtms));
+    // Only when it actually fired — a line that is always there stops being read.
+    // `repointed` is the half that is a GAIN: those candidates were lost outright
+    // before A11, because a grown container's realloc left every element address
+    // stale. (audit #5 A11)
+    if (reanchorDropped || reanchorRepointed) {
+        LOG_INFO("Radar: Refine re-anchor: %d container element(s) repointed after a "
+                 "realloc, %d dropped (slot freed / container shrank / header gone)",
+                 reanchorRepointed, reanchorDropped);
+    }
     return stats;
 }
 

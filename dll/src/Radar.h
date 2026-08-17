@@ -443,12 +443,114 @@ const std::vector<std::string>& VectorStructNames(DataType dt);
 
 // Per-(class, field) display metadata. One entry per distinct field the
 // scan emits a candidate for; shared via Candidate::descriptorIdx.
+// ============================================================
+// Container-element refine anchoring (audit #5 A11)
+//
+// A candidate remembers its value's ABSOLUTE address, and refine (Next Scan)
+// re-reads that address. For a DIRECT field that is stable for the object's life.
+// For a CONTAINER ELEMENT it is not, and the comment that used to sit on
+// `Candidate::addr` claimed the failure was a clean drop. It is not:
+//
+//   * TArray::RemoveAt does RelocateConstructItems on everything after the
+//     removal point (Array.h RemoveAtImpl), so the pinned address stays perfectly
+//     mapped and now holds the NEIGHBOUR's value — a silent wrong survivor;
+//   * a TSparseArray Add reuses a freed slot in place (SparseArray.h
+//     AddUninitialized -> FirstFreeIndex), so a removed-then-refilled slot reads
+//     as a live value at the same address;
+//   * growth reallocs the buffer, and today every element candidate in that
+//     container is simply lost.
+//
+// The rule below is INDEX-AWARE and per-shape on purpose. A container-wide
+// "did anything change" test would drop every candidate in an array that merely
+// APPENDED — and appending with slack (Array.h AddUninitialized: `if (ArrayNum ==
+// ArrayMax) grow; else ArrayNum++`) relocates nothing, so those candidates are
+// correct today. Trading a rare silent-wrong-value for a frequent permanent loss
+// of a correct candidate would be a worse scanner, not a better one.
+// ============================================================
+
+/// How a candidate's value is reached from its owning object.
+///
+/// `Unknown` is NOT "no container" — it is "nobody said", and refine falls back to
+/// the pre-A11 address-only behaviour for it. The deep-container and group paths
+/// carry `Unknown` today, deliberately and visibly, rather than being given a
+/// `Direct` all-clear they have not earned.
+enum class ValueAnchor : uint8_t {
+    Unknown = 0,
+    Direct,          // obj + fieldOffset — stable for the object's life
+    ArrayElement,    // TArray slot:      data + idx*elemStride + elemIntra
+    SparseElement,   // TSet/TMap slot:   same, and gated on the slot's OWN alloc bit
+};
+
+/// What refine must do with one container-element candidate.
+enum class RefineAnchorVerdict : uint8_t {
+    KeepAddress,   // the stored absolute address is still correct
+    Repoint,       // the buffer moved; recompute from the live Data pointer
+    Drop,          // this element is gone, or may have been relocated under us
+};
+
+/// Absolute address of container element `idx`. Pure.
+constexpr uintptr_t ContainerElemAddr(uintptr_t data, int32_t idx,
+                                      int32_t elemStride, int32_t elemIntra) {
+    return data + static_cast<uintptr_t>(static_cast<int64_t>(idx) * elemStride)
+                + static_cast<uintptr_t>(elemIntra);
+}
+
+/// Decide the fate of a container-element candidate whose container header has
+/// just been re-read. Pure — every input is already in the caller's hands.
+///
+/// @param slotAllocated  the candidate's OWN allocation bit, for a sparse
+///        container. EXACT: it answers "was MY slot freed", which no count or
+///        address comparison can. Pass true for TArray, which has no such bit.
+///
+/// Known residual, stated rather than hidden: `TArray::Insert` shifts on a count
+/// INCREASE, and this keeps those candidates. That is no worse than today, and
+/// catching it would need a per-element identity witness (see todo.md).
+constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
+                                                    int32_t   elementIndex,
+                                                    int32_t   numAtScan,
+                                                    uintptr_t dataAtScan,
+                                                    uintptr_t nowData,
+                                                    int32_t   nowNum,
+                                                    bool      slotAllocated) {
+    // Not a container candidate, or nobody stamped one: pre-A11 behaviour.
+    if (anchor != ValueAnchor::ArrayElement && anchor != ValueAnchor::SparseElement)
+        return RefineAnchorVerdict::KeepAddress;
+    // Stamped as a container but missing the data to act on it — degrade to the
+    // old behaviour rather than dropping a candidate on our own bookkeeping.
+    if (elementIndex < 0 || numAtScan < 0 || !dataAtScan || !nowData)
+        return RefineAnchorVerdict::KeepAddress;
+
+    // The slot no longer exists.
+    if (elementIndex >= nowNum) return RefineAnchorVerdict::Drop;
+    // Sparse: MY slot was freed. Exact, and it is the case a stale address cannot
+    // see, because a refilled slot reads as a perfectly live value.
+    if (anchor == ValueAnchor::SparseElement && !slotAllocated)
+        return RefineAnchorVerdict::Drop;
+    // The container SHRANK. For TArray that is RemoveAt, which relocated every
+    // element after the removal point and we cannot tell whether ours moved; for a
+    // sparse array it means Compact() ran, which relocates too.
+    if (nowNum < numAtScan) return RefineAnchorVerdict::Drop;
+    // The buffer moved (growth realloc). Everything is still in slot order, so the
+    // element is recoverable — today it is simply lost.
+    if (nowData != dataAtScan) return RefineAnchorVerdict::Repoint;
+    return RefineAnchorVerdict::KeepAddress;
+}
+
 struct FieldDescriptor {
     std::string className;          // The instance's UClass name
     std::string definingClassName;  // Class where the field is declared
     std::string fieldName;          // BASE name (no array "[i]" suffix)
     std::string fieldType;          // "FloatProperty" / "IntProperty" / ...
-    int32_t     fieldOffset   = 0;  // bytes from instanceAddr
+    int32_t     fieldOffset   = 0;  // bytes from instanceAddr. For a container anchor
+                                    // this is the CONTAINER HEADER's offset, which is
+                                    // what lets refine re-read the header without
+                                    // storing its address on every candidate.
+    // audit #5 A11 — how refine must treat this field's stored absolute address.
+    // `Unknown` is the honest default: the deep-container and group paths do not
+    // stamp one and get the pre-A11 address-only refine.
+    ValueAnchor anchor        = ValueAnchor::Unknown;
+    int32_t     elemStride    = 0;  // container element stride  (container anchors only)
+    int32_t     elemIntra     = 0;  // value offset WITHIN the element (map value / struct inner)
     // BoolProperty bitfield support: when boolFieldMask != 0xFF the field
     // shares a byte with siblings. Read as `(byte & mask) != 0`.
     uint8_t     boolFieldMask = 0xFF;
@@ -504,6 +606,13 @@ struct Candidate {
     uint32_t    descriptorIdx = 0;   // -> Session::descriptors
     uint32_t    instanceIdx   = 0;   // -> Session::instances
     int32_t     elementIndex  = -1;  // array/container element index, -1 = direct field
+    // audit #5 A11 — the container's element count (TArray::Num / TSparseArray::
+    // MaxIndex) AT SCAN TIME. -1 = not a container element. Lands in the padding
+    // this struct already carried, so the lean-Candidate constraint above is
+    // unaffected. Per-candidate rather than per-container because the alternative
+    // is a second pool keyed on (instanceIdx, descriptorIdx), which costs more than
+    // the four bytes it saves.
+    int32_t     containerNum  = -1;
 };
 
 struct Session {
@@ -769,7 +878,14 @@ struct GroupSlotMatch {
     int32_t   offset        = 0;   // bytes from the OWNING object to the leaf (direct); 0 for deep
     uintptr_t leafAddr      = 0;   // ABSOLUTE address of the value — direct: owner+offset;
                                    // deep (container element): the element's own address.
-                                   // Refine re-reads this (SEH-safe; stale on container realloc = drop).
+                                   // Refine re-reads this. ⚠ "stale on realloc = drop" was
+                                   // OPTIMISTIC and is corrected here (audit #5 A11): a TArray
+                                   // RemoveAt relocates the tail in place and a sparse slot is
+                                   // REUSED on the next Add, so a stale element address survives
+                                   // the read and returns the WRONG value. The group path does
+                                   // not yet carry a ValueAnchor — it is `Unknown`, i.e. this
+                                   // is still the pre-A11 behaviour, filed and named rather than
+                                   // silently assumed safe.
     uintptr_t ownerAddr     = 0;   // object directly holding the leaf: the candidate actor for an
                                    // own-block leaf, or an OWNED sub-object for a cross-object leaf
                                    // (P4). Drives the per-slot handoffs to the right object.
