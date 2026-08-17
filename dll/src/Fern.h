@@ -50,6 +50,11 @@ private:
     // event writes — writes to DIFFERENT connections need no shared lock.
     struct Connection {
         HANDLE             pipe{INVALID_HANDLE_VALUE};
+        // Monotonic id, assigned under m_connMutex at accept (audit #5 F2). Needed
+        // because the per-command cancel is owned by the connections that RAISED it,
+        // and a raw pointer cannot answer "is that same connection still live" once
+        // the object is gone and the allocator has reused the address.
+        uint64_t           seq{0};
         std::mutex         writeMutex;
         std::atomic<bool>  inFlight{false};   // true only while inside DispatchCommand
         // What that in-flight command IS, and when it started. Written just before
@@ -114,6 +119,16 @@ private:
     std::vector<std::shared_ptr<Connection>> m_conns;
     HANDLE                  m_listenPipe{INVALID_HANDLE_VALUE};
     std::mutex              m_connMutex;     // guards m_conns + m_listenPipe + m_clientConnected
+                                             // + m_cancelOwners + m_connSeq
+    // Which connections raised the per-command cancel. Cleared when none of them is
+    // still registered — NOT when the registry merely goes empty, which the two-lane
+    // split made unreachable (audit #5 F2).
+    std::vector<uint64_t>   m_cancelOwners;
+    uint64_t                m_connSeq{0};    // assigned under m_connMutex at accept
+
+    // Clear the per-command cancel once no connection that raised it is still live.
+    // MUST be called with m_connMutex ALREADY HELD.
+    void ReevaluatePerCommandCancel();
     std::condition_variable m_connCv;        // notified when a connection thread exits
 
     // Disconnect monitor (cooperative cancellation). A bulk-lane scan blocks its

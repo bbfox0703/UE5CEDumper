@@ -235,6 +235,76 @@ static void Test_Alignment_WeakAndSparseDelegate() {
            !Scharf::IsAlignmentSuspicious("MulticastSparseDelegateProperty", 0x5, 1, false));
 }
 
+// ----- Tot: when the per-command cancel is still owed ------------------------
+//
+// Audit #5 F2. The cancel latch cleared only when a session connected into an
+// EMPTY connection registry ("firstConn"). That was right when there was one
+// connection. With the two-lane split it is not: if the BULK lane drops
+// mid-scan while the LIGHT lane stays up, the registry is never empty, so the
+// latch is never cleared and every subsequent scan on the surviving lane aborts
+// instantly -- for the life of the process.
+//
+// Ownership is the right question, not emptiness.
+
+static void Test_Tot_PerCommandStillOwed() {
+    // The one that was broken. Lane 1 (bulk) raised the cancel and is gone;
+    // lane 2 (light) is still connected, so the registry is NOT empty -- but the
+    // raiser is not in it, so the cancel is no longer owed.
+    {
+        const uint64_t owners[] = { 1 };
+        const uint64_t live[]   = { 2 };
+        EXPECT("raiser gone, sibling lane still up -> NOT owed",
+               !Tot::PerCommandStillOwed(owners, 1, live, 1));
+    }
+
+    // Must NOT clear while the raiser is still registered: its orphaned scan has
+    // to keep seeing the cancel until it unwinds.
+    {
+        const uint64_t owners[] = { 1 };
+        const uint64_t live[]   = { 1, 2 };
+        EXPECT("raiser still registered -> still owed",
+               Tot::PerCommandStillOwed(owners, 1, live, 2));
+    }
+
+    // BOTH lanes dropped mid-command. Clearing on the first one's exit would free
+    // a cancel the second still needs -- which is why the monitor records owners
+    // unconditionally rather than only on the first raise.
+    {
+        const uint64_t owners[] = { 1, 2 };
+        const uint64_t live[]   = { 2 };
+        EXPECT("second raiser still live -> still owed",
+               Tot::PerCommandStillOwed(owners, 2, live, 1));
+        const uint64_t none[] = { 9 };
+        EXPECT("neither raiser live -> NOT owed",
+               !Tot::PerCommandStillOwed(owners, 2, none, 1));
+    }
+
+    // The case the old firstConn rule DID handle -- an empty registry. The new
+    // rule must still catch it, or the fix is a regression on the path that worked.
+    {
+        const uint64_t owners[] = { 1, 2, 3 };
+        EXPECT("empty registry -> NOT owed (subsumes the old firstConn rule)",
+               !Tot::PerCommandStillOwed(owners, 3, nullptr, 0));
+    }
+
+    // Nobody raised anything: never owed, whatever is connected.
+    {
+        const uint64_t live[] = { 1, 2, 3 };
+        EXPECT("no owners -> never owed",
+               !Tot::PerCommandStillOwed(nullptr, 0, live, 3));
+    }
+
+    // Ids are monotonic and never reused, so a NEW connection that happens to sit
+    // where an old one did must not inherit its cancel. (This is why the owner set
+    // stores a seq and not a pointer -- the allocator reuses addresses.)
+    {
+        const uint64_t owners[] = { 7 };
+        const uint64_t live[]   = { 8 };
+        EXPECT("a later connection does not inherit an earlier one's cancel",
+               !Tot::PerCommandStillOwed(owners, 1, live, 1));
+    }
+}
+
 // ----- Aura: which deep leaves the static scan index already covers -----------
 //
 // Audit #5 A4. Value Search's deep pass skipped on `depth < 2` alone -- "depth 1
@@ -5300,6 +5370,7 @@ int main() {
     RUN(Test_Alignment_UnknownTypesNotValidated);
     RUN(Test_Alignment_WeakAndSparseDelegate);
 
+    RUN(Test_Tot_PerCommandStillOwed);
     RUN(Test_Aura_DeepLeafCoverage);
     RUN(Test_Ubel_ClassCacheBound);
     RUN(Test_Ubel_EstimateClassInfoBytes);

@@ -784,6 +784,23 @@ void Fern::Stop(bool graceful) {
 // the client vanishing and request per-command cancellation so the orphaned
 // scan bails. Peeks only while m_commandInFlight (handler is CPU-bound in
 // DispatchCommand, not touching the pipe) — no concurrent read/write.
+void Fern::ReevaluatePerCommandCancel() {
+    // Caller MUST hold m_connMutex.
+    if (m_cancelOwners.empty()) return;
+
+    std::vector<uint64_t> live;
+    live.reserve(m_conns.size());
+    for (const auto& c : m_conns) live.push_back(c->seq);
+
+    if (Tot::PerCommandStillOwed(m_cancelOwners.data(), m_cancelOwners.size(),
+                                 live.data(), live.size())) {
+        return;   // a connection that raised the cancel is still registered
+    }
+    m_cancelOwners.clear();
+    Tot::ResetPerCommand();
+    LOG_INFO("PipeServer: per-command cancel cleared — no connection that raised it is still live");
+}
+
 void Fern::MonitorLoop() {
   // Allocates while peeking the pipe and formatting logs; a raw thread proc. (B14)
   Routine::RunThreadGuarded("PipeServer: MonitorLoop", [&] {
@@ -824,10 +841,23 @@ void Fern::MonitorLoop() {
                     // ever fires for a broken bulk scan. The UI must reconnect
                     // BOTH lanes together so g_perCommand is reset (AcceptLoop
                     // firstConn) before the next session's scans.
+                    // Record WHICH connection raised this, unconditionally. The
+                    // latch is now owned by its raisers (audit #5 F2), so a second
+                    // lane dropping while the flag is already set must still be
+                    // recorded — otherwise clearing on the first one's exit would
+                    // free a cancel the second still needs. Only the LOG stays
+                    // once-per-latch: that is a noise concern, not a correctness one.
+                    {
+                        std::lock_guard<std::mutex> lock(m_connMutex);
+                        if (std::find(m_cancelOwners.begin(), m_cancelOwners.end(), c->seq)
+                            == m_cancelOwners.end()) {
+                            m_cancelOwners.push_back(c->seq);
+                        }
+                    }
                     if (!Tot::g_perCommand.load(std::memory_order_relaxed)) {
                         LOG_WARN("PipeServer: client gone mid-command (err=%lu) — aborting in-flight op", e);
-                        Tot::RequestPerCommand();
                     }
+                    Tot::RequestPerCommand();
                 }
             }
         }
@@ -894,14 +924,22 @@ void Fern::AcceptLoop() {
             std::lock_guard<std::mutex> lock(m_connMutex);
             m_listenPipe = INVALID_HANDLE_VALUE;   // consumed by this connection
             firstConn = m_conns.empty();
+            // Assign the id HERE, under the lock — never on the connection thread,
+            // or two accepts race to the same value (audit #5 F2).
+            conn->seq = ++m_connSeq;
             m_conns.push_back(conn);
             connCount = m_conns.size();
             m_clientConnected = true;
+            ReevaluatePerCommandCancel();
         }
-        // New session (registry was empty): clear any per-command cancel left by
-        // the prior fully-disconnected session. NOT done per-command, so a light
-        // command on one lane can't clear a running scan's cancel on the other.
-        if (firstConn) Tot::ResetPerCommand();
+        // The old rule was `if (firstConn) Tot::ResetPerCommand();` — clear only when
+        // a session connects into an EMPTY registry. ReevaluatePerCommandCancel above
+        // subsumes it STRICTLY: an empty registry trivially has no live owner, so
+        // every case firstConn caught is still caught, plus the one it could not — a
+        // lane dropping while its sibling stays connected, which the two-lane split
+        // made the ordinary shape and which left the latch set for the life of the
+        // process (audit #5 F2).
+        (void)firstConn;
 
         LOG_INFO("PipeServer: Client connected (conns=%zu)", connCount);
         // Guarded: only DispatchCommand inside HandleConnection had a handler, so a
@@ -1105,6 +1143,10 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         if (it != m_conns.end()) m_conns.erase(it);
         last = m_conns.empty();
         m_clientConnected = !m_conns.empty();
+        // Safe to clear here: this runs strictly AFTER the handler returned, so an
+        // orphaned scan on this connection has already unwound and can no longer
+        // need the cancel it raised.
+        ReevaluatePerCommandCancel();
     }
 
     CloseConnOnce(*conn);
