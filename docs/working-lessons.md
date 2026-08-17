@@ -1216,6 +1216,15 @@ values it did set were the two that most code exercises.
 
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
+> ⚠ **NARROWED 2026-08-17 — it is not a version band.** **Lushfoil Photography Sim is UE 5.6 cooked
+> Shipping and `Add_IntInt(3,4)` returned `7`** (`✓ PE hook verified`), so "UE 5.5+ cooked Shipping"
+> over-states it. Read the rule as **title-specific** — most plausibly whether that title's cook
+> applied BlueprintFastCall to that helper. The practical consequence is unchanged: *do not build a
+> verification on a KismetMathLibrary return*, because it may or may not be dispatched and you cannot
+> tell which from the outside. But equally, **do not read a KismetMathLibrary failure as proof the
+> hook is fine** — on DumperTest the same signature turned out to be a genuinely mis-detected vtable
+> slot, and only the DLL's own "fired 0 times in 1500 ms" validator separated the two cases.
+
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when
 invoked via ProcessEvent from a reflection-driven dumper on UE 5.5+ cooked Shipping. Likely UE's
 BlueprintFastCall optimisation: the BP VM bypasses ProcessEvent entirely for these helpers, so the

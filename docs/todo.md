@@ -2037,11 +2037,32 @@ zero tells us nothing about BlueprintFastCall.
   current (3262, `matched`); the slot is mis-detected. The message sends the user down the one path
   that cannot work, and it is also built on the target §4.4 says not to verify with.
 
+**✅ The control was run, and it is SAMPLE-SPECIFIC — not a general detection failure.** Same build,
+same UI, **Lushfoil Photography Sim (UE 5.6)**:
+```
+DetectProcessEvent (pattern): match at vtable+0x260 -> 0x7FF7A7171510   <- AOB HIT, no fallback
+GameThreadDispatch: hook installed at 0x7FF7A7171510, validator armed (1500ms)
+ProcessEvent: first-time init complete — offset=608, hook_active=1      <- and NO VALIDATION FAILED
+```
+and the self-test answers **`✓ Add_IntInt(3,4) = 7 → PE hook verified`**. So the pattern works; it is
+**DumperTest** the scan misses on, and the `UE=504` version-table fallback (`primary=0x220` / offset
+544) is then simply wrong for that binary. Lushfoil's real slot is `0x260` / 608.
+
+⚠ **This control also narrows [working-lessons.md](working-lessons.md) §4.4.** That lesson says
+KismetMathLibrary helpers no-op through ProcessEvent on *"UE 5.5+ cooked Shipping"*. Lushfoil **is**
+UE 5.6 cooked Shipping and `Add_IntInt` returned **7**. The no-op is therefore title-specific (most
+likely: whether that cooker applied BlueprintFastCall to that helper), not a property of the version
+band. §4.4 has been narrowed accordingly.
+
 **Consequence for the register:** any row needing a game-thread invoke on **DumperTest** — CE
 `callFunction`, `ST1`, the AA14–AA20 invoke batch, Teleport/GodMode/Movement on the sample — is
-running against a hook that never fires. Those must move to a title where detection succeeds, or
-wait for the detection fix. Worth re-checking which of the twelve swept titles validate cleanly;
-`init-0.log` answers it per title in one grep.
+running against a hook that never fires, and must move to a title where detection succeeds
+(**Lushfoil is confirmed good**) or wait for the detection fix.
+
+⚠ **Do NOT survey this from the existing logs — it will read as all-clear and be wrong.** The hook
+installs **on first invoke**, so a title that was only scanned has no ProcessEvent lines at all.
+A sweep of all twelve log folders found ProcessEvent entries for **DumperTest only**, and that is
+"never attempted" for the other eleven, not "fine". Each title needs one **Run Self-Test** click.
 
 ### ⛔ NEW 2026-08-17 `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` does NOT mean the game loads it
 
