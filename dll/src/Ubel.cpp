@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <list>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -779,6 +780,43 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
 // back navigation for large classes (e.g., 182 fields → 0ms vs re-walking).
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 
+// --- LRU bound for the cache above (audit #5 U5) ---
+//
+// Legal here and ONLY here: WalkClass returns ClassInfo BY VALUE and every
+// s_walkClassCache touch copies under s_walkClassCacheMutex, so evicting an entry
+// cannot invalidate anything a caller is holding. The ENRICHED cache below hands
+// out `const ClassInfo&` and is NOT bounded for exactly that reason.
+//
+// Recency is a list of addresses, newest at the front; the map from address to
+// its list position makes touch-on-hit O(1). Both are guarded by the SAME mutex
+// as the cache, so they cannot drift from it.
+static std::list<uintptr_t> s_walkLru;
+static std::unordered_map<uintptr_t, std::list<uintptr_t>::iterator> s_walkLruPos;
+
+// Move `addr` to the front. Caller MUST hold s_walkClassCacheMutex.
+static void TouchWalkLru(uintptr_t addr) {
+    auto it = s_walkLruPos.find(addr);
+    if (it == s_walkLruPos.end()) return;
+    s_walkLru.splice(s_walkLru.begin(), s_walkLru, it->second);
+}
+
+// Insert-or-refresh `addr`, evicting the least recently used entries until the
+// cache is within its bound. Caller MUST hold s_walkClassCacheMutex.
+static void PublishWalkClass(uintptr_t addr, const ClassInfo& info) {
+    auto [entry, inserted] = s_walkClassCache.try_emplace(addr, info);
+    if (!inserted) { TouchWalkLru(addr); return; }
+
+    s_walkLru.push_front(addr);
+    s_walkLruPos[addr] = s_walkLru.begin();
+
+    while (s_walkLru.size() > Ubel::kMaxWalkClassCacheEntries) {
+        uintptr_t victim = s_walkLru.back();
+        s_walkLru.pop_back();
+        s_walkLruPos.erase(victim);
+        s_walkClassCache.erase(victim);
+    }
+}
+
 // Synthesize the native field layout for intrinsic UE core structs that carry no
 // reflected child UPROPERTYs. FDateTime / FTimespan serialize a single `int64 Ticks`
 // via custom serialization, not reflection, so their FField chain is empty and the
@@ -800,6 +838,20 @@ static void InjectIntrinsicStructFields(const std::string& structName,
     }
 }
 
+void GetClassCacheStats(size_t& outEntries, size_t& outFields, size_t& outApproxBytes) {
+    std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
+    outEntries = s_walkClassCache.size();
+    outFields = 0;
+    outApproxBytes = 0;
+    for (const auto& kv : s_walkClassCache) {
+        const ClassInfo& ci = kv.second;
+        outFields += ci.Fields.size();
+        outApproxBytes += EstimateClassInfoBytes(ci.Name.size(), ci.FullPath.size(),
+                                                 ci.SuperName.size(), ci.Fields.size(),
+                                                 sizeof(FieldInfo));
+    }
+}
+
 ClassInfo WalkClass(uintptr_t uclassAddr) {
     ClassInfo info{};
     if (!uclassAddr) return info;
@@ -810,6 +862,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         auto cacheIt = s_walkClassCache.find(uclassAddr);
         if (cacheIt != s_walkClassCache.end()) {
+            TouchWalkLru(uclassAddr);   // the lock is exclusive, so mutating on read is fine
             return cacheIt->second;
         }
     }
@@ -880,6 +933,9 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
             std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
             auto superCacheIt = s_walkClassCache.find(super);
             if (superCacheIt != s_walkClassCache.end()) {
+                // A base class is reused by every subclass, so it is exactly what must
+                // not be evicted for being "old" — the chain walk is a use.
+                TouchWalkLru(super);
                 const auto& superFields = superCacheIt->second.Fields;
                 info.Fields.insert(info.Fields.begin(), superFields.begin(), superFields.end());
                 break;  // cached super already includes its entire inheritance chain
@@ -944,7 +1000,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     // costs a re-walk.
     if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-        s_walkClassCache.try_emplace(uclassAddr, info);
+        PublishWalkClass(uclassAddr, info);
     } else {
         Sein::Warn("WALK:safe",
             "WalkClass: refusing to cache 0x%llx — PropertiesSize=%d (read %s); "

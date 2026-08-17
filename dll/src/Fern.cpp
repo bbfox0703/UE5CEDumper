@@ -3873,6 +3873,22 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             proc["cpu_percent"]       = ps.cpuPercent;   // -1 = needs a 2nd sample
             data["process"] = proc;
 
+            // Class-walk cache occupancy (audit #5 U5 Tier 0). The bound added with it
+            // was sized from ONE game's log extrapolation; these three numbers are what
+            // make it tunable per game instead. approx_bytes is deliberately rough --
+            // it counts the two owned strings and the field vector, and std::string's
+            // SSO makes anything finer a lie about the allocator.
+            {
+                size_t ccEntries = 0, ccFields = 0, ccBytes = 0;
+                Ubel::GetClassCacheStats(ccEntries, ccFields, ccBytes);
+                json cc;
+                cc["entries"]      = ccEntries;
+                cc["max_entries"]  = Ubel::kMaxWalkClassCacheEntries;
+                cc["fields"]       = ccFields;
+                cc["approx_bytes"] = ccBytes;
+                data["class_cache"] = cc;
+            }
+
             // Game-thread health from Stark — already public, and the other half
             // of "is the game starved?". A stalled game thread makes every
             // invoke-bearing command sit in the dispatcher.

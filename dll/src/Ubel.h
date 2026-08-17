@@ -146,6 +146,52 @@ ClassInfo WalkClass(uintptr_t uclassAddr);
 // legitimate and IS memoized. (audit #5 U4)
 const ClassInfo& WalkClassEx(uintptr_t uclassAddr);
 
+// ============================================================
+// Class-walk cache bound (audit #5 U5)
+// ============================================================
+//
+// The finding was re-filed FOUR times saying eviction is illegal until
+// WalkClassEx stops returning `const ClassInfo&`. That is right about the
+// ENRICHED cache and WRONG about this one: WalkClass returns BY VALUE, and all
+// three s_walkClassCache touch points copy under the mutex — so bounding it is
+// legal today with zero call-site change. Half the bytes were reclaimable the
+// whole time.
+//
+// What is NOT done here, deliberately: the enriched WalkClassEx memo (its
+// `const&` return is the real blocker), and Aura's s_classContainerCache, which
+// is the same shape with the same blocker and is tracked as A10.
+
+/// Rough heap cost of one cached ClassInfo, for the get_diagnostics counter.
+/// Pure and approximate on purpose — it exists to turn "unbounded" into a
+/// per-game number, not to be exact. Counts the two owned strings and the field
+/// vector; std::string's SSO makes anything finer a lie about the allocator.
+inline size_t EstimateClassInfoBytes(size_t nameLen, size_t pathLen,
+                                     size_t superNameLen, size_t fieldCount,
+                                     size_t bytesPerField) {
+    return sizeof(ClassInfo)
+         + nameLen + pathLen + superNameLen
+         + fieldCount * bytesPerField;
+}
+
+/// Entries kept in the plain class-walk cache before the least-recently-used one
+/// is evicted.
+///
+/// 2048, NOT the 512 first proposed. 512 was sized against "~50x the deepest
+/// super chain", which is the wrong denominator: the working set is the classes
+/// touched in ONE scan pass, and the DSClient reference log touches 10,046
+/// distinct classes. 2048 entries is roughly 55K FieldInfo, and still reclaims
+/// most of what the unbounded map held.
+///
+/// Tune it with the get_diagnostics `class_cache` counters, never with the
+/// 0.038 ms average walk time — that average is dominated by cache HITS, so it
+/// says nothing about what an eviction costs.
+constexpr size_t kMaxWalkClassCacheEntries = 2048;
+
+/// Snapshot of the plain class-walk cache, for get_diagnostics. Turns
+/// "unbounded" into a per-game number, which is the only thing that makes the
+/// bound above tunable on evidence rather than on one game's log extrapolation.
+void GetClassCacheStats(size_t& outEntries, size_t& outFields, size_t& outApproxBytes);
+
 // --- Shared reflection field lookup ---
 // (Extracted from the Debug Camera helpers in Frieren.cpp, build 1014;
 //  shared by the Debug Camera flow and Wirbel/Teleport.)

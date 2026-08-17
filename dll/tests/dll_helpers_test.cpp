@@ -235,6 +235,56 @@ static void Test_Alignment_WeakAndSparseDelegate() {
            !Scharf::IsAlignmentSuspicious("MulticastSparseDelegateProperty", 0x5, 1, false));
 }
 
+// ----- Ubel: the class-walk cache bound -------------------------------------
+//
+// Audit #5 U5. The finding was re-filed FOUR times saying eviction is illegal
+// until WalkClassEx stops returning `const ClassInfo&`. That is right about the
+// ENRICHED cache and wrong about the plain one: WalkClass returns BY VALUE
+// (Ubel.h) and every s_walkClassCache touch copies under the mutex, so bounding
+// it is legal today with zero call-site change. Half the bytes were reclaimable
+// the whole time.
+//
+// The LRU itself lives in Ubel.cpp, which no target compiles. What IS pinnable
+// is the sizing rule and the cap, and the cap is the number most likely to be
+// "tuned" later by someone reading the wrong denominator.
+
+static void Test_Ubel_ClassCacheBound() {
+    // 512 was the first proposal, sized against "~50x the deepest super chain".
+    // That is the wrong denominator: the working set is the classes touched in
+    // ONE scan pass, and the reference log touches 10,046 distinct classes.
+    EXPECT("cap is not the 512 that the wrong denominator produced",
+           Ubel::kMaxWalkClassCacheEntries != 512);
+    EXPECT("cap is 2048", Ubel::kMaxWalkClassCacheEntries == 2048);
+
+    // A bound that cannot bind is the failure mode worth guarding: it would make
+    // get_diagnostics report a cap while the map grew forever.
+    EXPECT("cap is a real bound", Ubel::kMaxWalkClassCacheEntries > 0);
+    EXPECT("cap is below the reference working set, i.e. it actually evicts",
+           Ubel::kMaxWalkClassCacheEntries < 10046);
+}
+
+static void Test_Ubel_EstimateClassInfoBytes() {
+    const size_t base = Ubel::EstimateClassInfoBytes(0, 0, 0, 0, 0);
+    EXPECT("an empty ClassInfo still costs its own struct", base == sizeof(ClassInfo));
+
+    // Every input must be additive -- a term dropped from the sum is exactly how
+    // a memory counter under-reports and a bound looks unnecessary.
+    EXPECT("name length counts",
+           Ubel::EstimateClassInfoBytes(10, 0, 0, 0, 0) == base + 10);
+    EXPECT("path length counts",
+           Ubel::EstimateClassInfoBytes(0, 20, 0, 0, 0) == base + 20);
+    EXPECT("super name counts",
+           Ubel::EstimateClassInfoBytes(0, 0, 30, 0, 0) == base + 30);
+    EXPECT("fields count, scaled by their width",
+           Ubel::EstimateClassInfoBytes(0, 0, 0, 7, 40) == base + 280);
+
+    // The dominant term on a real class is the field vector, not the strings.
+    const size_t realistic =
+        Ubel::EstimateClassInfoBytes(24, 64, 16, 182, sizeof(FieldInfo));
+    EXPECT("a 182-field class is dominated by its fields",
+           realistic > 182 * sizeof(FieldInfo));
+}
+
 // ----- Stark: not re-entering our own ProcessEvent detour --------------------
 //
 // Audit #5 ST1. MinHook patches UObject::ProcessEvent's PROLOGUE, so a caller of
@@ -5190,6 +5240,8 @@ int main() {
     RUN(Test_Alignment_UnknownTypesNotValidated);
     RUN(Test_Alignment_WeakAndSparseDelegate);
 
+    RUN(Test_Ubel_ClassCacheBound);
+    RUN(Test_Ubel_EstimateClassInfoBytes);
     RUN(Test_Stark_ShouldUseTrampoline);
     RUN(Test_Stark_ShouldDrainQueue);
     RUN(Test_Lineal_SerialOffsetForLayout);
