@@ -2673,13 +2673,29 @@ The remaining unchecked boxes below are superseded by the table above except whe
   title where `Genau` logs `CasePreservingName: YES` (e.g. Titan Quest II). Expand any actor's `Tags`.
   Before the fix `InferScalarSize` forced the stride to 8 against the engine's real 16, so every
   element but the first was read from the middle of its predecessor.
-- ⬜ **A `TMap`/`TSet` whose ELEMSIZE reads garbage no longer wedges the walk (U1).** Hard to force
-  deliberately; the passive check is that no `walk-0.log` line shows an absurd `KeySz=`/`ValSz=`
-  (e.g. `1073742336`) and that expanding maps never produces a multi-second freeze. A rejected size
-  now degrades to "cannot read elements" instead of a ~1 GiB allocation per element.
-- ⬜ **Check `walk-0.log` for the `Stride=` values.** `WALK:MapP` logs `ValOff` and `Stride` per map
-  field. A struct-valued map should now show an odd-looking-but-correct stride (e.g. 24 for
-  `TMap<int32,FVector>`, not 28). This is the cheapest passive evidence.
+- 🟡 **PARTIAL `[DUMPERTEST-LOG-2026-08-17]` — A `TMap`/`TSet` whose ELEMSIZE reads garbage no longer
+  wedges the walk (U1).** The **passive half PASSES**: every `KeySz=`/`ValSz=` in the DumperTest
+  `walk-0.log` is plausible (8/4, 4/4, 8/4, 16/4, 4/12) — nothing like `1073742336`.
+  ⚠ **The degraded branch itself is NOT TESTED and must not be recorded as passing.** All five maps
+  read cleanly (`Read 3/3 map entries … skipped 0 unallocated` on each), so
+  `Cannot read map elements for '%s'` (`Ubel.cpp`, `Sein::Warn`) structurally cannot fire here — and
+  this file already says the case is hard to force deliberately. The "no multi-second freeze" half is
+  a UI-perceived claim and is likewise unmeasured from a log.
+- ✅ **DONE `[DUMPERTEST-LOG-2026-08-17]` — `walk-0.log` `Stride=` values are correct.** Grepped
+  `WALK:MapP` in `Logs\DumperTest\walk-0.log`; all five maps present with `ValOff=` and `Stride=`:
+
+  | field | KeySz/ValSz | ValOff | Stride | the defect would have shown |
+  |---|---|---|---|---|
+  | `Map_I64ToI32` | 8 / 4 | 8 | **24** | 20 — the core M1 witness |
+  | `Map_StrToInt` | 16 / 4 | 16 | **32** | 28 — second witness, different arithmetic |
+  | `Map_IntToVec3f` | 4 / 12 | **4** | 24 | value at +8; the only one wrong at element 0 (M3) |
+  | `Map_NameToInt` | 8 / 4 | 8 | 20 | unchanged by design |
+  | `Map_IntToFloat` | 4 / 4 | 4 | 16 | unchanged by design |
+
+  The two witnesses disagree in their arithmetic, so one wrong assumption cannot satisfy both, and
+  `Map_IntToVec3f` exercises the `UScriptStruct::MinAlignment` read specifically. Log is from
+  build `5ef4c2b` (1.0.0.2812) — the DLL-side commit for this fix, so it is in scope.
+  **This is the log half only**; the UI-side arithmetic remains open in the rows above.
 
 ### 🔴 NEW 2026-08-11 — `executeCodeEx` finite timeout + reason capture (build 2792)
 

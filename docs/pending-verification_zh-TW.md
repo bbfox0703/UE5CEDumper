@@ -53,17 +53,6 @@
 
 只看 log／跑工具就能結案。從這裡開始。
 
-### ⬜ U1 / M1 / M3 (walk-0.log) —— walk 記錄檔裡的 map stride 值
-
-*build 2830 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 開啟 %LOCALAPPDATA%\UE5CEDumper\Logs 下該遊戲的 walk-0.log，grep 字串 WALK:MapP | 每個 map 欄位各有一行，含 ValOff= 與 Stride=<br>⚠ 該 session 必須真的在 Live Walker 展開過 TMap 欄位；沒有這些行不代表通過 |
-| 2 | 看 struct-valued map 的 Stride 值，例如 TMap<int32,FVector> | Stride=24（不是 28） |
-| 3 | grep KeySz= 與 ValSz= | 沒有荒謬數值（如 1073742336） |
-| 4 | 回想／重做一次展開 map 的操作 | 不會出現數秒凍結；讀不到時只顯示 cannot read elements |
-
 ### ⬜ D1 / D3 —— DumperTest Development 封包指標與 stride 健檢
 
 *build 2661 / 2673 · 優先度 **高***
