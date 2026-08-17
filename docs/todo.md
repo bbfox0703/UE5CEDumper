@@ -2634,6 +2634,44 @@ each has a *visible* pass/fail, and four of them only ever show up when somethin
    (`Slot_1`, `Slot_2`). Panel and Value Search must agree on the same 8 bytes. ⚠ Object/instance
    NAMES are a separate, unfixed lead — do not read a truncated instance name as a failure here.
 
+> ### ✅ A5 · V6 · AE9 all PASS 2026-08-17 `[GRP4-UI-2026-08-17]` — DumperTest Development, 3262
+>
+> **A5 — the live half AND the honesty half, on one screen.** Property Search `TickCount`:
+> `DumperTestActor.TickCount` (IntProperty, `0x6A8`) previewed **279**, and a re-search ~38 s later
+> previewed **317**. The sample's HUD drives TickCount at 1 Hz, so +38 in 38 s is the value *moving*,
+> not merely looking plausible — that is what makes it a live reading rather than a Blueprint default.
+> In the same result set, `NiagaraComponent.WarmupTickCount` and `NiagaraSystem.WarmupTickCount` read
+> **`0 (CDO default)`**, i.e. classes with no live instance are marked instead of silently presented
+> as live. Both halves of the fix, together.
+>
+> ⚠ **Lead, not filed as a defect: DEEP rows get no preview at all.** A `CurrentValue` deep search
+> returned 5 rows (`DumperTestActor.Health.CurrentValue` @ `0x698` among them) and **every Preview
+> cell was empty** — not a value, not `(CDO default)`. Same for `NiagaraSimCache.CacheFrames[]…`.
+> `Aura.cpp`'s `(CDO default)` marker is only appended `if (!m.preview.empty())`, so an empty preview
+> is upstream of it, in `Ubel::ResolvePropertyPreviews` not resolving struct/container-nested paths.
+> A5's own wording does not cover deep rows, so this is a gap to confirm, not a failure of A5.
+>
+> **AE9 — both halves.** Value Search → First Scan (`424242`, 2 candidates in 52 ms) → Sort picker set
+> to `Value` → **New Scan** → the picker reads **`Scan order`** again and the session ends. Then, on a
+> result set with *varied* values (`Bigger` 400000 → **14,813 candidates**), picking `Value` re-sorted
+> the whole set ascending — first rows went from `225000000, 1023969488, 549755813888…` (scan order)
+> to `424242, 424242, 480256×4, 524288…`. Note the `Exact` predicate returns identical values and
+> therefore **cannot** test a re-sort; that is why `Bigger` was used.
+>
+> **V6 — all three claims.** Live Walker on `DumperTestActor_0` (reached via a Value Search row's
+> `Live` button, which correctly scrolled to and selected `FrozenInt`): typed `Flag` → `3 matches`,
+> `bFlagA` highlighted. Pressed **Refresh** → the keyword and `3 matches` survive, and the grid stays
+> at the same region (`0x478…0x658`) instead of jumping to the top. Pressed the **▼ stepper** → it
+> scrolled to and selected `bFlagA` at `0x670`. Highlights, anchor and stepper all survive a refresh.
+>
+> ⭐ **Free corroboration of the SDK-header export, from a different code path.** Every offset the
+> Live Walker shows on this actor matches the exported header exactly — `0x639 U8_Small`,
+> `0x63C I16`, `0x640 I32`, `0x650 F32`, `0x658 F64`, `0x670 bFlagA/bFlagB/bFlagC` (bits 0/1/2, masks
+> 0x01/0x02/0x04, byte `05`), `0x671 bPlainBool`, `0x672 Grade`, `0x694 Health`, `0x6A8 TickCount`,
+> `0x6AC FrozenInt`. Two independent emitters agreeing on the whole layout is stronger evidence for
+> W2/W3 than either alone. *(Incidental for AA1: the bitfield byte currently reads `0x05`, the
+> pre-toggle state that check expects to become `0x07`.)*
+
 **Needs a specific condition (worth doing when it arises):**
 
 5. **G1 + X3 — the offset banner.** On a game where offset detection partially fails, the Pointers
