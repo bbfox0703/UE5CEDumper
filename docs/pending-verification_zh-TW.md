@@ -279,14 +279,13 @@
 | 2 | 改連「另一款」遊戲 Y，載入 X 的 .jsonl 並按 Re-check。 | 比對被拒絕、狀態列同時寫出 X 與 Y 的 module 名、所有列都是未比對、Jump 沒有東西可跳；log 出現 `DumpExplorer live match refused: dump module '…' != live module '…'`。 |
 | 3 | （機會性，等 X 真的更新版本後）連上 X，載入更新前的舊 dump。 | 仍然比對成功，但帶 "Different build — offsets may have moved" 註記。 |
 
-### ⬜ G8 / G9 —— 版本偵測改分層規則後不變
+### 🟡 G8 / G9 —— 版本偵測改分層規則後不變（**只剩步驟 1：需要 Elliot**）
 
-*優先度 **低***
+*優先度 **低** · 步驟 2 已於 2026-08-17 用 DumperTest 冷掃驗過並 commit*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 注入一款一般（Tier 1 會命中）的 UE5 遊戲，掃描後在 `%LOCALAPPDATA%\UE5CEDumper\Logs\<proc>\scan-0.log` 搜尋字串 `DetectVersion: Tier 1`。 | 出現 `DetectVersion: Tier 1 (ascii\|utf16) '++UEx+Release-N.N' -> NNN`，版本號與該遊戲過去記錄相同。<br>⚠ 這裡通過只代表沒改壞 Tier 1，不可據此關閉 G11（Tier 2 從未在任何檔案上觸發過）。 |
-| 2 | 掃描前先記下該遊戲在 `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json` 的 `ueVersion` / `versionDetected` / `lowConfidence`，掃描後再比一次。 | 三個值前後完全相同；任何一個變了就是 finding，回報遊戲名與前後值。<br>⚠ 首次跑新 build 會因 `kVersionDetectLogicRev` 升版重新偵測一次（約 0.35 s），屬預期。 |
+| 1 | 注入 **Elliot**（version resource 被 strip 的標題），掃描後 grep `scan-0.log` 的 `DetectVersion: Tier 1` | 出現 `DetectVersion: Tier 1 (ascii\|utf16) '++UEx+Release-N.N' -> NNN`<br>⚠ **不要用 DumperTest**：實測它停在 `PE VERSIONINFO -> UE 5.4 -> 504`，結構上進不了 tier ladder |
 
 ### ⬜ AF6 / AE8 —— 兩個順手檢查：拒絕要出聲、被拒的掃描不計數
 

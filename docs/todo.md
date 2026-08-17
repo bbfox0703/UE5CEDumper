@@ -1972,6 +1972,26 @@ demonstration. Anything that does change is a finding.*
 3. **⚠ REGRESSION — a Tier 1 game is untouched.** G8/G9 only touch Tier 2/3, and Tier 1 returns
    first on nearly every real title. Confirm `DetectVersion: Tier 1 (ascii|utf16) …` still appears
    and still names the same version.
+   **⬜ STILL OPEN, and `[G89-PIPE-2026-08-17]` measured WHY DumperTest cannot serve it.** A cold scan
+   was forced (entry `6A7EA60310F17000` deleted, game relaunched, DLL injected) and `DetectVersion`
+   genuinely ran — but it stopped two lines in:
+   `DetectVersion: Attempting to detect UE version...` → `DetectVersion: PE VERSIONINFO -> UE 5.4 ->
+   504`. **DumperTest has intact PE VERSIONINFO, so it short-circuits before the tier ladder is
+   reached** — exactly what G11 step 3's ⚠ predicts. This step needs a **version-resource-stripped**
+   title; **Elliot** is the one on this machine. Do not retry it on the sample.
+
+**Step 1 additionally re-confirmed `[G89-PIPE-2026-08-17]`, and more strongly than the step asks.**
+Rather than comparing across a scan, the cached entry was **deleted outright** and a cold re-detect
+reproduced every value: `ueVersion` 504, `versionDetected` true, `lowConfidence` false,
+`versionDetectRev` 5 — all identical to the recorded before-state. `scanCount` reset 3 → 1, which is
+expected when the entry is removed. The two other DumperTest entries were untouched and also compared
+identical across the session.
+
+*Incidental, not a finding:* the cold scan's winning GObjects pattern was `GOBJ_ES53_1`, where the
+hinted run earlier the same session reported `GOBJ_GH_4` (hits=99). A hint short-circuits the sweep,
+so cold and hinted runs legitimately crown different patterns; both resolved in-module and both
+worked. Worth knowing before anyone diffs pattern ids across a hint boundary and calls it a
+regression.
 4. **G11 context — do not misread a pass here.** Tier 2 has never fired on any binary we own (the
    trailing-dot defect), so a green result on steps 1–3 says these fixes did no harm; it says
    **nothing** about Tier 2 working. Do not close G11 on the strength of this batch.
