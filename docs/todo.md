@@ -1544,10 +1544,40 @@ is **not** in the engine's array order.
 
 -----
 
-### ⬜ NEW 2026-08-17 — AA38: a GWorld must not be reported on a process with no object pool (build 3245)
+### ✅ VERIFIED 2026-08-17 `[AA38-PYTHON-2026-08-17]` — AA38: a GWorld must not be reported on a process with no object pool (build 3245)
 
-*Needs **no game** — the two reproducing samples are `python.exe` and a launcher shim, both already
-in the local log corpus. This is a first-tier check.*
+**Steps 1, 2, 3 and 5 PASS. Step 4 NOT TESTED** (no modular-build title was scanned).
+
+Run on build **1.0.0.3262** (`05a9af58-dirty`), confirmed from the injected DLL's own
+`Logger started` line rather than assumed — `dist/build_number.txt` agrees, so §2.6's stale-proxy
+trap is excluded. Neither the sleeper nor DumperTest carries a proxy, so the injection genuinely
+scanned.
+
+* **5 (done first, or the rest proves nothing).** Deleted `67F515A70001A000` from
+  `UE5CEDumper.MSI-NB.json` — it cached `gWorld: aob/GWLD_V3` with `gObjects`/`gNames`
+  `not_found`, i.e. exactly the hint that would let the run resolve MAIN-module *and be accepted by
+  design*. File backed up, edited by a `json` round-trip; the Solarpunk and DumperTest control
+  entries were left intact and re-checked afterwards. Step 1 was therefore a cold scan.
+* **1 — PASS.** `python.exe` sleeper, PID 26292:
+  `FindAll: Complete — GObjects=0x0 (not_found), GNames=0x0 (not_found), GWorld=0x0 (not_found)`.
+  **The before/after pair is from the same host**: the archived 2026-08-15 runs of this same
+  `python.exe` recorded `GWorld=0x7FFB4595D5A8 (aob)` alongside `GObjects=0x0` — the defect itself.
+* **2 — PASS, and it is the *unanchored* wording**, which is the half that matters:
+  `[GWorld] GWLD_V3: REFUSED 7 match(es) resolving to 0x7FFF47461760 in 'atcuf64.dll' — GObjects
+  never validated this run, so nothing has confirmed this process is the UE process; a match in an
+  arbitrary loaded module is not admissible`. The module is named, and this is the branch that
+  asserts only what the run established — not the monolithic sibling, which would have claimed more.
+* **3 — PASS.** Non-regression on DumperTest-Shipping (PID 38764), whose hint entry
+  `E1AAB613081BC000` was left in place: all three resolve by `aob` and the winners are
+  **`GOBJ_V13` / `GNAM_V8` / `GWLD_TQ_1`** — identical to the cached ids. Addresses differ from the
+  prior run (ASLR), which is why the comparison is on pattern id + method, as this row instructs.
+* **4 — NOT TESTED.** Needs a modular-build title (GNames in `CoreUObject.dll`). Satisfactory is
+  installed and is the shaped candidate, but it was not scanned; do not read the ✅ as covering
+  `AnchorState::ForeignDll`.
+
+⚠ The second reproducing sample (the Solarpunk launcher shim, `C9E9551B0003D000`) was **not** run —
+one sample plus the reverse control was judged sufficient. Its hint entry is untouched if anyone
+wants it.
 
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|

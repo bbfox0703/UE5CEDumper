@@ -49,21 +49,11 @@
 
 -----
 
-## 第 0 步 — 不用開遊戲
-
-只看 log／跑工具就能結案。從這裡開始。
-
-### ⬜ AA38 —— 沒有物件池的行程不得回報 GWorld
-
-*build 3245 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 注入 `python.exe`（或任一小型非 UE 執行檔），等掃描跑完，看 `FindAll: Complete` | `GObjects=0x0` 而且 `GWorld=0x0` |
-| 2 | grep `scan-0.log` 的字串 `GObjects never validated this run` | REFUSED 那行出現並指名模組<br>⚠ 訊息必須是「未錨定」那一版；印成舊的 monolithic 版就是分支走錯 |
-| 3 | 反向對照：對一款三個指標都正常解出的遊戲（DSClient / TQ2 / Elliot）重掃 | 勝出的 pattern id 與 method 跟現有 `scan-0.log` 相同<br>⚠ 比 pattern id 和 method，不要比位址 —— 位址每次啟動都會變 |
-| 4 | 反向對照（模組化建置）：若手上有 GNames 在 `CoreUObject.dll` 的遊戲，重掃一次 | GNames 仍然從 DLL 解得出來 |
-| 5 | 做第 1 步前先清掉 `python.exe` 那個 PE hash 的 hint 快取 | 該次為 cold scan<br>⚠ 帶著 `GWLD_V3` 的 hint 會解到主模組並被規則正常接受，那樣什麼都證明不了 |
+> ## ✅ 第 0 步 已全部完成 (2026-08-17)
+>
+> `U1/M1/M3`、`D1/D3`、`AA38` 三項都已結案並 commit，證據在
+> [todo.md](todo.md)（grep 項目編號）。**不用開遊戲**的項目目前歸零 ——
+> 現在最便宜的一批是第 1 步。
 
 -----
 
