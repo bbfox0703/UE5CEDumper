@@ -22,6 +22,61 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - U5: the class-walk cache is bounded, and "eviction is illegal" was half wrong (build 3218)
+
+**Audit #5 U5 (MED) closed — Tier 0 + Tier 1.** The headline is not the bound; it is that the reason
+this was refused four times does not hold for half the memory.
+
+The register said, repeatedly, that eviction is **illegal** until `WalkClassEx` stops returning
+`const ClassInfo&`, and that the real item is a return-type refactor across 25 call sites. That is
+true of the **enriched** memo. It is **false of the plain `s_walkClassCache`**: `WalkClass` returns
+`ClassInfo` **by value**, and all three touch points copy under the mutex — so eviction there cannot
+invalidate anything a caller holds. **Bounding it was legal the whole time, with zero call-site
+change.** Half the reclaimable bytes were sitting behind a blanket claim that covered both maps.
+
+The supporting numbers were reproduced from the maintainer's own `walk-0.log`, not asserted: 10,046
+distinct classes, 10,198 walks, 0 refusals.
+
+**Tier 0 first, because it is what makes Tier 1 measurable.** `get_diagnostics` gains `class_cache`
+(entries / max_entries / fields / approx_bytes) plus a pure header-inline
+`Ubel::EstimateClassInfoBytes`. That replaces one game's log extrapolation with a per-game number.
+
+**Tier 1** is an LRU on the plain cache with touch-on-hit at **both** lookups. The super-chain site is
+the load-bearing half and is easy to miss: a base class is reused by every subclass, so the chain
+walk **is** a use — without touching there, `Object`/`Actor` age out despite being the hottest
+entries in the map.
+
+Cap **2048, not the 512 first proposed.** 512 came from "~50× the deepest super chain", which is the
+wrong denominator — the working set is the classes touched in one scan pass. The test asserts the cap
+is neither 512 nor ≥ the reference working set, because that constant is the one most likely to be
+re-tuned later off the wrong figure. Tune it with the Tier-0 counters, **never** with the 0.038 ms
+average walk time: that average is dominated by cache HITS and says nothing about an eviction.
+
+⛔ **Four things deliberately not done**, recorded so none reads as an oversight:
+
+1. **Tier 2** (shrinking `FieldInfo`) — 197-419 mechanical edits across three files with no coverage,
+   and its proposed handle cannot have both an implicit `const std::string&` conversion and a sole
+   `operator==`. Its own finding if ever pursued.
+2. **Publishing each super the chain loop walks.** The clean implementation is recursion through
+   `WalkClass`, i.e. restructuring the B10 hot path; publishing a *partial* `ClassInfo` instead would
+   be returned verbatim by a later lookup, which is a correctness regression rather than a cheaper
+   version. And the cliff it defends against is already unreachable — touch-on-hit at the super site
+   refreshes bases on every subclass walk, so they cannot go LRU-cold.
+3. **"Stop publishing when the call came from `WalkClassEx`"** — same bytes, but it kills the B10
+   super-chain reuse.
+4. **An append-only arena as a BOUNDING measure** — it bounds nothing by construction. Fine as
+   compaction, which is a different question.
+
+Two follow-ups filed rather than folded in: **U18** (four `// cached — just hash lookup` comments
+that are wrong — a hit is a hash lookup *plus a deep copy of the flattened chain*, and three of them
+sit inside per-value loops) and **A10**, already open (`s_classContainerCache` is the same shape and
+still blocked by a by-reference return, so whatever is decided here governs it).
+
+4013 passed / 0 failed. Negative controls: dropping the estimator's fields term fails exactly the two
+field-scaling assertions; restoring cap 512 fails exactly the two cap assertions.
+
+-----
+
 ## 2026-08-17 - AD3: a zero-hit hint erased the pattern before the pass that could find it (build 3215)
 
 **Audit #5 AD3 closed (MED→LOW)**, and it filed **AA38** on the way out.
