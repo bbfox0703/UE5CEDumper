@@ -2738,6 +2738,25 @@ each has a *visible* pass/fail, and four of them only ever show up when somethin
    amber half still has no host** — it needs a title whose offset detection *partially* fails, and
    screening for one is a single `get_offsets` call per title, so fold it into any future sweep rather
    than launching for it.
+> ### ✅ V7 · AF6 PASS 2026-08-17 `[GRP4-UI-2026-08-17]`
+>
+> **V7 — the salmon line appears, forced the way the plan prescribes.** Live Walker on GWorld
+> (`UWorld ThirdPersonMap`), then the **game process was suspended** from Python (`NtSuspendProcess`)
+> rather than an actor destroyed — suspending leaves the object graph intact and stops only the DLL
+> answering, which is precisely the "refresh could not complete" case. Pressing **Refresh** produced,
+> under the status line and in salmon:
+> ```
+> Refresh timed out after 10s — the target object may have been destroyed in-game.
+> ```
+> Ten-second deadline, visible failure, and the grid kept its previous contents rather than blanking.
+> The process was resumed immediately afterwards. Before this fix a dead refresh looked exactly like a
+> live one.
+>
+> **AF6 — PASS, on the evidence Y9 already produced.** Its ask is "a huge integer into Force → an
+> explicit refusal *naming the substitute*, not a silent nothing", and `9999` into Force on a
+> `ByteProperty` answers **`uint8 holds 0 to 255 — 9999 would be written as 15`**. The substitute is
+> named and the value is not written. No separate run needed.
+
 6. **V7 — failures are visible.** Live Walker an object, then destroy/unload it in-game and press
    Refresh. Expect the salmon error line under the status line (10 s timeout). Before this fix a
    dead refresh looked exactly like a live one.
