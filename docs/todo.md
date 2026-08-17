@@ -2766,10 +2766,12 @@ Both are derived from the same two sources (`vendor/RE-UE4SS/.../Generator.cpp`,
    drops every `*_C`) is **still open**, so a BP class legitimately will not be there yet — confirm
    that is the reason rather than a parse failure.
 
-### 🟡 PARTIAL 2026-08-17 `[W23-PIPE-2026-08-17]` — SDK header layout: inherited-property boundary + packed bitfields (audit #5 W2/W3, build 2842)
+### ✅ CLOSED 2026-08-17 `[W23-PIPE-2026-08-17]` + `[SDKHDR-UI-2026-08-17]` — SDK header layout: inherited-property boundary + packed bitfields (audit #5 W2/W3, build 2842)
 
-**The headless half — the boundary value itself — PASSES all three checks. The UI half is NOT run**
-(see below). DumperTest Development, build **1.0.0.3262**, via `tools/verify/pipe_client.py`.
+**Both halves now pass — the headless boundary value AND the emitted header.** DumperTest
+Development, build **1.0.0.3262**, headless via `tools/verify/pipe_client.py` and then through the
+real UI. ⛔ **The export also surfaced a separate, unrelated defect that makes the header
+uncompilable — see the block after the UI half. That one is still open.**
 
 1. ✅ `walk_class` on `DumperTestActor` (`//Script/DumperTest/DumperTestActor`) reports
    `super_props_size: 672` against `props_size: 1760` — non-zero and smaller, as required.
@@ -2787,12 +2789,65 @@ block is present in the packed form the header generator has to handle — `bNet
 `bOnlyRelevantToOwner`/`bAlwaysRelevant`/… all at **offset 88** with `bool_mask` 1/4/8/16/…, and the
 sample's own `bFlagA`/`bFlagB`/`bFlagC` at **1648** with masks 1/2/4 plus `bPlainBool` at 1649.
 
-⚠ **The UI half is NOT verified and this must not be read as covering it.** Exporting the SDK header
-and checking the struct opens at the super's size, declares none of the base's properties, and emits
-`uint8_t bX : 1` runs whose byte count matches the gap — all of that needs UE5DumpUI, which
-**cannot currently be granted to computer-use** (it is a loose exe with no installer registration;
-see `docs/auto-verification-session-plan.md` §1). The emitters are unit-covered; what stays unproven
-is the emitters running against this live boundary value.
+### ✅ UI HALF NOW CLOSED 2026-08-17 `[SDKHDR-UI-2026-08-17]` — all three checks pass
+
+UE5DumpUI **is** grantable once the shortcut lives in the all-users Start Menu (see
+`docs/auto-verification-session-plan.md` §1), so the export was run for real: DumperTest Development
+injected via the panel's own **Inject into running game…**, `Connected — UE504 (25179 objects)`,
+`v1.0.0.3262 DLL 3262` on screen, then **Export → SDK Header (.h)** → 3.48 MB / 75,342 lines.
+
+```cpp
+struct DumperTestActor : public Actor
+{
+    FText Text_Even2_OneNull; // 0x02A0 (0x0010) TextProperty      <- FIRST member
+    ...
+    uint8_t bFlagA : 1; // 0x0670 (0x0001) BoolProperty [Mask: 0x01]
+    uint8_t bFlagB : 1; // 0x0670 (0x0001) BoolProperty [Mask: 0x02]
+    uint8_t bFlagC : 1; // 0x0670 (0x0001) BoolProperty [Mask: 0x04]
+    bool bPlainBool;    // 0x0671 (0x0001) BoolProperty
+}; // Size: 0x06E0
+```
+
+1. ✅ **Opens at the super's size.** The first member sits at **0x02A0 = 672** — the exact
+   `super_props_size` the headless half measured — with no filler ahead of it.
+2. ✅ **Declares none of the base's properties.** Zero `AActor` members in the block: no
+   `PrimaryActorTick`, no `bNetTemporary`/`bOnlyRelevantToOwner`/`bAlwaysRelevant`, no
+   `RootComponent`. All of those **are** in the `walk_class` reply this header was built from
+   (`PrimaryActorTick` at 40, the replication bools at 88), so the filter demonstrably ran on data
+   that contained them — an absence with a witness, not a bare absence.
+3. ✅ **Bitfield runs match the gap.** `bFlagA/B/C` all at **0x0670** with masks 1/2/4, and the next
+   member starts at **0x0671** — the run consumed exactly one byte. `bPlainBool` is emitted as a full
+   `bool`, correctly *not* as a bitfield.
+
+`Size: 0x06E0` = **1760** = the headless `props_size`, which is a fourth cross-check for free.
+
+### ⛔ NEW DEFECT found by this export — the header does not COMPILE
+
+*Not what the batch was looking for, and worth more than the step that surfaced it.*
+
+`OptionalProperty` and any unresolved `StructProperty` are emitted with the array extent **before the
+identifier**, which is not valid C++:
+
+```cpp
+uint8_t[0x40] CellBounds;   // 0x0088 (0x0040) OptionalProperty   <- syntax error
+uint8_t[0x8]  Opt_Int_Set;  // 0x0608 (0x0008) OptionalProperty
+```
+
+Measured over the whole 75,342-line export: **5 malformed declarations, every one an
+`OptionalProperty`**, against **7,543 well-formed** array declarations (`uint8_t Pad_0000[0x0028];`)
+— so the padding emitter is right and only these two fallbacks are wrong.
+
+* Cause: [SdkExportService.cs:273](../ui/UE5DumpUI/Services/SdkExportService.cs) (`_ =>
+  $"uint8_t[0x{size:X}]"`, where `OptionalProperty` lands) and
+  [SdkExportService.cs:258](../ui/UE5DumpUI/Services/SdkExportService.cs) (`StructProperty` with no
+  resolved struct type). Both bake the extent into the **type** string, which the field writer then
+  emits as `{type} {name};`.
+* Fix shape: return the element type and an array suffix separately, and place `[0xN]` **after** the
+  identifier — exactly what the padding path already does.
+* ⚠ **This is not sample-only.** `CellBounds` is an engine (World Partition) property, so any real
+  UE5 title with a `TOptional` UPROPERTY exports a header that cannot be compiled.
+* Why no test caught it: the emitters are unit-covered, but evidently not over a `TOptional` field —
+  and a header is only *read*, never compiled, in any existing check.
 
 Both fixes are unit-verified end-to-end against the real emitters, with separate negative controls.
 What no unit test can cover is the **boundary value itself**: `super_props_size` is a new
@@ -3221,6 +3276,38 @@ build 3262, over the pipe. Effort **M** · Risk med.
 > ⚠ **Step 4 is NOT verified.** The `Leaves/slot` clamp (8–4096) is a client-side UI control and
 > UE5DumpUI cannot currently be granted to computer-use. Its wire half does hold: none of these
 > requests carried `per_slot_cap`, matching "absent unless the user moves the control".
+>
+> ### ✅ Step 4 SETTLED 2026-08-17 `[D2-UI-2026-08-17]` — but its PREMISE was wrong
+>
+> **The control is a `ComboBox`, not a NumericUpDown**
+> ([ValueSearchPanel.axaml:550](../ui/UE5DumpUI/Views/ValueSearchPanel.axaml)), bound to
+> `PerSlotCapChoices` — the ten powers of two from 8 to 4096
+> ([ValueSearchViewModel.cs:79](../ui/UE5DumpUI/ViewModels/ValueSearchViewModel.cs)). **So an
+> out-of-range value is unreachable from the UI and there is no clamp to test**; the `if (value <
+> Min)` guard at `ValueSearchViewModel.cs:89-90` is a defensive backstop the interface cannot
+> exercise. Confirmed by stepping the control: from `16`, four Downs lands on `256`
+> (16→32→64→128→256), i.e. the enumeration is exactly as built. **Fix the step's wording, not the
+> code.**
+>
+> **What the step should be checking, and it PASSES.** With `Leaves/slot` moved to **16**, a Group
+> First Scan on DumperTest (`424242` + `100`) put it on the wire, and the *DLL's own* `pipe-0.log`
+> recorded the request verbatim:
+> ```json
+> {"cmd":"begin_group_scan", … ,"deadline_ms":25000,"auto_skip_noise":true,"per_slot_cap":16,"id":2}
+> ```
+> At the 256 default it is omitted ([DumpService.cs:2244](../ui/UE5DumpUI/Services/DumpService.cs):
+> `if (perSlotCap != Constants.GroupPerSlotCap)`), which is what the headless run above observed from
+> the other side. **Both directions now have evidence.**
+>
+> ⭐ **The incidental result is the valuable one: a known AOT hazard does NOT bite here.** CLAUDE.md
+> lists *"`ComboBox.SelectedItem` bound to a boxed value"* among the patterns that compile and run
+> untrimmed and fail **only** after trimming. This control is exactly that —
+> `SelectedItem="{Binding GroupPerSlotCap}"` over an `int` — and it was driven **on the AOT-trimmed
+> `dist` binary** (256 → 16 → 256, selection honoured, value reaching the wire). One instance of the
+> hazard class is therefore live-clear on 3262.
+>
+> *Also confirmed in passing:* the `(+N)` `match_count` annotation renders — both result rows read
+> `FrozenInt=424242, NetUpdateFrequency=100 (+2)` / `(+3)`. Scan cost `83 ms` over 1,815 objects.
 >
 > ⚠ **Only the first 5 candidates are logged**, by design (`[SCAN:grp]` debug, off the hot path), and
 > only DROPPED ones appeared — the two survivors produced no `KEPT` line. Do not read the absence of
