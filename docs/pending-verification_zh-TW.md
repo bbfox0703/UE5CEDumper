@@ -53,19 +53,6 @@
 
 只看 log／跑工具就能結案。從這裡開始。
 
-### ⬜ D1 / D3 —— DumperTest Development 封包指標與 stride 健檢
-
-*build 2661 / 2673 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 開 %LOCALAPPDATA%/UE5CEDumper/Logs/DumperTest/，grep offsets-*.log 的字串 FUObjectItem size | FUObjectItem size detected as 32 bytes，括號內為 200 items with valid names, 200 total valid, 0 bad<br>⚠ 資料夾要有 build ≥2673 之後的執行紀錄；寫成 tentatively set to、或 validated 數只有兩位數即為失敗，不可當通過 |
-| 2 | grep init-*.log 的字串 Name sanity | 10/10 objects resolved<br>⚠ 5/10（只有偶數 index 解得出來）= stride 被判成一半 |
-| 3 | grep offsets-*.log 的字串 Module anchor | Module anchor set to 'DumperTest.exe' |
-| 4 | grep offsets-*.log 的 [GNames]，看最後 validated 的位址 | 位址與 GObjects 同一個 0x7FF6… 模組區間，不得落在 EOSSDK-Win64-Shipping.dll<br>⚠ 若只看到 REFUSED … EOSSDK 而完全沒有任何 GNames validated，那是 AOB 覆蓋不足，不是排序規則問題 |
-| 5 | grep DynOff 摘要的 validated=，以及 GWorld 相關警告 | validated=yes（不是 NO (DEFAULTS)），且沒有 GWorld does not deref to a UWorld |
-| 6 | 開 UI Object Tree 看標題列的 named 比例 | 接近 100% named，不是 50.0% |
-
 ### ⬜ AA38 —— 沒有物件池的行程不得回報 GWorld
 
 *build 3245 · 優先度 **高***

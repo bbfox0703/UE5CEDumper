@@ -2818,6 +2818,29 @@ measurements taken on this config are measuring the stride, not the matcher.
 > **Nobody had to re-run anything** — the ⬜ outlived its own answer by a day because the check was
 > filed as "re-run the Development package" rather than as a grep against logs the package had
 > already written. Where a marker is passive, state the grep, not the run.
+>
+> ### ✅ RE-CONFIRMED ON THE CURRENT PACKAGE `[DUMPERTEST-LOG-2026-08-17]`
+>
+> The evidence above is from the package built **2026-08-05**, and the packages were **rebuilt
+> 2026-08-14** to add the audit-#5 containers — so it no longer described the binary on disk. Re-run
+> as greps against `Logs\DumperTest\`, all five log criteria still hold on the 2026-08-14 build:
+>
+> * `FUObjectItem size detected as 32 bytes (200 items with valid names, 200 total valid, 0 bad)` —
+>   `detected as`, not `tentatively set to`; 200/200 against a 200 budget, 0 bad.
+> * `UE5_Init: Name sanity: 10/10 objects resolved` — not the 5/10 that means a halved stride.
+> * `[SCAN:GObj] Module anchor set to 'DumperTest.exe'`.
+> * **D1 specifically:** all **15** `REFUSED` lines name `EOSSDK-Win64-Shipping.dll`, and GNames
+>   still validates at `0x7FF63CD568C0` — the same `0x7FF63C…` image as GObjects at `0x7FF63CE43620`.
+>   The anchor rule rejected the decoys *without* costing the real answer, which is the pairing that
+>   makes this evidence rather than either half alone. One run resolved it by `aob` and another by
+>   `pointer_scan`; both in-module.
+> * `[SUMMARY] DynOff: CPN=no FProp=yes TagFFV=yes Outer=+0x20 validated=yes`, and **zero**
+>   `does not deref to a UWorld` in the whole folder.
+>
+> ⚠ **Still not directly observed: the Object Tree header ratio.** It is closed above by *inference*
+> from D2's group scan, and the on-screen string cannot be substituted by the `ui-view` log line —
+> `ObjectTreeViewModel` computes the header from a different denominator than the log. Left as-is
+> rather than re-opened, but it has never been read off the screen.
 
 
 Both came out of the config-only A/B (**same source, Shipping vs Development**) that this file has
