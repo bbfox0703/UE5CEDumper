@@ -119,26 +119,32 @@ Not needed: browsers (read-only tier), terminals/IDEs (all shell work goes throu
 
 -----
 
-## 3a. Deployed proxies — **all ten are STALE**. Update them; do not remove them.
+## 3a. Deployed proxies — ✅ all ten refreshed to 3262. **Re-check before the run anyway.**
 
-Measured 2026-08-17 by PE `VERSIONINFO` `ProductName` (the same signal the Proxy Deploy panel uses —
-**not** filename, because `dxgi.dll`/`version.dll` are real system DLL names too):
+⛔ **Do not take this section's numbers on trust.** A Steam update, a "verify integrity", or simply a
+newer `dist` makes them wrong again, and the failure is silent. **Re-run the inventory first** —
+match on PE `VERSIONINFO` `ProductName`, the same signal the Proxy Deploy panel uses, **not** on
+filename (`dxgi.dll` / `version.dll` are real system DLL names too).
 
-| Build | Count | Titles |
+**State as measured and then fixed on 2026-08-17:**
+
+| | Before | After |
 |---|---|---|
-| **3122** | 9 | ES2 · DQ7R · DQ I&II · EVERSPACE · Lushfoil · Manor Lords · OCTOPATH · SEED · Geri (all `version.dll`) |
-| **3161** | 1 | Elliot (`dxgi.dll`) |
-| — | 0 foreign | no third-party wrapper is deployed anywhere |
+| ES2 · DQ7R · DQ I&II · EVERSPACE · Lushfoil · Manor Lords · OCTOPATH · SEED · Geri (`version.dll`) | 3122 | **3262** |
+| Elliot (`dxgi.dll`) | 3161 | **3262** |
+| foreign / third-party wrappers | 0 | 0 |
 
-`dist/proxy` is **3262**. **DumperTest carries no proxy in either config** (verified independently) —
-which is why Groups 1/2/4/5 can inject directly and skip `trigger_scan`. Keep it that way.
+All ten now SHA-match `dist/proxy`, confirmed by a **second, independent** scanner rather than by the
+updater's own success report (working-lessons §1.4). **DumperTest carries no proxy in either
+config** — which is why Groups 1/2/4/5 inject directly and skip `trigger_scan`. Keep it that way.
 
-**Why this matters more than it looks.** A deployed proxy makes a fresh injection a silent no-op:
-`injectDLL` returns `true`, the DLL loads, and `DllMain AutoStart` logs *"pipe already exists … skip"*
-while the **old** proxy keeps serving the pipe (working-lessons §2.6). Eight of GROUP 7's ten titles
-and **Elliot — the host for the whole of GROUP 6** — would therefore answer as build 3122/3161, i.e.
-from before AA38 (3245), A11 (3253) and A12 (3261) existed. The batch would report those fixes
-verified against code that does not contain them.
+**Why this is the first thing to check, every time.** A deployed proxy makes a fresh injection a
+silent no-op: `injectDLL` returns `true`, the DLL loads, and `DllMain AutoStart` logs *"pipe already
+exists … skip"* while the **old** proxy keeps serving the pipe (working-lessons §2.6). Had this gone
+unchecked, eight of GROUP 7's ten titles and **Elliot — the host for the whole of GROUP 6** — would
+have answered as build 3122/3161, i.e. from before AA38 (3245), A11 (3253) and A12 (3261) existed.
+The batch would have reported those three fixes *verified* against code that does not contain them.
+Nothing in the run surfaces that on its own; only the version check does.
 
 **Do not remove them.** Three rows need the proxy path to exist: **B5 (active half)**,
 **`.CT` DLL discovery (b2576)** and **B29**. Proxy mode also *auto-starts the pipe on launch*, which
