@@ -1,0 +1,385 @@
+# Unattended verification session — handoff and run plan
+
+**Written 2026-08-17 · dist build 3262 · 64 checklist rows classified · A=16 · B=35 · C=12 · D=1**
+
+This is the *operational* companion to [todo.md § Pending live-game verification](todo.md) and
+[pending-verification_zh-TW.md](pending-verification_zh-TW.md). Those two own **what** to verify and
+**why**; this file owns **how to run the batch unattended** — what is already staged, what may be
+launched without a human, and what must never be started without one.
+
+> **The register is canonical.** When an item closes, tick it in `todo.md` and delete its section in
+> the zh-TW checklist. Do not record results here.
+
+-----
+
+## 0. Hard operating rules — these bound every group below
+
+1. ⛔ **ONE GAME AT A TIME. Sequential only, never parallel.** This PC over-loads otherwise
+   (maintainer, 2026-08-17). DumperTest counts as a game. A long `build.ps1` or a full scan running
+   *alongside* a game is the same violation.
+2. ⛔ **Kill the game process as soon as the group that needed it is done.** Every group below ends
+   with an explicit kill step. Do not leave a title running "in case a later group wants it" — a
+   later group re-launches it.
+3. **Never launch a second title before the first is confirmed dead.** Poll for process exit; do not
+   assume a close request worked. A Steam title can leave the shipping exe alive after the window
+   closes.
+4. **A "not tested" is a legitimate, required result.** Three rows are *expected* to end that way
+   (U1 step 4, B18, G3). Recording one as PASS is the failure mode this whole register exists to
+   avoid.
+5. **Record every number with its conditions — including absences** (working-lessons §1.6).
+
+-----
+
+## 1. Already staged (done 2026-08-17, do not repeat)
+
+| Thing | State |
+|---|---|
+| `dist/UE5DumpUI.exe` | **57.1 MB Native AOT** — verified by PE: no `hostfxr`/`hostpolicy` import, CLR data-directory 14 = 0, imports are OS + CRT only. (The previous 107 MB self-contained build was **not** trimmed.) |
+| `dist/UE5Dumper.dll` + 4 proxies | Rebuilt in the same `-Mode Publish` run |
+| `dist/build_number.txt` | **3262** |
+| repo `build_number.txt` | **3261** — reverted on purpose (verification-only publish). ⚠ **Compare a DLL's reported `build_number` against 3262**, not against the repo file. |
+| DumperTest packages | `D:\UE_Analyze_Data\For Testing\DumperTest\{Development,Shipping}`, built 2026-08-14. **Current — no repackage needed** (see §2). |
+| Start-menu entries | 7 Steam `.url` created + `DumperTest Development` / `DumperTest Shipping` as real `.lnk` |
+
+**Future builds during a verification session must pass `-NoBumpBuildNumber`.** `build.ps1`
+increments `build_number.txt` on **every** invocation, not only `-Mode Publish`
+([build.ps1:381](../build.ps1)).
+
+### The Start-menu entries, and why they were created before the session
+
+computer-use can only be granted apps that exist in the Start menu **when the MCP server starts**,
+so an entry created mid-session is useless until the next one. Nine of the sixteen installed UE
+titles had no entry, and neither did DumperTest.
+
+The two `DumperTest` entries point at the **inner** executable
+(`…\DumperTest\Binaries\Win64\DumperTest.exe` / `DumperTest-Win64-Shipping.exe`), **not** the
+154 KB launcher shim beside `Windows\`. The grant is enforced against the *foreground process*, and
+the window belongs to the inner exe; a shortcut aimed at the shim would resolve to a name that never
+owns a window.
+
+> ⚠ **UNVERIFIED, and the first action of the next session must settle it.** Steam titles are `.url`
+> and that format is known to be enumerated (`Steam Support Center` is a `.url` and appears in the
+> installed-app list). The two DumperTest `.lnk` files have **not** been confirmed to resolve.
+> **First action: one `request_access` with the whole list in §3, then report which names resolved
+> and which did not.** If DumperTest does not resolve, its pipe-driven work (Groups 1, 2) is
+> unaffected — only the on-screen HUD reads (D2 樣本心跳, B8) lose their route.
+
+The entries were made by two throwaway Python helpers (ctypes → `IShellLinkW`, no PowerShell); the
+`.url` writer supports `--revert`.
+
+-----
+
+## 2. Does DumperTest need modifying? **No — start against the packages already on disk.**
+
+Verified by binary probe of both packaged exes, not inferred from a changelog: all five audit-#5
+properties (`Map_I64ToI32`, `Map_StrToInt`, `Map_IntToVec3f`, `Set_Big`, `Set_Struct`) are present
+as **narrow** strings, i.e. genuinely reflected, while `RawInt`/`RawFloat`/`RawDouble`(`_Ticking`)
+are narrow=0 / utf16=1 — printed by the HUD, **not** reflected, so the Native-C hole test is intact.
+
+`capture_package_identity.py --check` reports `package DRIFT`. That is **bookkeeping, not
+staleness**: the packages were rebuilt 2026-08-14 and `package-identity.json` was last written
+2026-08-12. Re-record it (drop `--check`) rather than repackaging.
+
+**Four rows want a property the sample lacks. None blocks any other row. All four are DEFER.**
+
+| Wanted | Unlocks | Call |
+|---|---|---|
+| A **churn container** — `TArray<FDumperTestStat> Arr_Churn` + `TMap<int32,FDumperTestStat> Map_Churn` + `UFUNCTION`s to grow / remove-at / reserve | **A12** steps 2-4 · **A11** steps 2-5 · **V1a** step 1 · makes M1/M2/M3/A2/U1/V1/V2 step 5 literal | **The only high-value one.** It converts three C_HYBRID rows to fully automatable. Every container today is filled once in `BeginPlay` and never resized. Worth one ~20-min packaging cycle **if this batch will recur** — not before the first run. |
+| `UPROPERTY() FName Name_Slot = FName(TEXT("Slot_7"))` | **U8** only (1 of 4 sub-checks in A5/V6/AE9/U8) | Defer. The sample's only FName UPROPERTYs carry no `Number` component. Huntable in a commercial title instead. |
+| `UPROPERTY() FVector3f Vec3f_Known` | **AB3/AB5** step 5 only | Defer, probably unnecessary — the exe already carries `Vector3f` 90× narrow. Probe with `search_properties` first. |
+| Three `UFUNCTION`s (a `TArray<AActor*>&` out-param, an `FText` param, a hardcoded `-1` return) | would make **AA14–AA20** a repeatable fixture | Defer. That batch runs on Elliot. The sample has **zero** `UFUNCTION`s today. |
+
+**Impossible from the sample, at any price:** **U2** (`WITH_CASE_PRESERVING_NAME` is an engine build
+flag — needs a from-source UE build) and **Y15 step 6** (a 4-byte `UENUM`; Blueprint-exposed enums
+are always `uint8`).
+
+-----
+
+## 3. One `request_access` call — grant all of these up front
+
+The maintainer will not be present, so a mid-run grant request stalls the batch until they return.
+
+**Tools:** `UE5DumpUI` · `Cheat Engine (64-bit)` · `Steam`
+**Sample:** `DumperTest Development` · `DumperTest Shipping`
+
+| Start-menu display name | = | | Start-menu display name | = |
+|---|---|---|---|---|
+| `Titan Quest II` | TQ2 | | `EVERSPACE 2` | ES2 |
+| `冒險家艾略特的千年奇譚` | Elliot | | `EVERSPACE™` | EVERSPACE 1 |
+| `勇者鬥惡龍 VII Reimagined` | DQ7R | | `The Artisan of Glimmith` | Geri |
+| `勇者鬥惡龍I & II HD-2D Remake` | DQ I&II | | `OCTOPATH TRAVELER` | OCTOPATH |
+| `滿意工廠` | Satisfactory | | `Light Maze` | Light Maze |
+| `莊園領主 Manor Lords` | Manor Lords | | `Lushfoil Photography Sim` | Lushfoil |
+| `機動戰士 GUNDAM SEED 激鬥命運 復刻版` | SEED | | `Star Trek Voyager - Across the Unknown` | STVoyager |
+| `DragonSword Awakening` | DSA | | `Solarpunk` | Solarpunk |
+
+⚠ Start-menu names differ from the on-disk folder names (`EVERSPACE 2` vs `EVERSPACE™ 2`).
+Not needed: browsers (read-only tier), terminals/IDEs (all shell work goes through Bash),
+`python.exe` (AA38 launches it headless and never shows it).
+
+-----
+
+## 3a. Deployed proxies — **all ten are STALE**. Update them; do not remove them.
+
+Measured 2026-08-17 by PE `VERSIONINFO` `ProductName` (the same signal the Proxy Deploy panel uses —
+**not** filename, because `dxgi.dll`/`version.dll` are real system DLL names too):
+
+| Build | Count | Titles |
+|---|---|---|
+| **3122** | 9 | ES2 · DQ7R · DQ I&II · EVERSPACE · Lushfoil · Manor Lords · OCTOPATH · SEED · Geri (all `version.dll`) |
+| **3161** | 1 | Elliot (`dxgi.dll`) |
+| — | 0 foreign | no third-party wrapper is deployed anywhere |
+
+`dist/proxy` is **3262**. **DumperTest carries no proxy in either config** (verified independently) —
+which is why Groups 1/2/4/5 can inject directly and skip `trigger_scan`. Keep it that way.
+
+**Why this matters more than it looks.** A deployed proxy makes a fresh injection a silent no-op:
+`injectDLL` returns `true`, the DLL loads, and `DllMain AutoStart` logs *"pipe already exists … skip"*
+while the **old** proxy keeps serving the pipe (working-lessons §2.6). Eight of GROUP 7's ten titles
+and **Elliot — the host for the whole of GROUP 6** — would therefore answer as build 3122/3161, i.e.
+from before AA38 (3245), A11 (3253) and A12 (3261) existed. The batch would report those fixes
+verified against code that does not contain them.
+
+**Do not remove them.** Three rows need the proxy path to exist: **B5 (active half)**,
+**`.CT` DLL discovery (b2576)** and **B29**. Proxy mode also *auto-starts the pipe on launch*, which
+makes GROUP 7's sweep cheaper than injecting — and the "pipe already exists" clash between two
+proxied games cannot arise under §0's one-game-at-a-time rule.
+
+**Do not update them with the panel's own "Update All" button.** That button is **AE4 step 2's
+subject**. A prerequisite performed by the thing under test leaves you half-updated and unable to say
+which half failed. Copy from `dist/proxy` directly, then let AE4 exercise the button separately.
+
+> **Measured, not assumed:** all ten paths — **including ES2 under `C:\Program Files (x86)`** — open
+> `r+b` without elevation, so no UAC prompt is involved. This is narrower than the general rule in
+> §4: *deployment writes* to that tree are fine here; it is `inject-ue.ps1`'s auto-elevation that an
+> unattended run still cannot answer.
+
+**The `build_number` guard stays either way.** A current proxy is not a substitute for reading
+`get_pointers.build_number` and comparing it against 3262, and proxy mode still needs `trigger_scan`
+because `init` never scans.
+
+-----
+
+## 4. Steps that write outside our own files — **AUTHORISED 2026-08-17**, with conditions
+
+Both were raised for review and the maintainer approved both. The conditions below are what makes
+them safe; they are not optional.
+
+### 4.1 Plant a foreign `dxgi.dll` — target: **Light Maze** ✅ authorised
+
+*Used by **AC1** step 1 and **B29** step 3.*
+
+**Target: `D:\SteamLibrary\steamapps\common\Light Maze\LightMaze\Binaries\Win64\dxgi.dll`.**
+Chosen on measurements, not convenience:
+
+- **0.2 GB** — smallest installed UE title by 5×, so a Steam re-download is trivial if it ever comes
+  to that.
+- **It has no `dxgi.dll` and no `version.dll` today** — no proxy of ours, nothing of anyone's. This
+  is the property that matters: **"restore" here means *delete the file we planted*, not overwrite
+  something back.** There is no original to lose, so the destructive case the review flagged cannot
+  arise. (Contrast Elliot, which carries our own `dxgi.dll` — never use it for this.)
+- On `D:\SteamLibrary`, writable without elevation.
+
+Source for the foreign DLL: copy `C:\Windows\System32\winhttp.dll` (read-only use of System32;
+nothing there is modified). Its real `ProductName` is what makes the panel render
+`Other proxy: <name>` — the whole point of the test.
+
+Conditions:
+1. Record the SHA-256 of the planted file, and assert the destination did **not** exist beforehand.
+2. **Never launch Light Maze while the planted DLL is present** — the game would try to load
+   `winhttp.dll` as `dxgi.dll`. AC1 explicitly needs no running game.
+3. ⛔ **Ordering: delete the planted file and assert `dxgi.dll` is absent again, before GROUP 7
+   launches Light Maze.** GROUP 3 (AC1) runs long before GROUP 7, so this is sequencing, not a
+   conflict — but it must be an explicit asserted step, not an assumption.
+4. Fallback if anything is left behind: Steam → Light Maze → Properties → Installed Files → Verify
+   integrity (or reinstall, 0.2 GB).
+
+> Still worth trying first, because it costs nothing: a **synthetic folder** under
+> `D:\SteamLibrary\steamapps\common\` shaped like a game (`<name>\Binaries\Win64\`), the same trick
+> the orphan-scan probe uses. If the Proxy Deploy Steam scan lists it, no real title is touched at
+> all. Fall back to Light Maze only if it does not.
+
+### 4.2 Delete one hint-cache key ✅ authorised
+
+*Used by **AA38** step 5 (the cold-scan precondition).*
+
+Delete key `67F515A70001A000` (python.exe) from
+`%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.MSI-NB.json`. App-generated and regenerable, but the file
+also holds every other game's hints, so:
+
+1. Copy the whole file to the scratchpad first.
+2. Edit with a Python `json` load → `del` → dump round-trip. **Never a text rewrite** — a regex over
+   JSON is how a sibling key gets clipped.
+3. Restore the backup when AA38 is done, or leave the key deleted and let the next scan re-learn it —
+   either is fine, but say which.
+
+### 4.3 Update the ten stale proxies
+
+Covered in §3a. Overwrites our own older DLLs with our own newer ones; reversible by redeploying any
+build. Measured writable without elevation at all ten paths.
+
+**Elevation.** `inject-ue.ps1` auto-elevates via `Start-Process -Verb RunAs` — **a UAC dialog an
+unattended run can never answer**, and computer-use cannot drive elevated windows at all. Prefer
+`D:\SteamLibrary` for anything the batch creates. ⚠ Do **not** generalise this into "C: is
+unwritable": §3a measured every deployed-proxy path, ES2's `C:\Program Files (x86)` one included, as
+writable without elevation. Probe with an `r+b` open before assuming either way.
+
+-----
+
+## 5. Batched run order
+
+Ordered by items closed per environment launch. **Every group ends by killing what it started.**
+
+### ▶ GROUP 0 — no environment · ~50 min · A
+Grep and staging only; closes work *and* stages later groups. Run first.
+`U1/M1/M3` steps 1-3 · `D1/D3` steps 1-5 · `G12(heuristic)` corpus grep · `DSA layout` step 3 ·
+build the pre-fix DLL for `Genau RIP decode` in a **fresh** `git worktree` (⚠ not
+`.claude/worktrees/suspicious-cannon-a8dec8`) with `-NoBumpBuildNumber`.
+Staging steps that touch outside files are in §4 — **ask first**.
+
+### ▶ GROUP 1 — DumperTest-Development, headless pipe · ~5 h · A · closes 12+
+One launch, a Python client on `\\.\pipe\UE5DumpBfx`, no UI. Neither package carries a proxy DLL, so
+`inject-ue.ps1 -ProcessId` scans directly — **no `trigger_scan`**.
+`F9` · `W2/W3` · `D2` · `A3` · `Z1` · `G11` · `G8/G9` · `U3/U17` (1/2/3/5) · `AB3/AB5` (1-3) ·
+`A6` (1/3/5) · `G2` Tier-1 · `G3` partial · `A12` (5-6) · `A11` (6) · `B19`.
+**→ kill DumperTest.**
+
+### ▶ GROUP 2 — headless, non-game hosts · ~2 h · A
+`AA38` (python.exe sleeper; free second sample = the Solarpunk launcher shim; non-regression on
+DumperTest-Shipping — diff **pattern id + method**, never addresses) · `B25` (two synthetic marker
+exes) · `Genau RIP decode` (compare **module-relative RVAs**; ASLR rebases every launch).
+**→ kill each host before starting the next.**
+
+### ▶ GROUP 3 — UE5DumpUI only, no game · ~70 min · B
+`AE4/AE5/AE6/AE7` · `AC1`. AC1's proof is the **unchanged SHA-256**, not a toast; its log line lands
+in `Logs\UE5DumpUI\view-0.log` (the `ProxyDeploy` category falls through to the *view* logger).
+Ends with a full app close + relaunch to check `ForceOverwrite` persisted and
+`AllowForeignOverwrite` did not. **→ close the UI.**
+
+### ▶ GROUP 4 — UE5DumpUI + DumperTest (Dev, then Shipping) · ~5 h · B · closes 10
+`D1/D3` step 6 (the header ratio uses a **different denominator** from the log line — the log cannot
+substitute) · `Y9` · `A5/V6/AE9` · `V7/AF4/AB6` (force V7's failure by **suspending the game
+process** from Python, not by destroying an actor) · `D2(顯示配對)` · `B10` · `AF6/AE8` ·
+`G12(一般分支)` · `Dump Explorer 跨遊戲身分閘` · `Skia ABI` soak · `D2(樣本心跳)` (⚠ do **not** pass
+`-DumperTestIdle`) · `AE2/AE3` (1/2/3/5/6).
+**→ kill DumperTest (both flavours), close the UI.**
+
+### ▶ GROUP 5 — UE5DumpUI + Cheat Engine + DumperTest · ~4.5 h · B · closes 11
+Run `AB1/AB2` **first** — B29 is downstream of the plugin being installed.
+`AB1/AB2` · `B4` · `AA7` · `executeCodeEx 基本路徑` · `U4/U16/U6/F3` · `AA1` (bitfield byte must read
+**0x05 → 0x07**) · `Y15` (skip step 6) · `Y1` · `Fern::Stop / B18` · `B26` (⚠ confirm the AOBMaker
+bridge pipe answers first, or step 1 passes vacuously) · `B5` (.CT half) ·
+`M1/M2/M3/A2/U1/V1/V2` (UI half).
+**→ kill DumperTest, close CE, close the UI.**
+
+### ▶ GROUP 6 — Cheat Engine + Elliot · ~3.5 h · B (+1 C)
+Elliot's 482 MB image is what makes the race windows real; the sample is too small.
+`G10/MA1` · `B5` (B5 half) · `executeCodeEx 5000 ms` (⚠ **not** downstream of the plugin —
+`ue5_dissect.lua` loads into CE's Lua Engine directly) · `AA14–AA20` (⚠ step 5 needs the **game
+thread only** suspended; CE's whole-process pause hits the status-0 branch, not the 0xFF branch
+under test) · `G2` speed-split · `ST1` *(C — §6)*.
+**→ kill Elliot, close CE.**
+
+### ▶ GROUP 7 — Steam sweep, ten never-logged titles · ~90 min · B · advances 4 rows at once
+DQ7R · DQ I&II · EVERSPACE™ · Light Maze · Lushfoil · Manor Lords · OCTOPATH · SEED · STVoyager ·
+Geri.
+⛔ **Strictly one at a time**: launch → dismiss launcher/EULA/splash → inject → one pipe round-trip →
+grep → **kill and confirm dead** → next.
+Pays for `G12(heuristic)` discovery · `U2` CPN screening (`get_offsets`, poll until
+`probe_ran:true`; sweep **all** titles — CPN exists in UE4 too) · `G1/X3` · `U7`.
+Expect null results and record them as "swept N, all false" — that is the honest form.
+
+### ▶ GROUP 8 — TQ2 · ~2 h · B (+1 C)
+`AE10` (a save already exists, so Continue reaches a level) · `X2` (backup host) · `U3/U17` step 4
+(GAS control — a CDO walk, main menu suffices) · `AA12/AA13` *(C)*. **→ kill TQ2.**
+
+### ▶ GROUP 9 — DQ7R · ~2 h · B (+1 C)
+`X2` (primary host) · `G1/X3/U7/AF2` (DumperTest is AF2's `<30`-class control — but as a *separate*
+launch, never concurrent) · `M1–M5 / Solide 256-cap` *(C)*. **→ kill DQ7R.**
+
+### ▶ GROUP 10 — remaining single-title launches · ~2.5 h, one title at a time
+`B8 (deferred half)` — DumperTest-Development with **`-DumperTestIdle`** (already compiled in; the
+`-ExecCmds` cvar route is wrong). Grep **`walk-0.log`**. ⛔ closing the game never tests this. ·
+`DSA layout` (retry loop; only a `…F8B0` anchor hit has evidential value) · `B29` (ES2; needs the
+Group-5 plugin; step 2 needs **no** wrapper — System32's own `dxgi.dll` already exercises the
+not-ours branch) · `b719 / b648 / b636 / b642 / b637+644` steps 2-3 on Geri + ES2.
+
+### ▶ GROUP 11 — human-gated bouts. Schedule when the maintainer is back (§6).
+
+-----
+
+## 6. C_HYBRID — 12 rows, the exact human action and when
+
+| Item | Human action | When |
+|---|---|---|
+| **A12** | Play a game with a growing container until it **reallocates**; remove an entry sitting **before** the matched element; repeat against a TMap-shaped container | Mid-batch ×3. Steps 5-6 already run in Group 1 |
+| **A11** | Same bout: add until growth · remove an earlier index · remove the exact TSet/TMap entry · **append into slack without a realloc** (step 5 — do not skip, it is what catches an over-eager fix) | Mid-batch. Fold into A12's bout |
+| **V1a** | Same bout (step 1) · then judge whether the NumericAll result volume is workable — the checklist states outright there is no mechanical PASS line | Mid-batch + one judgement |
+| **AD4** | Play into combat and **take damage** so the game resets `bCanBeDamaged` while the batch spams ↻ · name a title whose pawn is immune for its own reasons (the "ON (not held)" control) | Naming before · damage mid-batch |
+| **AE2/AE3** | On a streaming title, **travel to another level** so a walked class goes stale, then re-click the same row (step 4 only) | Mid-batch, once |
+| **AA2/AA3** | Reach a world with **many live instances of one class**, then cause churn (kill and let respawn, or cross a streaming boundary) | World before · churn mid-batch. Try scripted long-distance `teleport_relative` first |
+| **AA12/AA13** | Enter gameplay until an instance of the pre-chosen class **spawns**; then confirm the value is genuinely held, not just the record ticked | Mid-batch, once |
+| **ST1** | With one invoke left in the queue, **play normally for a few minutes** — idling at a menu does not substitute, the drain must happen | Stall state before steps 3/4 · gameplay at the end |
+| **M1–M5 / Solide cap** | Load DQ7R into gameplay with real occluders; then **four times, eyes on screen**, toggle See-through off while moving / paused / on a yanked connection / on game close, confirming no actor is left invisible (the DLL's hidden-count is **not** acceptance). Separately get **>256 live instances of one class** | Load before · toggles mid-batch · the >256 hunt before the cap step |
+| **W1/W7** | **Install FModel** (or leave a runnable CUE4Parse `UsmapParser` on disk) and tell the batch its path — no independent parser exists on this machine, and writing one would reproduce the very shared misreading the item exists to rule out | Before the batch |
+| **U2** | **Only if the Group-7 sweep returns all-false**: build UE from source with `WITH_CASE_PRESERVING_NAME=1` — hours, not a packaging cycle | After the sweep reports, never before |
+| **b719 / b648 / b636 / b642 / b637+644** | Play Geri until **NPCs die and respawn** with a Route B freeze running, and change level once; then judge the freeze tick's FPS impact (no threshold exists in the doc) | Mid-batch. Steps 2-3 run in Group 10 |
+
+-----
+
+## 7. D_MANUAL — 1 row
+
+**G3** (Extra Scan → Apply rescan gate). Measured, not assumed: Extra Scan is offered only when
+`IsPointerMissing(GObjects) || GWorldMethod == "not_found"`, and every UE title in the local corpus
+resolves all three. The only two pointer-missing processes are `python.exe` and the Solarpunk shim —
+non-UE, so `apply_rescan` applies nothing, and **after the AA38 fix they report `GWorld=0` too,
+removing them as candidates**. Needs an Avowed-shaped forked-engine title, not installed.
+Group 1 still runs the 10-minute partial as a genuine non-regression, recorded as partial.
+
+-----
+
+## 8. Promoted — rows the docs call untestable that an installed environment satisfies
+
+1. **G11** → DumperTest-Development. Its cached entry is at `versionDetectRev=3` against code rev 5,
+   so it re-detects across both boundaries. Removes the GUI entirely (B → **A**).
+2. **Dump Explorer 跨遊戲身分閘** → DumperTest-Development ↔ **-Shipping**: the gate compares
+   main-module names and the two flavours differ. No second commercial title needed.
+3. **AB3/AB5** → DumperTest-Development *is* a stock UE 5.4 project — LWC 24-byte FVector with a
+   live pawn. Geri (UE4.27) supplies the 12-byte regression half.
+4. **U3/U17** step 4 → **Titan Quest II** (backup Elliot); both carry `GameplayAttributeData` +
+   `AbilitySystemComponent`, and a CDO walk needs no save.
+5. **AE10** → **Titan Quest II**, installed *and* already carrying a save from 2026-08-14.
+6. **B25** → two **synthetic marker exes**. Both branches read only the module's PE VERSIONINFO and
+   two literals. **No game needed.**
+7. **B29** step 2 → **no wrapper install**: every DX12 UE title already has System32's `dxgi.dll`
+   mapped, which is exactly the not-ours branch.
+8. **B8 (deferred half)** → **`-DumperTestIdle`**, already compiled into the packaged Development
+   binary and named for B8 by id in the sample README.
+9. **X2** → **DQ7R** and **TQ2** are installed; the doc's other candidates are not.
+10. **executeCodeEx 5000 ms** → **Elliot** *and* **DSA**, the exact pair the doc names, both
+    installed. It is **not** downstream of the CE-plugin item.
+11. **G1/X3/U7/AF2** → DumperTest is AF2's mandatory `<30`-class control; the four Japanese titles
+    serve U7.
+12. **G12(heuristic)** → ten installed titles have never been logged at all — real sweep headroom.
+13. **DSA layout** step 3 → the corpus grep is runnable **now**, before any launch.
+
+> **Explicitly NOT promoted (refuted).** **U2 → TQ2.** TQ2 is installed but was *measured* non-CPN on
+> 2026-08-14 (`votes standard=20, CPN=0`), and `test-games.md` already carries the note. Do not
+> re-run TQ2 expecting a different answer.
+
+-----
+
+## 9. Traps to encode once in the harness
+
+- **Before believing any pipe reply**, read `get_pointers.build_number` and compare against
+  **`dist/build_number.txt` (3262)** — not the repo's 3261. Stale-proxy trap, working-lessons §2.6.
+- **Proxy mode needs `trigger_scan`**; `init` returns cached values and never scans. Direct
+  `inject-ue.ps1` into either DumperTest package *does* scan (both verified proxy-free).
+- **Check `max_results` / `truncated` / `deadline_hit`** before turning an absence into a claim.
+- **`build.ps1` bumps `build_number.txt` on every invocation.** Pass `-NoBumpBuildNumber`.
+- **Bitdefender ATD**: commit before executing anything newly created; drive all create/delete
+  automation from Python, never a `.ps1` (working-lessons §3.8).
+- **Grep by FORMAT STRING, never line number** — every line cite in the register drifts.
+- **CE's address edit boxes ignore `Ctrl+A`** — use `Home`, `shift+End`, then type.
+- **Screenshots: no `scale` argument.** Scale is clamped but click coordinates are not, so a scaled
+  screenshot puts every click ~25% off — which looks like the app ignoring input.
