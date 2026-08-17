@@ -814,7 +814,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             Breadcrumbs.Clear();
             References.Clear();
             HasReferences = false;
-            await NavigateToAsync(engine.Address, "GameEngine", 0, "GameEngine", isPointer: true);
+            await NavigateToAsync(engine.Address, "GameEngine", 0, "GameEngine", isPointer: true,
+                                  // Re-roots the walker (Breadcrumbs.Clear() above), so there is
+                                  // no parent to be stale against. NOT an oversight.
+                                  expectedParent: null);
 
             var note = engine.GameInstanceOk ? "" : "  (GameInstance null — engine may be mid-boot)";
             StatusText = $"Started from GameEngine ({engine.ClassName}){note}";
@@ -967,6 +970,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ClearStatus();
             IsLoading = true;
 
+            // Capture the parent AT GESTURE TIME, not after the walk. A post-await check
+            // alone only catches "drill first, Back second"; the reverse ordering commits
+            // its damage synchronously before the await ever returns. Audit #5 AE2 paid for
+            // this exact lesson already: "The ticket is claimed at GESTURE time ... Claimed
+            // in the command it would invert the fix."
+            var parentAtGesture = CurrentCrumb;
+
             // Save the clicked field name on the current breadcrumb for scroll restoration on Back
             if (Breadcrumbs.Count > 0)
                 Breadcrumbs[^1].ScrollHintFieldName = field.Name;
@@ -989,7 +999,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (!string.IsNullOrEmpty(field.PtrAddress) && field.PtrAddress != "0x0")
             {
                 // ObjectProperty navigation (pointer dereference)
-                await NavigateToAsync(field.PtrAddress, field.Name, navOffset, field.Name, isPointer: true);
+                await NavigateToAsync(field.PtrAddress, field.Name, navOffset, field.Name, isPointer: true,
+                                      expectedParent: parentAtGesture);
             }
             else if (!string.IsNullOrEmpty(field.StructDataAddr) && field.StructDataAddr != "0x0")
             {
@@ -999,6 +1010,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 var displayName = !string.IsNullOrEmpty(field.StructTypeName)
                     ? $"{field.Name} ({field.StructTypeName})"
                     : field.Name;
+
+                // Same staleness window as the pointer branch above — two awaits happened
+                // between the gesture and this append, and navOffset was computed from the
+                // parent BEFORE them.
+                if (!IsStillOnParent(parentAtGesture))
+                {
+                    StatusText = $"Navigation superseded — '{field.Name}' was discarded (you moved while it loaded).";
+                    _log.Info($"NAV✕Struct {field.Name} discarded: parent changed during the walk");
+                    return;
+                }
 
                 // DataTable row navigation: the uint8* is a pointer that needs dereference,
                 // not an inline struct. Set IsPointerDeref=true for correct CE XML pointer chain.
@@ -1086,6 +1107,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Fetch elements BEFORE adding breadcrumb — if the DLL call fails,
         // we must not leave a stale breadcrumb that causes repeated entries.
         var parentAddr = CurrentAddress;
+        // ...and capture WHICH parent, at gesture time. parentAddr alone is not an
+        // identity: a container drill pushes a crumb without changing CurrentAddress,
+        // so an address-only check lets the very mislabel this guards against through.
+        var parentAtGesture = CurrentCrumb;
         List<ArrayElementValue> elements;
         if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
         {
@@ -1111,7 +1136,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             elements = field.ArrayElements ?? new();
         }
 
-        // Only add breadcrumb after successful element retrieval
+        // Only add breadcrumb after successful element retrieval — and only if the
+        // user is still where they launched this from. parentAddr was captured before
+        // the await above, so BOTH the address and the offset can be stale.
+        if (!IsStillOnParent(parentAtGesture))
+        {
+            StatusText = $"Navigation superseded — '{field.Name}' was discarded (you moved while it loaded).";
+            _log.Info($"NAV✕Array {field.Name} discarded: parent changed during the element fetch");
+            return;
+        }
+
         Breadcrumbs.Add(new BreadcrumbItem
         {
             Address = parentAddr,
@@ -2372,13 +2406,39 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (string.IsNullOrEmpty(CurrentAddress) || CurrentAddress == "0x0") return;
 
+        // Snapshot WHAT this scan is about, before the await. find_refs_to_uobject runs on
+        // the BULK lane (LaneRoutingPipeClient) while walk_instance runs on the interactive
+        // one, with no ordering between them, and the DLL-side scan has a 30-second
+        // deadline — so the user can be somewhere else entirely by the time it lands.
+        // Nothing gates the panel meanwhile: IsLoading is bound only to a ProgressBar's
+        // IsVisible, never to IsEnabled.
+        //
+        // The header must be composed from THIS snapshot, not from live VM state, or it
+        // reads "References to <wherever you are now>" over the rows of the object you
+        // scanned. That is not cosmetic: Open on such a row pre-arms the scroll hint from
+        // the referring field and re-roots the walker, so the user gets a real navigation
+        // into an object that references something else entirely.
+        var scanAddr   = CurrentAddress;
+        var scanName   = CurrentObjectName;
+        var scanCrumb  = CurrentCrumb;
+
         try
         {
             ClearStatus();
             IsLoading = true;
             StatusText = "Searching for references…";
 
-            var result = await _dump.FindReferencesToUObjectAsync(CurrentAddress);
+            var result = await _dump.FindReferencesToUObjectAsync(scanAddr);
+
+            // Address alone is NOT an identity here: a container drill pushes a crumb and
+            // changes CurrentObjectName while leaving CurrentAddress untouched, which is
+            // exactly the "References to Items" mislabel. Compare the crumb by reference.
+            if (CurrentAddress != scanAddr || !ReferenceEquals(CurrentCrumb, scanCrumb))
+            {
+                StatusText = $"Reference scan for {scanName} finished, but you navigated away — results discarded.";
+                _log.Info($"FindReferences: {scanAddr} -> {result.References.Count} matches DISCARDED (walker moved)");
+                return;
+            }
 
             References.Clear();
             foreach (var r in result.References)
@@ -2395,22 +2455,22 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             if (HasReferences)
             {
-                ReferencesHeader = $"References to {CurrentObjectName} ({References.Count})" + scanSuffix;
+                ReferencesHeader = $"References to {scanName} ({References.Count})" + scanSuffix;
                 StatusText = $"Found {References.Count} reference(s)" + scanSuffix;
-                _log.Info($"FindReferences: {CurrentAddress} -> {References.Count} matches{scanSuffix}");
+                _log.Info($"FindReferences: {scanAddr} -> {References.Count} matches{scanSuffix}");
             }
             else
             {
-                ReferencesHeader = $"References to {CurrentObjectName} (none found)" + scanSuffix;
+                ReferencesHeader = $"References to {scanName} (none found)" + scanSuffix;
                 HasReferences = true;  // Show empty panel so user sees scan completed
                 StatusText = "No references found — likely held by a non-reflected pointer (TUniquePtr / raw pointer / non-UObject struct)" + scanSuffix;
-                _log.Info($"FindReferences: {CurrentAddress} -> 0 matches{scanSuffix}");
+                _log.Info($"FindReferences: {scanAddr} -> 0 matches{scanSuffix}");
             }
         }
         catch (Exception ex)
         {
             SetError(ex);
-            _log.Error($"FindReferences failed for {CurrentAddress}", ex);
+            _log.Error($"FindReferences failed for {scanAddr}", ex);
         }
         finally
         {
@@ -2527,7 +2587,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            await NavigateToAsync(normalizedAddr, "Custom", 0, "Custom", isPointer: true);
+            await NavigateToAsync(normalizedAddr, "Custom", 0, "Custom", isPointer: true,
+                                  // Go box / bookmark / cross-tab handoff: re-roots via
+                                  // Breadcrumbs.Clear() above, so no parent is expected.
+                                  expectedParent: null);
             StatusText = ReRootedHint();
         }
         catch (Exception ex)
@@ -5612,10 +5675,45 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         ScrollFieldIntoView?.Invoke(target);
     }
 
-    private async Task NavigateToAsync(string addr, string label, int fieldOffset, string fieldName, bool isPointer)
+    /// <summary>
+    /// The crumb a drill-down gesture was launched FROM, captured at gesture time so a
+    /// post-await append can tell whether the spine it is about to grow is still the one
+    /// the user was looking at. Audit V3/V4.
+    ///
+    /// ⚠ Identity, not <c>Breadcrumbs.Count</c>. Back-then-Forward, and Back-then-a-different-drill,
+    /// both restore the count while changing the parent — a count check passes and the
+    /// corruption lands anyway. Crumbs are re-used BY IDENTITY across Back/Forward
+    /// (LiveWalkerForwardNavTests asserts <c>Assert.Same(leaf, vm.Breadcrumbs[1])</c>), so
+    /// reference equality is exactly the right test.
+    ///
+    /// ⚠ <c>null</c> means "no expectation", and it is a legitimate answer, not a missing one.
+    /// Two of the three <see cref="NavigateToAsync"/> callers re-root the walker with
+    /// <c>Breadcrumbs.Clear()</c> first (Game Engine start, and the Go box / bookmark /
+    /// cross-tab "Open in Live Walker" handoff) — they have no parent to be stale against,
+    /// and making this parameter demand one would silently kill every one of those paths.
+    /// The parameter is required-but-nullable so a new caller has to state which it is.
+    /// </summary>
+    private BreadcrumbItem? CurrentCrumb => Breadcrumbs.Count > 0 ? Breadcrumbs[^1] : null;
+
+    private bool IsStillOnParent(BreadcrumbItem? expectedParent)
+        => expectedParent is null || ReferenceEquals(CurrentCrumb, expectedParent);
+
+    private async Task NavigateToAsync(string addr, string label, int fieldOffset, string fieldName,
+                                       bool isPointer, BreadcrumbItem? expectedParent)
     {
         var result = await _dump.WalkInstanceAsync(addr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
         result = await AutoFillGapsRetryAsync(result, addr);
+
+        // The walk above can take seconds. If the user went Back / Forward / jumped a
+        // breadcrumb meanwhile, appending here grafts this object onto a DIFFERENT
+        // parent, and the resulting crumb's FieldOffset belongs to a spine that no
+        // longer exists — which then ships into CE XML, CSX and a persisted bookmark.
+        if (!IsStillOnParent(expectedParent))
+        {
+            StatusText = $"Navigation superseded — '{fieldName}' was discarded (you moved while it loaded).";
+            _log.Info($"NAV✕ {fieldName} addr={addr} discarded: parent changed during the walk");
+            return;
+        }
 
         var displayName = !string.IsNullOrEmpty(result.Name) ? result.Name : label;
         Breadcrumbs.Add(new BreadcrumbItem

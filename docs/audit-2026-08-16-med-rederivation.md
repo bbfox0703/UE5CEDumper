@@ -28,8 +28,8 @@ was written here.
 | ~~1~~ ✅ **DONE** | ~~**AF3**~~ | **Shipped build 3167.** Closed exactly as predicted — pure C#, 8 new tests, five source mutations each observed to fail, nothing added to the live backlog. Confirmed the entry's own warning: reusing `ResultOf` would have made the tests pass while testing nothing, so a separate `TruncatedResultOf` fixture was mandatory. One defect beyond the write-up: `SetBaseline`'s `GroupBy(...).First().Count` made the captured baseline depend on the Earliest-first **view toggle**, because `ApplyDiffAndFilter` re-sorts `_allEntries` in place. Half 2 (a `sort` param on `pe_profile_get`) deliberately deferred, per this entry's own "do NOT do half 2 alone". |
 | ~~1~~ ✅ **DONE** | ~~**A3**~~ | **Shipped build 3168.** The premise corrections all held; the load-bearing one was the *risk* re-rating, not the mechanism — `expandFields` had no output cap unlike both correct siblings, so the filed one-line erase would have removed the only bound besides `depth<=4`. Shipped as RAII path-scoping + `kMaxScanFieldsPerClass`, pinned header-inline in `dll_helpers_test` (7-failure negative control). ⚠ Live check still owed. |
 | ~~1~~ (half) | ~~**U3**~~ -> **U17** | **Silent-drop half shipped build 3169**; the layout half is now register row `U17` (M/med, still open). The entry's own warning was what mattered: the filed rationale would have deleted a skip that is CORRECT for `FGameplayAttributeData`. |
-| 1 TAKE FIRST - SHIP WITH V4 | **V3** | Same root cause as V4, one method apart. Fixing either alone leaves the identical hole next door. |
-| 5 — SHIP WITH V3 | **V4** | ⚠ **Read `residual_risk` before writing a line.** The obvious fix (a `required` expected-parent parameter) would SILENTLY KILL the Go box, Find Refs and every cross-tab 'Open in Live Walker' handoff — two of `NavigateToAsync`'s three callers `Breadcrumbs.Clear()` first and legitimately have no parent. |
+| ~~1~~ ✅ **DONE** | **V3** | Same root cause as V4, one method apart. Fixing either alone leaves the identical hole next door. |
+| ~~5~~ ✅ **DONE** | **V4** | ⚠ **Read `residual_risk` before writing a line.** The obvious fix (a `required` expected-parent parameter) would SILENTLY KILL the Go box, Find Refs and every cross-tab 'Open in Live Walker' handoff — two of `NavigateToAsync`'s three callers `Breadcrumbs.Clear()` first and legitimately have no parent. |
 
 **Do not batch these into one commit.** Negative-control ONE change at a time — the 2026-08-16
 session's own build-time guard shipped green while checking nothing, and only reverting the thing it
@@ -631,7 +631,12 @@ NOT A RISK BUT MUST SURVIVE INTO THE COMMIT: the fix text's own warning is corre
 
 ---
 
-## V3 — CONFIRMED_BUT_DIFFERENT
+## V3 - CONFIRMED_BUT_DIFFERENT - FIXED build 3170 (2026-08-17)
+
+> **Closed, with V4.** The entry's third premise-correction was the one that mattered: the obvious
+> `QueryAddress != CurrentAddress` one-liner IS broken, and that was confirmed empirically rather
+> than argued - reverting the shipped guard to address-only left every other V3 test green, and
+> only a purpose-built container-drill test caught it. Analysis below preserved verbatim.
 
 ### Premises of the filed finding that are WRONG
 

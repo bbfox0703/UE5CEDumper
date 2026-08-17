@@ -22,6 +22,62 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - V3 + V4: Live Walker wrote post-await state onto whatever the user moved to (build 3170)
+
+**Shipped together because they are one root cause, one method apart.** Both write VM state after a
+long `await` without checking that the state is still the state they started from. Nothing gates the
+panel meanwhile: `IsLoading` is bound only to a `ProgressBar`'s `IsVisible`, never to `IsEnabled`, and
+`find_refs_to_uobject` rides the **bulk** pipe lane while `walk_instance` rides the **interactive**
+one, so there is no ordering between them at all. The DLL-side reference scan has a 30-second
+deadline — that is how wide the window gets.
+
+**V4** — a drill-down appends to `Breadcrumbs` after its walk returns. Go Back meanwhile and the new
+crumb is grafted onto a *different* parent, with a `FieldOffset` describing a spine that no longer
+exists. Not confined to the panel: it ships into CE XML and CSX exports and is **persisted** into
+`bookmarks.<hash>.json`, so it survives a restart.
+
+**V3** — the reference scan refills `References` and composes `ReferencesHeader` from live VM state,
+so A's referrers appear under "References to B". Not cosmetic: `Open` on such a row pre-arms the
+scroll hint from the referring field and re-roots the walker, giving a real navigation into an object
+that references something else entirely.
+
+**The guard is crumb IDENTITY, never `Breadcrumbs.Count`.** Back-then-a-different-drill restores the
+count while changing the parent. That is not a theoretical objection — swapping the shipped guard for
+a count check was **measured to let 2 of the 7 new tests through**.
+
+**Captured at GESTURE time**, not after the await, and threaded into `NavigateToAsync` — audit #5 AE2
+already paid for this exact lesson ("the ticket is claimed at GESTURE time … claimed in the command it
+would invert the fix"). All three post-await `Breadcrumbs.Add` sites are covered (`NavigateToAsync`,
+the `NavigateToFieldAsync` struct branch, `NavigateToArrayContainerAsync`), each degrading with an
+honest `StatusText` rather than a silent `return`.
+
+⚠ **The residual risk was real, and it has its own test.** The expected-parent parameter is
+**required but nullable**. Game Engine start, and the Go box / bookmark / cross-tab "Open in Live
+Walker" handoff, all call `Breadcrumbs.Clear()` first and legitimately have **no** parent — a
+`required` non-null parameter would have silently killed every one of those paths.
+`V4_ReRootingNavigation_HasNoParentAndMustStillWork` exists to stop a future "tighten the guard"
+change from doing it.
+
+**The controls found a hole that review did not.** Reverting V3's guard to the *tempting* one-liner —
+`result.QueryAddress != CurrentAddress`, free because the DLL echoes it and `DumpService` already
+parses it — left **every V3 test green**. A container drill pushes a crumb and changes
+`CurrentObjectName` while leaving `CurrentAddress` untouched, which is the exact "References to Items"
+mislabel. `V3_ContainerDrillDuringTheScan_IsAlsoCaught` was written in response and now fails against
+that variant. Two of the first four mutations were also useless — one did not compile, one was a
+semantic no-op — which is worth recording: **a mutation that does not change behaviour proves
+nothing, and reads exactly like a passing control.**
+
+**Verification.** 246 + 1235 C++ and **3928** C# tests green (+7). Controls: the identity guard
+downgraded to a count check → 2 failures; the `NavigateToAsync` guard neutralised → 2 failures; V3's
+guard downgraded to address-only → 1 failure (the container-drill test). Restored → green.
+
+**Not done, deliberately:** the shared-`IsLoading` flag (two commands, one flag, each clearing it in
+its own `finally`) and the `IsEnabled="{Binding !IsLoading}"` belt on the Back/Forward/Parent buttons.
+Both are named in the finding; neither is the corruption, and folding them in would have made the
+negative controls ambiguous.
+
+-----
+
 ## 2026-08-17 - U3: a struct preview that dropped leading members, silently (build 3169)
 
 **`size > 8` is not evidence of a vtable.** `InterpretValue`'s StructProperty arm skipped the first 8
