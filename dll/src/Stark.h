@@ -91,4 +91,70 @@ uint64_t MsSinceLastHookFire();
 /// Thread-safe.
 bool IsGameThreadResponsive(int32_t thresholdMs = kStallThresholdMs);
 
+// ============================================================
+// Calling ProcessEvent OURSELVES without re-entering our own detour
+// (audit #5 ST1)
+// ============================================================
+//
+// MinHook patches the PROLOGUE of UObject::ProcessEvent. So any caller of ours
+// that resolves the address out of the vtable and calls it lands in
+// HookedProcessEvent -- on whatever thread it happened to be running. That is
+// how a pipe lane or the Mimic polling thread ends up executing the drain, whose
+// only gate is "is the queue non-empty". The requests it then runs are precisely
+// the ones a caller judged UNSAFE off the game thread; that is why they were
+// queued instead of called directly.
+//
+// The reachability is not a tight race. An invoke that times out stays queued
+// with its own owned parameter copy, deliberately, expecting a later drain -- so
+// after one timeout the window is open indefinitely, and the next self-issued
+// direct call executes that abandoned stateful UFunction on the wrong thread.
+//
+// The fix is NOT a thread-identity check. There is no IsInGameThread in this
+// tree and nothing resolves GIsGameThreadId, so any gate would be guessing --
+// and a gate that guesses wrong never drains, which times out every game-thread
+// invoke and is strictly worse than the defect. Instead we do what Grausam
+// already does for its own hooks: call the TRAMPOLINE we are holding, so our
+// calls never enter the detour in the first place.
+
+/// Address MinHook actually patched, or 0 if no hook is installed.
+uintptr_t HookedAddress();
+
+/// @return true when the original-function trampoline is available to call.
+bool HasOriginal();
+
+/// Call the ORIGINAL ProcessEvent through MinHook's trampoline, bypassing our
+/// detour entirely, with the same SEH protection the queued path uses.
+/// Returns 0 on success, -3 if no trampoline, -4 on an SEH exception.
+///
+/// Marks the calling thread as "inside our own PE call" for its duration, so a
+/// nested dispatch that DOES re-enter the detour is recognised as ours.
+int32_t CallOriginalSEH(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
+
+/// True while this thread is inside CallOriginalSEH.
+bool InOwnPeCall();
+
+/// Should a caller that resolved `resolvedPeAddr` out of an instance's vtable
+/// route through the trampoline instead of calling that address directly?
+///
+/// The `resolvedPeAddr == hookedAddr` term is load-bearing, not belt-and-braces:
+/// a class that genuinely OVERRIDES ProcessEvent has a different slot, that slot
+/// was never patched, and calling the trampoline for it would silently run the
+/// BASE implementation instead of the override. When the two differ we fail open
+/// to the caller's own address, which is the correct one.
+inline bool ShouldUseTrampoline(uintptr_t resolvedPeAddr,
+                                uintptr_t hookedAddr,
+                                bool haveOriginal) {
+    return haveOriginal && hookedAddr != 0 && resolvedPeAddr == hookedAddr;
+}
+
+/// Should HookedProcessEvent drain the queue on this entry?
+///
+/// `entryIsOurs` is true when this thread is inside our own CallOriginalSEH --
+/// i.e. the detour was re-entered by a nested dispatch underneath a call WE
+/// issued, which is not a game-thread tick and must not drain. This is the
+/// shipped gate, not a mirror of it: HookedProcessEventBody calls exactly this.
+inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
+    return queueDepth != 0 && !entryIsOurs;
+}
+
 } // namespace Stark

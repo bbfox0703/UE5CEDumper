@@ -1860,10 +1860,16 @@ extern "C" int UE5_GetProcessEventOffset() {
     return s_processEventOffset;
 }
 
-// Direct call entry point — never goes through GameThreadDispatch.
-// Mirrors the fallback path of UE5_CallProcessEvent without the hook
-// check; intended for callers (e.g. Mimic::HandleInvoke) that have
-// independently verified the function is safe to call off-thread.
+// Direct call entry point — bypasses the game-thread QUEUE for callers (e.g.
+// Mimic::HandleInvoke) that have independently verified the function is safe to
+// call off-thread.
+//
+// It used to say "never goes through GameThreadDispatch", and that was FALSE
+// (audit #5 ST1): MinHook patches ProcessEvent's prologue, so calling the
+// address read out of the vtable lands in HookedProcessEvent — on a pipe lane or
+// the Mimic polling thread — and its drain then executed queued requests that
+// were queued precisely because they are NOT safe off-thread. Now true again,
+// because we route through the trampoline below.
 // Sharing the body via a static helper would tangle SEH+C++ object
 // lifetimes; the duplication is small.
 int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
@@ -1878,6 +1884,20 @@ int32_t UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_
 
     uintptr_t peAddr = 0;
     if (!Macht::ReadSafe(vtable + s_processEventOffset, peAddr) || !peAddr) return -3;
+
+    // If this instance's ProcessEvent is the very address MinHook patched, call
+    // the trampoline instead — otherwise we re-enter our own detour off the game
+    // thread and its drain runs the queue. When the addresses DIFFER the class
+    // overrides ProcessEvent, that slot was never patched, and the trampoline
+    // would silently run the base implementation instead of the override — so we
+    // fail open to the resolved address, which is the correct one.
+    if (Stark::ShouldUseTrampoline(peAddr, Stark::HookedAddress(), Stark::HasOriginal())) {
+        LOG_INFO("UE5_CallProcessEventDirect: inst=0x%llX func=0x%llX pe=0x%llX "
+                 "(via trampoline — not re-entering our hook)",
+                 (unsigned long long)instance, (unsigned long long)ufunc,
+                 (unsigned long long)peAddr);
+        return Stark::CallOriginalSEH(instance, ufunc, params);
+    }
 
     typedef void (__fastcall *FnProcessEvent)(void*, void*, void*);
     auto pProcessEvent = reinterpret_cast<FnProcessEvent>(peAddr);

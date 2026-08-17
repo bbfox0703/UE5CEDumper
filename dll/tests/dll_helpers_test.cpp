@@ -38,6 +38,7 @@
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
 #include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
+#include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
 
 #include <Windows.h>
 
@@ -232,6 +233,68 @@ static void Test_Alignment_WeakAndSparseDelegate() {
     // MulticastSparseDelegateProperty: only 1 byte stored on the field.
     EXPECT("SparseDelegate @ 0x5 OK",
            !Scharf::IsAlignmentSuspicious("MulticastSparseDelegateProperty", 0x5, 1, false));
+}
+
+// ----- Stark: not re-entering our own ProcessEvent detour --------------------
+//
+// Audit #5 ST1. MinHook patches UObject::ProcessEvent's PROLOGUE, so a caller of
+// ours that resolves the address out of an instance's vtable and calls it lands
+// in HookedProcessEvent -- on whatever thread it happened to be on. The drain
+// there is gated only on "is the queue non-empty", so a pipe lane or the Mimic
+// polling thread would execute requests that were queued PRECISELY because a
+// caller judged them unsafe off the game thread.
+//
+// It is not a tight race: a timed-out invoke stays queued deliberately, with its
+// own parameter copy, expecting a later drain -- so after one timeout the window
+// is open indefinitely.
+//
+// The repair is not a thread-identity check. Nothing in this tree resolves the
+// game thread id, so any gate would be guessing, and a gate that guesses wrong
+// never drains -- which times out every game-thread invoke and is strictly worse
+// than the defect. We call the trampoline instead, as Grausam already does.
+
+static void Test_Stark_ShouldUseTrampoline() {
+    const uintptr_t kHooked = 0x7FF6'0000'1000ull;
+    const uintptr_t kOther  = 0x7FF6'0000'2000ull;
+
+    // The ordinary case: this instance's PE slot IS the patched address.
+    EXPECT("trampoline when the slot is the patched address",
+           Stark::ShouldUseTrampoline(kHooked, kHooked, true));
+
+    // THE LOAD-BEARING CASE. A class that genuinely OVERRIDES ProcessEvent has a
+    // different slot; that slot was never patched, so calling the trampoline for
+    // it would silently run the BASE implementation instead of the override.
+    // Fail open to the caller's own address.
+    EXPECT("NOT the trampoline when the class overrides ProcessEvent",
+           !Stark::ShouldUseTrampoline(kOther, kHooked, true));
+
+    // No trampoline to call -- hook never installed, or install failed.
+    EXPECT("no trampoline available -> call directly",
+           !Stark::ShouldUseTrampoline(kHooked, kHooked, false));
+
+    // Nothing patched yet: there is no address to match against, and a 0 ==  0
+    // comparison must not read as agreement.
+    EXPECT("nothing hooked -> call directly",
+           !Stark::ShouldUseTrampoline(kHooked, 0, true));
+    EXPECT("nothing hooked, and the resolved address is 0 too",
+           !Stark::ShouldUseTrampoline(0, 0, true));
+}
+
+static void Test_Stark_ShouldDrainQueue() {
+    // The pre-existing fast path: nothing enqueued, nothing to do.
+    EXPECT("empty queue never drains",         !Stark::ShouldDrainQueue(0, false));
+    EXPECT("empty queue never drains (ours)",  !Stark::ShouldDrainQueue(0, true));
+
+    // A genuine game-thread tick with work pending.
+    EXPECT("game entry with work drains",       Stark::ShouldDrainQueue(1, false));
+    EXPECT("game entry with lots of work drains", Stark::ShouldDrainQueue(64, false));
+
+    // THE REGRESSION GUARD. The detour was re-entered by a nested dispatch
+    // underneath a call WE issued -- that is not a game-thread tick, and draining
+    // there runs queued work on our own caller's thread.
+    EXPECT("our own re-entry does NOT drain",  !Stark::ShouldDrainQueue(1, true));
+    EXPECT("our own re-entry does NOT drain, whatever the depth",
+           !Stark::ShouldDrainQueue(64, true));
 }
 
 // ----- Lineal: FUObjectItem SerialNumber offset --------------------------------
@@ -5127,6 +5190,8 @@ int main() {
     RUN(Test_Alignment_UnknownTypesNotValidated);
     RUN(Test_Alignment_WeakAndSparseDelegate);
 
+    RUN(Test_Stark_ShouldUseTrampoline);
+    RUN(Test_Stark_ShouldDrainQueue);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_CommandNumbering);
