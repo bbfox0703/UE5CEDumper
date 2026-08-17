@@ -22,6 +22,53 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - A1: at stride 20 the serial read was ClusterRootIndex (build 3194)
+
+**Audit #5 A1 (MED) closed.** `Aura::GetSerialNumber` computed its offset inline as
+`s_itemSize >= 24 ? 0x10 : 0x0C` — a two-way split covering only strides 16 and 24. The reachable
+set is **{16, 20, 24, 32}**: the auto-probe tries `{16, 24, 32, 20}` and `UE5_InitWithExtendedLayout`
+forces any of `{0x14, 0x18, 0x10, 0x20}`.
+
+Stride 20 is Avowed's packed `FUObjectItem`, whose layout is
+`{Object@+0x00, Flags@+0x08, ClusterRoot@+0x0C, Serial@+0x10}` — from the Ghidra decompilation of
+`AllocateUObjectIndex` recorded in `docs/avowed-gobjects-fix.md`. The old expression returned
+`0x0C` for it, which is **ClusterRootIndex**. `Ubel::ResolveWeakObjectPtr` then runs a bare
+`if (actualSerial != serialNumber) return 0;` — no fallback, no retry, no log — so every weak
+reference resolved to null.
+
+**The question this had to settle before anything moved: is A1 the thrice-refused `SerialNumber`
+witness?** It is not, and the distinction is worth keeping. `working-lessons.md` §4.3 and the
+cluster-③ STOP-BLOCK refuse a **passive observer STORING `(index, serial)`** as a recycle witness,
+because UE zeroes the serial in `FreeUObjectIndex` and allocates it lazily, so most objects carry 0
+for life and a stale `(i, 0)` matches a recycled `(i, 0)`. A1 is UE's own
+`FWeakObjectPtr::SerialNumbersMatch` input, read at the right **address**. Different question — and
+it is the kind of surface similarity that would have got the fix refused on sight.
+
+One filed over-claim corrected: *"silently nulls a whole feature family"* is total only for
+`WeakObjectProperty` and the delegate family (single, multicast, sparse). The Soft and Lazy handlers
+display the asset PATH first and lose only the resolved live object.
+
+**How it became testable.** The rule moved to a pure header-inline
+`Lineal::SerialOffsetForLayout`. No target compiles `Aura.cpp`, but `dll_helpers_test.cpp` already
+includes `Lineal.h` — the MA2 / build-3135 pattern again: *ask what the test file already includes
+before accepting that something cannot be pinned.* `Aura.h`'s declaration comment said "16-byte or
+24-byte" and described the code exactly; comment and bug agreed, which is why neither looked wrong.
+
+**Two things deliberately not done**, on the skeptic's call: deleting `Aura.h`'s 16-byte
+`struct FUObjectItem` (nothing reads `.SerialNumber` off it, but removing an exported accessor is
+scope creep on a one-line correctness fix — its comment was corrected instead), and pinning the
+Packed57 serial offset, which is still *** UNVERIFIED *** and runtime-calibratable. It passes
+through untouched, and there is a test asserting exactly that.
+
+9 assertions across all four classic strides, both UE5.7+ modes, and the calibrated pass-through.
+Negative control: restoring the old expression fails exactly one row — `classic 20 -> 0x10
+(Avowed)`. 3950 passed / 0 failed.
+
+⚠ Live check owed — Avowed, or any forced-stride-20 title, should now resolve weak references and
+delegate targets instead of showing them uniformly null.
+
+-----
+
 ## 2026-08-17 - AD5: an English FText over zeroed heap came back as CJK mojibake (build 3193)
 
 **Audit #5 AD5 (MED) closed.** `DecodeFStringBuffer`'s own "KNOWN RESIDUAL" was real, reachable, and
