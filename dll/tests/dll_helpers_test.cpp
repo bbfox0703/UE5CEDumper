@@ -4695,6 +4695,94 @@ static void Test_Macht_ParsePattern_Nibble() {
 // The picker is reader-templated exactly so it can be tested here with no game.
 // ============================================================
 // ================================================================
+// Ubel::PreviewScalarValue — audit U17 (the layout half of U3)
+//
+// The byte-blind decoder cannot tell 3 doubles from 6 floats, because size does
+// not determine member width and neither does the engine version — one UE5 game
+// holds fields of both. The only thing that settles it is the property's OWN
+// declared width, which is what this reads. Everything below is the case U3's
+// test 6 had to leave asserted-as-broken.
+// ================================================================
+static void Test_Ubel_PreviewScalarValue() {
+    std::printf("Test_Ubel_PreviewScalarValue\n");
+
+    // --- The LWC case, member by member. 8 bytes read as a double, not two floats.
+    {
+        double d = 1234.5;
+        uint8_t b[8]; memcpy(b, &d, 8);
+        EXPECT("DoubleProperty reads all 8 bytes",
+               Ubel::PreviewScalarValue("DoubleProperty", b, 8) == "1234.5");
+        // The SAME bytes as a float are the garbage the old path printed. Asserting
+        // this pins that width comes from the property, never from the buffer.
+        EXPECT("FloatProperty at width 4 is a different, wrong reading",
+               Ubel::PreviewScalarValue("FloatProperty", b, 4) != "1234.5");
+    }
+    {
+        double d = -678.25;
+        uint8_t b[8]; memcpy(b, &d, 8);
+        EXPECT("negative double", Ubel::PreviewScalarValue("DoubleProperty", b, 8) == "-678.25");
+    }
+
+    // --- Float stays float.
+    {
+        float f = 90.0f;
+        uint8_t b[4]; memcpy(b, &f, 4);
+        EXPECT("FloatProperty", Ubel::PreviewScalarValue("FloatProperty", b, 4) == "90");
+    }
+
+    // --- Integers, signed and unsigned, at their real widths. A UInt32 holding
+    //     0xFFFFFFFF must not print as -1: that is the sign-leak family AB4 was.
+    {
+        uint8_t b[8] = {};
+        int32_t i = -42; memcpy(b, &i, 4);
+        EXPECT("IntProperty signed", Ubel::PreviewScalarValue("IntProperty", b, 4) == "-42");
+        uint32_t u = 0xFFFFFFFFu; memcpy(b, &u, 4);
+        EXPECT("UInt32Property is NOT sign-extended",
+               Ubel::PreviewScalarValue("UInt32Property", b, 4) == "4294967295");
+        int64_t i64 = -5000000000LL; memcpy(b, &i64, 8);
+        EXPECT("Int64Property", Ubel::PreviewScalarValue("Int64Property", b, 8) == "-5000000000");
+        int16_t i16 = -300; memcpy(b, &i16, 2);
+        EXPECT("Int16Property", Ubel::PreviewScalarValue("Int16Property", b, 2) == "-300");
+    }
+
+    // --- Bool / byte.
+    {
+        uint8_t b[1] = { 0 };
+        EXPECT("BoolProperty false", Ubel::PreviewScalarValue("BoolProperty", b, 1) == "false");
+        b[0] = 1;
+        EXPECT("BoolProperty true",  Ubel::PreviewScalarValue("BoolProperty", b, 1) == "true");
+        b[0] = 200;
+        EXPECT("ByteProperty",       Ubel::PreviewScalarValue("ByteProperty", b, 1) == "200");
+    }
+
+    // --- Impure types return "" so the caller supplies them. This is the seam that
+    //     keeps the function pure and therefore testable at all.
+    {
+        uint8_t b[16] = {};
+        EXPECT("NameProperty is deferred",   Ubel::PreviewScalarValue("NameProperty", b, 8).empty());
+        EXPECT("ObjectProperty is deferred", Ubel::PreviewScalarValue("ObjectProperty", b, 8).empty());
+        EXPECT("unknown type is deferred",   Ubel::PreviewScalarValue("SomeFutureProperty", b, 8).empty());
+    }
+
+    // --- A width the property does not have must NOT be guessed at.
+    {
+        uint8_t b[8] = {};
+        EXPECT("DoubleProperty at width 4 is refused",
+               Ubel::PreviewScalarValue("DoubleProperty", b, 4).empty());
+        EXPECT("null buffer is refused", Ubel::PreviewScalarValue("FloatProperty", nullptr, 4).empty());
+    }
+
+    // --- FormatPreviewNumber: readable over the human range, %g only outside it.
+    EXPECT("zero",             Ubel::FormatPreviewNumber(0.0) == "0");
+    EXPECT("trailing zeros trimmed", Ubel::FormatPreviewNumber(2245.0) == "2245");
+    EXPECT("one decimal kept", Ubel::FormatPreviewNumber(129.7) == "129.7");
+    EXPECT("no scientific in the human range",
+           Ubel::FormatPreviewNumber(18328.64).find('e') == std::string::npos);
+    EXPECT("scientific past the human range",
+           Ubel::FormatPreviewNumber(1e20).find('e') != std::string::npos);
+}
+
+// ================================================================
 // Ubel::InterpretStructBytes / LooksLikeVtablePointer — audit U3
 //
 // The old branch skipped 8 bytes whenever size > 8, on the theory that structs
@@ -5119,6 +5207,9 @@ int main() {
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
     RUN(Test_FFieldClassName_Probe);
+
+    // Ubel — reflected struct preview: member width comes from the property (U17)
+    RUN(Test_Ubel_PreviewScalarValue);
 
     // Ubel — byte-blind struct preview: gate the vtable skip on evidence (U3)
     RUN(Test_Ubel_InterpretStructBytes);

@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -593,6 +595,61 @@ inline std::vector<Interval> ComputeClassHoles(const ClassInfo& ci,
 // Pure: bytes in, string out. Lives here so dll_helpers_test can pin it — no
 // target compiles Ubel.cpp.
 
+// === Reflected struct preview (audit U17, build 3171) ===
+//
+// The layout half of U3. The byte-blind decoder below cannot tell 3 doubles from
+// 6 floats — Radar.h states the rule: the struct name does not determine the
+// width and neither does the engine version. The only thing that CAN settle it is
+// the reflected field list, and every call site that matters already holds the
+// UScriptStruct*. These two are the pure half of that decode, so the width
+// handling — which is exactly where the LWC bug lives — is unit-pinnable.
+
+/// Format a number for a preview cell. `%g` flips to scientific past a few digits
+/// (18328.64 -> "1.833e+04"), unreadable in a value column; `%f` with trailing
+/// zeros trimmed reads correctly over the whole int32/int64-ish range, falling
+/// back to `%g` only where a wall of digits would be worse.
+inline std::string FormatPreviewNumber(double v) {
+    if (v == 0.0) return "0";
+    double a = (v < 0.0) ? -v : v;
+    char buf[64];
+    if (a >= 1e16 || a < 1e-6) {
+        snprintf(buf, sizeof(buf), "%.6g", v);   // out of human range -> %g
+        return buf;
+    }
+    snprintf(buf, sizeof(buf), "%.4f", v);
+    std::string s(buf);
+    size_t dot = s.find('.');
+    if (dot != std::string::npos) {
+        size_t last = s.find_last_not_of('0');
+        if (last == dot) last--;                 // "2245." -> "2245"
+        s.erase(last + 1);
+    }
+    return s;
+}
+
+/// Decode ONE reflected scalar at `p`, using the property's OWN declared width.
+/// This is the whole point of U17: a DoubleProperty is read as 8 bytes and a
+/// FloatProperty as 4, so an LWC FVector yields its three real components instead
+/// of six float halves, with no guessing anywhere.
+///
+/// Returns "" for properties that need process state (Name / Object / Class) or
+/// are not previewable — the caller supplies those, which is what keeps this pure.
+inline std::string PreviewScalarValue(const std::string& typeName,
+                                      const uint8_t* p, int32_t size) {
+    if (!p || size <= 0) return "";
+    if (typeName == "FloatProperty"  && size == 4) { float  v; memcpy(&v, p, 4); return FormatPreviewNumber(v); }
+    if (typeName == "DoubleProperty" && size == 8) { double v; memcpy(&v, p, 8); return FormatPreviewNumber(v); }
+    if (typeName == "IntProperty"    && size == 4) { int32_t v; memcpy(&v, p, 4); return std::to_string(v); }
+    if (typeName == "UInt32Property" && size == 4) { uint32_t v; memcpy(&v, p, 4); return std::to_string(v); }
+    if (typeName == "Int64Property"  && size == 8) { int64_t v; memcpy(&v, p, 8); return std::to_string(v); }
+    if (typeName == "UInt64Property" && size == 8) { uint64_t v; memcpy(&v, p, 8); return std::to_string(v); }
+    if (typeName == "Int16Property"  && size == 2) { int16_t v; memcpy(&v, p, 2); return std::to_string(v); }
+    if (typeName == "UInt16Property" && size == 2) { uint16_t v; memcpy(&v, p, 2); return std::to_string(v); }
+    if (typeName == "BoolProperty")                 return p[0] ? "true" : "false";
+    if (typeName == "ByteProperty" || typeName == "Int8Property") return std::to_string(p[0]);
+    return "";   // needs process state, or not previewable
+}
+
 /// True when the first 8 bytes look like a real vtable pointer: non-null,
 /// 8-byte aligned, and inside the x64 user-mode canonical range. A float pair
 /// (0x400000003F800000), a double (0x40934A0000000000) and an FLinearColor's
@@ -684,6 +741,15 @@ struct DataTableWalkResult {
 DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset = 0, int32_t limit = 64);
 
 // Interpret raw bytes as a typed value string based on the field type name
+// Decode a struct through its REFLECTED layout — the correct answer, and the one
+// every caller holding a UScriptStruct* should use. Emits "{Name=Value, ...}".
+// Returns "" when nothing is previewable (or, for InterpretStructAt, when the
+// layout cannot be resolved) so the caller can fall back to hex. Audit U17.
+std::string InterpretStructByLayout(const uint8_t* buf, int32_t size,
+                                    const ClassInfo& si, int previewLimit);
+std::string InterpretStructAt(const uint8_t* buf, int32_t size,
+                              uintptr_t structClassAddr, int previewLimit);
+
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size);
 
 // --- Array Element Reading (Phase B) ---

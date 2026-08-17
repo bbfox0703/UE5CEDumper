@@ -1443,6 +1443,23 @@ reports them identical. Nothing has desynced.)*
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### 🔲 U3 + U17 — struct previews: dropped members, then wrong widths (builds 3169, 3171)
+
+*Needs a connected game. See dev-log builds 3169 and 3171. **The decode RULES are unit-pinned
+(35 assertions, four negative controls); the LOOKUP half is not** — resolving a `UScriptStruct*` and
+`WalkClass`-ing it touches target memory, and no target compiles `Ubel.cpp`.*
+
+> **There is a known-good vehicle already on record.** `docs/todo.md` names `Map_IntToVec3f` as the
+> field that reproduced the original `f:[6203.0000]`, so the before/after is one row.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | Live Walker → expand a struct-valued `TMap`/`TSet` element | `{X=…, Y=…, Z=…}`, not `f:[…]` | U17: those callers now use the reflected layout |
+> | 2 | cross-check against `hexValue` on the same row | all components present and correct | the hex always held them; that is how U3 was caught |
+> | 3 | a UE5 **LWC** title (24-byte `FVector`) | three components at real magnitudes | the case the byte-blind path structurally cannot get right |
+> | 4 ⚠ control | any **GAS** title — a `FGameplayAttributeData` preview | still `BaseValue` / `CurrentValue`, no pointer halves | **the regression guard**: GAS really does have a vtable, and "just delete the skip" would show four values here |
+> | 5 | a struct with NO resolvable layout | still `f:[…]` | the byte-blind fallback is retained on purpose, not dead |
+
 ### 🔲 A3 — one FVector per class was ever indexed (build 3168)
 
 *Needs a connected game. See dev-log build 3168. **The guard's CONTRACT is unit-pinned

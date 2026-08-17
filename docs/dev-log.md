@@ -22,6 +22,46 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - U17: the correct struct decoder existed, and only one caller could reach it (build 3171)
+
+**The layout half of U3, and the root cause was one level deeper than filed.** U17 was filed as "the
+byte-blind decoder still reads 4-byte floats, so an LWC `FVector` decodes as six float halves". True —
+but the reason was not that a correct decoder had to be written. **It already existed**, field-driven
+and width-correct, and had done since build ~1200 — *inline inside `WalkInstance` and nowhere else*.
+Every other surface (TMap keys and values, TSet elements, the Property Search preview column,
+DataTable rows) fell through to `InterpretValue("StructProperty", …)` **while already holding the
+`UScriptStruct*` a few lines above its own decode**. Two in-tree comments even name `InterpretValue`
+as the wrong answer.
+
+So the fix is extraction and routing, not new logic:
+
+- **`Ubel::InterpretStructByLayout` / `InterpretStructAt`** — the decoder, lifted out of
+  `WalkInstance` and made callable. `WalkInstance` now calls it too, so the two cannot drift; a second
+  copy is precisely how the report and the reality end up computed by different code paths.
+- **`PreferLayout`** routes the six container call sites: reflected layout when the struct address is
+  in hand, `InterpretValue` only as the fallback for callers that genuinely have no layout.
+- **The width handling is pure and moved to `Ubel.h`** — `PreviewScalarValue` reads each member at the
+  property's OWN declared width, and `FormatPreviewNumber` was **moved** out of `Ubel.cpp` rather than
+  copied. That matters twice: no target compiles `Ubel.cpp`, so this is the only way to pin it; and a
+  copy would have re-created the drift this whole finding is about.
+
+⚠ **The byte-blind path REMAINS, deliberately.** Callers with no `UScriptStruct*` still get
+`f:[…]` from the U3 gate, and U3's test case 6 still asserts its six-float output. That assertion is
+not a leftover — it pins the fallback's behaviour, which is unchanged and still cannot disambiguate
+3 doubles from 6 floats. What changed is that the surfaces that *never needed* the fallback no longer
+take it.
+
+**Verification.** 246 + **1256** C++ assertions (+21) and 3928 C# tests green. Three negative controls,
+each aimed at the width handling because that is the entire defect: `DoubleProperty` read as a float
+→ **2** failures (the LWC case, both signs); `UInt32Property` sign-extended → **1** (the AB4 family —
+`0xFFFFFFFF` must print 4294967295, not -1); the `size == 8` width check dropped → **1**. Restored →
+green.
+
+⚠ **Live check owed** and it is cheap: a struct-valued `TMap`/`TSet` element should now read
+`{X=…, Y=…, Z=…}` instead of `f:[…]`, cross-checked against the `hexValue` on the same row.
+
+-----
+
 ## 2026-08-17 - V3 + V4: Live Walker wrote post-await state onto whatever the user moved to (build 3170)
 
 **Shipped together because they are one root cause, one method apart.** Both write VM state after a
