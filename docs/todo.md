@@ -1933,6 +1933,72 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    it proves the family is coherent on the path that was already coherent — it is a regression check,
    not evidence for the repair.
 
+### ⛔ NEW 2026-08-17 `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` does NOT mean the game loads it
+
+*Found while sweeping the three Tier-1 titles. It invalidates an assumption the whole verification
+plan rests on: that a proxy the panel calls current will serve the pipe.*
+
+**OCTOPATH TRAVELER, measured three ways:**
+
+| check | result |
+|---|---|
+| `version.dll` in `…\Octopath_Traveler\Binaries\Win64\` | present, **2,860,544 B — byte-identical to `dist/proxy`** |
+| Proxy Deploy panel | **`DeployedCurrent  1.0.0.3262`** |
+| `%LOCALAPPDATA%\UE5CEDumper\Logs\` folder for the process | **does not exist at all** |
+| loaded modules of the live process (`EnumProcessModulesEx`) | **only `C:\WINDOWS\SYSTEM32\VERSION.dll`** |
+
+So the deployment is perfect and the DLL never runs. **The failure is completely silent** — no error,
+no log file, no panel indication; the pipe simply is not there.
+
+**The contrast, measured on a title where it works.** DQ I&II HD-2D, same proxy flavour, same build:
+```
+D:\SteamLibrary\…\Game\Binaries\Win64\VERSION.dll   <- ours
+C:\WINDOWS\system32\version.dll                     <- the real one, loaded BY ours (forwarding)
+```
+Both mapped, and everything works. So the diagnostic is: **ours in the module list = loaded; only
+System32's = silently ignored.**
+
+**The correlation, 3 for 3** (`tools/pe/pe_imports_exports.py imports <exe>`): OCTOPATH **statically
+imports `version.dll`** and is ignored; **DQ7R and DQ I&II do not** (a dependency pulls it in later)
+and both get ours.
+
+⚠ **Do NOT publish a mechanism yet — the obvious one is already refuted.** `KnownDLLs` was the
+natural explanation and it is **wrong**: `HKLM\SYSTEM\CurrentControlSet\Control\Session
+Manager\KnownDLLs` has 37 entries and **none of `version` / `dxgi` / `winmm` / `dinput8` is among
+them** (checked, so nobody re-proposes it). A load-order story fits the evidence — if any module with
+that base name is already mapped, the loader satisfies the import by base name and never searches the
+application directory, and Steam injects early — but that is **untested**.
+
+**What to do with it:**
+1. **Screen before deploying**: if the exe's import table names the proxy flavour statically, expect
+   the proxy to be ignored, and pick another flavour or inject directly. Cheap, offline, one command.
+2. **A "did it actually load?" check is missing from the panel.** Status is computed from the file on
+   disk; nothing verifies the module mapped. The log-folder existence, or a module scan, is the honest
+   signal. This is the same *report-and-reality-computed-by-different-paths* shape as audit #4's root
+   cause.
+3. **The plan's §3a inventory needs a caveat**: "all ten SHA-match `dist/proxy`" was verified — and is
+   *not sufficient*. At least one of the ten (OCTOPATH) cannot serve the pipe at all.
+4. **OCTOPATH is therefore unverifiable through its proxy** and dropped out of the G2 rate sweep as
+   the third data point.
+
+### ✅ G8/G9 step 3 corroborated on a SECOND title `[DQ7R-PIPE-2026-08-17]`
+
+DQ I&II HD-2D Remake, build 3262, proxy mode:
+```
+23:24:39.073 [WARN] DetectVersion: PE VERSIONINFO Product=1.0 File=1.0 — unrecognised
+23:24:39.073 [WARN] DetectVersion: PE resource failed, falling back to memory string scan
+23:24:39.187 [INFO] DetectVersion: Tier 1 (utf16) '++UE4+Release-4.27' -> 427 at 0x42F5F30
+23:24:39.187 [INFO] FindAll: UE Version = 427 (tier=1, detected=yes, lowConfidence=yes, publisher=SQUARE_ENIX)
+```
+`Product=1.0` is what the offline classifier predicted for this title — a second blind prediction
+confirmed verbatim. `object_count` 104,867; patterns `GOBJ_ES53_1` / `GNAM_V8` / `GWLD_TQ_1`, i.e.
+**identical to DQ7R's**, which is consistent with the two being the same engine-build family.
+
+**Also from the same launch:** `case_preserving=false` with `probe_ran=true` and `validated=true` →
+DQ I&II is a **fourth** confirmed non-CPN title (U2 sweep: TQ2 · Solarpunk · DQ7R · DQ I&II, still
+zero CPN found), and another `validated`-clean host, so **G1/X3's amber-banner half still has no
+host**.
+
 ### ⬜ NEW 2026-08-17 — G11: Tier 2 is alive; check it agrees with Tier 1
 
 *Needs the DLL injected. See dev-log build 3112. **Measured 0/170 → 6/170 Tier 2 hits offline, with
@@ -2179,24 +2245,40 @@ no test target compiles `Genau.cpp`.*
    | bytes the needle actually covered | full image, ×2 flavours | ascii full + utf16 to the hit at `0x4BBC6D8` = 79,415,000 B |
    | build | 3122 | 3262 |
 
-   Scaling DQ7R's needle-only cost onto Elliot's image brackets the needle at **~1.7–1.9 s of the
-   2.400 s** (1.9 s if the two flavours are one interleaved pass, 1.7 s if they are two separate
-   passes — the bracket exists because that detail was not established, and the conclusion is the same
-   either way). So `CountPreUE4Markers` accounts for only ~0.5 s, and **the lead's hypothesis is
-   refuted: the window is dominated by the version needle, not by the ungated marker sweep.**
+   ⛔ **A first pass here concluded "the lead is REFUTED". That was over-claimed and is WITHDRAWN.**
+   It rested on extrapolating DQ7R's per-byte rate onto Elliot's image, which assumed the rate is
+   stable. **A second Tier-1 title was then measured and it is not:**
 
-   **What that leaves is the lead's own alternative, and it holds.** DQ7R's 0.316 s over a ~99 MiB
-   image is essentially the dev-log's 0.35 s figure, so that number was measured on a ~100 MB-class
-   image and is not a per-title guarantee. Elliot is 4.7× the bytes and cost 4.7× the time — linear,
-   i.e. exactly what a rewritten single-pass sweep should look like. **Step 2 is therefore a PASS
-   against the mechanism and a correction to the batch's own prediction:** "sub-second" is true at
-   ~100 MB and cannot be true at 460 MB. Do not file "G2 is slower than claimed".
+   | title | bytes the needle covered | window | implied rate |
+   |---|---|---|---|
+   | DQ7R | 79,415,000 (hit at `0x4BBC6D8`) = 75.7 MiB | 0.316 s | **240 MiB/s** |
+   | DQ I&II HD-2D | 70,213,424 (hit at `0x42F5F30`) = 67.0 MiB | **0.114 s** | **587 MiB/s** |
 
-   ⚠ **Conditions, because a rate without them is not a measurement:** one title per column, single
-   run each, warm page cache, different builds (3122 vs 3262), and the Elliot row is quoted from
-   `[ELLIOT-2026-08-16]` rather than re-measured. The two remaining Tier-1 titles (DQ I&II 87 MB,
-   OCTOPATH 43 MB) would turn the one-point rate into a three-point slope and are the cheap way to
-   harden this — each is a launch plus a ~2 s scan.
+   **2.4× apart on two images of the same order.** Extrapolated onto Elliot's 460 MiB that spans
+   0.78 s – 1.9 s of the 2.400 s window, so the needle is somewhere between **33% and 80%** of it.
+   The fast end makes `CountPreUE4Markers` the *dominant* term — i.e. it **supports** the lead the
+   first pass claimed to refute. **Two points, two opposite conclusions: the extrapolation cannot
+   decide this and must not be used to.**
+
+   **What IS established, and it is worth having:**
+   * The needle-only window is directly measurable, and it is **small** — 0.114 s and 0.316 s over
+     ~67–76 MiB — on any title where a tier hit keeps the marker sweep out of the window by
+     construction. That part of G2's rewrite demonstrably works on live images.
+   * The dev-log's 0.35 s sits inside that measured range for ~100 MB-class images, so the figure is
+     **image-size-specific rather than wrong**.
+   * ⚠ **Per-byte scan rate on this machine varies by 2.4× run to run**, which is itself the finding:
+     it makes *any* cross-title extrapolation of scan cost unsound, here and in future batches.
+
+   **So step 2 stays 🟡 and the only decisive route is the lead's FIRST option: instrument.** Add one
+   `SCAN:Ver` line between the version needle and `CountPreUE4Markers` and re-measure **Elliot
+   itself** — nothing measured on a smaller title can settle what fraction of Elliot's 2.4 s belongs
+   to which sweep. Do **not** file "G2 is slower than claimed" either; both directions are currently
+   unsupported.
+
+   ⚠ **Conditions:** single run per title, warm page cache, mixed builds (Elliot 3122 vs DQ7R/DQ I&II
+   3262), and the Elliot row is quoted from `[ELLIOT-2026-08-16]` rather than re-measured. OCTOPATH
+   would have been the third point but **cannot be measured at all** — its `version.dll` proxy never
+   loads; see the silent-proxy finding below.
 3. **⚠ REGRESSION — a Tier 1 game still detects from Tier 1.** Any ordinary UE5 title: confirm
    `scan-0.log` still shows `DetectVersion: Tier 1 (ascii|utf16) '++UEx+Release-N.N' -> NNN`. The log
    lines were kept byte-identical on purpose, so any wording change here is itself a defect.
