@@ -461,8 +461,21 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 | D2 (樣本心跳) | ✅ **PASS** — DLL and game HUD agree to the digit over a measured 34 s | `[GRP4-UI-2026-08-17]` |
 | Dump Explorer 跨遊戲身分閘 | ✅ **PASS** on the two DumperTest flavours | `[GRP4-UI-2026-08-17]` |
 
-**GROUP 3 is complete.** GROUP 4 has 8 of its rows done; the rest (`Y9`, `B10`, `AF6/AE8`,
-`V7/AB6`, `D1/D3` step 6, `AE2/AE3`, Skia soak) are untouched.
+| Y9 · V7 · AF6 · AB6 · AE8 · D1/D3 step 6 | ✅ **PASS** | `[Y9-UI-2026-08-17]` · `[GRP4-UI-2026-08-17]` |
+| AE2/AE3 | 🟡 **4 of 6** (steps 4 and 5 not run) | `[AE23-UI-2026-08-17]` |
+| **PE hook** | ⛔ **NEW: detection FAILS on DumperTest**, verified good on Lushfoil | `[PEHOOK-2026-08-17]` |
+| Skia ABI soak | ✅ see below | `[GRP4-UI-2026-08-17]` |
+
+**GROUP 3 complete. GROUP 4: 14 rows done**, leaving `B10`, `AE2/AE3` steps 4–5, and `A5/V6/AE9`'s
+`U8` sub-check (the sample has no `FName` with a `Number` component).
+
+**Skia ABI soak — PASS, incidentally.** The AOT `dist` UI ran ~2.5 h across two instances under
+heavy text/grid load: a 14,813-row Value Search with server-side re-sorts, a 58,618-object tree
+reloaded across three different games, a 25,179-row tree, repeated Property Search result sets, six
+modal dialogs, a 3.48 MB SDK header export and a 10.5 MB JSONL dump, and dozens of tab switches.
+**No render fault, no crash, and `crash.log` gained nothing after the duplicate-launch entry.** Worth
+recording because Skia/HarfBuzz are pinned to what Avalonia was built against, and the failure this
+soak is looking for is precisely a font/text-shaping ABI break under sustained load.
 
 **Three things this sitting learned that outlive the rows:**
 1. **The version-detection ladder needs TWO properties, not one** — an unrecognised PE VERSIONINFO
