@@ -22,6 +22,64 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AF3: the Live Funcs panel was silent about a cap that removes its own target (build 3167)
+
+**The cap keeps the highest counts; this panel exists to find a low one.** `pe_profile_get` sorts the
+whole table by fire count desc and emits only the first `FetchLimit = 300` rows, while
+`distinct_funcs` stays **pre-cap** ([Fern.cpp:3983](../dll/src/Fern.cpp), pipe-protocol.md says
+"pre-cap" explicitly). The panel's own dev-log states the workflow: *"The action-specific function is
+near the top with a **low** count (a handful of calls); per-frame Tick/Update noise has huge counts."*
+Count-desc + cap deletes precisely that tail. On a game whose window dispatches more than 300 distinct
+UFunctions, `OpenShop` (count 1-3) is not a mis-ranked row — it is an **absent** row, and nothing said
+so. The busier the game, the more certain it was that the answer was the part that got cut.
+
+**The compounding half: a baseline captured from a capped page fabricates the answer.**
+`SetBaseline` built `_baseline` from the same truncated page, so any idle function below the cut
+missed `_baseline.TryGetValue` on the action fetch → `IsNew = true` → sorted to the very top by
+`OrderByDescending(e => e.IsNew)` → survived the default New/changed-only filter. The status line then
+read *"The action's function is almost certainly among the NEW rows at the top."* Worse, `std::sort`
+is not stable and the input is `unordered_map` iteration order ([Linie.cpp:92](../dll/src/Linie.cpp)),
+so which count-1 functions survive the cap differs arbitrarily between the two recordings — false NEWs
+land in the same tail as the true ones and are indistinguishable by inspection.
+
+- **Truncation is derived, not guessed** — `Entries.Count < DistinctFuncs`. Conservative and correct:
+  it is also true when `ResolveFunctionInfo` dropped stale pointers or the `Tot` abort cut the emit
+  loop short, and all three mean the same thing to the user.
+- **Both status lines are honest now.** Non-diff gains the house cap string
+  (`SnapshotViewModel`/`SpcQueryViewModel` convention), spelled `(showing top N of M by count)`
+  because *which* rows were cut is the point. The diff line stops reporting page-scoped counts against
+  a table-scoped denominator — "1 NEW of 900" invited reading 900 as the population those rows were
+  selected from when only 300 were examined — and **drops the certainty claim** when either page was
+  capped, replacing it with what NEW actually means: *not in the idle top N*, not *did not fire*.
+- **`SetBaseline` marks the baseline PARTIAL rather than refusing it.** Refusing would disable Diff on
+  exactly the busy games it is for; the defect was never the capture, it was the silence.
+- **AF28 — found while re-deriving, filed as its own LOW row rather than folded in silently:**
+  `GroupBy(Key).ToDictionary(g => g.Key, g => g.First().Count)`
+  made the captured baseline depend on a **view toggle**. `_allEntries` is re-sorted *in place* by
+  `ApplyDiffAndFilter`, and Earliest-first orders it by `FirstSeq` — so `First()` took whichever
+  duplicate-key row was on top of the current grid. Now `Max(x => x.Count)`, which is what `First()`
+  was reaching for and is sort-independent.
+
+**Tests: 8 new, and the fixture trap was real.** `ResultOf(...)` sets `DistinctFuncs = entries.Length`,
+so all 13 existing uses are structurally incapable of expressing a truncated page — they always assert
+the degenerate not-truncated case, which is why ~30 tests never caught this. A separate
+`TruncatedResultOf(distinct, entries)` was added rather than reusing it (working-lessons §2.3, "a
+fixture that reports coverage it does not have"). Four of the eight are **negative controls in their
+own right**: the cap note must NOT appear on a whole fetch, and the original certainty sentence must
+SURVIVE when nothing was capped — otherwise the fix has merely deleted a working hint.
+
+**Verification.** 3921 tests green. Then five source mutations, each reverting one piece of the fix and
+each observed to fail: dropping the cap note, dropping the PARTIAL marking (2 tests), `Max`→`First`,
+forcing the diff line always-confident, and reporting diff counts against the table again. Restored
+tree green again. **The harness itself needed a negative control first** — the initial run passed
+`--nologo`, which Microsoft.Testing.Platform does not accept, so it printed help and ran **zero**
+tests while reporting every mutation as "no test failed". Only checking the *restored* tree's exit
+code exposed it. Half 2 of the fix shape (a `sort` parameter on `pe_profile_get` so the UI can ask for
+the low-count tail) is DLL work and deliberately not done here — the false-NEW manufacture is a
+client-side bug and stays reachable through any DLL change.
+
+-----
+
 ## 2026-08-17 - PX1: two proxies handed our functions the real DLL's ordinals (build 3166)
 
 **A proxy DLL is a NAME map AND an ORDINAL map.** PX1 was filed against `dinput8` for the first;

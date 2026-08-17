@@ -25,8 +25,8 @@ was written here.
 | # | finding | why here |
 |---|---|---|
 | ~~1~~ ✅ **DONE** | ~~**PX1**~~ | **Shipped build 3166** (`9ea249b8` dinput8, `ceaff6ad` version, `b0ccae6c` the CI check). Verified offline exactly as predicted — all four proxies diff clean against real System32, zero missing names, zero ordinal mismatches, nothing added to the live backlog. **Two of the filed premises were wrong in the direction that matters**: link.exe assigns unpinned exports from *(highest pinned + 1)*, not "alphabetically from 1" — so the obvious minimal fix (pin only the missing export) would have moved the five *correct* forwards off their ordinals, i.e. **worse than the bug** — and `/DEF:` merges with `__declspec(dllexport)` rather than suppressing it, so the missing name needed an *implementation*, not a `.def` line. Permanently re-derived by [`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py). |
-| 1 ⭐ TAKE FIRST | **AF3** | Pure C# ViewModel logic — fully unit-pinnable in `ui/UE5DumpUI.Tests`, so like PX1 it closes **without adding to the live-verification backlog**. That is what makes it the new head of the queue. |
-| 2 | **A3** | S/low effort and a *user-visible* scan gap (GAS `Health`/`MaxHealth`/`Mana` share one `UScriptStruct`, so only the first is indexed). No target compiles `Aura.cpp`, so budget a live check. |
+| ~~1~~ ✅ **DONE** | ~~**AF3**~~ | **Shipped build 3167.** Closed exactly as predicted — pure C#, 8 new tests, five source mutations each observed to fail, nothing added to the live backlog. Confirmed the entry's own warning: reusing `ResultOf` would have made the tests pass while testing nothing, so a separate `TruncatedResultOf` fixture was mandatory. One defect beyond the write-up: `SetBaseline`'s `GroupBy(...).First().Count` made the captured baseline depend on the Earliest-first **view toggle**, because `ApplyDiffAndFilter` re-sorts `_allEntries` in place. Half 2 (a `sort` param on `pe_profile_get`) deliberately deferred, per this entry's own "do NOT do half 2 alone". |
+| 1 ⭐ TAKE FIRST | **A3** | S/low effort and a *user-visible* scan gap (GAS `Health`/`MaxHealth`/`Mana` share one `UScriptStruct`, so only the first is indexed). No target compiles `Aura.cpp`, so budget a live check — the first of the remaining four that does. |
 | 4 | **U3** | Real and bigger than filed, but `Ubel.cpp` has no test target and the payload is a *display* preview — misleading rather than corrupting. |
 | 5 — SHIP WITH V4 | **V3** | Same root cause as V4, one method apart. Fixing either alone leaves the identical hole next door. |
 | 5 — SHIP WITH V3 | **V4** | ⚠ **Read `residual_risk` before writing a line.** The obvious fix (a `required` expected-parent parameter) would SILENTLY KILL the Go box, Find Refs and every cross-tab 'Open in Live Walker' handoff — two of `NavigateToAsync`'s three callers `Breadcrumbs.Clear()` first and legitimately have no parent. |
@@ -332,7 +332,15 @@ The DIAGNOSIS is safe; the PRESCRIBED FIX contains one step I would not take, pl
 
 ---
 
-## AF3 — BIGGER_THAN_FILED
+## AF3 — BIGGER_THAN_FILED — ✅ FIXED build 3167 (2026-08-17)
+
+> **Closed.** Every prediction in this entry held, including the fixture warning: reusing `ResultOf`
+> would have produced tests that pass while asserting nothing, so `TruncatedResultOf` was added
+> alongside it. Half 1 shipped in full; half 2 (a `sort` parameter on `pe_profile_get` so the UI can
+> request the low-count tail) is deliberately NOT done, per this entry's own "do NOT do half 2
+> alone" — the false-NEW manufacture is client-side and survives any DLL change. One defect beyond
+> the write-up: `SetBaseline` captured through `GroupBy(...).First().Count`, which made the baseline
+> value depend on the Earliest-first VIEW toggle. Analysis below preserved verbatim.
 
 ### What the code actually does
 
