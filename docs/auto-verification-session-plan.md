@@ -326,6 +326,25 @@ which half failed. Copy from `dist/proxy` directly, then let AE4 exercise the bu
 `get_pointers.build_number` and comparing it against 3262, and proxy mode still needs `trigger_scan`
 because `init` never scans.
 
+### ⛔ A SHA match is necessary and NOT sufficient — at least one of the ten never loads
+
+Measured 2026-08-17 (`[PROXYLOAD-2026-08-17]`, full write-up in todo.md). **OCTOPATH TRAVELER**'s
+`version.dll` is byte-identical to `dist/proxy`, the panel reads `DeployedCurrent 1.0.0.3262`, and the
+running process maps **only `C:\WINDOWS\SYSTEM32\VERSION.dll`**. No log folder is ever created, so the
+no-op is completely silent: no error, no toast, nothing in the panel. A batch that trusted the status
+column would have recorded OCTOPATH's rows against a DLL that never ran.
+
+**The cheap diagnostic, and it is the only honest one:** after launching, confirm
+`%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\` **exists**, or list the process's modules and check
+that *our* path is mapped and not just System32's. On a working title (DQ I&II) **both** appear —
+ours, plus the real one loaded by ours forwarding.
+
+**Screening, offline, before deploying anything:** `py tools/pe/pe_imports_exports.py imports <exe>`.
+Correlates 3 for 3 so far — a title that **statically imports** the proxy name gets System32's copy
+(OCTOPATH), one that does not gets ours (DQ7R, DQ I&II). ⚠ `KnownDLLs` is **not** the mechanism; it
+was checked and none of the four proxy names is in it. The mechanism is still unknown, so treat the
+import-table correlation as a screen, not a law.
+
 -----
 
 ## 4. Steps that write outside our own files — **AUTHORISED 2026-08-17**, with conditions
@@ -425,7 +444,9 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 | Row | State | Tag |
 |---|---|---|
 | G8/G9 step 3 | ✅ **CLOSED** on DQ7R — the sample was missing, not the capability | `[DQ7R-PIPE-2026-08-17]` |
-| G2 step 2 | ✅ **LEAD REFUTED**, no defect, no instrumentation needed | `[DQ7R-PIPE-2026-08-17]` |
+| G2 step 2 | 🟡 a refutation was claimed and then **WITHDRAWN** — scan rate varies 2.4×, so no extrapolation can decide it. Needs instrumenting Elliot | `[DQ7R-PIPE-2026-08-17]` |
+| **Proxy load** | ⛔ **NEW: `DeployedCurrent` ≠ loaded.** OCTOPATH's proxy is byte-perfect and silently never runs | `[PROXYLOAD-2026-08-17]` |
+| **SDK header** | ⛔ **NEW: the export does not compile** (`uint8_t[0x8] Name;` for every `TOptional`) | `[SDKHDR-UI-2026-08-17]` |
 | G11 step 1 | 🟡 third title run but it does **not** discharge the step (DQ7R's PE hash changed) | `[DQ7R-PIPE-2026-08-17]` |
 | U2 sweep | ✅ DQ7R is a third confirmed **non-CPN** title | `[DQ7R-PIPE-2026-08-17]` |
 | AE4 steps 3/5/6 + 1 | ✅ **PASS** (step 1 by a stated substitution) | `[AE4-UI-2026-08-17]` |
