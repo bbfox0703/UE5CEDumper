@@ -3489,10 +3489,21 @@ measurements taken on this config are measuring the stride, not the matcher.
 > * `[SUMMARY] DynOff: CPN=no FProp=yes TagFFV=yes Outer=+0x20 validated=yes`, and **zero**
 >   `does not deref to a UWorld` in the whole folder.
 >
-> ⚠ **Still not directly observed: the Object Tree header ratio.** It is closed above by *inference*
-> from D2's group scan, and the on-screen string cannot be substituted by the `ui-view` log line —
-> `ObjectTreeViewModel` computes the header from a different denominator than the log. Left as-is
-> rather than re-opened, but it has never been read off the screen.
+> ~~⚠ **Still not directly observed: the Object Tree header ratio.**~~ **✅ NOW READ OFF THE SCREEN
+> 2026-08-17 `[GRP4-UI-2026-08-17]`.** UE5DumpUI 1.0.0.3262 connected to **DumperTest Development** —
+> the configuration both defects lived in — shows:
+> ```
+> Object Tree   Objects: 25,179 (showing 5,000)
+> Loaded 25,179 named objects (of 25,179 total, 100.0%)
+> ```
+> **25,179 / 25,179 = 100.0%.** This is the reading the step wanted and the one the log could not
+> supply, since `ObjectTreeViewModel` builds the header from a different denominator.
+>
+> It discriminates because **both** defects would move this number and in opposite-looking ways: D3's
+> halved `FUObjectItem` stride would walk roughly half the pool, and D1's GNames landing in
+> `EOSSDK-Win64-Shipping.dll` would leave most entries unnamed. A ratio of exactly 100.0% on
+> Development rules out both. *(An earlier capture during load read `25,172 / 25,179` — read the
+> header only after the tree finishes loading, or the shortfall is just the progress bar.)*
 
 
 Both came out of the config-only A/B (**same source, Shipping vs Development**) that this file has
