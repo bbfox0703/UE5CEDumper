@@ -525,6 +525,55 @@ explicitly in the register, since it correspondingly proves nothing about the pa
 returning 0 that `dll-spec.md` documented as working. **Executing a shipped path finds defects that
 reading it does not.**
 
+### 2.7 Six MED fixes in one session — what the offline half taught (builds 3189-3195)
+
+Learned 2026-08-17 closing Z1, Z3, AC1, AD5, AD6 and A1 with **no game available** and no ability to
+grant new permissions. Every one was pinned by `build.ps1 -Target Test` alone. Five lessons, none of
+which is about the individual bugs.
+
+**a. A cap changes what "precision" means, and the answer is not the intuitive one.** Z3's fetch
+sends each seed as its own query with its own 200-row envelope, filled in walk order. So a seed
+matching 3,050 names is *fine* when 98% of them are the word you meant (`Item`, `Velocity`) — the
+200 rows you get back are the right rows — and a seed matching 10,180 is *fatal* when 6% are
+(`MP`, which is mostly `Component`/`Compression`/`Template`). **Volume is not the test; precision
+above the cap is.** The filed fix ("cost is near zero, just add the keywords") measured CPU, which
+really was free, and missed that the scarce resource was the envelope. Below the cap precision does
+not matter at all, because everything fits.
+
+**b. That calibration is FREE and needs no game.** Extracting ASCII identifiers from three shipped
+game EXEs in `D:\UE_Analyze_data` gave **578,809 distinct names** in about a minute of Python — UE
+registers reflected property names as literal strings, so it is a sound over-approximation of the
+pool the DLL walks. That corpus turned "seems reasonable" into a per-seed number and changed the
+shipped list. Same move as G8/G9/G11 modelling tier rules over the PE corpus: **when a rule is about
+names or bytes, model it offline before writing it.**
+
+**c. A test that calls the method under test directly can pass straight through the defect.** Z1's
+existing coverage set the property and then `await`ed `RescoreAsync()` itself — which re-scores
+unconditionally, so it was green with the bug fully present (§1.3, again). The fix is to await *what
+the VM decided to do*, not what the test decided: an `internal Task? PendingRescore` the production
+path assigns, `null` when it chose not to act. That distinction — "did the VM reconcile?" vs "did I
+reconcile it?" — is the whole assertion.
+
+**d. In an async VM test, a bounded wait is not a nicety.** Both Z1 regressions would *hang* the
+suite under the pre-fix code rather than fail it, because the pre-fix code awaits something the test
+never releases. `var done = await Task.WhenAny(work, Task.Delay(10s, TestContext.Current.CancellationToken)); Assert.Same(work, done);`
+turns that into a failure. **A hang is not a test result** — and a negative control that hangs cannot
+be distinguished from a hung machine.
+
+**e. Before calling an existing guard blind, run your negative control past it.** AD6's write-up was
+going to say `check_mailbox_contract.py` could not see a moved mailbox field. Measured: it *does*
+fail on `className[256]`→`[255]`, via its surface hash. What it cannot do is compute an offset — so
+it demands a *decision*, and a developer who bumps the contract version sails through with every
+offset moved. The honest claim is "complementary", not "blind", and the difference took one command
+to establish. The generalisation: **"the existing check misses this" is a claim to test, exactly
+like the defect itself.**
+
+**f. Register hygiene — the severity cell must stay a plain severity.** Writing AD6's re-tier as
+`| **AD6** ✅ | MED→**LOW** |` silently dropped the row out of `check_audit_register.py`'s total
+(290 → 289) while still reporting OK-looking numbers. The convention `AB7` already follows is a plain
+`LOW` in the cell with *(MED→LOW on re-derivation, build N)* in the body. Watch the **total**, not
+just the open count, when pasting the tool's headline.
+
 -----
 
 ## 3. Traps in our own stack
