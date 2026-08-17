@@ -22,6 +22,83 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AD5: an English FText over zeroed heap came back as CJK mojibake (build 3193)
+
+**Audit #5 AD5 (MED) closed.** `DecodeFStringBuffer`'s own "KNOWN RESIDUAL" was real, reachable, and
+**fires 100% of the time** in the case it describes — not, as the header argued, a near-impossible
+coincidence.
+
+**The finding names the wrong type.** `FUtf8String` goes through `Ubel::ReadFUtf8String`, which is
+count-based and never calls this function. The live path is `Ubel::ReadFTextString`, which
+blind-scans `FTextData+0x08..0x90` and offers every 16-byte candidate to `TryDecodeFStringAt`. So the
+case is an **FText display string that a cooked build stored as UTF-8, holding ASCII text** — i.e.
+ordinary English UI, not an exotic input.
+
+Rule 2 needs a multi-byte sequence and pure ASCII has none, so step 3 falls through to the UTF-16
+hypothesis. Production reads `Num*2` bytes, so half the window is adjacent heap; each ASCII byte
+PAIR becomes one BMP unit and "Continue" returns as U+6F43 U+746E U+6E69 U+6575.
+
+**The header's defence was false on both halves, and that sentence is why this stayed open.** It
+claimed *"Both conditions must hold — LooksLikeDecodedText rejects a binary tail"*. The two
+conditions are the SAME heap state: zero-filled slack (the ordinary allocator state) puts the
+terminator pair at `[2n-2]` and supplies the textual tail at once. And the mojibake contains **zero**
+replacement characters, so `LooksLikeDecodedText` accepts it — it rejects binary, and a run of valid
+CJK code points is not binary. That block now says so.
+
+**Fixed structurally, not heuristically.** An `FString` is a `TArray<TCHAR>` whose `Num` includes the
+terminator, so exactly one null unit exists and it is the last; an interior null unit proves the
+second half of the window is not part of the string.
+
+**The re-derivation's own fix was too broad, and the skeptic caught it by compiling both.** Built
+against the real header with MSVC over 20 vectors: an unconditional interior-zero-unit rule also
+changes buffers that today decode as a truncated prefix — nothing to do with this defect — and one
+of the prescribed tests would have locked that behaviour in. What shipped is gated on `utf8Ok`, so
+it can only break the tie where both hypotheses succeed and the wrong one wins, and it is a guarded
+block rather than an early `return ""`, because the function's tail is what delivers the correct
+UTF-8 answer once UTF-16 steps aside.
+
+Six tests: three real cases (OK / Continue / Press Start over zeroed slack) and three controls —
+genuine UTF-16 unaffected, rule 2 still winning ahead of the tie-break, and an interior-zero-unit
+UTF-16 buffer that pins the gate stays OUT. Negative control: disabling the tie-break fails exactly
+the three new vectors and none of the 11 pre-existing ones. 3950 passed / 0 failed.
+
+-----
+
+## 2026-08-17 - AD6: the test that covered nothing, and the comment that made it load-bearing (build 3192)
+
+**Audit #5 AD6 closed — re-derived as LOW, not MED:** a coverage lie, not a defect in shipping code.
+The diagnosis needed no premise corrected, which is unusual for this register.
+
+`Test_Mimic_PollLatency_OneMillisecond` asserted a fact about the **host** — that
+`timeBeginPeriod(1)` makes 100×`Sleep(1)` finish under 300 ms. True, occasionally useful, and
+invariant to every line in `dll/src`: **it passed with `Mimic.cpp` deleted from the tree.** None of
+the four regressions its own banner named could redden it; `kPollIntervalMs` is a file-static in
+`Mimic.cpp`, so the test's literal `Sleep(1)` cannot track it.
+
+Worse than an empty test, because the false claim lived in **two** places and the second was
+load-bearing: `dll/CMakeLists.txt` cited *"so it covers the real mechanism instead of a linked
+import"* as the **justification for not linking winmm** into the target. Both rewritten rather than
+merely deleted — leaving that comment behind would turn a deletion into a new lie.
+
+**What replaces it is coverage that cannot exist anywhere else.** `Mimic.cpp` is compiled by no test
+target, but `Mimic.h` is pure data, and that data is a published cross-language contract: every
+offset is baked as a literal into `Services/CeMailboxLayout.cs` (whose comment reads *"must match
+Mimic.h MailboxData"*) and into `scripts/UE5CEDumper.CT`. Nothing enforced it on either side. A
+silent shift does not fail a build — it makes every saved `.CT` write to the wrong address. Offsets
+are spelled as literals rather than derived from the struct: deriving them from the declaration
+under test would assert only that C++ agrees with itself.
+
+**Measured, not assumed, against the existing guard.** `tools/check_mailbox_contract.py` *does* catch
+the control edit, via its surface hash — so the claim "the tool is blind" would have been wrong. But
+it can only demand a *decision*: it never computes an offset, so a developer who bumps the version
+sails through with the offsets silently moved. The two guards are complementary.
+
+Negative control: `className[256]` → `[255]` fails exactly 5 assertions — the `funcName`,
+`errorMsg` and `paramsData` offsets, the `className` size, and the struct total. Before this commit
+that edit built and passed clean. 3950 passed / 0 failed.
+
+-----
+
 ## 2026-08-17 - AC1: one checkbox, two policies, and only one of them is reversible (build 3191)
 
 **Audit #5 AC1 (MED) closed.** Proxy Deploy's "Force Overwrite" armed two policies through a single
