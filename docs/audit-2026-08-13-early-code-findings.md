@@ -3344,38 +3344,30 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 
 ## 3b. START HERE — scanning is DONE; everything left is fixing
 
-*State as of 2026-08-17 (end of the fix session that closed queue ① – ⑥ plus G2, MA1, G8, G9, G11,
-G3). Read this first; it is written for a session with no memory of that one.*
+*State as of 2026-08-17, after the session that closed queue ① – ⑥ plus G2, MA1, G8, G9, G11, G3,
+and the one that spent the six-MED dossier (PX1 · A3 · AF3 · U3 · V3+V4, plus U17 and AF28). Read
+this first; it is written for a session with no memory of either.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-> ## ⭐ FIVE MEDs REMAIN PRE-VETTED AND READY TO FIX — 2026-08-16 (PX1 ✅ shipped 2026-08-17)
+> ## ✅ THE PRE-VETTED MED QUEUE IS SPENT — all six shipped 2026-08-17; the dossier is archived
 >
-> **[audit-2026-08-16-med-rederivation.md](audit-2026-08-16-med-rederivation.md)** holds **A3, AF3,
-> U3, V3, V4** still open, each re-derived from source and passed through a refute-mandated skeptic.
-> All survived; **none of the five is fixed**. The derivation is the expensive half and it is already
-> done — start there rather than re-deriving, but treat each `fix_shape` as a proposal, not an
-> instruction.
->
-> **`PX1` is DONE (build 3166** — `9ea249b8`, `ceaff6ad`, `b0ccae6c`**).** Do not re-open it. It
-> confirmed the value of this ordering twice over: it grew on re-derivation (the same ordinal
-> aliasing sat on **`version.dll`, the UI's DEFAULT proxy**, 8 real ordinals bound to our `UE5_*`
-> functions) and **two of its filed premises turned out to be wrong in ways that would have made the
-> obvious fix worse than the bug** — link.exe assigns unpinned exports from *(highest pinned + 1)*,
-> not "alphabetically from 1", so pinning only the missing export would have moved the five *correct*
-> forwards off their ordinals. That is the third instance of §2.4's rule: re-derive the PREMISE, not
-> just the location. Next-best offline candidate is now **`AF3`** (pure C# ViewModel logic, fully
-> unit-pinnable, closes without touching the live backlog).
->
-> **`V3` and `V4` must ship together**, and `V4`'s residual-risk section is mandatory reading — the
-> obvious fix silently kills the Go box, Find Refs and every cross-tab handoff.
+> **[archive/audit-2026-08-16-med-rederivation.md](archive/audit-2026-08-16-med-rederivation.md)**
+> (moved 2026-08-17 with its status markers corrected; derivation text untouched) recorded the six
+> re-derivations, and every one is now fixed — do not re-open them:
+> PX1 b3166 (`9ea249b8`/`ceaff6ad`/`b0ccae6c`) · AF3 (+AF28) b3167 · A3 b3168 · U3 b3169 ·
+> V3+V4 b3170 (one commit — one root cause, one method apart) · U17, the layout half U3 spawned,
+> b3171. What the batch re-proved: five of the six grew on re-derivation, and PX1's filed premises
+> were wrong in the direction that would have made the obvious fix WORSE than the bug (link.exe
+> assigns unpinned ordinals from *highest pinned + 1*) — §2.4's rule, third instance. Several of
+> these fixes still owe a LIVE check; those rows live in [todo.md](todo.md)'s register, not here.
 
 > ## ⚠ THE BOTTLENECK IS NO LONGER FINDING OR FIXING — IT IS VERIFICATION
 >
 > **Do not open this file looking for the next fix.** Every named clump is closed, the register is
-> down to **0 HIGH / 25 MED**, and **31 batches** are stacked in
+> down to **0 HIGH / 19 MED**, and **31 batches** are stacked in
 > [todo.md](todo.md)'s `## Pending live-game verification` — the largest backlog it has ever held.
-> Shipping a 26th unverified MED makes the tree *less* trustworthy, not more.
+> Shipping a 20th unverified MED makes the tree *less* trustworthy, not more.
 >
 > **Start in [todo.md](todo.md), not here**, unless the maintainer names a finding.
 > The three worth doing first, and why:

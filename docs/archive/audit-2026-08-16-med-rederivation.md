@@ -1,16 +1,25 @@
-# MED re-derivation — 2026-08-16 (pre-vetted, UNFIXED)
+# MED re-derivation — 2026-08-16 — ✅ SPENT: all six FIXED (builds 3166–3171)
+
+> **ARCHIVED 2026-08-17 — the queue this file existed to feed is fully consumed.** PX1 b3166 ·
+> AF3 b3167 · A3 b3168 · U3 (silent-drop half) b3169 · V3+V4 b3170 · U17 (the layout half U3
+> spawned) b3171. Finding STATUS lives on the audit #5 register —
+> [../audit-2026-08-13-early-code-findings.md](../audit-2026-08-13-early-code-findings.md) §3c,
+> CI-gated by `tools/check_audit_register.py` — and the live-game checks several of these fixes
+> still owe are in [../todo.md](../todo.md)'s `## Pending live-game verification`. At archive time
+> the stale status markers (this title, the U3/V4 headings, the order table) and the relative links
+> were corrected; **the derivation text below is untouched.**
 
 **What this file is.** Six open MEDs from
-[audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md), each re-derived
+[audit-2026-08-13-early-code-findings.md](../audit-2026-08-13-early-code-findings.md), each re-derived
 from source and then put through a **refute-mandated skeptic** instructed to default to "refuted"
-when uncertain. **All six survived; none is fixed.** This exists so the next fix session does not
+when uncertain. **All six survived; all six have since been FIXED** (banner above). This exists so the next fix session does not
 repeat the derivation — it was ~1.5M tokens of agent work and lived only in a temp folder until it
 was written here.
 
 **Read this before using any of it:**
 
 - **Five of the six came back BIGGER than filed** (`V3` came back *different*). That is the normal
-  outcome on this repo — see [working-lessons.md](working-lessons.md) §2.1–2.5.
+  outcome on this repo — see [working-lessons.md](../working-lessons.md) §2.1–2.5.
 - **A verdict here is evidence a defect exists. It is NOT authority on the repair.** The audit's own
   history has a case (AB4) where the diagnosis was right and the prescribed fix could never have
   worked. Each entry carries `fix_shape` **and** `residual_risk`; the risk section has repeatedly
@@ -24,10 +33,10 @@ was written here.
 
 | # | finding | why here |
 |---|---|---|
-| ~~1~~ ✅ **DONE** | ~~**PX1**~~ | **Shipped build 3166** (`9ea249b8` dinput8, `ceaff6ad` version, `b0ccae6c` the CI check). Verified offline exactly as predicted — all four proxies diff clean against real System32, zero missing names, zero ordinal mismatches, nothing added to the live backlog. **Two of the filed premises were wrong in the direction that matters**: link.exe assigns unpinned exports from *(highest pinned + 1)*, not "alphabetically from 1" — so the obvious minimal fix (pin only the missing export) would have moved the five *correct* forwards off their ordinals, i.e. **worse than the bug** — and `/DEF:` merges with `__declspec(dllexport)` rather than suppressing it, so the missing name needed an *implementation*, not a `.def` line. Permanently re-derived by [`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py). |
+| ~~1~~ ✅ **DONE** | ~~**PX1**~~ | **Shipped build 3166** (`9ea249b8` dinput8, `ceaff6ad` version, `b0ccae6c` the CI check). Verified offline exactly as predicted — all four proxies diff clean against real System32, zero missing names, zero ordinal mismatches, nothing added to the live backlog. **Two of the filed premises were wrong in the direction that matters**: link.exe assigns unpinned exports from *(highest pinned + 1)*, not "alphabetically from 1" — so the obvious minimal fix (pin only the missing export) would have moved the five *correct* forwards off their ordinals, i.e. **worse than the bug** — and `/DEF:` merges with `__declspec(dllexport)` rather than suppressing it, so the missing name needed an *implementation*, not a `.def` line. Permanently re-derived by [`tools/check_proxy_exports.py`](../../tools/check_proxy_exports.py). |
 | ~~1~~ ✅ **DONE** | ~~**AF3**~~ | **Shipped build 3167.** Closed exactly as predicted — pure C#, 8 new tests, five source mutations each observed to fail, nothing added to the live backlog. Confirmed the entry's own warning: reusing `ResultOf` would have made the tests pass while testing nothing, so a separate `TruncatedResultOf` fixture was mandatory. One defect beyond the write-up: `SetBaseline`'s `GroupBy(...).First().Count` made the captured baseline depend on the Earliest-first **view toggle**, because `ApplyDiffAndFilter` re-sorts `_allEntries` in place. Half 2 (a `sort` param on `pe_profile_get`) deliberately deferred, per this entry's own "do NOT do half 2 alone". |
 | ~~1~~ ✅ **DONE** | ~~**A3**~~ | **Shipped build 3168.** The premise corrections all held; the load-bearing one was the *risk* re-rating, not the mechanism — `expandFields` had no output cap unlike both correct siblings, so the filed one-line erase would have removed the only bound besides `depth<=4`. Shipped as RAII path-scoping + `kMaxScanFieldsPerClass`, pinned header-inline in `dll_helpers_test` (7-failure negative control). ⚠ Live check still owed. |
-| ~~1~~ (half) | ~~**U3**~~ -> **U17** | **Silent-drop half shipped build 3169**; the layout half is now register row `U17` (M/med, still open). The entry's own warning was what mattered: the filed rationale would have deleted a skip that is CORRECT for `FGameplayAttributeData`. |
+| ~~1~~ ✅ **DONE** | ~~**U3**~~ -> ~~**U17**~~ | **Silent-drop half shipped build 3169**; the layout half became register row `U17` — **✅ FIXED build 3171** (the width-correct decoder already existed inline in `WalkInstance`; the fix was extraction + routing, not new logic). The entry's own warning was what mattered: the filed rationale would have deleted a skip that is CORRECT for `FGameplayAttributeData`. |
 | ~~1~~ ✅ **DONE** | **V3** | Same root cause as V4, one method apart. Fixing either alone leaves the identical hole next door. |
 | ~~5~~ ✅ **DONE** | **V4** | ⚠ **Read `residual_risk` before writing a line.** The obvious fix (a `required` expected-parent parameter) would SILENTLY KILL the Go box, Find Refs and every cross-tab 'Open in Live Walker' handoff — two of `NavigateToAsync`'s three callers `Breadcrumbs.Clear()` first and legitimately have no parent. |
 
@@ -41,7 +50,7 @@ guarded exposed it (working-lessons §2.2).
 
 > **Closed.** `9ea249b8` (dinput8: `Proxy_GetdfDIJoystick` + pin `@1..@6`), `ceaff6ad` (version: pin
 > `@1..@17`, shipped separately per `residual_risk` #1 so the default proxy has one suspect),
-> `b0ccae6c` ([`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py) + baseline + CI ×2).
+> `b0ccae6c` ([`tools/check_proxy_exports.py`](../../tools/check_proxy_exports.py) + baseline + CI ×2).
 > Every prediction below held: verification WAS offline, the fix WAS additive, nothing was added to
 > the live-verification backlog, and `residual_risk` #2 — "both ordinal maps are machine-local facts
 > baked into the tree with nothing to re-derive them" — is answered by the committed baseline plus
@@ -460,7 +469,7 @@ FIX-TIME SIBLING GREP: the same page-vs-table confusion may exist wherever a cap
 
 ---
 
-## U3 - BIGGER_THAN_FILED - FIXED (silent-drop half) build 3169; LAYOUT HALF = U17, OPEN
+## U3 - BIGGER_THAN_FILED - FIXED (silent-drop half) build 3169; LAYOUT HALF = U17 — ✅ FIXED build 3171
 
 > **Half closed.** The silent-drop half shipped: the 8-byte skip is now gated on
 > `Ubel::LooksLikeVtablePointer` instead of on `size > 8`, so `FVector3f` keeps all three
@@ -769,7 +778,14 @@ DELIBERATELY OUT OF SCOPE — `References` is cleared at only three sites (:815 
 
 ---
 
-## V4 — BIGGER_THAN_FILED
+## V4 — BIGGER_THAN_FILED — ✅ FIXED build 3170 (2026-08-17)
+
+> **Closed, with V3 (one commit — one root cause, one method apart).** The residual-risk section
+> below is what shaped the shipped fix: NOT a `required` expected-parent parameter (which would have
+> silently killed the Go box, Find Refs and every cross-tab handoff), and NOT a `Breadcrumbs.Count`
+> check — the guard is a crumb-IDENTITY ticket captured at GESTURE time and threaded into
+> `NavigateToAsync`; swapping identity for count was measured to let 2 of the 7 new tests through.
+> All three post-await `Breadcrumbs.Add` sites are covered. Analysis below preserved verbatim.
 
 ### Premises of the filed finding that are WRONG
 
