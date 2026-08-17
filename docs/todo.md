@@ -2688,6 +2688,15 @@ each has a *visible* pass/fail, and four of them only ever show up when somethin
 > at the same region (`0x478…0x658`) instead of jumping to the top. Pressed the **▼ stepper** → it
 > scrolled to and selected `bFlagA` at `0x670`. Highlights, anchor and stepper all survive a refresh.
 >
+> **AF4 — PASS, and this one has no unit test by design.** Live Walker on `DumperTestActor_0` →
+> switch to **Instances** → switch back. The object, the scroll region and the selection all survive.
+> Then the real check, chosen so a dead callback cannot hide: search `Text_` (**8 matches**, and the
+> `Text_*` fields live at `0x2A0…0x310`, far *above* the `0x4C8+` region on screen) and press the
+> **▼ stepper** — the grid scrolls all the way up and selects `0x2A0 Text_Even2_OneNull`. Before the
+> fix all six callbacks were dead after one round trip **and nothing errored**; a stepper that only
+> had to move a few rows could not have told the difference, which is why the keyword was picked to
+> force a long scroll.
+>
 > ⭐ **Free corroboration of the SDK-header export, from a different code path.** Every offset the
 > Live Walker shows on this actor matches the exported header exactly — `0x639 U8_Small`,
 > `0x63C I16`, `0x640 I32`, `0x650 F32`, `0x658 F64`, `0x670 bFlagA/bFlagB/bFlagC` (bits 0/1/2, masks
