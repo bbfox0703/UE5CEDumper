@@ -275,6 +275,39 @@ public sealed class TimeState
     public TimeDilationKnob Pawn { get; init; } = new();
 }
 
+/// <summary>
+/// Full God Mode state from <c>get_protect_state</c> (Solitar), as opposed to the
+/// single tri-state <c>get_god_mode</c> returns.
+///
+/// <para>The three fields answer different questions, and collapsing them is what
+/// made the badge lie (audit #5 AD4):</para>
+/// <list type="bullet">
+/// <item><see cref="Want"/> — what the USER asked for. Survives a reconnect, and
+/// is what the re-assert worker keeps driving.</item>
+/// <item><see cref="Live"/> — what the pawn's <c>bCanBeDamaged</c> ACTUALLY reads
+/// right now. <c>-1</c> when there is no pawn to read.</item>
+/// <item><see cref="Resolvable"/> — whether a canonical target was found at all.
+/// Without it, <see cref="Want"/> is an intention with nothing to write to.</item>
+/// </list>
+///
+/// <para>The wire name for <see cref="Live"/> is <c>godmode</c>, not <c>live</c> —
+/// see <c>Fern.cpp</c>'s CMD_GET_PROTECT_STATE handler.</para>
+/// </summary>
+public sealed class ProtectState
+{
+    /// <summary>Desired toggle (1 = on, 0 = off). Survives reconnect.</summary>
+    public int Want { get; init; }
+
+    /// <summary>Observed live state (1 = immune, 0 = damageable, -1 = no pawn).</summary>
+    public int Live { get; init; } = -1;
+
+    /// <summary>True when a canonical <c>bCanBeDamaged</c> target was resolved.</summary>
+    public bool Resolvable { get; init; }
+
+    /// <summary>Solitar::ProtectResult (0 = OK, negative = error).</summary>
+    public int Code { get; init; }
+}
+
 /// <summary>Live state of the Fly feature (Dunste — no-gravity 3D flight),
 /// returned by <c>fly_set</c> / <c>fly_get_state</c>. <see cref="HasCmc"/> is
 /// false on vehicle / custom-framework pawns with no UCharacterMovementComponent

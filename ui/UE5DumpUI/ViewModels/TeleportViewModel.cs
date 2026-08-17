@@ -654,6 +654,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // Reflect any dilation the DLL is already holding (prior session / CE
             // record) — it survives a UI reconnect as long as the game lives.
             _ = RefreshHeldTimeStateAsync();
+            // Same "state lives in the DLL" model for God Mode: `want` survives a UI
+            // reconnect, so the badge must reflect it without the user pressing ↻
+            // (audit #5 AD4 — nothing queried it on connect, and AutoTick polls only
+            // pose + markers). Deliberately NOT RefreshGodModeAsync: that one sets
+            // IsBusy, which flickers every CanOperate-bound button, and writes
+            // StatusText, which would overwrite the "Connected" just set above.
+            _ = RefreshHeldProtectStateAsync();
         }
         else
         {
@@ -1396,7 +1403,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     // ── God Mode (force AActor.bCanBeDamaged, Solitar) ─────────────────
 
     /// <summary>Map the DLL tri-state (1=immune, 0=can be damaged, &lt;0=unknown)
-    /// onto the badge.</summary>
+    /// onto the badge. Kept for the disconnect reset and as the fallback when only
+    /// the collapsed <c>get_god_mode</c> value is available.</summary>
     private void ApplyGodModeState(int state)
         => (GodModeState, GodModeBadgeColor) = state switch
         {
@@ -1404,6 +1412,39 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             0 => ("OFF",     "#999999"),   // grey — can be damaged
             _ => ("Unknown", "#888888"),
         };
+
+    /// <summary>
+    /// Badge from the FULL state (audit #5 AD4). <c>get_god_mode</c> returns one
+    /// number and therefore cannot separate three genuinely different situations,
+    /// all of which used to render as a flat "OFF" or "Unknown":
+    ///
+    /// <list type="bullet">
+    /// <item><b>ON (pending)</b> — the user enabled it, but no canonical
+    /// <c>bCanBeDamaged</c> has been resolved yet (no pawn in the world). The hold
+    /// is armed and will apply on spawn. This read "Unknown".</item>
+    /// <item><b>ON (not held)</b> — the pawn currently reads immune, but WE are not
+    /// the reason: nothing was requested. Reporting a plain "ON" would credit the
+    /// tool for a state it is not maintaining, and the badge would then go "off"
+    /// by itself when the game changed it back.</item>
+    /// <item><b>ON (contested)</b> — the hold IS engaged and resolvable, and the
+    /// game just won the drift race this instant. The re-assert worker will take it
+    /// back. This read "OFF", i.e. identical to never having enabled it — which is
+    /// the same conflation this method exists to remove, so omitting this cell
+    /// would have reproduced the defect inside its own fix.</item>
+    /// </list>
+    /// </summary>
+    private void ApplyProtectState(ProtectState st)
+    {
+        (GodModeState, GodModeBadgeColor) = (st.Want, st.Live, st.Resolvable) switch
+        {
+            (1, 1, _)     => ("ON",             "#4EC9B0"),  // green — asked for it, holding it
+            (1, _, false) => ("ON (pending)",   "#E0A050"),  // amber — armed, nothing to write to yet
+            (1, 0, true)  => ("ON (contested)", "#E0A050"),  // amber — engaged, drifted this instant
+            (0, 1, _)     => ("ON (not held)",  "#E0A050"),  // amber — immune, but not by us
+            (0, 0, _)     => ("OFF",            "#999999"),  // grey  — off and damageable
+            _             => ("Unknown",        "#888888"),  // no pawn and nothing requested
+        };
+    }
 
     [RelayCommand]
     private Task ForceGodModeOnAsync()  => ForceGodModeAsync(wantOn: true);
@@ -1420,13 +1461,18 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             IsBusy = true;
             ClearError();
-            var state = await _dump.GetGodModeAsync();
-            ApplyGodModeState(state);
-            StatusText = state switch
+            var st = await _dump.GetProtectStateAsync();
+            ApplyProtectState(st);
+            StatusText = (st.Want, st.Live, st.Resolvable) switch
             {
-                1 => "God Mode is ON (bCanBeDamaged = false).",
-                0 => "God Mode is OFF.",
-                _ => "God Mode state unknown — enter gameplay so a pawn spawns, then ↻.",
+                (1, 1, _)     => "God Mode is ON (bCanBeDamaged = false).",
+                (1, _, false) => "God Mode is ON but not applied yet — no pawn resolved. " +
+                                 "It engages as soon as one spawns.",
+                (1, 0, true)  => "God Mode is ON and engaged; the game just reset the flag — " +
+                                 "the re-assert worker will take it back.",
+                (0, 1, _)     => "Damage is off, but not because of us — nothing is being held.",
+                (0, 0, _)     => "God Mode is OFF.",
+                _             => "God Mode state unknown — enter gameplay so a pawn spawns, then ↻.",
             };
         }
         catch (Exception ex)
@@ -1450,7 +1496,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var state = await _dump.SetGodModeAsync(wantOn);
-            ApplyGodModeState(state);
+            // Land the toggle on the SAME map as ↻ (audit #5 AD4). set_god_mode
+            // returns only the observed value, so a force-ON with no pawn yet came
+            // back < 0 and the badge said "Unknown" — the request itself is what
+            // the user needs to see reflected. `want` is known here without a
+            // second round-trip, and `resolvable` follows from a readable state.
+            ApplyProtectState(new ProtectState
+            {
+                Want       = wantOn ? 1 : 0,
+                Live       = state,
+                Resolvable = state >= 0,
+            });
             StatusText = state switch
             {
                 1 when wantOn  => "✓ God Mode forced ON (bCanBeDamaged = false).",
@@ -2034,6 +2090,25 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ApplyLaneState(TimeLane.World, -1);
             ApplyLaneState(TimeLane.Pawn, -1);
             _log.Error("Teleport RefreshHeldTimeState failed", ex);
+        }
+    }
+
+    /// <summary>Quiet read-back of the God Mode hold (used on connect). The DLL's
+    /// re-assert worker keeps driving <c>want</c> for as long as the game process
+    /// lives, so a UI reconnect should show the badge that is actually in force
+    /// rather than "Unknown" until the user presses ↻. Log-only on failure, and it
+    /// never touches IsBusy or StatusText — see the call site for why.</summary>
+    private async Task RefreshHeldProtectStateAsync()
+    {
+        if (!IsConnected) return;
+        try
+        {
+            ApplyProtectState(await _dump.GetProtectStateAsync());
+        }
+        catch (Exception ex)
+        {
+            ApplyGodModeState(-1);
+            _log.Error("Teleport RefreshHeldProtectState failed", ex);
         }
     }
 

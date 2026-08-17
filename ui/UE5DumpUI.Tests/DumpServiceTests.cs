@@ -105,6 +105,58 @@ public class DumpServiceTests
 
     private DumpService CreateService() => new(_pipe, _log);
 
+    // Audit #5 AD4 — get_protect_state parsing.
+    //
+    // The one trap: the live value arrives on the wire as `godmode`, NOT `live`
+    // (Fern.cpp's CMD_GET_PROTECT_STATE handler). Reading the wrong key falls
+    // through to the ?? -1 default, which means "no pawn" — a silent, permanent
+    // "Unknown" badge that looks exactly like a game with no pawn spawned.
+    [Fact]
+    public async Task GetProtectStateAsync_ParsesTheFlatEnvelope()
+    {
+        JsonObject? lastReq = null;
+        _pipe.SetHandler(req =>
+        {
+            lastReq = req;
+            return new JsonObject
+            {
+                ["ok"]         = true,
+                ["want"]       = 1,
+                ["godmode"]    = 1,     // <- the wire name for ProtectState.Live
+                ["resolvable"] = false,
+                ["code"]       = 0,
+                // Every response also carries this; the parse must ignore extras
+                // rather than depend on an exact key set.
+                ["game_thread_stalled"] = false,
+            };
+        });
+
+        var svc = CreateService();
+        var st = await svc.GetProtectStateAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("get_protect_state", lastReq?["cmd"]?.GetValue<string>());
+        Assert.Equal(1, st.Want);
+        Assert.Equal(1, st.Live);          // reddens if the key is read as "live"
+        Assert.False(st.Resolvable);
+        Assert.Equal(0, st.Code);
+    }
+
+    /// <summary>Missing fields must degrade to the honest defaults, not to a
+    /// confident wrong answer: no live reading is -1 ("no pawn"), not 0
+    /// ("damageable").</summary>
+    [Fact]
+    public async Task GetProtectStateAsync_MissingFields_DefaultToUnknownNotOff()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true });
+
+        var svc = CreateService();
+        var st = await svc.GetProtectStateAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, st.Want);
+        Assert.Equal(-1, st.Live);
+        Assert.False(st.Resolvable);
+    }
+
     [Fact]
     public async Task InvokeFunctionAsync_StringParams_SerializedAsStrParamsArray()
     {

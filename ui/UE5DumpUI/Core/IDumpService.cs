@@ -554,6 +554,17 @@ public interface IDumpService
     Task<TimeState> GetTimeStateAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// Read the FULL God Mode state (Solitar): what the user asked for, what the
+    /// pawn's <c>bCanBeDamaged</c> actually reads, and whether a canonical target
+    /// was resolvable at all.
+    ///
+    /// <para>The single tri-state <c>get_god_mode</c> collapses those three into
+    /// one number, so it cannot distinguish "GodMode was never enabled" from "the
+    /// hold is engaged but there is no pawn to write to yet" (audit #5 AD4).</para>
+    /// </summary>
+    Task<ProtectState> GetProtectStateAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Hold a dilation lever (<paramref name="target"/> = "global" | "pawn") at the
     /// absolute <paramref name="value"/> (1.0 = normal, 0.5 = half, 0 = frozen; clamped
     /// DLL-side to [0,100]) with a re-assert worker that fights the game's per-tick

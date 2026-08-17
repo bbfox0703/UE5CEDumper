@@ -181,6 +181,12 @@ __declspec(dllexport) int32_t   UE5_GetGodMode();
 // Combined state for the UI badge: *outWant = desired toggle (1/0, survives
 // reconnect), *outLive = observed state (1/0, -1 if no pawn), *outResolvable =
 // could the live pawn be read (1/0). All params nullable. Returns 0.
+//
+// Consumed by the UI via the `get_protect_state` pipe command since build 3203
+// (audit #5 AD4). It had shipped with zero clients while the badge read the
+// collapsed UE5_GetGodMode tri-state, which cannot tell "never enabled" from
+// "enabled and waiting for a pawn" or from "engaged and drifted this instant".
+// The wire name for *outLive is `godmode`, not `live` — see Fern.cpp.
 __declspec(dllexport) int32_t   UE5_GetProtectState(int32_t* outWant,
                                     int32_t* outLive, int32_t* outResolvable);
 
