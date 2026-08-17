@@ -22,6 +22,53 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - Y16: a 1-byte enum param was written as 4 bytes over the next one (build 3214)
+
+**Audit #5 Y16 (MED) closed** — the maintainer lifted the hold that had kept it recorded-not-fixed.
+The register's own scope note was right and the row wrong: **three sites plus a cosmetic straggler**.
+
+UE sizes an enum by its UNDERLYING type. The common `TEnumAsByte` / `enum class : uint8` is 1 byte,
+so mapping every `EnumProperty` to `int32` writes 4 bytes and clobbers the next parameter in
+`params_data`.
+
+| # | site | was | now |
+|---|---|---|---|
+| 1 | `InvokeScriptGenerator.GetMailboxWriteStatement` — interactive CE form, WRITE | shared the `IntProperty` arm → `writeInteger` | falls to the existing `_ => size switch` |
+| 2 | `BakedScriptGenerator.MapToHelperType` via `MapInputType` — Copy AA Script (Baked), WRITE | flat `'int32'` token | size-aware token |
+| 3 | `CeInvokeReturn` — RETURN, READ | 1-byte enum reported from a 4-byte read | reads its real width |
+
+Sites 1–2 corrupt memory; site 3 only misreports. **Fixing site 1 alone would have left the three
+ways of invoking a UFunction from one dialog input still disagreeing**, which is the row's own
+complaint.
+
+**This is the family's recurring shape and it is worth naming: the finding is the DROPPED FIELD, not
+the guess.** The size was in scope at all three sites the entire time — site 1's `_ => size switch`
+fallback already mapped 1/2/8 correctly and `EnumProperty` short-circuited past it; site 2 held
+`v.Size` and used it only for the `fstruct` arm; site 3's `size` was already a parameter. The same
+was true of W6 (`CeWidthForSize` existing but unused) and Y15 (`MapToHelperType`'s "out of v1 scope"
+comment). Here `BakedParamValue.Size`'s own doc comment stated the defective assumption outright.
+
+Shape copied from **Y15's precedent**: a `(string, int)` overload plus a sizeless one behaving as
+size 0, with **only `EnumProperty` consulting the size**. That restriction has its own test, and it
+is the one that matters — letting `size` override types whose width is fixed by their NAME would turn
+a mis-reported size into a wrong write for types that are currently correct, i.e. the fix would
+become a bigger version of the bug.
+
+**No Lua change was needed**: `writeBakedParams` already accepts the `byte` / `int16` / `int64`
+tokens, so no user has to re-embed the helper. The cosmetic straggler is folded in —
+`ShortTypeNameForComment` hardcoded `"enum(int32)"`, so the generated script's own trailing comment
+would have gone on asserting the old width after the write was corrected.
+
+42 tests. Site 1 is asserted on the **emitted Lua** rather than the mapping, because that is what
+reaches the game — including that the neighbouring int param keeps its own width. Negative controls:
+putting `EnumProperty` back in the int arm fails exactly the three emitted-width cases; flattening
+the enum arm fails the mapping, `MapInputType` and cross-path-agreement cases. 4013 passed / 0.
+
+**The enum-width family is now 4 findings across 7 sites in 4 subsystems, all closed** — W6, Y2,
+Y15, Y16.
+
+-----
+
 ## 2026-08-17 - AA10: seven of eleven mailbox emitters had no idle guard at all (build 3206)
 
 **Audit #5 AA10 closed (MED→LOW).** The mailbox has two concurrency guards and they are mutually

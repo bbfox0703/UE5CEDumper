@@ -1373,11 +1373,11 @@ MEDIUM.
 | **Y13** | LOW | `BakedScriptGenerator.cs:195` | Verify mode's 32-byte dump window cannot contain the complex return it tells the user to read. | S / low |
 | **Y14** | LOW | `InvokeParamDialog.cs:850` | *"AA Script created in CE … (N baked param(s))"* is reported even when a param failed to parse and was baked as 0. | M / low |
 | **Y15** ✅ | MED | *(hand-found while fixing Y9)* `FreezeScriptGenerator.cs:193` + `Models/FreezeScriptParams.cs` | `MapToHelperType` maps **`EnumProperty` → `int32` unconditionally**, so freezing / force-holding an `enum class : uint8` field emits a **4-byte `writeInteger`** and clobbers the three bytes after it. `FreezeScriptParams` carries no size at all, so the generator *cannot* know better — the DLL's real width is on `PropertySearchMatch.PropSize` and is dropped at the model boundary. **Third site of a family this audit has already fixed twice**: W6 (CE XML export hardcoded `"4 Bytes"`) and Y2 (invoke param buffer gated on `available >= 4`). The code comment at the mapping admits it — *"if a future game has a 1-byte enum we'd want to surface the size and pick uint8 instead. Out of v1 scope."* — which is the whole finding. Needs plumbing, hence M not S. | M / low |
-| **Y16** | MED | *(hand-found while fixing Y15)* `InvokeScriptGenerator.cs:558` (`GetMailboxWriteStatement`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` → **`writeInteger`**, so the **interactive CE invoke form** writes 4 bytes for a 1-byte enum param and clobbers the next param in `params_data`. Same defect Y2 fixed in `ParamBufferBuilder` (the FIRE path), surviving in a third path — so for one dialog input the three ways of calling a UFunction still do not agree. **Fourth site of the enum-width family** (W6, Y2, Y15). One line: the method already receives `p.Size` and its `_ => size switch` fallback already maps 1/2/8 correctly — `EnumProperty` short-circuits past it, so deleting it from that arm is the fix. **⚠ NOT a one-liner — see Y16's scope note below; it is three sites, not one.** | M / low |
+| **Y16** ✅ | MED | **FIXED build 3214.** The scope note below was right and the row wrong: **three sites plus a cosmetic straggler**, all closed. The size was in scope at every one of them — site 1's `_ => size switch` fallback already mapped 1/2/8 correctly and `EnumProperty` short-circuited past it; site 2 held `v.Size` and used it only for the `fstruct` arm; site 3's `size` was already a parameter. Shape copied from **Y15's precedent** — a `(string, int)` overload plus a sizeless one behaving as size 0, with **only `EnumProperty` consulting the size**. That restriction has its own test (`MapToHelperTypeIgnoresSizeForEveryTypeButEnum`): letting `size` override types whose width is fixed by their NAME would turn a mis-reported size into a wrong write for types that are currently correct — the fix would become a bigger version of the bug. **No Lua change was needed** (the helper already accepts `byte`/`int16`/`int64`), so nobody re-embeds anything. Site 1 is asserted on the **emitted Lua**, not the mapping, because that is what reaches the game — including that the neighbouring int param keeps its own width. 42 tests; negative controls = putting `EnumProperty` back in the int arm (fails exactly the three emitted-width cases) and flattening the enum arm (fails the mapping / `MapInputType` / cross-path-agreement cases). 4013 passed / 0 failed. **The enum-width family is now 4 findings across 7 sites in 4 subsystems, all closed** (W6 ✅, Y2 ✅, Y15 ✅, Y16 ✅). — *As filed:* *(hand-found while fixing Y15)* `InvokeScriptGenerator.cs:558` (`GetMailboxWriteStatement`) | `EnumProperty` is grouped with `IntProperty`/`UInt32Property` → **`writeInteger`**, so the **interactive CE invoke form** writes 4 bytes for a 1-byte enum param and clobbers the next param in `params_data`. Same defect Y2 fixed in `ParamBufferBuilder` (the FIRE path), surviving in a third path — so for one dialog input the three ways of calling a UFunction still do not agree. **Fourth site of the enum-width family** (W6, Y2, Y15). One line: the method already receives `p.Size` and its `_ => size switch` fallback already maps 1/2/8 correctly — `EnumProperty` short-circuits past it, so deleting it from that arm is the fix. **⚠ NOT a one-liner — see Y16's scope note below; it is three sites, not one.** | M / low |
 
-> ### 📋 Y16 scope note — surveyed 2026-08-15, DELIBERATELY NOT FIXED
+> ### 📋 Y16 scope note — surveyed 2026-08-15, **FIXED build 3214** (the maintainer lifted the hold on 2026-08-17)
 >
-> The maintainer asked for this to be recorded rather than fixed. Recorded here because the survey
+> The maintainer originally asked for this to be recorded rather than fixed, then lifted that hold on 2026-08-17; the survey below is what the fix was built from. It is kept because it found
 > found **the row above understates it**: Y16 is *three* sites, not one, and the sizing rule was
 > already at hand at every one of them. Re-rated **M / low**.
 >
@@ -1410,7 +1410,7 @@ MEDIUM.
 > script's own trailing comment would keep asserting `int32` after the write was corrected.
 >
 > The family now stands at **4 findings across 7 sites in 4 subsystems** — W6 (CE XML export) ✅,
-> Y2 (FIRE param buffer) ✅, Y15 (freeze/force) ✅, Y16 (three invoke sites + one comment) open.
+> Y2 (FIRE param buffer) ✅, Y15 (freeze/force) ✅, Y16 (three invoke sites + one comment) ✅.
 
 **Verified independently (not agent-reported):**
 
@@ -3624,7 +3624,7 @@ leaf `Actor` exists — which is what proves the package half is really being ma
 End-to-end: `createFromPath("/Script/Engine.Actor")` now builds a 129-field `Actor` structure in CE.
 16 new assertions; negative control (dropping the separator rewrite) turns **6** of them red.
 
-**Current register: 170 open of 291 · 0 HIGH · 6 MED · 137 LOW · 27 INFO.** Re-derive with
+**Current register: 169 open of 291 · 0 HIGH · 5 MED · 137 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —
