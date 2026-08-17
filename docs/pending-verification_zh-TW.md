@@ -163,19 +163,6 @@
 | 3 | Value Search → First Scan → 用 Value 排序 → 按 New Scan。 | 排序選單回到「Scan order」；再選一次「Value」會真的重新排序。 |
 | 4 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
 
-### ⬜ F9 —— walk_world 要列得出 actor 和它的 component
-
-*build 3247 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 連線後 Live Walker → **Load GWorld** | actor 清單非空<br>⚠ 之前兩款遊戲都是 `actor_count: 0`；非零就是新行為 |
-| 2 | 小地圖上比對 `actor_count` 與 `actor_total` | 兩者相等、`truncated` 為 false |
-| 3 | 掃一遍清單找 `ModelComponent*` / `ActorCluster` 這類列 | 一個都不該有<br>⚠ 它們確實 outered 到 level；出現就代表 is-Actor 閘門沒跑，清單只做了 outer 比對 |
-| 4 | 展開一個明顯有 component 的 actor（Character） | component 列得出來<br>⚠ 這一半是 finding 沒提到的：這個迴圈在正式版從來沒執行過 |
-| 5 | 檢查列出的 component 的 Outer | 就是它被列在底下的那個 actor |
-| 6 | 在大型串流地圖上把 `limit` 調小 | `actor_count` = limit、`actor_total` 大於它、`truncated` 為 true |
-
 ### ⬜ AE2 / AE3 —— Class/Struct 面板在快速切換選取下的同步
 
 *優先度 **中***

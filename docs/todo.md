@@ -1523,11 +1523,34 @@ behaves as it did before 3253.
 
 -----
 
-### ⬜ NEW 2026-08-17 — F9: walk_world must list actors AND their components (build 3247)
+### ✅ VERIFIED 2026-08-17 `[F9-PIPE-2026-08-17]` — F9: walk_world must list actors AND their components (build 3247)
 
-*Needs a connected game. Two titles already reproduced `actor_count: 0` — DumperTest's stock
-ThirdPersonMap and Solarpunk — so those are the discriminating samples. **No offline test exists**
-(the correctness is structural, and no target compiles `Fern.cpp`/`Aura.cpp`), so this IS the pin.*
+**All six steps PASS**, on **DumperTest Development** — one of the two titles that originally
+reproduced `actor_count: 0`, so it is a discriminating sample and not a fresh one. Driven over the
+pipe with `tools/verify/pipe_client.py` on build **1.0.0.3262**; **no UI was involved, so this says
+nothing about the Live Walker's own bindings** — only that the DLL now returns the right payload.
+
+* **1 — PASS.** `walk_world` returns `actor_count: 58` on the stock ThirdPersonMap. The defect was
+  `0` here.
+* **2 — PASS.** `actor_count: 58` == `actor_total: 58`, `truncated: false`.
+* **3 — PASS (the gate).** Zero rows whose name contains `ModelComponent` or `ActorCluster`, over
+  all 58. Both ARE outered to the level, so their absence is what shows the is-Actor gate ran rather
+  than a bare outer comparison.
+* **4 — PASS (the half the finding did not mention).** 53 components across 47 of 58 actors.
+  `BP_ThirdPersonCharacter_C` lists six — `PawnInputComponent0`, `CollisionCylinder`,
+  `CharacterMesh0`, `CharMoveComp`, `CameraBoom`, `FollowCamera` — i.e. the non-reflected
+  `OwnedComponents` TSet is now read correctly.
+* **5 — PASS, and checked INDEPENDENTLY of the payload under test.** `walk_world`'s component
+  entries carry only `addr`/`class`/`name`, so the Outer cannot be read off the same reply that is
+  being verified. Asked the DLL separately via `get_related_objects` for each of the six: all six
+  report `Outer -> BP_ThirdPersonCharacter_C_2147482479`, the actor they were listed under. 6/6.
+* **6 — PASS, with a stated substitution.** No large streamed map was used; `limit=10` against this
+  58-actor level gives `actor_count: 10`, `actor_total: 58`, `truncated: true`. That is the same
+  count-past-the-cap path, but it is **not** a streaming-map test and must not be read as one.
+
+*No defect found. One false alarm of my own is worth recording so it is not re-raised: the actor
+rows looked like they had a null class until I noticed I was reading `class_name`; the field is
+`class`, and all 58 carry it.*
 
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
