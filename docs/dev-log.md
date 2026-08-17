@@ -22,6 +22,56 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - A4: struct-sided TSet/TMap elements were covered by nothing (build 3219)
+
+**Audit #5 A4 (MED) closed**, and it filed **A11** on the way out.
+
+Value Search's deep pass skipped on `lf.depth < 2` alone — "depth 1 is already covered by the static
+paths". That holds for **arrays only**: `collectStructArrayInner` has exactly one non-recursive call
+site and it sits inside the `ArrayProperty` branch. A struct-sided `TSet<FStruct>` or
+`TMap<K, FStruct>` element was therefore reached by **neither** index, and an everyday
+`TMap<FName, FItemData>` inventory count was unfindable with Deep ON as well as OFF.
+
+**The asymmetry is the evidence.** Three consumers share the same walker and only this one has the
+wrong shape: the snapshot path tests `leafName.empty() && depth < 2` (whole-element-aware, i.e.
+correct) and the group scan uses `depth < 1`.
+
+**The rule moved to a pure header-inline predicate; the WIRING was closed by placement, not by a
+test** — no target compiles `Aura.cpp`, so the fix's most likely failure was never the rule but a
+leaf-init site left un-threaded. `ContainerKind` moves to `Aura.h` with **`Unknown` first**, and
+`ContainerLeaf::kind` sits **immediately before `int depth`**, so a site that forgets it binds an
+`int` to a scoped enum and fails to compile. Verified as a control: dropping it from one of the four
+sites is `error C2440`.
+
+⚠ **That inverts the advice the fix was drafted from, and the inversion is the whole safety
+argument.** The draft warned against putting a new enumerator first, on the grounds that
+`ContainerCacheEntry` is aggregate-initialised positionally — but those sites name their enumerators
+explicitly, so order is unobservable there. The real hazard runs the other way: with `Array` at 0, a
+missed wiring site value-initialises to *"statically covered"* and **silently reproduces A4**, with
+no compile error and no failing test. Zero must mean "nobody said", and nobody-said is not covered.
+(§2.2's *make a wired-through field required*, applied to an enum rather than a bool.)
+
+**Two prerequisites shipped with it**, because without them the fix is wrong in a new way:
+
+- `ScanClassInfo.fieldCapHit` now gates the predicate. It answers *does the static index reach this
+  leaf*, which is meaningless if that index was truncated at `kMaxScanFieldsPerClass` — such a class
+  now falls through to emitting rather than trusting coverage it may not have.
+- `ensureDeepDescriptor` takes the leaf's real `boolMask` instead of hardcoding `0xFF`. A packed bool
+  shares its byte with up to 7 siblings, so a whole-byte mask compares all of them — newly reachable
+  now that struct-sided Set/Map leaves emit.
+
+13 assertions. Negative control: restoring `depth < 2` fails exactly the two defect rows plus the
+`Unknown` guard. 4013 passed / 0 failed.
+
+⚠ **Known limit, filed as A11 rather than glossed over.** Deep candidates refine by stored ABSOLUTE
+address, and the newly-reachable rows are overwhelmingly TSet/TMap sparse-container elements — which
+UE rehashes and compacts on Add/Remove. So a refine after the user picks up an item can drop the very
+candidate this fix made findable. That is pre-existing behaviour, but this multiplies its incidence
+on precisely the inventory workflow the finding cites. **A4 makes the count findable; A11 is what
+makes it stay findable.** Do not report the workflow as closed on A4 alone.
+
+-----
+
 ## 2026-08-17 - U5: the class-walk cache is bounded, and "eviction is illegal" was half wrong (build 3218)
 
 **Audit #5 U5 (MED) closed — Tier 0 + Tier 1.** The headline is not the bound; it is that the reason
