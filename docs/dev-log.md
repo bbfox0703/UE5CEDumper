@@ -22,6 +22,50 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AD3: a zero-hit hint erased the pattern before the pass that could find it (build 3215)
+
+**Audit #5 AD3 closed (MED→LOW)**, and it filed **AA38** on the way out.
+
+The checked question first: **is this the same defect G10 already fixed?** No. G10 stopped the hint
+erasing a pattern that MATCHED but failed validation. What remained is the `hintHits.empty()` arm,
+and it is wrong for a different reason: `Macht::AOBScanAll(pattern)` passes no `moduleBase`, so it
+defaults to `GetModuleBase(nullptr)` and answers **"no match in the MAIN module"** — while **Pass 2
+exists precisely for patterns with zero main-module hits** and re-scans them across every loaded
+module.
+
+So erasing on an empty result removed the pattern **before the only pass that could still find it**.
+A target living in another module was unresolvable on any run that had a hint, and resolvable on the
+cold run that had none. Same G10 invariant — *the hint path must never be weaker than the scan that
+produced the hint* — one axis further out.
+
+**A second defect surfaced while fixing it.** The hint phase pushed its `PatternScanResult` on BOTH
+miss paths while leaving the pattern in `sorted` for the batch passes to re-scan, so the same pattern
+landed in `report.results` twice: "N patterns tried" was inflated and the per-pattern dump listed it
+twice. That already affected the matched-but-unvalidated case, and deleting the erase would have
+added the zero-hit case. The hint phase now records only when it WINS — the batch pass reports
+otherwise, because its verdict is the final one.
+
+⛔ **No test, deliberately.** The rule is a deletion, not a predicate, and no target compiles
+`Genau.cpp`. A `Sig::ShouldDropHintPattern` header predicate was considered and rejected as oversold:
+it is constant-false at all three reachable call sites, so it would pin a hypothetical branch while
+the actual call-site edit stayed unverified — a green test there would be worse than no test. The
+diff is kept to the minimum inspection can carry.
+
+**AA38 filed rather than hidden.** Both corpus instances that exercise this had `GObjects … NONE
+validated` and recovered a **foreign-module GWorld** that `ValidateGWorldBasic` accepted only because
+`world == 0` passes outright — on `python.exe`, a process with no UE world at all. AD3 makes those
+suspect resolves appear on *every* launch instead of every other launch; it did not create them and
+does not make them worse per-run. The honest item is the one the review asked for: *a foreign-module
+GWorld win on a run where GObjects never resolved should be refused, not published.*
+
+Live check (log-only, no interaction): grep by format string — `Hint MISS: '`,
+`(multi-module), validated`, `patterns tried,`. A hint-miss run should now show the pattern reaching
+Pass 2 with real multi-module hits rather than `hits=0`.
+
+4013 passed / 0 failed.
+
+-----
+
 ## 2026-08-17 - Y16: a 1-byte enum param was written as 4 bytes over the next one (build 3214)
 
 **Audit #5 Y16 (MED) closed** — the maintainer lifted the hold that had kept it recorded-not-fixed.
