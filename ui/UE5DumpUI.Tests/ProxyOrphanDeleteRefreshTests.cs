@@ -250,7 +250,7 @@ public class ProxyOrphanDeleteRefreshTests
         public bool IsElevated() => false;
         public Task<InjectResult> InjectDllElevatedAsync(int pid, string dllPath, CancellationToken ct = default) => No<Task<InjectResult>>();
         public Task RefreshDeployStatusAsync(IList<DetectedGame> games, string sourceDllPath, ProxyType proxyType, IReadOnlySet<string>? preserveBinariesDirs = null, CancellationToken ct = default) => Task.CompletedTask;
-        public Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType, bool force = false, CancellationToken ct = default) => No<Task<bool>>();
+        public Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType, DeployOptions options = default, CancellationToken ct = default) => No<Task<bool>>();
         public Task<bool> UndeployAsync(DetectedGame game, CancellationToken ct = default) => No<Task<bool>>();
         public Task ApplyProxySuggestionsAsync(IReadOnlyList<DetectedGame> games, IReadOnlyDictionary<string, ProxyType> confirmedByExe, IReadOnlyDictionary<string, ProxyType> rememberedByGame, IReadOnlySet<string> injectedExes, bool enabled, CancellationToken ct = default) => Task.CompletedTask;
         public bool IsOurProxyDll(string dllPath) => true;

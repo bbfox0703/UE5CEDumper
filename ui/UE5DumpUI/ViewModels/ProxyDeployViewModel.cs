@@ -32,7 +32,25 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private string _sourceDllPath = "";
     [ObservableProperty] private string? _sourceDllVersion;
+    /// <summary>Redeploy over OUR proxy even at the same version. Persisted
+    /// (<c>ui-options.json</c>) — it is benign and reversible.</summary>
     [ObservableProperty] private bool _forceOverwrite;
+
+    /// <summary>
+    /// Allow replacing a DLL that is provably NOT ours (ReShade, Special K,
+    /// Ultimate ASI Loader, a game-shipped wrapper).
+    ///
+    /// <para><b>Deliberately NOT persisted, and that is the fix — audit #5
+    /// AC1.</b> This used to be the same flag as <see cref="ForceOverwrite"/>,
+    /// which IS persisted, so a tick meaning "redeploy over my own DLL" became a
+    /// standing cross-session, cross-game authorisation to destroy other
+    /// programs' files — applied per game inside the deploy loop, over a
+    /// Select All that can be an entire Steam library, with no confirmation and
+    /// no backup. Resetting to false every launch keeps the destructive half
+    /// tied to a decision the user made in the session they are looking at.</para>
+    /// </summary>
+    [ObservableProperty] private bool _allowForeignOverwrite;
+
     [ObservableProperty] private string? _lastOperationResult;
 
     /// <summary>
@@ -1230,7 +1248,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
             ct.ThrowIfCancellationRequested();
             StatusText = $"Deploying to {game.Name}...";
 
-            bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType, ForceOverwrite, ct);
+            bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType,
+                new DeployOptions(ForceSameVersion: ForceOverwrite,
+                                  ForeignConsent:   AllowForeignOverwrite), ct);
             if (success)
             {
                 ok++;
@@ -1364,7 +1384,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     }
 
                     StatusText = $"Updating {game.Name} ({type.GetDisplayName()})...";
-                    bool success = await _deploy.DeployAsync(srcPath, game, type, force: true, ct: ct);
+                    // ForeignConsent stays FALSE: the loop above already refuses anything
+                    // that is not our proxy, so Update All never needs it and must not
+                    // acquire it by 'simplification'.
+                    bool success = await _deploy.DeployAsync(srcPath, game, type,
+                        new DeployOptions(ForceSameVersion: true, ForeignConsent: false), ct: ct);
                     if (success) updated++;
                     else { fail++; failedDirs.Add(game.BinariesDir); }
                 }

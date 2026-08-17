@@ -94,7 +94,7 @@ public interface IProxyDeployService
     /// Returns true on success, false on failure (sets game.ErrorMessage).
     /// </summary>
     Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
-        bool force = false, CancellationToken ct = default);
+        DeployOptions options = default, CancellationToken ct = default);
 
     /// <summary>
     /// Undeploy (delete) our proxy DLLs from a game's Binaries directory.

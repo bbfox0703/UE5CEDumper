@@ -1443,6 +1443,29 @@ reports them identical. Nothing has desynced.)*
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### ⬜ NEW 2026-08-17 — AC1: Force Overwrite must no longer be able to destroy a foreign DLL (build 3191)
+
+*Needs **no game** — only the Proxy Deploy panel and one throwaway file. Same "free from an ordinary
+session" shape as AE4–AE7, so it can ride along with those. See dev-log build 3191.*
+
+> **The policy is unit-pinned (15 tests, negative-controlled); what is NOT pinned is that the two
+> checkboxes are wired to the two halves.** `PlanDeploy` is pure and exhaustively tested, but nothing
+> proves the AXAML binds `AllowForeignOverwrite` to `ForeignConsent` rather than to the persisted
+> flag — that is exactly the kind of wiring a green build does not check.
+>
+> **Make the foreign DLL by copying any non-ours DLL** into a game's `Binaries\Win64` under a proxy
+> name (e.g. `dxgi.dll`); it only has to lack our `ProductName`. Delete it afterwards.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | place a foreign `dxgi.dll`, Refresh | row reads `Other proxy: <name>` | baseline: detection still works |
+> | 2 | tick **Force Overwrite** only → Deploy | **refused**, file untouched, row still names the owner | **the regression this fix exists for** — before 3191 this destroyed the file |
+> | 3 | check the byte size / version of the foreign DLL | unchanged | proves "refused" means *not written*, not merely *reported as refused* |
+> | 4 | tick **both** boxes → Deploy | succeeds; `proxy` log carries a `Replacing another program's dxgi.dll (…)` warn line **naming the old product** | the capability is kept, and the only surviving record of what was destroyed is written |
+> | 5 ⚠ control | restart the app | **Force Overwrite still ticked, "Replace other tools' DLLs" back to OFF** | the whole point: the destructive half must not persist. If both come back ticked, the fix is defeated |
+> | 6 | with our proxy already deployed at the same version, tick Force Overwrite → Deploy | redeploys (no "already current" skip) | the benign half still works — guards against over-correcting into a refusal |
+> | 7 | Update All against a game with a foreign DLL | skips it, as before | `UpdateAllAsync` passes `ForeignConsent: false`; its own pre-gate should make that unreachable |
+
 ### 🔲 U3 + U17 — struct previews: dropped members, then wrong widths (builds 3169, 3171)
 
 *Needs a connected game. See dev-log builds 3169 and 3171. **The decode RULES are unit-pinned

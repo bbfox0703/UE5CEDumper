@@ -22,6 +22,57 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AC1: one checkbox, two policies, and only one of them is reversible (build 3191)
+
+**Audit #5 AC1 (MED) closed.** Proxy Deploy's "Force Overwrite" armed two policies through a single
+`bool force`, and they have nothing in common:
+
+- `ProxyDeployService.cs:924` — redeploy over **our** proxy even at the same version. Benign,
+  reversible, and by far the commoner reason anyone ticks the box.
+- `:916` — replace a file that is provably **not ours**: ReShade, Special K, Ultimate ASI Loader,
+  or a wrapper the game itself shipped. Irreversible.
+
+The user ticks for the first. `UiOptionsSettings.cs:217` persists it and `MainWindowViewModel.cs:2434`
+restores it on every launch, so that consent silently became **standing, cross-session, cross-game
+authority for the second** — applied per game inside `DeploySelectedAsync`'s loop, over a Select All
+that can be an entire Steam library, with no confirmation anywhere on the path (the VM's only
+confirm delegate serves orphan cleanup). `:955` is a bare `File.Copy(overwrite: true)`: no backup, no
+rename, and **no Recycle Bin**, against this repo's own rule that destructive operations go to the
+bin. The evidence went with it — refresh computes `Other proxy: {ProductName}` at `:854-865`, and a
+successful deploy returns `SetErrorMessage` default-true which blanks exactly that row, while `:956`
+logged only the destination. So after the fact, nothing on screen or on disk said what had been
+destroyed.
+
+**The asymmetry was the tell, and it is one line.** `UpdateAllAsync` also passes `force: true`, but
+is pre-gated at `ProxyDeployViewModel.cs:1355` on `IsOurProxyDll` and therefore never reaches a
+foreign file. `DeploySelectedAsync` simply had no equivalent gate.
+
+**Fixed by splitting the flag at the service boundary**, into a
+`DeployOptions(ForceSameVersion, ForeignConsent)` record struct. Named members rather than two
+adjacent positional bools on purpose: `DeployAsync(src, game, type, true, false, ct)` compiles, reads
+plausibly, and destroys files if the pair is transposed. The persisted checkbox now feeds
+`ForceSameVersion` **only**; a new **deliberately non-persisted** "Replace other tools' DLLs"
+checkbox feeds `ForeignConsent` and resets to off every launch. The capability the tooltip has always
+advertised is kept — this re-scopes the authority, it does not remove the feature — and the tooltip
+now states which half does what and that it cannot be undone. The identity of a foreign DLL is
+logged *before* it is replaced, because nothing else survives the operation.
+
+Policy extracted to a pure `PlanDeploy`, matching the `PlanUndeploy` idiom already in this file:
+ownership is decided by `FileVersionInfo.ProductName`, so fabricating a PE that carries a version
+resource would test the fixture rather than the policy.
+
+**Blast radius the finding did not name:** `Core/IProxyDeployService.cs` declares the signature and
+**two test doubles** implement it. All three updated. `DeployOptions` lives in `Models`, not beside
+the service, because `Core` names it and Core must not depend on Services.
+
+15 policy tests. Negative control: re-conflating the two flags (`ForeignConsent || ForceSameVersion`)
+fails exactly the three cases that describe the defect and nothing else. 3950 passed / 0 failed.
+
+⚠ Live check owed — a real foreign `dxgi.dll` must refuse with Force Overwrite alone and proceed
+with both boxes ticked.
+
+-----
+
 ## 2026-08-17 - Z3: half the property scorer's vocabulary could never be fetched (build 3190)
 
 **Audit #5 Z3 (MED) closed.** Interesting Properties (and Detect Player Stats) fetch on

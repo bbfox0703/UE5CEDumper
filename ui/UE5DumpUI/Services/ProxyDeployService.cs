@@ -903,8 +903,25 @@ public sealed class ProxyDeployService : IProxyDeployService
     // Deploy / Undeploy
     // ────────────────────────────────────────────────────────────────
 
+    public static DeployVerdict PlanDeploy(bool targetExists, bool targetIsOurs,
+                                           bool sameVersion, DeployOptions options)
+    {
+        if (!targetExists) return DeployVerdict.Proceed;
+
+        if (!targetIsOurs)
+        {
+            return options.ForeignConsent
+                ? DeployVerdict.Proceed
+                : DeployVerdict.NeedsForeignConsent;
+        }
+
+        if (sameVersion && !options.ForceSameVersion) return DeployVerdict.AlreadyCurrent;
+
+        return DeployVerdict.Proceed;
+    }
+
     public async Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
-        bool force = false, CancellationToken ct = default)
+        DeployOptions options = default, CancellationToken ct = default)
     {
         var (ok, update) = await Task.Run<(bool, GameStatusUpdate)>(() =>
         {
@@ -912,25 +929,38 @@ public sealed class ProxyDeployService : IProxyDeployService
             {
                 string targetDll = Path.Combine(game.BinariesDir, proxyType.GetDllName());
 
-                // Refuse to overwrite another program's proxy DLL
-                if (File.Exists(targetDll) && !IsOurProxyDll(targetDll) && !force)
+                bool exists   = File.Exists(targetDll);
+                bool isOurs   = exists && IsOurProxyDll(targetDll);
+                string? srcVer = null, tgtVer = null;
+                if (exists && isOurs)
                 {
-                    return (false, new GameStatusUpdate(game, ProxyDeployStatus.OtherProxy,
-                        ErrorMessage: "Refused: another program's proxy DLL",
-                        SetInstalledVersion: false));
+                    srcVer = GetDllVersion(sourceDllPath);
+                    tgtVer = GetDllVersion(targetDll);
                 }
+                bool sameVersion = srcVer != null && srcVer == tgtVer;
 
-                // Skip if same version (unless force)
-                if (!force && File.Exists(targetDll) && IsOurProxyDll(targetDll))
+                switch (PlanDeploy(exists, isOurs, sameVersion, options))
                 {
-                    string? srcVer = GetDllVersion(sourceDllPath);
-                    string? tgtVer = GetDllVersion(targetDll);
-                    if (srcVer != null && srcVer == tgtVer)
-                    {
+                    case DeployVerdict.NeedsForeignConsent:
+                        return (false, new GameStatusUpdate(game, ProxyDeployStatus.OtherProxy,
+                            ErrorMessage: "Refused: another program's proxy DLL",
+                            SetInstalledVersion: false));
+
+                    case DeployVerdict.AlreadyCurrent:
                         // Already up to date — status only, version/error left as they were.
                         return (true, new GameStatusUpdate(game, ProxyDeployStatus.DeployedCurrent,
                             SetInstalledVersion: false, SetErrorMessage: false));
-                    }
+                }
+
+                // Replacing a third party's DLL is irreversible and the same
+                // operation erases the row that said whose it was (a successful
+                // deploy clears ErrorMessage), so record the identity FIRST —
+                // otherwise nothing anywhere says what used to be here.
+                if (exists && !isOurs)
+                {
+                    _log.Warn("ProxyDeploy",
+                        $"Replacing another program's {proxyType.GetDllName()} in {game.Name} " +
+                        $"({DescribeForeignDll(targetDll)}) — foreign overwrite was explicitly allowed");
                 }
 
                 // A proxy can only load if something in the process actually NAMES that DLL —
@@ -1815,6 +1845,24 @@ public sealed class ProxyDeployService : IProxyDeployService
     // ────────────────────────────────────────────────────────────────
     // DLL Identification
     // ────────────────────────────────────────────────────────────────
+
+    /// <summary>Best-effort identity of a DLL that is NOT ours, for the log line
+    /// written before it is replaced. The row that displayed this is blanked by
+    /// the successful deploy, so the log is the only surviving record.</summary>
+    private static string DescribeForeignDll(string dllPath)
+    {
+        try
+        {
+            var info = FileVersionInfo.GetVersionInfo(dllPath);
+            string product = string.IsNullOrWhiteSpace(info.ProductName) ? "unknown product" : info.ProductName!;
+            string version = string.IsNullOrWhiteSpace(info.FileVersion) ? "no version" : info.FileVersion!;
+            return $"{product} {version}";
+        }
+        catch (Exception ex)
+        {
+            return $"unreadable version info: {ex.GetType().Name}";
+        }
+    }
 
     public bool IsOurProxyDll(string dllPath)
     {

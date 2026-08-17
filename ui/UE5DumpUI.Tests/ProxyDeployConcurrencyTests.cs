@@ -82,7 +82,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         }
 
         public async Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
-                                            bool force = false, CancellationToken ct = default)
+                                            DeployOptions options = default, CancellationToken ct = default)
         {
             await WaitAsync($"deploy:{game.Name}");
             DuringDeploy?.Invoke();

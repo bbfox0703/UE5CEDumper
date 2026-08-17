@@ -740,6 +740,7 @@
     <sys:String x:Key="str.ProxyDeploy.Undeploy">Undeploy</sys:String>
     <sys:String x:Key="str.ProxyDeploy.UpdateAll">Update All</sys:String>
     <sys:String x:Key="str.ProxyDeploy.Force">Force Overwrite</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ForeignOverwrite">Replace other tools' DLLs</sys:String>
     <sys:String x:Key="str.ProxyDeploy.SelectAll">All</sys:String>
     <sys:String x:Key="str.ProxyDeploy.UnselectAll">None</sys:String>
     <sys:String x:Key="str.ProxyDeploy.InvertSel">Invert</sys:String>
@@ -1464,7 +1465,8 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.ProxyDeploy.Deploy">Route ① of 4 — the best one when you can restart the game: the proxy loads with it, survives restarts, and needs no Cheat Engine. Deploy the selected proxy DLL to the ticked games.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Undeploy">Remove OUR proxy DLLs from the selected games — every flavour (version / dinput8 / dxgi), not just the one selected above: that radio governs deploying, while this is a clean-up. A version.dll or dxgi.dll belonging to another program (a mod loader, another tool) is always left alone, and is reported rather than deleted.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.UpdateAll">Update all deployed games to latest version</sys:String>
-    <sys:String x:Key="str.Tip.ProxyDeploy.Force">Overwrite even if same version or other proxy detected</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.Force">Redeploy over OUR proxy even when the version already matches. Does not touch another program's DLL. Remembered between sessions.</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.ForeignOverwrite">Allow replacing a DLL that is NOT ours (ReShade, Special K, ASI loaders, a wrapper the game shipped). IRREVERSIBLE - there is no backup, and the replaced file is gone. Resets to off every time the app starts.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Type.Version">Hijack version.dll — broadest game compatibility (loaded by virtually every Windows process)</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Type.Dinput8">Hijack dinput8.dll — fallback when version.dll conflicts with installer or anti-tamper shim</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Type.Dxgi">Hijack dxgi.dll — for D3D11/D3D12 games whose EXE imports neither version.dll nor dinput8.dll (most UE games on Windows)</sys:String>
