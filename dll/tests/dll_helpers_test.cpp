@@ -37,9 +37,9 @@
 #include "../src/Aura.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
+#include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
 
 #include <Windows.h>
-#include <timeapi.h>   // timeBeginPeriod — exercised by the poll-latency check
 
 #include <thread>
 
@@ -234,86 +234,105 @@ static void Test_Alignment_WeakAndSparseDelegate() {
            !Scharf::IsAlignmentSuspicious("MulticastSparseDelegateProperty", 0x5, 1, false));
 }
 
-// ----- Mimic poll-latency micro-benchmark ------------------------------------
+// ----- Mimic: the CE Lua <-> DLL mailbox LAYOUT --------------------------------
 //
-// Mimic.cpp's polling thread does `Sleep(kPollIntervalMs)` (=1) every iteration
-// and bumps timer resolution via timeBeginPeriod(1) so Sleep(1) actually
-// delivers ~1ms latency. This test reproduces the same setup in the test
-// process and asserts that 100 × Sleep(1) takes < 200ms wall-clock.
+// What used to sit here was a poll-latency micro-benchmark that touched no Mimic
+// code at all (audit #5 AD6). It re-implemented EnsureWinmmResolved inside the
+// test process and then asserted a fact about THIS HOST -- that
+// timeBeginPeriod(1) makes 100 x Sleep(1) finish under 300 ms. True, occasionally
+// useful, and invariant to every line in dll/src: it passed with Mimic.cpp
+// deleted from the tree. Its own comment, and the CMakeLists comment justifying
+// why winmm is not linked, both claimed it "covers the actual mechanism".
 //
-// Without timeBeginPeriod, Sleep(1) on a system with the default 15.6ms tick
-// rounds up to 15.6ms per call → 100 calls = ~1560ms, which would fail this
-// assertion. So a green test confirms the Mimic-side latency reduction is
-// actually achievable on this host's OS configuration.
+// What replaces it is the thing that genuinely cannot be checked anywhere else.
+// `Mimic.cpp` is not compiled by any target, but `Mimic.h` is pure data, so its
+// layout IS reachable from here. And that layout is a published cross-language
+// contract: every offset below is baked as a literal into the emitted CE Lua
+// (`Services/CeMailboxLayout.cs`, whose comment reads "must match Mimic.h
+// MailboxData") and into scripts/UE5CEDumper.CT. Until now nothing enforced it
+// on either side -- `tools/check_mailbox_contract.py` hashes the comment-stripped
+// surface but never computes an offset, so it cannot tell a moved field from a
+// renamed one. A silent shift here does not fail a build; it makes every saved
+// .CT write to the wrong address.
 //
-// 300ms threshold (vs. ideal ~100ms): generous to account for CI scheduler
-// jitter, thread contention, and the kernel's discretion on tick rounding.
-// Idle baseline on a quiet machine landed at 193ms (≈1.94ms/sleep) — Windows
-// commonly rounds Sleep(1) up to the next 1-2ms tick boundary, so anything
-// under ~250ms confirms timeBeginPeriod is in effect. The 5× headroom keeps
-// the test from flaking under heavy load while still catching the legacy-
-// tick regression cleanly (which would land near 1560ms).
+// These numbers are deliberately spelled as literals rather than derived from
+// the struct: deriving them from the same declaration they are checking would
+// assert only that C++ agrees with itself.
 
-static void Test_Mimic_PollLatency_OneMillisecond() {
-    // Mirror the DLL polling thread's timer-resolution request — INCLUDING how it
-    // reaches winmm. Mimic no longer statically imports winmm: it resolves
-    // timeBeginPeriod/timeEndPeriod from the System32 copy by explicit path, so
-    // that a future winmm.dll PROXY build cannot have the call resolve back into
-    // its own forwarding stub (which returns 0 == TIMERR_NOERROR before it has
-    // resolved the real export, silently no-opping the 1ms tick). Resolving the
-    // same way here means this test covers the actual mechanism, and lets the test
-    // exe drop its winmm import too — nothing in the tree statically imports it.
-    using TimePeriodFn = MMRESULT (WINAPI*)(UINT);
-    wchar_t winmmPath[MAX_PATH] = {};
-    UINT n = GetSystemDirectoryW(winmmPath, MAX_PATH);
-    EXPECT("GetSystemDirectoryW ok", n != 0 && n < MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return;
-    wcsncat_s(winmmPath, L"\\winmm.dll", _TRUNCATE);
+static void Test_Mimic_MailboxLayout() {
+    // Command/status header.
+    EXPECT("mailbox cmd @ 0x00",          offsetof(Mimic::MailboxData, cmd)           == 0x00);
+    EXPECT("mailbox status @ 0x04",       offsetof(Mimic::MailboxData, status)        == 0x04);
+    EXPECT("mailbox result @ 0x08",       offsetof(Mimic::MailboxData, result)        == 0x08);
+    EXPECT("mailbox initState @ 0x0C",    offsetof(Mimic::MailboxData, initState)     == 0x0C);
 
-    HMODULE hWinmm = LoadLibraryW(winmmPath);
-    EXPECT("LoadLibraryW(System32 winmm.dll) ok", hWinmm != nullptr);
-    if (!hWinmm) return;
+    // Operand slots -- reused per command as op / knobId / value / slot.
+    EXPECT("mailbox instanceAddr @ 0x10", offsetof(Mimic::MailboxData, instanceAddr)  == 0x10);
+    EXPECT("mailbox ufuncAddr @ 0x18",    offsetof(Mimic::MailboxData, ufuncAddr)     == 0x18);
 
-    auto pBegin = reinterpret_cast<TimePeriodFn>(GetProcAddress(hWinmm, "timeBeginPeriod"));
-    auto pEnd   = reinterpret_cast<TimePeriodFn>(GetProcAddress(hWinmm, "timeEndPeriod"));
-    EXPECT("timeBeginPeriod resolved", pBegin != nullptr);
-    EXPECT("timeEndPeriod resolved", pEnd != nullptr);
-    if (!pBegin || !pEnd) return;
+    // UFunction metadata the DLL fills in.
+    EXPECT("mailbox parmsSize @ 0x20",    offsetof(Mimic::MailboxData, parmsSize)     == 0x20);
+    EXPECT("mailbox numParms @ 0x22",     offsetof(Mimic::MailboxData, numParms)      == 0x22);
+    EXPECT("mailbox functionFlags @ 0x24",offsetof(Mimic::MailboxData, functionFlags) == 0x24);
 
-    MMRESULT rc = pBegin(1);
-    EXPECT("timeBeginPeriod(1) ok", rc == TIMERR_NOERROR);
-    if (rc != TIMERR_NOERROR) {
-        std::printf("  [warn] timeBeginPeriod failed rc=%u — skipping latency assert\n", rc);
-        return;
-    }
+    // Fixed-width string blocks. A size change here silently shifts everything
+    // after it, which is the failure this test exists to make loud.
+    EXPECT("mailbox className @ 0x28",    offsetof(Mimic::MailboxData, className)     == 0x28);
+    EXPECT("mailbox funcName @ 0x128",    offsetof(Mimic::MailboxData, funcName)      == 0x128);
+    EXPECT("mailbox errorMsg @ 0x228",    offsetof(Mimic::MailboxData, errorMsg)      == 0x228);
 
-    LARGE_INTEGER freq{}, start{}, end{};
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&start);
+    // The paged in/out buffer -- CeMailboxLayout.OffParamsData is this number.
+    EXPECT("mailbox paramsData @ 0x328",  offsetof(Mimic::MailboxData, paramsData)    == 0x328);
 
-    constexpr int kIters = 100;
-    for (int i = 0; i < kIters; ++i) {
-        Sleep(1);
-    }
+    EXPECT("mailbox className is 256",    sizeof(Mimic::MailboxData::className)  == 256);
+    EXPECT("mailbox funcName is 256",     sizeof(Mimic::MailboxData::funcName)   == 256);
+    EXPECT("mailbox errorMsg is 256",     sizeof(Mimic::MailboxData::errorMsg)   == 256);
+    EXPECT("mailbox paramsData is 1024",  sizeof(Mimic::MailboxData::paramsData) == 1024);
 
-    QueryPerformanceCounter(&end);
-    pEnd(1);
+    // Whole-struct size: 0x328 + 1024 = 1832. The header comment says "~1848",
+    // which is what an unchecked number drifts into.
+    EXPECT("mailbox total size 1832",     sizeof(Mimic::MailboxData) == 1832);
+    EXPECT("mailbox fits one page",       sizeof(Mimic::MailboxData) <= 4096);
+}
 
-    double elapsedMs = double(end.QuadPart - start.QuadPart) * 1000.0 / double(freq.QuadPart);
-    std::printf("  [info] 100 x Sleep(1) under timeBeginPeriod(1) = %.1f ms "
-                "(avg %.2f ms/sleep)\n",
-                elapsedMs, elapsedMs / kIters);
+// The Cmd / op enumerators CE Lua writes into the mailbox. Renumbering one is a
+// breaking contract change (see MAILBOX_CONTRACT_MIN in Mimic.h); these values
+// are duplicated in Services/CeMailboxLayout.cs and in scripts/UE5CEDumper.CT,
+// neither of which the compiler can see.
+static void Test_Mimic_CommandNumbering() {
+    EXPECT("CMD_SET_DEBUG_CAMERA = 7", static_cast<int>(Mimic::CMD_SET_DEBUG_CAMERA) == 7);
+    EXPECT("CMD_TELEPORT = 8",         static_cast<int>(Mimic::CMD_TELEPORT)         == 8);
+    EXPECT("CMD_PROTECT = 9",          static_cast<int>(Mimic::CMD_PROTECT)          == 9);
+    EXPECT("CMD_MOVEMENT = 10",        static_cast<int>(Mimic::CMD_MOVEMENT)         == 10);
+    EXPECT("CMD_FLY = 11",             static_cast<int>(Mimic::CMD_FLY)              == 11);
+    EXPECT("CMD_FOREGROUND = 12",      static_cast<int>(Mimic::CMD_FOREGROUND)       == 12);
+    EXPECT("CMD_QUERY_PTR = 13",       static_cast<int>(Mimic::CMD_QUERY_PTR)        == 13);
+    EXPECT("CMD_SEETHROUGH = 14",      static_cast<int>(Mimic::CMD_SEETHROUGH)       == 14);
+    EXPECT("CMD_TIME = 15",            static_cast<int>(Mimic::CMD_TIME)             == 15);
 
-    // Hard ceiling: if a sleep really cost the legacy 15.6ms tick, this would
-    // be ~1560ms. 300ms catches that regression cleanly while tolerating noise.
-    if (elapsedMs >= 300.0) {
-        ++g_fail;
-        std::printf("  FAIL: poll-latency over threshold\n"
-                    "    actual=%.1f ms expected<200 ms\n"
-                    "    at %s:%d\n", elapsedMs, __FILE__, __LINE__);
-    } else {
-        ++g_pass;
-    }
+    // InitState -- polled as a bare memory read by the CE bootstrap, so these
+    // are as load-bearing as the offsets above.
+    EXPECT("INIT_IDLE = 0",    static_cast<int>(Mimic::INIT_IDLE)    == 0);
+    EXPECT("INIT_RUNNING = 1", static_cast<int>(Mimic::INIT_RUNNING) == 1);
+    EXPECT("INIT_READY = 2",   static_cast<int>(Mimic::INIT_READY)   == 2);
+    EXPECT("INIT_FAILED = 3",  static_cast<int>(Mimic::INIT_FAILED)  == 3);
+    EXPECT("INIT_SKIPPED = 4", static_cast<int>(Mimic::INIT_SKIPPED) == 4);
+
+    // The published compatibility RANGE. A script checks MIN <= its baked
+    // version <= CONTRACT before its first write.
+    EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
+    EXPECT("contract is 2",          Mimic::MAILBOX_CONTRACT     == 2);
+    EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
+
+    // g_mailboxContract is a SEPARATE exported symbol, read before anything is
+    // written -- so CE Lua reads these three at fixed offsets too, and they are
+    // the one thing a script consults to decide whether the rest of the layout
+    // can be trusted. If they move, the version check itself reads garbage.
+    EXPECT("contract magic @ 0x00",   offsetof(Mimic::MailboxContract, magic)   == 0x00);
+    EXPECT("contract current @ 0x04", offsetof(Mimic::MailboxContract, current) == 0x04);
+    EXPECT("contract minimum @ 0x08", offsetof(Mimic::MailboxContract, minimum) == 0x08);
+    EXPECT("contract struct is 12",   sizeof(Mimic::MailboxContract) == 12);
+    EXPECT("contract magic value",    Mimic::MAILBOX_CONTRACT_MAGIC == 0x43354555u);
 }
 
 // ----- Radar: SizeOf + NameOf + parsers ---------------------------------
@@ -5053,7 +5072,8 @@ int main() {
     RUN(Test_Alignment_UnknownTypesNotValidated);
     RUN(Test_Alignment_WeakAndSparseDelegate);
 
-    RUN(Test_Mimic_PollLatency_OneMillisecond);
+    RUN(Test_Mimic_MailboxLayout);
+    RUN(Test_Mimic_CommandNumbering);
 
     RUN(Test_ValueScan_DataTypeSizes);
     RUN(Test_ValueScan_ParseDataTypeRoundTrip);
