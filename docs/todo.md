@@ -3195,14 +3195,24 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > | Lushfoil Photography Sim | 506 | PE | 58,617 | false | true | `ES53_1` / `V8` / `TQ_1` |
 > | Manor Lords | 505 | PE | 80,013 | false | true | `ES53_1` / `V8` / **`SP57_1`** |
 > | SEED BATTLE DESTINY REMASTERED | 427 | PE | 26,113 | false | true | `ES53_1` / `V8` / `TQ_1` |
+> | DragonSword Awakening *(injected)* | 504 | **cached, `rev=5`** | 72,604 | false | true | `ES53_1` / `V8` / `TQ_1` |
+> | Star Trek Voyager *(injected)* | 506 | PE | 46,994 | false | true | **`V13`** / `V8` / `TQ_1` |
+> | Light Maze *(injected)* | 500 | PE | 14,958 | false | true | **`V13`** / `V8` / `TQ_1` |
 >
-> **U2: nine confirmed non-CPN titles, zero CPN** (TQ2 · Solarpunk · DQ7R · DQ I&II · EVERSPACE ·
-> Geri · Lushfoil · Manor Lords · SEED), spanning **UE 4.20 → 5.6**. The population is no longer thin
-> enough to call unrepresentative, and the register's own rule — *no environment to test on ⇒ LOW* —
-> now rests on a real sample rather than an assumption.
+> The last three carry **no proxy**, so they were injected through the panel's own *Inject into
+> running game…* — which also exercises that button on three unrelated titles.
 >
-> **G1/X3 gains seven more clean hosts and still no amber one.** Every title returned
-> `validated=true` with **no `unmeasured` key at all**. Nine titles, nine negative controls: the
+> **U2: TWELVE confirmed non-CPN titles, zero CPN** (TQ2 · Solarpunk · DQ7R · DQ I&II · EVERSPACE ·
+> Geri · Lushfoil · Manor Lords · SEED · DSA · STVoyager · Light Maze), spanning **UE 4.20 · 4.27 ·
+> 5.0 · 5.4 · 5.5 · 5.6 · 5.7**. The population is no longer thin enough to call unrepresentative,
+> and the register's own rule — *no environment to test on ⇒ LOW* — now rests on a real sample rather
+> than an assumption.
+>
+> **G8/G9 step 2 corroborated again, on DSA:** `UE Version = 504 (cached, rev=5, detected=yes,
+> lowConf=no) — skipped DetectVersion`. The rev stamp is written back and honoured on a second title.
+>
+> **G1/X3 gains ten more clean hosts and still no amber one.** Every title returned
+> `validated=true` with **no `unmeasured` key at all**. Twelve titles, twelve negative controls: the
 > partial-offset-failure branch is looking genuinely rare rather than merely unvisited, and screening
 > for it stays a single `get_offsets` per title.
 >
@@ -3211,7 +3221,7 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > `tier=1, lowConfidence=**yes**` under `SQUARE_ENIX`. Same tier, opposite flag, publisher the only
 > difference — which is exactly what the source says drives it, now observed rather than only read.
 >
-> **G12 discovery value:** EVERSPACE (UE 4.20) is the only title using `GOBJ_G42_4` + `GNAM_CT3`, and
+> **G12 discovery value — four distinct pattern families across twelve titles:** EVERSPACE (UE 4.20) is the only title using `GOBJ_G42_4` + `GNAM_CT3`, and
 > Manor Lords the only one on `GWLD_SP57_1`. All nine resolved all three pointers; no failures.
 >
 > ⛔ **OCTOPATH TRAVELER could not be swept at all** — its `version.dll` proxy never loads. See the
