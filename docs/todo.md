@@ -2752,6 +2752,25 @@ each has a *visible* pass/fail, and four of them only ever show up when somethin
 > The process was resumed immediately afterwards. Before this fix a dead refresh looked exactly like a
 > live one.
 >
+> **AB6 — PASS, on a deliberately leaf-heavy set.** Group Scan `Exact 0` on both slots →
+> **1,655 matching objects in 196 ms**, with slots keeping many leaves (`(+63)`, `(+89)`, `(+90)`,
+> `(+91)`). Sorting by **First value** reordered the rows so the *rendered* first-slot values ascend
+> monotonically: `-1`, `-0.00000000000111392`, `…110971`, `…110953`, `…110926`, `…110204`, … The sort
+> follows the leaf that is actually **on screen**, not some other leaf the slot kept — which is only a
+> meaningful check because each slot is holding ~63 of them.
+>
+> **AE8 — PASS, and both halves are visible.** A First Scan with an empty Value box is **rejected
+> with an inline `Value is required.`** (red, box outlined) rather than silently ignored — and the
+> **`Diagnostics — DLL dispatch cost`** table went 38 → 40 dispatches across the attempt, the two new
+> entries being `get_diagnostics` and `end_group_scan`, both of which the operator caused. **No scan
+> command appears for the rejected click**: it never reached the pipe, so it was never measured.
+>
+> *Two things fell out of the same panel.* The header reads `40 dispatches over 860.4s — dispatcher
+> busy **0.2%** of wall-clock`, consistent with [multipipe-eval](multipipe-eval.md) §10's measured
+> finding that the dispatcher is mostly idle and there is no head-of-line blocking to remove. And the
+> **Pipe Activity** tail independently corroborates **V7**: `07:20:58.618 B → walk_world #6` is sent
+> with **no matching `←` reply** — the very refresh that timed out while the process was suspended.
+>
 > **AF6 — PASS, on the evidence Y9 already produced.** Its ask is "a huge integer into Force → an
 > explicit refusal *naming the substitute*, not a silent nothing", and `9999` into Force on a
 > `ByteProperty` answers **`uint8 holds 0 to 255 — 9999 would be written as 15`**. The substitute is
