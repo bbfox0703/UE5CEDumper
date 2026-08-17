@@ -3018,7 +3018,38 @@ redistributables) when GObjects resolved inside the main executable.
 >   immediately. It now retries for 45 s, asking an `IsConnectedProbe` whether it worked instead of
 >   assuming, and says which attempt it is on.
 
-**D2 — Group Scan cannot see the object's own scalar UPROPERTYs.** Effort **M** · Risk med.
+**D2 — Group Scan cannot see the object's own scalar UPROPERTYs.** ✅ **VERIFIED 2026-08-17
+`[D2-PIPE-2026-08-17]`** — steps 1-3 of the operational checklist all pass on DumperTest Development,
+build 3262, over the pipe. Effort **M** · Risk med.
+
+> ### ✅ VERIFIED 2026-08-17 — the object's OWN fields are what matched
+>
+> **Step 1.** `begin_group_scan` with two `Exact` slots, `1234567` and `424242`, returns 2 candidates,
+> and the live one's slots are **`I32` @ offset 1600** and **`FrozenInt` @ offset 1708** — the
+> derived class's own scalars, which is precisely what the defect could not see. Not
+> `PrimaryActorTick.*`, not `CustomTimeDilation`. Both offsets agree independently with the
+> `walk_class` reply taken the same session (`I32` 1600, `FrozenInt` 1708), so two detectors concur.
+> `match_count` is on the wire as documented.
+>
+> **Step 3 — the "groups need `Unchanged`" case, and it landed exactly as written.** A broad first
+> scan (`Bigger 0` / `Exact 0`) gives **366** objects; a refine to `Changed` / `Unchanged` leaves
+> **2**, one of which is `DumperTestActor_0` showing
+> **`Health.CurrentValue=79`** and **`PrimaryActorTick.TickInterval=0`** — the row this checklist
+> predicted in advance. `Health.CurrentValue` falls 1 Hz and `TickInterval` never moves, so the pair
+> is the hard case rather than an accident.
+>
+> **Step 2 — the old `perSlotCap` of 8 is provably gone.** The first refine logged
+> `leaves entered=` 2/3/4/8/**9**; a deliberately leaf-heavy scan (`Exact 0` on both slots, 432
+> objects) pushed it to 14 and **20**. A hard cap at 8 cannot produce a 20, which is the discriminator
+> — the raw magnitude is not, since `entered` is bounded by how many fields actually matched.
+>
+> ⚠ **Step 4 is NOT verified.** The `Leaves/slot` clamp (8–4096) is a client-side UI control and
+> UE5DumpUI cannot currently be granted to computer-use. Its wire half does hold: none of these
+> requests carried `per_slot_cap`, matching "absent unless the user moves the control".
+>
+> ⚠ **Only the first 5 candidates are logged**, by design (`[SCAN:grp]` debug, off the hot path), and
+> only DROPPED ones appeared — the two survivors produced no `KEPT` line. Do not read the absence of
+> a KEPT line as a failure.
 On the Shipping package (where the pointers ARE correct), a Group First Scan over
 `DumperTestActor_0` matched only **container elements and base-class fields**:
 
@@ -3067,7 +3098,10 @@ and `Health.CurrentValue` falling, so the values genuinely change.
 > `grep "RefineGroup cand" pipe-0.log`. `predicate-said-no=<everything>` means the comparison is
 > wrong; `entered=` far below the object's field count means the leaves were never stored; the
 > DISTINCT-assignment verdict means the matcher, not the predicate. Those are three different fixes
-> and the log now separates them. ⬜
+> and the log now separates them.
+> **✅ RUN 2026-08-17 `[D2-PIPE-2026-08-17]`** — see the block below; and ⚠ **that grep target is
+> wrong**: the marker is emitted under `[SCAN:grp]`, so it lands in **`scan-0.log`**, not
+> `pipe-0.log`. Grepping the file this line names returns nothing on a run that produced the lines.
 >
 > ### ✅ ANSWERED + FIXED build 2680 — the diagnostic named it on its first run
 >

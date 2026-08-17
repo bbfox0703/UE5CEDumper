@@ -227,16 +227,16 @@
 | 2 | Live Walker 開物件 → 切到別的 tab → 切回來 → 使用 🌍 Locate in GWorld、書籤還原、或 ↑/↓ 比對步進。 | 表格仍會捲動並定位到目標列。<br>⚠ 壞掉時不會跳錯，只是按鈕按了沒反應——要看畫面有沒有捲動。 |
 | 3 | Group Scan 下一個會讓單一 slot 保留多個 leaf 的 filter，然後依 Value 欄排序。 | 排序結果與畫面上 Value 欄顯示的值一致。 |
 
-### ⬜ D2 —— Group Scan 掃得到物件自己的 scalar 欄位
+### 🟡 D2 —— Group Scan 掃得到物件自己的 scalar 欄位（**只剩步驟 4：UI clamp**）
 
-*build 2680 / 2690 · 優先度 **中***
+*build 2680 / 2690 · 步驟 1-3 已於 2026-08-17 用 pipe 驗過並 commit*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 注入 DumperTest 封包，Value Search 切 Group 模式，兩個 slot 都設 Exact，分別填 1234567 與 424242，按 First Scan | 有 candidate，且欄位包含衍生類別自己的欄位（I32 / FrozenInt），不是只有 PrimaryActorTick.* / CustomTimeDilation |
-| 2 | grep pipe-0.log 的 RefineGroup cand | leaves entered= 明顯大於 8<br>⚠ entered=8 就是舊的 perSlotCap 復發 |
-| 3 | slot0 設 Changed、slot1 設 Unchanged，執行 refine | 至少 2 個存活物件，其中一列為 DumperTestActor_0 — Health.CurrentValue=NN, PrimaryActorTick.TickInterval=0 |
-| 4 | 把 Leaves/slot: NumericUpDown 調離預設值再掃一次 | 數值被 clamp 在 8–4096；未調動時封包不帶 per_slot_cap |
+| 4 | 把 Leaves/slot: NumericUpDown 調離預設值再掃一次 | 數值被 clamp 在 8–4096<br>⚠ 卡在 UE5DumpUI 無法授權；封包半部已驗（未調動時不帶 per_slot_cap） |
+
+⚠ **清單原本寫「grep pipe-0.log」是錯的** —— `RefineGroup cand … leaves entered=` 掛在 `[SCAN:grp]`，
+會寫進 **`scan-0.log`**。
 
 ### ⬜ D2（顯示配對） —— Group Scan 列上顯示的是真正的配對
 
