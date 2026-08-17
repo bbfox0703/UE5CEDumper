@@ -2931,12 +2931,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var label = !string.IsNullOrEmpty(s.ToName) ? s.ToName
                   : (!string.IsNullOrEmpty(s.FieldName) ? s.FieldName : "(node)");
 
-        // Synthetic "world → level" hop from the streaming/World-Partition recovery
-        // (Aura::RecoverViaWorldLevel): the level was reached via ULevel::OwningWorld
-        // BACK-reference, not a forward static pointer, so it's a plain navigation
-        // anchor (navigate by Address) — NOT a pointer deref. Marking it non-deref
-        // keeps CE export from fabricating an offset for a hop that has none.
-        if (s.FieldType == "WorldLevel")
+        // Synthetic back-reference hops from the streaming/World-Partition recovery
+        // (Aura::RecoverViaWorldLevel). Neither is a forward static pointer, so both
+        // are plain navigation anchors (navigate by Address) — NOT pointer derefs.
+        // Marking them non-deref keeps CE export from fabricating an offset for a hop
+        // that has none.
+        //   WorldLevel — world → level, reached via ULevel::OwningWorld.
+        //   LevelActor — level → actor, reached via the actor's Outer. Synthetic for
+        //                the same reason (audit #5 F8): ULevel::Actors carries no
+        //                UPROPERTY, so there is no reflected offset OR element index
+        //                to publish, and the array lookup that used to produce them
+        //                is what made this whole recovery unreachable.
+        if (s.FieldType == "WorldLevel" || s.FieldType == "LevelActor")
         {
             return new[]
             {
@@ -2945,7 +2951,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     Address = s.To,
                     Label = label,
                     FieldOffset = -1,
-                    FieldName = "(world level)",
+                    FieldName = s.FieldType == "LevelActor" ? "(level actor)" : "(world level)",
                     IsPointerDeref = false,
                 },
             };

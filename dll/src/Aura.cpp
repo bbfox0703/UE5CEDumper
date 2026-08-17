@@ -3894,8 +3894,10 @@ void CollectOutgoingObjectPtrs(uintptr_t obj, std::vector<OutgoingPtr>& out,
 //   world →(world-level back-ref)→ ULevel → Actors[k] → actor [→ … → target]
 // The world→level hop is synthetic (fieldType "WorldLevel") because, by
 // construction, if the level were forward-reachable the actor would have been too
-// (level → Actors → actor is a reflected chain) — so the plain BFS would already
-// have found it. Returns found=true / status "ok_via_level" on success, or a
+// — so the plain BFS would already have found it. (That parenthetical used to read
+// "level → Actors → actor is a reflected chain". It is not: ULevel::Actors carries
+// no UPROPERTY, which is exactly what broke this recovery — audit #5 F8. Both hops
+// below are synthetic back-references.) Returns found=true / status "ok_via_level" on success, or a
 // default {found=false} GraphPathResult to signal "no recovery available".
 // maxDepth is intentionally not a parameter: this recovery uses its own fixed bounds
 // (the Outer climb is capped at 8 hops; the actor→target tail BFS at a deliberate 6),
@@ -3933,18 +3935,23 @@ static GraphPathResult RecoverViaWorldLevel(uintptr_t rootWorld, uintptr_t targe
         if (Macht::ReadSafe(level + owOff, ow) && ow && ow != rootWorld) return res;
     }
 
-    // Find the actor's index in ULevel::Actors (TArray<AActor*>).
-    int32_t actorsOff = Ubel::FindFieldOffset(levelCls, "Actors", "Actors",
-                                              nullptr, "ArrayProperty");
-    if (actorsOff < 0) return res;
-    Macht::TArrayView arr;
-    if (!Macht::ReadTArray(level + actorsOff, arr) || arr.Count <= 0 || !arr.Data) return res;
-    int32_t scanN = arr.Count > 500000 ? 500000 : arr.Count;   // sane cap
-    std::vector<uintptr_t> buf(static_cast<size_t>(scanN), 0);
-    if (!Macht::ReadBytesSafe(arr.Data, buf.data(), static_cast<size_t>(scanN) * 8)) return res;
-    int32_t k = -1;
-    for (int32_t i = 0; i < scanN; ++i) { if (buf[i] == actor) { k = i; break; } }
-    if (k < 0) return res;   // actor genuinely not in this level's Actors — don't fabricate
+    // NO ULevel::Actors lookup, and that is the fix (audit #5 F8).
+    //
+    // `ULevel::Actors` is declared `TArray<TObjectPtr<AActor>> Actors;` with NO
+    // UPROPERTY, so FindFieldOffset cannot see it. It returned < 0 and this whole
+    // recovery bailed — which is why `ok_via_level` never fired: 18 sessions logged
+    // actor_count 0 and not one non-zero. Worse, the fuzzy name fallback could bind
+    // "Actors" to DestroyedReplicatedStaticActors, which IS reflected, and then scan
+    // the wrong array.
+    //
+    // The membership it was proving is already guaranteed by construction: the Outer
+    // climb above exits ONLY with `level = GetOuter(actor)`, i.e. this actor's own
+    // level. Re-deriving that from a reflected array added a hard failure mode and
+    // no information.
+    //
+    // The element index goes with it. There is no reflected array to index INTO, so
+    // -1 is the honest answer, and it is the shape the UI already renders for the
+    // synthetic hop directly above.
 
     // --- Build the chain. ---
     std::vector<GraphPathStep> steps;
@@ -3956,13 +3963,15 @@ static GraphPathResult RecoverViaWorldLevel(uintptr_t rootWorld, uintptr_t targe
         s.elementIndex = -1;
         steps.push_back(std::move(s));
     }
-    // (2) level → Actors[k] → actor: a REAL object-array element edge.
+    // (2) level → actor: the Outer back-reference, synthetic for the same reason
+    //     the world→level hop above is. ULevel::Actors carries no UPROPERTY, so
+    //     there is no reflected offset to publish and no index to publish either
+    //     — -1/-1 is what the UI already renders for a synthetic hop.
     {
         GraphPathStep s;
         s.fromObj = level; s.toObj = actor;
-        s.fieldOffset = actorsOff; s.fieldName = "Actors"; s.fieldType = "ArrayProperty";
-        s.innerType = "ObjectProperty"; s.elementIndex = k;
-        s.elemStride = 0; s.elemValueOffset = 0;   // object array: UI hardcodes the 8B stride
+        s.fieldOffset = -1; s.fieldName = "Actors"; s.fieldType = "LevelActor";
+        s.elementIndex = -1;
         steps.push_back(std::move(s));
     }
     // (3) actor → … → target: the short forward chain to the owned sub-object

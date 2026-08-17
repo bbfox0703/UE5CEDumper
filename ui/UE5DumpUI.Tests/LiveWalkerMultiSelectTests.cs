@@ -434,6 +434,50 @@ public class LiveWalkerMultiSelectTests
     }
 
     [Fact]
+    public void PathStepToBreadcrumbs_LevelActor_EmitsSingleNonDerefNavCrumb()
+    {
+        // Audit #5 F8. The level -> actor hop is synthetic for the same reason the
+        // world -> level hop above is: ULevel::Actors is declared
+        // `TArray<TObjectPtr<AActor>> Actors;` with NO UPROPERTY, so there is no
+        // reflected offset and no element index to publish. The lookup that used to
+        // produce them could not see the field at all -- which is why ok_via_level
+        // never fired -- and its fuzzy fallback could bind "Actors" to
+        // DestroyedReplicatedStaticActors, which IS reflected, and scan the wrong
+        // array.
+        var step = new GWorldPathStep
+        {
+            From = "0x200", To = "0x300", FieldOffset = -1, FieldName = "Actors",
+            FieldType = "LevelActor", ElementIndex = -1,
+            ToName = "BP_Enemy_C_2", ToClass = "BP_Enemy_C",
+        };
+        var crumbs = LiveWalkerViewModel.PathStepToBreadcrumbs(step);
+        Assert.Single(crumbs);
+        Assert.Equal("0x300", crumbs[0].Address);      // navigate to the actor by address
+        Assert.False(crumbs[0].IsPointerDeref);        // NOT a deref -- no static offset exists
+        Assert.False(crumbs[0].IsContainerView);       // and NOT an array element view
+        Assert.Equal("BP_Enemy_C_2", crumbs[0].Label);
+    }
+
+    /// <summary>A -1 hop must keep the GWorld-walkable CE export gate CLOSED: a
+    /// back-reference cannot be reproduced by a forward walk, so exporting a
+    /// pointer chain through it would fabricate one.</summary>
+    [Theory]
+    [InlineData("WorldLevel")]
+    [InlineData("LevelActor")]
+    public void PathStepToBreadcrumbs_SyntheticHops_CarryNoForwardOffset(string fieldType)
+    {
+        var step = new GWorldPathStep
+        {
+            From = "0x1", To = "0x2", FieldOffset = -1, FieldName = "X",
+            FieldType = fieldType, ElementIndex = -1, ToName = "N",
+        };
+        var crumbs = LiveWalkerViewModel.PathStepToBreadcrumbs(step);
+        Assert.Single(crumbs);
+        Assert.True(crumbs[0].FieldOffset < 0);
+        Assert.False(crumbs[0].IsPointerDeref);
+    }
+
+    [Fact]
     public void PathStepToBreadcrumbs_DirectPointerField_SingleCrumb()
     {
         var step = new GWorldPathStep
