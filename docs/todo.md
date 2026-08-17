@@ -2001,6 +2001,48 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    it proves the family is coherent on the path that was already coherent — it is a regression check,
    not evidence for the repair.
 
+### ⛔ NEW 2026-08-17 `[PEHOOK-2026-08-17]` — ProcessEvent slot detection FAILS on DumperTest
+
+*Found by clicking **System → Run Self-Test** while looking for something else. It matters out of
+proportion to how it was found: every invoke-dependent row that plans to use the sample is affected.*
+
+**Two independent detectors agree, which is what makes this a finding rather than a known caveat.**
+
+1. **The DLL's own validator**, in `Logs\DumperTest\init-0.log`:
+   ```
+   [WARN]  DetectProcessEvent (fallback): pattern scan missed, falling back to UE=504 version-table primary=0x220
+   [INFO]  GameThreadDispatch: hook installed at 0x7FF79ED69FC0, validator armed (1500ms)
+   [ERROR] GameThreadDispatch: VALIDATION FAILED — hook at 0x7FF79ED69FC0 fired 0 times in 1500ms
+   ```
+   The AOB pattern scan **missed**, the code fell back to a version-table guess, and the resulting
+   hook saw **zero** ProcessEvent traffic in 1.5 s — on a running game, where the engine's own PE
+   calls should be constant. The panel agrees: `Game thread: PE hook off · never fired · 0 fires`.
+2. **The self-test**: `✗ Add_IntInt(3,4) expected 7, got 0`, `Raw buffer: 03000000 04000000 00000000`
+   — arguments written correctly, return slot untouched.
+
+⚠ **Detector 2 alone would prove nothing, and that is the trap.**
+[working-lessons.md](working-lessons.md) §4.4 records that KismetMathLibrary helpers **silently
+no-op through ProcessEvent even when the hook is correct** (verified on EVERSPACE 2, UE 5.5), with
+*exactly* this signature — A and B written, result 0. So the self-test's own evidence is
+indistinguishable from the documented false alarm. It is detector 1, the fired-0-times validator,
+that settles it, because that counts the game's own traffic rather than our invoke.
+**Do not read this as widening §4.4's population** — here the slot is genuinely wrong, so the
+zero tells us nothing about BlueprintFastCall.
+
+**What is wrong, in order of what to fix:**
+* **The detection**, primarily: `DetectProcessEvent`'s pattern scan misses on this UE 5.4
+  Development build and the version-table fallback (`primary=0x220`) is not the live slot.
+* **The self-test's advice**, secondarily: it says *"Hook may be on the wrong vtable slot. Check
+  init-\*.log for 'VALIDATION FAILED' and re-deploy the DLL."* Re-deploying cannot help — the DLL is
+  current (3262, `matched`); the slot is mis-detected. The message sends the user down the one path
+  that cannot work, and it is also built on the target §4.4 says not to verify with.
+
+**Consequence for the register:** any row needing a game-thread invoke on **DumperTest** — CE
+`callFunction`, `ST1`, the AA14–AA20 invoke batch, Teleport/GodMode/Movement on the sample — is
+running against a hook that never fires. Those must move to a title where detection succeeds, or
+wait for the detection fix. Worth re-checking which of the twelve swept titles validate cleanly;
+`init-0.log` answers it per title in one grep.
+
 ### ⛔ NEW 2026-08-17 `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` does NOT mean the game loads it
 
 *Found while sweeping the three Tier-1 titles. It invalidates an assumption the whole verification
