@@ -3496,6 +3496,28 @@ build 3262, over the pipe. Effort **M** · Risk med.
 >
 > *Also confirmed in passing:* the `(+N)` `match_count` annotation renders — both result rows read
 > `FrozenInt=424242, NetUpdateFrequency=100 (+2)` / `(+3)`. Scan cost `83 ms` over 1,815 objects.
+
+> ### ✅ D2 (樣本心跳) PASS 2026-08-17 `[GRP4-UI-2026-08-17]` — the DLL and the game agree to the digit
+>
+> The sample prints its own values on screen, so the panel can be checked against the *game's* opinion
+> rather than against itself. Two readings **34 s apart** — Live Walker on `DumperTestActor_0` first,
+> then the HUD:
+>
+> | field | DLL (Live Walker) | game HUD, +34 s | verdict |
+> |---|---|---|---|
+> | `FrozenInt` — *must NOT move* | **424242** (hex `32790600`) | **424242** | identical |
+> | `Health.BaseValue` — *must NOT move* | **100** (hex `0000C842`) | **100** | identical |
+> | `TickCount` — *climbs at 1 Hz* | **815** (hex `2F030000`) | **849** | +34 over a 34 s gap |
+> | `F32_Ticking` — *falls 10.25/tick* | **600.75** (hex `00301644`) | **252.25** | 600.75 − 34×10.25 = **252.25 exactly** |
+>
+> **This is stronger than "the numbers look right".** The two frozen fields match to the digit, and
+> the two moving fields match the sample's own documented rates **exactly** over the measured
+> interval — including `F32_Ticking`, where an arithmetic slip of a single tick would show. Every hex
+> column round-trips too (`0x32F` = 815, `0x00067932` = 424242, `0x44163000` = 600.75).
+>
+> *Conditions:* DumperTest Development, dist **3262**, windowed, ~34 s between the two captures, no
+> wrap occurred in `F32_Ticking` during the interval (it falls from 600.75, and the wrap is far
+> below).
 >
 > ⚠ **Only the first 5 candidates are logged**, by design (`[SCAN:grp]` debug, off the hot path), and
 > only DROPPED ones appeared — the two survivors produced no `KEPT` line. Do not read the absence of
