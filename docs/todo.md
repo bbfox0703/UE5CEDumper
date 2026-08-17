@@ -2584,7 +2584,33 @@ Both are derived from the same two sources (`vendor/RE-UE4SS/.../Generator.cpp`,
    drops every `*_C`) is **still open**, so a BP class legitimately will not be there yet — confirm
    that is the reason rather than a parse failure.
 
-### ⬜ NEW 2026-08-14 — SDK header layout: inherited-property boundary + packed bitfields (audit #5 W2/W3, build 2842)
+### 🟡 PARTIAL 2026-08-17 `[W23-PIPE-2026-08-17]` — SDK header layout: inherited-property boundary + packed bitfields (audit #5 W2/W3, build 2842)
+
+**The headless half — the boundary value itself — PASSES all three checks. The UI half is NOT run**
+(see below). DumperTest Development, build **1.0.0.3262**, via `tools/verify/pipe_client.py`.
+
+1. ✅ `walk_class` on `DumperTestActor` (`//Script/DumperTest/DumperTestActor`) reports
+   `super_props_size: 672` against `props_size: 1760` — non-zero and smaller, as required.
+2. ✅ **The real check.** Walking `super_addr` (`0x1DB6FDEAE00` = `//Script/Engine/Actor`) directly
+   gives `props_size: 672` — *exactly* the child's `super_props_size`. This is the equality that
+   would catch the offset being read off the wrong struct, and it holds. Corroborated independently
+   by the layout itself: `DumperTestActor`'s own first field, `Text_Even2_OneNull`, sits at offset
+   **672** — the derived data starts precisely at the boundary.
+3. ✅ **Not an absence-shaped result** (§1.2). The lowest-offset field in `fields` is
+   `PrimaryActorTick` at **40**, far below the 672 boundary, so the reply genuinely does carry
+   inherited properties and the filter has something to do.
+
+*Also visible in the same reply, though it is the emitter that W3 is about:* `AActor`'s replication
+block is present in the packed form the header generator has to handle — `bNetTemporary`/
+`bOnlyRelevantToOwner`/`bAlwaysRelevant`/… all at **offset 88** with `bool_mask` 1/4/8/16/…, and the
+sample's own `bFlagA`/`bFlagB`/`bFlagC` at **1648** with masks 1/2/4 plus `bPlainBool` at 1649.
+
+⚠ **The UI half is NOT verified and this must not be read as covering it.** Exporting the SDK header
+and checking the struct opens at the super's size, declares none of the base's properties, and emits
+`uint8_t bX : 1` runs whose byte count matches the gap — all of that needs UE5DumpUI, which
+**cannot currently be granted to computer-use** (it is a loose exe with no installer registration;
+see `docs/auto-verification-session-plan.md` §1). The emitters are unit-covered; what stays unproven
+is the emitters running against this live boundary value.
 
 Both fixes are unit-verified end-to-end against the real emitters, with separate negative controls.
 What no unit test can cover is the **boundary value itself**: `super_props_size` is a new

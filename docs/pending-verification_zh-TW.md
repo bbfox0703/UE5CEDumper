@@ -187,17 +187,13 @@
 | 3 | 用 proxy 模式從 UI 啟動掃描，掃到一半直接關閉 UI。 | `scan-0.log` 出現 `aborted (client gone / shutdown)`（`DataScanGObjectsCandidates` / `FindGObjectsStaticStruct` / `FindGNamesByStringRef` 其一），而不是整趟跑完。<br>⚠ 這三個取消點只編譯過從未跑過，前面步驟通過不代表它們有被驗到。 |
 | 4 | 連上 UI → 指令進行中斷線 → 重新連線 → 重跑一次完整掃描。 | GObjects / GNames 正常解析完成，且日誌中**沒有**任何 `aborted` 行。 |
 
-### ⬜ W2 / W3 —— SDK header 繼承邊界與位元欄位
+### 🟡 W2 / W3 —— SDK header 繼承邊界與位元欄位（**只剩 UI 匯出這一步**）
 
-*build 2842 · 優先度 **中***
+*build 2842 · 優先度 **中** · 步驟 1-4 已於 2026-08-17 用 pipe 驗過並 commit*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 注入任一遊戲，用 headless pipe client 對一個衍生類別（AActor 或任一 *_C）下 walk_class | 回覆含 super_props_size 欄位<br>⚠ 需先建立 \\.\pipe\UE5DumpBfx 連線；recipe 在 audit-2026-08-13-early-code-findings.md |
-| 2 | 檢查 super_props_size 的值 | 非 0，且小於 props_size |
-| 3 | 再對回覆中的 super_addr 直接下一次 walk_class | 它的 props_size 等於上一步的 super_props_size（這步才是真正判定） |
-| 4 | 看 fields 陣列中 offset 最小的欄位 | 該 offset 小於 super_props_size<br>⚠ 若所有欄位都 ≥ 邊界，這次檢查等於沒做，換一個類別重來 |
-| 5 | 在 UI 匯出該類別的 SDK header | struct 從 super 的大小起算、不重覆宣告基底屬性；含 packed bool 的類別（AActor 複製旗標區）發出 uint8_t bX : 1，其位元組數與到下一欄位的間隙相符 |
+| 5 | 在 UI 匯出該類別（`DumperTestActor`）的 SDK header | struct 從 super 的大小（**672**）起算、不重覆宣告 `AActor` 的屬性；含 packed bool 的類別發出 `uint8_t bX : 1`，其位元組數與到下一欄位的間隙相符<br>⚠ 目前卡在 UE5DumpUI 無法授權給 computer-use（散裝 exe、登錄檔沒有安裝項目） |
 
 ### ⬜ W1 / W7 —— 匯出的 .usmap 能被真實解析器讀出
 
