@@ -22,6 +22,55 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AA8: the dissect script asserted an Outer offset the DLL already detects (build 3204)
+
+**Audit #5 AA8 closed — re-tiered MED→LOW** (population today is **zero of 30+ tested games**, so it
+is a correctness gap with no known live victim), and it filed **AA37** on the way out.
+
+`ue5_dissect.lua`'s UObject header carried a flat `addIfMissing(0x20, "Outer")`. On a
+`WITH_CASE_PRESERVING_NAME` build FName is 12 bytes instead of 8, so `OuterPrivate` pads out to
+`+0x28` — which the DLL detects (`DynOff::UOBJECT_OUTER`, Genau) and the script did not. The emitted
+structure then labels the FName's DisplayIndex/Number pair as an 8-byte "Outer" pointer and omits the
+real field. Correctly narrowed on re-derivation: this is the **only** header row that can be wrong;
+the other five match `Grimoire`'s constants.
+
+**Fixed by asking the DLL, not by mirroring it.** A second copy of the detection is the drift this
+repo keeps paying for, so `detectOuterOffset` calls `UE5_GetObjectOuter` for the object being
+dissected and finds which slot holds that value — two reads and one export call.
+
+Three judgement calls, each with its own test:
+
+- **A null Outer proves nothing.** A root package legitimately has none, so it falls back rather
+  than treat 0 as a reading — otherwise every such object "detects" whichever slot happens to hold 0.
+- **An ambiguous read prefers 0x20.** A tie is not evidence for the rarer layout.
+- **Deliberately NOT memoised.** CE keeps one Lua state for the whole session and never rebuilds it
+  (CE-Bugs-Minesweeper §5), so a cached `0x28` would follow the user onto the next,
+  non-case-preserving game and corrupt every structure built there. The "just cache it" optimisation
+  has its own regression test.
+
+**One filed rationale was over-claimed and dropped:** a `pcall` around the probe, for version skew.
+`git log -S"UE5_GetObjectOuter"` finds only the module-rename commit, so the export predates the
+naming scheme and no DLL a user could plausibly pair with this script lacks it — and swallowing there
+would re-introduce exactly the silent failure the AA5/AA6 fix removed.
+
+**The rig earned its keep twice**, which is the reusable part. `scripts/tests/dissect_test.lua` runs
+the real script over stubbed CE globals: it failed on the first run because the change had quietly
+introduced a **new DLL dependency**, and its 40 pre-existing checks then proved the rest of the
+header path was untouched. Six new cases, 50 checks. Negative control: restoring the hardcoded
+`0x20` fails 3 of them.
+
+**AA37 filed rather than bundled.** AA8's re-derivation surfaced a second, independent defect:
+`addUObjectHeader` runs **unconditionally**, without asking whether the walked `UStruct` is even
+UObject-derived — so `createFromPath("/Script/CoreUObject.Vector")` staples six meaningless header
+rows over real member offsets, and the `covered` set does not stop it because that set is built from
+element START offsets only. The register is CI-gated per row, so folding two defects into one commit
+would have left neither honestly markable.
+
+3971 passed / 0 failed; the C# text assertions over this script (`CeExecuteCodeExArityTests`) still
+pass.
+
+-----
+
 ## 2026-08-17 - AD4: the God Mode badge collapsed three states into one (build 3203)
 
 **Audit #5 AD4 closed — re-tiered MED→LOW.** Nothing mis-writes: the hold is correct and the
