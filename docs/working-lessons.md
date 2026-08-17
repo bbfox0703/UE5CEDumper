@@ -1287,6 +1287,15 @@ architecture or UX changes in these areas.
 - **Do not reorder GObjects preset rows B and E.** Putting E first would let its +0x20/+0x24 reads steal
   a real Back4Blood layout — trading one silent misread for another. The fix is the chunk-count
   discriminator plus a two-pass relaxed table, both strictly widening.
+- **A single hand-maintained bugs control table** (merging the audit docs / todo / dev-log into one
+  tracker) — evaluated 2026-08-17, **rejected**. The audit #5 register (§3c) already IS the single
+  status owner, CI-gated by `check_audit_register.py`, and the other docs' roles (evidence dossiers /
+  append-only history that doubles as the gate's claim source / forward work + the verification
+  register) are load-bearing for the gates. The deciding evidence: the six-row re-derivation dossier
+  drifted three ways within a day of its own fixes — every extra hand-maintained copy of status is a
+  copy that lies. A unified view must be DERIVED, never stored — `check_audit_register.py --list`
+  prints the open HIGH/MED tier with segments. The spent dossier is in `docs/archive/`; full
+  rationale in the 2026-08-17 dev-log entry.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see CLAUDE.md's docs table
 for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-value-scan-spec.md`,
