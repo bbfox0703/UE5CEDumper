@@ -109,14 +109,14 @@ sixth format would tell us nothing the first five did not.
 * **Groups 3, 4 and 5 are unblocked** (20+ rows, including W2/W3 step 5 and D2 step 4, the two
   stranded half-items).
 
-⚠ **Still open, and small: `DumperTest Development` / `DumperTest Shipping` do NOT resolve** even
-though `Get-StartApps` lists both from the *same* `…\Programs\Test\` folder with correct inner-exe
-targets (index total went 255 → 258). `UE5DumpUI`, created the same way minutes earlier, resolved
-immediately. Neither exe was running at the time, so the running-process route is not what made
-`UE5DumpUI` work. Untested next guesses, cheapest first: retry after a few minutes (a TTL on the
-resolver's side), then a single-token name with no space, then a target path with no space
-(`D:\UE_Analyze_data\For Testing\…` has one; `D:\Github\UE5CEDumper\dist\…` does not).
-**Groups 1 and 2 do not care** — they drive DumperTest over the pipe and never take a grant.
+⚠ **There is a lag on the resolver's side — a first failure is not a verdict.**
+`DumperTest Development` / `DumperTest Shipping` returned `notInstalled` on the first attempt, minutes
+after their shortcuts were created and while `Get-StartApps` already listed both (index total
+255 → 258). **Retried ~10 minutes later with nothing else changed: both granted at full tier.**
+`UE5DumpUI` happened to resolve immediately, so the two cases together bracket it. **So: after
+creating a shortcut, if `Get-StartApps` shows it but `request_access` says `notInstalled`, wait and
+retry rather than changing anything.** Do not start editing names or paths on the strength of one
+refusal — that is how the original five-format wild goose chase began.
 
 ### The superseded probe work — measurements good, conclusion wrong
 
@@ -420,8 +420,32 @@ time and would have cost it again:
 and never triggers Zydis; Path 2 needs `walk_function_props` on a script-less UFunction);
 and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 
-**Next up, in order:** Elliot (G8/G9 step 1 · G11 step 3 · G2 speed-split — all pipe-drivable), then
-whatever §3's step-0 experiment unlocks.
+### ✅ Also run 2026-08-17 (late sitting) — the UI is unblocked, so GROUP 3 started
+
+| Row | State | Tag |
+|---|---|---|
+| G8/G9 step 3 | ✅ **CLOSED** on DQ7R — the sample was missing, not the capability | `[DQ7R-PIPE-2026-08-17]` |
+| G2 step 2 | ✅ **LEAD REFUTED**, no defect, no instrumentation needed | `[DQ7R-PIPE-2026-08-17]` |
+| G11 step 1 | 🟡 third title run but it does **not** discharge the step (DQ7R's PE hash changed) | `[DQ7R-PIPE-2026-08-17]` |
+| U2 sweep | ✅ DQ7R is a third confirmed **non-CPN** title | `[DQ7R-PIPE-2026-08-17]` |
+| AE4 steps 3/5/6 + 1 | ✅ **PASS** (step 1 by a stated substitution) | `[AE4-UI-2026-08-17]` |
+| AE4 steps 2/4 | ⬜ **NOT TESTED**, with measured reasons | `[AE4-UI-2026-08-17]` |
+| AC1 step 5 | ✅ **CLOSED** — needed no foreign DLL at all | `[AE4-UI-2026-08-17]` |
+| W2/W3 step 5 | ✅ **CLOSED** — the last stranded half-item, all three checks | `[SDKHDR-UI-2026-08-17]` |
+| D2 step 4 | ✅ **SETTLED** — and the step's premise was wrong | `[D2-UI-2026-08-17]` |
+
+**Three things this sitting learned that outlive the rows:**
+1. **The version-detection ladder needs TWO properties, not one** — an unrecognised PE VERSIONINFO
+   *and* a findable `++UE[45]+Release-` tag. Only **DQ7R / DQ I&II / OCTOPATH** have both; Elliot,
+   which the register named, has neither half of the tag and can never produce a tier line.
+2. **The exported SDK header does not compile** (`uint8_t[0x8] Name;` for every `TOptional`), which no
+   existing check could see because headers are read and never compiled. Open.
+3. **A duplicate UI launch writes an unhandled exception into `crash.log`** — the file documented as
+   *the* AOT startup diagnostic.
+
+**Next up, in order:** finish GROUP 3 (AE4 steps 2/4 + AC1 steps 1/2/3/4/6/7 — both need the
+synthetic-folder staging in §4.1, and §4.1's AV caveat means doing it while someone can answer a
+prompt), then GROUP 4 on DumperTest, then Elliot for `G8/G9 step 1` / `G11 step 3` / `AA14–AA20`.
 
 -----
 
