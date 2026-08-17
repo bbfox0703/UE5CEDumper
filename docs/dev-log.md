@@ -22,6 +22,63 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AF5 + Z2: a ComboBox pick inside a tab re-ran that tab's activation (builds 3200, 3201)
+
+**Audit #5 AF5 (MED) and Z2 (MED→LOW) closed.**
+
+**AF5 is two independent defects**, and only together do they produce the reported symptom.
+
+*The routing.* Avalonia's `SelectionChanged` **bubbles**. A ComboBox or ListBox inside the selected
+tab raises it, it travels to the main TabControl, and `MainTabs_SelectionChanged` ran with
+`sender == TabControl` and `SelectedItem.Tag` still naming the tab the user was already on — so an
+ordinary in-tab pick re-ran the whole per-tab activation routine, cancelling in-flight heavy queries
+and rebuilding lists.
+
+**The premise was executed, not assumed.** In a headless harness against the pinned Avalonia: the
+TabControl *is* a visual ancestor of the tab's content
+(`StackPanel→ContentPresenter→Panel→DockPanel→Border→TabControl`); **ComboBox and ListBox** re-fire the
+handler this way while **DataGrid and AutoCompleteBox do not**; and a genuine tab switch arrives
+with `e.Source == TabControl`. Two things follow that are easy to get wrong: the discriminator is
+**`e.Source`, not `sender`** (sender is the TabControl in every case — which is exactly why the old
+code could not tell them apart), and **`e.Handled` is not an option**, because the TabControl is the
+end of the route and setting it suppresses nothing.
+
+Fixed with a pure `Helpers/TabActivation.ShouldRunActivation(e.Source, tabs)` — the
+`LiveWalkerNavShortcuts` shape, `object?` parameters, testable without a toolkit.
+
+*The reset.* `ClassPivotViewModel.RefreshAsync` rebuilt `Snapshots` and then **hard-set** the
+selection to `Snapshots[0]` and re-ticked the two newest `DiscoverPicks`. That is what turned a
+wasteful re-entry into a destructive one: the user picked a snapshot, the pick bubbled, activation
+re-ran, refresh reset the pick. It now captures both before the rebuild and restores them **by Id** —
+`UiCollection.Reset` repopulates with NEW `SnapshotMeta` instances, so a reference or index
+comparison would pass for the wrong reason. The two-newest default still applies on a first build,
+so it stays a starting point rather than something that reasserts itself, and a snapshot deleted
+between refreshes falls through to the newest.
+
+**The third proposed part was deliberately not taken.** Coalescing concurrent refreshes behind a
+shared task targets an overlap that the source guard already removes, and the obvious implementation
+is unsafe: hoisting `_refreshing` above the await also swallows `OnSelectedSnapshotChanged`'s class
+load, which keys off the same flag. Separate concern, separate change.
+
+Negative controls: degrading the guard to always-true fails 5 of 6 `TabActivation` cases including
+the bubbled-child one; reverting the hard reset fails exactly the two preservation tests and nothing
+else. AOT publish verified (54.4 MB).
+
+**Z2 lands as CONSISTENCY, and the write-up matters more than the diff.** Two selection-bound lists
+were rebuilt without first detaching the selection, where three sibling panels carry the detach
+verbatim. The *severity story* around it is wrong in **both** directions, which is the part worth
+keeping: the filed row asks to rank it by audit #3's L18/L19 downgrade, and that precedent **does
+not transfer** — this site is `SelectionMode="Extended"` with `grid.SelectedItems` consumed by two
+code-behind handlers, while both downgraded sites are single-select. But that difference is
+**untouched by the one-liner**, which detaches `SelectedResult`, not `SelectedItems`. So the fix is
+right and the elevated-risk story would have been wrong. No crash has ever been observed at any of
+the four panels; the reason to land it is that four panels asserting one invariant three different
+ways is how the next reader learns the wrong rule.
+
+3960 passed / 0 failed.
+
+-----
+
 ## 2026-08-17 - A1: at stride 20 the serial read was ClusterRootIndex (build 3194)
 
 **Audit #5 A1 (MED) closed.** `Aura::GetSerialNumber` computed its offset inline as
