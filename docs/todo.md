@@ -1658,7 +1658,7 @@ honestly on a real pawn** — `Solitar.cpp` is compiled by no test target.*
 > | 7 | Force ON, close the UI, reopen and reconnect | badge is `ON` **without pressing ↻** | the connect-time read; `want` lives in the DLL and survives a UI restart |
 > | 8 ⚠ control | during step 7's reconnect, watch the status line | stays `Connected`, no button flicker | proves the connect read did not go through RefreshGodModeAsync (IsBusy / StatusText) |
 
-### ⬜ NEW 2026-08-17 — AC1: Force Overwrite must no longer be able to destroy a foreign DLL (build 3191)
+### ✅ CLOSED 2026-08-17 `[AC1-UI-2026-08-17]` — AC1: Force Overwrite must no longer be able to destroy a foreign DLL (build 3191)
 
 *Needs **no game** — only the Proxy Deploy panel and one throwaway file. Same "free from an ordinary
 session" shape as AE4–AE7, so it can ride along with those. See dev-log build 3191.*
@@ -1695,12 +1695,56 @@ session" shape as AE4–AE7, so it can ride along with those. See dev-log build 
 > That is exactly the required asymmetry — the destructive half does not persist. `Force Overwrite`
 > was returned to OFF afterwards so the app is left as found.
 >
-> **Steps 1/2/3/4/6/7 still need the foreign DLL.** Prefer §4.1's **synthetic folder** over Light
-> Maze; the same synthetic folder also unblocks **AE4 step 4**, which has no leftover to delete
-> today. ⚠ Note for whoever stages it: copying a system DLL to `dxgi.dll` inside a game folder is
-> the textbook DLL-hijack shape, so on this machine (Bitdefender ATD, working-lessons §3.8) prefer a
-> benign third-party DLL that merely lacks our `ProductName`, and do it while someone can answer an
-> AV prompt.
+### ✅ ALL SEVEN STEPS CLOSED 2026-08-17 `[AC1-UI-2026-08-17]` — on a synthetic folder, no real game touched
+
+§4.1's preferred route worked, so **Light Maze was never involved**. Staged under
+`D:\SteamLibrary\steamapps\common\ZZSynthProxyTest\ZZSynth\Binaries\Win64\` with two deliberate risk
+reductions: the `-Win64-Shipping.exe` is a **57-byte text stub** (the scanner pattern-matches the
+filename and nothing there is ever executed, so real executable bytes serve no purpose), and the
+foreign DLL is a copy of **Intel's `tbbmalloc.dll`** rather than a System32 binary — it only has to
+carry a `ProductName` that is not ours. SHA-256 recorded before and after every step, per §4.1
+condition 1. `Found 17 UE game(s)` confirmed the synthetic folder is detected.
+
+| step | verdict | evidence |
+|---|---|---|
+| 1 | ✅ | row reads `OtherProxy` / **`Other proxy: oneAPI Threading Building Blocks`** — the panel really does read the foreign DLL's own `ProductName` |
+| 2 ⚠ the regression | ✅ | `Force Overwrite` alone → **`Deployed: 0 success, 1 failed`**, row still `OtherProxy`, Error cell **`Refused: another program…`** |
+| 3 | ✅ | SHA-256 **byte-identical** to the planted file afterwards — "refused" means *not written*, not merely *reported as refused* |
+| 4 | ✅ **both halves** | both boxes → `Deployed: 1 success`, file now SHA-matches `dist/proxy/dxgi.dll`, and `view-0.log` carries `[WARN] Replacing another program's dxgi.dll in ZZSynthProxyTest (oneAPI Threading Building Blocks (oneTBB) 2021.13.0) — foreign overwrite was explicitly allowed`. It names the product **and its version** |
+| 5 | ✅ | see the block above — two detectors, `ui-options.json` has no foreign-consent key at all |
+| 6 | ✅ | our proxy already at 1.0.0.3262, `Force Overwrite` only → `Deployed: 1 success`, i.e. it **redeployed** rather than skipping as "already current" |
+| 7 | ✅ **stronger than asked** | foreign DLL re-planted, then `Update All` with **BOTH boxes ticked** → `All 10 deployed proxy DLL(s) already up-to-date`, row untouched, SHA still the foreign one. The count of **10** shows the pre-gate excluded it before consent was ever consulted, so the hard-coded `ForeignConsent: false` beats the UI state |
+
+**Cleanup asserted, not assumed:** both synthetic trees removed and
+`D:\SteamLibrary\steamapps\common` re-counted back to its original 63 children with no `ZZ*` left.
+
+### ✅ AE4 step 4 — removal half CLOSED, gate half NOT OBSERVABLE `[AC1-UI-2026-08-17]`
+
+The same staging gave AE4 step 4 the leftover it lacked: a `…\ZZSynthOrphan\ZZOrphan\Binaries\Win64\`
+holding **only** our `version.dll` and no exe.
+
+**Removal works, and three independent detectors agree** — which matters because this is the
+Recycle-Bin-only policy (B13/B41) actually holding in practice rather than in unit tests:
+1. Panel: `Cleaned 1 of 1 leftover(s) — **1 file(s) recycled, 4 folder(s) removed**`.
+2. Disk: the four-level tree is gone and the ceiling `…\steamapps\common` survives untouched.
+3. **Recycle Bin: the file is recoverable** — `D:\$RECYCLE.BIN\S-1-5-…-1001\$RG84NG7.dll`, 2,860,544 B.
+
+The confirmation dialog is itself worth recording: it lists the exact folders it will try **in order,
+each only if left empty**, prints `Not touched: D:\SteamLibrary\steamapps\common`, and explains *why*
+this is judged a leftover (no Steam appmanifest names `ZZSynthOrphan`; no executable survives under
+the tree). `Cancel` reports `Cancelled — nothing was removed`.
+
+⚠ **The gate arm is NOT verified.** Pressing `Delete checked` while a scan ran opened the
+confirmation dialog rather than refusing — but that proves nothing either way, because the scan
+finished inside the 2 s before the click and because the dialog opening is not the delete *running*.
+**Same measurement limit as steps 1 and 2**: every operation here completes inside one input
+round-trip. The gate itself is proven to exist and to name its operation (see AE4 step 1), so what is
+missing is specifically the `IsRemovingOrphans` arm.
+
+⚠ **A trap for whoever re-checks the Recycle Bin:** the first probe reported *no* recycled file and
+nearly became a filed defect. `shutil.copy2` preserves mtime, so the `$R…` entry carries the
+**source's** timestamp, not the deletion time — filtering the Recycle Bin by "modified in the last
+30 minutes" hides it. Match on **size**, never on time.
 
 ### 🔲 U3 + U17 — struct previews: dropped members, then wrong widths (builds 3169, 3171)
 
