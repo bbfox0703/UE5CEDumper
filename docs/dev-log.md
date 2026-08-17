@@ -22,6 +22,51 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - A12: the group scan re-anchors container elements too (build 3261)
+
+**Audit #5 A12 closed — the register is now 0 HIGH / 0 MED.** A11 fixed the single-value scan
+and left the group scan carrying the same defect: `RefineGroupCandidates` re-read a stored
+ABSOLUTE address with no container re-anchor.
+
+The RULE needed no work; this was the wiring, and the wiring is where the traps were. **A
+pre-implementation adversarial review broke the first design twice**, and both breaks would have
+been invisible offline:
+
+1. **Deriving the scan-time buffer base from stride+intra** — what the single-value path does — is
+   the strictly MORE dangerous of two equal-cost encodings here. The deep walk builds a leaf
+   address through a recursion where the intra-element offset is easy to get wrong (the Map
+   `.Value` side alone is off by `cfe.valueOffset`), and with a derived base a wrong intra makes
+   `dataAtScan != nowData` on every pass — so the candidate is Repointed by that error,
+   permanently, onto a real and plausible-looking neighbouring field. The base is now **stored**,
+   and `RepointByBufferMove` needs neither stride nor intra: every leaf in a moved buffer shifts by
+   the same delta. Two fields dropped from three hops as a side effect.
+2. **The sparse count UNIT.** The walker's loop bound is `sa.MaxCapacity`; refine re-reads
+   `sa.MaxIndex`, and `MaxCapacity >= MaxIndex` is enforced. Reaching for the local in hand would
+   make `numAtScan` exceed `nowNum` for every TSet/TMap with a spare slot, so the shrink rule would
+   **drop every sparse group candidate on the first Next Scan** — a fix that deletes valid results.
+   Two named factories now stand between them; `maxIndex` being a parameter name is the defence.
+
+Also corrected before shipping: the depth test was off by one as drafted (leaves are emitted with
+`depth + 1`, so the rule is `leafDepth == 1`) and now lives in one place in a header the tests
+compile; `LeafAnchor` is ONE sub-object placed before `int depth` rather than four loose scalars,
+because `int -> int32_t` is an identity conversion and a partially-filled positional initialiser
+would silently set `depth = 0`, which `deepVisitor`'s `if (lf.depth < 1) return;` turns into
+"every deep group leaf dropped"; and **A4's compile-force claim turns out to be half false** — the
+`int -> uintptr_t` narrowing half is a warning, not an error, because this repo builds `/W4` with
+no `/WX`. Measured by compiling it.
+
+`FieldDescriptor::anchor` is now documented single-value-sessions-only: `internDesc` interns group
+descriptors per SHORT class name, so two distinct UClasses sharing one already share a descriptor —
+harmless for display text, an address bug for pointer arithmetic. The anchor rides per-match instead.
+
+17 assertions, two negative controls run separately. The `static_assert` had to be moved off the
+controlled line — at depth 1 it turned the first control into a compile abort that could not show
+its own must-stay-green half.
+
+**1386 C++ / 4016 .NET assertions, 0 failed.** Live check owed.
+
+-----
+
 ## 2026-08-17 - AA38 + F9 + A11: the three MED the morning's fixes created (builds 3245, 3247, 3253)
 
 **Audit #5 AA38, F9 and A11 closed.** All three were spawned by the session that cleared the

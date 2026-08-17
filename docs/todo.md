@@ -1474,6 +1474,30 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### ⬜ NEW 2026-08-17 — A12: the same, in GROUP mode (build 3261)
+
+*Needs a connected game and the same container as A11's check. **The rule and the anchor factories
+are unit-pinned (17 assertions, two negative controls); the WIRING through three by-name hops is
+not** — no target compiles `Aura.cpp`. Run this straight after A11's; it is the same in-game
+actions with the panel in Group mode.*
+
+> Grep by FORMAT STRING: `RefineGroup re-anchor:` (whole-pass summary) and `container-moved=`
+> (the per-candidate drop tally).
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | Value Search → **Group** mode, **Deep ON**, two slots whose values both live inside the same `TArray<FStruct>` element. First Scan. | a candidate row whose slot fields carry an `[i]` index | establishes the leaves really are container elements and Deep is on — without Deep, nothing here is exercised |
+> | 2 ⚠ THE ONE THAT MATTERS | grow that container in game until it must realloc, then Next Scan | the row **SURVIVES**, and `scan-0.log` has `RefineGroup re-anchor: N … repointed` | before 3261 a realloc left every leaf address stale |
+> | 3 | remove an element BEFORE the matched one, then Next Scan | the row is dropped, and the `RefineGroup cand[...]` line shows `container-moved=` non-zero | the shift-in-place case; the tally is what tells it apart from a predicate rejection |
+> | 4 ⚠ THE UNIT TRAP, and it needs a TSet/TMap | run the same two steps against a `TMap` whose value struct holds both values | rows behave as in 2 and 3, and are **NOT** all dropped on the very first Next Scan | a mass drop with no in-game change is the `MaxCapacity`-vs-`MaxIndex` mismatch. This is the failure the two named factories exist to prevent and the ONLY way to observe it |
+> | 5 ⚠ NON-REGRESSION | Group scan a plain (non-container) field pair, Next Scan with nothing changed | rows survive, and **no** `RefineGroup re-anchor` line at all | `Direct` leaves must not enter the new path |
+> | 6 | check the log for `carries no ValueAnchor` | **absent** | it fires only if one of the three by-name hops dropped the stamp — the one thing no offline test can see |
+
+⚠ **Depth ≥ 2 is deliberately NOT anchored** (`UnverifiableNested`), so a leaf nested two containers
+deep behaves exactly as it did before 3261. Not a failure.
+
+-----
+
 ### ⬜ NEW 2026-08-17 — A11: a grown container must no longer lose its Value Search candidates (build 3253)
 
 *Needs a connected game with a `TArray`/`TMap` UPROPERTY whose element count changes in play

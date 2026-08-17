@@ -24,9 +24,9 @@
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI |
 | **第 2 步 — 要注入一個執行中的遊戲** | 23 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 17 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 16 | 符合特定條件的遊戲 |
+| **第 4 步 — 需要特定條件的遊戲** | 17 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **63** | |
+| **合計** | **64** | |
 
 ### ⚠ 四條會害人記錯結果的鐵則
 
@@ -581,6 +581,21 @@
 ## 第 4 步 — 需要特定條件的遊戲
 
 手上要有符合條件的樣本才做得動；條件寫在每項的「需要」欄。
+
+### ⬜ A12 —— Group 模式下的同一件事
+
+*build 3261 · 優先度 **高** · 需要：和 A11 同一個容器；接著 A11 那一項做，動作一樣，只是面板切 Group*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | Value Search 切 **Group** 模式、**Deep 開**，兩個 slot 的值都放在同一個 `TArray<FStruct>` 元素裡，First Scan | 出現候選列，slot 欄位帶 `[i]` 索引<br>⚠ 沒開 Deep 的話這一整項都沒測到 |
+| 2 | 讓那個容器在遊戲裡長大到必須重新配置，再 Next Scan | 該列**存活**，且 `scan-0.log` 出現 `RefineGroup re-anchor: N … repointed` |
+| 3 | 刪掉一個排在命中元素「前面」的元素，再 Next Scan | 該列被丟掉，且 `RefineGroup cand[...]` 那行的 `container-moved=` 不是 0<br>⚠ 這個計數是唯一能分辨「容器搬走了」和「predicate 不符」的東西 |
+| 4 | 換成 `TMap`（value struct 同時裝兩個值）重跑第 2、3 步 | 行為同上，**而且第一次 Next Scan 不會整批被丟掉**<br>⚠ 遊戲裡什麼都沒動卻整批消失 = `MaxCapacity` / `MaxIndex` 用錯單位，這是唯一看得出來的地方 |
+| 5 | 反向對照：拿一組「非容器」的普通欄位做 Group scan，什麼都不改就 Next Scan | 列都還在，而且完全沒有 `RefineGroup re-anchor` 那行 |
+| 6 | grep log 的 `carries no ValueAnchor` | 不該出現（出現＝三個 by-name 傳遞環節有一個漏掉，離線測不到） |
+
+⚠ **巢狀第 2 層以上刻意不處理**（`UnverifiableNested`），行為與 3261 之前相同，不算失敗。
 
 ### ⬜ A11 —— 容器長大後 Value Search 的候選不該消失
 
