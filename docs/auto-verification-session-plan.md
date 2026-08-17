@@ -45,32 +45,45 @@ launched without a human, and what must never be started without one.
 increments `build_number.txt` on **every** invocation, not only `-Mode Publish`
 ([build.ps1:381](../build.ps1)).
 
-### The Start-menu entries — what grantability actually requires
+### The Start-menu entries — what is MEASURED, and what is still unknown
 
-⚠ **"The app list is snapshotted at MCP-server startup" is REFUTED.** It was carried over from an
-earlier session as an inference and is wrong: all seven `.url` entries created *during* the
-2026-08-17 session resolved in that same session. **An entry created mid-session takes effect
-immediately — a new session is not needed.**
+⚠ **Do not read a mechanism into this section. Two candidate explanations both survive, and the
+useful part is the observation table, not a theory.**
 
-What was measured, and what it implies:
+| Case | Steam-installed? | Start-menu entry? | `HKCU\…\Uninstall`? | Running? | `request_access` |
+|---|---|---|---|---|---|
+| The 7 Steam titles given a `.url` this session (TQ2, Solarpunk, Light Maze, STVoyager, DSA, OCTOPATH, ES2) | yes | created **mid-session** | yes (Steam's) | no | ✅ resolves |
+| The 9 Steam titles that already had one (Elliot, DQ7R, 滿意工廠, …) | yes | pre-existing | yes | no | ✅ resolves |
+| **Hollow Knight: Silksong** — Steam-installed, never touched by this session | yes | **no** | yes | no | ❌ |
+| **UE5DumpUI** — as `.lnk`, as `.url` with a `file:` URL, under its `ProductName`, while **running**, and then **with** a per-user Uninstall entry written | no | yes | **yes (added, made no difference)** | tried both | ❌ all five |
+| **DumperTest** ×2 — real `.lnk` to the inner exe, plus a per-user Uninstall entry | no | yes | **yes (made no difference)** | no | ❌ |
 
-| Case | Registry-installed? | Start-menu entry? | `request_access` |
-|---|---|---|---|
-| The 7 new Steam titles (TQ2, Solarpunk, …) | yes (Steam writes one per app) | yes — created this session | ✅ resolves |
-| **Hollow Knight: Silksong** — the negative control, Steam-installed and never touched | yes | **no** | ❌ *"doesn't match any installed or running application"* |
-| **UE5DumpUI** — tried as `.lnk`, as `.url` with a `file:` URL, under its `ProductName`, and while **running** | **no** (a loose exe, no installer) | yes | ❌ all four |
+**What is settled:** a Start-menu entry alone is not sufficient (Silksong has none and fails; our
+exes have one and fail), and **a per-user `HKCU\…\Uninstall` registration does not help** — that was
+tried on 2026-08-17 and refused identically. Steam titles resolve; our loose exes do not.
 
-**Inferred mechanism (3 data points, not proof): a name resolves only when the app is a
-registry-installed application *and* a Start-menu entry supplies its display name.** Each alone is
-insufficient — Silksong has the first, UE5DumpUI the second, and both fail. Treat this as the working
-model; re-measure if it ever matters.
+**What is NOT settled — and an earlier draft of this file wrongly claimed it was.** It asserted that
+"the list is snapshotted at MCP-server startup" had been *refuted*, on the grounds that the seven new
+`.url` entries resolved in the same session they were created. That inference is weaker than it
+looked: the installed-app list is presented **truncated** (`… and 34 more`), so "those seven were
+absent at session start" was read off alphabetical position in a truncated list, not observed. If the
+list is in fact a startup snapshot and those titles were already inside the hidden remainder, every
+observation above still holds and shortcut creation was simply irrelevant.
 
-**Consequence: `UE5DumpUI` and `DumperTest` cannot be granted as things stand**, because neither is
-installed in the registry sense. This costs nothing for Groups 0/1/2, which drive the DLL over the
-pipe and read logs — **no grant is involved at any point there**. It costs the *on-screen* work:
-Groups 3/4/5 and the two HUD reads (D2 樣本心跳, B8). Options, none taken yet: register them with a
-per-user `HKCU\…\Uninstall` entry (a registry write — ask first; fully reversible by deleting the
-key), or run those groups with the maintainer present.
+**The cheap experiment that separates them, not yet run:** start a **new session** and call
+`request_access` for `UE5DumpUI`. The `.lnk` and the Uninstall entry both exist now, so a snapshot
+taken at the next startup would include whatever it keys on. If it resolves there, the snapshot
+theory is right and mid-session creation never works; if it still fails, loose exes are excluded for
+some other reason entirely.
+
+**Consequence either way: `UE5DumpUI` and `DumperTest` are not grantable in the session that created
+their entries.** This costs nothing for Groups 0/1/2 — those drive the DLL over the pipe and read
+logs, with **no grant involved at any point**. It costs the on-screen work: Groups 3/4/5, W2/W3
+step 5, D2 step 4, and the two HUD reads (D2 樣本心跳, B8).
+
+*The registrations were left in place so the next-session test is possible. They are visible in
+Settings → Apps → Installed apps, do nothing else, and each carries
+`Comment = UE5CEDumper-verification-registration` so a revert can find exactly them.*
 
 The two `DumperTest` entries point at the **inner** executable
 (`…\DumperTest\Binaries\Win64\DumperTest.exe` / `DumperTest-Win64-Shipping.exe`), **not** the
