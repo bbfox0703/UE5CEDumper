@@ -2561,97 +2561,92 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["level_name"] = Ubel::GetName(levelAddr);
             data["level_offset"] = persistentLevelOffset;
 
-            // Walk ULevel class to find Actors TArray field
-            uintptr_t levelClass = Ubel::GetClass(levelAddr);
-            ClassInfo levelCI = levelClass ? Ubel::WalkClass(levelClass) : ClassInfo{};
-
-            // Find Actors field (ArrayProperty) — it's a TArray<AActor*>
-            int actorsOffset = -1;
-            for (const auto& f : levelCI.Fields) {
-                if (f.Name == "Actors" && f.TypeName == "ArrayProperty") {
-                    actorsOffset = f.Offset;
-                    break;
-                }
-            }
-
             json actors = json::array();
             int actorLimit = request.value("limit", 200);
 
-            // The two failures below used to return `actors: []` with ok:true and NO
-            // error, even though this same handler sets data["error"] for the two
-            // failures above it — so the UI rendered a populated level as an empty
-            // one. Live on DumperTest's stock ThirdPersonMap 2026-08-14: actor_count
-            // 0 while world_addr / level_name / level_offset all resolved. That is a
-            // real unanswered question about this map, and it was invisible because
-            // nothing said which branch fired. (audit #5 D5/F6)
+            // === The actor list is DERIVED from Outer, not read from ULevel::Actors ===
+            //
+            // `ULevel::Actors` is declared with NO UPROPERTY (Engine/Classes/Engine/
+            // Level.h:428-429), so the reflected field lookup this used to do could not
+            // ever have matched — `actor_count: 0` on 2 of 2 games, forever, and the
+            // fuzzy fallback could bind "Actors" to DestroyedReplicatedStaticActors,
+            // which IS reflected. There is no native offset to detect either: SpawnActor
+            // outers every actor to the level it adds it to, so one GObjects pass over
+            // "objects derived from AActor whose Outer is this level" reconstructs the
+            // list with no offset detection, no latch and no constant. (audit #5 F8/F9)
+            //
+            // Deriving from AActor is MANDATORY: ULevelActorContainer and UModelComponent
+            // are outered to the level too, so an outer-only test would list them here.
             int actorTotal = -1;
-            if (actorsOffset < 0) {
-                data["error"] = "ULevel::Actors ArrayProperty not found on this level's class "
-                                "— the actor list below is empty because it was never read";
+            int32_t derivedTotal = 0;
+            auto levelActors = Aura::FindActorsInLevel(levelAddr, actorLimit, &derivedTotal);
+            static const std::unordered_set<std::string> kActorComponentBase{ "ActorComponent" };
+
+            if (levelActors.aborted) {
+                // A cancelled pass must not publish a total — that is the D5/F6 lesson
+                // this handler exists to carry, and `0` would positively assert an empty
+                // level where -1 documents "never fully read".
+                data["error"] = "actor enumeration was cancelled (client gone / shutdown) "
+                                "— the list below is partial and the total is unknown";
+            } else if (derivedTotal == 0 && levelActors.scanned > 0) {
+                data["error"] = "no live UObject derived from AActor is outered to this level "
+                                "— this list is DERIVED from the Outer back-reference, not read "
+                                "from ULevel::Actors (which carries no UPROPERTY and is "
+                                "invisible to reflection)";
             } else {
-                Macht::TArrayView actorArr;
-                if (!Macht::ReadTArray(levelAddr + actorsOffset, actorArr)) {
-                    data["error"] = "ULevel::Actors TArray unreadable at +"
-                                  + std::to_string(actorsOffset)
-                                  + " — the actor list below is empty because the read failed";
-                } else {
-                    actorTotal = actorArr.Count;
-                    int count = (std::min)(actorArr.Count, actorLimit);
-                    for (int i = 0; i < count; ++i) {
-                        uintptr_t actorAddr = Macht::ReadTArrayElement(actorArr, i);
-                        if (!actorAddr) continue;
+                actorTotal = derivedTotal;
+            }
 
-                        json actorItem;
-                        actorItem["addr"]  = Renge::AddrToStr(actorAddr);
-                        actorItem["name"]  = Ubel::GetName(actorAddr);
-                        actorItem["index"] = Ubel::GetIndex(actorAddr);
+            for (const auto& sr : levelActors.results) {
+                json actorItem;
+                actorItem["addr"]  = Renge::AddrToStr(sr.addr);
+                actorItem["name"]  = sr.name;
+                actorItem["index"] = Ubel::GetIndex(sr.addr);
+                actorItem["class"] = sr.className;
 
-                        uintptr_t actorCls = Ubel::GetClass(actorAddr);
-                        actorItem["class"] = actorCls ? Ubel::GetName(actorCls) : "";
+                // Components, structurally — for the SAME reason. AActor::OwnedComponents
+                // is a private `TSet<TObjectPtr<UActorComponent>>` with no UPROPERTY
+                // (GameFramework/Actor.h:4331), so the old lookup was wrong twice over:
+                // the field is not reflected, and it is a TSet being asked for as an
+                // ArrayProperty. This never ran in production (actorsOffset was always
+                // -1), so it was never-run code being treated as known-good.
+                // Same shape Edel already uses for "owned components of the PC/Pawn".
+                std::vector<Aura::OutgoingPtr> edges;
+                Aura::CollectOutgoingObjectPtrs(sr.addr, edges, /*cap=*/64);
+                json comps = json::array();
+                std::unordered_set<uintptr_t> seenComps;
+                for (const auto& e : edges) {
+                    if (comps.size() >= 64) break;
+                    uintptr_t compAddr = e.target;
+                    if (!compAddr || !seenComps.insert(compAddr).second) continue;
+                    if (!Aura::ClassDerivesFromAny(Ubel::GetClass(compAddr), kActorComponentBase))
+                        continue;
+                    // A UActorComponent's Outer IS its actor — exactly one hop. This is
+                    // what keeps a pointer to a SHARED object (another actor, the world,
+                    // the GameInstance) from being reported as a component of this one.
+                    if (Ubel::GetOuter(compAddr) != sr.addr) continue;
 
-                        // Try to find OwnedComponents on this actor
-                        ClassInfo actorCI = actorCls ? Ubel::WalkClass(actorCls) : ClassInfo{};
-                        int compsOffset = -1;
-                        for (const auto& f : actorCI.Fields) {
-                            if (f.Name == "OwnedComponents" && f.TypeName == "ArrayProperty") {
-                                compsOffset = f.Offset;
-                                break;
-                            }
-                        }
-
-                        if (compsOffset >= 0) {
-                            Macht::TArrayView compArr;
-                            if (Macht::ReadTArray(actorAddr + compsOffset, compArr)) {
-                                json comps = json::array();
-                                int compCount = (std::min)(compArr.Count, 64); // Limit components
-                                for (int c = 0; c < compCount; ++c) {
-                                    uintptr_t compAddr = Macht::ReadTArrayElement(compArr, c);
-                                    if (!compAddr) continue;
-
-                                    json compItem;
-                                    compItem["addr"] = Renge::AddrToStr(compAddr);
-                                    compItem["name"] = Ubel::GetName(compAddr);
-                                    uintptr_t compCls = Ubel::GetClass(compAddr);
-                                    compItem["class"] = compCls ? Ubel::GetName(compCls) : "";
-                                    comps.push_back(compItem);
-                                }
-                                actorItem["components"] = comps;
-                            }
-                        }
-
-                        actors.push_back(actorItem);
-                    }
+                    json compItem;
+                    compItem["addr"] = Renge::AddrToStr(compAddr);
+                    compItem["name"] = Ubel::GetName(compAddr);
+                    uintptr_t compCls = Ubel::GetClass(compAddr);
+                    compItem["class"] = compCls ? Ubel::GetName(compCls) : "";
+                    comps.push_back(compItem);
                 }
+                actorItem["components"] = comps;
+
+                actors.push_back(actorItem);
             }
 
             data["actors"]      = actors;
             data["actor_count"] = static_cast<int>(actors.size());
-            // actor_count is the PAGE size. The level's real element count was read
-            // one line above and thrown away, so a 500-actor page was indis-
-            // tinguishable from a 500-actor level and an actor at index 1877 simply
-            // was not there. -1 = never read (see the error above). (audit #5 D5/F6)
+            // actor_count is the PAGE size; actor_total is the whole level. -1 = never
+            // fully read (see the errors above). (audit #5 D5/F6)
             data["actor_total"] = actorTotal;
-            data["truncated"]   = (actorTotal > actorLimit);
+            // ONE source. Deriving this here from actorTotal as well would be two flags
+            // computed by different code paths — audit #4's named root cause — so take
+            // the flag the pass itself produced.
+            data["truncated"]   = levelActors.truncated;
             return Renge::MakeResponse(id, data).dump();
         }
 

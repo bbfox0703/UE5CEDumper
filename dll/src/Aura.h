@@ -135,6 +135,8 @@ struct SearchResultSet {
     int32_t nonNull = 0;    // Objects that were non-null
     int32_t named   = 0;    // Objects whose class name resolved successfully
     bool truncated  = false;// More non-excluded matches exist than the cap returned
+    bool aborted    = false;// Tot tripped mid-walk: results AND any total are INCOMPLETE
+                            // and must not be published as a count of anything
     // Class-noise histogram for FindInstancesByClass (build with the same
     // count-desc/name-asc shape as the value-scan picker). Tallied over the FULL
     // matched pool — every row satisfying the class+name query, counted BEFORE
@@ -203,7 +205,31 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
 // Case-insensitive, matching FindInstancesByClass (the name reaches us over the
 // pipe). Cost is one super-chain walk per DISTINCT UClass, not per object.
 // `truncated` means more derived instances exist than the cap returned.
-SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults = 500);
+/// @param outerFilter  0 = no filter. Non-zero = keep only objects whose UObject::Outer
+///        IS this address. The read is hoisted ABOVE the class read so the expensive
+///        half (class + memo + FName decode) is paid only by the surviving minority.
+/// @param totalOut  non-null = keep COUNTING past `maxResults` and report the exact
+///        pre-cap match count. `truncated` is then derived from it, so the page flag and
+///        the total can never be computed by two different code paths.
+SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults = 500,
+                                         uintptr_t outerFilter = 0, int32_t* totalOut = nullptr);
+
+/// Live actors of `levelAddr`, DERIVED from the Outer back-reference.
+///
+/// `ULevel::Actors` is declared `TArray<TObjectPtr<AActor>> Actors;` with NO UPROPERTY
+/// (Engine/Classes/Engine/Level.h:428-429), so reflection never sees it and the field
+/// lookup that used to drive walk_world could not ever have matched (audit #5 F8/F9).
+/// SpawnActor outers every actor to the level it then adds it to, so the Outer
+/// back-reference reconstructs the list without knowing any native offset.
+///
+/// Deriving from AActor is MANDATORY, not a nicety: ULevelActorContainer and
+/// UModelComponent are outered to the level too, so an outer-only test lists them as
+/// actors. That gate is structural here — it IS the base class this queries.
+///
+/// Honest semantics: a SUPERSET of the engine's array by actors already destroyed but
+/// not yet collected, and by actors mid-spawn; it is not the engine's array ORDER; and
+/// `levelAddr == 0` returns nothing rather than degrading into "every actor in the game".
+SearchResultSet FindActorsInLevel(uintptr_t levelAddr, int maxResults, int32_t* totalOut);
 
 // Address-to-Instance reverse lookup result.
 //

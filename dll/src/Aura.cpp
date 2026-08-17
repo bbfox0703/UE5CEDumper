@@ -1678,8 +1678,10 @@ static bool ClassChainMatchesLower(uintptr_t cls, const std::string& lowerName) 
     return false;
 }
 
-SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults) {
+SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults,
+                                         uintptr_t outerFilter, int32_t* totalOut) {
     SearchResultSet rset;
+    if (totalOut) *totalOut = 0;
     if (baseClassName.empty() || maxResults <= 0) return rset;
 
     std::string lowerQuery = baseClassName;
@@ -1694,15 +1696,29 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
 
     int32_t count = GetCount();
     rset.scanned = count;
+    int32_t matchTotal = 0;   // matches BEFORE the cap — exact when totalOut was asked for
     for (int32_t i = 0; i < count; ++i) {
-        if (static_cast<int>(rset.results.size()) >= maxResults) break;
+        // When the caller asked for an exact total we must keep COUNTING past the cap
+        // and stop only APPENDING; otherwise `total` degenerates into the page size and
+        // a 500-actor page is indistinguishable from a 500-actor level (audit #5 F6).
+        if (!totalOut && static_cast<int>(rset.results.size()) >= maxResults) break;
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:find", "FindInstancesDerivedFrom: aborted (client gone / shutdown)");
+            rset.aborted = true;   // the total is INCOMPLETE — callers must not publish it
             break;   // return partial result
         }
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
         rset.nonNull++;
+
+        // Outer gate FIRST when filtering: one 8-byte read per pool entry, versus a
+        // class read + a memo probe + an FName decode. Ordering this cheapest-first is
+        // what makes an outer-filtered pass affordable over a 10^5-10^6 object pool.
+        uintptr_t objOuter = 0;
+        if (outerFilter) {
+            if (!Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, objOuter)) continue;
+            if (objOuter != outerFilter) continue;
+        }
 
         uintptr_t cls = 0;
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
@@ -1732,23 +1748,45 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
         // maxResults class-default rows and not one live instance.
         if (objName.rfind("Default__", 0) == 0) continue;
 
+        ++matchTotal;
+        if (static_cast<int>(rset.results.size()) >= maxResults) continue;   // count, don't append
+
         SearchResult sr;
         sr.addr      = obj;
         sr.index     = i;
         sr.name      = objName;
         sr.className = Ubel::GetName(cls);   // the CONCRETE class, not the queried base
         sr.classAddr = cls;
-        Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
+        if (outerFilter) sr.outer = objOuter;                    // already read above
+        else Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
         rset.results.push_back(std::move(sr));
     }
 
-    rset.truncated = (static_cast<int>(rset.results.size()) >= maxResults);
+    if (totalOut) *totalOut = matchTotal;
+    // ONE source for "is this a page or the whole set". When an exact total was asked
+    // for, derive the flag from it — a second flag computed by a different code path is
+    // audit #4's own named root cause, and this handler's caller publishes `truncated`.
+    rset.truncated = totalOut ? (matchTotal > maxResults)
+                             : (static_cast<int>(rset.results.size()) >= maxResults);
 
     Sein::Info("PIPE:find", "FindInstancesDerivedFrom base='%s': %d live instance(s)%s over %d distinct class(es), scanned=%d, nonNull=%d",
                  baseClassName.c_str(), (int)rset.results.size(),
                  rset.truncated ? " (capped)" : "",
                  (int)derivedCache.size(), rset.scanned, rset.nonNull);
     return rset;
+}
+
+SearchResultSet FindActorsInLevel(uintptr_t levelAddr, int maxResults, int32_t* totalOut) {
+    SearchResultSet rset;
+    if (totalOut) *totalOut = 0;
+    // Zero means "nobody said", never "match everything". Without this a caller that
+    // failed to resolve PersistentLevel would silently get every actor in the game
+    // presented as the contents of one level.
+    if (!levelAddr) {
+        Sein::Warn("PIPE:world", "FindActorsInLevel: refused — no level address supplied");
+        return rset;
+    }
+    return FindInstancesDerivedFrom("Actor", maxResults, /*outerFilter=*/levelAddr, totalOut);
 }
 
 // Helper: populate an AddressLookupResult from a UObject pointer.
