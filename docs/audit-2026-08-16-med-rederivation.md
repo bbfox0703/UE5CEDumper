@@ -24,9 +24,9 @@ was written here.
 
 | # | finding | why here |
 |---|---|---|
-| 1 ⭐ TAKE FIRST | **PX1** | Offline-verifiable — rebuild the proxies and re-parse the export tables. The ONLY one of the six that does not add to the live-verification backlog. It also grew: the same defect sits on `version.dll`, the UI's DEFAULT proxy, with 8 aliased ordinals. |
+| ~~1~~ ✅ **DONE** | ~~**PX1**~~ | **Shipped build 3166** (`9ea249b8` dinput8, `ceaff6ad` version, `b0ccae6c` the CI check). Verified offline exactly as predicted — all four proxies diff clean against real System32, zero missing names, zero ordinal mismatches, nothing added to the live backlog. **Two of the filed premises were wrong in the direction that matters**: link.exe assigns unpinned exports from *(highest pinned + 1)*, not "alphabetically from 1" — so the obvious minimal fix (pin only the missing export) would have moved the five *correct* forwards off their ordinals, i.e. **worse than the bug** — and `/DEF:` merges with `__declspec(dllexport)` rather than suppressing it, so the missing name needed an *implementation*, not a `.def` line. Permanently re-derived by [`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py). |
+| 1 ⭐ TAKE FIRST | **AF3** | Pure C# ViewModel logic — fully unit-pinnable in `ui/UE5DumpUI.Tests`, so like PX1 it closes **without adding to the live-verification backlog**. That is what makes it the new head of the queue. |
 | 2 | **A3** | S/low effort and a *user-visible* scan gap (GAS `Health`/`MaxHealth`/`Mana` share one `UScriptStruct`, so only the first is indexed). No target compiles `Aura.cpp`, so budget a live check. |
-| 3 | **AF3** | Pure C# ViewModel logic — fully unit-pinnable in `ui/UE5DumpUI.Tests`, so it closes without adding to the backlog. |
 | 4 | **U3** | Real and bigger than filed, but `Ubel.cpp` has no test target and the payload is a *display* preview — misleading rather than corrupting. |
 | 5 — SHIP WITH V4 | **V3** | Same root cause as V4, one method apart. Fixing either alone leaves the identical hole next door. |
 | 5 — SHIP WITH V3 | **V4** | ⚠ **Read `residual_risk` before writing a line.** The obvious fix (a `required` expected-parent parameter) would SILENTLY KILL the Go box, Find Refs and every cross-tab 'Open in Live Walker' handoff — two of `NavigateToAsync`'s three callers `Breadcrumbs.Clear()` first and legitimately have no parent. |
@@ -37,7 +37,17 @@ guarded exposed it (working-lessons §2.2).
 
 ---
 
-## PX1 — BIGGER_THAN_FILED
+## PX1 — BIGGER_THAN_FILED — ✅ FIXED build 3166 (2026-08-17)
+
+> **Closed.** `9ea249b8` (dinput8: `Proxy_GetdfDIJoystick` + pin `@1..@6`), `ceaff6ad` (version: pin
+> `@1..@17`, shipped separately per `residual_risk` #1 so the default proxy has one suspect),
+> `b0ccae6c` ([`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py) + baseline + CI ×2).
+> Every prediction below held: verification WAS offline, the fix WAS additive, nothing was added to
+> the live-verification backlog, and `residual_risk` #2 — "both ordinal maps are machine-local facts
+> baked into the tree with nothing to re-derive them" — is answered by the committed baseline plus
+> `--verify-system`. The two `## Fix shape` warnings both proved real: pinning only `@6` would have
+> moved the five correct forwards off their ordinals, and a `.def` line alone would not have linked.
+> The analysis below is preserved verbatim as filed.
 
 ### Premises of the filed finding that are WRONG
 

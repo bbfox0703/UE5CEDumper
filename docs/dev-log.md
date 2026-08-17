@@ -22,6 +22,74 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - PX1: two proxies handed our functions the real DLL's ordinals (build 3166)
+
+**A proxy DLL is a NAME map AND an ORDINAL map.** PX1 was filed against `dinput8` for the first;
+re-derivation found the second, on `version.dll` — the UI's default proxy — eight times over. Nine
+collisions across two proxies, not one.
+
+**The loud half** (dinput8 only): the real `dinput8.dll` exports six functions and
+`ProxyDinput8.def` listed five. A by-name static import of `GetdfDIJoystick` against our proxy fails
+process creation with `STATUS_ENTRYPOINT_NOT_FOUND` — before `DllMain`, before `Sein` has a log file
+to say so.
+
+**The quiet half, and the worse one** (both proxies): `link.exe` hands **unpinned** exports out in
+name-sorted order starting at **(highest PINNED ordinal + 1)** — not at 1, and not
+"alphabetically from 1" as the finding assumed. Neither hand-written `.def` pinned anything, so on
+dinput8 the five real forwards landed on `@1..@5` by luck and our `UE5_*` block began exactly where
+`GetdfDIJoystick` belonged; on version the nine `GetFileVersionInfo*` names took `@1..@9`
+alphabetically and our block took `@10..@17`, which is where the real DLL keeps `VerFindFileA/W`,
+`VerInstallFileA/W`, `VerLanguageNameA/W` and `VerQueryValueA/W`. An ordinal import of any of those
+nine did not fail — it called one of ours, with an unrelated signature.
+
+**Two filed premises were wrong, and both were load-bearing for the repair.** The ordinal rule above
+is why pinning *only* the new export would have been **worse than the bug** (the five correct
+forwards would have moved off their own ordinals to `@7..@11`). And `/DEF:` does **not** suppress
+`__declspec(dllexport)` — it *merges* with it, which three `.def` headers claimed otherwise; the
+shipped dinput8 proxy exported 66 names while its `.def` listed 36. So the missing export needed an
+*implementation*, not just a line.
+
+- **`Lugner_Dinput8.cpp`** — a sixth forwarder, `Proxy_GetdfDIJoystick`, declared `const void*` so
+  `dinput.h` stays out of the build (no-args/pointer-return either way, so a plain C forwarder is
+  exact and the asm jmp-thunk machinery dxgi/winmm need for undocumented internals is unnecessary).
+  The four comments that made the wrong count *look* verified are corrected.
+- **`ProxyDinput8.def`** pins `@1..@6`, **`ProxyVersion.def`** pins `@1..@17` — shipped as two
+  separate commits so a regression on the default proxy has one suspect. version's source order is
+  deliberately *not* renumbered into ordinal sequence, so it stays line-diffable against `Lugner.cpp`.
+- **[`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py)** re-derives it permanently
+  against a committed System32 baseline (`tools/pe/proxy-export-baseline.tsv`) — a baseline rather
+  than a live read because these tables vary by Windows build and a runner whose System32 differs
+  from the maintainer's must not redden an unrelated PR. Five rules; rule 4 (*max pinned >= max
+  real*) is the structural one that keeps the unpinned `UE5_*` block above the real range with no
+  per-symbol bookkeeping. Wired into CI **twice**: the `.def` source before the build, the four
+  linked DLLs after it — because PX1's own severity was misjudged from the source and it was the
+  artifact that disagreed.
+- **Negative controls** — 6 mutations run on scratch copies, all observed to fail (2/7/5/3/1/18
+  errors); case 6 reverts version's pins and reproduces the shipped defect exactly. dxgi and winmm
+  pass untouched, so the check distinguishes the two broken `.def`s from the two correct ones.
+
+**Verified on the artifacts, not the source:** all four proxies now diff clean against real System32
+— zero missing names, zero ordinal mismatches. dinput8 67 exports (ours start `@7`), version 78
+(`@18`), dxgi 81 (`@21`), winmm 241 (`@183`). No live-game verification was added to the backlog:
+`ProxyImportAnalyzer.cs:285` records only 1 of 21 measured games statically imports dinput8, and the
+modern Windows SDK *statically defines* `GetdfDIJoystick` rather than importing it, so there is
+probably no game that can exercise the original failure.
+
+**Also shipped: a Startup-shortcut tool, in two languages.**
+[`scripts/startup-shortcut.ps1`](../scripts/startup-shortcut.ps1) and
+[`scripts/startup_shortcut.py`](../scripts/startup_shortcut.py) create / remove / inspect a per-user
+Start Menu Startup shortcut for `UE5DumpUI.exe`, resolving the exe from their own folder; `build.ps1`
+copies both into `dist\` beside it. Current user only by design (the folder comes from the shell, not
+from a literal `%APPDATA%` path, which is localised and redirectable). No pipe, no network. Both
+refuse to overwrite or delete a shortcut pointing at anything else without `-Force`, and both read the
+shortcut back after writing — `Save()` reports success by not throwing, and a wrong Startup shortcut
+gives no feedback until the next sign-in. **Why two:** Bitdefender's Advanced Threat Defense
+quarantined the `.ps1` on its first run and took `build.ps1`,
+`scripts/gen_proxy_forwarders.py`, `tools/check_proxy_exports.py` and `dist/UE5DumpUI.exe` with it —
+see [working-lessons.md](working-lessons.md) §3.8.
+
+-----
+
 ## 2026-08-16 - AU1: find-object-by-path never existed, on three APIs that advertised it (build 3157)
 
 **Found by VERIFICATION, not by a finder.** Running todo.md's AA4-AA7 step 1 against a real Cheat

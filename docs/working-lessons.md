@@ -764,6 +764,47 @@ py -c "import json;d=json.load(open('ui/UE5DumpUI/obj/project.assets.json'));t=l
 Put the version in **one** MSBuild property feeding every reference. Seven scattered references are
 how a bump gets applied to some and not the others — the variant that hides longest.
 
+### 3.8 The AV quarantines *collateral*, and it takes uncommitted work with it
+
+2026-08-17. A newly written `scripts/startup-shortcut.ps1` was run once. Bitdefender's **Advanced
+Threat Defense** — the behavioural layer, not a signature scan — flagged the process chain
+`claude.exe → pwsh.exe → powershell.exe` writing a `.lnk` into the Startup folder. That is a textbook
+persistence shape and the AV was not wrong to look.
+
+**What it actually did is the lesson.** It did not block one action. It removed **six files**, most of
+which had nothing to do with the Startup folder:
+
+| Removed | Recoverable? |
+|---|---|
+| `scripts/startup-shortcut.ps1` | ❌ **untracked — gone for good** |
+| `build.ps1` | ✅ committed, but the working-tree edit was lost |
+| `scripts/gen_proxy_forwarders.py` | ✅ committed minutes earlier |
+| `tools/check_proxy_exports.py` | ✅ committed minutes earlier |
+| `dist/UE5DumpUI.exe`, `dist/startup-shortcut.ps1` | ➖ rebuildable |
+
+Four rules came out of it:
+
+1. **Commit before you execute anything new.** The only unrecoverable loss was the one file that had
+   not been committed yet. `git checkout` restored the other three verbatim. This costs nothing and
+   is the whole defence.
+2. **It then BLOCKS THE PATHS, and `git checkout` fails with `Permission denied`.** The block is
+   *path-specific*: new paths in the same folders stayed writable, which is why the Python twin could
+   be written and committed while the `.ps1` could not. **It survives until a reboot** — do not
+   burn a session retrying.
+3. **Windows Defender's logs are empty and prove nothing.** `Get-MpThreatDetection` and the
+   `Windows Defender/Operational` log both returned zero events. Defender is *passive* here
+   (`SecurityCenter2 productState 393472`); the real product is Bitdefender, whose events are not in
+   any Windows event log. Check `root\SecurityCenter2 AntiVirusProduct` before concluding "no
+   detection" — an absence in the wrong log is not evidence.
+4. **PowerShell is inspected far more aggressively than Python on this machine.** Maintainer's
+   standing rule: **anything automated that creates or deletes must go through the Python tool**; the
+   `.ps1` is for the maintainer to invoke by hand. Same family as the older AMSI finding (a
+   `LoadLibrary`/`GetProcAddress` P/Invoke probe is refused as "malicious content").
+
+**Do not respond by making the script look like something else.** The behaviour genuinely *is*
+persistence; that is what the tool does. The honest fixes are a folder exclusion, a second
+implementation in a less-inspected host, and not running the thing automatically.
+
 -----
 
 ## 4. UE and CE facts that cost a session each

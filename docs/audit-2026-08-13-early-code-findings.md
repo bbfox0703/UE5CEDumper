@@ -367,7 +367,7 @@ flagged in place).
 | ID | Sev | Location | Defect | Effort/Risk |
 |----|-----|----------|--------|-------------|
 | **ST1** | MED | `Stark.cpp:160` | The queued-invoke drain is gated **only** on `s_queueDepth != 0` — never on thread identity — so it executes on whichever thread entered the patched `ProcessEvent`. `Stark.h:10-12` states the module's whole purpose is that "ProcessEvent is always called from the game thread". Multi-thread PE is **not speculative here**: it is a confirmed finding of audit #3 (L5), whose fix sits two lines above the drain in the same hook body (`Linie.cpp:46-52`). Verified independently: `grep -rn "IsInGameThread\|GGameThread\|GameThreadId\|GetCurrentThreadId" dll/src/` returns **five** hits (re-counted at takeover — D4b wrote four) — three are `Frieren.cpp` log-format arguments, two are `Himmel.h` AOB comment text — so **zero** thread-identity checks on any dispatch path. Second lens confirmed it on a *stronger* path than the finder's: `UE5_CallProcessEventDirect` recomputes the same vtable slot, so `Mimic::HandleInvoke`'s static-native route re-enters our own trampoline **from the mailbox polling thread**. | M / med |
-| **PX1** ‡ | MED | `ProxyDinput8.def:15-20` (+ `Lugner_Dinput8.cpp:54`) | The dinput8 proxy forwards **5 of the real DLL's 6 exports**. `GetdfDIJoystick` has no stub and no `.def` entry, and because the `.def` pins **no ordinals**, MSVC assigns them alphabetically and our `@6` becomes `UE5_AutoStart`. A by-name static import fails process creation outright (`STATUS_ENTRYPOINT_NOT_FOUND`, before any of our logging exists); an ordinal-`#6` import calls `UE5_AutoStart`, which kicks off the whole AOB scan and returns a `bool` in RAX where an `LPCDIDATAFORMAT` is expected. `ProxyImportAnalyzer` records only the imported DLL *name*, never a function list, so Proxy Deploy cannot warn. `ProxyDxgi.def` pins `@1..@20` and its own header says why: *"The @ordinal values match real dxgi.dll so ordinal imports resolve too."* | S / low |
+| **PX1** ✅ ‡ | MED | `ProxyDinput8.def:15-20` (+ `Lugner_Dinput8.cpp:54`) | **FIXED build 3166** (`9ea249b8` dinput8, `ceaff6ad` version, `b0ccae6c` the CI check). Bigger than filed: the same unpinned-ordinal defect was on **`ProxyVersion.def`, the DEFAULT proxy**, aliasing **eight** real ordinals `@10..@17` (VerFindFileA/W, VerInstallFileA/W, VerLanguageNameA/W, VerQueryValueA/W) onto our `UE5_*` block — nine collisions across two proxies, not one. Two filed premises were also wrong and load-bearing: link.exe assigns unpinned exports from **(highest pinned ordinal + 1)** in name-sorted order, not "alphabetically from 1" (so pinning only `@6` would have moved the five *correct* forwards off their ordinals — worse than the bug); and `/DEF:` does **not** suppress `__declspec(dllexport)`, it merges with it (the .def listed 36 names, the shipped binary exported 66), so the missing export needed an *implementation*, not just a line. Fixed by pinning the full real range on both proxies + a `Proxy_GetdfDIJoystick` forwarder, and re-derived permanently by [`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py) (CI, twice: the `.def` source pre-build and the four linked DLLs post-build) against a committed System32 baseline. Verified on the artifacts: all four proxies, zero missing names, zero ordinal mismatches. — *As filed:* the dinput8 proxy forwards **5 of the real DLL's 6 exports**. `GetdfDIJoystick` has no stub and no `.def` entry, and because the `.def` pins **no ordinals**, MSVC assigns them alphabetically and our `@6` becomes `UE5_AutoStart`. A by-name static import fails process creation outright (`STATUS_ENTRYPOINT_NOT_FOUND`, before any of our logging exists); an ordinal-`#6` import calls `UE5_AutoStart`, which kicks off the whole AOB scan and returns a `bool` in RAX where an `LPCDIDATAFORMAT` is expected. `ProxyImportAnalyzer` records only the imported DLL *name*, never a function list, so Proxy Deploy cannot warn. `ProxyDxgi.def` pins `@1..@20` and its own header says why: *"The @ordinal values match real dxgi.dll so ordinal imports resolve too."* | S / low |
 | **MB1** | LOW | `Mimic.cpp:557` | `HandleInvoke` decides the game-thread-vs-direct-off-thread route from `g_invokeMailbox.functionFlags`, which `Mimic.h` documents as a **DLL-filled output** and which `CMD_INVOKE`'s documented inputs do not include. A bare re-`FIRE` (`InvokeScriptGenerator.cs:383-384` re-issues `CMD_INVOKE` without re-running `CMD_FIND_FUNCTION`) therefore routes on whatever the *previous* command left at offset `0x024`. A stale `Native|Static` sends a stateful actor UFunction off the game thread — exactly what the comment three lines above forbids. The false-positive is the unsafe direction; the false-negative is harmless. | S / low |
 | **MB2** | LOW | `Mimic.cpp:278` | The `EnsureInitialized()` gate is applied to **every** command including `CMD_FOREGROUND`, which `Mimic.h` documents as thread-agnostic pure Win32 and which the pipe path services with no such gate — so on a game whose GObjects scan fails, Keep-Foreground is refused with `-10` and `ForegroundScriptGenerator.cs:79-81` renders it as `hook error -10`, naming MinHook, a subsystem never reached. Second half: `Frieren` latches `s_initialized` only on **success**, so the gate re-runs a whole-image AOB sweep on every command while init keeps failing, pinning the mailbox at `status=0xFF` past `MailboxPollTimeoutMs`. | S / low |
 | **SE1** | LOW | `Sein.cpp:473` | `InitProcessMirror` **discards `OpenFileInDir`'s `bool`** and sets `s_filesOpen = true` regardless, then flushes the early buffer into possibly-NULL `FILE*`s and `clear()`s it. A category that failed to open is dead for the session with **nothing logged anywhere**, not even into the `init` file that opened fine. Same shape in `RotateIfNeeded`: a failed reopen leaves `file == nullptr` **and `written = 0`**, so the size test at `:268` returns early forever and the category never retries. The victim is [log-verification-checklist.md](log-verification-checklist.md)'s own procedure — a grep that finds nothing reads as "the code path never ran" when the truth is "the file never opened". | S / low |
@@ -3347,17 +3347,23 @@ G3). Read this first; it is written for a session with no memory of that one.*
 
 ### ▶ THE NEXT FIX SESSION STARTS HERE
 
-> ## ⭐ SIX MEDs ARE PRE-VETTED AND READY TO FIX — 2026-08-16
+> ## ⭐ FIVE MEDs REMAIN PRE-VETTED AND READY TO FIX — 2026-08-16 (PX1 ✅ shipped 2026-08-17)
 >
-> **[audit-2026-08-16-med-rederivation.md](audit-2026-08-16-med-rederivation.md)** holds **PX1, A3,
-> AF3, U3, V3, V4**, each re-derived from source and passed through a refute-mandated skeptic. All
-> six survived; **none is fixed**. The derivation is the expensive half and it is already done —
-> start there rather than re-deriving, but treat each `fix_shape` as a proposal, not an instruction.
+> **[audit-2026-08-16-med-rederivation.md](audit-2026-08-16-med-rederivation.md)** holds **A3, AF3,
+> U3, V3, V4** still open, each re-derived from source and passed through a refute-mandated skeptic.
+> All survived; **none of the five is fixed**. The derivation is the expensive half and it is already
+> done — start there rather than re-deriving, but treat each `fix_shape` as a proposal, not an
+> instruction.
 >
-> **Take `PX1` first.** It is the only one whose verification is *offline* (rebuild the proxies,
-> re-parse the export tables), so it does not add to the backlog below. It also grew on
-> re-derivation: the same ordinal-aliasing defect sits on **`version.dll`, the UI's DEFAULT proxy**,
-> with 8 real ordinals bound to our `UE5_*` functions.
+> **`PX1` is DONE (build 3166** — `9ea249b8`, `ceaff6ad`, `b0ccae6c`**).** Do not re-open it. It
+> confirmed the value of this ordering twice over: it grew on re-derivation (the same ordinal
+> aliasing sat on **`version.dll`, the UI's DEFAULT proxy**, 8 real ordinals bound to our `UE5_*`
+> functions) and **two of its filed premises turned out to be wrong in ways that would have made the
+> obvious fix worse than the bug** — link.exe assigns unpinned exports from *(highest pinned + 1)*,
+> not "alphabetically from 1", so pinning only the missing export would have moved the five *correct*
+> forwards off their ordinals. That is the third instance of §2.4's rule: re-derive the PREMISE, not
+> just the location. Next-best offline candidate is now **`AF3`** (pure C# ViewModel logic, fully
+> unit-pinnable, closes without touching the live backlog).
 >
 > **`V3` and `V4` must ship together**, and `V4`'s residual-risk section is mandatory reading — the
 > obvious fix silently kills the Go box, Find Refs and every cross-tab handoff.
@@ -3623,7 +3629,7 @@ leaf `Actor` exists — which is what proves the package half is really being ma
 End-to-end: `createFromPath("/Script/Engine.Actor")` now builds a 129-field `Actor` structure in CE.
 16 new assertions; negative control (dropping the separator rewrite) turns **6** of them red.
 
-**Current register: 187 open of 288 · 0 HIGH · 25 MED · 135 LOW · 27 INFO.** Re-derive with
+**Current register: 186 open of 288 · 0 HIGH · 24 MED · 135 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —
