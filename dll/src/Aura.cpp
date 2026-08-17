@@ -2278,6 +2278,16 @@ struct ContainerLeaf {
     // value-initialise to the zero enumerator and pass silently, which is how the
     // fix would reproduce the very defect it removes.
     ContainerKind      kind;        // container shape this leaf was reached through
+    // audit #5 A12 — same placement rule, same reason, one step further: ONE sub-object
+    // rather than four loose scalars. A site that omits it still binds `depth`'s `int` to
+    // a class type with no converting constructor (C2440), and a partially-braced `{...}`
+    // cannot swallow `depth`. Loose scalars would NOT be safe: `int -> int32_t` is an
+    // identity conversion, so supplying three of four and stopping compiles clean, `depth`
+    // silently becomes 0, and `deepVisitor`'s `if (lf.depth < 1) return;` then drops EVERY
+    // deep group leaf — the feature reporting zero and reading as "this game has none".
+    // (⚠ `int -> uintptr_t` narrowing is only a WARNING here — this repo builds /W4 with
+    // no /WX — so do not rely on it. Measured, not assumed.)
+    Radar::LeafAnchor  anchor;      // container identity at scan time (see Radar.h)
     int                depth;       // recursion depth at which this leaf was emitted (>= 1)
 };
 using ContainerLeafVisitor = std::function<void(const ContainerLeaf&)>;
@@ -2306,10 +2316,17 @@ static bool IsScalarLeafType(const std::string& t) {
 // Emit `structAddr`'s direct scalar leaves (incl. those nested in direct
 // sub-structs), at element path `arrayPath`[`elemIndex`]. Containers inside the
 // struct are NOT emitted here — they're walked via GetClassContainers.
+// `anchor` has NO default (audit #5 A12): the three callers reach this helper from
+// genuinely different places -- inside a container element, recursing through a direct
+// sub-struct, and from snapshot capture with no container at all -- so each must SAY
+// which it is. It is passed whole rather than as a `slotBase` to recompute from,
+// because this helper already threads two interchangeable `uintptr_t` bases (`base`,
+// `elemBaseAddr`) and a third would be a coin-flip at every call site.
 static void EmitStructDirectLeaves(uintptr_t structAddr, uintptr_t base,
                                    const std::string& arrayPath, int32_t elemIndex,
                                    uintptr_t elemStructAddr, uintptr_t elemBaseAddr,
                                    const std::string& namePrefix, ContainerKind kind,
+                                   const Radar::LeafAnchor& anchor,
                                    int depth, int structDepth,
                                    const ContainerLeafVisitor& visit) {
     constexpr int kMaxStructDepth = 4;
@@ -2320,13 +2337,13 @@ static void EmitStructDirectLeaves(uintptr_t structAddr, uintptr_t base,
         if (IsScalarLeafType(f.TypeName)) {
             ContainerLeaf lf{ arrayPath, elemIndex, elemStructAddr, elemBaseAddr,
                               leafName, base + f.Offset, f.TypeName, f.Size, f.boolFieldMask,
-                              kind, depth };
+                              kind, anchor, depth };
             visit(lf);
         } else if (f.TypeName == "StructProperty" && f.Address) {
             uintptr_t nested = 0;
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, nested) && nested)
                 EmitStructDirectLeaves(nested, base + f.Offset, arrayPath, elemIndex,
-                                       elemStructAddr, elemBaseAddr, leafName, kind,
+                                       elemStructAddr, elemBaseAddr, leafName, kind, anchor,
                                        depth, structDepth + 1, visit);
         }
     }
@@ -2354,16 +2371,31 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
         int32_t   capacity = 0;
         Macht::TSparseArrayView sa{};
         const bool isSparse = (cfe.kind != ContainerKind::Array);
+        // audit #5 A12 — the container's identity AT SCAN TIME, so refine can re-read the
+        // header instead of trusting each leaf's absolute address. Built HERE because this
+        // is the only scope holding the header address and the raw counts.
+        //
+        // ⚠ `capacity` below is NOT the number to stamp for a sparse container: it is
+        // `MaxCapacity` (the backing TArray's Max, used as the iteration bound), while
+        // refine re-reads `MaxIndex`. Stamping capacity would make numAtScan exceed nowNum
+        // for every TSet/TMap with a spare slot, so the shrink rule would DROP every sparse
+        // group candidate on the first Next Scan. The two named factories exist so this
+        // cannot be got wrong by reaching for the local that happens to be in hand.
+        Radar::LeafAnchor leafAnchor;
         if (cfe.kind == ContainerKind::Array) {
             Macht::TArrayView arr;
             if (!Macht::ReadTArray(fieldAddr, arr)) continue;
             if (arr.Max <= 0 || !arr.Data || arr.Max > 0x100000) continue;
             // Use Count (logical) for capture — slack slots hold stale data.
             bufData = arr.Data; capacity = arr.Count;
+            leafAnchor = Radar::MakeArrayLeafAnchor(fieldAddr, arr.Data, arr.Count,
+                                                    /*leafDepth=*/depth + 1);
         } else {
             if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
             if (sa.MaxCapacity <= 0 || !sa.Data || sa.MaxCapacity > 0x100000) continue;
             bufData = sa.Data; capacity = sa.MaxCapacity;
+            leafAnchor = Radar::MakeSparseLeafAnchor(fieldAddr, sa.Data, sa.MaxIndex,
+                                                     /*leafDepth=*/depth + 1);
         }
         if (capacity <= 0) continue;
 
@@ -2403,7 +2435,7 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     uintptr_t elemBase = slotBase + sides[s].regionOff;
                     EmitStructDirectLeaves(sides[s].structAddr, elemBase, sidePath, e,
                                            sides[s].structAddr, elemBase, "", cfe.kind,
-                                           depth + 1, 0, visit);
+                                           leafAnchor, depth + 1, 0, visit);
                     WalkContainerLeaves(elemBase, sides[s].structAddr,
                                         sidePath + "[" + std::to_string(e) + "]", depth + 1, lim, visit, visited);
                 } else if (s == 0 && cfe.kind != ContainerKind::Map
@@ -2416,7 +2448,7 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     const std::string empty;
                     ContainerLeaf lf{ containerPath, e, 0, slotBase, empty,
                                       slotBase, cfe.innerType, 0 /*caller resolves size*/, 0xFF,
-                                      cfe.kind, depth + 1 };
+                                      cfe.kind, leafAnchor, depth + 1 };
                     visit(lf);
                 }
             }
@@ -2437,7 +2469,8 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     std::string vpath = containerPath; vpath += ".Value";
                     ContainerLeaf lf{ vpath, e, 0, slotBase, empty,
                                       slotBase + cfe.valueOffset, cfe.valueLeafType,
-                                      0 /*caller resolves size*/, 0xFF, cfe.kind, depth + 1 };
+                                      0 /*caller resolves size*/, 0xFF, cfe.kind,
+                                      leafAnchor, depth + 1 };
                     visit(lf);
                 }
                 if (cfe.keyStruct == 0 && IsScalarLeafType(cfe.keyLeafType)) {
@@ -2445,7 +2478,8 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     std::string kpath = containerPath; kpath += ".Key";
                     ContainerLeaf lf{ kpath, e, 0, slotBase, empty,
                                       slotBase /*key at pair+0*/, cfe.keyLeafType,
-                                      0 /*caller resolves size*/, 0xFF, cfe.kind, depth + 1 };
+                                      0 /*caller resolves size*/, 0xFF, cfe.kind,
+                                      leafAnchor, depth + 1 };
                     visit(lf);
                 }
             }
@@ -8247,6 +8281,10 @@ void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
                                // coverage predicate short-circuits before it reads this --
                                // but Direct is the honest label, not an arbitrary sentinel.
                                ContainerKind::Direct,
+                               // No container here either, so there is nothing to re-anchor
+                               // against. `Direct` rather than a default, so `Unknown` keeps
+                               // meaning "a hop dropped the stamp". (audit #5 A12)
+                               Radar::MakeDirectLeafAnchor(),
                                /*depth*/ 0, /*structDepth*/ 0,
             [&](const ContainerLeaf& lf) {
                 if (added >= kMaxStructLeafFields) return;
@@ -8291,6 +8329,9 @@ struct GroupLeafMeta {
     uint8_t     boolMask     = 0xFF;
     bool        isNativeC    = false;  // P2: raw-hole leaf (unmanaged, non-UPROPERTY)
     std::string guessedType;           // P2: interpreted width label (e.g. "Int32"); "" for reflected
+    // audit #5 A12 — relayed verbatim to GroupSlotMatch so refine can re-anchor a
+    // container element. Defaults to Unknown/-1, which the rule refuses to act on.
+    Radar::LeafAnchor anchor;
 };
 
 // One deep block = a numeric container's elements, or one struct-array/map
@@ -8353,6 +8394,7 @@ void CollectGroupLeaves(uintptr_t obj, const std::string& ownerClassName,
             m.ownerAddr     = obj;                            // the object directly holding this leaf
             m.ownerClass    = ownerClassName;                 // class of obj (constant across this walk)
             m.boolMask      = f.boolFieldMask;
+            m.anchor        = Radar::MakeDirectLeafAnchor();   // A12: not a container element
             metas.push_back(std::move(m));
         } else if (f.TypeName == "StructProperty" && f.Address) {
             uintptr_t nested = 0;
@@ -8701,6 +8743,7 @@ void AppendRawHoleLeaves(uintptr_t obj, uintptr_t cls, const std::string& classN
                 m.boolMask      = 0xFF;
                 m.isNativeC     = true;
                 m.guessedType   = Radar::NameOf(w);
+                m.anchor        = Radar::MakeDirectLeafAnchor();   // A12: a raw hole in the object body
                 metas.push_back(std::move(m));
                 if (++rawAdded >= kMaxRawGroupLeaves) break;
             }
@@ -8822,6 +8865,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
                 sm.leafAddr      = meta.leafAddr;
                 sm.ownerAddr     = meta.ownerAddr ? meta.ownerAddr : obj;  // P4: leaf's owning object
                 sm.ownerClass    = meta.ownerClass.empty() ? className : meta.ownerClass;  // P4 inc 2
+                sm.anchor        = meta.anchor;   // A12: relay the container identity
                 std::memcpy(sm.prevValue, blkLeaves[static_cast<size_t>(leafIdx)].bytes, 8);
                 gc.slotMatches[s].push_back(sm);
             }
@@ -8888,6 +8932,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         m.ownerAddr     = curObjAddr;     // deep leaves are owned by the scanned object
         m.ownerClass    = curClassName;   // ...so the Pivot handoff uses its class (P4 inc 2)
         m.boolMask      = lf.boolMask;
+        m.anchor        = lf.anchor;      // A12: the container this element lives in
         blk.metas.push_back(std::move(m));
     };
 
@@ -9000,6 +9045,35 @@ ValueScanStats RefineGroupCandidates(
     constexpr int kDiagCandidates = 5;
     int dbgCandidates = 0;
 
+    // audit #5 A12 -- re-anchor container-element leaves before re-reading them, using
+    // the same pure rule the single-value refine uses. Read each container header ONCE
+    // per pass: a block is one container element, so many leaves share one header.
+    struct HeaderSnapshot {
+        bool                    ok   = false;
+        uintptr_t               data = 0;
+        int32_t                 num  = 0;
+        Macht::TSparseArrayView sa;             // populated for sparse only
+    };
+    std::unordered_map<uintptr_t, HeaderSnapshot> headerCache;
+    auto headerFor = [&](uintptr_t headerAddr, bool sparse) -> const HeaderSnapshot& {
+        auto it = headerCache.find(headerAddr);
+        if (it != headerCache.end()) return it->second;
+        HeaderSnapshot hs;
+        if (sparse) {
+            if (Macht::ReadTSparseArray(headerAddr, hs.sa)) {
+                hs.ok = true; hs.data = hs.sa.Data; hs.num = hs.sa.MaxIndex;
+            }
+        } else {
+            Macht::TArrayView av;
+            if (Macht::ReadTArray(headerAddr, av)) {
+                hs.ok = true; hs.data = av.Data; hs.num = av.Count;
+            }
+        }
+        return headerCache.emplace(headerAddr, hs).first->second;
+    };
+    int32_t reanchorDropped = 0, reanchorRepointed = 0;
+    bool warnedUnstamped = false;
+
     std::vector<Radar::GroupCandidate> survivors;
     survivors.reserve(candidates.size());
     for (auto& gc : candidates) {
@@ -9013,6 +9087,7 @@ ValueScanStats RefineGroupCandidates(
         // written and abandoned against that silence on 2026-08-05 -- so it now counts.
         const bool diag = (dbgCandidates < kDiagCandidates);
         int dRead = 0, dWidth = 0, dNoTarget = 0, dPredicate = 0, dKept = 0, dEntered = 0;
+        int dReanchor = 0;   // A12: dropped because its container moved/shrank under it
         for (size_t s = 0; s < nSlots && alive; ++s) {
             // P2: per-slot predicate. Prev-value types (Changed/Increased/...)
             // compare each leaf's re-read bytes against its own stored prevValue;
@@ -9031,6 +9106,51 @@ ValueScanStats RefineGroupCandidates(
                     { ++dWidth; continue; }
                 const size_t sz = Radar::SizeOf(width);
                 if (sz == 0 || sz > 8) { ++dWidth; continue; }
+
+                // A12: re-anchor BEFORE reading leafAddr. `Unknown` / `Direct` /
+                // `UnverifiableNested` fall straight through unchanged.
+                const Radar::LeafAnchor& an = sm.anchor;
+                if (an.kind == Radar::ValueAnchor::ArrayElement
+                    || an.kind == Radar::ValueAnchor::SparseElement) {
+                    const bool sparse = (an.kind == Radar::ValueAnchor::SparseElement);
+                    const HeaderSnapshot& hs = headerFor(an.header, sparse);
+                    if (!hs.ok) { ++dReanchor; ++reanchorDropped; continue; }   // container gone
+                    const bool slotAlloc =
+                        !sparse || Macht::IsSparseIndexAllocated(hs.sa, sm.elementIndex);
+                    switch (Radar::RefineContainerAnchor(an.kind, sm.elementIndex, an.num,
+                                                         an.data, hs.data, hs.num, slotAlloc)) {
+                        case Radar::RefineAnchorVerdict::Drop:
+                            ++dReanchor;          // per-candidate diagnostic bucket
+                            ++reanchorDropped;    // whole-pass summary
+                            continue;
+                        case Radar::RefineAnchorVerdict::Repoint:
+                            // Exact by construction: every leaf in the buffer shifts by the
+                            // same delta, whatever its stride or intra-element offset was.
+                            sm.leafAddr    = Radar::RepointByBufferMove(sm.leafAddr, an.data, hs.data);
+                            sm.anchor.data = hs.data;
+                            sm.anchor.num  = hs.num;
+                            ++reanchorRepointed;
+                            break;
+                        case Radar::RefineAnchorVerdict::KeepAddress:
+                            sm.anchor.num = hs.num;   // keep the stamp current for the NEXT refine
+                            break;
+                    }
+                } else if (sm.elementIndex >= 0 && an.kind == Radar::ValueAnchor::Unknown
+                           && !warnedUnstamped) {
+                    // A container element with no stamp at all. The deep visitor is the only
+                    // writer of elementIndex >= 0 into a GroupLeafMeta, and it always relays
+                    // an anchor -- so this can only mean one of the by-name hops
+                    // (ContainerLeaf -> GroupLeafMeta -> GroupSlotMatch) dropped it. Warn
+                    // once; do NOT change the verdict, which would turn a wiring bug into a
+                    // scan regression.
+                    warnedUnstamped = true;
+                    Sein::Warn("SCAN:grp",
+                        "RefineGroup: container element '%s' carries no ValueAnchor -- a leaf "
+                        "metadata hop dropped it; this leaf is refined at its stale absolute "
+                        "address (audit #5 A12)",
+                        descriptors[sm.descriptorIdx].fieldName.c_str());
+                }
+
                 uint8_t buf[8] = {};
                 if (!Macht::ReadBytesSafe(sm.leafAddr, buf, sz)) { ++dRead; continue; }
                 const uint8_t* cmp = usePrev ? sm.prevValue : slots[s].targets.Find(width);
@@ -9058,8 +9178,9 @@ ValueScanStats RefineGroupCandidates(
                                              : "kept";
             Sein::Debug("SCAN:grp",
                 "RefineGroup cand[%u]: %s | leaves entered=%d kept=%d | dropped: unreadable=%d "
-                "bad-width=%d no-target-for-width=%d predicate-said-no=%d",
-                (unsigned)gc.instanceIdx, verdict, dEntered, dKept, dRead, dWidth, dNoTarget, dPredicate);
+                "bad-width=%d no-target-for-width=%d predicate-said-no=%d container-moved=%d",
+                (unsigned)gc.instanceIdx, verdict, dEntered, dKept, dRead, dWidth, dNoTarget,
+                dPredicate, dReanchor);
         }
         if (feasible)
             survivors.push_back(std::move(gc));
@@ -9069,6 +9190,14 @@ ValueScanStats RefineGroupCandidates(
     stats.scannedObjects = static_cast<int32_t>(candidates.size());
     stats.durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
+    // Only when it actually fired. `repointed` is the half that is a GAIN: before A12 a
+    // grown container left every element address stale and those leaves were lost.
+    if (reanchorDropped || reanchorRepointed) {
+        Sein::Info("SCAN:grp",
+                   "RefineGroup re-anchor: %d container element(s) repointed after a realloc, "
+                   "%d dropped (slot freed / container shrank / header gone)",
+                   reanchorRepointed, reanchorDropped);
+    }
     return stats;
 }
 

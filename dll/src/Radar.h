@@ -479,6 +479,16 @@ enum class ValueAnchor : uint8_t {
     Direct,          // obj + fieldOffset — stable for the object's life
     ArrayElement,    // TArray slot:      data + idx*elemStride + elemIntra
     SparseElement,   // TSet/TMap slot:   same, and gated on the slot's OWN alloc bit
+    // A container element at depth >= 2, i.e. one whose container HEADER lives inside
+    // an OUTER container's heap buffer. Treated exactly like `Unknown` (pre-A11
+    // behaviour), but NAMED so it is distinguishable from a hop that dropped the stamp.
+    //
+    // The honest reason it is not anchored: validating a depth-2 header first requires
+    // proving the depth-1 element did not move — that is an anchor CHAIN, not one
+    // anchor. (It is NOT that re-reading a freed header is uniquely dangerous; the
+    // pre-A11 path already reads a stale leaf address, so anchoring could not be worse
+    // on that axis. Recording the real reason so nobody "fixes" the wrong thing.)
+    UnverifiableNested,
 };
 
 /// What refine must do with one container-element candidate.
@@ -536,6 +546,65 @@ constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
     return RefineAnchorVerdict::KeepAddress;
 }
 
+/// What a container-element leaf carries from the deep walk to refine (audit #5 A12).
+///
+/// ⚠ `data` is the buffer base STORED AT SCAN TIME, not derived from stride+intra the
+/// way the single-value path derives it. That is deliberate and it is the safer of two
+/// equal-cost encodings: the deep walk builds a leaf address through a recursion where
+/// an intra-element offset is easy to get wrong (the Map `.Value` side alone is off by
+/// `cfe.valueOffset`), and with a DERIVED base a wrong intra makes `dataAtScan` differ
+/// from `nowData` on every pass — so the candidate is Repointed by that error, forever,
+/// onto a real and plausible-looking neighbouring field. With the base STORED, a wrong
+/// intra can only fail to help. Repoint becomes `RepointByBufferMove`, which is exact by
+/// construction and needs neither stride nor intra.
+///
+/// Every member has an NSDMI, and `num` defaults to **-1**, not 0: both downstream hops
+/// are default-initialised (`GroupLeafMeta m;` / `GroupSlotMatch sm;`), so a hop that
+/// drops the assignment must land on values `RefineContainerAnchor` REFUSES to act on.
+/// A 0 there would pass its `numAtScan < 0` guard and then pass the shrink test.
+struct LeafAnchor {
+    ValueAnchor kind   = ValueAnchor::Unknown;
+    uintptr_t   header = 0;    // absolute address of the container header
+    uintptr_t   data   = 0;    // buffer base at scan time
+    int32_t     num    = -1;   // TArray::Count / TSparseArray::MaxIndex at scan time
+};
+
+/// The depth rule, in ONE place. Leaves are emitted with `depth + 1`, so "the container
+/// header is a direct field of the scanned object" is `leafDepth == 1` — writing that
+/// test at the call site with the walker's own `depth` is an off-by-one nothing can
+/// catch, because no test target compiles `Aura.cpp`.
+constexpr ValueAnchor AnchorKindForLeaf(bool isSparse, int leafDepth) {
+    if (leafDepth != 1) return ValueAnchor::UnverifiableNested;
+    return isSparse ? ValueAnchor::SparseElement : ValueAnchor::ArrayElement;
+}
+
+/// ⚠ Two factories, not one with a flag, and the parameter NAMES are the point.
+/// The walker's own loop variable holds `sa.MaxCapacity` for a sparse container while
+/// refine re-reads `sa.MaxIndex`. Stamping the one in hand would make `numAtScan`
+/// (capacity) exceed `nowNum` (index) for every TSet/TMap with spare slots, so the
+/// shrink rule would DROP every sparse group candidate on the first Next Scan. Naming
+/// the parameter `maxIndex` is what stands between the two.
+constexpr LeafAnchor MakeArrayLeafAnchor(uintptr_t header, uintptr_t data,
+                                         int32_t count, int leafDepth) {
+    return LeafAnchor{ AnchorKindForLeaf(/*isSparse=*/false, leafDepth), header, data, count };
+}
+constexpr LeafAnchor MakeSparseLeafAnchor(uintptr_t header, uintptr_t data,
+                                          int32_t maxIndex, int leafDepth) {
+    return LeafAnchor{ AnchorKindForLeaf(/*isSparse=*/true, leafDepth), header, data, maxIndex };
+}
+/// Not reached through any container. Explicit, so `Unknown` keeps meaning "nobody said".
+constexpr LeafAnchor MakeDirectLeafAnchor() {
+    return LeafAnchor{ ValueAnchor::Direct, 0, 0, -1 };
+}
+
+/// New absolute address of a leaf after its container's buffer moved. Exact by
+/// construction: every leaf in the buffer shifts by the same delta, whatever its
+/// element index, element stride or intra-element offset happened to be.
+constexpr uintptr_t RepointByBufferMove(uintptr_t leafAddr, uintptr_t dataAtScan,
+                                        uintptr_t nowData) {
+    return leafAddr + (nowData - dataAtScan);
+}
+
 struct FieldDescriptor {
     std::string className;          // The instance's UClass name
     std::string definingClassName;  // Class where the field is declared
@@ -546,8 +615,15 @@ struct FieldDescriptor {
                                     // what lets refine re-read the header without
                                     // storing its address on every candidate.
     // audit #5 A11 — how refine must treat this field's stored absolute address.
-    // `Unknown` is the honest default: the deep-container and group paths do not
-    // stamp one and get the pre-A11 address-only refine.
+    //
+    // ⚠ SINGLE-VALUE SESSIONS ONLY. `Session` stamps these three; `GroupSession` does
+    // NOT — its `internDesc` interns a descriptor per (short class name, field, offset),
+    // and two distinct UClasses sharing a short name already share one, which is
+    // harmless for display text and would be an ADDRESS bug for anything used in
+    // pointer arithmetic. So a group leaf carries its anchor per-match on
+    // `GroupSlotMatch::anchor` instead, and these stay `Unknown`/0 there.
+    // Do NOT read `descriptors[groupSlotMatch.descriptorIdx].anchor` — it is not the
+    // truth for that session, it is the default. (audit #5 A12)
     ValueAnchor anchor        = ValueAnchor::Unknown;
     int32_t     elemStride    = 0;  // container element stride  (container anchors only)
     int32_t     elemIntra     = 0;  // value offset WITHIN the element (map value / struct inner)
@@ -882,16 +958,20 @@ struct GroupSlotMatch {
                                    // OPTIMISTIC and is corrected here (audit #5 A11): a TArray
                                    // RemoveAt relocates the tail in place and a sparse slot is
                                    // REUSED on the next Add, so a stale element address survives
-                                   // the read and returns the WRONG value. The group path does
-                                   // not yet carry a ValueAnchor — it is `Unknown`, i.e. this
-                                   // is still the pre-A11 behaviour, filed and named rather than
-                                   // silently assumed safe.
+                                   // the read and returns the WRONG value. `anchor` below is what
+                                   // lets refine re-read the container instead of trusting this
+                                   // (audit #5 A12).
     uintptr_t ownerAddr     = 0;   // object directly holding the leaf: the candidate actor for an
                                    // own-block leaf, or an OWNED sub-object for a cross-object leaf
                                    // (P4). Drives the per-slot handoffs to the right object.
     std::string ownerClass;        // class name of ownerAddr's object: the candidate class for an
                                    // own-block leaf, the OWNED sub-object's class for a cross-object
                                    // leaf (P4 inc 2). Drives the per-slot Pivot handoff to the right class.
+    // audit #5 A12 — the container this leaf lives in, as it was AT SCAN TIME, so refine
+    // can re-read the header and re-anchor instead of trusting `leafAddr`. Defaults to
+    // `Unknown`/-1, which the rule refuses to act on: this struct is default-initialised
+    // at its producer, so a hop that drops the copy must degrade, never mis-fire.
+    LeafAnchor anchor;
     uint8_t   prevValue[16] = {};  // last-observed leaf bytes
 };
 

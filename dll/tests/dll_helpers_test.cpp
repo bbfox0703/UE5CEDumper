@@ -5045,6 +5045,104 @@ static void Test_Radar_RefineContainerAnchor() {
                   "RefineContainerAnchor must be constexpr-evaluable");
 }
 
+// audit #5 A12 — the group-scan half. The RULE is the same one above; what is new is
+// the anchor a deep leaf carries to reach it, and the two ways that wiring can be
+// silently wrong (the sparse count's UNIT, and the leaf-depth off-by-one).
+static void Test_Radar_LeafAnchor() {
+    std::printf("Test_Radar_LeafAnchor\n");
+    using Radar::ValueAnchor;
+    using Radar::RefineAnchorVerdict;
+
+    // --- the depth rule, in the one place it lives -----------------------------
+    // Leaves are emitted with `depth + 1`, so the container header is a direct field
+    // of the scanned object exactly when the LEAF's depth is 1. Writing this test at
+    // the call site with the walker's own `depth` is an off-by-one no target can catch,
+    // because no test target compiles Aura.cpp.
+    EXPECT("depth-1 array leaf is anchorable",
+           Radar::AnchorKindForLeaf(/*isSparse=*/false, 1) == ValueAnchor::ArrayElement);
+    EXPECT("depth-1 sparse leaf is anchorable",
+           Radar::AnchorKindForLeaf(/*isSparse=*/true, 1) == ValueAnchor::SparseElement);
+    EXPECT("depth-2 leaf is NOT anchorable (its header is inside an outer buffer)",
+           Radar::AnchorKindForLeaf(false, 2) == ValueAnchor::UnverifiableNested);
+    EXPECT("depth-0 is not a container leaf at all",
+           Radar::AnchorKindForLeaf(false, 0) == ValueAnchor::UnverifiableNested);
+
+    // --- UnverifiableNested must behave EXACTLY like Unknown -------------------
+    // Its whole reason to exist is to be distinguishable from a dropped stamp while
+    // changing nothing, so the "changes nothing" half needs pinning too.
+    EXPECT("nested leaf does not Repoint on a moved buffer",
+           Radar::RefineContainerAnchor(ValueAnchor::UnverifiableNested, 3, 8,
+                                        0x2000, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("nested leaf does not Drop on an out-of-range index",
+           Radar::RefineContainerAnchor(ValueAnchor::UnverifiableNested, 9, 8,
+                                        0x2000, 0x2000, 5, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the factories: a defaulted / half-wired anchor must DEGRADE -----------
+    // Both downstream hops default-construct their struct, so a dropped assignment has
+    // to land on values the rule refuses to act on. `num` defaulting to 0 instead of -1
+    // would pass the `numAtScan < 0` guard and then pass the shrink test.
+    const Radar::LeafAnchor defaulted{};
+    EXPECT("a defaulted anchor is Unknown", defaulted.kind == ValueAnchor::Unknown);
+    EXPECT("a defaulted anchor's count is -1, not 0", defaulted.num == -1);
+    EXPECT("a defaulted anchor cannot act",
+           Radar::RefineContainerAnchor(defaulted.kind, 3, defaulted.num, defaulted.data,
+                                        0x9000, 9, true) == RefineAnchorVerdict::KeepAddress);
+    const Radar::LeafAnchor direct = Radar::MakeDirectLeafAnchor();
+    EXPECT("a direct anchor is Direct, not Unknown", direct.kind == ValueAnchor::Direct);
+    // THE half-wired shape that actually matters: a hop copies `kind` faithfully and
+    // drops the value fields. The zero `data` is what stops the rule acting — without
+    // that guard this Repoints to the buffer base, collapsing every leaf onto element 0.
+    EXPECT("a stamped kind with no buffer base cannot act",
+           Radar::RefineContainerAnchor(ValueAnchor::ArrayElement, 3, /*numAtScan=*/0,
+                                        /*dataAtScan=*/0, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the sparse UNIT trap -------------------------------------------------
+    // The walker's own loop bound is TSparseArray::MaxCapacity; refine re-reads
+    // MaxIndex, and MaxCapacity >= MaxIndex is enforced by ReadTSparseArray. Stamping
+    // the local that happens to be in hand would make numAtScan exceed nowNum for every
+    // TSet/TMap with a spare slot, so the shrink rule would DROP them all on the first
+    // Next Scan. The factory takes `maxIndex` by name; this asserts what that buys.
+    const auto sparse = Radar::MakeSparseLeafAnchor(0x1000, 0x2000, /*maxIndex=*/8, 1);
+    EXPECT("a sparse container with spare capacity is NOT dropped",
+           Radar::RefineContainerAnchor(sparse.kind, 3, sparse.num, sparse.data,
+                                        /*nowData=*/0x2000, /*nowNum=*/8, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("...but stamping the CAPACITY instead would drop it",
+           Radar::RefineContainerAnchor(sparse.kind, 3, /*numAtScan=*/64, sparse.data,
+                                        0x2000, /*nowNum=*/8, true)
+               == RefineAnchorVerdict::Drop);
+
+    // --- the repoint, which is exact by construction ---------------------------
+    // Every leaf in a moved buffer shifts by the same delta, whatever its element
+    // index, stride or intra-element offset were — so a wrong intra can only fail to
+    // help, and can never relocate a candidate onto a neighbouring field.
+    EXPECT("a moved buffer shifts a leaf by exactly the buffer delta",
+           Radar::RepointByBufferMove(0x2044, 0x2000, 0x9000) == 0x9044u);
+    EXPECT("an unmoved buffer leaves the leaf alone",
+           Radar::RepointByBufferMove(0x2044, 0x2000, 0x2000) == 0x2044u);
+
+    // The array factory keeps the logical count (slack slots hold stale data).
+    const auto arr = Radar::MakeArrayLeafAnchor(0x1000, 0x2000, /*count=*/8, 1);
+    EXPECT("an appended-into-slack array is not dropped",
+           Radar::RefineContainerAnchor(arr.kind, 3, arr.num, arr.data, 0x2000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("a grown+realloc'd array repoints",
+           Radar::RefineContainerAnchor(arr.kind, 3, arr.num, arr.data, 0x9000, 12, true)
+               == RefineAnchorVerdict::Repoint);
+
+    // Deliberately asserts a DEEP depth, not depth 1: the depth-1 rule is what the
+    // negative control reverts, and a static_assert over the controlled line turns that
+    // control into a compile abort that structurally cannot show its own
+    // "everything else stayed green" half. This still proves constexpr-evaluability.
+    static_assert(Radar::AnchorKindForLeaf(true, 5) == ValueAnchor::UnverifiableNested,
+                  "AnchorKindForLeaf must be constexpr-evaluable");
+    static_assert(Radar::MakeDirectLeafAnchor().num == -1,
+                  "a direct anchor must carry the no-count sentinel");
+}
+
 static void Test_Genau_AdmitMultiModuleCandidate() {
     std::printf("Test_Genau_AdmitMultiModuleCandidate\n");
     using Genau::AnchorState;
@@ -5664,6 +5762,7 @@ int main() {
     RUN(Test_Sig_IsCeReplayableAob);
     RUN(Test_Genau_AdmitMultiModuleCandidate);
     RUN(Test_Radar_RefineContainerAnchor);
+    RUN(Test_Radar_LeafAnchor);
     RUN(Test_Macht_ParsePattern_Nibble);
 
     // Tot — per-command cancel immunity is independent of "is a background worker"
