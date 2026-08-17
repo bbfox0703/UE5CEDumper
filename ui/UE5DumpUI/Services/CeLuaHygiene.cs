@@ -483,6 +483,60 @@ public static class CeLuaHygiene
     }
 
     /// <summary>
+    /// Bounded idle wait for a generator that owns a CE memory record — i.e. every
+    /// stateful toggle and momentary action — emitting the bail in this repo's house
+    /// shape rather than as a one-liner.
+    ///
+    /// <para><b>Why this exists rather than calling <see cref="AppendIdleWait"/>
+    /// directly (audit #5 AA10).</b> Seven of the eleven mailbox emitters had NO idle
+    /// wait at all: they sampled nothing and wrote straight over whatever command was in
+    /// flight. The four that did have one are all helper-shaped
+    /// (<c>return nil, reason</c>), so there was no toggle-shaped precedent to copy —
+    /// and hand-rolling one per generator is precisely how build 2743's three defects
+    /// reached all seven copies of the mailbox wait at once.</para>
+    ///
+    /// <para>The bail is emitted across SEPARATE LINES on purpose. Squeezing
+    /// <c>showMessage(...); if memrec then ... end; return</c> onto the single line
+    /// <see cref="AppendIdleWait"/> interpolates into makes it invisible to
+    /// <c>CeMailboxBailoutTests</c>, which scans line-by-line for an untick FOLLOWING
+    /// each message. That test caught this the first time it was written the short way,
+    /// and it was right to: the one-liner is also unreadable in CE's editor.</para>
+    ///
+    /// <para>Placement is the caller's job and it matters: this belongs ABOVE the
+    /// operand writes, not merely above the status clear. Writing operands into a
+    /// mailbox the DLL still owns corrupts the command in flight — the same reason
+    /// <see cref="AppendContractCheck"/> sits before the first write.</para>
+    /// </summary>
+    /// <param name="tag">Script tag used in the user-facing message, e.g. "GodMode".</param>
+    /// <param name="onBusy">How this block bails: a toggle unticks and returns, a
+    /// <c>[DISABLE]</c> block reports under <c>dbg</c> only.</param>
+    public static void AppendIdleWaitOrBail(StringBuilder sb, string mbExpr, string tag,
+                                            MailboxTimeout onBusy = MailboxTimeout.UntickAndReturn,
+                                            string indent = "")
+    {
+        Line(sb, indent, "local _idleBusy, _idleGone = false, false");
+        // `break` leaves AppendIdleWait's own while-loop; the reporting happens below so
+        // the message and the untick land on lines of their own.
+        AppendIdleWait(sb, mbExpr, "_idleBusy = true; break", indent,
+                       "_idleGone = true; break");
+
+        bool announce = onBusy != MailboxTimeout.SilentReturn;
+        string say = announce ? "showMessage" : "dbg";
+
+        Line(sb, indent, "if _idleGone then");
+        Line(sb, indent, $"  {say}('[{tag}] the mailbox could not be read -- the game process has "
+                         + "most likely exited (re-inject UE5Dumper.dll if it is still running)')");
+        AppendBail(sb, onBusy, indent + "  ");
+        Line(sb, indent, "end");
+
+        Line(sb, indent, "if _idleBusy then");
+        Line(sb, indent, $"  {say}('[{tag}] the DLL mailbox is busy with another command -- "
+                         + "try again in a moment')");
+        AppendBail(sb, onBusy, indent + "  ");
+        Line(sb, indent, "end");
+    }
+
+    /// <summary>
     /// Emit the mailbox round-trip's WAIT loop plus its bail-out. Every generator that
     /// talks to <c>g_invokeMailbox</c> must use this rather than hand-rolling the loop,
     /// because three separate things were wrong in all seven hand-rolled copies and a

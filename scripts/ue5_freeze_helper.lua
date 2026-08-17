@@ -493,6 +493,23 @@ local function fetchInstancePage(className, pageIndex)
     return nil, 0, 'mailbox busy (concurrent invoke or rescan)'
   end
 
+  -- The flag above is OURS. It says nothing about a command an EMITTED script
+  -- left in flight -- those write the mailbox directly and never touch it, so
+  -- the two guards are mutually blind (audit #5 AA10). A generated toggle that
+  -- timed out bails while cmd is still non-zero and the DLL still owns the
+  -- mailbox; without this, the next rescan tick (<=5 s away) overwrites a live
+  -- command. Same class as AA19, which this repo already rated MED.
+  --
+  -- Placed BEFORE `_ue5_invoke_busy = true`, never after: returning with the
+  -- flag already set latches it for the session and abandons the freeze, which
+  -- is a worse failure than the one being prevented.
+  local inFlight = readInteger(mb + OFF_CMD)
+  if inFlight ~= nil and inFlight ~= 0 then
+    -- Transient by contract: rescan() treats a nil return as "skip this cycle"
+    -- and MAX_FAIL_STREAK bounds it, so a genuinely stuck mailbox still gives up.
+    return nil, 0, 'mailbox busy (concurrent invoke or rescan)'
+  end
+
   _ue5_invoke_busy = true
   local pok, addrs, totalPages, err, classPtr, classOff = pcall(function()
     writeMbStr(mb, OFF_CLASS, className)

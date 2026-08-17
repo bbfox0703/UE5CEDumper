@@ -80,6 +80,14 @@ public static class MovementScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Movement",
             enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
         Line(sb);
+        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
+        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
+        // a toggle fired while another command was still in flight wrote straight
+        // over it. Above the OPERAND writes, not merely above the status clear:
+        // operands land in the same mailbox, so writing them corrupts the command in
+        // flight just as surely -- the same reason the contract check sits here.
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "Movement",
+            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {(int)knob})        -- knobId: {label}");
         Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(sent)})   -- percent (100 = off)");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)        -- clear status");
@@ -158,6 +166,14 @@ public static class MovementScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Movement",
             enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
         Line(sb);
+        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
+        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
+        // a toggle fired while another command was still in flight wrote straight
+        // over it. Above the OPERAND writes, not merely above the status clear:
+        // operands land in the same mailbox, so writing them corrupts the command in
+        // flight just as surely -- the same reason the contract check sits here.
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "Movement",
+            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, 3)        -- knobId 3 = GravityDirection");
         Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(sx)})   -- X");
         Line(sb, $"writeDouble(mb + 0x330, {Lua(sy)})   -- Y");
