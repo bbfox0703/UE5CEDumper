@@ -7,6 +7,29 @@ match a game. Used to author new `Himmel.h` signatures and the `Genau`/`Aura` re
 See **[docs/reversing-nonstandard-ue-games.md](../docs/reversing-nonstandard-ue-games.md)** for
 the end-to-end workflow these tools fit into (the Avowed playbook).
 
+## `verify/` — drive the injected DLL over its pipe, with no UI
+
+[`verify/pipe_client.py`](verify/pipe_client.py) speaks the named-pipe protocol
+(`\\.\pipe\UE5DumpBfx`) directly, so a verification-register row can be closed without an Avalonia
+session. This is the rig [working-lessons.md §2.6](../docs/working-lessons.md) describes: the UI is
+a **client**, not the subject, so driving the DLL directly is *stronger* evidence for a DLL-side
+claim — and correspondingly proves nothing about the panel's own bindings, which must be stated
+when the result is recorded.
+
+It enforces §2.6's three traps rather than leaving them to the caller, because each yields a
+confident **wrong answer** instead of an error: `assert_build()` refuses a pipe served by a stale
+proxy, `ensure_scanned()` sends `trigger_scan` (proxy mode starts the pipe but never scans, and
+`init` does not make it), and `check_complete()` rejects a reply carrying `deadline_hit`/`truncated`
+so a capped sample cannot be reported as an absence.
+
+```bash
+py tools/verify/pipe_client.py get_pointers
+py tools/verify/pipe_client.py find_instances --args '{"class_name":"DumperTestActor"}'
+```
+
+The batch it exists for is planned in
+[docs/auto-verification-session-plan.md](../docs/auto-verification-session-plan.md).
+
 ## `ghidra/` — Ghidra scripts
 
 Run headless via `support/analyzeHeadless.bat` (or in the Script Manager GUI).
