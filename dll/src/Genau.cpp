@@ -1054,31 +1054,47 @@ static std::string ModuleNameOf(HMODULE h) {
     return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
 }
 
-/// Should a multi-module candidate at `resolved` be refused?
-/// Only when the anchor says the build is monolithic and the candidate is elsewhere.
+/// Classify where the anchor lives. `AnchorState::None` covers BOTH "GObjects has not
+/// run yet" and "GObjects ran and failed" — from a scan-admission point of view those
+/// are the same fact: nothing has confirmed this process is the UE process.
+static Genau::AnchorState CurrentAnchorState() {
+    if (!s_moduleAnchor) return Genau::AnchorState::None;
+    const HMODULE anchorMod = ModuleOfAddress(s_moduleAnchor);
+    if (!anchorMod) return Genau::AnchorState::None;
+    return (anchorMod == GetModuleHandleW(nullptr)) ? Genau::AnchorState::MainExe
+                                                    : Genau::AnchorState::ForeignDll;
+}
+
+/// May the multi-module candidate at `resolved` be published? Delegates the RULE to the
+/// pure predicate in Genau.h (which dll_helpers_test pins as a truth table) and does only
+/// the impure part — asking Windows which module each address belongs to — here.
 ///
 /// Does NOT log: a pattern with N matches all resolving to the same foreign pointer would
 /// print N identical lines, and the first live run did exactly that -- 8 to 11 copies per
 /// pattern, five patterns deep. The caller accumulates and prints one line per pattern.
-static bool RefuseForeignModule(uintptr_t resolved, std::string* outModule) {
-    if (!s_moduleAnchor || !resolved) return false;
-    const HMODULE mainExe   = GetModuleHandleW(nullptr);
-    const HMODULE anchorMod = ModuleOfAddress(s_moduleAnchor);
-    if (!anchorMod || anchorMod != mainExe) return false;   // modular build — allow
-
+static Genau::ModuleAdmission AdmitCandidate(uintptr_t resolved, bool producesAnchor,
+                                             std::string* outModule) {
+    if (!resolved) return Genau::ModuleAdmission::Accept;
+    const HMODULE mainExe = GetModuleHandleW(nullptr);
     const HMODULE candMod = ModuleOfAddress(resolved);
-    if (candMod == mainExe) return false;
 
-    if (outModule && outModule->empty()) *outModule = ModuleNameOf(candMod);
-    return true;
+    const auto verdict = Genau::AdmitMultiModuleCandidate(
+        CurrentAnchorState(), /*candIsMainExe=*/ candMod == mainExe, producesAnchor);
+
+    if (verdict != Genau::ModuleAdmission::Accept && outModule && outModule->empty())
+        *outModule = ModuleNameOf(candMod);
+    return verdict;
 }
 
 void SetModuleAnchor(uintptr_t gobjects) { s_moduleAnchor = gobjects; }
 
+/// @param producesAnchor  true ONLY for FindGObjects. Deliberately has NO default: a
+///        target added later must state whether it is the anchor producer, and the
+///        compiler — not a reviewer — is what enforces that. (audit #5 AA38)
 static uintptr_t ScanForTarget(
     const AobSignature* patterns, size_t count,
     ValidatorFn validate, ScanReport& report,
-    bool tryMultiModule,
+    bool tryMultiModule, bool producesAnchor,
     const char* hintPatternId = nullptr)
 {
     // Sort entries by priority (patterns array is constexpr, so copy pointers)
@@ -1455,14 +1471,17 @@ static uintptr_t ScanForTarget(
                 int         refusedCount = 0;
                 uintptr_t   refusedAddr  = 0;
                 std::string refusedModule;
+                auto        refusedWhy   = Genau::ModuleAdmission::Accept;
                 for (uintptr_t matchAddr : multiMatches) {
                     uintptr_t resolved = TryResolveMatch(matchAddr, *sig, validate);
                     // Gate on the RESOLVED address, not the match site: the match is only
                     // where the instruction sits, while `resolved` is the pointer we are
                     // about to hand the whole dumper.
-                    if (resolved && RefuseForeignModule(resolved, &refusedModule)) {
+                    const auto admission = AdmitCandidate(resolved, producesAnchor, &refusedModule);
+                    if (resolved && admission != Genau::ModuleAdmission::Accept) {
                         ++refusedCount;
                         refusedAddr = resolved;
+                        refusedWhy  = admission;
                         continue;
                     }
                     if (resolved) {
@@ -1472,11 +1491,23 @@ static uintptr_t ScanForTarget(
                     }
                 }
                 if (refusedCount) {
-                    Sein::Warn("SCAN", "[%s] %s: REFUSED %d match(es) resolving to 0x%llX in '%s' "
-                               "— GObjects resolved inside the main executable, so this build is "
-                               "monolithic and the engine globals cannot live in another module",
-                               report.targetName, sig->id, refusedCount,
-                               (unsigned long long)refusedAddr, refusedModule.c_str());
+                    // Two refusal reasons, two messages. The monolithic one ASSERTS a fact
+                    // about the build that the unanchored one has not established — reporting
+                    // the unanchored case with the monolithic text is a claim we cannot back.
+                    if (refusedWhy == Genau::ModuleAdmission::RefuseUnanchored) {
+                        Sein::Warn("SCAN", "[%s] %s: REFUSED %d match(es) resolving to 0x%llX in '%s' "
+                                   "— GObjects never validated this run, so nothing has confirmed "
+                                   "this process is the UE process; a match in an arbitrary loaded "
+                                   "module is not admissible",
+                                   report.targetName, sig->id, refusedCount,
+                                   (unsigned long long)refusedAddr, refusedModule.c_str());
+                    } else {
+                        Sein::Warn("SCAN", "[%s] %s: REFUSED %d match(es) resolving to 0x%llX in '%s' "
+                                   "— GObjects resolved inside the main executable, so this build is "
+                                   "monolithic and the engine globals cannot live in another module",
+                                   report.targetName, sig->id, refusedCount,
+                                   (unsigned long long)refusedAddr, refusedModule.c_str());
+                    }
                 }
 
                 if (g_validationDbgCount > kMaxValidationDbgLogs) {
@@ -1610,7 +1641,9 @@ uintptr_t FindGObjects(const char* hintPatternId) {
 
     uintptr_t result = ScanForTarget(
         Sig::GOBJECTS_PATTERNS, std::size(Sig::GOBJECTS_PATTERNS),
-        ValidateGObjects, report, /*tryMultiModule=*/true, hintPatternId);
+        ValidateGObjects, report, /*tryMultiModule=*/true,
+        /*producesAnchor=*/true,    // GObjects IS the anchor; it cannot require one
+        hintPatternId);
 
     LogScanReport(report);
 
@@ -2359,7 +2392,8 @@ uintptr_t FindGNames(const char* hintPatternId) {
 
     uintptr_t result = ScanForTarget(
         Sig::GNAMES_PATTERNS, std::size(Sig::GNAMES_PATTERNS),
-        ValidateGNamesAny, report, /*tryMultiModule=*/true, hintPatternId);
+        ValidateGNamesAny, report, /*tryMultiModule=*/true,
+        /*producesAnchor=*/false, hintPatternId);
 
     LogScanReport(report);
 
@@ -2425,7 +2459,8 @@ uintptr_t FindGWorld(const char* hintPatternId) {
 
     uintptr_t result = ScanForTarget(
         Sig::GWORLD_PATTERNS, std::size(Sig::GWORLD_PATTERNS),
-        ValidateGWorldBasic, report, /*tryMultiModule=*/true, hintPatternId);
+        ValidateGWorldBasic, report, /*tryMultiModule=*/true,
+        /*producesAnchor=*/false, hintPatternId);
 
     LogScanReport(report);
 
@@ -2534,7 +2569,7 @@ uintptr_t FindSparseDelegateStorage() {
     uintptr_t result = ScanForTarget(
         Sig::SPARSE_PATTERNS, std::size(Sig::SPARSE_PATTERNS),
         ValidateSparseDelegates, s_sparseReport, /*tryMultiModule=*/true,
-        /*hintPatternId=*/nullptr);
+        /*producesAnchor=*/false, /*hintPatternId=*/nullptr);
 
     LogScanReport(s_sparseReport);
 
@@ -4708,7 +4743,7 @@ uintptr_t FindGEngineSlot() {
     uintptr_t result = ScanForTarget(
         Sig::GENGINE_PATTERNS, std::size(Sig::GENGINE_PATTERNS),
         ValidateGEngineSlot, s_gengineReport, /*tryMultiModule=*/true,
-        /*hintPatternId=*/nullptr);
+        /*producesAnchor=*/false, /*hintPatternId=*/nullptr);
 
     LogScanReport(s_gengineReport);
 

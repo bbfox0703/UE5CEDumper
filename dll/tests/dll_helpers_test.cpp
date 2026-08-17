@@ -39,6 +39,7 @@
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
 #include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
 #include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
+#include "../src/Genau.h"      // AdmitMultiModuleCandidate (constexpr, pure) — Pass-2 scan admission
 
 #include <Windows.h>
 
@@ -4949,6 +4950,64 @@ static void Test_Sig_IsCeReplayableAob() {
     EXPECT("tables still carry a CallFollow entry", checkedCallFollow > 0);
 }
 
+// audit #5 AA38 — the Pass-2 (multi-module) admission rule as a truth table.
+//
+// The whole legal space is 3 anchor states x 2 candidate placements x 2 producer
+// flags = 12 rows, and every one is asserted so the table cannot drift silently.
+// (The predicate deliberately does NOT take two booleans for the anchor: that shape
+// has 4 combinations of which 1 is unreachable, and the unreachable one is exactly
+// the "meaningless, pass false here" parameter the audit's own lesson forbids.)
+static void Test_Genau_AdmitMultiModuleCandidate() {
+    std::printf("Test_Genau_AdmitMultiModuleCandidate\n");
+    using Genau::AnchorState;
+    using Genau::ModuleAdmission;
+    const auto admit = &Genau::AdmitMultiModuleCandidate;
+
+    // --- THE DEFECT: unanchored + foreign + not the anchor producer -----------
+    // python.exe / Solarpunk published a GWorld out of an arbitrary loaded module on
+    // a run where GObjects never validated at all.
+    EXPECT("AA38: unanchored foreign candidate is refused",
+           admit(AnchorState::None, /*candIsMainExe=*/false, /*producesAnchor=*/false)
+               == ModuleAdmission::RefuseUnanchored);
+
+    // --- GObjects' OWN Pass 2 must still be admitted --------------------------
+    // It runs before any anchor can exist. Refusing it would break the modular
+    // builds (Satisfactory 4.25) that multi-module scanning was added for.
+    EXPECT("AA38: the anchor producer is exempt while unanchored",
+           admit(AnchorState::None, false, /*producesAnchor=*/true)
+               == ModuleAdmission::Accept);
+
+    // --- today's EOSSDK behaviour must survive unchanged ----------------------
+    EXPECT("monolithic anchor + foreign candidate is refused",
+           admit(AnchorState::MainExe, false, false) == ModuleAdmission::RefuseForeignMonolithic);
+    EXPECT("monolithic anchor refuses the producer too",
+           admit(AnchorState::MainExe, false, true) == ModuleAdmission::RefuseForeignMonolithic);
+
+    // --- a genuinely modular build is untouched -------------------------------
+    EXPECT("modular anchor admits a foreign candidate",
+           admit(AnchorState::ForeignDll, false, false) == ModuleAdmission::Accept);
+    EXPECT("modular anchor admits the producer",
+           admit(AnchorState::ForeignDll, false, true) == ModuleAdmission::Accept);
+
+    // --- a MAIN-MODULE candidate is admitted in every state -------------------
+    // This is what keeps the FORBIDDEN fix forbidden. GWLD_DI427_1/2 are UE4.27
+    // write-site patterns that resolve &GWorld from a `GWorld = nullptr` store before
+    // any world exists, so a main-module hit whose *GWorld reads 0 MUST be accepted —
+    // tightening `world == 0` globally would delete two Tier-1 patterns.
+    for (auto st : { AnchorState::None, AnchorState::MainExe, AnchorState::ForeignDll }) {
+        for (bool prod : { false, true }) {
+            EXPECT("main-module candidate is always admitted",
+                   admit(st, /*candIsMainExe=*/true, prod) == ModuleAdmission::Accept);
+        }
+    }
+
+    // The rule must be pure — it reads no global state and cannot be made to depend on
+    // one, which is the only reason a table this small is worth anything.
+    static_assert(Genau::AdmitMultiModuleCandidate(AnchorState::MainExe, false, false)
+                      == ModuleAdmission::RefuseForeignMonolithic,
+                  "AdmitMultiModuleCandidate must be constexpr-evaluable");
+}
+
 static void Test_Macht_ParsePattern_Nibble() {
     std::printf("Test_Macht_ParsePattern_Nibble\n");
     Macht::ParsedPattern p;
@@ -5515,6 +5574,7 @@ int main() {
 
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
     RUN(Test_Sig_IsCeReplayableAob);
+    RUN(Test_Genau_AdmitMultiModuleCandidate);
     RUN(Test_Macht_ParsePattern_Nibble);
 
     // Tot — per-command cancel immunity is independent of "is a background worker"
