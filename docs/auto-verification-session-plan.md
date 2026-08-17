@@ -454,6 +454,15 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 | AC1 step 5 | ✅ **CLOSED** — needed no foreign DLL at all | `[AE4-UI-2026-08-17]` |
 | W2/W3 step 5 | ✅ **CLOSED** — the last stranded half-item, all three checks | `[SDKHDR-UI-2026-08-17]` |
 | D2 step 4 | ✅ **SETTLED** — and the step's premise was wrong | `[D2-UI-2026-08-17]` |
+| **AC1 all 7 steps** | ✅ **CLOSED** on a synthetic folder — **Light Maze never touched** | `[AC1-UI-2026-08-17]` |
+| AE4 step 4 | ✅ removal half (3 detectors incl. the Recycle Bin); gate arm not observable | `[AC1-UI-2026-08-17]` |
+| A5 · V6 · AE9 · AF4 | ✅ **PASS** (AF4 has no unit test by design) | `[GRP4-UI-2026-08-17]` |
+| U3 + U17 | ✅ **CLOSED** — the old bug's own output is the control | `[GRP4-UI-2026-08-17]` |
+| D2 (樣本心跳) | ✅ **PASS** — DLL and game HUD agree to the digit over a measured 34 s | `[GRP4-UI-2026-08-17]` |
+| Dump Explorer 跨遊戲身分閘 | ✅ **PASS** on the two DumperTest flavours | `[GRP4-UI-2026-08-17]` |
+
+**GROUP 3 is complete.** GROUP 4 has 8 of its rows done; the rest (`Y9`, `B10`, `AF6/AE8`,
+`V7/AB6`, `D1/D3` step 6, `AE2/AE3`, Skia soak) are untouched.
 
 **Three things this sitting learned that outlive the rows:**
 1. **The version-detection ladder needs TWO properties, not one** — an unrecognised PE VERSIONINFO
