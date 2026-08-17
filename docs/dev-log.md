@@ -88,6 +88,17 @@ quarantined the `.ps1` on its first run and took `build.ps1`,
 `scripts/gen_proxy_forwarders.py`, `tools/check_proxy_exports.py` and `dist/UE5DumpUI.exe` with it —
 see [working-lessons.md](working-lessons.md) §3.8.
 
+**Verification split by host, deliberately.** The Python tool was swept automatically — 11 cases
+including both refusals, all inside a temp folder via `--startup-dir`, real Startup folder never
+touched. The `.ps1` was **not** re-run here (automated PowerShell is what tripped the AV); the
+maintainer ran it by hand from `dist\` instead: `status` → `remove` on an empty folder → `install`
+→ directory listing showing `UE5CEDumper.lnk` → `remove` → listing showing it gone. All six steps as
+expected, with the two other programs' shortcuts in that folder untouched throughout. Two things
+that cross-check: the shortcut is **989 bytes, identical to the one the Python twin writes**, so the
+two implementations produce equivalent `.lnk` files; and the em dashes rendered correctly, confirming
+the UTF-8 BOM fix (Windows PowerShell 5.1 reads a BOM-less `.ps1` as ANSI and had been printing them
+as `??`).
+
 -----
 
 ## 2026-08-16 - AU1: find-object-by-path never existed, on three APIs that advertised it (build 3157)
