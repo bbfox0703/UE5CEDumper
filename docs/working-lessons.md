@@ -161,6 +161,31 @@ write *call*), committed inside a test written to catch exactly that class of er
   *forbidding the shipped default* (budgeting on `-Xmx`, a reservation ceiling, not a working set);
   and a prediction that a bug would "collapse concurrency to 1" when it measured at **+42%**.
 
+### 1.10a A probe that holds the deciding variable fixed will confidently answer the wrong question
+
+**Three times in one sitting (2026-08-17), and each one nearly became a filed finding.** The shape is
+identical every time: build a probe, get a clean negative, and conclude something general — while the
+one variable that actually decided the outcome was never varied.
+
+| the probe | its clean negative | what it actually held fixed |
+|---|---|---|
+| copied an indexed `Ollama.lnk` under a new name to test whether the app index takes new entries | copy never appeared | **the target** — AppsFolder dedupes on target path, so a duplicate is invisible no matter what |
+| three fresh `.lnk` files, varying drive / target / file completeness | none appeared ⇒ *"the index takes no new `.lnk` at all"* | **the directory** — all three were per-user; the all-users folder works, which is the entire answer |
+| a title missing from the injection picker, with `OpenProcess` succeeding at every access right | looked like a real `IsUe` misclassification | **the scroll position** — the list held 7 and showed 6; the title was one scroll below the fold |
+
+**The rule that caught all three, and it is cheap:** before believing a negative, *enumerate what
+differs between a case that works and the case that does not*, and make sure the probe varies **that**.
+A working example was sitting in plain sight each time — `Ollama.lnk` in the indexed list, and the
+same picker having listed `DSClient-Win64-Shipping.exe` minutes earlier.
+
+**A second, blunter tell:** if a probe produces a *general law* ("X never happens") from a sample that
+never varied the obvious suspect, the law is almost certainly a property of the sample. Two of the
+three above were phrased as laws, and both were wrong.
+
+⚠ **And the same day, the same shape at a smaller scale:** a Recycle-Bin check filtered on "modified
+in the last 30 minutes" and reported the recycled file absent — because `shutil.copy2` had preserved
+the *source's* mtime. Match deleted files on **size**, never on time.
+
 ### 1.11 The recurring-defect sweep is not "grep the symbol" — it is "grep the argument nobody used"
 
 Audit #5's most expensive family was `EnumProperty` being written as 4 bytes when UE's dominant
