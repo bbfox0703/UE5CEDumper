@@ -1159,9 +1159,14 @@ static uintptr_t ScanForTarget(
                 if (!hintHits.empty()) {
                     pr.selected = resolved;
                     pr.validated = (resolved != 0);
-                    report.results.push_back(pr);
-
+                    // Only record the hint's own attempt when it WON. On a miss the
+                    // pattern stays in `sorted` and the batch passes below scan it
+                    // again, so pushing here put the same pattern in report.results
+                    // twice — inflating "N patterns tried" and listing it twice in the
+                    // per-pattern dump (audit #5 AD3). The batch pass is the one that
+                    // reports, because it is the one whose verdict is final.
                     if (resolved) {
+                        report.results.push_back(pr);
                         LOG_INFO("[%s] Hint HIT: '%s' -> 0x%llX (scan %lld us, skipping remaining patterns)",
                                  report.targetName, hintPatternId,
                                  static_cast<unsigned long long>(resolved),
@@ -1173,8 +1178,6 @@ static uintptr_t ScanForTarget(
                         report.hintUsed = true;
                         return resolved;
                     }
-                } else {
-                    report.results.push_back(pr);
                 }
 
                 LOG_INFO("[%s] Hint MISS: '%s' (%zu matches, none validated; scan %lld us) — "
@@ -1182,15 +1185,15 @@ static uintptr_t ScanForTarget(
                          report.targetName, hintPatternId, hintHits.size(),
                          static_cast<long long>(hintUs));
 
-                // Erase ONLY when the pattern genuinely produced no matches at all. A pattern
-                // that matched but failed validation must stay in the batch set: the hint path
-                // and Pass 1 now apply the identical rule, so re-scanning it costs one more
-                // batch entry and buys back the case where the image changed such that a
-                // different match validates. Erasing on a validation failure is what turned a
-                // resolvable target into "NONE validated" (see the block above).
-                if (hintHits.empty()) {
-                    sorted.erase(it);
-                }
+                // NOTHING is erased. G10 established the invariant that the hint path must
+                // never be weaker than the scan that produced the hint, and this was the one
+                // axis it did not consider: Macht::AOBScanAll with no moduleBase answers "no
+                // match in the MAIN module" (it defaults to GetModuleBase(nullptr)), while
+                // Pass 2 below exists precisely for patterns with zero main-module hits and
+                // re-scans them across every loaded module. Erasing on an empty result
+                // therefore removed the pattern before the only pass that could still find
+                // it — so a target living in another module was unresolvable on any run that
+                // had a hint, and resolvable on the cold run that had none (audit #5 AD3).
             } else {
                 LOG_INFO("[%s] Hint: pattern '%s' is non-AOB type (%d), skipping hint",
                          report.targetName, hintPatternId, static_cast<int>(hintSig->resolve));
