@@ -24,7 +24,8 @@ WHAT IT CHECKS
 
 USAGE
     py tools/check_audit_register.py            # gate: exit 1 on drift
-    py tools/check_audit_register.py --list     # also print the derived counts
+    py tools/check_audit_register.py --list     # + derived counts and the open
+                                                #   HIGH/MED rows with their segment
 """
 from __future__ import annotations
 
@@ -106,7 +107,21 @@ def main() -> int:
     audit = AUDIT.read_text(encoding="utf-8")
     devlog = DEVLOG.read_text(encoding="utf-8")
 
-    rows = ROW_RE.findall(audit)
+    # One pass collects the same (fid, tick, sev) tuples findall produced, plus the
+    # §2 segment heading each row sits under — display data for --list only. Every
+    # gate decision below reads just the tuples, so the gate's verdict is unchanged.
+    heads = [(h.start(), re.sub(r"\s+[—-]\s+✅.*$", "", h.group(1)).strip())
+             for h in re.finditer(r"^#{2,3} (.+)$", audit, re.M)]
+    rows = []
+    seg_of = {}
+    for m in ROW_RE.finditer(audit):
+        rows.append((m.group(1), m.group(2), m.group(3)))
+        seg = ""
+        for pos, title in heads:
+            if pos > m.start():
+                break
+            seg = title
+        seg_of[m.group(1)] = seg
     if not rows:
         print("FAIL: no finding rows matched — the row format changed and this gate is blind.")
         return 1
@@ -137,6 +152,18 @@ def main() -> int:
         print(f"dev-log claims {len(claimed)} finding(s) fixed; {len(claimed & marked)} are marked")
         print(f"open by severity: " +
               " · ".join(f"{open_by_sev[k]} {k}" for k in SEVERITIES))
+        # The vetted, actionable tier only. LOW/INFO stay unlisted on purpose: §3c
+        # warns they were never vetted to this audit's standard (re-derive before
+        # fixing), and a flat listing would present 160+ unvetted leads as if they
+        # were confirmed bugs.
+        actionable = [(fid, sev) for fid, tick, sev in rows
+                      if not tick and sev in ("HIGH", "MED")]
+        actionable.sort(key=lambda t: t[1] != "HIGH")  # HIGH first; file order within a tier
+        if actionable:
+            print()
+            print(f"open HIGH/MED ({len(actionable)}), with the §2 segment each sits under:")
+            for fid, sev in actionable:
+                print(f"  {sev:<4} {fid:<5} {seg_of.get(fid) or '?'}")
 
     if missing:
         print(f"FAIL: {len(missing)} finding(s) the dev-log says are fixed have NO ✅ on their row:")

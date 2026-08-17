@@ -22,6 +22,41 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - the six-MED dossier is spent and archived; the register gate's --list now prints the open vetted tier
+
+**No code change — docs routing + one tool.** The consolidation question ("should the scattered
+audit docs merge into one bugs control table?") was evaluated and answered NO: the audit #5
+register (§3c) already IS the single status owner, CI-gated, and every additional hand-maintained
+copy of status is a copy that drifts. The evidence closed the argument by itself: the re-derivation
+dossier — six rows, one day old — was already inconsistent three ways when checked (its title still
+said UNFIXED, the V4 heading carried no marker despite shipping in build 3170, and the U3 heading
+still called U17 open despite build 3171).
+
+- **`docs/audit-2026-08-16-med-rederivation.md` → `docs/archive/`.** Its queue is fully consumed
+  (PX1 3166 · AF3 3167 · A3 3168 · U3 3169 · V3+V4 3170 · U17 3171). Status markers and relative
+  links were corrected at archive time; the derivation text is untouched — its archive README row
+  flags this explicitly, since that folder's default convention is "nothing was edited, only moved".
+- **`check_audit_register.py --list` now prints each open HIGH/MED row with the §2 segment it sits
+  under** (HIGH first), derived from the same `ROW_RE` pass the gate already runs — zero new stored
+  state, so the list can never disagree with the register it summarises. LOW/INFO stay unlisted on
+  purpose: §3c warns they were never vetted to the audit's standard, and a flat listing would
+  present 160+ unvetted leads as confirmed bugs.
+- Routing text updated everywhere it pointed at the dossier: CLAUDE.md's docs index (dossier row
+  removed, archive row extended, the audit-#5 row now says the fix queue is spent) and §3b's head
+  block, whose stale "0 HIGH / 25 MED" is now the gate-derived 19. The "31 batches" figure next to
+  it was re-derived (31 of 33 register headings carry an open marker) and stands as written.
+
+First run of the new list surfaced a pre-existing row-vs-prose discrepancy to settle later: §3b's
+clump table says AA10 + AA11 were downgraded to LOW on re-derivation, but their register rows still
+carry MED, so both appear in the 19. The rows are the authority the count reads; if the downgrade
+is real, the settle is re-tiering the rows (which moves the derived headline), not trusting the
+prose.
+
+Gates after the change: `check_audit_register` (including the new list), `check_live_verification`,
+`check_derived_counts` — all green.
+
+-----
+
 ## 2026-08-17 - U17: the correct struct decoder existed, and only one caller could reach it (build 3171)
 
 **The layout half of U3, and the root cause was one level deeper than filed.** U17 was filed as "the
