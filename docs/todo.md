@@ -3222,7 +3222,8 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > difference — which is exactly what the source says drives it, now observed rather than only read.
 >
 > **G12 discovery value — four distinct pattern families across twelve titles:** EVERSPACE (UE 4.20) is the only title using `GOBJ_G42_4` + `GNAM_CT3`, and
-> Manor Lords the only one on `GWLD_SP57_1`. All nine resolved all three pointers; no failures.
+> Manor Lords the only one on `GWLD_SP57_1`, and STVoyager + Light Maze the only two on `GOBJ_V13`.
+> **All twelve resolved all three pointers; no failures.**
 >
 > ⛔ **OCTOPATH TRAVELER could not be swept at all** — its `version.dll` proxy never loads. See the
 > `[PROXYLOAD-2026-08-17]` finding; it needs a different flavour or direct injection.
