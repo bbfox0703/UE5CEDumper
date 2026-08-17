@@ -22,6 +22,75 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - ST1: our own "direct" calls re-entered our own detour (build 3205)
+
+**Audit #5 ST1 (MED) closed**, and the AA10 / AA11 status conflict settled in the same pass.
+
+**The diagnosis was right and both the location and the repair were wrong.** The finding reads as
+"the drain lacks a thread check". One level up: three of our own call sites resolve
+`UObject::ProcessEvent` out of an instance's vtable and call **the address MinHook patched**. So a
+self-issued "direct" call lands in `HookedProcessEvent` — on a pipe lane, or on the Mimic polling
+thread — and the drain there is gated only on *is the queue non-empty*.
+
+What the drain then runs is the whole point. Requests are queued **because** a caller judged them
+unsafe off the game thread: Mimic sends Native+Static helpers direct and routes FUNC_Net,
+FUNC_Event, BlueprintEvent and stateful actor mutation to the queue. The concrete failure is
+therefore UE object and world mutation on a non-game thread — exactly the hazard this module exists
+to prevent.
+
+**And the window is not a microsecond race.** A timed-out invoke *stays queued*, deliberately, with
+its own owned parameter copy, expecting a later drain. After one timeout the window is open
+indefinitely, and the next CE static-native invoke or UI self-test executes that abandoned stateful
+UFunction on the wrong thread.
+
+**Fixed by calling the trampoline** — the same thing `Grausam` already does for its own hooks — so
+our calls never enter the detour at all.
+
+⛔ **Explicitly not by checking thread identity, and this is the part to remember.** Nothing in this
+tree resolves the game-thread id: the finding's five grep hits are three `printf` arguments and two
+AOB comment lines, and `GIsGameThreadIdInitialized` is only *named* in a derivation note. Any gate
+would be guessing — and **a gate that guesses wrong never drains**, which times out every
+game-thread invoke. That is strictly worse than the defect it would be fixing.
+
+Two pure predicates in `Stark.h`, each negative-controlled on its own:
+
+- **`ShouldUseTrampoline`'s `resolvedPeAddr == hookedAddr` term is load-bearing.** A class that
+  genuinely OVERRIDES ProcessEvent has a different slot, that slot was never patched, and calling the
+  trampoline for it would silently run the BASE implementation instead of the override. When they
+  differ we fail open to the caller's address, which is the correct one.
+- **`ShouldDrainQueue` is CALLED by `HookedProcessEventBody`, not mirrored by it.** A mirrored copy
+  proves only that the copy is right; no target compiles `Stark.cpp`, so the predicate under test has
+  to be the shipped one.
+
+⚠ **The `thread_local` marker is set ONLY inside the new `CallOriginalSEH`, never inside
+`CallProcessEventSEH`.** That distinction is the correctness of the whole guard: the latter is what
+the *legitimate* game-thread drain calls, and a UFunction executing there routinely dispatches
+further ProcessEvent calls through the vtable. Marking it there would make the game's own nested
+dispatches look like ours and suppress draining on the very thread that is supposed to drain.
+
+**Four scope claims were cut back on review, all of them in the direction of over-claiming:** the
+`UE5_CallProcessEventEx` fallback is **dead as a second vector** (`Stark::RemoveHook` has zero
+callers, so `IsHookActive()==false` there means the address was never patched); the
+validator-self-satisfaction consequence is a **race, not a guaranteed path**; the false-liveness one
+is **bounded by the 500 ms** stall threshold and only fires on rare user-initiated one-shots; and the
+filed *"reuse Linie's fix two lines above"* is a **category error** — it is eight lines away, in
+another translation unit, and `Linie.cpp:46` is a timestamp-monotonicity tolerance that tests no
+thread identity at all.
+
+`Frieren.cpp`'s *"never goes through GameThreadDispatch"* comment was provably false and is true
+again only because of this change.
+
+10 assertions. Negative controls: dropping the address-match term fails exactly the
+overridden-ProcessEvent case; reverting the drain gate to depth-only fails exactly the two re-entry
+cases. 3971 passed / 0 failed. ⚠ Live check owed — the drain is only observable with a game attached.
+
+**AA10 / AA11 re-tiered MED → LOW.** Their rows said MED while §3b's clump table said they were
+downgraded when AA9/AA12/AA13 shipped; the rows are the authority, so the two disagreed and the
+gate-derived headline was inflated by two. Re-derivation confirmed LOW for both and they are now
+consistent. They remain **open** — this is a re-tier, not a close.
+
+-----
+
 ## 2026-08-17 - AA8: the dissect script asserted an Outer offset the DLL already detects (build 3204)
 
 **Audit #5 AA8 closed — re-tiered MED→LOW** (population today is **zero of 30+ tested games**, so it

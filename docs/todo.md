@@ -1443,6 +1443,25 @@ reports them identical. Nothing has desynced.)*
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### ⬜ NEW 2026-08-17 — ST1: our own direct calls must stop entering our own PE detour (build 3205)
+
+*Needs a connected game. See dev-log build 3205. **The two predicates are unit-pinned (10 assertions,
+two negative controls); the ROUTING is not** — nothing offline can observe which address a live
+vtable actually holds, and no target compiles `Stark.cpp` or `Frieren.cpp`.*
+
+> **The cheapest decisive check is the log line**, because the fix adds a distinguishable one.
+> Grep by FORMAT STRING (never line number): `via trampoline — not re-entering our hook` vs the
+> older `(caller-asserted safe)`.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | connect, run the Pointers-tab KismetMathLibrary self-test (`directCall: true`) | `pipe` log shows **`via trampoline`** | the ordinary path now bypasses the detour |
+> | 2 | with the game running, `get_pointers` → note `hook_fire_count`, run step 1 again, re-read | the count does **not** jump by our own call | our call no longer enters `HookedProcessEvent` at all |
+> | 3 ⚠ THE ONE THAT MATTERS | set a short invoke timeout, fire a game-thread invoke on a **paused/menu** game so it times out and stays queued; then fire a CE static-native invoke | the queued request is **still queued** afterwards, not executed | before 3205 the second call drained it on the pipe thread |
+> | 4 | resume the game | the queued request now runs, on the game thread | the drain still works where it should — the regression guard for step 3 |
+> | 5 ⚠ control | a class that OVERRIDES ProcessEvent (a BP with its own slot), invoked directly | log shows **`(caller-asserted safe)`**, and the call still works | fail-open is correct here; the trampoline would have run the BASE implementation |
+> | 6 | ordinary gameplay for a few minutes with an invoke queued | no `SEH exception during queued PE call`, no 0xC0000409 | the `thread_local` guard did not suppress the legitimate drain |
+
 ### ⬜ NEW 2026-08-17 — AD4: the God Mode badge must now name WHY, not just on/off (build 3203)
 
 *Needs a connected game with a pawn. See dev-log build 3203. **The badge MAP is unit-pinned (11
