@@ -1424,6 +1424,32 @@ reports them identical. Nothing has desynced.)*
 
 -----
 
+## ⬜ NEW 2026-08-17 — rewrite `pending-verification_zh-TW.md` as an OPERATIONAL checklist
+
+*Effort M / risk low. Docs only, no code. Do this BEFORE working the verification register below —
+it is what makes that register executable.*
+
+**It is ~430 builds stale, measured not guessed.** Its own header says
+*"目前狀態（2026-08-12，build 2804）"*; the tree is past 3237, and **86 finding IDs present in this
+file are absent from it entirely**. It is stuck in the audit-#4 era (B4 / B29 / B18 / B19 / B10 /
+B28 / B8) while this file is now almost all audit #5.
+
+**What the maintainer said it is FOR** (2026-08-17, and it changes the shape): it exists so they can
+see **how to operate** in order to confirm a bug is fixed, or to sanity-check. So:
+
+- **Steps and expected results ONLY.** No background, no root cause, no "why this matters". This
+  file keeps the reasoning; that one keeps the hands.
+- ⚠ **Do NOT re-translate this file's ~2,800 lines.** That is precisely how it drifted the first
+  time and it would drift again within days. A compact operational index is the deliverable.
+- **Priority rule:** anything with **no environment to test on** ranks LOW even when the register
+  says MED — e.g. the case-preserving-FName (CPN) work, population zero of 30+ tested games. The
+  absence is itself the signal that such games are rare.
+- Keep the "第 0 步" idea that CLAUDE.md credits it for: the checks that cost nothing from an
+  ordinary session, first.
+- This file stays canonical (CLAUDE.md's rule) — edit here first, then mirror.
+
+-----
+
 ## Pending live-game verification (verify only — no code)
 
 > **Session evidence tag `[ELLIOT-2026-08-16]`.** Three launches of **Elliot** (`Elliot-Win64-Shipping`,

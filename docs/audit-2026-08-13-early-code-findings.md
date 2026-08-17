@@ -3349,55 +3349,68 @@ member in `FieldValueConverter.cs` is **AE1** per T1c's own table — §2z and T
 
 ## 3b. START HERE — scanning is DONE; everything left is fixing
 
-*State as of 2026-08-17, after the session that closed queue ① – ⑥ plus G2, MA1, G8, G9, G11, G3,
-and the one that spent the six-MED dossier (PX1 · A3 · AF3 · U3 · V3+V4, plus U17 and AF28). Read
-this first; it is written for a session with no memory of either.*
+*State as of 2026-08-17 evening, after the session that cleared the ENTIRE original MED tier
+(19 → 0). Read this first; it is written for a session with no memory of it.*
 
-### ▶ THE NEXT FIX SESSION STARTS HERE
+### ▶ THE NEXT SESSION STARTS HERE — there are exactly TWO jobs, (a) and (b)
 
-> ## ✅ THE PRE-VETTED MED QUEUE IS SPENT — all six shipped 2026-08-17; the dossier is archived
+> ## ✅ THE ORIGINAL MED TIER IS CLEAR — 19 → 0, all 2026-08-17
 >
-> **[archive/audit-2026-08-16-med-rederivation.md](archive/audit-2026-08-16-med-rederivation.md)**
-> (moved 2026-08-17 with its status markers corrected; derivation text untouched) recorded the six
-> re-derivations, and every one is now fixed — do not re-open them:
-> PX1 b3166 (`9ea249b8`/`ceaff6ad`/`b0ccae6c`) · AF3 (+AF28) b3167 · A3 b3168 · U3 b3169 ·
-> V3+V4 b3170 (one commit — one root cause, one method apart) · U17, the layout half U3 spawned,
-> b3171. What the batch re-proved: five of the six grew on re-derivation, and PX1's filed premises
-> were wrong in the direction that would have made the obvious fix WORSE than the bug (link.exe
-> assigns unpinned ordinals from *highest pinned + 1*) — §2.4's rule, third instance. Several of
-> these fixes still owe a LIVE check; those rows live in [todo.md](todo.md)'s register, not here.
-
-> ## ⚠ THE BOTTLENECK IS NO LONGER FINDING OR FIXING — IT IS VERIFICATION
+> Sixteen findings shipped in one session, each its own commit with its own negative control:
+> **Z1** b3189 · **Z3** b3190 · **AC1** b3191 · **AD6** b3192 · **AD5** b3193 · **A1** b3194 ·
+> **AF5** b3200 · **Z2** b3201 · **AD4** b3203 · **AA8** b3204 · **ST1** b3205 · **AA10** b3206 ·
+> **Y16** b3214 · **AD3** b3215 · **U5** b3218 · **A4** b3219 · **F8** b3220 · **F2** b3221.
+> **AA11** was re-tiered LOW and remains open. Do not re-open any of the fixed ones.
 >
-> **Do not open this file looking for the next fix.** Every named clump is closed, the register is
-> down to **0 HIGH / 19 MED**, and **31 batches** are stacked in
-> [todo.md](todo.md)'s `## Pending live-game verification` — the largest backlog it has ever held.
-> Shipping a 20th unverified MED makes the tree *less* trustworthy, not more.
+> **Every one of the three MED still open was CREATED by this session's fixes** — none is a survivor
+> of the original tier: **A11** (out of A4), **F9** (out of F8), **AA38** (out of AD3). Their rows
+> carry the traps up front.
 >
-> **Start in [todo.md](todo.md), not here**, unless the maintainer names a finding.
-> The three worth doing first, and why:
+> Two register facts worth knowing before you plan anything:
+> **U5's four-times-repeated blocker was HALF WRONG** — `WalkClass` returns BY VALUE, so bounding the
+> plain cache was legal all along with zero call-site change; only the enriched memo is blocked.
+> And **Y16's PARKED hold was lifted by the maintainer** on 2026-08-17 and it is fixed.
+
+> ## ▶ (a) REWRITE `pending-verification_zh-TW.md` — it is ~400 builds stale
 >
-> | batch | why it is first |
-> |---|---|
-> | **AB4 — the Aura half** | 7 steps, needs only a connected game. It is the half that *structurally could not* be unit-pinned (no target compiles `Aura.cpp`), so it is the only evidence that will ever exist. Step 4 is the control that the pruning half still prunes. |
-> | **SkiaSharp/HarfBuzzSharp ABI alignment** | it needs **several quiet sessions**, so it can only ever close by *starting early*. Session 1 of N is already logged. Nothing else on the register has that shape. |
-> | **AA12/AA13 + AA9** (freeze) | needs a real Cheat Engine, which no rig can stand in for. Step 3 is the one that matters: if an armed-but-empty freeze unticks itself, the fix broke the feature and that is worse than the bug. |
+> **Measured, not guessed:** the file's own header says *"目前狀態（2026-08-12，build 2804）"* while
+> the tree is past 3237, and **86 finding IDs present in [todo.md](todo.md) are absent from it
+> entirely**. It is stuck in the audit-#4 era (B4 / B29 / B18 / B19 / B10 / B28 / B8).
 >
-> Two are **free from an ordinary session**: `AE4–AE7` (Proxy Deploy panel, no game) and
-> `AA4–AA7` step 2 (dissect with the DLL absent).
+> **The maintainer stated what it is for, and it is NOT a translation of todo.md:** it exists so they
+> can *see how to operate in order to confirm a bug is fixed, or sanity-check*. So write **steps and
+> expected results only** — no background, no root-cause prose, no "why this matters". todo.md keeps
+> the reasoning; this file keeps the hands.
+>
+> ⚠ **Do NOT re-translate todo.md's 2,800 lines.** That is exactly how it drifted the first time, and
+> it would drift again by the next build. A compact operational index is the deliverable.
+>
+> **Priority rule the maintainer set:** anything with **no environment to test on** ranks LOW even
+> when the register says MED — e.g. the case-preserving-FName (CPN) work, whose population today is
+> zero of 30+ tested games. That absence is itself the signal: such games are rare.
+>
+> todo.md is canonical (CLAUDE.md's rule); edit there first, then mirror.
 
-**There is NO ordered queue left, and every clump is now closed.** The pre-vetted ① – ⑥ is exhausted,
-so are its named follow-ups, and so are the four subsystem clumps that replaced them:
+> ## ▶ (b) THE THREE REMAINING MED — all created by this session, all re-derived already
+>
+> | id | out of | the trap its row records |
+> |---|---|---|
+> | **A11** | A4 | Deep candidates refine by ABSOLUTE address; the rows A4 made reachable are mostly TSet/TMap sparse elements, which UE rehashes on Add/Remove. A4 makes the inventory count findable, **A11 is what makes it stay findable** — do not report that workflow closed on A4 alone. ⛔ A `leafAddr` dedupe is the wrong fix (it drops sibling bitfield bools sharing a byte). |
+> | **F9** | F8 | Needs a real native detector for `ULevel::Actors`. ⛔ Three traps, each ships looking correct: do NOT copy the precedent's latch-on-FAILURE semantics; the `isActor` predicate is MANDATORY (Dumper-7's validity-only test matches an FString inside `FURL`); refuse the scan rather than substitute a constant when `OwningWorld` will not resolve. ⚠ **Price the cheaper alternative first** — one GObjects pass on `GetOuter(o) == levelAddr` needs no offset detection at all. |
+> | **AA38** | AD3 | A foreign-module GWorld is published on runs where GObjects never validated, because `ValidateGWorldBasic` accepts `world == 0` outright — seen on `python.exe`, which has no UE world. AD3 made it visible every launch instead of every other launch; it did not create it. ⛔ Do not fix by tightening `world == 0` globally — a legitimate pre-world main-module resolve depends on it. |
 
-| clump | state |
-|---|---|
-| ~~`ue5_freeze_helper.lua` **AA9 – AA13**~~ | ✅ **AA9 + AA12 + AA13 shipped** (3125 / 3129) — AA12 and AA13 collapse into ONE defect. **AA10 + AA11 downgraded to LOW** on re-derivation. |
-| ~~`Radar` **AB4 + AB7**~~ | ✅ **AB4 shipped** (3133). ⛔ **AB7 downgraded MED→LOW and STILL OPEN** — clause 1 refuted, and its prescribed fix is the thrice-refused serial witness. **Read its block below before touching it.** |
-| ~~`Macht` **MA2**~~ | ✅ **shipped** (3135) — one shared predicate across all four scan loops, not the "two lines" the finding proposed. |
-| `Fern` **F2 + F8** | **the only clump left, and it is the worst-conditioned one**: no test target compiles `Fern.cpp`, so it is live-only — i.e. it would *add* to the verification backlog above rather than draw it down. Take it after the backlog, or when a session already has a game running. |
+> ## ⚠ AND THE STANDING CONSTRAINT: VERIFICATION IS STILL THE DEEPER BACKLOG
+>
+> [todo.md](todo.md)'s `## Pending live-game verification` now holds **36 batches**, four of them
+> added by this session (**AC1**, **AD4**, **ST1**; the live halves of **F8**/**F2** are recorded on their register rows, not yet as batches). The
+> maintainer has authorised running the game, Cheat Engine and DumperTest, so "live-only" is no
+> longer disqualifying — but it is still slower than an offline pin, and job (a) exists precisely to
+> make that backlog executable.
+>
+> Free from an ordinary session, needing **no game at all**: `AE4–AE7` and **AC1** (Proxy Deploy
+> panel only; its step 5 is the one that matters — the destructive checkbox must NOT come back
+> ticked after a restart).
 
-**⛔ `U5` is NOT a candidate**, and this is the fourth time it has to be said: it is blocked behind a
-`WalkClassEx` return-type refactor across 25 call sites, not an LRU. See the cluster ③ block below.
 
 > ### 🔑 WHAT THE 2026-08-16 SESSION ADDED TO THE METHOD (builds 3125 – 3135)
 >
