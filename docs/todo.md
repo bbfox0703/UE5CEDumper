@@ -1681,6 +1681,27 @@ session" shape as AE4–AE7, so it can ride along with those. See dev-log build 
 > | 6 | with our proxy already deployed at the same version, tick Force Overwrite → Deploy | redeploys (no "already current" skip) | the benign half still works — guards against over-correcting into a refusal |
 > | 7 | Update All against a game with a foreign DLL | skips it, as before | `UpdateAllAsync` passes `ForeignConsent: false`; its own pre-gate should make that unreachable |
 
+> ### ✅ Step 5 CLOSED 2026-08-17 `[AE4-UI-2026-08-17]` — and it needed no foreign DLL at all
+>
+> Step 5's claim is about **persistence of two checkboxes**, not about deployment, so it can be
+> settled before the rest of the batch is staged. Both boxes were ticked, the app was closed, and the
+> app was relaunched. **Two independent detectors, and they agree:**
+>
+> * **The persisted file.** `%LOCALAPPDATA%\UE5CEDumper\ui-options.json` → `proxyDeploy` carries
+>   `forceOverwrite: true` and **no `allowForeignOverwrite` / `foreignConsent` key exists at all**.
+>   This is stronger than reading the UI: an absent key *cannot* come back ticked.
+> * **The relaunched UI.** ☑ `Force Overwrite`, ☐ `Replace other tools' DLLs`.
+>
+> That is exactly the required asymmetry — the destructive half does not persist. `Force Overwrite`
+> was returned to OFF afterwards so the app is left as found.
+>
+> **Steps 1/2/3/4/6/7 still need the foreign DLL.** Prefer §4.1's **synthetic folder** over Light
+> Maze; the same synthetic folder also unblocks **AE4 step 4**, which has no leftover to delete
+> today. ⚠ Note for whoever stages it: copying a system DLL to `dxgi.dll` inside a game folder is
+> the textbook DLL-hijack shape, so on this machine (Bitdefender ATD, working-lessons §3.8) prefer a
+> benign third-party DLL that merely lacks our `ProductName`, and do it while someone can answer an
+> AV prompt.
+
 ### 🔲 U3 + U17 — struct previews: dropped members, then wrong widths (builds 3169, 3171)
 
 *Needs a connected game. See dev-log builds 3169 and 3171. **The decode RULES are unit-pinned
@@ -2308,6 +2329,43 @@ Every step is a click sequence; the unit tests cover the logic, not what the pan
 6. **The drive-selection reset.** Switch source to **Scan drives**, and while the drive list is
    loading switch back to Steam and to Drives again. Tick some drives. They must stay ticked — a
    second load used to `Clear()` the list and silently drop the selection.
+
+> ### 🟡 4-of-6 CLOSED 2026-08-17 `[AE4-UI-2026-08-17]` — UI driven with computer-use, no game
+>
+> Build **1.0.0.3262** (the AOT `dist` binary), app `Disconnected` throughout. **Two steps are
+> recorded NOT TESTED with a measured reason, not waved through.**
+>
+> | step | verdict | evidence |
+> |---|---|---|
+> | 1 | ✅ **PASS, via a stated substitution** | Deploy-then-Undeploy **cannot** be made to overlap here: a single 2.8 MB copy finishes faster than one input event, measured twice (`Deployed: 1 success, 0 failed` then `Removed: 1 success, 0 failed` — both ran). The **shared** gate was then exercised with a long first operation: with `Scan drives` running, pressing `Deploy` produced **`Busy: Scan drives is running — wait for it to finish`** — a line that *names what is running*, and not the old wrong *"Wait for scan to finish"*. Designed to risk nothing: **no rows were ticked**, so neither outcome could write a file |
+> | 2 | 🟡 **PARTIAL** | Bar confirmed during **Scan Steam** (`Checking deploy status...`), **Scan drives** and **Find leftovers**. The last is the one that counts: it runs on `IsScanningOrphans`, *not* `IsScanning`, so the bar is demonstrably no longer bound to `IsScanning` alone. **NOT observable for Deploy / Undeploy / Refresh / Update All** — each completes in under one screenshot round-trip on this machine. Not a pass |
+> | 3 | ✅ **PASS on 2 of 3 cancels** | Scan Steam runs; **Scan drives runs AND cancels** with an explicit `Scan cancelled` status. Find leftovers runs, its `Cancel` appears on the **correct card** and clears correctly — but the scan finished before the click **twice** (14 s then <3 s), so the orphan cancel itself is **NOT tested**. ⚠ The B45 failure was checked in **both** directions: no ghost `Cancel` ever appeared on the other card |
+> | 4 | ⬜ **NOT TESTED** | There is no leftover to delete — `No leftover proxy DLLs found (30 folder(s) examined)`. Needs a **synthetic** leftover folder (a `…\Binaries\Win64\` holding only our proxy). Nothing about the gate can be claimed until one exists |
+> | 5 | ✅ **PASS, both directions** | version→dinput8→**dxgi** clicked quickly: header becomes `Source: dxgi.dll v1.0.0.3262`, the nine `version.dll` titles flip to `DeployedOtherType` with the Version column **cleared**, and **Elliot flips to `DeployedCurrent` 1.0.0.3262** — because its real proxy *is* dxgi. Clicking back to `version.dll` flips both sets symmetrically. So Status **and** Installed Version follow the radio, with a positive and a negative case in one view |
+> | 6 | ✅ **PASS** | D: ticked → Source toggled Steam→Scan Drives to force a **second** load of the drive list → D: **still ticked** |
+>
+> **State left as found, verified independently of the panel's own report** (working-lessons §1.4):
+> TQ2 was the deploy target and its `Binaries\Win64` was re-listed from Python afterwards — no
+> `version.dll` / `dxgi.dll` / `dinput8.dll` / `winmm.dll` present. `Force Overwrite` and the Source
+> radio were both returned to their original values.
+>
+> **§3a re-confirmed by a second, independent route.** The panel reports `Found 16 UE game(s)` —
+> exactly the 16 titles an offline enumeration found — and every deployed proxy reads **1.0.0.3262**:
+> nine `version.dll` (ES2, DQ7R, DQ I&II, EVERSPACE, Lushfoil, Manor Lords, OCTOPATH, SEED, Geri) plus
+> **Elliot** on `dxgi.dll · confirmed working`. Ten, matching §3a exactly.
+>
+> ⚠ **NEW, and §3a's inventory does not cover it: an ELEVENTH deployed proxy, and it is STALE.**
+> A drive scan surfaces `D:\UE_Analyze_data\Game archive\Satisfactory\UE5.6.1\…` as
+> **`DeployedOutdated 1.0.0.2498`**. It is in the reference-build corpus rather than a game, which is
+> why the game-only inventory missed it. Two consequences: §3a should say *eleven*, and this row is a
+> ready-made **`DeployedOutdated` fixture** — the only one on the machine — for exercising `Update All`
+> (AE4 step 2) against something that actually needs updating.
+>
+> *Incidental lead, not filed as a finding:* launching a **second** instance of the UI writes an
+> unhandled exception into `crash.log` — `System.InvalidOperationException: Cannot perform requested
+> operation because the Dispatcher shut down` at `ClassicDesktopStyleApplicationLifetime.StartCore` —
+> instead of exiting quietly. The first instance is unaffected and keeps running. Worth a look because
+> `crash.log` is documented as *the* AOT startup diagnostic, and a benign duplicate launch pollutes it.
 
 ### 🟡 4-of-5 CLOSED 2026-08-16 — AA4–AA7: ue5_dissect.lua in a real Cheat Engine
 
