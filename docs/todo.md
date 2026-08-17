@@ -1873,6 +1873,19 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    …,"name":"ModelComponents","type":"ArrayProperty"}` — so `FARRAYPROP_INNER` is not 8 bytes off.
    **Zero `EnumProperty` appeared in the entire session**, so `FENUMPROP_ENUM` / `FBYTEPROP_ENUM`
    are untested. Pick a class with an enum field next time; that is the half that can still be wrong.
+   **✅ BOTH HALVES NOW DONE `[G12-PIPE-2026-08-17]`** — DumperTest Development, build 3262, via
+   `walk_instance` over the pipe (never `walk_class`, and without `lean`, so these are real per-object
+   reads). **The enum half is covered by four fields across BOTH writers**, which is what makes it
+   evidence rather than one lucky lookup:
+   `Grade` → `EDumperTestGrade::Elite` and `UpdateOverlapsMethodDuringLevelStreaming` →
+   `EActorUpdateOverlapsMethod::UseConfigDefault` exercise `FENUMPROP_ENUM`; `RemoteRole` →
+   `ROLE_None` and `NetDormancy` → `DORM_Awake` exercise `FBYTEPROP_ENUM`. `Grade` is the
+   discriminating one: the sample's `EDumperTestGrade` has a **hole at 3..6** (`Legend`=7), so a
+   build that confused index with value could not land on `Elite` by accident — and `Elite` is the
+   value `tools/ue-sample/README.md` documents in advance.
+   TArray regression re-confirmed on the same reply: `Arr_Int` inner `IntProperty`/4,
+   `Arr_Struct` inner `StructProperty`/**32** (FName 8 + int 4 + pad 4 + FText 16), `Tags` and
+   `Layers` `NameProperty`/8.
 2. **G12, the case it actually fixes.** Needs a title whose offset validation takes the **heuristic
    fallback** — `scan-0.log` / `offsets-0.log` shows `Cannot find Guid or Vector struct`. Solarpunk
    is the documented one (though a later build resolved via `Guid` instead, so it may not reproduce).

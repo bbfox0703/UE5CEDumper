@@ -206,15 +206,6 @@
 | 3 | 查 AActor 的 bHidden / InitialLifeSpan | 屬性名稱與型別都正確列出<br>⚠ 「沒有報錯」不算通過；空表或亂碼視為失敗 |
 | 4 | 順便查一個 Blueprint 類別（*_C） | 查不到是預期的（W8 未修，*_C 被過濾），不要當成解析失敗 |
 
-### ⬜ G12（一般分支）—— enum 欄位顯示成員名稱
-
-*build 3119 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 注入任一遊戲，Live Walker 開一個確定含 enum 欄位的 class。 | 該欄位顯示 enum 成員名稱，而非原始整數。<br>⚠ 整個 session 沒出現任何 EnumProperty ＝未測到，不可判為通過。 |
-| 2 | 同一畫面確認 TArray 欄位的 array_inner_type / array_elem_size（回歸用）。 | 元素型別與大小正確（此半邊先前已 PASS）。 |
-
 ### ⬜ G11 —— 版本偵測 Tier 2 上線後結果不變
 
 *build 3112 · 優先度 **中***
