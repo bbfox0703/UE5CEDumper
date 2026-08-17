@@ -1930,6 +1930,13 @@ scanned on-disk bytes, and for packed/obfuscated titles those differ.*
    `DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503` → `UE Version = 503 (tier=1, detected=yes,
    lowConfidence=no)` → `raising version 503 -> 504`. **Identical. The batch asks for two or three
    titles, so this stays 🟡 until a second one is checked.**
+
+   **A third title was run, and it does NOT discharge the step `[DQ7R-PIPE-2026-08-17]`.** DQ7R
+   detected **427**, matching the `ueVersion: 427` already cached for it — but its PE hash changed
+   under a game patch (`69BA4044185AB000` → `69BB84C7069E9000`), so this was a first-ever scan of a
+   *different binary* (`scanCount=1`), not the re-detect of a cached entry this step is about. What it
+   does establish is weaker and still worth recording: the same title, across a publisher patch,
+   detects the same version under `rev=5`. **Left 🟡.**
 2. **A packed title is the interesting one.** Avowed is the documented packed case. Confirm its
    detected version is unchanged; this is the population where mapped-vs-on-disk could diverge.
 3. **If a `Tier 2` line ever appears in `scan-0.log`, cross-check it.** Grep for
@@ -1940,6 +1947,16 @@ scanned on-disk bytes, and for packed/obfuscated titles those differ.*
    VERSIONINFO is intact answers at `DetectVersion: PE VERSIONINFO -> UE 5.3 -> 503` and **never
    enters the tier ladder at all** — no `Tier 1 (ascii|utf16)` line either. Steps 3–4 here, step 3 of
    G8/G9, and every step of the G2 batch need a title with a **stripped version resource** (Elliot).
+   **⚠ Correction: a stripped version resource is necessary but NOT sufficient, and Elliot is the
+   wrong example** — it also lacks the release tag, so it produces no tier line at all. The ladder
+   needs *unrecognised PE VERSIONINFO* **and** *a findable tag*; the three installed titles that have
+   both are listed under G8/G9 step 3.
+   **🟡 The ladder has now been entered, and Tier 2 still did not fire `[DQ7R-PIPE-2026-08-17]`.**
+   DQ7R reached the memory scan and **Tier 1 (utf16) answered first** (`'++UE4+Release-4.27' -> 427`),
+   so no `Tier 2 Release prefix` line was produced. That is the offline model's prediction reproduced
+   live — Tier 1 agreeing on and masking every Tier 2 hit — and it is the first time the ladder is
+   known to be *reachable* on this machine rather than merely modelled. **It is still not evidence
+   that Tier 2 works**, and per step 4's warning this must not be read as closing G11.
 4. **⚠ REGRESSION — Tier 3 still behaves.** A title that previously reported `Tier 3 (low
    confidence)` must still report the same version. The bare-needle change touches Tier 2 only, and
    two unit rails assert that, but Tier 3 is what stripped-tag games actually land on today.
@@ -1972,13 +1989,48 @@ demonstration. Anything that does change is a finding.*
 3. **⚠ REGRESSION — a Tier 1 game is untouched.** G8/G9 only touch Tier 2/3, and Tier 1 returns
    first on nearly every real title. Confirm `DetectVersion: Tier 1 (ascii|utf16) …` still appears
    and still names the same version.
-   **⬜ STILL OPEN, and `[G89-PIPE-2026-08-17]` measured WHY DumperTest cannot serve it.** A cold scan
-   was forced (entry `6A7EA60310F17000` deleted, game relaunched, DLL injected) and `DetectVersion`
-   genuinely ran — but it stopped two lines in:
-   `DetectVersion: Attempting to detect UE version...` → `DetectVersion: PE VERSIONINFO -> UE 5.4 ->
-   504`. **DumperTest has intact PE VERSIONINFO, so it short-circuits before the tier ladder is
-   reached** — exactly what G11 step 3's ⚠ predicts. This step needs a **version-resource-stripped**
-   title; **Elliot** is the one on this machine. Do not retry it on the sample.
+   **✅ PASS `[DQ7R-PIPE-2026-08-17]` — on DQ7R, over the pipe, build 3262.** `scan-0.log`:
+   ```
+   22:34:01.983 [WARN] DetectVersion: PE VERSIONINFO Product=1.1 File=1.1 — unrecognised
+   22:34:01.983 [WARN] DetectVersion: PE resource failed, falling back to memory string scan
+   22:34:02.299 [INFO] DetectVersion: Tier 1 (utf16) '++UE4+Release-4.27' -> 427 at 0x4BBC6D8
+   22:34:02.299 [INFO] FindAll: UE Version = 427 (tier=1, detected=yes, lowConfidence=yes, publisher=SQUARE_ENIX)
+   ```
+   The Tier 1 line appears, in the `utf16` flavour, and names **427** — matching what
+   [test-games.md](test-games.md) and the pre-existing cache entry both carry for this title. That is
+   the whole of what this step asks.
+
+   **`lowConfidence=yes` alongside `tier=1` is NOT a finding — it is documented intent.** Checked in
+   source before filing: [Genau.cpp](../dll/src/Genau.cpp) `if (publisher && out.UEVersion >=
+   Grimoire::MIN_SUPPORTED_UE_VERSION) out.bLowConfidence = true;`, whose comment says a publisher
+   thumbprint flags low confidence *"even when detection produced a clean Tier 1 / Tier 2 hit, since
+   those strings can come from bundled SDKs"*. DQ7R matches `SQUARE_ENIX`.
+
+   ⚠ **The earlier note here named the wrong host, and the correction is worth keeping.** It said
+   Elliot was the title for this step. It is not: Elliot's PE resource fails *and* it carries no
+   `++UE[45]+Release-` tag at all, so it falls past every tier to the publisher fallback (`tier=0`)
+   and can never produce a Tier 1 line. The requirement is **two** properties, not one —
+   *unrecognised PE VERSIONINFO* **and** *a findable release tag*. An offline sweep of all 16
+   installed UE titles (`version.dll` APIs for the PE half, the `ue_version.py` regexes for the tag
+   half) found exactly **three** that qualify, and none of them had ever been tried:
+
+   | title | PE VERSIONINFO | tag | image |
+   |---|---|---|---|
+   | **DQ7R** | `Product=1.1` unrecognised | 4.27 | 99 MB |
+   | **DQ I&II HD-2D Remake** | `Product=1.0` unrecognised | 4.27 | 87 MB |
+   | **OCTOPATH TRAVELER** | `Product=1.0` unrecognised | 4.18 | 43 MB |
+
+   The other twelve — TQ2, DSA, Solarpunk, STVoyager, Lushfoil, Manor Lords, ES2, EVERSPACE, SEED,
+   Geri, Light Maze — all short-circuit at the PE fast path and cannot reach the ladder. The
+   classifier reproduced the exact wording of two independently known log lines before being trusted
+   (Elliot's `Product=1.2 File=1.2 — unrecognised` and DSA's `PE VERSIONINFO -> UE 5.3 -> 503`), then
+   predicted DQ7R's `Product=1.1 File=1.1` and was confirmed verbatim by the run above.
+
+   *Incidental, and it matters for anyone diffing this title:* **DQ7R's PE hash has changed** —
+   `69BA4044185AB000` (2026-06-06) → `69BB84C7069E9000`. So this was a first-ever scan of a patched
+   binary (`scanCount=1`), not a re-detect of a cached one. `ueVersion` is 427 on both, but the
+   winning GWorld pattern moved `GWLD_GH_1` → `GWLD_TQ_1` (gNames `GNAM_V8` and gObjects
+   `GOBJ_ES53_1` unchanged). The stale entry was left in place.
 
 **Step 1 additionally re-confirmed `[G89-PIPE-2026-08-17]`, and more strongly than the step asks.**
 Rather than comparing across a scan, the cached entry was **deleted outright** and a cold re-detect
@@ -2091,6 +2143,39 @@ no test target compiles `Genau.cpp`.*
    between the two sweeps, or re-measure on a title where the pre-UE4 check exits early. Do **not**
    record "G2 is slower than claimed" until the two are separated — the 0.35 s figure may simply have
    been measured on a much smaller image, which would make this no defect at all.
+
+   **✅ LEAD RESOLVED `[DQ7R-PIPE-2026-08-17]` — NO DEFECT, and it took no instrumentation.** The
+   lead's own second option was taken: re-measure on a title where the pre-UE4 check exits early.
+   `CountPreUE4Markers` is reached **only** in `DetectVersionDetailed`'s terminal all-failed branch,
+   so any title that produces a tier hit keeps that second sweep out of the window by construction.
+   DQ7R is such a title (see G8/G9 step 3 for how it was found):
+
+   | | Elliot | DQ7R |
+   |---|---|---|
+   | window `PE resource failed` → next `SCAN:Ver` | **2.400 s** | **0.316 s** |
+   | contains `CountPreUE4Markers`? | **yes** (`markers 0/4`, no tier hit) | **no** (Tier 1 hit) |
+   | image | 482,390,784 B (460 MiB) | 103,878,656 B (99 MiB) |
+   | bytes the needle actually covered | full image, ×2 flavours | ascii full + utf16 to the hit at `0x4BBC6D8` = 79,415,000 B |
+   | build | 3122 | 3262 |
+
+   Scaling DQ7R's needle-only cost onto Elliot's image brackets the needle at **~1.7–1.9 s of the
+   2.400 s** (1.9 s if the two flavours are one interleaved pass, 1.7 s if they are two separate
+   passes — the bracket exists because that detail was not established, and the conclusion is the same
+   either way). So `CountPreUE4Markers` accounts for only ~0.5 s, and **the lead's hypothesis is
+   refuted: the window is dominated by the version needle, not by the ungated marker sweep.**
+
+   **What that leaves is the lead's own alternative, and it holds.** DQ7R's 0.316 s over a ~99 MiB
+   image is essentially the dev-log's 0.35 s figure, so that number was measured on a ~100 MB-class
+   image and is not a per-title guarantee. Elliot is 4.7× the bytes and cost 4.7× the time — linear,
+   i.e. exactly what a rewritten single-pass sweep should look like. **Step 2 is therefore a PASS
+   against the mechanism and a correction to the batch's own prediction:** "sub-second" is true at
+   ~100 MB and cannot be true at 460 MB. Do not file "G2 is slower than claimed".
+
+   ⚠ **Conditions, because a rate without them is not a measurement:** one title per column, single
+   run each, warm page cache, different builds (3122 vs 3262), and the Elliot row is quoted from
+   `[ELLIOT-2026-08-16]` rather than re-measured. The two remaining Tier-1 titles (DQ I&II 87 MB,
+   OCTOPATH 43 MB) would turn the one-point rate into a three-point slope and are the cheap way to
+   harden this — each is a launch plus a ~2 s scan.
 3. **⚠ REGRESSION — a Tier 1 game still detects from Tier 1.** Any ordinary UE5 title: confirm
    `scan-0.log` still shows `DetectVersion: Tier 1 (ascii|utf16) '++UEx+Release-N.N' -> NNN`. The log
    lines were kept byte-identical on purpose, so any wording change here is itself a defect.
@@ -2372,6 +2457,12 @@ each has a *visible* pass/fail, and four of them only ever show up when somethin
    the probe. The pair is only observable together. ⚠ On a game where everything measures cleanly
    the correct result is **no banner at all** — absence proves nothing unless `get_offsets` on the
    same process reports `validated: true`, so check that too before concluding.
+   **Host screening `[DQ7R-PIPE-2026-08-17]`: DQ7R is the NEGATIVE-control branch, not the positive
+   one.** `get_offsets` reports `validated: true`, `probe_ran: true`, and emits **no** `unmeasured`
+   key at all, so the only thing DQ7R can establish here is that a clean game shows no banner. **The
+   amber half still has no host** — it needs a title whose offset detection *partially* fails, and
+   screening for one is a single `get_offsets` call per title, so fold it into any future sweep rather
+   than launching for it.
 6. **V7 — failures are visible.** Live Walker an object, then destroy/unload it in-game and press
    Refresh. Expect the salmon error line under the status line (10 s timeout). Before this fix a
    dead refresh looked exactly like a live one.
@@ -2753,6 +2844,12 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > sweep other titles (`case_preserving` is one `get_offsets` call each, so this is cheap), or build UE
 > from source with the flag on and repackage DumperTest. Until then U2 stands on the unit tests and
 > code review only.
+>
+> **Sweep, title 3 of N — DQ7R is measurably NOT CPN `[DQ7R-PIPE-2026-08-17]`.** `get_offsets` on the
+> live process returned **`case_preserving=false, probe_ran=true, validated=true`** — a verdict, not a
+> sample, because `probe_ran` is set (the method note above). Population of confirmed non-CPN titles
+> is now **TQ2 · Solarpunk · DQ7R**; still zero CPN titles found. Per the register's own priority
+> rule, that growing absence is itself the signal and keeps U2 LOW.
 >
 > **Incidental — D1/U3 CONFIRMED LIVE as still broken (not yet fixed).** `Map_IntToVec3f` renders as
 > `f:[6203.0000]`: one float, the **last** one. The raw hex holds all three correct values, so the

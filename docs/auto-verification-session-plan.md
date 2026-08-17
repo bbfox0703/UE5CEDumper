@@ -62,19 +62,108 @@ useful part is the observation table, not a theory.**
 exes have one and fail), and **a per-user `HKCU\…\Uninstall` registration does not help** — that was
 tried on 2026-08-17 and refused identically. Steam titles resolve; our loose exes do not.
 
-**What is NOT settled — and an earlier draft of this file wrongly claimed it was.** It asserted that
-"the list is snapshotted at MCP-server startup" had been *refuted*, on the grounds that the seven new
-`.url` entries resolved in the same session they were created. That inference is weaker than it
-looked: the installed-app list is presented **truncated** (`… and 34 more`), so "those seven were
-absent at session start" was read off alphabetical position in a truncated list, not observed. If the
-list is in fact a startup snapshot and those titles were already inside the hidden remainder, every
-observation above still holds and shortcut creation was simply irrelevant.
+### ✅ SETTLED 2026-08-17 (late) — the timing/snapshot theory is DEAD. Stop testing shortcut formats.
 
-**The cheap experiment that separates them, not yet run:** start a **new session** and call
-`request_access` for `UE5DumpUI`. The `.lnk` and the Uninstall entry both exist now, so a snapshot
-taken at the next startup would include whatever it keys on. If it resolves there, the snapshot
-theory is right and mid-session creation never works; if it still fails, loose exes are excluded for
-some other reason entirely.
+The one-call experiment below was run in a new session. **`request_access(["UE5DumpUI"])` returned
+`notInstalled` with an empty `didYouMean`, and the dialog was never shown to the user** — the request
+short-circuits at name resolution, so this is not a refusal and never reaches the grant layer at all.
+
+What makes it decisive rather than one more failed attempt is the **timing**, checked instead of
+assumed:
+
+| Artifact | Created |
+|---|---|
+| `…\Start Menu\Programs\UE5DumpUI.lnk` | **2026-08-16 22:56** |
+| every `claude` process (13 of them, incl. the MCP host) | **2026-08-17 13:49** (two helpers later, 20:12 / 22:10) |
+
+The `.lnk` predates every live process by ~15 hours. **Any** snapshot — taken at MCP-server startup,
+at app launch, or per call — would therefore already contain it, and it still does not resolve. So
+the failure is **structural in the resolver, not a matter of when the entry was created**, and the
+sixth format would tell us nothing the first five did not.
+
+### ✅ SOLVED, same session — it was the WRONG START-MENU FOLDER all along
+
+> **⛔ Read this before the sub-section below it.** The probe table further down concluded "the index
+> takes no new `.lnk` at all". **That conclusion was wrong**, and it is kept only because the
+> measurements in it are still valid and the mistake is instructive: every probe, and all five earlier
+> attempts, wrote to the **per-user** `%APPDATA%\Microsoft\Windows\Start Menu\Programs`. That folder
+> is not enumerated on this machine. The **all-users** folder is.
+
+**What works, verified end to end on 2026-08-17:**
+
+1. Create the shortcut in **`C:\ProgramData\Microsoft\Windows\Start Menu\Programs`** (a subfolder is
+   fine — `…\Programs\Test\` is where these live). Needs elevation, so the **maintainer** creates it
+   via Explorer → right-click → New → Shortcut; computer-use cannot drive the UAC prompt.
+2. Name it **exactly** what `request_access` will ask for. Target the **inner** exe.
+3. Confirm Windows took it — free, no MCP call:
+   `Get-StartApps | Where-Object Name -match 'UE5'`. The count rises by one and the `AppID` column
+   shows the target path.
+4. `request_access(["UE5DumpUI"])` → **granted, `tier: full`, in the same session, with no Claude
+   Desktop restart.**
+
+**Two things this settles for good:**
+
+* **The resolver queries live.** Mid-session creation *does* work. Every "snapshotted at startup"
+  theory in this file's history is dead — the entry that failed all morning succeeded within a minute
+  of landing in the right folder, in the same session.
+* **Groups 3, 4 and 5 are unblocked** (20+ rows, including W2/W3 step 5 and D2 step 4, the two
+  stranded half-items).
+
+⚠ **Still open, and small: `DumperTest Development` / `DumperTest Shipping` do NOT resolve** even
+though `Get-StartApps` lists both from the *same* `…\Programs\Test\` folder with correct inner-exe
+targets (index total went 255 → 258). `UE5DumpUI`, created the same way minutes earlier, resolved
+immediately. Neither exe was running at the time, so the running-process route is not what made
+`UE5DumpUI` work. Untested next guesses, cheapest first: retry after a few minutes (a TTL on the
+resolver's side), then a single-token name with no space, then a target path with no space
+(`D:\UE_Analyze_data\For Testing\…` has one; `D:\Github\UE5CEDumper\dist\…` does not).
+**Groups 1 and 2 do not care** — they drive DumperTest over the pipe and never take a grant.
+
+### The superseded probe work — measurements good, conclusion wrong
+
+The resolver's index is **`Get-StartApps` / AppsFolder** — 255 entries against the tool's own
+truncated list of ~254, and `Titan Quest II` is present in the former while absent from the latter's
+visible range. So the question "why is our exe not grantable" reduces to "why is our `.lnk` not in
+AppsFolder", which is answerable locally with no MCP call at all.
+
+**Measured, with the confound removed.** A first probe copied an already-indexed `.lnk`
+(`Ollama.lnk`) under a new name and did not appear — but that proved nothing, because AppsFolder
+keys legacy shortcuts by **target** (the `AppID` column *is* the target path), so a second shortcut
+to the same exe is deduplicated. The clean re-run used three **unique** targets, written through
+`IShellLinkW` + `IPersistFile` with WorkingDirectory/Description/Icon filled in:
+
+| probe | target | `.lnk` size | indexed? |
+|---|---|---|---|
+| `ZZProbeC` | `C:\Windows\System32\where.exe` | 1880 B | ❌ |
+| `ZZProbeD` | `D:\…\dist\UE5DumpUI.exe` | 949 B | ❌ |
+| `ZZProbeD2` | `D:\…\dist\UE5Dumper.dll` | 951 B | ❌ |
+
+All three returned `S_OK`; the total stayed **exactly 255** across all of it, **including after the
+maintainer restarted `explorer.exe` from Task Manager**. Both drives are `DriveType 3` (local fixed,
+NTFS), so the drive is not the discriminator either.
+
+The conclusion drawn at the time — *"the app index enumerates no new `.lnk` at all"* — **was wrong**.
+Every row above wrote to the **per-user** Programs folder, so the table measures one cell three times.
+It reads as a general law and is actually a property of that one directory.
+
+**The lesson worth keeping is the method failure, not the result.** Three probes varying target,
+drive and file completeness all held the *directory* fixed, and the fixed variable was the answer.
+Two earlier claims in this same investigation failed the same way: the first probe duplicated an
+indexed shortcut's **target** (AppsFolder dedupes on target, so its absence meant nothing), and the
+"snapshot at startup" theory rested on **alphabetical position in a truncated list**. Three
+confounded probes in one sitting is the signal to go and enumerate what actually differs between a
+working case and a broken one — `Ollama.lnk` was sitting in the working list the whole time, and the
+one attribute nobody had compared was which of the two Start-menu roots it lived in.
+
+*Cleanup state: the three `ZZProbe*` shortcuts were deleted. The per-user `UE5DumpUI.lnk` /
+`UE5DumpUI.url` / `DumperTest *.lnk` and the two per-user Uninstall keys are now redundant — the
+all-users entries are what work — and can be reverted with
+`py tools/verify/register_apps.py --revert --apply`.*
+
+⚠ **And do not build any further argument on the `<installed-apps>` list's contents.** It is
+truncated (`… and 34 more`) *and* it omits names that the resolver demonstrably grants — `Titan
+Quest II` was granted at full tier on 2026-08-17 yet does not appear in the list's own visible
+`Thunderbird → Tools for Desktop Apps` window. The list is a display, not the resolver's index;
+alphabetical-position reasoning over it (in either direction) is worthless.
 
 **Consequence either way: `UE5DumpUI` and `DumperTest` are not grantable in the session that created
 their entries.** This costs nothing for Groups 0/1/2 — those drive the DLL over the pipe and read
