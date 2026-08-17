@@ -1353,22 +1353,13 @@ int32_t GetSerialNumber(int32_t index) {
         itemAddr = chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
     }
 
-    // SerialNumber offset depends on the FUObjectItem layout:
-    //   classic (objOff==0): Object(8) + Flags(4) [+ ClusterRootIndex(4)] + Serial(4)
-    //                        → +0x0C (16B stride) / +0x10 (24B stride)
-    //   UE5.7+  (objOff!=0): FlagsAndRefCount(8) + Object(8) + SerialNumber(4) + ClusterRootIndex(4)
-    //                        → SerialNumber sits right after Object, i.e. objOff + 0x08
-    //   packed57: layout is *** UNVERIFIED *** — SerialNumber position is not pinned.
-    //             Best-effort guess (calibratable via set_packed_consts serial_off). A
-    //             wrong value only degrades FWeakObjectPtr staleness resolution (weak
-    //             refs / delegates), never the core object walk.
-    int serialOff;
-    if (s_layoutMode == Lineal::ItemLayoutMode::Packed57) {
-        serialOff = s_packedSerialOff;
-    } else {
-        serialOff = (s_itemObjOffset != 0) ? (s_itemObjOffset + 0x08)
-                                           : ((s_itemSize >= 24) ? 0x10 : 0x0C);
-    }
+    // The whole offset rule lives in Lineal so it can be unit-pinned — no target
+    // compiles Aura.cpp, and the old inline `s_itemSize >= 24 ? 0x10 : 0x0C`
+    // silently returned 0x0C for the reachable 20-byte packed item, which reads
+    // ClusterRootIndex and made every weak reference look stale (audit #5 A1).
+    const int serialOff = Lineal::SerialOffsetForLayout(
+        s_layoutMode, s_itemSize, s_itemObjOffset, s_packedSerialOff);
+
     int32_t serial = 0;
     Macht::ReadSafe(itemAddr + serialOff, serial);
     return serial;

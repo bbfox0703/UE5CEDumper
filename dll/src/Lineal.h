@@ -76,4 +76,51 @@ inline void Encode(uintptr_t obj, const PackedConsts& c,
     flagsAndRefCount = (hiPtrBits << 32) | (flagsExtra & 0xFFFFFFFFull);
 }
 
+// Byte offset of FUObjectItem::SerialNumber for a given item layout. Pure: no
+// memory access, no globals — so it is unit-testable even though no target
+// compiles Aura.cpp, which is its only caller.
+//
+// The offset is decided by the STRIDE, and the reachable stride set is exactly
+// {16, 20, 24, 32} — `Aura`'s auto-probe tries {16, 24, 32, 20} and
+// `UE5_InitWithExtendedLayout` forces any of {0x14, 0x18, 0x10, 0x20}. It used
+// to be computed inline as `s_itemSize >= 24 ? 0x10 : 0x0C`, a two-way split
+// that only covers 16 and 24 (audit #5 A1):
+//
+//   16  Object(8) + Flags(4) + Serial(4)                        -> 0x0C
+//   20  Object(8) + Flags(4) + ClusterRootIndex(4) + Serial(4)  -> 0x10
+//   24  as 16/20 plus stats padding                             -> 0x10
+//   32  classic + stats growth appended after the serial        -> 0x10
+//
+// **Stride 20 is the packed FUObjectItem Avowed ships**, and it is reachable by
+// both routes above. The old expression returned 0x0C for it, which reads
+// `ClusterRootIndex` — so `Ubel::ResolveWeakObjectPtr`'s bare
+// `if (actualSerial != serialNumber) return 0;` declared EVERY weak reference
+// stale, silently: no fallback, no retry, no log. That nulls WeakObjectProperty
+// and the whole delegate family outright, and costs Soft/Lazy handlers their
+// resolved live object (they still show the asset path).
+//
+// Offsets are from the Ghidra decompilation of Avowed's AllocateUObjectIndex,
+// recorded in docs/avowed-gobjects-fix.md: {Object@+0x00, Flags@+0x08,
+// ClusterRoot@+0x0C, Serial@+0x10}.
+//
+// NOTE this is UE's own FWeakObjectPtr::SerialNumbersMatch check — reading the
+// serial at the right ADDRESS. It is NOT the "invent (index, serial) as a
+// recycle witness" proposal that working-lessons §4.3 refuses three times over;
+// that one is about a passive observer STORING a serial UE allocates lazily.
+inline int SerialOffsetForLayout(ItemLayoutMode mode, int itemSize,
+                                 int objOffset, int packedSerialOff) noexcept {
+    // Packed UE5.7+: position is *** UNVERIFIED ***, calibratable at runtime via
+    // set_packed_consts serial_off. A wrong value degrades only weak-ref
+    // staleness resolution, never the core object walk.
+    if (mode == ItemLayoutMode::Packed57) return packedSerialOff;
+
+    // Unpacked UE5.7+: FlagsAndRefCount(8) + Object(8) + SerialNumber(4) +
+    // ClusterRootIndex(4) — the serial sits immediately after the object.
+    if (objOffset != 0) return objOffset + 0x08;
+
+    // Classic. Only the 16-byte item has no ClusterRootIndex ahead of the
+    // serial, so it is the sole case that stays at 0x0C.
+    return (itemSize <= 16) ? 0x0C : 0x10;
+}
+
 } // namespace Lineal

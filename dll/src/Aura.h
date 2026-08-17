@@ -73,7 +73,11 @@ uintptr_t GetByIndex(int32_t index);
 FUObjectItem* GetItem(int32_t index);
 
 // Read the SerialNumber of the FUObjectItem at the given index.
-// Handles both 16-byte (serial@+0x0C) and 24-byte (serial@+0x10) items.
+// The offset rule is Lineal::SerialOffsetForLayout, which covers every reachable
+// stride — 16 (@+0x0C), and 20/24/32 (@+0x10), plus the two UE5.7+ modes. The
+// comment here used to say "16-byte or 24-byte" and the code matched it, which
+// is why the reachable 20-byte packed item read ClusterRootIndex instead
+// (audit #5 A1).
 int32_t GetSerialNumber(int32_t index);
 
 // Iterate all valid objects

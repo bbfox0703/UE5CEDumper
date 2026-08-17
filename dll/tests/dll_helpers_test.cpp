@@ -234,6 +234,61 @@ static void Test_Alignment_WeakAndSparseDelegate() {
            !Scharf::IsAlignmentSuspicious("MulticastSparseDelegateProperty", 0x5, 1, false));
 }
 
+// ----- Lineal: FUObjectItem SerialNumber offset --------------------------------
+//
+// Audit #5 A1. Aura::GetSerialNumber used to compute this inline as
+// `s_itemSize >= 24 ? 0x10 : 0x0C` -- a two-way split covering only strides 16
+// and 24. The reachable stride set is {16, 20, 24, 32}: Aura's auto-probe tries
+// {16, 24, 32, 20} and UE5_InitWithExtendedLayout forces any of
+// {0x14, 0x18, 0x10, 0x20}.
+//
+// At stride 20 the old expression returned 0x0C, which is ClusterRootIndex.
+// Ubel::ResolveWeakObjectPtr then compares that against the stored serial with a
+// bare `if (actualSerial != serialNumber) return 0;` -- no fallback, no retry,
+// no log -- so EVERY weak reference reads as stale. That empties
+// WeakObjectProperty and the whole delegate family, and costs the Soft/Lazy
+// handlers their resolved live object.
+//
+// The rule lives in Lineal.h precisely so it can be tested: no target compiles
+// Aura.cpp, but this file already includes Lineal.h.
+
+static void Test_Lineal_SerialOffsetForLayout() {
+    using Lineal::SerialOffsetForLayout;
+    using M = Lineal::ItemLayoutMode;
+
+    // --- Classic: the offset is decided by whether ClusterRootIndex precedes
+    // the serial, which it does for every stride above 16.
+    EXPECT("classic 16 -> 0x0C", SerialOffsetForLayout(M::Classic, 16, 0, 0x0C) == 0x0C);
+
+    // THE REGRESSION ROW. Avowed's packed 20-byte FUObjectItem:
+    // {Object@+0x00, Flags@+0x08, ClusterRoot@+0x0C, Serial@+0x10} -- from the
+    // Ghidra decompilation of AllocateUObjectIndex in docs/avowed-gobjects-fix.md.
+    EXPECT("classic 20 -> 0x10 (Avowed)", SerialOffsetForLayout(M::Classic, 20, 0, 0x0C) == 0x10);
+
+    EXPECT("classic 24 -> 0x10", SerialOffsetForLayout(M::Classic, 24, 0, 0x0C) == 0x10);
+    EXPECT("classic 32 -> 0x10", SerialOffsetForLayout(M::Classic, 32, 0, 0x0C) == 0x10);
+
+    // --- UE5.7+ unpacked: FlagsAndRefCount(8) + Object(8) + SerialNumber(4),
+    // so the serial sits immediately after the object wherever that landed.
+    EXPECT("unpacked57 objOff 8 -> 0x10",
+           SerialOffsetForLayout(M::Unpacked57, 24, 0x08, 0x0C) == 0x10);
+    EXPECT("unpacked57 objOff 16 -> 0x18",
+           SerialOffsetForLayout(M::Unpacked57, 32, 0x10, 0x0C) == 0x18);
+
+    // --- Packed UE5.7+: layout is UNVERIFIED, so the value is whatever
+    // set_packed_consts calibrated. It must pass through untouched -- including
+    // when the stride would otherwise imply something else.
+    EXPECT("packed57 passes the calibrated value through",
+           SerialOffsetForLayout(M::Packed57, 24, 0x08, 0x0C) == 0x0C);
+    EXPECT("packed57 honours a recalibration",
+           SerialOffsetForLayout(M::Packed57, 24, 0x08, 0x14) == 0x14);
+
+    // --- The function is pure: same inputs, same answer, no hidden state.
+    EXPECT("pure / repeatable",
+           SerialOffsetForLayout(M::Classic, 20, 0, 0x0C) ==
+           SerialOffsetForLayout(M::Classic, 20, 0, 0x0C));
+}
+
 // ----- Mimic: the CE Lua <-> DLL mailbox LAYOUT --------------------------------
 //
 // What used to sit here was a poll-latency micro-benchmark that touched no Mimic
@@ -5072,6 +5127,7 @@ int main() {
     RUN(Test_Alignment_UnknownTypesNotValidated);
     RUN(Test_Alignment_WeakAndSparseDelegate);
 
+    RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_CommandNumbering);
 
