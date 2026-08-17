@@ -22,6 +22,40 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - Z1: Interesting Functions looked finished 2 s before it was (build 3189)
+
+**Audit #5 Z1 (MED) closed.** The Gameplay-Actions opt-in could latch ON while the grid stayed
+scored with the pack OFF — permanently, with untick+retick the only recovery. The filed finding
+named the guard that drops the toggle (`RescoreAsync`'s `if (IsLoading || ...) return;`) but not
+the thing holding `IsLoading` true, and prescribed a fix that is wrong on a double-toggle.
+
+**What re-derivation added.** `LoadAsync` ended with `await CheckAobMakerAsync()` — sitting directly
+under a comment asserting it *"doesn't block the load"*. It is the **only awaited AOBMaker probe in
+the UI**, against eight fire-and-forget siblings (one hit repo-wide), and the bridge pays a 2000 ms
+pipe-connect timeout whenever Cheat Engine is not running, which is this panel's ordinary state. So
+the swallow window is a **guaranteed 2 s, not a race**. Worse, nothing between `ApplyFilter()` and
+the probe awaits, so the grid's first paint and the final status line land at the instant the window
+opens: the panel looks *done* for the whole 2 s in which its main opt-in silently does nothing.
+
+**Two halves, negative-controlled separately.** (a) `_ = CheckAobMakerAsync()` restores what the
+comment already claimed and deletes 2 s of the window — but not the `Task.Run` remainder, so it is
+not the repair. (b) The repair: record which mode `_allRows` was actually scored with, and reconcile
+it against the live property in `LoadAsync`'s `finally`. Comparing *values* beats the filed
+"pending-rescore latch" precisely on the case a boolean gets wrong — a user who toggles twice inside
+the window is back on the mode already scored, and must trigger no re-score.
+
+**The seam is the lesson, and it is §1.3 again.** The pre-existing test set the property and then
+`await`ed `RescoreAsync()` *directly* — which re-scores unconditionally and therefore passes with
+the defect fully present. The new tests await `PendingRescore`, the task the VM itself decided to
+run, so they can distinguish "the VM reconciled" from "the test re-scored it". They also use bounded
+`Task.WhenAny` waits rather than bare awaits, so re-introducing the `await` **fails** the suite
+instead of hanging it — a hang is not a test result.
+
+Negative controls: restoring the `await` alone fails only the busy-probe test; removing the
+reconcile alone fails only the swallowed-toggle test. 3931 passed / 0 failed.
+
+-----
+
 ## 2026-08-17 - the six-MED dossier is spent and archived; the register gate's --list now prints the open vetted tier
 
 **No code change — docs routing + one tool.** The consolidation question ("should the scattered

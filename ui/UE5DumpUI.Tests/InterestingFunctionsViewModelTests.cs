@@ -408,11 +408,19 @@ public class InterestingFunctionsViewModelTests
         public bool NextCheckResult { get; set; }
         public int CheckCallCount { get; private set; }
 
-        public Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
+        /// <summary>When set, CheckAvailabilityAsync blocks on this instead of
+        /// completing synchronously — a deterministic stand-in for the real
+        /// bridge's 2s pipe-connect timeout when Cheat Engine isn't running.
+        /// Lets a test occupy the window that LoadAsync used to spend with
+        /// IsLoading still true.</summary>
+        public TaskCompletionSource<bool>? Gate { get; set; }
+
+        public async Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
         {
             CheckCallCount++;
+            if (Gate != null) await Gate.Task;
             IsAvailable = NextCheckResult;
-            return Task.FromResult(NextCheckResult);
+            return NextCheckResult;
         }
 
         public Task<bool> NavigateHexViewAsync(string hexAddress, CancellationToken ct = default)
@@ -431,6 +439,120 @@ public class InterestingFunctionsViewModelTests
         public Task<(bool Ok, string? ErrorMessage)> InjectTableFileAsync(string fileName, string content,
             CancellationToken ct = default)
             => Task.FromResult<(bool, string?)>((false, null));
+    }
+
+    // ==================================================================
+    // Audit #5 Z1 — a Gameplay-Actions toggle raised while Load is still
+    // "in flight" must not be silently discarded.
+    //
+    // LoadAsync used to `await CheckAobMakerAsync()` as its last statement,
+    // which pays a 2s pipe-connect timeout whenever CE isn't running, all of
+    // it with IsLoading still true and the grid ALREADY painted. RescoreAsync
+    // bails on `if (IsLoading ...) return;`, so a tick landing in that window
+    // was dropped and nothing ever re-ran: the CheckBox read ON while the rows
+    // stayed scored with the pack OFF, permanently. Recovery was untick+retick.
+    // ==================================================================
+
+    /// <summary>The load must not stay busy for the AOBMaker probe. The probe
+    /// is fire-and-forget, so LoadAsync completes (and clears IsLoading) even
+    /// while the bridge is still blocked.</summary>
+    [Fact]
+    public async Task LoadAsync_DoesNotStayBusyWaitingOnTheAobMakerProbe()
+    {
+        var bridge = new FakeAobMakerBridge
+        {
+            NextCheckResult = false,
+            Gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        var vm = new InterestingFunctionsViewModel(
+            new FakeDumpService { NextResult = BuildResult(BuildSampleEntries()) },
+            new NoopLogger(), bridge);
+
+        // The gate is never released — it stands in for "CE isn't running, so
+        // the pipe connect burns its full 2s timeout".
+        var load = vm.LoadCommand.ExecuteAsync(null);
+
+        // Bounded wait, NOT a bare await: if LoadAsync goes back to awaiting the
+        // probe this must FAIL, not hang the suite.
+        var finished = await Task.WhenAny(load, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+
+        Assert.Same(load, finished);
+        Assert.False(vm.IsLoading,
+            "LoadAsync must not hold IsLoading true while the AOBMaker probe is outstanding");
+        Assert.NotEmpty(vm.Results);
+        Assert.Equal(1, bridge.CheckCallCount);
+
+        bridge.Gate.SetResult(false);
+    }
+
+    /// <summary>A toggle raised inside the busy window survives it: once the
+    /// load finishes, the rows are reconciled to the mode the CheckBox shows.</summary>
+    [Fact]
+    public async Task GameplayActions_ToggledWhileLoadIsBusy_IsNotSwallowed()
+    {
+        // OpenShop is below threshold with the pack off and above it with the
+        // pack on — the same fixture the in-place re-score test uses.
+        var entries = new List<AllFunctionEntry>
+        {
+            new() { ClassName="ShopSubsystem", FuncName="OpenShop",
+                    FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=8 },
+        };
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bridge = new FakeAobMakerBridge { NextCheckResult = false, Gate = gate };
+        var vm = new InterestingFunctionsViewModel(
+            new FakeDumpService { NextResult = BuildResult(entries) },
+            new NoopLogger(), bridge);
+
+        var load = vm.LoadCommand.ExecuteAsync(null);
+
+        // The user ticks the pack. Before the fix this landed while IsLoading
+        // was still true and RescoreAsync's guard threw it away.
+        vm.GameplayActions = true;
+
+        gate.SetResult(false);
+        var finished = await Task.WhenAny(load, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.Same(load, finished);
+
+        // Drain ONLY the reconciliation the VM itself decided to run. Calling
+        // RescoreAsync() from the test instead would re-score unconditionally
+        // and pass even with the defect present — that seam is exactly why the
+        // pre-existing coverage never caught this.
+        Assert.NotNull(vm.PendingRescore);
+        await vm.PendingRescore!;
+
+        Assert.True(vm.GameplayActions);
+        Assert.Contains(vm.Results, r => r.FuncName == "OpenShop");
+    }
+
+    /// <summary>Toggling twice inside the window lands back on the mode the
+    /// rows were already scored with, so the reconciliation correctly does
+    /// nothing — this is why it compares values instead of latching a bool.</summary>
+    [Fact]
+    public async Task GameplayActions_ToggledTwiceWhileBusy_LeavesRowsAlone()
+    {
+        var entries = new List<AllFunctionEntry>
+        {
+            new() { ClassName="ShopSubsystem", FuncName="OpenShop",
+                    FunctionFlags=0x0400_0000, NumParms=1, ParmsSize=8 },
+        };
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bridge = new FakeAobMakerBridge { NextCheckResult = false, Gate = gate };
+        var vm = new InterestingFunctionsViewModel(
+            new FakeDumpService { NextResult = BuildResult(entries) },
+            new NoopLogger(), bridge);
+
+        var load = vm.LoadCommand.ExecuteAsync(null);
+        vm.GameplayActions = true;
+        vm.GameplayActions = false;
+
+        gate.SetResult(false);
+        var finished = await Task.WhenAny(load, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.Same(load, finished);
+
+        // Net-zero change, so there is nothing to reconcile and no re-score.
+        Assert.Null(vm.PendingRescore);
+        Assert.False(vm.GameplayActions);
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "OpenShop");
     }
 
     [Fact]
