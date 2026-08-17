@@ -2427,7 +2427,30 @@ no test target compiles `Genau.cpp`.*
 comment in `DetectVersionDetailed`), and **MA1** — `Macht.cpp`'s AOB family has zero cancellation, so
 once a scan enters `AOBScanAllModules` every poll added here is unreachable.
 
-### ⬜ NEW 2026-08-17 — AE2 / AE3: the Class/Struct panel under fast selection
+### 🟡 4-of-6 2026-08-17 `[AE23-UI-2026-08-17]` — AE2 / AE3: the Class/Struct panel under fast selection
+
+Run on **Lushfoil Photography Sim** (UE 5.6, 58,093/58,618 objects), dist 3262.
+
+* **1 — PASS.** Clicking tree nodes populates the panel and the header tracks: `MaterialExpression`
+  → `//Script/Engine/MaterialExpression`, `Super Class Object`, `Properties Size 176`, full field
+  list; then `Light` → `Super Class Actor`, `696`.
+* **2 — PASS, on the transition the old failure actually needed.** ⚠ **Filter recorded, because the
+  step says a homogeneous list proves nothing:** keyword **`SkyLight`**, **26 results**, genuinely
+  interleaved — 5 `Class`, `Enum`, `ScriptStruct`, `Function`, then **six instances**
+  (`Default__SkyLight`, `Default__SkyLightComponent`, `SkyLightComponent0`,
+  `Default__DatasmithSkyLightComponentTemplate`, `Default__ARSkyLight`, `SkyLightComponent0`), then
+  three more `Function` rows, then two instances. Fourteen rapid `Down` presses crossed the whole
+  instance block and landed on the class-like `Function BndEvt__3Dmenu_SkyLightAO_…`, and the header
+  read that function's full signature with `Properties Size 4` and its single `Value FloatProperty`.
+  **Header matched the highlighted row**; it did not stay on the preceding instance's class.
+  *(A held `Down` advanced only one row — key-repeat does not reach this list, so use `repeat`.)*
+* **3 — PASS.** No loading indicator stuck after the panel settled during that fast traversal.
+* **6 — PASS.** Typing `Light` then `SkyLight` into the tree filter with a node selected left the
+  Class/Struct panel **fully populated** on the previous class — it neither blanked nor flickered.
+* **4 — not run** (needs a level travel to make a class address go stale; human-gated).
+* **5 — not run** (the cross-tab handoff; nothing pushed a class into Class/Struct in this session).
+
+### ⬜ Original checklist (kept for the steps)
 
 *Needs a game connected, but nothing else — the Object Tree is a permanent left pane beside the
 Class/Struct panel, so every check is "do the two halves agree". See dev-log builds 3067 / 3068. The
