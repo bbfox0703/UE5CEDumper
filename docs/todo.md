@@ -1424,10 +1424,15 @@ reports them identical. Nothing has desynced.)*
 
 -----
 
-## ⬜ NEW 2026-08-17 — rewrite `pending-verification_zh-TW.md` as an OPERATIONAL checklist
+## ✅ DONE 2026-08-17 — `pending-verification_zh-TW.md` rewritten as an OPERATIONAL checklist
 
-*Effort M / risk low. Docs only, no code. Do this BEFORE working the verification register below —
-it is what makes that register executable.*
+*Effort M / risk low. Docs only, no code. **Rebuilt from scratch 2026-08-17** — 60 items, grouped by
+what they COST to run (第 0 步 = needs nothing, through 第 5 步 = no sample exists), each a
+`| # | 做什麼 | 預期 |` table and nothing else. Kept below as the contract for anyone editing it.*
+
+⚠ **It is GENERATED-shaped, not hand-maintained prose.** When an item here changes, change the step
+and the expected result over there — do not re-introduce narrative. When an item is CLOSED here,
+delete the whole section there; that file holds only outstanding work.
 
 **It is ~430 builds stale, measured not guessed.** Its own header says
 *"目前狀態（2026-08-12，build 2804）"*; the tree is past 3237, and **86 finding IDs present in this
@@ -1468,6 +1473,70 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ NEW 2026-08-17 — A11: a grown container must no longer lose its Value Search candidates (build 3253)
+
+*Needs a connected game with a `TArray`/`TMap` UPROPERTY whose element count changes in play
+(inventory, spawned-actor list, buff list). **The RULE is unit-pinned (15 assertions, two negative
+controls); the WIRING is not** — no target compiles `Aura.cpp`.*
+
+> **The cheapest decisive evidence is a log line the fix adds**, and it only appears when the
+> re-anchor actually fired. Grep by FORMAT STRING: `Refine re-anchor:`.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | Value Search a known value that lives in a container element (a `TArray<FStruct>` field, or a `TMap` value). First Scan. | the row appears with a `[i]` element index | establishes the candidate IS a container element, not a direct field |
+> | 2 ⚠ THE ONE THAT MATTERS | in game, ADD entries to that container until it must grow (pick up items, spawn enemies), then Next Scan with the same value | the candidate **SURVIVES**, and `scan-0.log` has `Refine re-anchor: N container element(s) repointed after a realloc` | before 3253 a growth realloc left every element address stale and they were lost outright. A surviving candidate with **no** re-anchor line means the buffer never moved — the container had slack, so this run did not test the repoint |
+> | 3 | now REMOVE an element that sits BEFORE the candidate's index, then Next Scan | the candidate is **dropped**, and the log's `dropped` count goes up | this is the silent-wrong-value case: the tail shifts down one slot in place, so the old address reads cleanly and returns the neighbour's value |
+> | 4 | for a `TSet`/`TMap`: remove the entry the candidate points AT, then Next Scan | dropped | the allocation bit is the only witness — a freed sparse slot is refilled at the identical address |
+> | 5 ⚠ NON-REGRESSION, do not skip | scan a container value, then APPEND to that container without forcing a realloc (add one entry to a list that has slack), Next Scan | the candidate **survives** | the naive `{dataPtr,count}` rule drops these. If they vanish, the asymmetric rule was lost and this is a REGRESSION, not a fix |
+> | 6 | repeat step 1 on a plain (non-container) field | unchanged behaviour, and **no** `Refine re-anchor` line at all | `Direct` candidates must not enter the new path |
+
+**Known residuals, do not report as failures**: `TArray::Insert` at a low index shifts on a count
+INCREASE and is not caught; balanced churn (remove one, add one back into the same slot) is
+invisible; and the GROUP scan path is untouched (filed as **A12**), so a Group-mode refine still
+behaves as it did before 3253.
+
+-----
+
+### ⬜ NEW 2026-08-17 — F9: walk_world must list actors AND their components (build 3247)
+
+*Needs a connected game. Two titles already reproduced `actor_count: 0` — DumperTest's stock
+ThirdPersonMap and Solarpunk — so those are the discriminating samples. **No offline test exists**
+(the correctness is structural, and no target compiles `Fern.cpp`/`Aura.cpp`), so this IS the pin.*
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | connect, Live Walker → **Load GWorld** | a **non-zero** actor list | `actor_count: 0` on 2 of 2 games was the defect; anything non-zero is new behaviour |
+> | 2 | compare `actor_count` with `actor_total` on a small map | equal, and `truncated` false | `actor_total` is now the level, not the page |
+> | 3 ⚠ THE GATE, observed in the wild | scan the list for `ModelComponent*` / `ActorCluster` rows | **none** | those ARE outered to the level. Seeing them means the is-Actor gate is not running and the list is outer-only |
+> | 4 ⚠ THE HALF THE FINDING DID NOT MENTION | expand an actor that obviously has components (a Character) | **components listed** | this loop had never executed in production; `OwnedComponents` is a non-reflected TSet that was being read as an ArrayProperty |
+> | 5 | check a listed component's Outer | it is the actor it is listed under | the one-hop ownership test is what keeps shared objects (the world, another actor) out |
+> | 6 | on a big streamed map, set `limit` low | `actor_count` == limit, `actor_total` > it, `truncated` true | the count-past-the-cap path |
+
+⚠ **A benign over-report is EXPECTED, not a failure**: the list is derived from the Outer
+back-reference, so it can include an actor already destroyed but not yet garbage-collected, and it
+is **not** in the engine's array order.
+
+-----
+
+### ⬜ NEW 2026-08-17 — AA38: a GWorld must not be reported on a process with no object pool (build 3245)
+
+*Needs **no game** — the two reproducing samples are `python.exe` and a launcher shim, both already
+in the local log corpus. This is a first-tier check.*
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | inject into `python.exe` (or any small non-UE exe) and let the scan finish | `FindAll: Complete` shows `GObjects=0x0` **and** `GWorld=0x0` | before 3245 GWorld was published from an arbitrary loaded module on exactly this run |
+> | 2 | grep `scan-0.log` for `GObjects never validated this run` | the REFUSED line appears, naming the module | the refusal must state the UNANCHORED reason, not the older monolithic-build text, which asserts something this run has not established |
+> | 3 ⚠ NON-REGRESSION | re-scan a normal game that already resolves all three (DSClient / TQ2 / Elliot) | same winning pattern id and same method as its current `scan-0.log` | compare pattern id + method, **not** literal addresses — those are not stable across launches |
+> | 4 ⚠ NON-REGRESSION, the modular case | if a modular-build title is available (GNames in `CoreUObject.dll`, Satisfactory-shaped), re-scan it | GNames still resolves out of the DLL | `AnchorState::ForeignDll` must still accept; this is the case multi-module scanning exists for |
+> | 5 | clear the per-PE-hash hint cache entry for `python.exe` first | step 1's run does a cold scan | with a cached `GWLD_V3` hint the run can resolve MAIN-module and be accepted by design, which would not disprove anything |
+
+**Known residual, filed as AA39, not a failure here**: Pass 1 (main-module) is ungated. Injecting
+into a LARGE non-UE monolithic exe can still publish a main-module GWorld.
+
+-----
 
 ### ⬜ NEW 2026-08-17 — ST1: our own direct calls must stop entering our own PE detour (build 3205)
 
