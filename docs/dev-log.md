@@ -22,6 +22,57 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AA10: seven of eleven mailbox emitters had no idle guard at all (build 3206)
+
+**Audit #5 AA10 closed (MED→LOW).** The mailbox has two concurrency guards and they are mutually
+blind: `_ue5_invoke_busy` is the Lua helpers' own flag, and the GENERATED scripts write the mailbox
+directly and never touch it.
+
+**The re-derivation's own reachability argument was too pessimistic**, and correcting it is what made
+this shippable. It concluded the bug needs `processMessagesPaintOnly` to dispatch `WM_TIMER` —
+unknowable offline. But a re-entrancy-free branch exists that needs no pump at all: every wait arm
+bails on timeout while `cmd` is still non-zero and the DLL still owns the mailbox, so the next rescan
+tick (≤5 s away) or the next user-ticked guardless generator writes straight over a live command.
+That is AA19's shape, which this repo already rated MED and fixed.
+
+And the scale is worse than the headline: **7 of the 11** mailbox emitters had no idle wait at all —
+8 sites, counting Movement's two. The four that did have one are all helper-shaped
+(`return nil, reason`), so there was no toggle-shaped precedent to copy.
+
+**Two corrections to the prescribed fix, both load-bearing:**
+
+- **Placement.** "Before each status clear" is still *after* the operand writes — and those land in
+  the same mailbox, corrupting the in-flight command just as surely. It belongs above the FIRST
+  write, exactly where `AppendContractCheck` already sits for the identical reason.
+- **Shape.** A one-line `showMessage(...); if memrec then ... end; return` reads fine and **fails
+  `CeMailboxBailoutTests`**, which scans line-by-line for an untick FOLLOWING each message. The test
+  was right to reject it — the one-liner is also unreadable in CE's editor. Rather than hand-roll
+  eight copies (build 2743's three defects reached all seven copies of the mailbox wait exactly that
+  way), this adds the shared `CeLuaHygiene.AppendIdleWaitOrBail`.
+
+Lua side: `fetchInstancePage` now refuses a non-zero `cmd`, **placed before `_ue5_invoke_busy =
+true`**. After it, a return latches the flag for the session and abandons the freeze — a worse
+failure than the one being prevented.
+
+⛔ **Not taken:** emitting an `_ue5_invoke_busy` acquire/release into the generated scripts. Its only
+added coverage is the nested-re-entry window whose reachability is unsettleable offline, against a
+release that must fire on five wait arms plus every generator's own returns, where one miss latches
+a session-global.
+
+**Verified by parsing, not by asserting about text.** All **16** emitted `{$lua}` chunks across the
+8 guarded sites were dumped and loaded by a real Lua 5.4 — 0 rejected. The guard adds two `if/end`
+pairs and a `break` inside a while-loop to eight blocks at once, which is exactly the class of change
+text assertions cannot vet; the parser check was itself negative-controlled with a bare `break`
+outside a loop.
+
+Negative controls: disabling the refusal lets the rescan overwrite the live command (cmd 8→6,
+result -7→0); moving the guard after the flag set keeps **both** value assertions green while
+latching the flag and abandoning the freeze — which is precisely why the third assertion exists.
+
+3971 C# / 0 failed; freeze rig 55 checks / 0; dissect rig 50 / 0.
+
+-----
+
 ## 2026-08-17 - ST1: our own "direct" calls re-entered our own detour (build 3205)
 
 **Audit #5 ST1 (MED) closed**, and the AA10 / AA11 status conflict settled in the same pass.
