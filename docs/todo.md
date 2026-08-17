@@ -1746,7 +1746,31 @@ nearly became a filed defect. `shutil.copy2` preserves mtime, so the `$R…` ent
 **source's** timestamp, not the deletion time — filtering the Recycle Bin by "modified in the last
 30 minutes" hides it. Match on **size**, never on time.
 
-### 🔲 U3 + U17 — struct previews: dropped members, then wrong widths (builds 3169, 3171)
+### ✅ CLOSED 2026-08-17 `[GRP4-UI-2026-08-17]` — U3 + U17 — struct previews: dropped members, then wrong widths (builds 3169, 3171)
+
+**Verified on the vehicle this file already named, and it carries its own negative control.**
+DumperTest Development, dist 3262, Live Walker → `DumperTestActor_0` → `Map_IntToVec3f` (`0x518`).
+
+The map expands to three distinct entries, each rendering **all three components**:
+```
+[0] 1 → {X=6201, Y=6202, Z=…}      [1] 2 → {X=6211, Y=6212, …}      [2] 3 → {X=6221, Y=6222, …}
+```
+and drilling into `[0]` gives the whole struct with offsets, widths and addresses:
+```
+0x0  X  FloatProperty  6201   00C8C145   0x1B062E6A964
+0x4  Y  FloatProperty  6202   00D0C145   0x1B062E6A968
+0x8  Z  FloatProperty  6203   00D8C145   0x1B062E6A96C
+```
+
+* **U3 (dropped members) — fixed.** Three members, not one.
+* **U17 (wrong widths) — fixed.** Offsets `0x0/0x4/0x8` and addresses exactly 4 bytes apart, i.e.
+  read as `float`, and the hex round-trips (`6201.0f` = `0x45C1C800` → little-endian `00C8C145`).
+* ⭐ **The negative control is free and exact.** The old defect displayed `f:[6203.0000]` — a single
+  float, the **last** one, from skipping 8 bytes of a 12-byte struct. `6203` is precisely `Z` here, so
+  the broken rendering is the current output with `X` and `Y` deleted. Nothing else in the sample
+  makes the before/after that legible.
+
+### 🔲 U3 + U17 — original checklist (kept for the steps)
 
 *Needs a connected game. See dev-log builds 3169 and 3171. **The decode RULES are unit-pinned
 (35 assertions, four negative controls); the LOOKUP half is not** — resolving a `UScriptStruct*` and
