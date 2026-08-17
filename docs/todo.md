@@ -2897,7 +2897,35 @@ Needs any connected game with an `enum class : uint8` field (Property Search →
    must still map to `int32`. That is the no-regression half; 4 is the one width the old code was
    right about.
 
-### ⬜ NEW 2026-08-15 — freeze a byte-wide property and try to overflow it (audit #5 Y9, build 2895)
+### ✅ CLOSED 2026-08-17 `[Y9-UI-2026-08-17]` — freeze a byte-wide property and try to overflow it (audit #5 Y9, build 2895)
+
+**All five steps PASS** on DumperTest Development, dist 3262, using `U8_Max` (`ByteProperty`,
+`0x63A`), `F32` (`FloatProperty`, `0x650`) and `F64` (`DoubleProperty`, `0x658`).
+
+| step | evidence |
+|---|---|
+| 1 | Dialog opens headed `Type: ByteProperty -> uint8` with **`Freeze value (uint8):` pre-filled `255`** — the width is named in the label, not just enforced |
+| 2 | `9999` → inline error **`uint8 holds 0 to 255 — 9999 would be written as 15`**, verbatim, and the dialog **stays open**. (9999 mod 256 = 15, so the number in the message is the truth, not a placeholder) |
+| 3 | `200` → `✓ Holding DumperTestActor::U8_Max = 200 on 1 instance(s).` The ordinary path is intact |
+| 4 | **This is how 1–3 were run** — see the ⚠ below |
+| 5 | `1e300` on `F32` → **`Too large for a 4-byte float (max ±3.4028235E+38) — it would be written as infinity`**; the *same* value on `F64` → **accepted**, `✓ Holding DumperTestActor::F64 = 1E+300`. The narrowing check did not leak into the 8-byte path |
+
+⚠ **A precondition this checklist does not state, and it inverts steps 1–4.** The **Freeze button** is
+bound `IsEnabled="{Binding IsAobMakerAvailable}"`
+([PropertySearchPanel.axaml:294](../ui/UE5DumpUI/Views/PropertySearchPanel.axaml)), and the toolbar
+read `AOBMaker Offline`, so that button is greyed and **steps 1–3 cannot be run through it without
+the CE plugin installed** (GROUP 5). Everything above therefore went through **step 4's** route —
+row context → *Force field (hold across instances)* → *Force value…* — which opens the *same*
+`Freeze property value` dialog, exactly as step 4 says. So the dialog and its arithmetic are fully
+verified; what remains unexercised is only the **Lua-helper consumer** reached from the button.
+Rewrite the step order accordingly: Force first, button only once AOBMaker is up.
+
+*Incidental, both confirming Solide end to end:* the **`Forced fields:` strip** appears with
+`DumperTestActor U8_Max (1 held)` and a `Clear all` that empties it; and the float pre-fill is the
+generic `9999.0`, i.e. the 255 pre-fill is specific to byte-width targets rather than a blanket
+change.
+
+### ⬜ Original checklist (kept for the steps)
 
 The freeze / force value dialog now rejects values wider than the target property instead of letting
 them wrap. The arithmetic is measured against the writers' own masking in unit tests, **but nobody
