@@ -45,11 +45,32 @@ launched without a human, and what must never be started without one.
 increments `build_number.txt` on **every** invocation, not only `-Mode Publish`
 ([build.ps1:381](../build.ps1)).
 
-### The Start-menu entries, and why they were created before the session
+### The Start-menu entries — what grantability actually requires
 
-computer-use can only be granted apps that exist in the Start menu **when the MCP server starts**,
-so an entry created mid-session is useless until the next one. Nine of the sixteen installed UE
-titles had no entry, and neither did DumperTest.
+⚠ **"The app list is snapshotted at MCP-server startup" is REFUTED.** It was carried over from an
+earlier session as an inference and is wrong: all seven `.url` entries created *during* the
+2026-08-17 session resolved in that same session. **An entry created mid-session takes effect
+immediately — a new session is not needed.**
+
+What was measured, and what it implies:
+
+| Case | Registry-installed? | Start-menu entry? | `request_access` |
+|---|---|---|---|
+| The 7 new Steam titles (TQ2, Solarpunk, …) | yes (Steam writes one per app) | yes — created this session | ✅ resolves |
+| **Hollow Knight: Silksong** — the negative control, Steam-installed and never touched | yes | **no** | ❌ *"doesn't match any installed or running application"* |
+| **UE5DumpUI** — tried as `.lnk`, as `.url` with a `file:` URL, under its `ProductName`, and while **running** | **no** (a loose exe, no installer) | yes | ❌ all four |
+
+**Inferred mechanism (3 data points, not proof): a name resolves only when the app is a
+registry-installed application *and* a Start-menu entry supplies its display name.** Each alone is
+insufficient — Silksong has the first, UE5DumpUI the second, and both fail. Treat this as the working
+model; re-measure if it ever matters.
+
+**Consequence: `UE5DumpUI` and `DumperTest` cannot be granted as things stand**, because neither is
+installed in the registry sense. This costs nothing for Groups 0/1/2, which drive the DLL over the
+pipe and read logs — **no grant is involved at any point there**. It costs the *on-screen* work:
+Groups 3/4/5 and the two HUD reads (D2 樣本心跳, B8). Options, none taken yet: register them with a
+per-user `HKCU\…\Uninstall` entry (a registry write — ask first; fully reversible by deleting the
+key), or run those groups with the maintainer present.
 
 The two `DumperTest` entries point at the **inner** executable
 (`…\DumperTest\Binaries\Win64\DumperTest.exe` / `DumperTest-Win64-Shipping.exe`), **not** the
