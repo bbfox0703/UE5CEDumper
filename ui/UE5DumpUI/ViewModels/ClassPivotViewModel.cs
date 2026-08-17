@@ -662,6 +662,8 @@ public partial class ClassPivotViewModel : ViewModelBase
         int id = ++_fieldLoadId;
         if (SelectedSnapshot == null || SelectedClass == null)
         {
+            SelectedKeyField = null;   // detach selections before clearing bound lists
+            SelectedResult = null;
             Fields.Clear(); KeyFieldOptions.Clear(); Results.Clear();
             return;
         }
