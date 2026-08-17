@@ -2688,6 +2688,26 @@ each has a *visible* pass/fail, and four of them only ever show up when somethin
 > at the same region (`0x478…0x658`) instead of jumping to the top. Pressed the **▼ stepper** → it
 > scrolled to and selected `bFlagA` at `0x670`. Highlights, anchor and stepper all survive a refresh.
 >
+> **Dump Explorer cross-game identity gate — PASS, on the two DumperTest flavours.** §8 promoted this
+> row on the grounds that the gate compares main-module names and the two packages differ; that is
+> now confirmed end to end. Dumped from **Development** (`Export → Dump All Metadata`, 3,942 classes /
+> 10.5 MB, meta line records `module: "DumperTest.exe"`, `pe_hash 6A7EA60310F17000`), then the game
+> was swapped for **Shipping** (`UE504`, **24,445** objects vs Development's 25,179 — a genuinely
+> different binary) and the dump loaded:
+>
+> ```
+> UE 5.4 · DumperTest.exe · 3,942 classes · 68,637 props · 9,806 funcs · 2026-08-17T22:22:03Z
+> Live match refused: this dump is from DumperTest.exe, but the connected game is DumperTest-Win64-Shipping.exe.
+> ✅ In current game — (run Re-check live)        <- EMPTY
+> ⚠ Not checked yet — showing 2,000 of 82,385    <- everything
+> ```
+>
+> Three things make it a pass rather than a shrug: the refusal **names both modules**, the
+> *In current game* list is **empty** so nothing is falsely claimed present, and the 82,385 rows are
+> labelled **"Not checked yet"** rather than *"Not in current game"* — refusing to match is not the
+> same claim as absence, and the panel keeps them apart. `Re-check live` stays enabled as the
+> deliberate override.
+>
 > **AF4 — PASS, and this one has no unit test by design.** Live Walker on `DumperTestActor_0` →
 > switch to **Instances** → switch back. The object, the scroll region and the selection all survive.
 > Then the real check, chosen so a dead callback cannot hide: search `Text_` (**8 matches**, and the
