@@ -22,6 +22,88 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AA38 + F9 + A11: the three MED the morning's fixes created (builds 3245, 3247, 3253)
+
+**Audit #5 AA38, F9 and A11 closed.** All three were spawned by the session that cleared the
+original MED tier, and each was filed as "already re-derived and refute-passed". **A fresh
+re-derivation plus a three-lens adversarial pass found all three fix shapes defective** — every one
+would have produced a green commit with the defect intact. Two new rows filed: **A12** (the group
+half of A11) and **AA39** (the honest Pass-1 residual of AA38).
+
+### AA38 — an unanchored foreign-module candidate was published as a win (build 3245)
+
+On a process where GObjects never validated at all, the Pass-2 multi-module fallback published a
+GWorld out of an arbitrary loaded module. Seen on **both** corpus instances with `GObjects=0x0` —
+`python.exe` and `Solarpunk` — i.e. on processes with no UE world to find.
+
+**The filed fix was a measured no-op.** It prescribed tightening `ValidateGWorldBasic`'s
+`world == 0` arm when the module is foreign. That validator is `bool(uintptr_t)` — a bare address,
+no provenance — so the rule cannot live there without a hidden global; and on both repros the
+winning pattern has `gworldAllowNull == false`, so `TryResolveMatch` rejects null **before** the
+validator and the arm was never reached.
+
+The question is where the ADDRESS came from, which the Pass-2 loop already knows. So the rule moved
+there as a pure `constexpr Genau::AdmitMultiModuleCandidate(AnchorState, candIsMainExe,
+producesAnchor)`. **`AnchorState` is an enum rather than two booleans deliberately**: the two-bool
+shape has an unreachable combination whose parameter has to be documented *"meaningless here, pass
+false"* — the exact "zero must never silently mean nobody said" trap the fix cites as its own design
+principle. Three states, 12 legal rows, all asserted. `producesAnchor` threads through
+`ScanForTarget` with no default, so all five targets state it and a sixth fails to compile.
+
+`ValidateGWorldBasic` is untouched: `world == 0` is the only reason `GWLD_DI427_1/2` resolve at all.
+The blunter alternative — skip `FindGWorld` entirely when GObjects failed — covers more but is not
+strictly better: `ExtraScanGWorld` needs `Aura::GetCount() > 0`, so on a hard game it would delete
+the `&GWorld` slot *and* every path that could recover it.
+
+### F9 — walk_world enumerated a non-reflected field, twice over (build 3247)
+
+`ULevel::Actors` has no `UPROPERTY`, so walk_world's reflected lookup could never match:
+`actor_count: 0` on 2 of 2 games, always. **And the finding named only half of it.** The component
+lookup 45 lines below has the identical shape — `AActor::OwnedComponents` is a private
+`TSet<TObjectPtr<UActorComponent>>` with no `UPROPERTY`, asked for by name **and as an
+`ArrayProperty`**, then read with `ReadTArray`. It was invisible because the outer bug meant that
+loop had **never executed in production**; fixing only the actor half would have shipped a flat
+actor list with no components.
+
+Both halves are now derived structurally: actors = one GObjects pass for objects derived from AActor
+whose **Outer is the level**; components = outgoing object-pointer edges deriving from
+`ActorComponent` whose Outer is the actor. No offset detection, no latch, no constant — so all three
+traps the finding warned about are structurally unreachable, and the expensive native-detector
+option is rejected on the record.
+
+Rather than copy a 70-line pool walk, `FindInstancesDerivedFrom` gained `outerFilter` + `totalOut`;
+it already read and returned the Outer. The outer read is hoisted above the class read, so the
+expensive half is paid only by the surviving minority of the pool. `truncated` now has one source
+instead of two computed by different paths, and a cancelled pass reports `actor_total = -1` rather
+than `0`.
+
+### A11 — container-element candidates were refined at a stale address (build 3253)
+
+**Three of the filed premises were wrong.** It was filed as deep/TSet-specific and A4-caused; it is
+neither — the direct static path has emitted address-pinned TSet/TMap element candidates since
+**V1a, build 927**, and a comment predating A4 says so. Its stated mechanism (rehash relocates
+elements) is false in the engine source: `Rehash()` rebuilds the bucket table and relocates nothing.
+And the half it dismissed — *"for TArray that is mostly fine"* — is where the real damage is:
+`RemoveAtImpl` relocates the tail **in place**, so the pinned address stays mapped and returns the
+**neighbour's value**. A sparse slot is likewise **reused** by the next Add. The three "stale = drop"
+comments documented the benign outcome, which is why this went unnoticed for months.
+
+Its prescribed fix would have fixed nothing (both producers end at the same `cand.addr = valueAddr`)
+and would have required reverting A4's predicate to adopt.
+
+Fixed with a pure `Radar::RefineContainerAnchor`. **The rule is index-aware, and that is the whole
+design**: the obvious `{dataPtr, count}` stamp is a regression, because appending into slack
+relocates nothing and every existing candidate is correct today. A buffer that moved is now
+**repointed and kept** — those candidates were lost outright before. A freed sparse slot is caught
+by its own allocation bit, the only exact witness when the address is byte-identical.
+
+15 assertions and **two** negative controls: one deletes the alloc-bit arm, the other substitutes
+the *plausible* rule and confirms the non-regression assertions fail.
+
+**Totals:** 1369 C++ / 4016 .NET assertions, 0 failed. Live checks owed on all three.
+
+-----
+
 ## 2026-08-17 - F8 + F2: ok_via_level had never fired, and a dropped lane latched the cancel forever (builds 3220, 3221)
 
 **Audit #5 F8 (site 2 of 2) and F2 (MED) closed** — the last two of the original MED tier. F8's
