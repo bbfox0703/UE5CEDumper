@@ -1443,6 +1443,27 @@ reports them identical. Nothing has desynced.)*
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### 🔲 A3 — one FVector per class was ever indexed (build 3168)
+
+*Needs a connected game. See dev-log build 3168. **The guard's CONTRACT is unit-pinned
+(`Test_Aura_StructPathGuard`, negative control 7 red); the WALK THAT USES IT is not** — no test target
+compiles `Aura.cpp`, so `expandFields` calling the guard has never run against a real class.*
+
+> **Why this is cheap: the before/after is a single scan and the expected delta is huge.** The guard
+> was whole-walk instead of path-scoped, so only the FIRST field of a given `UScriptStruct` type in a
+> class contributed leaves — `Location` was indexed, `Velocity` / `Scale3D` / `Extent` never were,
+> subtree and all, across unrelated branches.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | Value Search, **Float** (or NumericAll), any value, on a class with a pawn/actor | rows whose field name ends in `.Velocity` / `.Scale3D`, not only `.Location` | before 3168 exactly one FVector per class could appear; this is the whole defect |
+> | 2 ⚠ control | the same scan with data type **FVector** | unchanged vs before 3168 | `acceptedStructNames` is non-empty for vector scans, so the recursion is skipped and the guard never fired there — **if this changed, the fix reached somewhere it should not** |
+> | 3 | Group Scan or Property Search **Deep** for the same field | already found it before 3168 too | those walkers were always path-scoped; confirms the asymmetry that made this diagnosable |
+> | 4 | grep `scan-*.log` for `hit the 4000 scan-field cap` | absent on ordinary classes | the new cap is meant to be unreachable in practice; if it fires routinely the value is wrong |
+>
+> ⚠ **Do not verify with an FVector scan.** It is the one data type the defect never touched, so a
+> green FVector run proves nothing — that is what step 2 is for, as a control rather than as evidence.
+
 ### ✅ CLOSED 2026-08-16 `[ELLIOT-PIPE-2026-08-16]` — AB4: the Aura half of the ordered-predicate width fix
 
 *Needs a connected game. See dev-log build 3133. **The Radar half is unit-pinned (16 new assertions,

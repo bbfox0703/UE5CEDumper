@@ -22,6 +22,64 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - A3: Value Search indexed ONE FVector per class, ever (build 3168)
+
+**A cycle guard that answered the wrong question.** `ScanForValue`'s per-class index builder
+(`expandFields`, [Aura.cpp:6411](../dll/src/Aura.cpp)) threaded a single `unordered_set` through the
+whole struct walk with `visited.insert(structAddr)` and **no matching erase anywhere**. One set per
+`buildClassIndex` call, by reference, for the entire tree — so it answered *"have I ever seen this
+`UScriptStruct` in this class?"* when the only safe question is *"am I currently inside it?"*.
+
+Consequence: only the **first** field of a given struct type in a class contributed leaves, and every
+later one was dropped **subtree and all**. And the loss is **cross-branch**, not "sibling fields of a
+repeated struct" — once `Vector` had been entered anywhere, every other `FVector` in that class at any
+depth was skipped. An ordinary actor indexed `Location` but never `Velocity`, `Scale3D` or `Extent`;
+inside a single `FTransform`, `Translation` blocked `Scale3D`. Value Search then reported no match for
+a field that was sitting right there.
+
+**The filed framing ("hits GAS") was the wrong headline** and would have scoped the fix. The dominant
+real-world hit is `FVector`/`FRotator` repeats on ordinary actors under Float / Double / NumericAll —
+this tool's most common query. GAS is one instance, not the scope. Conversely **vector-typed scans are
+unaffected**: `Radar::VectorStructNames` is non-empty there, so the `acceptedStructNames.empty()` gate
+skips the recursion and the guard never fires — a verification run using an FVector scan would have
+shown nothing wrong.
+
+**Why it never looked broken:** `git log -L` puts the guard in `da9865dd`, *"recurse StructProperty so
+GAS / nested-struct leafs are reachable (build 740)"* — the commit that added nested-struct support
+shipped with the bug that half-defeats it. `Health` was found; only its siblings were missing.
+
+- **`Aura::StructPathGuard`** (new, header-inline in [Aura.h](../dll/src/Aura.h)) — RAII, scoped to the
+  active path. RAII rather than a bare `erase`, because the lambda has many early exits and the first
+  one anybody forgets silently restores the bug.
+- **`kMaxScanFieldsPerClass = 4000`** — path-scoping deliberately removes the accidental bound the
+  whole-walk set was providing, leaving only `depth <= 4` on a tree whose fan-out is
+  (fields per struct)^4. Mirrors `kMaxSchemaLeavesPerClass`, which its sibling pairs with the same
+  path-scoped guard for exactly this reason. **The one-line fix as filed would have removed a bound
+  without adding one.**
+- **The cap logs when it bites.** A missing leaf is indistinguishable from a value that is not there —
+  which is precisely how this stayed invisible for ~2400 builds.
+
+**Two walkers already had it right**, which is the observable tell: `CollectSchemaLeaves`
+(Property Search Deep, erases at `Aura.cpp:4251` under a comment that states the intent verbatim) and
+`CollectGroupLeaves` (Group Scan, push/pop at 8114/8150). So Group Scan and Property-Search-Deep found
+`MaxHealth` while single-value Value Search did not — **a distinct in-the-scanner cause for the
+"Value Search can't find field X" family in [working-lessons.md](working-lessons.md) §5, separate from
+AB4.**
+
+**Verification.** No target compiles `Aura.cpp`, so the semantics were moved into a header-inline type
+and pinned in `dll_helpers_test` (which already includes `Aura.h`): 246 + 1221 C++ assertions and 3921
+C# tests green. Negative control — the guard's destructor emptied to reproduce the whole-walk
+behaviour — produced **7 failures including both A3-labelled sibling assertions**, then green again on
+restore. The test's third case is itself a control in the opposite direction: re-entry *along the
+active path* must still be **refused**, or "siblings work" would be passing for the wrong reason and a
+self-referential `USTRUCT` would recurse until the stack died.
+
+⚠ **Still needs a live check.** The unit test pins the guard's contract, not the walk that uses it.
+The in-game confirmation is cheap and specific: a Float scan on an actor class should now index
+`Velocity` / `Scale3D`, not just `Location`.
+
+-----
+
 ## 2026-08-17 - AF3: the Live Funcs panel was silent about a cap that removes its own target (build 3167)
 
 **The cap keeps the highest counts; this panel exists to find a low one.** `pe_profile_get` sorts the

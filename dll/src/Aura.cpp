@@ -6404,10 +6404,20 @@ ValueScanResult ScanForValue(
     //   - kMaxDepth = 4. Real UE structs rarely nest beyond 2-3 levels;
     //     beyond 4 we're either in a recursive type loop or pathological
     //     data. The cap bounds worst-case CPU per class.
-    //   - visited set per call protects against accidental cycles
-    //     (FStructProperty's Struct pointer pointing to a struct that
-    //     transitively re-references itself, e.g. linked-list nodes
-    //     declared as USTRUCT with a self-typed StructProperty).
+    //   - the guard set is scoped to the ACTIVE PATH (Aura::StructPathGuard),
+    //     so a self-referential struct still terminates while two sibling
+    //     fields of the SAME struct type are both expanded. It used to be a
+    //     whole-walk set with no erase, which silently meant "only the first
+    //     FVector in a class is ever indexed" — Location found, Velocity /
+    //     Scale3D / Extent not, subtree and all (audit A3). The two walkers
+    //     that got this right are CollectSchemaLeaves and CollectGroupLeaves.
+    //   - kMaxScanFieldsPerClass, because path-scoping deliberately removes the
+    //     accidental bound the whole-walk set was providing. Without it the only
+    //     limit left is depth<=4 on a tree whose fan-out is (fields per struct)^4.
+    //     Mirrors kMaxSchemaLeavesPerClass, which its sibling pairs with the same
+    //     path-scoped guard for exactly this reason.
+    constexpr size_t kMaxScanFieldsPerClass = 4000;
+    bool fieldCapHit = false;
     auto expandFields = [&](auto& self,
                             uintptr_t structAddr,
                             int32_t   baseOffset,
@@ -6417,7 +6427,11 @@ ValueScanResult ScanForValue(
                             int depth) -> void {
         constexpr int kMaxDepth = 4;
         if (depth > kMaxDepth) return;
-        if (!visited.insert(structAddr).second) return;  // cycle
+        if (out.size() >= kMaxScanFieldsPerClass) { fieldCapHit = true; return; }
+        // Cycle guard along the CURRENT path only — RAII so every early return
+        // below unwinds it. A plain insert-without-erase is the A3 defect.
+        Aura::StructPathGuard pathGuard(visited, structAddr);
+        if (!pathGuard.Entered()) return;  // already on this path: real cycle
 
         // Use WalkClassEx at every depth so BoolProperty FieldMask is
         // populated for nested bitfield bools (WalkClass alone covers it
@@ -6426,6 +6440,7 @@ ValueScanResult ScanForValue(
         // are cheap relative to the GObjects walk itself.
         const ClassInfo& ci = Ubel::WalkClassEx(structAddr);
         for (const auto& f : ci.Fields) {
+            if (out.size() >= kMaxScanFieldsPerClass) { fieldCapHit = true; break; }
             // Leaf-type match: emit a ScanField at the cumulative offset.
             bool accepted = false;
             for (const auto& t : acceptedTypes) {
@@ -6732,8 +6747,17 @@ ValueScanResult ScanForValue(
         sci.noiseClass = preFilterNoise && IsSnapshotNoiseClass(classAddr, ci.FullPath);
 
         std::unordered_set<uintptr_t> visited;
+        fieldCapHit = false;
         expandFields(expandFields, classAddr, /*baseOffset=*/0,
                      /*namePrefix=*/"", sci.fields, visited, /*depth=*/0);
+        // Never truncate silently. A missing leaf is indistinguishable from a
+        // value that is not there, which is precisely how A3 stayed invisible
+        // for ~2400 builds — the scan simply reported no match.
+        if (fieldCapHit) {
+            LOG_WARN("ScanForValue: class '%s' hit the %zu scan-field cap — "
+                     "deeper struct leaves were NOT indexed for this scan",
+                     sci.className.c_str(), kMaxScanFieldsPerClass);
+        }
 
         // Precompute the per-object batch-read span over DIRECT fixed-width
         // leaf fields (container == None). Each such field reads at most 16B

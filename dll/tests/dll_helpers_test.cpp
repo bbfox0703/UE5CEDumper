@@ -4694,6 +4694,82 @@ static void Test_Macht_ParsePattern_Nibble() {
 //
 // The picker is reader-templated exactly so it can be tested here with no game.
 // ============================================================
+// ================================================================
+// Aura::StructPathGuard — audit A3
+//
+// ScanForValue's index builder threaded ONE unordered_set through the whole
+// per-class struct walk and never erased. That silently turned the cycle guard
+// into a global dedupe: only the FIRST field of a given UScriptStruct type in a
+// class contributed leaves, and every later one was dropped subtree and all,
+// ACROSS UNRELATED BRANCHES. An ordinary actor indexed `Location` but never
+// `Velocity` / `Scale3D` / `Extent`; inside one FTransform, `Translation`
+// blocked `Scale3D`. Value Search then reported "no match" for a field that was
+// right there — and Group Scan / Property-Search-Deep, which scope to the path,
+// found it, which is the observable tell.
+//
+// No target compiles Aura.cpp, so the semantics live in a header-inline RAII
+// type and are pinned here. The two cases below are the entire contract, and
+// they pull in opposite directions: a *sibling* re-entry MUST be allowed, a
+// re-entry *along the active path* MUST NOT.
+// ================================================================
+static void Test_Aura_StructPathGuard() {
+    std::printf("Test_Aura_StructPathGuard\n");
+
+    const uintptr_t kVector    = 0x1000;   // pretend UScriptStruct addresses
+    const uintptr_t kTransform = 0x2000;
+
+    std::unordered_set<uintptr_t> path;
+
+    // --- 1. SIBLINGS: the same struct type twice, sequentially. Both must enter.
+    //     This is the A3 defect: with a whole-walk set the second one is refused.
+    {
+        Aura::StructPathGuard g1(path, kVector);
+        EXPECT("first FVector enters", g1.Entered());
+    }
+    EXPECT("path empty after scope exit", path.empty());
+    {
+        Aura::StructPathGuard g2(path, kVector);
+        EXPECT("SIBLING FVector also enters (A3)", g2.Entered());
+    }
+
+    // --- 2. NESTED, DIFFERENT TYPES: FTransform { FVector Translation, ... }.
+    //     The inner FVector must enter, and on leaving it the *sibling*
+    //     FVector Scale3D must still be able to enter while FTransform is held.
+    {
+        Aura::StructPathGuard t(path, kTransform);
+        EXPECT("FTransform enters", t.Entered());
+        {
+            Aura::StructPathGuard v1(path, kVector);
+            EXPECT("Translation enters inside FTransform", v1.Entered());
+        }
+        {
+            Aura::StructPathGuard v2(path, kVector);
+            EXPECT("Scale3D enters inside the SAME FTransform (A3)", v2.Entered());
+        }
+        EXPECT("FTransform still held while siblings come and go",
+               path.count(kTransform) == 1);
+    }
+    EXPECT("path empty after FTransform scope", path.empty());
+
+    // --- 3. TRUE CYCLE: re-entering a struct already ON the path is refused.
+    //     Negative control for case 1 — if the guard allowed this, a
+    //     self-referential USTRUCT would recurse until the stack died, and
+    //     "siblings work" would be passing for the wrong reason.
+    {
+        Aura::StructPathGuard outer(path, kVector);
+        EXPECT("outer FVector enters", outer.Entered());
+        {
+            Aura::StructPathGuard inner(path, kVector);
+            EXPECT("re-entry ALONG THE PATH is refused", !inner.Entered());
+        }
+        // The refused guard must not have erased the outer one's entry on
+        // destruction — that would reopen the cycle one level up.
+        EXPECT("refused guard did not release the outer entry",
+               path.count(kVector) == 1);
+    }
+    EXPECT("path empty at the end", path.empty());
+}
+
 static void Test_FFieldClassName_Probe() {
     std::printf("\n[DynOff::PickFFieldClassNameOffset]\n");
 
@@ -4940,6 +5016,9 @@ int main() {
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
     RUN(Test_FFieldClassName_Probe);
+
+    // Aura — the struct-walk cycle guard is scoped to the PATH, not the whole walk
+    RUN(Test_Aura_StructPathGuard);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

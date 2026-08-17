@@ -1497,4 +1497,47 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
                                          bool skipNoiseClasses = false,
                                          NumericFamily family = NumericFamily::Any);
 
+// === Path-scoped cycle guard (audit A3, build 3168) ===
+//
+// A recursive struct walk needs to refuse to re-enter a UScriptStruct it is
+// ALREADY INSIDE (FFoo holding a TArray<FFoo> would recurse forever). It must
+// NOT refuse a struct type it merely visited EARLIER on a different branch —
+// those are sibling fields and both are real.
+//
+// The distinction is the whole of A3. `ScanForValue`'s index builder threaded
+// one `unordered_set` through the entire per-class walk and never erased, which
+// turns "am I inside this?" into "have I ever seen this?" — so only the FIRST
+// field of a given struct type in a class contributed leaves, and every later
+// one was dropped SUBTREE AND ALL, across unrelated branches. An ordinary actor
+// yielded `Location` but never `Velocity`/`Scale3D`/`Extent`; inside a single
+// FTransform, `Translation` blocked `Scale3D`. Silent, and total for the session.
+//
+// The two walkers that got it right (`CollectSchemaLeaves` — Property Search
+// Deep — and `CollectGroupLeaves` — Group Scan) both scope to the active path,
+// which is why those surfaces find `MaxHealth` while single-value Value Search
+// did not. That asymmetry is a distinct in-the-scanner cause for the
+// "Value Search can't find field X" family in working-lessons §5.
+//
+// RAII because the fix is otherwise one `erase` per `return` in a lambda with
+// many early exits, and the first one anybody forgets silently restores the bug.
+// Header-inline and dependency-free so `dll_helpers_test` can compile it — no
+// test target builds Aura.cpp, so this is the only way to pin the semantics.
+class StructPathGuard {
+public:
+    StructPathGuard(std::unordered_set<uintptr_t>& path, uintptr_t node)
+        : path_(path), node_(node), entered_(path.insert(node).second) {}
+    ~StructPathGuard() { if (entered_) path_.erase(node_); }
+
+    StructPathGuard(const StructPathGuard&)            = delete;
+    StructPathGuard& operator=(const StructPathGuard&) = delete;
+
+    /// False when `node` is already on the active path — the caller must return.
+    bool Entered() const { return entered_; }
+
+private:
+    std::unordered_set<uintptr_t>& path_;
+    uintptr_t                      node_;
+    bool                           entered_;
+};
+
 } // namespace Aura
