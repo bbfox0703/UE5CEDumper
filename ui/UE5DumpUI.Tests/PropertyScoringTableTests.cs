@@ -1,3 +1,4 @@
+using System.Linq;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -462,4 +463,130 @@ public class PropertyScoringTableTests
         };
         Assert.Equal(2, PropertyScoringTable.ComputeStatPairBonuses(matches).Count);
     }
+
+    // ==================================================================
+    // Audit #5 Z3 — the fetch vocabulary (SeedQueries) and the score
+    // vocabulary (the *Keywords tables) must agree.
+    //
+    // A property is only ever scored if round 1 fetched it, and round 1
+    // fetches on SeedQueries alone. So a scored keyword that no seed can
+    // reach is a dead scoring arm — the panel can never show the field
+    // however well it would rank. 58 of 123 keywords were in that state.
+    //
+    // The drift was procedural: the "Add a keyword" recipe at the top of
+    // PropertyScoringTable never mentions SeedQueries, which sits 460 lines
+    // below it. These tests make it structural instead.
+    // ==================================================================
+
+    /// <summary>Every scored keyword must be reachable by some seed, or be
+    /// listed in the measured exclusion set with it. No third option — that
+    /// is the whole point.</summary>
+    [Fact]
+    public void EveryScoredKeyword_IsEitherSeeded_OrDeliberatelyExcluded()
+    {
+        var seeds = PropertyScoringTable.SeedQueries
+            .Select(s => s.ToLowerInvariant()).ToArray();
+        var excluded = new HashSet<string>(
+            PropertyScoringTable.DeliberatelyUnseededKeywords,
+            StringComparer.OrdinalIgnoreCase);
+
+        var orphans = new List<string>();
+        foreach (var (table, keywords) in AllKeywordTables())
+        {
+            foreach (var kw in keywords)
+            {
+                if (excluded.Contains(kw)) continue;
+                // The DLL matches a seed as a case-insensitive substring of the
+                // property NAME, so a keyword is reachable exactly when some
+                // seed is a substring of it: then every name containing the
+                // keyword also contains that seed.
+                var lower = kw.ToLowerInvariant();
+                if (!seeds.Any(seed => lower.Contains(seed)))
+                    orphans.Add($"{table}.{kw}");
+            }
+        }
+
+        Assert.True(orphans.Count == 0,
+            "These scored keywords can never be fetched, so their scoring arms are dead. " +
+            "Add a seed that is a substring of each, or — if the seed would be a short " +
+            "acronym whose substring matches are mostly unrelated words — add it to " +
+            "PropertyScoringTable.DeliberatelyUnseededKeywords WITH the measurement: " +
+            string.Join("; ", orphans));
+    }
+
+    /// <summary>The exclusion list is a claim about scored keywords, so every
+    /// entry must actually be one. Otherwise it becomes a junk drawer that
+    /// silently suppresses the check above.</summary>
+    [Fact]
+    public void DeliberatelyUnseededKeywords_AreAllRealScoredKeywords()
+    {
+        var scored = new HashSet<string>(
+            AllKeywordTables().SelectMany(t => t.Keywords),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var kw in PropertyScoringTable.DeliberatelyUnseededKeywords)
+        {
+            Assert.True(scored.Contains(kw),
+                $"'{kw}' is excluded from seeding but is not a scored keyword — " +
+                "the exclusion list must not accumulate entries the check never asks about.");
+        }
+    }
+
+    /// <summary>An excluded keyword must be genuinely unreachable. If some seed
+    /// already reaches it, the exclusion is a lie and hides a working path.</summary>
+    [Fact]
+    public void DeliberatelyUnseededKeywords_AreNotAlreadyReachable()
+    {
+        var seeds = PropertyScoringTable.SeedQueries
+            .Select(s => s.ToLowerInvariant()).ToArray();
+
+        foreach (var kw in PropertyScoringTable.DeliberatelyUnseededKeywords)
+        {
+            var lower = kw.ToLowerInvariant();
+            var hit = seeds.FirstOrDefault(seed => lower.Contains(seed));
+            Assert.True(hit == null,
+                $"'{kw}' is listed as deliberately unseeded, but seed '{hit}' already " +
+                "reaches it — remove it from the exclusion list.");
+        }
+    }
+
+    /// <summary>
+    /// Exact duplicates only.
+    ///
+    /// ⚠ Do NOT extend this to reject a seed that is a substring of another
+    /// seed. It looks redundant and is not: each query carries its OWN 200-row
+    /// envelope, so a narrower seed is a *reservation* for that family. "Timer"
+    /// alongside "Time" guarantees 200 timer-specific rows that "Time" — which
+    /// caps routinely on any real game — would otherwise fill with Lifetime /
+    /// TimeStamp / CastTime before ever reaching them. The same holds for
+    /// "Damaged" beside "Damage" and "TimeDilation" beside "Time".
+    ///
+    /// This is recorded because the check WAS written that way first and flagged
+    /// all three as waste; acting on it would have deleted three working
+    /// reservations to save work that the cap makes nearly free anyway (the
+    /// inner loop tests the cap before the substring search).
+    /// </summary>
+    [Fact]
+    public void SeedQueries_ContainNoExactDuplicates()
+    {
+        var dupes = PropertyScoringTable.SeedQueries
+            .GroupBy(s => s, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+
+        Assert.True(dupes.Count == 0,
+            "A duplicate seed issues the same query twice and halves that family's "
+            + "effective row budget: " + string.Join(", ", dupes));
+    }
+
+    private static (string Table, string[] Keywords)[] AllKeywordTables() => new[]
+    {
+        ("Stats",     PropertyScoringTable.StatsKeywords),
+        ("Combat",    PropertyScoringTable.CombatKeywords),
+        ("Resources", PropertyScoringTable.ResourcesKeywords),
+        ("Movement",  PropertyScoringTable.MovementKeywords),
+        ("Utility",   PropertyScoringTable.UtilityKeywords),
+        ("Timing",    PropertyScoringTable.TimingKeywords),
+    };
 }

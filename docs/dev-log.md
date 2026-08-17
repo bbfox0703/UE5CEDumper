@@ -22,6 +22,60 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - Z3: half the property scorer's vocabulary could never be fetched (build 3190)
+
+**Audit #5 Z3 (MED) closed.** Interesting Properties (and Detect Player Stats) fetch on
+`SeedQueries` and score on the six `*Keywords` tables. A property is only scored if it was fetched,
+so a scored keyword no seed can reach is a **dead scoring arm** — the panel cannot show the field
+however well it would rank. The finding named one case (`CurrentMP`). The real figure, measured
+twice independently and agreeing exactly, is **58 of 123 keywords (47%)**, with Resources (20/29)
+and Utility (10/15) hit far harder than the Stats example that was filed.
+
+**Two filed premises were wrong**, both in the direction of over-claiming: `Duration` *is* seeded,
+so 5 of the 6 build-678 Combat additions are affected rather than all six; and the table's "14/15
+games" annotation covers only `Effect`/`Target` — `Ability`/`Modifier` are marked 7/15.
+
+**The filed fix would have made its own flagship case worse, and this is the part worth keeping.**
+"Cost of the fix is near zero — the DLL walks GObjects once" measures the wrong resource. CPU
+genuinely is near-free (single walk, hoisted `ToLower`, and the per-query cap is tested *before* the
+substring search, so a filled seed costs an integer compare). The scarce resource is the
+**per-query 200-row envelope**, filled in GObjects walk order, first come first served. Measured
+offline over **578,809 distinct identifiers from three shipped games** (DWORIGINS / ES2 /
+CrimsonDesert — the `D:\UE_Analyze_data` PE corpus, no game running): a bare `"MP"` seed matches
+**10,180** names of which **6%** carry `mp` as an actual token. It would spend its whole envelope on
+`Component` / `Compression` / `Template`, never reach `CurrentMP`, and convert a bucket that returns
+nothing today into 200 junk rows that also pollute the class histogram and permanently inflate the
+"N of M keywords STOPPED at the 200-row cap" strip until that warning means nothing.
+
+**Volume is not the test — precision is.** `Item` (3,050 matches) and `Velocity` (665) also blow
+past the cap, but at 98% and 99% genuine the 200 rows they return are the right rows. Shipped 40
+measured-safe seeds (58 → **8** unreachable) and recorded the 8 refusals — `MP`, `SP`, `XP`, `Exp`,
+`Lv`, `Def`, `Load`, `Run` — in `DeliberatelyUnseededKeywords` **with their measurements**, so the
+obvious-looking completion cannot be re-attempted blind. The honest repair for those is a
+whole-token match on the DLL side (the client scorer already tokenises), not a broader substring.
+
+**The drift was procedural, so the fix is structural.** The "Add a keyword" recipe at the top of
+`PropertyScoringTable` lists three steps and never mentions `SeedQueries`, 460 lines below it in the
+same file — that is how 47% of the vocabulary went dark without anyone doing anything wrong. Three
+tests now assert the two vocabularies agree, that every exclusion is a real scored keyword, and that
+no exclusion is already reachable.
+
+**A test was deleted for being wrong in the dangerous direction.** The first version also asserted
+"no seed is a substring of another seed", and it flagged `Timer`, `TimeDilation` and `Damaged` as
+redundant with `Time`/`Damage`. That reads as obvious waste and is the opposite: each query owns its
+OWN envelope, so a narrower seed is a **reservation** — `Time` caps routinely on any real game and
+would fill with `Lifetime`/`TimeStamp`/`CastTime` long before reaching timer fields. Acting on the
+check would have deleted three working paths to save work the cap already makes free. The reasoning
+is now a do-not-re-add comment on the surviving exact-duplicate check. (§2.2 again: a guard you add
+is code, and negative-controlling it is what exposed this — it failed on first run and the failure
+was correct about two of its three claims and wrong about the conclusion.)
+
+Negative controls: dropping the `Regen` seed re-orphans exactly `Stats.Regen` + `Stats.Regenerate`;
+the reachability test also failed on first run with three real gaps (`Supplies`, `TickRate`,
+`Cadence`) that the seed list had missed. 3935 passed / 0 failed.
+
+-----
+
 ## 2026-08-17 - Z1: Interesting Functions looked finished 2 s before it was (build 3189)
 
 **Audit #5 Z1 (MED) closed.** The Gameplay-Actions opt-in could latch ON while the grid stayed
