@@ -3291,6 +3291,27 @@ and `Health.CurrentValue` falling, so the values genuinely change.
 > 27 instrs / 0 mapped      9 instrs / 1 mapped props   <- the one that resolved
 > ```
 >
+> ### ✅ RE-CONFIRMED ON BUILD 3262 `[Z1-PIPE-2026-08-17]` — 497 analyses instead of 8
+>
+> Same sample, driven over the pipe instead of the UI, and at ~60× the volume: `walk_function_props`
+> over every `UFunction` `find_instances` would return. **497 functions took the `disasm` path**
+> (3 returned `none`, 0 took `bytecode`), `instrs` ran **min 7 / median 32 / max 98** — nowhere near
+> zero — **zero decode errors**, and **8 functions mapped ≥1 property** (6×1, 1×2, 1×3).
+>
+> The mappings are *semantically* right, which is stronger than the bare N≥1 the criterion asks for:
+> `GetPlaneConstraintNormal` → `PlaneConstraintNormal`, `GetPlaneConstraintOrigin` →
+> `PlaneConstraintOrigin`, `IsActive` → `bAutoActivate`. A getter resolving to its own backing field
+> is not something a mis-decoded `[this+off]` produces by chance.
+>
+> ⚠ **Two things worth knowing before re-running this.** (1) **`find_property_xrefs` does NOT
+> exercise Path 2** — it is the bytecode path, and on this sample it reports
+> `0 xrefs (scanned 9807 functions, 6 with script)` without emitting a single
+> `AnalyzeNativeFunctionProps` line. Path 2 only runs via `walk_function_props` on a **script-less**
+> UFunction. The checklist's "⇊ Funcs" step conflates them; they are separate commands.
+> (2) `find_instances` capped at **500 with `truncated: true`**, so this is a SAMPLE of the UFunction
+> pool. That is fine for an existence claim (N≥1 mapped) and would **not** have been fine for an
+> absence claim.
+>
 > Against the criteria below: **zero decode errors** anywhere in the log folder, **at least one
 > function with non-zero `mapped props`**, and `instrs` nowhere near 0. Path 1 ran too —
 > `FindPropertyXrefs: 0 xrefs (scanned 9807 functions, 6 with script, 51ms)` — and 0 is expected on

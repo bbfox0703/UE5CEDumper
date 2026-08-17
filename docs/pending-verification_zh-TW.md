@@ -249,16 +249,6 @@
 | 3 | 展開該列按 All fields，再按一次收合 | 列出該 slot 保留的所有 leaf，且物件自己的欄位排在最前面（FrozenInt 不必往下捲）；第二次按會收合，重開會重新查詢<br>⚠ 某個值「沒出現在列上」不代表沒 match — 先看 (+N) 與 All fields 再下結論 |
 | 4 | 對 All fields 裡任一 leaf 依序按 Live / Addr / Pivot / Locate | 四個都能正常跳轉；deep 或 Snapshot 來源的列若取不到 leaf 位址則整個省略 → 0x… 箭頭，而不是印 → 0x0 或物件 base |
 
-### ⬜ Z1 —— zydis 升版後 Path-2 仍能解出 [this+off]
-
-*build 2794 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 注入任一 UE 遊戲，Property Search 找一個 native getter/setter 欄位（例：CharacterMovementComponent 的 JumpZVelocity），按 ⇊ Funcs | grep ui-pipe-0.log 的 find_property_xrefs 有紀錄，代表指令確實送出<br>⚠ 先確認指令送出，再判讀 offsets log；否則空 grep 會被誤判為失敗 |
-| 2 | 等 offsets-0.log 檔案大小不再增長後，grep AnalyzeNativeFunctionProps | 每筆的 I instrs 是合理函式長度（不趨近 0）；至少一筆 -> N mapped props 的 N ≥ 1；整個 log 資料夾無 decode error<br>⚠ 點完 20 秒就 grep 會撈不到（DLL 尚未 flush） |
-| 3 | grep FindPropertyXrefs | 有輸出行即可；在幾乎沒有 Blueprint script 的樣本上 0 xrefs 屬正常，不算失敗 |
-
 ### ⬜ B10 —— WalkClassEx memo 的耗時與欄位正確性
 
 *優先度 **中***
