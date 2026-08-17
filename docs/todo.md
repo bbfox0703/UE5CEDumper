@@ -1443,6 +1443,30 @@ reports them identical. Nothing has desynced.)*
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### ⬜ NEW 2026-08-17 — AD4: the God Mode badge must now name WHY, not just on/off (build 3203)
+
+*Needs a connected game with a pawn. See dev-log build 3203. **The badge MAP is unit-pinned (11
+tests, two negative controls); what is not pinned is that the DLL actually reports the three fields
+honestly on a real pawn** — `Solitar.cpp` is compiled by no test target.*
+
+> **Read this first, because one cell is expected to be WRONG on some games and that is not a
+> regression.** `Solitar::GetState`'s `live` falls back to the *desired* value when the T2 scan
+> matched no canonical `bCanBeDamaged`, while `GetGodMode` returns `PR_ERR_REFLECT` for the same
+> pawn. That mismatch is **deliberately out of scope** for build 3203 (live-only, needs
+> `Solitar.cpp`). If step 4 shows "ON" where you expected "ON (pending)", that is this known gap —
+> file it against Solitar, not against the badge map.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | connect with the game at a menu / no pawn, press ↻ | `Unknown` | baseline: nothing wanted, nothing readable |
+> | 2 | still pawn-less, Force ON | **`ON (pending)`**, not `Unknown` | the toggle path — before 3203 this reported Unknown and looked like a failure |
+> | 3 | enter gameplay so a pawn spawns, press ↻ | `ON` | the armed hold engaged on its own |
+> | 4 | let the game damage-reset the flag, press ↻ repeatedly | `ON` mostly, occasionally **`ON (contested)`** | the drift race — the cell that used to read `OFF`. Rare by design; the re-assert worker wins quickly |
+> | 5 | Force OFF, then ↻ | `OFF` | the unambiguous cell still works |
+> | 6 ⚠ control | on a game whose pawn is immune for its OWN reasons, with nothing forced | **`ON (not held)`** | proves the badge distinguishes "we hold it" from "it happens to be true" |
+> | 7 | Force ON, close the UI, reopen and reconnect | badge is `ON` **without pressing ↻** | the connect-time read; `want` lives in the DLL and survives a UI restart |
+> | 8 ⚠ control | during step 7's reconnect, watch the status line | stays `Connected`, no button flicker | proves the connect read did not go through RefreshGodModeAsync (IsBusy / StatusText) |
+
 ### ⬜ NEW 2026-08-17 — AC1: Force Overwrite must no longer be able to destroy a foreign DLL (build 3191)
 
 *Needs **no game** — only the Proxy Deploy panel and one throwaway file. Same "free from an ordinary

@@ -22,6 +22,62 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - AD4: the God Mode badge collapsed three states into one (build 3203)
+
+**Audit #5 AD4 closed — re-tiered MED→LOW.** Nothing mis-writes: the hold is correct and the
+re-assert worker keeps it. What was wrong is a display that *could not* be accurate, plus ~25 lines
+of shipped-but-unused DLL surface.
+
+`get_protect_state` has been in the DLL since build 1251 carrying `want` / `live` / `resolvable`
+separately, with **zero clients**. The UI read the collapsed `get_god_mode` tri-state, so three
+genuinely different situations all rendered as a flat OFF or Unknown:
+
+| real state | old badge | why that is wrong |
+|---|---|---|
+| `want=1`, unresolvable | "Unknown" | armed and waiting for a pawn — shown as a broken connection |
+| `want=0`, `live=1` | "ON" | immune, but not by us — credits the tool for a state it isn't holding |
+| `want=1`, `live=0`, resolvable | "OFF" | engaged, game won the drift race — shown as never-enabled |
+
+**Wired up C#-only. Deleting the dead command was the alternative and is strictly MORE expensive:**
+it trips three CI gates — `check_mailbox_contract.py` hashes `ProtectOp`, so removal means a contract
+bump plus a golden-block justification, and `check_derived_counts.py` covers `pipe_commands` and
+`c_abi_exports`, cascading into CLAUDE.md ×2, architecture.md, naming-convention.md and dll-spec.md.
+Wiring moves none of them.
+
+**Three traps, each of which would have produced a fix that looked finished:**
+
+1. **The wire name for `Live` is `godmode`, not `live`.** The wrong key falls through to the `-1`
+   default, which *means* "no pawn" — so the badge would sit at Unknown forever, looking exactly
+   like a game with nothing spawned. Its negative control is the rename itself.
+2. **The badge map needs THREE new cells, not two.** The obvious version leaves
+   `want=1 && live=0 && resolvable` falling through to plain "OFF" — mirroring the very conflation
+   the fix exists to remove, in the cell most likely to occur in practice. Omitting it would have
+   reproduced the defect *inside its own repair*.
+3. **The toggle path had to move too.** `ForceGodModeAsync` still routed through the int map, so a
+   force-ON with no pawn yet reported "Unknown" — the reported symptom surviving on the commoner
+   path. It passes `want` directly; it already knows it, so there is no extra round trip.
+
+Connect-time read added, since `want` survives a UI reconnect and nothing queried it (AutoTick polls
+pose + markers only). Deliberately **not** `RefreshGodModeAsync`: that sets `IsBusy`, which flickers
+every `CanOperate`-bound button, and writes `StatusText`, which would overwrite the "Connected"
+written moments earlier. Both properties are pinned by their own tests.
+
+**Left open on purpose, and this is the important boundary:** making `Solitar::GetState.live` honest
+on a pawn whose scan matched no canonical `bCanBeDamaged` — it falls back to the *desired* value
+while `GetGodMode` returns `PR_ERR_REFLECT`. That needs `Solitar.cpp`, which no test target
+compiles, so it is live-only; folding it in would have made these negative controls ambiguous.
+`Solitar::IsGodModeWanted`'s zero callers are also left alone — its header comment is the only
+written record of the reconnect-restore rationale `want` exists to serve.
+
+One filed clause was overstated: "the docs assert the opposite contract in two places" is **one** —
+`godmode-spec.md` §7 is plan text superseded by that file's own status banner, which names this
+deviation explicitly. The repo's supersession convention held.
+
+11 tests. Negative controls: renaming the wire key reddens the parse test; dropping the contested
+cell reddens exactly that badge test. 3971 passed / 0 failed.
+
+-----
+
 ## 2026-08-17 - AF5 + Z2: a ComboBox pick inside a tab re-ran that tab's activation (builds 3200, 3201)
 
 **Audit #5 AF5 (MED) and Z2 (MED→LOW) closed.**
