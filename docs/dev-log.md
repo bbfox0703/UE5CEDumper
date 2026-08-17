@@ -22,6 +22,77 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - F8 + F2: ok_via_level had never fired, and a dropped lane latched the cancel forever (builds 3220, 3221)
+
+**Audit #5 F8 (site 2 of 2) and F2 (MED) closed** — the last two of the original MED tier. F8's
+first site is filed as **F9**.
+
+### F8 — `ULevel::Actors` has no `UPROPERTY`
+
+`RecoverViaWorldLevel` recovers a streaming / World-Partition actor through the
+`ULevel::OwningWorld` back-reference, then confirmed membership by looking up `ULevel::Actors` and
+scanning it. That lookup **cannot succeed**: UE declares
+`TArray<TObjectPtr<AActor>> Actors;` with no `UPROPERTY` (verified in the vendored 5.8 tree), so
+`FindFieldOffset` returns < 0 and the whole recovery bailed. The logs agree — **18 sessions with
+`actor_count 0` and not one non-zero.** `ok_via_level` has never once fired.
+
+Worse than a clean miss: the fuzzy name fallback can bind "Actors" to
+`DestroyedReplicatedStaticActors`, which IS reflected — so the alternative outcome was scanning the
+wrong array.
+
+**The membership it was proving is guaranteed by construction.** The Outer climb exits ONLY with
+`level = GetOuter(actor)`. Re-deriving that from a reflected array bought no information and added a
+hard failure mode, so the lookup and the scan are deleted — no offset detection, no wrong-offset
+risk. The element index goes with them: there is no reflected array to index into, so `-1` is the
+honest answer, and it is the shape the UI already renders for the synthetic `WorldLevel` hop
+directly above. The hop is typed `LevelActor` and handled beside it as a **navigation anchor, not a
+pointer deref** — which stops CE export fabricating an offset for a hop that has none, and correctly
+keeps the GWorld-walkable export gate closed.
+
+⛔ The `GuessGapTypes` route the finding implies was rejected, and the rejection verified: it emits
+only Padding/Pointer?/Float/Double/Int32?/Int16?/Byte?, and `NormalizeGuessedTypeToProperty` drops
+the two labels a TArray header would produce.
+
+The comment that made the code look right is corrected too — *"level → Actors → actor is a
+reflected chain"* is precisely what is not true.
+
+### F2 — emptiness was the wrong question
+
+The per-command cancel cleared only on `firstConn`: a session connecting into an EMPTY registry.
+Correct when there was one connection; **unreachable after the two-lane split** (PR #396). If the
+BULK lane drops mid-scan while the LIGHT lane stays connected the registry is never empty, so
+`g_perCommand` stays latched and **every subsequent scan on the surviving lane aborts instantly for
+the life of the process** — silently; the UI just shows empty results.
+
+Ownership replaces emptiness. Connections carry a monotonic `seq`, the server records which seqs
+raised the cancel, and clears once none is still registered. Three details are load-bearing:
+
+- **The seq is assigned under `m_connMutex` at accept**, never on the connection thread — or two
+  accepts race to the same value.
+- **A seq, not a pointer.** The allocator reuses addresses, so a pointer cannot answer *is that same
+  connection still live*, and a new connection could inherit an old one's cancel.
+- **Owners are recorded unconditionally, not only on the first raise.** If both lanes drop and only
+  the first is recorded, clearing on its exit frees a cancel the second still needs. Only the
+  `LOG_WARN` stays once-per-latch — noise, not correctness.
+
+It cannot clear early, which is the axis `Tot.h` exists to protect: a connection is erased strictly
+AFTER its handler returned, so an orphaned scan has unwound before its owner leaves the live set.
+And the new rule **subsumes `firstConn` strictly** — an empty registry trivially has no live owner —
+with a test for exactly that, because a fix handling only the new case would regress the path that
+already worked.
+
+The decision is a pure `Tot::PerCommandStillOwed`, unit-tested rather than inferred from Fern's
+threading; Fern supplies both lists and holds no policy.
+
+12 assertions across the two. Negative controls: dropping `LevelActor` from the UI's synthetic-hop
+branch fails exactly F8's two new tests; reverting the predicate to the emptiness rule fails four of
+F2's, the first being the exact two-lane scenario. 4016 passed / 0 failed.
+
+⚠ Both owe a live check, and F8's is the point of the whole finding: `ok_via_level` firing **at
+all**.
+
+-----
+
 ## 2026-08-17 - A4: struct-sided TSet/TMap elements were covered by nothing (build 3219)
 
 **Audit #5 A4 (MED) closed**, and it filed **A11** on the way out.
