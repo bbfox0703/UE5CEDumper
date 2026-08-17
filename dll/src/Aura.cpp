@@ -2074,11 +2074,8 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 // offset (parent struct offset + child field offset) and a dotted name
 // like "Stats.Levels".
 
-enum class ContainerKind {
-    Array,   // TArray.Data buffer, stride = inner element size
-    Set,     // TSparseArray.Data buffer, stride = ComputeSetElementStride
-    Map,     // TSparseArray.Data buffer, stride = ComputeSetElementStride(pair)
-};
+// ContainerKind moved to Aura.h (audit #5 A4) so the coverage predicate
+// DeepLeafCoveredByStaticScanIndex can be unit-tested against it.
 
 struct ContainerCacheEntry {
     int32_t       offset;       // Absolute byte offset within owner UObject
@@ -2237,6 +2234,12 @@ struct ContainerLeaf {
     const std::string& leafType;    // property type name ("IntProperty" / "NameProperty" / ...)
     int32_t            leafSize;    // byte width (0 for variable/string — caller resolves)
     uint8_t            boolMask;    // BoolProperty bit mask (0xFF otherwise)
+    // Placed immediately BEFORE `depth` deliberately (audit #5 A4): these leaves are
+    // aggregate-initialised positionally, so a site that forgets `kind` binds an
+    // `int` to a scoped enum and fails to COMPILE. Appending it instead would
+    // value-initialise to the zero enumerator and pass silently, which is how the
+    // fix would reproduce the very defect it removes.
+    ContainerKind      kind;        // container shape this leaf was reached through
     int                depth;       // recursion depth at which this leaf was emitted (>= 1)
 };
 using ContainerLeafVisitor = std::function<void(const ContainerLeaf&)>;
@@ -2268,7 +2271,8 @@ static bool IsScalarLeafType(const std::string& t) {
 static void EmitStructDirectLeaves(uintptr_t structAddr, uintptr_t base,
                                    const std::string& arrayPath, int32_t elemIndex,
                                    uintptr_t elemStructAddr, uintptr_t elemBaseAddr,
-                                   const std::string& namePrefix, int depth, int structDepth,
+                                   const std::string& namePrefix, ContainerKind kind,
+                                   int depth, int structDepth,
                                    const ContainerLeafVisitor& visit) {
     constexpr int kMaxStructDepth = 4;
     if (structDepth > kMaxStructDepth || !structAddr) return;
@@ -2277,13 +2281,15 @@ static void EmitStructDirectLeaves(uintptr_t structAddr, uintptr_t base,
         std::string leafName = namePrefix.empty() ? f.Name : (namePrefix + "." + f.Name);
         if (IsScalarLeafType(f.TypeName)) {
             ContainerLeaf lf{ arrayPath, elemIndex, elemStructAddr, elemBaseAddr,
-                              leafName, base + f.Offset, f.TypeName, f.Size, f.boolFieldMask, depth };
+                              leafName, base + f.Offset, f.TypeName, f.Size, f.boolFieldMask,
+                              kind, depth };
             visit(lf);
         } else if (f.TypeName == "StructProperty" && f.Address) {
             uintptr_t nested = 0;
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, nested) && nested)
                 EmitStructDirectLeaves(nested, base + f.Offset, arrayPath, elemIndex,
-                                       elemStructAddr, elemBaseAddr, leafName, depth, structDepth + 1, visit);
+                                       elemStructAddr, elemBaseAddr, leafName, kind,
+                                       depth, structDepth + 1, visit);
         }
     }
 }
@@ -2358,7 +2364,8 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     if (cfe.kind == ContainerKind::Map && nSides > 1) sidePath += sides[s].tag;
                     uintptr_t elemBase = slotBase + sides[s].regionOff;
                     EmitStructDirectLeaves(sides[s].structAddr, elemBase, sidePath, e,
-                                           sides[s].structAddr, elemBase, "", depth + 1, 0, visit);
+                                           sides[s].structAddr, elemBase, "", cfe.kind,
+                                           depth + 1, 0, visit);
                     WalkContainerLeaves(elemBase, sides[s].structAddr,
                                         sidePath + "[" + std::to_string(e) + "]", depth + 1, lim, visit, visited);
                 } else if (s == 0 && cfe.kind != ContainerKind::Map
@@ -2370,7 +2377,8 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     // at distinct offsets, so they need the per-side handling.)
                     const std::string empty;
                     ContainerLeaf lf{ containerPath, e, 0, slotBase, empty,
-                                      slotBase, cfe.innerType, 0 /*caller resolves size*/, 0xFF, depth + 1 };
+                                      slotBase, cfe.innerType, 0 /*caller resolves size*/, 0xFF,
+                                      cfe.kind, depth + 1 };
                     visit(lf);
                 }
             }
@@ -2391,7 +2399,7 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     std::string vpath = containerPath; vpath += ".Value";
                     ContainerLeaf lf{ vpath, e, 0, slotBase, empty,
                                       slotBase + cfe.valueOffset, cfe.valueLeafType,
-                                      0 /*caller resolves size*/, 0xFF, depth + 1 };
+                                      0 /*caller resolves size*/, 0xFF, cfe.kind, depth + 1 };
                     visit(lf);
                 }
                 if (cfe.keyStruct == 0 && IsScalarLeafType(cfe.keyLeafType)) {
@@ -2399,7 +2407,7 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     std::string kpath = containerPath; kpath += ".Key";
                     ContainerLeaf lf{ kpath, e, 0, slotBase, empty,
                                       slotBase /*key at pair+0*/, cfe.keyLeafType,
-                                      0 /*caller resolves size*/, 0xFF, depth + 1 };
+                                      0 /*caller resolves size*/, 0xFF, cfe.kind, depth + 1 };
                     visit(lf);
                 }
             }
@@ -6232,6 +6240,10 @@ ValueScanResult ScanForValue(
         bool                    gameClass = false;   // !IsEnginePackage(classPath)
         bool                    noiseClass = false;  // pre-filter: engine/system noise
                                                      // (only computed when preFilterNoise)
+        // The static field index for this class hit kMaxScanFieldsPerClass, so
+        // "already covered by the static paths" is no longer true for it and the
+        // deep pass must not skip anything on that basis (audit #5 A4).
+        bool                    fieldCapHit = false;
         std::vector<ScanField>  fields;
         // Per-object batch-read plan (build 974). The body span covering this
         // class's DIRECT fixed-width leaf fields (container == None) — the reads
@@ -6744,6 +6756,7 @@ ValueScanResult ScanForValue(
         // Never truncate silently. A missing leaf is indistinguishable from a
         // value that is not there, which is precisely how A3 stayed invisible
         // for ~2400 builds — the scan simply reported no match.
+        sci.fieldCapHit = fieldCapHit;
         if (fieldCapHit) {
             LOG_WARN("ScanForValue: class '%s' hit the %zu scan-field cap — "
                      "deeper struct leaves were NOT indexed for this scan",
@@ -7097,7 +7110,8 @@ ValueScanResult ScanForValue(
         // candidate if the value matches. Vectors are skipped (the walker emits
         // scalar leaves, not whole vector structs).
         auto ensureDeepDescriptor = [&](const std::string& displayName,
-                                        const std::string& fieldType) -> uint32_t {
+                                        const std::string& fieldType,
+                                        uint8_t boolMask) -> uint32_t {
             std::string key = sci->className; key += '\x01'; key += displayName;
             auto it = deepDescriptors.find(key);
             if (it != deepDescriptors.end()) return it->second;
@@ -7107,7 +7121,11 @@ ValueScanResult ScanForValue(
             d.fieldName         = displayName;   // fully-substituted path, no "[]" placeholder
             d.fieldType         = fieldType;
             d.fieldOffset       = 0;             // deep leaf: object-relative offset not meaningful
-            d.boolFieldMask     = 0xFF;
+            d.boolFieldMask     = boolMask;      // NOT 0xFF: a packed bool shares its byte
+                                                 // with up to 7 siblings, so a hardcoded
+                                                 // whole-byte mask compares all of them.
+                                                 // Newly reachable now that struct-sided
+                                                 // Set/Map leaves emit (audit #5 A4).
             uint32_t idx = static_cast<uint32_t>(tr.descriptors.size());
             tr.descriptors.push_back(std::move(d));
             deepDescriptors.emplace(std::move(key), idx);
@@ -7116,7 +7134,20 @@ ValueScanResult ScanForValue(
 
         auto deepEmit = [&](const ContainerLeaf& lf) {
             if (static_cast<int32_t>(tr.candidates.size()) >= maxResults) return;
-            if (lf.depth < 2) return;   // depth 1 already covered by static paths
+            // Was `lf.depth < 2`, i.e. "depth 1 is covered by the static paths". That
+            // is true only for ARRAYS -- collectStructArrayInner is reached solely
+            // from the ArrayProperty branch -- so a struct-sided TSet<FStruct> or
+            // TMap<K, FStruct> element was covered by neither the static index nor
+            // this pass, and an everyday TMap<FName, FItemData> inventory count was
+            // unfindable with Deep ON as well as OFF (audit #5 A4). The two sibling
+            // consumers already had the right shape: the snapshot path tests
+            // `leafName.empty() && depth < 2`, and the group scan uses `depth < 1`.
+            // `!sci->fieldCapHit` guards the predicate's own premise: it answers
+            // "does the STATIC INDEX reach this leaf", which is only meaningful if
+            // that index was built completely. A class truncated at the cap falls
+            // through to emitting rather than trusting coverage it may not have.
+            if (!sci->fieldCapHit
+                && DeepLeafCoveredByStaticScanIndex(lf.depth, lf.kind, lf.leafName.empty())) return;
             if (isVector) return;       // walker yields scalar leaves, not vector structs
 
             bool typeOk = false;
@@ -7134,7 +7165,7 @@ ValueScanResult ScanForValue(
                 else if (dt == Radar::DataType::FName)    readStr = Ubel::ReadFNameAt(lf.leafAddr, 0);
                 else                                          readStr = Ubel::ReadFTextStringAt(lf.leafAddr, 0);
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType), -1, nullptr, 0, &readStr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, nullptr, 0, &readStr);
             } else if (isMulti) {
                 Radar::DataType mdt = dt;
                 const Radar::NumericTargetSet::Entry* mtgt = nullptr; const uint8_t* mtgt2 = nullptr;
@@ -7142,12 +7173,12 @@ ValueScanResult ScanForValue(
                 size_t sz = Radar::SizeOf(mdt);
                 if (!Macht::ReadBytesSafe(lf.leafAddr, readBuf, sz)) return;
                 if (!Radar::ComparePredicate(mdt, st, readBuf, mtgt, mtgt2, roundMode)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType), -1, readBuf, sz, nullptr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, readBuf, sz, nullptr);
             } else {
                 if (!typeOk) return;
                 if (!Macht::ReadBytesSafe(lf.leafAddr, readBuf, dtSize)) return;
                 if (!Radar::ComparePredicate(dt, st, readBuf, targetBytes, target2Bytes, roundMode)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType), -1, readBuf, dtSize, nullptr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, readBuf, dtSize, nullptr);
             }
         };
 
@@ -8046,6 +8077,10 @@ void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
 
         EmitStructDirectLeaves(nested, obj + f.Offset, /*arrayPath*/ "", /*elemIndex*/ 0,
                                /*elemStructAddr*/ 0, /*elemBaseAddr*/ 0, /*namePrefix*/ f.Name,
+                               // Not a container at all. These leaves are depth 0, so the
+                               // coverage predicate short-circuits before it reads this --
+                               // but Direct is the honest label, not an arbitrary sentinel.
+                               ContainerKind::Direct,
                                /*depth*/ 0, /*structDepth*/ 0,
             [&](const ContainerLeaf& lf) {
                 if (added >= kMaxStructLeafFields) return;

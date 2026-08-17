@@ -731,6 +731,52 @@ bool ClassDerivesFromAny(uintptr_t classObj, const std::unordered_set<std::strin
 // double-leading-slash, '/'-separator format. Pure / string-only (unit-tested);
 // header-inline so the lightweight DLL test can exercise it without linking the
 // whole DLL.
+// ============================================================
+// Deep-container leaf coverage (audit #5 A4)
+// ============================================================
+
+/// Which container shape a leaf was reached through. Lives in the header so the
+/// coverage predicate below can be unit-tested; the walker in Aura.cpp is the
+/// only producer.
+///
+/// `Unknown` is FIRST, and that placement is the fix's own safety net. A leaf
+/// struct that gains this member and forgets to initialise it value-initialises
+/// to the zero enumerator — so if `Array` sat at 0, a missed wiring site would
+/// silently mean "statically covered" and reproduce A4 with no compile error and
+/// no failing test. Zero must mean "nobody said", and nobody-said is not covered.
+enum class ContainerKind {
+    Unknown = 0,  // never a valid producer value — see above
+    Array,        // TArray.Data buffer, stride = inner element size
+    Set,          // TSparseArray.Data buffer, stride = ComputeSetElementStride
+    Map,          // TSparseArray.Data buffer, stride = ComputeSetElementStride(pair)
+    Direct,       // not a container at all (the snapshot numeric-scope path)
+};
+
+/// Is this deep-walk leaf ALREADY reachable through Value Search's static scan
+/// index, and therefore safe for the deep pass to skip?
+///
+/// The deep pass used to skip on `depth < 2` alone, i.e. "depth 1 is covered".
+/// That is only true for ARRAYS: `collectStructArrayInner` is reached solely from
+/// the ArrayProperty branch, so a struct-sided `TSet<FStruct>` or
+/// `TMap<K, FStruct>` element is covered by neither the static index nor the deep
+/// pass — an everyday `TMap<FName, FItemData>` inventory count was unfindable with
+/// Deep ON *and* OFF.
+///
+/// `leafIsWholeElement` is `leafName.empty()`: the leaf IS the element (a leaf
+/// container's element, or a scalar map side), which the static paths do cover
+/// for every kind.
+///
+/// The sibling consumers already had the right shape and are what made the
+/// asymmetry visible: the snapshot path tests `leafName.empty() && depth < 2`,
+/// and the group scan uses `depth < 1`.
+inline bool DeepLeafCoveredByStaticScanIndex(int depth, ContainerKind kind,
+                                             bool leafIsWholeElement) {
+    if (depth < 1) return true;    // the object's own direct fields
+    if (depth > 1) return false;   // nothing static reaches past one level
+    if (leafIsWholeElement) return true;
+    return kind == ContainerKind::Array;
+}
+
 inline bool IsEnginePackage(const std::string& rawPath) {
     static const char* const kEnginePrefixes[] = {
         "/Script/Engine", "/Script/CoreUObject", "/Script/CoreOnline",

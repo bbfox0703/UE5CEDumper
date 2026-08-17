@@ -235,6 +235,66 @@ static void Test_Alignment_WeakAndSparseDelegate() {
            !Scharf::IsAlignmentSuspicious("MulticastSparseDelegateProperty", 0x5, 1, false));
 }
 
+// ----- Aura: which deep leaves the static scan index already covers -----------
+//
+// Audit #5 A4. Value Search's deep pass skipped on `depth < 2` alone -- "depth 1
+// is covered by the static paths". That is true only for ARRAYS:
+// collectStructArrayInner is reached solely from the ArrayProperty branch, so a
+// struct-sided TSet<FStruct> or TMap<K, FStruct> element was covered by NEITHER
+// the static index nor the deep pass. An everyday TMap<FName, FItemData>
+// inventory count was unfindable with Deep ON as well as OFF.
+//
+// The two sibling consumers of the same walker already had the right shape, and
+// that asymmetry is what made this visible: the snapshot path tests
+// `leafName.empty() && depth < 2`, the group scan uses `depth < 1`.
+//
+// NOTE the rule is pinnable here; the WIRING is not -- no target compiles
+// Aura.cpp. The wiring is instead made a COMPILE error by placing
+// ContainerLeaf::kind immediately before `depth`, so an un-threaded aggregate
+// init binds an int to a scoped enum.
+
+static void Test_Aura_DeepLeafCoverage() {
+    using Aura::DeepLeafCoveredByStaticScanIndex;
+    using K = Aura::ContainerKind;
+
+    // depth 0 -- the object's own direct fields; always statically indexed.
+    EXPECT("depth 0 is covered", DeepLeafCoveredByStaticScanIndex(0, K::Direct, false));
+    EXPECT("depth 0 is covered whatever the kind",
+           DeepLeafCoveredByStaticScanIndex(0, K::Map, false));
+
+    // depth 1, whole element -- a leaf container's element or a scalar map side.
+    // The static paths cover these for EVERY kind.
+    EXPECT("array leaf-element covered",  DeepLeafCoveredByStaticScanIndex(1, K::Array, true));
+    EXPECT("set leaf-element covered",    DeepLeafCoveredByStaticScanIndex(1, K::Set,   true));
+    EXPECT("map scalar side covered",     DeepLeafCoveredByStaticScanIndex(1, K::Map,   true));
+
+    // depth 1, a NAMED field inside a struct element -- covered only for arrays.
+    EXPECT("array struct-element field covered (collectStructArrayInner)",
+           DeepLeafCoveredByStaticScanIndex(1, K::Array, false));
+
+    // THE DEFECT, both halves.
+    EXPECT("set struct-element field is NOT covered",
+           !DeepLeafCoveredByStaticScanIndex(1, K::Set, false));
+    EXPECT("map struct-side field is NOT covered",
+           !DeepLeafCoveredByStaticScanIndex(1, K::Map, false));
+
+    // Nothing static reaches past one level.
+    EXPECT("depth 2 array not covered",   !DeepLeafCoveredByStaticScanIndex(2, K::Array, false));
+    EXPECT("depth 2 whole-element not covered",
+           !DeepLeafCoveredByStaticScanIndex(2, K::Array, true));
+    EXPECT("depth 4 not covered",         !DeepLeafCoveredByStaticScanIndex(4, K::Map, false));
+
+    // Unknown is the zero enumerator and must never read as "covered" -- a leaf
+    // struct that forgets to set `kind` value-initialises to it, and answering
+    // "covered" there would silently reproduce A4.
+    EXPECT("Unknown at depth 1 is NOT covered",
+           !DeepLeafCoveredByStaticScanIndex(1, K::Unknown, false));
+    EXPECT("Unknown is the zero enumerator",
+           static_cast<int>(K::Unknown) == 0);
+    EXPECT("Array is NOT the zero enumerator",
+           static_cast<int>(K::Array) != 0);
+}
+
 // ----- Ubel: the class-walk cache bound -------------------------------------
 //
 // Audit #5 U5. The finding was re-filed FOUR times saying eviction is illegal
@@ -5240,6 +5300,7 @@ int main() {
     RUN(Test_Alignment_UnknownTypesNotValidated);
     RUN(Test_Alignment_WeakAndSparseDelegate);
 
+    RUN(Test_Aura_DeepLeafCoverage);
     RUN(Test_Ubel_ClassCacheBound);
     RUN(Test_Ubel_EstimateClassInfoBytes);
     RUN(Test_Stark_ShouldUseTrampoline);
