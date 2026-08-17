@@ -3181,6 +3181,42 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > is now **TQ2 · Solarpunk · DQ7R**; still zero CPN titles found. Per the register's own priority
 > rule, that growing absence is itself the signal and keeps U2 LOW.
 >
+> ### ⬜ Sweep completed to 9 titles 2026-08-17 `[SWEEP-2026-08-17]` — still ZERO CPN
+>
+> Six more titles, each a launch + one `get_offsets`, every one with `probe_ran=true` so every one is
+> a verdict rather than a sample:
+>
+> | title | UE | detected via | objects | `case_preserving` | `validated` | GObj / GNames / GWorld |
+> |---|---|---|---|---|---|---|
+> | DQ7R | 427 | **memory Tier 1** | 149,497 | false | true | `ES53_1` / `V8` / `TQ_1` |
+> | DQ I&II HD-2D | 427 | **memory Tier 1** | 104,867 | false | true | `ES53_1` / `V8` / `TQ_1` |
+> | EVERSPACE™ | 420 | PE | 191,363 | false | true | **`G42_4` / `CT3`** / `TQ_1` |
+> | The Artisan of Glimmith | 427 | PE | 24,132 | false | true | `ES53_1` / `V8` / `TQ_1` |
+> | Lushfoil Photography Sim | 506 | PE | 58,617 | false | true | `ES53_1` / `V8` / `TQ_1` |
+> | Manor Lords | 505 | PE | 80,013 | false | true | `ES53_1` / `V8` / **`SP57_1`** |
+> | SEED BATTLE DESTINY REMASTERED | 427 | PE | 26,113 | false | true | `ES53_1` / `V8` / `TQ_1` |
+>
+> **U2: nine confirmed non-CPN titles, zero CPN** (TQ2 · Solarpunk · DQ7R · DQ I&II · EVERSPACE ·
+> Geri · Lushfoil · Manor Lords · SEED), spanning **UE 4.20 → 5.6**. The population is no longer thin
+> enough to call unrepresentative, and the register's own rule — *no environment to test on ⇒ LOW* —
+> now rests on a real sample rather than an assumption.
+>
+> **G1/X3 gains seven more clean hosts and still no amber one.** Every title returned
+> `validated=true` with **no `unmeasured` key at all**. Nine titles, nine negative controls: the
+> partial-offset-failure branch is looking genuinely rare rather than merely unvisited, and screening
+> for it stays a single `get_offsets` per title.
+>
+> ⭐ **A control for the `lowConfidence` rule fell out for free.** Five of these are `tier=1,
+> lowConfidence=**no**` with `DetectPublisher: no thumbprint match`, against DQ7R / DQ I&II at
+> `tier=1, lowConfidence=**yes**` under `SQUARE_ENIX`. Same tier, opposite flag, publisher the only
+> difference — which is exactly what the source says drives it, now observed rather than only read.
+>
+> **G12 discovery value:** EVERSPACE (UE 4.20) is the only title using `GOBJ_G42_4` + `GNAM_CT3`, and
+> Manor Lords the only one on `GWLD_SP57_1`. All nine resolved all three pointers; no failures.
+>
+> ⛔ **OCTOPATH TRAVELER could not be swept at all** — its `version.dll` proxy never loads. See the
+> `[PROXYLOAD-2026-08-17]` finding; it needs a different flavour or direct injection.
+>
 > **Incidental — D1/U3 CONFIRMED LIVE as still broken (not yet fixed).** `Map_IntToVec3f` renders as
 > `f:[6203.0000]`: one float, the **last** one. The raw hex holds all three correct values, so the
 > loss is in `InterpretValue`'s 8-byte "vtable preamble" skip — 12-byte struct − 8 = one float. U3
