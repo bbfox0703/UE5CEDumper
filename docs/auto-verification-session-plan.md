@@ -129,12 +129,51 @@ are always `uint8`).
 
 -----
 
-## 3. One `request_access` call — grant all of these up front
+## 3. Granting — do this FIRST in every session, in batches of ≤7
 
-The maintainer will not be present, so a mid-run grant request stalls the batch until they return.
+> ### ▶ START HERE IN A NEW SESSION — step 0, the one-call experiment
+>
+> **Before anything else, call `request_access(["UE5DumpUI"])` on its own and record the result.**
+> It costs one call and settles the open question in §1. Both the `.lnk` and the per-user Uninstall
+> entry already exist on disk, so a fresh startup snapshot would contain whatever the resolver keys
+> on.
+>
+> * **If it RESOLVES** → the list *is* snapshotted at MCP-server startup, mid-session creation never
+>   works, and §1's table should be rewritten to say so. Then add `DumperTest Development` /
+>   `DumperTest Shipping` and **Groups 3, 4 and 5 become runnable** — that is 20+ rows, including
+>   W2/W3 step 5 and D2 step 4, which are the two currently stranded half-items.
+> * **If it STILL FAILS** → loose exes are excluded for some other reason. Do **not** keep guessing
+>   shortcut formats; five have been tried. The remaining untried combination is
+>   `dist\startup_shortcut.py install`, whose `.lnk` lands in the **Startup** subfolder under the
+>   name **`UE5CEDumper`** — a name never yet paired with a shortcut of that name. It also makes the
+>   UI auto-start at sign-in, so ask before running it. Otherwise the UI groups need the maintainer
+>   present and should be scheduled, not attempted.
+>
+> Either way, **write the answer into §1** — that section currently states an open question, and it
+> should not stay open once one call has settled it.
 
-**Tools:** `UE5DumpUI` · `Cheat Engine (64-bit)` · `Steam`
-**Sample:** `DumperTest Development` · `DumperTest Shipping`
+⚠ **Grants do not survive a session.** Every session re-requests the whole list; nothing carries
+over. Budget the three calls below into the start of every run.
+
+⛔ **At most ~7 apps per `request_access` call.** Measured 2026-08-17: an 18-app request rendered a
+dialog **taller than the display**, so the Allow button could not be reached — and it came back
+**`user_denied` for all eighteen**, which reads exactly like a deliberate refusal and is not one.
+Re-sent as **4 + 7 + 7** and every one was granted at full tier. **Never diagnose a blanket
+`user_denied` as a decision without checking the batch size first.**
+
+The batches below are the ones that worked verbatim.
+
+**Batch 1 (4):** `Cheat Engine (64-bit)` · `Steam` · `Titan Quest II` · `冒險家艾略特的千年奇譚`
+**Batch 2 (7):** `勇者鬥惡龍 VII Reimagined` · `勇者鬥惡龍I & II HD-2D Remake` · `滿意工廠` ·
+`莊園領主 Manor Lords` · `機動戰士 GUNDAM SEED 激鬥命運 復刻版` · `DragonSword Awakening` ·
+`EVERSPACE 2`
+**Batch 3 (7):** `EVERSPACE™` · `The Artisan of Glimmith` · `OCTOPATH TRAVELER` · `Light Maze` ·
+`Lushfoil Photography Sim` · `Star Trek Voyager - Across the Unknown` · `Solarpunk`
+
+**Plus, only if step 0 succeeded:** `UE5DumpUI` · `DumperTest Development` · `DumperTest Shipping`.
+
+> A mid-run grant request stalls an unattended batch until the maintainer returns, which is the whole
+> reason these go first.
 
 | Start-menu display name | = | | Start-menu display name | = |
 |---|---|---|---|---|
@@ -267,6 +306,35 @@ writable without elevation. Probe with an `r+b` open before assuming either way.
 -----
 
 ## 5. Batched run order
+
+### ✅ Already run 2026-08-17 — do not repeat these
+
+Nine rows were closed or advanced in the first sitting, all headless (pipe + logs, no grant used).
+Each is committed separately with its evidence; grep `todo.md` for the tag in brackets.
+
+| Row | State | Tag |
+|---|---|---|
+| U1 / M1 / M3 | ✅ log half. U1's degraded branch **not tested** — it cannot fire on this sample | `[DUMPERTEST-LOG-2026-08-17]` |
+| D1 / D3 | ✅ re-confirmed on the **2026-08-14** package (the old evidence described a superseded build) | `[DUMPERTEST-LOG-2026-08-17]` |
+| AA38 | ✅ steps 1/2/3/5. **Step 4 (modular build) not tested** — Satisfactory is the candidate | `[AA38-PYTHON-2026-08-17]` |
+| F9 | ✅ all six. Step 6 used `limit=10` on a 58-actor level, **not** a streaming map | `[F9-PIPE-2026-08-17]` |
+| W2 / W3 | 🟡 headless half. **Step 5 (SDK header export) blocked on the UI** | `[W23-PIPE-2026-08-17]` |
+| G12 general branch | ✅ both writers, four enum fields | `[G12-PIPE-2026-08-17]` |
+| Z1 | ✅ re-confirmed at 60× the original sample (497 Path-2 analyses) | `[Z1-PIPE-2026-08-17]` |
+| D2 | ✅ steps 1/2/3. **Step 4 (Leaves/slot clamp) blocked on the UI** | `[D2-PIPE-2026-08-17]` |
+| G8 / G9 | 🟡 step 2 by cold re-detect. **Step 1 needs Elliot** — DumperTest short-circuits at PE VERSIONINFO | `[G89-PIPE-2026-08-17]` |
+
+**Three defects in the checklist itself were found and corrected** while running these — they cost
+time and would have cost it again:
+`D2` said to grep `pipe-0.log`, but the marker is `[SCAN:grp]` and lands in **`scan-0.log`**;
+`Z1`'s single "⇊ Funcs" step conflates **two** commands (`find_property_xrefs` is the bytecode path
+and never triggers Zydis; Path 2 needs `walk_function_props` on a script-less UFunction);
+and `G8/G9` step 1 is **structurally impossible on DumperTest**.
+
+**Next up, in order:** Elliot (G8/G9 step 1 · G11 step 3 · G2 speed-split — all pipe-drivable), then
+whatever §3's step-0 experiment unlocks.
+
+-----
 
 Ordered by items closed per environment launch. **Every group ends by killing what it started.**
 
