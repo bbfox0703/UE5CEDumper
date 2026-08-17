@@ -668,6 +668,13 @@ public partial class MainWindow : Window
         if (sender is not TabControl tabs) return;
         if (DataContext is not MainWindowViewModel vm) return;
 
+        // SelectionChanged BUBBLES. A ComboBox or ListBox inside the current tab
+        // raises it and it arrives here with sender == the TabControl and the Tag
+        // still naming the tab the user is already on — so this whole routine used
+        // to re-run on an ordinary in-tab pick, cancelling in-flight work and
+        // rebuilding lists underneath the user (audit #5 AF5).
+        if (!TabActivation.ShouldRunActivation(e.Source, tabs)) return;
+
         var tag = (tabs.SelectedItem as TabItem)?.Tag as string;
 
         // Stop Live Walker auto-refresh when switching away from it.
