@@ -3720,17 +3720,39 @@ changed: `scripts/ue5_dissect.lua`'s `callDLL` (was an INFINITE timeout, now 500
 
 **Needs deliberate action:**
 
-- ⬜ **Is 5000 ms enough for the slowest real call?** The candidate is `UE5_FindObject`, which scans
-  GObjects — dissect a class on a **large-pool** title (Elliot / DragonSword, 250 K+ objects) and
-  confirm no `Execution timeout`. If it does time out, the fix is **not** simply a bigger number:
-  every timeout permanently leaks the stub + result + string allocations in the *target* process
-  (§13.4), so a value that fires regularly has its own cost. Reconsider the call, not the constant.
-- ⬜ **Negative control — does `why` actually surface?** The reason capture is the whole point of
-  the change and a healthy session never exercises it. Cheapest induction: attach CE, suspend the
-  game process, then trigger one dissect call. Expect
-  `[UE5Dissect WARN] <name> failed: Execution timeout` — **not** a bare `nil`, and not the old
-  guessed wording. Before build 2792 this froze CE permanently instead, so this check doubles as the
-  proof that the infinite-timeout fix took.
+- ✅ **DONE 2026-08-18 — 5000 ms is comfortably enough.** Dissected `/Script/Engine.Actor` on
+  **Elliot** (85,068 objects, dist 3262, `dxgi` proxy) from CE's Lua Engine: **844 ms** end to end
+  for `dofile` + `createFromPath`, producing `name=Actor elements=129`, with **no** `Execution
+  timeout` and **no** `[UE5Dissect WARN]` line. That whole figure *includes* the `UE5_FindObject`
+  GObjects scan this row names as the slow candidate, so the budget has ~6× headroom here.
+  ⚠ Conditions: Elliot at its **main menu**, 85 K objects — not the 250 K+ the row asks for.
+  DragonSword would still be a stronger sample, so treat this as "no sign of strain at 85 K"
+  rather than a bound proven at 250 K.
+- ⛔ **The prescribed negative control DOES NOT WORK — attempted 2026-08-18, do not re-run as
+  written.** Suspending the game process does **not** make `executeCodeEx` time out; it succeeds
+  normally, so anyone following this row would see "no timeout" and wrongly conclude the path is
+  fine while never having exercised it.
+
+  | attempt | suspension | result |
+  |---|---|---|
+  | 1 | short (resume raced the call) | `elapsed=984 ms  ok=true` — confounded, discarded |
+  | 2 | **held ~18 s**, call issued ~3 s in | **`elapsed=1422 ms  ok=true`**, structure built |
+
+  Attempt 2 is decisive: the call started and finished entirely inside a suspension that provably
+  outlasted it by an order of magnitude.
+
+  **Why:** CE's `executeCodeEx` runs the target function on a **newly created remote thread**.
+  `NtSuspendProcess` suspends the threads that *already exist*; a thread created afterwards runs.
+  And the dissect's calls (`UE5_FindObject`, the walk exports) are pure memory work that needs no
+  game thread, so nothing blocks.
+
+  **This is the same trap the run plan already flags for `AA14–AA20` step 5** — *"needs the game
+  thread only suspended; CE's whole-process pause hits the status-0 branch, not the 0xFF branch
+  under test"*. Same cause, second row.
+
+  **A working induction must make the call need something that is actually stopped**: suspend the
+  **game thread specifically** and invoke through `Stark`'s ProcessEvent dispatch, which cannot
+  complete without it. Rewrite the row that way before spending another session on it.
 
 ### 🟡 PARTIAL 2026-08-10 — GObjects layout fix (build 2782), DragonSword Awakening
 
