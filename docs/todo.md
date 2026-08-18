@@ -19,9 +19,30 @@ Open work only. **Read this when deciding what to do next.**
 >   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-17: **196 audit findings open of 277 · 0 HIGH · 37 MED**. Nothing is
-> blocked on a maintainer decision any more (A6 was the last, and it is decided and shipped).
-> Re-derive the count with `py tools/check_audit_register.py --list` — never hand-tally.
+> State as of 2026-08-18: **166 audit findings open of 297 · 0 HIGH · 0 MED · 139 LOW · 27 INFO**.
+> Nothing is blocked on a maintainer decision. Re-derive with
+> `py tools/check_audit_register.py --list` — never hand-tally.
+>
+> ### ▶ OPEN FIXES INDEX — 12 items, and NONE of them is in the 166 above
+> ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
+> invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
+> found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
+> closed — #4's ten unmarked rows are its *refuted, do-not-re-raise* table, not open work.
+>
+> | tag | one-line defect |
+> |---|---|
+> | `[PASTECRASH-2026-08-18]` | a failed clipboard **paste terminates the UI** — Ctrl+V is a potential crash |
+> | `[PEHOOKONCE-2026-08-18]` | a failed ProcessEvent **detection is permanent** for the process; `pe_profile_start` before the scan causes it |
+> | `[STALEDLL-2026-08-17]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up |
+> | `[PEHOOK-2026-08-17]` | ProcessEvent slot **mis-detected** on DumperTest (sample-specific) |
+> | `[PROXYLOAD-2026-08-17]` | `DeployedCurrent` does not mean the game actually loads it |
+> | `[FREEZESTUCK-2026-08-18]` | an abandoned freeze leaves the CE record **ticked/active** |
+> | `[FREEZESCOPE-2026-08-18]` | Freeze holds the declaring class only, while Force beside it walks subclasses |
+> | `[SLOTSYM-2026-08-18]` | slot `[DISABLE]` claims "unregistered" and does not unregister |
+> | `[CONTAINERCAP-2026-08-18]` | the container list stops at the array limit and says nothing |
+> | `[CLASSTOTAL-2026-08-18]` | "total UClasses" is the **capped** count, so it can never answer "how many classes?" |
+> | `[PIPEBUSY-2026-08-18]` | at-capacity logged as an **ERROR once a second, forever** (1,826 lines in 31 min) |
+> | *(untagged)* | **SDK header does not compile** — grep `### ⛔ NEW DEFECT found by this export` |
 
 > **2026-06-06 cleanup.** This file was slimmed to open items only. The full
 > pre-cleanup history (every shipped build's effort/risk retrospective, files
