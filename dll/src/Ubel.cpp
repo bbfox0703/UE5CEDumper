@@ -267,7 +267,7 @@ static std::string ReadFString(uintptr_t instanceAddr, int32_t offset) {
     std::memcpy(&data, hdr, sizeof(data));
     std::memcpy(&count, hdr + 8, sizeof(count));
 
-    if (!data || count <= 0 || count > 256) return "";
+    if (!data || !IsPlausibleStringCount(count)) return "";  // audit #5 U10: cap bounds a garbage Count, not string length
 
     // Read wchar_t buffer (count includes null terminator in most UE builds)
     std::vector<wchar_t> wbuf(count, 0);
@@ -307,7 +307,7 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
     std::memcpy(&data, hdr, sizeof(data));
     std::memcpy(&count, hdr + 8, sizeof(count));
 
-    if (!data || count <= 0 || count > 256) return "";
+    if (!data || !IsPlausibleStringCount(count)) return "";  // audit #5 U10: cap bounds a garbage Count, not string length
 
     // count includes the null terminator in most UE builds.
     std::vector<char> bytes(count, 0);
@@ -361,10 +361,11 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
 // ============================================================
 // TryDecodeFStringAt — read a { Data(8B), Num(4B), Max(4B) } FString header at
 // `addr`, read its buffer, and decode it as UTF-16 OR UTF-8 (element width
-// auto-detected by Utf8Helpers::DecodeFStringBuffer). Used only by the FText
-// reader, so it carries a higher length cap than the 256-char hot-path
-// ReadFString — dialogue / UI lines are long — WITHOUT widening that hot path
-// (its 256 cap protects the value-scan / snapshot / walk callers).
+// auto-detected by Utf8Helpers::DecodeFStringBuffer). Used by the FText reader,
+// where it carries a matching length ceiling (num > 8192) plus a Max-window and
+// heap-pointer gate the by-offset ReadFString cannot use (it has no header sibling
+// to corroborate). ReadFString now shares the same 8192-char bound
+// (Ubel::kMaxFStringChars, audit #5 U10) so a long StrProperty resolves too.
 // Returns "" if `addr` does not hold a plausible, decodable FString.
 // ============================================================
 static std::string TryDecodeFStringAt(uintptr_t addr) {
@@ -2121,12 +2122,11 @@ ReadArrayResult ReadArrayElements(
 
         // Interpret value
         if (enumPtr) {
-            // Enum element: read raw integer value and resolve name
-            int64_t rawVal = 0;
-            if (elemSize == 1) rawVal = buf[0];
-            else if (elemSize == 2) { int16_t v; memcpy(&v, buf.data(), 2); rawVal = v; }
-            else if (elemSize == 4) { int32_t v; memcpy(&v, buf.data(), 4); rawVal = v; }
-            else if (elemSize == 8) { int64_t v; memcpy(&v, buf.data(), 8); rawVal = v; }
+            // Enum element: read raw integer value and resolve name. Same byte-enum-
+            // unsigned rule as the struct-field path via ReadEnumRawValue (audit #5 U9);
+            // this path already read size 1 unsigned, so routing it here only shares the
+            // rule so the two enum readers cannot drift.
+            int64_t rawVal = ReadEnumRawValue(buf.data(), elemSize);
             elem.rawIntValue = rawVal;
             elem.enumName = ResolveEnumValue(enumPtr, rawVal);
             elem.value = elem.enumName.empty() ? std::to_string(rawVal) : elem.enumName;
@@ -2577,11 +2577,11 @@ ReadArrayResult ReadStructArrayElements(
                     : byteVal != 0;
                 sf.value = boolVal ? "true" : "false";
             } else if ((cf.typeName == "EnumProperty" || cf.typeName == "ByteProperty") && cf.enumAddr) {
-                int64_t rawVal = 0;
-                if (cf.size == 1) rawVal = static_cast<int8_t>(buf[cf.offset]);
-                else if (cf.size == 2) { int16_t v; memcpy(&v, buf.data() + cf.offset, 2); rawVal = v; }
-                else if (cf.size == 4) { int32_t v; memcpy(&v, buf.data() + cf.offset, 4); rawVal = v; }
-                else if (cf.size == 8) { int64_t v; memcpy(&v, buf.data() + cf.offset, 8); rawVal = v; }
+                // audit #5 U9: a byte enum must be read UNSIGNED — reading through int8_t
+                // sign-extended the UHT MAX=255 sentinel (and any enumerator >= 128) to a
+                // negative int that never matched the UEnum table. ReadEnumRawValue keeps
+                // size 1 unsigned and 2/4/8 signed, matching the array-enum sibling below.
+                int64_t rawVal = ReadEnumRawValue(buf.data() + cf.offset, cf.size);
                 sf.value = ResolveEnumValue(cf.enumAddr, rawVal);
                 if (sf.value.empty()) sf.value = std::to_string(rawVal);
             } else if (cf.typeName == "StructProperty") {
@@ -5297,16 +5297,14 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 uintptr_t textData = 0;
                 Macht::ReadSafe(fieldAddr, textData);
                 isSet = (textData != 0);
-                // FText display: read embedded FString at +0x10 (same path
-                // the StrProperty display reuses), guarded by the pointer
-                // sanity check from InterpretValue.
+                // FText display (audit #5 U11): decode via ReadFTextString, which follows
+                // the ITextData* at FText+0 and scans it for the display FString — the SAME
+                // decoder the plain TextProperty path uses. The old code read an inline
+                // FString at FText+0x10, where stock UE stores the uint32 Flags (the display
+                // string is NOT there), so it produced garbage or "" for a real value.
                 if (isSet) {
-                    int32_t cnt = 0;
-                    Macht::ReadSafe(fieldAddr + 0x18, cnt);
-                    if (cnt > 0 && cnt <= 256) {
-                        std::string s = ReadFString(fieldAddr, 0x10);
-                        if (!s.empty()) fv.strValue = std::move(s);
-                    }
+                    std::string s = ReadFTextString(fieldAddr);
+                    if (!s.empty()) fv.strValue = std::move(s);
                 }
             } else if (innerSize > 0) {
                 // Scalar/struct (no intrusive specialization): trailing

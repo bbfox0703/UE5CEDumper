@@ -11,9 +11,10 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **36 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L2 (T1a Radar)
->   AB12/AB13/AB14/AB16/AB17 end-to-end batch; before it the CLASSTOTAL / PIPEBUSY honesty fixes and
+> - `## Pending live-game verification` — **37 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L1 (D1/D2/D3 DLL
+>   engine) U11/G6/G7/A7/A8/A9 batch; before it the audit L2 (T1a Radar)
+>   AB12/AB13/AB14/AB16/AB17 end-to-end batch, then the CLASSTOTAL / PIPEBUSY honesty fixes and
 >   the SLOTSYM / STALEDLL(b) generator + `.CT` fixes; the five before them are
 >   2026-08-17's, and NONE has been
 >   seen on a real target; two of those older ones need less than a full session:
@@ -22,8 +23,9 @@ Open work only. **Read this when deciding what to do next.**
 >   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-18: **166 audit findings open of 297 · 0 HIGH · 0 MED · 139 LOW · 27 INFO**.
-> Nothing is blocked on a maintainer decision. Re-derive with
+> State as of 2026-08-19: **135 audit findings open of 297 · 0 HIGH · 0 MED · 108 LOW · 27 INFO**
+> (audit L1 closed U9/U10/U11/G4/G5/G6/G7/A7/A8/A9; A10 left open — needs the U5 by-value
+> restructuring). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
 > ### ▶ OPEN FIXES INDEX — 2 items, and they are NOT in the 154 above
@@ -1501,6 +1503,25 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L1 (D1/D2/D3 DLL engine): U11 / G6 / G7 / A7 / A8 / A9
+
+*The pure rules of this batch are unit-pinned in `dll_helpers_test` and need NO live check: **U9**
+(`ReadEnumRawValue` — byte enums unsigned), **U10** (`IsPlausibleStringCount` — 8192 cap), **G4**
+(`BlockBitsAreIndistinguishable` — the probe collision), **G5** (`UE4NameIndexInBounds` — negative
+index). Each has a negative control (revert reds the exact rows). **A10 was LEFT OPEN** — its two
+caches return `const T&` references, so a safe invalidation needs the by-reference→by-value
+restructuring U5 deferred; it is not a live-check item, it needs its own session. The rows below are
+the in-situ fixes that only a running game / obfuscated fork can prove.*
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | U11 | on any game, Live Walker into an instance holding a **`TOptional<FText>`** that is SET (a display/label field) | the row shows the FText display string, not `(empty)` or 亂碼 | before the fix it read an inline FString at FText+0x10 (where UE stores the uint32 Flags) → garbage; now uses `ReadFTextString` like the plain TextProperty path |
+> | G7 | on a game that offsets-validates only after a re-scan (e.g. **Solarpunk**), connect, then trigger **apply_rescan** (the pipe/UI re-scan path) | the DYNO/offsets log gains a `validation state CHANGED validated=NO -> validated=YES (re-run)` line and the summary header reads `=== Dynamic Offset Summary (validated=YES) ===`; `get_offsets` and the log now agree | before, the one-time UE5_Init scan-log summary said validated=NO forever while live state was true |
+> | A9 | on a large game with deep/wide nested containers (a **SEED-class** object), run **Group Scan with Deep** enabled | no ~24 s single-object stall; the per-object element budget (`maxTotalElems`) bites before the global 15 s deadline, so the scan spreads across objects | before, the counter was never threaded so the budget was inert and one object could consume the whole scan window |
+> | A8 | on a **flat `FFixedUObjectArray`** title (OctoPath / FF7R Intergrade / Extinction / NEKOPALIVE), take a Value Search / Instance Finder row → **get CE pointer info** | the response carries `flat_layout=true`, a single-hop `ce_offsets=[fieldOffset]` at the ABSOLUTE address, and the flat warning — NOT a 4-hop chunked chain resolving to a garbage, user-writable address | the chunked chain treated `Item[0].Object` as a chunk-table pointer on a flat array; the degrade is only observable on a flat title (none available here) |
+> | A7 | on a huge game, start a **find-object-by-address** (get_ce_pointer_info / find_by_address triggers `FindByAddress`) and **disconnect the client mid-scan** | shutdown/next command is prompt — no multi-second hang while the full GObjects walk finishes; the lookup returns "not found" | the loop now polls `Tot::Requested()` every 0x1000 objects like its siblings; only observable under a real disconnect on a large pool |
+> | G6 | (obfuscated fork only — **MindsEye**, no sample here) let name resolution race the fork's live key-table growth; also view a block whose tag is genuinely **absent** from the table | a transiently-unresolvable tag recovers on a later name (no permanent blanking of every FName with that tag); an absent-tag block renders as plaintext | the tri-state `LookupTagKey` no longer caches a transient miss, and a clean-absent resolves to key 0 (plaintext) per Genau's rule |
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L6 (U3 MainWindow VM): X5 / X6 / X7 / X8 / X10 / X11 / X12
 

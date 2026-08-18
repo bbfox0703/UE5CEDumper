@@ -4172,15 +4172,36 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     const bool allMeasured = (unmeasured == 0);
     DynOff::g_offsetsFallbackReason = kUnmeasuredReason[unmeasured & 0x0F];
     DynOff::bOffsetsProbeRan.store(true, std::memory_order_release);
+
+    // G7: publish the validated verdict on EVERY run and flag a state CHANGE. The
+    // one-time UE5_Init "DynOff: ... validated=..." scan-log summary goes stale the moment
+    // apply_rescan (Fern) re-runs this and flips NO->YES, so a maintainer following
+    // log-verification-checklist reads validated=NO while get_offsets on the live process
+    // returns validated=true (Solarpunk 2026-08-14). Re-emitting here — the single writer
+    // of bOffsetsValidated, reached by BOTH the init and apply_rescan call sites — keeps
+    // the log's last DynOff record honest.
+    static int s_lastPublishedValidated = -1;   // -1 = never published, 0 = NO, 1 = YES
+    const int nowValidated = allMeasured ? 1 : 0;
     DynOff::bOffsetsValidated.store(allMeasured, std::memory_order_release);
+    if (s_lastPublishedValidated != -1 && s_lastPublishedValidated != nowValidated) {
+        Sein::Info("DYNO", "ValidateAndFixOffsets: validation state CHANGED %s -> %s (re-run)",
+                   s_lastPublishedValidated ? "validated=YES" : "validated=NO",
+                   allMeasured ? "validated=YES" : "validated=NO");
+    }
+    s_lastPublishedValidated = nowValidated;
+
     if (!allMeasured) {
         Sein::Warn("DYNO", "ValidateAndFixOffsets: PARTIAL — %s (validated=NO, offsets below "
                            "mix probed values with version defaults)",
                  DynOff::g_offsetsFallbackReason);
     }
 
-    // Summary log
-    Sein::Info("DYNO", "=== Dynamic Offset Summary ===");
+    // Summary log — the header states the CURRENT verdict so every run's summary is
+    // self-describing (G7): a later successful re-run leaves validated=YES in the log.
+    Sein::Info("DYNO", "=== Dynamic Offset Summary (validated=%s%s%s) ===",
+               allMeasured ? "YES" : "NO",
+               allMeasured ? "" : " reason=",
+               allMeasured ? "" : DynOff::g_offsetsFallbackReason);
     // Derived: UStruct::Script (Kismet bytecode TArray) is always PROPSSIZE + 8
     // (MinAlignment int32 sits between them). Inherits PROPSSIZE's calibration,
     // so shifted-layout games (Atomic Heart / Silent Hill F / Outer Worlds) are

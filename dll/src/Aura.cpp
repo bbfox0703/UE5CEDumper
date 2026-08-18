@@ -1854,6 +1854,15 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
     int numCandidates = 0;
 
     for (int32_t i = 0; i < count; ++i) {
+        // audit #5 A7: this is a full-GObjects walk; poll cancellation like every sibling
+        // scan (FindInstancesByClass / FindInstancesDerivedFrom / the value scans) so a
+        // client disconnect or shutdown doesn't block UE5_Shutdown's join for the whole
+        // pass. A cancelled lookup returns "not found": the candidate set is incomplete, so
+        // emitting a nearest-match from it would be arbitrary.
+        if ((i & 0xFFF) == 0 && Tot::Requested()) {
+            LOG_INFO("FindByAddress: aborted (client gone / shutdown) at index %d of %d", i, count);
+            return result;
+        }
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
 
@@ -9013,7 +9022,13 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         if (deep && static_cast<int32_t>(result.candidates.size()) < maxResults) {
             curClassName = className;
             deepBlocks.clear();
-            WalkContainerLeaves(obj, cls, /*pathPrefix*/ "", /*depth*/ 0, dlim, deepVisitor);
+            // audit #5 A9: pass the per-walk element counter so dlim.maxTotalElems actually
+            // bounds this object's deep walk. Without it (the 7th arg defaulted to nullptr)
+            // the budget set at dlim.maxTotalElems above was inert, and a single deep/wide
+            // object (the recorded SEED ~24 s chunk) ran to the global 15 s deadline,
+            // consuming the whole scan budget. Mirrors ScanForValue's deepEmit call.
+            int64_t deepVisited = 0;
+            WalkContainerLeaves(obj, cls, /*pathPrefix*/ "", /*depth*/ 0, dlim, deepVisitor, &deepVisited);
             for (auto& kv : deepBlocks) {
                 GroupBlock& blk = kv.second;
                 if (blk.leaves.size() < nSlots) continue;

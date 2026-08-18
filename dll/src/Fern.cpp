@@ -4720,6 +4720,30 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeResponse(id, data).dump();
             }
 
+            if (Aura::IsFlat()) {
+                // FLAT (non-chunked) FFixedUObjectArray (OctoPath / FF7R Intergrade /
+                // Extinction / NEKOPALIVE): Objects* points directly at a single
+                // FUObjectItem[] with NO chunk pointer table. The 4-hop chunked chain below
+                // would treat Item[0].Object as a chunk-table pointer at hop 3 and hand CE a
+                // GARBAGE address the user can write to (audit #5 A8). Degrade to the
+                // ABSOLUTE object address — valid for this session only — exactly as the
+                // packed branch above does. A restart-surviving flat chain would need the
+                // FFixedUObjectArray Objects-deref offset plumbed out and live verification
+                // on a flat title (none available here); tracked in the register.
+                data["flat_layout"]   = true;
+                data["packed_layout"] = false;
+                data["warning"] =
+                    "Flat (non-chunked) FFixedUObjectArray: the GObjects-relative chunked CE "
+                    "pointer chain does not apply (there is no chunk table). Falling back to the "
+                    "ABSOLUTE object address — it will NOT survive a game restart or ASLR rebase, "
+                    "so re-resolve after each launch.";
+                json offsets = json::array();
+                offsets.push_back(fieldOffset);     // single hop: absolute object addr + field
+                data["ce_offsets"] = offsets;
+                data["ce_base"]    = Renge::AddrToStr(addr);  // absolute object address
+                return Renge::MakeResponse(id, data).dump();
+            }
+
             // CE offset chain (bottom-to-top), DIRECT layouts (classic / UE5.7+ unpacked):
             // Level 4 (outermost): deref FUObjectArray* → chunkTable (offset 0)
             // Level 3: chunkTable + chunkIndex*8 → chunk

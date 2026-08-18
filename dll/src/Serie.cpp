@@ -84,9 +84,13 @@ static uintptr_t s_keyTableCtx = 0;
 // on another thread then sees "resolved" with a still-zero key. That produced wrong
 // keys in practice — tag 0x0001 resolved to 0x09 on one thread and 0x00 on another in
 // the same millisecond, decoding "Object" as "Fkclj}". A single word cannot tear.
-//   bit 8 = resolved, bit 9 = miss, bits 0-7 = key
+//   bit 8 = resolved, bits 0-7 = key
+// There is deliberately NO "miss" state (audit #5 G6): a genuine absent tag resolves to
+// key 0 (Genau's "absent tag = plaintext" rule) and is cached RESOLVED like any other,
+// while a TRANSIENT lookup failure (torn read of the live table) is left UNCACHED so the
+// next name retries. Caching a transient miss permanently blanked every FName with that
+// tag for the process life.
 static constexpr uint16_t TAGKEY_RESOLVED = 0x100;
-static constexpr uint16_t TAGKEY_MISS     = 0x200;
 static std::unique_ptr<std::atomic<uint16_t>[]> s_tagKey;
 
 // Look the fork's XOR key up in ITS OWN tag->key table — exact, no heuristics.
@@ -97,14 +101,23 @@ static std::unique_ptr<std::atomic<uint16_t>[]> s_tagKey;
 //   entry +0x00 u16 tag   +0x08 u64 value (LOW BYTE is the key)   +0x10 i32 next (-1 = end)
 // Pure memory reads: no control ever transfers into game code, so the SRW lock the
 // game takes around its own probe can never be left held by us.
-static bool LookupTagKey(uint16_t tag, uint8_t& outKey) {
+// Classify a lookup so a TRANSIENT failure is never confused with a genuine miss
+// (audit #5 G6). Returns true + `outKey` when the tag is found. On a miss, `readError`
+// splits the two cases the old single-bool return conflated:
+//   readError = true  -> could NOT determine (no context / a torn read of the live table
+//                        the game mutates as it runs / a corrupt-looking chain). The
+//                        caller must not cache this.
+//   readError = false -> the hash chain terminated cleanly with no match, i.e. the tag is
+//                        genuinely ABSENT -> the block is plaintext (key 0).
+static bool LookupTagKey(uint16_t tag, uint8_t& outKey, bool& readError) {
+    readError = true;   // pessimistic: anything but a clean walk is "unknown"
     if (!s_keyTableCtx) return false;
 
     int32_t count = 0, sentinel = 0, capacity = 0;
     uintptr_t entries = 0, buckets = 0;
     if (!Macht::ReadSafe(s_keyTableCtx + 0x18, count)) return false;
     if (!Macht::ReadSafe(s_keyTableCtx + 0x44, sentinel)) return false;
-    if (count == sentinel) return false;                      // table reports empty
+    if (count == sentinel) return false;                      // table reports empty (transient/racing)
     if (!Macht::ReadSafe(s_keyTableCtx + 0x10, entries) || !entries) return false;
     if (!Macht::ReadSafe(s_keyTableCtx + 0x58, capacity) || capacity <= 0) return false;
     if (!Macht::ReadSafe(s_keyTableCtx + 0x50, buckets)) return false;
@@ -115,32 +128,47 @@ static bool LookupTagKey(uint16_t tag, uint8_t& outKey) {
         return false;
 
     // Bounded chain walk — a corrupt/misread table must not spin forever.
-    for (int hop = 0; hop < 64 && idx >= 0; ++hop) {
-        if (idx >= count) return false;
+    for (int hop = 0; hop < 64; ++hop) {
+        if (idx < 0) { readError = false; return false; }    // clean end of chain -> ABSENT (plaintext)
+        if (idx >= count) return false;                       // out-of-range link -> corrupt/racing
         uintptr_t entry = entries + static_cast<uintptr_t>(idx) * 24;
         uint16_t  etag  = 0;
         if (!Macht::ReadSafe(entry + 0x00, etag)) return false;
         if (etag == tag) {
             uint8_t key = 0;
             if (!Macht::ReadSafe(entry + 0x08, key)) return false;   // low byte of the u64 value
+            readError = false;
             outKey = key;
             return true;
         }
         if (!Macht::ReadSafe(entry + 0x10, idx)) return false;
     }
-    return false;
+    return false;   // chain too long -> corrupt, readError stays true
 }
 
 static bool GetTagKey(uint16_t tag, uint8_t& outKey) {
     if (!s_tagKey) return false;
     uint16_t cached = s_tagKey[tag].load(std::memory_order_acquire);
-    if (cached & TAGKEY_MISS) return false;
     if (cached & TAGKEY_RESOLVED) { outKey = static_cast<uint8_t>(cached & 0xFF); return true; }
 
     uint8_t key = 0;
-    if (!LookupTagKey(tag, key)) {
-        s_tagKey[tag].store(TAGKEY_MISS, std::memory_order_release);
-        return false;
+    bool readError = false;
+    if (!LookupTagKey(tag, key, readError)) {
+        if (readError) {
+            // audit #5 G6: a TRANSIENT miss (no context / torn read of the live table /
+            // corrupt-looking chain) is NOT cached. Poisoning it — as the old permanent
+            // TAGKEY_MISS did — blanked every FName carrying this tag for the rest of the
+            // process, though the fork's own lookup would have succeeded on a later read.
+            // Leave the slot unresolved so the next name retries.
+            return false;
+        }
+        // Genuine ABSENT -> Genau's "absent tag = plaintext": the fork stores this block
+        // unXOR'd (its own lookup returns NULL and XORs with 0). Resolve to key 0 and
+        // cache it. If the game later inserts this tag, the ANSI decode's two-attempt
+        // InvalidateTagKey path self-heals to the real key on the first bad decode.
+        s_tagKey[tag].store(TAGKEY_RESOLVED, std::memory_order_release);   // RESOLVED | key(0)
+        outKey = 0;
+        return true;
     }
     // Racing threads compute the identical value, so the last writer wins harmlessly.
     s_tagKey[tag].store(static_cast<uint16_t>(TAGKEY_RESOLVED | key), std::memory_order_release);
@@ -184,9 +212,10 @@ static uintptr_t GetEntryInternal(int32_t nameIndex) {
     if (!s_poolAddr) return 0;
 
     if (s_isUE4Mode) {
+        // audit #5 G5: reject a negative nameIndex before `%` yields a negative elemIndex.
+        if (!UE4NameIndexInBounds(nameIndex, UE4_CHUNK_SIZE, UE4_NAME_MAX_CHUNKS)) return 0;
         int32_t chunkIndex = nameIndex / UE4_CHUNK_SIZE;
         int32_t elemIndex  = nameIndex % UE4_CHUNK_SIZE;
-        if (chunkIndex < 0 || chunkIndex > UE4_NAME_MAX_CHUNKS) return 0;
         uintptr_t chunkPtr = 0;
         if (!Macht::ReadSafe(s_poolAddr + chunkIndex * sizeof(uintptr_t), chunkPtr) || !chunkPtr) return 0;
         uintptr_t entryPtr = 0;
@@ -298,66 +327,59 @@ static void DetectChunksOffset() {
     s_chunksOffset = 0x10; // Best guess: standard layout
 }
 
-// Auto-detect FNameBlockOffsetBits by trying different bit widths.
-// Standard UE5 uses 16 bits. Some UE4 builds use 14 bits.
-// We test by reading FName entries at known indices and checking if they produce valid strings.
+// FNameBlockOffsetBits: keep the stock FNamePool width (16) and confirm it — do NOT
+// pretend to measure it (audit #5 G4).
+//
+// FNameBlockOffsetBits is 16 on every stock FNamePool (UE 4.23+); the pre-FNamePool
+// TNameEntryArray builds resolve through s_isUE4Mode, not here. The old loop's probe at
+// testIdx = 1 could NEVER pick 14 over 16 and then logged the outcome as a measurement:
+//   * At testIdx = 1 both widths address the identical byte — chunk 0, offset 1*stride
+//     (Serie::BlockBitsAreIndistinguishable(1, 16, 14, stride) == true), so the 14-bit
+//     arm was structurally unreachable and 16 always "won".
+//   * A discriminating index (>= 2^14) is not a fix either: FName indices encode
+//     variable-length BYTE offsets, so index 0x4000 need not be an entry BOUNDARY even
+//     in a valid 16-bit pool, and "16 failed there" is not evidence for 14 — a
+//     fixed-index probe can WRONGLY downgrade a working pool. So there is no reliable
+//     offline discriminator.
+// We therefore sanity-read index 1 under the stock width (confirms the pool + header
+// format are usable at a low index) and log HONESTLY that the width is assumed, not
+// measured. s_blockOffsetBits / s_blockOffsetMask are already 16 / 0xFFFF from init.
 static void DetectBlockOffsetBits() {
-    // Default: 16 bits (covers most UE5 games)
-    // Try 16 first, then 14 (some UE4 games)
-    int candidates[] = { 16, 14 };
+    const Serie::BlockProbe p = Serie::ComputeBlockProbe(1, s_blockOffsetBits, s_stride);
+    uintptr_t chunkPtr = 0;
+    uintptr_t chunksBase = s_poolAddr + s_chunksOffset;
+    bool decoded = false;
+    char buf[8] = {};
+    int len = 0;
 
-    for (int bits : candidates) {
-        int mask = (1 << bits) - 1;
-
-        // Test: index 1 should produce a non-empty, valid ASCII string
-        int32_t testIdx = 1;
-        int32_t ci = testIdx >> bits;
-        int32_t co = (testIdx & mask) * s_stride;
-
-        uintptr_t chunkPtr = 0;
-        uintptr_t chunksBase = s_poolAddr + s_chunksOffset;
-        if (!Macht::ReadSafe(chunksBase + ci * sizeof(uintptr_t), chunkPtr) || !chunkPtr) continue;
-
-        uintptr_t entry = chunkPtr + co;
-
-        // Read header at the detected header offset
+    if (Macht::ReadSafe(chunksBase + p.chunkIndex * sizeof(uintptr_t), chunkPtr) && chunkPtr) {
+        uintptr_t entry = chunkPtr + p.chunkOffset;
         uint16_t header = 0;
-        if (!Macht::ReadSafe(entry + s_headerOffset, header)) continue;
-
-        // Try both header formats
-        auto tryLen = [&](int shift, int lenMask) -> int {
-            return (header >> shift) & lenMask;
-        };
-
-        int lenA = tryLen(6, 0x3FF);
-        int lenB = tryLen(1, 0x7FF);
-
-        // Accept if either format gives a plausible length (1-256)
-        int len = (lenA >= 1 && lenA <= 256) ? lenA : ((lenB >= 1 && lenB <= 256) ? lenB : 0);
-        if (len <= 0) continue;
-
-        // Read the string and check if it's valid ASCII
-        // String starts at entry + s_headerOffset + 2
-        char buf[8] = {};
-        int readLen = len > 7 ? 7 : len;
-        if (!Macht::ReadBytesSafe(entry + s_headerOffset + 2, buf, readLen)) continue;
-
-        bool valid = true;
-        for (int i = 0; i < readLen; ++i) {
-            auto c = static_cast<unsigned char>(buf[i]);
-            if (c < 0x20 || c >= 0x7F) { valid = false; break; }
-        }
-
-        if (valid) {
-            s_blockOffsetBits = bits;
-            s_blockOffsetMask = mask;
-            LOG_INFO("FNamePool: BlockOffsetBits = %d (FName[1] len=%d, str='%.7s')", bits, len, buf);
-            return;
+        if (Macht::ReadSafe(entry + s_headerOffset, header)) {
+            int lenA = (header >> 6) & 0x3FF;      // Format A
+            int lenB = (header >> 1) & 0x7FF;      // Format B
+            len = (lenA >= 1 && lenA <= 256) ? lenA : ((lenB >= 1 && lenB <= 256) ? lenB : 0);
+            if (len > 0) {
+                int readLen = len > 7 ? 7 : len;
+                if (Macht::ReadBytesSafe(entry + s_headerOffset + 2, buf, readLen)) {
+                    decoded = true;
+                    for (int i = 0; i < readLen; ++i) {
+                        auto c = static_cast<unsigned char>(buf[i]);
+                        if (c < 0x20 || c >= 0x7F) { decoded = false; break; }
+                    }
+                }
+            }
         }
     }
 
-    // Keep default
-    LOG_INFO("FNamePool: BlockOffsetBits = %d (default)", s_blockOffsetBits);
+    if (decoded) {
+        LOG_INFO("FNamePool: BlockOffsetBits = %d (stock FNamePool; ASSUMED, not measured — "
+                 "index 1 decodes '%.7s', but a low-index probe cannot distinguish 14 from 16)",
+                 s_blockOffsetBits, buf);
+    } else {
+        LOG_WARN("FNamePool: BlockOffsetBits = %d (stock default kept; index 1 did NOT decode "
+                 "cleanly at this width — name resolution may be degraded)", s_blockOffsetBits);
+    }
 }
 
 // Auto-detect FNameEntry stride by scanning chunk[0] for the "None" string.
@@ -491,11 +513,14 @@ uintptr_t GetEntry(int32_t nameIndex) {
     if (s_isUE4Mode) {
         // UE4 TNameEntryArray: Chunks[chunkIdx] -> FNameEntry*[UE4_CHUNK_SIZE]
         // Double dereference: array -> chunk -> entry pointer
+        // Bounds guard (audit #5 G5): reject a negative nameIndex FIRST. A poison
+        // ComparisonIndex 0xFFFFFFFF read as int32 = -1 gives chunkIndex 0 / elemIndex -1,
+        // which passes a chunkIndex-only guard and derefs chunkPtr + (-1)*8 as an
+        // FNameEntry*, returning a fabricated name as real. The UE5 path below is safe via
+        // its own `chunkIndex < 0` guard (arithmetic >> keeps the sign).
+        if (!UE4NameIndexInBounds(nameIndex, UE4_CHUNK_SIZE, UE4_NAME_MAX_CHUNKS)) return 0;
         int32_t chunkIndex = nameIndex / UE4_CHUNK_SIZE;
         int32_t elemIndex  = nameIndex % UE4_CHUNK_SIZE;
-
-        // Bounds guard: UE4 typically has < 256 chunks (256 * 16384 = 4M names max)
-        if (chunkIndex < 0 || chunkIndex > UE4_NAME_MAX_CHUNKS) return 0;
 
         // Read chunk pointer from array
         uintptr_t chunkPtr = 0;

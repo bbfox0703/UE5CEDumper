@@ -34,6 +34,7 @@
 #include "../src/Solide.h"      // Force-field / stealth-meter matcher (MatchStealthField, header-inline)
 #include "../src/Orden.h"       // Multi-value group scan: source-agnostic SDR matcher (MatchGroup)
 #include "../src/Ubel.h"        // Native-C scan P0: ComputeHoles / ComputeClassHoles / NormalizeGuessedTypeToProperty (inline, pure)
+#include "../src/Serie.h"       // FNamePool index geometry: ReadEnumRawValue is in Ubel; BlockBits/UE4 bounds are here (audit #5 G4/G5)
 #include "../src/Aura.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
@@ -5913,6 +5914,94 @@ static void Test_Voll_CapacityLoggingPolicy() {
     }
 }
 
+// audit #5 U9 — a byte-width enum member must read UNSIGNED so the UHT MAX=255 sentinel
+// (and any enumerator >= 128) matches the UEnum table instead of sign-extending to a
+// negative int. Wider widths keep their natural signedness (matching the array-enum
+// sibling). Negative control: reverting ReadEnumRawValue's `case 1` to int8_t fails the
+// 0xFF / 0x80 rows.
+static void Test_Ubel_ReadEnumRawValue() {
+    uint8_t b_ff = 0xFF, b_80 = 0x80, b_7f = 0x7F;
+    EXPECT_EQ_U64("byte 0xFF unsigned -> 255", Ubel::ReadEnumRawValue(&b_ff, 1), 255);
+    EXPECT_EQ_U64("byte 0x80 unsigned -> 128", Ubel::ReadEnumRawValue(&b_80, 1), 128);
+    EXPECT_EQ_U64("byte 0x7F -> 127",          Ubel::ReadEnumRawValue(&b_7f, 1), 127);
+
+    // Wider widths: natural signedness — a negative int16 stays negative.
+    uint8_t neg16[2] = { 0xFF, 0xFF };            // int16 -1
+    EXPECT("int16 0xFFFF -> -1", Ubel::ReadEnumRawValue(neg16, 2) == -1);
+    uint8_t v16[2] = { 0x00, 0x01 };              // int16 256
+    EXPECT_EQ_U64("int16 0x0100 -> 256", Ubel::ReadEnumRawValue(v16, 2), 256);
+    uint8_t v32[4] = { 0x00, 0x00, 0x00, 0x01 };  // int32 0x01000000
+    EXPECT_EQ_U64("int32 -> 0x01000000", Ubel::ReadEnumRawValue(v32, 4), 0x01000000);
+    uint8_t v64[8] = { 0,0,0,0,0,0,0,1 };         // int64 0x0100000000000000
+    EXPECT_EQ_U64("int64 -> high byte", Ubel::ReadEnumRawValue(v64, 8), 0x0100000000000000ULL);
+
+    // Guards: null and unusual size are 0, never a crash.
+    EXPECT_EQ_U64("null -> 0",   Ubel::ReadEnumRawValue(nullptr, 1), 0);
+    EXPECT_EQ_U64("size 3 -> 0", Ubel::ReadEnumRawValue(&b_ff, 3), 0);
+}
+
+// audit #5 U10 — the FString/FUtf8String count cap bounds a GARBAGE Count, not display
+// length: a realistic long string (a 400-char description that used to render as
+// "(empty)") is accepted, while empty/negative and garbage-huge counts are rejected.
+// Negative control: dropping kMaxFStringChars back to 256 fails the 400 / cap rows.
+static void Test_Ubel_IsPlausibleStringCount() {
+    EXPECT("1 accepted",             Ubel::IsPlausibleStringCount(1));
+    EXPECT("256 accepted",           Ubel::IsPlausibleStringCount(256));
+    EXPECT("400 accepted (was empty)", Ubel::IsPlausibleStringCount(400));
+    EXPECT("cap accepted",           Ubel::IsPlausibleStringCount(Ubel::kMaxFStringChars));
+    EXPECT("0 rejected",             !Ubel::IsPlausibleStringCount(0));
+    EXPECT("negative rejected",      !Ubel::IsPlausibleStringCount(-1));
+    EXPECT("garbage count rejected", !Ubel::IsPlausibleStringCount(0x7FFFFFFF));
+    EXPECT("just over cap rejected", !Ubel::IsPlausibleStringCount(Ubel::kMaxFStringChars + 1));
+}
+
+// audit #5 G4 — the FNamePool block-offset-bits probe at testIdx=1 CANNOT distinguish 14
+// from 16 (both address chunk 0, offset 1*stride), which is why the old detector's
+// 14-bit arm was structurally unreachable while it logged the outcome as a measurement.
+// A block-boundary index DOES differ, but is unreliable for other reasons (see
+// DetectBlockOffsetBits) — so the honest fix keeps the stock width and this pins the
+// impossibility. Negative control: if ComputeBlockProbe stopped masking, the idx-1
+// indistinguishable assertion flips.
+static void Test_Serie_BlockBitsProbe() {
+    const int stride = 2;
+    EXPECT("idx1 16 vs 14 indistinguishable",
+           Serie::BlockBitsAreIndistinguishable(1, 16, 14, stride));
+    Serie::BlockProbe p16 = Serie::ComputeBlockProbe(1, 16, stride);
+    Serie::BlockProbe p14 = Serie::ComputeBlockProbe(1, 14, stride);
+    EXPECT("idx1 chunk 0 both",          p16.chunkIndex == 0 && p14.chunkIndex == 0);
+    EXPECT("idx1 offset 1*stride both",  p16.chunkOffset == stride && p14.chunkOffset == stride);
+
+    // At the 14-bit block boundary the widths DO diverge: 16 keeps it in chunk 0 at a
+    // large offset, 14 rolls it into chunk 1 offset 0.
+    const int32_t boundary = 1 << 14;  // 0x4000
+    EXPECT("idx 0x4000 16 vs 14 distinguishes",
+           !Serie::BlockBitsAreIndistinguishable(boundary, 16, 14, stride));
+    Serie::BlockProbe b16 = Serie::ComputeBlockProbe(boundary, 16, stride);
+    Serie::BlockProbe b14 = Serie::ComputeBlockProbe(boundary, 14, stride);
+    EXPECT("idx 0x4000 @16 chunk 0",     b16.chunkIndex == 0);
+    EXPECT_EQ_U64("idx 0x4000 @16 offset", b16.chunkOffset, (int64_t)boundary * stride);
+    EXPECT("idx 0x4000 @14 chunk 1",     b14.chunkIndex == 1);
+    EXPECT_EQ_U64("idx 0x4000 @14 offset 0", b14.chunkOffset, 0);
+}
+
+// audit #5 G5 — the UE4 TNameEntryArray index guard must reject a NEGATIVE nameIndex
+// (a poison 0xFFFFFFFF read into an int32 as -1), which under truncating division gives
+// chunkIndex 0 / elemIndex -1 and derefs chunk + (-1)*8. Negative control: a guard that
+// only bounds chunkIndex (the old code) accepts -1 (chunkIndex 0).
+static void Test_Serie_UE4NameIndexInBounds() {
+    const int32_t chunkSize = 0x4000;   // UE4_CHUNK_SIZE
+    const int32_t maxChunks = 256;      // UE4_NAME_MAX_CHUNKS
+    EXPECT("index 0 (None) ok", Serie::UE4NameIndexInBounds(0, chunkSize, maxChunks));
+    EXPECT("index 1 ok",        Serie::UE4NameIndexInBounds(1, chunkSize, maxChunks));
+    EXPECT("index 16383 ok",    Serie::UE4NameIndexInBounds(16383, chunkSize, maxChunks));
+    EXPECT("last chunk ok",     Serie::UE4NameIndexInBounds(maxChunks * chunkSize, chunkSize, maxChunks));
+    // The defect: a negative index MUST be rejected (the old chunkIndex-only guard did not).
+    EXPECT("index -1 REJECTED",     !Serie::UE4NameIndexInBounds(-1, chunkSize, maxChunks));
+    EXPECT("large negative rejected", !Serie::UE4NameIndexInBounds(-100000, chunkSize, maxChunks));
+    EXPECT("past max chunks rejected",
+           !Serie::UE4NameIndexInBounds((maxChunks + 1) * chunkSize, chunkSize, maxChunks));
+}
+
 // Print the test about to run, when DLL_TEST_TRACE is set. build.ps1 sets it under
 // CI. Off locally so the ordinary run stays two lines.
 static bool g_trace = false;
@@ -6129,6 +6218,12 @@ int main() {
 
     // Voll — pipe-accept capacity logging: ERROR_PIPE_BUSY once, not 1/s ([PIPEBUSY])
     RUN(Test_Voll_CapacityLoggingPolicy);
+
+    // audit #5 L1 (D1/D2 DLL engine decode + safety)
+    RUN(Test_Ubel_ReadEnumRawValue);          // U9  — byte enums read unsigned
+    RUN(Test_Ubel_IsPlausibleStringCount);    // U10 — FString cap bounds a garbage Count
+    RUN(Test_Serie_BlockBitsProbe);           // G4  — idx-1 probe cannot distinguish 14 vs 16
+    RUN(Test_Serie_UE4NameIndexInBounds);     // G5  — reject negative UE4 name index
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);
