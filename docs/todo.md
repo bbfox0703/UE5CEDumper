@@ -2718,13 +2718,14 @@ Every step is a click sequence; the unit tests cover the logic, not what the pan
 > instead of exiting quietly. The first instance is unaffected and keeps running. Worth a look because
 > `crash.log` is documented as *the* AOT startup diagnostic, and a benign duplicate launch pollutes it.
 
-### 🟡 4-of-5 CLOSED 2026-08-16 — AA4–AA7: ue5_dissect.lua in a real Cheat Engine
+### ✅ 5-of-5 CLOSED (step 4 on 2026-08-18) — AA4–AA7: ue5_dissect.lua in a real Cheat Engine
 
 *Needs CE + a game, and **step 2 needs no DLL at all** — it is the fastest check here. See dev-log
 build 3037. The Lua rig (`lua scripts/tests/dissect_test.lua`, 40 checks) covers the logic against
 stubs; what it cannot cover is CE's real dissect machinery.*
 
-> **Steps 1, 2, 3, 5 ✅ PASS. Step 4 not staged (see it below).** Two sessions, deliberately split:
+> **All five steps ✅ PASS.** Steps 1, 2, 3, 5 in two 2026-08-16 sessions, deliberately split;
+> **step 4 closed 2026-08-18 on DumperTest** (`[DUMPERTEST-CE-2026-08-18]`, see it below):
 > `[CE-NOTEPAD-2026-08-16]` = CE 7.7.0.10568 attached to `Notepad.exe` with **no DLL at all**
 > (steps 2, 3); `[ELLIOT-CE-2026-08-16]` = the same CE against **Elliot** with the DLL injected
 > (steps 1, 5). **The batch paid for itself**: step 1 failed on first run and turned out to be a
@@ -2778,9 +2779,25 @@ stubs; what it cannot cover is CE's real dissect machinery.*
    test at `:80`, which only exists because CE's `errorOnLookupFailure` really does default **FALSE**
    despite `celua.txt` claiming TRUE — see [CE-Bugs-Minesweeper.md](CE-Bugs-Minesweeper.md) §6. This
    is the first live confirmation of that; the guard is not dead code.
-4. **A mid-walk failure leaves nothing behind.** Harder to stage: build a structure, then close the
-   game and re-run `createFromClass` on the same class. It must fail cleanly, and the CE structure
-   list must not gain a half-built or empty entry.
+4. **✅ PASS `[DUMPERTEST-CE-2026-08-18]` — a mid-walk failure leaves nothing behind.** Staged
+   exactly as written, on DumperTest Development (dist 3262) with the DLL injected.
+   **Baseline:** CE's structure list at **0** (the table reload had cleared it), then
+   `d.createFromPath('/Script/DumperTest.DumperTestActor')` →
+   `[UE5Dissect] Struct created: DumperTestActor (193 elements, 1760 bytes)`, list at **1**.
+   **Then `Stop-Process DumperTest -Force`, confirmed dead, and re-ran the same call.** It failed
+   loudly — `Error:Failure to allocate memory` / `Script Error` (CE's own message; no invented
+   wording) — and the structure list afterwards read:
+   ```
+   structure count now = 1
+     [0] name=DumperTestActor elements=193
+   ```
+   **Still 1, still the intact 193-element structure from step 1: no half-built entry, no empty
+   entry, and the good one was not damaged** — which is the whole of what this step asks.
+   ⚠ **Precise about what was NOT shown.** The raise escaped a `pcall` wrapped around
+   `createFromPath`, so it fired *before* that function — at the `dofile` re-load, where the script
+   resolves exports against a process that no longer exists. So the *inside-`createFromClass`*
+   unwind path is still unwitnessed; what is proven is the row's actual claim, that the attempt
+   fails and leaves no debris.
 
 ### ⬜ NEW 2026-08-17 — A6: Force now holds the class AND its subclasses
 
