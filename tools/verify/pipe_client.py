@@ -63,6 +63,7 @@ class PipeClient:
         self._f = None
         self._id = 0
         self.events: list[dict] = []
+        self._buf = bytearray()   # leftover bytes between block reads
 
     # -- lifecycle ------------------------------------------------------------
     def connect(self, retries: int = 10, delay: float = 1.0) -> "PipeClient":
