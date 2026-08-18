@@ -76,11 +76,13 @@ hook look "intermittent" in the previous sitting.**
   holds **2**, so one rig client fills the pool and the accept loop then logs
   `CreateNamedPipe failed (err=231)` **every second, forever** — 1,826 lines in 31 min, measured
   (`[PIPEBUSY-2026-08-18]`). Close the UI first, or drive the check through the UI instead.
-* ⏱ **`list_all_functions` is genuinely slow on a large title** — ~10 min on Avowed (281,501
-  objects), measured server-side: request at 21:08:06, response attempted 21:17:43. It is NOT
-  hanging. `list_classes` alone is 23–35 s there. Budget for it, or use the UI panel that already
-  ran it. (A separate rig bug made it look infinitely worse — see the block-read fix in
-  `pipe_client.py`.)
+* ⏱ **`list_all_functions` is FAST; a long wait means the RIG, not the DLL.** Measured on Avowed
+  (281,501 objects): the DLL logs `EnumerateAllFunctions: 21845 entries from 8780 classes`
+  **0.34 s** after the request, and the full round trip is **0.8 s** once the client reads in blocks.
+  Before that fix the same call appeared to take **>10 minutes** — the DLL had finished and was
+  BLOCKED writing a multi-MB reply into a pipe drained one byte at a time. ⚠ An earlier revision of
+  this file recorded "genuinely slow, ~10 min, budget for it"; that was **wrong** and is exactly the
+  wrong lesson to carry.
 
 * **A reader that returns 0 on failure is worthless when 0 is also the bug.** A screener missing its
   `ReadProcessMemory` return check reported "does not persist" for a store that had *already

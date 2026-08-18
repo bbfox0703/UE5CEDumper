@@ -2126,6 +2126,14 @@ Effort **S** · Risk **low** (logging only; do not change the retry itself, whic
 ⚠ Do **not** "fix" it by raising `kMaxPipeInstances` — the cap is a deliberate resource bound, and
 the spam would simply move to 4 clients.
 
+⚠ **CORRECTION to the diagnosis that found this.** The same investigation blamed a 16-minute wait
+partly on "`list_all_functions` is genuinely ~10 min on Avowed". **That was wrong.** Server-side the
+call completes in **0.34 s** (`EnumerateAllFunctions: 21845 entries from 8780 classes`); the stall was
+entirely a rig bug — `pipe_client.request()` read the reply one byte at a time, so the DLL blocked
+writing a multi-MB response. Fixed to block reads: the same call now round-trips in **0.8 s**, and
+`list_classes` went from 25–35 s to **0.1 s**. The pipe-instance spam below is real and independent;
+the slowness was not a DLL property at all.
+
 **Operational rule this establishes for the register:** the UI holds **2** of the 3 lanes, so
 **never run a second `pipe_client.py` alongside the UI** — one is the ceiling. Close the UI first
 when a row needs the rig.
@@ -3987,6 +3995,49 @@ Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogw
 > ⚠ Nothing was fired: these commands have real side effects (`SetAchievement`,
 > `UnlockAllAchievements` touch the user's Steam account). The defect is in resolving the class
 > **before** FIRE, so opening the dialog is the whole check.
+>
+> ### ⛔ AVOWED TOO — third title, richest exec surface anywhere, still ZERO past the cap `[AVOWED-X2-2026-08-18]`
+>
+> Avowed (UE **504**, **281,501** objects, save loaded) is the strongest candidate the machine has:
+> **8,780 classes** and **281 exec functions across 22 classes** (193 of them on game classes — the
+> figure the UI's Console reports, which is how the detector below was validated).
+>
+> **All 22 exec classes are INSIDE the cap. The highest is index 4929, seventy-one short of 5,000.**
+>
+> | idx | class | cmds | | idx | class | cmds |
+> |---:|---|---:|---|---:|---|---:|
+> | 5 | `AlabamaPlayerController` | 2 | | 2535 | `GameInstance` | 2 |
+> | 36 | `DebugCameraController` | 2 | | 2657 | **`AlabamaCheatManager`** | **152** |
+> | 55 | `AlabamaGameModeBase` | 6 | | 2831 | `PlayerInput` | 5 |
+> | 59 | `PlayerController` | 14 | | 3094 | `CheatManager` | 50 |
+> | 170–251 | `GameMode`/`GameHud`/`HudBase`/`HUD` | 13 | | 3301 | `ActivitiesSubsystem` | 5 |
+> | 1092 | `AlabamaGameInstance` | 4 | | 4080–4102 | `AlabamaAutoPlayer`/`DevUtility`/`UiCheatManagerExtension` | 6 |
+> | 1265–2050 | `AISystem`/`FogOfWarSubsystem` | 5 | | 4412–4929 | `HealthSnapshotBlueprintLibrary`/`UiCheatManagerExtension` | 12 |
+>
+> ⇒ **THE STRUCTURAL CLAIM IS NOW CONFIRMED ON THREE TITLES** (Elliot 0 game execs; ES2 6, all at
+> idx 22; Avowed 281, all ≤ 4929) **and it should be refined**: it is not merely "startup singletons
+> sit at the front". Every exec-bearing class is a **natively-declared C++ class**, registered while
+> modules load — i.e. before content. The classes *past* the cap are the tail of the walk, which is
+> content-loaded Blueprint assets (`BP_*_C`, `WBP_*_C`, `GA_*`), and a Blueprint cannot carry a
+> native `UFUNCTION(exec)`. **A past-cap exec command is therefore close to a contradiction in terms.**
+>
+> ▶ **Recommendation: close step 4 against the shared fix rather than hunt a fourth host.** Step 3
+> already proved the past-cap path end-to-end (`BP_EnemyCharacter_C::SetBlockDispHPGauge`, AA(B)
+> dialog + script into CE), and the Console twin shares that same class-address resolution — ES2
+> exercised it successfully, just not past the cap. Hunting further has a poor prior.
+>
+> ### ⚠ THE DETECTOR WAS WRONG TWICE, AND EACH TIME IT RETURNED A CLEAN ZERO
+> Recorded because a zero from a broken detector is indistinguishable from a real absence — the exact
+> failure this row keeps producing:
+> 1. Read `flags` / `name`; the reply's fields are **`function_flags`** / **`func_name`** → every
+>    lookup was `None` → "EXEC: 0 across 0 classes".
+> 2. Fixed the field, then used **`FUNC_Exec = 0x100`** from memory. `0x100` is **`FUNC_NetRequest`**;
+>    the real value is **`0x200`**, and this repo states it in
+>    [`ConsoleViewModel.cs:15`](../ui/UE5DumpUI/ViewModels/ConsoleViewModel.cs) — still "EXEC: 0".
+>
+> **What made it safe in the end was a cross-check against a number computed by other code**:
+> `game_only=true` must yield the UI's own `193`. It does, exactly, so the 281/22 figures are
+> trustworthy. **Never accept a zero from a filter that has not been shown to fire.**
 >
 > ### ⚠ MY OWN ERROR, recorded because it is the same shape as the trap this row keeps hitting
 > I first read the class as **`ES2GameInstance`** off a 0.6-scale screenshot (the package is `ES2`,

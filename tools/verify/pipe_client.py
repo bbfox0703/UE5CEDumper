@@ -106,24 +106,32 @@ class PipeClient:
         self._f.write((json.dumps(msg) + "\n").encode("utf-8"))
 
         deadline = time.time() + self.timeout
-        buf = b""
+        # Read in BLOCKS, not bytes. The byte-at-a-time version was quadratic on a
+        # large reply (a per-byte pipe read, `buf += chunk`, and a clock call each
+        # time). The DLL finishes list_all_functions on a 281K-object title in 0.34 s
+        # and then BLOCKS writing the multi-MB reply into a pipe this drains one byte
+        # at a time -- which is the whole of the "~10 minute" stall, and it read as a
+        # DLL hang. Leftovers live in self._buf so they survive across requests.
         while time.time() < deadline:
-            chunk = self._f.read(1)
+            chunk = self._f.read(65536)
             if not chunk:
                 raise PipeError(f"pipe closed while waiting for id={rid} ({cmd})")
-            if chunk != b"\n":
-                buf += chunk
-                continue
-            line, buf = buf, b""
-            if not line.strip():
-                continue
-            try:
-                obj = json.loads(line.decode("utf-8", "replace"))
-            except json.JSONDecodeError:
-                continue
-            if obj.get("id") == rid:
-                return obj
-            self.events.append(obj)
+            self._buf.extend(chunk)
+            while True:
+                nl = self._buf.find(b"\n")
+                if nl < 0:
+                    break
+                line = bytes(self._buf[:nl])
+                del self._buf[:nl + 1]
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line.decode("utf-8", "replace"))
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("id") == rid:
+                    return obj
+                self.events.append(obj)
         raise PipeError(f"timed out after {self.timeout}s waiting for id={rid} ({cmd})")
 
     # -- the three §2.6 guards ------------------------------------------------
