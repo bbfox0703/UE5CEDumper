@@ -12,6 +12,53 @@ launched without a human, and what must never be started without one.
 
 -----
 
+## ▶ RESUME HERE — state as of 2026-08-18 morning (written before a context compaction)
+
+**Machine state: nothing running.** No game, no UI, no Cheat Engine. Working tree clean,
+**42 unpushed commits on `dev`** (no PR opened — the maintainer asks for one when they want it).
+
+**Environment is ready and needs no setup:**
+* **The AOBMaker CE plugin IS installed** (maintainer, 2026-08-18). Launch `Cheat Engine (64-bit)`
+  and the bridge comes up on its own — verify with `\\.\pipe\AOBMakerCEBridge` and the UI toolbar
+  reading **`● AOBMaker Connected`**.
+* **All computer-use grants are held** for this session: `UE5DumpUI`, `DumperTest Development`,
+  `DumperTest Shipping`, `Steam`, `Cheat Engine (64-bit)` and the 16 game titles. ⚠ Grants do **not**
+  survive a *session* (a compaction is not a new session, but a restart is) — re-request per §3 if
+  `request_access` starts failing.
+
+### ▶ NEXT: finish GROUP 5
+
+Done already: `AB1/AB2` (bridge live, three independent signs), `Y9` (both consumers), the CE Lua
+hygiene shape, and the freeze arming end to end. **Still to run:**
+`B4` · `AA7` · `executeCodeEx 基本路徑` · `U4/U16/U6/F3` · `AA1` (bitfield byte **0x05 → 0x07**) ·
+`Y15` (skip step 6) · `Y1` · `Fern::Stop / B18` · `B26` (⚠ confirm the AOBMaker bridge answers first
+or step 1 passes vacuously) · `B5` (.CT half) · `M1/M2/M3/A2/U1/V1/V2` (UI half).
+
+### Operational facts learned the hard way this session — they cost round trips
+
+* **Host choice matters now.** `DumperTest`'s **ProcessEvent hook never fires**
+  (`[PEHOOK-2026-08-17]`), so **anything needing a game-thread invoke must run on another title**.
+  **Lushfoil is verified good** (`✓ PE hook verified`). Use it as the invoke host.
+* **CE: a failed record looks silent.** Open **CE → Lua Engine** *before* diagnosing a red ✗ — the
+  hygiene rules keep the message out of any dialog. And CE must be **attached to the live game**; a
+  symbol registered against a killed process gives *"contract symbol resolved to the wrong memory"*.
+* **Freeze needs its helper**: UI → **Tools → Inject Freeze Helper into Current CE Table** (verify via
+  CE's `Table` menu listing `ue5_freeze_helper.lua`).
+* **UI window handling**: it starts un-maximized and mostly off-screen left — click maximize at
+  ~(298, 63) first. **Collapsing/expanding the left Object Tree shifts every tab x-coordinate by
+  ~290 px**, so re-screenshot after toggling it. Killing the game leaves the UI `Disconnected`; press
+  **Connect**, and press **Reload** on the Object Tree or it keeps the previous game's tree.
+* **The tree's Class/Struct list needs discrete `Down` presses** — held-key repeat does not reach it.
+* Scratchpad helpers built this session (rebuild from these descriptions if the folder is gone):
+  `front_window.py` (force-front by process name, and it must NOT `SW_RESTORE` a maximized window),
+  `suspend.py` (NtSuspendProcess/Resume — how V7's dead refresh is forced), `sweep_title.py`
+  (per-title pointers + CPN + version-log evidence over the pipe), `stage_synth.py` (the synthetic
+  game/orphan folders for AC1 and AE4 step 4), `cold_detect.py` (drop one game's cache entry to force
+  a cold re-detect), `tier_triage.py` (which titles enter the memory tier ladder),
+  `pe_hook_survey.py` (which titles validated their PE hook).
+
+-----
+
 ## 0. Hard operating rules — these bound every group below
 
 1. ⛔ **ONE GAME AT A TIME. Sequential only, never parallel.** This PC over-loads otherwise
