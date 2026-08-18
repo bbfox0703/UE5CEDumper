@@ -12,69 +12,82 @@ launched without a human, and what must never be started without one.
 
 -----
 
-## ▶ RESUME HERE — the ONE open task is Y1 (rewritten 2026-08-18, end of a long sitting)
+## ▶ RESUME HERE — Y1 is CLOSED; the register is the work (rewritten 2026-08-18)
 
-**Machine state: nothing running.** Elliot, CE and UE5DumpUI all killed and confirmed gone. Invoke
-timeout restored (5000, not persisted). Elliot's `dxgi.dll` proxy is back in place. CE's `Plugins64`
-is byte-identical to its pre-session baseline. Working tree clean.
+**Machine state:** see the end of this block. Working tree clean.
 
-### ✅ CLOSED THIS SITTING — do not re-run
-`AA14–AA20` **5/5** · `AB1/AB2` **5/5** · `AB3/AB5` **1–4** · `G2` **4+5** · `X2` **1–3**.
-Results live in `todo.md`; three of those rows had their *instructions* corrected as well.
+### ✅ CLOSED — do not re-run
+Earlier sittings: `AA14–AA20` **5/5** · `AB1/AB2` **5/5** · `AB3/AB5` **1–4** · `G2` **4+5** ·
+`X2` **1–3**. This sitting: **`Y1` fully closed** (`[ELLIOT-Y1c-2026-08-18]`), steps 1–4 including
+the null control. Results live in `todo.md`; several rows had their *instructions* corrected too.
 
-### ▶ THE ONLY THING LEFT HERE: close **Y1**
+### ⛔ TWO THINGS THIS SITTING PRODUCED THAT ARE NOT YET FIXED
 
-Everything except the witness is solved. Read `todo.md`'s Y1 block first — especially
-`[ELLIOT-Y1b-2026-08-18]`, which records **a witness that looked perfect and was invalid**.
+1. **`[PEHOOKONCE-2026-08-18]`** — a FAILED ProcessEvent *detection* is permanent for the process
+   (`offset=-1`; every retry is gated `>= 0` or `== -2`), and the message it prints tells the user to
+   do the one thing that cannot work. **Triggered simply by calling `pe_profile_start` before the
+   scan** — which is easy to do from a script. Full write-up + fix shape in `todo.md`.
+2. The Y1b conclusion *"`paramsData` is cleared by the invoke path"* was **refuted** — see below.
 
-**1. Pick the target with the committed finder, not by clicking:**
-`py tools/verify/find_object_param_targets.py` → functions whose ObjectProperty is a REAL parameter
-(one of the first `num_parms` entries of `walk_functions`). It found **38** on Elliot.
-⚠ `walk_function_props` is NOT the parameter list (it is Denken's xref walk) — it returns nothing and
-looks like "no candidates".
-⚠ Live Walker's `INV` is the button that reaches `InvokeScriptGenerator` (where Y1's fix is), and it
-lists **only the class's OWN functions** — `K2_AttachToActor` is unreachable that way.
+### ▶ THE ORDER THAT MATTERS WHEN STAGING ANY INVOKE ROW
 
-**2. ⛔ DO NOT witness by reading `paramsData` after the call — it is CLEARED by the invoke path.**
-Proven: a `0xDEADBEEF` sentinel and a plain write of the pointer both read back fine at
-`g_invokeMailbox+0x328`, the emitted script is the fixed form, and its parse yields `0x3C8940A30` in
-CE's own Lua — yet post-call the buffer is zero. Reading it after FIRE fabricates the old bug's
-signature and would file a false regression. Don't assume a setter stores its argument either
-(`AttackCollisionData::SetOwnerClass` does not).
+On a proxy-mode DLL the log says *"pipe server only (no scan)"*, so **GObjects is unset until you
+scan**. Always:
 
-**3. The witness that WILL work — freeze the game thread and read `paramsData` while the DLL blocks:**
-* `py tools/verify/pipe_client.py set_invoke_timeout --args '{"timeout_ms":120000,"persist":false}'`
-  (must exceed the Lua's 10 s by more than a GUI round trip)
-* pick the thread **by fire-rate**, never by creation order — suspend a candidate and watch
-  `get_diagnostics` → `hook_fire_count` stop while the **pipe still answers**
-* `py tools/verify/suspend.py suspend-tid <FULL image stem> <tid>` — pass the **full** stem; a Steam
-  launcher shim shares the prefix and the tool now refuses an ambiguous match
-* FIRE, then `read_mem` `g_invokeMailbox+0x328` **while it is still blocked**
-* ⚠ a suspended game thread did **not** recover on resume last time — treat it as one-shot and plan
-  to restart the title afterwards
+```
+init  →  trigger_scan  →  one invoke (teleport_get_pov)  →  pe_profile_start
+```
 
-**4. ⚠ This route REQUIRES `hook_active: true`.** Check it *before* staging anything:
-`py tools/verify/pipe_client.py pe_profile_start` (then `pe_profile_stop`). On Elliot the hook is
-**intermittent** — it failed twice and succeeded twice this sitting with
-`MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`. **Restart the game until it installs**; that is the
-maintainer's own instruction, not a workaround.
+Doing `pe_profile_start` first poisons the hook for the whole process (finding 1 above). Verified as
+a one-variable negative control: same binary, same game — scan-first gave `hook_active: true`,
+profiler-first gave `false` permanently. **This, not `MH_ERROR_MEMORY_ALLOC`, was what made Elliot's
+hook look "intermittent" in the previous sitting.**
 
-### Hosts, and the ONE grant each still needs
+### ▶ WITNESSING AN INVOKE — what is now known to work
 
-Already granted and known-good: **Elliot** (`dxgi` proxy auto-loads; hook intermittent).
-Two alternatives the maintainer suggested, both with the `steam://` entry ALREADY granted:
+* **`paramsData` IS a valid witness** if read immediately after FIRE with **no other mailbox command
+  in between**. Nothing in the DLL clears it (game-thread path copies `ownedParams` back at
+  `Stark.cpp:430`; timeout path deliberately doesn't copy; static-native and no-hook fallback pass
+  the buffer straight through). What *does* wipe it: the **eight** `memset(paramsData, …)` calls in
+  other `Mimic.cpp` handlers. The previous "it is cleared" finding is refuted in `todo.md`.
+* **The generated script picks its OWN instance**, not the one Live Walker is showing. Read
+  `instanceAddr` out of the mailbox header and witness *that* object.
+* Rigs, both committed: `tools/verify/mailbox_addr.py` (resolves `g_invokeMailbox` from the injected
+  DLL's export table — deliberately independent of CE's `getAddress`, which is part of the path under
+  test) and `tools/verify/y1_witness.py`.
+* Thread-freezing was **not needed** and is no longer the recommended first approach.
 
-| title | UE | game exe | note |
-|---|---|---|---|
-| **Solarpunk** | 5.7 | `D:\SteamLibrary\steamapps\common\Solarpunk\Solarpunk\Binaries\Win64\SolarpunkSteam-Win64-Shipping.exe` (launcher `Solarpunk.exe`) | AOB *fails* on the non-Steam build — also the only known host for `G2` step 4's recovery path |
-| **EVERSPACE 2** | 5.5 | `C:\Program Files (x86)\Steam\steamapps\common\EVERSPACE™ 2\ES2\Binaries\Win64\ES2-Win64-Shipping.exe` (launcher `Everspace2.exe`) | maintainer notes the save is **on a landing pad** — may not suit an invoke needing live actors |
+### ⚠ TWO OPERATIONAL TRAPS WORTH MORE THAN THEY COST
 
-⛔ **Their exes CANNOT be granted in advance** — `request_access` only resolves *installed or running*
-apps, and these are bare exes. Tried and refused with `notInstalled`. So: **launch the title first,
-then immediately `request_access` for its `*-Win64-Shipping.exe`** (one dialog, needs the maintainer
-present for that moment). Everything else — UE5DumpUI, Cheat Engine, Steam, steamwebhelper, File
-Explorer, and 11 games incl. both `steam://` entries above — is already granted for this session.
+* **A reader that returns 0 on failure is worthless when 0 is also the bug.** A screener missing its
+  `ReadProcessMemory` return check reported "does not persist" for a store that had *already
+  happened* — the UI was displaying the stored value at that moment. Every `tools/verify/` reader now
+  fails loudly.
+* **The IME eats typed hex.** Default input on this machine is Chinese: typing `0x…` into a CE form
+  yields Han characters plus a candidate window that also swallows `Ctrl+A`/`Ctrl+V`. **`shift`**
+  toggles to English; clear with `End` + repeated `BackSpace` (triple-click-to-replace silently
+  leaves the old text). Always zoom and confirm the field **before** FIRE.
 
+### Hosts — grants now held for BOTH alternatives
+
+| title | UE | status |
+|---|---|---|
+| **Elliot** | 5.04 | `dxgi` proxy auto-loads, exe granted. **Known-good invoke host** — hook installs reliably if you scan first. |
+| **Solarpunk** | 5.7 | `steam://` **and** `SolarpunkSteam-Win64-Shipping.exe` granted 2026-08-18. Also a candidate for `G2` step 3. |
+| **EVERSPACE 2** | 5.5 | `steam://` **and** `ES2-Win64-Shipping.exe` granted 2026-08-18. Save is on a landing pad — may lack live actors. Also a `G2` step 3 candidate. |
+
+⚠ **A bare exe can only be granted while it is RUNNING** (`request_access` resolves installed *or
+running* apps). Both were launched for exactly that purpose, so no further dialog is needed for them
+this session. `Everspace2.exe` / `Solarpunk.exe` are launcher shims that own no window and do not
+resolve — irrelevant, the shipping exe is what matters.
+⚠ **`steam://rungameid/...` launches silently fail** via `open_application`; drive the Steam client's
+library UI, or start the shipping exe directly (Elliot works this way and skips Steam entirely).
+
+### ▶ WHAT TO PICK UP NEXT
+`py tools/check_audit_register.py --list` for the open tier. Named remainders: `G2` step 3 (needs a
+UE5 title whose PE version resource is stripped/unrecognised — **Solarpunk and ES2 are both granted
+now and are listed candidates**; Lushfoil is ruled out), `AB3/AB5` step 5 (`Vector3f` 12 B beside a
+24 B vector), `X2` steps 4–5 (>5,000 classes **and** game-class exec commands).
 
 ### ▶ STEP 1 — GRANTS, IN BATCHES OF ≤7. Do this before anything else.
 

@@ -2091,6 +2091,54 @@ handle needs the record passed in, or the generated script must poll `isAbandone
 — the accessor exists for exactly this and has no other caller. Effort **S**, risk **LOW**; the
 `scripts/tests/freeze_helper_test.lua` rig already drives the abandonment path.
 
+### ⛔ NEW 2026-08-18 `[PEHOOKONCE-2026-08-18]` — a FAILED ProcessEvent detection is PERMANENT for the process, and the message it prints is unreachable advice
+
+*Distinct from `[PEHOOK-2026-08-17]` below: that one is a wrong vtable SLOT on one sample. This one
+is the recovery path, and it bites on any game.* Found while staging Y1 on Elliot.
+
+**What happens.** In proxy mode the DLL starts the pipe server only — *"proxy DLL mode — starting
+pipe server only (no scan)"* — so `Aura`'s GObjects is unset until a scan runs. Issue
+`pe_profile_start` (or any invoke) **before** the scan and `CollectCandidateVTables` finds nothing:
+
+```
+[INFO ] ProcessEvent: first-time init on thread 21156 … serialized via call_once
+[ERROR] DetectProcessEvent: no valid UObject vtable available
+[WARN ] GameThreadDispatch: cannot resolve ProcessEvent address for hooking
+[INFO ] ProcessEvent: first-time init complete — offset=-1, hook_active=0
+```
+
+**And `-1` is terminal.** `DetectProcessEventVTableOffset` runs only inside `std::call_once`, which
+cannot re-run; the ordinary-path retry is gated `if (s_processEventOffset >= 0 && !IsHookActive())`
+([`Frieren.cpp:1730`](../dll/src/Frieren.cpp)); the other call site is gated `== -2`
+([`:1569`](../dll/src/Frieren.cpp)); and `UE5_EnsureGameThreadHook` returns early at
+`if (s_processEventOffset < 0) return false` ([`:1851`](../dll/src/Frieren.cpp)). So once detection
+has failed, **nothing in the process can ever install the hook** — no invoke, no user click, no
+later scan. Only a game restart recovers it.
+
+⛔ **The user-facing string actively misleads**, and this is the half worth fixing first:
+`"ProcessEvent not detected — do any invoke first (Teleport -> Get POV), then Start again."`
+On this path that instruction is **unreachable by construction** — doing an invoke and starting
+again re-enters `EnsureProcessEventReady`, which is already satisfied, and hits the `< 0` early
+return. The user is told to retry the one thing that cannot work.
+
+**Verified by negative control** — same binary, same game, same build, one variable (order):
+
+| order | result |
+|---|---|
+| `pe_profile_start` → `init` → `trigger_scan` → invoke → `pe_profile_start` | `hook_active: false`, **permanently** |
+| `init` → `trigger_scan` → invoke → `pe_profile_start` | **`hook_active: true`** |
+
+**Fix shape.** `-1` from *detection* is not the same as `-1` forever: it means "no UObject existed
+yet", which a later scan changes. Either re-arm the sentinel to `-2` when detection fails for the
+"no vtable available" reason specifically (so the existing `== -2` retry rearms), or move detection
+out of the `call_once` and keep only the *install* serialized. Whichever is chosen, the message must
+distinguish "not detected yet, retry after a scan" from "detected and permanently failed", and
+`pe_profile_start` should refuse (or run the scan) rather than poisoning the process.
+
+⚠ **This is plausibly the everyday cause of "the PE hook works sometimes on this game".** It is NOT
+the same as the `MH_ERROR_MEMORY_ALLOC` install failure (which IS retryable, and which
+`UE5_EnsureGameThreadHook` forces past) — do not merge the two.
+
 ### ⛔ NEW 2026-08-17 `[PEHOOK-2026-08-17]` — ProcessEvent slot detection FAILS on DumperTest
 
 *Found by clicking **System → Run Self-Test** while looking for something else. It matters out of
@@ -3639,7 +3687,7 @@ Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogw
 > | 4 | ⬜ **NOT DECIDABLE ON ELLIOT — and the reason is measured** | The Console twin needs an `exec` command **on a past-cap class**. Elliot has **none**: with `Game Only` on, Console reports `No UFUNCTION(exec) commands found in this game (scanned 12,822 functions across 3,935 classes)`. All **94** exec commands it does find sit on engine classes (`CheatManager`, `AISystem`, `AbilitySystemCheatManagerExtension`), and `CheatManager` is **present** in the capped list (4 matching rows), i.e. inside the first 5,000. Running the twin here would pass **vacuously**. ▶ Needs a title with **>5,000 classes AND game-class exec commands** — check the Console tab's `Game Only` count before committing to a host |
 > | 5 | ⬜ not run | The negative case (unknown class must say plainly *"not found"*, not the "may still exist" caveat) goes through the **Live handoff**, which was not staged this session |
 
-### 🟡 PARTIAL 2026-08-18 — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
+### ✅ DONE 2026-08-18 `[ELLIOT-Y1c-2026-08-18]` — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
 
 The invoke form passed **0** for every `UObject*` / `FName` argument since the feature shipped;
 `tonumber(s, 16)` was handed a string still carrying its `0x`. Fixed, and the Lua semantics are
@@ -3744,6 +3792,58 @@ at the Lua expression; everything after it — the mailbox write, the DLL's `CMD
 >   again failed with `MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`, so **restart until it installs**.
 > * Or a function that **persists** its object argument somewhere readable (verify by reading the
 >   field back, not by assuming a setter stores it — `SetOwnerClass` did not).
+
+> ### ✅ THIRD ATTEMPT — CLOSED, and the previous attempt's diagnosis was WRONG
+> `[ELLIOT-Y1c-2026-08-18]`
+>
+> Elliot, UE **504**, DLL **3262**, CE 7.7 attached, AOBMaker connected, **`hook_active: true`**.
+> Target `DropItemSpawner::Setup` — chosen because its two parameters are *exactly* the two types
+> this bug affected: `InOwner [ObjectProperty, off=0]` and `NameLotteryID [NameProperty, off=8]`,
+> `parmsSize=16 numParms=2`, flags `0x04020401` (Final|Native|Public|BlueprintCallable — **not**
+> `FUNC_Static`, so it routes through GameThreadDispatch). One FIRE settles both halves.
+>
+> **Both values were typed WITH the `0x` prefix**, which is the whole point: a bare-hex string goes
+> down `tonumber(s,16)`, the path that always worked. Distinct values so they cannot be confused.
+>
+> | witness | pre-FIRE | post-FIRE | typed |
+> |---|---|---|---|
+> | `paramsData+0x00` (InOwner) | `0x0` | **`0x1078919D0`** | `0x1078919D0` |
+> | `paramsData+0x08` (NameLotteryID) | `0x0` | **`0x1234ABCD`** | `0x1234ABCD` |
+> | instance `Owner` field `+0xE0` | `0x0` | **`0x1078919D0`** | — reached the function |
+>
+> ⇒ **Step 3 satisfied by the EFFECT, not by `INVOKED OK`**: `Owner` is a stored field that survives
+> the call, and it holds the typed pointer. ⇒ **Step 4 (null control) run first, deliberately**, so
+> the positive case started from a known zero: FIRE with the untouched `0x0` gave `result=0`,
+> `status=1`, `Owner=0`, no crash. The check is demonstrably able to fail in both directions.
+>
+> ### ⚠ The Y1b conclusion "`paramsData` is cleared by the invoke path" is REFUTED
+> It is not cleared on **any** path, and the code says so: the game-thread path copies `ownedParams`
+> back over the caller's buffer ([`Stark.cpp:430`](../dll/src/Stark.cpp)), the timeout path
+> deliberately performs no copy-back, and both the static-native and the no-hook fallback pass
+> `&g_invokeMailbox.paramsData` straight to ProcessEvent. Two things that DO produce the observed
+> zeros, and both applied to Y1b: the hook was **inactive** on that launch, and `Mimic.cpp` contains
+> **eight** `memset(g_invokeMailbox.paramsData, 0, …)` calls in *other* command handlers — so any
+> later mailbox traffic wipes the buffer. **Read it immediately after FIRE, with no mailbox command
+> in between, and it is a valid witness.** Generalisation worth keeping: *a shared buffer is only a
+> witness for as long as nothing else is entitled to write it.*
+>
+> ### ⚠ The script picks its OWN instance — witness THAT one
+> The form resolved `inst=0x7FF4DE7EE190` (first live instance) while Live Walker was walking
+> `0x7FF4DE81F970`. Reading `Owner` on the walked instance shows **no change** and looks like a
+> clean FAIL. The mailbox header names the instance actually invoked — read it from there.
+> Rig: [`tools/verify/mailbox_addr.py`](../tools/verify/mailbox_addr.py) resolves `g_invokeMailbox`
+> by parsing the injected DLL's export table (no CE involved — CE's own `getAddress` is part of the
+> path under test), and `tools/verify/y1_witness.py` prints both witnesses.
+>
+> ### ⚠ Two rig traps this cost, both worth not repeating
+> * **A reader that returns 0 for "read failed" is useless here**, because 0 is also what the *bug*
+>   looks like. A screener that dropped the `ReadProcessMemory` return check reported
+>   `PERSISTS = False` for a store that had actually happened — the UI was showing the stored value
+>   at the same moment. Every reader in `tools/verify/` now fails loudly instead.
+> * **The IME eats typed hex.** This machine's default input is Chinese; typing `0x1078919D0` into a
+>   CE form produced Han characters and a candidate window that also swallowed `Ctrl+A`/`Ctrl+V`.
+>   `shift` toggles the IME to English; `End` + repeated `BackSpace` is the reliable clear, since
+>   triple-click-to-replace silently left the old text in place.
 
 
 

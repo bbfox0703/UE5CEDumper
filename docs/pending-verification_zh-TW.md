@@ -22,10 +22,10 @@
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI |
 | **第 2 步 — 要注入一個執行中的遊戲** | 19 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 10 | 遊戲 + Cheat Engine |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 9 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 16 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **49** | |
+| **合計** | **48** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -329,16 +329,6 @@
 | 3 | 檢查 init-0.log 的 LIST_INSTANCES ... classWitness=0x... 這行。 | witness 非 0；為 0 表示 guard 退回舊路徑、修正沒生效。 |
 | 4 | 維持凍結，製造 churn：把凍結中的 actor 打死重生，或跨越 level streaming 邊界。 | 約一次 rescan（~5 秒）內重新接上；且沒有任何不相干物件的欄位被改動。 |
 | 5 | AA3：凍結執行中把 DLL 卸載/重新注入，讓 rescan 永久失敗。 | ~15 秒內 Lua console 印出一次「... consecutive rescans failed -- freeze STOPPED writing」，之後不再寫入。 |
-
-### ⬜ Y1 —— CE invoke 的物件參數真的有傳進函式
-
-*build 2862 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 在 Live Walker 挑一個帶物件參數的 UFunction（K2_AttachToActor 或任何吃 AActor* 的 BlueprintCallable），用 Copy AA Script / push 到 CE。 | 腳本送進 CE。 |
-| 2 | 從任一面板複製一個實例位址（App 自己的 0x+大寫 hex 格式）貼進 [UObject*: …] 欄位，按 FIRE。 | 遊戲內出現實際效果，或設 UE5_DEBUG=1 讀解碼後的回傳值。<br>⚠ 印出 INVOKED OK 不算通過，壞掉的版本也會印。 |
-| 3 | 反向對照：保持預設 0x0 直接 FIRE。 | 行為等同 null 參數，與修正前一致。 |
 
 ### ⬜ G10 / MA1 —— Hint 快取與 AOB 掃描取消守衛
 
