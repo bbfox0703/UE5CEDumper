@@ -2620,7 +2620,10 @@ no test target compiles `Genau.cpp`.*
    3262), and the Elliot row is quoted from `[ELLIOT-2026-08-16]` rather than re-measured. OCTOPATH
    would have been the third point but **cannot be measured at all** — its `version.dll` proxy never
    loads; see the silent-proxy finding below.
-3. **⚠ REGRESSION — a Tier 1 game still detects from Tier 1.** Any ordinary UE5 title: confirm
+3. **⚠ REGRESSION — a Tier 1 game still detects from Tier 1.** ⛔ **"Any ordinary UE5 title" is
+   WRONG and is what made this step look runnable** — an ordinary UE5 title resolves at Tier **0**
+   and never reaches Tier 1. Screen candidates with `tools/verify/pe_version_probe.py` first; see
+   `[G2-TIER0-SWEEP-2026-08-18]`. Confirm
    `scan-0.log` still shows `DetectVersion: Tier 1 (ascii|utf16) '++UEx+Release-N.N' -> NNN`. The log
    lines were kept byte-identical on purpose, so any wording change here is itself a defect.
 4. **The three new cancel points actually fire.** Proxy mode: start a scan from the UI, close the UI
@@ -2660,6 +2663,47 @@ no test target compiles `Genau.cpp`.*
 > rewritten **identically** (`ueVersion=506 versionDetected=True versionDetectRev=5`).
 > ⚠ The maintainer has confirmed the whole cache file is **disposable** — it only speeds up a second
 > load — so a cold-detect row may drop a record, or the file, without ceremony.
+>
+> ### ⛔ STEP 3 IS AS CLOSED AS IT CAN GET — the UE5 branch has NO HOST, and all five candidates are REFUTED
+> `[G2-TIER0-SWEEP-2026-08-18]`
+>
+> Asked to run step 3 on **Solarpunk**. It cannot: its `VS_FIXEDFILEINFO.dwProductVersionMS` is
+> **5.7.1.0**, so `Genau::DetectVersionFromPEResource`'s very first test (`major==5 && minor<=9`)
+> returns **507** and the ladder exits at `PE VERSIONINFO` — the same mechanism that ruled out
+> Lushfoil. ⚠ Its *string* `ProductVersion` is the placeholder `"UE5-CL-0"`, which **looks**
+> unrecognisable and is why this title read as a candidate; the strings are only consulted at stage 3,
+> long after the fixed-info block has already decided.
+>
+> **So the question was settled offline for every binary on this machine, not one title at a time.**
+> `tools/verify/pe_version_probe.py` replays that function's decision order against a PE, and was run
+> over **71** UE binaries (14 installed Steam titles + 57 under `D:\UE_Analyze_data`, incl. our own
+> 5.3/5.4/5.7/5.8 reference builds and both DumperTest packages).
+>
+> **Exactly three fall through Tier 0, and all three are UE4-era:**
+>
+> | title | ProductVersion | why it falls through | use for step 3 |
+> |---|---|---|---|
+> | DQ7R | 1.1.1.0 | game version, not engine | already the witnessed `utf16` + **UE4** line |
+> | OCTOPATH TRAVELER | 1.0.0.1 | game version | **unusable** — its `version.dll` proxy never loads |
+> | Elliot | 1.2.0.0 | game version | reaches the needle and **finds nothing** (`Could not detect UE version from PE or memory`) |
+>
+> **Every UE5 title carries a real `5.x` there** — Solarpunk 5.7.1.0, TQ2 5.7.4.0, Manor Lords
+> 5.5.4.0, ES2 5.5.4.0, STVoyager 5.6.0.0, Satisfactory 5.6.1.0, Light Maze 5.0.3.0, DSA 5.3.2.0 —
+> **so this row's entire candidate list is refuted, by the same mechanism, and should not be retried.**
+> Our own packaged reference builds do **not** help either: UE writes the ENGINE version by default,
+> so 5.3/5.4/5.7/5.8 and DumperTest all resolve at Tier 0. It is games that *override* it with a
+> product version (1.x) that fall through — the opposite of the intuition that a self-built sample
+> would be generic.
+>
+> ⇒ **`ascii` and the UE5 branch of `'%s%s'` are UNVERIFIABLE on this machine's inventory**, and no
+> supported switch skips Tier 0 (`cold_detect.py drop` only clears the cache; it re-runs the same
+> ladder). Closing this needs **a new UE5 title whose version resource is stripped or carries a
+> product version** — screen any candidate with `pe_version_probe.py` **before** installing it.
+> Corroborated from the other side: a fresh sweep of every log on this machine still finds exactly
+> **two** Tier-1 lines, both `utf16`, both `++UE4+Release-4.27`.
+>
+> **The rest of step 3 stands as already recorded:** the wording is byte-exact against
+> `Genau.cpp:3047`, and the regression it guards is witnessed on the UE4/`utf16` path.
 >
 > **Step 4 — ✅ THE LINES FIRE, but NOT by the route this row prescribes.** Witnessed on 3262, in
 > `Logs/Elliot-Win64-Shipping/scan-20260818-13*.log`: **`DataScanGObjectsCandidates: aborted (client

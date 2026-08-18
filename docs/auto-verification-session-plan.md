@@ -84,10 +84,17 @@ resolve — irrelevant, the shipping exe is what matters.
 library UI, or start the shipping exe directly (Elliot works this way and skips Steam entirely).
 
 ### ▶ WHAT TO PICK UP NEXT
-`py tools/check_audit_register.py --list` for the open tier. Named remainders: `G2` step 3 (needs a
-UE5 title whose PE version resource is stripped/unrecognised — **Solarpunk and ES2 are both granted
-now and are listed candidates**; Lushfoil is ruled out), `AB3/AB5` step 5 (`Vector3f` 12 B beside a
-24 B vector), `X2` steps 4–5 (>5,000 classes **and** game-class exec commands).
+`py tools/check_audit_register.py --list` for the open tier. Named remainders: `AB3/AB5` step 5
+(`Vector3f` 12 B beside a 24 B vector) and `X2` steps 4–5 (>5,000 classes **and** game-class exec
+commands).
+
+⛔ **`G2` step 3 is BLOCKED-NO-SAMPLE — do not spend a session on it** (`[G2-TIER0-SWEEP-2026-08-18]`).
+Its `ascii` and UE5 branches need a UE5 title that falls past Tier 0, and an offline replay of
+`Genau::DetectVersionFromPEResource` over **71** UE binaries on this machine found only three that
+do — all UE4-era. Every listed candidate (Solarpunk, TQ2, Manor Lords, ES2, STVoyager) is refuted:
+they carry a real `5.x` `ProductVersion`, exactly like Lushfoil. **Screen any future candidate with
+`py tools/verify/pe_version_probe.py --scan <dir>` BEFORE installing or launching it** — which tier a
+title reaches is decided by its version RESOURCE, not by the engine that built it.
 
 ### ▶ STEP 1 — GRANTS, IN BATCHES OF ≤7. Do this before anything else.
 

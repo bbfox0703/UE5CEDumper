@@ -173,7 +173,7 @@
 | # | 做什麼 | 預期 |
 |---|---|---|
 | 1 | 把 `DetectVersion: PE resource failed, falling back to memory string scan` 到下一條 `SCAN:Ver` 之間的時間拆開量：加一條分隔 log，或改用一款 pre-UE4 檢查會提早結束的遊戲重測。同時記下遊戲名與 exe 位元組大小。 | 單獨的版本字串掃描本身在 1 秒以內。<br>⚠ 未拆分前不可記「G2 比宣稱慢」——目前量到的 2.4 s 內含 `CountPreUE4Markers` 另一次全檔掃描。 |
-| 2 | 找一款 **PE 版本資源被拔掉或無法辨識的 UE5 遊戲**注入（候選：TQ2 507、Solarpunk 507、Manor Lords 505、ES2 505、STVoyager 506），必要時先 `py tools/verify/cold_detect.py drop <PEHASH> --apply` 強制冷偵測，再搜 `scan-0.log` 的 `DetectVersion: Tier 1`。 | 出現 `DetectVersion: Tier 1 (ascii\|utf16) '++UE5+Release-N.N' -> NNN`，字面文字一字不差。<br>⚠ **Lushfoil 做不到這一項**：它的 PE 版本資源完好，會停在 `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` 就結束，永遠走不到記憶體字串那一段。目前全機只見證過 `utf16` + **UE4** 兩條，`ascii` 與 **UE5** 兩個分支都還沒有證據。 |
+| 2 | ⛔ **本機做不到，先別開遊戲。** 全機 **71** 個 UE 執行檔（14 個已安裝 + 57 個 `D:\UE_Analyze_data` 備份／自建樣本）已用 `py tools/verify/pe_version_probe.py --scan <目錄>` 離線掃過：只有 3 個會落到記憶體字串那一段，且**全部是 UE4 世代**（DQ7R、OCTOPATH、Elliot）。原列候選 **TQ2 / Solarpunk / Manor Lords / ES2 / STVoyager 全部已被推翻** —— 它們的 `ProductVersion` 都是真的 `5.x`，會停在 Tier 0，理由跟 Lushfoil 一模一樣。 | 要收掉這項需要**一款新的、版本資源被拔掉或寫成產品版號（1.x）的 UE5 遊戲**。⚠ **裝之前先用 `pe_version_probe.py` 篩**，不要靠引擎版本猜。<br>⚠ Solarpunk 的字串 `ProductVersion` 是 `UE5-CL-0`，看起來像無法辨識，但 `VS_FIXEDFILEINFO` 是 5.7.1.0，第一關就結束了 —— 字串要到第三關才會被看。 |
 
 ### 🟡 W2 / W3 —— SDK header 繼承邊界與位元欄位（**只剩 UI 匯出這一步**）
 
