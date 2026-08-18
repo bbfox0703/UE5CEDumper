@@ -2021,14 +2021,29 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
 * **`Tools → Inject Freeze Helper into Current CE Table` works.** CE's `Table` menu then lists
   `ue5_freeze_helper.lua`, so the file really is attached to the table.
 
-⚠ **Open, and NOT diagnosed: with the helper present and CE attached to DumperTest, the record still
-errors** (CE shows the red ✗ on Active). No dialog appears and the Lua Engine output is **empty** —
-consistent with the DEBUG-gated hygiene rule, but it also means the failure reports nothing.
-**Leading hypothesis, untested:** this is downstream of `[PEHOOK-2026-08-17]` below — DumperTest's
-ProcessEvent hook never fires, so anything routed through the game-thread dispatch dies here. **The
-decisive next step is one run of the same flow on Lushfoil**, where the hook is verified good; if it
-succeeds there, the freeze path is fine and the sample is simply the wrong host. Do not file a defect
-against the freeze script until that control exists.
+* **✅ The freeze ARMS, end to end.** The control was run: same flow on **Lushfoil**, CE re-attached
+  to it, record ticked →
+  ```
+  [Freeze] armed: no live instances of PrimitiveComponent right now -- the freeze applies as they spawn.
+  ```
+  A success message that also states the *actual* state rather than implying a write happened. The
+  dialog's **bool flavour** works too (`BoolProperty -> bool`, `0x272`, pre-filled `true`, hint
+  *"Accepts: true / false / 1 / 0"*).
+
+* **✅ And the earlier DumperTest failure was NOT a defect — the script diagnosed it correctly.**
+  Opening CE's Lua Engine surfaced what the red ✗ meant:
+  ```
+  [ue5_freeze] DumperTestActor: 3 consecutive rescans failed -- freeze STOPPED writing
+  (last error: the contract symbol resolved to the wrong memory (stale address) -- re-inject the DLL).
+  Re-enable the record after fixing it.
+  ```
+  CE was still attached to a DumperTest process that had since been killed, so the registered symbol
+  pointed at dead memory. **This is CLAUDE.md's "never report a mailbox failure by guessing" rule
+  working**: it names the specific cause, stops writing after 3 consecutive failures instead of
+  spinning, and tells the user what to do and to re-enable afterwards.
+  ⚠ **Operational note that cost a diagnosis here:** the message is only visible with **CE's Lua
+  Engine window open** — by design (DEBUG-gated hygiene), but it means a red ✗ on a record looks
+  silent until you open it. Open the Lua Engine *before* concluding anything about a failed record.
 
 ### ⛔ NEW 2026-08-17 `[PEHOOK-2026-08-17]` — ProcessEvent slot detection FAILS on DumperTest
 
