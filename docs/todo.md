@@ -5404,11 +5404,46 @@ Effort **S**, risk **LOW**, generator-only; `CeInjectScriptGeneratorTests` alrea
     (`D:\tmp\UE5CEDumper_dist` is gone). `Record` seeds an MRU from the running exe's folder, so a
     deleted breadcrumb loses history rather than merging it. Harmless here, worth knowing before
     treating that file as a durable record.
-  - ⬜ **Not settled: WHICH slot answered.** The row wants the `UE5_DEBUG=1` slot report to credit
-    *"folder of the most recent UE5CEDumper.CT in CE's recent-files list"*. `UE5_DEBUG` was 1 in
-    CE's Lua state, but the console output was not captured before the table reload, so the
-    registry-vs-other-slot attribution is **unproven** — only that *some* slot succeeded. One rerun
-    with the Lua window open would close it.
+  - ⛔ **The registry / recent-files half is STILL UNEXERCISED — a cheaper slot answered.** CE's
+    console names the winner outright:
+    ```
+    [UE5Dump] DLL path: C:\Program Files\Cheat Engine\UE5Dumper.dll
+    [UE5Dump] UE5CEDumper loaded as 'UE5Dumper.dll' but parked (initState=0) — restarting in place.
+    ```
+    So the chain resolved **CE's own install folder**, exactly the "only runs when every cheap slot
+    misses" caveat this row already carried. Leave that half ⬜. See the finding below for what it
+    resolved *to*.
+
+### ⛔ NEW 2026-08-18 `[STALEDLL-2026-08-18]` — a 6-month-old `UE5Dumper.dll` sits in CE's install folder and the `.CT` will pick it
+
+*Found only because deleting the breadcrumb for the B5 run pushed discovery one slot further down.*
+
+| file | size | date |
+|---|---|---|
+| `C:\Program Files\Cheat Engine\UE5Dumper.dll` | **536,064 B** | **2026-02-19** |
+| `D:\Github\UE5CEDumper\dist\UE5Dumper.dll` | 2,857,472 B | 2026-08-17 |
+
+Different SHA-256, and a **5.3× size difference** — this is not a near-miss copy, it is a build from
+six months and hundreds of builds ago, from before the mailbox contract moved.
+
+**It did not actually load this time, and the reason matters.** A fresh `UE5Dumper.dll` was already
+mapped into `DumperTest.exe` from the earlier injection, so the `.CT` took its *"already loaded but
+parked — restarting in place"* branch. Proven, not assumed: `init-0.log` stamps **both** injections
+(10:14 and 11:30) with `build=05a9af58-dirty`, and `git log 05a9af58` dates that commit **2026-08-17**
+— the dist build. **Every result recorded this session therefore ran on the current DLL.**
+
+**The hazard is a cleanly-launched game.** With no module already mapped and no `dll-path.txt` — the
+state of any machine where the UI has not been run yet, which is precisely the state the breadcrumb
+fallback exists to serve — the same resolution injects the **February** DLL. Symptoms would be a
+contract-range refusal at best, and at worst the class of failure this session already saw twice
+(`the contract symbol resolved to the wrong memory`), with nothing on screen naming a stale DLL as
+the cause.
+
+**Actions.** (a) Delete or refresh `C:\Program Files\Cheat Engine\UE5Dumper.dll` — machine-local, so
+it is the maintainer's call, not something to do unattended. (b) Worth considering in the `.CT`:
+report the resolved DLL's build alongside the path it chose, so `DLL path: …` and the build stamp
+appear together; the two lines are already adjacent in the console and only one of them is currently
+actionable.
 
 - **Flaky: `SnapshotViewModelTests.GroupMatch_MissingValue_ShowsErrorNoCandidates`** — failed ONCE
   in a full parallel run on 2026-07-23 (build 2318), then passed 25/25 three times in isolation and
