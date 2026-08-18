@@ -2091,6 +2091,45 @@ handle needs the record passed in, or the generated script must poll `isAbandone
 — the accessor exists for exactly this and has no other caller. Effort **S**, risk **LOW**; the
 `scripts/tests/freeze_helper_test.lua` rig already drives the abandonment path.
 
+### ⛔ NEW 2026-08-18 `[PIPEBUSY-2026-08-18]` — at-capacity is logged as an ERROR once per second, forever
+
+**Measured, not inferred: 1,826 ERROR lines in ~31.5 minutes (~170 KB) on one Avowed session**, and
+it stopped the instant the extra client was killed (`… Waiting for client connection...`).
+
+`Fern.h:45` sets `kMaxPipeInstances = 3`. The UI takes **2** lanes, so a single extra client — a
+`tools/verify/pipe_client.py` run, which is the whole verification rig — fills the pool. The accept
+loop then cannot create the next listener instance and does this
+([`Fern.cpp:889`](../dll/src/Fern.cpp)):
+
+```cpp
+if (pipe == INVALID_HANDLE_VALUE) {
+    LOG_ERROR("PipeServer: CreateNamedPipe failed (err=%lu)", GetLastError());
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    continue;                    // forever, until a client disconnects
+}
+```
+
+Three things wrong, in order of what matters:
+1. **It is not an error.** `err=231` is `ERROR_PIPE_BUSY` — "all instances are busy" — which is the
+   *designed* behaviour at capacity, not a fault. Logging it at ERROR trains the reader to ignore
+   ERROR lines in the one log where they matter.
+2. **It repeats indefinitely at 1 Hz.** ~3,500 lines/hour. The pipe log rotates at 8 MB, so a long
+   3-client session **evicts real diagnostics** with this. It is also the first thing a log sweep
+   sees, which is how it was found.
+3. **The message names the wrong thing.** "CreateNamedPipe failed" reads like a broken pipe server;
+   the truth is "at capacity, waiting for a slot".
+
+**Fix shape (small):** special-case `ERROR_PIPE_BUSY` — log **once on the transition into** the
+at-capacity state at INFO/DEBUG ("all %lu instances in use, waiting for a free slot"), stay silent
+while the state holds, and log once on recovery. Keep `LOG_ERROR` for genuinely unexpected codes.
+Effort **S** · Risk **low** (logging only; do not change the retry itself, which is correct).
+⚠ Do **not** "fix" it by raising `kMaxPipeInstances` — the cap is a deliberate resource bound, and
+the spam would simply move to 4 clients.
+
+**Operational rule this establishes for the register:** the UI holds **2** of the 3 lanes, so
+**never run a second `pipe_client.py` alongside the UI** — one is the ceiling. Close the UI first
+when a row needs the rig.
+
 ### ⛔ NEW 2026-08-18 `[CLASSTOTAL-2026-08-18]` — "total UClasses" is the CAPPED count, so it can never answer "how many classes?"
 
 *Raised by the maintainer asking the obvious question — "can I see the class count in the UI? I only
