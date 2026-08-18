@@ -12,10 +12,15 @@ launched without a human, and what must never be started without one.
 
 -----
 
-## ▶ RESUME HERE — state as of 2026-08-18 morning (written before a context compaction)
+## ▶ RESUME HERE — state as of 2026-08-18 afternoon
 
-**Machine state: nothing running.** No game, no UI, no Cheat Engine. Working tree clean,
-**42 unpushed commits on `dev`** (no PR opened — the maintainer asks for one when they want it).
+**Machine state: nothing running.** Elliot, Cheat Engine and the UI were all killed at the end of
+the sitting. Working tree clean, **~62 unpushed commits on `dev`** (no PR opened — the maintainer
+asks for one when they want it).
+
+**To resume GROUP 6:** relaunch Elliot with `Start-Process "steam://rungameid/3483510"` (the
+`open_application` route fails on the `steam://` handler), wait for the `UE5DumpBfx` pipe (its
+`dxgi` proxy injects on its own), then launch CE and the UI.
 
 **Environment is ready and needs no setup:**
 * **The AOBMaker CE plugin IS installed** (maintainer, 2026-08-18). Launch `Cheat Engine (64-bit)`
