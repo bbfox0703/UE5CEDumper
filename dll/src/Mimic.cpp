@@ -736,15 +736,40 @@ static void HandleListFunctions() {
 // helper. Paginated identically to LIST_FUNCTIONS so the CE Lua side can pull
 // multi-page result sets through the single-slot mailbox.
 //
-// Match policy: exactMatch=true. Freeze callers want precise class identity
-// — partial matching would have "Pawn" pull every pawn subclass in the world,
-// and the property offset only makes sense for the exact class chain the
-// PropertySearch row identified. Users who deliberately want a broader scope
-// can edit the className in the generated AA Script's CFG block.
+// Match policy: chosen by the caller, and the DEFAULT is the exact class.
+//
+// exactMatch=true was the only policy until contract 3, on the reasoning that a
+// freeze wants precise class identity. That reasoning holds for the class the user
+// NAMED and fails for the class the UI actually hands over: a Property Search row
+// for an inherited field is keyed to the class that DECLARES it, so freezing a
+// pawn's `bCanBeDamaged` submits "Actor" and an exact pool returns whichever stray
+// AActor the level happens to hold — never the pawn. Solide hit the identical wall
+// and fixed it with Aura::FindInstancesDerivedFrom (audit #5 A6); the Freeze button
+// and the Force submenu sit on the same row, so they must scope the same way.
+// (`[FREEZESCOPE-2026-08-18]`)
+//
+// The scope is an opt-in bit rather than a policy change, so a script generated
+// before contract 3 keeps the pool it was written against.
 static void HandleListInstances() {
     char className[256];
     memcpy(className, g_invokeMailbox.className, sizeof(className));
     className[255] = '\0';
+
+    // Read the scope flag and CLEAR it in the same breath, BEFORE any early return.
+    //
+    // cmdFlags is the one input that would otherwise survive between commands
+    // (className and paramsData are both rewritten by the next caller), so a
+    // derived request left standing would silently widen the pool of whoever asks
+    // next — including a contract-1/2 script that never writes the field and is
+    // entitled to exact-match behaviour. Clearing here is what makes the flag
+    // genuinely additive rather than sticky.
+    const uint32_t inFlags = g_invokeMailbox.cmdFlags;
+    g_invokeMailbox.cmdFlags = 0;
+    const bool derived = (inFlags & LI_IN_DERIVED) != 0;
+
+    // Rewritten, never accumulated: a stale truncation bit from a previous page
+    // would tell the caller its pool was capped when it was not.
+    g_invokeMailbox.cmdOutFlags = 0;
 
     if (className[0] == '\0') {
         SetError(-1, "Empty class name");
@@ -755,33 +780,41 @@ static void HandleListInstances() {
     uint32_t pageIndex = 0;
     memcpy(&pageIndex, g_invokeMailbox.paramsData, sizeof(uint32_t));
 
-    LOG_INFO("Mailbox: LIST_INSTANCES class='%s' page=%u", className, pageIndex);
+    LOG_INFO("Mailbox: LIST_INSTANCES class='%s' page=%u scope=%s",
+             className, pageIndex, derived ? "derived" : "exact");
 
-    // Hard cap at 2000 instances — freeze use cases ("all teammates", "all
-    // ammo pickups") rarely exceed double digits; 2000 is generous and the
-    // total walk stays bounded.
-    auto rset = Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/2000);
+    // Caps live in Mimic.h beside the page geometry they have to agree with.
+    const int cap = derived ? LIST_INSTANCES_MAX_DERIVED : LIST_INSTANCES_MAX_EXACT;
+    Aura::SearchResultSet rset = derived
+        ? Aura::FindInstancesDerivedFrom(className, cap)
+        : Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/cap);
 
     // CDO filter: the class default object (Default__BP_Foo_C) is the
     // template, not a live instance. Freezing its property would touch the
     // template state — never what the user wants.
-    std::vector<uintptr_t> live;
+    //
+    // The derived walk already drops CDOs INSIDE its loop (it has to — a base like
+    // AActor has thousands of them at the low GObjects indices, and filtering after
+    // the cap would return a page of nothing but templates). This second pass is
+    // therefore a no-op there and the real filter on the exact path; both are kept
+    // so neither path depends on the other's behaviour.
+    struct LiveEntry { uint64_t obj; uint64_t cls; };
+    std::vector<LiveEntry> live;
     live.reserve(rset.results.size());
     for (const auto& r : rset.results) {
-        if (r.addr && r.name.find("Default__") == std::string::npos) {
-            live.push_back(r.addr);
-        }
+        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
+        live.push_back({ static_cast<uint64_t>(r.addr), static_cast<uint64_t>(r.classAddr) });
     }
 
-    constexpr uint32_t ENTRY_SIZE = 8;            // uint64 pointer
-    constexpr uint32_t ENTRIES_PER_PAGE = 128;    // 128 * 8 = 1024 bytes (fills paramsData)
+    const uint32_t entrySize = ListInstancesEntrySize(derived);
+    const uint32_t entriesPerPage = ListInstancesPerPage(derived);
 
     uint32_t totalCount = static_cast<uint32_t>(live.size());
-    uint32_t totalPages = (totalCount + ENTRIES_PER_PAGE - 1) / ENTRIES_PER_PAGE;
+    uint32_t totalPages = (totalCount + entriesPerPage - 1) / entriesPerPage;
     if (totalPages == 0) totalPages = 1;
 
-    uint32_t startIdx = pageIndex * ENTRIES_PER_PAGE;
-    uint32_t endIdx = (std::min)(startIdx + ENTRIES_PER_PAGE, totalCount);
+    uint32_t startIdx = pageIndex * entriesPerPage;
+    uint32_t endIdx = (std::min)(startIdx + entriesPerPage, totalCount);
     uint32_t returnedCount = (startIdx < totalCount) ? (endIdx - startIdx) : 0;
 
     // parmsSize is uint16 — saturate if a class somehow has >65535 instances.
@@ -789,22 +822,41 @@ static void HandleListInstances() {
     g_invokeMailbox.numParms = static_cast<uint16_t>(returnedCount);
     g_invokeMailbox.functionFlags = totalPages;
 
+    // "The pool was capped" comes from the walk that did the capping, not from a
+    // second test over the page — that is audit #4's own named root cause (report
+    // and reality computed by different code paths). A derived sweep off a broad
+    // base reaches this routinely, so the caller must be TOLD rather than left to
+    // read a truthful-but-partial count as a total.
+    if (rset.truncated || rset.aborted)
+        g_invokeMailbox.cmdOutFlags |= LI_OUT_TRUNCATED;
+
     // Contract 2: publish the identity witness a caching caller needs to tell a
     // live instance from a recycled slot (audit #5 AA2/AA3).
     //
     // Read from an actual enumerated instance rather than resolved by name a
     // second time: the caller compares against what it will read out of THESE
-    // objects, so the witness has to come from the same place. exactMatch=true
-    // above means every entry shares one class, so one pointer covers the page —
-    // and the page the caller is holding, not just page 0.
+    // objects, so the witness has to come from the same place.
+    //
+    // EXACT scope: every entry shares one class, so one pointer covers the page —
+    //   and the page the caller is holding, not just page 0.
+    // DERIVED scope (contract 3): there IS no single class, so instanceAddr stays
+    //   0 and the witness travels per entry inside paramsData. Publishing the base
+    //   class here instead would be worse than useless: the caller would compare
+    //   each object's ClassPrivate against a class none of them IS, and refuse
+    //   every write while reporting a healthy freeze.
     //
     // Both are cleared first: a previous command may have left an unrelated
     // UObject*/UFunction* here, and a caller must never mistake that for a
     // witness. Zero means "not available" and the caller falls back.
     g_invokeMailbox.instanceAddr = 0;
     g_invokeMailbox.ufuncAddr    = 0;
-    if (returnedCount > 0) {
-        uintptr_t cls = Ubel::GetClass(live[startIdx]);
+    if (derived) {
+        // The offset is a property of the ENGINE, not of the page, so it is
+        // published whenever the scope needs it — the caller treats a zero here as
+        // a hard error rather than as a reason to write unguarded.
+        g_invokeMailbox.ufuncAddr = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
+    } else if (returnedCount > 0) {
+        uintptr_t cls = Ubel::GetClass(static_cast<uintptr_t>(live[startIdx].obj));
         if (cls) {
             g_invokeMailbox.instanceAddr = static_cast<uint64_t>(cls);
             g_invokeMailbox.ufuncAddr    = static_cast<uint64_t>(Grimoire::OFF_UOBJECT_CLASS);
@@ -814,12 +866,16 @@ static void HandleListInstances() {
     memset(g_invokeMailbox.paramsData, 0, sizeof(g_invokeMailbox.paramsData));
 
     for (uint32_t i = 0; i < returnedCount; ++i) {
-        uint64_t addr = live[startIdx + i];
-        memcpy(g_invokeMailbox.paramsData + (i * ENTRY_SIZE), &addr, ENTRY_SIZE);
+        const LiveEntry& e = live[startIdx + i];
+        uint8_t* slot = g_invokeMailbox.paramsData + (i * entrySize);
+        memcpy(slot, &e.obj, sizeof(uint64_t));
+        if (derived) memcpy(slot + sizeof(uint64_t), &e.cls, sizeof(uint64_t));
     }
 
-    LOG_INFO("Mailbox: LIST_INSTANCES returned %u/%u (page %u/%u) classWitness=0x%llX",
+    LOG_INFO("Mailbox: LIST_INSTANCES returned %u/%u (page %u/%u) scope=%s%s classWitness=0x%llX",
              returnedCount, totalCount, pageIndex + 1, totalPages,
+             derived ? "derived" : "exact",
+             (g_invokeMailbox.cmdOutFlags & LI_OUT_TRUNCATED) ? " CAPPED" : "",
              (unsigned long long)g_invokeMailbox.instanceAddr);
     SetDone(0);
 }

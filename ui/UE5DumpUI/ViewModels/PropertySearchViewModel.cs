@@ -305,11 +305,20 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     internal static FreezeScriptParams BuildFreezeParams(PropertySearchMatch match, string literal)
         => new()
         {
-            // Prefer the defining class — that's where the property is
-            // actually declared; freezing on it covers all subclasses.
-            ClassName      = !string.IsNullOrEmpty(match.DefiningClassName)
-                             ? match.DefiningClassName
-                             : match.ClassName,
+            // Prefer the defining class — that's where the property is actually
+            // declared. Note what that does and does NOT buy: the OFFSET is valid on
+            // every subclass, but the class NAME alone reaches only the declaring
+            // class, and until build 3262 the generated script asked the DLL for an
+            // exact-name pool. So an inherited field ("Actor") froze whichever stray
+            // Actor the level held and never the pawn — the claim that this "covers
+            // all subclasses" was the comment describing an intent the code did not
+            // implement. The script now sets the helper's `derived` scope, which is
+            // what makes the sentence true. (`[FREEZESCOPE-2026-08-18]`)
+            //
+            // Shared with FreezeValueDialog so the class the user is TOLD about and
+            // the class the script is KEYED on cannot drift apart.
+            ClassName      = FreezeScriptGenerator.HeldClassName(
+                                 match.ClassName, match.DefiningClassName),
             PropertyName   = match.PropName,
             PropertyOffset = match.PropOffset,
             UeTypeName     = match.PropType,

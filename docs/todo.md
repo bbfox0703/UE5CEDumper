@@ -23,7 +23,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 9 items, and NONE of them is in the 166 above
+> ### ▶ OPEN FIXES INDEX — 7 items, and NONE of them is in the 166 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -33,8 +33,6 @@ Open work only. **Read this when deciding what to do next.**
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up |
 > | `[PROXYLOAD-2026-08-17]` | `DeployedCurrent` does not mean the game actually loads it |
-> | `[FREEZESTUCK-2026-08-18]` | an abandoned freeze leaves the CE record **ticked/active** |
-> | `[FREEZESCOPE-2026-08-18]` | Freeze holds the declaring class only, while Force beside it walks subclasses |
 > | `[SLOTSYM-2026-08-18]` | slot `[DISABLE]` claims "unregistered" and does not unregister |
 > | `[CONTAINERCAP-2026-08-18]` | the container list stops at the array limit and says nothing |
 > | `[CLASSTOTAL-2026-08-18]` | "total UClasses" is the **capped** count, so it can never answer "how many classes?" |
@@ -2172,46 +2170,35 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
   the freeze had stopped writing. That is what turned this observation into
   `[FREEZESTUCK-2026-08-18]` below.
 
-### ⛔ NEW 2026-08-18 `[FREEZESTUCK-2026-08-18]` — an abandoned freeze leaves the CE record ACTIVE
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[FREEZESTUCK-2026-08-18]` — an abandoned freeze must untick its own record
 
-*Found only because the maintainer corrected the checkbox reading above. With red ✗ = failed, the
-record looked like it had reported its own failure; with red ✗ = **active**, the same screen shows a
-record CE believes is applying a cheat while `ue5_freeze_helper` has stopped writing.*
+*Needs **any** connected game plus CE. The whole batch is one freeze record and one DLL re-injection.*
 
-**Mechanism, verified by grep, not by inference.** `scripts/ue5_freeze_helper.lua:730-740` sets
-`handle._abandoned = true` after `MAX_FAIL_STREAK` consecutive rescan failures, clears the cache and
-prints once. It exposes the state at `:761`:
-
-```lua
-handle.isAbandoned = function() return handle._abandoned end
-```
-
-`grep -rn isAbandoned ui/ scripts/ dll/` returns **five hits: the definition, two lines of
-`scripts/tests/freeze_helper_test.lua`, one `Assert.Contains` in `FreezeScriptGeneratorTests.cs`, and
-nothing else.** The generated CE script never polls it, so nothing ever clears `memrec.Active`.
-
-**Why it matters, and why it is not a duplicate of audit #5 AA3.** AA3 was *`_lastError` had three
-writers and zero readers* — no failure reached the user at all. That was fixed: the abandonment now
-prints. What did **not** get fixed is the channel the user actually looks at. `CeLuaHygiene.cs:492`
-names this exact failure mode in its own doc comment — **"The checkbox lied"** — and CLAUDE.md's MUST
-("a bail-out that applied NOTHING must untick the record", stateful-toggle flavour) is written for
-it. A freeze that has stopped writing is applying nothing; the box says otherwise.
-
-**Failure scenario.** Re-inject the DLL while a freeze record is ticked. Three rescans fail, the
-helper abandons, the print lands in a Lua Engine window that hygiene has closed. The user sees a
-ticked record and believes the value is held. It is not, and nothing will resume it — `_abandoned` is
-only cleared by a *successful* rescan, which cannot happen because writing has stopped.
-
-**Extra tell that the intent was to untick**: the message ends *"Re-enable the record after fixing
-it"* — advice that cannot be followed, because the record was never disabled. The user must untick
-and re-tick, which the wording does not say.
-
-**Fix shape (not applied — scanning applies no fixes).** In the abandonment branch, drive the record
-inactive the way every other stateful toggle does (`if memrec then memrec.Active = false end`), which
-also makes the existing "Re-enable" wording true. `memrec` is not in scope inside the helper, so the
-handle needs the record passed in, or the generated script must poll `isAbandoned()` on its own timer
-— the accessor exists for exactly this and has no other caller. Effort **S**, risk **LOW**; the
-`scripts/tests/freeze_helper_test.lua` rig already drives the abandonment path.
+> **What is already pinned offline and must NOT be re-checked here:** 13 executable cases in
+> `scripts/tests/freeze_helper_test.lua` (`lua scripts/tests/freeze_helper_test.lua`, 117 checks)
+> drive the abandonment against a stubbed CE — including a memory-record stand-in whose
+> `Active = false` dispatches the `[DISABLE]` chunk, so the untick really does run `stop()` and
+> destroy both timers; a control proving a **transient** failure does NOT untick; a no-`memrec`
+> case; and a deleted-record case. Plus `FreezeScriptGeneratorTests` for the `CFG.memrec = memrec`
+> wiring and for the removal of the old unfollowable "Re-enable the record after fixing it".
+> **What no offline test can reach** is whether CE's real `TMemoryRecord.Active = false`, driven
+> from a Lua timer, behaves like the stand-in. That is step 3, and it is the only step that matters.
+>
+> ⚠ **Read the checkbox correctly**: in CE a big red ✗ on a record's checkbox means **ACTIVE**, not
+> failed; an inactive record is an **empty box**. Reading it backwards inverts every step below.
+>
+> ⚠ **Open CE's Lua Engine window before step 2** — the abandonment message is printed there, and
+> hygiene closes that window on a clean enable.
+>
+> | step | do this | expect |
+> |---|---|---|
+> | 1 | Property Search any supported field → row **Freeze** → create the script → tick the record | the record ticks (red ✗) and the value holds |
+> | 2 | With it still ticked, **re-inject `UE5Dumper.dll`** (or kill the DLL host) and wait ~15 s (3 rescans × 5 s) | the Lua Engine prints `… consecutive rescans failed -- freeze STOPPED writing … This record has been unticked; re-enable it after fixing the cause.` |
+> | 3 ⚠ THE ONE THAT MATTERS | look at the record's checkbox | it is now an **EMPTY box**. Before the fix it stayed a red ✗ forever, claiming a cheat nothing was applying |
+> | 4 | check CE is still responsive; look for an error dialog | none. The untick is deferred onto a one-shot timer precisely so `[DISABLE]` does not destroy a timer from inside its own handler |
+> | 5 | re-inject a working DLL, then re-tick the record | the freeze arms again and holds — i.e. step 2's advice is followable, which it was not before |
+> | 6 ⚠ control | with a healthy DLL, leave a freeze running untouched for a minute | the record **stays ticked** and keeps writing. One transient `mailbox busy` must not untick anything |
+> | 7 ⚠ control, opportunistic | delete the memory record while its freeze is mid-abandonment | no Lua error dialog; the failure is still reported |
 
 ### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PASTECRASH-2026-08-18]` — a clipboard paste must no longer terminate the UI
 
@@ -3744,48 +3731,39 @@ instances.
 >
 > ⚠ **Which instance it held is the incidental finding below** — not `DumperTestActor_0`.
 
-### ⛔ NEW 2026-08-18 `[FREEZESCOPE-2026-08-18]` — Freeze holds the DECLARING class only; the Force submenu beside it does not
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[FREEZESCOPE-2026-08-18]` — Freeze must hold the subclasses too
 
-*Found while measuring AA1: the freeze was armed and ticking, yet `DumperTestActor_0`'s byte never
-moved. It was working correctly — on a different object.*
+*Needs a game with a **player pawn** and any inherited `AActor` bool (`bCanBeDamaged`, `bHidden`,
+`bReplicates`) — i.e. any UE game. Runs in the same sitting as `[FREEZESTUCK-2026-08-18]` above.*
 
-**Observed.** `Freeze: Actor::bAlwaysRelevant = true` armed cleanly and rescanned every 5 s, and
-`Logs\DumperTest\pipe-0.log` shows each pass as:
-
-```
-Mailbox: LIST_INSTANCES class='Actor' page=0
-Mailbox: LIST_INSTANCES returned 1/1 (page 1/1) classWitness=0x1F140CCB800
-```
-
-**1 of 1**, in a level whose GObjects pool holds 25,179 objects. Instances → `Actor` with **Exact
-match** on returns exactly two: `ChaosDebugDrawActor` and `Default__Actor` (the CDO, correctly
-skipped). So the freeze held one incidental debug actor, and every `AActor` subclass in the level —
-including the `DumperTestActor` the user was looking at — was untouched.
-
-**Mechanism, and it is deliberate at the bottom of the stack.** `Mimic.cpp:763` calls
-`Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/2000)`, and
-`scripts/ue5_freeze_helper.lua:43-44` documents its own contract as *"exact UE class name … exact
-match, case-insensitive"*. Nothing here is malfunctioning.
-
-**The defect is in the handoff.** A Property Search row for an **inherited** field is keyed to the
-class that DECLARES it, so `bCanBeDamaged` / `bHidden` / `bReplicates` — the three fields this very
-checklist recommends for the test — all present as class `Actor`. Feeding that name to an
-exact-match pool is the failure audit #5 **A6** already identified and fixed for `Solide` (build
-3036: `Aura::FindInstancesDerivedFrom`, a super-chain test with a per-`UClass` verdict cache). **The
-Force submenu and the Freeze button sit on the same row of the same panel and now scope
-oppositely** — Force walks subclasses, Freeze does not.
-
-**Failure scenario.** A user right-clicks their pawn's `bCanBeDamaged` in Property Search, freezes it
-to `false`, sees CE report the record active (a red ✗ — see `[FREEZESTUCK-2026-08-18]`), and takes
-damage anyway. Nothing reports a problem: the helper's own "armed, N instances" message is truthful
-about the pool it was given.
-
-**Fix shape (not applied).** Either give the mailbox `LIST_INSTANCES` an opt-in derived flag routed
-to `Aura::FindInstancesDerivedFrom` (the function exists and is already cached) and have the Freeze
-generator set it, or — cheaper and honest — have the Freeze dialog say which class it will hold and
-warn when the row's declaring class differs from the class the user navigated from. Effort **M**,
-risk **MED** (a derived sweep off `Actor` reaches the 2000 cap, so it needs `Solide`'s
-`truncated` treatment too).
+> **What is already pinned offline and must NOT be re-checked here:** 11 executable scope cases in
+> `scripts/tests/freeze_helper_test.lua` (derived is the default; `derived = false` is honoured; the
+> 16-byte page stride, with a negative control that an 8-byte read would return a class pointer as
+> an address; per-entry identity witnesses; a witness-less entry dropped rather than written blind;
+> a missing `ClassPrivate` offset refused rather than degraded; a filter dropping address and
+> witness in lockstep; cap reported, and a control that an uncapped pool does not claim to be
+> capped; a contract-2 DLL refused). Plus `dll_helpers_test`'s page-geometry + contract-3 layout
+> assertions and `FreezeValueDialogValidationTests`' scope-summary/warning pair.
+> **What no offline test can reach** is whether a real `Aura::FindInstancesDerivedFrom` sweep
+> reaches the user's pawn — that is step 4.
+>
+> ⚠ **DLL and UI must be from the same build.** This moved the mailbox contract to **3**; a
+> contract-2 DLL is refused up front with *"update UE5Dumper.dll"*, which is a correct answer, not
+> a defect. See `[STALEDLL-2026-08-18]` for the February DLL that can be picked up instead.
+>
+> ⚠ Read the checkbox correctly (red ✗ = ACTIVE) and open CE's Lua Engine first, as above.
+>
+> | step | do this | expect |
+> |---|---|---|
+> | 1 | Property Search `bCanBeDamaged` (or `bHidden`) — a field the Class column shows as **`Actor`** with an `+N inheritors` badge | the row exists |
+> | 2 | Click **Freeze** and read the dialog before typing anything | a **Scope:** line reading `every live Actor and every subclass (N inherit this field)`, plus a ⚠ line saying the field is declared on `Actor` and how to narrow it. Neither existed before |
+> | 3 | Create the script and read the generated CFG | it contains `derived            = true,` |
+> | 4 ⚠ THE ONE THAT MATTERS | tick the record, then check `Logs\<Game>\pipe-0.log` | `LIST_INSTANCES class='Actor' page=0 scope=derived` and a **returned count in the hundreds/thousands**, not `1/1`. Before the fix this was `1/1` in a 25,179-object level |
+> | 5 | with `bCanBeDamaged` frozen to `false`, take damage on the **player pawn** | the pawn is unharmed. Pre-fix the freeze held one incidental `ChaosDebugDrawActor` and the pawn died normally — that is the whole finding |
+> | 6 ⚠ the honesty half | if the log line ends in `CAPPED`, read the Lua Engine | it printed `CAP REACHED, so that is a floor, not a total: more instances exist and are NOT held`, and the Lua Engine window **stayed open** instead of auto-closing over the notice |
+> | 7 ⚠ control | edit the CFG to `derived = false`, re-tick | `scope=exact` in the log and the old narrow pool returns — the flag is a real switch, not decoration |
+> | 8 ⚠ control, backward compatibility | tick an **older saved .CT** whose freeze script predates contract 3 | it still runs and still holds its exact-class pool. The flag defaults off and the handler clears it, so an old script must be unaffected |
+> | 9 ⚠ control, cross-feature | on the same row, use **Force ON/OFF** (Solide) | it reports a comparable instance count to step 4 — Force and Freeze sit on one row and must not scope oppositely, which is what started this |
 
 ### ⬜ SUPERSEDED — original AA1 steps, kept for the method
 

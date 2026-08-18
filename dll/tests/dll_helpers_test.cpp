@@ -697,10 +697,59 @@ static void Test_Mimic_MailboxLayout() {
     EXPECT("mailbox errorMsg is 256",     sizeof(Mimic::MailboxData::errorMsg)   == 256);
     EXPECT("mailbox paramsData is 1024",  sizeof(Mimic::MailboxData::paramsData) == 1024);
 
-    // Whole-struct size: 0x328 + 1024 = 1832. The header comment says "~1848",
+    // Contract 3 grew the struct at the TAIL — which is the only place it can grow
+    // without invalidating every saved .CT, so pinning that these two sit AFTER
+    // paramsData (and that nothing above them moved) is the whole compatibility
+    // claim, checked rather than asserted in prose.
+    EXPECT("mailbox cmdFlags @ 0x728",    offsetof(Mimic::MailboxData, cmdFlags)    == 0x728);
+    EXPECT("mailbox cmdOutFlags @ 0x72C", offsetof(Mimic::MailboxData, cmdOutFlags) == 0x72C);
+
+    // Whole-struct size: 0x328 + 1024 + 8 = 1840. The header comment says "~1848",
     // which is what an unchecked number drifts into.
-    EXPECT("mailbox total size 1832",     sizeof(Mimic::MailboxData) == 1832);
+    EXPECT("mailbox total size 1840",     sizeof(Mimic::MailboxData) == 1840);
     EXPECT("mailbox fits one page",       sizeof(Mimic::MailboxData) <= 4096);
+}
+
+// ----- Mimic: CMD_LIST_INSTANCES page geometry ---------------------------------
+//
+// The wire format of one LIST_INSTANCES page depends on a single input bit, and
+// the two sides that have to agree about it are written in different languages:
+// Mimic.cpp packs the entries, scripts/ue5_freeze_helper.lua unpacks them. Neither
+// can see the other, so the rule lives in the header both are documented against
+// and is pinned here. Getting the stride wrong does not crash — it reads the high
+// half of one pointer as the next object and freezes an address that is not one.
+static void Test_Mimic_ListInstancesGeometry() {
+    EXPECT("exact entry is 8 bytes",    Mimic::ListInstancesEntrySize(false) == 8);
+    EXPECT("derived entry is 16 bytes", Mimic::ListInstancesEntrySize(true)  == 16);
+
+    // Derived carries the per-entry UClass* witness, so it fits half as many.
+    EXPECT("exact page holds 128",   Mimic::ListInstancesPerPage(false) == 128);
+    EXPECT("derived page holds 64",  Mimic::ListInstancesPerPage(true)  == 64);
+
+    // A page must never overrun paramsData — the derived format halved the count
+    // rather than spilling, and this is what says so.
+    EXPECT("exact page fits paramsData",
+           Mimic::ListInstancesPerPage(false) * Mimic::ListInstancesEntrySize(false)
+               <= sizeof(Mimic::MailboxData::paramsData));
+    EXPECT("derived page fits paramsData",
+           Mimic::ListInstancesPerPage(true) * Mimic::ListInstancesEntrySize(true)
+               <= sizeof(Mimic::MailboxData::paramsData));
+
+    // Both caps must be reachable inside the page budget the helper walks, or the
+    // last instances are enumerated by the DLL and never fetched — a freeze that
+    // silently drops its tail.
+    EXPECT("exact cap fits 16 pages",
+           Mimic::LIST_INSTANCES_MAX_EXACT
+               <= static_cast<int>(Mimic::LIST_INSTANCES_MAX_PAGES
+                                   * Mimic::ListInstancesPerPage(false)));
+    EXPECT("derived cap fits 16 pages",
+           Mimic::LIST_INSTANCES_MAX_DERIVED
+               <= static_cast<int>(Mimic::LIST_INSTANCES_MAX_PAGES
+                                   * Mimic::ListInstancesPerPage(true)));
+
+    // The flag bits the CE Lua side writes/reads as literals.
+    EXPECT("LI_IN_DERIVED = 1",    static_cast<uint32_t>(Mimic::LI_IN_DERIVED)    == 1u);
+    EXPECT("LI_OUT_TRUNCATED = 1", static_cast<uint32_t>(Mimic::LI_OUT_TRUNCATED) == 1u);
 }
 
 // The Cmd / op enumerators CE Lua writes into the mailbox. Renumbering one is a
@@ -729,7 +778,7 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    EXPECT("contract is 2",          Mimic::MAILBOX_CONTRACT     == 2);
+    EXPECT("contract is 3",          Mimic::MAILBOX_CONTRACT     == 3);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
@@ -5735,6 +5784,7 @@ int main() {
     RUN(Test_Stark_PeValidationFailureVerdict);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
+    RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
 
     RUN(Test_ValueScan_DataTypeSizes);

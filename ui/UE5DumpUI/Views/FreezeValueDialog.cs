@@ -62,11 +62,31 @@ public sealed class FreezeValueDialog : Window
             Spacing = 8,
         };
 
-        // Read-only target details
-        root.Children.Add(BuildLabelRow("Class:",    _match.ClassName));
+        // Read-only target details. "Class" is the class the freeze will be KEYED on,
+        // which is not always the one in the row's Class column — see HeldClassName.
+        root.Children.Add(BuildLabelRow("Class:",    FreezeScriptGenerator.HeldClassName(
+                                                         _match.ClassName, _match.DefiningClassName)));
         root.Children.Add(BuildLabelRow("Property:", _match.PropName));
         root.Children.Add(BuildLabelRow("Type:",     $"{_match.PropType} -> {_helperType}"));
         root.Children.Add(BuildLabelRow("Offset:",   _match.OffsetHex));
+        // What the freeze will actually hold. Stated up front because it is the one
+        // thing the user cannot infer from the row: a Property Search row for an
+        // inherited field is keyed to the class that DECLARES it, so freezing "my
+        // pawn's bCanBeDamaged" is really freezing every live Actor in the level.
+        root.Children.Add(BuildLabelRow("Scope:",    ScopeSummary(_match)));
+
+        var scopeWarning = ScopeWarning(_match);
+        if (scopeWarning != null)
+        {
+            root.Children.Add(new TextBlock
+            {
+                Text = scopeWarning,
+                Foreground = new SolidColorBrush(Color.Parse("#DCDCAA")),
+                FontSize = 11,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+        }
 
         // Value input
         var valueLbl = new TextBlock
@@ -175,6 +195,54 @@ public sealed class FreezeValueDialog : Window
     /// </summary>
     internal static string HelperTypeFor(PropertySearchMatch match)
         => FreezeScriptGenerator.MapToHelperType(match.PropType, match.PropSize);
+
+    /// <summary>
+    /// One line naming every object the freeze will write to.
+    ///
+    /// <para>The generated script asks the DLL for the class <b>and every subclass of
+    /// it</b> (<c>ue5_freeze_helper.lua</c>'s <c>derived</c>), matching what the Force
+    /// submenu on the same row already does. That is the right scope — an exact-class
+    /// pool for an inherited field holds whichever stray ancestor instance the level
+    /// happens to have and misses the pawn entirely — but it is also much wider than
+    /// "the thing I clicked", so the dialog says so before the script exists rather
+    /// than after nothing appears to happen. (`[FREEZESCOPE-2026-08-18]`)</para>
+    /// </summary>
+    internal static string ScopeSummary(PropertySearchMatch match)
+    {
+        var held = FreezeScriptGenerator.HeldClassName(match.ClassName, match.DefiningClassName);
+        if (string.IsNullOrEmpty(held)) return "every live instance of the matched class";
+        return match.InheritedByCount > 0
+            ? $"every live {held} and every subclass ({match.InheritedByCount} inherit this field)"
+            : $"every live {held} and every subclass";
+    }
+
+    /// <summary>
+    /// The caveat, or null when there is nothing to warn about.
+    ///
+    /// <para>Fires when the field is <b>inherited</b> — i.e. the class this freeze is
+    /// keyed on is an ANCESTOR of whatever the user was actually looking at, which is
+    /// the case for every <c>AActor</c> field the Property Search recipes recommend
+    /// (<c>bCanBeDamaged</c>, <c>bHidden</c>, <c>bReplicates</c>). Also fires if the
+    /// row's own class ever differs from the defining class, which post-dedup it does
+    /// not, but the wire is free to change and the warning should not depend on that.
+    /// </para>
+    ///
+    /// <para>Null for a field unique to its class: there is nothing surprising about
+    /// freezing a game-specific field on the class that declares it, and a warning that
+    /// fires every time is a warning nobody reads.</para>
+    /// </summary>
+    internal static string? ScopeWarning(PropertySearchMatch match)
+    {
+        var held = FreezeScriptGenerator.HeldClassName(match.ClassName, match.DefiningClassName);
+        bool differentRowClass = !string.IsNullOrEmpty(match.ClassName)
+                                 && !string.Equals(match.ClassName, held, StringComparison.Ordinal);
+        if (match.InheritedByCount <= 0 && !differentRowClass) return null;
+
+        return $"⚠ {match.PropName} is declared on {held}, not on one specific object — "
+             + $"so this holds the value on EVERY live {held} and subclass at once, not just "
+             + "the one you were looking at. To target a single class, edit className in the "
+             + "generated CFG block (or set derived = false for that class only).";
+    }
 
     /// <summary>
     /// The "big number" a freeze usually wants. Clamped to what the target type can

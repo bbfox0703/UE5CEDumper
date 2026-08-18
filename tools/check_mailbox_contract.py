@@ -56,15 +56,35 @@ import sys
 # writing a field it never touched before is a contract change this hash cannot see.
 # The "bumped but unchanged" branch below is what surfaces it — it forces the bumper
 # to come here and say why, which is the check actually doing its job.
-GOLDEN_VERSION = 2
-GOLDEN_HASH = "7021c884dde831a77009d4a8b968f6c2e8382941c4100f87dda223fe92b5b63b"
+#
+# NOTE on version 3 (`[FREEZESCOPE-2026-08-18]`): this one moved the hash, and for two
+# independent reasons — the struct grew and a new contract enum joined the surface.
+#
+#   1. `MailboxData` gained `cmdFlags` (IN) and `cmdOutFlags` (OUT) at its TAIL. The
+#      tail is the only place it can grow without invalidating a saved .CT: every
+#      pre-existing field keeps its offset, so an old script's reads and writes land
+#      exactly where they always did. `sizeof` changed, which item 1 of Mimic.h's rule
+#      says to bump for — hence the version move — but nothing OLD moved, which is why
+#      MAILBOX_CONTRACT_MIN stays at 1.
+#   2. `ListInstancesFlag` was added to CONTRACT_ENUMS above. Its two bits are written
+#      and read as literals by scripts/ue5_freeze_helper.lua, which makes them contract
+#      surface in exactly the sense the op enums already are; leaving them unhashed
+#      would have re-created the gap this file exists to close.
+#
+# WHY the change is additive despite CMD_LIST_INSTANCES now having two wire formats:
+# the 16-byte derived page is reachable ONLY when the caller sets LI_IN_DERIVED, the
+# flag defaults to 0, and the handler CLEARS it after every use — so no contract-1/2
+# script can set it, inherit it, or encounter the format it selects.
+GOLDEN_VERSION = 3
+GOLDEN_HASH = "b131d22dbef3e9bb5453d88afca22850ff7d54883ab99766a2c491aa0a5a6ac3"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")
 LAYOUT_CS = os.path.join("ui", "UE5DumpUI", "Services", "CeMailboxLayout.cs")
 
 # Enums whose VALUES a generated script depends on.
 CONTRACT_ENUMS = ("Cmd", "TeleportOp", "FlyOp", "ForegroundOp",
-                  "QueryPtrOp", "TimeOp", "ProtectOp", "Status", "InitState")
+                  "QueryPtrOp", "TimeOp", "ProtectOp", "ListInstancesFlag",
+                  "Status", "InitState")
 
 
 def read(path):

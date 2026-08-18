@@ -367,6 +367,106 @@ public class FreezeValueDialogValidationTests
         Assert.Contains($"value              = {literal},", script);
     }
 
+    // ── Scope disclosure ([FREEZESCOPE-2026-08-18]) ─────────────────────────
+    //
+    // The dialog is the last screen before the script exists, and it was silent
+    // about the one thing the user cannot infer from the row: the freeze is keyed
+    // on the class that DECLARES the field, so "freeze my pawn's bCanBeDamaged" is
+    // really "hold it on every live Actor and subclass in the level". Both strings
+    // are pure statics for the same reason the validator is — the Window itself
+    // needs an Avalonia runtime and cannot be exercised headless.
+
+    [Fact]
+    public void ScopeSummary_NamesTheHeldClassAndItsSubclasses()
+    {
+        var m = new PropertySearchMatch
+        {
+            ClassName = "Actor", DefiningClassName = "Actor",
+            PropName = "bCanBeDamaged", PropType = "BoolProperty",
+            PropOffset = 0x100, PropSize = 1, InheritedByCount = 4823,
+        };
+
+        var s = FreezeValueDialog.ScopeSummary(m);
+        Assert.Contains("Actor", s);
+        Assert.Contains("every subclass", s);
+        Assert.Contains("4823", s);
+    }
+
+    [Fact]
+    public void ScopeSummary_UsesTheClassTheScriptWillActuallyBeKeyedOn()
+    {
+        // The row's Class column and the class the freeze targets are not the same
+        // field, and the dialog used to show the former while the generator used the
+        // latter. Both now come from FreezeScriptGenerator.HeldClassName.
+        var m = new PropertySearchMatch
+        {
+            ClassName = "BP_SpecificTeammate_C", DefiningClassName = "BP_Teammate_C",
+            PropName = "Health", PropType = "FloatProperty",
+            PropOffset = 0x4F8, PropSize = 4,
+        };
+
+        var s = FreezeValueDialog.ScopeSummary(m);
+        Assert.Contains("BP_Teammate_C", s);
+        Assert.DoesNotContain("BP_SpecificTeammate_C", s);
+
+        // And it is the same name the emitted script keys on.
+        var script = FreezeScriptGenerator.Generate(
+            PropertySearchViewModel.BuildFreezeParams(m, "1.0"));
+        Assert.Contains("className          = 'BP_Teammate_C',", script);
+    }
+
+    [Fact]
+    public void ScopeWarning_FiresWhenTheFieldIsInherited()
+    {
+        var m = new PropertySearchMatch
+        {
+            ClassName = "Actor", DefiningClassName = "Actor",
+            PropName = "bCanBeDamaged", PropType = "BoolProperty",
+            PropOffset = 0x100, PropSize = 1, InheritedByCount = 4823,
+        };
+
+        var w = FreezeValueDialog.ScopeWarning(m);
+        Assert.NotNull(w);
+        Assert.Contains("bCanBeDamaged", w);
+        Assert.Contains("Actor", w);
+        // It must say how to narrow it, or it is only an apology.
+        Assert.Contains("className", w);
+    }
+
+    [Fact]
+    public void ScopeWarning_IsSilentForAFieldUniqueToItsClass()
+    {
+        // The control. A warning that fires on every row is a warning nobody reads,
+        // and there is nothing surprising about freezing a game-specific field on
+        // the only class that declares it.
+        var m = new PropertySearchMatch
+        {
+            ClassName = "BP_Player_C", DefiningClassName = "BP_Player_C",
+            PropName = "MyGameHealth", PropType = "FloatProperty",
+            PropOffset = 0x4F8, PropSize = 4, InheritedByCount = 0,
+        };
+
+        Assert.Null(FreezeValueDialog.ScopeWarning(m));
+    }
+
+    [Fact]
+    public void ScopeWarning_FiresWhenTheRowClassDiffersFromTheDefiningClass()
+    {
+        // Post-dedup these are equal, so this branch is defensive — but the row's
+        // class is what the user READ and the defining class is what gets frozen,
+        // so if the wire ever stops collapsing them the warning must not go quiet.
+        var m = new PropertySearchMatch
+        {
+            ClassName = "BP_SpecificTeammate_C", DefiningClassName = "BP_Teammate_C",
+            PropName = "Health", PropType = "FloatProperty",
+            PropOffset = 0x4F8, PropSize = 4, InheritedByCount = 0,
+        };
+
+        var w = FreezeValueDialog.ScopeWarning(m);
+        Assert.NotNull(w);
+        Assert.Contains("BP_Teammate_C", w);
+    }
+
     private static PropertySearchMatch MakeMatch(string propType, int propSize) => new()
     {
         ClassName         = "BP_Player_C",

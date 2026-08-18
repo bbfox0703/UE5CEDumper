@@ -399,8 +399,12 @@ public class FreezeScriptGeneratorTests
         Assert.Contains("OFF_UFUNC", lua);
         Assert.Contains("handle._classPtr", lua);
 
-        // ...and the tick compares the object's live ClassPrivate against it.
-        Assert.Contains("readQword(addr + cOff) == cPtr", lua);
+        // ...and the tick compares the object's live ClassPrivate against it. The
+        // witness is now per-ENTRY in derived scope and page-wide in exact scope, so
+        // the comparison reads `want` — resolved from clsOf[i] or cPtr — rather than
+        // cPtr directly. The line that matters is that a compare still gates the write.
+        Assert.Contains("local want = clsOf and clsOf[i] or cPtr", lua);
+        Assert.Contains("readQword(addr + cOff) == want", lua);
 
         // The old guard tested only "is qword 0 non-zero", which a recycled or
         // pooled block passes because it holds old bytes or a free-list link.
@@ -474,8 +478,12 @@ public class FreezeScriptGeneratorTests
     {
         var script = FreezeScriptGenerator.Generate(SampleParams());
 
-        // Four captures: pcall status, then start()'s own (ok, err, count).
-        Assert.Contains("local sok, sok2, serr, scount = pcall(handleOrErr.start)", script);
+        // Five captures: pcall status, then start()'s own (ok, err, count, capped).
+        // `scapped` joined the tuple with the derived scope — a capped pool makes the
+        // count a floor rather than a total, and dropping the capture here would put
+        // the caveat back out of reach. (`[FREEZESCOPE-2026-08-18]`)
+        Assert.Contains("local sok, sok2, serr, scount, scapped = pcall(handleOrErr.start)",
+                        script);
     }
 
     [Fact]
@@ -527,8 +535,10 @@ public class FreezeScriptGeneratorTests
         Assert.Contains("elseif scount == 0 then", enable);
         Assert.Contains("[Freeze] armed: no live instances of BP_Teammate_C", enable);
 
-        // The close is gated on BOTH a reported outcome and a non-zero count.
-        Assert.Contains("if sok2 == true and scount ~= 0 and DEBUG == 0 then", enable);
+        // The close is gated on a reported outcome, a non-zero count, AND an
+        // un-capped pool — a capped one printed a caveat that must not be closed over.
+        Assert.Contains("if sok2 == true and scount ~= 0 and not scapped and DEBUG == 0 then",
+                        enable);
 
         // The armed branch must not carry an untick. Slice from the branch to the
         // end of the if-chain and assert the untick is not inside it.
@@ -596,6 +606,134 @@ public class FreezeScriptGeneratorTests
         var script = FreezeScriptGenerator.Generate(p);
 
         Assert.Contains("propOffset         = 0x100,", script);
+    }
+
+    // ==================================================================
+    // [FREEZESTUCK-2026-08-18] — an abandoned freeze left the record ACTIVE.
+    //
+    // The helper stopped writing after MAX_FAIL_STREAK failed rescans and said so
+    // with a print() into a Lua Engine window this generator had already closed. CE
+    // shows a ticked record (a red X on the checkbox means ACTIVE, not failed), so
+    // the user was told a cheat was applied while nothing was being written — and
+    // the message's own advice ("re-enable the record") was unfollowable, because
+    // nothing had disabled it.
+    //
+    // The BEHAVIOUR is proven by scripts/tests/freeze_helper_test.lua, which runs the
+    // helper against a stubbed CE (including a memory record whose Active=false
+    // dispatches the [DISABLE] chunk, so the reentrancy hazard is real there). These
+    // are the tripwires for the half that lives in the generated script.
+    // ==================================================================
+
+    [Fact]
+    public void Generate_HandsTheCeRecordToTheHelper()
+    {
+        var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
+
+        // Without this the helper has nothing to untick and the checkbox keeps lying.
+        Assert.Contains("CFG.memrec = memrec", enable);
+
+        // It must reach the helper BEFORE the handle is built, or the handle it is
+        // stored in does not have it.
+        var wireIdx  = enable.IndexOf("CFG.memrec = memrec", System.StringComparison.Ordinal);
+        var buildIdx = enable.IndexOf("pcall(freezeProperty, CFG)", System.StringComparison.Ordinal);
+        Assert.True(buildIdx > wireIdx,
+            "the record must be in CFG before freezeProperty reads it");
+    }
+
+    [Fact]
+    public void FreezeHelper_Abandonment_UnticksTheRecordAndSaysSo()
+    {
+        var lua = FreezeHelperLuaResource.Read();
+
+        // The record travels into the handle...
+        Assert.Contains("cfg.memrec", lua);
+        // ...and the abandonment path drives it inactive.
+        Assert.Contains("abandonAndUntick", lua);
+        Assert.Contains("rec.Active = false", lua);
+
+        // Deferred, not inline: setting Active=false runs [DISABLE], which calls
+        // stop(), which destroys the timer whose handler is on the stack.
+        Assert.Contains("timer.destroy()", lua);
+
+        // ...and the diagnosis must not be killed by its own fix. Unticking runs
+        // [DISABLE], whose last line is this generator's auto-close, so a print()
+        // into the Lua Engine window disappears the moment the record clears.
+        Assert.Contains("pcall(showMessage, message)", lua);
+
+        // The unfollowable advice must be GONE, not merely joined by better wording —
+        // it told the user to re-enable a record that had never been disabled.
+        Assert.DoesNotContain("Re-enable the record after fixing it.", lua);
+        Assert.Contains("has been unticked", lua);
+        // ...and the no-record case still tells the truth about who has to act.
+        Assert.Contains("Untick and re-tick this record", lua);
+    }
+
+    // ==================================================================
+    // [FREEZESCOPE-2026-08-18] — the freeze held the DECLARING class only.
+    //
+    // A Property Search row for an inherited field is keyed to the class that
+    // DECLARES it, so freezing a pawn's bCanBeDamaged submitted "Actor" and the DLL's
+    // exact-name pool returned one incidental debug actor. The Force submenu on the
+    // SAME ROW already walked subclasses (Solide, audit #5 A6).
+    // ==================================================================
+
+    [Fact]
+    public void Generate_AsksForTheDerivedScope()
+    {
+        var script = FreezeScriptGenerator.Generate(SampleParams());
+
+        // In the EDITABLE block, because narrowing the scope is a legitimate thing to
+        // want and CFG is where this script documents its knobs.
+        Assert.Contains("derived            = true,", script);
+    }
+
+    [Fact]
+    public void FreezeHelper_DerivedScope_IsWiredAllTheWayToTheWire()
+    {
+        var lua = FreezeHelperLuaResource.Read();
+
+        // The request flag reaches the mailbox...
+        Assert.Contains("LI_IN_DERIVED", lua);
+        Assert.Contains("writeInteger(mb + OFF_CMD_FLAGS", lua);
+
+        // ...the reply is unpacked at the WIDER stride, which is the half that fails
+        // silently: at 8 bytes the second "address" is entry 1's class pointer.
+        Assert.Contains("ENTRY_SIZE_DERIVED", lua);
+
+        // ...and each entry keeps its own identity witness, because a sweep across
+        // subclasses has no single class for the contract-2 page witness to name.
+        Assert.Contains("handle._cacheCls", lua);
+
+        // Truncation is read from the DLL rather than guessed from the page size.
+        Assert.Contains("LI_OUT_TRUNCATED", lua);
+        Assert.Contains("handle.isTruncated", lua);
+    }
+
+    [Fact]
+    public void Generate_CappedPool_IsReportedAsAFloorNotATotal()
+    {
+        var enable = EnableBlockOf(FreezeScriptGenerator.Generate(SampleParams()));
+
+        Assert.Contains("elseif scapped then", enable);
+        Assert.Contains("CAP REACHED", enable);
+        Assert.Contains("floor, not a total", enable);
+
+        // A capped pool is a SUCCESS, so it must not untick — same rule as the
+        // armed-but-empty branch beside it.
+        var idx = enable.IndexOf("elseif scapped then", System.StringComparison.Ordinal);
+        var end = enable.IndexOf("\nend", idx, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("memrec.Active = false", enable.Substring(idx, end - idx));
+    }
+
+    [Fact]
+    public void HeldClassName_PrefersTheDefiningClass()
+    {
+        // One definition, shared by the dialog's "Class:" row and the script the VM
+        // builds — they used to choose separately and could disagree.
+        Assert.Equal("Actor", FreezeScriptGenerator.HeldClassName("BP_Pawn_C", "Actor"));
+        Assert.Equal("BP_Pawn_C", FreezeScriptGenerator.HeldClassName("BP_Pawn_C", ""));
+        Assert.Equal("BP_Pawn_C", FreezeScriptGenerator.HeldClassName("BP_Pawn_C", null));
+        Assert.Equal("", FreezeScriptGenerator.HeldClassName(null, null));
     }
 
     [Fact]

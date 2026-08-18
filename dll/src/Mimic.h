@@ -27,7 +27,14 @@ enum Cmd : int32_t {
     CMD_FIND_FUNCTION   = 3,  // Find UFunction by name on instance's class
     CMD_INVOKE_BY_NAME  = 4,  // Combined: find instance + find function + invoke
     CMD_LIST_FUNCTIONS  = 5,  // List all UFunctions on an instance's class (paginated)
-    CMD_LIST_INSTANCES  = 6,  // List all live (non-CDO) instances of a class (paginated)
+    CMD_LIST_INSTANCES  = 6,  // List all live (non-CDO) instances of a class (paginated).
+                              //   Scope is chosen by cmdFlags & LI_IN_DERIVED
+                              //   (contract 3+): clear = the exact class only,
+                              //   set = that class AND every subclass. See the
+                              //   paramsData notes on MailboxData for the two
+                              //   page formats — they differ, because a derived
+                              //   sweep spans many concrete classes and the
+                              //   identity witness has to travel per entry.
     CMD_SET_DEBUG_CAMERA = 7, // Robust Debug Camera force on/off / query.
                               //   Input:  instanceAddr = 0 (OFF) / 1 (ON) / 2 (query, no change)
                               //   Output: result = resulting state (1=ON, 0=OFF, -1=error)
@@ -216,6 +223,29 @@ enum ProtectOp : uint64_t {
     // generic "force any reflected bool" using instanceAddr=obj + className=prop.
 };
 
+// CMD_LIST_INSTANCES flag bits (contract 3+). Two fields, one bit each so far —
+// the IN bit is written by CE Lua before the trigger, the OUT bit by the DLL.
+//
+// LI_IN_DERIVED is what makes a class-wide freeze cover the pool the user is
+// actually looking at. A Property Search row for an INHERITED field is keyed to
+// the class that DECLARES it (`bCanBeDamaged` presents as `Actor`), so an
+// exact-name pool held one incidental debug actor while every AActor subclass in
+// the level — the player's pawn included — went untouched. Same failure Solide
+// already fixed for Force (audit #5 A6); the two sit on the same panel row and
+// must not scope oppositely. (`[FREEZESCOPE-2026-08-18]`)
+//
+// The bit DEFAULTS OFF, and that is the whole backward-compatibility story: a
+// contract-1/2 script never writes cmdFlags, reads 0, and gets contract-2's exact
+// match byte for byte. The handler clears cmdFlags after reading it, so a derived
+// request cannot leak into the next caller's command.
+enum ListInstancesFlag : uint32_t {
+    LI_IN_DERIVED    = 0x1,  // cmdFlags    (IN) : include every SUBCLASS of className
+    LI_OUT_TRUNCATED = 0x1,  // cmdOutFlags (OUT): the pool hit the result cap, so the
+                             //   returned set is a PREFIX and more instances exist
+                             //   unheld. A derived sweep off a broad base reaches this
+                             //   routinely, so it is normal here, not exceptional.
+};
+
 // Mailbox status (DLL writes to status field)
 enum Status : int32_t {
     STATUS_IDLE         = 0,
@@ -290,17 +320,29 @@ struct MailboxData {
                                         //
                                         // CMD_LIST_INSTANCES uses this buffer for paginated results:
                                         //   Input:  paramsData[0..3] = page index (uint32, 0-based)
-                                        //           className field = exact class name (case-insensitive)
+                                        //           className field = class name (case-insensitive)
+                                        //           cmdFlags       = LI_IN_DERIVED to include every
+                                        //                            SUBCLASS (contract 3+; absent/0
+                                        //                            keeps the exact match)
                                         //   Output: parmsSize = total live instance count (capped at 0xFFFF)
                                         //           numParms  = returned count this page
                                         //           functionFlags = total pages
+                                        //           cmdOutFlags   = LI_OUT_TRUNCATED when the result cap
+                                        //                           was reached (contract 3+)
                                         //           instanceAddr  = UClass* of the enumerated class
-                                        //                           (0 = not resolved; contract 2+)
+                                        //                           (0 = not resolved OR derived scope,
+                                        //                           where there is no single class;
+                                        //                           contract 2+)
                                         //           ufuncAddr     = byte offset of UObject::ClassPrivate,
                                         //                           i.e. Grimoire::OFF_UOBJECT_CLASS
                                         //                           (contract 2+)
-                                        //   Each entry is 8 bytes (max 128 per page):
-                                        //     [0..7]   UObject* (uint64)
+                                        //   Entry layout depends on the scope — ListInstancesEntrySize():
+                                        //     exact   8 bytes (max 128 per page):
+                                        //       [0..7]   UObject* (uint64)
+                                        //     derived 16 bytes (max 64 per page):
+                                        //       [0..7]   UObject* (uint64)
+                                        //       [8..15]  UClass*  (uint64) — the CONCRETE class of THAT
+                                        //                object, i.e. its per-entry identity witness
                                         //
                                         // WHY the two extra outputs (contract 2, audit #5 AA2/AA3):
                                         //   A caller that CACHES these pointers and writes to them on a
@@ -314,10 +356,70 @@ struct MailboxData {
                                         //   too, and the next rescan would enumerate it anyway.
                                         //   Both are class-wide, not per-entry, so the entries stay
                                         //   8 bytes and the page size is unchanged — this is additive.
+                                        //
+                                        //   ...and that class-wide shape is exactly why the DERIVED
+                                        //   scope (contract 3) could not reuse it: the sweep returns
+                                        //   instances of many concrete classes, so one page witness
+                                        //   would refuse every write except the one class it named.
+                                        //   Dropping the witness instead was not an option — that IS
+                                        //   the AA2 defect — so the derived format carries the UClass*
+                                        //   per entry and halves the page to 64.
+
+    volatile uint32_t cmdFlags;         // 0x728: IN  — per-command input flags (contract 3+).
+                                        //        Today only CMD_LIST_INSTANCES reads it
+                                        //        (ListInstancesFlag). Its handler CLEARS it after
+                                        //        reading, so a flag set by one caller can never widen
+                                        //        the next caller's command — which is what keeps a
+                                        //        contract-1/2 script (which never writes this field)
+                                        //        on exactly its old behaviour.
+    volatile uint32_t cmdOutFlags;      // 0x72C: OUT — per-command output flags (contract 3+).
+                                        //        CMD_LIST_INSTANCES publishes LI_OUT_TRUNCATED here.
+                                        //        Rewritten on every command that uses it, never
+                                        //        accumulated.
 };
 #pragma pack(pop)
 
 static_assert(sizeof(MailboxData) <= 4096, "MailboxData must fit in a single page");
+
+// ---- CMD_LIST_INSTANCES page geometry + result caps (contract 3+) -----------
+//
+// The wire format depends on ONE input bit, so the DLL and the CE Lua helper must
+// derive it from the same rule or they disagree about where entry N begins. Kept
+// header-inline and pure precisely so `dll_helpers_test` can pin it: no test target
+// compiles Mimic.cpp, but every test compiles this header.
+
+constexpr uint32_t LIST_INSTANCES_ENTRY_EXACT   = 8;   // UObject*
+constexpr uint32_t LIST_INSTANCES_ENTRY_DERIVED = 16;  // UObject* + its UClass*
+
+constexpr uint32_t ListInstancesEntrySize(bool derived) {
+    return derived ? LIST_INSTANCES_ENTRY_DERIVED : LIST_INSTANCES_ENTRY_EXACT;
+}
+
+constexpr uint32_t ListInstancesPerPage(bool derived) {
+    return static_cast<uint32_t>(sizeof(MailboxData::paramsData))
+         / ListInstancesEntrySize(derived);
+}
+
+// Result caps. TWO of them, because the pools are not the same size and the cost
+// that matters is cap ÷ page size: the CE Lua caller re-runs a full GObjects walk
+// for EVERY page, on EVERY rescan (5 s by default). Both caps land on the same
+// 16-page ceiling the helper enforces, so widening the scope did not double the
+// per-rescan walk count.
+//
+// The derived cap is also a fact about the consumer, not just about the walk: the
+// freeze tick issues one ReadProcessMemory + one WriteProcessMemory per instance
+// at 20 Hz from CE's Lua, so a four-figure pool is already past what that loop can
+// service. Truncation is reported (LI_OUT_TRUNCATED) rather than hidden.
+constexpr int      LIST_INSTANCES_MAX_EXACT   = 2000;
+constexpr int      LIST_INSTANCES_MAX_DERIVED = 1024;
+constexpr uint32_t LIST_INSTANCES_MAX_PAGES   = 16;
+
+static_assert(LIST_INSTANCES_MAX_EXACT
+                  <= static_cast<int>(LIST_INSTANCES_MAX_PAGES * ListInstancesPerPage(false)),
+              "the exact cap must fit inside the page budget the helper walks");
+static_assert(LIST_INSTANCES_MAX_DERIVED
+                  <= static_cast<int>(LIST_INSTANCES_MAX_PAGES * ListInstancesPerPage(true)),
+              "the derived cap must fit inside the page budget the helper walks");
 
 /// Start the mailbox polling thread.
 /// Called from dllmain.cpp DLL_PROCESS_ATTACH.
@@ -373,7 +475,19 @@ namespace Mimic {
 ///   enumerated UClass* in `instanceAddr` and the UObject::ClassPrivate byte offset
 ///   in `ufuncAddr`. ADDITIVE — both fields were unused outputs for this command, so
 ///   no contract-1 script referenced them and MAILBOX_CONTRACT_MIN stays at 1.
-constexpr int32_t MAILBOX_CONTRACT = 2;
+/// 3 (`[FREEZESCOPE-2026-08-18]`): two new fields at the TAIL of MailboxData —
+///   `cmdFlags` (IN) and `cmdOutFlags` (OUT) — plus CMD_LIST_INSTANCES' derived
+///   scope, which they select and report truncation for. ADDITIVE in both halves,
+///   so MAILBOX_CONTRACT_MIN stays at 1:
+///     * every pre-existing field keeps its offset (the struct only grew at the
+///       end), so an old script's reads and writes land exactly where they did;
+///     * the new IN flag defaults to 0 = the old exact-match behaviour, and the
+///       handler clears it after every use so it cannot be inherited;
+///     * the 16-byte derived page format is reachable ONLY with that flag set, so
+///       no old script can encounter it.
+///   Note this bump DOES move the surface hash (the struct gained fields), unlike
+///   version 2 which moved on meaning alone — see tools/check_mailbox_contract.py.
+constexpr int32_t MAILBOX_CONTRACT = 3;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.
