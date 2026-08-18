@@ -5169,13 +5169,68 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   genuinely pre-UE4 (UE3) binary must still be refused, via the marker path — grep
   `PRE-UE4 engine POSITIVELY identified`.
 
-- ⬜ **Duplicate GameEngine records no longer break each other** (build 2621, B26). Teleport →
-  Global Pointers → *Get GameEngine*, then click it again. **PASS** = the second click says it was
-  *already pushed this session* and copies XML instead of adding a record. Then paste that XML to
-  deliberately create a second record, tick BOTH, and untick the OLDER one. **PASS** = the newer
-  record's `UE_GameEngine` still resolves and its chain still reads (set `UE5_DEBUG=1` to see
-  *"another record owns UE_GameEngine now — leaving it alone"*). **FAIL** = the newer record's
-  addresses go to `??`.
+- ✅ **DONE 2026-08-18 — Duplicate GameEngine records no longer break each other** (build 2621, B26).
+  Ran on DumperTest Development, dist 3262, AOBMaker bridge live (the row's precondition — verified
+  first, so step 1 could not pass vacuously).
+  - **Step 1 PASS.** First *Get GameEngine* → `Added 'Get GameEngine → symbol UE_GameEngine' to Cheat
+    Engine via AOBMaker…`. Second click → *"'Get GameEngine → symbol UE_GameEngine' was already
+    pushed to Cheat Engine this session — copied it as CE memory-record XML instead of adding a
+    second record."* CE's list holds **exactly one** record under the `UE5CEDumper (DLL)` group.
+  - **Step 2 PASS on its load-bearing assertion.** Pasted the XML to make a real second record,
+    ticked both, unticked the **older** — the newer record's `UE_GameEngine` still resolved to
+    **`0x7FF7AD323670`**, the `&GEngine` slot, *not* `??`. Enable also logs
+    `[GameEngine] UE_GameEngine -> &GEngine slot 0x7FF7AD323670 (auto-follows)`, so the slot binding
+    (rather than a snapshot buffer) is what this title takes.
+  - ⚠ **The expected debug line is BRANCH-SPECIFIC and cannot appear here.**
+    `Services/PointerQueryScriptGenerator.cs:238-250` emits *"another record owns … leaving it
+    alone"* only under `mayFallBack` — the `allocateMemory` **buffer** flavour, where there is
+    something to free. DumperTest resolves the `&GEngine` AOB, so its record takes the **slot**
+    flavour (`:256-258`), whose `[DISABLE]` is two lines with no ownership guard because there is no
+    buffer. **This checklist's wording should be scoped to the buffer flavour**; expecting the string
+    on the slot flavour is a mis-specification, not a failure.
+  - ⛔ **But the slot flavour's `[DISABLE]` is broken — see `[SLOTSYM-2026-08-18]` below.**
+
+### ⛔ NEW 2026-08-18 `[SLOTSYM-2026-08-18]` — the slot-flavour `[DISABLE]` says "unregistered" and does not unregister
+
+*Found while separating B26's two branches. Reproduced with ONE record and no second record in play,
+so none of B26's duplicate-record confounders apply.*
+
+**Clean sequence, each step probed** (CE Lua, `UE5_DEBUG=1`):
+
+| # | action | `getAddressSafe('UE_GameEngine')` |
+|---|---|---|
+| 0 | manual `unregisterSymbol` to establish a baseline | `nil` |
+| 1 | tick the **single** record → logs `-> &GEngine slot 0x7FF7AD323670 (auto-follows)` | `140701739398768` (= `0x7FF7AD323670`) |
+| 2 | untick that same record → logs **`[GameEngine] UE_GameEngine unregistered`** | **`140701739398768` — still there** |
+| 3 | one manual `unregisterSymbol('UE_GameEngine')` | `nil` **on the first call** |
+
+Step 3 is what makes this a defect rather than a CE quirk: `unregisterSymbol` works, and **one** call
+is enough. So the `[DISABLE]` block did not remove the symbol, while printing that it did.
+
+**Where.** `PointerQueryScriptGenerator.cs:256-258` emits, for the no-fallback (slot) path:
+
+```lua
+if getAddressSafe('UE_GameEngine') then unregisterSymbol('UE_GameEngine') end
+dbg('[GameEngine] UE_GameEngine unregistered')
+```
+
+The `dbg` line is **unconditional** — it reports the intent, never the outcome, which is the same
+"the report and the reality are computed by different code paths" root cause audit #4a named. Two
+candidate mechanisms, and this run does **not** distinguish them: either the `getAddressSafe` guard
+returns falsy inside that chunk so `unregisterSymbol` is skipped, or ENABLE leaves **two**
+registrations and one `unregisterSymbol` only removes one. Deciding it needs a probe *inside* the
+DISABLE block.
+
+**Why it matters.** A symbol that survives its record's disable is a **stale symbol across a game
+restart**: `UE_GameEngine` keeps resolving to the previous process's module base, and anything built
+on it reads dead memory. That is the exact failure class that stopped the freeze helper earlier this
+same session (*"the contract symbol resolved to the wrong memory (stale address)"*), reached from a
+different direction.
+
+**Fix shape (not applied).** Make the message follow the fact: capture `getAddressSafe` after the
+unregister and only claim success when it is gone, looping/reporting otherwise — and add the
+ownership guard the buffer branch already has, so a *second* live record's symbol is not removed.
+Effort **S**, risk **LOW**, generator-only; `CeInjectScriptGeneratorTests` already covers this file.
 
 - ✅ **The five dead coord-grid sort headers** (build 2610, B16) — **VERIFIED 2026-08-12**, on the
   AOT/trimmed `dist\UE5DumpUI.exe` (56.9 MB, build 2794) against the DumperTest Development package.
