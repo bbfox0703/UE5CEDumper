@@ -12,24 +12,86 @@ launched without a human, and what must never be started without one.
 
 -----
 
-## ▶ RESUME HERE — state as of 2026-08-18 afternoon
+## ▶ RESUME HERE — NEXT SESSION STARTS AT STEP 1 (written 2026-08-18, end of a long sitting)
 
-**Machine state: nothing running.** Elliot, Cheat Engine and the UI were all killed at the end of
-the sitting. Working tree clean, **~62 unpushed commits on `dev`** (no PR opened — the maintainer
-asks for one when they want it).
+**Machine state: nothing running.** Elliot, Cheat Engine and UE5DumpUI were all killed. Working tree
+clean; ~71 unpushed commits on `dev` (no PR — the maintainer asks when they want one).
 
-**To resume GROUP 6:** relaunch Elliot with `Start-Process "steam://rungameid/3483510"` (the
-`open_application` route fails on the `steam://` handler), wait for the `UE5DumpBfx` pipe (its
-`dxgi` proxy injects on its own), then launch CE and the UI.
+### ▶ STEP 1 — GRANTS, IN BATCHES OF ≤7. Do this before anything else.
 
-**Environment is ready and needs no setup:**
-* **The AOBMaker CE plugin IS installed** (maintainer, 2026-08-18). Launch `Cheat Engine (64-bit)`
-  and the bridge comes up on its own — verify with `\\.\pipe\AOBMakerCEBridge` and the UI toolbar
-  reading **`● AOBMaker Connected`**.
-* **All computer-use grants are held** for this session: `UE5DumpUI`, `DumperTest Development`,
-  `DumperTest Shipping`, `Steam`, `Cheat Engine (64-bit)` and the 16 game titles. ⚠ Grants do **not**
-  survive a *session* (a compaction is not a new session, but a restart is) — re-request per §3 if
-  `request_access` starts failing.
+⛔ **A single `request_access` listing many apps CANNOT BE ACCEPTED**: the dialog grows taller than
+the screen and the **Accept button is unreachable**, so it comes back `user_denied` for the whole
+set — which is *not* a refusal, just an unclickable dialog. **Grants also never survive a session**,
+so this is the first action of every new session, not a fallback for when something fails.
+
+**One batch of 7 covers everything the next two rows need:**
+
+| # | app (Start-menu name) | why |
+|---|---|---|
+| 1 | `UE5DumpUI` | the UI under test |
+| 2 | `Cheat Engine (64-bit)` | AA14–AA20 is the CE Lua invoke path |
+| 3 | `Steam` | launcher for the two titles below |
+| 4 | `冒險家艾略特的千年奇譚` (Elliot) | **PE hook verified good** — the invoke host |
+| 5 | `Lushfoil Photography Sim` | second verified invoke host; also the Tier-1 title for G2 step 3 |
+| 6 | `DumperTest Development` | fallback / G10 step 2 later |
+| 7 | `DumperTest Shipping` | fallback |
+
+Add more only in a **second** batch, never by extending this one.
+
+### ▶ STEP 2 — the work: `AA14–AA20`, then `G2` steps 3/4/5
+
+**`AA14–AA20` — CE Lua invoke in a real game.** Host: **Elliot** (`Add_IntInt(3,4) = 7 → PE hook
+verified`) or Lushfoil. ⚠ **Step 5 needs the GAME THREAD ONLY suspended** — CE's whole-process pause
+hits the status-0 branch, not the 0xFF branch under test. Related and now proven: a whole-process
+`NtSuspendProcess` does **not** stop `executeCodeEx` either, because it runs on a *newly created*
+remote thread.
+
+**`G2` — steps 1 and 2 are ✅ CLOSED; only 3, 4, 5 remain.**
+* **3** (regression) — any ordinary UE5 title: `scan-0.log` still shows
+  `DetectVersion: Tier 1 (ascii|utf16) '++UEx+Release-N.N' -> NNN`. Lushfoil is a Tier-1 title.
+* **4** — **proxy mode**, start a scan from the UI, close the UI mid-scan, and expect one of
+  `DataScanGObjectsCandidates` / `FindGObjectsStaticStruct` / `FindGNamesByStringRef` to log
+  `aborted (client gone / shutdown)`.
+  ⚠ **Do not assume this behaves like the AOB cancel.** It was measured on 2026-08-18 that killing
+  the UI mid-scan does **not** cancel the *AOB* scan (`trigger_scan` is async, so nothing is
+  in-flight). These are **different** cancel points on the recovery/data-scan path, so they may well
+  fire — but that is the question, not the assumption.
+* **5** (regression) — disconnect the UI mid-command, reconnect, and confirm a fresh scan resolves
+  GObjects/GNames with **no** `aborted` line.
+
+### ⛔ STEP 3 — kill everything when a row is done
+
+**One game at a time, sequential, never parallel**, and **kill the game, CE and the UI as soon as the
+row that needed them is finished** — do not leave a title running "for the next row". Confirm the
+process is actually gone before launching anything else; a Steam title can leave its shipping exe
+alive after the window closes.
+
+### 📁 `out/` is the cross-session scratch area on THIS PC
+
+`out/` is gitignored (`.gitignore:33` — `[Oo]ut/`), so it is the place to hand intermediate data
+between sessions on the same machine: captured logs, a half-finished measurement, a note to the next
+session. ⚠ **It is temporary by definition and may be wiped at any time — never put anything there
+that is not reproducible.** Anything that must survive goes in `todo.md` (results), this file (run
+state), or `tools/verify/` (rigs).
+
+### ⭐ The staging lesson that unlocked three long-open rows — read before any mid-scan/mid-command row
+
+**A short window cannot be hit by two consecutive operator actions.** Each tool round trip costs
+~10 s of wall clock and a GUI click can silently fail to register, so an 8 s scan is unreachable by
+"switch window, then click". Four routes were measured and none work: untick the CE record (the
+`.CT` blocks **CE's GUI thread** for the whole scan, so the click queues), kill the UI (async
+`trigger_scan`), a fixed CE Lua timer (cannot be aimed), and a CE Lua thread polling the log
+(**CE Lua's `io.open` cannot read our live log** — writer share mode).
+
+▶ **What works: a two-process chain with BOTH halves pre-armed.**
+`py tools/verify/kill_on_marker.py <log> "<marker>" --touch <flagfile> --after-ms N` watches the log
+(Python *can* read it) and drops a flag file; a **pre-armed** CE `createThread` polls that flag and
+fires `executeCodeEx(...)`. Neither half is on the operator's critical path. Give the CE loop a
+**generous** timeout — one mis-registered click cost 3 minutes and expired a 120 s loop — and
+**restart CE between attempts**: it keeps one Lua state, and an abandoned thread later shut down a
+*fresh* game.
+
+-----
 
 ### ✅ GROUP 5 DONE · GROUP 6 MOSTLY DONE (2026-08-18). ▶ NEXT: `AA14–AA20`, `G2`, `Y1`
 
