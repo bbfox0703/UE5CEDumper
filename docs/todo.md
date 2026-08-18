@@ -3017,7 +3017,7 @@ feature WRITES TO (the Stealth Meter card), so the regression half matters as mu
    `reset_all_fields` — that would mean a class-default object was written. (The CDO skip moved
    inside Aura's walk; the local skip in `Solide` stayed as the invariant.)
 
-### 🟡 3-of-5 CLOSED 2026-08-18 — AB3/AB5: the vector scan on a UE5 (LWC) game
+### 🟡 4-of-5 CLOSED 2026-08-18 — AB3/AB5: the vector scan on a UE5 (LWC) game
 
 *Needs a **UE5** game — this is the one check a UE4 title structurally cannot make. See dev-log
 build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a real target**.
@@ -3059,7 +3059,7 @@ build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a
 > | 1 | ✅ **PASS** | Value Search → **FVector** / **Exact** / Deep on / Native-C **off** → `41342,110645,1641` → `First Scan: 3 candidates in 766 ms (scanned 257500 objects, 722 classes with matching fields)`. **The player pawn is among them**: `DsPC_Lute_V2_C.ActiveLocation` at `0x18F21068F10` = pawn `0x18F21068040` **+ 0xED0**, the row's own reported offset. The other two are `CapsuleComponent.RelativeLocation` (`CollisionCylinder`) and `DsPCMovementComponent.LastUpdateLocation` (`CharMoveComp`) — both plausible, neither noise |
 > | 2 | ✅ **PASS, witnessed on the RAW BYTES not on the UI cell** | The Value column truncates to `41342, 11064…` and would not widen, so the check was made independently: `py tools/verify/read_mem.py DSClient-Win64-Shipping 0x18F21068F10 24` → `00 00 00 00 C0 2F E4 40  00 00 00 00 50 03 FB 40  00 00 E0 06 5E A2 99 40` → as **3 doubles** = `(41342.0, 110645.0, 1640.5918231010437)`, matching the Teleport pose exactly. **The same 24 bytes read as 3 floats give `(0.0, 7.13, 0.0)`** — i.e. the pre-fix decode really is garbage on this target, so the fix is doing visible work rather than being a no-op here |
 > | 3 | ✅ **PASS** | Moved the character (verified by re-reading the same address: `(42260.337…, 110719.078…, 1773.512…)`), then **Changed** → `Next Scan (Changed): 3 surviving candidates in 0 ms` — **all three survived, pawn included**, and the Value column re-rendered as `42260.3, 110…`. This is the half that needs `FieldDescriptor::vectorWidth`: a session that lost the width would have dropped every candidate |
-> | 4 | ⬜ not run | UE4 regression — needs a different title |
+> | 4 | ✅ **PASS `[DQ7R-2026-08-18]`** | **DQ7R**, UE **427**, 199,196 objects, `version.dll` proxy (build 3262) — the UE4 half. Pose `29.115 / -103.393 / 133.344` (pawn `0x20544680010`), scanned as **`29,-103,133`** → `First Scan: 4 candidates in 673 ms (scanned 154900 objects, 580 classes with matching fields)`: `SceneComponent.RelativeLocation` (`RootSceneComponent`), `DOLLPlayerMovementComponent.LastUpdated…`, `DOLLPlayableCharacterCapsuleComponent…`, `AtomComponent.RelativeLocation`. **Independently witnessed on the bytes, mirroring the UE5 half**: `read_mem … 0x20463ED831C 12` → `30 EC E8 41 3C C9 CE C2 F6 57 05 43` = **3 floats** `(29.115325927734375, -103.39303588867188, 133.34359741210938)`. So **24B doubles on DSA and 12B floats on DQ7R both match under the same predicate** — the width really is read per field, and the gate did not narrow what UE4 accepts |
 > | 5 | ⬜ not run | `Vector3f` (12B) beside 24B `Vector` in the same process — no known field to aim at yet |
 >
 > ### ⛔ THE TRAP, AND THIS ROW'S OWN INSTRUCTIONS WALK INTO IT
@@ -3516,7 +3516,7 @@ flag stored as one).
    *"would be written as infinity"*, while the same value on a `DoubleProperty` must still be
    accepted. If the double case is refused, the narrowing check leaked into the 8-byte path.
 
-### ⬜ NEW 2026-08-15 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
+### 🟡 3-of-5 CLOSED 2026-08-18 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
 
 The three handoffs that need a class address stopped re-deriving it from the capped `list_classes`
 page and now use the address the row already carries. The pure logic is unit-tested with three
@@ -3537,6 +3537,36 @@ Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogw
 5. Worth one negative case: a class that genuinely does not exist should still report plainly
    *"not found"*, not the "may still exist" caveat. The Live-handoff path (no live instance +
    an unknown class name) is where that text appears.
+
+> ### ⛔ STEP 1 SAYS STOP — **DQ7R IS TOO SMALL**, and this row's own candidate list is wrong
+> `[DQ7R-2026-08-18]`
+>
+> Classes tab → Load, on **DQ7R** (UE 427, 199,196 objects, DLL 3262), both ways:
+> * `Game classes only` **on**  → `2888 classes (scanned 199,196 objects, 2888 total UClasses)`
+> * `Game classes only` **off** → `4738 classes (scanned 199,196 objects, 4738 total UClasses)`
+>
+> **4,738 < 5,000, so the cap is never reached and the status line carries no
+> `⚠ STOPPED at the 5,000-row cap` at all.** Step 1 is explicit that this makes the rest of the row
+> meaningless here, so nothing further was attempted on this title.
+>
+> ▶ **Correct the row's candidate list.** It names "DQ7R, Hogwarts Legacy, FF7R"; DQ7R does **not**
+> qualify. A host that plausibly does, and is already known-good for driving: **Elliot** — its own
+> `list_all_functions` status line this session read *"20239 functions across **6612 classes**"*, and
+> classes-with-functions is a **lower bound** on total UClasses, so Elliot is ≥6,612 > 5,000.
+> (Object counts point the same way: Elliot 355,717 vs DQ7R 199,196.) ⚠ That is a lower bound from a
+> *different* command — confirm with the Classes tab's own total before relying on it.
+
+> ### ✅ STEPS 1-3 PASS ON ELLIOT `[ELLIOT-X2-2026-08-18]` — the lower-bound inference held
+>
+> Elliot, UE **504**, 355,679 objects, `dxgi.dll` proxy build **3262**, AOBMaker **Connected**.
+>
+> | step | verdict | evidence |
+> |---|---|---|
+> | 1 | ✅ **PASS** | Classes tab → Load → `5000 classes (scanned 355,679 objects, 5000 total UClasses)` **`⚠ STOPPED at the 5,000-row cap — more classes exist`** — verbatim. Confirms Elliot qualifies where DQ7R (4,738) does not |
+> | 2 | ✅ **PASS** | Interesting Funcs → Load → `20235 functions across 6609 classes`. Took the top row's class **`BP_EnemyCharacter_C`** and filtered the *capped* Classes list by that exact name → **0 rows**. So it is in the function list and absent from the class page: past the cap by construction, not by assumption |
+> | 3 | ✅ **PASS, end to end** | `AA(B)` on `BP_EnemyCharacter_C::SetBlockDispHPGauge` → the dialog **opened** (`ParmsSize=1`, `bBlock [bool, 1B, off=0]`) instead of aborting on *"Class … not found"*, and `Copy AA Script` **reached CE**: the record `Invoke (baked): BP_EnemyCharacter_C::SetBlockDispHPGauge` is in the address list. That is the whole finding — the handoff used the address the row carries rather than re-deriving it from the capped page |
+> | 4 | ⬜ **NOT DECIDABLE ON ELLIOT — and the reason is measured** | The Console twin needs an `exec` command **on a past-cap class**. Elliot has **none**: with `Game Only` on, Console reports `No UFUNCTION(exec) commands found in this game (scanned 12,822 functions across 3,935 classes)`. All **94** exec commands it does find sit on engine classes (`CheatManager`, `AISystem`, `AbilitySystemCheatManagerExtension`), and `CheatManager` is **present** in the capped list (4 matching rows), i.e. inside the first 5,000. Running the twin here would pass **vacuously**. ▶ Needs a title with **>5,000 classes AND game-class exec commands** — check the Console tab's `Game Only` count before committing to a host |
+> | 5 | ⬜ not run | The negative case (unknown class must say plainly *"not found"*, not the "may still exist" caveat) goes through the **Live handoff**, which was not staged this session |
 
 ### ⬜ NEW 2026-08-15 — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
 
