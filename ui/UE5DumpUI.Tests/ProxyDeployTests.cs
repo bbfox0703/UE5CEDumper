@@ -801,6 +801,68 @@ public class ProxyDeployTests
             string filterName, string filterExtension) => Task.FromResult<string?>(null);
     }
 
+    /// <summary>A platform whose %LOCALAPPDATA% points at a temp folder, so the
+    /// [PROXYLOAD-2026-08-17] load-signal probe can be exercised end to end.</summary>
+    private sealed class AppDataPlatform(string appData) : IPlatformService
+    {
+        public bool TryAcquireSingleInstance() => true;
+        public void ReleaseSingleInstance() { }
+        public string GetAppDataPath() => appData;
+        public string GetLogDirectoryPath() =>
+            Path.Combine(appData, Constants.LogFolderName, Constants.LogSubFolder);
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
+        public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
+        public string GetMachineName() => "test";
+        public void CloseImeForWindow(IntPtr windowHandle) { }
+        public Task<string?> ShowSaveFileDialogAsync(string defaultFileName,
+            string filterName, string filterExtension) => Task.FromResult<string?>(null);
+    }
+
+    [Fact]
+    public async Task RefreshDeployStatus_SetsLoadObservation_FromPerProcessLogFolder()
+    {
+        // End-to-end proof of the [PROXYLOAD-2026-08-17] load signal: the join key
+        // (ProcessLogFolderName) + the real folder lookup under
+        // %LOCALAPPDATA%\UE5CEDumper\Logs. No exe is executed — a plain temp folder stands in
+        // for a game that HAS run; a game with no folder is honest UNKNOWN, not a failure.
+        string appData = MakeTempDir();
+        try
+        {
+            // A game whose per-process folder was written just now → "loaded <today>".
+            string ranDir = Path.Combine(appData, Constants.LogFolderName, Constants.LogSubFolder, "P3R");
+            Directory.CreateDirectory(ranDir);
+            File.WriteAllText(Path.Combine(ranDir, "scan-0.log"), "hello");
+
+            string binRan = Path.Combine(appData, "binRan");
+            string binNever = Path.Combine(appData, "binNever");
+            Directory.CreateDirectory(binRan);
+            Directory.CreateDirectory(binNever);
+
+            var ran = new DetectedGame
+            {
+                Name = "Persona 3 Reload", ExePath = @"X:\g\P3R.exe", BinariesDir = binRan
+            };
+            var never = new DetectedGame
+            {
+                Name = "Octopath",
+                ExePath = @"X:\g\Octopath-Win64-Shipping.exe",
+                BinariesDir = binNever
+            };
+
+            var svc = new ProxyDeployService(new NoopLog(), new AppDataPlatform(appData));
+            await svc.RefreshDeployStatusAsync(
+                new List<DetectedGame> { ran, never }, @"X:\missing.dll", ProxyType.Version,
+                ct: TestContext.Current.CancellationToken);
+
+            Assert.StartsWith("loaded ", ran.LoadObservation);    // folder present + fresh
+            Assert.Equal("not observed", never.LoadObservation);  // no folder → honest unknown
+        }
+        finally
+        {
+            Directory.Delete(appData, recursive: true);
+        }
+    }
+
     private static string MakeTempDir()
     {
         string dir = Path.Combine(Path.GetTempPath(),

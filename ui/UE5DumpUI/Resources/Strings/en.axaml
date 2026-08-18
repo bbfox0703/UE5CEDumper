@@ -755,6 +755,7 @@
     <sys:String x:Key="str.ProxyDeploy.ColName">Game</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColPath">Binaries Path</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColStatus">Status</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.ColLoad">Loaded?</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColSuggested">Suggested proxy</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColVersion">Version</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColError">Error</sys:String>

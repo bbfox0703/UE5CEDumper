@@ -779,13 +779,19 @@ public sealed class ProxyDeployService : IProxyDeployService
         string? InstalledVersion = null,
         string? ErrorMessage = null,
         bool SetInstalledVersion = true,
-        bool SetErrorMessage = true);
+        bool SetErrorMessage = true,
+        // The load-observation column. Default OFF so the deploy/error paths, which write a
+        // status the instant BEFORE a game is launched, do not clobber a real observation with
+        // stale nothing — only the refresh path (which re-reads the log folder) sets it.
+        string? LoadObservation = null,
+        bool SetLoadObservation = false);
 
     private static void ApplyStatus(in GameStatusUpdate u)
     {
         u.Game.Status = u.Status;
         if (u.SetInstalledVersion) u.Game.InstalledVersion = u.InstalledVersion;
         if (u.SetErrorMessage)     u.Game.ErrorMessage     = u.ErrorMessage;
+        if (u.SetLoadObservation)  u.Game.LoadObservation  = u.LoadObservation;
     }
 
     /// <summary>
@@ -801,6 +807,62 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// </summary>
     internal static bool ShouldApplyRefresh(string binariesDir, IReadOnlySet<string>? preserve)
         => preserve == null || !preserve.Contains(binariesDir);
+
+    /// <summary>
+    /// Read the "did it actually load?" signal for a game from its per-process log folder under
+    /// <c>%LOCALAPPDATA%\UE5CEDumper\Logs</c>. The DLL creates that folder on load
+    /// (<c>dll/src/Sein.cpp InitProcessMirror</c>), so its presence + newest write time is the
+    /// cheapest honest tell that the proxy/inject actually ran — disk state alone cannot say that
+    /// (<c>[PROXYLOAD-2026-08-17]</c>). Absence is reported as "not observed" (UNKNOWN), never as a
+    /// failure: the game may simply not have been launched with the proxy yet. Best-effort; any IO
+    /// error degrades to "not observed". The join key + classification are the pure, tested
+    /// <c>ProxyImportAnalyzer.ProcessLogFolderName</c> / <c>ClassifyLoad</c>.
+    /// </summary>
+    private string ComputeLoadObservation(string exePath)
+    {
+        DateTime now = DateTime.Now;
+        try
+        {
+            string folderName = ProxyImportAnalyzer.ProcessLogFolderName(exePath);
+            if (string.IsNullOrEmpty(folderName))
+                return ProxyImportAnalyzer.ClassifyLoad(false, null, now, Constants.LogMaxAgeDays).Display;
+
+            string procDir = Path.Combine(
+                _platform.GetAppDataPath(), Constants.LogFolderName, Constants.LogSubFolder, folderName);
+
+            bool present = Directory.Exists(procDir);
+            DateTime? lastWrite = present ? NewestLogWrite(procDir) : null;
+            return ProxyImportAnalyzer.ClassifyLoad(present, lastWrite, now, Constants.LogMaxAgeDays).Display;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug("ProxyDeploy", $"Load-signal probe skipped for {exePath}: {ex.Message}");
+            return ProxyImportAnalyzer.ClassifyLoad(false, null, now, Constants.LogMaxAgeDays).Display;
+        }
+    }
+
+    /// <summary>Newest <c>*.log</c> write time in a per-process log folder — the DLL's "last wrote a
+    /// line" is its "last ran", which is a truer signal than the directory's own mtime (that also
+    /// moves on the retention sweep's deletes). Falls back to the folder's write time when it holds
+    /// no <c>.log</c> yet; null when nothing is readable.</summary>
+    private static DateTime? NewestLogWrite(string dir)
+    {
+        DateTime? newest = null;
+        try
+        {
+            foreach (string f in Directory.EnumerateFiles(dir, "*.log"))
+            {
+                DateTime t = File.GetLastWriteTime(f);
+                if (newest is null || t > newest) newest = t;
+            }
+        }
+        catch { /* fall through to the folder's own time */ }
+        if (newest is null)
+        {
+            try { newest = Directory.GetLastWriteTime(dir); } catch { /* leave null */ }
+        }
+        return newest;
+    }
 
     public async Task RefreshDeployStatusAsync(
         IList<DetectedGame> games, string sourceDllPath, ProxyType proxyType,
@@ -886,7 +948,13 @@ public sealed class ProxyDeployService : IProxyDeployService
                                    : $"{errorMessage}; {conflictMsg}";
                 }
 
-                results.Add(new GameStatusUpdate(game, status, installedVersion, errorMessage));
+                // "Did it actually load?" — orthogonal to the disk status above, so it is set on
+                // EVERY refresh regardless of that status ([PROXYLOAD-2026-08-17]). Cheap: a
+                // Directory.Exists + a mtime read, no PE parse.
+                string loadObservation = ComputeLoadObservation(game.ExePath);
+
+                results.Add(new GameStatusUpdate(game, status, installedVersion, errorMessage,
+                    LoadObservation: loadObservation, SetLoadObservation: true));
             }
 
             return results;
@@ -963,30 +1031,27 @@ public sealed class ProxyDeployService : IProxyDeployService
                         $"({DescribeForeignDll(targetDll)}) — foreign overwrite was explicitly allowed");
                 }
 
-                // A proxy can only load if something in the process actually NAMES that DLL —
-                // but "names it" includes a RUN-TIME LoadLibrary, not just the import table.
-                // This is therefore an ADVISORY and never a refusal; the measurement that
-                // settled it is in ProxyImportAnalyzer.LoadsDynamically (11 of 21 local games
-                // run a working version.dll proxy with no static import, DQ7R self-confirmed).
-                //
-                // A refusal used to live here and cost real deploys: it rejected version.dll —
-                // the broadest-compatible flavour and the one the Suggested column recommends —
-                // on every game that loads it dynamically, which is most of them.
-                //
-                // What survives is the reason the check was written: when a proxy genuinely
-                // cannot load it fails SILENTLY and TOTALLY (zero log, reads exactly like
-                // "nothing happened"). So the risk rides along with the successful deploy as a
-                // note instead of being turned into a wall. A null parse result means "could
-                // not tell" and yields no note. Computed HERE, past the early returns, so the
-                // paths that deploy nothing do not pay a PE parse.
-                string? riskNote = ProxyImportAnalyzer.DescribeLoadRisk(
-                    ReadProxyImports(game.ExePath), proxyType);
+                // Whether a proxy will load is an ADVISORY here, never a refusal — a refusal used
+                // to live here and rejected version.dll (the broadest-compatible flavour) on every
+                // game that loads it dynamically. Two independent risks, at most one of which
+                // applies (they partition on whether the flavour is imported):
+                //   • BYPASS: the flavour IS imported, so an already-mapped System32 copy can
+                //     pre-empt ours — the [PROXYLOAD-2026-08-17] OCTOPATH failure; and
+                //   • NEVER-LOADS: a static-only flavour (dxgi/winmm) is absent, so nothing names
+                //     it and it cannot load at all.
+                // Both fail SILENTLY and TOTALLY when real (zero log, reads like "nothing
+                // happened"), so the note rides along with the successful deploy rather than
+                // becoming a wall. A null parse result means "could not tell" → no note. Computed
+                // HERE, past the early returns, so the paths that deploy nothing do not pay a PE
+                // parse. The persistent per-game tell is the Load column, refreshed from the log
+                // folder — this note is the one-shot nudge at deploy time.
+                var imports = ReadProxyImports(game.ExePath);
+                string? riskNote = ProxyImportAnalyzer.DescribeDeployAdvisory(imports, proxyType);
 
                 File.Copy(sourceDllPath, targetDll, overwrite: true);
                 _log.Info("ProxyDeploy", $"Deployed {proxyType.GetDisplayName()} to {game.Name}: {targetDll}");
                 if (riskNote != null)
-                    _log.Warn("ProxyDeploy",
-                        $"{proxyType.GetDllName()} for {game.Name} is not in its import table — may not load");
+                    _log.Warn("ProxyDeploy", $"{proxyType.GetDllName()} for {game.Name}: {riskNote}");
                 return (true, new GameStatusUpdate(game, ProxyDeployStatus.DeployedCurrent,
                     InstalledVersion: GetDllVersion(targetDll), ErrorMessage: riskNote));
             }

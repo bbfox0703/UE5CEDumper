@@ -441,6 +441,156 @@ public class ProxyImportAnalyzerTests
         Assert.Null(ProxyImportAnalyzer.DescribeLoadRisk(none, ProxyType.Dxgi));
     }
 
+    // ── Import-bypass screening ([PROXYLOAD-2026-08-17]) ──
+    //
+    // The counter-intuitive half of the finding: a flavour the .exe imports DIRECTLY may be
+    // PRE-EMPTED by an already-mapped System32 copy (OCTOPATH's version.dll proxy is silently
+    // ignored). It is a HEURISTIC — warns, never blocks — and is the exact inverse condition of
+    // DescribeLoadRisk (which fires when a static-only flavour is ABSENT).
+
+    [Fact]
+    public void DescribeImportBypassRisk_ImportedFlavour_Warns_AsAHeuristic()
+    {
+        var imports = new ProxyImportAnalyzer.ProxyImportInfo(ImportsVersion: true, false, false, false);
+        string? note = ProxyImportAnalyzer.DescribeImportBypassRisk(imports, ProxyType.Version);
+        Assert.NotNull(note);
+        Assert.Contains("version.dll", note);
+        Assert.Contains("Heuristic", note);      // worded as a maybe, never a certainty
+        Assert.Contains("not observed", note);   // points at the Load column that settles it
+    }
+
+    [Fact]
+    public void DescribeImportBypassRisk_FiresForEveryImportedFlavour()
+    {
+        // The finding generalises across all four base names; screen them all.
+        Assert.NotNull(ProxyImportAnalyzer.DescribeImportBypassRisk(
+            new ProxyImportAnalyzer.ProxyImportInfo(false, true, false, false), ProxyType.Dinput8));
+        Assert.NotNull(ProxyImportAnalyzer.DescribeImportBypassRisk(
+            new ProxyImportAnalyzer.ProxyImportInfo(false, false, true, false), ProxyType.Dxgi));
+        Assert.NotNull(ProxyImportAnalyzer.DescribeImportBypassRisk(
+            new ProxyImportAnalyzer.ProxyImportInfo(false, false, false, true), ProxyType.Winmm));
+    }
+
+    [Fact]
+    public void DescribeImportBypassRisk_NotImported_IsSilent()
+    {
+        // version not imported here → it loads dynamically → nothing to warn about.
+        var imports = new ProxyImportAnalyzer.ProxyImportInfo(false, false, true, false);
+        Assert.Null(ProxyImportAnalyzer.DescribeImportBypassRisk(imports, ProxyType.Version));
+    }
+
+    [Fact]
+    public void DescribeImportBypassRisk_ModularStub_And_UnparseablePe_AreSilent()
+    {
+        // "Names nothing" is a folded modular stub, and null is an unparseable PE — both mean
+        // "cannot tell", which must never become a warning.
+        var none = new ProxyImportAnalyzer.ProxyImportInfo(false, false, false, false);
+        Assert.True(none.ImportsNone);
+        Assert.Null(ProxyImportAnalyzer.DescribeImportBypassRisk(none, ProxyType.Version));
+        Assert.Null(ProxyImportAnalyzer.DescribeImportBypassRisk(null, ProxyType.Version));
+    }
+
+    [Fact]
+    public void DescribeDeployAdvisory_PicksWhicheverApplies_AndNeverBoth()
+    {
+        // Imported → bypass note; static-only absent → never-loads note; the two partition on
+        // Imports(type), so at most one ever fires.
+        var octopath = new ProxyImportAnalyzer.ProxyImportInfo(
+            ImportsVersion: true, false, ImportsDxgi: true, ImportsWinmm: true);
+        string? ver = ProxyImportAnalyzer.DescribeDeployAdvisory(octopath, ProxyType.Version);
+        Assert.NotNull(ver);
+        Assert.Contains("imported directly", ver);
+
+        var winmmOnly = new ProxyImportAnalyzer.ProxyImportInfo(false, false, false, true);
+        string? dxgi = ProxyImportAnalyzer.DescribeDeployAdvisory(winmmOnly, ProxyType.Dxgi);
+        Assert.NotNull(dxgi);
+        Assert.Contains("never load", dxgi);
+
+        // version absent → loads dynamically → nothing to say either way.
+        Assert.Null(ProxyImportAnalyzer.DescribeDeployAdvisory(winmmOnly, ProxyType.Version));
+    }
+
+    [Fact]
+    public void Recommend_VersionImported_CautionsAndSuggestsInjection_ButKeepsTypeVersion()
+    {
+        // OCTOPATH's default: version.dll is imported, so the default pick is at bypass risk. The
+        // recommended TYPE stays version (never auto-changed); only the display flags the heuristic.
+        var imports = new ProxyImportAnalyzer.ProxyImportInfo(ImportsVersion: true, false, true, true);
+        var s = ProxyImportAnalyzer.Recommend(imports, null, null, injected: false);
+        Assert.Equal(ProxyType.Version, s.Type);
+        Assert.Contains("may be bypassed", s.Display);
+        Assert.Contains("injection", s.Display);
+    }
+
+    [Fact]
+    public void Recommend_VersionImported_HistoryStillWins_OverTheHeuristic()
+    {
+        // A confirmed pick is a stronger signal than the bypass heuristic and must not be overridden.
+        var imports = new ProxyImportAnalyzer.ProxyImportInfo(ImportsVersion: true, false, false, false);
+        var s = ProxyImportAnalyzer.Recommend(imports, ProxyType.Winmm, null, injected: false);
+        Assert.Equal(ProxyType.Winmm, s.Type);
+        Assert.Equal("winmm.dll · confirmed working", s.Display);
+    }
+
+    // ── Load signal (ClassifyLoad) — pure ──
+
+    [Fact]
+    public void ClassifyLoad_NoFolder_IsUnknown_NotFailure()
+    {
+        var (sig, disp) = ProxyImportAnalyzer.ClassifyLoad(false, null, DateTime.Now, 21);
+        Assert.Equal(ProxyImportAnalyzer.ProxyLoadSignal.Unknown, sig);
+        Assert.Equal("not observed", disp);   // honest unknown, never "failed"
+    }
+
+    [Fact]
+    public void ClassifyLoad_RecentFolder_IsObserved_WithDate()
+    {
+        var now = new DateTime(2026, 8, 18, 12, 0, 0);
+        var (sig, disp) = ProxyImportAnalyzer.ClassifyLoad(true, now.AddDays(-1), now, 21);
+        Assert.Equal(ProxyImportAnalyzer.ProxyLoadSignal.Observed, sig);
+        Assert.Equal("loaded 2026-08-17", disp);
+    }
+
+    [Fact]
+    public void ClassifyLoad_OldFolder_IsStale_AndNeverClaimsLoadedNow()
+    {
+        // The finding's explicit warning: a leftover folder from a previous BUILD must not read as a
+        // current load. The date is always shown AND anything past the window is flagged stale.
+        var now = new DateTime(2026, 8, 18);
+        var (sig, disp) = ProxyImportAnalyzer.ClassifyLoad(true, now.AddDays(-30), now, 21);
+        Assert.Equal(ProxyImportAnalyzer.ProxyLoadSignal.ObservedStale, sig);
+        Assert.Contains("(stale)", disp);
+        Assert.Contains("2026-07-19", disp);
+    }
+
+    [Fact]
+    public void ClassifyLoad_PresentButNoTimestamp_IsObserved_WithoutDate()
+    {
+        var (sig, disp) = ProxyImportAnalyzer.ClassifyLoad(true, null, DateTime.Now, 21);
+        Assert.Equal(ProxyImportAnalyzer.ProxyLoadSignal.Observed, sig);
+        Assert.Equal("loaded", disp);
+    }
+
+    // ── Log-folder join key — must mirror dll/src/Sein.cpp InitProcessMirror ──
+
+    [Theory]
+    [InlineData(@"D:\Steam\common\Octopath\Binaries\Win64\Octopath_Traveler-Win64-Shipping.exe",
+                "Octopath_Traveler-Win64-Shipping")]
+    [InlineData("P3R.exe", "P3R")]                        // bare leaf, single extension
+    [InlineData("game.with.dots.exe", "game.with.dots")] // only the LAST extension is dropped
+    [InlineData("NoExtension", "NoExtension")]            // no dot → unchanged
+    [InlineData("a/b/c/Foo.exe", "Foo")]                  // forward slashes too
+    public void ProcessLogFolderName_MatchesTheDllRule(string input, string expected)
+    {
+        Assert.Equal(expected, ProxyImportAnalyzer.ProcessLogFolderName(input));
+    }
+
+    [Fact]
+    public void ProcessLogFolderName_EmptyInput_IsEmpty()
+    {
+        Assert.Equal("", ProxyImportAnalyzer.ProcessLogFolderName(""));
+    }
+
     /// <summary>Locate dist/proxy/version.dll by walking up from the test assembly.</summary>
     private static string? FindBuiltProxy()
     {

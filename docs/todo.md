@@ -24,7 +24,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 5 items, and NONE of them is in the 166 above
+> ### ▶ OPEN FIXES INDEX — 4 items, and NONE of them is in the 166 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -33,12 +33,14 @@ Open work only. **Read this when deciding what to do next.**
 > | tag | one-line defect |
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
-> | `[PROXYLOAD-2026-08-17]` | `DeployedCurrent` does not mean the game actually loads it |
 > | `[CONTAINERCAP-2026-08-18]` | the container list stops at the array limit and says nothing |
 > | `[CLASSTOTAL-2026-08-18]` | "total UClasses" is the **capped** count, so it can never answer "how many classes?" |
 > | `[PIPEBUSY-2026-08-18]` | at-capacity logged as an **ERROR once a second, forever** (1,826 lines in 31 min) |
 >
 > *`[SLOTSYM-2026-08-18]` was **fixed 2026-08-19** and moved to `## Pending live-game verification`.*
+>
+> *`[PROXYLOAD-2026-08-17]` was **part-fixed 2026-08-19** (offline screening + a real load signal —
+> both offline halves) and moved to `## Pending live-game verification`.*
 >
 > *The seventh row — the untagged "SDK header does not compile" — was **fixed 2026-08-19** and has
 > moved into the register below as `[SDKHDR-2026-08-18]`, where it is now grep-able like the rest.*
@@ -1494,6 +1496,45 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### ⬜ PART-FIXED 2026-08-19, NEEDS A LIVE CHECK `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored"
+
+*Was: the Proxy Deploy panel's `DeployedCurrent` is computed from the file on DISK only; it does NOT
+mean the game loads the proxy. Measured on **OCTOPATH TRAVELER**: `version.dll` byte-identical to
+`dist/proxy`, panel said `DeployedCurrent 1.0.0.3262`, yet the log folder never appeared and only
+`C:\WINDOWS\SYSTEM32\VERSION.dll` was in the module list — the app-dir proxy is silently ignored. The
+correlation was 3 for 3: a title that STATICALLY imports the proxy's base name gets the loader
+satisfying the import from an already-mapped module (an overlay/launcher such as Steam maps it early)
+and never searches the app dir; titles that don't import it get ours. DQ I&II, same flavour/build,
+had BOTH `VERSION.dll` (ours) and System32's mapped and worked. ⚠ The load-order mechanism FITS but
+is **untested** — `KnownDLLs` was refuted (none of version/dxgi/winmm/dinput8 is a KnownDLL), so it is
+treated as a HEURISTIC, not a law.*
+
+**What shipped (both offline halves, 2026-08-19):**
+1. **Static-import BYPASS screening** — a small AOT-safe managed PE import reader already existed
+   (`ProxyImportAnalyzer.Analyze`, unit-tested against synthetic PEs). Added `DescribeImportBypassRisk`
+   / `DescribeDeployAdvisory`: when the chosen flavour IS named in the exe's import table, the deploy
+   note and the Suggested column warn it may be pre-empted by an already-mapped copy and suggest a
+   flavour it does not import, or direct injection. Screens all four base names. **Worded as a
+   heuristic** (it can false-positive — OCTOPATH imports winmm yet its winmm proxy WORKS, so the load
+   signal below is what actually settles it per-game).
+2. **A "did it actually load?" signal** — a new **"Loaded?"** grid column, refreshed on every scan/
+   refresh from the per-process log folder the DLL creates on load
+   (`%LOCALAPPDATA%\UE5CEDumper\Logs\<exe-base-name>`; join key mirrors `dll/src/Sein.cpp
+   InitProcessMirror` exactly). States: **"loaded &lt;date&gt;"** (folder present & fresh),
+   **"loaded &lt;date&gt; (stale)"** (present but > `LogMaxAgeDays` old — a previous run/build, never
+   claimed as "loaded now"), **"not observed"** (absent → honest UNKNOWN, NOT a failure claim for a
+   game that simply hasn't been launched). Disk `Status` + "not observed" is the OCTOPATH silent
+   failure, now visible. Pure logic (`ClassifyLoad` / `ProcessLogFolderName`) is unit-tested; the
+   folder lookup is exercised end-to-end via a temp-appdata service test.
+
+> Needs a running game. No sample was captured for the code path, so this is a real live check.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 ⚠ THE ONE THAT MATTERS | deploy `version.dll` to a title that STATICALLY imports version.dll (**OCTOPATH**; confirm with `py tools/pe/pe_imports_exports.py imports <exe> --dll version`), launch it, then **Scan/Refresh** the panel | Suggested column WARNS ("imported, may be bypassed"); after launch the **Loaded?** column stays **"not observed"** next to `DeployedCurrent` | before the fix the panel said only `DeployedCurrent` and nothing flagged the silent failure |
+> | 2 | deploy `version.dll` to a title that does NOT import it (**DQ7R** / **DQ I&II**), launch, Refresh | **Loaded?** shows **"loaded &lt;today&gt;"**; no bypass warning | proves the signal is not a blanket "not observed" — it reads the real folder |
+> | 3 | on OCTOPATH, switch to the `winmm` flavour, deploy, launch, Refresh | **Loaded?** → "loaded" (winmm proxy works per `[OCTOPATH-G2T3]`) even though winmm may also be imported | proves the warning is a heuristic and the load signal, not the import table, is the source of truth |
+
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[SLOTSYM-2026-08-18]` — the slot `[DISABLE]` now actually unregisters, and says so honestly
 
 *Was: on the `&GEngine` SLOT path the "Get GameEngine" record took the `mayFallBack` `[DISABLE]`
@@ -2381,53 +2422,13 @@ the walk continue), or drop the field and have the cap note carry the real total
 choosing a title for a cap-related check needs it. Effort **S** · Risk **low** (read-only counter).
 ⚠ Do not "fix" it by raising the cap — the cap is the feature under test in X2.
 
-### ⛔ NEW 2026-08-17 `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` does NOT mean the game loads it
+### ✅ PART-FIXED 2026-08-19 `[PROXYLOAD-2026-08-17]` — screening + a real load signal (writeup moved to "Pending live-game verification")
 
-*Found while sweeping the three Tier-1 titles. It invalidates an assumption the whole verification
-plan rests on: that a proxy the panel calls current will serve the pipe.*
-
-**OCTOPATH TRAVELER, measured three ways:**
-
-| check | result |
-|---|---|
-| `version.dll` in `…\Octopath_Traveler\Binaries\Win64\` | present, **2,860,544 B — byte-identical to `dist/proxy`** |
-| Proxy Deploy panel | **`DeployedCurrent  1.0.0.3262`** |
-| `%LOCALAPPDATA%\UE5CEDumper\Logs\` folder for the process | **does not exist at all** |
-| loaded modules of the live process (`EnumProcessModulesEx`) | **only `C:\WINDOWS\SYSTEM32\VERSION.dll`** |
-
-So the deployment is perfect and the DLL never runs. **The failure is completely silent** — no error,
-no log file, no panel indication; the pipe simply is not there.
-
-**The contrast, measured on a title where it works.** DQ I&II HD-2D, same proxy flavour, same build:
-```
-D:\SteamLibrary\…\Game\Binaries\Win64\VERSION.dll   <- ours
-C:\WINDOWS\system32\version.dll                     <- the real one, loaded BY ours (forwarding)
-```
-Both mapped, and everything works. So the diagnostic is: **ours in the module list = loaded; only
-System32's = silently ignored.**
-
-**The correlation, 3 for 3** (`tools/pe/pe_imports_exports.py imports <exe>`): OCTOPATH **statically
-imports `version.dll`** and is ignored; **DQ7R and DQ I&II do not** (a dependency pulls it in later)
-and both get ours.
-
-⚠ **Do NOT publish a mechanism yet — the obvious one is already refuted.** `KnownDLLs` was the
-natural explanation and it is **wrong**: `HKLM\SYSTEM\CurrentControlSet\Control\Session
-Manager\KnownDLLs` has 37 entries and **none of `version` / `dxgi` / `winmm` / `dinput8` is among
-them** (checked, so nobody re-proposes it). A load-order story fits the evidence — if any module with
-that base name is already mapped, the loader satisfies the import by base name and never searches the
-application directory, and Steam injects early — but that is **untested**.
-
-**What to do with it:**
-1. **Screen before deploying**: if the exe's import table names the proxy flavour statically, expect
-   the proxy to be ignored, and pick another flavour or inject directly. Cheap, offline, one command.
-2. **A "did it actually load?" check is missing from the panel.** Status is computed from the file on
-   disk; nothing verifies the module mapped. The log-folder existence, or a module scan, is the honest
-   signal. This is the same *report-and-reality-computed-by-different-paths* shape as audit #4's root
-   cause.
-3. **The plan's §3a inventory needs a caveat**: "all ten SHA-match `dist/proxy`" was verified — and is
-   *not sufficient*. At least one of the ten (OCTOPATH) cannot serve the pipe at all.
-4. **OCTOPATH was unverifiable through its proxy** and dropped out of the G2 rate sweep as
-   the third data point.
+Both **offline** halves shipped 2026-08-19: (1) import-table BYPASS screening at deploy time and in
+the Suggested column, and (2) a per-game "Loaded?" column read from the log folder — so a
+`DeployedCurrent` proxy that never ran is no longer silent. **The live check** (OCTOPATH warns +
+shows "not observed"; DQ7R/DQ I&II confirm "loaded") is under
+`[PROXYLOAD-2026-08-17]` in **"Pending live-game verification"**.
 
 ### ✅ G8/G9 step 3 corroborated on a SECOND title `[DQ7R-PIPE-2026-08-17]`
 

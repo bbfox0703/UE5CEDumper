@@ -345,6 +345,13 @@
         <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColStatus}"
                             Binding="{Binding Status}" SortMemberPath="Status" Width="200" IsReadOnly="True"/>
 
+        <!-- Load observation: whether the DLL was actually SEEN to load (per-process log folder),
+             NOT the disk state in Status. "DeployedCurrent" + "not observed" is the silent-failure
+             the [PROXYLOAD] fix surfaces; "not observed" is honest unknown, never a failure claim. -->
+        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColLoad}"
+                            Binding="{Binding LoadObservation}" SortMemberPath="LoadObservation"
+                            Width="150" MinWidth="100" IsReadOnly="True"/>
+
         <!-- Suggested proxy (import-table + remembered pick; advisory, plain text
              column with Binding==SortMemberPath so it sorts under compiled bindings). -->
         <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColSuggested}"

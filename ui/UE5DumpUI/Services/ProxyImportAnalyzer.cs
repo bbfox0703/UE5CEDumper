@@ -238,6 +238,17 @@ internal static class ProxyImportAnalyzer
         // 3. No history → the safe default. version.dll loads dynamically almost
         //    everywhere, so it stays the broadest-compatible pick regardless of the
         //    static import table. The imports only annotate the fallback options.
+        //
+        //    ONE exception, from [PROXYLOAD-2026-08-17]: if this game imports version.dll
+        //    DIRECTLY, the default is at BYPASS risk — an already-mapped System32 version.dll
+        //    (an overlay/launcher such as Steam maps it early) can satisfy that import before
+        //    the game folder is searched, so ours is silently ignored. Surface it as a
+        //    HEURISTIC and point at injection; never change the recommended TYPE (the Load
+        //    column confirms per-game — this class must not turn a maybe into a wall).
+        if (imports is ProxyImportInfo vi && vi.ImportsVersion)
+            return new ProxySuggestion(
+                ProxyType.Version, "version · default · imported, may be bypassed — try injection");
+
         string alt = DescribeImportable(imports);
         string display = alt.Length > 0
             ? $"version · default · alt: {alt}"
@@ -347,6 +358,124 @@ internal static class ProxyImportAnalyzer
         }
         return string.Join(", ", parts);
     }
+
+    /// <summary>
+    /// Advisory when the proxy flavour IS named in a game's import table.
+    ///
+    /// <para><b>Counter-intuitively this is a RISK, not the guarantee the rest of this class once
+    /// assumed.</b> Measured 2026-08-17 (<c>[PROXYLOAD-2026-08-17]</c>): OCTOPATH TRAVELER
+    /// statically imports <c>version.dll</c> and its <c>version.dll</c> proxy is silently ignored —
+    /// only <c>System32\version.dll</c> loads, and no per-process log folder is ever created. The
+    /// observed correlation was 3 for 3: titles that statically import the flavour's base name got
+    /// the SYSTEM copy; titles that do not got ours. The fitting mechanism — the Windows loader
+    /// satisfies an import by base name from a module ALREADY MAPPED into the process (an overlay or
+    /// launcher such as Steam maps <c>version.dll</c> early), never searching the application
+    /// directory — is stated in the finding as a HEURISTIC, not a law, and this method treats it as
+    /// one: it warns, it never blocks. It is worded as a maybe on purpose, because it CAN
+    /// false-positive (a game imports <c>winmm.dll</c> yet its winmm proxy works when nothing
+    /// pre-maps winmm — OCTOPATH's own resolved flavour). The Load column settles it per-game.</para>
+    ///
+    /// <para>Deliberately NOT the mirror of <see cref="DescribeLoadRisk"/>. That one fires when a
+    /// static-only flavour is ABSENT (it then cannot load at all); this one fires when a flavour is
+    /// PRESENT (it may be pre-empted). The two are mutually exclusive on
+    /// <see cref="ProxyImportInfo.Imports"/>, which is what lets
+    /// <see cref="DescribeDeployAdvisory"/> return whichever applies.</para>
+    ///
+    /// <para>Returns null when the PE could not be parsed, when it is a modular stub that names
+    /// nothing (<see cref="ProxyImportInfo.ImportsNone"/> — the real modules were folded in, so a
+    /// bare stub proves nothing), or when the flavour is simply not imported.</para>
+    /// </summary>
+    public static string? DescribeImportBypassRisk(ProxyImportInfo? imports, ProxyType type)
+    {
+        if (imports is not ProxyImportInfo info) return null; // unparseable → no claim
+        if (info.ImportsNone) return null;                    // modular stub → cannot tell
+        if (!info.Imports(type)) return null;                 // not imported → this method is silent
+        return $"{type.GetDllName()} is imported directly by this game — an already-mapped copy "
+             + "(e.g. one an overlay or launcher loaded early) can satisfy that import before the "
+             + "game folder is searched, so this proxy may be silently ignored. Heuristic: if the "
+             + "Load column stays “not observed”, try a flavour it does not import, or inject.";
+    }
+
+    /// <summary>The single advisory to attach when deploying <paramref name="type"/>: the
+    /// import-BYPASS risk when the flavour is present, otherwise the never-loads risk when a
+    /// static-only flavour is absent. At most one is non-null (they partition on
+    /// <see cref="ProxyImportInfo.Imports"/>). Null = nothing honest to say.</summary>
+    public static string? DescribeDeployAdvisory(ProxyImportInfo? imports, ProxyType type)
+        => DescribeImportBypassRisk(imports, type) ?? DescribeLoadRisk(imports, type);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // "Did it actually load?" signal — the per-process log-folder tell
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether the injected DLL has been OBSERVED to load for a game, inferred from the per-process
+    /// log folder it creates on load. DISK state (<c>ProxyDeployStatus.DeployedCurrent</c>) says only
+    /// that a file is in place; this says whether it actually ran. See <c>[PROXYLOAD-2026-08-17]</c>.
+    /// </summary>
+    public enum ProxyLoadSignal
+    {
+        /// <summary>No per-process log folder found. HONESTLY UNKNOWN — the game may simply not have
+        /// been launched with the proxy yet. This is never reported as a failure.</summary>
+        Unknown,
+        /// <summary>Log folder present and written recently — the DLL ran.</summary>
+        Observed,
+        /// <summary>Log folder present but OLD (older than <c>staleAfterDays</c>) — the DLL ran, but in
+        /// an earlier session/build; it is NOT evidence of a current load.</summary>
+        ObservedStale,
+    }
+
+    /// <summary>
+    /// Classify the load signal from the per-process log folder's presence + newest write time.
+    /// Pure so it is unit-testable without touching the filesystem; the folder lookup itself lives in
+    /// <c>ProxyDeployService</c>.
+    ///
+    /// <para><paramref name="lastWrite"/> and <paramref name="now"/> must be the same kind (both local
+    /// or both UTC). A present folder whose timestamp cannot be read is still
+    /// <see cref="ProxyLoadSignal.Observed"/> — the folder exists only because the DLL created it —
+    /// but without a date. The staleness guard is the direct answer to the finding's warning that a
+    /// leftover folder from a previous BUILD must not read as a current load: the date is ALWAYS
+    /// shown, so nothing here ever claims "loaded now".</para>
+    /// </summary>
+    public static (ProxyLoadSignal Signal, string Display) ClassifyLoad(
+        bool logFolderPresent, DateTime? lastWrite, DateTime now, int staleAfterDays)
+    {
+        if (!logFolderPresent) return (ProxyLoadSignal.Unknown, "not observed");
+        if (lastWrite is not DateTime ts) return (ProxyLoadSignal.Observed, "loaded");
+        string date = ts.ToString("yyyy-MM-dd");
+        return (now - ts).TotalDays > staleAfterDays
+            ? (ProxyLoadSignal.ObservedStale, $"loaded {date} (stale)")
+            : (ProxyLoadSignal.Observed, $"loaded {date}");
+    }
+
+    /// <summary>
+    /// The per-process log SUBFOLDER name the DLL creates for a host executable — the join key
+    /// between a <c>DetectedGame</c> and its <c>%LOCALAPPDATA%\UE5CEDumper\Logs\&lt;name&gt;</c>
+    /// folder. Mirrors <c>dll/src/Sein.cpp InitProcessMirror</c> EXACTLY: take the file leaf, drop the
+    /// last extension, then replace each Windows-invalid path character with '_'. Kept a pure string
+    /// transform (no IO) so a test can pin it against that C++ rule — a drift there silently makes
+    /// every load probe miss its folder.
+    /// </summary>
+    public static string ProcessLogFolderName(string exePathOrName)
+    {
+        if (string.IsNullOrEmpty(exePathOrName)) return "";
+        // Leaf: last separator of EITHER kind (Sein is handed the DLL-side leaf; we may get a path).
+        int slash = exePathOrName.LastIndexOfAny(s_pathSeparators);
+        string leaf = slash >= 0 ? exePathOrName[(slash + 1)..] : exePathOrName;
+        // Strip the last extension (Sein: rfind('.')).
+        int dot = leaf.LastIndexOf('.');
+        string name = dot >= 0 ? leaf[..dot] : leaf;
+        // Replace the exact 9 characters Sein replaces — no more, no less.
+        char[] buf = name.ToCharArray();
+        for (int i = 0; i < buf.Length; i++)
+        {
+            char c = buf[i];
+            if (c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|')
+                buf[i] = '_';
+        }
+        return new string(buf);
+    }
+
+    private static readonly char[] s_pathSeparators = { '/', '\\' };
 
     // ─────────────────────────────────────────────────────────────────────────
     // EXPORT table reader — used by the leftover-proxy cleanup to confirm a DLL is ours

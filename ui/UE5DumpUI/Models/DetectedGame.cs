@@ -75,4 +75,17 @@ public sealed partial class DetectedGame : ObservableObject
     /// <summary>Concise column text for the suggestion (e.g. "version · default",
     /// "dxgi · last used", "version · default · alt: dxgi"). Null clears the cell.</summary>
     [ObservableProperty] private string? _suggestedProxy;
+
+    /// <summary>
+    /// Concise column text for the "did it actually load?" signal — "loaded 2026-08-17",
+    /// "loaded 2026-07-01 (stale)", or "not observed" — computed from the per-process log
+    /// folder the DLL creates on load (see <c>ProxyImportAnalyzer.ClassifyLoad</c>).
+    ///
+    /// <para><b>Orthogonal to <see cref="Status"/>, which is DISK state only.</b>
+    /// <c>DeployedCurrent</c> + "not observed" is precisely the <c>[PROXYLOAD-2026-08-17]</c>
+    /// silent failure: the file is in place yet the proxy never ran. "not observed" is honest
+    /// UNKNOWN (the game may not have been launched), never a claim of failure. Null clears the
+    /// cell.</para>
+    /// </summary>
+    [ObservableProperty] private string? _loadObservation;
 }
