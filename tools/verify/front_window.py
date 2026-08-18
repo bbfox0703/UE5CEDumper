@@ -2,6 +2,7 @@
 
     py front_window.py list
     py front_window.py front UE5DumpUI
+    py front_window.py front cheatengine "Lua Engine"   # 2nd arg = window-title filter
     py front_window.py minimize explorer
 
 computer-use refuses to click while a non-allowlisted app is frontmost, and
@@ -67,10 +68,17 @@ def foreground():
     return hwnd, pid.value, proc_name(pid.value), buf.value
 
 
-def front(match):
+def front(match, title_match=None):
     targets = [t for t in top_windows() if match.lower() in t[2].lower()]
+    # One process can own several top-level windows -- Cheat Engine owns its main
+    # window, the Lua Engine, and the Memory Viewer at once, and EnumWindows hands
+    # back the same one first every time. Without this the caller silently keeps
+    # fronting the wrong one and then clicks coordinates read off the other.
+    if title_match:
+        targets = [t for t in targets if title_match.lower() in t[3].lower()]
     if not targets:
-        print(f"no visible window owned by a process matching {match!r}")
+        extra = f" with title containing {title_match!r}" if title_match else ""
+        print(f"no visible window owned by a process matching {match!r}{extra}")
         return 1
     hwnd, pid, name, title = targets[0]
     print(f"target: hwnd={hwnd} pid={pid} {name}  {title!r}")
@@ -116,7 +124,7 @@ if __name__ == "__main__":
         fh, fp, fn, ft = foreground()
         print(f"foreground: pid={fp} {fn}  {ft!r}")
     elif cmd == "front":
-        sys.exit(front(sys.argv[2]))
+        sys.exit(front(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None))
     elif cmd == "minimize":
         sys.exit(minimize(sys.argv[2]))
     else:
