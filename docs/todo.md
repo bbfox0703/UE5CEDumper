@@ -3246,7 +3246,7 @@ refusal naming the substitute, NOT a silent nothing), AE8 (a rejected scan click
 appear in the diagnostics measurement list), AF1 (needs a malformed UEnum — not reproducible on
 demand), U7's sibling paths.
 
-### ⬜ NEW 2026-08-15 — install the plugin into a REAL Cheat Engine (audit #5 AB1, build 2913)
+### 🟡 3-of-5 CLOSED 2026-08-18 — install the plugin into a REAL Cheat Engine (audit #5 AB1, build 2913)
 
 We were crashing CE by leaving a 1 ms-poll thread running in an image CE unloads. The fix stops
 creating threads in a CE host and pins the module elsewhere. **The unload paths were read out of CE's
@@ -3283,6 +3283,25 @@ This is the one verification in the register that needs **no game at all**.
      comes up; an "injection failed" dialog must mean the module really is absent.
 5. Worth one negative case: a game whose folder is named e.g. `...\Cheat Engine 7.7\Game.exe` must
    still get its poller. Only the executable leaf is tested, and there is a unit test for it.
+
+> ### ✅ STEPS 1-3 PASS `[CE-PLUGIN-2026-08-18]` — the crash is gone, on the SHIPPING 7.7 binary
+>
+> **Cheat Engine 7.7.0.10568**, DLL build **1.0.0.3262**, **no game involved** (as the row promises).
+> The DLL was staged at `out\ce-plugin-test\UE5Dumper.dll` rather than pointed at `dist\` on purpose:
+> once CE loads it the file is locked, and a later `-Mode Publish` would fail to overwrite.
+>
+> | step | verdict | evidence |
+> |---|---|---|
+> | 1 | ✅ **PASS** | Settings → Plugins → **Add new** → selected the DLL. The dialog accepted it and the list gained `UE5Dumper.dll:UE5CEDumper`. **CE's PID was 34984 before the Add and 34984 after** — same process, so it neither crashed nor silently restarted. This is the exact operation the finding says used to take CE down |
+> | 2 | ✅ **PASS, all three halves** | Ticked it → OK: CE's menu bar gained a **`Plugins`** menu, i.e. the CE entry points ran. **Closed CE normally → clean exit**: process gone, and `Get-WinEvent` over the Application log for the preceding 10 minutes returned **no** `cheatengine` entry. **Settings survived**: `HKCU\Software\Cheat Engine\Plugins64` gained `00000002 A = …\UE5Dumper.dll`, `00000002 B = 1` — written *at exit*, which is the point, since the unload runs before CE writes them. **Re-opened** (new PID 36608) → the plugin auto-loaded enabled and logged `CEPlugin: InitializePlugin pluginid=2 menuItemId=1 ef_size=1272` |
+> | 3 | ✅ **PASS** | A `Logs\cheatengine-x86_64\` folder appeared, and `init-0.log` carries the guard verbatim: `[WARN] [INIT] DllMain: host is Cheat Engine — NOT starting the mailbox poller or the auto-start thread. CE FreeLibrary's plugin DLLs (on Settings→Add and on exit), and a thread left running in an unmapped image takes CE down with it. …` It fired on **both** loads (the Add, and again on the re-open) |
+> | 4 | ⬜ not run | Needs a running game — this is also the **AB2** step, so it wants doing deliberately |
+> | 5 | ⬜ not run | The `…\Cheat Engine 7.7\Game.exe` folder-name negative case |
+>
+> **State left exactly as found**, verified against a baseline captured before the run: the plugin was
+> deleted, and `Plugins64` is byte-identical to `out\ce-plugin-test\plugins64-before.txt`
+> (`AOBMaker_CEPlugin.dll` = 1, `CE-Handwire.dll` = 0, nothing else). CE exited cleanly a **second**
+> time on the way out, with the plugin being removed — an incidental repeat of step 2's unload path.
 
 
 ### ⬜ NEW 2026-08-15 — 🌍 Locate-in-GWorld on a game where the AOB scan does NOT resolve &GWorld (audit #5 AE10, build 2961)
