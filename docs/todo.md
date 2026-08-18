@@ -3672,16 +3672,34 @@ changed: `scripts/ue5_dissect.lua`'s `callDLL` (was an INFINITE timeout, now 500
 
 **Free from any ordinary session** (no special setup — just use the tool once):
 
-- ⬜ **Dissect still builds a structure.** Run `ue5_dissect.lua` against any class with a decent
-  field count and confirm the CE structure comes out the same as before. The happy path should be
-  untouched — `executeCodeEx` returns the RAX either way — but this is the one shipped script whose
-  call helper changed, and a class walk runs it **once per field**, so a mistake here is not subtle.
-- ⬜ **No stray warnings on a healthy run.** A clean dissect must print **zero**
-  `[UE5Dissect WARN] <name> failed: …` lines. `warn()` is ungated, so any appearing means a call is
-  failing that previously failed *silently* — new information, not a new bug.
-- ⬜ **`.CT` disable still tears down.** Untick the inject record and confirm `UE5_Shutdown` runs
-  (`ue5_callDLL` is the changed path). A regression here reports a clean teardown that never
-  happened — the audit #4 B1 symptom.
+- ✅ **DONE 2026-08-18 — Dissect still builds a structure**, DumperTest Development, dist 3262.
+  `dissect.createFromPath('/Script/DumperTest.DumperTestActor')` returned a CE structure named
+  **`DumperTestActor` with 193 elements**.
+  ⚠ The row warns that "a structure window appeared" is not a pass, so the check was **per field**:
+  seven elements were looked up **by offset** and compared with what Live Walker independently
+  reports, across five different type shapes — **matched 7, missed 0**.
+
+  | offset | element | CE `Vartype` / `Bytesize` |
+  |---|---|---|
+  | `0x5E` | `UpdateOverlapsMethodDuringLevelStreaming` | 0 / 1 |
+  | `0x17C` | `PhysicsReplicationMode` | 0 / 1 |
+  | `0x478` | `Map_I64ToI32` | 12 / 8 (pointer stub) |
+  | `0x518` | `Map_IntToVec3f` | 12 / 8 |
+  | `0x568` | `Set_Big` | 12 / 8 |
+  | `0x608` | `Opt_Int_Set` | 2 / 4 |
+  | `0x671` | `bPlainBool` | 0 / 1 |
+
+  Since a class walk runs the changed `callDLL` **once per field**, 193 successful elements is 193
+  successful `executeCodeEx` round trips through the 5000 ms path.
+  **This also closes AA7 step 1** (`createFromClass` succeeds and the structure appears in CE's list).
+- ✅ **DONE 2026-08-18 — No stray warnings on a healthy run.** **Zero** `[UE5Dissect WARN]` lines in
+  CE's Lua console across the whole dissect (and across a second run of the same class for the
+  by-offset comparison). `warn()` is ungated, so this is a real absence, not a suppressed one.
+- ✅ **DONE 2026-08-18 — `.CT` disable still tears down.** Evidence and timings are in the
+  `Fern::Stop` block above: `init-0.log` shows `UE5_Shutdown: Cleaning up...` →
+  `[Grausam] Foreground lock DISABLED` → `[SENSE] Diagnostics counters reset`, and CE's console
+  printed `[UE5Dump] UE5 Dumper stopped.` So `ue5_callDLL` really reached `UE5_Shutdown` — not the
+  audit #4 B1 shape where a clean teardown is reported and never happens.
 
 **Needs deliberate action:**
 
@@ -4647,12 +4665,46 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 > nothing. The entry path is named in the log, so the attribution problem that made this take five
 > attempts cannot recur.
 >
-> ⬜ **What is still unverified: the `graceful=true` path**, i.e. a CE Disable / `UE5_StopPipeServer`.
-> It is unchanged by construction (the fix is an early return in front of it) but it was not exercised
-> — the headless route cannot drive CE. **Next CE session, one grep:** untick the record with the UI
-> connected → `grep "Stop entry" pipe-0.log`. **PASS** = the line does **not** say `process exit`, the
-> drain reports `satisfied`, and `Stopped` follows. **FAIL** = `process exit` on a CE Disable, which
-> would mean the destructor is racing the explicit call.
+> ### ✅ VERIFIED 2026-08-18 — the `graceful=true` path (CE Disable), DumperTest Development, dist 3262
+>
+> Unticked `Inject DLL + Start Pipe Server` with the UI **connected** (`conns=2`). All three PASS
+> conditions met, and the whole shutdown took **174 ms**:
+>
+> ```
+> 11:26:03.059 Mailbox: polling thread stopped
+> 11:26:03.059 PipeServer: Stop entry (conns=2)          <- NOT "process exit"
+> 11:26:03.059 PipeServer: Stop cancel issued: 2 accepted, 0 had nothing pending
+> 11:26:03.060 PipeServer: AcceptLoop exiting
+> 11:26:03.060 PipeServer: Stop cancels+wake done (0 ms)
+> 11:26:03.060 PipeServer: Stop watches+scan joins done (0 ms)
+> 11:26:03.060 PipeServer: Stop conn drain satisfied, 0 left (0 ms, 0 cancel re-asserts)
+> 11:26:03.060 PipeServer: Stop accept join done (1 ms)
+> 11:26:03.233 PipeServer: Stop monitor join done (174 ms)
+> 11:26:03.233 PipeServer: Stopped
+> ```
+>
+> `Stop entry` names `conns=2`, **not** `process exit` — so the destructor is not racing the explicit
+> call, which was the FAIL signature. The drain says **satisfied** with **0 cancel re-asserts**, and
+> `Stopped` follows. The 174 ms is entirely the monitor join (its poll is 200 ms, so this is one
+> sleep), and every other phase is 0–1 ms.
+>
+> **This also closes the `executeCodeEx` basic-path step 3** ("untick the `.CT` record → `UE5_Shutdown`
+> really runs, rather than the UI merely claiming unloaded"). `init-0.log` shows the DLL's own side:
+>
+> ```
+> 11:26:03.057 [INIT]    UE5_Shutdown: Cleaning up...
+> 11:26:03.059 [Grausam] Foreground lock DISABLED
+> 11:26:03.060 [SENSE]   Diagnostics counters reset
+> ```
+>
+> Real teardown of real state, two ms before the pipe server's own entry line — the ordering
+> `UE5_Shutdown` → `Fern::Stop` that `Frieren.cpp:588` describes. CE's Lua console printed
+> `[11:26:03] [UE5Dump] UE5 Dumper stopped.` and neither CE nor the game hung.
+>
+> ⬜ **B18's step 3 remains untestable on this sample** and is *not* claimed: it needs a title whose
+> GObjects is **not** AOB-resolvable, so an Extra Scan is still running when the record is unticked.
+> DumperTest resolves on the first pattern, so `Stop watches+scan joins done` had nothing to join —
+> it reported `0 ms` because there was no scan, not because a long one was cancelled promptly.
 >
 > ⬜ does **not** mean "probably fine". It means nobody has looked. Most of the fourteen were
 > simply not exercised (no wrapper installed, no UI killed mid-command, no Extra Scan).
@@ -4895,6 +4947,21 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   which are exactly the fields `WalkClassEx` adds on top of `WalkClass`. **FAIL** = those columns go
   blank (the memo would be serving a pre-enrichment entry), or a crash under a parallel scan (a
   handed-out reference being invalidated — the reason `try_emplace` landed first).
+
+- 🟡 **BLOCKED ON SAMPLE SIZE — attempted 2026-08-18 on DumperTest Development, do not retry there.**
+  The single-call-that-blocks-for-seconds requirement is **unmeetable on this package**, measured
+  rather than assumed. Its GObjects pool is 25,179 objects, and the two heaviest whole-pool commands
+  the UI can issue finish far inside `MonitorLoop`'s 200 ms poll:
+
+  | command (all classes, deep, native-C, no noise filter) | UI-reported duration |
+  |---|---|
+  | `begin_value_scan` `NumericNoByte` / `Bigger` / `0` — 50,000 candidates | **113 ms** |
+  | `begin_value_scan` `FString` / `Contains` / `"a"` — 1,060 candidates | **52 ms** |
+
+  Both appear in `pipe-0.log` as single `begin_value_scan` commands, so this is one call, not
+  chunking — it is simply over before a poll can land. **Move B4 to a large title**; GROUP 6 already
+  says Elliot's 482 MB image "is what makes the race windows real; the sample is too small", and that
+  reasoning applies here exactly. Recorded as *not tested*, per the run plan's rule 4.
 
 - ⬜ **CE mailbox survives a dead UI client** (build 2592, B4). The evidence line is **cold** — once
   per latch, so it costs nothing to leave in. Needs a deliberate sequence but the whole answer is in
@@ -5315,15 +5382,33 @@ Effort **S**, risk **LOW**, generator-only; `CeInjectScriptGeneratorTests` alrea
   *Why it can't be tested here: it needs two real threads racing a multi-second scan inside a live
   game; the unit tests can only pin the flag semantics, not the timing.*
 
-- ⬜ **`.CT` DLL discovery — the `reg.exe` recent-files fallback** (build 2576). The breadcrumb half
-  is **✅ verified** (run `UE5DumpUI.exe` once, open the `.CT` from CE's recent-files menu, tick
-  `init` → the DLL resolves). The registry half has NOT been exercised: it only runs when every
-  cheap slot misses. **To test:** delete `%LOCALAPPDATA%\UE5CEDumper\dll-path.txt`, open the `.CT`
-  from recent files, tick `init`. PASS = a brief console flash, the DLL resolves, the slot report
-  (set `UE5_DEBUG=1`) credits *"folder of the most recent UE5CEDumper.CT in CE's recent-files
-  list"*, **and `dll-path.txt` is recreated** so a second tick does not flash again. FAIL = still
-  not found, or it flashes every time (the self-heal write did not happen).
-  *Why it can't be tested here: it is CE Lua, and `CtDllDiscoveryTests` can only pin structure.*
+- ✅ **DONE 2026-08-18 — `.CT` DLL discovery survives a missing breadcrumb** (build 2576).
+  Ran exactly as written: moved `%LOCALAPPDATA%\UE5CEDumper\dll-path.txt` aside, reloaded the `.CT`
+  **from CE's Load Recent menu** (answering **No** to "save your last changes" — saying Yes would
+  have written this session's test records into the repo's `scripts/UE5CEDumper.CT`), ticked `init`
+  and then `Inject DLL + Start Pipe Server`.
+  - **The discovery half PASSES.** With no breadcrumb file on disk, `UE5Dumper.dll` still loaded into
+    `DumperTest.exe` and `\\.\pipe\UE5DumpBfx` came up. So the fallback chain reaches the DLL without
+    the file the row is named after.
+  - ⚠ **The `dll-path.txt` is recreated` clause is a MIS-SPECIFICATION — the `.CT` cannot do it.**
+    `grep -c 'dll-path.txt", "w"' scripts/UE5CEDumper.CT` = **0**; the only occurrences are the path
+    string and one `io.open(..., "r")`. The writer is the UI:
+    `DumperDllPathStore.Record` (`Services/DumperDllPathStore.cs:80`, `File.WriteAllLines` at `:118`)
+    with its single caller `App.axaml.cs:91`, i.e. **UI startup**. Verified end to end: the file was
+    still absent after the successful `.CT` injection, and reappeared the moment the UI was
+    restarted, containing `D:\Github\UE5CEDumper\dist`.
+    ⇒ Rewrite the row's expectation as *"the DLL resolves without the breadcrumb; the breadcrumb
+    returns on the UI's next start"*. **FAIL as written would have been reported against working
+    code** — the same shape as working-lessons §2.4.
+  - ⚠ Incidental: the rebuilt file has **one** entry where the original had two
+    (`D:\tmp\UE5CEDumper_dist` is gone). `Record` seeds an MRU from the running exe's folder, so a
+    deleted breadcrumb loses history rather than merging it. Harmless here, worth knowing before
+    treating that file as a durable record.
+  - ⬜ **Not settled: WHICH slot answered.** The row wants the `UE5_DEBUG=1` slot report to credit
+    *"folder of the most recent UE5CEDumper.CT in CE's recent-files list"*. `UE5_DEBUG` was 1 in
+    CE's Lua state, but the console output was not captured before the table reload, so the
+    registry-vs-other-slot attribution is **unproven** — only that *some* slot succeeded. One rerun
+    with the Lua window open would close it.
 
 - **Flaky: `SnapshotViewModelTests.GroupMatch_MissingValue_ShowsErrorNoCandidates`** — failed ONCE
   in a full parallel run on 2026-07-23 (build 2318), then passed 25/25 three times in isolation and
