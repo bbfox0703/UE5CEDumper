@@ -23,7 +23,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 7 items, and NONE of them is in the 166 above
+> ### ▶ OPEN FIXES INDEX — 6 items, and NONE of them is in the 166 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -37,7 +37,9 @@ Open work only. **Read this when deciding what to do next.**
 > | `[CONTAINERCAP-2026-08-18]` | the container list stops at the array limit and says nothing |
 > | `[CLASSTOTAL-2026-08-18]` | "total UClasses" is the **capped** count, so it can never answer "how many classes?" |
 > | `[PIPEBUSY-2026-08-18]` | at-capacity logged as an **ERROR once a second, forever** (1,826 lines in 31 min) |
-> | *(untagged)* | **SDK header does not compile** — grep `### ⛔ NEW DEFECT found by this export` |
+>
+> *The seventh row — the untagged "SDK header does not compile" — was **fixed 2026-08-19** and has
+> moved into the register below as `[SDKHDR-2026-08-18]`, where it is now grep-able like the rest.*
 
 > **2026-06-06 cleanup.** This file was slimmed to open items only. The full
 > pre-cleanup history (every shipped build's effort/risk retrospective, files
@@ -4374,34 +4376,6 @@ struct DumperTestActor : public Actor
 
 `Size: 0x06E0` = **1760** = the headless `props_size`, which is a fourth cross-check for free.
 
-### ⛔ NEW DEFECT found by this export — the header does not COMPILE
-
-*Not what the batch was looking for, and worth more than the step that surfaced it.*
-
-`OptionalProperty` and any unresolved `StructProperty` are emitted with the array extent **before the
-identifier**, which is not valid C++:
-
-```cpp
-uint8_t[0x40] CellBounds;   // 0x0088 (0x0040) OptionalProperty   <- syntax error
-uint8_t[0x8]  Opt_Int_Set;  // 0x0608 (0x0008) OptionalProperty
-```
-
-Measured over the whole 75,342-line export: **5 malformed declarations, every one an
-`OptionalProperty`**, against **7,543 well-formed** array declarations (`uint8_t Pad_0000[0x0028];`)
-— so the padding emitter is right and only these two fallbacks are wrong.
-
-* Cause: [SdkExportService.cs:273](../ui/UE5DumpUI/Services/SdkExportService.cs) (`_ =>
-  $"uint8_t[0x{size:X}]"`, where `OptionalProperty` lands) and
-  [SdkExportService.cs:258](../ui/UE5DumpUI/Services/SdkExportService.cs) (`StructProperty` with no
-  resolved struct type). Both bake the extent into the **type** string, which the field writer then
-  emits as `{type} {name};`.
-* Fix shape: return the element type and an array suffix separately, and place `[0xN]` **after** the
-  identifier — exactly what the padding path already does.
-* ⚠ **This is not sample-only.** `CellBounds` is an engine (World Partition) property, so any real
-  UE5 title with a `TOptional` UPROPERTY exports a header that cannot be compiled.
-* Why no test caught it: the emitters are unit-covered, but evidently not over a `TOptional` field —
-  and a header is only *read*, never compiled, in any existing check.
-
 Both fixes are unit-verified end-to-end against the real emitters, with separate negative controls.
 What no unit test can cover is the **boundary value itself**: `super_props_size` is a new
 `walk_class` field read off a live `UStruct`, and the tests supply it by hand.
@@ -4423,7 +4397,52 @@ size, declares none of the base's properties, and that a class with packed bools
 replication-flag block) emits `uint8_t bX : 1` runs whose byte count matches the gap to the next
 field.
 
-### 🔴 NEW 2026-08-14 — TMap element geometry: pair padding + struct alignment + free-slot count (audit #5 M1/M2/M3)
+-----
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[SDKHDR-2026-08-18]` — the exported SDK header COMPILES again
+
+*This is the OPEN FIXES INDEX's one **untagged** row ("SDK header does not compile"), surfaced by the
+`[SDKHDR-UI-2026-08-17]` export above and worth more than the step that found it. It now has a tag, a
+fix and a batch, and the index row is gone.*
+
+*Was: `OptionalProperty` and any unresolved `StructProperty` baked the array extent into the **type**
+string, so the field writer's `{type} {name};` emitted `uint8_t[0x40] CellBounds;` — not valid C++.
+Measured over the whole 75,342-line export: **5 malformed declarations, every one an
+`OptionalProperty`**, against **7,543 well-formed** `uint8_t Pad_0000[0x0028];` padding declarations —
+the padding emitter was always right and only the two fallbacks were wrong. `CellBounds` is an engine
+(World Partition) property, so **any** real UE5 title with a `TOptional` UPROPERTY exported a header
+that could not be compiled. Now: `SdkExportService.MapCppDecl` returns a `CppDecl(Type, ArraySuffix)`
+pair and the extent is written **after** the identifier, exactly as the padding path always did.
+`null` out of the type switch is the ONLY route into the raw-byte fallback, so an extent cannot be
+smuggled back into a type string by a future branch.*
+
+> **Why nothing caught it**: the emitters were unit-covered, but never over a `TOptional` field — and
+> a generated header is only ever *read* in this repo's checks, never compiled. Both gaps are closed
+> offline now. `ui/UE5DumpUI.Tests/SdkHeaderDeclaratorTests.cs` walks **every** emitted member and
+> rejects an extent that precedes the identifier *whatever produced it*, and
+> `tools/verify/compile_sdk_header.py` puts the real emitter's output in front of `cl.exe`
+> (`/Zs`, no dev shell needed — the artifact includes nothing). Negative control: re-inserting the
+> pre-fix spelling gives `error C2059: syntax error: '['` on that exact line, and the shape oracle
+> flags exactly one bad declarator.
+>
+> **What the offline half cannot cover** is the *corpus*. The fixture has the branches; a real title
+> has the distribution — and an unresolved `StructProperty` did not occur even once in the
+> 75,342-line export, so that fallback has still never been seen on live data.
+>
+> | step | do this | expect |
+> |---|---|---|
+> | 1 | connect to a UE5 title with a `TOptional` UPROPERTY (**DumperTest** has `Opt_Int_Set`; any World Partition title has `CellBounds`), then **Export → Dump All** and **Export → SDK Header (.h)** | both complete without error |
+> | 2 ⚠ THE ONE THAT MATTERS | grep the header for an extent that PRECEDES an identifier: `rg "^\s+\S*\[0x[0-9A-Fa-f]+\]\s+\w+;" out.h` | **0 matches**. It was **5** on the pre-fix export of this same sample |
+> | 3 ⚠ NOT AN ABSENCE-SHAPED RESULT | `rg "OptionalProperty" out.h` | **≥1**, each of the shape `uint8_t Name[0xN]; // … OptionalProperty`. A header containing no `TOptional` at all makes step 2 vacuous ([working-lessons.md](working-lessons.md) §1.2) |
+> | 4 | `rg "\[0x0\];" out.h` | **0** — MSVC rejects a zero-length array (C2466), so that would not compile either |
+> | 5 | cut the struct(s) that own the `OptionalProperty` members into a small `.cpp`, prepend the stub prelude from `out/sdk-smoke/sdk_smoke.cpp`, and run `cl /Zs /TP /permissive- /utf-8` on it | **exit 0** |
+>
+> ⚠ **Do not over-read step 5.** It is deliberately scoped to an EXCERPT. `GenerateFullSdkAsync`
+> emits classes in GObjects order with no topological sort, so the full 75,342-line header very
+> likely does not compile as one translation unit regardless of this fix (a `struct X : public Y`
+> whose `Y` is declared later is an incomplete base). That ordering question is **untested and
+> separate** — if step 5 on the whole file fails with "undefined base class" rather than a syntax
+> error at a `[`, that is the ordering gap, not this defect, and it is worth opening as its own item.
 
 Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.
 

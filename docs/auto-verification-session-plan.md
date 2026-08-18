@@ -739,7 +739,7 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 | G8/G9 step 3 | ✅ **CLOSED** on DQ7R — the sample was missing, not the capability | `[DQ7R-PIPE-2026-08-17]` |
 | G2 step 2 | 🟡 a refutation was claimed and then **WITHDRAWN** — scan rate varies 2.4×, so no extrapolation can decide it. Needs instrumenting Elliot | `[DQ7R-PIPE-2026-08-17]` |
 | **Proxy load** | ⛔ **NEW: `DeployedCurrent` ≠ loaded.** OCTOPATH's proxy is byte-perfect and silently never runs | `[PROXYLOAD-2026-08-17]` |
-| **SDK header** | ⛔ **NEW: the export does not compile** (`uint8_t[0x8] Name;` for every `TOptional`) | `[SDKHDR-UI-2026-08-17]` |
+| **SDK header** | ⛔ **NEW: the export does not compile** (`uint8_t[0x8] Name;` for every `TOptional`). *(Fixed 2026-08-19 — extent now follows the identifier; live check is `[SDKHDR-2026-08-18]` in todo.md)* | `[SDKHDR-UI-2026-08-17]` |
 | G11 step 1 | 🟡 third title run but it does **not** discharge the step (DQ7R's PE hash changed) | `[DQ7R-PIPE-2026-08-17]` |
 | U2 sweep | ✅ DQ7R is a third confirmed **non-CPN** title | `[DQ7R-PIPE-2026-08-17]` |
 | AE4 steps 3/5/6 + 1 | ✅ **PASS** (step 1 by a stated substitution) | `[AE4-UI-2026-08-17]` |
@@ -775,7 +775,9 @@ soak is looking for is precisely a font/text-shaping ABI break under sustained l
    *and* a findable `++UE[45]+Release-` tag. Only **DQ7R / DQ I&II / OCTOPATH** have both; Elliot,
    which the register named, has neither half of the tag and can never produce a tier line.
 2. **The exported SDK header does not compile** (`uint8_t[0x8] Name;` for every `TOptional`), which no
-   existing check could see because headers are read and never compiled. Open.
+   existing check could see because headers are read and never compiled. **Fixed 2026-08-19** — and
+   the "read but never compiled" half is closed too: `tools/verify/compile_sdk_header.py` now runs
+   `cl /Zs` over the real emitter's output. Live re-export tracked as `[SDKHDR-2026-08-18]`.
 3. **A duplicate UI launch writes an unhandled exception into `crash.log`** — the file documented as
    *the* AOT startup diagnostic.
 
