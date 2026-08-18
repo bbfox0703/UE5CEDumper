@@ -2675,32 +2675,49 @@ no test target compiles `Genau.cpp`.*
 > long after the fixed-info block has already decided.
 >
 > **So the question was settled offline for every binary on this machine, not one title at a time.**
-> `tools/verify/pe_version_probe.py` replays that function's decision order against a PE, and was run
-> over **71** UE binaries (14 installed Steam titles + 57 under `D:\UE_Analyze_data`, incl. our own
-> 5.3/5.4/5.7/5.8 reference builds and both DumperTest packages).
+> ⚠ **CORRECTED — the first pass of this sweep was WRONG and the error is the interesting part.**
+> It globbed a fixed depth (`common/*/*/Binaries/Win64/*-Win64-Shipping.exe`) and so silently
+> skipped **Avowed**, **Echoes of Aincrad Demo** (nested one level deeper / installed mid-session)
+> and **SEED BATTLE DESTINY REMASTERED** (its exe is not named `*-Win64-Shipping.exe` at all).
+> **An absence claim built on a glob that can silently skip files is worthless** — the corrected
+> tool, `tools/verify/tier1_host_survey.py`, walks every `Binaries\Win64` directory instead.
 >
-> **Exactly three fall through Tier 0, and all three are UE4-era:**
+> It also reports **two independent facts**, because either alone misleads: whether the title falls
+> THROUGH Tier 0, **and** whether the `++UEn+Release-N.N` needle actually exists in the image, in
+> which encoding. Validated on a known positive first — DQ7R yields `utf16 ++UE4+Release-4.27`,
+> exactly the line its log carries — so a "no needle" result is a real negative, not a dead detector.
 >
-> | title | ProductVersion | why it falls through | use for step 3 |
+> **18 installed binaries; only THREE can produce a Tier-1 line, and all three are UE4:**
+>
+> | title | ProductVersion | needle | note |
 > |---|---|---|---|
-> | DQ7R | 1.1.1.0 | game version, not engine | already the witnessed `utf16` + **UE4** line |
-> | OCTOPATH TRAVELER | 1.0.0.1 | game version | **unusable** — its `version.dll` proxy never loads |
-> | Elliot | 1.2.0.0 | game version | reaches the needle and **finds nothing** (`Could not detect UE version from PE or memory`) |
+> | DQ7R | 1.1.1.0 | `utf16` 4.27 | the already-witnessed line |
+> | DQ I&II HD-2D | 1.0.2.0 | `utf16` 4.27 | same flavour |
+> | **OCTOPATH TRAVELER** | 1.0.0.1 | **`ascii`** + utf16 4.18 | ⭐ **the only `ascii` host on this machine** |
 >
-> **Every UE5 title carries a real `5.x` there** — Solarpunk 5.7.1.0, TQ2 5.7.4.0, Manor Lords
-> 5.5.4.0, ES2 5.5.4.0, STVoyager 5.6.0.0, Satisfactory 5.6.1.0, Light Maze 5.0.3.0, DSA 5.3.2.0 —
-> **so this row's entire candidate list is refuted, by the same mechanism, and should not be retried.**
-> Our own packaged reference builds do **not** help either: UE writes the ENGINE version by default,
-> so 5.3/5.4/5.7/5.8 and DumperTest all resolve at Tier 0. It is games that *override* it with a
-> product version (1.x) that fall through — the opposite of the intuition that a self-built sample
-> would be generic.
+> **Falls through but has NO needle → detects nothing:** Elliot (1.2.0.0) and Echoes of Aincrad Demo
+> (1.0.1.27081). ⚠ Both are **UE 5.4**, not UE4 — an earlier revision of this block said "all UE4-era"
+> and that was wrong. They are exactly the shape step 3 wants (UE5 + falls through Tier 0) and still
+> cannot serve it, because the needle is absent from the image.
 >
-> ⇒ **`ascii` and the UE5 branch of `'%s%s'` are UNVERIFIABLE on this machine's inventory**, and no
-> supported switch skips Tier 0 (`cold_detect.py drop` only clears the cache; it re-runs the same
-> ladder). Closing this needs **a new UE5 title whose version resource is stripped or carries a
-> product version** — screen any candidate with `pe_version_probe.py` **before** installing it.
-> Corroborated from the other side: a fresh sweep of every log on this machine still finds exactly
-> **two** Tier-1 lines, both `utf16`, both `++UE4+Release-4.27`.
+> **Every UE5 title either exits at Tier 0 or has no needle**, and the split is instructive:
+> Light Maze (5.0), Lushfoil (5.6) and Manor Lords (5.5) **do** carry `++UE5+Release-` but resolve at
+> Tier 0 and never look; Solarpunk, TQ2, ES2, STVoyager, Satisfactory, DSA and Avowed carry **no
+> needle at all**. So the required host — falls through Tier 0 **and** carries a UE5 needle — does
+> not exist here, and newer UE5 shipping builds appear to strip the string entirely.
+> Our own packaged reference builds do not help either: UE writes the ENGINE version by default, so
+> 5.3/5.4/5.7/5.8 and DumperTest all resolve at Tier 0. It is games that *override* it with a product
+> version (1.x) that fall through — the opposite of the intuition that a stock-built sample would be
+> generic.
+>
+> ⇒ **The UE5 branch is unverifiable on this inventory** and no supported switch skips Tier 0
+> (`cold_detect.py drop` only clears the cache; it re-runs the same ladder).
+> ⇒ **The `ascii` branch IS reachable — via OCTOPATH**, which was previously written off as
+> "proxy never loads". The maintainer supplied the missing piece (2026-08-18): it needs the
+> **`winmm.dll`** proxy; `version.dll` and `dxgi.dll` do not load in it. That is a concrete,
+> runnable next step rather than a blocked one.
+> Corroborated from the other side: a fresh sweep of every log still finds exactly **two** Tier-1
+> lines, both `utf16`, both `++UE4+Release-4.27`.
 >
 > **The rest of step 3 stands as already recorded:** the wording is byte-exact against
 > `Genau.cpp:3047`, and the regression it guards is witnessed on the UE4/`utf16` path.
