@@ -161,6 +161,23 @@ public partial class ConsoleViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
 
+    /// <summary>Drop exec discovery + the pinned per-class live instance addresses so
+    /// a reconnect never invokes against the previous game's instances or shows its
+    /// rows/history (audit X5). Client-side only. LoadAsync already clears
+    /// <c>_stickyInstance</c> on a re-discover; this covers the disconnect gap.</summary>
+    public void ClearOnDisconnect()
+    {
+        _allExec = new List<AllFunctionEntry>();
+        SelectedResult = null;
+        Results.Clear();
+        History.Clear();
+        _stickyInstance.Clear();     // live per-class instance addresses — process-scoped
+        _debugCamEntry = null;
+        HasDebugCameraToggle = false;
+        SetDebugCameraState(null);
+        StatusText = "Click Load to discover UFUNCTION(exec) commands in this game.";
+    }
+
     partial void OnFilterTextChanged(string value)
     {
         ApplyFilter();

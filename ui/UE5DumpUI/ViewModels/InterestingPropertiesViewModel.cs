@@ -139,6 +139,19 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
 
+    /// <summary>Drop scored properties so a reconnect never shows rows (and live
+    /// FProperty* addresses) from the previous game (audit X5). Client-side only.</summary>
+    public void ClearOnDisconnect()
+    {
+        _xrefBatchCts?.Cancel();
+        _allRows = new List<ScoredPropertyRow>();
+        SelectedResult = null;
+        Results.Clear();
+        ClassFilter.Reset();
+        ClassFilterNote = "";
+        StatusText = "Click Load to scan for interesting properties";
+    }
+
     /// <summary>
     /// "Find functions using this field" — bridges the property scoring to the
     /// functions that actually reference the scored field (static bytecode

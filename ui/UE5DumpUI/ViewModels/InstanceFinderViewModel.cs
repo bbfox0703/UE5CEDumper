@@ -225,6 +225,33 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         };
     }
 
+    /// <summary>Drop the instance list + walked fields so a reconnect never shows
+    /// instances (and addresses) from the previous game or offers a stale field walk
+    /// (audit X5). Bumps the search/field tickets so an in-flight response can't
+    /// repaint after this. Client-side only. Null <see cref="SelectedInstance"/>
+    /// FIRST — a non-null selection's changed-handler triggers a pipe field walk.</summary>
+    public void ClearOnDisconnect()
+    {
+        _reRunCts?.Cancel();
+        try { _xrefBatchCts?.Cancel(); } catch { /* already disposed */ }
+        _searchGen++;
+        _fieldLoadId++;
+        _hasActiveClassSearch = false;
+        _lastClassQuery = "";
+        _lastNameQuery = "";
+        SelectedInstance = null;   // detach before clearing (null branch is a no-op)
+        Instances.Clear();
+        _allInstances.Clear();
+        ClassFilter.Reset();
+        ClassFilterNote = "";
+        ContainerMatches.Clear();
+        Fields.Clear();
+        HasFields = false;
+        HasContainerMatches = false;
+        StatusText = "";
+        LookupStatusText = "";
+    }
+
     /// <summary>Class-noise picker changed. When a class search is active the
     /// exclusion is server-authoritative — re-RUN the scan with the new
     /// <see cref="ClassFacetFilter.ExcludedClasses"/> so an instance previously

@@ -185,6 +185,21 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         };
     }
 
+    /// <summary>Drop scored functions so a reconnect never shows rows (and live
+    /// UClass* addresses) from the previous game (audit X5). Client-side only.</summary>
+    public void ClearOnDisconnect()
+    {
+        _xrefBatchCts?.Cancel();
+        _allRows = new List<ScoredFunctionRow>();
+        _entries = Array.Empty<AllFunctionEntry>();
+        _scoredWithGameplayActions = false;
+        SelectedResult = null;
+        Results.Clear();
+        ClassFilter.Reset();
+        ClassFilterNote = "";
+        StatusText = "Click Load to scan all UFunctions";
+    }
+
     /// <summary>
     /// Reverse edge: "Props" row action — list the properties this function
     /// reads/writes (static bytecode scan). Opens a self-contained dialog

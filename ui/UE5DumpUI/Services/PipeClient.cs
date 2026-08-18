@@ -50,12 +50,12 @@ public sealed class PipeClient : IPipeClient
     public event Action<bool>? ConnectionStateChanged;
     public event Action<JsonObject>? EventReceived;
     public event Action<PipeLogEntry>? Activity;
+    // Raised per response that carries the flag (raw observation — NOT
+    // edge-suppressed here). The two-lane router (LaneRoutingPipeClient) owns the
+    // single combined latch that dedupes for the UI: per-lane suppression here was
+    // the audit-X7 cause of the "game thread paused" banner sticking ON when the
+    // lane that saw the pause went idle after the game resumed.
     public event Action<bool>? GameThreadStalledChanged;
-
-    // Last game-thread-stalled value we raised, so a busy paging burst (every
-    // response carries the flag) fires the event only on a true→false / false→true
-    // transition instead of once per line. Touched only from the single ReadLoop.
-    private bool _lastStalled;
 
     // id -> (command name, TX tick) so the RX line can show which command it
     // answers and the round-trip ms. Only populated when Activity has a
@@ -94,9 +94,6 @@ public sealed class PipeClient : IPipeClient
         _writer = new StreamWriter(_pipe, Encoding.UTF8) { AutoFlush = true };
 
         IsConnected = true;
-        // Reset the stall latch so the first response after a (re)connect always
-        // raises, even if the game was already paused before this connection.
-        _lastStalled = false;
         ConnectionStateChanged?.Invoke(true);
         _log.Info(Constants.LogCatPipe, "Pipe connected");
 
@@ -257,15 +254,12 @@ public sealed class PipeClient : IPipeClient
                     if (obj == null) continue;
 
                     // App-wide game-thread liveness hint: the DLL rides
-                    // `game_thread_stalled` on every success envelope. Raise only
-                    // on a transition so a paging burst doesn't spam the UI thread.
-                    // Absent (old DLL / push event) → leave the last state as-is.
-                    if (obj["game_thread_stalled"]?.GetValue<bool>() is bool stalled
-                        && stalled != _lastStalled)
-                    {
-                        _lastStalled = stalled;
+                    // `game_thread_stalled` on every success envelope. Report the
+                    // raw observation on every response; the router's combined
+                    // latch (GameThreadStalledLevel) dedupes so a paging burst
+                    // doesn't spam the UI. Absent (old DLL / push event) → no report.
+                    if (obj["game_thread_stalled"]?.GetValue<bool>() is bool stalled)
                         GameThreadStalledChanged?.Invoke(stalled);
-                    }
 
                     if (obj["event"] != null)
                     {

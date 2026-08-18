@@ -203,6 +203,29 @@ public class ConsoleViewModelTests
     }
 
     [Fact]
+    public async Task ClearOnDisconnect_drops_exec_rows_and_resets_status()
+    {
+        // X5: a reconnect (often to a different game) must not leave the previous
+        // game's exec rows — each carries a live ClassAddr the Run action would use.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult
+            {
+                Total = 6, ScannedObjects = 100, ScannedClasses = 5, TotalFunctions = 6,
+                Functions = BuildSampleEntries(),
+            }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.NotEmpty(vm.Results);
+
+        vm.ClearOnDisconnect();
+
+        Assert.Empty(vm.Results);
+        Assert.Contains("Click Load", vm.StatusText);   // back to the initial prompt
+    }
+
+    [Fact]
     public async Task FilterText_matches_funcName_substring_case_insensitive()
     {
         var fake = new FakeDumpService

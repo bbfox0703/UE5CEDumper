@@ -61,6 +61,27 @@ public partial class RelatedObjectsViewModel : ViewModelBase
         _platform = platform;
     }
 
+    /// <summary>Drop the related-objects graph + detected-target candidates so a
+    /// reconnect never shows (or navigates to) addresses from the previous game
+    /// (audit X5). Client-side only. <see cref="_suppressCandidateLoad"/> gates the
+    /// selection-changed pipe walk while we null the selection.</summary>
+    public void ClearOnDisconnect()
+    {
+        _suppressCandidateLoad = true;
+        try
+        {
+            SelectedCandidate = null;   // its changed-handler would otherwise walk the pipe
+            SelectedRelated = null;
+            Related.Clear();
+            TargetCandidates.Clear();
+            HasCandidates = false;
+            TargetAddress = "";
+            QueryClassName = "";
+            StatusText = "";
+        }
+        finally { _suppressCandidateLoad = false; }
+    }
+
     /// <summary>Handoff entry point from another panel: set the address and load.</summary>
     public async Task LoadForAddressAsync(string addr)
     {

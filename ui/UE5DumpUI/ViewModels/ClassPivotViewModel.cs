@@ -234,6 +234,17 @@ public partial class ClassPivotViewModel : ViewModelBase
         if (IsDataTableSource) PendingLoad = RefreshDataTablesAsync();
     }
 
+    /// <summary>Drop the live DataTable pick (process-scoped, from FindInstances) and
+    /// cancel pending work on disconnect (audit X5). Snapshot-derived rows are
+    /// disk-backed and PRESERVED — a reconnect re-populates via SetEngineState.</summary>
+    public void ClearOnDisconnect()
+    {
+        CancelPendingWork();
+        DataTables.Clear();
+        _dataTable = null;
+        SelectedDataTable = null;   // handler early-returns on null (no pipe call)
+    }
+
     // --- N1: Pivot-scope class denylist (right-click "Hide this class") ---
     // Independent from the SPC / Diff lists — hiding a class here only affects
     // the Pivot class picker.

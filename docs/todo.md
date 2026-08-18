@@ -1502,6 +1502,26 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L6 (U3 MainWindow VM): X5 / X6 / X7 / X8 / X10 / X11 / X12
+
+*The pure logic is unit-tested: **X4** (`DumpCompletionFormatter` — floating size + honest zero-class
+line + the `DumpResult` count round-trip), **X7** (`GameThreadStalledLevel` — the stuck-ON resume
+case, dedup, reset), **X9** (`CompetingHostBanner` — self-exclusion by PID and by module name, the
+two-instances control), **X12** (`FileWriteFault.IsPlacementDenied` classifier), plus **X5** at the
+VM level for ValueSearch (both sessions forgotten with NO End pipe call) and Console (rows dropped).
+X4 and X9 are fully settled by tests; the rows below are what only a running game / real CE can prove.*
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | X5 | connect to game A, populate several panels (Instance Finder, Property Search, Live Walker, Value Search, Interesting Funcs), disconnect, then connect to a **DIFFERENT** game B | every panel is empty on reconnect — no rows, no addresses, no jump offers from game A; Live Walker's per-game **bookmarks survive** | before the fix only Teleport/DumpExplorer/LiveFuncs reset; the other ~13 kept stale rows offering jumps to dead addresses — bindings/timers only observable live |
+> | X5 | before disconnecting, start Live Walker **auto-refresh** and (experimental) an **auto-snapshot** loop, then disconnect | both loops stop immediately on disconnect (no "re-walk"/"capture" log spam against the dead pipe); the snapshot **corpus is preserved** | the timer/loop teardown and corpus-preservation are not unit-testable |
+> | X6 | start a **Dump All** (or Full SDK / USMAP) on a large game, then kill the game / disconnect mid-export | the export aborts promptly with "… cancelled (disconnected)" instead of hanging on dead-pipe round-trips; no truncated file at the chosen name | the ct now threads from a connection-linked CTS; before, `ct` was `default` and every service ct-check was dead code |
+> | X7 | pause the game thread **during a long bulk-lane scan** (so only the bulk lane observed the pause), let the scan finish, then resume and browse via Live Walker (interactive lane) | the "game thread paused" banner **clears** on resume; before the fix it stuck ON until a bulk command ran | the pure latch is unit-tested, but the PipeClient per-response feed + banner is end-to-end |
+> | X8 | on the **Console** tab, with CE + AOBMaker **closed**, click a baked-exec / Debug-Camera "to CE" action → then **open** CE with the AOBMaker plugin and click again (no tab switch) | the second click now sends to CE (was "AOBMaker not connected" from the stale cached flag) | the path now calls `CheckAvailabilityAsync` first; needs a real CE toggled between clicks |
+> | X10 | on Teleport, change the **World / Player time-dilation** sliders, wait >1 s, close the app, relaunch | the slider values are restored (they now schedule a save) | before, only OTHER Teleport options triggered a save, so a time-dilation-only change was lost |
+> | X11 | start a **Dump All** and abort it (disconnect / cancel) mid-stream | there is **no** truncated `.jsonl` at the chosen name — only a `<name>.partial` (or nothing); a completed dump appears atomically at the final name | temp-then-rename is only observable against a real abort |
+> | X12 | (maintainer) install CE under **%ProgramFiles%** (write needs elevation), run the app **non-elevated**, click **Install CE autorun** | it falls back to the manual save dialog ("… not writable — choose where to place it…") instead of failing | the denied-write branch needs a real non-writable CE folder |
+
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L2 (T1a Radar) end-to-end: AB12 / AB13 / AB14 / AB16 / AB17
 
 *The pure logic of each is unit-tested in `dll_helpers_test` (AB14 resolution, AB15 octal, AB16

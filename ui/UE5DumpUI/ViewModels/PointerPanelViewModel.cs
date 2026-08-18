@@ -606,6 +606,18 @@ public partial class PointerPanelViewModel : ViewModelBase
         catch { IsAobMakerAvailable = false; }
     }
 
+    /// <summary>Hide the stale pointer block + all HasData-gated badges/actions on
+    /// disconnect so a reconnect never offers copy/register on the previous game's
+    /// addresses (audit X5). <see cref="Update"/> repopulates on reconnect. Minimal
+    /// by design: resetting the UE-override / invoke-timeout inputs would fire a pipe
+    /// round-trip via their setters, so only <see cref="HasData"/> is reset. The pipe
+    /// activity log is kept for post-mortem.</summary>
+    public void ClearOnDisconnect()
+    {
+        HasData = false;
+        NotifyComputedProperties();
+    }
+
     private void NotifyComputedProperties()
     {
         OnPropertyChanged(nameof(ShowVersionWarning));

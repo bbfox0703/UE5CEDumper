@@ -492,6 +492,40 @@ public class ValueSearchTests
     }
 
     [Fact]
+    public async Task ClearOnDisconnect_ForgetsBothSessionsClientSide_WithoutAnEndPipeCall()
+    {
+        // X5: on disconnect the panel must drop both live scan sessions so a
+        // reconnect never acts on the previous game's candidate addresses — but the
+        // pipe is gone, so it must NOT send end_value_scan / end_group_scan (the DLL
+        // sessions die with the process and self-expire).
+        var (vm, fake) = MakeVm();
+
+        fake.NextBeginResult = new ValueScanBeginResult { SessionId = 1UL };
+        vm.SelectedDataType = ValueScanDataType.Int32;
+        vm.SelectedScanType = ValueScanType.Exact;
+        vm.Value = "100";
+        await vm.FirstScanCommand.ExecuteAsync(null);
+        Assert.True(vm.HasSession);
+
+        fake.NextGroupBeginResult = new GroupScanBeginResult { SessionId = 2UL };
+        vm.IsGroupMode = true;
+        vm.GroupInputs[0].Value = "1";
+        vm.GroupInputs[1].Value = "2";
+        await vm.GroupFirstScanCommand.ExecuteAsync(null);
+        Assert.True(vm.HasGroupSession);
+
+        vm.ClearOnDisconnect();
+
+        Assert.False(vm.HasSession);
+        Assert.False(vm.HasGroupSession);
+        Assert.Empty(vm.Candidates);
+        Assert.Empty(vm.GroupCandidates);
+        // The invariant that matters: no teardown round-trip to the dead game.
+        Assert.Empty(fake.Ends);
+        Assert.Empty(fake.GroupEnds);
+    }
+
+    [Fact]
     public async Task EndValueScanAsync_SendsSessionId()
     {
         var svc = MakeService(out var pipe);

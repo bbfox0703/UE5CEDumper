@@ -58,6 +58,19 @@ public partial class GameClassFilterViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
 
+    /// <summary>Drop the class list so a reconnect never shows classes (and live
+    /// UClass* addresses) from the previous game (audit X5). Client-side only.</summary>
+    public void ClearOnDisconnect()
+    {
+        _xrefBatchCts?.Cancel();
+        _allResults = new List<GameClassEntry>();
+        SelectedResult = null;       // detach before clearing the selection-bound grid
+        Results.Clear();
+        SuperSuggestions = new List<string>();
+        PackageSuggestions = new List<string>();
+        StatusText = "";
+    }
+
     partial void OnFilterTextChanged(string value)
     {
         ApplyFilter();

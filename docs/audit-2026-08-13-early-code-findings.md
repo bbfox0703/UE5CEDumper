@@ -1045,15 +1045,15 @@ unread flags, not wrong writes.
 | **X1** ✅ | MED | `DumpService.cs:1746` (`SearchPropertiesBatchAsync`) | The batch property search parses `query` + `match_count` only, dropping the per-query `truncated` and batch `aborted` the DLL emits for exactly this purpose — `PropertySearchQueryEnvelope` has no such field to parse into. Interesting Properties sends all 51 seed queries at 200 rows each, so common seeds (`Max`, `Count`, `Time`, `Level`, `Hit`) cap routinely and the panel reports *"N unique properties"* with no cap note. **This is the exact report class the F4 fix was written to end**, surviving at F4's other site. `DetectStatsViewModel` makes the same call with the same blind spot. | S / low |
 | **X2** ✅ | MED | `MainWindowViewModel.cs:1650` | Class-address lookups scan a single 5,000-row `list_classes` page and report a real class as **"not found"** when it falls past the cap. | S / low |
 | **X3** ✅ | MED | *(hand-found)* `DumpService.cs` / `Models/EngineState.cs` | The DLL computes and publishes a three-flag offset-validation verdict (`validated`, `probe_ran`, `case_preserving`, plus `fallback_reason`) and **the UI never issues `get_offsets` at all**, so nothing can tell the user the walker is running on unvalidated default offsets. | S / low |
-| **X4** | LOW | `MainWindowViewModel.cs:3373` | The Dump All completion line is derived from the **file's byte length** rather than from what the dump did, so a zero-class or half-failed dump still announces an export — and the figure itself is integer division (`Length / 1024 / 1024:F1`), so a 3.7 MB dump prints `3.0 MB` and anything under 1 MB prints `0.0 MB`. | S / low |
-| **X5** | LOW | `MainWindowViewModel.cs:2003` | The disconnect fan-out resets **3 of 15** panels; every other panel keeps its rows across a reconnect and goes on offering jumps to addresses from the previous process. | M / med |
-| **X6** | LOW | `MainWindowViewModel.cs:3336` | The three long-running export commands take no `CancellationToken`, so every `ct` check inside the services they drive is dead code. | M / low |
-| **X7** | LOW | `MainWindowViewModel.cs:2026` | The "game thread paused" banner is a level rebuilt from two independent per-lane edge latches, so it sticks ON after the game resumes. | S / low |
-| **X8** | LOW | `MainWindowViewModel.cs:1915` | The Console tab's two AOBMaker actions assert *"AOBMaker not connected"* from a cached flag nothing on their path refreshes. | S / low |
-| **X9** | LOW | `MainWindowViewModel.cs:132` | The competing-dumper-host banner lists the game you are connected to among the "also loaded" competitors when the DLL reports no PID. | S / low |
-| **X10** | LOW | `MainWindowViewModel.cs:2315` | Time-dilation values are in `ApplyOptions` and `BuildOptions` but missing from `TeleportPersist`, so changing them never schedules a save. | S / low |
-| **X11** | LOW | `MainWindowViewModel.cs:3368` | Dump All streams onto the destination with `FileMode.Create` and no temp-then-rename, so an abort leaves a truncated `.jsonl` at the final name, and no consumer checks the trailing summary line that is written only on success. **Scope corrected by hand — see below.** | S / low |
-| **X12** | LOW | `MainWindowViewModel.cs:3145` | Install-CE-autorun skips its own manual-placement fallback in exactly the case where the write was denied. | S / low |
+| **X4** ✅ | LOW | `MainWindowViewModel.cs:3373` | The Dump All completion line is derived from the **file's byte length** rather than from what the dump did, so a zero-class or half-failed dump still announces an export — and the figure itself is integer division (`Length / 1024 / 1024:F1`), so a 3.7 MB dump prints `3.0 MB` and anything under 1 MB prints `0.0 MB`. | S / low |
+| **X5** ✅ | LOW | `MainWindowViewModel.cs:2003` | The disconnect fan-out resets **3 of 15** panels; every other panel keeps its rows across a reconnect and goes on offering jumps to addresses from the previous process. | M / med |
+| **X6** ✅ | LOW | `MainWindowViewModel.cs:3336` | The three long-running export commands take no `CancellationToken`, so every `ct` check inside the services they drive is dead code. | M / low |
+| **X7** ✅ | LOW | `MainWindowViewModel.cs:2026` | The "game thread paused" banner is a level rebuilt from two independent per-lane edge latches, so it sticks ON after the game resumes. | S / low |
+| **X8** ✅ | LOW | `MainWindowViewModel.cs:1915` | The Console tab's two AOBMaker actions assert *"AOBMaker not connected"* from a cached flag nothing on their path refreshes. | S / low |
+| **X9** ✅ | LOW | `MainWindowViewModel.cs:132` | The competing-dumper-host banner lists the game you are connected to among the "also loaded" competitors when the DLL reports no PID. | S / low |
+| **X10** ✅ | LOW | `MainWindowViewModel.cs:2315` | Time-dilation values are in `ApplyOptions` and `BuildOptions` but missing from `TeleportPersist`, so changing them never schedules a save. | S / low |
+| **X11** ✅ | LOW | `MainWindowViewModel.cs:3368` | Dump All streams onto the destination with `FileMode.Create` and no temp-then-rename, so an abort leaves a truncated `.jsonl` at the final name, and no consumer checks the trailing summary line that is written only on success. **Scope corrected by hand — see below.** | S / low |
+| **X12** ✅ | LOW | `MainWindowViewModel.cs:3145` | Install-CE-autorun skips its own manual-placement fallback in exactly the case where the write was denied. | S / low |
 
 **Verified independently (not agent-reported):**
 
@@ -3676,7 +3676,7 @@ leaf `Actor` exists — which is what proves the package half is really being ma
 End-to-end: `createFromPath("/Script/Engine.Actor")` now builds a 129-field `Actor` structure in CE.
 16 new assertions; negative control (dropping the separator rewrite) turns **6** of them red.
 
-**Current register: 154 open of 297 · 0 HIGH · 0 MED · 127 LOW · 27 INFO.** Re-derive with
+**Current register: 145 open of 297 · 0 HIGH · 0 MED · 118 LOW · 27 INFO.** Re-derive with
 `py tools/check_audit_register.py --list` — never hand-tally, and see rule 0 below for why that gate
 now exists. ⚠ **This exact sentence is now CI-gated** (it went stale three times): the checker
 compares it against the rows and, on a mismatch, prints the replacement line to paste. Paste it —

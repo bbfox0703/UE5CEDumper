@@ -85,8 +85,12 @@ public static class DumpAllService
     ///     specific class walk fails; iteration continues.</item>
     ///   <item><c>{"kind":"summary", ...}</c> — last line; counters.</item>
     /// </list>
+    /// Returns a <see cref="DumpResult"/> carrying the same counters the
+    /// summary line reports, so the caller can compose an honest completion
+    /// message from what the dump actually produced (classes emitted / errors)
+    /// rather than from the output file's byte length (audit X4).
     /// </summary>
-    public static async Task GenerateAsync(
+    public static async Task<DumpResult> GenerateAsync(
         IDumpService dump,
         EngineState engineState,
         Stream output,
@@ -221,6 +225,8 @@ public static class DumpAllService
             Phase: $"Done — {classesEmitted} classes",
             Done: classesEmitted,
             Total: classesEmitted));
+
+        return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects);
     }
 
     /// <summary>
@@ -518,6 +524,13 @@ public static class DumpAllService
     /// <summary>Whitelist check — exposed for tests.</summary>
     internal static bool IsClassLikeMetaName(string meta) => ClassLikeMetas.Contains(meta);
 }
+
+/// <summary>What a dump run actually produced — the same counters the trailing
+/// <c>{"kind":"summary"}</c> line reports. Returned by
+/// <see cref="DumpAllService.GenerateAsync"/> so callers can report success
+/// (and its scale) from what happened, not from the file's byte length.</summary>
+public sealed record DumpResult(
+    int ClassesEmitted, int ClassesSkippedEngine, int Errors, int ObjectsScanned);
 
 /// <summary>Options controlling what the dumper emits.</summary>
 public sealed record DumpOptions(

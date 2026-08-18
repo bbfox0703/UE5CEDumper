@@ -89,6 +89,17 @@ public partial class DetectStatsViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
 
+    /// <summary>Drop detected-stat rows so a reconnect never shows fields (and live
+    /// addresses) from the previous game (audit X5). Client-side only — the offline
+    /// snapshot corpus is owned by the store, not here.</summary>
+    public void ClearOnDisconnect()
+    {
+        _allResults = new List<DetectedStat>();
+        SelectedResult = null;
+        Results.Clear();
+        StatusText = "Click Detect to shortlist likely HP / MP / Gold fields and confirm them live.";
+    }
+
     [RelayCommand]
     private async Task DetectAsync()
     {

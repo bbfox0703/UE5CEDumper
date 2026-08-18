@@ -730,6 +730,38 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
     }
 
+    /// <summary>Forget both live scan sessions + drop their candidate windows so a
+    /// reconnect never shows (or acts on) addresses from the previous game (audit X5).
+    /// The DLL sessions die with the process and self-expire, so this is CLIENT-SIDE
+    /// ONLY — it must NOT call the End* pipe teardown against the gone game. Sessions
+    /// are zeroed first so any selection-changed reload early-returns on !HasSession.</summary>
+    public void ClearOnDisconnect()
+    {
+        // Cancel all in-flight scan / view / filter work.
+        _scanCts?.Cancel();
+        _viewCts?.Cancel();
+        _filterCts?.Cancel();
+        _groupViewCts?.Cancel();
+        _groupFilterCts?.Cancel();
+        _groupLeafLoadId++;
+
+        SessionId = 0;             // flips HasSession off (no pipe End_* call)
+        GroupSessionId = 0;        // flips HasGroupSession off
+        SelectedCandidate = null;
+        SelectedGroupCandidate = null;
+        Candidates.Clear();
+        GroupCandidates.Clear();
+        Total = 0;
+        FilteredTotal = 0;
+        GroupTotal = 0;
+        GroupFilteredTotal = 0;
+        WindowStatus = "";
+        GroupWindowStatus = "";
+        ClassFilter.Reset();
+        GroupClassFilter.Reset();
+        StatusText = "Click First Scan to scan for a value across all UPROPERTY fields.";
+    }
+
     // Shared auto-detect provider for both class filters: classify the facet
     // class names via the DLL (safe rules) and adapt to the helper's tuple shape.
     private async Task<IReadOnlyList<(string className, bool isNoise, string reason)>>

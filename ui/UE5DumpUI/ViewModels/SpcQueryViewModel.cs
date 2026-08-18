@@ -413,6 +413,16 @@ public partial class SpcQueryViewModel : ViewModelBase
         _ = RefreshAsync();
     }
 
+    /// <summary>Drop the live session id so per-row Live/Addr actions auto-disable, and
+    /// cancel any in-flight query, on disconnect (audit X5). The disk-backed corpus +
+    /// results are PRESERVED — a reconnect re-scopes via SetEngineState.</summary>
+    public void ClearOnDisconnect()
+    {
+        CancelPendingWork();
+        _currentSessionId = "";
+        RaiseResultRowActionGates();
+    }
+
     /// <summary>Reload the per-game denylist after SetActiveGame switched the
     /// active DB. Resets the local cache + the bound display collection.</summary>
     private void LoadDenylistFromStore()

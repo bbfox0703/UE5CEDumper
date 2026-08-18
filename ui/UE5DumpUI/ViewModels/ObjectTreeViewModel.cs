@@ -464,6 +464,21 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
     /// Caps the displayed items at <see cref="Constants.ObjectTreeMaxDisplay"/>
     /// to keep the UI responsive (Avalonia ListBox virtualization handles rendering).
     /// </summary>
+    /// <summary>Drop all process-scoped rows so a reconnect never shows objects
+    /// (and addresses) from the previous game (audit X5). Client-side only — the
+    /// pipe is already gone; does not touch persisted state (there is none here).</summary>
+    public void ClearOnDisconnect()
+    {
+        _loadCts?.Cancel();
+        _loadGen++;               // supersede any in-flight paging load
+        SelectedNode = null;      // detach ClassStruct (null branch is a no-op)
+        _allNodes.Clear();
+        FilteredNodes.Clear();
+        ObjectCount = 0;
+        DisplayCount = "";
+        StatusText = "";
+    }
+
     private void ApplyFilter()
     {
         // Detach the bound selection before clearing: Avalonia's selection model

@@ -153,6 +153,24 @@ public partial class ClassStructViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FieldFilter, Fields.Count > 0));
     }
 
+    /// <summary>Drop the currently-shown class so a reconnect never displays fields
+    /// (and a UClass* address) from the previous game (audit X5). Bumps the load
+    /// ticket so an in-flight WalkClass can't repaint after this. Client-side only.</summary>
+    public void ClearOnDisconnect()
+    {
+        _loadId++;                 // supersede any in-flight WalkClass repaint
+        _shownNodeAddress = null;
+        SelectedField = null;
+        _allFields.Clear();
+        Fields.Clear();
+        ClassName = "";
+        ClassPath = "";
+        SuperName = "";
+        PropertiesSize = 0;
+        LoadedClassAddr = "";
+        HasClass = false;
+    }
+
     /// <summary>
     /// "Find functions using this field" — static Kismet-bytecode cross-reference
     /// for the field's FProperty*. Opens a self-contained dialog (no tab impact).

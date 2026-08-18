@@ -184,6 +184,23 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         _isAobMakerAvailable = aobMaker?.IsAvailable ?? false;
     }
 
+    /// <summary>Drop search results + the forced-fields mirror so a reconnect never
+    /// shows rows (and live UClass* addresses) from the previous game (audit X5).
+    /// Client-side ONLY: the DLL's force-holds die with the process, so this clears
+    /// the mirror without calling the (gone) pipe — do NOT reset holds here.</summary>
+    public void ClearOnDisconnect()
+    {
+        _xrefBatchCts?.Cancel();
+        SelectedResult = null;   // detach before clearing the selection-bound grid
+        _allResults = new List<PropertySearchMatch>();
+        Results.Clear();
+        ClassFilter.Reset();
+        ClassFilterNote = "";
+        ForcedFields.Clear();
+        HasForcedFields = false;
+        StatusText = "";
+    }
+
     /// <summary>
     /// Re-probe AOBMaker pipe so the Freeze button enablement reflects the
     /// current state. Called on tab activation + before each Freeze click;

@@ -5460,6 +5460,34 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         AutoRefreshStatusText = "sec";
     }
 
+    /// <summary>Drop the live walk state so a reconnect never shows an object (and
+    /// its live addresses) from the previous game, and STOP the auto-refresh timer so
+    /// it can't re-walk a dead pipe (audit X5). Deliberately preserves the persisted
+    /// per-game <see cref="BookmarkSlots"/> / <c>_activePeHash</c> / SearchHistory —
+    /// those are reloaded on reconnect and must survive a disconnect.</summary>
+    public void ClearOnDisconnect()
+    {
+        StopAutoRefreshTimer();       // also sets IsAutoRefreshing = false
+        _exportCts?.Cancel();
+
+        Breadcrumbs.Clear();
+        Fields.Clear();
+        Functions.Clear();
+        References.Clear();
+        ClearForwardStack();
+        _replacedSpine = null;
+        _cachedWorld = null;
+        _selectedFieldsSnapshot.Clear();
+        SelectedFieldsCount = 0;
+
+        SelectedField = null;
+        CurrentAddress = "";
+        CurrentObjectName = "";
+        CurrentClassName = "";
+        HasData = false;
+        LocateFailureMessage = "";
+    }
+
     /// <summary>
     /// Audit fix #17: stop both DispatcherTimers when the VM is destroyed.
     /// Without this, a still-registered Tick handler keeps the VM rooted by
