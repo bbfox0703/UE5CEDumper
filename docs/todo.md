@@ -537,7 +537,7 @@ the per-finding detail was always in [audit-2026-07-14-findings.md](audit-2026-0
   (project-gas-attr-flatten-ce-export).*
 
 - **dxgi proxy early-load fragility — harden (thin-shim + renamed real-dxgi copy), or leave dxgi as "late-load games only"** —
-  Effort: **M-L** · Risk: med (loader-time code + deploy flow). **Deferred by owner (2026-06-19); Octopath uses version.dll for now, and the UI default is back to version.dll.** The dxgi proxy instant-exits on games that call dxgi **extremely early — under the loader lock, before our CRT is initialised** (Octopath Traveler: debugger-confirmed across 3 distinct crash dumps — execute-0 / `__tzset` uninit CRT lock / `RtlAllocateHeap` null heap; see dev-log 2026-06-19). Two genuine early-load fixes shipped + kept (`Sein::GetTimestamp`→Win32 `GetLocalTime`; dxgi lazy self-resolving thunks), but they do NOT make Octopath's dxgi work — the **root blocker** is that `LoadLibraryW(real same-named System32\dxgi.dll)` returns NULL under the early loader lock. **version.dll dodges it all by being called at normal runtime, not under early loader lock.** Robust fix = **thin-shim split (like RE-UE4SS):** `dxgi.dll` becomes a tiny CRT-free forwarder that (a) loads the real dxgi via a **renamed copy** (`dxgi_orig.dll`) to dodge the same-base-name-under-lock failure, and (b) `LoadLibrary("UE5Dumper.dll")` to run the heavy dumper as a **separate, normally-named, late-loaded** DLL. Deploy becomes **2 files** (`dxgi.dll` + `UE5Dumper.dll`) → the Proxy Deploy panel's deploy/undeploy/redundancy/Update-All must copy/remove both. NOTE: `/MD` (dynamic VCRuntime/UCRT) alone is only a **partial** fix — it removes the CRT-init crashes (Octopath already loads the shared UCRT early) but NOT the loader-lock same-name `LoadLibrary` blocker (that resurfaces as execute-0). version.dll/dinput8.dll don't need any of this (they load late). *Parent: dxgi proxy build 1172; early-load diagnosis + 2 fixes build 1351 (dev-log 2026-06-19).*
+  Effort: **M-L** · Risk: med (loader-time code + deploy flow). **Deferred by owner (2026-06-19); the UI default is back to version.dll.** ⚠ **CORRECTION 2026-08-18: Octopath does NOT use version.dll — that proxy never loads there. It needs `winmm.dll`** (verified end-to-end, `[OCTOPATH-G2T3-2026-08-18]`), so this item's premise that Octopath is served by version.dll in the meantime was wrong. The dxgi proxy instant-exits on games that call dxgi **extremely early — under the loader lock, before our CRT is initialised** (Octopath Traveler: debugger-confirmed across 3 distinct crash dumps — execute-0 / `__tzset` uninit CRT lock / `RtlAllocateHeap` null heap; see dev-log 2026-06-19). Two genuine early-load fixes shipped + kept (`Sein::GetTimestamp`→Win32 `GetLocalTime`; dxgi lazy self-resolving thunks), but they do NOT make Octopath's dxgi work — the **root blocker** is that `LoadLibraryW(real same-named System32\dxgi.dll)` returns NULL under the early loader lock. **version.dll dodges it all by being called at normal runtime, not under early loader lock.** Robust fix = **thin-shim split (like RE-UE4SS):** `dxgi.dll` becomes a tiny CRT-free forwarder that (a) loads the real dxgi via a **renamed copy** (`dxgi_orig.dll`) to dodge the same-base-name-under-lock failure, and (b) `LoadLibrary("UE5Dumper.dll")` to run the heavy dumper as a **separate, normally-named, late-loaded** DLL. Deploy becomes **2 files** (`dxgi.dll` + `UE5Dumper.dll`) → the Proxy Deploy panel's deploy/undeploy/redundancy/Update-All must copy/remove both. NOTE: `/MD` (dynamic VCRuntime/UCRT) alone is only a **partial** fix — it removes the CRT-init crashes (Octopath already loads the shared UCRT early) but NOT the loader-lock same-name `LoadLibrary` blocker (that resurfaces as execute-0). version.dll/dinput8.dll don't need any of this (they load late). *Parent: dxgi proxy build 1172; early-load diagnosis + 2 fixes build 1351 (dev-log 2026-06-19).*
 
 - **UE5.7+ packed FUObjectItem — live-verify + calibrate when a packed game appears** —
   Effort: **S** (mostly verify) · Risk: low (gated, last-resort only). Packed parsing shipped
@@ -2247,7 +2247,7 @@ application directory, and Steam injects early — but that is **untested**.
    cause.
 3. **The plan's §3a inventory needs a caveat**: "all ten SHA-match `dist/proxy`" was verified — and is
    *not sufficient*. At least one of the ten (OCTOPATH) cannot serve the pipe at all.
-4. **OCTOPATH is therefore unverifiable through its proxy** and dropped out of the G2 rate sweep as
+4. **OCTOPATH was unverifiable through its proxy** and dropped out of the G2 rate sweep as
    the third data point.
 
 ### ✅ G8/G9 step 3 corroborated on a SECOND title `[DQ7R-PIPE-2026-08-17]`
@@ -2721,6 +2721,46 @@ no test target compiles `Genau.cpp`.*
 >
 > **The rest of step 3 stands as already recorded:** the wording is byte-exact against
 > `Genau.cpp:3047`, and the regression it guards is witnessed on the UE4/`utf16` path.
+
+> ### ✅ THE `ascii` BRANCH IS NOW WITNESSED `[OCTOPATH-G2T3-2026-08-18]` — and OCTOPATH is a working host again
+>
+> **OCTOPATH TRAVELER**, UE **4.18**, DLL **1.0.0.3262**, **`winmm.dll` proxy**. The offline survey
+> predicted `ascii` for this title; the DLL then reported `ascii`. Prediction first, confirmation by
+> an independent method second:
+>
+> ```
+> DetectVersion: PE VERSIONINFO Product=1.0 File=1.0 — unrecognised
+> DetectVersion: PE resource failed, falling back to memory string scan
+> DetectVersion: Tier 1 (ascii) '++UE4+Release-4.18' -> 418 at 0x1C06AB0
+> FindAll: UE Version = 418 (tier=1, detected=yes, lowConfidence=yes, publisher=SQUARE_ENIX)
+> ```
+>
+> That is the **`ascii` flavour of `'%s%s'`**, unwitnessed since the format string shipped, and it
+> also re-confirms step 3's regression (a Tier-1 game still detects from Tier 1) on a second engine
+> generation. ⇒ **Of step 3's four combinations, three are now closed** (`utf16`+UE4, `ascii`+UE4,
+> and the Tier-0 exit); only the **UE5** branch remains, still hostless for the reasons above.
+>
+> ### ⭐ THE PROXY FOR OCTOPATH IS `winmm.dll` — `version.dll` and `dxgi.dll` do NOT work
+> Supplied by the maintainer and verified end-to-end. This retires a blocker recorded in three
+> places (§"could not be swept at all", the G2 rate-sweep drop-out, and the deferred dxgi item):
+> * `winmm proxy: lazily forwarded 180/180 exports to real System32 winmm.dll` → `pipe server started`
+> * full scan clean: GObjects/GNames/GWorld/**GEngine** all `aob`, **273,956 objects**, and
+>   **0 `[ERROR]` across all five log files**.
+> ⚠ **The measured fact and the mechanism are separate, and only the first is established.** The exe
+> **statically imports BOTH `VERSION.dll` and `WINMM.dll`** (verified by parsing its import table),
+> yet the game-folder `winmm.dll` loads while the loaded `VERSION.dll` is **System32's**. A KnownDLLs
+> explanation was tested and **refuted** — `version.dll` is not in the KnownDLLs list and no KnownDLL
+> imports it. **So "why version.dll loses" is NOT established; do not publish a cause for it.**
+> What is safe to rely on: for this title, use `winmm`.
+> ⚠ The stale `version.dll` proxy was removed from the game folder (to the Recycle Bin, recoverable).
+>
+> ### ➕ A THIRD DATA POINT FOR STEP 2, free from the same run
+> `20:04:35.123` (fallback begins) → `20:04:35.154` (Tier-1 hit at `0x1C06AB0`) = **31 ms** to reach
+> ~28.0 MiB, i.e. **~900 MiB/s**. Against the two existing points — DQ7R 240 MiB/s, DQ I&II 587 MiB/s
+> — the spread widens from 2.4× to **3.8×**. That **strengthens** step 2's existing conclusion rather
+> than settling it: per-byte scan rate on this machine varies far too much for any cross-title
+> extrapolation to decide what fraction of Elliot's 2.4 s belongs to which sweep. Same conditions
+> caveat as before (single run, warm cache, early-exit path).
 >
 > **Step 4 — ✅ THE LINES FIRE, but NOT by the route this row prescribes.** Witnessed on 3262, in
 > `Logs/Elliot-Win64-Shipping/scan-20260818-13*.log`: **`DataScanGObjectsCandidates: aborted (client
@@ -4212,7 +4252,9 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 > Manor Lords the only one on `GWLD_SP57_1`, and STVoyager + Light Maze the only two on `GOBJ_V13`.
 > **All twelve resolved all three pointers; no failures.**
 >
-> ⛔ **OCTOPATH TRAVELER could not be swept at all** — its `version.dll` proxy never loads. See the
+> ⛔ **OCTOPATH TRAVELER could not be swept at all** — its `version.dll` proxy never loads. ✅ **RESOLVED
+> 2026-08-18: use the `winmm.dll` proxy** (`[OCTOPATH-G2T3-2026-08-18]`) — 180/180 exports forwarded,
+> full clean scan, 273,956 objects. See the
 > `[PROXYLOAD-2026-08-17]` finding; it needs a different flavour or direct injection.
 >
 > **Incidental — D1/U3 CONFIRMED LIVE as still broken (not yet fixed).** `Map_IntToVec3f` renders as
