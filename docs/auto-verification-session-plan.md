@@ -12,49 +12,69 @@ launched without a human, and what must never be started without one.
 
 -----
 
-## ▶ RESUME HERE — NEXT SESSION STARTS AT STEP 1 (rewritten 2026-08-18, after the AA14-AA20 + G2 sitting)
+## ▶ RESUME HERE — the ONE open task is Y1 (rewritten 2026-08-18, end of a long sitting)
 
-**Machine state: nothing running.** Elliot, Cheat Engine and UE5DumpUI were all killed and
-confirmed gone. Working tree clean; ~73 unpushed commits on `dev` (no PR — the maintainer asks).
+**Machine state: nothing running.** Elliot, CE and UE5DumpUI all killed and confirmed gone. Invoke
+timeout restored (5000, not persisted). Elliot's `dxgi.dll` proxy is back in place. CE's `Plugins64`
+is byte-identical to its pre-session baseline. Working tree clean.
 
-### ✅ DONE THIS SITTING — `AA14–AA20` **all 5**, `G2` 4+5. Results are in `todo.md`, not here.
+### ✅ CLOSED THIS SITTING — do not re-run
+`AA14–AA20` **5/5** · `AB1/AB2` **5/5** · `AB3/AB5` **1–4** · `G2` **4+5** · `X2` **1–3**.
+Results live in `todo.md`; three of those rows had their *instructions* corrected as well.
 
-**What is LEFT, and it is short:**
-* ~~`AA14–AA20` step 5~~ — **CLOSED on Lushfoil.** The lesson generalises: **when the PE hook will
-  not install, CHANGE TITLE, do not retry.** Elliot's hook is intermittent (maintainer: "sometimes
-  yes, sometimes no"); Lushfoil gave `hook_active: true` first try. ⚠ Two traps, both in todo.md:
-  the DLL's invoke timeout must be raised **well above** the Lua's 10 s (use 120000, not 30000 — a
-  GUI round trip eats 30000's window and the run then *looks* like an AA19 failure), and
-  `suspend.py` must be given the **full image stem** (a Steam shim shares the prefix). Also:
-  a suspended game thread did **not** recover on resume — treat it as one-shot and restart the game.
-* **`G2` step 3** — Lushfoil is **ruled out**: its PE version resource is intact, so it stops at
-  `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` and never reaches the memory-string needle. Needs
-  a **UE5 title with a stripped/unrecognised version resource** — try TQ2 (507), Solarpunk (507),
-  Manor Lords (505), ES2 (505), STVoyager (506). The cache drop itself is solved and cheap.
-* **(superseded, kept for the mechanics)** the old step-5 note below
-  (`MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`; the same game hooked fine 6 h earlier, so
-  **just relaunch and re-check `get_diagnostics` -> `hook_active` BEFORE staging anything**).
-  Everything else is already built: `set_invoke_timeout {"timeout_ms":30000,"persist":false}`
-  (mandatory — the DLL's stock 5000 ms fires before the Lua's 10000 ms, so the branch under test is
-  otherwise unreachable) and `tools/verify/suspend.py threads|suspend-tid|resume-tid`.
-  ⚠ Pick a **non-static** function: a `Native|Static` one takes Mimic's fast path and never queues.
-* **`G2` step 3** — needs ONE cache drop to witness the **UE5** branch:
-  `py tools/verify/cold_detect.py drop 998ED2850957D000 --apply` then launch Lushfoil. Only
-  `utf16`/UE4 Tier-1 lines exist at 3262.
+### ▶ THE ONLY THING LEFT HERE: close **Y1**
 
-### ⚙ Three setup facts this sitting paid for — carry them forward
+Everything except the witness is solved. Read `todo.md`'s Y1 block first — especially
+`[ELLIOT-Y1b-2026-08-18]`, which records **a witness that looked perfect and was invalid**.
 
-1. **`UE5CEDumper.CT` has no `<Files>` section.** Add the helper by hand
-   (`Table -> Add File...` -> `scripts/ue5_invoke_helper.lua`) or every invoke row fails at the
-   loader instead of at the thing under test. Verify in CE Lua: `findTableFile(...)` must report
-   `TLuafile` with `len=33432`.
-2. **Under a proxy the mailbox symbol is the BARE name.** Elliot loads the DLL as `dxgi.dll`, so
-   `getAddress('UE5Dumper.g_invokeMailbox')` is **nil** — and CE's `getAddress` *returns 0 rather
-   than raising* (CE-Bugs-Minesweeper §6), so a qualified-only probe reports a false failure.
-3. **AOBMaker goes live once CE is running**, and then `Copy AA Script` pushes the record
-   **straight into CE's address list** — nothing lands on the clipboard. The toolbar's
-   `AOBMaker Offline` label can still read stale; the dialog's own result text is the honest one.
-   Do not diagnose a "clipboard defect" from the toolbar.
+**1. Pick the target with the committed finder, not by clicking:**
+`py tools/verify/find_object_param_targets.py` → functions whose ObjectProperty is a REAL parameter
+(one of the first `num_parms` entries of `walk_functions`). It found **38** on Elliot.
+⚠ `walk_function_props` is NOT the parameter list (it is Denken's xref walk) — it returns nothing and
+looks like "no candidates".
+⚠ Live Walker's `INV` is the button that reaches `InvokeScriptGenerator` (where Y1's fix is), and it
+lists **only the class's OWN functions** — `K2_AttachToActor` is unreachable that way.
+
+**2. ⛔ DO NOT witness by reading `paramsData` after the call — it is CLEARED by the invoke path.**
+Proven: a `0xDEADBEEF` sentinel and a plain write of the pointer both read back fine at
+`g_invokeMailbox+0x328`, the emitted script is the fixed form, and its parse yields `0x3C8940A30` in
+CE's own Lua — yet post-call the buffer is zero. Reading it after FIRE fabricates the old bug's
+signature and would file a false regression. Don't assume a setter stores its argument either
+(`AttackCollisionData::SetOwnerClass` does not).
+
+**3. The witness that WILL work — freeze the game thread and read `paramsData` while the DLL blocks:**
+* `py tools/verify/pipe_client.py set_invoke_timeout --args '{"timeout_ms":120000,"persist":false}'`
+  (must exceed the Lua's 10 s by more than a GUI round trip)
+* pick the thread **by fire-rate**, never by creation order — suspend a candidate and watch
+  `get_diagnostics` → `hook_fire_count` stop while the **pipe still answers**
+* `py tools/verify/suspend.py suspend-tid <FULL image stem> <tid>` — pass the **full** stem; a Steam
+  launcher shim shares the prefix and the tool now refuses an ambiguous match
+* FIRE, then `read_mem` `g_invokeMailbox+0x328` **while it is still blocked**
+* ⚠ a suspended game thread did **not** recover on resume last time — treat it as one-shot and plan
+  to restart the title afterwards
+
+**4. ⚠ This route REQUIRES `hook_active: true`.** Check it *before* staging anything:
+`py tools/verify/pipe_client.py pe_profile_start` (then `pe_profile_stop`). On Elliot the hook is
+**intermittent** — it failed twice and succeeded twice this sitting with
+`MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`. **Restart the game until it installs**; that is the
+maintainer's own instruction, not a workaround.
+
+### Hosts, and the ONE grant each still needs
+
+Already granted and known-good: **Elliot** (`dxgi` proxy auto-loads; hook intermittent).
+Two alternatives the maintainer suggested, both with the `steam://` entry ALREADY granted:
+
+| title | UE | game exe | note |
+|---|---|---|---|
+| **Solarpunk** | 5.7 | `D:\SteamLibrary\steamapps\common\Solarpunk\Solarpunk\Binaries\Win64\SolarpunkSteam-Win64-Shipping.exe` (launcher `Solarpunk.exe`) | AOB *fails* on the non-Steam build — also the only known host for `G2` step 4's recovery path |
+| **EVERSPACE 2** | 5.5 | `C:\Program Files (x86)\Steam\steamapps\common\EVERSPACE™ 2\ES2\Binaries\Win64\ES2-Win64-Shipping.exe` (launcher `Everspace2.exe`) | maintainer notes the save is **on a landing pad** — may not suit an invoke needing live actors |
+
+⛔ **Their exes CANNOT be granted in advance** — `request_access` only resolves *installed or running*
+apps, and these are bare exes. Tried and refused with `notInstalled`. So: **launch the title first,
+then immediately `request_access` for its `*-Win64-Shipping.exe`** (one dialog, needs the maintainer
+present for that moment). Everything else — UE5DumpUI, Cheat Engine, Steam, steamwebhelper, File
+Explorer, and 11 games incl. both `steam://` entries above — is already granted for this session.
+
 
 ### ▶ STEP 1 — GRANTS, IN BATCHES OF ≤7. Do this before anything else.
 
