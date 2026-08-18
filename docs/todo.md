@@ -2568,7 +2568,30 @@ unproven is the real gesture under key repeat.*
    keystroke nulls the selection) — this must NOT re-walk the class repeatedly, and must not blank
    the panel.
 
-### ⬜ NEW 2026-08-17 — U4 / U16 / U6 / F3: the three never-erased caches in `Ubel`
+### ✅ DONE 2026-08-18 — U4 / U16 / U6 / F3: the three never-erased caches in `Ubel`
+
+> **Ran on DumperTest Development, dist 3262, driven from CE's Lua Engine.** The exports resolve by
+> name (`getAddress('UE5Dumper.UE5_WalkClassBegin')` → `0x7FFE762B6E90`), so the call sites — the
+> thing no test target can reach — were exercised directly.
+>
+> ⚠ **Signature trap, recorded because it cost a round trip:** `executeCodeEx` is
+> `(callmethod, timeout, address, …)`, **not** `(timeout, …)`. Passing the timeout first returns
+> `nil, "Invalid callmethod:5000"`. That is also a live confirmation that CE's `nil, reason`
+> channel carries a usable reason (cf. the `executeCodeEx` row and `ce-plugin-sdk-notes.md` §13).
+>
+> | step | verdict | evidence |
+> |---|---|---|
+> | 1 regression | ✅ | Object Tree loaded 25,172/25,179 named (100.0%); Live Walker drilled `DumperTestActor_0` and every container; Property Search returned hits on four different queries; enum fields render member names (`ROLE_Authority`, `EActorUpdateOverlapsMe…`), not raw ints. |
+> | 2 **U4** | ✅ | `A = 0x1F144477910` (a UObject instance, not a UStruct), `size = 556035168`. Two calls produced **two** `WalkClass: … at 0x1F144477910` DEBUG lines and **two** `WALK:safe … refusing to cache 0x1f144477910 — PropertiesSize=556035168 (read ok); not a UStruct, or recycled memory`. Before the fix the second call was served from the poisoned entry and logged nothing. ⚠ *Conditions:* the raw bytes at `A+0x58` read `60 6C 24 21` (=556270688) a minute earlier — those are live `AActor` bitfield bytes and they move; the point is that any reading of them is garbage as a `PropertiesSize`, and both were refused. A **second, independent** witness came free: `0x1F1408E1200` (a mis-transcribed tree address, not a UClass) was walked **4** times and refused **4** times, logging all four. |
+> | 3 **U4 honest half** | ✅ | `FDateTime` `UScriptStruct` @`0x1F159AA8F80`, visited **4** times → exactly **ONE** cold-walk pair (`WalkClass: DateTime (super=, size=8)` + `— 1 fields`) and silence for visits 2–4. The gate rejects garbage, not small/empty structs. ⚠ **Strictly-zero-field case NOT demonstrated**: `FDateTime` reports **1** field (`InjectIntrinsicStructFields` supplies `Ticks`), so "0 fields is still cached" remains unwitnessed — every 0-field walk seen this session was a *refusal*. Do not read this row as closing that. |
+> | 4 **U6/F3** | ✅ *(deterministic alternative)* | `DumperTestActor_0` `+0x18` = `7C C0 08 00 | 01 00 00 00` (ComparisonIndex `0x0008C07C`, Number 1). Wrote `ChaosDebugDrawActor`'s index `0x00150570` from CE, pressed Refresh: the live header changed to **`ChaosDebugDrawActor_0`** while the class stayed `DumperTestActor` (correct — only the object's FName moved). Restored `0x0008C07C`. The name memo is keyed on the input bytes, so no stale decode survived. *(The level-travel flavour was not run — this sample has no second level.)* ⚠ The **breadcrumb** still read `DumperTestActor0`, which is a historical crumb, not a stale cache — exactly the surface the step warns not to judge from. |
+> | 5 **U16** | 🟡 PARTIAL | **138** `ResolveEnumValue` lines in `walk-0.log`, **0** with `N != M`, and **0** `GetEnumEntries: … truncated read` in *any* log in the folder. Healthy tables are still cached. ⚠ Two gaps: the largest table seen is **26** entries (no `EPhysicalSurface`-scale enum exists in this sample, so "large" is only exercised to 26), and the **CE DropDownList half was not checked**. |
+>
+> **Unchanged by this run** (as the note below already says): U5, and the class-cache-name panels.
+
+<details><summary>Original U4 / U16 / U6 / F3 steps — kept for the method</summary>
+
+### (superseded) NEW 2026-08-17 — U4 / U16 / U6 / F3: the three never-erased caches in `Ubel`
 
 *Needs the DLL injected. See dev-log builds 3052 / 3058 / 3065. The C++ suite pins all three predicates
 (21 new assertions, 1073 → 1094); what it structurally cannot pin is the WIRING, because no test
@@ -2601,6 +2624,8 @@ target compiles `Ubel.cpp`. **Every step below is about the call sites, not the 
    publish gate did not stop caching healthy tables. Grep `walk-0.log` for
    `ResolveEnumValue: UEnum` — the line now reports `read N of M`, and **N must equal M**.
    Any `GetEnumEntries: ... truncated read` line is a real find, so record it.
+
+</details>
 
 **Still open after this batch, deliberately** — do not read a pass here as closing them:
 **U5** (nothing is freed; eviction is illegal while `WalkClassEx` returns a reference),
