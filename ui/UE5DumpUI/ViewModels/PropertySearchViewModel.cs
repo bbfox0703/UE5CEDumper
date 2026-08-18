@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.Linq;
-using Avalonia.Input.Platform;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -620,17 +619,23 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         NavigateToPivot?.Invoke(match.ClassName, match.PropName);
     }
 
+    /// <summary>
+    /// Copy the matched property's offset.
+    ///
+    /// <para>Routed through <see cref="IPlatformService.CopyToClipboardAsync"/> like
+    /// every other copy in the app. It used to reach into
+    /// <c>Application.Current…MainWindow.Clipboard</c> from the ViewModel and
+    /// fire-and-forget the returned <c>Task</c> — which broke the platform-abstraction
+    /// rule and, worse, discarded the failure: a clipboard that refused the write
+    /// produced an unobserved faulted task, so the button silently did nothing and
+    /// left no trace anywhere ([PASTECRASH-2026-08-18]).</para>
+    /// </summary>
     [RelayCommand]
-    private void CopyOffset(PropertySearchMatch? match)
+    private async Task CopyOffsetAsync(PropertySearchMatch? match)
     {
         if (match == null) return;
-        Avalonia.Input.Platform.IClipboard? clipboard = null;
-        if (Avalonia.Application.Current?.ApplicationLifetime
-                is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            clipboard = desktop.MainWindow?.Clipboard;
-        }
-        clipboard?.SetTextAsync(match.OffsetHex);
+        if (_platform is null || !await _platform.CopyToClipboardAsync(match.OffsetHex))
+            _log.Warn($"Copy Offset did nothing — the clipboard refused the write ({match.OffsetHex}).");
     }
 
     /// <summary>

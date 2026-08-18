@@ -90,16 +90,67 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
         return Path.Combine(GetAppDataPath(), Constants.LogFolderName, Constants.LogSubFolder);
     }
 
-    public async Task CopyToClipboardAsync(string text)
+    /// <summary>
+    /// Where a failed clipboard WRITE is reported. Set by the composition root once
+    /// the logger exists — this service is constructed BEFORE it (the log directory
+    /// comes from <see cref="GetLogDirectoryPath"/>), so it cannot be a constructor
+    /// parameter. Null means "not wired yet"; the copy still degrades safely, it is
+    /// just silent, which is the correct trade during the first milliseconds of
+    /// startup when nothing can copy anything anyway.
+    /// </summary>
+    public ILoggingService? Logger { get; set; }
+
+    /// <inheritdoc />
+    public Task<bool> CopyToClipboardAsync(string text)
     {
+        IClipboard? clipboard = null;
         if (Avalonia.Application.Current?.ApplicationLifetime is
             IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var topLevel = desktop.MainWindow;
-            if (topLevel?.Clipboard != null)
-            {
-                await topLevel.Clipboard.SetTextAsync(text);
-            }
+            clipboard = desktop.MainWindow?.Clipboard;
+        }
+
+        return CopyGuardedAsync(
+            clipboard is null ? null : () => clipboard.SetTextAsync(text), Logger);
+    }
+
+    /// <summary>
+    /// The guarded write itself, taking the clipboard call as a delegate so a test
+    /// can supply one that FAILS. There is no headless clipboard, so the only way to
+    /// exercise the failure path — the entire point of this code — is to inject it;
+    /// asserting on the shape of the source instead would prove nothing.
+    /// </summary>
+    /// <param name="setText">The clipboard write, or <c>null</c> when there is no
+    /// clipboard to write to.</param>
+    /// <param name="log">Where to report a refused write; may be null before the
+    /// composition root has wired it.</param>
+    internal static async Task<bool> CopyGuardedAsync(Func<Task>? setText, ILoggingService? log)
+    {
+        if (setText is null)
+        {
+            log?.Warn(Constants.LogCatView,
+                "Clipboard copy did nothing: no main window / no clipboard.");
+            return false;
+        }
+
+        try
+        {
+            await setText();
+            return true;
+        }
+        // Everything EXCEPT the never-swallow set, which stays loud here for the same
+        // reason it does in the read guard: an OOM or a trimming failure surfacing
+        // through the clipboard is still an OOM or a trimming failure.
+        catch (Exception ex) when (!Helpers.InputLayerFaultClassifier.IsNeverSwallowable(ex))
+        {
+            // Degrade to "the copy did nothing". Letting this escape would fault the
+            // AsyncRelayCommand that called it, which rethrows onto the dispatcher
+            // with our own frames on the stack — where the fault guard rightly
+            // refuses to swallow and the app terminates ([PASTECRASH-2026-08-18]).
+            log?.Warn(Constants.LogCatView,
+                $"Clipboard copy FAILED — nothing was copied, the app is unaffected. " +
+                $"{ex.GetType().FullName}: {ex.Message}");
+            return false;
         }
     }
 

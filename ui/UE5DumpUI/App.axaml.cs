@@ -61,14 +61,19 @@ public class App : Application
             var logDir = _platform.GetLogDirectoryPath();
             _logging = new LoggingService(logDir);
 
+            // The clipboard is now guarded at BOTH ends. Reads (Ctrl+V) surface as
+            // dispatcher faults and are handled by the guard below; WRITES go through
+            // the platform service, which needs somewhere to report a refused copy.
+            _platform.Logger = _logging;
+
             // Attach the dispatcher fault guard as soon as there is somewhere to
             // log to, and before any window exists — a clipboard/IME fault must
             // never again take the process down with it ([PASTECRASH-2026-08-18]).
             // The guard swallows ONLY faults the classifier positively identifies
             // as platform input-layer ones; everything else still crashes and still
-            // reaches crash.log.
-            _faultGuard = new DispatcherFaultGuard(_logging);
-            _faultGuard.Attach(Dispatcher.UIThread);
+            // reaches crash.log. Constructed and attached in ONE call so the
+            // subscription cannot be dropped on its own — see AppComposition.
+            _faultGuard = AppComposition.AttachDispatcherFaultGuard(_logging, Dispatcher.UIThread);
 
             // Two-connection lane router (interactive + bulk) — see
             // LaneRoutingPipeClient / docs/multipipe-eval.md §9.
@@ -173,6 +178,11 @@ public class App : Application
                 _pipeClient?.Dispose();
                 _aobMakerBridge?.Dispose();
                 _platform?.Dispose();
+
+                // Detach BEFORE the logger dies. Past this point the guard could
+                // still be invoked but could no longer report what it decided, and a
+                // swallow nobody can see is worse than the crash it prevents.
+                _faultGuard?.Detach(Dispatcher.UIThread);
                 (_logging as IDisposable)?.Dispose();
             };
 

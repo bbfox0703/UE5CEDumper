@@ -26,7 +26,7 @@ public sealed class MockPlatformService : IPlatformService
 
     /// <summary>Last text passed to <see cref="CopyToClipboardAsync"/> (null until first call).</summary>
     public string? LastClipboard { get; private set; }
-    public Task CopyToClipboardAsync(string text) { LastClipboard = text; return Task.CompletedTask; }
+    public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(true); }
     public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
     public string GetMachineName() => "TEST-MACHINE";
     public void CloseImeForWindow(IntPtr windowHandle) { }

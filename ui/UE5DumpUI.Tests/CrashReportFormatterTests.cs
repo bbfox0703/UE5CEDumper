@@ -43,27 +43,36 @@ public class CrashReportFormatterTests
     }
 
     [Fact]
-    public void StalePhaseMarker_IsReportedAsStaleRatherThanRepeated()
+    public void LongStartupPhase_ReportsBothReadingsWithoutAccusingTheMarker()
     {
-        // If the phase marker is never advanced, the honest answer is "unknown",
-        // not "startup" — otherwise the fix just re-creates the original defect in
-        // a new wording.
+        // A long-lived process still reading "Startup" is EITHER a stale marker or a
+        // genuinely slow cold start (first launch after an update, AV scanning the
+        // 54 MB AOT binary, a cold cache). The headline must surface both readings
+        // and commit to neither: asserting "the marker was never advanced" would
+        // print an accusation of a second defect on top of every slow-start crash —
+        // the same "state a guess as a fact" mistake as the hard-coded phrase this
+        // formatter replaced.
         var line = CrashReportFormatter.Headline(AppPhase.Startup, TimeSpan.FromMinutes(31));
 
-        Assert.Contains("never advanced", line, StringComparison.Ordinal);
-        Assert.Contains("UNKNOWN", line, StringComparison.Ordinal);
+        Assert.Contains("UNCERTAIN", line, StringComparison.Ordinal);
         Assert.Contains("31m 00s", line, StringComparison.Ordinal);
+        // Both possibilities are named...
+        Assert.Contains("genuinely that slow", line, StringComparison.Ordinal);
+        Assert.Contains("never advanced", line, StringComparison.Ordinal);
+        // ...and neither is asserted as the finding.
+        Assert.Contains("EITHER", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("UNKNOWN", line, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ShortStartupCrash_DoesNotTripTheStaleMarkerBranch()
+    public void ShortStartupCrash_DoesNotTripTheLongStartupBranch()
     {
         // Negative control for the branch above: a genuine startup crash inside the
         // window must read as an ordinary startup crash.
         var line = CrashReportFormatter.Headline(
             AppPhase.Startup, TimeSpan.FromSeconds(UE5DumpUI.Constants.CrashStartupPhaseMaxSeconds - 1));
 
-        Assert.DoesNotContain("never advanced", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("UNCERTAIN", line, StringComparison.Ordinal);
         Assert.Contains("during STARTUP", line, StringComparison.Ordinal);
     }
 

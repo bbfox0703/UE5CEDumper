@@ -68,8 +68,10 @@ internal enum InputFaultVerdict
 /// (<see cref="IsNeverSwallowable"/>) — memory corruption and
 /// trimming/AOT failures must always be loud, this repo especially.</item>
 /// <item>There is stack text at all. No evidence ⇒ no swallow.</item>
-/// <item><b>No frame belongs to us.</b> Any <c>UE5DumpUI.</c> frame means the
-/// fault passed through our code and is ours to fix, so it must still crash.</item>
+/// <item><b>No frame belongs to us.</b> Any <c>UE5DumpUI.</c> frame — or any frame
+/// from code GENERATED into our assembly, see
+/// <see cref="GeneratedOwnCodeMarkers"/> — means the fault passed through our code
+/// and is ours to fix, so it must still crash.</item>
 /// <item>A frame matches the allow-list below — a short, explicit set of Avalonia
 /// clipboard / IME types, pinned against the real Avalonia assemblies by
 /// <c>InputLayerFaultClassifierTests</c> so an Avalonia upgrade that renames one
@@ -94,6 +96,40 @@ internal static class InputLayerFaultClassifier
     private static readonly string OwnCodeMarker = Constants.AppName + ".";
 
     /// <summary>
+    /// Namespaces of code that is GENERATED INTO our assembly and therefore does
+    /// not carry the <see cref="OwnCodeMarker"/> prefix. Rule 3 ("no frame belongs
+    /// to us") reads the root namespace, so without these a fault raised inside a
+    /// compiled XAML binding would look like nobody's code and could be swallowed
+    /// under a clipboard-topped stack.
+    ///
+    /// <para>Measured, not guessed: the shipped assembly holds <b>47</b> types
+    /// outside <c>UE5DumpUI.*</c>, 35 of them under <c>CompiledAvaloniaXaml</c> —
+    /// <c>XamlIlTrampolines</c> and <c>XamlDynamicSetters</c> (the compiled-binding
+    /// property setters, where a binding type mismatch raises
+    /// <see cref="InvalidCastException"/>), plus <c>XamlIlContext</c>,
+    /// <c>!XamlLoader</c> and the per-view <c>!AvaloniaResources</c> loaders.</para>
+    ///
+    /// <para>This list only ever makes the guard REFUSE more, never swallow more —
+    /// it is an extension of the "our code is on the stack" rule, checked before the
+    /// input-layer allow-list. That is why an ambiguous owner is fine:
+    /// <c>CompiledAvaloniaXaml</c> also exists inside Avalonia's own themed
+    /// assemblies, and a fault in XAML-compiled code is application-level either
+    /// way — never the platform clipboard/IME plumbing this guard is scoped to.</para>
+    ///
+    /// <para>Deliberately NOT listed, though also generated into this assembly:
+    /// <c>&lt;PrivateImplementationDetails&gt;</c>,
+    /// <c>&lt;&gt;z__ReadOnlySingleElementList</c> and
+    /// <c>CommunityToolkit.Mvvm.ComponentModel.__Internals</c>. Those names are
+    /// emitted verbatim into MANY assemblies (the BCL's and Avalonia's included), so
+    /// a frame carrying one is not evidence about WHOSE code failed — and our own
+    /// generated property setters already appear as <c>UE5DumpUI.…set_X</c>.</para>
+    /// </summary>
+    internal static readonly string[] GeneratedOwnCodeMarkers =
+    {
+        "CompiledAvaloniaXaml.",
+    };
+
+    /// <summary>
     /// Avalonia TYPES whose frames identify a clipboard / IME fault. Full names as
     /// they appear in a runtime stack trace. Internal Avalonia types are fine —
     /// stack traces print them, and the pin test resolves them by reflection.
@@ -116,16 +152,75 @@ internal static class InputLayerFaultClassifier
     };
 
     /// <summary>
-    /// Avalonia METHODS (type + method name) that are clipboard entry points. The
-    /// three <see cref="Avalonia.Controls.TextBox"/> clipboard commands are the
-    /// user-visible triggers: Ctrl+X / Ctrl+C / Ctrl+V.
+    /// Avalonia METHODS (type + method name) that are clipboard entry points — the
+    /// user-visible triggers Ctrl+C and Ctrl+V.
+    ///
+    /// <para><b><c>TextBox.Cut</c> is deliberately absent, and must stay absent.</b>
+    /// It is the one of the three that MUTATES state around its await, so swallowing
+    /// its fault does not degrade to "the keystroke did nothing" — it leaves the
+    /// control inconsistent. Read out of the installed Avalonia 12.1.1 IL rather
+    /// than assumed (<c>TextBox+&lt;Cut&gt;d__233.MoveNext</c>):</para>
+    /// <code>
+    /// IL_0047 call TextBox.SnapshotUndoRedo          &lt;- before the await
+    /// IL_0069 call ClipboardExtensions.SetTextAsync
+    /// IL_0098 call AsyncVoidMethodBuilder.AwaitUnsafeOnCompleted
+    /// IL_00BE call TaskAwaiter.GetResult             &lt;- a clipboard failure throws HERE
+    /// IL_00C4 call TextBox.DeleteSelection           &lt;- never runs
+    /// </code>
+    /// <para>So a swallowed Cut pushes an undo snapshot that no edit ever matches.
+    /// The same read clears the other two: <c>Copy</c> mutates nothing at all, and
+    /// <c>Paste</c>'s <c>SnapshotUndoRedo</c> is at IL_0106 — AFTER its
+    /// <c>GetResult</c> at IL_00AD — so a failed clipboard read throws before any
+    /// state changes. Re-run that check before adding Cut back.</para>
     /// </summary>
     internal static readonly string[] MethodMarkers =
     {
-        "Avalonia.Controls.TextBox.Cut",
         "Avalonia.Controls.TextBox.Copy",
         "Avalonia.Controls.TextBox.Paste",
     };
+
+    /// <summary>
+    /// The same methods as <see cref="MethodMarkers"/>, spelled the way a stack
+    /// trace renders them when the async state machine is NOT unwrapped back into
+    /// its original method name — <c>TextBox.&lt;Paste&gt;d__235.MoveNext()</c>.
+    ///
+    /// <para><b>Why this is not paranoia.</b> Unwrapping <c>MoveNext</c> into
+    /// <c>Paste</c> costs the formatter a reflection walk over the declaring type
+    /// looking for the method whose <c>[AsyncStateMachine]</c> names this class.
+    /// That walk is exactly the shape Native AOT trims away, and this app SHIPS as
+    /// a Native-AOT trimmed binary — so the plain markers can match in every test
+    /// run (CoreCLR, unwrapped) and match nothing at all in the build users
+    /// actually run. All three clipboard entry points are <c>async void</c>
+    /// (verified: their builders are <c>AsyncVoidMethodBuilder</c>), so every one of
+    /// them is exposed to this.</para>
+    ///
+    /// <para>Two spellings per method because the two renderings differ in how the
+    /// nested state-machine type is joined to its declaring type: CoreCLR's
+    /// <c>StackTrace</c> does <c>FullName.Replace('+', '.')</c>, but the name is
+    /// <c>Avalonia.Controls.TextBox+&lt;Paste&gt;d__235</c> to reflection and to any
+    /// formatter that does not do that replacement.</para>
+    /// </summary>
+    internal static readonly string[] StateMachineMethodMarkers =
+        BuildStateMachineMarkers(MethodMarkers);
+
+    /// <summary>Turn <c>Ns.Type.Method</c> into the <c>Ns.Type.&lt;Method&gt;d__</c>
+    /// and <c>Ns.Type+&lt;Method&gt;d__</c> renderings. The trailing <c>d__</c> is
+    /// kept (without the ordinal, which changes on any Avalonia edit) so the marker
+    /// cannot match an ordinary method that merely starts with the same name.</summary>
+    private static string[] BuildStateMachineMarkers(string[] methodMarkers)
+    {
+        var built = new string[methodMarkers.Length * 2];
+        for (int i = 0; i < methodMarkers.Length; i++)
+        {
+            var marker = methodMarkers[i];
+            int cut = marker.LastIndexOf('.');
+            string type = marker[..cut];
+            string method = marker[(cut + 1)..];
+            built[i * 2] = $"{type}.<{method}>d__";
+            built[i * 2 + 1] = $"{type}+<{method}>d__";
+        }
+        return built;
+    }
 
     /// <summary>Bound on the exception graph walk — a cycle or a pathological
     /// AggregateException must not turn a crash handler into a hang.</summary>
@@ -247,6 +342,18 @@ internal static class InputLayerFaultClassifier
             return InputFaultVerdict.OurCodeOnStack;
         }
 
+        // Code generated INTO our assembly counts as ours too, and it does not carry
+        // the root-namespace prefix — see GeneratedOwnCodeMarkers. Checked here, with
+        // the own-code rule and BEFORE the allow-list, so it can only ever refuse.
+        foreach (var marker in GeneratedOwnCodeMarkers)
+        {
+            if (stackText.Contains(marker, StringComparison.Ordinal))
+            {
+                detail = "generated code from our own assembly is on the stack (" + marker + ")";
+                return InputFaultVerdict.OurCodeOnStack;
+            }
+        }
+
         foreach (var marker in TypeMarkers)
         {
             if (stackText.Contains(marker, StringComparison.Ordinal))
@@ -258,9 +365,20 @@ internal static class InputLayerFaultClassifier
 
         foreach (var marker in MethodMarkers)
         {
-            if (stackText.Contains(marker, StringComparison.Ordinal))
+            if (ContainsWholeMethodName(stackText, marker))
             {
                 detail = "input-layer frame: " + marker;
+                return InputFaultVerdict.InputLayer;
+            }
+        }
+
+        // Same methods, as an un-unwrapped async state machine — what the shipped
+        // Native-AOT build is liable to print instead of the plain name.
+        foreach (var marker in StateMachineMethodMarkers)
+        {
+            if (stackText.Contains(marker, StringComparison.Ordinal))
+            {
+                detail = "input-layer frame (state machine): " + marker;
                 return InputFaultVerdict.InputLayer;
             }
         }
@@ -268,6 +386,40 @@ internal static class InputLayerFaultClassifier
         detail = "no input-layer frame on the stack";
         return InputFaultVerdict.NotInputLayer;
     }
+
+    /// <summary>
+    /// Substring match for a METHOD marker, refusing a hit that runs on into a
+    /// longer identifier: <c>TextBox.Paste</c> must match <c>TextBox.Paste()</c> but
+    /// NOT a hypothetical <c>TextBox.PasteHistoryItem()</c>.
+    ///
+    /// <para>Found by a negative control, not by review — the plain
+    /// <c>string.Contains</c> this replaces accepted the longer name, which would
+    /// have quietly widened the swallow to a method nobody had reasoned about. The
+    /// boundary is the only tightening that cannot backfire: requiring a literal
+    /// <c>"("</c> instead would DISABLE the marker for any renderer that formats
+    /// frames without a parameter list, and a silently disabled guard is the exact
+    /// failure this whole class is written against.</para>
+    ///
+    /// <para>Deliberately not used for <see cref="TypeMarkers"/> (a type name is
+    /// legitimately a prefix of its own nested / generic spellings) nor for
+    /// <see cref="StateMachineMethodMarkers"/> (which END in <c>d__</c> and are
+    /// always followed by the compiler's ordinal digits, so a boundary test there
+    /// would reject every real match).</para>
+    /// </summary>
+    private static bool ContainsWholeMethodName(string stackText, string marker)
+    {
+        int at = 0;
+        while ((at = stackText.IndexOf(marker, at, StringComparison.Ordinal)) >= 0)
+        {
+            int after = at + marker.Length;
+            if (after >= stackText.Length || !IsIdentifierChar(stackText[after]))
+                return true;
+            at = after;
+        }
+        return false;
+    }
+
+    private static bool IsIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
     /// <summary>
     /// Exception types that must ALWAYS reach the crash handler, whatever the
@@ -286,8 +438,14 @@ internal static class InputLayerFaultClassifier
     /// Note <see cref="COMException"/> is deliberately NOT here even when its
     /// HRESULT is <c>E_OUTOFMEMORY</c> (0x8007000E, the captured case): that is a
     /// COM peer reporting ITS memory state, not this process running out.
+    ///
+    /// <para><b>Internal, not private</b>, because the same question is asked at the
+    /// other end of the clipboard: <c>WindowsPlatformService.CopyToClipboardAsync</c>
+    /// catches a failed WRITE so the Copy buttons degrade instead of killing the
+    /// process, and that catch must let this same set through. One list, so the two
+    /// halves of the clipboard cannot disagree about what stays loud.</para>
     /// </summary>
-    private static bool IsNeverSwallowable(Exception e) =>
+    internal static bool IsNeverSwallowable(Exception e) =>
         e is OutOfMemoryException            // + InsufficientMemoryException
           or StackOverflowException
           or AccessViolationException

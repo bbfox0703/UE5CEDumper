@@ -55,15 +55,25 @@ internal static class CrashReportFormatter
     {
         var when = FormatUptime(uptime);
 
-        // The phase marker never advanced past Startup, yet the process had been
-        // alive far longer than any startup takes. Report BOTH readings instead of
-        // trusting the stale one — this is the exact failure the honest-phase fix
-        // exists to prevent, so it must not be reproducible through the new path.
+        // The phase still says Startup, yet the process had been alive longer than a
+        // startup is expected to take. Report BOTH readings rather than trusting the
+        // one that might be stale.
+        //
+        // Hedged on purpose. This is a HEURISTIC over one threshold, and it has a
+        // legitimate false positive: a genuinely slow cold start — first launch after
+        // an update, a cold NTFS cache, AV scanning a 54 MB AOT binary, a network
+        // drive in the path — really can spend minutes still IN startup, and then the
+        // phase marker is correct and the crash really is a startup crash. Wording it
+        // as a finding ("the marker was never advanced") would put an accusation of a
+        // second defect at the top of every such report, which is the same category
+        // of mistake as the hard-coded "startup crash" this whole formatter exists to
+        // undo: stating a guess as a fact.
         if (phase == AppPhase.Startup &&
             uptime.TotalSeconds > Constants.CrashStartupPhaseMaxSeconds)
         {
-            return $"{Constants.AppName} crash — phase marker still says STARTUP after {when}; " +
-                   "the marker was never advanced, so treat the phase as UNKNOWN";
+            return $"{Constants.AppName} crash — phase still says STARTUP after {when}, which is " +
+                   "longer than startup normally takes; EITHER the start was genuinely that slow " +
+                   "OR the phase marker never advanced, so treat the phase as UNCERTAIN";
         }
 
         var phaseText = phase switch

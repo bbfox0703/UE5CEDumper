@@ -44,13 +44,41 @@ internal sealed class DispatcherFaultGuard
         dispatcher.UnhandledException += OnUnhandledException;
     }
 
+    /// <summary>
+    /// Unsubscribe. Called at shutdown BEFORE the logging service is disposed: past
+    /// that point the guard can no longer report what it did, and a swallow nobody
+    /// can see is worse than the crash it prevents. Detaching makes teardown
+    /// behaviour a stated decision instead of a side effect of object lifetimes.
+    /// </summary>
+    internal void Detach(Dispatcher dispatcher)
+    {
+        dispatcher.UnhandledException -= OnUnhandledException;
+    }
+
     private void OnUnhandledException(object? sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        // Avalonia's own guidance for this event: the handler must not be able to
-        // raise a secondary exception. Everything below is inside ShouldHandle's
-        // try/catch, so this assignment is the only work done here.
-        e.Handled = ShouldHandle(e.Exception);
+        if (NextHandledFlag(e.Handled, e.Exception))
+            e.Handled = true;
     }
+
+    /// <summary>
+    /// The set-only-true rule, as a function so it is reachable from a test —
+    /// <c>DispatcherUnhandledExceptionEventArgs</c> cannot be constructed outside
+    /// Avalonia.
+    ///
+    /// <para><b>Why it is not <c>e.Handled = ShouldHandle(...)</c>.</b> That form
+    /// writes the result unconditionally, so it can write <c>false</c> over a
+    /// <c>true</c> another subscriber already set — the event is multicast and the
+    /// invocation order is nobody's contract, so a second handler added later (or by
+    /// Avalonia itself) could have its decision silently revoked by ours. This
+    /// guard's job is to add a reason to swallow, never to remove one.</para>
+    ///
+    /// <para>An already-handled fault also short-circuits before
+    /// <see cref="ShouldHandle"/>, so <see cref="SwallowedCount"/> counts only
+    /// swallows THIS guard is responsible for.</para>
+    /// </summary>
+    internal bool NextHandledFlag(bool alreadyHandled, Exception? ex) =>
+        alreadyHandled || ShouldHandle(ex);
 
     /// <summary>
     /// The decision, split from the event so it is reachable from a test —
@@ -60,35 +88,80 @@ internal sealed class DispatcherFaultGuard
     /// </summary>
     /// <returns><c>true</c> to swallow the fault, <c>false</c> to let it terminate
     /// the process as before.</returns>
+    ///
+    /// <remarks>
+    /// <b>The verdict does not depend on the logger.</b> The classify step and the
+    /// log step used to share one try/catch, so a logger that threw — which is the
+    /// NORMAL state after <c>ShutdownRequested</c> disposes it — turned a swallow
+    /// into a crash. Whether a clipboard fault kills the app must not be a function
+    /// of how far through teardown the process happens to be, so the decision is
+    /// made first and logging is best-effort afterwards.
+    /// </remarks>
     internal bool ShouldHandle(Exception? ex)
+    {
+        var verdict = ClassifySafely(ex, out var detail);
+        bool swallow = verdict == InputFaultVerdict.InputLayer;
+
+        // Only now, with the decision fixed and unable to change below, does the
+        // counter move: it previously incremented BEFORE logging, so a throwing
+        // logger left a count of faults that were then rethrown anyway.
+        int n = swallow ? Interlocked.Increment(ref _swallowedCount) : 0;
+
+        TryLog(swallow, verdict, detail, ex, n);
+        return swallow;
+    }
+
+    /// <summary>Classify, treating a fault in the classifier itself as "cannot
+    /// prove it is safe" — the same fail-closed answer as no evidence.</summary>
+    private static InputFaultVerdict ClassifySafely(Exception? ex, out string detail)
     {
         try
         {
-            var verdict = InputLayerFaultClassifier.Classify(ex, out var detail);
+            return InputLayerFaultClassifier.Classify(ex, out detail);
+        }
+        catch (Exception classifierFault)
+        {
+            detail = "the classifier itself threw " + classifierFault.GetType().Name;
+            return InputFaultVerdict.NotInputLayer;
+        }
+    }
+
+    /// <summary>
+    /// Best-effort logging of a decision already made. Everything here can throw —
+    /// the logger may be disposed, and even <c>ex.Message</c> is user code on a
+    /// custom exception type — and none of it may change the outcome.
+    ///
+    /// <para>Both outcomes go to the SAME category (<see cref="Constants.LogCatView"/>).
+    /// They were split across <c>view</c> and <c>init</c>, which meant reading the
+    /// guard's story required two files and made the documented verification step
+    /// ("grep view-0.log") silently unable to see half of it.</para>
+    /// </summary>
+    private void TryLog(bool swallow, InputFaultVerdict verdict, string detail, Exception? ex, int n)
+    {
+        try
+        {
             var typeName = ex?.GetType().FullName ?? "(null)";
 
-            if (verdict == InputFaultVerdict.InputLayer)
+            if (swallow)
             {
-                int n = Interlocked.Increment(ref _swallowedCount);
                 _log.Warn(Constants.LogCatView,
                     $"Input-layer fault swallowed (#{n}) — the keystroke did nothing, the app is " +
                     $"still running. {typeName}: {ex?.Message} [{detail}]");
-                return true;
+                return;
             }
 
             // Not swallowed: this is on its way to crash.log. Log it here too so the
             // UI's own log carries the last thing the dispatcher saw — crash.log is
             // overwritten by the next crash, these files are not.
-            _log.Error(Constants.LogCatInit,
+            _log.Error(Constants.LogCatView,
                 $"Unhandled dispatcher exception, NOT swallowed ({verdict}: {detail}). " +
                 $"{typeName}: {ex?.Message}");
-            return false;
         }
         catch
         {
-            // A guard that throws would replace one crash with a worse one. Fail
-            // closed: let the original exception continue on its way.
-            return false;
+            // A guard that throws would replace one crash with a worse one, and this
+            // is the one place that can: Avalonia's guidance for this event is that
+            // the handler must not raise a secondary exception.
         }
     }
 }

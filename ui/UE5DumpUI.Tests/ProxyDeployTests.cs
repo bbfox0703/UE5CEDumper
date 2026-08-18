@@ -793,7 +793,7 @@ public class ProxyDeployTests
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => "";
         public string GetLogDirectoryPath() => "";
-        public Task CopyToClipboardAsync(string text) => Task.CompletedTask;
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "test";
         public void CloseImeForWindow(IntPtr windowHandle) { }

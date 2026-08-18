@@ -47,7 +47,7 @@ internal static class Program
             {
                 var logDir = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "UE5CEDumper");
+                    Constants.LogFolderName);
                 Directory.CreateDirectory(logDir);
                 File.WriteAllText(
                     Path.Combine(logDir, Constants.CrashLogFileName),

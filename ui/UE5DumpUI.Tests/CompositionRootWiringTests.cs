@@ -135,6 +135,65 @@ public class CompositionRootWiringTests : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // The dispatcher fault guard's attachment. Same class of defect as B27 above:
+    // a service that is constructed and then not connected to anything.
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// A guard that is never attached is indistinguishable from one that works —
+    /// no exception, no log line, nothing to notice — and the app quietly goes back
+    /// to dying on a bad paste ([PASTECRASH-2026-08-18]). Deleting the
+    /// <c>Attach</c> call used to fail no test at all.
+    ///
+    /// <para>Construction and subscription are now one call, and this exercises that
+    /// call — so the only way to lose the subscription is to delete the whole thing
+    /// from <c>App</c>, which is a visible edit rather than a silent one.</para>
+    /// </summary>
+    [Fact]
+    public void AttachDispatcherFaultGuard_ActuallySubscribes()
+    {
+        var dispatcher = Avalonia.Threading.Dispatcher.UIThread;
+
+        int before = FaultGuardSubscriberCount(dispatcher);
+        var guard = AppComposition.AttachDispatcherFaultGuard(new NoopLog(), dispatcher);
+        try
+        {
+            Assert.Equal(before + 1, FaultGuardSubscriberCount(dispatcher));
+        }
+        finally
+        {
+            // Dispatcher.UIThread is process-wide; leaving this attached would leak
+            // into every later test in this assembly.
+            guard.Detach(dispatcher);
+        }
+
+        // Detach is half of the same contract: the guard must be removable before the
+        // logger is disposed at shutdown, or it can be invoked with nowhere to report.
+        Assert.Equal(before, FaultGuardSubscriberCount(dispatcher));
+    }
+
+    /// <summary>
+    /// How many <see cref="DispatcherFaultGuard"/> handlers are on the dispatcher's
+    /// <c>UnhandledException</c> event. Counted by delegate TARGET rather than by
+    /// total length so an unrelated subscriber cannot make this pass or fail.
+    /// </summary>
+    private static int FaultGuardSubscriberCount(Avalonia.Threading.Dispatcher dispatcher)
+    {
+        var field = typeof(Avalonia.Threading.Dispatcher).GetField(
+            "UnhandledException",
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        Assert.True(field is not null,
+            "Avalonia's Dispatcher no longer exposes an 'UnhandledException' backing field, so " +
+            "this test can no longer see whether the fault guard is attached. Re-derive it before " +
+            "assuming the wiring is fine.");
+
+        var handler = field!.GetValue(dispatcher) as Delegate;
+        return handler is null
+            ? 0
+            : handler.GetInvocationList().Count(d => d.Target is DispatcherFaultGuard);
+    }
+
+    // ------------------------------------------------------------------
     // Local no-ops. The equivalents in MainWindowInjectHelperTests are private
     // nested types, so they cannot be shared without widening them.
     // ------------------------------------------------------------------

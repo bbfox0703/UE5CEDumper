@@ -18,7 +18,7 @@ public class TeleportHotkeyStoreTests
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
         public string GetLogDirectoryPath() => Dir;
-        public Task CopyToClipboardAsync(string text) => Task.CompletedTask;
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TEST";
         public void CloseImeForWindow(IntPtr windowHandle) { }

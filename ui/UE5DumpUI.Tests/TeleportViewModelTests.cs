@@ -226,7 +226,7 @@ public class TeleportViewModelTests
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => _dir;
         public string GetLogDirectoryPath() => _dir;
-        public Task CopyToClipboardAsync(string text) { LastClipboard = text; return Task.CompletedTask; }
+        public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(true); }
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TEST";
         public void CloseImeForWindow(IntPtr windowHandle) { }

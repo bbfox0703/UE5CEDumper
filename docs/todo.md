@@ -2215,33 +2215,44 @@ handle needs the record passed in, or the generated script must poll `isAbandone
 
 ### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PASTECRASH-2026-08-18]` — a clipboard paste must no longer terminate the UI
 
-*Needs the UI only — **no game, no DLL, no pipe**. Two halves shipped: a
-`Dispatcher.UIThread.UnhandledException` guard (`Services/DispatcherFaultGuard.cs`) that marks
-**only** classifier-confirmed input-layer faults handled, and a crash.log headline that states the
-real phase + uptime instead of the hard-coded phrase "startup crash".*
+*Needs the UI only — **no game, no DLL, no pipe**. Three halves now (a follow-up hardening pass
+landed on 2026-08-19): a `Dispatcher.UIThread.UnhandledException` guard
+(`Services/DispatcherFaultGuard.cs`) that marks **only** classifier-confirmed input-layer faults
+handled, a guard on the clipboard **WRITE** path (`WindowsPlatformService.CopyGuardedAsync`), and a
+crash.log headline that states the real phase + uptime instead of the hard-coded phrase "startup
+crash".*
 
-> **What is already pinned offline and must NOT be re-checked here:** the swallow SCOPE (52 unit
-> tests — `InputLayerFaultClassifierTests`, `DispatcherFaultGuardTests`, `CrashReportFormatterTests`
-> — including negative controls for a ViewModel `NullReferenceException`, a mixed our-code/clipboard
-> stack, eight never-swallow exception types, an over-deep exception chain, and an
-> `AggregateException` that tries to smuggle an unrelated fault through), plus a reflection test that
-> fails if Avalonia ever renames one of the allow-listed types. **What no offline test can reach** is whether Avalonia's dispatcher actually
-> raises `UnhandledException` for a fault arriving via `Task.ThrowAsync`, which is the entire premise
-> — that is step 2, and it is the only step that matters.
+> **What is already pinned offline and must NOT be re-checked here:** the swallow SCOPE (92 unit
+> tests — `InputLayerFaultClassifierTests`, `DispatcherFaultGuardTests`, `ClipboardWriteGuardTests`,
+> `CrashReportFormatterTests` — including negative controls for a ViewModel
+> `NullReferenceException`, a mixed our-code/clipboard stack, eight never-swallow exception types, an
+> over-deep exception chain, an `AggregateException` that tries to smuggle an unrelated fault
+> through, and a marker that must not match a longer method name), plus reflection tests that fail if
+> Avalonia renames an allow-listed type or drops one of the async state machines. **What no offline
+> test can reach** is whether Avalonia's dispatcher actually raises `UnhandledException` for a fault
+> arriving via `Task.ThrowAsync`, which is the entire premise — that is step 2, and it is the only
+> step that matters.
 >
 > ⚠ Step 2 needs the clipboard to genuinely fail. Two ways that both work: hold the clipboard open
 > from another process (`OpenClipboard` without `CloseClipboard`), or copy from an app that uses
 > delayed rendering and close that app before pasting.
+>
+> ⚠ **Everything the guard logs — swallowed AND refused — goes to `view`.** The two outcomes used to
+> split across `view-0.log` and `init-0.log`, so grepping one file showed half the story. Grep
+> `Logs\UE5DumpUI\view-0.log` only.
 >
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | 1 | start the UI, copy ordinary text, `Ctrl+V` into any filter box | the text pastes | baseline — the guard must not have broken normal paste |
 > | 2 ⚠ THE ONE THAT MATTERS | make the clipboard unreadable (above), then `Ctrl+V` into a filter box | **the app is still running**, the box is unchanged, and `Logs\UE5DumpUI\view-0.log` gains `Input-layer fault swallowed (#1)` | this is the crash, reproduced; before the fix the process died here |
 > | 3 | repeat step 2 a few times, then release the clipboard and paste again | counter climbs (`#2`, `#3`…), then a normal paste works | the guard is not one-shot and leaves nothing wedged |
-> | 4 | `Ctrl+C` and `Ctrl+X` in a text box while the clipboard is unreadable | same: alive, logged, no crash | the other two clipboard commands go through the same allow-listed frames |
+> | 4 | `Ctrl+C` in a text box while the clipboard is unusable | same: alive, logged, no crash | `Copy` is the other allow-listed command. **`Ctrl+X` is NOT — see step 4b** |
+> | 4b ⚠ EXPECTED, not a defect | `Ctrl+X` in a text box while the clipboard is unusable | the app **terminates**, and `crash.log` names the COM fault | `TextBox.Cut` is deliberately outside the swallow: its IL calls `SnapshotUndoRedo` BEFORE the await and `DeleteSelection` after, so swallowing leaves an undo snapshot no edit matches. Copy mutates nothing and Paste snapshots only after its `GetResult`, which is why those two are in. If this is judged the wrong trade, it is one line — re-add `"Avalonia.Controls.TextBox.Cut"` to `MethodMarkers` |
+> | 4c ⚠ NEW, the WRITE half | with the clipboard unusable, press any **Copy** button (Pointer panel addresses, a Live Walker row, Property Search → Copy Offset) | **the app is still running**, nothing is copied, and `view-0.log` gains `Clipboard copy FAILED — nothing was copied` | ~60 Copy buttons went through an unguarded `SetTextAsync`; a faulted `AsyncRelayCommand` rethrows onto the dispatcher WITH our frames on it, so the read guard is structurally obliged to refuse it and the app died. Only the write guard can stop this one |
 > | 5 | launch a SECOND copy of the UI (the known duplicate-launch crash) and read `%LOCALAPPDATA%\UE5CEDumper\crash.log` | headline reads `UE5DumpUI crash during STARTUP (uptime 0.??s)` — **not** the old fixed phrase | the honest-phase half, on the one crash that is reproducible on demand |
 > | 6 ⚠ control | with an IME active, type into a filter box normally | text arrives as usual; **no** `Input-layer fault swallowed` line appears | proves the guard is dormant when nothing fails — a line here would mean it is swallowing healthy input |
 > | 7 ⚠ control, opportunistic | the next time the UI crashes for any reason after startup, read `crash.log` | it says `while RUNNING` (or `during SHUTDOWN`) with a real uptime | proves the phase marker advances; cannot be forced, so tick it when it happens |
+> | 8 ⚠ control, opportunistic | if a crash report ever opens `phase still says STARTUP after …` | read it as UNCERTAIN, not as a second defect | the stale-marker branch is a HEURISTIC over a 60 s threshold, and a genuinely slow cold start trips it honestly; the wording now names both possibilities instead of accusing the marker |
 
 ### ⛔ NEW 2026-08-18 `[PIPEBUSY-2026-08-18]` — at-capacity is logged as an ERROR once per second, forever
 

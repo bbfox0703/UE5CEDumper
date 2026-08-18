@@ -29,7 +29,7 @@ public class PointerPanelScanMethodTests
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => Path.GetTempPath();
         public string GetLogDirectoryPath() => Path.GetTempPath();
-        public Task CopyToClipboardAsync(string text) => Task.CompletedTask;
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TESTHOST";
         public void CloseImeForWindow(IntPtr windowHandle) { }

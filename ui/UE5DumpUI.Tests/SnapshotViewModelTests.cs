@@ -912,7 +912,7 @@ public class SnapshotViewModelTests : IDisposable
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => _appData;
         public string GetLogDirectoryPath() => Path.Combine(_appData, "Logs");
-        public Task CopyToClipboardAsync(string text) => Task.CompletedTask;
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TEST-MACHINE";
         public void CloseImeForWindow(IntPtr windowHandle) { }

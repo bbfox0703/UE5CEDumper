@@ -28,8 +28,25 @@ public interface IPlatformService
     /// <summary>Get the log directory path.</summary>
     string GetLogDirectoryPath();
 
-    /// <summary>Copy text to clipboard.</summary>
-    Task CopyToClipboardAsync(string text);
+    /// <summary>
+    /// Copy text to the clipboard. Returns <c>true</c> only when the text actually
+    /// reached the clipboard; <c>false</c> means the copy did nothing.
+    ///
+    /// <para><b>Never throws for an ordinary clipboard failure</b>, and that is the
+    /// contract, not an implementation detail. A clipboard write can fail for
+    /// reasons that have nothing to do with this app (another process holding the
+    /// clipboard open, an OLE source that went away), and every caller here is an
+    /// <c>[RelayCommand]</c>: CommunityToolkit's <c>AsyncRelayCommand</c> rethrows a
+    /// faulted command onto the dispatcher, where the fault carries OUR frames, so
+    /// <c>InputLayerFaultClassifier</c> correctly refuses to swallow it and the
+    /// process dies. Copy is on ~60 buttons; a momentarily busy clipboard must not
+    /// be able to close the app from any of them ([PASTECRASH-2026-08-18]).</para>
+    ///
+    /// <para>Faults that mean the process is no longer trustworthy
+    /// (<c>InputLayerFaultClassifier.IsNeverSwallowable</c>: OOM, access violation,
+    /// trimming/AOT damage) still propagate — those must stay loud everywhere.</para>
+    /// </summary>
+    Task<bool> CopyToClipboardAsync(string text);
 
     /// <summary>Open the OS file browser at <paramref name="path"/>: reveal/select the
     /// file if it exists, otherwise open the containing directory. Never throws.</summary>
