@@ -26,7 +26,33 @@ launched without a human, and what must never be started without one.
   survive a *session* (a compaction is not a new session, but a restart is) — re-request per §3 if
   `request_access` starts failing.
 
-### ✅ GROUP 5 IS DONE (2026-08-18). ▶ NEXT: GROUP 6 (Cheat Engine + Elliot)
+### ✅ GROUP 5 DONE · GROUP 6 PART-DONE (2026-08-18). ▶ NEXT: finish GROUP 6
+
+**GROUP 6 closed so far, all on Elliot via its deployed `dxgi` proxy:**
+* **`B4` ✅ — open since build 2592, arming line captured for the first time.** Vehicle: a
+  **single synchronous** `begin_value_scan` (~700 ms with Parallel/Batch off), with the kill fired
+  **from the log** via `tools/verify/kill_on_marker.py`. ⛔ **`trigger_scan` is ASYNC and cannot arm
+  the latch** — a third trap alongside Dump All and Snapshot capture, and the one that looks most
+  like the ideal vehicle.
+* **`B5` ✅ — the concurrent-`UE5_Init` handshake.** Needs **three `createThread` calls fired
+  together**; a UI-then-CE sequence and a 60-iteration CE loop both failed to produce it.
+  **Concurrency has to be constructed, not hurried.**
+* **`executeCodeEx` 5000 ms ✅** — 844 ms for a full `Actor` dissect at 85 K objects.
+  ⛔ **Its negative control is REFUTED**: suspending the process does **not** cause a timeout
+  (`executeCodeEx` runs on a *new* remote thread). Same trap the plan already flags for AA14–AA20
+  step 5. Rewrite it to suspend the **game thread** and invoke through `Stark`.
+
+**Still to run in GROUP 6:** `G10/MA1` (needs a deliberate hint-cache miss — §4.2) · `AA14–AA20`
+(⚠ **Elliot has never installed its PE hook** — nothing has invoked yet; `pe_hook_survey.py` lists
+only Lushfoil as verified-good) · `G2` speed-split · `ST1` *(human-gated)*. **`Y1` also still needs
+an invoke host — use Lushfoil.**
+
+ℹ️ **Epic Games Launcher was closed** mid-session: it repeatedly stole foreground and made
+computer-use refuse every click. Reopen it freely; nothing depended on it.
+
+---
+
+### ✅ GROUP 5 IS DONE (2026-08-18)
 
 **Closed this sitting:** `M1/M3/A2/U1/V1` + `U3` steps 1–2 · `AA1` · `Y15` (step 6 skipped, no
 4-byte enum) · `U4/U6/F3` · `executeCodeEx` basic path (all 3 steps) · `AA7` step 4 → **AA4–AA7 is
