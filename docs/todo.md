@@ -3246,7 +3246,7 @@ refusal naming the substitute, NOT a silent nothing), AE8 (a rejected scan click
 appear in the diagnostics measurement list), AF1 (needs a malformed UEnum — not reproducible on
 demand), U7's sibling paths.
 
-### 🟡 4-of-5 CLOSED 2026-08-18 — install the plugin into a REAL Cheat Engine (audit #5 AB1, build 2913)
+### ✅ 5-of-5 CLOSED 2026-08-18 — install the plugin into a REAL Cheat Engine (audit #5 AB1, build 2913)
 
 We were crashing CE by leaving a 1 ms-poll thread running in an image CE unloads. The fix stops
 creating threads in a CE host and pins the module elsewhere. **The unload paths were read out of CE's
@@ -3296,7 +3296,7 @@ This is the one verification in the register that needs **no game at all**.
 > | 2 | ✅ **PASS, all three halves** | Ticked it → OK: CE's menu bar gained a **`Plugins`** menu, i.e. the CE entry points ran. **Closed CE normally → clean exit**: process gone, and `Get-WinEvent` over the Application log for the preceding 10 minutes returned **no** `cheatengine` entry. **Settings survived**: `HKCU\Software\Cheat Engine\Plugins64` gained `00000002 A = …\UE5Dumper.dll`, `00000002 B = 1` — written *at exit*, which is the point, since the unload runs before CE writes them. **Re-opened** (new PID 36608) → the plugin auto-loaded enabled and logged `CEPlugin: InitializePlugin pluginid=2 menuItemId=1 ef_size=1272` |
 > | 3 | ✅ **PASS** | A `Logs\cheatengine-x86_64\` folder appeared, and `init-0.log` carries the guard verbatim: `[WARN] [INIT] DllMain: host is Cheat Engine — NOT starting the mailbox poller or the auto-start thread. CE FreeLibrary's plugin DLLs (on Settings→Add and on exit), and a thread left running in an unmapped image takes CE down with it. …` It fired on **both** loads (the Add, and again on the re-open) |
 > | 4 | ✅ **PASS on the injection half; the APC half is UNREACHABLE — see below** | Elliot, **proxy temporarily moved aside** so the injection is genuine (see the trap below). `Plugins → UE5CEDumper: Inject & Connect` → dialog inside 3 s: *"DLL injected — GObjects/GNames scan started in the background."* **AB2's async is measured, not assumed**: `Injecting into PID=12780` 17:05:54.151 → `InjectDLL returned` .248 (**97 ms**), while the scan only finished at **17:05:58.596** — 4.4 s later, i.e. well past the 1 s APC / 10 s normal window CE frees the stub in. **Game did not crash**: alive and `Responding: True` **6 minutes** later, no Application event-log entry. **Pipe opened** (`get_pointers` returned live pointers). **Mailbox poller started IN THE GAME** (`Mailbox: polling thread started (poll=1ms)`) while CE's own log carries the refusal — the exact contrast AB1 is about. **CE Lua reaches it**: `g_invokeMailbox = 7FFE944CC610` |
-> | 5 | ⬜ not run | The `…\Cheat Engine 7.7\Game.exe` folder-name negative case |
+> | 5 | ✅ **PASS, with a discriminating control** | Two hosts, **same DLL, same injector, same minute**, differing only in the executable leaf. **A** = `out\Cheat Engine 7.7\Game.exe` → `Mailbox: polling thread started (poll=1ms)` and **no** guard line, i.e. a folder literally named *Cheat Engine 7.7* does **not** cost the poller. **B (control)** = `out\plainhost\cheatengine-x86_64.exe` → the guard fired (`DllMain: host is Cheat Engine — NOT starting the mailbox poller…`) and **zero** poller starts. Both hosts were copies of `cmd.exe`, so B also shows the match is on the **name**, not on really being CE |
 >
 > ### ⭐ The BOOL-vs-observation fix, demonstrated live — this is the strongest single result here
 >
@@ -3336,6 +3336,19 @@ This is the one verification in the register that needs **no game at all**.
 > 2. **CE attached BEFORE the injection has a stale symbol list.** `getAddressSafe('g_invokeMailbox')`
 >    returned **nil** until `reinitializeSymbolhandler()`, after which it resolved. With a proxy the
 >    DLL is present before CE attaches, which is why the earlier invoke rows resolved it immediately.
+>
+> ### ⭐ Why step 5 needed a control, and the staging that made it cheap
+>
+> `Grimoire.h:441` `HostAllowsBackgroundThreads` takes the **full** host path and `IsCheatEngineExeName`
+> matches a **prefix of the LEAF** — so "path contains Cheat Engine" and "exe is named cheatengine*"
+> are different questions, and only a **pair** of hosts separates them. Host A alone could pass simply
+> because the guard never fires for anything; host B is what shows the check can fail.
+>
+> ⚠ **Staging note for a re-run: `notepad.exe` and `charmap.exe` from System32 DO NOT WORK as hosts.**
+> Copied elsewhere they exit immediately (Notepad is a Store stub). `cmd.exe` copied to the target name
+> and launched as `Start-Process … -ArgumentList '/k','timeout /t 900'` stays alive and is enough — the
+> guard only reads the host path, so the host does not need to be a UE game at all. The UE scan then
+> fails in that host, which is expected and irrelevant to this step.
 >
 > **State left exactly as found**, verified against a baseline captured before the run: the plugin was
 > deleted, and `Plugins64` is byte-identical to `out\ce-plugin-test\plugins64-before.txt`
