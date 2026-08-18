@@ -3700,6 +3700,51 @@ at the Lua expression; everything after it — the mailbox write, the DLL's `CMD
 > by the `Param` column, then confirm the type and offset in the `AA(Baked)` dialog — it prints
 > `[UObject*: …, 8B, off=N]` — and only then drive `INV`. **Steps 3 and 4 remain unrun**: with no
 > argument-carrying target, neither the effect-confirmation nor the `0x0` null control is meaningful.
+>
+> ### 🔁 SECOND ATTEMPT — a qualifying target WAS found, and the witness turned out to be invalid
+> `[ELLIOT-Y1b-2026-08-18]`
+>
+> **Finding the target is solved and cheap** — do it over the pipe, not by clicking:
+> `walk_functions {addr: <class_addr>}` returns each function's `num_parms` **and** a `params[]` list
+> with `type`/`offset`/`ret`; a real parameter is one of the **first `num_parms` entries**. Screening
+> the classes that had live non-CDO instances produced **38** functions with a genuine object
+> parameter. Script kept at `out/ce-plugin-test/find_y1_target.py`.
+> ⚠ `walk_function_props` is **not** the parameter list — it is Denken's property-xref walk
+> (`scope`, `occurrences`, `offset:-1`). Using it here returns nothing and looks like "no candidates".
+>
+> **Target used:** `AttackCollisionData::SetOwnerClass` — `num_parms=1`, the single param
+> `OwnerClass [ObjectProperty, off=0]`, **native** (`flags=0x4020401`), on a live instance
+> `0x1C1FED3200` whose own `OwnerClass` field (`+0x1F8` → `0x1C1FED33F8`) read **all zeros** first,
+> in both `read_mem` and the Live Walker grid. A perfect-looking witness: baseline zero, so any
+> non-zero could only come from the typed value.
+>
+> **What ran:** `INV` → CE form with exactly one field `OwnerClass [UObject*]` → typed
+> `0x3C8940A30` (a real `UClass`) → FIRE → `Mailbox: INVOKE inst=0x1C1FED3200
+> func=0x7FF4DE4B6A48`, `result=0`.
+>
+> ⛔ **And the witness is INVALID — which is the actual result of this attempt.** Both `OwnerClass`
+> and `paramsData` read back zero, which *looks* exactly like the old bug (`tonumber('0x…',16)` →
+> nil → 0). It is not. Four checks, in order:
+> 1. **The emitted script is the FIXED form.** Dumped from the CE record itself
+>    (`out/ce-plugin-test/inv_script.txt`, 11,900 chars), line 251:
+>    `writeQword(PD + 0, (function() local s = edits[1].Text or ''; … local h = s:match('^0[xX](%x+)$'); if h then return tonumber(h,16) or 0 end; …)())`
+>    with `local PD = mb + 0x328` — the prefix IS stripped before `tonumber(h,16)`.
+> 2. **That expression parses correctly in CE's own Lua**: `PARSE of 0x3C8940A30 -> 16250047024 (0x3C8940A30)`.
+> 3. **My reader and the address are sound** — negative control: `writeQword(mb+0x328, 0xDEADBEEF)`
+>    then `read_mem` shows `0x00000000DEADBEEF`; a plain write of `0x3C8940A30` reads back
+>    `0x00000003C8940A30`. The address `mb+0x328` is confirmed against `Mimic.h` (`paramsData` @ 0x328),
+>    and the header survived the call (`instanceAddr`/`ufuncAddr`/`parmsSize=8`/`numParms=1` all correct).
+> 4. ⇒ **`paramsData` is cleared by the invoke path**, so reading it *after* the call cannot witness
+>    what was passed — and `SetOwnerClass` does not store into the `OwnerClass` field either.
+>
+> ▶ **Next attempt needs a witness that SURVIVES the call**, and the two that would:
+> * **Freeze the game thread and read `paramsData` while the DLL is still blocked** — exactly the
+>   AA14-AA20 step-5 staging (`set_invoke_timeout` well above the Lua's 10 s, `suspend.py suspend-tid`
+>   on a thread picked **by fire-rate**). ⚠ This needs `hook_active: true`; on this launch the hook
+>   again failed with `MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`, so **restart until it installs**.
+> * Or a function that **persists** its object argument somewhere readable (verify by reading the
+>   field back, not by assuming a setter stores it — `SetOwnerClass` did not).
+
 
 
 
