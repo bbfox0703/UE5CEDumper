@@ -3063,7 +3063,63 @@ instances.
    Lua console to print `... consecutive rescans failed -- freeze STOPPED writing` **once** within
    ~15 s, and no further writes.
 
-### ⬜ NEW 2026-08-15 — freeze a PACKED bitfield bool and check its 7 siblings survive (audit #5 AA1, build 2922)
+### ✅ DONE 2026-08-18 — freeze a PACKED bitfield bool and check its 7 siblings survive (audit #5 AA1, build 2922)
+
+> **Ran on DumperTest Development, dist 3262, CE 7.7 attached.** All five steps pass, and the
+> DLL→UI half the box was waiting on is now witnessed: a real packed bool's mask reached the UI.
+>
+> | step | result |
+> |---|---|
+> | 1 | Property Search `bAlwaysRelevant` → **`Actor / BoolProperty / 0x58 / size 1`**. Row's **Freeze** button (visible only after collapsing the Object Tree — it lives in a per-row cell, not the toolbar) → dialog reads `Type: BoolProperty -> bool`, `Offset: 0x58`, value pre-filled **`true`**, hint *"Accepts: true / false / 1 / 0"*. → `Freeze script created in CE: Freeze: Actor::bAlwaysRelevant = true`. |
+> | 2 | ✅ **The mask arrives.** Generated CFG: `boolMask = 0x08,  -- packed bitfield: only this bit is written`. `0x08` = bit 3, which is `bAlwaysRelevant`'s bit as Live Walker independently reports it. |
+> | 3–5 | ✅ **Only the masked bit ever moves**, shown by *two* transitions rather than one baseline — the freeze had already been running, so a single before/after could not prove the neighbours predated it. Editing the CFG's `value` and re-arming gave, at `ChaosDebugDrawActor+0x58` (read with `tools/verify/read_mem.py`, not from a panel): **`0x6A` → (false) `0x62` → (true) `0x6A`**. `b1`, `b5`, `b6` are set throughout and never move; only `b3` follows the frozen value. The pre-fix whole-byte write produces `0x01`/`0x00`, and step 5's specific trap — a non-`0x01` mask leaving the target bool unset — is excluded because `b3` tracks the value in both directions. |
+>
+> ⚠ **Which instance it held is the incidental finding below** — not `DumperTestActor_0`.
+
+### ⛔ NEW 2026-08-18 `[FREEZESCOPE-2026-08-18]` — Freeze holds the DECLARING class only; the Force submenu beside it does not
+
+*Found while measuring AA1: the freeze was armed and ticking, yet `DumperTestActor_0`'s byte never
+moved. It was working correctly — on a different object.*
+
+**Observed.** `Freeze: Actor::bAlwaysRelevant = true` armed cleanly and rescanned every 5 s, and
+`Logs\DumperTest\pipe-0.log` shows each pass as:
+
+```
+Mailbox: LIST_INSTANCES class='Actor' page=0
+Mailbox: LIST_INSTANCES returned 1/1 (page 1/1) classWitness=0x1F140CCB800
+```
+
+**1 of 1**, in a level whose GObjects pool holds 25,179 objects. Instances → `Actor` with **Exact
+match** on returns exactly two: `ChaosDebugDrawActor` and `Default__Actor` (the CDO, correctly
+skipped). So the freeze held one incidental debug actor, and every `AActor` subclass in the level —
+including the `DumperTestActor` the user was looking at — was untouched.
+
+**Mechanism, and it is deliberate at the bottom of the stack.** `Mimic.cpp:763` calls
+`Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/2000)`, and
+`scripts/ue5_freeze_helper.lua:43-44` documents its own contract as *"exact UE class name … exact
+match, case-insensitive"*. Nothing here is malfunctioning.
+
+**The defect is in the handoff.** A Property Search row for an **inherited** field is keyed to the
+class that DECLARES it, so `bCanBeDamaged` / `bHidden` / `bReplicates` — the three fields this very
+checklist recommends for the test — all present as class `Actor`. Feeding that name to an
+exact-match pool is the failure audit #5 **A6** already identified and fixed for `Solide` (build
+3036: `Aura::FindInstancesDerivedFrom`, a super-chain test with a per-`UClass` verdict cache). **The
+Force submenu and the Freeze button sit on the same row of the same panel and now scope
+oppositely** — Force walks subclasses, Freeze does not.
+
+**Failure scenario.** A user right-clicks their pawn's `bCanBeDamaged` in Property Search, freezes it
+to `false`, sees CE report the record active (a red ✗ — see `[FREEZESTUCK-2026-08-18]`), and takes
+damage anyway. Nothing reports a problem: the helper's own "armed, N instances" message is truthful
+about the pool it was given.
+
+**Fix shape (not applied).** Either give the mailbox `LIST_INSTANCES` an opt-in derived flag routed
+to `Aura::FindInstancesDerivedFrom` (the function exists and is already cached) and have the Freeze
+generator set it, or — cheaper and honest — have the Freeze dialog say which class it will hold and
+warn when the row's declaring class differs from the class the user navigated from. Effort **M**,
+risk **MED** (a derived sweep off `Actor` reaches the 2000 cap, so it needs `Solide`'s
+`truncated` treatment too).
+
+### ⬜ SUPERSEDED — original AA1 steps, kept for the method
 
 Sibling of the Y15 check below, same panel, same failure shape — a whole-byte write over a field that
 does not own the whole byte. Freezing a `BoolProperty` now emits `boolMask` into the generated CFG and
