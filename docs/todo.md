@@ -3913,6 +3913,50 @@ Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogw
 > that the pure logic already has three unit-tested negative controls is the right place for it.**
 > Rewrite step 5 as *"confirm the CAVEAT is what a past-cap miss reports"* — which is what passed here.
 
+> ### ⛔ EVERSPACE 2 ALSO FAILS STEP 4 — and the reason looks STRUCTURAL `[ES2-X2-2026-08-18]`
+>
+> ES2 (UE **505**, **1,150,301** objects, in-game) is the best candidate yet on the first criterion:
+> Interesting Funcs reads **`29805 functions across 6324 classes`** — comfortably over 5,000, while
+> the Classes tab reads `5000 … ⚠ STOPPED`, which is `[CLASSTOTAL]` in one screenshot.
+>
+> **But its exec commands are on a class INSIDE the cap, so it decides nothing.** Console → Game Only
+> finds **6** exec commands, all on **`ESGameInstance`** — and that class sits at **index 22** of the
+> walk. Every exec-bearing class that actually exists is inside:
+>
+> | class | idx | inside cap |
+> |---|---|---|
+> | `ESGameInstance` | **22** | ✓ |
+> | `ESPlayerController` | 25 | ✓ |
+> | `PlayerController` / `Character` / `WorldSettings` | 64 / 68 / 71 | ✓ |
+> | `AISystem` / `GameInstance` / `CheatManager` | 1034 / 2266 / 2745 | ✓ |
+>
+> ▶ **The structural claim this suggests, and it should be tested before another host is hunted:**
+> `UFUNCTION(exec)` lives on **long-lived singletons constructed at startup**, which is exactly what
+> puts them at the FRONT of GObjects — so they are inside the first 5,000 *by construction*. A
+> past-cap class is by definition late-registered (a `BP_*_C` loaded with content), and Blueprint
+> classes essentially never declare native exec commands. **Step 4 may therefore be near-unstageable
+> on any title**, not merely on Elliot and ES2. If so, the honest resolution is to close it against
+> the shared fix (below) rather than keep hunting.
+>
+> **What ES2 does establish, even vacuously:** the Console **AA(B)** twin resolves a class and opens
+> its dialog — `Invoke: ESGameInstance::SetRichPresence`, `(ParmsSize=4)`,
+> `PresenceId [int32, 4B, off=0]` — and **Copy AA Script** produced a complete, well-formed script
+> (`AA Script ready: …`; AOBMaker offline so it went to the clipboard, read back and checked: correct
+> `invokeUFunction('ESGameInstance','SetRichPresence', 4, PARAMS)`, the helper-file guard, and the
+> untick-on-bail-out shape). The two twins share the class-address resolution the fix changed, so
+> this is evidence the Console path works — it just cannot be *past-cap* evidence here.
+> ⚠ Nothing was fired: these commands have real side effects (`SetAchievement`,
+> `UnlockAllAchievements` touch the user's Steam account). The defect is in resolving the class
+> **before** FIRE, so opening the dialog is the whole check.
+>
+> ### ⚠ MY OWN ERROR, recorded because it is the same shape as the trap this row keeps hitting
+> I first read the class as **`ES2GameInstance`** off a 0.6-scale screenshot (the package is `ES2`,
+> the class is `ESGameInstance`) and membership-tested *that*. It came back "not in the capped page"
+> — **because it does not exist at all** — and I reported ES2 as qualifying. A nonexistent name is
+> absent from every list, which is indistinguishable from "past the cap". **Always confirm the class
+> EXISTS before concluding it is past the cap**; `find_instances` answers it in one call, and the
+> corrected table above pairs `exists` with `inside cap` for exactly this reason.
+
 ### ✅ DONE 2026-08-18 `[ELLIOT-Y1c-2026-08-18]` — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
 
 The invoke form passed **0** for every `UObject*` / `FName` argument since the feature shipped;
