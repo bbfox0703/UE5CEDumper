@@ -2376,9 +2376,27 @@ and is decisive — this is the rare case where the regression was captured befo
    20:49) answered `Hint HIT: 'GOBJ_ES53_1'`, plus `Hint HIT` on `GNAM_V8` and `GWLD_TQ_1`, and
    **`NONE validated` appears nowhere in any of the three logs.** That is the shipped bug's exact
    shape, exercised and clean.
-2. **G10 — the count no longer lies.** In `scan-0.log`, a `Hint MISS` line now reports the real match
-   count (`(%zu matches, none validated; …)`). It must never say `1 match` for a pattern the cold run
-   logged with hundreds — that mismatch is what hid this defect for months.
+2. 🟡 **G10 — the count no longer lies. NOT DECIDABLE ON ELLIOT — use DumperTest.** In `scan-0.log`,
+   a `Hint MISS` line must report the real match count (`(%zu matches, none validated; …)`) and never
+   say `1 match` for a pattern the cold run logged with hundreds.
+   **Why Elliot cannot answer it (measured 2026-08-18).** A `Hint MISS` *is* stageable here — writing
+   `gNames.patternId = "GNAM_V7"` into the cache would produce one, because every cold run logs
+   `[GNames] GNAM_V7 hits=1 (not validated)`. But its **true count is 1**, so a correct
+   implementation and the broken "always 1" one print the *same line*. That is a confounded probe
+   (working-lessons §1.10a) and would return PASS either way.
+   The full per-pattern table from Elliot's cold scan, which is what rules it out:
+
+   | target | pattern | hits |
+   |---|---|---|
+   | GObjects | `GOBJ_ES53_1` | **74** — but it **validates**, so hinting it gives a `Hint HIT`, not a MISS |
+   | GNames | `GNAM_V7` | 1, *not validated* — a MISS, but a useless one |
+   | GNames | `GNAM_V8` | 1 → WINNER |
+   | GWorld / SparseDelegates / GEngine | `GWLD_TQ_1` / `SPARSE_ES2_1` / `GENG_X1` | 1 each → WINNER |
+
+   **What the subject must have: a pattern with MANY matches, none of which validate.** Elliot has no
+   such pattern — its only many-match pattern is the winner. Use the case this row already names,
+   **DumperTest (PE `6A7EA60310F17000`)**, and hint `gNames` to a high-count non-validating pattern
+   there.
 3. **✅ REGRESSION — a warm launch is still FAST.** The hint path now scans all matches instead of
    stopping at the first, so a genuine `Hint HIT` costs slightly more. Confirm run #2 is still far
    faster than a cold scan (`[X] AOB scan total: %lld us`), not merely correct.
