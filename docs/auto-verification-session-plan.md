@@ -31,38 +31,41 @@ asks for one when they want it).
   survive a *session* (a compaction is not a new session, but a restart is) — re-request per §3 if
   `request_access` starts failing.
 
-### ✅ GROUP 5 DONE · GROUP 6 PART-DONE (2026-08-18). ▶ NEXT: finish GROUP 6
+### ✅ GROUP 5 DONE · GROUP 6 MOSTLY DONE (2026-08-18). ▶ NEXT: `AA14–AA20`, `G2`, `Y1`
 
-**GROUP 6 closed so far, all on Elliot via its deployed `dxgi` proxy:**
-* **`B4` ✅ — open since build 2592, arming line captured for the first time.** Vehicle: a
-  **single synchronous** `begin_value_scan` (~700 ms with Parallel/Batch off), with the kill fired
-  **from the log** via `tools/verify/kill_on_marker.py`. ⛔ **`trigger_scan` is ASYNC and cannot arm
-  the latch** — a third trap alongside Dump All and Snapshot capture, and the one that looks most
-  like the ideal vehicle.
-* **`B5` ✅ — the concurrent-`UE5_Init` handshake.** Needs **three `createThread` calls fired
-  together**; a UI-then-CE sequence and a 60-iteration CE loop both failed to produce it.
-  **Concurrency has to be constructed, not hurried.**
+**GROUP 6 closed, all on Elliot:**
+* **`B4` ✅** (open since build 2592) — arming line captured. Vehicle: a **single synchronous**
+  `begin_value_scan`, kill fired **from the log**. ⛔ **`trigger_scan` is ASYNC and cannot arm the
+  latch** — a third trap beside Dump All and Snapshot, and the one that looks ideal.
+* **`B5` ✅** — the concurrent-`UE5_Init` handshake. Needs **three `createThread` calls at once**.
+* **`MA1` ✅** — the AOB cancel guard **and all three of its guards**, plus the healthy-scan
+  regression. Cold scan 8.0 s vs 3.3 s warm.
 * **`executeCodeEx` 5000 ms ✅** — 844 ms for a full `Actor` dissect at 85 K objects.
-  ⛔ **Its negative control is REFUTED**: suspending the process does **not** cause a timeout
-  (`executeCodeEx` runs on a *new* remote thread). Same trap the plan already flags for AA14–AA20
-  step 5. Rewrite it to suspend the **game thread** and invoke through `Stark`.
+  ⛔ Its negative control is **refuted**: a whole-process suspend does not stop `executeCodeEx`.
+* **`G10` steps 1 & 3** were already closed 2026-08-16; **step 2 is NOT decidable on Elliot** (its
+  only many-match pattern validates, so the one stageable `Hint MISS` has a true count of 1 —
+  confounded). Use **DumperTest**.
 
-**✅ Elliot is a VALID INVOKE HOST** — System → Run Self-Test returns
-**`✓ Add_IntInt(3,4) = 7 → PE hook verified`**. So `AA14–AA20` and `Y1` can both run here and do
-**not** need Lushfoil. (Second title to return 7 from a KismetMathLibrary helper, which further
-narrows working-lessons §4.4 — the no-op is title-specific, not a UE-version property.)
+### ⭐ The staging lesson this batch paid for — read before any mid-scan/mid-command row
 
-**Still to run in GROUP 6:** `G10/MA1` (needs a deliberate hint-cache miss — §4.2; ⚠ **Elliot is
-PROXY-injected, so there is no CE record to untick** for the cancel half — that step needs a
-CE-injected title) · `AA14–AA20` (ready to go — but see the suspend trap above for step 5) ·
-`G2` speed-split · `ST1` *(human-gated)* · `Y1`.
+**An 8 s window cannot be hit by two consecutive operator actions**: each tool round trip costs
+~10 s of wall clock, and a GUI click can silently fail to register. Four routes were measured and
+none work — untick the CE record (the `.CT` blocks CE's **GUI thread** for the whole scan, so the
+click queues), kill the UI (async `trigger_scan`, nothing in flight), a fixed CE Lua timer (can't be
+aimed), and a CE Lua thread polling the log (**CE Lua's `io.open` cannot read our live log**).
 
-ℹ️ **Elliot's System tab reports UE 504 "⚠ Low Confidence — detected via fragile fallback path …
-Publisher: Square Enix … version not detected"**, while every pointer (GObjects / GNames / GWorld /
-FSparseDelegateStorage / &GEngine slot) resolves. Noted in passing; not chased.
+▶ **What works is a two-process chain with BOTH halves pre-armed:**
+`py tools/verify/kill_on_marker.py <log> "<marker>" --touch <flagfile> --after-ms N` watches the log
+(Python *can* read it) and drops a flag; a **pre-armed** CE `createThread` polls that flag and fires
+`executeCodeEx(...)`. Give the CE loop a generous timeout — one mis-registered click cost 3 minutes
+and expired a 120 s loop. Restart CE between attempts: **it keeps one Lua state, and an abandoned
+thread later shut down a *fresh* game.**
 
-ℹ️ **Epic Games Launcher was closed** mid-session: it repeatedly stole foreground and made
-computer-use refuse every click. Reopen it freely; nothing depended on it.
+**Still to run in GROUP 6:** `AA14–AA20` (Elliot's PE hook is verified good), `G2` speed-split,
+`Y1`, `ST1` *(human-gated)*, and `G10` step 2 **on DumperTest**.
+
+ℹ️ **Epic Games Launcher was closed** mid-session — it repeatedly stole foreground and made
+computer-use refuse every click. Reopen it freely.
 
 ---
 
