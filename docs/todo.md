@@ -4965,8 +4965,9 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   blank (the memo would be serving a pre-enrichment entry), or a crash under a parallel scan (a
   handed-out reference being invalidated — the reason `try_emplace` landed first).
 
-- 🟡 **BLOCKED ON SAMPLE SIZE — attempted 2026-08-18 on DumperTest Development, do not retry there.**
-  The single-call-that-blocks-for-seconds requirement is **unmeetable on this package**, measured
+- ℹ️ **Attempted 2026-08-18 on DumperTest Development first — do not retry there** (it passed later, on
+  Elliot; see the ✅ row below).
+  The single-call-that-blocks-for-seconds requirement is **unmeetable on that package**, measured
   rather than assumed. Its GObjects pool is 25,179 objects, and the two heaviest whole-pool commands
   the UI can issue finish far inside `MonitorLoop`'s 200 ms poll:
 
@@ -4980,7 +4981,55 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   says Elliot's 482 MB image "is what makes the race windows real; the sample is too small", and that
   reasoning applies here exactly. Recorded as *not tested*, per the run plan's rule 4.
 
-- ⬜ **CE mailbox survives a dead UI client** (build 2592, B4). The evidence line is **cold** — once
+- ✅ **DONE 2026-08-18 `[ELLIOT-B4-2026-08-18]` — CE mailbox survives a dead UI client** (build 2592,
+  B4). **The arming line has never been captured before**; this run has it, on Elliot (85,068
+  objects), dist 3262, DLL injected by its deployed `dxgi` proxy.
+
+  **Two vehicles were tried, and the first one FAILED for a reason worth keeping** (below). The one
+  that works is a **single synchronous** pipe command: `begin_value_scan`, ~700 ms with *Parallel
+  scan* and *Batch read* unticked. The kill was fired **from the log** rather than on a timer
+  (`tools/verify/kill_on_marker.py`) — a fixed sleep fired before the command started on the first
+  two attempts and proved nothing:
+
+  ```
+  12:06:38.041 Received: {"cmd":"begin_value_scan","data_type":"FString","scan_type":"Contains",…}
+  12:06:38.665 PipeServer: Client disconnected
+  12:06:38.818 [WARN]  PipeServer: client gone mid-command (err=109) — aborting in-flight op
+  12:06:38.826 [ERROR] PipeServer: Failed to write response
+  12:06:38.826 PipeServer: per-command cancel cleared — no connection that raised it is still live
+  ```
+
+  * **The ARMING line is present** — `client gone mid-command (err=109)` (109 = `ERROR_BROKEN_PIPE`),
+    777 ms after the command arrived. Per this row's own rule, that is what makes everything below
+    mean anything, and it is the line every previous attempt lacked.
+  * **The in-flight op really was aborted** (`Failed to write response`).
+  * **The follow-up command reports a NON-ZERO count**: a fresh UI, reconnected, ran Instance Finder
+    on `Actor` → **`Found 2 instances (scanned 85,068, non-null 84,410, named 84,410 (100.0%))`**.
+    The FAIL signature — `0` answered while `scanned` shows the whole pool — is excluded.
+  * ⚠ **`per-command cancel is latched` did NOT appear on the next command, and that is a PASS, not
+    a miss.** The DLL cleared the cancel at disconnect (*"no connection that raised it is still
+    live"*), so it never survived to poison a later command at all. The row was written expecting
+    the *next* command to hit the latch and clear it; the shipped behaviour is stronger. **Reword the
+    row rather than re-running it.**
+
+  ### ⛔ Add a THIRD trap to the list below: `trigger_scan` is ASYNC
+  The obvious vehicle — the multi-second startup scan — **cannot arm the latch**, and this was
+  measured, not reasoned. Killing the UI 900 ms into a 3.4 s scan produced **no** arming line, and
+  the pipe log says why:
+  ```
+  12:03:18.127 Received: {"cmd":"trigger_scan","id":2}
+  12:03:18.127 trigger_scan: Starting async engine scan...
+  12:03:18.128 RunScan: started
+  12:03:18.636 Received: {"cmd":"scan_status","id":8}
+  12:03:19.421 ... repeated 2x: scan_status
+  12:03:21.525 RunScan: finished
+  ```
+  `trigger_scan` returns immediately and the UI **polls `scan_status`**. So for those 3.4 s the
+  connection had no long command in flight — it is the same "thousands of short commands with gaps"
+  shape as Dump All and Snapshot capture, which this row already warns about. **The scan looks like
+  the ideal vehicle and is a trap.**
+
+- ⬜ *(original instructions kept for the method)* **CE mailbox survives a dead UI client** (build 2592, B4). The evidence line is **cold** — once
   per latch, so it costs nothing to leave in. Needs a deliberate sequence but the whole answer is in
   the log, so it lives here: connect the UI, start something long (Property Search deep, or a full
   Instance Finder scan), **kill the UI process while it runs**, then use any CE-side lookup — the
