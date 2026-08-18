@@ -3142,7 +3142,36 @@ bool's `bool_mask` arrive on the `search_properties` wire.
 5. The nastiest half of the old bug: when the mask is **not** `0x01`, the intended bool was never set
    at all. So also confirm the target bool actually reads as the value you froze.
 
-### ⬜ NEW 2026-08-15 — freeze a 1-byte enum and check its neighbours survive (audit #5 Y15, build 2904)
+### ✅ DONE 2026-08-18 — freeze a 1-byte enum and check its neighbours survive (audit #5 Y15, build 2904)
+
+> **Ran on DumperTest Development, dist 3262.** Steps 1–5 pass; **step 6 not run** (needs a 4-byte
+> `enum`; every EnumProperty reachable here reports size 1).
+>
+> **Target choice is the whole result, so it is recorded first.** The obvious candidate —
+> `Actor::PhysicsReplicationMode` @`0x17C` — reads `00 00 00 00` with its three neighbours, and on
+> **all-zero neighbours a 4-byte write is indistinguishable from a 1-byte one**: freezing to 3 gives
+> `03 00 00 00` either way. That probe can only return "pass" (working-lessons §1.10a). Rejected it
+> and swept for an enum with a **non-zero** neighbour, which is what makes the read decisive:
+>
+> | offset | field | baseline |
+> |---|---|---|
+> | `0x5E` | `Actor::UpdateOverlapsMethodDuringLevelStreaming` (EnumProperty, size 1) | `00` |
+> | `0x5F` | `Actor::DefaultUpdateOverlapsMethod` (EnumProperty, size 1) | **`02`** |
+> | `0x60`, `0x61` | — | `00`, `00` |
+>
+> | step | result |
+> |---|---|
+> | 1 | Baseline at `ChaosDebugDrawActor+0x5E` = **`00 02 00 00`** (`tools/verify/read_mem.py`). |
+> | 2 | ✅ Dialog reads **`Type: EnumProperty -> uint8`** — not `-> int32` — with the field labelled `Freeze value (uint8):` and pre-filled **`255`**, not `9999`. |
+> | 3 | ✅ Entering `9999` produces exactly **`uint8 holds 0 to 255 — 9999 would be written as 15`** and **no script is created** (the dialog stays open). Re-entered `3` → `Freeze script created in CE: Freeze: Actor::UpdateOverlapsMethodDuringLevelStreaming = 3`. |
+> | 4 | ✅ **`00 02 00 00` → `03 02 00 00`.** The enum took the value and `DefaultUpdateOverlapsMethod` **kept its `02`**. The pre-fix 4-byte `writeInteger(3)` writes `03 00 00 00` and silently resets a *named, adjacent enum property* — which is the damage the finding is about, now stated as a field name rather than "the following bytes". |
+> | 5 | ✅ CFG: `propOffset = 0x5E`, **`valueType = 'uint8'`**, `value = 3`, and **no `boolMask`** (correct — the mask line is bool-only, cf. AA1 above). |
+> | 6 | ⬜ **NOT RUN** — no 4-byte enum in this sample; skipped per the run plan. |
+>
+> ⚠ Same scope caveat as AA1: the record held `ChaosDebugDrawActor`, the only non-CDO exact-`Actor`
+> instance — see `[FREEZESCOPE-2026-08-18]`.
+
+### ⬜ SUPERSEDED — original Y15 steps, kept for the method
 
 Freezing an `EnumProperty` now picks its writer from the width the engine reported instead of always
 using a 4-byte `writeInteger`. The mapping and both call sites are unit-tested with four negative
