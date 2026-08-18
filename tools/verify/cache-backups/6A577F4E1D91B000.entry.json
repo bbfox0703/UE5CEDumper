@@ -1,0 +1,28 @@
+{
+  "gNames": {
+    "method": "aob",
+    "patternId": "GNAM_V8",
+    "patternsHit": 2,
+    "patternsTried": 5
+  },
+  "gObjects": {
+    "method": "aob",
+    "patternId": "GOBJ_ES53_1",
+    "patternsHit": 1,
+    "patternsTried": 2
+  },
+  "gWorld": {
+    "method": "aob",
+    "patternId": "GWLD_TQ_1",
+    "patternsHit": 1,
+    "patternsTried": 2
+  },
+  "gameName": "Elliot-Win64-Shipping.exe",
+  "lastScanUtc": "2026-08-18T05:02:38Z",
+  "lowConfidence": true,
+  "peHash": "6A577F4E1D91B000",
+  "scanCount": 1,
+  "ueVersion": 427,
+  "versionDetectRev": 5,
+  "versionDetected": false
+}

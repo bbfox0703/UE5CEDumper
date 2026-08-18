@@ -2397,8 +2397,28 @@ and is decisive — this is the rare case where the regression was captured befo
    sit in the *same* process, on the *same* warm page cache, and did **not** speed up. So the 4× is
    the hint path and not disk caching or machine warm-up. Conditions: `Elliot-Win64-Shipping.exe`,
    **482,390,784 bytes**, build 3122.
-4. **MA1 — the cancel actually fires.** On a cold, hint-less title, untick the CE script ~2 s into
-   the scan. `scan-0.log` must show `AOB scan CANCELLED after N/M batches` within ~1 s, and
+4. 🟡 **MA1 — the cancel actually fires. ATTEMPTED FOUR WAYS on 2026-08-18 (Elliot), STILL UNPROVEN
+   — but the staging is now solved, so do NOT start from scratch.**
+
+   **First, the enabling measurement**: dropping Elliot's hint entry (`6A577F4E1D91B000`, via
+   `tools/verify/cold_detect.py drop`) makes the scan **8.0–8.4 s** against **3.3 s** warm — an
+   ample window. The window was never the problem; **reaching `Tot::Requested()` was**.
+
+   | route tried | what happened | cause |
+   |---|---|---|
+   | Untick the CE record ~2 s in (**as this step is written**) | click took effect **8.5 s later**, after the scan had finished | the `.CT` `init` script blocks **CE's GUI thread** for the whole scan, so the click just queues. **This step as written is not performable.** |
+   | Kill the UI mid-scan (timed off the log, landed **2.8 s** into an **8.0 s** scan) | scan **completed normally**, no `CANCELLED` line | `trigger_scan` is **async** — it returns at once and the UI polls `scan_status`, so there is no in-flight command for a disconnect to cancel. Same cause as B4's third trap. |
+   | CE Lua `createThread` + fixed `sleep`, then `UE5_Shutdown` | fired **before** the scan started | a GUI round trip (front + click) is 2–6 s and outlasted the timer. ⚠ **And a leftover thread from the previous attempt later shut down a FRESH Elliot** — CE keeps one Lua state, so arm-and-abandon leaves live threads; restart CE between attempts. |
+   | CE Lua thread polling `init-0.log` for `Starting initialization` | printed **`NEVER SAW SCAN START`** | **CE Lua's `io.open` cannot read our live log** — the writer's share mode, exactly [working-lessons.md](working-lessons.md) §3. Python's reader *can* (`tools/verify/kill_on_marker.py` reads it fine), Lua's cannot. |
+
+   ▶ **The recipe that should work, next session — reverse the order so the GUI round trip is off the
+   critical path.** Click **Start Scan first** (the scan then runs for ~8 s), *then* switch to CE and
+   Execute `createThread(function() sleep(500) executeCodeEx(0,60000,getAddress('dxgi.UE5_Shutdown')) end)`.
+   A 2–4 s switch lands the shutdown comfortably inside the scan. Requirements learned above:
+   **drop the hint first**, **restart CE between attempts**, and drive the game through its **proxy**
+   (so the UI owns the scan and CE's GUI stays free).
+
+   **PASS** is still: `scan-0.log` shows `AOB scan CANCELLED after N/M batches` within ~1 s and
    `FindAll: scan was CANCELLED — NOT writing the hint cache`.
 5. **⚠ MA1 — the guards, each checked SEPARATELY** (a control that passes is how a bug in a fix gets
    found): after that cancelled run, (a) **diff `UE5CEDumper.{Machine}.json`** — it must be
