@@ -12,10 +12,38 @@ launched without a human, and what must never be started without one.
 
 -----
 
-## ▶ RESUME HERE — NEXT SESSION STARTS AT STEP 1 (written 2026-08-18, end of a long sitting)
+## ▶ RESUME HERE — NEXT SESSION STARTS AT STEP 1 (rewritten 2026-08-18, after the AA14-AA20 + G2 sitting)
 
-**Machine state: nothing running.** Elliot, Cheat Engine and UE5DumpUI were all killed. Working tree
-clean; ~71 unpushed commits on `dev` (no PR — the maintainer asks when they want one).
+**Machine state: nothing running.** Elliot, Cheat Engine and UE5DumpUI were all killed and
+confirmed gone. Working tree clean; ~73 unpushed commits on `dev` (no PR — the maintainer asks).
+
+### ✅ DONE THIS SITTING — `AA14–AA20` 1-4, `G2` 4+5. Results are in `todo.md`, not here.
+
+**What is LEFT, and it is short:**
+* **`AA14–AA20` step 5** — blocked only by the PE hook failing to install that launch
+  (`MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`; the same game hooked fine 6 h earlier, so
+  **just relaunch and re-check `get_diagnostics` -> `hook_active` BEFORE staging anything**).
+  Everything else is already built: `set_invoke_timeout {"timeout_ms":30000,"persist":false}`
+  (mandatory — the DLL's stock 5000 ms fires before the Lua's 10000 ms, so the branch under test is
+  otherwise unreachable) and `tools/verify/suspend.py threads|suspend-tid|resume-tid`.
+  ⚠ Pick a **non-static** function: a `Native|Static` one takes Mimic's fast path and never queues.
+* **`G2` step 3** — needs ONE cache drop to witness the **UE5** branch:
+  `py tools/verify/cold_detect.py drop 998ED2850957D000 --apply` then launch Lushfoil. Only
+  `utf16`/UE4 Tier-1 lines exist at 3262.
+
+### ⚙ Three setup facts this sitting paid for — carry them forward
+
+1. **`UE5CEDumper.CT` has no `<Files>` section.** Add the helper by hand
+   (`Table -> Add File...` -> `scripts/ue5_invoke_helper.lua`) or every invoke row fails at the
+   loader instead of at the thing under test. Verify in CE Lua: `findTableFile(...)` must report
+   `TLuafile` with `len=33432`.
+2. **Under a proxy the mailbox symbol is the BARE name.** Elliot loads the DLL as `dxgi.dll`, so
+   `getAddress('UE5Dumper.g_invokeMailbox')` is **nil** — and CE's `getAddress` *returns 0 rather
+   than raising* (CE-Bugs-Minesweeper §6), so a qualified-only probe reports a false failure.
+3. **AOBMaker goes live once CE is running**, and then `Copy AA Script` pushes the record
+   **straight into CE's address list** — nothing lands on the clipboard. The toolbar's
+   `AOBMaker Offline` label can still read stale; the dialog's own result text is the honest one.
+   Do not diagnose a "clipboard defect" from the toolbar.
 
 ### ▶ STEP 1 — GRANTS, IN BATCHES OF ≤7. Do this before anything else.
 
