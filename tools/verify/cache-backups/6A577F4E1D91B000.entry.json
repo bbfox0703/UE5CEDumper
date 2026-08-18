@@ -1,28 +1,29 @@
 {
-  "gNames": {
-    "method": "aob",
-    "patternId": "GNAM_V8",
-    "patternsHit": 2,
-    "patternsTried": 5
-  },
+  "peHash": "6A577F4E1D91B000",
+  "gameName": "Elliot-Win64-Shipping.exe",
+  "ueVersion": 504,
+  "lowConfidence": true,
+  "versionDetectRev": 5,
+  "ueVersionUserOverrideAt": "",
+  "invokeTimeoutMsAt": "",
   "gObjects": {
     "method": "aob",
     "patternId": "GOBJ_ES53_1",
-    "patternsHit": 1,
-    "patternsTried": 2
+    "patternsTried": 2,
+    "patternsHit": 1
+  },
+  "gNames": {
+    "method": "aob",
+    "patternId": "GNAM_V8",
+    "patternsTried": 5,
+    "patternsHit": 2
   },
   "gWorld": {
     "method": "aob",
     "patternId": "GWLD_TQ_1",
-    "patternsHit": 1,
-    "patternsTried": 2
+    "patternsTried": 2,
+    "patternsHit": 1
   },
-  "gameName": "Elliot-Win64-Shipping.exe",
-  "lastScanUtc": "2026-08-18T05:02:38Z",
-  "lowConfidence": true,
-  "peHash": "6A577F4E1D91B000",
-  "scanCount": 1,
-  "ueVersion": 427,
-  "versionDetectRev": 5,
-  "versionDetected": false
+  "lastScanUtc": "2026-08-18T05:15:53.2737195Z",
+  "scanCount": 2
 }

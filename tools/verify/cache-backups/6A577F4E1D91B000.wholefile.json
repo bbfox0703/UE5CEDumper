@@ -1,842 +1,843 @@
 {
+  "version": 1,
+  "machineName": "MSI-NB",
   "games": {
     "064516410B26F000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 5
-      },
+      "peHash": "064516410B26F000",
+      "gameName": "TQ2-Win64-Shipping.exe",
+      "ueVersion": 507,
+      "versionDetected": true,
+      "versionDetectRev": 3,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_ES53_1",
+        "patternsTried": 5,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "TQ2-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-14T05:45:41Z",
-      "peHash": "064516410B26F000",
-      "scanCount": 1,
-      "ueVersion": 507,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 3,
-      "versionDetected": true
+      "scanCount": 1
     },
     "0863E3B90C993000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V5",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "0863E3B90C993000",
+      "gameName": "MindsEye-Win64-Shipping.exe",
+      "ueVersion": 504,
+      "versionDetected": true,
+      "versionDetectRev": 1,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_GH_4",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V5",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_ES2_6",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "MindsEye-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-07-19T14:23:47.0266115Z",
-      "peHash": "0863E3B90C993000",
-      "scanCount": 6,
-      "ueVersion": 504,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 1,
-      "versionDetected": true
+      "scanCount": 6
     },
     "1A40B98A00046000": {
-      "gNames": {
-        "method": "symbol_call_follow",
-        "patternId": "GNAM_EXP_TOSTR",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "1A40B98A00046000",
+      "gameName": "FactoryGameSteam-Win64-Shipping.exe",
+      "ueVersion": 506,
+      "versionDetected": true,
+      "versionDetectRev": 3,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "symbol",
         "patternId": "GOBJ_EXP",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "symbol_call_follow",
+        "patternId": "GNAM_EXP_TOSTR",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "symbol",
         "patternId": "GWLD_EXP",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "FactoryGameSteam-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-12T02:22:40.9365457Z",
-      "peHash": "1A40B98A00046000",
-      "scanCount": 4,
-      "ueVersion": 506,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 3,
-      "versionDetected": true
+      "scanCount": 4
     },
     "4720D6A80ABFA000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "4720D6A80ABFA000",
+      "gameName": "STVoyagerSteam-Win64-Shipping.exe",
+      "ueVersion": 506,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 3,
-        "patternsTried": 10
+        "patternsTried": 10,
+        "patternsHit": 3
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "STVoyagerSteam-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T22:49:23.1706372Z",
-      "peHash": "4720D6A80ABFA000",
-      "scanCount": 2,
-      "ueVersion": 506,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 2
     },
     "5D8E2D5003601000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_CT3",
-        "patternsHit": 2,
-        "patternsTried": 21
-      },
+      "peHash": "5D8E2D5003601000",
+      "gameName": "RSG-Win64-Shipping.exe",
+      "ueVersion": 420,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_G42_4",
-        "patternsHit": 2,
-        "patternsTried": 3
+        "patternsTried": 3,
+        "patternsHit": 2
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_CT3",
+        "patternsTried": 21,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "RSG-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T22:32:26Z",
-      "peHash": "5D8E2D5003601000",
-      "scanCount": 1,
-      "ueVersion": 420,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 1
     },
     "62E78F5C05216000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "62E78F5C05216000",
+      "gameName": "LightMaze-Win64-Shipping.exe",
+      "ueVersion": 500,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 3,
-        "patternsTried": 10
+        "patternsTried": 10,
+        "patternsHit": 3
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "LightMaze-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T22:51:48.9768465Z",
-      "peHash": "62E78F5C05216000",
-      "scanCount": 2,
-      "ueVersion": 500,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 2
     },
     "67CA8EE00645F000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "67CA8EE00645F000",
+      "gameName": "SEED BATTLE DESTINY REMASTERED.exe",
+      "ueVersion": 427,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "SEED BATTLE DESTINY REMASTERED.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T22:39:42Z",
-      "peHash": "67CA8EE00645F000",
-      "scanCount": 1,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 1
     },
     "67F515A70001A000": {
-      "gNames": {
-        "method": "not_found",
-        "patternId": "",
-        "patternsHit": 5,
-        "patternsTried": 33
-      },
+      "peHash": "67F515A70001A000",
+      "gameName": "python.exe",
+      "ueVersion": 504,
+      "lowConfidence": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "not_found",
         "patternId": "",
-        "patternsHit": 7,
-        "patternsTried": 56
+        "patternsTried": 56,
+        "patternsHit": 7
+      },
+      "gNames": {
+        "method": "not_found",
+        "patternId": "",
+        "patternsTried": 33,
+        "patternsHit": 5
       },
       "gWorld": {
         "method": "not_found",
         "patternId": "",
-        "patternsHit": 1,
-        "patternsTried": 51
+        "patternsTried": 51,
+        "patternsHit": 1
       },
-      "gameName": "python.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T13:31:28Z",
-      "lowConfidence": true,
-      "peHash": "67F515A70001A000",
-      "scanCount": 1,
-      "ueVersion": 504,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5
+      "scanCount": 1
     },
     "68FD6FDE09BAD000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "68FD6FDE09BAD000",
+      "gameName": "ff7rebirth_.exe",
+      "ueVersion": 427,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMs": 6000,
+      "invokeTimeoutMsAt": "2026-05-10T01:05:31Z",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_ES53_1",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_G42_3",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "ff7rebirth_.exe",
-      "invokeTimeoutMs": 6000,
-      "invokeTimeoutMsAt": "2026-05-10T01:05:31Z",
       "lastScanUtc": "2026-05-10T01:41:39.0781795Z",
-      "peHash": "68FD6FDE09BAD000",
-      "scanCount": 9,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": ""
+      "scanCount": 9
     },
     "691B0D9809EB2000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "691B0D9809EB2000",
+      "gameName": "DSClient-Win64-Shipping.exe",
+      "ueVersion": 504,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "DSClient-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T22:43:17.3651487Z",
-      "peHash": "691B0D9809EB2000",
-      "scanCount": 4,
-      "ueVersion": 504,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 4
     },
     "697C7D7D05E10000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "697C7D7D05E10000",
+      "gameName": "DQIandIIHD2DRemake.exe",
+      "ueVersion": 427,
+      "versionDetected": true,
+      "lowConfidence": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "DQIandIIHD2DRemake.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T15:24:40Z",
-      "lowConfidence": true,
-      "peHash": "697C7D7D05E10000",
-      "scanCount": 1,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 1
     },
     "69BA4044185AB000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "69BA4044185AB000",
+      "gameName": "DQ7R-Win64-Shipping.exe",
+      "ueVersion": 427,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_GH_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "DQ7R-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-06-06T06:58:53.3732564Z",
-      "peHash": "69BA4044185AB000",
-      "scanCount": 2,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": ""
+      "scanCount": 2
     },
     "69BB84C7069E9000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "69BB84C7069E9000",
+      "gameName": "DQ7R-Win64-Shipping.exe",
+      "ueVersion": 427,
+      "versionDetected": true,
+      "lowConfidence": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "DQ7R-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T14:34:03Z",
-      "lowConfidence": true,
-      "peHash": "69BB84C7069E9000",
-      "scanCount": 1,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 1
     },
     "69BBB7C121AE7000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "69BBB7C121AE7000",
+      "gameName": "Elliot-Win64-Shipping.exe",
+      "ueVersion": 504,
+      "lowConfidence": true,
+      "versionDetectRev": 1,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "Elliot-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-06-28T08:42:57Z",
-      "lowConfidence": true,
-      "peHash": "69BBB7C121AE7000",
-      "scanCount": 45,
-      "ueVersion": 504,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 1
+      "scanCount": 45
     },
     "69E7D6A504F85000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "69E7D6A504F85000",
+      "gameName": "Geri-Win64-Shipping.exe",
+      "ueVersion": 427,
+      "versionDetected": true,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_GH_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "Geri-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-05-10T13:04:48.5014846Z",
-      "peHash": "69E7D6A504F85000",
-      "scanCount": 2,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": "",
-      "versionDetected": true
+      "scanCount": 2
     },
     "6A00923B04F81000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "6A00923B04F81000",
+      "gameName": "Geri-Win64-Shipping.exe",
+      "ueVersion": 427,
+      "versionDetected": true,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_SAT425_2",
-        "patternsHit": 2,
-        "patternsTried": 3
+        "patternsTried": 3,
+        "patternsHit": 2
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_GH_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "Geri-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-06-06T07:31:26.4944642Z",
-      "peHash": "6A00923B04F81000",
-      "scanCount": 4,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": "",
-      "versionDetected": true
+      "scanCount": 4
     },
     "6A16CED2099D9000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_SAT425_3",
-        "patternsHit": 3,
-        "patternsTried": 14
-      },
+      "peHash": "6A16CED2099D9000",
+      "gameName": "ff7rebirth_.exe",
+      "ueVersion": 427,
+      "lowConfidence": true,
+      "versionDetectRev": 1,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_SAT425_3",
+        "patternsTried": 14,
+        "patternsHit": 3
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_G42_3",
-        "patternsHit": 2,
-        "patternsTried": 19
+        "patternsTried": 19,
+        "patternsHit": 2
       },
-      "gameName": "ff7rebirth_.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-06-28T14:34:35.2889166Z",
-      "lowConfidence": true,
-      "peHash": "6A16CED2099D9000",
-      "scanCount": 4,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 1
+      "scanCount": 4
     },
     "6A577F4E1D91B000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "6A577F4E1D91B000",
+      "gameName": "Elliot-Win64-Shipping.exe",
+      "ueVersion": 504,
+      "lowConfidence": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "Elliot-Win64-Shipping.exe",
-      "lastScanUtc": "2026-08-18T05:02:38Z",
-      "lowConfidence": true,
-      "peHash": "6A577F4E1D91B000",
-      "scanCount": 1,
-      "ueVersion": 427,
-      "versionDetectRev": 5,
-      "versionDetected": false
+      "lastScanUtc": "2026-08-18T05:15:53.2737195Z",
+      "scanCount": 2
     },
     "6A63295904E83000": {
+      "peHash": "6A63295904E83000",
+      "gameName": "Geri-Win64-Shipping.exe",
+      "ueVersion": 427,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
+      "gObjects": {
+        "method": "aob",
+        "patternId": "GOBJ_ES53_1",
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
       "gNames": {
         "method": "aob",
         "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
-      "gObjects": {
-        "method": "aob",
-        "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "Geri-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T22:34:14Z",
-      "peHash": "6A63295904E83000",
-      "scanCount": 1,
-      "ueVersion": 427,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 1
     },
     "6A7328DF10F13000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V1",
-        "patternsHit": 10,
-        "patternsTried": 31
-      },
+      "peHash": "6A7328DF10F13000",
+      "gameName": "DumperTest.exe",
+      "ueVersion": 504,
+      "versionDetected": true,
+      "versionDetectRev": 3,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V1",
+        "patternsTried": 31,
+        "patternsHit": 10
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "DumperTest.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-12T00:00:00.7125315Z",
-      "peHash": "6A7328DF10F13000",
-      "scanCount": 2,
-      "ueVersion": 504,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 3,
-      "versionDetected": true
+      "scanCount": 2
     },
     "6A7EA60310F17000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V1",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "6A7EA60310F17000",
+      "gameName": "DumperTest.exe",
+      "ueVersion": 504,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V1",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "DumperTest.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-18T03:30:21Z",
-      "peHash": "6A7EA60310F17000",
-      "scanCount": 12,
-      "ueVersion": 504,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 12
     },
     "6F82E40F0B18C000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "6F82E40F0B18C000",
+      "gameName": "TQ2-Win64-Shipping.exe",
+      "ueVersion": 507,
+      "versionDetected": true,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_ES53_1",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "TQ2-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-05-10T04:44:28.5456131Z",
-      "peHash": "6F82E40F0B18C000",
-      "scanCount": 6,
-      "ueVersion": 507,
-      "ueVersionUserOverrideAt": "",
-      "versionDetected": true
+      "scanCount": 6
     },
     "8B80D0CE09D67000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 2,
-        "patternsTried": 5
-      },
+      "peHash": "8B80D0CE09D67000",
+      "gameName": "ManorLords-Win64-Shipping.exe",
+      "ueVersion": 505,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 5,
+        "patternsHit": 2
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_SP57_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "ManorLords-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T22:38:02Z",
-      "peHash": "8B80D0CE09D67000",
-      "scanCount": 1,
-      "ueVersion": 505,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 1
     },
     "998ED2850957D000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "998ED2850957D000",
+      "gameName": "LushfoilSim-Win64-Shipping.exe",
+      "ueVersion": 506,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "LushfoilSim-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-18T01:33:47.8877987Z",
-      "peHash": "998ED2850957D000",
-      "scanCount": 4,
-      "ueVersion": 506,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 4
     },
     "C9E9551B0003D000": {
-      "gNames": {
-        "method": "not_found",
-        "patternId": "",
-        "patternsHit": 5,
-        "patternsTried": 33
-      },
+      "peHash": "C9E9551B0003D000",
+      "gameName": "Solarpunk.exe",
+      "ueVersion": 507,
+      "versionDetected": true,
+      "versionDetectRev": 3,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "not_found",
         "patternId": "",
-        "patternsHit": 7,
-        "patternsTried": 56
+        "patternsTried": 56,
+        "patternsHit": 7
+      },
+      "gNames": {
+        "method": "not_found",
+        "patternId": "",
+        "patternsTried": 33,
+        "patternsHit": 5
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_V3",
-        "patternsHit": 1,
-        "patternsTried": 51
+        "patternsTried": 51,
+        "patternsHit": 1
       },
-      "gameName": "Solarpunk.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-14T05:51:15Z",
-      "peHash": "C9E9551B0003D000",
-      "scanCount": 1,
-      "ueVersion": 507,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 3,
-      "versionDetected": true
+      "scanCount": 1
     },
     "DDCE3EDE0BE03000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V5",
-        "patternsHit": 1,
-        "patternsTried": 5
-      },
+      "peHash": "DDCE3EDE0BE03000",
+      "gameName": "Avowed-Win64-Shipping.exe",
+      "ueVersion": 503,
+      "versionDetected": true,
+      "versionDetectRev": 1,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_AV1",
-        "patternsHit": 2,
-        "patternsTried": 3
+        "patternsTried": 3,
+        "patternsHit": 2
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V5",
+        "patternsTried": 5,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "instance_scan_recovery",
         "patternId": "",
-        "patternsHit": 1,
-        "patternsTried": 18
+        "patternsTried": 18,
+        "patternsHit": 1
       },
-      "gameName": "Avowed-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-06-26T14:30:09.3247476Z",
-      "peHash": "DDCE3EDE0BE03000",
-      "scanCount": 2,
-      "ueVersion": 503,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 1,
-      "versionDetected": true
+      "scanCount": 2
     },
     "E1AAB613081BC000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_V8",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "E1AAB613081BC000",
+      "gameName": "DumperTest-Win64-Shipping.exe",
+      "ueVersion": 504,
+      "versionDetected": true,
+      "versionDetectRev": 5,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_V8",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_TQ_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "DumperTest-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-17T22:24:24.1107523Z",
-      "peHash": "E1AAB613081BC000",
-      "scanCount": 11,
-      "ueVersion": 504,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 5,
-      "versionDetected": true
+      "scanCount": 11
     },
     "ED3D085C0811F000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_SAT425_3",
-        "patternsHit": 1,
-        "patternsTried": 13
-      },
+      "peHash": "ED3D085C0811F000",
+      "gameName": "SolarpunkSteam-Win64-Shipping.exe",
+      "ueVersion": 507,
+      "versionDetected": true,
+      "versionDetectRev": 3,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMsAt": "",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 3,
-        "patternsTried": 10
+        "patternsTried": 10,
+        "patternsHit": 3
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_SAT425_3",
+        "patternsTried": 13,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_SP57_1",
-        "patternsHit": 1,
-        "patternsTried": 2
+        "patternsTried": 2,
+        "patternsHit": 1
       },
-      "gameName": "SolarpunkSteam-Win64-Shipping.exe",
-      "invokeTimeoutMsAt": "",
       "lastScanUtc": "2026-08-14T05:56:02.4791389Z",
-      "peHash": "ED3D085C0811F000",
-      "scanCount": 2,
-      "ueVersion": 507,
-      "ueVersionUserOverrideAt": "",
-      "versionDetectRev": 3,
-      "versionDetected": true
+      "scanCount": 2
     },
     "FBD525DD0A7B2000": {
-      "gNames": {
-        "method": "aob",
-        "patternId": "GNAM_ES53_1",
-        "patternsHit": 1,
-        "patternsTried": 1
-      },
+      "peHash": "FBD525DD0A7B2000",
+      "gameName": "ES2-Win64-Shipping.exe",
+      "ueVersion": 505,
+      "versionDetected": true,
+      "ueVersionUserOverrideAt": "",
+      "invokeTimeoutMs": 7000,
+      "invokeTimeoutMsAt": "2026-05-10T10:48:06Z",
       "gObjects": {
         "method": "aob",
         "patternId": "GOBJ_V13",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
+      },
+      "gNames": {
+        "method": "aob",
+        "patternId": "GNAM_ES53_1",
+        "patternsTried": 1,
+        "patternsHit": 1
       },
       "gWorld": {
         "method": "aob",
         "patternId": "GWLD_ES2_1",
-        "patternsHit": 1,
-        "patternsTried": 1
+        "patternsTried": 1,
+        "patternsHit": 1
       },
-      "gameName": "ES2-Win64-Shipping.exe",
-      "invokeTimeoutMs": 7000,
-      "invokeTimeoutMsAt": "2026-05-10T10:48:06Z",
       "lastScanUtc": "2026-06-07T10:07:23.7831110Z",
-      "peHash": "FBD525DD0A7B2000",
-      "scanCount": 58,
-      "ueVersion": 505,
-      "ueVersionUserOverrideAt": "",
-      "versionDetected": true
+      "scanCount": 58
     }
-  },
-  "machineName": "MSI-NB",
-  "version": 1
+  }
 }
