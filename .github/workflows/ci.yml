@@ -143,6 +143,12 @@ jobs:
           # nothing re-derives. Stdlib-only, <1s.
           & $py tools/check_audit_register.py
           if ($LASTEXITCODE -ne 0) { throw "check_audit_register FAILED ($LASTEXITCODE) - a finding docs/dev-log.md reports fixed has no tick on its row in the audit doc, so the open count over-reports. The failure names each one. Marking the grouped queue row is not enough." }
+          # Machine-local user paths. The repo is written on more than one PC and read by people
+          # who are not the maintainer, so a literal home directory is wrong for every other
+          # reader AND discloses the account name. It leaks through pasted log lines and tool
+          # usage examples, and nothing else in CI looks. Placeholders and %ENVVAR% forms pass.
+          & $py tools/check_no_local_paths.py
+          if ($LASTEXITCODE -ne 0) { throw "check_no_local_paths FAILED ($LASTEXITCODE) - a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / %APPDATA% / %USERPROFILE%, or a placeholder. The failure names each hit." }
           # Proxy export surface. A proxy DLL is a NAME map and an ORDINAL map, and audit PX1
           # found both halves wrong on two of the four at once - silently, for months. A name
           # the real DLL exports and we do not kills the game before DllMain, with no log file
