@@ -20,13 +20,15 @@
 
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
-| **第 0 步 — 不用開遊戲** | 3 | 什麼都不用 |
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI |
-| **第 2 步 — 要注入一個執行中的遊戲** | 23 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 17 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 17 | 符合特定條件的遊戲 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 19 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 11 | 遊戲 + Cheat Engine |
+| **第 4 步 — 需要特定條件的遊戲** | 16 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **64** | |
+| **合計** | **50** | |
+
+> 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
+> 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
 
 ### ⚠ 四條會害人記錯結果的鐵則
 
@@ -104,18 +106,6 @@
 | 3 | 對一個有同字首兄弟類別的類別下 Force（如 Enemy vs EnemyProjectile、或任一 Foo / FooComponent 組合），檢查 ForcedFields 狀態列與 DLL log 的 FindInstancesDerivedFrom base=… 行 | 不相關的同字首類別「沒有」被 hold |
 | 4 | 回歸：Teleport 分頁 → Stealth card → Detect → Hold @0 → Reset | Hold 回報非零數量，Reset 後數值回復 |
 | 5 | 回歸：對基底類別 Force 一個 bool 後執行 reset_all_fields，再觀察後續新生成的物件 | 新生成物件不會仍帶著被強制的值（表示沒有寫到 CDO） |
-
-### ⬜ Y9 —— 凍結/強制寫入對話框會擋住超出寬度的值
-
-*build 2895 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Property Search 找一個 ByteProperty 的列，按 Freeze 開啟數值對話框。 | 數值框預先填入 255（不是 9999）。<br>⚠ 預填值只在 UI 看得到，先確認這一步再往下做。 |
-| 2 | 輸入 9999 按 OK。 | 出現內嵌錯誤「uint8 holds 0 to 255 — 9999 would be written as 15」，且對話框保持開啟不關閉。 |
-| 3 | 改成 200，產生腳本。 | 照舊正常產生，一般流程沒被檢查擋掉。 |
-| 4 | 同一列用右鍵 → Force → value… 再測一次 9999。 | 出現同樣的錯誤訊息。<br>⚠ 這條走的是 Solide，不是 Lua helper，必須分開測。 |
-| 5 | 在 FloatProperty 上輸入 1e300；再在 DoubleProperty 上輸入同一個值。 | Float 被拒絕並顯示「would be written as infinity」；Double 必須被接受。<br>⚠ Double 若也被拒，表示窄化檢查誤入 8-byte 路徑。 |
 
 ### ⬜ AD4 —— God Mode 徽章要說明原因而非只有開關
 
@@ -311,85 +301,24 @@
 
 還要開 CE 並載入 .CT。
 
-### ⬜ AB1 / AB2 —— 把 plugin 裝進真正的 Cheat Engine 不會炸
+### ⬜ AB1 / AB2 —— plugin 的 Inject & Connect 路徑（**前 3 步已完成，只剩這 3 步**）
 
 *build 2913 / 2932 · 優先度 **高***
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 把 dist\UE5Dumper.dll 放進 CE 的 plugins\ 資料夾，開 CE → Settings → Plugins → Add 選它。 | 對話框接受檔案，CE 沒有崩潰（修正前這一步就是崩潰點）。<br>⚠ 前三步不需要遊戲，可先單獨做完。 |
-| 2 | 勾選啟用 plugin，然後正常關閉 CE，再重開 CE 檢查設定。 | 乾淨結束，且重開後先前的 CE 設定都還在。 |
-| 3 | 到 %LOCALAPPDATA%\UE5CEDumper\Logs 搜尋字串「host is Cheat Engine — NOT starting the mailbox poller or the auto-start thread」。 | 找得到這行。<br>⚠ 找不到這行代表守門沒觸發，後面幾步的結果都不算數。 |
-| 4 | plugin 啟用狀態下，對一個執行中的遊戲用選單「UE5CEDumper: Inject & Connect」。 | 選單立刻返回、對話框說掃描已在背景開始；CE 視窗不因掃描凍結；DLL 有注入、pipe 有開、CE Lua mailbox 可用；幾秒後遊戲不崩潰。<br>⚠ 對話框說成功就必須真的通得了 pipe；說注入失敗就必須真的沒有模組被載入。 |
-| 5 | 到 CE Settings 勾選 cbInjectDLLWithAPC，重複上一步。 | 同樣不崩潰（這是修正前最容易炸的路徑）。 |
-| 6 | 反向對照：對一個資料夾名稱含「Cheat Engine」的遊戲（例如 ...\Cheat Engine 7.7\Game.exe）注入。 | 該遊戲仍然啟動 poller，功能正常。 |
+| 1 | plugin 啟用狀態下，對一個執行中的遊戲用選單「UE5CEDumper: Inject & Connect」。 | 選單立刻返回、對話框說掃描已在背景開始；CE 視窗不因掃描凍結；DLL 有注入、pipe 有開、CE Lua mailbox 可用；幾秒後遊戲不崩潰。<br>⚠ 對話框說成功就必須真的通得了 pipe；說注入失敗就必須真的沒有模組被載入。 |
+| 2 | 到 CE Settings 勾選 cbInjectDLLWithAPC，重複上一步。 | 同樣不崩潰（這是修正前最容易炸的路徑）。 |
+| 3 | 反向對照：對一個資料夾名稱含「Cheat Engine」的遊戲注入。 | 該遊戲仍然啟動 poller，功能正常。 |
 
-### ⬜ B4 —— UI 被強殺後 CE 端查詢仍能拿到結果
+### ⬜ U16 —— 大型 enum 的成員清單（**U4 / U6 / F3 已完成，只剩這一步**）
 
-*優先度 **高***
+*優先度 **中** · 需要：有 `EPhysicalSurface` 規模（數十個成員）enum 欄位的遊戲*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 連上 UI，發動一個「單一會阻塞好幾秒」的指令：Value Search 第一次掃描、Live Walker → Find Refs、Instance Finder 全池掃描，或 🌍 Locate in GWorld 把 depth 滑桿拉高。 | 指令開始跑且持續數秒以上。<br>⚠ Dump All 與 Snapshot capture 是分頁式指令（每頁 50–80 ms），永遠不會觸發，用了等於沒測。 |
-| 2 | 指令還在跑的時候強殺 UI：工作管理員「詳細資料」分頁 → 結束處理程序，或 `taskkill /F /IM UE5DumpUI.exe`。 | pipe-0.log 出現 `client gone mid-command (err=…) — aborting in-flight op`。<br>⚠ 工作管理員「處理程序」分頁的『結束工作』先送 WM_CLOSE，UI 會優雅關閉，latch 根本不會設；沒有這行就代表這次跑測沒測到東西，不是 PASS。 |
-| 3 | 接著從 CE 端做任一查詢：.CT 的 Find Instance、teleport 或 GodMode 熱鍵。 | pipe-0.log 出現 `per-command cancel is latched`，且緊接著的指令回報非 0 筆數。FAIL = 沒有該 WARN、查詢回 0 但 `scanned=<整個物件池>`。 |
-
-### ⬜ AA7 (AA4–AA7 批次僅剩此步) —— dissect 中途失敗不留殘骸
-
-*build 3037 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | CE 注入 DLL 後，用 ue5_dissect.lua 的 createFromClass 先成功建出一個結構 | Structure Dissect 清單出現該結構 |
-| 2 | 關閉遊戲，對同一個 class 再跑一次 createFromClass | 乾淨地失敗（回報錯誤），且 CE 結構清單「沒有」多出半成品或空的項目 |
-
-### ⬜ executeCodeEx (build 2792) — 基本路徑 —— Dissect 與 .CT 停用在改用有限逾時後仍正常
-
-*優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 注入 DLL 後，在 CE 對任一欄位數量夠多的類別執行 scripts/ue5_dissect.lua。 | CE 產出的 Structure 與改動前相同，欄位數與型別沒有缺漏。<br>⚠ 類別走訪是「每個欄位呼叫一次」，只看有沒有跳出結構視窗不算通過，要逐欄比對。 |
-| 2 | 檢查該次 dissect 的 CE Lua 輸出，搜尋字串 [UE5Dissect WARN]。 | 健康的一次 dissect 應該是 0 行 WARN。<br>⚠ warn() 未被 DEBUG 關閉，出現任何一行就代表有呼叫在失敗。 |
-| 3 | 取消勾選 UE5CEDumper.CT 的注入記錄（disable）。 | UE5_Shutdown 確實執行，log 有對應的關閉記錄，而不是只在 UI 上顯示已卸載。 |
-
-### ⬜ U4 / U16 / U6 / F3 —— Ubel 三個快取在實機的清除與寫入
-
-*優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 回歸：Object Tree 載入、Live Walker 下鑽某個 actor 看欄位、Property Search 有結果、enum 型別欄位顯示成員名稱而非數字。 | 以上四項與修正前一樣正常；有任何變差就停下看 `walk-0.log`。 |
-| 2 | 從 CE Lua 取一個**不是 class** 的位址 A，連續執行兩次 `UE5_WalkClassBegin(A)` + `UE5_WalkClassEnd()`，然後 grep `walk-0.log`。 | 出現**兩條** `0x<A>` 的 `WalkClass:` DEBUG 行，另有一條指名 A 的 `WALK:safe`。<br>⚠ 記錄下 A 與第一行報的 `size=`；只寫「通過」不算量測。 |
-| 3 | 對一個確實沒有欄位的 class（或 `FDateTime` / `FTimespan` 結構）反覆訪問數次，再 grep `walk-0.log`。 | 整段只出現**一條** cold-walk 記錄行，代表空 class 仍被正常快取。 |
-| 4 | 對某 actor 下書籤，**保持連線**切換到另一個關卡，再重走該書籤；名稱以 `get_object` / `walk_instance` 回傳的 `name` 欄位為準。 | 顯示新佔用者的名稱或空字串 `""`，絕不會是已被銷毀 actor 的舊名稱。<br>⚠ 不要看會渲染 class 快取名稱的面板，那是凍結副本、兩種結果都看起來像舊的。 |
-| 5 | （步驟 4 的免切關卡替代作法）記下某個靜止物件的名稱與 `+0x18` 的 4 bytes，用 CE 寫入另一個有效的 `ComparisonIndex`，重新整理同一位址。 | 新名稱立刻出現。 |
-| 6 | 開啟含大型 enum 欄位的 class（`EPhysicalSurface` 或任一 Blueprint enum），確認 CE DropDownList 成員完整，並 grep `walk-0.log` 的 `ResolveEnumValue: UEnum`。 | 該行的 `read N of M` 中 N 等於 M。<br>⚠ 若出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
-
-### ⬜ AA1 —— 凍結封裝 bitfield bool 不會壓掉同 byte 的 7 個鄰居
-
-*build 2922 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Property Search 找一個實際類別上的 bool（AActor 的 bHidden / bReplicates / bCanBeDamaged 通常就是 bitfield），產生 freeze 腳本。 | 能正常產生腳本。<br>⚠ 先在 Live Walker 的欄位 tooltip/CSX 描述確認它是 packed bool，native bool 沒有 mask 是正確的。 |
-| 2 | 讀產生出來的 CFG 內容。 | 出現 boolMask = 0xNN（0x01～0x80 其中之一）。<br>⚠ 這行不存在就代表 mask 沒送到 UI，後面全部不用做。 |
-| 3 | 在 Live Walker 或 CE 記下 prop_offset 位置的整個 byte 值。 | 取得基準值。 |
-| 4 | 啟用腳本讓它 tick 幾秒，再讀同一個 byte。 | 只有 mask 指定的那個 bit 變動；若整個 byte 變成 0x00 或 0x01 即為失敗。 |
-| 5 | 確認目標 bool 本身讀出來就是你凍結的值。 | 值正確。<br>⚠ mask 不是 0x01 時，舊行為是目標 bool 根本沒被設到，所以這步必做。 |
-
-### ⬜ Y15 —— 凍結 1-byte enum 不會蓋到後面的欄位
-
-*build 2904 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Property Search 用 type filter 選 EnumProperty，挑一列；到 Live Walker 記下它後面三個欄位的值（或 offset+1..offset+3 的原始 bytes）。 | 取得基準值。<br>⚠ 沒記基準值的話後面所有步驟都無法判定。 |
-| 2 | 回 Property Search 對該列按 Freeze。 | 對話框 Type 行顯示 EnumProperty -> uint8（不是 -> int32），數值框預填 255（不是 9999）。 |
-| 3 | 輸入 9999。 | 出現「uint8 holds 0 to 255 — 9999 would be written as 15」；改成合法 enum 值後產生腳本。 |
-| 4 | 在 CE 啟用腳本 tick 幾秒，重讀步驟 1 記下的三個鄰居欄位。 | 三個欄位完全沒變。 |
-| 5 | 檢查 CE 腳本的 CFG 行。 | valueType = 'uint8'。 |
-| 6 | 若遊戲有 4-byte enum（普通 enum，非 enum class : uint8），重複一次。 | 必須仍然對應到 int32。 |
+| 1 | 開啟含大型 enum 欄位的 class，把該列推到 CE，展開 CE 的 DropDownList。 | 成員完整，沒有缺尾。<br>⚠ 已量過的最大表只有 26 個成員，所以「大型」這一半還沒真的壓到。 |
+| 2 | grep `walk-0.log` 的 `ResolveEnumValue: UEnum`。 | `read N of M` 中 N 等於 M；出現任何 `GetEnumEntries: ... truncated read` 就是真的有問題，要記錄下來。 |
 
 ### ⬜ AA2 / AA3 —— 凍結能撐過死亡/重生並在失聯時自行停手
 
@@ -452,34 +381,21 @@
 | 5 | 嵌入 build 3125 之前（pre-1.2）的 ue5_freeze_helper.lua，再打勾新產生的腳本。 | 出現「older ue5_freeze_helper.lua … re-inject it」、視窗保持開啟、記錄維持打勾。 |
 | 6 | 同時打勾兩份不同的 freeze 腳本，再取消其中一份。 | 另一份仍持續凍結生效。 |
 
-### ⬜ Fern::Stop graceful path / B18 —— CE Disable 時 pipe server 乾淨收工
+### ⬜ B18 —— Extra Scan 跑到一半被取消要立刻收工（**Fern::Stop graceful 已完成，只剩這一步**）
 
-*優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 注入遊戲、連上 UI 正常操作一陣子，然後在 CE 取消勾選 record（Disable）。 | 遊戲與 CE 都沒有卡住。 |
-| 2 | grep pipe-0.log 的 `Stop entry`。 | 該行「不」含 `process exit`，後面的 `Stop conn drain` 說 `satisfied`，並出現 `Stopped`。FAIL = CE Disable 卻印出 `process exit`（解構子搶跑）。 |
-| 3 | （B18，需 GObjects 無法用 AOB 解出的遊戲）讓 Extra Scan 真的跑久，跑到一半取消 CE record 或關掉 UI。 | `PipeServer: Stop watches+scan joins done` 在 `Stop entry` 後約一秒內出現。FAIL = 中間隔了好幾秒，或 CE 視窗整個凍住直到掃完。<br>⚠ GObjects 用 AOB 一次就解出來的遊戲，Extra Scan 根本不會跑久，測不到。 |
-
-### ⬜ B26 —— 重複的 GameEngine record 不會互相破壞
-
-*優先度 **中***
+*優先度 **中** · 需要：**GObjects 無法用 AOB 一次解出**的遊戲，否則 Extra Scan 根本不會跑久*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | Teleport → Global Pointers → *Get GameEngine*，然後再按一次同一顆按鈕。 | 第二次顯示「本 session 已推送過」並改成複製 XML，不新增 record。FAIL = 又加了一筆。 |
-| 2 | 把複製到的 XML 貼回 CE，故意做出第二筆 record，兩筆都勾起來，然後取消勾選「較舊」那一筆。 | 較新那筆的 `UE_GameEngine` 仍能解析、chain 仍讀得到值（設 `UE5_DEBUG=1` 會看到 "another record owns UE_GameEngine now — leaving it alone"）。FAIL = 較新那筆的位址變成 `??`。 |
+| 1 | 讓 Extra Scan 真的跑久，跑到一半取消 CE record 或關掉 UI。 | `PipeServer: Stop watches+scan joins done` 在 `Stop entry` 後約一秒內出現。FAIL = 中間隔了好幾秒，或 CE 視窗整個凍住直到掃完。 |
 
-### ⬜ B5（主動半） / .CT DLL discovery (b2576) —— proxy 啟動路徑：並行 Init 與 DLL 路徑備援
+### ⬜ .CT DLL discovery —— 到底是哪一個 slot 答的（**B5 主動半與探索半都已完成，只剩這一步**）
 
-*優先度 **中***
+*優先度 **中** · ⚠ 先確認 CE 安裝資料夾底下沒有 `UE5Dumper.dll`，否則那個較便宜的 slot 會先答（見 todo.md `[STALEDLL-2026-08-18]`）*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 用已部署的 proxy DLL 啟動遊戲，連上 UI，按 Scan。 | 掃描開始（proxy 路徑下兩個快取指標都還是 0，但 pipe 已經活著）。 |
-| 2 | Scan 還在跑的時候從 CE 觸發任一 mailbox 指令（勾 .CT，或按 teleport 熱鍵）。 | init-0.log 出現 `init already in progress on another thread — tid=… is waiting`，接著 `resumed after waiting (first caller succeeded — returning its result, no second scan)`，全程只有「一個」`Starting initialization...`，且該 CE 指令正常完成。FAIL = 兩行 `Starting`，或報 `validated=yes` 但 drill-down 每個屬性型別都是 unknown。 |
-| 3 | 刪掉 `%LOCALAPPDATA%\UE5CEDumper\dll-path.txt`，從 CE 的最近開啟檔案清單開啟 `.CT`，勾 `init`。 | console 閃一下、DLL 有解析到、`UE5_DEBUG=1` 的 slot 報告寫 "folder of the most recent UE5CEDumper.CT in CE's recent-files list"，而且 `dll-path.txt` 被重新建立。FAIL = 找不到 DLL，或每次勾都閃（self-heal 沒寫檔）。 |
+| 1 | 移走 `dll-path.txt`，設 `UE5_DEBUG=1`，**先把 CE 的 Lua Engine 開著**，再從 CE 最近開啟檔案清單載入 `.CT` 並勾 init。 | slot 報告寫「folder of the most recent UE5CEDumper.CT in CE's recent-files list」。<br>⚠ 若寫的是 CE 自己的資料夾，代表這一步又沒測到。 |
 
 ### ⬜ M1–M5 / DLL LOW L1,L5,L8,L10,L12 / Solide L2–L4 + 截斷徽章 —— hold worker 的競態、斷線與 256 上限徽章
 
@@ -551,40 +467,23 @@
 | 4 | 回歸：在任一 UE4 遊戲（12-byte Vector）做同樣的 FVector Exact 掃描 | 照舊能掃到，未被寬度判斷擋掉 |
 | 5 | 在同一個 UE5 遊戲上掃一個 Vector3f 欄位（float、12B） | 同樣能命中 |
 
-### ⬜ executeCodeEx (build 2792) — 5000 ms 逾時 + 失敗原因 —— 逾時值夠用，且失敗原因會被正確回報
+### ⬜ M2 / TSet 迴歸 —— 計數與非迴歸（**M1 / M3 / A2 / U1 / V1 已完成，只剩這兩項**）
 
-*優先度 **中** · 需要：大型物件池（250K+ objects）的遊戲，例如 Elliot 或 DragonSword Awakening；另需開啟 Cheat Engine。*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 在大物件池遊戲注入後，用 ue5_dissect.lua dissect 一個類別（會觸發 UE5_FindObject 掃 GObjects）。 | 全程沒有出現 Execution timeout。<br>⚠ 若真的逾時，不要直接調大 5000 這個常數，改為回報「這個呼叫本身要重新檢討」。 |
-| 2 | 反向對照：接上 CE 後把遊戲行程 suspend，再觸發一次 dissect 呼叫。 | 輸出 [UE5Dissect WARN] <name> failed: Execution timeout（有具體原因字串）。<br>⚠ 出現裸的 nil、舊的猜測字串、或 CE 直接凍結不回應，都算失敗。 |
-| 3 | 結束前把遊戲行程 resume，確認 CE 沒有殘留凍結。 | CE 介面可正常操作，不需重啟。 |
-
-### ⬜ M1 / M2 / M3 / A2 / U1 / V1 / V2 —— TMap 元素位址與計數在 UI 端正確
-
-*build 2830 · 優先度 **中** · 需要：TMap<AActor*,float> 形狀的欄位：key 8 對齊、且 pair size 不是 8 的倍數（只有這種形狀新舊 stride 才會不同）。DumperTest UE5.4 Development package 已含 Map_I64ToI32 / Map_StrToInt / Map_IntToVec3f / Set_Big 可用。第 3 步需另開 Cheat Engine。*
+*build 2830 · 優先度 **中***
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | Live Walker 展開該 TMap，讀 element[1] 的 Address 欄 | 等於 MapDataAddr + 24 + 8；不是 +20，也不是 element base |
-| 2 | 就地編輯 element[1] 的值後按 Refresh | value 改變，key 文字不變 |
-| 3 | 對 element[1] 按 +CE | CE 顯示的是 value；凍結它不會破壞 key |
-| 4 | 展開 TMap<int32,FVector> 形狀的欄位（或任何 4 對齊 struct 當 value 的 map），看 element[0] | value 在 +4 讀出且三個 float 都正確（不是 +8） |
-| 5 | 找一個遊戲中被移除過項目的 TMap/TSet（例如丟掉道具後的背包）；再找一個超過 128 筆並在遊戲中移除一筆 | header 的 count 與實際列數一致；被移除的那一筆不再出現在列表、也不再出現在 Find Refs / Value Search 結果 |
-| 6 | 回歸檢查：展開 TSet<FName> / TSet<UObject*>，並開啟任一 UDataTable | 元素與資料列仍正確解析 |
+| 1 | 找一個**實際列數沒有被 array limit 截掉**的 TMap/TSet（元素數小於 Options 的 array limit，預設 128），並在遊戲中移除其中一筆。 | header 的 count 與實際列數一致。<br>⚠ 元素數超過 array limit 時列表會靜默停在上限，這一步就無法判定（見 todo.md `[CONTAINERCAP-2026-08-18]`）。 |
+| 2 | 展開 `TSet<FName>` / `TSet<UObject*>`，並開啟任一 UDataTable。 | 元素與資料列仍正確解析。<br>⚠ DumperTest 這三種樣本都沒有，必須用真實遊戲。 |
 
-### ⬜ U3 / U17 —— struct 預覽要有完整成員與正確寬度
+### ⬜ U3 / U17 —— struct 預覽的 LWC 寬度與 GAS 樣本（**步驟 1、2 已完成，只剩這些**）
 
-*build 3169 / 3171 · 優先度 **中** · 需要：三種樣本：有 struct-valued TMap/TSet 欄位的遊戲、一個 UE5 LWC（24-byte FVector）遊戲、一個使用 GAS 的遊戲*
+*build 3169 / 3171 · 優先度 **中** · 需要：一個 UE5 LWC（24-byte FVector）遊戲、一個使用 GAS 的遊戲*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | Live Walker 展開一個 struct-valued 的 TMap/TSet 元素 | 顯示 `{X=…, Y=…, Z=…}`，不是 `f:[…]`<br>⚠ 已知可重現的欄位是 `Map_IntToVec3f`，直接用它做 before/after |
-| 2 | 同一列與 hexValue 交叉比對 | 各分量都在且數值正確 |
-| 3 | 在 UE5 LWC（24-byte FVector）遊戲上做同樣展開 | 三個分量都出現，數量級正確 |
-| 4 | 反向對照：在使用 GAS 的遊戲上看 `FGameplayAttributeData` 的預覽 | 仍只有 BaseValue / CurrentValue<br>⚠ 若出現四個值（含 pointer 半部）代表改過頭，是 regression |
-| 5 | 找一個無法解析 layout 的 struct 展開 | 仍顯示 `f:[…]` 的 byte-blind 退路 |
+| 1 | 在 UE5 LWC（24-byte FVector）遊戲上展開一個 struct-valued 的 TMap/TSet 元素。 | 三個分量都出現，數量級正確。 |
+| 2 | 在使用 GAS 的遊戲上做同樣展開（CDO 走訪即可，主選單就夠）。 | 成員完整、寬度正確。 |
 
 ### ⬜ G1 / X3 / U7 / AF2 —— 三個要碰到特定遊戲才看得到的顯示
 
