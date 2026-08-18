@@ -23,9 +23,9 @@
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI |
 | **第 2 步 — 要注入一個執行中的遊戲** | 19 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 9 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 16 | 符合特定條件的遊戲 |
+| **第 4 步 — 需要特定條件的遊戲** | 15 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **48** | |
+| **合計** | **47** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -430,18 +430,6 @@
 | 4 | TSet / TMap：刪掉候選指著的那一筆，再 Next Scan | 被丟掉<br>⚠ 釋放掉的 sparse slot 會被下一次 Add 就地重用，位址一模一樣，只有 allocation bit 看得出來 |
 | 5 | 反向對照（不可略過）：掃一個容器值之後，只「append」而不觸發重新配置，再 Next Scan | 候選**存活**<br>⚠ 這些消失了就是 regression 不是修好 —— 天真的 `{dataPtr,count}` 規則正是會把它們全殺掉 |
 | 6 | 對一個「非容器」的普通欄位重做第 1 步 | 行為不變，而且完全沒有 `Refine re-anchor` 那行 |
-
-### ⬜ AB3 / AB5 —— UE5 (LWC) 遊戲上的向量掃描
-
-*build 3035 · 優先度 **中** · 需要：UE5（LWC，24-byte FVector）遊戲，例如 DragonSword Awakening (UE5.4)；步驟 4 另需一款 UE4 遊戲*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Value Search → data type 選 **FVector** → Exact → 填入角色目前 X,Y,Z（從 Teleport 面板 POV/marker 讀數抄）→ First Scan | 候選中包含玩家 pawn 的座標<br>⚠ data type 必須是 FVector；用 NumericNoByte 會完全不走向量解碼路徑，等於沒測 |
-| 2 | 看結果列的 value 欄 | 讀回的就是你輸入的座標，不是超大或超小的數字 |
-| 3 | 移動角色 → 選 Changed → Next Scan | 存活候選仍包含 pawn 位置 |
-| 4 | 回歸：在任一 UE4 遊戲（12-byte Vector）做同樣的 FVector Exact 掃描 | 照舊能掃到，未被寬度判斷擋掉 |
-| 5 | 在同一個 UE5 遊戲上掃一個 Vector3f 欄位（float、12B） | 同樣能命中 |
 
 ### ⬜ M2 / TSet 迴歸 —— 計數與非迴歸（**M1 / M3 / A2 / U1 / V1 已完成，只剩這兩項**）
 

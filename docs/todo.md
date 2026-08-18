@@ -3126,7 +3126,7 @@ feature WRITES TO (the Stealth Meter card), so the regression half matters as mu
    `reset_all_fields` — that would mean a class-default object was written. (The CDO skip moved
    inside Aura's walk; the local skip in `Solide` stayed as the invariant.)
 
-### 🟡 4-of-5 CLOSED 2026-08-18 — AB3/AB5: the vector scan on a UE5 (LWC) game
+### ✅ ALL 5 CLOSED 2026-08-18 — AB3/AB5: the vector scan on a UE5 (LWC) game
 
 *Needs a **UE5** game — this is the one check a UE4 title structurally cannot make. See dev-log
 build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a real target**.
@@ -3156,6 +3156,47 @@ build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a
 5. **A `Vector3f` field on a UE5 game** (float-backed, 12B, in the same process as 24B `Vector`
    fields) also matches. That is the case a version-keyed fix would have got wrong, and the reason
    the width is read per field rather than per game.
+
+> ### ✅ STEP 5 PASSES `[ELLIOT-AB3-2026-08-18]` — one scan matched BOTH widths in one process
+>
+> **Elliot**, `Elliot-Win64-Shipping.exe`, **UE 504**, DLL **1.0.0.3262**, dxgi proxy, 84,388 objects
+> scanned per pass. A second UE5 title for this batch (steps 1–3 were DSA), which is itself worth
+> having.
+>
+> **Target found over the pipe, not by clicking.** `search_properties` returns a `struct_type` per
+> field, so sweeping ~18 vector-ish name queries and grouping by `struct_type` gives the width census
+> directly: this process holds `Vector`=24 B, `Vector2D`=16 B, `Vector4`=32 B, **`Vector2f`=8 B** and
+> **`Vector3f`=12 B**. `ChaosClothConfig`'s CDO is the ideal specimen — it carries **both widths in
+> the SAME object**: `Gravity` / `LinearVelocityScale` as 24 B `Vector`, `MaxLinearVelocity` /
+> `MaxLinearAcceleration` as 12 B `Vector3f`. Exact bytes from `walk_instance`:
+> `MaxLinearVelocity.hex = 00007A44 00007A44 00007A44` = three **floats** of 1000.0 at
+> `0x7FF4DE864B44`.
+>
+> **One `FVector` Exact scan for `1000,1000,1000` returned 3 hits spanning both widths:**
+>
+> | address | class::field | struct | width |
+> |---|---|---|---|
+> | `0x7FF4DE6877F0` | `BoxComponent::RelativeScale3D` | `Vector` | **24 B** |
+> | `0x7FF4DE7345A0` | `NiagaraDataChannel_Islands::InitialExtents` | `Vector` | **24 B** |
+> | `0x7FF4DE864B44` | `ChaosClothConfig::MaxLinearVelocity` | **`Vector3f`** | **12 B** |
+>
+> ⇒ **Exactly the case a version-keyed fix gets wrong**: a single UE5 process where one predicate has
+> to accept 24 B and 12 B fields in the same pass. The width is demonstrably per field, not per game.
+> Widths were confirmed from the class layout (`walk_instance` `size=`), not inferred from the hit.
+>
+> **Two controls, because a scan that matched everything would also "pass":**
+> * A value present ONLY in a 12 B field — `60000,60000,60000` → **exactly 1** hit,
+>   `ChaosClothConfig::MaxLinearAcceleration` (`Vector3f`, `0x7FF4DE864B54`). A 24 B-only compare
+>   finds nothing here.
+> * An implausible triple `1234.5,6789.25,-4321.75` → **0** hits over the same 84,388 objects.
+>
+> ⚠ **Scope, stated plainly:** driven over the pipe (`begin_value_scan`), which exercises the same
+> `Radar` predicate the UI calls — that predicate *is* what step 5 is about. The **display** half was
+> already covered by step 2 on DSA; this run does not re-cover the UI rendering.
+> ⚠ `game_only` must be **false** — every specimen above is an engine class, and the default `true`
+> hides all of them, which would read as "no Vector3f in this game".
+> ⚠ The reply puts hits under **`candidates`**, not `results`; reading the wrong key reports a clean
+> pass as a failure.
 
 > ### ✅ STEPS 1-3 PASS `[DSA-2026-08-18]` — the LWC vector scan works on a real UE5.4 target
 >
