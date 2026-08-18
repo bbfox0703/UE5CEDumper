@@ -208,16 +208,31 @@ static bool IsAlreadyLoadedInTarget(HANDLE hProcess, std::string& outName,
 {
     if (!hProcess) return false;
 
-    HMODULE modules[1024];
+    // Size the buffer to the process's ACTUAL module count (audit #5 AB12). A fixed
+    // 1024-slot array silently truncated a process with more modules, and the cost is
+    // no longer just a redundant map: this same walk is the POST-INJECT verification,
+    // and freshly-loaded modules append to the END of the list — so a successful
+    // inject landing past slot 1024 was reported to the user as "not mapped". A size
+    // probe (nullptr, 0) returns the needed byte count; allocate, then enumerate.
     DWORD cbNeeded = 0;
-    if (!EnumProcessModulesEx(hProcess, modules, sizeof(modules),
-                              &cbNeeded, LIST_MODULES_ALL)) {
+    if (!EnumProcessModulesEx(hProcess, nullptr, 0, &cbNeeded, LIST_MODULES_ALL)
+        || cbNeeded == 0) {
+        LOG_WARN("CEPlugin: EnumProcessModulesEx size probe failed (err=%lu)", GetLastError());
+        return false;
+    }
+    std::vector<HMODULE> modules(cbNeeded / sizeof(HMODULE));
+    DWORD cbNeeded2 = 0;
+    if (!EnumProcessModulesEx(hProcess, modules.data(),
+                              static_cast<DWORD>(modules.size() * sizeof(HMODULE)),
+                              &cbNeeded2, LIST_MODULES_ALL)) {
         LOG_WARN("CEPlugin: EnumProcessModulesEx failed (err=%lu)", GetLastError());
         return false;
     }
-
-    DWORD count = cbNeeded / sizeof(HMODULE);
-    if (count > _countof(modules)) count = _countof(modules);
+    // A module can load between the two calls, so re-clamp: never read past what the
+    // second call actually filled, nor past the buffer we sized.
+    DWORD filled = cbNeeded2 / sizeof(HMODULE);
+    DWORD cap    = static_cast<DWORD>(modules.size());
+    DWORD count  = filled < cap ? filled : cap;
 
     for (DWORD i = 0; i < count; ++i) {
         wchar_t modPath[MAX_PATH] = {};
@@ -288,17 +303,47 @@ static void __stdcall OnInjectAndConnect()
         }
     }
 
-    // 2. Get the full path of this DLL (running in CE's process)
-    char dllPath[MAX_PATH] = {};
-    if (!GetModuleFileNameA(g_hDllModule, dllPath, MAX_PATH)) {
-        LOG_ERROR("CEPlugin: GetModuleFileNameA failed (error=%lu)", GetLastError());
+    // 2. Resolve this DLL's own path (running in CE's process). WIDE, not ...A:
+    //    GetModuleFileNameA narrows through the ANSI code page, mapping any character
+    //    it cannot represent to '?'. Unlike this file's two DISPLAY sites (already
+    //    wide-fixed), the path here is FUNCTIONAL — handed to CE's InjectDLL, which
+    //    LoadLibrary's it in the target — so a mangled path (CE installed under a
+    //    non-ANSI folder) fails the load on a path that does not exist. (audit #5 AB13)
+    wchar_t dllPathW[MAX_PATH] = {};
+    if (!GetModuleFileNameW(g_hDllModule, dllPathW, MAX_PATH)) {
+        LOG_ERROR("CEPlugin: GetModuleFileNameW failed (error=%lu)", GetLastError());
         g_CE.ShowMessage(const_cast<char*>(
             "UE5CEDumper: Failed to resolve DLL path."));
         return;
     }
+    // InjectDLL takes a narrow (char*) path. Narrow the long path with the system
+    // ANSI code page first; if any character is unrepresentable (lpUsedDefaultChar),
+    // fall back to the 8.3 SHORT path, which is pure ASCII and survives the narrowing
+    // (best-effort — only when the volume keeps 8.3 names). ASCII paths narrow to the
+    // exact old bytes, so only the non-ASCII case this fixes changes behaviour.
+    char dllPath[MAX_PATH] = {};
+    BOOL usedDefault = FALSE;
+    int narrowed = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, dllPathW, -1,
+                                       dllPath, sizeof(dllPath), nullptr, &usedDefault);
+    if (narrowed == 0 || usedDefault) {
+        wchar_t shortW[MAX_PATH] = {};
+        if (GetShortPathNameW(dllPathW, shortW, MAX_PATH) > 0)
+            narrowed = WideCharToMultiByte(CP_ACP, 0, shortW, -1,
+                                           dllPath, sizeof(dllPath), nullptr, nullptr);
+    }
+    if (narrowed == 0 || dllPath[0] == '\0') {
+        LOG_ERROR("CEPlugin: could not narrow DLL path to a loadable ANSI form (err=%lu)",
+                  GetLastError());
+        g_CE.ShowMessage(const_cast<char*>(
+            "UE5CEDumper: Failed to resolve a loadable DLL path."));
+        return;
+    }
 
+    // Log the EXACT path (UTF-8 of the wide form): the narrow dllPath may be an 8.3
+    // alias or otherwise lossy, so the human-readable log uses the wide path.
+    const std::string dllPathU8 = Utf8Helpers::EncodeUtf16(dllPathW, wcslen(dllPathW));
     LOG_INFO("CEPlugin: Injecting into PID=%lu | DLL=%s | fn=%s",
-             pid, dllPath, g_AutoStartFn);
+             pid, dllPathU8.c_str(), g_AutoStartFn);
 
     // 3. Inject this DLL into the game process and call UE5_AutoStart.
     //    CE's InjectDLL handles: CreateRemoteThread → LoadLibrary(path)

@@ -11,9 +11,10 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **35 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The newest (2026-08-19) are the CLASSTOTAL / PIPEBUSY
->   honesty fixes and the SLOTSYM / STALEDLL(b) generator + `.CT` fixes; the five before them are
+> - `## Pending live-game verification` — **36 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L2 (T1a Radar)
+>   AB12/AB13/AB14/AB16/AB17 end-to-end batch; before it the CLASSTOTAL / PIPEBUSY honesty fixes and
+>   the SLOTSYM / STALEDLL(b) generator + `.CT` fixes; the five before them are
 >   2026-08-17's, and NONE has been
 >   seen on a real target; two of those older ones need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
@@ -25,7 +26,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 1 item, and it is NOT in the 166 above
+> ### ▶ OPEN FIXES INDEX — 2 items, and they are NOT in the 154 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -34,6 +35,7 @@ Open work only. **Read this when deciding what to do next.**
 > | tag | one-line defect |
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
+> | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 >
 > *`[CONTAINERCAP-2026-08-18]` was **fixed 2026-08-19** (client-only badge + status line) and moved to
 > `## Pending live-game verification`.*
@@ -1499,6 +1501,22 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L2 (T1a Radar) end-to-end: AB12 / AB13 / AB14 / AB16 / AB17
+
+*The pure logic of each is unit-tested in `dll_helpers_test` (AB14 resolution, AB15 octal, AB16
+`FormatCandidateOrigin`, AB18 witness distinctness, AB19 leaf budget), and AB8/AB10/AB11 are
+compile-verified obvious fixes. What is NOT reachable from a test is the integration through Aura /
+CE injection / the pipe, which is what this batch checks. AB15/AB18/AB19 need no live check (fully
+unit-tested); AB9 stays OPEN (loader-lock, out of L2 scope).*
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | AB14 | on any UE game, run a **Value Search → NumericAll** scan for a value held by a known enum-backed field (e.g. a character state / difficulty enum) | the enum field now appears among candidates (it read as 1 byte); before the fix it was invisible to every value scan | the resolution is unit-tested, but whether Aura's meta scan actually emits enum candidates is only observable live |
+> | AB16 | enable **Native-C** in Value Search, scan, then type `native` (and `reflected`) into the results filter box | rows visibly reading "Native-C (Int32)" match on `native`; "Reflected" rows match on `reflected` | before the fix the server-side filter ignored the Origin column and returned zero |
+> | AB17 | begin a value scan, do a Next Scan or End, leave the app connected & idle; separately, start a 2nd scan much later | a stale earlier session is reaped on the next Begin/Refine/End (memory does not accumulate); the session being refined is NOT dropped when you step away mid-refine | the sweep trigger + the "protect my own session" ordering are not unit-testable (wall-clock) |
+> | AB12 | attach CE to a process with **>1024 loaded modules** and click Inject & Connect (or click it twice) | the "already loaded" / post-inject check correctly finds our DLL even past module 1024; a successful inject is never reported "not mapped" | needs a real large-module process |
+> | AB13 | (maintainer) place the CE plugin DLL under a path with **non-ASCII characters** and Inject & Connect | injection succeeds (8.3 short-path fallback) and the log shows the exact UTF-8 path | needs a non-ASCII install path; ASCII paths are unchanged |
 
 ### ⬜ PART-FIXED 2026-08-19, NEEDS A LIVE CHECK `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored"
 

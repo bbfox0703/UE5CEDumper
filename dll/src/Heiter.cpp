@@ -42,9 +42,12 @@ extern "C" void UE5_Shutdown();
 // Mailbox — shared memory interface for CE Lua
 #include "Mimic.h"
 
-// Handle for the auto-start thread — stored so we can wait for it during
-// active shutdown (UE5_Shutdown, not DLL_PROCESS_DETACH, see below).
-static HANDLE g_hAutoStartThread = nullptr;
+// No handle is kept for the auto-start thread (audit #5 AB8). Nothing ever joins
+// it: DLL_PROCESS_DETACH is a deliberate no-op (a join under the loader lock would
+// deadlock) and UE5_Shutdown lives in another translation unit that could not reach
+// a file-static here anyway. The two comments that used to claim a shutdown join
+// were wrong, and the stored HANDLE was leaked for the process lifetime. The thread
+// runs detached; its CreateThread handle is closed immediately below.
 
 #ifdef UE5_PROXY_BUILD
 // ── Proxy mutual exclusion ─────────────────────────────────────────────────
@@ -61,6 +64,11 @@ static HANDLE g_primaryProxyMutex = nullptr;
 // False when CreateMutexW itself failed — the guard is then not armed at all and a
 // second proxy in this process would run alongside us. Logged once Sein exists. (B47)
 static bool   g_primaryProxyMutexArmed = false;
+// GetLastError() captured AT the CreateMutexW call (audit #5 AB10/AB11). The B47
+// warning below is logged only after Sein::Init + several Win32/CRT calls, each of
+// which clobbers the thread's last-error, so a live GetLastError() there names the
+// wrong API. Stored here at the point of failure so the warning blames the right one.
+static DWORD  g_primaryProxyMutexErr = 0;
 #endif
 
 #ifdef UE5_PROXY_BUILD
@@ -227,8 +235,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             swprintf_s(mutexName, L"Local\\UE5CEDumper_PrimaryProxy_%lu",
                        GetCurrentProcessId());
             g_primaryProxyMutex = CreateMutexW(nullptr, FALSE, mutexName);
+            // Capture last-error NOW: everything below (and the deferred B47 warning)
+            // clobbers it, so reading it later blames the wrong call. (AB10/AB11)
+            const DWORD mutexErr = GetLastError();
             if (g_primaryProxyMutex != nullptr &&
-                GetLastError() == ERROR_ALREADY_EXISTS) {
+                mutexErr == ERROR_ALREADY_EXISTS) {
                 // Cannot log — Sein is deliberately not initialized in passive mode, and
                 // initializing it is exactly what this branch must avoid. The first
                 // instance records the pairing from its own side instead (below).
@@ -239,6 +250,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             // invisible: two proxies in one process would BOTH run, and the only symptom
             // is interleaved logs in one folder.
             g_primaryProxyMutexArmed = (g_primaryProxyMutex != nullptr);
+            if (!g_primaryProxyMutexArmed) g_primaryProxyMutexErr = mutexErr;
         }
 #endif
 
@@ -285,7 +297,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             if (!g_primaryProxyMutexArmed) {
                 LOG_WARN("Proxy: first-loaded-wins guard is NOT armed (CreateMutexW failed, "
                          "err=%lu) — a second UE5CEDumper proxy in this process would run "
-                         "alongside this one", GetLastError());
+                         "alongside this one", g_primaryProxyMutexErr);
             }
 #endif
         }
@@ -336,11 +348,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             Mimic::StartThread();
 
             // Spawn auto-start thread. It will self-terminate if g_isCEPlugin
-            // is set true by CEPlugin_InitializePlugin within 1 second.
-            // Store the handle so DLL_PROCESS_DETACH can wait for it to finish.
-            g_hAutoStartThread = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
-            if (g_hAutoStartThread) {
+            // is set true by CEPlugin_InitializePlugin within 1 second. Nothing
+            // joins it (see the note by the removed g_hAutoStartThread), so close
+            // our handle at once and let it run detached rather than leak it. (AB8)
+            HANDLE hAutoStart = CreateThread(nullptr, 0, AutoStartThreadProc, nullptr, 0, nullptr);
+            if (hAutoStart) {
                 LOG_INFO("DllMain: auto-start thread created OK");
+                CloseHandle(hAutoStart);
             } else {
                 LOG_ERROR("DllMain: CreateThread failed (error=%lu)", GetLastError());
             }

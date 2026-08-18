@@ -277,10 +277,14 @@ const std::vector<std::string>& PropertyTypeNames(DataType dt) {
         "FloatProperty", "DoubleProperty",
     };
     // NumericAll union — NumericNoByte plus the 1-byte families
-    // (Int8Property + ByteProperty). MUST stay in sync with the names
-    // TryDataTypeFromPropertyTypeName resolves.
+    // (Int8Property + ByteProperty) and EnumProperty (audit #5 AB14: enums are
+    // 1-byte in the overwhelming majority, resolved to UInt8 by
+    // TryDataTypeFromPropertyTypeName). MUST stay in sync with the names
+    // TryDataTypeFromPropertyTypeName resolves — a field is admitted into the
+    // scan index by THIS union (Aura's acceptedTypes) and its width is resolved
+    // by that function, so the two disagreeing hides a field or reads a stray one.
     static const std::vector<std::string> kNumericAll = {
-        "Int8Property",  "ByteProperty",
+        "Int8Property",  "ByteProperty",  "EnumProperty",
         "Int16Property", "UInt16Property",
         "IntProperty",   "UInt32Property",
         "Int64Property", "UInt64Property",
@@ -388,6 +392,19 @@ bool TryDataTypeFromPropertyTypeName(const std::string& propTypeName, DataType& 
     if (propTypeName == "UInt64Property") { out = DataType::UInt64; return true; }
     if (propTypeName == "FloatProperty")  { out = DataType::Float;  return true; }
     if (propTypeName == "DoubleProperty") { out = DataType::Double; return true; }
+    // EnumProperty (audit #5 AB14). Enum-backed state fields were invisible to
+    // every value scan because this name mapped to nothing, so the meta scan
+    // skipped them. An enum's storage width is NOT encoded in the type name — it
+    // is the underlying integer's ElementSize (Scharf reads FPROPERTY_ELEMSIZE for
+    // exactly this reason) — but the overwhelming majority of UE enums are 1 byte
+    // (`enum class : uint8`, and TEnumAsByte reflects as ByteProperty which is
+    // already UInt8), so resolve to UInt8 here. A rare wider enum (`enum class :
+    // int32`) is then read at its LOW byte, which still matches the small indices
+    // enums actually hold and is strictly better than the field being unscannable;
+    // it is NOT the garbage a guessed vector width produces. This is 1-byte, so it
+    // joins NumericAll (which includes ByteProperty) and stays out of NumericNoByte
+    // — see PropertyTypeNames' kNumericAll, kept in lock-step per the note there.
+    if (propTypeName == "EnumProperty")   { out = DataType::UInt8;  return true; }
     return false;
 }
 
@@ -515,26 +532,36 @@ bool BuildNumericTargets(DataType metaDt, const std::string& raw, NumericTargetS
     if (lo >= hi) return false;
     const std::string s = raw.substr(lo, hi - lo);
 
-    const bool isHex = s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');
     const bool isNeg = s[0] == '-';
+    // Hex only when the (optionally signed) string starts with 0x/0X — the leading
+    // minus is part of the number, not the prefix, so "-0x10" is hex too.
+    const size_t hexHead = isNeg ? 1u : 0u;
+    const bool isHex = s.size() > hexHead + 2 && s[hexHead] == '0'
+                       && (s[hexHead + 1] == 'x' || s[hexHead + 1] == 'X');
 
-    // Parse each interpretation independently; require the WHOLE string
-    // to be consumed so "100.5" doesn't pass as integer 100. Base 0
-    // mirrors ParseValueBytes (auto-detects hex; leading-0 = octal).
+    // Parse each interpretation independently; require the WHOLE string to be
+    // consumed so "100.5" doesn't pass as integer 100. Base 10 for a plain
+    // integer, 16 for a 0x-prefixed one (audit #5 AB15): base 0 read a leading
+    // zero as OCTAL for the integer widths ("010" -> 8) while std::stod below
+    // always reads DECIMAL ("010" -> 10), so ONE meta scan gave the same string
+    // two different numbers. Decimal is what a value-scan user means, and it now
+    // agrees across every width. (std::stod does not parse octal, so the float
+    // branch was already decimal — this makes the integer branches match it.)
+    const int intBase = isHex ? 16 : 10;
     bool     hasSigned = false; int64_t  sv = 0;
     bool     hasUnsigned = false; uint64_t uv = 0;
     bool     hasFloat = false; double   dv = 0.0;
 
     try {
         size_t pos = 0;
-        long long v = std::stoll(s, &pos, 0);
+        long long v = std::stoll(s, &pos, intBase);
         if (pos == s.size()) { hasSigned = true; sv = static_cast<int64_t>(v); }
     } catch (...) {}
 
     if (!isNeg) {
         try {
             size_t pos = 0;
-            unsigned long long v = std::stoull(s, &pos, isHex ? 16 : 0);
+            unsigned long long v = std::stoull(s, &pos, intBase);
             if (pos == s.size()) { hasUnsigned = true; uv = static_cast<uint64_t>(v); }
         } catch (...) {}
     }
@@ -1061,6 +1088,13 @@ std::string FormatCandidateValue(const Candidate& c, DataType dt,
     return FormatScalarBytes(dt, c.prevValue);
 }
 
+std::string FormatCandidateOrigin(const FieldDescriptor& desc) {
+    // Mirror ui/UE5DumpUI/Models/ValueScanModels.cs `Origin` exactly.
+    if (!desc.isNativeC) return "Reflected";
+    if (desc.guessedType.empty()) return "Native-C";
+    return "Native-C (" + desc.guessedType + ")";
+}
+
 double DecodeNumericToDouble(DataType dt, const uint8_t* b) {
     switch (dt) {
         case DataType::Int8:   { int8_t  v; std::memcpy(&v, b, 1); return static_cast<double>(v); }
@@ -1137,6 +1171,9 @@ bool CandidateMatchesFilter(const Candidate& c, DataType dt,
     if (ContainsCI(d.fieldType, needleLower)) return true;
     if (ContainsCI(inst.instanceName, needleLower)) return true;
     if (ContainsCI(FormatCandidateValue(c, dt, d), needleLower)) return true;
+    // The displayed "Origin" column ("Native-C (Int32)" / "Reflected"), so a
+    // user filtering for "native" hits the rows that visibly read it (audit #5 AB16).
+    if (ContainsCI(FormatCandidateOrigin(d), needleLower)) return true;
     // Lowercase hex of offset + address (needle is already lowercased, so a
     // user typing either case of an offset/address pasted from the grid hits).
     char buf[32];
@@ -1275,12 +1312,23 @@ uint64_t SessionManager::Begin(DataType dt,
 
 bool SessionManager::End(uint64_t sessionId) {
     std::lock_guard<std::mutex> lk(mu_);
-    return sessions_.erase(sessionId) > 0;
+    const bool erased = sessions_.erase(sessionId) > 0;
+    // Reap other idle sessions on the way out (audit #5 AB17): ending a scan is a
+    // natural point to drop ones a client abandoned without an End.
+    ExpireOldSessionsLocked();
+    return erased;
 }
 
 void SessionManager::ExpireOldSessions() {
-    auto now = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lk(mu_);
+    ExpireOldSessionsLocked();
+}
+
+// Caller MUST hold mu_. Split out so RefineWith / End can sweep AFTER protecting
+// their own session, without the double-lock a public ExpireOldSessions would take
+// (std::mutex is non-recursive). (audit #5 AB17)
+void SessionManager::ExpireOldSessionsLocked() {
+    auto now = std::chrono::steady_clock::now();
     for (auto it = sessions_.begin(); it != sessions_.end(); ) {
         if (now - it->second->lastUse > kExpirySeconds) {
             it = sessions_.erase(it);
@@ -1390,6 +1438,42 @@ std::vector<size_t> OrderGroupSlotLeaves(
     return order;
 }
 
+namespace {
+// Kuhn's augmenting path over a candidate's slots — leaf identity = leafAddr,
+// candidates tried in PREFERENCE order (the greedy pick first, then list order).
+// Seats slot `s` on a distinct leaf, bumping earlier slots along an alternating
+// path when that is what frees one. (audit #5 AB18)
+bool AugmentWitnessSeat(size_t s,
+                        const std::vector<std::vector<GroupSlotMatch>>& slotMatches,
+                        const std::vector<size_t>& preferred,
+                        std::unordered_map<uintptr_t, size_t>& seatByAddr,
+                        std::vector<size_t>& pick,
+                        std::unordered_set<uintptr_t>& visited) {
+    const std::vector<GroupSlotMatch>& matches = slotMatches[s];
+    const size_t n = matches.size();
+    if (n == 0) return true;   // an empty slot claims nothing; pick[s] stays 0
+    const size_t pref = preferred[s] < n ? preferred[s] : 0;
+    std::vector<size_t> order;
+    order.reserve(n);
+    order.push_back(pref);
+    for (size_t k = 0; k < n; ++k) if (k != pref) order.push_back(k);
+
+    for (size_t k : order) {
+        const uintptr_t a = matches[k].leafAddr;
+        if (visited.count(a)) continue;
+        visited.insert(a);
+        auto it = seatByAddr.find(a);
+        if (it == seatByAddr.end()
+            || AugmentWitnessSeat(it->second, slotMatches, preferred, seatByAddr, pick, visited)) {
+            seatByAddr[a] = s;
+            pick[s] = k;
+            return true;
+        }
+    }
+    return false;
+}
+}  // namespace
+
 std::vector<size_t> PickGroupWitnessAssignment(
     const std::vector<std::vector<GroupSlotMatch>>& slotMatches,
     const std::vector<SlotSpec>&                   slots,
@@ -1492,7 +1576,34 @@ std::vector<size_t> PickGroupWitnessAssignment(
         if (const FieldDescriptor* d = descOf(pick))
             shownDefiningClasses.push_back(d->definingClassName);
     }
-    return picks;
+
+    // --- Distinctness repair (audit #5 AB18) ---
+    // The greedy passes above choose each slot's PREFERRED leaf but never revisit an
+    // earlier slot, so two slots can end up seated on the SAME physical leaf (same
+    // leafAddr) even though the caller proved a distinct assignment exists
+    // (Orden::HasDistinctAssignment). A row showing one leaf as two slots asserts a
+    // pairing the group-scan contract forbids. Re-seat via augmenting paths, keeping
+    // each slot's greedy pick whenever it is already distinct — so a run where greedy
+    // succeeded is unchanged, and only a genuine collision is repaired (at the cost of
+    // moving an earlier slot to a less-preferred leaf of its own).
+    //
+    // NOT a reuse of Orden's discarded matching: Orden matches leaf INDICES in a
+    // different pool and ignores the filter/sibling preferences that are this
+    // function's whole purpose (reusing it would DELETE working preference logic).
+    // Applying the SAME augmenting-path guarantee here, over preference-ordered
+    // candidates, keeps the preferences AND enforces distinctness.
+    std::unordered_map<uintptr_t, size_t> seatByAddr;
+    std::vector<size_t> repaired(picks.size(), 0);
+    for (size_t s = 0; s < slotMatches.size(); ++s) {
+        std::unordered_set<uintptr_t> visited;
+        if (!AugmentWitnessSeat(s, slotMatches, picks, seatByAddr, repaired, visited)) {
+            // No distinct seat for this slot — only reachable if the caller's
+            // HasDistinctAssignment precondition did not hold. Keep the greedy pick;
+            // at worst a duplicate, exactly the pre-repair behaviour.
+            repaired[s] = picks[s] < slotMatches[s].size() ? picks[s] : 0;
+        }
+    }
+    return repaired;
 }
 
 std::vector<uint32_t> BuildGroupOrderedView(
@@ -1644,6 +1755,30 @@ std::vector<std::pair<std::string, int>> BuildGroupClassHistogram(
     return SortClassHistogram(counts);
 }
 
+size_t GroupSessionLeafCount(const std::vector<GroupCandidate>& candidates) {
+    size_t total = 0;
+    for (const auto& gc : candidates)
+        for (const auto& slot : gc.slotMatches)
+            total += slot.size();
+    return total;
+}
+
+size_t GroupCandidatesWithinLeafBudget(const std::vector<GroupCandidate>& candidates,
+                                       size_t budgetLeaves) {
+    if (candidates.empty()) return 0;
+    size_t running = 0;
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        size_t leaves = 0;
+        for (const auto& slot : candidates[i].slotMatches) leaves += slot.size();
+        // Keep at least the first candidate even if it alone exceeds the budget: a
+        // single candidate is bounded by slots x perSlotCap and never really does,
+        // and returning 0 would drop a whole scan on the backstop.
+        if (i > 0 && running + leaves > budgetLeaves) return i;
+        running += leaves;
+    }
+    return candidates.size();
+}
+
 GroupSessionManager& GroupSessionManager::Instance() {
     // Intentionally leaked singleton — same reasoning as SessionManager::Instance.
     static GroupSessionManager* inst = new GroupSessionManager();
@@ -1655,6 +1790,20 @@ uint64_t GroupSessionManager::Begin(std::vector<SlotSpec>        slots,
                                     std::vector<FieldDescriptor> descriptors,
                                     std::vector<InstanceRecord>  instances) {
     ExpireOldSessions();
+
+    // Total-leaf memory backstop (audit #5 AB19). max_results is not clamped at the
+    // Fern boundary, so a broad scan on a large game can arrive with a candidate
+    // pool whose leaf memory (candidates x slots x perSlotCap GroupSlotMatch) is
+    // multiple GB inside the target process. Trim the tail (scan order keeps the
+    // earliest) so the RETAINED session is bounded regardless of the request. Fires
+    // only in pathological cases; a normal scan holds far fewer leaves than the cap.
+    size_t dropped = 0;
+    const size_t keep = GroupCandidatesWithinLeafBudget(candidates, kMaxGroupSessionLeaves);
+    if (keep < candidates.size()) {
+        dropped = candidates.size() - keep;
+        candidates.resize(keep);
+    }
+
     std::lock_guard<std::mutex> lk(mu_);
     uint64_t id = nextId_++;
     auto sess = std::make_unique<GroupSession>();
@@ -1664,18 +1813,26 @@ uint64_t GroupSessionManager::Begin(std::vector<SlotSpec>        slots,
     sess->descriptors = std::move(descriptors);
     sess->instances   = std::move(instances);
     sess->lastUse     = std::chrono::steady_clock::now();
+    sess->candidatesDroppedForMemory = dropped;
     sessions_.emplace(id, std::move(sess));
     return id;
 }
 
 bool GroupSessionManager::End(uint64_t sessionId) {
     std::lock_guard<std::mutex> lk(mu_);
-    return sessions_.erase(sessionId) > 0;
+    const bool erased = sessions_.erase(sessionId) > 0;
+    ExpireOldSessionsLocked();   // audit #5 AB17 — sibling of SessionManager::End
+    return erased;
 }
 
 void GroupSessionManager::ExpireOldSessions() {
-    auto now = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lk(mu_);
+    ExpireOldSessionsLocked();
+}
+
+// Caller MUST hold mu_ — see SessionManager::ExpireOldSessionsLocked. (audit #5 AB17)
+void GroupSessionManager::ExpireOldSessionsLocked() {
+    auto now = std::chrono::steady_clock::now();
     for (auto it = sessions_.begin(); it != sessions_.end(); ) {
         if (now - it->second->lastUse > kExpirySeconds) it = sessions_.erase(it);
         else ++it;

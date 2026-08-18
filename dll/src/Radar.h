@@ -16,12 +16,17 @@
 //                        against cached candidates, pruning in place
 //   end_value_scan     → SessionManager::End drops the session
 //
-// Sessions auto-expire after 300s of inactivity so a misbehaving client
-// can't leak memory. SessionManager holds a global mutex; ownership is
-// via unique_ptr so move semantics are cheap when refining (caller's
-// lambda runs inside the lock holding a reference to the candidates
-// vector — typical refine reads ~50K addresses via ReadSafe which is
-// fast enough that a coarse lock is acceptable for v1).
+// Idle sessions are reaped by an ACTIVITY-TRIGGERED lazy sweep, not a wall clock
+// (audit #5 AB17): every Begin / RefineWith / End sweeps sessions idle past
+// kScanSessionIdleExpiry (a Refine/End protects its OWN session first). The real
+// backstop for a client that goes fully quiet is the last-client-disconnect
+// DropAll (Fern) — a single session left by a connected-but-idle client is bounded
+// by the connection, not by the 300s (a wall-clock sweep would have to live on
+// Fern's pipe-monitor thread; the read/query path is deliberately NOT swept, being
+// hit on every page). SessionManager holds a global mutex; ownership is via
+// unique_ptr so move semantics are cheap when refining (caller's lambda runs inside
+// the lock holding a reference to the candidates vector — typical refine reads ~50K
+// addresses via ReadSafe which is fast enough that a coarse lock is acceptable).
 //
 // Scope (build 738 MVP + Phase 2 expansion 2026-05-26):
 //   Numeric (MVP, build 738):
@@ -284,7 +289,10 @@ const std::vector<DataType>& MultiNumericMembers(DataType dt);
 // ClassInfo.Fields[].TypeName) to its concrete scalar DataType. The
 // full numeric member set is recognised — "IntProperty"->Int32,
 // "FloatProperty"->Float, "Int16Property"->Int16, "Int8Property"->Int8,
-// "ByteProperty"->UInt8, etc. Returns false for BoolProperty +
+// "ByteProperty"->UInt8, etc. "EnumProperty"->UInt8 (audit #5 AB14): enums are
+// 1-byte in the overwhelming majority; the underlying width is not in the name, so
+// a rare wider enum is read at its low byte — acceptable for the small indices
+// enums hold, and it was invisible otherwise. Returns false for BoolProperty +
 // non-numeric names. (NumericNoByte simply never feeds byte-width names
 // here because its PropertyTypeNames union excludes them.) Used by the
 // scan + refine engines to resolve each candidate's own width.
@@ -653,6 +661,25 @@ struct FieldDescriptor {
 // least one candidate; shared via Candidate::instanceIdx. (Each object is
 // scanned by exactly one worker thread, so instances never duplicate
 // across the per-thread merge.)
+//
+// Cross-RPC identity model (audit #5 AB7). A candidate is re-read across refines
+// by its stored ABSOLUTE address; `instanceIndex` is display metadata, not
+// re-validated. If the owning object is freed and its slot recycled by ANOTHER
+// object between scans, refine reads the new occupant's bytes. This is NOT patched
+// with a `(InternalIndex, SerialNumber)` witness — that pair was refused three
+// times and is wrong for a passive observer (working-lessons §4.3: UE zeroes
+// SerialNumber on free and allocates it lazily, so most objects carry serial 0
+// and a stored (i,0) matches a recycled (i,0), reporting "fresh" exactly when it
+// must not). §4.3's correct pattern — witness the INPUT BYTES of a memoized
+// decode — does not apply either: a value scan EXPECTS the bytes at the address to
+// change (Changed/Increased/…), so there are no stable input bytes to witness. The
+// only real identity check left is re-reading the UObject's class pointer to catch
+// a slot recycled by a DIFFERENT class — a new, behaviour-changing feature with an
+// open product question (AA2 established class-wide targeting can be by design) and
+// no unit-test seam (needs a live recycled slot). Deferred as its own item rather
+// than forced in a LOW batch. Current mitigations: SEH-safe reads drop a candidate
+// whose address became unreadable, and the container anchor (A11/A12) handles
+// element relocation.
 struct InstanceRecord {
     uintptr_t   instanceAddr  = 0;  // owning UObject
     int32_t     instanceIndex = -1; // GObjects index (-1 if not enumerated)
@@ -741,6 +768,14 @@ int32_t OptionalFlagOffset(int32_t optionalSize, int32_t innerSize);
 std::string FormatCandidateValue(const Candidate& c, DataType dt,
                                  const FieldDescriptor& desc);
 
+// The "Origin" column exactly as the UI renders it (audit #5 AB16): "Native-C
+// (Int32)" for a raw-hole hit, "Native-C" when the width guess is empty, else
+// "Reflected". Kept byte-identical to the C# `ScanCandidate.Origin` so the
+// server-side keyword filter can match a column the user can see — filtering for
+// "native" used to return zero rows over candidates visibly reading "Native-C".
+// Pure / std-only (unit-tested).
+std::string FormatCandidateOrigin(const FieldDescriptor& desc);
+
 // Decode a numeric candidate's prevValue to a double sort key (lossy for very
 // large 64-bit integers but monotonic enough for ordering). Non-numeric dt
 // returns 0.
@@ -820,6 +855,10 @@ public:
         // The candidate vector may have been pruned — drop the cached view
         // so the next QueryWith rebuilds the order against the surviving set.
         it->second->viewValid = false;
+        // Reap OTHER idle sessions too (audit #5 AB17). Runs AFTER the bump above
+        // so it can never drop the session being refined — a user stepping away
+        // mid-refine keeps their candidates, which is the whole point of the 300s.
+        ExpireOldSessionsLocked();
         return true;
     }
 
@@ -871,8 +910,10 @@ public:
     // Drop a specific session. Returns false if not found.
     bool End(uint64_t sessionId);
 
-    // Drop sessions whose lastUse is older than kExpirySeconds.
-    // Called lazily from Begin().
+    // Drop sessions whose lastUse is older than kExpirySeconds. Called lazily from
+    // Begin / RefineWith / End, so any value-scan activity reaps abandoned sessions
+    // (audit #5 AB17 — it used to fire ONLY from Begin, so a client that scanned
+    // once and went quiet never triggered it).
     void ExpireOldSessions();
 
     // Drop every session — called from pipe shutdown / DLL unload.
@@ -890,10 +931,15 @@ private:
     SessionManager(const SessionManager&) = delete;
     SessionManager& operator=(const SessionManager&) = delete;
 
+    // The sweep body, assuming mu_ is already held. `ExpireOldSessions()` locks and
+    // calls this; RefineWith / End call it directly under their own lock so a Refine
+    // can protect its session (bump lastUse) BEFORE sweeping. (audit #5 AB17)
+    void ExpireOldSessionsLocked();
+
     // 5-minute idle expiry — matches discrete's Phase 27b precedent.
     // Long enough that a user can step away mid-refine without losing
-    // candidates; short enough that abandoned sessions clear on the
-    // next Begin().
+    // candidates; short enough that abandoned sessions clear on the next
+    // value-scan operation (Begin / RefineWith / End all sweep — audit #5 AB17).
     static constexpr std::chrono::seconds kExpirySeconds = kScanSessionIdleExpiry;
 
     std::mutex                                                  mu_;
@@ -983,6 +1029,31 @@ struct GroupCandidate {
     std::vector<std::vector<GroupSlotMatch>> slotMatches;
 };
 
+// A group session's persistent leaf memory is the PRODUCT of three factors:
+// candidates x slots x per-slot leaves (each a GroupSlotMatch, ~120 B + a string).
+// Two are clamped — slots to 2..4 and the per-slot cap to [8, 4096] — but the
+// candidate count rides `max_results`, which Fern does NOT clamp, so the product
+// has no upper bound and a broad scan on a large game could hold multiple GB inside
+// the target process (audit #5 AB19: the per-slot clamp's own comment names "x every
+// candidate" as the hazard it does not cover). These pure helpers give the session
+// manager a total-leaf backstop that bounds the THIRD factor's contribution.
+
+// Total GroupSlotMatch leaf objects held across a candidate pool. Pure.
+size_t GroupSessionLeafCount(const std::vector<GroupCandidate>& candidates);
+
+// How many LEADING candidates (scan order) fit within `budgetLeaves` total leaves.
+// Always keeps at least one candidate when the pool is non-empty (a single
+// candidate is itself bounded by slots x perSlotCap and cannot exceed the budget).
+// Returns candidates.size() when the whole pool fits. Pure / testable.
+size_t GroupCandidatesWithinLeafBudget(const std::vector<GroupCandidate>& candidates,
+                                       size_t budgetLeaves);
+
+// Total-leaf backstop for a retained group session. ~120 B per GroupSlotMatch, so
+// 4,000,000 leaves is roughly half a GB of leaf records — far above any realistic
+// scan (tens of thousands of leaves) yet well under an OOM. It bounds the retained
+// session even when an unclamped max_results asked for the entire object pool.
+inline constexpr size_t kMaxGroupSessionLeaves = 4'000'000;
+
 struct GroupSession {
     uint64_t                              id = 0;
     std::vector<SlotSpec>                 slots;
@@ -990,6 +1061,11 @@ struct GroupSession {
     std::vector<FieldDescriptor>          descriptors;  // shared via GroupSlotMatch::descriptorIdx
     std::vector<InstanceRecord>           instances;    // shared via GroupCandidate::instanceIdx
     std::chrono::steady_clock::time_point lastUse;
+    // Candidates the memory backstop dropped at Begin (audit #5 AB19). Non-zero only
+    // when a session exceeded kMaxGroupSessionLeaves total leaves — normally 0. Set
+    // by GroupSessionManager::Begin; a future Fern change can surface it on the wire
+    // beside `total` so the trim is never fully silent.
+    size_t                                candidatesDroppedForMemory = 0;
 
     // V3-C cached ordered view (same contract as Session::view*).
     bool                                  viewValid    = false;
@@ -1053,9 +1129,14 @@ std::vector<std::string> SplitFilterTerms(const std::string& filter);
 //      beside `PrimaryActorTick.TickInterval`,
 //   3. any free leaf.
 //
-// Greedy: it can theoretically fail where a proper matching exists. The caller
-// has already established via HasDistinctAssignment that one does, so at worst a
-// row falls back to a duplicate rather than claiming no match.
+// The three passes are greedy (they never revisit an earlier slot), so they can
+// seat two slots on one leaf where a proper matching exists — a duplicate the
+// group-scan contract forbids. A final augmenting-path repair (audit #5 AB18)
+// fixes exactly that: it keeps each slot's greedy pick when already distinct and
+// otherwise bumps an earlier slot to a less-preferred leaf, guaranteeing a
+// distinct assignment whenever one exists (the caller established via
+// HasDistinctAssignment that it does). Only if that precondition is violated can
+// a duplicate remain.
 //
 // WHY THIS LIVES HERE and not in the wire encoder. Every earlier version of this
 // rule was written inside Fern.cpp's JSON builder, where no test could reach it
@@ -1128,6 +1209,9 @@ public:
         it->second->lastUse = std::chrono::steady_clock::now();
         fn(*it->second);
         it->second->viewValid = false;
+        // Reap OTHER idle group sessions (audit #5 AB17) — after the bump, so the
+        // session being refined is protected.
+        ExpireOldSessionsLocked();
         return true;
     }
 
@@ -1184,6 +1268,9 @@ private:
     GroupSessionManager() = default;
     GroupSessionManager(const GroupSessionManager&) = delete;
     GroupSessionManager& operator=(const GroupSessionManager&) = delete;
+
+    // Sweep body assuming mu_ is held — see SessionManager::ExpireOldSessionsLocked.
+    void ExpireOldSessionsLocked();
 
     static constexpr std::chrono::seconds kExpirySeconds = kScanSessionIdleExpiry;
 

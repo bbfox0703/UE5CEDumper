@@ -984,6 +984,10 @@ static void Test_ValueScan_DataTypeFromPropertyTypeName() {
     // simply never feeds them in via its PropertyTypeNames union).
     EXPECT("ByteProperty -> UInt8",  Radar::TryDataTypeFromPropertyTypeName("ByteProperty", got) && got == DT::UInt8);
     EXPECT("Int8Property -> Int8",   Radar::TryDataTypeFromPropertyTypeName("Int8Property", got)  && got == DT::Int8);
+    // audit #5 AB14 — EnumProperty resolves to UInt8 (enums are 1-byte in the
+    // overwhelming majority). Before the fix this returned false and enum-backed
+    // state fields were invisible to every meta value scan.
+    EXPECT("EnumProperty -> UInt8",  Radar::TryDataTypeFromPropertyTypeName("EnumProperty", got) && got == DT::UInt8);
     // Bool + non-numeric still reject.
     EXPECT("BoolProperty rejected",  !Radar::TryDataTypeFromPropertyTypeName("BoolProperty", got));
     EXPECT("StrProperty rejected",   !Radar::TryDataTypeFromPropertyTypeName("StrProperty", got));
@@ -999,12 +1003,20 @@ static void Test_ValueScan_DataTypeFromPropertyTypeName() {
         }
         return true;
     };
+    auto hasName = [](const std::vector<std::string>& v, const char* n) {
+        for (const auto& s : v) if (s == n) return true;
+        return false;
+    };
     const auto& noByteNames = Radar::PropertyTypeNames(DT::NumericNoByte);
     EXPECT("NumericNoByte has 8 property names", noByteNames.size() == 8);
     EXPECT("every NumericNoByte property name resolves", allResolve(noByteNames));
+    // audit #5 AB14 — EnumProperty joined NumericAll (11 now, was 10) but NOT
+    // NumericNoByte: it resolves to UInt8, a 1-byte width NumericNoByte excludes.
     const auto& allNames = Radar::PropertyTypeNames(DT::NumericAll);
-    EXPECT("NumericAll has 10 property names", allNames.size() == 10);
+    EXPECT("NumericAll has 11 property names", allNames.size() == 11);
     EXPECT("every NumericAll property name resolves", allResolve(allNames));
+    EXPECT("NumericAll includes EnumProperty", hasName(allNames, "EnumProperty"));
+    EXPECT("NumericNoByte excludes EnumProperty", !hasName(noByteNames, "EnumProperty"));
 }
 
 static void Test_ValueScan_PropertyTypeNameOf_Inverse() {
@@ -1241,6 +1253,37 @@ static void Test_ValueScan_BuildNumericTargets() {
         EXPECT("0x10 has NO Float", ts.Find(DT::Float) == nullptr);
         const uint8_t* i = ts.Find(DT::Int32);
         if (i) { int32_t v; std::memcpy(&v, i, 4); EXPECT("0x10 Int32 == 16", v == 16); }
+    }
+    // audit #5 AB15 — a LEADING ZERO must mean DECIMAL for every width, not octal
+    // for the integers and decimal for the floats. Before the fix, base-0 parsing
+    // read "010" as octal 8 for Int32/Int64/... while std::stod read it as 10.0 for
+    // Float/Double, so one meta scan gave the same string two different numbers.
+    {
+        Radar::NumericTargetSet ts;
+        EXPECT("BuildNumericTargets(010) ok", Radar::BuildNumericTargets(DT::NumericAll, "010", ts));
+        const uint8_t* i32 = ts.Find(DT::Int32);
+        EXPECT("010 Int32 present", i32 != nullptr);
+        if (i32) { int32_t v; std::memcpy(&v, i32, 4); EXPECT("010 Int32 == 10 (decimal, not octal 8)", v == 10); }
+        const uint8_t* u8 = ts.Find(DT::UInt8);
+        if (u8) EXPECT("010 UInt8 == 10", *u8 == 10);
+        const uint8_t* f = ts.Find(DT::Float);
+        EXPECT("010 Float present", f != nullptr);
+        if (f) { float v; std::memcpy(&v, f, 4); EXPECT("010 Float == 10.0", v == 10.0f); }
+        // The integer and float interpretations now AGREE — the whole point.
+        if (i32 && f) {
+            int32_t iv; std::memcpy(&iv, i32, 4);
+            float   fv; std::memcpy(&fv, f, 4);
+            EXPECT("010: integer and float widths agree", static_cast<float>(iv) == fv);
+        }
+    }
+    // ...and a 0x prefix still parses as hex even with a sign in front.
+    {
+        Radar::NumericTargetSet ts;
+        EXPECT("BuildNumericTargets(-0x10) ok", Radar::BuildNumericTargets(DT::NumericNoByte, "-0x10", ts));
+        const uint8_t* i32 = ts.Find(DT::Int32);
+        EXPECT("-0x10 Int32 present", i32 != nullptr);
+        if (i32) { int32_t v; std::memcpy(&v, i32, 4); EXPECT("-0x10 Int32 == -16", v == -16); }
+        EXPECT("-0x10 has NO Float (hex is integer-only)", ts.Find(DT::Float) == nullptr);
     }
     // Empty / whitespace / garbage → false, no entries.
     {
@@ -2590,6 +2633,24 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     EXPECT("witness: no leaf is displayed by two slots",
            shared[0][distinct[0]].leafAddr != shared[1][distinct[1]].leafAddr);
 
+    // audit #5 AB18 — the case GREEDY ALONE gets wrong. slot0 has two options and
+    // slot1 has only the shared one; greedy seats slot0 on the shared leaf first and
+    // leaves slot1 nothing free, so it duplicated it — even though a distinct
+    // assignment plainly exists (slot0 -> unique, slot1 -> shared). The augmenting-
+    // path repair must recover it. This FAILS before the fix and passes after.
+    std::vector<std::vector<GroupSlotMatch>> forcedSwap = {
+        { leaf(1, 1284, 100), leaf(2, 1288, 19) },   // slot0: two options
+        { leaf(1, 1284, 100) },                       // slot1: only the shared leaf
+    };
+    auto swapped = PickGroupWitnessAssignment(forcedSwap, slots, descs, {});
+    EXPECT("witness: augmenting path yields a distinct assignment greedy would miss",
+           swapped.size() == 2 &&
+           forcedSwap[0][swapped[0]].leafAddr != forcedSwap[1][swapped[1]].leafAddr);
+    EXPECT("witness: the forced-unique slot keeps its only (shared) leaf",
+           forcedSwap[1][swapped[1]].leafAddr == 1284);
+    EXPECT("witness: and the flexible slot moved to its other leaf",
+           forcedSwap[0][swapped[0]].leafAddr == 1288);
+
     // An empty slot claims nothing and must not disturb the later slots. The
     // filter picks the SECOND leaf, so an implementation that lost its place
     // (or just returned zeros) fails here rather than passing by construction.
@@ -2632,6 +2693,69 @@ static void Test_Radar_PickGroupWitnessAssignment() {
     std::sort(seen.begin(), seen.end());
     EXPECT("order: a permutation, nothing lost or repeated",
            seen.size() == 3 && seen[0] == 0 && seen[1] == 1 && seen[2] == 2);
+}
+
+// audit #5 AB16 — the server-side Value Search filter must cover the displayed
+// "Origin" column, so filtering for "native" hits rows that visibly read "Native-C".
+static void Test_Radar_FormatCandidateOrigin() {
+    using namespace Radar;
+    FieldDescriptor reflected;      // isNativeC = false by default
+    EXPECT("origin: reflected field", FormatCandidateOrigin(reflected) == "Reflected");
+
+    FieldDescriptor nativeWidth;
+    nativeWidth.isNativeC   = true;
+    nativeWidth.guessedType = "Int32";
+    EXPECT("origin: native with width", FormatCandidateOrigin(nativeWidth) == "Native-C (Int32)");
+
+    FieldDescriptor nativeNoWidth;
+    nativeNoWidth.isNativeC = true;   // guessedType empty
+    EXPECT("origin: native without width", FormatCandidateOrigin(nativeNoWidth) == "Native-C");
+
+    // The string exactly mirrors the C# ScanCandidate.Origin, so the server-side
+    // keyword filter now matches a column the user can see (the whole finding).
+}
+
+// audit #5 AB19 — a group session's leaf memory is candidates x slots x perSlotCap
+// GroupSlotMatch objects; only the last two are clamped. The pure helpers below let
+// GroupSessionManager::Begin bound the retained session by total leaves.
+static void Test_Radar_GroupLeafBudget() {
+    using namespace Radar;
+    auto candWith = [](size_t slotCount, size_t leavesPerSlot) {
+        GroupCandidate gc;
+        gc.slotMatches.resize(slotCount);
+        for (auto& sl : gc.slotMatches) sl.resize(leavesPerSlot);
+        return gc;
+    };
+
+    // Leaf count is the plain product summed over candidates.
+    std::vector<GroupCandidate> pool = {
+        candWith(2, 3),   // 6 leaves
+        candWith(2, 4),   // 8 leaves
+        candWith(2, 5),   // 10 leaves
+    };
+    EXPECT("leafcount: sum over all slots of all candidates",
+           GroupSessionLeafCount(pool) == 24);
+
+    // Empty pool -> 0 kept, 0 leaves.
+    EXPECT("budget: empty pool keeps nothing",
+           GroupCandidatesWithinLeafBudget({}, 1000) == 0);
+    EXPECT("leafcount: empty pool is 0", GroupSessionLeafCount({}) == 0);
+
+    // Whole pool fits under a generous budget.
+    EXPECT("budget: whole pool fits", GroupCandidatesWithinLeafBudget(pool, 1000) == 3);
+
+    // A tight budget keeps the LEADING candidates (scan order) up to the cap: the
+    // first (6) fits under 10, adding the second (8 -> 14) would exceed it, so 1 kept.
+    EXPECT("budget: trims the tail at the leaf cap",
+           GroupCandidatesWithinLeafBudget(pool, 10) == 1);
+    // Exactly the first two (6 + 8 = 14) at a budget of 14.
+    EXPECT("budget: boundary keeps as many as fit", GroupCandidatesWithinLeafBudget(pool, 14) == 2);
+
+    // Never drop the whole scan on the backstop: a single over-budget candidate is
+    // still kept (it is itself bounded by slots x perSlotCap).
+    std::vector<GroupCandidate> oneBig = { candWith(4, 4096) };  // 16384 leaves
+    EXPECT("budget: one over-budget candidate is still kept",
+           GroupCandidatesWithinLeafBudget(oneBig, 100) == 1);
 }
 
 // The grid must order by the leaf the ROW SHOWS — audit #5 AB6.
@@ -5892,6 +6016,8 @@ int main() {
     RUN(Test_NumericFamily_Filter);
     RUN(Test_GroupScan_ExcludeAndHistogram);
     RUN(Test_Radar_PickGroupWitnessAssignment);
+    RUN(Test_Radar_FormatCandidateOrigin);
+    RUN(Test_Radar_GroupLeafBudget);
     RUN(Test_Radar_GroupSortUsesTheDisplayedLeaf);
     RUN(Test_ValueScan_OrderedViewScale);
     RUN(Test_Macht_IsRipRelativeModRM);
