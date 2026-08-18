@@ -26,13 +26,31 @@ launched without a human, and what must never be started without one.
   survive a *session* (a compaction is not a new session, but a restart is) — re-request per §3 if
   `request_access` starts failing.
 
-### ▶ NEXT: finish GROUP 5
+### ✅ GROUP 5 IS DONE (2026-08-18). ▶ NEXT: GROUP 6 (Cheat Engine + Elliot)
 
-Done already: `AB1/AB2` (bridge live, three independent signs), `Y9` (both consumers), the CE Lua
-hygiene shape, and the freeze arming end to end. **Still to run:**
-`B4` · `AA7` · `executeCodeEx 基本路徑` · `U4/U16/U6/F3` · `AA1` (bitfield byte **0x05 → 0x07**) ·
-`Y15` (skip step 6) · `Y1` · `Fern::Stop / B18` · `B26` (⚠ confirm the AOBMaker bridge answers first
-or step 1 passes vacuously) · `B5` (.CT half) · `M1/M2/M3/A2/U1/V1/V2` (UI half).
+**Closed this sitting:** `M1/M3/A2/U1/V1` + `U3` steps 1–2 · `AA1` · `Y15` (step 6 skipped, no
+4-byte enum) · `U4/U6/F3` · `executeCodeEx` basic path (all 3 steps) · `AA7` step 4 → **AA4–AA7 is
+now 5-of-5** · `B26` · `Fern::Stop` graceful path (open since build 2813) · the `.CT` breadcrumb
+discovery half. `M2`/`U16` are PARTIAL and say why on their rows.
+
+**Two rows moved to a bigger title, with measurements rather than impressions:**
+* **`B4`** — DumperTest cannot produce a command that blocks for seconds. The two heaviest whole-pool
+  value scans measured **113 ms** and **52 ms** against `MonitorLoop`'s 200 ms poll. Run it on Elliot.
+* **`Y1`** — needs a game-thread invoke, and DumperTest's PE hook never fires
+  (`[PEHOOK-2026-08-17]`). Run it on a title with a verified hook.
+
+**Still open from GROUP 5, needing a specific condition:** `B18` step 3 (a title whose GObjects is
+*not* AOB-resolvable) · the `.CT` **registry/recent-files** slot (a cheaper slot answered — see
+`[STALEDLL-2026-08-18]`) · the `TSet<FName>` / `TSet<UObject*>` / `UDataTable` regression (DumperTest
+ships none of the three).
+
+**Five findings filed this sitting** — `[FREEZESTUCK-2026-08-18]`, `[CONTAINERCAP-2026-08-18]`,
+`[FREEZESCOPE-2026-08-18]`, `[SLOTSYM-2026-08-18]`, `[STALEDLL-2026-08-18]`. Full write-ups in
+todo.md.
+
+⚠ **`C:\Program Files\Cheat Engine\UE5Dumper.dll` is a stale February build** (536 KB vs dist's
+2.86 MB). It did not load this session, but it *will* on a clean game with no `dll-path.txt`.
+Maintainer's call to delete it.
 
 ### Operational facts learned the hard way this session — they cost round trips
 
