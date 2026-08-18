@@ -1146,6 +1146,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Scalar arrays are re-fetched in full above; only pointer/struct arrays fall back to the
+        // capped inline preview, so compare the elements actually shown against the true count.
+        label += ContainerTruncation.BadgeSuffix(elements.Count, field.ArrayCount);
+        var arrTruncStatus = ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
+        if (arrTruncStatus.Length > 0) StatusText = arrTruncStatus;
+
         Breadcrumbs.Add(new BreadcrumbItem
         {
             Address = parentAddr,
@@ -1174,7 +1180,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         var keyLabel = !string.IsNullOrEmpty(field.MapKeyType) ? field.MapKeyType : "?";
         var valLabel = !string.IsNullOrEmpty(field.MapValueType) ? field.MapValueType : "?";
-        var label = $"{field.Name} {{Map: {field.MapCount}, {keyLabel} \u2192 {valLabel}}}";
+        var received = field.MapElements?.Count ?? 0;
+        var label = $"{field.Name} {{Map: {field.MapCount}, {keyLabel} \u2192 {valLabel}}}"
+            + ContainerTruncation.BadgeSuffix(received, field.MapCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
@@ -1188,13 +1196,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         });
         _log.Info($"NAV→MapContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
+        var mapTruncStatus = ContainerTruncation.StatusLine(received, field.MapCount);
+        if (mapTruncStatus.Length > 0) StatusText = mapTruncStatus;
+
         PopulateMapContainerFields(field.MapElements ?? new(), field);
     }
 
     private void NavigateToSetContainer(LiveFieldValue field)
     {
         var elemLabel = !string.IsNullOrEmpty(field.SetElemType) ? field.SetElemType : "?";
-        var label = $"{field.Name} {{Set: {field.SetCount}, {elemLabel}}}";
+        var received = field.SetElements?.Count ?? 0;
+        var label = $"{field.Name} {{Set: {field.SetCount}, {elemLabel}}}"
+            + ContainerTruncation.BadgeSuffix(received, field.SetCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
@@ -1207,6 +1220,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ContainerField = field,
         });
         _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
+
+        var setTruncStatus = ContainerTruncation.StatusLine(received, field.SetCount);
+        if (setTruncStatus.Length > 0) StatusText = setTruncStatus;
 
         PopulateSetContainerFields(field.SetElements ?? new(), field);
     }
@@ -1294,7 +1310,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         var typeLabel = !string.IsNullOrEmpty(sourceField.ArrayStructType)
             ? sourceField.ArrayStructType : sourceField.ArrayInnerType;
-        CurrentObjectName = sourceField.Name;
+        CurrentObjectName = sourceField.Name
+            + ContainerTruncation.BadgeSuffix(elements.Count, sourceField.ArrayCount);
         CurrentClassName = $"Array<{typeLabel}>";
         HasData = true;
         ShowCeXml = false;
@@ -1355,7 +1372,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         var keyLabel = !string.IsNullOrEmpty(sourceField.MapKeyType) ? sourceField.MapKeyType : "?";
         var valLabel = !string.IsNullOrEmpty(sourceField.MapValueType) ? sourceField.MapValueType : "?";
-        CurrentObjectName = sourceField.Name;
+        CurrentObjectName = sourceField.Name
+            + ContainerTruncation.BadgeSuffix(elements.Count, sourceField.MapCount);
         CurrentClassName = $"Map<{keyLabel}, {valLabel}>";
         HasData = true;
         ShowCeXml = false;
@@ -1507,7 +1525,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private void PopulateSetContainerFields(List<ContainerElementValue> elements, LiveFieldValue sourceField)
     {
         var elemLabel = !string.IsNullOrEmpty(sourceField.SetElemType) ? sourceField.SetElemType : "?";
-        CurrentObjectName = sourceField.Name;
+        CurrentObjectName = sourceField.Name
+            + ContainerTruncation.BadgeSuffix(elements.Count, sourceField.SetCount);
         CurrentClassName = $"Set<{elemLabel}>";
         HasData = true;
         ShowCeXml = false;

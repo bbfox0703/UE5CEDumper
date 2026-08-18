@@ -25,7 +25,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 2 items, and NONE of them is in the 166 above
+> ### ▶ OPEN FIXES INDEX — 1 item, and it is NOT in the 166 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -34,7 +34,9 @@ Open work only. **Read this when deciding what to do next.**
 > | tag | one-line defect |
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
-> | `[CONTAINERCAP-2026-08-18]` | the container list stops at the array limit and says nothing |
+>
+> *`[CONTAINERCAP-2026-08-18]` was **fixed 2026-08-19** (client-only badge + status line) and moved to
+> `## Pending live-game verification`.*
 >
 > *`[CLASSTOTAL-2026-08-18]` and `[PIPEBUSY-2026-08-18]` were **fixed 2026-08-19** and moved to
 > `## Pending live-game verification`.*
@@ -4643,35 +4645,32 @@ The remaining unchecked boxes below are superseded by the table above except whe
 > | **TSet / UDataTable no-regression** | ⬜ **NOT TESTED — do not record as passing** | `TSet<int32>` (`Set_Int`, `Set_Big`) and `TSet<FStruct>` (`Set_Struct`) resolve, but the row asks for **`TSet<FName>` / `TSet<UObject*>` and a `UDataTable`**, and DumperTest ships **none of the three** (`Set_` filter returns exactly 3 matches, all covered above). Needs a real game. |
 > | **U2** | ⬜ still open | needs a `CasePreservingName: YES` title; unchanged by this sitting. |
 
-### ⛔ NEW 2026-08-18 `[CONTAINERCAP-2026-08-18]` — the container list stops at the array limit and says nothing
+### ✅ FIXED 2026-08-19 `[CONTAINERCAP-2026-08-18]` — container drill-down now discloses "showing N of M" when capped
 
-*Found while trying to settle M2's "header count == rows rendered" half, which is what makes it
-worth filing: the row could not be decided, and the reason was invisible on screen.*
+**Was.** `Set_Big` drilled to a grid whose last row is `[128]` under breadcrumb
+`SetBig {Set: 199, IntProperty}` — nothing distinguished a complete 128-entry set from the first 128
+of 199, so a user who expanded a 500-entry `TMap`, missed an item, and concluded it wasn't there was
+misled. `Constants.DefaultArrayLimit = 128` (surfaced as the toolbar **Array Limit** slider /
+`ArrayLimitExponent`) caps the walk; the cap is correct — the *silence* was the defect.
 
-**Observed.** `Set_Big` renders as breadcrumb **`SetBig {Set: 199, IntProperty}`** over a grid whose
-last row is **`[128] 9128`**. There is no ellipsis, no badge, no status line, and no row count —
-nothing on screen distinguishes "this set has 128 entries" from "this set has 199 and you are seeing
-the first 128".
+**Fix (client-only, no protocol change).** The DLL already sends BOTH the true total
+(`set_count` / `map_count` / array `count`, `Fern.cpp:1448-1602`) and the capped element list, so the
+UI now compares them. New pure helper `ContainerTruncation` (`ui/UE5DumpUI/Core/ContainerTruncation.cs`)
+drives three disclosures, ALL empty on the non-truncated common case (no noise): the drill breadcrumb
+label and the panel header (`CurrentObjectName`) gain a `⚠ showing 128 of 199` suffix, and `StatusText`
+points at the **Array Limit** slider. Wired into `NavigateTo{Array,Map,Set}Container` +
+`Populate{Array,Map,Set}ContainerFields` in `LiveWalkerViewModel`. Scalar arrays are re-fetched in full
+on drill, so they correctly show no badge; only `TSet` / `TMap` / pointer-`TArray` (inline preview)
+truncate. Covered by `ui/UE5DumpUI.Tests/ContainerTruncationTests.cs` (pure helper + real-VM drill per
+container kind, truncated & full).
 
-**Cause, and it is not a bug in the cap itself.** `Constants.DefaultArrayLimit = 128`
-(`ui/UE5DumpUI/Constants.cs:266`), surfaced as the user-settable `ArrayLimitExponent = 7`
-(`Models/UiOptionsSettings.cs:70`) and passed to `Ubel::WalkInstance`'s `arrayLimit`
-(`dll/src/Ubel.cpp:3682`, clamped to [1, 16384]). Truncating is deliberate and correct.
+**Verify in-game (verify only — no code):**
 
-**The defect is the silence, and the fix needs no protocol change.** `Fern.cpp:1548-1573` already
-sends **both** numbers in the same object — `set_count` (199, the true total) and a `set_elements`
-array of 128 — and the map path at `:1543` is the same shape. The UI therefore holds everything it
-needs to render "128 of 199" and renders neither. Compare `Solide`, where the register *requires* a
-`⚠ capped` / `(256 held)` badge for exactly this situation; the same disclosure is missing here.
-
-**Failure scenario.** A user expands a 500-entry inventory `TMap`, does not find the item they are
-hunting, and concludes the item is not in the map — the panel has told them, without qualification,
-that the map's contents are what they can see. The same reasoning silently bounds any conclusion
-drawn from Find Refs on a large container.
-
-**Fix shape (not applied).** Where `set_elements.Count < set_count` (and the map/array equivalents),
-badge the container row and the breadcrumb — e.g. `{Set: 199 — showing 128}` — and point at the
-Options array-limit control. Effort **S**, risk **LOW**, client-only.
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | Live Walker → drill into a `TSet` / `TMap` / `TArray<obj>` with **> 128** entries | Breadcrumb AND header read `⚠ showing 128 of N`; a status line names the **Array Limit** slider |
+| 2 | Drill into a container with **≤ 128** entries | No `showing…` badge anywhere and no status line (common case stays clean) |
+| 3 | Raise the toolbar **Array Limit** slider, re-open the same big container | The shown count rises (e.g. `showing 256 of N`); once the cap ≥ N the badge disappears entirely |
 - ⬜ **`TArray<FName>` / `TMap<FName,V>` on a CasePreservingName game (U2).** Needs a UE 5.5+/5.7
   title where `Genau` logs `CasePreservingName: YES` (e.g. Titan Quest II). Expand any actor's `Tags`.
   Before the fix `InferScalarSize` forced the stride to 8 against the engine's real 16, so every
