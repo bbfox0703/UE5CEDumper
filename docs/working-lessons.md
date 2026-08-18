@@ -161,6 +161,31 @@ write *call*), committed inside a test written to catch exactly that class of er
   *forbidding the shipped default* (budgeting on `-Xmx`, a reservation ceiling, not a working set);
   and a prediction that a bug would "collapse concurrency to 1" when it measured at **+42%**.
 
+### 1.10a A probe that holds the deciding variable fixed will confidently answer the wrong question
+
+**Three times in one sitting (2026-08-17), and each one nearly became a filed finding.** The shape is
+identical every time: build a probe, get a clean negative, and conclude something general — while the
+one variable that actually decided the outcome was never varied.
+
+| the probe | its clean negative | what it actually held fixed |
+|---|---|---|
+| copied an indexed `Ollama.lnk` under a new name to test whether the app index takes new entries | copy never appeared | **the target** — AppsFolder dedupes on target path, so a duplicate is invisible no matter what |
+| three fresh `.lnk` files, varying drive / target / file completeness | none appeared ⇒ *"the index takes no new `.lnk` at all"* | **the directory** — all three were per-user; the all-users folder works, which is the entire answer |
+| a title missing from the injection picker, with `OpenProcess` succeeding at every access right | looked like a real `IsUe` misclassification | **the scroll position** — the list held 7 and showed 6; the title was one scroll below the fold |
+
+**The rule that caught all three, and it is cheap:** before believing a negative, *enumerate what
+differs between a case that works and the case that does not*, and make sure the probe varies **that**.
+A working example was sitting in plain sight each time — `Ollama.lnk` in the indexed list, and the
+same picker having listed `DSClient-Win64-Shipping.exe` minutes earlier.
+
+**A second, blunter tell:** if a probe produces a *general law* ("X never happens") from a sample that
+never varied the obvious suspect, the law is almost certainly a property of the sample. Two of the
+three above were phrased as laws, and both were wrong.
+
+⚠ **And the same day, the same shape at a smaller scale:** a Recycle-Bin check filtered on "modified
+in the last 30 minutes" and reported the recycled file absent — because `shutil.copy2` had preserved
+the *source's* mtime. Match deleted files on **size**, never on time.
+
 ### 1.11 The recurring-defect sweep is not "grep the symbol" — it is "grep the argument nobody used"
 
 Audit #5's most expensive family was `EnumProperty` being written as 4 bytes when UE's dominant
@@ -483,6 +508,97 @@ A 40-check Lua rig stubbing CE's globals found 13 real failures in the unfixed f
   its own coverage as the fix improves things (48 checks → 39 on the first green run). Count into one
   assertion instead. Same family as AF1's aliasing fixture in §2.3.
 
+### 2.6 Verify the DLL through the PIPE, not the UI — and check `build_number` first
+
+Learned 2026-08-16 closing the AB4 batch, which had been the top-ranked unverified item.
+
+**The UI is a client, not the subject.** Every DLL-side batch on the verification register can be
+driven by a ~50-line Python client speaking the pipe protocol directly: open the `UE5DumpBfx` named
+pipe as `'r+b', buffering=0`, write `{"id":N,"cmd":...}` + `\n`, read newline-delimited replies and
+match on `id` (async events interleave, so a blind readline will hand you the wrong message). AB4's
+seven steps went from "needs a UI session and a human" to a few minutes of scripted scans. It is also
+**stronger evidence** for a DLL-side claim, because it removes Avalonia as a variable — but say so
+explicitly in the register, since it correspondingly proves nothing about the panel's own bindings.
+
+**Three traps, each of which produces a confident wrong answer:**
+
+- **A game with a deployed proxy IGNORES a fresh injection.** `injectDLL` returns `true`, and then
+  the log says `DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skip`.
+  The OLD proxy keeps serving the pipe. On 2026-08-16 that meant a build-**3122** proxy answering
+  while the freshly built 3156 DLL sat loaded and inert in the same process — i.e. the batch would
+  have "verified" a fix the running code did not contain. **Read `get_pointers.build_number` and
+  compare it against what you just built, before believing any result.** To test a new build, replace
+  the proxy in the game's `Binaries\Win64` and restart the game.
+- **Proxy mode does not scan on load, and `init` does not make it.** A proxy is loaded long before
+  the engine exists, so it deliberately starts the pipe server only
+  (`DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)`). `init` returns
+  `ok:true` in ~0 ms and scans nothing. The client must send **`trigger_scan`** and then poll until
+  `gobjects_method == "aob"`. Skip it and every pointer reads `not_found`, which looks exactly like a
+  broken AOB table on a game that in fact resolves fine.
+- **A result cap silently turns an absence claim into a sample.** `max_results` truncation sets
+  `deadline_hit: true`. "I paged 40,000 rows and saw no 1-byte fields" is not the same claim as
+  "there are none". Re-run with a cap high enough to finish, confirm `deadline_hit:false`, and only
+  then assert over the population. AB4's control step is decisive *only* because it completed —
+  367,401 rows over the full 84,387-object pool, zero 1-byte rows, against 81,547 for the opposite
+  predicate on the same data type. Same pool, same value, opposite predicate: that pairing is the
+  evidence, not either number alone (§1.6).
+
+**And the reason to do this work at all:** running AA4–AA7 step 1 for the first time surfaced
+**AU1** — find-object-by-path had never worked, on any of three APIs that advertised it, because
+`Ubel::GetFullName` emits `//Script/Engine/Actor` while every caller, doc and `.CT` writes
+`/Script/Engine.Actor`. No finder had raised it across five audits, and one of the three was a stub
+returning 0 that `dll-spec.md` documented as working. **Executing a shipped path finds defects that
+reading it does not.**
+
+### 2.7 Six MED fixes in one session — what the offline half taught (builds 3189-3195)
+
+Learned 2026-08-17 closing Z1, Z3, AC1, AD5, AD6 and A1 with **no game available** and no ability to
+grant new permissions. Every one was pinned by `build.ps1 -Target Test` alone. Five lessons, none of
+which is about the individual bugs.
+
+**a. A cap changes what "precision" means, and the answer is not the intuitive one.** Z3's fetch
+sends each seed as its own query with its own 200-row envelope, filled in walk order. So a seed
+matching 3,050 names is *fine* when 98% of them are the word you meant (`Item`, `Velocity`) — the
+200 rows you get back are the right rows — and a seed matching 10,180 is *fatal* when 6% are
+(`MP`, which is mostly `Component`/`Compression`/`Template`). **Volume is not the test; precision
+above the cap is.** The filed fix ("cost is near zero, just add the keywords") measured CPU, which
+really was free, and missed that the scarce resource was the envelope. Below the cap precision does
+not matter at all, because everything fits.
+
+**b. That calibration is FREE and needs no game.** Extracting ASCII identifiers from three shipped
+game EXEs in `D:\UE_Analyze_data` gave **578,809 distinct names** in about a minute of Python — UE
+registers reflected property names as literal strings, so it is a sound over-approximation of the
+pool the DLL walks. That corpus turned "seems reasonable" into a per-seed number and changed the
+shipped list. Same move as G8/G9/G11 modelling tier rules over the PE corpus: **when a rule is about
+names or bytes, model it offline before writing it.**
+
+**c. A test that calls the method under test directly can pass straight through the defect.** Z1's
+existing coverage set the property and then `await`ed `RescoreAsync()` itself — which re-scores
+unconditionally, so it was green with the bug fully present (§1.3, again). The fix is to await *what
+the VM decided to do*, not what the test decided: an `internal Task? PendingRescore` the production
+path assigns, `null` when it chose not to act. That distinction — "did the VM reconcile?" vs "did I
+reconcile it?" — is the whole assertion.
+
+**d. In an async VM test, a bounded wait is not a nicety.** Both Z1 regressions would *hang* the
+suite under the pre-fix code rather than fail it, because the pre-fix code awaits something the test
+never releases. `var done = await Task.WhenAny(work, Task.Delay(10s, TestContext.Current.CancellationToken)); Assert.Same(work, done);`
+turns that into a failure. **A hang is not a test result** — and a negative control that hangs cannot
+be distinguished from a hung machine.
+
+**e. Before calling an existing guard blind, run your negative control past it.** AD6's write-up was
+going to say `check_mailbox_contract.py` could not see a moved mailbox field. Measured: it *does*
+fail on `className[256]`→`[255]`, via its surface hash. What it cannot do is compute an offset — so
+it demands a *decision*, and a developer who bumps the contract version sails through with every
+offset moved. The honest claim is "complementary", not "blind", and the difference took one command
+to establish. The generalisation: **"the existing check misses this" is a claim to test, exactly
+like the defect itself.**
+
+**f. Register hygiene — the severity cell must stay a plain severity.** Writing AD6's re-tier as
+`| **AD6** ✅ | MED→**LOW** |` silently dropped the row out of `check_audit_register.py`'s total
+(290 → 289) while still reporting OK-looking numbers. The convention `AB7` already follows is a plain
+`LOW` in the cell with *(MED→LOW on re-derivation, build N)* in the body. Watch the **total**, not
+just the open count, when pasting the tool's headline.
+
 -----
 
 ## 3. Traps in our own stack
@@ -722,6 +838,47 @@ py -c "import json;d=json.load(open('ui/UE5DumpUI/obj/project.assets.json'));t=l
 Put the version in **one** MSBuild property feeding every reference. Seven scattered references are
 how a bump gets applied to some and not the others — the variant that hides longest.
 
+### 3.8 The AV quarantines *collateral*, and it takes uncommitted work with it
+
+2026-08-17. A newly written `scripts/startup-shortcut.ps1` was run once. Bitdefender's **Advanced
+Threat Defense** — the behavioural layer, not a signature scan — flagged the process chain
+`claude.exe → pwsh.exe → powershell.exe` writing a `.lnk` into the Startup folder. That is a textbook
+persistence shape and the AV was not wrong to look.
+
+**What it actually did is the lesson.** It did not block one action. It removed **six files**, most of
+which had nothing to do with the Startup folder:
+
+| Removed | Recoverable? |
+|---|---|
+| `scripts/startup-shortcut.ps1` | ❌ **untracked — gone for good** |
+| `build.ps1` | ✅ committed, but the working-tree edit was lost |
+| `scripts/gen_proxy_forwarders.py` | ✅ committed minutes earlier |
+| `tools/check_proxy_exports.py` | ✅ committed minutes earlier |
+| `dist/UE5DumpUI.exe`, `dist/startup-shortcut.ps1` | ➖ rebuildable |
+
+Four rules came out of it:
+
+1. **Commit before you execute anything new.** The only unrecoverable loss was the one file that had
+   not been committed yet. `git checkout` restored the other three verbatim. This costs nothing and
+   is the whole defence.
+2. **It then BLOCKS THE PATHS, and `git checkout` fails with `Permission denied`.** The block is
+   *path-specific*: new paths in the same folders stayed writable, which is why the Python twin could
+   be written and committed while the `.ps1` could not. **It survives until a reboot** — do not
+   burn a session retrying.
+3. **Windows Defender's logs are empty and prove nothing.** `Get-MpThreatDetection` and the
+   `Windows Defender/Operational` log both returned zero events. Defender is *passive* here
+   (`SecurityCenter2 productState 393472`); the real product is Bitdefender, whose events are not in
+   any Windows event log. Check `root\SecurityCenter2 AntiVirusProduct` before concluding "no
+   detection" — an absence in the wrong log is not evidence.
+4. **PowerShell is inspected far more aggressively than Python on this machine.** Maintainer's
+   standing rule: **anything automated that creates or deletes must go through the Python tool**; the
+   `.ps1` is for the maintainer to invoke by hand. Same family as the older AMSI finding (a
+   `LoadLibrary`/`GetProcAddress` P/Invoke probe is refused as "malicious content").
+
+**Do not respond by making the script look like something else.** The behaviour genuinely *is*
+persistence; that is what the tool does. The honest fixes are a folder exclusion, a second
+implementation in a less-inspected host, and not running the thing automatically.
+
 -----
 
 ## 4. UE and CE facts that cost a session each
@@ -751,6 +908,22 @@ Verify Return Value mode tried to find the return slot.
 hardcode `+0x3C` or any "+8 from ElementSize" form.
 
 ### 4.2 CE Lua quirks baked into our code as defensive patterns
+
+> ⚠ **First, read CE's address-list checkbox correctly, because getting it backwards inverts every
+> verification result you draw from a screenshot** (maintainer, 2026-08-18):
+>
+> | what you see on the record | what it means |
+> |---|---|
+> | **a big red ✗ drawn over the checkbox** | the script is **ACTIVE** |
+> | an empty checkbox | not active |
+>
+> The ✗ is CE's *enabled* glyph for `<script>` rows — **it is not an error marker**, and CE has no
+> per-record error marker at all. Two consequences, both of which have already cost time here:
+> **(a)** a script that bailed out correctly and untick'd itself looks *identical* to one that was
+> never ticked, and **(b)** a script that ticked, armed, and then silently stopped writing still shows
+> the red ✗ — which is exactly how `[FREEZESTUCK-2026-08-18]` hid (`todo.md`). The checkbox reports
+> what CE was *asked* to do, never what our Lua *achieved*; for that, open **CE → Lua Engine**, since
+> the hygiene rules deliberately keep those messages out of dialogs.
 
 > **Where to check whether a CE Lua call exists — and there are two copies, which answer different
 > questions.** CLAUDE.md forbids inventing CE Lua calls, so grep one of these first:
@@ -1059,6 +1232,15 @@ values it did set were the two that most code exercises.
 
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
+> ⚠ **NARROWED 2026-08-17 — it is not a version band.** **Lushfoil Photography Sim is UE 5.6 cooked
+> Shipping and `Add_IntInt(3,4)` returned `7`** (`✓ PE hook verified`), so "UE 5.5+ cooked Shipping"
+> over-states it. Read the rule as **title-specific** — most plausibly whether that title's cook
+> applied BlueprintFastCall to that helper. The practical consequence is unchanged: *do not build a
+> verification on a KismetMathLibrary return*, because it may or may not be dispatched and you cannot
+> tell which from the outside. But equally, **do not read a KismetMathLibrary failure as proof the
+> hook is fine** — on DumperTest the same signature turned out to be a genuinely mis-detected vtable
+> slot, and only the DLL's own "fired 0 times in 1500 ms" validator separated the two cases.
+
 KismetMathLibrary helpers (`Exp`, `Multiply_DoubleDouble`, `Add_IntInt`, …) **silently no-op** when
 invoked via ProcessEvent from a reflection-driven dumper on UE 5.5+ cooked Shipping. Likely UE's
 BlueprintFastCall optimisation: the BP VM bypasses ProcessEvent entirely for these helpers, so the
@@ -1204,6 +1386,15 @@ architecture or UX changes in these areas.
 - **Do not reorder GObjects preset rows B and E.** Putting E first would let its +0x20/+0x24 reads steal
   a real Back4Blood layout — trading one silent misread for another. The fix is the chunk-count
   discriminator plus a two-pass relaxed table, both strictly widening.
+- **A single hand-maintained bugs control table** (merging the audit docs / todo / dev-log into one
+  tracker) — evaluated 2026-08-17, **rejected**. The audit #5 register (§3c) already IS the single
+  status owner, CI-gated by `check_audit_register.py`, and the other docs' roles (evidence dossiers /
+  append-only history that doubles as the gate's claim source / forward work + the verification
+  register) are load-bearing for the gates. The deciding evidence: the six-row re-derivation dossier
+  drifted three ways within a day of its own fixes — every extra hand-maintained copy of status is a
+  copy that lies. A unified view must be DERIVED, never stored — `check_audit_register.py --list`
+  prints the open HIGH/MED tier with segments. The spent dossier is in `docs/archive/`; full
+  rationale in the 2026-08-17 dev-log entry.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see CLAUDE.md's docs table
 for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-value-scan-spec.md`,

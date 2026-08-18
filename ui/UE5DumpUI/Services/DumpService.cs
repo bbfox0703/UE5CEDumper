@@ -3241,6 +3241,24 @@ public sealed class DumpService : IDumpService
         };
     }
 
+    public async Task<ProtectState> GetProtectStateAsync(CancellationToken ct = default)
+    {
+        var req = new JsonObject { ["cmd"] = "get_protect_state" };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+        // Flat envelope (MakeResponse merge-patches the data object in), so these
+        // are top-level. NOTE the live value arrives as "godmode", not "live" —
+        // renaming it here would silently fall through to the ?? default and
+        // report "no pawn" forever.
+        return new ProtectState
+        {
+            Want       = res["want"]?.GetValue<int>() ?? 0,
+            Live       = res["godmode"]?.GetValue<int>() ?? -1,
+            Resolvable = res["resolvable"]?.GetValue<bool>() ?? false,
+            Code       = res["code"]?.GetValue<int>() ?? 0,
+        };
+    }
+
     public async Task<TimeDilationSetResult> SetTimeDilationAsync(string target, double value, CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "set_time_dilation", ["target"] = target, ["value"] = value };

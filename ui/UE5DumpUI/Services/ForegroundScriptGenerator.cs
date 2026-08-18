@@ -67,6 +67,13 @@ public static class ForegroundScriptGenerator
         Line(sb);
 
         // Mailbox round-trip: write op + value, trigger CMD_FOREGROUND=12, poll status.
+        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
+        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
+        // a toggle fired while another command was still in flight wrote straight
+        // over it. Above the OPERAND writes, not merely above the status clear:
+        // operands land in the same mailbox, so writing them corrupts the command in
+        // flight just as surely -- the same reason the contract check sits here.
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "KeepForeground");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {OpSet})    -- op: FG_OP_SET");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffUfuncAddr}, {value})    -- value: {value} = {label}");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)    -- clear status");

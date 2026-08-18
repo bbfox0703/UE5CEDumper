@@ -213,9 +213,18 @@ namespace Aura {  // legacy alias: ObjectArray
     // Iterate all non-null slots; cb returns false to stop
     void ForEach(std::function<bool(int32_t idx, uintptr_t obj)> cb);
 
-    // Linear name search
+    // Linear name search.
+    //   FindByName     — bare FName only ("Actor").
+    //   FindByFullName — path ("/Script/Engine.Actor" / "//Script/Engine/Actor" /
+    //                    "Class /Script/Engine.Actor"), all canonicalized to one form.
+    //   FindByNameOrPath — accepts EITHER; path first when a separator is present.
+    // ⚠ Prefer FindByNameOrPath in new code. Until build 3157 FindByFullName was a
+    // stub returning 0 while this table listed it as working, and both callers used
+    // FindByName on arguments named `fullPath`/`path` — so no path ever resolved
+    // (audit AU1).
     uintptr_t FindByName(const std::string& name);
     uintptr_t FindByFullName(const std::string& fullPath);
+    uintptr_t FindByNameOrPath(const std::string& query);
 
     // --- Paginated search results (used by pipe commands) ---
 

@@ -452,6 +452,17 @@ public partial class ClassPivotViewModel : ViewModelBase
         // pivot over temporally-inconsistent rows mixes two worlds' instances.
         var list = (await Task.Run(() => _store.ListSnapshotsAsync()))
             .Where(m => m.IsUsable).ToList();
+
+        // Capture what the user had chosen BEFORE the rebuild throws the objects
+        // away (audit #5 AF5). SnapshotMeta is a class and UiCollection.Reset
+        // repopulates with NEW instances, so this must round-trip by Id — never by
+        // reference or index. A refresh used to hard-reset the picker to "newest"
+        // plus the two-newest ticks, silently discarding a deliberate choice.
+        long? keepSnapshotId = SelectedSnapshot?.Id;
+        var keepTicked = DiscoverPicks.Where(p => p.IsSelected)
+                                      .Select(p => p.Id)
+                                      .ToHashSet();
+
         _refreshing = true;
         try
         {
@@ -465,11 +476,17 @@ public partial class ClassPivotViewModel : ViewModelBase
                 _classCache.Remove(k);
             foreach (var k in _fieldCache.Keys.Where(k => !liveIds.Contains(k.Item1)).ToList())
                 _fieldCache.Remove(k);
-            // Default to the newest snapshot.
-            SelectedSnapshot = Snapshots.Count > 0 ? Snapshots[0] : null;
-            // Rebuild the discovery picker, defaulting to the two newest ticked — the
-            // common "capture before/after an action" flow.
-            RebuildDiscoverPicks();
+            // Restore the previous selection, falling back to the newest. A snapshot
+            // that was deleted between refreshes simply isn't in `list`, so the
+            // FirstOrDefault misses and the fallback takes over — and the cache prune
+            // just above has already dropped its entries.
+            SelectedSnapshot =
+                (keepSnapshotId is long id ? Snapshots.FirstOrDefault(m => m.Id == id) : null)
+                ?? (Snapshots.Count > 0 ? Snapshots[0] : null);
+            // Rebuild the discovery picker, keeping whatever was ticked. Only a first
+            // build (nothing ticked yet) falls back to the two newest — the common
+            // "capture before/after an action" flow.
+            RebuildDiscoverPicks(keepTicked);
         }
         catch (Exception ex)
         {
@@ -486,15 +503,22 @@ public partial class ClassPivotViewModel : ViewModelBase
     }
 
     // (Re)build the Suggest-Targets picker from the current snapshot list (newest
-    // first), defaulting to the two newest ticked. Subscribes each pick so CanDiscover
-    // / the count / the hint update live as the user ticks 2-4.
-    private void RebuildDiscoverPicks()
+    // first). Subscribes each pick so CanDiscover / the count / the hint update live
+    // as the user ticks 2-4.
+    //
+    // `keepTicked` carries the user's ticks across a refresh, by Id — the picks hold
+    // NEW SnapshotMeta instances afterwards. Empty (or null) means "first build":
+    // only then does the two-newest default apply, which is what makes the default
+    // a starting point rather than something that reasserts itself (audit #5 AF5).
+    private void RebuildDiscoverPicks(IReadOnlySet<long>? keepTicked = null)
     {
+        bool restoring = keepTicked is { Count: > 0 };
         foreach (var p in DiscoverPicks) p.PropertyChanged -= OnDiscoverPickChanged;
         DiscoverPicks.Clear();
         for (int i = 0; i < Snapshots.Count; i++)
         {
-            var pick = new DiscoverSnapshotPick(Snapshots[i]) { IsSelected = i < 2 };
+            bool ticked = restoring ? keepTicked!.Contains(Snapshots[i].Id) : i < 2;
+            var pick = new DiscoverSnapshotPick(Snapshots[i]) { IsSelected = ticked };
             pick.PropertyChanged += OnDiscoverPickChanged;
             DiscoverPicks.Add(pick);
         }
@@ -638,6 +662,8 @@ public partial class ClassPivotViewModel : ViewModelBase
         int id = ++_fieldLoadId;
         if (SelectedSnapshot == null || SelectedClass == null)
         {
+            SelectedKeyField = null;   // detach selections before clearing bound lists
+            SelectedResult = null;
             Fields.Clear(); KeyFieldOptions.Clear(); Results.Clear();
             return;
         }

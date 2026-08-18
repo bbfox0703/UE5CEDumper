@@ -21,6 +21,14 @@ public class TeleportViewModelTests
         public TeleportPov NextPov { get; set; } = new() { Code = 0 };
         public int GetPovCalls { get; private set; }
 
+        public ProtectState NextProtectState { get; set; } = new();
+        public int GetProtectStateCalls { get; private set; }
+        public override Task<ProtectState> GetProtectStateAsync(CancellationToken ct = default)
+        {
+            GetProtectStateCalls++;
+            return Task.FromResult(NextProtectState);
+        }
+
         public int GetPoseCalls { get; private set; }
         public int SaveCalls { get; private set; }
         public int RecallCalls { get; private set; }
@@ -1055,6 +1063,144 @@ public class TeleportViewModelTests
 
         Assert.Equal(0, fake.SetGodModeCalls);
         Assert.Equal("Unknown", vm.GodModeState);
+    }
+
+    // ══ Audit #5 AD4 — the God Mode badge told three different situations apart
+    // by collapsing them into one number, so it could not.
+    //
+    // get_god_mode returns a single tri-state. get_protect_state has shipped in the
+    // DLL since build 1251 carrying want / live / resolvable separately, with zero
+    // clients. Each case below rendered as a flat "OFF" or "Unknown" before.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>Enabled, but nothing to write to yet — the hold is armed and will
+    /// engage when a pawn spawns. Used to read "Unknown", i.e. indistinguishable
+    /// from a broken connection.</summary>
+    [Fact]
+    public async Task GodMode_wanted_but_unresolvable_reads_pending_not_unknown()
+    {
+        var fake = new FakeDumpService
+        {
+            NextProtectState = new ProtectState { Want = 1, Live = -1, Resolvable = false },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.RefreshGodModeCommand.ExecuteAsync(null);
+
+        Assert.Equal("ON (pending)", vm.GodModeState);
+    }
+
+    /// <summary>Immune, but not because of us. Reporting a plain "ON" would credit
+    /// the tool for a state it is not maintaining — and the badge would then flip
+    /// "off" by itself when the game changed it back.</summary>
+    [Fact]
+    public async Task GodMode_immune_without_a_request_reads_not_held()
+    {
+        var fake = new FakeDumpService
+        {
+            NextProtectState = new ProtectState { Want = 0, Live = 1, Resolvable = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.RefreshGodModeCommand.ExecuteAsync(null);
+
+        Assert.Equal("ON (not held)", vm.GodModeState);
+    }
+
+    /// <summary>THE CELL THAT MATTERS. The hold is engaged and resolvable, and the
+    /// game just won the drift race — the re-assert worker will take it back. This
+    /// read "OFF", identical to never having enabled it, which is the exact
+    /// conflation the fix exists to remove. Omitting this case would have
+    /// reproduced the defect inside its own repair.</summary>
+    [Fact]
+    public async Task GodMode_engaged_but_drifted_reads_contested_not_off()
+    {
+        var fake = new FakeDumpService
+        {
+            NextProtectState = new ProtectState { Want = 1, Live = 0, Resolvable = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.RefreshGodModeCommand.ExecuteAsync(null);
+
+        Assert.Equal("ON (contested)", vm.GodModeState);
+    }
+
+    /// <summary>The unambiguous cells must not move — the three pre-existing
+    /// assertions above depend on them.</summary>
+    [Theory]
+    [InlineData(1, 1, true,  "ON")]
+    [InlineData(0, 0, true,  "OFF")]
+    [InlineData(0, -1, false, "Unknown")]
+    public async Task GodMode_unambiguous_cells_are_unchanged(
+        int want, int live, bool resolvable, string expected)
+    {
+        var fake = new FakeDumpService
+        {
+            NextProtectState = new ProtectState { Want = want, Live = live, Resolvable = resolvable },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.RefreshGodModeCommand.ExecuteAsync(null);
+
+        Assert.Equal(expected, vm.GodModeState);
+    }
+
+    /// <summary>The badge must reflect a hold that survived a UI reconnect without
+    /// the user pressing ↻ — `want` lives in the DLL, and nothing queried it on
+    /// connect (AutoTick polls pose + markers only).</summary>
+    [Fact]
+    public async Task Connecting_reads_the_held_protect_state_without_a_manual_refresh()
+    {
+        var fake = new FakeDumpService
+        {
+            NextProtectState = new ProtectState { Want = 1, Live = 1, Resolvable = true },
+        };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await Task.Delay(50, TestContext.Current.CancellationToken);   // fire-and-forget
+
+        Assert.True(fake.GetProtectStateCalls >= 1);
+        Assert.Equal("ON", vm.GodModeState);
+    }
+
+    /// <summary>…and it must not stomp the status line or hold the busy flag —
+    /// that is why it is not RefreshGodModeAsync.</summary>
+    [Fact]
+    public async Task Connect_time_protect_read_leaves_status_and_busy_alone()
+    {
+        var fake = new FakeDumpService
+        {
+            NextProtectState = new ProtectState { Want = 1, Live = 1, Resolvable = true },
+        };
+        var vm = CreateVm(fake, out _);
+
+        vm.SetConnected(true);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.False(vm.IsBusy);
+        Assert.Equal("Connected", vm.StatusText);
+    }
+
+    /// <summary>A force with no pawn yet must show the REQUEST, not "Unknown":
+    /// set_god_mode reports only the observed value, and the user needs to see that
+    /// their toggle registered. This is the path the filed fix left behind.</summary>
+    [Fact]
+    public async Task ForceGodModeOn_with_no_pawn_reads_pending_not_unknown()
+    {
+        var fake = new FakeDumpService { NextGodModeState = -1 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceGodModeOnCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, fake.SetGodModeCalls);
+        Assert.Equal("ON (pending)", vm.GodModeState);
     }
 
     // ── Movement tuning (Laufen): Move Speed / Gravity / Super Jump ─────

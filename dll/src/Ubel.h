@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -143,6 +145,52 @@ ClassInfo WalkClass(uintptr_t uclassAddr);
 // that the class genuinely declares nothing, because a field-less UCLASS is
 // legitimate and IS memoized. (audit #5 U4)
 const ClassInfo& WalkClassEx(uintptr_t uclassAddr);
+
+// ============================================================
+// Class-walk cache bound (audit #5 U5)
+// ============================================================
+//
+// The finding was re-filed FOUR times saying eviction is illegal until
+// WalkClassEx stops returning `const ClassInfo&`. That is right about the
+// ENRICHED cache and WRONG about this one: WalkClass returns BY VALUE, and all
+// three s_walkClassCache touch points copy under the mutex — so bounding it is
+// legal today with zero call-site change. Half the bytes were reclaimable the
+// whole time.
+//
+// What is NOT done here, deliberately: the enriched WalkClassEx memo (its
+// `const&` return is the real blocker), and Aura's s_classContainerCache, which
+// is the same shape with the same blocker and is tracked as A10.
+
+/// Rough heap cost of one cached ClassInfo, for the get_diagnostics counter.
+/// Pure and approximate on purpose — it exists to turn "unbounded" into a
+/// per-game number, not to be exact. Counts the two owned strings and the field
+/// vector; std::string's SSO makes anything finer a lie about the allocator.
+inline size_t EstimateClassInfoBytes(size_t nameLen, size_t pathLen,
+                                     size_t superNameLen, size_t fieldCount,
+                                     size_t bytesPerField) {
+    return sizeof(ClassInfo)
+         + nameLen + pathLen + superNameLen
+         + fieldCount * bytesPerField;
+}
+
+/// Entries kept in the plain class-walk cache before the least-recently-used one
+/// is evicted.
+///
+/// 2048, NOT the 512 first proposed. 512 was sized against "~50x the deepest
+/// super chain", which is the wrong denominator: the working set is the classes
+/// touched in ONE scan pass, and the DSClient reference log touches 10,046
+/// distinct classes. 2048 entries is roughly 55K FieldInfo, and still reclaims
+/// most of what the unbounded map held.
+///
+/// Tune it with the get_diagnostics `class_cache` counters, never with the
+/// 0.038 ms average walk time — that average is dominated by cache HITS, so it
+/// says nothing about what an eviction costs.
+constexpr size_t kMaxWalkClassCacheEntries = 2048;
+
+/// Snapshot of the plain class-walk cache, for get_diagnostics. Turns
+/// "unbounded" into a per-game number, which is the only thing that makes the
+/// bound above tunable on evidence rather than on one game's log extrapolation.
+void GetClassCacheStats(size_t& outEntries, size_t& outFields, size_t& outApproxBytes);
 
 // --- Shared reflection field lookup ---
 // (Extracted from the Debug Camera helpers in Frieren.cpp, build 1014;
@@ -561,6 +609,136 @@ inline std::vector<Interval> ComputeClassHoles(const ClassInfo& ci,
 // Returns "" for labels that have no gameplay-numeric meaning (Padding / Pointer),
 // signalling the caller to DROP the row. The human-readable guessed label is
 // carried separately (never in the property-type field). Pure.
+// === Byte-blind struct preview (audit U3, build 3169) ===
+//
+// LAST RESORT ONLY. When a caller cannot resolve the UScriptStruct* it can ask
+// for a hint decoded from raw bytes. That is a guess by construction and the
+// reflected-layout decoder (Ubel.cpp WalkInstance's `{Name=Value}` preview) is
+// always preferable — see the remaining half of U3 in the register.
+//
+// What this fixes: the old branch skipped 8 bytes unconditionally whenever
+// size > 8, on the theory that structs begin with a vtable. That is true of
+// FGameplayAttributeData (GAS declares a virtual destructor, so BaseValue /
+// CurrentValue really do sit at +8/+0xC — which is why the heuristic was
+// written and why it survived) and FALSE of nearly every other USTRUCT. The
+// cost was a SILENT DROP of leading members, which is worse than garbage
+// because it looks right:
+//   * FVector3f, 12 B, 3 floats  -> printed ONE number, the LAST component
+//     (live-confirmed on Map_IntToVec3f, todo.md)
+//   * FLinearColor, 16 B, 4 floats -> R and G vanish, only B and A print
+//
+// So the skip is now gated on EVIDENCE rather than on size. `size > 8` is not
+// evidence of anything; a pointer-shaped first 8 bytes is.
+//
+// ⚠ KNOWN REMAINING GAP, deliberately not papered over: a 24-byte struct is
+// 3 doubles (UE5 LWC FVector) or 6 floats, and the bytes cannot say which —
+// `Radar.h` states this repo rule outright ("the STRUCT NAME does not
+// determine the width and neither does the engine version"). This function
+// still reads 4-byte floats, so an LWC vector still decodes wrongly. Only the
+// reflected layout can settle it. Swapping one guess for another would be the
+// same defect with different numbers.
+//
+// Pure: bytes in, string out. Lives here so dll_helpers_test can pin it — no
+// target compiles Ubel.cpp.
+
+// === Reflected struct preview (audit U17, build 3171) ===
+//
+// The layout half of U3. The byte-blind decoder below cannot tell 3 doubles from
+// 6 floats — Radar.h states the rule: the struct name does not determine the
+// width and neither does the engine version. The only thing that CAN settle it is
+// the reflected field list, and every call site that matters already holds the
+// UScriptStruct*. These two are the pure half of that decode, so the width
+// handling — which is exactly where the LWC bug lives — is unit-pinnable.
+
+/// Format a number for a preview cell. `%g` flips to scientific past a few digits
+/// (18328.64 -> "1.833e+04"), unreadable in a value column; `%f` with trailing
+/// zeros trimmed reads correctly over the whole int32/int64-ish range, falling
+/// back to `%g` only where a wall of digits would be worse.
+inline std::string FormatPreviewNumber(double v) {
+    if (v == 0.0) return "0";
+    double a = (v < 0.0) ? -v : v;
+    char buf[64];
+    if (a >= 1e16 || a < 1e-6) {
+        snprintf(buf, sizeof(buf), "%.6g", v);   // out of human range -> %g
+        return buf;
+    }
+    snprintf(buf, sizeof(buf), "%.4f", v);
+    std::string s(buf);
+    size_t dot = s.find('.');
+    if (dot != std::string::npos) {
+        size_t last = s.find_last_not_of('0');
+        if (last == dot) last--;                 // "2245." -> "2245"
+        s.erase(last + 1);
+    }
+    return s;
+}
+
+/// Decode ONE reflected scalar at `p`, using the property's OWN declared width.
+/// This is the whole point of U17: a DoubleProperty is read as 8 bytes and a
+/// FloatProperty as 4, so an LWC FVector yields its three real components instead
+/// of six float halves, with no guessing anywhere.
+///
+/// Returns "" for properties that need process state (Name / Object / Class) or
+/// are not previewable — the caller supplies those, which is what keeps this pure.
+inline std::string PreviewScalarValue(const std::string& typeName,
+                                      const uint8_t* p, int32_t size) {
+    if (!p || size <= 0) return "";
+    if (typeName == "FloatProperty"  && size == 4) { float  v; memcpy(&v, p, 4); return FormatPreviewNumber(v); }
+    if (typeName == "DoubleProperty" && size == 8) { double v; memcpy(&v, p, 8); return FormatPreviewNumber(v); }
+    if (typeName == "IntProperty"    && size == 4) { int32_t v; memcpy(&v, p, 4); return std::to_string(v); }
+    if (typeName == "UInt32Property" && size == 4) { uint32_t v; memcpy(&v, p, 4); return std::to_string(v); }
+    if (typeName == "Int64Property"  && size == 8) { int64_t v; memcpy(&v, p, 8); return std::to_string(v); }
+    if (typeName == "UInt64Property" && size == 8) { uint64_t v; memcpy(&v, p, 8); return std::to_string(v); }
+    if (typeName == "Int16Property"  && size == 2) { int16_t v; memcpy(&v, p, 2); return std::to_string(v); }
+    if (typeName == "UInt16Property" && size == 2) { uint16_t v; memcpy(&v, p, 2); return std::to_string(v); }
+    if (typeName == "BoolProperty")                 return p[0] ? "true" : "false";
+    if (typeName == "ByteProperty" || typeName == "Int8Property") return std::to_string(p[0]);
+    return "";   // needs process state, or not previewable
+}
+
+/// True when the first 8 bytes look like a real vtable pointer: non-null,
+/// 8-byte aligned, and inside the x64 user-mode canonical range. A float pair
+/// (0x400000003F800000), a double (0x40934A0000000000) and an FLinearColor's
+/// first two components all fail it; a module address (0x00007FF6...) passes.
+inline bool LooksLikeVtablePointer(const uint8_t* bytes, int32_t size) {
+    if (!bytes || size < 8) return false;
+    uint64_t v = 0;
+    memcpy(&v, bytes, 8);
+    if (v < 0x10000ULL) return false;                 // null / small integer
+    if (v > 0x00007FFFFFFFFFFFULL) return false;      // above user-mode canonical
+    return (v & 7ULL) == 0;                           // vtable pointers are aligned
+}
+
+/// Decode `size` bytes as consecutive 4-byte floats, skipping a leading vtable
+/// pointer ONLY when one is actually present. Returns "" when nothing
+/// meaningful decodes, so the caller falls back to hex.
+inline std::string InterpretStructBytes(const uint8_t* bytes, int32_t size) {
+    if (!bytes || size < 4) return "";
+    const int floatStart = LooksLikeVtablePointer(bytes, size) ? 8 : 0;
+    const int floatCount = (size - floatStart) / 4;
+    if (floatCount <= 0 || floatCount > 16) return "";
+
+    bool anyMeaningful = false;
+    for (int i = 0; i < floatCount; ++i) {
+        float v;
+        memcpy(&v, bytes + floatStart + i * 4, 4);
+        if (v != 0.0f && v == v && v > -1e12f && v < 1e12f) { anyMeaningful = true; break; }
+    }
+    if (!anyMeaningful) return "";
+
+    std::string hint = "f:[";
+    for (int i = 0; i < floatCount; ++i) {
+        if (i > 0) hint += ", ";
+        float v;
+        memcpy(&v, bytes + floatStart + i * 4, 4);
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%.4f", v);   // no scientific notation
+        hint += buf;
+    }
+    hint += "]";
+    return hint;
+}
+
 inline std::string NormalizeGuessedTypeToProperty(const std::string& guessedType) {
     if (guessedType == "Float"  || guessedType == "Float?")  return "FloatProperty";
     if (guessedType == "Double" || guessedType == "Double?") return "DoubleProperty";
@@ -609,6 +787,15 @@ struct DataTableWalkResult {
 DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset = 0, int32_t limit = 64);
 
 // Interpret raw bytes as a typed value string based on the field type name
+// Decode a struct through its REFLECTED layout — the correct answer, and the one
+// every caller holding a UScriptStruct* should use. Emits "{Name=Value, ...}".
+// Returns "" when nothing is previewable (or, for InterpretStructAt, when the
+// layout cannot be resolved) so the caller can fall back to hex. Audit U17.
+std::string InterpretStructByLayout(const uint8_t* buf, int32_t size,
+                                    const ClassInfo& si, int previewLimit);
+std::string InterpretStructAt(const uint8_t* buf, int32_t size,
+                              uintptr_t structClassAddr, int previewLimit);
+
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size);
 
 // --- Array Element Reading (Phase B) ---

@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <list>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -779,6 +780,43 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
 // back navigation for large classes (e.g., 182 fields → 0ms vs re-walking).
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 
+// --- LRU bound for the cache above (audit #5 U5) ---
+//
+// Legal here and ONLY here: WalkClass returns ClassInfo BY VALUE and every
+// s_walkClassCache touch copies under s_walkClassCacheMutex, so evicting an entry
+// cannot invalidate anything a caller is holding. The ENRICHED cache below hands
+// out `const ClassInfo&` and is NOT bounded for exactly that reason.
+//
+// Recency is a list of addresses, newest at the front; the map from address to
+// its list position makes touch-on-hit O(1). Both are guarded by the SAME mutex
+// as the cache, so they cannot drift from it.
+static std::list<uintptr_t> s_walkLru;
+static std::unordered_map<uintptr_t, std::list<uintptr_t>::iterator> s_walkLruPos;
+
+// Move `addr` to the front. Caller MUST hold s_walkClassCacheMutex.
+static void TouchWalkLru(uintptr_t addr) {
+    auto it = s_walkLruPos.find(addr);
+    if (it == s_walkLruPos.end()) return;
+    s_walkLru.splice(s_walkLru.begin(), s_walkLru, it->second);
+}
+
+// Insert-or-refresh `addr`, evicting the least recently used entries until the
+// cache is within its bound. Caller MUST hold s_walkClassCacheMutex.
+static void PublishWalkClass(uintptr_t addr, const ClassInfo& info) {
+    auto [entry, inserted] = s_walkClassCache.try_emplace(addr, info);
+    if (!inserted) { TouchWalkLru(addr); return; }
+
+    s_walkLru.push_front(addr);
+    s_walkLruPos[addr] = s_walkLru.begin();
+
+    while (s_walkLru.size() > Ubel::kMaxWalkClassCacheEntries) {
+        uintptr_t victim = s_walkLru.back();
+        s_walkLru.pop_back();
+        s_walkLruPos.erase(victim);
+        s_walkClassCache.erase(victim);
+    }
+}
+
 // Synthesize the native field layout for intrinsic UE core structs that carry no
 // reflected child UPROPERTYs. FDateTime / FTimespan serialize a single `int64 Ticks`
 // via custom serialization, not reflection, so their FField chain is empty and the
@@ -800,6 +838,20 @@ static void InjectIntrinsicStructFields(const std::string& structName,
     }
 }
 
+void GetClassCacheStats(size_t& outEntries, size_t& outFields, size_t& outApproxBytes) {
+    std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
+    outEntries = s_walkClassCache.size();
+    outFields = 0;
+    outApproxBytes = 0;
+    for (const auto& kv : s_walkClassCache) {
+        const ClassInfo& ci = kv.second;
+        outFields += ci.Fields.size();
+        outApproxBytes += EstimateClassInfoBytes(ci.Name.size(), ci.FullPath.size(),
+                                                 ci.SuperName.size(), ci.Fields.size(),
+                                                 sizeof(FieldInfo));
+    }
+}
+
 ClassInfo WalkClass(uintptr_t uclassAddr) {
     ClassInfo info{};
     if (!uclassAddr) return info;
@@ -810,6 +862,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         auto cacheIt = s_walkClassCache.find(uclassAddr);
         if (cacheIt != s_walkClassCache.end()) {
+            TouchWalkLru(uclassAddr);   // the lock is exclusive, so mutating on read is fine
             return cacheIt->second;
         }
     }
@@ -880,6 +933,9 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
             std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
             auto superCacheIt = s_walkClassCache.find(super);
             if (superCacheIt != s_walkClassCache.end()) {
+                // A base class is reused by every subclass, so it is exactly what must
+                // not be evicted for being "old" — the chain walk is a use.
+                TouchWalkLru(super);
                 const auto& superFields = superCacheIt->second.Fields;
                 info.Fields.insert(info.Fields.begin(), superFields.begin(), superFields.end());
                 break;  // cached super already includes its entire inheritance chain
@@ -944,7 +1000,7 @@ ClassInfo WalkClass(uintptr_t uclassAddr) {
     // costs a re-walk.
     if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-        s_walkClassCache.try_emplace(uclassAddr, info);
+        PublishWalkClass(uclassAddr, info);
     } else {
         Sein::Warn("WALK:safe",
             "WalkClass: refusing to cache 0x%llx — PropertiesSize=%d (read %s); "
@@ -1770,6 +1826,71 @@ int32_t GetMapPairStride(uintptr_t fieldAddr) {
     return GetMapPairLayout(fieldAddr, layout) ? layout.pairStride : 0;
 }
 
+// === Reflected struct preview (audit U17) ===
+//
+// THE decoder for "what is inside this struct", and now the ONLY one. It reads
+// each member at its own offset with its OWN declared width, so a UE5 LWC FVector
+// (3 doubles) yields three real components instead of six float halves, and a
+// vtable needs no special case at all — there is no member at +0, so nothing
+// prints from there.
+//
+// This body used to be inline inside WalkInstance and nowhere else, which is why
+// every OTHER surface (TMap keys/values, TSet elements, the Property Search
+// preview column, DataTable rows) fell through to the byte-blind
+// InterpretValue("StructProperty", ...) despite already holding the
+// UScriptStruct*. Shared rather than copied on purpose: a second copy is how the
+// report and the reality end up computed by different code paths.
+//
+// The width handling is pure and lives in Ubel.h (PreviewScalarValue), so it is
+// unit-pinned; only NameProperty and Object/ClassProperty need process state and
+// they are handled here.
+std::string InterpretStructByLayout(const uint8_t* buf, int32_t size,
+                                    const ClassInfo& si, int previewLimit) {
+    if (!buf || size <= 0 || previewLimit <= 0) return "";
+
+    std::string preview;
+    int shown = 0;
+    const int kMaxScanFields = 20;
+    for (size_t idx = 0; idx < si.Fields.size() && static_cast<int>(idx) < kMaxScanFields; ++idx) {
+        const auto& sf = si.Fields[idx];
+        if (shown >= previewLimit) { preview += ", ..."; break; }
+
+        int32_t sfSize = sf.Size;
+        int32_t expected = InferScalarSize(sf.TypeName);
+        if (expected > 0 && sfSize != expected) sfSize = expected;
+        if (sf.Offset < 0 || sf.Offset + sfSize > size) continue;   // beyond the buffer
+
+        const uint8_t* p = buf + sf.Offset;
+        std::string val = PreviewScalarValue(sf.TypeName, p, sfSize);
+        if (val.empty()) {
+            if (sf.TypeName == "NameProperty" && sfSize >= 4) {
+                val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
+                if (val.empty()) val = "None";
+            } else if ((sf.TypeName == "ObjectProperty" || sf.TypeName == "ClassProperty")
+                       && sfSize >= 8) {
+                uintptr_t ptr; memcpy(&ptr, p, 8);
+                val = ptr ? GetName(ptr) : "null";   // GetName uses the name cache
+            } else {
+                continue;   // not previewable
+            }
+        }
+        if (!preview.empty()) preview += ", ";
+        preview += sf.Name + "=" + val;
+        ++shown;
+    }
+    return preview.empty() ? "" : "{" + preview + "}";
+}
+
+// Resolve a UScriptStruct* and decode `buf` through its reflected layout.
+// Returns "" when the layout cannot be resolved, so the caller can fall back.
+std::string InterpretStructAt(const uint8_t* buf, int32_t size,
+                              uintptr_t structClassAddr, int previewLimit) {
+    if (!structClassAddr) return "";
+    const ClassInfo& si = WalkClassEx(structClassAddr);   // memoized
+    if (si.Fields.empty()) return "";
+    return InterpretStructByLayout(buf, size, si, previewLimit);
+}
+
 std::string InterpretValue(const std::string& typeName, const void* data, int32_t size) {
     if (!data || size <= 0) return "";
 
@@ -1857,44 +1978,35 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
         return DecodeFNameBytes(bytes, size);
     }
 
-    // StructProperty: for small structs, show inline float hints
-    // Many gameplay structs (FGameplayAttributeData, FVector, FRotator, etc.)
-    // contain float fields. Show a summary like "f:[100.0, 100.0]" for quick analysis.
+    // StructProperty: byte-blind float hint, LAST RESORT ONLY (audit U3).
+    // The whole decode — including the vtable-skip decision that used to drop
+    // leading members silently — lives in Ubel.h::InterpretStructBytes so it is
+    // pure and unit-pinned; no target compiles this .cpp. Callers that can
+    // resolve the UScriptStruct* must prefer the reflected-layout preview
+    // (WalkInstance's "{Name=Value}"), which is width-correct and labelled.
     if (typeName == "StructProperty" && size >= 4) {
-        // Skip the first 8 bytes if size > 8 — often a vtable/pointer preamble.
-        // For structs <= 8 bytes, interpret from byte 0.
-        int floatStart = (size > 8) ? 8 : 0;
-        int floatCount = (size - floatStart) / 4;
-        if (floatCount > 0 && floatCount <= 16) {
-            // Check if at least one float in range looks meaningful (not 0, not NaN/garbage)
-            bool anyMeaningful = false;
-            for (int i = 0; i < floatCount; ++i) {
-                float v;
-                memcpy(&v, bytes + floatStart + i * 4, 4);
-                if (v != 0.0f && v == v && v > -1e12f && v < 1e12f) { // not zero, not NaN, reasonable range
-                    anyMeaningful = true;
-                    break;
-                }
-            }
-            if (anyMeaningful) {
-                std::string hint = "f:[";
-                for (int i = 0; i < floatCount; ++i) {
-                    if (i > 0) hint += ", ";
-                    float v;
-                    memcpy(&v, bytes + floatStart + i * 4, 4);
-                    char buf[48];
-                    // No scientific notation — fixed 4 decimal places
-                    snprintf(buf, sizeof(buf), "%.4f", v);
-                    hint += buf;
-                }
-                hint += "]";
-                return hint;
-            }
-        }
+        return InterpretStructBytes(bytes, size);
     }
 
     return ""; // Unknown type — caller shows hex
 }
+
+// Prefer the reflected layout, fall back to the byte-blind hint.
+//
+// The four container surfaces (TMap key, TMap value, TSet element) and the
+// preview column all ALREADY resolve the UScriptStruct* a few lines above their
+// decode and then threw it away — that was the whole of U17. Struct-typed values
+// now decode as "{X=1.5, Y=-2, Z=90}" with each member read at its own declared
+// width; everything else is unchanged.
+static std::string PreferLayout(const uint8_t* buf, int32_t size,
+                                uintptr_t structAddr, const std::string& typeName) {
+    if (typeName == "StructProperty" && structAddr) {
+        std::string byLayout = InterpretStructAt(buf, size, structAddr, /*previewLimit=*/8);
+        if (!byLayout.empty()) return byLayout;
+    }
+    return InterpretValue(typeName, buf, size);
+}
+
 
 // ============================================================
 // IsScalarArrayType — check if an inner type name supports inline
@@ -3564,24 +3676,8 @@ void GuessGapTypes(uintptr_t baseAddr, int32_t gapStart, int32_t gapEnd,
 // int32/int64-ish range with trailing zeros trimmed (2245.0000 -> "2245",
 // 129.7000 -> "129.7"), falling back to %g only for truly huge/tiny values
 // where a wall of digits would be worse.
-static std::string FmtPreviewNum(double v) {
-    if (v == 0.0) return "0";
-    double a = (v < 0.0) ? -v : v;
-    char buf[64];
-    if (a >= 1e16 || a < 1e-6) {
-        snprintf(buf, sizeof(buf), "%.6g", v);   // out of human range -> %g
-        return buf;
-    }
-    snprintf(buf, sizeof(buf), "%.4f", v);
-    std::string s(buf);
-    size_t dot = s.find('.');
-    if (dot != std::string::npos) {
-        size_t last = s.find_last_not_of('0');
-        if (last == dot) last--;                 // "2245." -> "2245"
-        s.erase(last + 1);
-    }
-    return s;
-}
+// FmtPreviewNum moved to Ubel.h as FormatPreviewNumber (pure, unit-pinned) so the
+// reflected-struct preview and this file cannot drift apart. Audit U17.
 
 InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int32_t arrayLimit, int32_t previewLimit, bool fillGaps) {
     // Clamp arrayLimit to sane range [1, 16384]
@@ -4417,7 +4513,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 // Read key bytes
                                 std::vector<uint8_t> keyBuf(fv.mapKeySize);
                                 if (Macht::ReadBytesSafe(elemAddr, keyBuf.data(), fv.mapKeySize)) {
-                                    ce.key = InterpretValue(keyTypeName, keyBuf.data(), fv.mapKeySize);
+                                    ce.key = PreferLayout(keyBuf.data(), fv.mapKeySize, fv.mapKeyStructAddr,
+                                                                  keyTypeName);
                                     // Hex
                                     std::string kh;
                                     int klen = (std::min)(fv.mapKeySize, 16);
@@ -4445,7 +4542,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 // Read value bytes (at aligned offset within pair)
                                 std::vector<uint8_t> valBuf(fv.mapValueSize);
                                 if (Macht::ReadBytesSafe(elemAddr + valOffset, valBuf.data(), fv.mapValueSize)) {
-                                    ce.value = InterpretValue(valueTypeName, valBuf.data(), fv.mapValueSize);
+                                    ce.value = PreferLayout(valBuf.data(), fv.mapValueSize, fv.mapValueStructAddr,
+                                                                    valueTypeName);
                                     std::string vh;
                                     int vlen = (std::min)(fv.mapValueSize, 16);
                                     for (int h = 0; h < vlen; ++h) {
@@ -4557,7 +4655,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 ce.index = idx;
                                 std::vector<uint8_t> keyBuf(fv.mapKeySize);
                                 if (Macht::ReadBytesSafe(elemAddr, keyBuf.data(), fv.mapKeySize)) {
-                                    ce.key = InterpretValue(keyTypeName, keyBuf.data(), fv.mapKeySize);
+                                    ce.key = PreferLayout(keyBuf.data(), fv.mapKeySize, fv.mapKeyStructAddr,
+                                                                  keyTypeName);
                                     std::string kh;
                                     int klen = (std::min)(fv.mapKeySize, 16);
                                     for (int h = 0; h < klen; ++h) {
@@ -4581,7 +4680,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                                 }
                                 std::vector<uint8_t> valBuf(fv.mapValueSize);
                                 if (Macht::ReadBytesSafe(elemAddr + valOffset, valBuf.data(), fv.mapValueSize)) {
-                                    ce.value = InterpretValue(valueTypeName, valBuf.data(), fv.mapValueSize);
+                                    ce.value = PreferLayout(valBuf.data(), fv.mapValueSize, fv.mapValueStructAddr,
+                                                                    valueTypeName);
                                     std::string vh;
                                     int vlen = (std::min)(fv.mapValueSize, 16);
                                     for (int h = 0; h < vlen; ++h) {
@@ -4683,7 +4783,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             ce.index = idx;
                             std::vector<uint8_t> elemBuf(fv.setElemSize);
                             if (Macht::ReadBytesSafe(elemAddr, elemBuf.data(), fv.setElemSize)) {
-                                ce.key = InterpretValue(elemTypeName, elemBuf.data(), fv.setElemSize);
+                                ce.key = PreferLayout(elemBuf.data(), fv.setElemSize, fv.setElemStructAddr,
+                                                              elemTypeName);
                                 std::string eh;
                                 int elen = (std::min)(fv.setElemSize, 16);
                                 for (int h = 0; h < elen; ++h) {
@@ -4760,7 +4861,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             ce.index = idx;
                             std::vector<uint8_t> elemBuf(fv.setElemSize);
                             if (Macht::ReadBytesSafe(elemAddr, elemBuf.data(), fv.setElemSize)) {
-                                ce.key = InterpretValue(elemTypeName, elemBuf.data(), fv.setElemSize);
+                                ce.key = PreferLayout(elemBuf.data(), fv.setElemSize, fv.setElemStructAddr,
+                                                              elemTypeName);
                                 std::string eh;
                                 int elen = (std::min)(fv.setElemSize, 16);
                                 for (int h = 0; h < elen; ++h) {
@@ -4847,55 +4949,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     hasBuf = Macht::ReadBytesSafe(structBase, structBuf.data(), readSize);
                 }
 
-                // Preview: interpret sub-fields from local buffer (no per-field ReadSafe)
-                std::string preview;
-                int shown = 0;
-                const int kMaxScanFields = 20;
-                for (size_t idx = 0; idx < si.Fields.size() && static_cast<int>(idx) < kMaxScanFields; ++idx) {
-                    const auto& sf = si.Fields[idx];
-                    if (shown >= previewLimit) {
-                        preview += ", ...";
-                        break;
-                    }
-                    int32_t sfSize = sf.Size;
-                    int32_t expected = InferScalarSize(sf.TypeName);
-                    if (expected > 0 && sfSize != expected) sfSize = expected;
-
-                    std::string val;
-                    // Use bulk-read buffer for scalar fields (zero cross-process reads)
-                    if (hasBuf && sf.Offset >= 0 && sf.Offset + sfSize <= readSize) {
-                        const uint8_t* p = structBuf.data() + sf.Offset;
-                        if (sf.TypeName == "FloatProperty" && sfSize == 4) {
-                            float v; memcpy(&v, p, 4);
-                            val = FmtPreviewNum(v);
-                        } else if (sf.TypeName == "DoubleProperty" && sfSize == 8) {
-                            double v; memcpy(&v, p, 8);
-                            val = FmtPreviewNum(v);
-                        } else if (sf.TypeName == "IntProperty" && sfSize == 4) {
-                            int32_t v; memcpy(&v, p, 4);
-                            val = std::to_string(v);
-                        } else if (sf.TypeName == "BoolProperty") {
-                            val = p[0] ? "true" : "false";
-                        } else if (sf.TypeName == "ByteProperty" || sf.TypeName == "Int8Property") {
-                            val = std::to_string(p[0]);
-                        } else if (sf.TypeName == "NameProperty" && sfSize >= 4) {
-                            val = DecodeFNameBytes(p, sfSize);   // Number included (U8)
-                            if (val.empty()) val = "None";
-                        } else if ((sf.TypeName == "ObjectProperty" || sf.TypeName == "ClassProperty") && sfSize >= 8) {
-                            uintptr_t ptr; memcpy(&ptr, p, 8);
-                            val = ptr ? GetName(ptr) : "null";  // GetName uses name cache
-                        } else {
-                            continue;  // skip non-previewable fields
-                        }
-                    } else {
-                        continue;  // field beyond buffer — skip
-                    }
-                    if (!preview.empty()) preview += ", ";
-                    preview += sf.Name + "=" + val;
-                    ++shown;
-                }
-                if (!preview.empty()) {
-                    fv.typedValue = "{" + preview + "}";
+                // Preview: one shared decoder, so this path and every container /
+                // preview / DataTable path cannot drift apart (audit U17).
+                if (hasBuf) {
+                    std::string preview = InterpretStructByLayout(
+                        structBuf.data(), readSize, si, previewLimit);
+                    if (!preview.empty()) fv.typedValue = preview;
                 }
 
                 // Hex display: reuse bulk-read buffer (no second ReadBytesSafe)
@@ -5337,11 +5396,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         std::string val;
                         if (sf.TypeName == "FloatProperty" && sfSize == 4) {
                             float v; memcpy(&v, p, 4);
-                            val = FmtPreviewNum(v);
+                            val = FormatPreviewNumber(v);
                         } else if (sf.TypeName == "DoubleProperty"
                                    && sfSize == 8) {
                             double v; memcpy(&v, p, 8);
-                            val = FmtPreviewNum(v);
+                            val = FormatPreviewNumber(v);
                         } else if (sf.TypeName == "IntProperty"
                                    && sfSize == 4) {
                             int32_t v; memcpy(&v, p, 4);

@@ -111,6 +111,13 @@ public static class FlyScriptGenerator
     // closes the Lua Engine on clean success (the terminal call in a block).
     private static void EmitCall(StringBuilder sb, string name, int op, int value, bool readState, string comment)
     {
+        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
+        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
+        // a toggle fired while another command was still in flight wrote straight
+        // over it. Above the OPERAND writes, not merely above the status clear:
+        // operands land in the same mailbox, so writing them corrupts the command in
+        // flight just as surely -- the same reason the contract check sits here.
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "Fly");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {op})    -- {comment}");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffUfuncAddr}, {value})    -- value = {value}");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)    -- clear status");

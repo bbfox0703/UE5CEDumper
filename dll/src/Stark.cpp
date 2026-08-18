@@ -127,6 +127,22 @@ static int32_t CallProcessEventSEH(uintptr_t instance, uintptr_t ufunc, uintptr_
     return 0;
 }
 
+// True while THIS thread is executing inside Stark::CallOriginalSEH (audit #5
+// ST1). Deliberately NOT set inside CallProcessEventSEH: that is what the
+// legitimate game-thread drain calls, and a UFunction executing there routinely
+// dispatches further ProcessEvent calls through the vtable -- i.e. back through
+// our detour. Marking the thread there would make the game's own nested
+// dispatches look like ours and suppress draining on the very thread that is
+// supposed to drain.
+static thread_local int t_inOwnPeCall = 0;
+
+namespace {
+struct OwnPeCallGuard {
+    OwnPeCallGuard()  { ++t_inOwnPeCall; }
+    ~OwnPeCallGuard() { --t_inOwnPeCall; }
+};
+}  // namespace
+
 // ---- Hook function ----
 
 /// Hooked ProcessEvent — called on the game thread for every UObject event.
@@ -157,7 +173,10 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs) {
     // zero read just defers a freshly enqueued request to the next PE call
     // (microseconds away), which is harmless — the real happens-before for the
     // request data is the mutex taken below.
-    if (s_queueDepth.load(std::memory_order_acquire) != 0) {
+    // The gate itself lives in Stark.h as a pure predicate so it can be unit
+    // tested -- no target compiles this file. Called, not mirrored: a mirrored
+    // copy would prove only that the copy is right.
+    if (ShouldDrainQueue(s_queueDepth.load(std::memory_order_acquire), InOwnPeCall())) {
         std::vector<std::shared_ptr<InvokeRequest>> pending;
 
         {
@@ -429,6 +448,25 @@ void SetInvokeTimeoutMs(int32_t timeoutMs) {
 
 int32_t GetInvokeTimeoutMs() {
     return s_invokeTimeoutMs.load();
+}
+
+uintptr_t HookedAddress() {
+    return s_hookedAddr;
+}
+
+bool HasOriginal() {
+    return s_originalPE != nullptr;
+}
+
+bool InOwnPeCall() {
+    return t_inOwnPeCall != 0;
+}
+
+int32_t CallOriginalSEH(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
+    // The guard must outlive the call and is a C++ object, so it cannot share a
+    // frame with __try -- hence the separate SEH helper below it.
+    OwnPeCallGuard guard;
+    return CallProcessEventSEH(instance, ufunc, params);
 }
 
 uint64_t GetHookFireCount() {

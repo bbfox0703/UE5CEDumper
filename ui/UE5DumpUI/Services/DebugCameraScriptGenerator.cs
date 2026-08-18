@@ -62,6 +62,13 @@ public static class DebugCameraScriptGenerator
         Line(sb);
 
         // Mailbox round-trip: write request, trigger CMD_SET_DEBUG_CAMERA=7, poll.
+        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
+        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
+        // a toggle fired while another command was still in flight wrote straight
+        // over it. Above the OPERAND writes, not merely above the status clear:
+        // operands land in the same mailbox, so writing them corrupts the command in
+        // flight just as surely -- the same reason the contract check sits here.
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "DebugCamera");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {req})   -- request: {req} = {label}");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)    -- clear status");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffCmd}, {CeMailboxLayout.CmdSetDebugCamera})    -- CMD_SET_DEBUG_CAMERA (write LAST)");

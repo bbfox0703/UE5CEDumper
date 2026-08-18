@@ -59,6 +59,75 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // rev 4 would keep its old tier/confidence without ever re-detecting.
 constexpr uint32_t kVersionDetectLogicRev = 5;
 
+// ============================================================
+// Multi-module candidate admission (audit #5 AA38)
+//
+// Pass 2 of the AOB scan re-scans every LOADED MODULE for patterns that had zero
+// main-module hits. Whether one of those foreign matches may be published is a
+// question about where the ADDRESS came from, not about the bytes it points at —
+// which is why it cannot live in a ValidatorFn (that only ever sees a bare
+// uintptr_t) and lives here instead.
+//
+// The rule turns on the ANCHOR: the validated GObjects address. GObjects is the one
+// global we resolve first and trust most, so where IT landed tells us whether this
+// build is monolithic (everything in the exe) or genuinely modular (GNames in
+// CoreUObject.dll — Satisfactory 4.25 is the reference case).
+// ============================================================
+
+/// Where the anchor (a validated GObjects) lives. Three states, NOT two booleans:
+/// "we have no anchor yet" is a fact in its own right and must never collapse into
+/// "the anchor is not in the exe" — those demand opposite verdicts.
+enum class AnchorState : uint8_t {
+    None = 0,    // GObjects has not validated this run: we do not know what this process IS
+    MainExe,     // anchor is in the main executable  => monolithic build
+    ForeignDll,  // anchor is in a DLL                => genuinely modular build
+};
+
+/// Verdict for one Pass-2 candidate. Three values because "refused because the build
+/// is monolithic" and "refused because we have no idea what this process is" are
+/// different facts, and the log line must be able to say which.
+enum class ModuleAdmission : uint8_t {
+    Accept,
+    RefuseForeignMonolithic,
+    RefuseUnanchored,
+};
+
+/// May a multi-module (Pass 2) candidate be published?
+///
+/// @param anchor          where the validated GObjects landed (see AnchorState).
+/// @param candIsMainExe   the RESOLVED address lives in the main executable.
+/// @param producesAnchor  true ONLY for GObjects itself, which by construction runs
+///                        before any anchor can exist and therefore cannot require one.
+///
+/// No parameter has a default, deliberately: a target added later must STATE its
+/// answer or fail to compile, and `false` must never silently mean "nobody said".
+///
+/// The AA38 arm is `AnchorState::None` + foreign + !producesAnchor. Before it, a
+/// process where GObjects never validated at all (python.exe, Solarpunk) published a
+/// GWorld out of some arbitrary loaded module, because an unloaded world and a wrong
+/// address that happens to read 0 are indistinguishable at the validator.
+constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
+                                                    bool candIsMainExe,
+                                                    bool producesAnchor) {
+    // A main-module candidate is always admissible. This is what keeps the FORBIDDEN
+    // fix forbidden: GWLD_DI427_1/2 are UE4.27 write-site patterns that resolve
+    // &GWorld from a `GWorld = nullptr` store BEFORE any world exists, so a
+    // main-module hit whose *GWorld reads 0 must still be accepted.
+    if (candIsMainExe) return ModuleAdmission::Accept;
+    switch (anchor) {
+        case AnchorState::None:
+            // GObjects' own Pass 2 runs before any anchor exists — refusing it would
+            // break the modular builds multi-module support was added for.
+            return producesAnchor ? ModuleAdmission::Accept
+                                  : ModuleAdmission::RefuseUnanchored;
+        case AnchorState::MainExe:
+            return ModuleAdmission::RefuseForeignMonolithic;
+        case AnchorState::ForeignDll:
+            return ModuleAdmission::Accept;   // modular build: GNames legitimately in a DLL
+    }
+    return ModuleAdmission::Accept;   // unreachable; keeps every compiler quiet
+}
+
 struct EnginePointers {
     uintptr_t GObjects  = 0;   // FUObjectArray*
     uintptr_t GNames    = 0;   // FNamePool* or TNameEntryArray*

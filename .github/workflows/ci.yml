@@ -143,9 +143,41 @@ jobs:
           # nothing re-derives. Stdlib-only, <1s.
           & $py tools/check_audit_register.py
           if ($LASTEXITCODE -ne 0) { throw "check_audit_register FAILED ($LASTEXITCODE) - a finding docs/dev-log.md reports fixed has no tick on its row in the audit doc, so the open count over-reports. The failure names each one. Marking the grouped queue row is not enough." }
+          # Machine-local user paths. The repo is written on more than one PC and read by people
+          # who are not the maintainer, so a literal home directory is wrong for every other
+          # reader AND discloses the account name. It leaks through pasted log lines and tool
+          # usage examples, and nothing else in CI looks. Placeholders and %ENVVAR% forms pass.
+          & $py tools/check_no_local_paths.py
+          if ($LASTEXITCODE -ne 0) { throw "check_no_local_paths FAILED ($LASTEXITCODE) - a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / %APPDATA% / %USERPROFILE%, or a placeholder. The failure names each hit." }
+          # Proxy export surface. A proxy DLL is a NAME map and an ORDINAL map, and audit PX1
+          # found both halves wrong on two of the four at once - silently, for months. A name
+          # the real DLL exports and we do not kills the game before DllMain, with no log file
+          # to say why. A stolen ordinal is worse because it "works": link.exe assigns UNPINNED
+          # exports from (max pinned + 1) in name-sorted order, so with nothing pinned our UE5_*
+          # block sat on GetdfDIJoystick (@6, dinput8) and on VerFindFileA..VerQueryValueW
+          # (@10-17, version - the DEFAULT proxy), and an ordinal import called ours with a
+          # wholly unrelated signature. Compared against a committed baseline rather than live
+          # System32 on purpose: these tables vary by Windows build, and a runner whose System32
+          # differs from the maintainer's must not redden an unrelated PR. Stdlib-only, <1s.
+          & $py tools/check_proxy_exports.py
+          if ($LASTEXITCODE -ne 0) { throw "check_proxy_exports FAILED ($LASTEXITCODE) - a dll/src/Proxy*.def omits a real export or fails to pin its real ordinal. The failure names each one. Remember a .def line exports nothing on its own; it needs an implementation in the matching Lugner_*.cpp/.asm." }
 
       - name: Build + test + AOT publish (the gate)
         shell: pwsh
         # -Mode Publish -Target All == C++ DLL + Native-AOT UI + full test suite.
         # -NoBumpBuildNumber: the runner's build_number.txt bump is throwaway.
         run: ./build.ps1 -Mode Publish -Clean -NoBumpBuildNumber
+
+      - name: Proxy export surface, on the ARTIFACTS
+        shell: pwsh
+        # The step above checks the .def SOURCE; this one re-parses the export tables of the
+        # four DLLs that were just linked. Both are needed, and audit PX1 is why: its own filed
+        # severity was wrong because it was rated from the source, and the shipped binary turned
+        # out to export 66 names where the .def listed 36 (/DEF: MERGES with __declspec(dllexport)
+        # rather than suppressing it, contrary to what three .def headers claimed). The source
+        # and the artifact are computed by different code paths - audit #4's 4a root cause - so
+        # only the artifact settles what the loader will actually see.
+        run: |
+          $py = @('python','python3','py') | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+          & $py tools/check_proxy_exports.py --artifacts --list
+          if ($LASTEXITCODE -ne 0) { throw "check_proxy_exports --artifacts FAILED ($LASTEXITCODE) - a BUILT proxy DLL does not export the real DLL's full surface at the real ordinals. This is what the game's loader sees." }

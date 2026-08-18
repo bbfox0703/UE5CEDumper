@@ -310,11 +310,33 @@ inline std::string TruncateUtf8(const std::string& s, size_t maxBytes,
 //      as well ("第1章" → ",{1", "中A文" → "-NA"), so prefer UTF-16 when it decodes
 //      cleanly — the stronger evidence wins.
 //
-// KNOWN RESIDUAL: an ASCII-only UTF-8 buffer whose adjacent heap happens to be 0x00
-// 0x00 at exactly [2n-2] and whose whole 2n-byte reading still looks textual would be
-// read as UTF-16. Both conditions must hold — LooksLikeDecodedText rejects a binary
-// tail — and no ASCII-only case is known in the wild, where FUtf8String FText is used
-// precisely for non-ASCII. Rule 2 protects every multi-byte case regardless of heap.
+// THE ASCII TIE, and why rules 1-3 alone got it wrong (audit #5 AD5).
+//
+// The case rule 3 cannot settle is a UTF-8 buffer that is PURE ASCII: rule 2 needs a
+// multi-byte sequence and there is none, so UTF-16 wins whenever its 2n-byte window
+// happens to read as text. That window is n real ASCII bytes plus n bytes of adjacent
+// heap, and each ASCII PAIR becomes one BMP unit — "Continue" comes back as
+// U+6F43 U+746E U+6E69 U+6575. It reaches here through Ubel::ReadFTextString, which
+// blind-scans FTextData+0x08..0x90 and offers every 16-byte candidate to
+// TryDecodeFStringAt; a cooked build storing an FText display string as UTF-8 with
+// English (i.e. ASCII) text is the ordinary case, not an exotic one.
+//
+// This block previously argued the residual was near-unreachable because "both
+// conditions must hold — LooksLikeDecodedText rejects a binary tail". That is
+// MEASURED FALSE, and it is the sentence that kept the bug open:
+//   * The two conditions are the SAME heap state, not independent coincidences.
+//     Zero-filled slack — the common allocator state — supplies both at once, and the
+//     mis-decode then fires 100% of the time rather than by luck.
+//   * The mojibake contains ZERO replacement characters, so LooksLikeDecodedText
+//     accepts it. It was never going to reject this; it rejects binary, and a run of
+//     valid CJK code points is not binary.
+//
+// Rule 3a below settles it with a structural fact instead of a heuristic: an FString
+// is a TArray<TCHAR> whose Num includes the terminator, so exactly one null unit
+// exists and it is the last. An interior null unit proves the second half of the
+// window is not part of the string. Applied ONLY as a tie-break when the UTF-8
+// hypothesis independently succeeded, so it cannot change any case that is not this
+// ambiguity. Rule 2 still protects every multi-byte case regardless of heap.
 //
 // Returns sanitized UTF-8, or "" if neither hypothesis yields a null-terminated,
 // mostly-textual string.
@@ -353,9 +375,33 @@ inline std::string DecodeFStringBuffer(const uint8_t* buf, size_t bufLen, int32_
                              (static_cast<uint16_t>(buf[i * 2 + 1]) << 8);
                 w.push_back(static_cast<wchar_t>(u));
             }
-            std::string decoded = Sanitize(EncodeUtf16(w.data(), w.size()));
-            // Step 3: stronger evidence wins the ASCII-ambiguous case.
-            if (LooksLikeDecodedText(decoded)) return decoded;
+            // Step 3a — the ASCII tie-breaker.
+            //
+            // An FString is a TArray<TCHAR> whose Num INCLUDES the terminator,
+            // so a genuine n-unit UTF-16 string has exactly ONE null unit and it
+            // sits at n-1. An earlier null unit means these 2n bytes are not an
+            // n-unit UTF-16 string at all — the second half is adjacent heap.
+            //
+            // Deliberately guarded on utf8Ok, i.e. used ONLY to break the tie the
+            // KNOWN RESIDUAL above describes, where both hypotheses "work" and
+            // the wrong one wins. Ungated, this would also reject buffers with a
+            // real interior zero unit that today decode as a truncated prefix —
+            // a behaviour change outside this defect, and measurably so.
+            bool interiorNullUnit = false;
+            if (utf8Ok) {
+                for (size_t i = 0; i + 1 < n; ++i) {
+                    if (w[i] == 0) { interiorNullUnit = true; break; }
+                }
+            }
+
+            // Never an early `return ""` here: the function's tail
+            // (`return utf8Ok ? utf8Decoded : std::string();`) is what delivers
+            // the correct UTF-8 answer once this hypothesis steps aside.
+            if (!interiorNullUnit) {
+                std::string decoded = Sanitize(EncodeUtf16(w.data(), w.size()));
+                // Step 3: stronger evidence wins the ASCII-ambiguous case.
+                if (LooksLikeDecodedText(decoded)) return decoded;
+            }
         }
     }
 

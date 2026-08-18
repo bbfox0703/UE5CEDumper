@@ -14,7 +14,10 @@ Cheat Engine artefacts that ship with UE5CEDumper.
 | `ue5_dissect.lua` | CE Structure Dissect builder — generates CE struct definitions from UE reflection | Copied to `dist/` by build |
 | `ue5_invoke_helper.lua` | Runtime helper required by AA Scripts produced via UE5DumpUI's "Copy AA Script (Baked)" / Interesting Funcs AA(B) flow | **Embedded in `UE5DumpUI.exe`** as a manifest resource — see [HelperLuaResource.cs](../ui/UE5DumpUI/Services/HelperLuaResource.cs) — and shipped into the user's open .CT either via Tools → Inject Helper (one click via AOBMaker) or Tools → Export CE Helper Lua File... + manual `Table -> Add File...` |
 | `inject-ue.ps1` | Command-line injector — list running UE4/UE5 games and inject `UE5Dumper.dll` (CreateRemoteThread + LoadLibraryW). No Cheat Engine needed. | Ship next to `UE5Dumper.dll` (e.g. copy into `dist/`) |
-| `test_pipe.ps1` | Dev-only pipe protocol test script | Not deployed |
+| `startup-shortcut.ps1` | Create / remove / inspect a **per-user Start Menu Startup shortcut** for `UE5DumpUI.exe`, so the UI launches at sign-in. Resolves the exe from its own folder. | Copied to `dist/` by build |
+| `startup_shortcut.py` | Same tool, same verbs and exit codes, in stdlib Python (`IShellLinkW` via `ctypes`). Exists because Bitdefender's behavioural layer quarantined the `.ps1` — see below. | Copied to `dist/` by build |
+| `test_pipe.ps1` | Dev-only pipe protocol test script — mocks the pipe **server** so the UI can be driven with no game | Not deployed |
+| `xref_probe.ps1` | Dev-only headless **client** for `find_property_xrefs` / `walk_function_props` — the mirror of `test_pipe.ps1`. Needs a running game with `UE5Dumper.dll` injected and its pipe server up; with no game it times out on `Connect()` after 5 s, which is the expected result, not a fault. | Not deployed |
 | `tests/*.lua` | **Executable tests for the Lua helpers** — they run the real scripts against stubbed CE globals. See below. | Not deployed |
 | `DEPLOY_README.md` | End-user deployment doc — copied into `dist/` as `README.md` | Copied to `dist/README.md` |
 
@@ -48,6 +51,63 @@ inject and the `version.dll` proxy. One combined CLI (list + inject + auto):
   manual `Run as administrator`.
 - **Notes:** real-time AV / anti-cheat may flag `CreateRemoteThread` injection —
   single-player / offline use only.
+
+---
+
+## startup-shortcut.ps1 / startup_shortcut.py
+
+Put `UE5DumpUI.exe` in the **current user's** Start Menu Startup folder, so it
+launches at sign-in. Two implementations of one tool — same verbs, same exit
+codes, same refusals. Both ship into `dist/`, beside the exe.
+
+```powershell
+.\startup-shortcut.ps1              # STATUS (default) — read-only, changes nothing
+.\startup-shortcut.ps1 install
+.\startup-shortcut.ps1 install -Minimized
+.\startup-shortcut.ps1 remove
+```
+```powershell
+py startup_shortcut.py              # identical, --minimized / --force / --name
+```
+
+- **Target resolution:** `<script dir>\UE5DumpUI.exe` first — the shipped case,
+  so an unzipped release needs no arguments — then `..\dist\`, `dist\`, `cwd`.
+  Same order `inject-ue.ps1` uses for `UE5Dumper.dll`.
+- **No pipe, no network.** Install is: resolve the path → confirm the file
+  exists → write the `.lnk` → read it back. The UI and the DLL do not need to be
+  running. (`xref_probe.ps1` is the script in this folder that *does* connect —
+  see its row above.)
+- **Current user only, by design.** The folder comes from the shell
+  (`GetFolderPath('Startup')` / `SHGetKnownFolderPath`), never from a literal
+  `%APPDATA%\...` path — that one is localised on non-English Windows and
+  relocatable by policy. The all-users folder is deliberately unsupported: it
+  needs elevation, and a debugging tool that starts for every account on the
+  machine is not a default anyone asked for.
+- **It refuses to clobber other programs' shortcuts.** `install` will not
+  overwrite a shortcut of that name pointing elsewhere; `remove` will not delete
+  one whose target is not `UE5DumpUI.exe`. Both say what they found; both take
+  `-Force` / `--force`.
+- **Every write is read back.** `Save()` reports success by not failing, which is
+  not the same as having written what you asked for — and a wrong Startup
+  shortcut gives no feedback at all until the next sign-in.
+- **Exit codes:** `0` ok, `1` error, `2` not installed, `3` installed but the
+  target is missing or foreign. `2` and `3` are distinct so a wrapper can tell
+  "never set up" from "set up and since broken" — the second is what a moved or
+  re-extracted `dist\` looks like, and it is the failure users actually hit.
+- **`--startup-dir` (Python)** points the whole tool at another folder. It exists
+  so the write path can be tested in a temp directory: installing into the *real*
+  Startup folder is a genuine persistence change to the machine and should not be
+  something a test run does casually.
+
+> **Why two implementations.** Bitdefender's Advanced Threat Defense quarantined
+> the `.ps1` (along with `build.ps1` and two `tools/*.py`) the first time it ran.
+> The detection was **behavioural, not a signature**: an unsigned parent process
+> spawning `pwsh` spawning `powershell`, which then wrote a `.lnk` into the
+> Startup folder. That is a textbook persistence shape and an AV is right to look
+> at it. Neither script tries to look like anything else — the Python twin simply
+> gives a machine where the PowerShell host is the problem another interpreter to
+> do the same job. If yours trips too, the honest fix is a folder exclusion for
+> the repo / release directory, not a workaround.
 
 ---
 

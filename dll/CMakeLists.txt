@@ -556,9 +556,16 @@ if(BUILD_DLL_TESTS)
         )
     endif()
 
-    # Winmm deliberately absent here too: the poll-latency micro-benchmark now
-    # resolves timeBeginPeriod / timeEndPeriod from System32 by explicit path,
-    # exactly as Mimic does, so it covers the real mechanism instead of a linked
-    # import. Nothing in the tree statically imports winmm any more.
+    # Winmm deliberately absent: nothing in this target needs it. Mimic resolves
+    # timeBeginPeriod / timeEndPeriod from the System32 copy by explicit path so a
+    # future winmm.dll PROXY build cannot have the call resolve into its own
+    # forwarding stub, and nothing in the tree statically imports winmm.
+    #
+    # This comment used to claim the test target "covers the real mechanism" of
+    # that resolution. It never did (audit #5 AD6): the test re-implemented the
+    # resolution inside itself and measured the host's timer tick, which is
+    # invariant to every line in dll/src. Mimic.cpp is still not compiled here —
+    # what the target now covers is Mimic.h's DATA surface, the mailbox layout and
+    # command numbering that CE Lua bakes as literals.
     target_link_libraries(dll_helpers_test PRIVATE Zydis)
 endif()

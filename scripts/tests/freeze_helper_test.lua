@@ -543,6 +543,55 @@ do
         'AA9 control: the timers are STILL RUNNING -- unreachable forever')
 end
 
+
+-- ============================================================
+-- AA10: the mailbox has TWO mutually-blind concurrency guards.
+--
+-- `_ue5_invoke_busy` is ours; the EMITTED scripts (Movement / GodMode / Fly /
+-- TimeDilation / ...) write the mailbox directly and never touch it. So a
+-- generated toggle that timed out bails while `cmd` is still non-zero and the
+-- DLL still owns the mailbox -- and the next rescan tick would write over a
+-- live command. Same class as AA19.
+-- ============================================================
+
+case('AA10: rescan refuses a mailbox another command still owns')
+do
+  resetWorld(); installMailbox{ pages = {{0xA1}} }
+  local h = freezeProperty{ className = 'BP_Player_C', propOffset = 0x10, valueType = 'int32', value = 99 }
+  h.start()
+
+  -- An emitted script left a command in flight. Poke the raw cells so the
+  -- write stubs / MAILBOX_ON_WRITE cannot answer it for us.
+  MEM[MB + OFF_CMD]    = 8
+  MEM[MB + OFF_STATUS] = 0
+  MEM[MB + OFF_RESULT] = -7
+
+  rescanTimer().OnTimer()
+
+  eq(MEM[MB + OFF_CMD], 8, 'the in-flight command was NOT overwritten')
+  eq(MEM[MB + OFF_RESULT], -7, 'and neither was its result')
+
+  -- THE PLACEMENT TRAP. A guard written after `_ue5_invoke_busy = true` passes
+  -- both assertions above and still latches the flag for the whole session,
+  -- so every later rescan refuses itself and the freeze is silently abandoned.
+  eq(_ue5_invoke_busy, false, 'the busy flag was not left latched')
+end
+
+case('AA10: the refusal is transient -- the next rescan still refreshes')
+do
+  resetWorld(); installMailbox{ pages = {{0xA1}} }
+  local h = freezeProperty{ className = 'BP_Player_C', propOffset = 0x10, valueType = 'int32', value = 99 }
+  h.start()
+
+  MEM[MB + OFF_CMD] = 8
+  rescanTimer().OnTimer()               -- refused
+  MEM[MB + OFF_CMD] = 0                 -- the other command finished
+  rescanTimer().OnTimer()               -- must recover
+
+  check(not h.isAbandoned(), 'the freeze is still live after a refusal')
+  eq(_ue5_invoke_busy, false, 'and the flag is clear again')
+end
+
 -- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))

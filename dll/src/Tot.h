@@ -101,6 +101,31 @@ inline bool Requested() {
 // refuse spawning a re-assert worker during the shutdown window. (M5)
 inline bool ShutdownRequested() { return g_shutdown.load(std::memory_order_relaxed); }
 
+// Is the per-command cancel still OWED, i.e. is at least one of the connections
+// that raised it still registered?
+//
+// The latch used to clear only when a fresh session connected into an EMPTY
+// registry ("firstConn"). That was right when there was one connection; with the
+// two-lane split it is not (audit #5 F2): if the bulk lane drops mid-scan while
+// the light lane stays up, the registry is never empty, firstConn never fires,
+// and the latch stays set FOREVER -- so every subsequent scan on the surviving
+// lane aborts instantly, for the life of the process.
+//
+// Ownership is the right question, not emptiness. Pure and header-inline so the
+// decision is unit-tested rather than inferred from Fern's threading; Fern
+// supplies both lists and holds no policy.
+//
+// It must NOT clear early: an orphaned scan has to keep seeing the cancel until
+// it unwinds. That holds because a connection is erased from the live list
+// strictly AFTER its handler returned.
+inline bool PerCommandStillOwed(const uint64_t* owners, size_t nOwners,
+                                const uint64_t* live, size_t nLive) {
+    for (size_t i = 0; i < nOwners; ++i)
+        for (size_t j = 0; j < nLive; ++j)
+            if (owners[i] == live[j]) return true;
+    return false;
+}
+
 inline void RequestPerCommand() { g_perCommand.store(true,  std::memory_order_relaxed); }
 inline void ResetPerCommand()   { g_perCommand.store(false, std::memory_order_relaxed); }
 inline void RequestShutdown()   { g_shutdown.store(true,    std::memory_order_relaxed); }

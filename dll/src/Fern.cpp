@@ -784,6 +784,23 @@ void Fern::Stop(bool graceful) {
 // the client vanishing and request per-command cancellation so the orphaned
 // scan bails. Peeks only while m_commandInFlight (handler is CPU-bound in
 // DispatchCommand, not touching the pipe) — no concurrent read/write.
+void Fern::ReevaluatePerCommandCancel() {
+    // Caller MUST hold m_connMutex.
+    if (m_cancelOwners.empty()) return;
+
+    std::vector<uint64_t> live;
+    live.reserve(m_conns.size());
+    for (const auto& c : m_conns) live.push_back(c->seq);
+
+    if (Tot::PerCommandStillOwed(m_cancelOwners.data(), m_cancelOwners.size(),
+                                 live.data(), live.size())) {
+        return;   // a connection that raised the cancel is still registered
+    }
+    m_cancelOwners.clear();
+    Tot::ResetPerCommand();
+    LOG_INFO("PipeServer: per-command cancel cleared — no connection that raised it is still live");
+}
+
 void Fern::MonitorLoop() {
   // Allocates while peeking the pipe and formatting logs; a raw thread proc. (B14)
   Routine::RunThreadGuarded("PipeServer: MonitorLoop", [&] {
@@ -824,10 +841,23 @@ void Fern::MonitorLoop() {
                     // ever fires for a broken bulk scan. The UI must reconnect
                     // BOTH lanes together so g_perCommand is reset (AcceptLoop
                     // firstConn) before the next session's scans.
+                    // Record WHICH connection raised this, unconditionally. The
+                    // latch is now owned by its raisers (audit #5 F2), so a second
+                    // lane dropping while the flag is already set must still be
+                    // recorded — otherwise clearing on the first one's exit would
+                    // free a cancel the second still needs. Only the LOG stays
+                    // once-per-latch: that is a noise concern, not a correctness one.
+                    {
+                        std::lock_guard<std::mutex> lock(m_connMutex);
+                        if (std::find(m_cancelOwners.begin(), m_cancelOwners.end(), c->seq)
+                            == m_cancelOwners.end()) {
+                            m_cancelOwners.push_back(c->seq);
+                        }
+                    }
                     if (!Tot::g_perCommand.load(std::memory_order_relaxed)) {
                         LOG_WARN("PipeServer: client gone mid-command (err=%lu) — aborting in-flight op", e);
-                        Tot::RequestPerCommand();
                     }
+                    Tot::RequestPerCommand();
                 }
             }
         }
@@ -894,14 +924,22 @@ void Fern::AcceptLoop() {
             std::lock_guard<std::mutex> lock(m_connMutex);
             m_listenPipe = INVALID_HANDLE_VALUE;   // consumed by this connection
             firstConn = m_conns.empty();
+            // Assign the id HERE, under the lock — never on the connection thread,
+            // or two accepts race to the same value (audit #5 F2).
+            conn->seq = ++m_connSeq;
             m_conns.push_back(conn);
             connCount = m_conns.size();
             m_clientConnected = true;
+            ReevaluatePerCommandCancel();
         }
-        // New session (registry was empty): clear any per-command cancel left by
-        // the prior fully-disconnected session. NOT done per-command, so a light
-        // command on one lane can't clear a running scan's cancel on the other.
-        if (firstConn) Tot::ResetPerCommand();
+        // The old rule was `if (firstConn) Tot::ResetPerCommand();` — clear only when
+        // a session connects into an EMPTY registry. ReevaluatePerCommandCancel above
+        // subsumes it STRICTLY: an empty registry trivially has no live owner, so
+        // every case firstConn caught is still caught, plus the one it could not — a
+        // lane dropping while its sibling stays connected, which the two-lane split
+        // made the ordinary shape and which left the latch set for the life of the
+        // process (audit #5 F2).
+        (void)firstConn;
 
         LOG_INFO("PipeServer: Client connected (conns=%zu)", connCount);
         // Guarded: only DispatchCommand inside HandleConnection had a handler, so a
@@ -1105,6 +1143,10 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         if (it != m_conns.end()) m_conns.erase(it);
         last = m_conns.empty();
         m_clientConnected = !m_conns.empty();
+        // Safe to clear here: this runs strictly AFTER the handler returned, so an
+        // orphaned scan on this connection has already unwound and can no longer
+        // need the cancel it raised.
+        ReevaluatePerCommandCancel();
     }
 
     CloseConnOnce(*conn);
@@ -1907,7 +1949,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::string path = request.value("path", "");
             if (path.empty()) return Renge::MakeError(id, "Missing path").dump();
 
-            uintptr_t obj = Aura::FindByName(path);
+            // The field is named "path" and clients send real UE paths; FindByName
+            // only ever matched a bare FName, so every path-shaped request failed.
+            uintptr_t obj = Aura::FindByNameOrPath(path);
             if (!obj) return Renge::MakeError(id, "Object not found").dump();
 
             json data;
@@ -2517,97 +2561,92 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["level_name"] = Ubel::GetName(levelAddr);
             data["level_offset"] = persistentLevelOffset;
 
-            // Walk ULevel class to find Actors TArray field
-            uintptr_t levelClass = Ubel::GetClass(levelAddr);
-            ClassInfo levelCI = levelClass ? Ubel::WalkClass(levelClass) : ClassInfo{};
-
-            // Find Actors field (ArrayProperty) — it's a TArray<AActor*>
-            int actorsOffset = -1;
-            for (const auto& f : levelCI.Fields) {
-                if (f.Name == "Actors" && f.TypeName == "ArrayProperty") {
-                    actorsOffset = f.Offset;
-                    break;
-                }
-            }
-
             json actors = json::array();
             int actorLimit = request.value("limit", 200);
 
-            // The two failures below used to return `actors: []` with ok:true and NO
-            // error, even though this same handler sets data["error"] for the two
-            // failures above it — so the UI rendered a populated level as an empty
-            // one. Live on DumperTest's stock ThirdPersonMap 2026-08-14: actor_count
-            // 0 while world_addr / level_name / level_offset all resolved. That is a
-            // real unanswered question about this map, and it was invisible because
-            // nothing said which branch fired. (audit #5 D5/F6)
+            // === The actor list is DERIVED from Outer, not read from ULevel::Actors ===
+            //
+            // `ULevel::Actors` is declared with NO UPROPERTY (Engine/Classes/Engine/
+            // Level.h:428-429), so the reflected field lookup this used to do could not
+            // ever have matched — `actor_count: 0` on 2 of 2 games, forever, and the
+            // fuzzy fallback could bind "Actors" to DestroyedReplicatedStaticActors,
+            // which IS reflected. There is no native offset to detect either: SpawnActor
+            // outers every actor to the level it adds it to, so one GObjects pass over
+            // "objects derived from AActor whose Outer is this level" reconstructs the
+            // list with no offset detection, no latch and no constant. (audit #5 F8/F9)
+            //
+            // Deriving from AActor is MANDATORY: ULevelActorContainer and UModelComponent
+            // are outered to the level too, so an outer-only test would list them here.
             int actorTotal = -1;
-            if (actorsOffset < 0) {
-                data["error"] = "ULevel::Actors ArrayProperty not found on this level's class "
-                                "— the actor list below is empty because it was never read";
+            int32_t derivedTotal = 0;
+            auto levelActors = Aura::FindActorsInLevel(levelAddr, actorLimit, &derivedTotal);
+            static const std::unordered_set<std::string> kActorComponentBase{ "ActorComponent" };
+
+            if (levelActors.aborted) {
+                // A cancelled pass must not publish a total — that is the D5/F6 lesson
+                // this handler exists to carry, and `0` would positively assert an empty
+                // level where -1 documents "never fully read".
+                data["error"] = "actor enumeration was cancelled (client gone / shutdown) "
+                                "— the list below is partial and the total is unknown";
+            } else if (derivedTotal == 0 && levelActors.scanned > 0) {
+                data["error"] = "no live UObject derived from AActor is outered to this level "
+                                "— this list is DERIVED from the Outer back-reference, not read "
+                                "from ULevel::Actors (which carries no UPROPERTY and is "
+                                "invisible to reflection)";
             } else {
-                Macht::TArrayView actorArr;
-                if (!Macht::ReadTArray(levelAddr + actorsOffset, actorArr)) {
-                    data["error"] = "ULevel::Actors TArray unreadable at +"
-                                  + std::to_string(actorsOffset)
-                                  + " — the actor list below is empty because the read failed";
-                } else {
-                    actorTotal = actorArr.Count;
-                    int count = (std::min)(actorArr.Count, actorLimit);
-                    for (int i = 0; i < count; ++i) {
-                        uintptr_t actorAddr = Macht::ReadTArrayElement(actorArr, i);
-                        if (!actorAddr) continue;
+                actorTotal = derivedTotal;
+            }
 
-                        json actorItem;
-                        actorItem["addr"]  = Renge::AddrToStr(actorAddr);
-                        actorItem["name"]  = Ubel::GetName(actorAddr);
-                        actorItem["index"] = Ubel::GetIndex(actorAddr);
+            for (const auto& sr : levelActors.results) {
+                json actorItem;
+                actorItem["addr"]  = Renge::AddrToStr(sr.addr);
+                actorItem["name"]  = sr.name;
+                actorItem["index"] = Ubel::GetIndex(sr.addr);
+                actorItem["class"] = sr.className;
 
-                        uintptr_t actorCls = Ubel::GetClass(actorAddr);
-                        actorItem["class"] = actorCls ? Ubel::GetName(actorCls) : "";
+                // Components, structurally — for the SAME reason. AActor::OwnedComponents
+                // is a private `TSet<TObjectPtr<UActorComponent>>` with no UPROPERTY
+                // (GameFramework/Actor.h:4331), so the old lookup was wrong twice over:
+                // the field is not reflected, and it is a TSet being asked for as an
+                // ArrayProperty. This never ran in production (actorsOffset was always
+                // -1), so it was never-run code being treated as known-good.
+                // Same shape Edel already uses for "owned components of the PC/Pawn".
+                std::vector<Aura::OutgoingPtr> edges;
+                Aura::CollectOutgoingObjectPtrs(sr.addr, edges, /*cap=*/64);
+                json comps = json::array();
+                std::unordered_set<uintptr_t> seenComps;
+                for (const auto& e : edges) {
+                    if (comps.size() >= 64) break;
+                    uintptr_t compAddr = e.target;
+                    if (!compAddr || !seenComps.insert(compAddr).second) continue;
+                    if (!Aura::ClassDerivesFromAny(Ubel::GetClass(compAddr), kActorComponentBase))
+                        continue;
+                    // A UActorComponent's Outer IS its actor — exactly one hop. This is
+                    // what keeps a pointer to a SHARED object (another actor, the world,
+                    // the GameInstance) from being reported as a component of this one.
+                    if (Ubel::GetOuter(compAddr) != sr.addr) continue;
 
-                        // Try to find OwnedComponents on this actor
-                        ClassInfo actorCI = actorCls ? Ubel::WalkClass(actorCls) : ClassInfo{};
-                        int compsOffset = -1;
-                        for (const auto& f : actorCI.Fields) {
-                            if (f.Name == "OwnedComponents" && f.TypeName == "ArrayProperty") {
-                                compsOffset = f.Offset;
-                                break;
-                            }
-                        }
-
-                        if (compsOffset >= 0) {
-                            Macht::TArrayView compArr;
-                            if (Macht::ReadTArray(actorAddr + compsOffset, compArr)) {
-                                json comps = json::array();
-                                int compCount = (std::min)(compArr.Count, 64); // Limit components
-                                for (int c = 0; c < compCount; ++c) {
-                                    uintptr_t compAddr = Macht::ReadTArrayElement(compArr, c);
-                                    if (!compAddr) continue;
-
-                                    json compItem;
-                                    compItem["addr"] = Renge::AddrToStr(compAddr);
-                                    compItem["name"] = Ubel::GetName(compAddr);
-                                    uintptr_t compCls = Ubel::GetClass(compAddr);
-                                    compItem["class"] = compCls ? Ubel::GetName(compCls) : "";
-                                    comps.push_back(compItem);
-                                }
-                                actorItem["components"] = comps;
-                            }
-                        }
-
-                        actors.push_back(actorItem);
-                    }
+                    json compItem;
+                    compItem["addr"] = Renge::AddrToStr(compAddr);
+                    compItem["name"] = Ubel::GetName(compAddr);
+                    uintptr_t compCls = Ubel::GetClass(compAddr);
+                    compItem["class"] = compCls ? Ubel::GetName(compCls) : "";
+                    comps.push_back(compItem);
                 }
+                actorItem["components"] = comps;
+
+                actors.push_back(actorItem);
             }
 
             data["actors"]      = actors;
             data["actor_count"] = static_cast<int>(actors.size());
-            // actor_count is the PAGE size. The level's real element count was read
-            // one line above and thrown away, so a 500-actor page was indis-
-            // tinguishable from a 500-actor level and an actor at index 1877 simply
-            // was not there. -1 = never read (see the error above). (audit #5 D5/F6)
+            // actor_count is the PAGE size; actor_total is the whole level. -1 = never
+            // fully read (see the errors above). (audit #5 D5/F6)
             data["actor_total"] = actorTotal;
-            data["truncated"]   = (actorTotal > actorLimit);
+            // ONE source. Deriving this here from actorTotal as well would be two flags
+            // computed by different code paths — audit #4's named root cause — so take
+            // the flag the pass itself produced.
+            data["truncated"]   = levelActors.truncated;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -3158,7 +3197,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     }
 
                     stats = Aura::RefineCandidates(dt, st, tgtPtr, tgt2Ptr, cs,
-                                                   sess.descriptors,
+                                                   sess.descriptors, sess.instances,
                                                    roundMode, targetString, caseSensitive,
                                                    multiPtr, multiPtr2);
                     totalCount = static_cast<int>(cs.size());
@@ -3870,6 +3909,22 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             proc["thread_count"]      = ps.threadCount;
             proc["cpu_percent"]       = ps.cpuPercent;   // -1 = needs a 2nd sample
             data["process"] = proc;
+
+            // Class-walk cache occupancy (audit #5 U5 Tier 0). The bound added with it
+            // was sized from ONE game's log extrapolation; these three numbers are what
+            // make it tunable per game instead. approx_bytes is deliberately rough --
+            // it counts the two owned strings and the field vector, and std::string's
+            // SSO makes anything finer a lie about the allocator.
+            {
+                size_t ccEntries = 0, ccFields = 0, ccBytes = 0;
+                Ubel::GetClassCacheStats(ccEntries, ccFields, ccBytes);
+                json cc;
+                cc["entries"]      = ccEntries;
+                cc["max_entries"]  = Ubel::kMaxWalkClassCacheEntries;
+                cc["fields"]       = ccFields;
+                cc["approx_bytes"] = ccBytes;
+                data["class_cache"] = cc;
+            }
 
             // Game-thread health from Stark — already public, and the other half
             // of "is the game starved?". A stalled game thread makes every

@@ -502,24 +502,86 @@ public static class PropertyScoringTable
     /// every property name. The scorer then re-evaluates client-side
     /// using the full keyword tables above — so this list is "what to
     /// fetch", not "what to score on".
+    ///
+    /// <para><b>This list and the keyword tables above must be kept in step,
+    /// and drifted apart for a long time (audit #5 Z3).</b> A property is only
+    /// ever scored if it was fetched, so a keyword no seed can reach is a dead
+    /// scoring arm: 58 of the 123 scored keywords were unreachable, including
+    /// most of Utility and Resources. <c>PropertyScoringTableTests</c> now
+    /// asserts the two agree, so this cannot silently drift again — the
+    /// "Add a keyword" recipe at the top of this class never mentioned the seed
+    /// list, 460 lines below it, which is how the gap opened.</para>
+    ///
+    /// <para><b>Why this is not simply the union of the keyword tables.</b> The
+    /// DLL matches a seed as a bare case-insensitive substring
+    /// (<c>lowerPropName.find(s.lowerQuery)</c>) and fills each query's own
+    /// 200-row envelope in GObjects walk order, first come first served. So the
+    /// scarce resource is the per-query cap, not CPU. A seed whose matches are
+    /// mostly unrelated words spends its whole envelope before reaching the
+    /// field the user wants — that is why <see cref="DeliberatelyUnseededKeywords"/>
+    /// exists and must stay excluded. Volume alone is fine: <c>Item</c> (3,050
+    /// matches) and <c>Velocity</c> (665) exceed the cap but are 98%/99%
+    /// genuine, so the 200 rows they do return are the right rows.</para>
+    ///
+    /// <para>Added seeds cost little beyond the first hit: the inner loop tests
+    /// <c>results.size() &gt;= cap</c> <i>before</i> the substring search, so a
+    /// broad seed goes nearly free once its envelope is full.</para>
     /// </summary>
     public static readonly string[] SeedQueries =
     {
         // Stats
         "HP", "Health", "Mana", "Stamina", "Energy", "Level", "Experience",
-        "Max", "Dead", "Alive",
+        "Max", "Dead", "Alive", "Regen", "Lvl",
         // Combat
         "Damage", "Defense", "Armor", "Crit", "Attack", "Multiplier",
         "Weapon", "Hit",
+        "Dmg", "Defence", "Armour", "Resist", "Atk", "Ability", "Effect",
+        "Target", "Radius", "Modifier",
         // Resources
         "Gold", "Coin", "Money", "Gem", "Ammo", "Stack", "Count",
+        "Currency", "Cash", "Credit", "Diamond", "Crystal", "Token",
+        // "Suppl" not "Supply": the plural "Supplies" does not contain the
+        // singular, and the DLL match is a bare substring. One seed covers both.
+        "Material", "Resource", "Suppl", "Quantity", "Amount", "Item",
         // Movement
         "Speed", "Jump", "Walk", "Sprint", "Friction", "Gravity",
+        "Velocity", "Accel", "Dash", "Climb", "Swim",
         // Utility (state flags / quest)
         "Quest", "Cheat", "Immortal", "Damaged", "Invincible",
+        "Save", "Checkpoint", "Mission", "Objective", "Debug", "GodMode",
+        "NoClip", "Score", "Invulnerable",
         // Timing (L1) — the DLL substring-matches these against property
         // names so round-1 actually fetches timer fields for the scorer.
         "Cooldown", "Duration", "Timer", "Delay", "Interval", "Elapsed",
         "Remaining", "Lifespan", "Recharge", "TimeDilation", "Time",
+        "TickRate", "Cadence",
+    };
+
+    /// <summary>
+    /// Scored keywords that are deliberately NOT seeded, and must not be
+    /// "helpfully" added later. See the measurement in the
+    /// <see cref="SeedQueries"/> remarks: each of these is a short acronym or
+    /// fragment whose substring matches are overwhelmingly unrelated words, so
+    /// seeding it would burn a whole 200-row envelope on junk in GObjects walk
+    /// order and surface nothing.
+    ///
+    /// Measured over 578,809 distinct identifiers from three shipped UE games
+    /// (DWORIGINS, ES2, CrimsonDesert), as substring-matches / of which the
+    /// seed is actually the leading token:
+    ///   MP    10,180 /   634 (6%)   — Component, Compression, Template, Sample
+    ///   SP     8,847 / 5,514 (62%)  — but Spawn/Space/Speed/Spline, not "SP"
+    ///   XP     3,373 /   702 (21%)
+    ///   Exp    1,422 / 1,272 (89%)  — but Exposure/Explorer/Export, not "Exp"
+    ///   Lv     1,949 /   484 (25%)  — Solve/Valve/Twelve
+    ///   Def    1,962 / 1,616 (82%)  — but Default(880) dominates
+    ///   Load   1,063 /   421 (40%)  — Upload/Download/Preload
+    ///   Run      442 /   284 (64%)  — Runtime(145) outweighs Run(88)
+    /// A name like <c>CurrentMP</c> therefore stays unreachable by design. The
+    /// honest repair for those is a whole-token match on the DLL side (the
+    /// client scorer already tokenises), not a broader substring.
+    /// </summary>
+    public static readonly string[] DeliberatelyUnseededKeywords =
+    {
+        "MP", "SP", "XP", "Exp", "Lv", "Def", "Load", "Run",
     };
 }

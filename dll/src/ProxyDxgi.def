@@ -19,9 +19,14 @@
 ; d3d12.dll can still resolve their dxgi dependencies through our
 ; proxy — omitting them can break D3D device creation.
 ;
-; The /DEF: linker flag suppresses default exports, so the UE5_*
-; C ABI entries must be listed explicitly here too (CE Lua's
-; getAddress() resolves the dumper functions through the proxy).
+; The UE5_* C ABI entries are listed for CE Lua's getAddress(),
+; not because /DEF: would otherwise hide them: /DEF: MERGES with
+; __declspec(dllexport) rather than suppressing it. Conversely a
+; line here exports nothing on its own -- it needs an
+; implementation to bind to, which is what audit PX1 cost us on
+; dinput8 (a name absent from the .def AND from the .cpp, whose
+; ordinal our UE5_* block then took). tools/check_proxy_exports.py
+; now re-derives both halves against the real System32 table.
 ; ============================================================
 
 LIBRARY dxgi

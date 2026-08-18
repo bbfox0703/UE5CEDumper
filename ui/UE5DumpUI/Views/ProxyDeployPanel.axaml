@@ -274,6 +274,13 @@
                     IsChecked="{Binding ForceOverwrite}"
                     ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Force}"
                     Foreground="#CCCCCC" VerticalAlignment="Center" Margin="8,0"/>
+          <!-- Separate from Force Overwrite on purpose (audit #5 AC1): this one
+               destroys a third party's file and is NOT persisted, so it cannot
+               become standing consent carried in from an earlier session. -->
+          <CheckBox Content="{StaticResource str.ProxyDeploy.ForeignOverwrite}"
+                    IsChecked="{Binding AllowForeignOverwrite}"
+                    ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.ForeignOverwrite}"
+                    Foreground="#E0A050" VerticalAlignment="Center" Margin="8,0"/>
           <TextBlock Text="{Binding LastOperationResult}"
                      Foreground="{Binding LastOperationColor}" VerticalAlignment="Center" FontSize="11"
                      FontWeight="SemiBold" Margin="8,0"

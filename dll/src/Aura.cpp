@@ -1353,22 +1353,13 @@ int32_t GetSerialNumber(int32_t index) {
         itemAddr = chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
     }
 
-    // SerialNumber offset depends on the FUObjectItem layout:
-    //   classic (objOff==0): Object(8) + Flags(4) [+ ClusterRootIndex(4)] + Serial(4)
-    //                        → +0x0C (16B stride) / +0x10 (24B stride)
-    //   UE5.7+  (objOff!=0): FlagsAndRefCount(8) + Object(8) + SerialNumber(4) + ClusterRootIndex(4)
-    //                        → SerialNumber sits right after Object, i.e. objOff + 0x08
-    //   packed57: layout is *** UNVERIFIED *** — SerialNumber position is not pinned.
-    //             Best-effort guess (calibratable via set_packed_consts serial_off). A
-    //             wrong value only degrades FWeakObjectPtr staleness resolution (weak
-    //             refs / delegates), never the core object walk.
-    int serialOff;
-    if (s_layoutMode == Lineal::ItemLayoutMode::Packed57) {
-        serialOff = s_packedSerialOff;
-    } else {
-        serialOff = (s_itemObjOffset != 0) ? (s_itemObjOffset + 0x08)
-                                           : ((s_itemSize >= 24) ? 0x10 : 0x0C);
-    }
+    // The whole offset rule lives in Lineal so it can be unit-pinned — no target
+    // compiles Aura.cpp, and the old inline `s_itemSize >= 24 ? 0x10 : 0x0C`
+    // silently returned 0x0C for the reachable 20-byte packed item, which reads
+    // ClusterRootIndex and made every weak reference look stale (audit #5 A1).
+    const int serialOff = Lineal::SerialOffsetForLayout(
+        s_layoutMode, s_itemSize, s_itemObjOffset, s_packedSerialOff);
+
     int32_t serial = 0;
     Macht::ReadSafe(itemAddr + serialOff, serial);
     return serial;
@@ -1406,10 +1397,58 @@ uintptr_t FindByName(const std::string& name) {
 }
 
 uintptr_t FindByFullName(const std::string& fullName) {
-    // Forward declared — uses Ubel::GetFullName
-    // This is implemented after UStructWalker is available
-    (void)fullName;
-    return 0;
+    // Resolve an object written as a PATH ("/Script/Engine.Actor"), as opposed to
+    // FindByName's bare-FName match ("Actor").
+    //
+    // This was a stub returning 0 from the day it was declared, while `Aura.h`,
+    // `docs/dll-spec.md` and `UE5_FindObject`'s own `fullPath` parameter name all
+    // advertised it as working. Nothing called it, so nothing failed loudly — the
+    // path capability simply did not exist, and `ue5_dissect.lua`'s
+    // `createFromPath` (whose interactive dialog is PRE-FILLED with
+    // "/Script/Engine.Actor") could never have resolved anything.
+    //
+    // Two-stage match, and the order is the point: `Ubel::GetFullName` walks the
+    // whole Outer chain and allocates, so running it on all ~85K objects would make
+    // this far slower than the scan it supports. The FName pre-filter reduces that
+    // to the handful of objects that share the leaf name.
+    const std::string wantPath = CanonicalizeObjectPath(fullName);
+    if (wantPath.empty()) return 0;
+    const std::string wantLeaf = PathLeafName(fullName);
+    if (wantLeaf.empty()) return 0;
+
+    uintptr_t result = 0;
+    ForEach([&](int32_t /*idx*/, uintptr_t obj) -> bool {
+        uint32_t nameIndex = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIndex)) return true;
+
+        // Cheap gate first — see above.
+        if (Serie::GetString(nameIndex) != wantLeaf) return true;
+
+        if (CanonicalizeObjectPath(Ubel::GetFullName(obj)) == wantPath) {
+            result = obj;
+            return false;  // Stop iteration
+        }
+        return true;
+    });
+    return result;
+}
+
+uintptr_t FindByNameOrPath(const std::string& query) {
+    // The single entry point every "find me this object" caller should use.
+    //
+    // A path is tried FIRST when the query carries a separator, because a path is
+    // the more specific request: "/Game/Maps/Foo.Foo" and "/Game/Other/Foo.Foo"
+    // share the leaf name "Foo", and answering either with whichever FName the
+    // GObjects walk reached first is a wrong answer that looks like a right one.
+    // Bare names keep their old single-pass cost — LooksLikeObjectPath is false, so
+    // FindByName runs directly and nothing about the historical behaviour changes.
+    if (LooksLikeObjectPath(query)) {
+        if (uintptr_t byPath = FindByFullName(query)) return byPath;
+        // Deliberate fallback: an object whose FName legitimately contains a '.'
+        // (asset names do) would otherwise become unreachable through this path.
+        return FindByName(query);
+    }
+    return FindByName(query);
 }
 
 SearchResultSet SearchByName(const std::string& query, int maxResults, bool instancesOnly) {
@@ -1639,8 +1678,10 @@ static bool ClassChainMatchesLower(uintptr_t cls, const std::string& lowerName) 
     return false;
 }
 
-SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults) {
+SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults,
+                                         uintptr_t outerFilter, int32_t* totalOut) {
     SearchResultSet rset;
+    if (totalOut) *totalOut = 0;
     if (baseClassName.empty() || maxResults <= 0) return rset;
 
     std::string lowerQuery = baseClassName;
@@ -1655,15 +1696,29 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
 
     int32_t count = GetCount();
     rset.scanned = count;
+    int32_t matchTotal = 0;   // matches BEFORE the cap — exact when totalOut was asked for
     for (int32_t i = 0; i < count; ++i) {
-        if (static_cast<int>(rset.results.size()) >= maxResults) break;
+        // When the caller asked for an exact total we must keep COUNTING past the cap
+        // and stop only APPENDING; otherwise `total` degenerates into the page size and
+        // a 500-actor page is indistinguishable from a 500-actor level (audit #5 F6).
+        if (!totalOut && static_cast<int>(rset.results.size()) >= maxResults) break;
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:find", "FindInstancesDerivedFrom: aborted (client gone / shutdown)");
+            rset.aborted = true;   // the total is INCOMPLETE — callers must not publish it
             break;   // return partial result
         }
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
         rset.nonNull++;
+
+        // Outer gate FIRST when filtering: one 8-byte read per pool entry, versus a
+        // class read + a memo probe + an FName decode. Ordering this cheapest-first is
+        // what makes an outer-filtered pass affordable over a 10^5-10^6 object pool.
+        uintptr_t objOuter = 0;
+        if (outerFilter) {
+            if (!Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, objOuter)) continue;
+            if (objOuter != outerFilter) continue;
+        }
 
         uintptr_t cls = 0;
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
@@ -1693,23 +1748,45 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
         // maxResults class-default rows and not one live instance.
         if (objName.rfind("Default__", 0) == 0) continue;
 
+        ++matchTotal;
+        if (static_cast<int>(rset.results.size()) >= maxResults) continue;   // count, don't append
+
         SearchResult sr;
         sr.addr      = obj;
         sr.index     = i;
         sr.name      = objName;
         sr.className = Ubel::GetName(cls);   // the CONCRETE class, not the queried base
         sr.classAddr = cls;
-        Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
+        if (outerFilter) sr.outer = objOuter;                    // already read above
+        else Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, sr.outer);
         rset.results.push_back(std::move(sr));
     }
 
-    rset.truncated = (static_cast<int>(rset.results.size()) >= maxResults);
+    if (totalOut) *totalOut = matchTotal;
+    // ONE source for "is this a page or the whole set". When an exact total was asked
+    // for, derive the flag from it — a second flag computed by a different code path is
+    // audit #4's own named root cause, and this handler's caller publishes `truncated`.
+    rset.truncated = totalOut ? (matchTotal > maxResults)
+                             : (static_cast<int>(rset.results.size()) >= maxResults);
 
     Sein::Info("PIPE:find", "FindInstancesDerivedFrom base='%s': %d live instance(s)%s over %d distinct class(es), scanned=%d, nonNull=%d",
                  baseClassName.c_str(), (int)rset.results.size(),
                  rset.truncated ? " (capped)" : "",
                  (int)derivedCache.size(), rset.scanned, rset.nonNull);
     return rset;
+}
+
+SearchResultSet FindActorsInLevel(uintptr_t levelAddr, int maxResults, int32_t* totalOut) {
+    SearchResultSet rset;
+    if (totalOut) *totalOut = 0;
+    // Zero means "nobody said", never "match everything". Without this a caller that
+    // failed to resolve PersistentLevel would silently get every actor in the game
+    // presented as the contents of one level.
+    if (!levelAddr) {
+        Sein::Warn("PIPE:world", "FindActorsInLevel: refused — no level address supplied");
+        return rset;
+    }
+    return FindInstancesDerivedFrom("Actor", maxResults, /*outerFilter=*/levelAddr, totalOut);
 }
 
 // Helper: populate an AddressLookupResult from a UObject pointer.
@@ -2035,11 +2112,8 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 // offset (parent struct offset + child field offset) and a dotted name
 // like "Stats.Levels".
 
-enum class ContainerKind {
-    Array,   // TArray.Data buffer, stride = inner element size
-    Set,     // TSparseArray.Data buffer, stride = ComputeSetElementStride
-    Map,     // TSparseArray.Data buffer, stride = ComputeSetElementStride(pair)
-};
+// ContainerKind moved to Aura.h (audit #5 A4) so the coverage predicate
+// DeepLeafCoveredByStaticScanIndex can be unit-tested against it.
 
 struct ContainerCacheEntry {
     int32_t       offset;       // Absolute byte offset within owner UObject
@@ -2198,6 +2272,22 @@ struct ContainerLeaf {
     const std::string& leafType;    // property type name ("IntProperty" / "NameProperty" / ...)
     int32_t            leafSize;    // byte width (0 for variable/string — caller resolves)
     uint8_t            boolMask;    // BoolProperty bit mask (0xFF otherwise)
+    // Placed immediately BEFORE `depth` deliberately (audit #5 A4): these leaves are
+    // aggregate-initialised positionally, so a site that forgets `kind` binds an
+    // `int` to a scoped enum and fails to COMPILE. Appending it instead would
+    // value-initialise to the zero enumerator and pass silently, which is how the
+    // fix would reproduce the very defect it removes.
+    ContainerKind      kind;        // container shape this leaf was reached through
+    // audit #5 A12 — same placement rule, same reason, one step further: ONE sub-object
+    // rather than four loose scalars. A site that omits it still binds `depth`'s `int` to
+    // a class type with no converting constructor (C2440), and a partially-braced `{...}`
+    // cannot swallow `depth`. Loose scalars would NOT be safe: `int -> int32_t` is an
+    // identity conversion, so supplying three of four and stopping compiles clean, `depth`
+    // silently becomes 0, and `deepVisitor`'s `if (lf.depth < 1) return;` then drops EVERY
+    // deep group leaf — the feature reporting zero and reading as "this game has none".
+    // (⚠ `int -> uintptr_t` narrowing is only a WARNING here — this repo builds /W4 with
+    // no /WX — so do not rely on it. Measured, not assumed.)
+    Radar::LeafAnchor  anchor;      // container identity at scan time (see Radar.h)
     int                depth;       // recursion depth at which this leaf was emitted (>= 1)
 };
 using ContainerLeafVisitor = std::function<void(const ContainerLeaf&)>;
@@ -2226,10 +2316,18 @@ static bool IsScalarLeafType(const std::string& t) {
 // Emit `structAddr`'s direct scalar leaves (incl. those nested in direct
 // sub-structs), at element path `arrayPath`[`elemIndex`]. Containers inside the
 // struct are NOT emitted here — they're walked via GetClassContainers.
+// `anchor` has NO default (audit #5 A12): the three callers reach this helper from
+// genuinely different places -- inside a container element, recursing through a direct
+// sub-struct, and from snapshot capture with no container at all -- so each must SAY
+// which it is. It is passed whole rather than as a `slotBase` to recompute from,
+// because this helper already threads two interchangeable `uintptr_t` bases (`base`,
+// `elemBaseAddr`) and a third would be a coin-flip at every call site.
 static void EmitStructDirectLeaves(uintptr_t structAddr, uintptr_t base,
                                    const std::string& arrayPath, int32_t elemIndex,
                                    uintptr_t elemStructAddr, uintptr_t elemBaseAddr,
-                                   const std::string& namePrefix, int depth, int structDepth,
+                                   const std::string& namePrefix, ContainerKind kind,
+                                   const Radar::LeafAnchor& anchor,
+                                   int depth, int structDepth,
                                    const ContainerLeafVisitor& visit) {
     constexpr int kMaxStructDepth = 4;
     if (structDepth > kMaxStructDepth || !structAddr) return;
@@ -2238,13 +2336,15 @@ static void EmitStructDirectLeaves(uintptr_t structAddr, uintptr_t base,
         std::string leafName = namePrefix.empty() ? f.Name : (namePrefix + "." + f.Name);
         if (IsScalarLeafType(f.TypeName)) {
             ContainerLeaf lf{ arrayPath, elemIndex, elemStructAddr, elemBaseAddr,
-                              leafName, base + f.Offset, f.TypeName, f.Size, f.boolFieldMask, depth };
+                              leafName, base + f.Offset, f.TypeName, f.Size, f.boolFieldMask,
+                              kind, anchor, depth };
             visit(lf);
         } else if (f.TypeName == "StructProperty" && f.Address) {
             uintptr_t nested = 0;
             if (Macht::ReadSafe(f.Address + DynOff::FSTRUCTPROP_STRUCT, nested) && nested)
                 EmitStructDirectLeaves(nested, base + f.Offset, arrayPath, elemIndex,
-                                       elemStructAddr, elemBaseAddr, leafName, depth, structDepth + 1, visit);
+                                       elemStructAddr, elemBaseAddr, leafName, kind, anchor,
+                                       depth, structDepth + 1, visit);
         }
     }
 }
@@ -2271,16 +2371,31 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
         int32_t   capacity = 0;
         Macht::TSparseArrayView sa{};
         const bool isSparse = (cfe.kind != ContainerKind::Array);
+        // audit #5 A12 — the container's identity AT SCAN TIME, so refine can re-read the
+        // header instead of trusting each leaf's absolute address. Built HERE because this
+        // is the only scope holding the header address and the raw counts.
+        //
+        // ⚠ `capacity` below is NOT the number to stamp for a sparse container: it is
+        // `MaxCapacity` (the backing TArray's Max, used as the iteration bound), while
+        // refine re-reads `MaxIndex`. Stamping capacity would make numAtScan exceed nowNum
+        // for every TSet/TMap with a spare slot, so the shrink rule would DROP every sparse
+        // group candidate on the first Next Scan. The two named factories exist so this
+        // cannot be got wrong by reaching for the local that happens to be in hand.
+        Radar::LeafAnchor leafAnchor;
         if (cfe.kind == ContainerKind::Array) {
             Macht::TArrayView arr;
             if (!Macht::ReadTArray(fieldAddr, arr)) continue;
             if (arr.Max <= 0 || !arr.Data || arr.Max > 0x100000) continue;
             // Use Count (logical) for capture — slack slots hold stale data.
             bufData = arr.Data; capacity = arr.Count;
+            leafAnchor = Radar::MakeArrayLeafAnchor(fieldAddr, arr.Data, arr.Count,
+                                                    /*leafDepth=*/depth + 1);
         } else {
             if (!Macht::ReadTSparseArray(fieldAddr, sa)) continue;
             if (sa.MaxCapacity <= 0 || !sa.Data || sa.MaxCapacity > 0x100000) continue;
             bufData = sa.Data; capacity = sa.MaxCapacity;
+            leafAnchor = Radar::MakeSparseLeafAnchor(fieldAddr, sa.Data, sa.MaxIndex,
+                                                     /*leafDepth=*/depth + 1);
         }
         if (capacity <= 0) continue;
 
@@ -2319,7 +2434,8 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     if (cfe.kind == ContainerKind::Map && nSides > 1) sidePath += sides[s].tag;
                     uintptr_t elemBase = slotBase + sides[s].regionOff;
                     EmitStructDirectLeaves(sides[s].structAddr, elemBase, sidePath, e,
-                                           sides[s].structAddr, elemBase, "", depth + 1, 0, visit);
+                                           sides[s].structAddr, elemBase, "", cfe.kind,
+                                           leafAnchor, depth + 1, 0, visit);
                     WalkContainerLeaves(elemBase, sides[s].structAddr,
                                         sidePath + "[" + std::to_string(e) + "]", depth + 1, lim, visit, visited);
                 } else if (s == 0 && cfe.kind != ContainerKind::Map
@@ -2331,7 +2447,8 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     // at distinct offsets, so they need the per-side handling.)
                     const std::string empty;
                     ContainerLeaf lf{ containerPath, e, 0, slotBase, empty,
-                                      slotBase, cfe.innerType, 0 /*caller resolves size*/, 0xFF, depth + 1 };
+                                      slotBase, cfe.innerType, 0 /*caller resolves size*/, 0xFF,
+                                      cfe.kind, leafAnchor, depth + 1 };
                     visit(lf);
                 }
             }
@@ -2352,7 +2469,8 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     std::string vpath = containerPath; vpath += ".Value";
                     ContainerLeaf lf{ vpath, e, 0, slotBase, empty,
                                       slotBase + cfe.valueOffset, cfe.valueLeafType,
-                                      0 /*caller resolves size*/, 0xFF, depth + 1 };
+                                      0 /*caller resolves size*/, 0xFF, cfe.kind,
+                                      leafAnchor, depth + 1 };
                     visit(lf);
                 }
                 if (cfe.keyStruct == 0 && IsScalarLeafType(cfe.keyLeafType)) {
@@ -2360,7 +2478,8 @@ static void WalkContainerLeaves(uintptr_t structBase, uintptr_t structAddr,
                     std::string kpath = containerPath; kpath += ".Key";
                     ContainerLeaf lf{ kpath, e, 0, slotBase, empty,
                                       slotBase /*key at pair+0*/, cfe.keyLeafType,
-                                      0 /*caller resolves size*/, 0xFF, depth + 1 };
+                                      0 /*caller resolves size*/, 0xFF, cfe.kind,
+                                      leafAnchor, depth + 1 };
                     visit(lf);
                 }
             }
@@ -3847,8 +3966,10 @@ void CollectOutgoingObjectPtrs(uintptr_t obj, std::vector<OutgoingPtr>& out,
 //   world →(world-level back-ref)→ ULevel → Actors[k] → actor [→ … → target]
 // The world→level hop is synthetic (fieldType "WorldLevel") because, by
 // construction, if the level were forward-reachable the actor would have been too
-// (level → Actors → actor is a reflected chain) — so the plain BFS would already
-// have found it. Returns found=true / status "ok_via_level" on success, or a
+// — so the plain BFS would already have found it. (That parenthetical used to read
+// "level → Actors → actor is a reflected chain". It is not: ULevel::Actors carries
+// no UPROPERTY, which is exactly what broke this recovery — audit #5 F8. Both hops
+// below are synthetic back-references.) Returns found=true / status "ok_via_level" on success, or a
 // default {found=false} GraphPathResult to signal "no recovery available".
 // maxDepth is intentionally not a parameter: this recovery uses its own fixed bounds
 // (the Outer climb is capped at 8 hops; the actor→target tail BFS at a deliberate 6),
@@ -3886,18 +4007,23 @@ static GraphPathResult RecoverViaWorldLevel(uintptr_t rootWorld, uintptr_t targe
         if (Macht::ReadSafe(level + owOff, ow) && ow && ow != rootWorld) return res;
     }
 
-    // Find the actor's index in ULevel::Actors (TArray<AActor*>).
-    int32_t actorsOff = Ubel::FindFieldOffset(levelCls, "Actors", "Actors",
-                                              nullptr, "ArrayProperty");
-    if (actorsOff < 0) return res;
-    Macht::TArrayView arr;
-    if (!Macht::ReadTArray(level + actorsOff, arr) || arr.Count <= 0 || !arr.Data) return res;
-    int32_t scanN = arr.Count > 500000 ? 500000 : arr.Count;   // sane cap
-    std::vector<uintptr_t> buf(static_cast<size_t>(scanN), 0);
-    if (!Macht::ReadBytesSafe(arr.Data, buf.data(), static_cast<size_t>(scanN) * 8)) return res;
-    int32_t k = -1;
-    for (int32_t i = 0; i < scanN; ++i) { if (buf[i] == actor) { k = i; break; } }
-    if (k < 0) return res;   // actor genuinely not in this level's Actors — don't fabricate
+    // NO ULevel::Actors lookup, and that is the fix (audit #5 F8).
+    //
+    // `ULevel::Actors` is declared `TArray<TObjectPtr<AActor>> Actors;` with NO
+    // UPROPERTY, so FindFieldOffset cannot see it. It returned < 0 and this whole
+    // recovery bailed — which is why `ok_via_level` never fired: 18 sessions logged
+    // actor_count 0 and not one non-zero. Worse, the fuzzy name fallback could bind
+    // "Actors" to DestroyedReplicatedStaticActors, which IS reflected, and then scan
+    // the wrong array.
+    //
+    // The membership it was proving is already guaranteed by construction: the Outer
+    // climb above exits ONLY with `level = GetOuter(actor)`, i.e. this actor's own
+    // level. Re-deriving that from a reflected array added a hard failure mode and
+    // no information.
+    //
+    // The element index goes with it. There is no reflected array to index INTO, so
+    // -1 is the honest answer, and it is the shape the UI already renders for the
+    // synthetic hop directly above.
 
     // --- Build the chain. ---
     std::vector<GraphPathStep> steps;
@@ -3909,13 +4035,15 @@ static GraphPathResult RecoverViaWorldLevel(uintptr_t rootWorld, uintptr_t targe
         s.elementIndex = -1;
         steps.push_back(std::move(s));
     }
-    // (2) level → Actors[k] → actor: a REAL object-array element edge.
+    // (2) level → actor: the Outer back-reference, synthetic for the same reason
+    //     the world→level hop above is. ULevel::Actors carries no UPROPERTY, so
+    //     there is no reflected offset to publish and no index to publish either
+    //     — -1/-1 is what the UI already renders for a synthetic hop.
     {
         GraphPathStep s;
         s.fromObj = level; s.toObj = actor;
-        s.fieldOffset = actorsOff; s.fieldName = "Actors"; s.fieldType = "ArrayProperty";
-        s.innerType = "ObjectProperty"; s.elementIndex = k;
-        s.elemStride = 0; s.elemValueOffset = 0;   // object array: UI hardcodes the 8B stride
+        s.fieldOffset = -1; s.fieldName = "Actors"; s.fieldType = "LevelActor";
+        s.elementIndex = -1;
         steps.push_back(std::move(s));
     }
     // (3) actor → … → target: the short forward chain to the owned sub-object
@@ -6193,6 +6321,10 @@ ValueScanResult ScanForValue(
         bool                    gameClass = false;   // !IsEnginePackage(classPath)
         bool                    noiseClass = false;  // pre-filter: engine/system noise
                                                      // (only computed when preFilterNoise)
+        // The static field index for this class hit kMaxScanFieldsPerClass, so
+        // "already covered by the static paths" is no longer true for it and the
+        // deep pass must not skip anything on that basis (audit #5 A4).
+        bool                    fieldCapHit = false;
         std::vector<ScanField>  fields;
         // Per-object batch-read plan (build 974). The body span covering this
         // class's DIRECT fixed-width leaf fields (container == None) — the reads
@@ -6356,10 +6488,20 @@ ValueScanResult ScanForValue(
     //   - kMaxDepth = 4. Real UE structs rarely nest beyond 2-3 levels;
     //     beyond 4 we're either in a recursive type loop or pathological
     //     data. The cap bounds worst-case CPU per class.
-    //   - visited set per call protects against accidental cycles
-    //     (FStructProperty's Struct pointer pointing to a struct that
-    //     transitively re-references itself, e.g. linked-list nodes
-    //     declared as USTRUCT with a self-typed StructProperty).
+    //   - the guard set is scoped to the ACTIVE PATH (Aura::StructPathGuard),
+    //     so a self-referential struct still terminates while two sibling
+    //     fields of the SAME struct type are both expanded. It used to be a
+    //     whole-walk set with no erase, which silently meant "only the first
+    //     FVector in a class is ever indexed" — Location found, Velocity /
+    //     Scale3D / Extent not, subtree and all (audit A3). The two walkers
+    //     that got this right are CollectSchemaLeaves and CollectGroupLeaves.
+    //   - kMaxScanFieldsPerClass, because path-scoping deliberately removes the
+    //     accidental bound the whole-walk set was providing. Without it the only
+    //     limit left is depth<=4 on a tree whose fan-out is (fields per struct)^4.
+    //     Mirrors kMaxSchemaLeavesPerClass, which its sibling pairs with the same
+    //     path-scoped guard for exactly this reason.
+    constexpr size_t kMaxScanFieldsPerClass = 4000;
+    bool fieldCapHit = false;
     auto expandFields = [&](auto& self,
                             uintptr_t structAddr,
                             int32_t   baseOffset,
@@ -6369,7 +6511,11 @@ ValueScanResult ScanForValue(
                             int depth) -> void {
         constexpr int kMaxDepth = 4;
         if (depth > kMaxDepth) return;
-        if (!visited.insert(structAddr).second) return;  // cycle
+        if (out.size() >= kMaxScanFieldsPerClass) { fieldCapHit = true; return; }
+        // Cycle guard along the CURRENT path only — RAII so every early return
+        // below unwinds it. A plain insert-without-erase is the A3 defect.
+        Aura::StructPathGuard pathGuard(visited, structAddr);
+        if (!pathGuard.Entered()) return;  // already on this path: real cycle
 
         // Use WalkClassEx at every depth so BoolProperty FieldMask is
         // populated for nested bitfield bools (WalkClass alone covers it
@@ -6378,6 +6524,7 @@ ValueScanResult ScanForValue(
         // are cheap relative to the GObjects walk itself.
         const ClassInfo& ci = Ubel::WalkClassEx(structAddr);
         for (const auto& f : ci.Fields) {
+            if (out.size() >= kMaxScanFieldsPerClass) { fieldCapHit = true; break; }
             // Leaf-type match: emit a ScanField at the cumulative offset.
             bool accepted = false;
             for (const auto& t : acceptedTypes) {
@@ -6684,8 +6831,18 @@ ValueScanResult ScanForValue(
         sci.noiseClass = preFilterNoise && IsSnapshotNoiseClass(classAddr, ci.FullPath);
 
         std::unordered_set<uintptr_t> visited;
+        fieldCapHit = false;
         expandFields(expandFields, classAddr, /*baseOffset=*/0,
                      /*namePrefix=*/"", sci.fields, visited, /*depth=*/0);
+        // Never truncate silently. A missing leaf is indistinguishable from a
+        // value that is not there, which is precisely how A3 stayed invisible
+        // for ~2400 builds — the scan simply reported no match.
+        sci.fieldCapHit = fieldCapHit;
+        if (fieldCapHit) {
+            LOG_WARN("ScanForValue: class '%s' hit the %zu scan-field cap — "
+                     "deeper struct leaves were NOT indexed for this scan",
+                     sci.className.c_str(), kMaxScanFieldsPerClass);
+        }
 
         // Precompute the per-object batch-read span over DIRECT fixed-width
         // leaf fields (container == None). Each such field reads at most 16B
@@ -6926,6 +7083,34 @@ ValueScanResult ScanForValue(
                                 ? sf.elemTypeName : sf.typeName;
             d.fieldOffset   = sf.offset;
             d.boolFieldMask = sf.boolFieldMask;
+            // audit #5 A11 — tell refine HOW this field's address was formed, so a
+            // container element can be re-anchored instead of re-read blind. The
+            // switch is exhaustive on purpose: a ScanContainer added later must
+            // state its anchor here or the compiler will not have covered it.
+            switch (sf.container) {
+                case ScanContainer::None:
+                    d.anchor = Radar::ValueAnchor::Direct;
+                    break;
+                case ScanContainer::Array:
+                    d.anchor = Radar::ValueAnchor::ArrayElement;
+                    d.elemStride = sf.elemStride;
+                    break;
+                case ScanContainer::StructArrayInner:
+                    d.anchor = Radar::ValueAnchor::ArrayElement;
+                    d.elemStride = sf.elemStride;
+                    d.elemIntra  = sf.structInnerOffset;
+                    break;
+                case ScanContainer::Set:
+                case ScanContainer::MapKey:
+                    d.anchor = Radar::ValueAnchor::SparseElement;
+                    d.elemStride = sf.elemStride;
+                    break;
+                case ScanContainer::MapValue:
+                    d.anchor = Radar::ValueAnchor::SparseElement;
+                    d.elemStride = sf.elemStride;
+                    d.elemIntra  = sf.valueOffset;
+                    break;
+            }
             // Vector scans only: the source width the refine path can no longer
             // re-derive (fieldType is the bare "StructProperty").
             d.vectorWidth   = sf.vectorWidth;
@@ -6951,9 +7136,14 @@ ValueScanResult ScanForValue(
         // interned instance index; only the value's address + snapshot +
         // element index live on the candidate itself. Used by both the
         // direct-field and per-array-element paths.
+        // `containerNum` has NO default, deliberately (audit #5 A11): every call site
+        // must state the container's element count at scan time, or -1 for "not a
+        // container element". A site that forgets it fails to COMPILE rather than
+        // silently minting a candidate refine cannot re-anchor.
         auto emitCandidate = [&](uintptr_t valueAddr,
                                  uint32_t  descriptorIdx,
                                  int32_t   elementIndex,   // -1 = direct field
+                                 int32_t   containerNum,   // -1 = not a container element
                                  const uint8_t* rawBytes,
                                  size_t   rawByteCount,
                                  const std::string* strValue) {
@@ -6967,6 +7157,7 @@ ValueScanResult ScanForValue(
             cand.descriptorIdx = descriptorIdx;
             cand.instanceIdx   = static_cast<uint32_t>(curInstanceIdx);
             cand.elementIndex  = elementIndex;
+            cand.containerNum  = containerNum;
             if (strValue) {
                 cand.prevStr = *strValue;
             } else if (rawBytes && rawByteCount > 0) {
@@ -6980,7 +7171,10 @@ ValueScanResult ScanForValue(
         // and emit a candidate (elementIndex = the container slot index) on
         // a match. Mirrors the direct-field read/compare branches; the
         // descriptor is interned lazily on the first match of this field.
-        auto scanElement = [&](ScanField& sf, uintptr_t elemAddr, int32_t elemIndex) {
+        // `containerNum` = the container's element count at scan time (TArray::Num /
+        // TSparseArray::MaxIndex). Required, not defaulted — see emitCandidate.
+        auto scanElement = [&](ScanField& sf, uintptr_t elemAddr, int32_t elemIndex,
+                               int32_t containerNum) {
             // Sized for the widest value read through it: a 24-byte LWC vector.
             uint8_t     readBuf[Radar::VECTOR_CANON_BYTES] = {};
             std::string readStr;
@@ -6993,7 +7187,7 @@ ValueScanResult ScanForValue(
                     readStr = Ubel::ReadFTextStringAt(elemAddr, 0);
                 }
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) return;
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, nullptr, 0, &readStr);
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, containerNum, nullptr, 0, &readStr);
             } else if (isVector) {
                 // Read the field's OWN width, decode to the canonical triple,
                 // then store the canonical form so display + refine never have
@@ -7005,7 +7199,7 @@ ValueScanResult ScanForValue(
                 if (!Radar::CompareVectorPredicate(st, cur, targetVec, targetVec2Ptr, roundMode)) return;
                 uint8_t canon[Radar::VECTOR_CANON_BYTES];
                 Radar::StoreVectorCanonical(cur, canon);
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex,
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, containerNum,
                               canon, sizeof(canon), nullptr);
             } else if (isMulti) {
                 // Resolve the element's own width (key/value/elem type) + target.
@@ -7016,14 +7210,14 @@ ValueScanResult ScanForValue(
                 size_t sz = Radar::SizeOf(elemDt);
                 if (!Macht::ReadBytesSafe(elemAddr, readBuf, sz)) return;
                 if (!Radar::ComparePredicate(elemDt, st, readBuf, mtgt, mtgt2, roundMode)) return;
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, readBuf, sz, nullptr);
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, containerNum, readBuf, sz, nullptr);
             } else {
                 // Container elements never share a bitfield byte (TArray /
                 // TSet<bool> + TMap<bool,...> store bool unpacked), so the
                 // boolFieldMask = 0xFF path applies.
                 if (!Macht::ReadBytesSafe(elemAddr, readBuf, dtSize)) return;
                 if (!Radar::ComparePredicate(dt, st, readBuf, targetBytes, target2Bytes, roundMode)) return;
-                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, readBuf, dtSize, nullptr);
+                emitCandidate(elemAddr, ensureDescriptor(sf), elemIndex, containerNum, readBuf, dtSize, nullptr);
             }
         };
 
@@ -7034,7 +7228,8 @@ ValueScanResult ScanForValue(
         // candidate if the value matches. Vectors are skipped (the walker emits
         // scalar leaves, not whole vector structs).
         auto ensureDeepDescriptor = [&](const std::string& displayName,
-                                        const std::string& fieldType) -> uint32_t {
+                                        const std::string& fieldType,
+                                        uint8_t boolMask) -> uint32_t {
             std::string key = sci->className; key += '\x01'; key += displayName;
             auto it = deepDescriptors.find(key);
             if (it != deepDescriptors.end()) return it->second;
@@ -7044,7 +7239,11 @@ ValueScanResult ScanForValue(
             d.fieldName         = displayName;   // fully-substituted path, no "[]" placeholder
             d.fieldType         = fieldType;
             d.fieldOffset       = 0;             // deep leaf: object-relative offset not meaningful
-            d.boolFieldMask     = 0xFF;
+            d.boolFieldMask     = boolMask;      // NOT 0xFF: a packed bool shares its byte
+                                                 // with up to 7 siblings, so a hardcoded
+                                                 // whole-byte mask compares all of them.
+                                                 // Newly reachable now that struct-sided
+                                                 // Set/Map leaves emit (audit #5 A4).
             uint32_t idx = static_cast<uint32_t>(tr.descriptors.size());
             tr.descriptors.push_back(std::move(d));
             deepDescriptors.emplace(std::move(key), idx);
@@ -7053,7 +7252,20 @@ ValueScanResult ScanForValue(
 
         auto deepEmit = [&](const ContainerLeaf& lf) {
             if (static_cast<int32_t>(tr.candidates.size()) >= maxResults) return;
-            if (lf.depth < 2) return;   // depth 1 already covered by static paths
+            // Was `lf.depth < 2`, i.e. "depth 1 is covered by the static paths". That
+            // is true only for ARRAYS -- collectStructArrayInner is reached solely
+            // from the ArrayProperty branch -- so a struct-sided TSet<FStruct> or
+            // TMap<K, FStruct> element was covered by neither the static index nor
+            // this pass, and an everyday TMap<FName, FItemData> inventory count was
+            // unfindable with Deep ON as well as OFF (audit #5 A4). The two sibling
+            // consumers already had the right shape: the snapshot path tests
+            // `leafName.empty() && depth < 2`, and the group scan uses `depth < 1`.
+            // `!sci->fieldCapHit` guards the predicate's own premise: it answers
+            // "does the STATIC INDEX reach this leaf", which is only meaningful if
+            // that index was built completely. A class truncated at the cap falls
+            // through to emitting rather than trusting coverage it may not have.
+            if (!sci->fieldCapHit
+                && DeepLeafCoveredByStaticScanIndex(lf.depth, lf.kind, lf.leafName.empty())) return;
             if (isVector) return;       // walker yields scalar leaves, not vector structs
 
             bool typeOk = false;
@@ -7071,7 +7283,7 @@ ValueScanResult ScanForValue(
                 else if (dt == Radar::DataType::FName)    readStr = Ubel::ReadFNameAt(lf.leafAddr, 0);
                 else                                          readStr = Ubel::ReadFTextStringAt(lf.leafAddr, 0);
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType), -1, nullptr, 0, &readStr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, /*containerNum=*/-1, nullptr, 0, &readStr);
             } else if (isMulti) {
                 Radar::DataType mdt = dt;
                 const Radar::NumericTargetSet::Entry* mtgt = nullptr; const uint8_t* mtgt2 = nullptr;
@@ -7079,12 +7291,12 @@ ValueScanResult ScanForValue(
                 size_t sz = Radar::SizeOf(mdt);
                 if (!Macht::ReadBytesSafe(lf.leafAddr, readBuf, sz)) return;
                 if (!Radar::ComparePredicate(mdt, st, readBuf, mtgt, mtgt2, roundMode)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType), -1, readBuf, sz, nullptr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, /*containerNum=*/-1, readBuf, sz, nullptr);
             } else {
                 if (!typeOk) return;
                 if (!Macht::ReadBytesSafe(lf.leafAddr, readBuf, dtSize)) return;
                 if (!Radar::ComparePredicate(dt, st, readBuf, targetBytes, target2Bytes, roundMode)) return;
-                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType), -1, readBuf, dtSize, nullptr);
+                emitCandidate(lf.leafAddr, ensureDeepDescriptor(disp, lf.leafType, lf.boolMask), -1, /*containerNum=*/-1, readBuf, dtSize, nullptr);
             }
         };
 
@@ -7139,7 +7351,8 @@ ValueScanResult ScanForValue(
                             return;
                         }
                     }
-                    scanElement(sf, arrayDataPtr + static_cast<uintptr_t>(idx) * sf.elemStride, idx);
+                    scanElement(sf, arrayDataPtr + static_cast<uintptr_t>(idx) * sf.elemStride, idx,
+                                /*containerNum=*/arrayNum);
                 }
                 continue;
             }
@@ -7182,7 +7395,7 @@ ValueScanResult ScanForValue(
                     scanElement(sf,
                         arrayDataPtr + static_cast<uintptr_t>(idx) * sf.elemStride
                                      + static_cast<uintptr_t>(sf.structInnerOffset),
-                        idx);
+                        idx, /*containerNum=*/arrayNum);
                 }
                 continue;
             }
@@ -7192,8 +7405,11 @@ ValueScanResult ScanForValue(
             // lives at slot_base + slotOff (0 for Set / Map key, valueOffset
             // for Map value). The sparse Data buffer holds freed slots too,
             // so IsSparseIndexAllocated skips them. Element addresses are raw
-            // (like TArray), so refine degrades the same way on a container
-            // reallocation between scans (SEH-safe read drops the candidate).
+            // (like TArray) — refine re-anchors them via Radar::ValueAnchor::
+            // SparseElement, which re-reads the header and re-tests THIS slot's
+            // allocation bit rather than trusting the stored address (audit #5
+            // A11; the old "a realloc just drops the candidate" was wrong — a
+            // freed sparse slot is REUSED in place and reads as a live value).
             if (sf.container == ScanContainer::Set
                 || sf.container == ScanContainer::MapKey
                 || sf.container == ScanContainer::MapValue) {
@@ -7217,7 +7433,8 @@ ValueScanResult ScanForValue(
                     }
                     if (!Macht::IsSparseIndexAllocated(sa, e)) continue;
                     scanElement(sf,
-                        sa.Data + static_cast<int64_t>(e) * sf.elemStride + slotOff, e);
+                        sa.Data + static_cast<int64_t>(e) * sf.elemStride + slotOff, e,
+                        /*containerNum=*/sa.MaxIndex);
                 }
                 continue;
             }
@@ -7251,7 +7468,7 @@ ValueScanResult ScanForValue(
                     readStr = Ubel::ReadFTextStringAt(obj, sf.offset);
                 }
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) continue;
-                emitCandidate(valueAddr, ensureDescriptor(sf), -1, nullptr, 0, &readStr);
+                emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, nullptr, 0, &readStr);
                 continue;
             }
             if (isVector) {
@@ -7264,7 +7481,7 @@ ValueScanResult ScanForValue(
                 if (!Radar::CompareVectorPredicate(st, cur, targetVec, targetVec2Ptr, roundMode)) continue;
                 uint8_t canon[Radar::VECTOR_CANON_BYTES];
                 Radar::StoreVectorCanonical(cur, canon);
-                emitCandidate(valueAddr, ensureDescriptor(sf), -1, canon, sizeof(canon), nullptr);
+                emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, canon, sizeof(canon), nullptr);
                 continue;
             }
 
@@ -7280,7 +7497,7 @@ ValueScanResult ScanForValue(
                 size_t msz = Radar::SizeOf(memberDt);
                 if (!readBody(sf.offset, readBuf, msz)) continue;
                 if (!Radar::ComparePredicate(memberDt, st, readBuf, mtgt, mtgt2, roundMode)) continue;
-                emitCandidate(valueAddr, ensureDescriptor(sf), -1, readBuf, msz, nullptr);
+                emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, readBuf, msz, nullptr);
                 continue;
             }
 
@@ -7297,7 +7514,7 @@ ValueScanResult ScanForValue(
             }
 
             if (!Radar::ComparePredicate(dt, st, readBuf, targetBytes, target2Bytes, roundMode)) continue;
-            emitCandidate(valueAddr, ensureDescriptor(sf), -1, readBuf, dtSize, nullptr);
+            emitCandidate(valueAddr, ensureDescriptor(sf), -1, /*containerNum=*/-1, readBuf, dtSize, nullptr);
         }
 
         // Deeply-nested container values (build 1206). The static fields above
@@ -7393,13 +7610,13 @@ ValueScanResult ScanForValue(
                                     if (!mtgt2) continue;
                                 }
                                 if (!Radar::ComparePredicate(e.dt, st, p, &e, mtgt2, roundMode)) continue;
-                                emitCandidate(obj + off, ensureRawDescriptor(off, e.dt), -1, p, msz, nullptr);
+                                emitCandidate(obj + off, ensureRawDescriptor(off, e.dt), -1, /*containerNum=*/-1, p, msz, nullptr);
                                 if (++rawEmitted >= kMaxRawPerObj) break;
                             }
                         } else {
                             if (off + static_cast<int32_t>(dtSize) > hole.end) break;  // width can't fit the hole's tail
                             if (!Radar::ComparePredicate(dt, st, p, targetBytes, target2Bytes, roundMode)) continue;
-                            emitCandidate(obj + off, ensureRawDescriptor(off, dt), -1, p, dtSize, nullptr);
+                            emitCandidate(obj + off, ensureRawDescriptor(off, dt), -1, /*containerNum=*/-1, p, dtSize, nullptr);
                             ++rawEmitted;
                         }
                     }
@@ -7532,7 +7749,7 @@ ValueScanResult ScanForValue(
                                     if (!Radar::ComparePredicate(me.dt, st, p, &me, mtgt2, roundMode)) continue;
                                     emitCandidate(elemBase + off,
                                                   ensureDeepRawDescriptor(cfe.name, e, off, me.dt),
-                                                  -1, p, msz, nullptr);
+                                                  -1, /*containerNum=*/-1, p, msz, nullptr);
                                     if (++deepRawEmitted >= kMaxDeepRawEmit) break;
                                 }
                             } else {
@@ -7540,7 +7757,7 @@ ValueScanResult ScanForValue(
                                 if (!Radar::ComparePredicate(dt, st, p, targetBytes, target2Bytes, roundMode)) continue;
                                 emitCandidate(elemBase + off,
                                               ensureDeepRawDescriptor(cfe.name, e, off, dt),
-                                              -1, p, dtSize, nullptr);
+                                              -1, /*containerNum=*/-1, p, dtSize, nullptr);
                                 ++deepRawEmitted;
                             }
                         }
@@ -7617,6 +7834,7 @@ ValueScanStats RefineCandidates(
     const uint8_t*                                 target2Bytes,
     std::vector<Radar::Candidate>&             candidates,
     const std::vector<Radar::FieldDescriptor>& descriptors,
+    const std::vector<Radar::InstanceRecord>&  instances,
     Radar::RoundMode                               roundMode,
     const std::string&                             targetString,
     bool                                           caseSensitive,
@@ -7665,10 +7883,77 @@ ValueScanStats RefineCandidates(
     std::vector<Radar::Candidate> kept;
     kept.reserve(candidates.size());
 
+    // === audit #5 A11 — re-anchor container-element candidates ================
+    // Read each container header ONCE per pass: N candidates in one TArray share
+    // one header, and a refine over 100K candidates must not pay N reads for it.
+    struct HeaderSnapshot {
+        bool                    ok     = false;
+        uintptr_t               data   = 0;
+        int32_t                 num    = 0;
+        Macht::TSparseArrayView sa;             // populated for sparse only
+    };
+    std::unordered_map<uintptr_t, HeaderSnapshot> headerCache;
+    auto headerFor = [&](uintptr_t headerAddr, bool sparse) -> const HeaderSnapshot& {
+        auto it = headerCache.find(headerAddr);
+        if (it != headerCache.end()) return it->second;
+        HeaderSnapshot hs;
+        if (sparse) {
+            if (Macht::ReadTSparseArray(headerAddr, hs.sa)) {
+                hs.ok = true; hs.data = hs.sa.Data; hs.num = hs.sa.MaxIndex;
+            }
+        } else {
+            Macht::TArrayView av;
+            if (Macht::ReadTArray(headerAddr, av)) {
+                hs.ok = true; hs.data = av.Data; hs.num = av.Count;
+            }
+        }
+        return headerCache.emplace(headerAddr, hs).first->second;
+    };
+    int32_t reanchorDropped = 0, reanchorRepointed = 0;
+
     for (auto& c : candidates) {
         // Per-(class,field) metadata (fieldType / boolFieldMask) lives in
         // the shared descriptor pool the candidate indexes into (V3-A).
         const Radar::FieldDescriptor& desc = descriptors[c.descriptorIdx];
+
+        // Re-anchor BEFORE any read of c.addr — every branch below reads it, and a
+        // container element's stored address can be stale in a way that still reads
+        // cleanly (see Radar::RefineContainerAnchor). `Unknown` (deep / group /
+        // native-raw) and `Direct` fall straight through, unchanged.
+        if (desc.anchor == Radar::ValueAnchor::ArrayElement
+            || desc.anchor == Radar::ValueAnchor::SparseElement) {
+            const bool sparse = (desc.anchor == Radar::ValueAnchor::SparseElement);
+            const uintptr_t headerAddr =
+                instances[c.instanceIdx].instanceAddr + desc.fieldOffset;
+            const HeaderSnapshot& hs = headerFor(headerAddr, sparse);
+            if (!hs.ok) { ++reanchorDropped; continue; }   // container gone / unreadable
+
+            // The scan-time buffer base is EXACT from what we already store —
+            // c.addr was built as base + idx*stride + intra — so it costs no bytes
+            // on the candidate.
+            const uintptr_t dataAtScan = c.addr
+                - static_cast<uintptr_t>(static_cast<int64_t>(c.elementIndex) * desc.elemStride)
+                - static_cast<uintptr_t>(desc.elemIntra);
+            const bool slotAlloc =
+                !sparse || Macht::IsSparseIndexAllocated(hs.sa, c.elementIndex);
+
+            switch (Radar::RefineContainerAnchor(desc.anchor, c.elementIndex,
+                                                 c.containerNum, dataAtScan,
+                                                 hs.data, hs.num, slotAlloc)) {
+                case Radar::RefineAnchorVerdict::Drop:
+                    ++reanchorDropped;
+                    continue;
+                case Radar::RefineAnchorVerdict::Repoint:
+                    c.addr = Radar::ContainerElemAddr(hs.data, c.elementIndex,
+                                                      desc.elemStride, desc.elemIntra);
+                    c.containerNum = hs.num;
+                    ++reanchorRepointed;
+                    break;
+                case Radar::RefineAnchorVerdict::KeepAddress:
+                    c.containerNum = hs.num;   // keep the stamp current for the NEXT refine
+                    break;
+            }
+        }
         if (isMulti) {
             // Re-resolve this candidate's own width from its stored
             // fieldType (concrete property type, e.g. "FloatProperty").
@@ -7795,6 +8080,15 @@ ValueScanStats RefineCandidates(
              static_cast<int>(st), usePrev ? 1 : 0,
              initialSize, static_cast<int>(candidates.size()),
              static_cast<long long>(dtms));
+    // Only when it actually fired — a line that is always there stops being read.
+    // `repointed` is the half that is a GAIN: those candidates were lost outright
+    // before A11, because a grown container's realloc left every element address
+    // stale. (audit #5 A11)
+    if (reanchorDropped || reanchorRepointed) {
+        LOG_INFO("Radar: Refine re-anchor: %d container element(s) repointed after a "
+                 "realloc, %d dropped (slot freed / container shrank / header gone)",
+                 reanchorRepointed, reanchorDropped);
+    }
     return stats;
 }
 
@@ -7983,6 +8277,14 @@ void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
 
         EmitStructDirectLeaves(nested, obj + f.Offset, /*arrayPath*/ "", /*elemIndex*/ 0,
                                /*elemStructAddr*/ 0, /*elemBaseAddr*/ 0, /*namePrefix*/ f.Name,
+                               // Not a container at all. These leaves are depth 0, so the
+                               // coverage predicate short-circuits before it reads this --
+                               // but Direct is the honest label, not an arbitrary sentinel.
+                               ContainerKind::Direct,
+                               // No container here either, so there is nothing to re-anchor
+                               // against. `Direct` rather than a default, so `Unknown` keeps
+                               // meaning "a hop dropped the stamp". (audit #5 A12)
+                               Radar::MakeDirectLeafAnchor(),
                                /*depth*/ 0, /*structDepth*/ 0,
             [&](const ContainerLeaf& lf) {
                 if (added >= kMaxStructLeafFields) return;
@@ -8027,6 +8329,9 @@ struct GroupLeafMeta {
     uint8_t     boolMask     = 0xFF;
     bool        isNativeC    = false;  // P2: raw-hole leaf (unmanaged, non-UPROPERTY)
     std::string guessedType;           // P2: interpreted width label (e.g. "Int32"); "" for reflected
+    // audit #5 A12 — relayed verbatim to GroupSlotMatch so refine can re-anchor a
+    // container element. Defaults to Unknown/-1, which the rule refuses to act on.
+    Radar::LeafAnchor anchor;
 };
 
 // One deep block = a numeric container's elements, or one struct-array/map
@@ -8089,6 +8394,7 @@ void CollectGroupLeaves(uintptr_t obj, const std::string& ownerClassName,
             m.ownerAddr     = obj;                            // the object directly holding this leaf
             m.ownerClass    = ownerClassName;                 // class of obj (constant across this walk)
             m.boolMask      = f.boolFieldMask;
+            m.anchor        = Radar::MakeDirectLeafAnchor();   // A12: not a container element
             metas.push_back(std::move(m));
         } else if (f.TypeName == "StructProperty" && f.Address) {
             uintptr_t nested = 0;
@@ -8437,6 +8743,7 @@ void AppendRawHoleLeaves(uintptr_t obj, uintptr_t cls, const std::string& classN
                 m.boolMask      = 0xFF;
                 m.isNativeC     = true;
                 m.guessedType   = Radar::NameOf(w);
+                m.anchor        = Radar::MakeDirectLeafAnchor();   // A12: a raw hole in the object body
                 metas.push_back(std::move(m));
                 if (++rawAdded >= kMaxRawGroupLeaves) break;
             }
@@ -8558,6 +8865,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
                 sm.leafAddr      = meta.leafAddr;
                 sm.ownerAddr     = meta.ownerAddr ? meta.ownerAddr : obj;  // P4: leaf's owning object
                 sm.ownerClass    = meta.ownerClass.empty() ? className : meta.ownerClass;  // P4 inc 2
+                sm.anchor        = meta.anchor;   // A12: relay the container identity
                 std::memcpy(sm.prevValue, blkLeaves[static_cast<size_t>(leafIdx)].bytes, 8);
                 gc.slotMatches[s].push_back(sm);
             }
@@ -8624,6 +8932,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         m.ownerAddr     = curObjAddr;     // deep leaves are owned by the scanned object
         m.ownerClass    = curClassName;   // ...so the Pivot handoff uses its class (P4 inc 2)
         m.boolMask      = lf.boolMask;
+        m.anchor        = lf.anchor;      // A12: the container this element lives in
         blk.metas.push_back(std::move(m));
     };
 
@@ -8736,6 +9045,35 @@ ValueScanStats RefineGroupCandidates(
     constexpr int kDiagCandidates = 5;
     int dbgCandidates = 0;
 
+    // audit #5 A12 -- re-anchor container-element leaves before re-reading them, using
+    // the same pure rule the single-value refine uses. Read each container header ONCE
+    // per pass: a block is one container element, so many leaves share one header.
+    struct HeaderSnapshot {
+        bool                    ok   = false;
+        uintptr_t               data = 0;
+        int32_t                 num  = 0;
+        Macht::TSparseArrayView sa;             // populated for sparse only
+    };
+    std::unordered_map<uintptr_t, HeaderSnapshot> headerCache;
+    auto headerFor = [&](uintptr_t headerAddr, bool sparse) -> const HeaderSnapshot& {
+        auto it = headerCache.find(headerAddr);
+        if (it != headerCache.end()) return it->second;
+        HeaderSnapshot hs;
+        if (sparse) {
+            if (Macht::ReadTSparseArray(headerAddr, hs.sa)) {
+                hs.ok = true; hs.data = hs.sa.Data; hs.num = hs.sa.MaxIndex;
+            }
+        } else {
+            Macht::TArrayView av;
+            if (Macht::ReadTArray(headerAddr, av)) {
+                hs.ok = true; hs.data = av.Data; hs.num = av.Count;
+            }
+        }
+        return headerCache.emplace(headerAddr, hs).first->second;
+    };
+    int32_t reanchorDropped = 0, reanchorRepointed = 0;
+    bool warnedUnstamped = false;
+
     std::vector<Radar::GroupCandidate> survivors;
     survivors.reserve(candidates.size());
     for (auto& gc : candidates) {
@@ -8749,6 +9087,7 @@ ValueScanStats RefineGroupCandidates(
         // written and abandoned against that silence on 2026-08-05 -- so it now counts.
         const bool diag = (dbgCandidates < kDiagCandidates);
         int dRead = 0, dWidth = 0, dNoTarget = 0, dPredicate = 0, dKept = 0, dEntered = 0;
+        int dReanchor = 0;   // A12: dropped because its container moved/shrank under it
         for (size_t s = 0; s < nSlots && alive; ++s) {
             // P2: per-slot predicate. Prev-value types (Changed/Increased/...)
             // compare each leaf's re-read bytes against its own stored prevValue;
@@ -8767,6 +9106,51 @@ ValueScanStats RefineGroupCandidates(
                     { ++dWidth; continue; }
                 const size_t sz = Radar::SizeOf(width);
                 if (sz == 0 || sz > 8) { ++dWidth; continue; }
+
+                // A12: re-anchor BEFORE reading leafAddr. `Unknown` / `Direct` /
+                // `UnverifiableNested` fall straight through unchanged.
+                const Radar::LeafAnchor& an = sm.anchor;
+                if (an.kind == Radar::ValueAnchor::ArrayElement
+                    || an.kind == Radar::ValueAnchor::SparseElement) {
+                    const bool sparse = (an.kind == Radar::ValueAnchor::SparseElement);
+                    const HeaderSnapshot& hs = headerFor(an.header, sparse);
+                    if (!hs.ok) { ++dReanchor; ++reanchorDropped; continue; }   // container gone
+                    const bool slotAlloc =
+                        !sparse || Macht::IsSparseIndexAllocated(hs.sa, sm.elementIndex);
+                    switch (Radar::RefineContainerAnchor(an.kind, sm.elementIndex, an.num,
+                                                         an.data, hs.data, hs.num, slotAlloc)) {
+                        case Radar::RefineAnchorVerdict::Drop:
+                            ++dReanchor;          // per-candidate diagnostic bucket
+                            ++reanchorDropped;    // whole-pass summary
+                            continue;
+                        case Radar::RefineAnchorVerdict::Repoint:
+                            // Exact by construction: every leaf in the buffer shifts by the
+                            // same delta, whatever its stride or intra-element offset was.
+                            sm.leafAddr    = Radar::RepointByBufferMove(sm.leafAddr, an.data, hs.data);
+                            sm.anchor.data = hs.data;
+                            sm.anchor.num  = hs.num;
+                            ++reanchorRepointed;
+                            break;
+                        case Radar::RefineAnchorVerdict::KeepAddress:
+                            sm.anchor.num = hs.num;   // keep the stamp current for the NEXT refine
+                            break;
+                    }
+                } else if (sm.elementIndex >= 0 && an.kind == Radar::ValueAnchor::Unknown
+                           && !warnedUnstamped) {
+                    // A container element with no stamp at all. The deep visitor is the only
+                    // writer of elementIndex >= 0 into a GroupLeafMeta, and it always relays
+                    // an anchor -- so this can only mean one of the by-name hops
+                    // (ContainerLeaf -> GroupLeafMeta -> GroupSlotMatch) dropped it. Warn
+                    // once; do NOT change the verdict, which would turn a wiring bug into a
+                    // scan regression.
+                    warnedUnstamped = true;
+                    Sein::Warn("SCAN:grp",
+                        "RefineGroup: container element '%s' carries no ValueAnchor -- a leaf "
+                        "metadata hop dropped it; this leaf is refined at its stale absolute "
+                        "address (audit #5 A12)",
+                        descriptors[sm.descriptorIdx].fieldName.c_str());
+                }
+
                 uint8_t buf[8] = {};
                 if (!Macht::ReadBytesSafe(sm.leafAddr, buf, sz)) { ++dRead; continue; }
                 const uint8_t* cmp = usePrev ? sm.prevValue : slots[s].targets.Find(width);
@@ -8794,8 +9178,9 @@ ValueScanStats RefineGroupCandidates(
                                              : "kept";
             Sein::Debug("SCAN:grp",
                 "RefineGroup cand[%u]: %s | leaves entered=%d kept=%d | dropped: unreadable=%d "
-                "bad-width=%d no-target-for-width=%d predicate-said-no=%d",
-                (unsigned)gc.instanceIdx, verdict, dEntered, dKept, dRead, dWidth, dNoTarget, dPredicate);
+                "bad-width=%d no-target-for-width=%d predicate-said-no=%d container-moved=%d",
+                (unsigned)gc.instanceIdx, verdict, dEntered, dKept, dRead, dWidth, dNoTarget,
+                dPredicate, dReanchor);
         }
         if (feasible)
             survivors.push_back(std::move(gc));
@@ -8805,6 +9190,14 @@ ValueScanStats RefineGroupCandidates(
     stats.scannedObjects = static_cast<int32_t>(candidates.size());
     stats.durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - t0).count();
+    // Only when it actually fired. `repointed` is the half that is a GAIN: before A12 a
+    // grown container left every element address stale and those leaves were lost.
+    if (reanchorDropped || reanchorRepointed) {
+        Sein::Info("SCAN:grp",
+                   "RefineGroup re-anchor: %d container element(s) repointed after a realloc, "
+                   "%d dropped (slot freed / container shrank / header gone)",
+                   reanchorRepointed, reanchorDropped);
+    }
     return stats;
 }
 

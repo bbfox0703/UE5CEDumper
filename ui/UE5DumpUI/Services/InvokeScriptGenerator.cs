@@ -555,7 +555,13 @@ public static class InvokeScriptGenerator
                 or "WeakObjectProperty" or "LazyObjectProperty"
                 or "InterfaceProperty"
                 => "writeQword",
-            "IntProperty" or "UInt32Property" or "EnumProperty"
+            // EnumProperty is DELIBERATELY absent here (audit #5 Y16, the enum-width
+            // family's fourth finding). UE sizes an enum by its underlying type --
+            // 1 byte for the common TEnumAsByte / uint8 enum class -- so writing 4
+            // clobbers the next parameter in params_data. The `_ => size switch`
+            // fallback below already maps 1/2/8 correctly; letting enums reach it is
+            // the whole fix. `size` was a parameter here the entire time.
+            "IntProperty" or "UInt32Property"
                 => "writeInteger",
             _ => size switch
             {

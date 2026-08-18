@@ -169,6 +169,7 @@ local EXPORTS = {
   'UE5_WalkClassBegin', 'UE5_WalkClassGetField', 'UE5_WalkClassEnd',
   'UE5_GetFieldStructClass', 'UE5_GetFieldBoolMask', 'UE5_GetClassPropsSize',
   'UE5_GetObjectName', 'UE5_GetObjectClass', 'UE5_FindObject', 'UE5_FindClass',
+  'UE5_GetObjectOuter',
 }
 local function injectDll()
   for _, n in ipairs(EXPORTS) do SYMBOLS[n] = { export = n } end
@@ -184,6 +185,10 @@ local function serveWalk(fields, failIndex, failMode)
   RESULTS['UE5_WalkClassEnd']   = function() return 1 end
   RESULTS['UE5_GetClassPropsSize'] = function() return 0x40 end
   RESULTS['UE5_GetObjectName'] = function(_, obj, buf) MEM[buf] = 'FakeClass'; return 1 end
+  -- Default: a root-ish object with no Outer. detectOuterOffset must then fall
+  -- back to 0x20 rather than treat "no evidence" as evidence. Individual cases
+  -- override this to model a case-preserving-FName build.
+  RESULTS['UE5_GetObjectOuter'] = function() return 0 end
   RESULTS['UE5_WalkClassGetField'] = function(_, i, addrBuf, nameBuf, _n, typeBuf, _t, offBuf, sizeBuf)
     if failIndex ~= nil and i == failIndex then
       -- Leave every buffer exactly as the previous field left it.
@@ -412,6 +417,104 @@ do
   local ok = pcall(dissect.createFromClass, 0xC1A55, 'NoMem')
   eq(ok, false, 'the build fails rather than reading from a nil buffer')
   eq(#GLOBAL_LIST, 0, 'nothing registered')
+end
+
+
+-- ============================================================
+-- AA8: UObject::OuterPrivate is NOT at a fixed 0x20.
+--
+-- On a WITH_CASE_PRESERVING_NAME build FName is 12 bytes rather than 8, so
+-- OuterPrivate pads out to +0x28. The DLL detects that (DynOff::UOBJECT_OUTER);
+-- this script used to assert a flat 0x20, which labels the FName's
+-- DisplayIndex/Number pair as an 8-byte "Outer" pointer and omits the real one.
+--
+-- The probe asks the DLL for THIS object's Outer and finds which slot agrees,
+-- so the two can never drift the way a second copy of the detection would.
+-- ============================================================
+
+local function outerAt(slotOffset, outerValue)
+  -- Model an object whose Outer really lives at `slotOffset`.
+  RESULTS['UE5_GetObjectOuter'] = function() return outerValue end
+  MEM[0xC1A55 + slotOffset] = outerValue
+end
+
+local function outerRow(st)
+  for i = 0, st.Count - 1 do
+    if st.Element[i].Name == 'Outer' then return st.Element[i] end
+  end
+  return nil
+end
+
+case('AA8: Outer is placed at 0x20 on an ordinary build')
+do
+  resetWorld(); dissect.clearAll(); injectDll(); serveWalk(THREE)
+  outerAt(0x20, 0xDEAD0000)
+  local s = dissect.createFromClass(0xC1A55, 'Normal')
+  local e = outerRow(s)
+  check(e ~= nil, 'an Outer row exists')
+  eq(e.Offset, 0x20, 'ordinary FName layout keeps Outer at 0x20')
+end
+
+case('AA8: Outer follows the DLL to 0x28 on a case-preserving-FName build')
+do
+  resetWorld(); dissect.clearAll(); injectDll(); serveWalk(THREE)
+  outerAt(0x28, 0xBEEF0000)
+  local s = dissect.createFromClass(0xC1A55, 'CasePreserving')
+  local e = outerRow(s)
+  check(e ~= nil, 'an Outer row exists')
+  eq(e.Offset, 0x28, 'the 12-byte FName pushes Outer to 0x28')
+end
+
+case('AA8: a null Outer proves nothing and must fall back, not guess')
+do
+  -- A root package legitimately has no Outer. Treating 0 as a reading would let
+  -- every such object "detect" whichever slot happened to hold 0.
+  resetWorld(); dissect.clearAll(); injectDll(); serveWalk(THREE)
+  RESULTS['UE5_GetObjectOuter'] = function() return 0 end
+  MEM[0xC1A55 + 0x20] = 0
+  MEM[0xC1A55 + 0x28] = 0
+  local s = dissect.createFromClass(0xC1A55, 'RootPackage')
+  eq(outerRow(s).Offset, 0x20, 'no evidence => the common layout')
+end
+
+case('AA8: an ambiguous read prefers 0x20 rather than the rarer layout')
+do
+  resetWorld(); dissect.clearAll(); injectDll(); serveWalk(THREE)
+  RESULTS['UE5_GetObjectOuter'] = function() return 0x1234 end
+  MEM[0xC1A55 + 0x20] = 0x1234
+  MEM[0xC1A55 + 0x28] = 0x1234   -- both agree: not evidence for the rare one
+  local s = dissect.createFromClass(0xC1A55, 'Ambiguous')
+  eq(outerRow(s).Offset, 0x20, 'ties go to the common layout')
+end
+
+case('AA8: the detection is NOT memoised across structures in one Lua state')
+do
+  -- CE keeps ONE Lua state for the whole session and never rebuilds it, so a
+  -- cached 0x28 would follow the user onto the next, non-case-preserving game
+  -- and corrupt every structure built there. This is the regression guard for
+  -- the "just cache it" optimisation.
+  resetWorld(); dissect.clearAll(); injectDll(); serveWalk(THREE)
+  outerAt(0x28, 0xBEEF0000)
+  eq(outerRow(dissect.createFromClass(0xC1A55, 'GameA')).Offset, 0x28, 'first game detects 0x28')
+
+  MEM[0xC1A55 + 0x28] = nil
+  outerAt(0x20, 0xDEAD0000)
+  eq(outerRow(dissect.createFromClass(0xC1A55, 'GameB')).Offset, 0x20,
+     'the next structure re-detects instead of reusing 0x28')
+end
+
+case('AA8: an existing element already covering the slot still wins')
+do
+  -- addIfMissing's contract: a walked field at that offset is authoritative.
+  -- The detection must not smuggle a duplicate row in behind it.
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({ { name = 'Owner', typeName = 'ObjectProperty', offset = 0x28, size = 8 } })
+  outerAt(0x28, 0xBEEF0000)
+  local s = dissect.createFromClass(0xC1A55, 'Covered')
+  local n = 0
+  for i = 0, s.Count - 1 do if s.Element[i].Offset == 0x28 then n = n + 1 end end
+  eq(n, 1, 'exactly one element at 0x28')
+  eq(outerRow(s), nil, 'the walked field kept the slot; no duplicate Outer row')
 end
 
 -- ============================================================

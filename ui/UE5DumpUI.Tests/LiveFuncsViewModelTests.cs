@@ -72,6 +72,21 @@ public class LiveFuncsViewModelTests
             Entries       = entries.ToList(),
         };
 
+    /// <summary>A page the DLL CAPPED: <paramref name="distinct"/> functions were recorded,
+    /// only <paramref name="entries"/> came back. Deliberately a separate helper —
+    /// <see cref="ResultOf"/> sets <c>DistinctFuncs = entries.Length</c>, so every test using
+    /// it is structurally incapable of expressing truncation and always asserts the
+    /// degenerate not-truncated case. That aliasing is exactly why ~15 existing tests never
+    /// caught AF3; reusing it here would have made these tests pass while testing nothing.</summary>
+    private static PeProfileResult TruncatedResultOf(int distinct, params PeProfileEntry[] entries)
+        => new()
+        {
+            Recording     = false,
+            DistinctFuncs = distinct,
+            TotalCalls    = entries.Sum(e => e.Count),
+            Entries       = entries.ToList(),
+        };
+
     // ==================================================================
     // Start / Stop
     // ==================================================================
@@ -492,5 +507,182 @@ public class LiveFuncsViewModelTests
     {
         var e = new PeProfileEntry { NumParms = numParms, ParmsSize = parmsSize };
         Assert.Equal(expected, e.ParamsLabel);
+    }
+
+    // ==================================================================
+    // Truncated fetch (AF3) — the DLL sorts count-DESC and emits only the top
+    // FetchLimit rows while distinct_funcs stays pre-cap, so the page can be a
+    // strict subset. The panel's target is a LOW-count function, i.e. exactly
+    // what the cap removes, so silence about it is the defect.
+    // ==================================================================
+
+    [Fact]
+    public async Task Truncated_NonDiffStatus_SaysHowManyOfHowMany()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = TruncatedResultOf(900,
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick",   Count = 900 },
+            new PeProfileEntry { ClassName = "AHUD",  FuncName = "Update", Count = 300 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Contains("showing top 2 of 900", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task NotTruncated_NonDiffStatus_HasNoCapNote()
+    {
+        // Negative control for the test above: the note must not appear when the
+        // whole table came back, or it is noise on every ordinary fetch.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("showing top", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Truncated_SetBaseline_MarksBaselinePartial()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = TruncatedResultOf(900,
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        vm.SetBaselineCommand.Execute(null);
+
+        Assert.Contains("PARTIAL", vm.BaselineStatus);
+        Assert.Contains("900", vm.BaselineStatus);
+        Assert.True(vm.DiffMode);   // still usable — refusing would disable Diff on busy games
+    }
+
+    [Fact]
+    public async Task WholeBaseline_SetBaseline_IsNotMarkedPartial()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        vm.SetBaselineCommand.Execute(null);
+
+        Assert.DoesNotContain("PARTIAL", vm.BaselineStatus);
+    }
+
+    [Fact]
+    public async Task PartialBaseline_DiffStatus_DropsTheCertaintyClaim()
+    {
+        // The actively harmful sentence: with a capped baseline a rare idle function
+        // that ranked below the cut comes back as NEW and sorts to the very top, so
+        // "almost certainly among the NEW rows" points at a fabricated row.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = TruncatedResultOf(900,
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = TruncatedResultOf(900,
+            new PeProfileEntry { ClassName = "APawn",       FuncName = "Tick",     Count = 1000 },
+            new PeProfileEntry { ClassName = "AShopVendor", FuncName = "OpenShop", Count = 2 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("almost certainly", vm.StatusText);
+        Assert.Contains("not in the idle top N", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task WholeBaseline_DiffStatus_KeepsTheCertaintyClaim()
+    {
+        // Negative control: when nothing was capped, the original guidance is correct
+        // and must survive — otherwise the fix has just removed a working hint.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn",       FuncName = "Tick",     Count = 1000 },
+            new PeProfileEntry { ClassName = "AShopVendor", FuncName = "OpenShop", Count = 2 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Contains("almost certainly", vm.StatusText);
+        Assert.DoesNotContain("not in the idle top N", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task DiffStatus_CountsAreReportedAgainstThePageNotTheTable()
+    {
+        // "1 NEW of 900" invited reading 900 as the population those rows were
+        // selected from, when only the 2 shown were ever examined.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = TruncatedResultOf(900,
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = TruncatedResultOf(900,
+            new PeProfileEntry { ClassName = "APawn",       FuncName = "Tick",     Count = 1000 },
+            new PeProfileEntry { ClassName = "AShopVendor", FuncName = "OpenShop", Count = 2 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Contains("of 2 shown; 900 recorded", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ClearBaseline_ResetsThePartialFlag()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = TruncatedResultOf(900,
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        Assert.Contains("PARTIAL", vm.BaselineStatus);
+
+        vm.ClearBaselineCommand.Execute(null);
+
+        // A stale _baselineTruncated would keep warning after a clean re-capture.
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        Assert.DoesNotContain("PARTIAL", vm.BaselineStatus);
+    }
+
+    [Fact]
+    public async Task SetBaseline_ValueDoesNotDependOnTheEarliestFirstToggle()
+    {
+        // Not filed in AF3. _allEntries is re-sorted IN PLACE by ApplyDiffAndFilter, and
+        // Earliest-first orders it by FirstSeq — so GroupBy(...).First() captured whichever
+        // duplicate-key row happened to be on top of the CURRENT VIEW. Max() is what First()
+        // was reaching for and is sort-independent.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 50 },
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 5,   FirstSeq = 1 });
+        vm.EarliestFirst = true;
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        // Action window: the same key at 900. Against a baseline of 900 that is Δ0 and is
+        // hidden by NewChangedOnly. Against a baseline of 5 (the FirstSeq-ordered First())
+        // it would read as +895 and be presented as caused by the action.
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 50 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "Tick");
     }
 }

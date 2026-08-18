@@ -334,9 +334,45 @@ end
 -- ----------------------------------------------------------------
 
 -- ----------------------------------------------------------------
+-- Where UObject::OuterPrivate sits.
+--
+-- Every other header offset below is fixed across the UE versions we support,
+-- but this one is NOT: on a WITH_CASE_PRESERVING_NAME build FName is 12 bytes
+-- instead of 8, so OuterPrivate pads out to +0x28. The DLL already detects that
+-- (DynOff::UOBJECT_OUTER, Genau) while this script asserted a flat 0x20 --
+-- labelling the FName's DisplayIndex/Number pair as an 8-byte "Outer" pointer
+-- and omitting the real one (audit #5 AA8).
+--
+-- Rather than mirror the DLL's detection (a second copy that can drift), ASK it
+-- for the answer on this object and find which slot agrees:
+--   * a null Outer proves nothing -- a root package legitimately has none, so
+--     fall back rather than guess,
+--   * and if BOTH slots happen to hold it, prefer 0x20: the common layout, and
+--     an ambiguous read is not evidence for the rarer one.
+--
+-- Deliberately NOT memoised. CE keeps ONE Lua state for the whole session and
+-- never rebuilds it (docs/CE-Bugs-Minesweeper.md 5), so a cached 0x28 would
+-- follow the user onto the next, non-case-preserving game and corrupt every
+-- structure built there. The probe is two reads and one export call.
+--
+-- No pcall: callDLL raises loudly by design (the AA5/AA6 fix), UE5_GetObjectOuter
+-- predates the module-naming scheme so no DLL a user could plausibly pair with
+-- this script lacks it, and swallowing here would re-introduce exactly the silent
+-- failure that fix removed.
+-- ----------------------------------------------------------------
+local function detectOuterOffset(probeAddr)
+    if not probeAddr or probeAddr == 0 then return 0x20 end
+    local outer = callDLL("UE5_GetObjectOuter", probeAddr)
+    if not outer or outer == 0 then return 0x20 end   -- root package: no evidence
+    if readQword(probeAddr + 0x20) == outer then return 0x20 end
+    if readQword(probeAddr + 0x28) == outer then return 0x28 end
+    return 0x20
+end
+
+-- ----------------------------------------------------------------
 -- Add standard UObject header fields (VTable, index, class, name, outer)
 -- ----------------------------------------------------------------
-local function addUObjectHeader(ceStruct)
+local function addUObjectHeader(ceStruct, probeAddr)
     -- Build a set of offsets already covered by existing elements
     local covered = {}
     for i = 0, ceStruct.Count - 1 do
@@ -356,7 +392,7 @@ local function addUObjectHeader(ceStruct)
     addIfMissing(0x0C, "ObjectIndex", vtDword)
     addIfMissing(0x10, "Class",       vtPointer)
     addIfMissing(0x18, "FNameIndex",  vtDword)
-    addIfMissing(0x20, "Outer",       vtPointer)
+    addIfMissing(detectOuterOffset(probeAddr), "Outer", vtPointer)
 end
 
 -- ----------------------------------------------------------------
@@ -412,7 +448,7 @@ function dissect.createFromClass(classAddr, structName, maxDepth)
     -- (audit #5 AA25, promoted from latent by the AA5/AA6 fix above.)
     local built, buildErr = pcall(function()
         addFieldsToStruct(ceStruct, classAddr, 0, "", 0, maxDepth)   -- walk class fields recursively
-        addUObjectHeader(ceStruct)                                   -- add UObject base fields
+        addUObjectHeader(ceStruct, classAddr)                        -- add UObject base fields
     end)
 
     ceStruct.endUpdate()
@@ -516,7 +552,9 @@ local function dissectOverrideBody(ceStruct, instanceAddr)
     -- Populate the provided structure
     ceStruct.beginUpdate()
     addFieldsToStruct(ceStruct, classAddr, 0, "", 0)
-    addUObjectHeader(ceStruct)
+    -- Probe the INSTANCE, not the class: both are UObjects, but the instance is
+    -- the object this structure actually describes.
+    addUObjectHeader(ceStruct, instanceAddr)
     ceStruct.endUpdate()
 
     if ceStruct.Count > 1 then

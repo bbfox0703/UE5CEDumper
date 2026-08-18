@@ -73,7 +73,11 @@ uintptr_t GetByIndex(int32_t index);
 FUObjectItem* GetItem(int32_t index);
 
 // Read the SerialNumber of the FUObjectItem at the given index.
-// Handles both 16-byte (serial@+0x0C) and 24-byte (serial@+0x10) items.
+// The offset rule is Lineal::SerialOffsetForLayout, which covers every reachable
+// stride — 16 (@+0x0C), and 20/24/32 (@+0x10), plus the two UE5.7+ modes. The
+// comment here used to say "16-byte or 24-byte" and the code matched it, which
+// is why the reachable 20-byte packed item read ClusterRootIndex instead
+// (audit #5 A1).
 int32_t GetSerialNumber(int32_t index);
 
 // Iterate all valid objects
@@ -85,6 +89,13 @@ uintptr_t FindByName(const std::string& name);
 
 // Find first object matching full path (linear scan)
 uintptr_t FindByFullName(const std::string& fullName);
+
+// Resolve a query that may be EITHER a bare FName ("Actor") or a path
+// ("/Script/Engine.Actor" / "Class /Script/Engine.Actor" / "//Script/Engine/Actor").
+// Path first when the query carries a separator, then bare-name fallback. This is
+// what `UE5_FindObject` and the pipe's `find_object` call; prefer it over calling
+// FindByName directly, or path-shaped input silently resolves to nothing.
+uintptr_t FindByNameOrPath(const std::string& query);
 
 // Get the detected FUObjectItem stride in bytes (16 or 24)
 int GetItemSize();
@@ -124,6 +135,8 @@ struct SearchResultSet {
     int32_t nonNull = 0;    // Objects that were non-null
     int32_t named   = 0;    // Objects whose class name resolved successfully
     bool truncated  = false;// More non-excluded matches exist than the cap returned
+    bool aborted    = false;// Tot tripped mid-walk: results AND any total are INCOMPLETE
+                            // and must not be published as a count of anything
     // Class-noise histogram for FindInstancesByClass (build with the same
     // count-desc/name-asc shape as the value-scan picker). Tallied over the FULL
     // matched pool — every row satisfying the class+name query, counted BEFORE
@@ -192,7 +205,31 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
 // Case-insensitive, matching FindInstancesByClass (the name reaches us over the
 // pipe). Cost is one super-chain walk per DISTINCT UClass, not per object.
 // `truncated` means more derived instances exist than the cap returned.
-SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults = 500);
+/// @param outerFilter  0 = no filter. Non-zero = keep only objects whose UObject::Outer
+///        IS this address. The read is hoisted ABOVE the class read so the expensive
+///        half (class + memo + FName decode) is paid only by the surviving minority.
+/// @param totalOut  non-null = keep COUNTING past `maxResults` and report the exact
+///        pre-cap match count. `truncated` is then derived from it, so the page flag and
+///        the total can never be computed by two different code paths.
+SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int maxResults = 500,
+                                         uintptr_t outerFilter = 0, int32_t* totalOut = nullptr);
+
+/// Live actors of `levelAddr`, DERIVED from the Outer back-reference.
+///
+/// `ULevel::Actors` is declared `TArray<TObjectPtr<AActor>> Actors;` with NO UPROPERTY
+/// (Engine/Classes/Engine/Level.h:428-429), so reflection never sees it and the field
+/// lookup that used to drive walk_world could not ever have matched (audit #5 F8/F9).
+/// SpawnActor outers every actor to the level it then adds it to, so the Outer
+/// back-reference reconstructs the list without knowing any native offset.
+///
+/// Deriving from AActor is MANDATORY, not a nicety: ULevelActorContainer and
+/// UModelComponent are outered to the level too, so an outer-only test lists them as
+/// actors. That gate is structural here — it IS the base class this queries.
+///
+/// Honest semantics: a SUPERSET of the engine's array by actors already destroyed but
+/// not yet collected, and by actors mid-spawn; it is not the engine's array ORDER; and
+/// `levelAddr == 0` returns nothing rather than degrading into "every actor in the game".
+SearchResultSet FindActorsInLevel(uintptr_t levelAddr, int maxResults, int32_t* totalOut);
 
 // Address-to-Instance reverse lookup result.
 //
@@ -720,6 +757,52 @@ bool ClassDerivesFromAny(uintptr_t classObj, const std::unordered_set<std::strin
 // double-leading-slash, '/'-separator format. Pure / string-only (unit-tested);
 // header-inline so the lightweight DLL test can exercise it without linking the
 // whole DLL.
+// ============================================================
+// Deep-container leaf coverage (audit #5 A4)
+// ============================================================
+
+/// Which container shape a leaf was reached through. Lives in the header so the
+/// coverage predicate below can be unit-tested; the walker in Aura.cpp is the
+/// only producer.
+///
+/// `Unknown` is FIRST, and that placement is the fix's own safety net. A leaf
+/// struct that gains this member and forgets to initialise it value-initialises
+/// to the zero enumerator — so if `Array` sat at 0, a missed wiring site would
+/// silently mean "statically covered" and reproduce A4 with no compile error and
+/// no failing test. Zero must mean "nobody said", and nobody-said is not covered.
+enum class ContainerKind {
+    Unknown = 0,  // never a valid producer value — see above
+    Array,        // TArray.Data buffer, stride = inner element size
+    Set,          // TSparseArray.Data buffer, stride = ComputeSetElementStride
+    Map,          // TSparseArray.Data buffer, stride = ComputeSetElementStride(pair)
+    Direct,       // not a container at all (the snapshot numeric-scope path)
+};
+
+/// Is this deep-walk leaf ALREADY reachable through Value Search's static scan
+/// index, and therefore safe for the deep pass to skip?
+///
+/// The deep pass used to skip on `depth < 2` alone, i.e. "depth 1 is covered".
+/// That is only true for ARRAYS: `collectStructArrayInner` is reached solely from
+/// the ArrayProperty branch, so a struct-sided `TSet<FStruct>` or
+/// `TMap<K, FStruct>` element is covered by neither the static index nor the deep
+/// pass — an everyday `TMap<FName, FItemData>` inventory count was unfindable with
+/// Deep ON *and* OFF.
+///
+/// `leafIsWholeElement` is `leafName.empty()`: the leaf IS the element (a leaf
+/// container's element, or a scalar map side), which the static paths do cover
+/// for every kind.
+///
+/// The sibling consumers already had the right shape and are what made the
+/// asymmetry visible: the snapshot path tests `leafName.empty() && depth < 2`,
+/// and the group scan uses `depth < 1`.
+inline bool DeepLeafCoveredByStaticScanIndex(int depth, ContainerKind kind,
+                                             bool leafIsWholeElement) {
+    if (depth < 1) return true;    // the object's own direct fields
+    if (depth > 1) return false;   // nothing static reaches past one level
+    if (leafIsWholeElement) return true;
+    return kind == ContainerKind::Array;
+}
+
 inline bool IsEnginePackage(const std::string& rawPath) {
     static const char* const kEnginePrefixes[] = {
         "/Script/Engine", "/Script/CoreUObject", "/Script/CoreOnline",
@@ -757,6 +840,69 @@ inline bool IsEnginePackage(const std::string& rawPath) {
         }
     }
     return false;
+}
+
+// CanonicalizeObjectPath — reduce every spelling of a UObject path to ONE form so
+// they can be compared. Pure / string-only (unit-tested); header-inline for the same
+// reason as IsEnginePackage above.
+//
+// Three spellings of the SAME object are in circulation, and this was measured on a
+// live UE 5.4 title (Elliot, 2026-08-16), not assumed:
+//   1. `Ubel::GetFullName` emits  "//Script/Engine/Actor"  — DOUBLE leading slash,
+//      '/' between package and object. This is what our own DLL produces.
+//   2. UE itself (and every doc, .CT and Lua caller) writes "/Script/Engine.Actor"
+//      — single leading slash, '.' before the object name.
+//   3. UE's fully-qualified form prepends the class: "Class /Script/Engine.Actor".
+// Comparing (1) against (2) with == is false for every object in the process, which
+// is exactly why find-by-path found nothing at all before build 3157.
+//
+// Canonical form = leading slash run collapsed to one, '.' and ':' (subobject
+// separator) rewritten to '/', any leading "ClassName " qualifier dropped.
+// Both examples above canonicalize to "/Script/Engine/Actor".
+//
+// Case is PRESERVED: UE FNames are case-insensitively *compared* but exactly cased,
+// and every other name compare in this file (FindByName, ClassDerivesFromAny) is
+// exact — a case-folding path compare here would be the only one in the module that
+// disagrees with its siblings.
+inline std::string CanonicalizeObjectPath(const std::string& raw) {
+    // Drop a leading class qualifier ("Class /Script/Engine.Actor"). Object paths
+    // never contain a space, so the text after the LAST space is the path.
+    size_t start = raw.find_last_of(' ');
+    start = (start == std::string::npos) ? 0 : start + 1;
+
+    // Collapse the leading slash run (handles GetFullName's "//").
+    size_t firstNonSlash = raw.find_first_not_of('/', start);
+    if (firstNonSlash == std::string::npos) return std::string();  // empty / all slashes
+
+    std::string out;
+    out.reserve(raw.size() - firstNonSlash + 1);
+    out.push_back('/');
+    for (size_t i = firstNonSlash; i < raw.size(); ++i) {
+        const char c = raw[i];
+        // '.' = package→object, ':' = object→subobject. Both are path separators.
+        out.push_back((c == '.' || c == ':') ? '/' : c);
+    }
+    return out;
+}
+
+// True when `raw` is written as a PATH rather than a bare object name — i.e. it
+// carries a separator. Callers use this to decide whether a path resolve is worth
+// attempting before falling back to the (much cheaper) bare-name match, so a plain
+// "Actor" keeps its original single-pass cost.
+inline bool LooksLikeObjectPath(const std::string& raw) {
+    return raw.find('/') != std::string::npos ||
+           raw.find('.') != std::string::npos ||
+           raw.find(':') != std::string::npos;
+}
+
+// PathLeafName — the final segment of a path ("/Script/Engine.Actor" -> "Actor").
+// Used as a CHEAP PRE-FILTER: comparing an object's FName against this costs one
+// FName read, whereas building its full name walks the whole Outer chain. Only
+// objects whose leaf name already matches are worth the expensive compare.
+inline std::string PathLeafName(const std::string& raw) {
+    const std::string canon = CanonicalizeObjectPath(raw);
+    const size_t slash = canon.find_last_of('/');
+    return (slash == std::string::npos) ? canon : canon.substr(slash + 1);
 }
 
 // IsReflectionMetaClass — true when a UObject's CLASS name denotes the reflection /
@@ -1221,6 +1367,10 @@ ValueScanStats RefineCandidates(
     const uint8_t*                               target2Bytes,
     std::vector<Radar::Candidate>&           candidates,
     const std::vector<Radar::FieldDescriptor>& descriptors,
+    // audit #5 A11 — needed to re-derive a container HEADER address
+    // (instanceAddr + descriptor.fieldOffset) so a container-element candidate can
+    // be re-anchored instead of re-read at a possibly stale absolute address.
+    const std::vector<Radar::InstanceRecord>&  instances,
     Radar::RoundMode                             roundMode     = Radar::RoundMode::Round,
     const std::string&                           targetString  = "",
     bool                                         caseSensitive = false,
@@ -1426,5 +1576,48 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
                                          bool captureNativeC = false,
                                          bool skipNoiseClasses = false,
                                          NumericFamily family = NumericFamily::Any);
+
+// === Path-scoped cycle guard (audit A3, build 3168) ===
+//
+// A recursive struct walk needs to refuse to re-enter a UScriptStruct it is
+// ALREADY INSIDE (FFoo holding a TArray<FFoo> would recurse forever). It must
+// NOT refuse a struct type it merely visited EARLIER on a different branch —
+// those are sibling fields and both are real.
+//
+// The distinction is the whole of A3. `ScanForValue`'s index builder threaded
+// one `unordered_set` through the entire per-class walk and never erased, which
+// turns "am I inside this?" into "have I ever seen this?" — so only the FIRST
+// field of a given struct type in a class contributed leaves, and every later
+// one was dropped SUBTREE AND ALL, across unrelated branches. An ordinary actor
+// yielded `Location` but never `Velocity`/`Scale3D`/`Extent`; inside a single
+// FTransform, `Translation` blocked `Scale3D`. Silent, and total for the session.
+//
+// The two walkers that got it right (`CollectSchemaLeaves` — Property Search
+// Deep — and `CollectGroupLeaves` — Group Scan) both scope to the active path,
+// which is why those surfaces find `MaxHealth` while single-value Value Search
+// did not. That asymmetry is a distinct in-the-scanner cause for the
+// "Value Search can't find field X" family in working-lessons §5.
+//
+// RAII because the fix is otherwise one `erase` per `return` in a lambda with
+// many early exits, and the first one anybody forgets silently restores the bug.
+// Header-inline and dependency-free so `dll_helpers_test` can compile it — no
+// test target builds Aura.cpp, so this is the only way to pin the semantics.
+class StructPathGuard {
+public:
+    StructPathGuard(std::unordered_set<uintptr_t>& path, uintptr_t node)
+        : path_(path), node_(node), entered_(path.insert(node).second) {}
+    ~StructPathGuard() { if (entered_) path_.erase(node_); }
+
+    StructPathGuard(const StructPathGuard&)            = delete;
+    StructPathGuard& operator=(const StructPathGuard&) = delete;
+
+    /// False when `node` is already on the active path — the caller must return.
+    bool Entered() const { return entered_; }
+
+private:
+    std::unordered_set<uintptr_t>& path_;
+    uintptr_t                      node_;
+    bool                           entered_;
+};
 
 } // namespace Aura

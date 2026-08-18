@@ -794,4 +794,125 @@ public class ClassPivotViewModelTests : IDisposable
         for (int i = 0; i < 400 && !store.Gates.ContainsKey(cls); i++)
             await Task.Delay(5, TestContext.Current.CancellationToken);
     }
+
+    // ==================================================================
+    // Audit #5 AF5 — a refresh must not discard the user's choices.
+    //
+    // RefreshAsync rebuilds Snapshots through UiCollection.Reset, then used to
+    // hard-set SelectedSnapshot to Snapshots[0] and re-tick the two newest
+    // DiscoverPicks. Any deliberate pick was silently reverted. That made the
+    // bubbled-SelectionChanged bug (fixed by Helpers/TabActivation) destructive
+    // rather than merely wasteful: an ordinary in-tab ComboBox pick re-ran tab
+    // activation, which refreshed, which reset the very selection just made.
+    //
+    // Everything asserts BY Id — UiCollection.Reset repopulates with new
+    // SnapshotMeta instances, so reference or index comparisons would pass for
+    // the wrong reason.
+    // ==================================================================
+
+    private async Task<long> SeedLabelledAsync(string label)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = label }, ct);
+        await _store.WriteChunkAsync(id, new[]
+        {
+            Obj(1, "BP_Item_C", "/G.M:L.Item_0", ("ItemID", 1), ("Quantity", 10)),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(id, 1, 2, ct);
+        return id;
+    }
+
+    [Fact]
+    public async Task RefreshAsync_KeepsTheSelectedSnapshot()
+    {
+        await SeedLabelledAsync("first");
+        await SeedLabelledAsync("second");
+        await SeedLabelledAsync("third");
+
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+
+        // Pick something that is NOT the newest — the default would mask the bug.
+        var wanted = vm.Snapshots.Last();
+        vm.SelectedSnapshot = wanted;
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+        long wantedId = wanted.Id;
+
+        await vm.RefreshAsync();
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+
+        Assert.NotNull(vm.SelectedSnapshot);
+        Assert.Equal(wantedId, vm.SelectedSnapshot!.Id);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_KeepsTheDiscoverPickTicks()
+    {
+        await SeedLabelledAsync("first");
+        await SeedLabelledAsync("second");
+        await SeedLabelledAsync("third");
+
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+
+        // Tick oldest + newest — deliberately NOT the two-newest default.
+        foreach (var p in vm.DiscoverPicks) p.IsSelected = false;
+        vm.DiscoverPicks.First().IsSelected = true;
+        vm.DiscoverPicks.Last().IsSelected  = true;
+        var wantedIds = vm.DiscoverPicks.Where(p => p.IsSelected)
+                                        .Select(p => p.Id).OrderBy(i => i).ToList();
+
+        await vm.RefreshAsync();
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+
+        var actualIds = vm.DiscoverPicks.Where(p => p.IsSelected)
+                                        .Select(p => p.Id).OrderBy(i => i).ToList();
+        Assert.Equal(wantedIds, actualIds);
+    }
+
+    /// <summary>The default must still apply on a FIRST build — preserving a
+    /// selection must not turn into "never select anything".</summary>
+    [Fact]
+    public async Task RefreshAsync_FirstBuild_StillDefaultsToNewestAndTwoNewestTicks()
+    {
+        await SeedLabelledAsync("first");
+        await SeedLabelledAsync("second");
+        await SeedLabelledAsync("third");
+
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+
+        Assert.NotNull(vm.SelectedSnapshot);
+        Assert.Equal(vm.Snapshots[0].Id, vm.SelectedSnapshot!.Id);
+        Assert.Equal(2, vm.DiscoverPicks.Count(p => p.IsSelected));
+        Assert.True(vm.DiscoverPicks[0].IsSelected);
+        Assert.True(vm.DiscoverPicks[1].IsSelected);
+    }
+
+    /// <summary>A snapshot deleted between refreshes must fall through to the
+    /// newest rather than leaving the picker empty.</summary>
+    [Fact]
+    public async Task RefreshAsync_SelectedSnapshotDeleted_FallsBackToNewest()
+    {
+        await SeedLabelledAsync("first");
+        long doomed = await SeedLabelledAsync("doomed");
+
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+
+        vm.SelectedSnapshot = vm.Snapshots.First(m => m.Id == doomed);
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+
+        await _store.DeleteSnapshotAsync(doomed, false, TestContext.Current.CancellationToken);
+        await vm.RefreshAsync();
+        if (vm.PendingLoad != null) await vm.PendingLoad;
+
+        Assert.NotNull(vm.SelectedSnapshot);
+        Assert.NotEqual(doomed, vm.SelectedSnapshot!.Id);
+        Assert.Equal(vm.Snapshots[0].Id, vm.SelectedSnapshot!.Id);
+    }
 }

@@ -151,7 +151,10 @@ public static class BakedScriptGenerator
         {
             // Input path uses MapInputType so string params keep their wide/
             // narrow distinction ('fstring' vs 'fstringn') the helper needs.
-            var helperType = MapInputType(v.UeTypeName);
+            // v.Size was in hand here the whole time and used only by the 'fstruct'
+            // arm below; an EnumProperty needs it too or it is written as 4 bytes
+            // over the next param (audit #5 Y16 site 2).
+            var helperType = MapInputType(v.UeTypeName, v.Size);
             var literal = RenderLiteral(v.UeTypeName, v.LiteralText);
             // By-value struct ('fstruct'): emit the exact byte size so the
             // helper zeroes the right region instead of falling back to its
@@ -162,7 +165,7 @@ public static class BakedScriptGenerator
             Line(sb,
                 $"  {{ name='{EscapeLua(v.ParamName)}', type='{helperType}', " +
                 $"offset={v.Offset}, {sizeField}value={literal} }},  " +
-                $"-- {ShortTypeNameForComment(v.UeTypeName)} {v.Size}B");
+                $"-- {ShortTypeNameForComment(v.UeTypeName, v.Size)} {v.Size}B");
         }
         Line(sb, "}");
         Line(sb, "-- =====================================================================");
@@ -239,7 +242,7 @@ public static class BakedScriptGenerator
             Line(sb, "if ok then");
             if (returnParam != null)
             {
-                var displayType = MapToHelperType(returnParam.UeTypeName);
+                var displayType = MapToHelperType(returnParam.UeTypeName, returnParam.Size);
                 // The helper's readUFunctionReturn doesn't recognise 'pointer'
                 // (defaults to int32 = 4-byte read on the 8-byte pointer slot).
                 // Send 'qword' on the wire while showing 'pointer' in the
@@ -377,12 +380,46 @@ public static class BakedScriptGenerator
     /// qword. Unrecognised types fall through to <c>'int32'</c> and the
     /// generator stamps a TODO in the literal so the user notices.
     /// </remarks>
-    public static string MapToHelperType(string ueTypeName) => ueTypeName switch
+    /// <param name="size">
+    /// Engine-reported byte width, used ONLY by <c>EnumProperty</c> (audit #5 Y16).
+    /// UE sizes an enum by its underlying type -- 1 byte for the common
+    /// TEnumAsByte / <c>enum class : uint8</c> -- so the old flat <c>'int32'</c>
+    /// wrote 4 bytes and clobbered the next parameter. 0 (the sizeless overload)
+    /// keeps the historical 4-byte answer.
+    ///
+    /// <para>Only enums consult it, deliberately: every other type's width is
+    /// implied by its name, and letting <c>size</c> override those would turn a
+    /// mis-reported size into a wrong write for types that are currently correct.
+    /// <c>MapToHelperTypeIgnoresSizeForEveryTypeButEnum</c> pins that.</para>
+    ///
+    /// <para>No Lua change is needed: <c>writeBakedParams</c> already accepts the
+    /// <c>byte</c> / <c>int16</c> / <c>int64</c> tokens, so nobody has to re-embed
+    /// the helper.</para>
+    /// </param>
+    /// <summary>
+    /// Size-less overload. Every type whose width is fixed by its NAME maps
+    /// identically; <c>EnumProperty</c> — the one type whose width is not — falls back
+    /// to the legacy <c>int32</c>. Callers holding a real param should pass its size.
+    /// Same shape as <c>FreezeScriptGenerator.MapToHelperType</c>, which Y15 built.
+    /// </summary>
+    public static string MapToHelperType(string ueTypeName)
+        => MapToHelperType(ueTypeName, 0);
+
+    public static string MapToHelperType(string ueTypeName, int size) => ueTypeName switch
     {
         "BoolProperty"                                => "bool",
         "ByteProperty" or "Int8Property"              => "byte",
         "Int16Property" or "UInt16Property"           => "int16",
-        "IntProperty" or "UInt32Property" or "EnumProperty" => "int32",
+        "IntProperty" or "UInt32Property"             => "int32",
+        // Whatever the engine reported, never implied by the name -- the same rule
+        // ParamBufferBuilder.EffectiveIntWidth already applies on the FIRE path.
+        "EnumProperty"                                => size switch
+        {
+            1 => "byte",
+            2 => "int16",
+            8 => "int64",
+            _ => "int32",
+        },
         "Int64Property"                               => "int64",
         "UInt64Property"                              => "pointer",
         "FloatProperty"                               => "float",
@@ -423,11 +460,16 @@ public static class BakedScriptGenerator
     /// three to <c>'fstring'</c>) so its complex-type classification is
     /// unaffected.
     /// </summary>
-    public static string MapInputType(string ueTypeName) => ueTypeName switch
+    public static string MapInputType(string ueTypeName)
+        => MapInputType(ueTypeName, 0);
+
+    /// <summary>Size-aware form — this is the WRITE path, so an enum reaching it with
+    /// the wrong width corrupts the next parameter (audit #5 Y16 site 2).</summary>
+    public static string MapInputType(string ueTypeName, int size) => ueTypeName switch
     {
         "StrProperty"                          => "fstring",
         "Utf8StrProperty" or "AnsiStrProperty" => "fstringn",
-        _                                      => MapToHelperType(ueTypeName),
+        _                                      => MapToHelperType(ueTypeName, size),
     };
 
     /// <summary>
@@ -554,9 +596,25 @@ public static class BakedScriptGenerator
     };
 
     /// <summary>Short type label rendered in the trailing comment of each
-    /// PARAMS row (purely human-readable; not parsed).</summary>
-    public static string ShortTypeNameForComment(string typeName) => typeName switch
+    /// PARAMS row (purely human-readable; not parsed).
+    ///
+    /// <para>Size-less overload; enums report the legacy <c>enum(int32)</c>.</para></summary>
+    public static string ShortTypeNameForComment(string typeName)
+        => ShortTypeNameForComment(typeName, 0);
+
+    /// <summary>Size-aware form. Only <c>EnumProperty</c> consults the size — the
+    /// comment used to hardcode <c>enum(int32)</c>, so after Y16 corrected the WRITE
+    /// the generated script's own comment would have gone on asserting the old width
+    /// (audit #5 Y16, the cosmetic straggler folded in rather than filed).</summary>
+    public static string ShortTypeNameForComment(string typeName, int size) => typeName switch
     {
+        "EnumProperty"   => size switch
+        {
+            1 => "enum(uint8)",
+            2 => "enum(int16)",
+            8 => "enum(int64)",
+            _ => "enum(int32)",
+        },
         "BoolProperty"   => "bool",
         "ByteProperty"   => "uint8",
         "Int8Property"   => "int8",
@@ -568,7 +626,6 @@ public static class BakedScriptGenerator
         "UInt64Property" => "uint64",
         "FloatProperty"  => "float",
         "DoubleProperty" => "double",
-        "EnumProperty"   => "enum(int32)",
         "NameProperty"   => "FName",
         "ObjectProperty" => "UObject*",
         "ClassProperty"  => "UClass*",

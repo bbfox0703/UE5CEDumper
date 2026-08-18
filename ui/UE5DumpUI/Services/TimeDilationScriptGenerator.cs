@@ -89,6 +89,14 @@ public static class TimeDilationScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, "Time",
             enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
         Line(sb);
+        // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
+        // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
+        // a toggle fired while another command was still in flight wrote straight
+        // over it. Above the OPERAND writes, not merely above the status clear:
+        // operands land in the same mailbox, so writing them corrupts the command in
+        // flight just as surely -- the same reason the contract check sits here.
+        CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "Time",
+            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {op})        -- op: {(enable ? "SET" : "RESET")}");
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffUfuncAddr}, {(int)target})        -- target: {label}");
         if (enable)

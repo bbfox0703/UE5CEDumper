@@ -39,6 +39,31 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// functions (new / increased) instead of per-frame Tick noise.</summary>
     private Dictionary<string, long> _baseline = new();
 
+    /// <summary>Rows the DLL actually sent for the last fetch, and the distinct count it
+    /// recorded BEFORE the cap. The DLL sorts the whole table by count desc and emits only
+    /// the first <see cref="FetchLimit"/> rows, while <c>distinct_funcs</c> stays pre-cap
+    /// (pipe-protocol.md), so <c>shown &lt; distinct</c> is a conservative, correct test for
+    /// "not everything is on screen" — it is also true when stale UFunction pointers were
+    /// dropped or a cooperative abort cut the emit loop short, and all three mean the same
+    /// thing to the user.</summary>
+    private int _lastShown;
+    private int _lastDistinct;
+
+    /// <summary>Was the page the baseline was captured from truncated, and how big was the
+    /// table it came from? This matters more than it looks: the DLL's cap keeps the HIGHEST
+    /// counts, and this panel exists to find a function with a LOW one. A baseline taken
+    /// from a capped page is missing exactly the rare idle functions, so on the action fetch
+    /// they miss <c>_baseline</c>, get flagged IsNew, sort to the very top and survive the
+    /// default New/changed-only filter — the tool then presents fabricated rows as the
+    /// answer. We still allow it (refusing would disable Diff on precisely the busy games it
+    /// is for), but NEW then means "not in the idle top N", not "did not fire while idle",
+    /// and both status lines have to say so.</summary>
+    private bool _baselineTruncated;
+    private int  _baselineDistinct;
+
+    /// <summary>True when the last fetch did not show every recorded function.</summary>
+    private bool LastTruncated => _lastShown < _lastDistinct;
+
     [ObservableProperty] private bool   _isRecording;
     [ObservableProperty] private string _filterText = "";
     [ObservableProperty] private string _statusText = "Click Start, do an in-game action (open shop / dash), then Stop.";
@@ -118,9 +143,19 @@ public partial class LiveFuncsViewModel : ViewModelBase
             StatusText = "Record an idle window first (Start → wait → Stop), then Set Baseline.";
             return;
         }
-        _baseline = _allEntries.GroupBy(Key).ToDictionary(g => g.Key, g => g.First().Count);
+        // Max, not First: _allEntries is re-sorted in place by ApplyDiffAndFilter, and the
+        // Earliest-first toggle orders it by FirstSeq rather than by count — so First() made
+        // the captured baseline value depend on a VIEW setting. Max is what First() was
+        // reaching for and is independent of however the grid happens to be sorted.
+        _baseline = _allEntries.GroupBy(Key).ToDictionary(g => g.Key, g => g.Max(x => x.Count));
+        _baselineTruncated = LastTruncated;
+        _baselineDistinct  = _lastDistinct;
         DiffMode = true;   // triggers ApplyDiffAndFilter via OnDiffModeChanged
-        BaselineStatus = $"Baseline: {_baseline.Count} funcs. Now record the ACTION — new/increased rows float to the top.";
+        BaselineStatus = _baselineTruncated
+            ? $"⚠ PARTIAL baseline: {_baseline.Count:N0} of {_baselineDistinct:N0} idle funcs "
+              + "(the rest ranked below the fetch cap). A row can show as NEW just for having "
+              + "been below the cut — treat NEW as \"not in the idle top N\"."
+            : $"Baseline: {_baseline.Count} funcs. Now record the ACTION — new/increased rows float to the top.";
         StatusText = "Baseline set. Start → perform the action (open shop) → Stop.";
     }
 
@@ -129,6 +164,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private void ClearBaseline()
     {
         _baseline = new();
+        _baselineTruncated = false;
+        _baselineDistinct  = 0;
         DiffMode = false;  // triggers ApplyDiffAndFilter
         BaselineStatus = "No baseline — record idle, then Set Baseline.";
     }
@@ -208,8 +245,18 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private async Task FetchAndPopulateAsync()
     {
         var result = await _dump.PeProfileGetAsync(FetchLimit);
-        _allEntries = result.Entries;
+        _allEntries   = result.Entries;
+        _lastShown    = result.Entries.Count;
+        _lastDistinct = result.DistinctFuncs;
         ApplyDiffAndFilter();
+
+        // House convention for surfacing a cap (SnapshotViewModel / SpcQueryViewModel).
+        // Spelled out rather than "(capped at 300)" because WHICH rows were cut is the
+        // point here: the DLL keeps the highest counts, and the function this panel is
+        // for has a low one.
+        string trunc = LastTruncated
+            ? $" (showing top {_lastShown:N0} of {_lastDistinct:N0} by count)"
+            : "";
 
         bool diff = DiffMode && _baseline.Count > 0;
         if (result.DistinctFuncs == 0)
@@ -221,12 +268,21 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             int newCount = _allEntries.Count(e => e.IsNew);
             int increased = _allEntries.Count(e => !e.IsNew && e.Delta > 0);
-            StatusText = $"vs baseline: {newCount} NEW + {increased} increased (of {result.DistinctFuncs:N0}). "
-              + "The action's function is almost certainly among the NEW rows at the top.";
+            // newCount/increased are counted over the PAGE, so they cannot be reported
+            // against the pre-cap table size — "3 NEW of 900" invited reading 900 as the
+            // population those 3 were selected from, when only 300 were ever examined.
+            StatusText = $"vs baseline: {newCount} NEW + {increased} increased "
+              + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded). "
+              + (_baselineTruncated || LastTruncated
+                  ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
+                    + "idle\" — a rare idle function below the cut also shows as NEW. Narrow the "
+                    + "window or use the filter before trusting the top rows."
+                  : "The action's function is almost certainly among the NEW rows at the top.");
         }
         else
         {
             StatusText = $"{result.DistinctFuncs:N0} distinct functions, {result.TotalCalls:N0} total calls"
+              + trunc
               + (result.Recording ? " (still recording)" : "")
               + ". Tip: Set Baseline on an idle window, then re-record to isolate the action.";
         }

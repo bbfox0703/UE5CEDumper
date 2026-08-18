@@ -37,9 +37,11 @@
 #include "../src/Aura.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
+#include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
+#include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
+#include "../src/Genau.h"      // AdmitMultiModuleCandidate (constexpr, pure) — Pass-2 scan admission
 
 #include <Windows.h>
-#include <timeapi.h>   // timeBeginPeriod — exercised by the poll-latency check
 
 #include <thread>
 
@@ -68,6 +70,17 @@ static int g_fail = 0;
         ++g_fail; \
         std::printf("  FAIL: %s\n    actual=0x%llX expected=0x%llX\n    at %s:%d\n", \
             label, (unsigned long long)_a, (unsigned long long)_e, __FILE__, __LINE__); \
+    } \
+} while (0)
+
+#define EXPECT_EQ_STR(label, actual, expected) do { \
+    const std::string _a = (actual); \
+    const std::string _e = (expected); \
+    if (_a == _e) { ++g_pass; } \
+    else { \
+        ++g_fail; \
+        std::printf("  FAIL: %s\n    actual=\"%s\" expected=\"%s\"\n    at %s:%d\n", \
+            label, _a.c_str(), _e.c_str(), __FILE__, __LINE__); \
     } \
 } while (0)
 
@@ -223,86 +236,402 @@ static void Test_Alignment_WeakAndSparseDelegate() {
            !Scharf::IsAlignmentSuspicious("MulticastSparseDelegateProperty", 0x5, 1, false));
 }
 
-// ----- Mimic poll-latency micro-benchmark ------------------------------------
+// ----- Tot: when the per-command cancel is still owed ------------------------
 //
-// Mimic.cpp's polling thread does `Sleep(kPollIntervalMs)` (=1) every iteration
-// and bumps timer resolution via timeBeginPeriod(1) so Sleep(1) actually
-// delivers ~1ms latency. This test reproduces the same setup in the test
-// process and asserts that 100 × Sleep(1) takes < 200ms wall-clock.
+// Audit #5 F2. The cancel latch cleared only when a session connected into an
+// EMPTY connection registry ("firstConn"). That was right when there was one
+// connection. With the two-lane split it is not: if the BULK lane drops
+// mid-scan while the LIGHT lane stays up, the registry is never empty, so the
+// latch is never cleared and every subsequent scan on the surviving lane aborts
+// instantly -- for the life of the process.
 //
-// Without timeBeginPeriod, Sleep(1) on a system with the default 15.6ms tick
-// rounds up to 15.6ms per call → 100 calls = ~1560ms, which would fail this
-// assertion. So a green test confirms the Mimic-side latency reduction is
-// actually achievable on this host's OS configuration.
-//
-// 300ms threshold (vs. ideal ~100ms): generous to account for CI scheduler
-// jitter, thread contention, and the kernel's discretion on tick rounding.
-// Idle baseline on a quiet machine landed at 193ms (≈1.94ms/sleep) — Windows
-// commonly rounds Sleep(1) up to the next 1-2ms tick boundary, so anything
-// under ~250ms confirms timeBeginPeriod is in effect. The 5× headroom keeps
-// the test from flaking under heavy load while still catching the legacy-
-// tick regression cleanly (which would land near 1560ms).
+// Ownership is the right question, not emptiness.
 
-static void Test_Mimic_PollLatency_OneMillisecond() {
-    // Mirror the DLL polling thread's timer-resolution request — INCLUDING how it
-    // reaches winmm. Mimic no longer statically imports winmm: it resolves
-    // timeBeginPeriod/timeEndPeriod from the System32 copy by explicit path, so
-    // that a future winmm.dll PROXY build cannot have the call resolve back into
-    // its own forwarding stub (which returns 0 == TIMERR_NOERROR before it has
-    // resolved the real export, silently no-opping the 1ms tick). Resolving the
-    // same way here means this test covers the actual mechanism, and lets the test
-    // exe drop its winmm import too — nothing in the tree statically imports it.
-    using TimePeriodFn = MMRESULT (WINAPI*)(UINT);
-    wchar_t winmmPath[MAX_PATH] = {};
-    UINT n = GetSystemDirectoryW(winmmPath, MAX_PATH);
-    EXPECT("GetSystemDirectoryW ok", n != 0 && n < MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return;
-    wcsncat_s(winmmPath, L"\\winmm.dll", _TRUNCATE);
-
-    HMODULE hWinmm = LoadLibraryW(winmmPath);
-    EXPECT("LoadLibraryW(System32 winmm.dll) ok", hWinmm != nullptr);
-    if (!hWinmm) return;
-
-    auto pBegin = reinterpret_cast<TimePeriodFn>(GetProcAddress(hWinmm, "timeBeginPeriod"));
-    auto pEnd   = reinterpret_cast<TimePeriodFn>(GetProcAddress(hWinmm, "timeEndPeriod"));
-    EXPECT("timeBeginPeriod resolved", pBegin != nullptr);
-    EXPECT("timeEndPeriod resolved", pEnd != nullptr);
-    if (!pBegin || !pEnd) return;
-
-    MMRESULT rc = pBegin(1);
-    EXPECT("timeBeginPeriod(1) ok", rc == TIMERR_NOERROR);
-    if (rc != TIMERR_NOERROR) {
-        std::printf("  [warn] timeBeginPeriod failed rc=%u — skipping latency assert\n", rc);
-        return;
+static void Test_Tot_PerCommandStillOwed() {
+    // The one that was broken. Lane 1 (bulk) raised the cancel and is gone;
+    // lane 2 (light) is still connected, so the registry is NOT empty -- but the
+    // raiser is not in it, so the cancel is no longer owed.
+    {
+        const uint64_t owners[] = { 1 };
+        const uint64_t live[]   = { 2 };
+        EXPECT("raiser gone, sibling lane still up -> NOT owed",
+               !Tot::PerCommandStillOwed(owners, 1, live, 1));
     }
 
-    LARGE_INTEGER freq{}, start{}, end{};
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&start);
-
-    constexpr int kIters = 100;
-    for (int i = 0; i < kIters; ++i) {
-        Sleep(1);
+    // Must NOT clear while the raiser is still registered: its orphaned scan has
+    // to keep seeing the cancel until it unwinds.
+    {
+        const uint64_t owners[] = { 1 };
+        const uint64_t live[]   = { 1, 2 };
+        EXPECT("raiser still registered -> still owed",
+               Tot::PerCommandStillOwed(owners, 1, live, 2));
     }
 
-    QueryPerformanceCounter(&end);
-    pEnd(1);
-
-    double elapsedMs = double(end.QuadPart - start.QuadPart) * 1000.0 / double(freq.QuadPart);
-    std::printf("  [info] 100 x Sleep(1) under timeBeginPeriod(1) = %.1f ms "
-                "(avg %.2f ms/sleep)\n",
-                elapsedMs, elapsedMs / kIters);
-
-    // Hard ceiling: if a sleep really cost the legacy 15.6ms tick, this would
-    // be ~1560ms. 300ms catches that regression cleanly while tolerating noise.
-    if (elapsedMs >= 300.0) {
-        ++g_fail;
-        std::printf("  FAIL: poll-latency over threshold\n"
-                    "    actual=%.1f ms expected<200 ms\n"
-                    "    at %s:%d\n", elapsedMs, __FILE__, __LINE__);
-    } else {
-        ++g_pass;
+    // BOTH lanes dropped mid-command. Clearing on the first one's exit would free
+    // a cancel the second still needs -- which is why the monitor records owners
+    // unconditionally rather than only on the first raise.
+    {
+        const uint64_t owners[] = { 1, 2 };
+        const uint64_t live[]   = { 2 };
+        EXPECT("second raiser still live -> still owed",
+               Tot::PerCommandStillOwed(owners, 2, live, 1));
+        const uint64_t none[] = { 9 };
+        EXPECT("neither raiser live -> NOT owed",
+               !Tot::PerCommandStillOwed(owners, 2, none, 1));
     }
+
+    // The case the old firstConn rule DID handle -- an empty registry. The new
+    // rule must still catch it, or the fix is a regression on the path that worked.
+    {
+        const uint64_t owners[] = { 1, 2, 3 };
+        EXPECT("empty registry -> NOT owed (subsumes the old firstConn rule)",
+               !Tot::PerCommandStillOwed(owners, 3, nullptr, 0));
+    }
+
+    // Nobody raised anything: never owed, whatever is connected.
+    {
+        const uint64_t live[] = { 1, 2, 3 };
+        EXPECT("no owners -> never owed",
+               !Tot::PerCommandStillOwed(nullptr, 0, live, 3));
+    }
+
+    // Ids are monotonic and never reused, so a NEW connection that happens to sit
+    // where an old one did must not inherit its cancel. (This is why the owner set
+    // stores a seq and not a pointer -- the allocator reuses addresses.)
+    {
+        const uint64_t owners[] = { 7 };
+        const uint64_t live[]   = { 8 };
+        EXPECT("a later connection does not inherit an earlier one's cancel",
+               !Tot::PerCommandStillOwed(owners, 1, live, 1));
+    }
+}
+
+// ----- Aura: which deep leaves the static scan index already covers -----------
+//
+// Audit #5 A4. Value Search's deep pass skipped on `depth < 2` alone -- "depth 1
+// is covered by the static paths". That is true only for ARRAYS:
+// collectStructArrayInner is reached solely from the ArrayProperty branch, so a
+// struct-sided TSet<FStruct> or TMap<K, FStruct> element was covered by NEITHER
+// the static index nor the deep pass. An everyday TMap<FName, FItemData>
+// inventory count was unfindable with Deep ON as well as OFF.
+//
+// The two sibling consumers of the same walker already had the right shape, and
+// that asymmetry is what made this visible: the snapshot path tests
+// `leafName.empty() && depth < 2`, the group scan uses `depth < 1`.
+//
+// NOTE the rule is pinnable here; the WIRING is not -- no target compiles
+// Aura.cpp. The wiring is instead made a COMPILE error by placing
+// ContainerLeaf::kind immediately before `depth`, so an un-threaded aggregate
+// init binds an int to a scoped enum.
+
+static void Test_Aura_DeepLeafCoverage() {
+    using Aura::DeepLeafCoveredByStaticScanIndex;
+    using K = Aura::ContainerKind;
+
+    // depth 0 -- the object's own direct fields; always statically indexed.
+    EXPECT("depth 0 is covered", DeepLeafCoveredByStaticScanIndex(0, K::Direct, false));
+    EXPECT("depth 0 is covered whatever the kind",
+           DeepLeafCoveredByStaticScanIndex(0, K::Map, false));
+
+    // depth 1, whole element -- a leaf container's element or a scalar map side.
+    // The static paths cover these for EVERY kind.
+    EXPECT("array leaf-element covered",  DeepLeafCoveredByStaticScanIndex(1, K::Array, true));
+    EXPECT("set leaf-element covered",    DeepLeafCoveredByStaticScanIndex(1, K::Set,   true));
+    EXPECT("map scalar side covered",     DeepLeafCoveredByStaticScanIndex(1, K::Map,   true));
+
+    // depth 1, a NAMED field inside a struct element -- covered only for arrays.
+    EXPECT("array struct-element field covered (collectStructArrayInner)",
+           DeepLeafCoveredByStaticScanIndex(1, K::Array, false));
+
+    // THE DEFECT, both halves.
+    EXPECT("set struct-element field is NOT covered",
+           !DeepLeafCoveredByStaticScanIndex(1, K::Set, false));
+    EXPECT("map struct-side field is NOT covered",
+           !DeepLeafCoveredByStaticScanIndex(1, K::Map, false));
+
+    // Nothing static reaches past one level.
+    EXPECT("depth 2 array not covered",   !DeepLeafCoveredByStaticScanIndex(2, K::Array, false));
+    EXPECT("depth 2 whole-element not covered",
+           !DeepLeafCoveredByStaticScanIndex(2, K::Array, true));
+    EXPECT("depth 4 not covered",         !DeepLeafCoveredByStaticScanIndex(4, K::Map, false));
+
+    // Unknown is the zero enumerator and must never read as "covered" -- a leaf
+    // struct that forgets to set `kind` value-initialises to it, and answering
+    // "covered" there would silently reproduce A4.
+    EXPECT("Unknown at depth 1 is NOT covered",
+           !DeepLeafCoveredByStaticScanIndex(1, K::Unknown, false));
+    EXPECT("Unknown is the zero enumerator",
+           static_cast<int>(K::Unknown) == 0);
+    EXPECT("Array is NOT the zero enumerator",
+           static_cast<int>(K::Array) != 0);
+}
+
+// ----- Ubel: the class-walk cache bound -------------------------------------
+//
+// Audit #5 U5. The finding was re-filed FOUR times saying eviction is illegal
+// until WalkClassEx stops returning `const ClassInfo&`. That is right about the
+// ENRICHED cache and wrong about the plain one: WalkClass returns BY VALUE
+// (Ubel.h) and every s_walkClassCache touch copies under the mutex, so bounding
+// it is legal today with zero call-site change. Half the bytes were reclaimable
+// the whole time.
+//
+// The LRU itself lives in Ubel.cpp, which no target compiles. What IS pinnable
+// is the sizing rule and the cap, and the cap is the number most likely to be
+// "tuned" later by someone reading the wrong denominator.
+
+static void Test_Ubel_ClassCacheBound() {
+    // 512 was the first proposal, sized against "~50x the deepest super chain".
+    // That is the wrong denominator: the working set is the classes touched in
+    // ONE scan pass, and the reference log touches 10,046 distinct classes.
+    EXPECT("cap is not the 512 that the wrong denominator produced",
+           Ubel::kMaxWalkClassCacheEntries != 512);
+    EXPECT("cap is 2048", Ubel::kMaxWalkClassCacheEntries == 2048);
+
+    // A bound that cannot bind is the failure mode worth guarding: it would make
+    // get_diagnostics report a cap while the map grew forever.
+    EXPECT("cap is a real bound", Ubel::kMaxWalkClassCacheEntries > 0);
+    EXPECT("cap is below the reference working set, i.e. it actually evicts",
+           Ubel::kMaxWalkClassCacheEntries < 10046);
+}
+
+static void Test_Ubel_EstimateClassInfoBytes() {
+    const size_t base = Ubel::EstimateClassInfoBytes(0, 0, 0, 0, 0);
+    EXPECT("an empty ClassInfo still costs its own struct", base == sizeof(ClassInfo));
+
+    // Every input must be additive -- a term dropped from the sum is exactly how
+    // a memory counter under-reports and a bound looks unnecessary.
+    EXPECT("name length counts",
+           Ubel::EstimateClassInfoBytes(10, 0, 0, 0, 0) == base + 10);
+    EXPECT("path length counts",
+           Ubel::EstimateClassInfoBytes(0, 20, 0, 0, 0) == base + 20);
+    EXPECT("super name counts",
+           Ubel::EstimateClassInfoBytes(0, 0, 30, 0, 0) == base + 30);
+    EXPECT("fields count, scaled by their width",
+           Ubel::EstimateClassInfoBytes(0, 0, 0, 7, 40) == base + 280);
+
+    // The dominant term on a real class is the field vector, not the strings.
+    const size_t realistic =
+        Ubel::EstimateClassInfoBytes(24, 64, 16, 182, sizeof(FieldInfo));
+    EXPECT("a 182-field class is dominated by its fields",
+           realistic > 182 * sizeof(FieldInfo));
+}
+
+// ----- Stark: not re-entering our own ProcessEvent detour --------------------
+//
+// Audit #5 ST1. MinHook patches UObject::ProcessEvent's PROLOGUE, so a caller of
+// ours that resolves the address out of an instance's vtable and calls it lands
+// in HookedProcessEvent -- on whatever thread it happened to be on. The drain
+// there is gated only on "is the queue non-empty", so a pipe lane or the Mimic
+// polling thread would execute requests that were queued PRECISELY because a
+// caller judged them unsafe off the game thread.
+//
+// It is not a tight race: a timed-out invoke stays queued deliberately, with its
+// own parameter copy, expecting a later drain -- so after one timeout the window
+// is open indefinitely.
+//
+// The repair is not a thread-identity check. Nothing in this tree resolves the
+// game thread id, so any gate would be guessing, and a gate that guesses wrong
+// never drains -- which times out every game-thread invoke and is strictly worse
+// than the defect. We call the trampoline instead, as Grausam already does.
+
+static void Test_Stark_ShouldUseTrampoline() {
+    const uintptr_t kHooked = 0x7FF6'0000'1000ull;
+    const uintptr_t kOther  = 0x7FF6'0000'2000ull;
+
+    // The ordinary case: this instance's PE slot IS the patched address.
+    EXPECT("trampoline when the slot is the patched address",
+           Stark::ShouldUseTrampoline(kHooked, kHooked, true));
+
+    // THE LOAD-BEARING CASE. A class that genuinely OVERRIDES ProcessEvent has a
+    // different slot; that slot was never patched, so calling the trampoline for
+    // it would silently run the BASE implementation instead of the override.
+    // Fail open to the caller's own address.
+    EXPECT("NOT the trampoline when the class overrides ProcessEvent",
+           !Stark::ShouldUseTrampoline(kOther, kHooked, true));
+
+    // No trampoline to call -- hook never installed, or install failed.
+    EXPECT("no trampoline available -> call directly",
+           !Stark::ShouldUseTrampoline(kHooked, kHooked, false));
+
+    // Nothing patched yet: there is no address to match against, and a 0 ==  0
+    // comparison must not read as agreement.
+    EXPECT("nothing hooked -> call directly",
+           !Stark::ShouldUseTrampoline(kHooked, 0, true));
+    EXPECT("nothing hooked, and the resolved address is 0 too",
+           !Stark::ShouldUseTrampoline(0, 0, true));
+}
+
+static void Test_Stark_ShouldDrainQueue() {
+    // The pre-existing fast path: nothing enqueued, nothing to do.
+    EXPECT("empty queue never drains",         !Stark::ShouldDrainQueue(0, false));
+    EXPECT("empty queue never drains (ours)",  !Stark::ShouldDrainQueue(0, true));
+
+    // A genuine game-thread tick with work pending.
+    EXPECT("game entry with work drains",       Stark::ShouldDrainQueue(1, false));
+    EXPECT("game entry with lots of work drains", Stark::ShouldDrainQueue(64, false));
+
+    // THE REGRESSION GUARD. The detour was re-entered by a nested dispatch
+    // underneath a call WE issued -- that is not a game-thread tick, and draining
+    // there runs queued work on our own caller's thread.
+    EXPECT("our own re-entry does NOT drain",  !Stark::ShouldDrainQueue(1, true));
+    EXPECT("our own re-entry does NOT drain, whatever the depth",
+           !Stark::ShouldDrainQueue(64, true));
+}
+
+// ----- Lineal: FUObjectItem SerialNumber offset --------------------------------
+//
+// Audit #5 A1. Aura::GetSerialNumber used to compute this inline as
+// `s_itemSize >= 24 ? 0x10 : 0x0C` -- a two-way split covering only strides 16
+// and 24. The reachable stride set is {16, 20, 24, 32}: Aura's auto-probe tries
+// {16, 24, 32, 20} and UE5_InitWithExtendedLayout forces any of
+// {0x14, 0x18, 0x10, 0x20}.
+//
+// At stride 20 the old expression returned 0x0C, which is ClusterRootIndex.
+// Ubel::ResolveWeakObjectPtr then compares that against the stored serial with a
+// bare `if (actualSerial != serialNumber) return 0;` -- no fallback, no retry,
+// no log -- so EVERY weak reference reads as stale. That empties
+// WeakObjectProperty and the whole delegate family, and costs the Soft/Lazy
+// handlers their resolved live object.
+//
+// The rule lives in Lineal.h precisely so it can be tested: no target compiles
+// Aura.cpp, but this file already includes Lineal.h.
+
+static void Test_Lineal_SerialOffsetForLayout() {
+    using Lineal::SerialOffsetForLayout;
+    using M = Lineal::ItemLayoutMode;
+
+    // --- Classic: the offset is decided by whether ClusterRootIndex precedes
+    // the serial, which it does for every stride above 16.
+    EXPECT("classic 16 -> 0x0C", SerialOffsetForLayout(M::Classic, 16, 0, 0x0C) == 0x0C);
+
+    // THE REGRESSION ROW. Avowed's packed 20-byte FUObjectItem:
+    // {Object@+0x00, Flags@+0x08, ClusterRoot@+0x0C, Serial@+0x10} -- from the
+    // Ghidra decompilation of AllocateUObjectIndex in docs/avowed-gobjects-fix.md.
+    EXPECT("classic 20 -> 0x10 (Avowed)", SerialOffsetForLayout(M::Classic, 20, 0, 0x0C) == 0x10);
+
+    EXPECT("classic 24 -> 0x10", SerialOffsetForLayout(M::Classic, 24, 0, 0x0C) == 0x10);
+    EXPECT("classic 32 -> 0x10", SerialOffsetForLayout(M::Classic, 32, 0, 0x0C) == 0x10);
+
+    // --- UE5.7+ unpacked: FlagsAndRefCount(8) + Object(8) + SerialNumber(4),
+    // so the serial sits immediately after the object wherever that landed.
+    EXPECT("unpacked57 objOff 8 -> 0x10",
+           SerialOffsetForLayout(M::Unpacked57, 24, 0x08, 0x0C) == 0x10);
+    EXPECT("unpacked57 objOff 16 -> 0x18",
+           SerialOffsetForLayout(M::Unpacked57, 32, 0x10, 0x0C) == 0x18);
+
+    // --- Packed UE5.7+: layout is UNVERIFIED, so the value is whatever
+    // set_packed_consts calibrated. It must pass through untouched -- including
+    // when the stride would otherwise imply something else.
+    EXPECT("packed57 passes the calibrated value through",
+           SerialOffsetForLayout(M::Packed57, 24, 0x08, 0x0C) == 0x0C);
+    EXPECT("packed57 honours a recalibration",
+           SerialOffsetForLayout(M::Packed57, 24, 0x08, 0x14) == 0x14);
+
+    // --- The function is pure: same inputs, same answer, no hidden state.
+    EXPECT("pure / repeatable",
+           SerialOffsetForLayout(M::Classic, 20, 0, 0x0C) ==
+           SerialOffsetForLayout(M::Classic, 20, 0, 0x0C));
+}
+
+// ----- Mimic: the CE Lua <-> DLL mailbox LAYOUT --------------------------------
+//
+// What used to sit here was a poll-latency micro-benchmark that touched no Mimic
+// code at all (audit #5 AD6). It re-implemented EnsureWinmmResolved inside the
+// test process and then asserted a fact about THIS HOST -- that
+// timeBeginPeriod(1) makes 100 x Sleep(1) finish under 300 ms. True, occasionally
+// useful, and invariant to every line in dll/src: it passed with Mimic.cpp
+// deleted from the tree. Its own comment, and the CMakeLists comment justifying
+// why winmm is not linked, both claimed it "covers the actual mechanism".
+//
+// What replaces it is the thing that genuinely cannot be checked anywhere else.
+// `Mimic.cpp` is not compiled by any target, but `Mimic.h` is pure data, so its
+// layout IS reachable from here. And that layout is a published cross-language
+// contract: every offset below is baked as a literal into the emitted CE Lua
+// (`Services/CeMailboxLayout.cs`, whose comment reads "must match Mimic.h
+// MailboxData") and into scripts/UE5CEDumper.CT. Until now nothing enforced it
+// on either side -- `tools/check_mailbox_contract.py` hashes the comment-stripped
+// surface but never computes an offset, so it cannot tell a moved field from a
+// renamed one. A silent shift here does not fail a build; it makes every saved
+// .CT write to the wrong address.
+//
+// These numbers are deliberately spelled as literals rather than derived from
+// the struct: deriving them from the same declaration they are checking would
+// assert only that C++ agrees with itself.
+
+static void Test_Mimic_MailboxLayout() {
+    // Command/status header.
+    EXPECT("mailbox cmd @ 0x00",          offsetof(Mimic::MailboxData, cmd)           == 0x00);
+    EXPECT("mailbox status @ 0x04",       offsetof(Mimic::MailboxData, status)        == 0x04);
+    EXPECT("mailbox result @ 0x08",       offsetof(Mimic::MailboxData, result)        == 0x08);
+    EXPECT("mailbox initState @ 0x0C",    offsetof(Mimic::MailboxData, initState)     == 0x0C);
+
+    // Operand slots -- reused per command as op / knobId / value / slot.
+    EXPECT("mailbox instanceAddr @ 0x10", offsetof(Mimic::MailboxData, instanceAddr)  == 0x10);
+    EXPECT("mailbox ufuncAddr @ 0x18",    offsetof(Mimic::MailboxData, ufuncAddr)     == 0x18);
+
+    // UFunction metadata the DLL fills in.
+    EXPECT("mailbox parmsSize @ 0x20",    offsetof(Mimic::MailboxData, parmsSize)     == 0x20);
+    EXPECT("mailbox numParms @ 0x22",     offsetof(Mimic::MailboxData, numParms)      == 0x22);
+    EXPECT("mailbox functionFlags @ 0x24",offsetof(Mimic::MailboxData, functionFlags) == 0x24);
+
+    // Fixed-width string blocks. A size change here silently shifts everything
+    // after it, which is the failure this test exists to make loud.
+    EXPECT("mailbox className @ 0x28",    offsetof(Mimic::MailboxData, className)     == 0x28);
+    EXPECT("mailbox funcName @ 0x128",    offsetof(Mimic::MailboxData, funcName)      == 0x128);
+    EXPECT("mailbox errorMsg @ 0x228",    offsetof(Mimic::MailboxData, errorMsg)      == 0x228);
+
+    // The paged in/out buffer -- CeMailboxLayout.OffParamsData is this number.
+    EXPECT("mailbox paramsData @ 0x328",  offsetof(Mimic::MailboxData, paramsData)    == 0x328);
+
+    EXPECT("mailbox className is 256",    sizeof(Mimic::MailboxData::className)  == 256);
+    EXPECT("mailbox funcName is 256",     sizeof(Mimic::MailboxData::funcName)   == 256);
+    EXPECT("mailbox errorMsg is 256",     sizeof(Mimic::MailboxData::errorMsg)   == 256);
+    EXPECT("mailbox paramsData is 1024",  sizeof(Mimic::MailboxData::paramsData) == 1024);
+
+    // Whole-struct size: 0x328 + 1024 = 1832. The header comment says "~1848",
+    // which is what an unchecked number drifts into.
+    EXPECT("mailbox total size 1832",     sizeof(Mimic::MailboxData) == 1832);
+    EXPECT("mailbox fits one page",       sizeof(Mimic::MailboxData) <= 4096);
+}
+
+// The Cmd / op enumerators CE Lua writes into the mailbox. Renumbering one is a
+// breaking contract change (see MAILBOX_CONTRACT_MIN in Mimic.h); these values
+// are duplicated in Services/CeMailboxLayout.cs and in scripts/UE5CEDumper.CT,
+// neither of which the compiler can see.
+static void Test_Mimic_CommandNumbering() {
+    EXPECT("CMD_SET_DEBUG_CAMERA = 7", static_cast<int>(Mimic::CMD_SET_DEBUG_CAMERA) == 7);
+    EXPECT("CMD_TELEPORT = 8",         static_cast<int>(Mimic::CMD_TELEPORT)         == 8);
+    EXPECT("CMD_PROTECT = 9",          static_cast<int>(Mimic::CMD_PROTECT)          == 9);
+    EXPECT("CMD_MOVEMENT = 10",        static_cast<int>(Mimic::CMD_MOVEMENT)         == 10);
+    EXPECT("CMD_FLY = 11",             static_cast<int>(Mimic::CMD_FLY)              == 11);
+    EXPECT("CMD_FOREGROUND = 12",      static_cast<int>(Mimic::CMD_FOREGROUND)       == 12);
+    EXPECT("CMD_QUERY_PTR = 13",       static_cast<int>(Mimic::CMD_QUERY_PTR)        == 13);
+    EXPECT("CMD_SEETHROUGH = 14",      static_cast<int>(Mimic::CMD_SEETHROUGH)       == 14);
+    EXPECT("CMD_TIME = 15",            static_cast<int>(Mimic::CMD_TIME)             == 15);
+
+    // InitState -- polled as a bare memory read by the CE bootstrap, so these
+    // are as load-bearing as the offsets above.
+    EXPECT("INIT_IDLE = 0",    static_cast<int>(Mimic::INIT_IDLE)    == 0);
+    EXPECT("INIT_RUNNING = 1", static_cast<int>(Mimic::INIT_RUNNING) == 1);
+    EXPECT("INIT_READY = 2",   static_cast<int>(Mimic::INIT_READY)   == 2);
+    EXPECT("INIT_FAILED = 3",  static_cast<int>(Mimic::INIT_FAILED)  == 3);
+    EXPECT("INIT_SKIPPED = 4", static_cast<int>(Mimic::INIT_SKIPPED) == 4);
+
+    // The published compatibility RANGE. A script checks MIN <= its baked
+    // version <= CONTRACT before its first write.
+    EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
+    EXPECT("contract is 2",          Mimic::MAILBOX_CONTRACT     == 2);
+    EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
+
+    // g_mailboxContract is a SEPARATE exported symbol, read before anything is
+    // written -- so CE Lua reads these three at fixed offsets too, and they are
+    // the one thing a script consults to decide whether the rest of the layout
+    // can be trusted. If they move, the version check itself reads garbage.
+    EXPECT("contract magic @ 0x00",   offsetof(Mimic::MailboxContract, magic)   == 0x00);
+    EXPECT("contract current @ 0x04", offsetof(Mimic::MailboxContract, current) == 0x04);
+    EXPECT("contract minimum @ 0x08", offsetof(Mimic::MailboxContract, minimum) == 0x08);
+    EXPECT("contract struct is 12",   sizeof(Mimic::MailboxContract) == 12);
+    EXPECT("contract magic value",    Mimic::MAILBOX_CONTRACT_MAGIC == 0x43354555u);
 }
 
 // ----- Radar: SizeOf + NameOf + parsers ---------------------------------
@@ -1754,6 +2083,60 @@ static void Test_IsEnginePackage() {
     // Degenerate inputs.
     EXPECT("empty -> not engine", !IsEnginePackage(""));
     EXPECT("all slashes -> not engine", !IsEnginePackage("///"));
+}
+
+// CanonicalizeObjectPath / LooksLikeObjectPath / PathLeafName: the pure half of
+// find-object-by-path. THE case that matters is the cross-convention one — our own
+// Ubel::GetFullName emits "//Script/Engine/Actor" while every caller, doc and .CT
+// writes "/Script/Engine.Actor". Those two are the SAME object and compared unequal,
+// which is why find-by-path resolved nothing at all before build 3157 (measured on
+// Elliot: find_object "Actor" -> 0x7FF4DDE12068, find_object "/Script/Engine.Actor"
+// -> "Object not found").
+static void Test_CanonicalizeObjectPath() {
+    using Aura::CanonicalizeObjectPath;
+    using Aura::LooksLikeObjectPath;
+    using Aura::PathLeafName;
+
+    const std::string kActor = "/Script/Engine/Actor";
+
+    // THE regression this exists for: all three spellings must agree.
+    EXPECT_EQ_STR("canon: GetFullName form", CanonicalizeObjectPath("//Script/Engine/Actor"), kActor);
+    EXPECT_EQ_STR("canon: UE canonical form", CanonicalizeObjectPath("/Script/Engine.Actor"), kActor);
+    EXPECT_EQ_STR("canon: class-qualified form",
+                  CanonicalizeObjectPath("Class /Script/Engine.Actor"), kActor);
+
+    // Subobject separator ':' is a path separator too.
+    EXPECT_EQ_STR("canon: subobject ':'",
+                  CanonicalizeObjectPath("/Game/Maps/Foo.Foo:PersistentLevel"),
+                  "/Game/Maps/Foo/Foo/PersistentLevel");
+
+    // Case is PRESERVED — every sibling name compare in Aura is exact-cased.
+    EXPECT_EQ_STR("canon: case preserved",
+                  CanonicalizeObjectPath("/Script/Engine.actor"), "/Script/Engine/actor");
+
+    // Degenerate inputs must not crash or produce a bare "/".
+    EXPECT("canon: empty", CanonicalizeObjectPath("").empty());
+    EXPECT("canon: all slashes", CanonicalizeObjectPath("///").empty());
+
+    // NEGATIVE CONTROL: two different objects that share a leaf name must NOT
+    // canonicalize equal. If this ever passes, the leaf pre-filter in
+    // FindByFullName would be answering with whichever object it reached first.
+    EXPECT("canon: same leaf, different package differs",
+           CanonicalizeObjectPath("/Game/A.Foo") != CanonicalizeObjectPath("/Game/B.Foo"));
+
+    // LooksLikeObjectPath decides whether the expensive resolve is attempted at all;
+    // a bare FName must stay on the cheap single-pass route.
+    EXPECT("looks: bare name is not a path", !LooksLikeObjectPath("Actor"));
+    EXPECT("looks: slash form is a path",     LooksLikeObjectPath("/Script/Engine/Actor"));
+    EXPECT("looks: dot form is a path",       LooksLikeObjectPath("/Script/Engine.Actor"));
+    EXPECT("looks: colon form is a path",     LooksLikeObjectPath("Foo:Sub"));
+
+    // The pre-filter's leaf must be the FName, or the cheap gate rejects every
+    // candidate and the resolve silently finds nothing.
+    EXPECT_EQ_STR("leaf: canonical form",  PathLeafName("/Script/Engine.Actor"), "Actor");
+    EXPECT_EQ_STR("leaf: GetFullName form", PathLeafName("//Script/Engine/Actor"), "Actor");
+    EXPECT_EQ_STR("leaf: class-qualified",  PathLeafName("Class /Script/Engine.Actor"), "Actor");
+    EXPECT_EQ_STR("leaf: bare name is its own leaf", PathLeafName("Actor"), "Actor");
 }
 
 // IsReflectionMetaClass: the Object Tree "Instances only" server-side gate. MUST match
@@ -4567,6 +4950,250 @@ static void Test_Sig_IsCeReplayableAob() {
     EXPECT("tables still carry a CallFollow entry", checkedCallFollow > 0);
 }
 
+// audit #5 AA38 — the Pass-2 (multi-module) admission rule as a truth table.
+//
+// The whole legal space is 3 anchor states x 2 candidate placements x 2 producer
+// flags = 12 rows, and every one is asserted so the table cannot drift silently.
+// (The predicate deliberately does NOT take two booleans for the anchor: that shape
+// has 4 combinations of which 1 is unreachable, and the unreachable one is exactly
+// the "meaningless, pass false here" parameter the audit's own lesson forbids.)
+// audit #5 A11 — how refine treats a container-element candidate whose stored
+// ABSOLUTE address may no longer denote the element it was scanned from.
+//
+// Every case below maps to a mechanism in the vendored 5.8 engine source, and the
+// non-regression cases matter as much as the drops: a container-wide "did anything
+// change" rule would drop every candidate in an array that merely APPENDED, and
+// those candidates are correct today.
+static void Test_Radar_RefineContainerAnchor() {
+    std::printf("Test_Radar_RefineContainerAnchor\n");
+    using Radar::ValueAnchor;
+    using Radar::RefineAnchorVerdict;
+    const auto V = &Radar::RefineContainerAnchor;
+
+    constexpr uintptr_t kData = 0x2000;
+    // anchor, idx, numAtScan, dataAtScan, nowData, nowNum, slotAllocated
+
+    // --- non-container anchors are untouched ---------------------------------
+    EXPECT("direct field is never re-anchored",
+           V(ValueAnchor::Direct, -1, -1, 0, 0, 0, true) == RefineAnchorVerdict::KeepAddress);
+    EXPECT("an UNSTAMPED anchor keeps the pre-A11 behaviour",
+           V(ValueAnchor::Unknown, 3, 8, kData, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the NON-REGRESSION cases (these are why the rule is index-aware) -----
+    // Array.h AddUninitialized: `if (ArrayNum == ArrayMax) grow; else ArrayNum++`.
+    // Appending into slack relocates NOTHING, so every existing element address is
+    // still correct and must survive.
+    EXPECT("append with slack does NOT drop",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, kData, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("an unchanged container keeps its address",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, kData, 8, true)
+               == RefineAnchorVerdict::KeepAddress);
+    // A sparse Add into a FREE slot elsewhere leaves our slot exactly where it was.
+    EXPECT("sparse add elsewhere does NOT drop our slot",
+           V(ValueAnchor::SparseElement, 3, 8, kData, kData, 8, /*slotAllocated=*/true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the GAIN: a grown container is recovered, not lost ------------------
+    // Today a growth realloc leaves every element address stale and the candidates
+    // are simply gone. Slot order is preserved, so they are recomputable.
+    EXPECT("growth realloc REPOINTS instead of losing the candidate",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, 0x9000, 12, true)
+               == RefineAnchorVerdict::Repoint);
+    EXPECT("sparse realloc repoints too",
+           V(ValueAnchor::SparseElement, 3, 8, kData, 0x9000, 12, true)
+               == RefineAnchorVerdict::Repoint);
+
+    // --- the DROPS, each an actual silent-wrong-value today ------------------
+    // Array.h RemoveAtImpl -> RelocateConstructItems: the tail shifts DOWN one slot,
+    // so the pinned address stays mapped and now holds the NEIGHBOUR's value.
+    EXPECT("array shrank (RemoveAt shifted the tail) drops",
+           V(ValueAnchor::ArrayElement, 3, 8, kData, kData, 7, true)
+               == RefineAnchorVerdict::Drop);
+    EXPECT("element index past the end drops",
+           V(ValueAnchor::ArrayElement, 9, 8, kData, kData, 5, true)
+               == RefineAnchorVerdict::Drop);
+    // SparseArray.h AddUninitialized reuses FirstFreeIndex: a removed slot is
+    // REFILLED in place, so the address is identical and reads as a live value.
+    // The allocation bit is the only exact witness.
+    EXPECT("sparse slot freed drops (address is identical — only the bit knows)",
+           V(ValueAnchor::SparseElement, 3, 8, kData, kData, 8, /*slotAllocated=*/false)
+               == RefineAnchorVerdict::Drop);
+    // A sparse MaxIndex shrink means Compact() ran, which DOES relocate.
+    EXPECT("sparse compact drops",
+           V(ValueAnchor::SparseElement, 3, 8, kData, kData, 6, true)
+               == RefineAnchorVerdict::Drop);
+
+    // --- missing bookkeeping degrades, it does not destroy -------------------
+    EXPECT("a container anchor with no element index falls back, not drops",
+           V(ValueAnchor::ArrayElement, -1, 8, kData, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("a container anchor with no scan-time count falls back, not drops",
+           V(ValueAnchor::ArrayElement, 3, -1, kData, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the address recomputation ------------------------------------------
+    EXPECT("element address = data + idx*stride + intra",
+           Radar::ContainerElemAddr(0x1000, 3, 16, 4) == 0x1000u + 3u * 16u + 4u);
+    EXPECT("element 0 with no intra offset is the buffer base",
+           Radar::ContainerElemAddr(0x1000, 0, 16, 0) == 0x1000u);
+
+    static_assert(Radar::RefineContainerAnchor(ValueAnchor::ArrayElement, 3, 8,
+                                               0x2000, 0x2000, 7, true)
+                      == RefineAnchorVerdict::Drop,
+                  "RefineContainerAnchor must be constexpr-evaluable");
+}
+
+// audit #5 A12 — the group-scan half. The RULE is the same one above; what is new is
+// the anchor a deep leaf carries to reach it, and the two ways that wiring can be
+// silently wrong (the sparse count's UNIT, and the leaf-depth off-by-one).
+static void Test_Radar_LeafAnchor() {
+    std::printf("Test_Radar_LeafAnchor\n");
+    using Radar::ValueAnchor;
+    using Radar::RefineAnchorVerdict;
+
+    // --- the depth rule, in the one place it lives -----------------------------
+    // Leaves are emitted with `depth + 1`, so the container header is a direct field
+    // of the scanned object exactly when the LEAF's depth is 1. Writing this test at
+    // the call site with the walker's own `depth` is an off-by-one no target can catch,
+    // because no test target compiles Aura.cpp.
+    EXPECT("depth-1 array leaf is anchorable",
+           Radar::AnchorKindForLeaf(/*isSparse=*/false, 1) == ValueAnchor::ArrayElement);
+    EXPECT("depth-1 sparse leaf is anchorable",
+           Radar::AnchorKindForLeaf(/*isSparse=*/true, 1) == ValueAnchor::SparseElement);
+    EXPECT("depth-2 leaf is NOT anchorable (its header is inside an outer buffer)",
+           Radar::AnchorKindForLeaf(false, 2) == ValueAnchor::UnverifiableNested);
+    EXPECT("depth-0 is not a container leaf at all",
+           Radar::AnchorKindForLeaf(false, 0) == ValueAnchor::UnverifiableNested);
+
+    // --- UnverifiableNested must behave EXACTLY like Unknown -------------------
+    // Its whole reason to exist is to be distinguishable from a dropped stamp while
+    // changing nothing, so the "changes nothing" half needs pinning too.
+    EXPECT("nested leaf does not Repoint on a moved buffer",
+           Radar::RefineContainerAnchor(ValueAnchor::UnverifiableNested, 3, 8,
+                                        0x2000, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("nested leaf does not Drop on an out-of-range index",
+           Radar::RefineContainerAnchor(ValueAnchor::UnverifiableNested, 9, 8,
+                                        0x2000, 0x2000, 5, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the factories: a defaulted / half-wired anchor must DEGRADE -----------
+    // Both downstream hops default-construct their struct, so a dropped assignment has
+    // to land on values the rule refuses to act on. `num` defaulting to 0 instead of -1
+    // would pass the `numAtScan < 0` guard and then pass the shrink test.
+    const Radar::LeafAnchor defaulted{};
+    EXPECT("a defaulted anchor is Unknown", defaulted.kind == ValueAnchor::Unknown);
+    EXPECT("a defaulted anchor's count is -1, not 0", defaulted.num == -1);
+    EXPECT("a defaulted anchor cannot act",
+           Radar::RefineContainerAnchor(defaulted.kind, 3, defaulted.num, defaulted.data,
+                                        0x9000, 9, true) == RefineAnchorVerdict::KeepAddress);
+    const Radar::LeafAnchor direct = Radar::MakeDirectLeafAnchor();
+    EXPECT("a direct anchor is Direct, not Unknown", direct.kind == ValueAnchor::Direct);
+    // THE half-wired shape that actually matters: a hop copies `kind` faithfully and
+    // drops the value fields. The zero `data` is what stops the rule acting — without
+    // that guard this Repoints to the buffer base, collapsing every leaf onto element 0.
+    EXPECT("a stamped kind with no buffer base cannot act",
+           Radar::RefineContainerAnchor(ValueAnchor::ArrayElement, 3, /*numAtScan=*/0,
+                                        /*dataAtScan=*/0, 0x9000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+
+    // --- the sparse UNIT trap -------------------------------------------------
+    // The walker's own loop bound is TSparseArray::MaxCapacity; refine re-reads
+    // MaxIndex, and MaxCapacity >= MaxIndex is enforced by ReadTSparseArray. Stamping
+    // the local that happens to be in hand would make numAtScan exceed nowNum for every
+    // TSet/TMap with a spare slot, so the shrink rule would DROP them all on the first
+    // Next Scan. The factory takes `maxIndex` by name; this asserts what that buys.
+    const auto sparse = Radar::MakeSparseLeafAnchor(0x1000, 0x2000, /*maxIndex=*/8, 1);
+    EXPECT("a sparse container with spare capacity is NOT dropped",
+           Radar::RefineContainerAnchor(sparse.kind, 3, sparse.num, sparse.data,
+                                        /*nowData=*/0x2000, /*nowNum=*/8, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("...but stamping the CAPACITY instead would drop it",
+           Radar::RefineContainerAnchor(sparse.kind, 3, /*numAtScan=*/64, sparse.data,
+                                        0x2000, /*nowNum=*/8, true)
+               == RefineAnchorVerdict::Drop);
+
+    // --- the repoint, which is exact by construction ---------------------------
+    // Every leaf in a moved buffer shifts by the same delta, whatever its element
+    // index, stride or intra-element offset were — so a wrong intra can only fail to
+    // help, and can never relocate a candidate onto a neighbouring field.
+    EXPECT("a moved buffer shifts a leaf by exactly the buffer delta",
+           Radar::RepointByBufferMove(0x2044, 0x2000, 0x9000) == 0x9044u);
+    EXPECT("an unmoved buffer leaves the leaf alone",
+           Radar::RepointByBufferMove(0x2044, 0x2000, 0x2000) == 0x2044u);
+
+    // The array factory keeps the logical count (slack slots hold stale data).
+    const auto arr = Radar::MakeArrayLeafAnchor(0x1000, 0x2000, /*count=*/8, 1);
+    EXPECT("an appended-into-slack array is not dropped",
+           Radar::RefineContainerAnchor(arr.kind, 3, arr.num, arr.data, 0x2000, 9, true)
+               == RefineAnchorVerdict::KeepAddress);
+    EXPECT("a grown+realloc'd array repoints",
+           Radar::RefineContainerAnchor(arr.kind, 3, arr.num, arr.data, 0x9000, 12, true)
+               == RefineAnchorVerdict::Repoint);
+
+    // Deliberately asserts a DEEP depth, not depth 1: the depth-1 rule is what the
+    // negative control reverts, and a static_assert over the controlled line turns that
+    // control into a compile abort that structurally cannot show its own
+    // "everything else stayed green" half. This still proves constexpr-evaluability.
+    static_assert(Radar::AnchorKindForLeaf(true, 5) == ValueAnchor::UnverifiableNested,
+                  "AnchorKindForLeaf must be constexpr-evaluable");
+    static_assert(Radar::MakeDirectLeafAnchor().num == -1,
+                  "a direct anchor must carry the no-count sentinel");
+}
+
+static void Test_Genau_AdmitMultiModuleCandidate() {
+    std::printf("Test_Genau_AdmitMultiModuleCandidate\n");
+    using Genau::AnchorState;
+    using Genau::ModuleAdmission;
+    const auto admit = &Genau::AdmitMultiModuleCandidate;
+
+    // --- THE DEFECT: unanchored + foreign + not the anchor producer -----------
+    // python.exe / Solarpunk published a GWorld out of an arbitrary loaded module on
+    // a run where GObjects never validated at all.
+    EXPECT("AA38: unanchored foreign candidate is refused",
+           admit(AnchorState::None, /*candIsMainExe=*/false, /*producesAnchor=*/false)
+               == ModuleAdmission::RefuseUnanchored);
+
+    // --- GObjects' OWN Pass 2 must still be admitted --------------------------
+    // It runs before any anchor can exist. Refusing it would break the modular
+    // builds (Satisfactory 4.25) that multi-module scanning was added for.
+    EXPECT("AA38: the anchor producer is exempt while unanchored",
+           admit(AnchorState::None, false, /*producesAnchor=*/true)
+               == ModuleAdmission::Accept);
+
+    // --- today's EOSSDK behaviour must survive unchanged ----------------------
+    EXPECT("monolithic anchor + foreign candidate is refused",
+           admit(AnchorState::MainExe, false, false) == ModuleAdmission::RefuseForeignMonolithic);
+    EXPECT("monolithic anchor refuses the producer too",
+           admit(AnchorState::MainExe, false, true) == ModuleAdmission::RefuseForeignMonolithic);
+
+    // --- a genuinely modular build is untouched -------------------------------
+    EXPECT("modular anchor admits a foreign candidate",
+           admit(AnchorState::ForeignDll, false, false) == ModuleAdmission::Accept);
+    EXPECT("modular anchor admits the producer",
+           admit(AnchorState::ForeignDll, false, true) == ModuleAdmission::Accept);
+
+    // --- a MAIN-MODULE candidate is admitted in every state -------------------
+    // This is what keeps the FORBIDDEN fix forbidden. GWLD_DI427_1/2 are UE4.27
+    // write-site patterns that resolve &GWorld from a `GWorld = nullptr` store before
+    // any world exists, so a main-module hit whose *GWorld reads 0 MUST be accepted —
+    // tightening `world == 0` globally would delete two Tier-1 patterns.
+    for (auto st : { AnchorState::None, AnchorState::MainExe, AnchorState::ForeignDll }) {
+        for (bool prod : { false, true }) {
+            EXPECT("main-module candidate is always admitted",
+                   admit(st, /*candIsMainExe=*/true, prod) == ModuleAdmission::Accept);
+        }
+    }
+
+    // The rule must be pure — it reads no global state and cannot be made to depend on
+    // one, which is the only reason a table this small is worth anything.
+    static_assert(Genau::AdmitMultiModuleCandidate(AnchorState::MainExe, false, false)
+                      == ModuleAdmission::RefuseForeignMonolithic,
+                  "AdmitMultiModuleCandidate must be constexpr-evaluable");
+}
+
 static void Test_Macht_ParsePattern_Nibble() {
     std::printf("Test_Macht_ParsePattern_Nibble\n");
     Macht::ParsedPattern p;
@@ -4629,6 +5256,273 @@ static void Test_Macht_ParsePattern_Nibble() {
 //
 // The picker is reader-templated exactly so it can be tested here with no game.
 // ============================================================
+// ================================================================
+// Ubel::PreviewScalarValue — audit U17 (the layout half of U3)
+//
+// The byte-blind decoder cannot tell 3 doubles from 6 floats, because size does
+// not determine member width and neither does the engine version — one UE5 game
+// holds fields of both. The only thing that settles it is the property's OWN
+// declared width, which is what this reads. Everything below is the case U3's
+// test 6 had to leave asserted-as-broken.
+// ================================================================
+static void Test_Ubel_PreviewScalarValue() {
+    std::printf("Test_Ubel_PreviewScalarValue\n");
+
+    // --- The LWC case, member by member. 8 bytes read as a double, not two floats.
+    {
+        double d = 1234.5;
+        uint8_t b[8]; memcpy(b, &d, 8);
+        EXPECT("DoubleProperty reads all 8 bytes",
+               Ubel::PreviewScalarValue("DoubleProperty", b, 8) == "1234.5");
+        // The SAME bytes as a float are the garbage the old path printed. Asserting
+        // this pins that width comes from the property, never from the buffer.
+        EXPECT("FloatProperty at width 4 is a different, wrong reading",
+               Ubel::PreviewScalarValue("FloatProperty", b, 4) != "1234.5");
+    }
+    {
+        double d = -678.25;
+        uint8_t b[8]; memcpy(b, &d, 8);
+        EXPECT("negative double", Ubel::PreviewScalarValue("DoubleProperty", b, 8) == "-678.25");
+    }
+
+    // --- Float stays float.
+    {
+        float f = 90.0f;
+        uint8_t b[4]; memcpy(b, &f, 4);
+        EXPECT("FloatProperty", Ubel::PreviewScalarValue("FloatProperty", b, 4) == "90");
+    }
+
+    // --- Integers, signed and unsigned, at their real widths. A UInt32 holding
+    //     0xFFFFFFFF must not print as -1: that is the sign-leak family AB4 was.
+    {
+        uint8_t b[8] = {};
+        int32_t i = -42; memcpy(b, &i, 4);
+        EXPECT("IntProperty signed", Ubel::PreviewScalarValue("IntProperty", b, 4) == "-42");
+        uint32_t u = 0xFFFFFFFFu; memcpy(b, &u, 4);
+        EXPECT("UInt32Property is NOT sign-extended",
+               Ubel::PreviewScalarValue("UInt32Property", b, 4) == "4294967295");
+        int64_t i64 = -5000000000LL; memcpy(b, &i64, 8);
+        EXPECT("Int64Property", Ubel::PreviewScalarValue("Int64Property", b, 8) == "-5000000000");
+        int16_t i16 = -300; memcpy(b, &i16, 2);
+        EXPECT("Int16Property", Ubel::PreviewScalarValue("Int16Property", b, 2) == "-300");
+    }
+
+    // --- Bool / byte.
+    {
+        uint8_t b[1] = { 0 };
+        EXPECT("BoolProperty false", Ubel::PreviewScalarValue("BoolProperty", b, 1) == "false");
+        b[0] = 1;
+        EXPECT("BoolProperty true",  Ubel::PreviewScalarValue("BoolProperty", b, 1) == "true");
+        b[0] = 200;
+        EXPECT("ByteProperty",       Ubel::PreviewScalarValue("ByteProperty", b, 1) == "200");
+    }
+
+    // --- Impure types return "" so the caller supplies them. This is the seam that
+    //     keeps the function pure and therefore testable at all.
+    {
+        uint8_t b[16] = {};
+        EXPECT("NameProperty is deferred",   Ubel::PreviewScalarValue("NameProperty", b, 8).empty());
+        EXPECT("ObjectProperty is deferred", Ubel::PreviewScalarValue("ObjectProperty", b, 8).empty());
+        EXPECT("unknown type is deferred",   Ubel::PreviewScalarValue("SomeFutureProperty", b, 8).empty());
+    }
+
+    // --- A width the property does not have must NOT be guessed at.
+    {
+        uint8_t b[8] = {};
+        EXPECT("DoubleProperty at width 4 is refused",
+               Ubel::PreviewScalarValue("DoubleProperty", b, 4).empty());
+        EXPECT("null buffer is refused", Ubel::PreviewScalarValue("FloatProperty", nullptr, 4).empty());
+    }
+
+    // --- FormatPreviewNumber: readable over the human range, %g only outside it.
+    EXPECT("zero",             Ubel::FormatPreviewNumber(0.0) == "0");
+    EXPECT("trailing zeros trimmed", Ubel::FormatPreviewNumber(2245.0) == "2245");
+    EXPECT("one decimal kept", Ubel::FormatPreviewNumber(129.7) == "129.7");
+    EXPECT("no scientific in the human range",
+           Ubel::FormatPreviewNumber(18328.64).find('e') == std::string::npos);
+    EXPECT("scientific past the human range",
+           Ubel::FormatPreviewNumber(1e20).find('e') != std::string::npos);
+}
+
+// ================================================================
+// Ubel::InterpretStructBytes / LooksLikeVtablePointer — audit U3
+//
+// The old branch skipped 8 bytes whenever size > 8, on the theory that structs
+// start with a vtable. True for FGameplayAttributeData (GAS declares a virtual
+// destructor), false for nearly every other USTRUCT — and the cost was a SILENT
+// DROP of leading members, which is worse than garbage because it looks right.
+//
+// The four cases below each fail the OLD code differently, and that is the
+// point: a repair aimed at only one of them regresses another. In particular
+// "just delete the 8-byte skip" — which the filed finding's parenthetical
+// invites — passes the first two and BREAKS the third.
+// ================================================================
+static void Test_Ubel_InterpretStructBytes() {
+    std::printf("Test_Ubel_InterpretStructBytes\n");
+
+    auto putF = [](uint8_t* p, int i, float v) { memcpy(p + i * 4, &v, 4); };
+
+    // --- 1. FVector3f: 12 B, 3 floats. The live-confirmed failure.
+    //     Old code: floatStart=8 -> ONE number, the LAST component.
+    {
+        uint8_t b[12];
+        putF(b, 0, 1.0f); putF(b, 1, 2.0f); putF(b, 2, 6203.0f);
+        EXPECT("FVector3f keeps all three components",
+               Ubel::InterpretStructBytes(b, 12) == "f:[1.0000, 2.0000, 6203.0000]");
+    }
+
+    // --- 2. FLinearColor: 16 B, 4 floats. Old code dropped R and G entirely.
+    {
+        uint8_t b[16];
+        putF(b, 0, 0.25f); putF(b, 1, 0.5f); putF(b, 2, 0.75f); putF(b, 3, 1.0f);
+        EXPECT("FLinearColor keeps R and G",
+               Ubel::InterpretStructBytes(b, 16) == "f:[0.2500, 0.5000, 0.7500, 1.0000]");
+    }
+
+    // --- 3. REGRESSION GUARD: FGameplayAttributeData really does carry a vtable.
+    //     If the skip is deleted outright this yields the two pointer halves
+    //     followed by the values, which is the fix that "looks" right on cases
+    //     1 and 2 and quietly ruins every GAS attribute preview.
+    {
+        uint8_t b[16];
+        uint64_t vt = 0x00007FF6A1B2C3D0ULL;   // module-range, 8-aligned
+        memcpy(b, &vt, 8);
+        putF(b, 2, 100.0f); putF(b, 3, 75.0f);
+        EXPECT("GAS attribute still skips its real vtable",
+               Ubel::InterpretStructBytes(b, 16) == "f:[100.0000, 75.0000]");
+        EXPECT("...and the pointer is recognised as one",
+               Ubel::LooksLikeVtablePointer(b, 16));
+    }
+
+    // --- 4. The gate must REJECT non-pointers, or case 3 is passing by luck.
+    //     Each of these is the first 8 bytes of a real struct that has no vtable.
+    {
+        uint8_t b[8];
+        putF(b, 0, 1.0f); putF(b, 1, 2.0f);
+        EXPECT("two floats are not a vtable pointer", !Ubel::LooksLikeVtablePointer(b, 8));
+
+        double d = 1234.5;                       // UE5 LWC FVector's X
+        memcpy(b, &d, 8);
+        EXPECT("a double is not a vtable pointer", !Ubel::LooksLikeVtablePointer(b, 8));
+
+        uint64_t tiny = 0x1234ULL;   // small integer member ("small" is a Win32 macro: rpcndr.h #define small char)
+        memcpy(b, &tiny, 8);
+        EXPECT("a small integer is not a vtable pointer", !Ubel::LooksLikeVtablePointer(b, 8));
+
+        uint64_t unaligned = 0x00007FF6A1B2C3D1ULL;
+        memcpy(b, &unaligned, 8);
+        EXPECT("an unaligned address is not a vtable pointer",
+               !Ubel::LooksLikeVtablePointer(b, 8));
+
+        uint64_t kernel = 0xFFFF800000000000ULL;
+        memcpy(b, &kernel, 8);
+        EXPECT("a kernel-range address is not a vtable pointer",
+               !Ubel::LooksLikeVtablePointer(b, 8));
+    }
+
+    // --- 5. Honest fallback: nothing decodable must yield "", not a number.
+    {
+        uint8_t zeros[16] = {};
+        EXPECT("all-zero struct yields no hint", Ubel::InterpretStructBytes(zeros, 16).empty());
+        EXPECT("too small yields no hint", Ubel::InterpretStructBytes(zeros, 2).empty());
+        uint8_t big[128] = {};
+        big[0] = 1;
+        EXPECT("beyond 16 floats yields no hint", Ubel::InterpretStructBytes(big, 128).empty());
+    }
+
+    // --- 6. DOCUMENTED REMAINING GAP (U3 half 2), asserted so it cannot be
+    //     mistaken for fixed: a 24-byte LWC FVector is 3 doubles, but the bytes
+    //     cannot say that, so this still decodes 6 floats. Only the reflected
+    //     layout can settle 3-doubles vs 6-floats.
+    {
+        uint8_t b[24];
+        double xyz[3] = { 1234.5, -678.25, 90.0 };
+        memcpy(b, xyz, 24);
+        std::string got = Ubel::InterpretStructBytes(b, 24);
+        EXPECT("LWC vector no longer eats X (skip is gated)", !got.empty());
+        // Six values, not four: the leading double is no longer swallowed. Still
+        // wrong values — that is the layout half, not this one.
+        EXPECT("LWC still decodes as 6 floats (layout half outstanding)",
+               std::count(got.begin(), got.end(), ',') == 5);
+    }
+}
+
+// ================================================================
+// Aura::StructPathGuard — audit A3
+//
+// ScanForValue's index builder threaded ONE unordered_set through the whole
+// per-class struct walk and never erased. That silently turned the cycle guard
+// into a global dedupe: only the FIRST field of a given UScriptStruct type in a
+// class contributed leaves, and every later one was dropped subtree and all,
+// ACROSS UNRELATED BRANCHES. An ordinary actor indexed `Location` but never
+// `Velocity` / `Scale3D` / `Extent`; inside one FTransform, `Translation`
+// blocked `Scale3D`. Value Search then reported "no match" for a field that was
+// right there — and Group Scan / Property-Search-Deep, which scope to the path,
+// found it, which is the observable tell.
+//
+// No target compiles Aura.cpp, so the semantics live in a header-inline RAII
+// type and are pinned here. The two cases below are the entire contract, and
+// they pull in opposite directions: a *sibling* re-entry MUST be allowed, a
+// re-entry *along the active path* MUST NOT.
+// ================================================================
+static void Test_Aura_StructPathGuard() {
+    std::printf("Test_Aura_StructPathGuard\n");
+
+    const uintptr_t kVector    = 0x1000;   // pretend UScriptStruct addresses
+    const uintptr_t kTransform = 0x2000;
+
+    std::unordered_set<uintptr_t> path;
+
+    // --- 1. SIBLINGS: the same struct type twice, sequentially. Both must enter.
+    //     This is the A3 defect: with a whole-walk set the second one is refused.
+    {
+        Aura::StructPathGuard g1(path, kVector);
+        EXPECT("first FVector enters", g1.Entered());
+    }
+    EXPECT("path empty after scope exit", path.empty());
+    {
+        Aura::StructPathGuard g2(path, kVector);
+        EXPECT("SIBLING FVector also enters (A3)", g2.Entered());
+    }
+
+    // --- 2. NESTED, DIFFERENT TYPES: FTransform { FVector Translation, ... }.
+    //     The inner FVector must enter, and on leaving it the *sibling*
+    //     FVector Scale3D must still be able to enter while FTransform is held.
+    {
+        Aura::StructPathGuard t(path, kTransform);
+        EXPECT("FTransform enters", t.Entered());
+        {
+            Aura::StructPathGuard v1(path, kVector);
+            EXPECT("Translation enters inside FTransform", v1.Entered());
+        }
+        {
+            Aura::StructPathGuard v2(path, kVector);
+            EXPECT("Scale3D enters inside the SAME FTransform (A3)", v2.Entered());
+        }
+        EXPECT("FTransform still held while siblings come and go",
+               path.count(kTransform) == 1);
+    }
+    EXPECT("path empty after FTransform scope", path.empty());
+
+    // --- 3. TRUE CYCLE: re-entering a struct already ON the path is refused.
+    //     Negative control for case 1 — if the guard allowed this, a
+    //     self-referential USTRUCT would recurse until the stack died, and
+    //     "siblings work" would be passing for the wrong reason.
+    {
+        Aura::StructPathGuard outer(path, kVector);
+        EXPECT("outer FVector enters", outer.Entered());
+        {
+            Aura::StructPathGuard inner(path, kVector);
+            EXPECT("re-entry ALONG THE PATH is refused", !inner.Entered());
+        }
+        // The refused guard must not have erased the outer one's entry on
+        // destruction — that would reopen the cycle one level up.
+        EXPECT("refused guard did not release the outer entry",
+               path.count(kVector) == 1);
+    }
+    EXPECT("path empty at the end", path.empty());
+}
+
 static void Test_FFieldClassName_Probe() {
     std::printf("\n[DynOff::PickFFieldClassNameOffset]\n");
 
@@ -4721,7 +5615,15 @@ int main() {
     RUN(Test_Alignment_UnknownTypesNotValidated);
     RUN(Test_Alignment_WeakAndSparseDelegate);
 
-    RUN(Test_Mimic_PollLatency_OneMillisecond);
+    RUN(Test_Tot_PerCommandStillOwed);
+    RUN(Test_Aura_DeepLeafCoverage);
+    RUN(Test_Ubel_ClassCacheBound);
+    RUN(Test_Ubel_EstimateClassInfoBytes);
+    RUN(Test_Stark_ShouldUseTrampoline);
+    RUN(Test_Stark_ShouldDrainQueue);
+    RUN(Test_Lineal_SerialOffsetForLayout);
+    RUN(Test_Mimic_MailboxLayout);
+    RUN(Test_Mimic_CommandNumbering);
 
     RUN(Test_ValueScan_DataTypeSizes);
     RUN(Test_ValueScan_ParseDataTypeRoundTrip);
@@ -4772,6 +5674,7 @@ int main() {
     RUN(Test_ValueScan_OptionalFlagOffset);
     RUN(Test_ValueScan_OrderedView);
     RUN(Test_IsEnginePackage);
+    RUN(Test_CanonicalizeObjectPath);
     RUN(Test_IsReflectionMetaClass);
     RUN(Test_KeywordMatch);
     RUN(Test_SnapshotNoise_GuardrailAndSets);
@@ -4857,6 +5760,9 @@ int main() {
 
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
     RUN(Test_Sig_IsCeReplayableAob);
+    RUN(Test_Genau_AdmitMultiModuleCandidate);
+    RUN(Test_Radar_RefineContainerAnchor);
+    RUN(Test_Radar_LeafAnchor);
     RUN(Test_Macht_ParsePattern_Nibble);
 
     // Tot — per-command cancel immunity is independent of "is a background worker"
@@ -4874,6 +5780,15 @@ int main() {
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
     RUN(Test_FFieldClassName_Probe);
+
+    // Ubel — reflected struct preview: member width comes from the property (U17)
+    RUN(Test_Ubel_PreviewScalarValue);
+
+    // Ubel — byte-blind struct preview: gate the vtable skip on evidence (U3)
+    RUN(Test_Ubel_InterpretStructBytes);
+
+    // Aura — the struct-walk cycle guard is scoped to the PATH, not the whole walk
+    RUN(Test_Aura_StructPathGuard);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

@@ -22,6 +22,1378 @@ builds ≤696 in
 
 -----
 
+## 2026-08-17 - A12: the group scan re-anchors container elements too (build 3261)
+
+**Audit #5 A12 closed — the register is now 0 HIGH / 0 MED.** A11 fixed the single-value scan
+and left the group scan carrying the same defect: `RefineGroupCandidates` re-read a stored
+ABSOLUTE address with no container re-anchor.
+
+The RULE needed no work; this was the wiring, and the wiring is where the traps were. **A
+pre-implementation adversarial review broke the first design twice**, and both breaks would have
+been invisible offline:
+
+1. **Deriving the scan-time buffer base from stride+intra** — what the single-value path does — is
+   the strictly MORE dangerous of two equal-cost encodings here. The deep walk builds a leaf
+   address through a recursion where the intra-element offset is easy to get wrong (the Map
+   `.Value` side alone is off by `cfe.valueOffset`), and with a derived base a wrong intra makes
+   `dataAtScan != nowData` on every pass — so the candidate is Repointed by that error,
+   permanently, onto a real and plausible-looking neighbouring field. The base is now **stored**,
+   and `RepointByBufferMove` needs neither stride nor intra: every leaf in a moved buffer shifts by
+   the same delta. Two fields dropped from three hops as a side effect.
+2. **The sparse count UNIT.** The walker's loop bound is `sa.MaxCapacity`; refine re-reads
+   `sa.MaxIndex`, and `MaxCapacity >= MaxIndex` is enforced. Reaching for the local in hand would
+   make `numAtScan` exceed `nowNum` for every TSet/TMap with a spare slot, so the shrink rule would
+   **drop every sparse group candidate on the first Next Scan** — a fix that deletes valid results.
+   Two named factories now stand between them; `maxIndex` being a parameter name is the defence.
+
+Also corrected before shipping: the depth test was off by one as drafted (leaves are emitted with
+`depth + 1`, so the rule is `leafDepth == 1`) and now lives in one place in a header the tests
+compile; `LeafAnchor` is ONE sub-object placed before `int depth` rather than four loose scalars,
+because `int -> int32_t` is an identity conversion and a partially-filled positional initialiser
+would silently set `depth = 0`, which `deepVisitor`'s `if (lf.depth < 1) return;` turns into
+"every deep group leaf dropped"; and **A4's compile-force claim turns out to be half false** — the
+`int -> uintptr_t` narrowing half is a warning, not an error, because this repo builds `/W4` with
+no `/WX`. Measured by compiling it.
+
+`FieldDescriptor::anchor` is now documented single-value-sessions-only: `internDesc` interns group
+descriptors per SHORT class name, so two distinct UClasses sharing one already share a descriptor —
+harmless for display text, an address bug for pointer arithmetic. The anchor rides per-match instead.
+
+17 assertions, two negative controls run separately. The `static_assert` had to be moved off the
+controlled line — at depth 1 it turned the first control into a compile abort that could not show
+its own must-stay-green half.
+
+**1386 C++ / 4016 .NET assertions, 0 failed.** Live check owed.
+
+-----
+
+## 2026-08-17 - AA38 + F9 + A11: the three MED the morning's fixes created (builds 3245, 3247, 3253)
+
+**Audit #5 AA38, F9 and A11 closed.** All three were spawned by the session that cleared the
+original MED tier, and each was filed as "already re-derived and refute-passed". **A fresh
+re-derivation plus a three-lens adversarial pass found all three fix shapes defective** — every one
+would have produced a green commit with the defect intact. Two new rows filed: **A12** (the group
+half of A11) and **AA39** (the honest Pass-1 residual of AA38).
+
+### AA38 — an unanchored foreign-module candidate was published as a win (build 3245)
+
+On a process where GObjects never validated at all, the Pass-2 multi-module fallback published a
+GWorld out of an arbitrary loaded module. Seen on **both** corpus instances with `GObjects=0x0` —
+`python.exe` and `Solarpunk` — i.e. on processes with no UE world to find.
+
+**The filed fix was a measured no-op.** It prescribed tightening `ValidateGWorldBasic`'s
+`world == 0` arm when the module is foreign. That validator is `bool(uintptr_t)` — a bare address,
+no provenance — so the rule cannot live there without a hidden global; and on both repros the
+winning pattern has `gworldAllowNull == false`, so `TryResolveMatch` rejects null **before** the
+validator and the arm was never reached.
+
+The question is where the ADDRESS came from, which the Pass-2 loop already knows. So the rule moved
+there as a pure `constexpr Genau::AdmitMultiModuleCandidate(AnchorState, candIsMainExe,
+producesAnchor)`. **`AnchorState` is an enum rather than two booleans deliberately**: the two-bool
+shape has an unreachable combination whose parameter has to be documented *"meaningless here, pass
+false"* — the exact "zero must never silently mean nobody said" trap the fix cites as its own design
+principle. Three states, 12 legal rows, all asserted. `producesAnchor` threads through
+`ScanForTarget` with no default, so all five targets state it and a sixth fails to compile.
+
+`ValidateGWorldBasic` is untouched: `world == 0` is the only reason `GWLD_DI427_1/2` resolve at all.
+The blunter alternative — skip `FindGWorld` entirely when GObjects failed — covers more but is not
+strictly better: `ExtraScanGWorld` needs `Aura::GetCount() > 0`, so on a hard game it would delete
+the `&GWorld` slot *and* every path that could recover it.
+
+### F9 — walk_world enumerated a non-reflected field, twice over (build 3247)
+
+`ULevel::Actors` has no `UPROPERTY`, so walk_world's reflected lookup could never match:
+`actor_count: 0` on 2 of 2 games, always. **And the finding named only half of it.** The component
+lookup 45 lines below has the identical shape — `AActor::OwnedComponents` is a private
+`TSet<TObjectPtr<UActorComponent>>` with no `UPROPERTY`, asked for by name **and as an
+`ArrayProperty`**, then read with `ReadTArray`. It was invisible because the outer bug meant that
+loop had **never executed in production**; fixing only the actor half would have shipped a flat
+actor list with no components.
+
+Both halves are now derived structurally: actors = one GObjects pass for objects derived from AActor
+whose **Outer is the level**; components = outgoing object-pointer edges deriving from
+`ActorComponent` whose Outer is the actor. No offset detection, no latch, no constant — so all three
+traps the finding warned about are structurally unreachable, and the expensive native-detector
+option is rejected on the record.
+
+Rather than copy a 70-line pool walk, `FindInstancesDerivedFrom` gained `outerFilter` + `totalOut`;
+it already read and returned the Outer. The outer read is hoisted above the class read, so the
+expensive half is paid only by the surviving minority of the pool. `truncated` now has one source
+instead of two computed by different paths, and a cancelled pass reports `actor_total = -1` rather
+than `0`.
+
+### A11 — container-element candidates were refined at a stale address (build 3253)
+
+**Three of the filed premises were wrong.** It was filed as deep/TSet-specific and A4-caused; it is
+neither — the direct static path has emitted address-pinned TSet/TMap element candidates since
+**V1a, build 927**, and a comment predating A4 says so. Its stated mechanism (rehash relocates
+elements) is false in the engine source: `Rehash()` rebuilds the bucket table and relocates nothing.
+And the half it dismissed — *"for TArray that is mostly fine"* — is where the real damage is:
+`RemoveAtImpl` relocates the tail **in place**, so the pinned address stays mapped and returns the
+**neighbour's value**. A sparse slot is likewise **reused** by the next Add. The three "stale = drop"
+comments documented the benign outcome, which is why this went unnoticed for months.
+
+Its prescribed fix would have fixed nothing (both producers end at the same `cand.addr = valueAddr`)
+and would have required reverting A4's predicate to adopt.
+
+Fixed with a pure `Radar::RefineContainerAnchor`. **The rule is index-aware, and that is the whole
+design**: the obvious `{dataPtr, count}` stamp is a regression, because appending into slack
+relocates nothing and every existing candidate is correct today. A buffer that moved is now
+**repointed and kept** — those candidates were lost outright before. A freed sparse slot is caught
+by its own allocation bit, the only exact witness when the address is byte-identical.
+
+15 assertions and **two** negative controls: one deletes the alloc-bit arm, the other substitutes
+the *plausible* rule and confirms the non-regression assertions fail.
+
+**Totals:** 1369 C++ / 4016 .NET assertions, 0 failed. Live checks owed on all three.
+
+-----
+
+## 2026-08-17 - F8 + F2: ok_via_level had never fired, and a dropped lane latched the cancel forever (builds 3220, 3221)
+
+**Audit #5 F8 (site 2 of 2) and F2 (MED) closed** — the last two of the original MED tier. F8's
+first site is filed as **F9**.
+
+### F8 — `ULevel::Actors` has no `UPROPERTY`
+
+`RecoverViaWorldLevel` recovers a streaming / World-Partition actor through the
+`ULevel::OwningWorld` back-reference, then confirmed membership by looking up `ULevel::Actors` and
+scanning it. That lookup **cannot succeed**: UE declares
+`TArray<TObjectPtr<AActor>> Actors;` with no `UPROPERTY` (verified in the vendored 5.8 tree), so
+`FindFieldOffset` returns < 0 and the whole recovery bailed. The logs agree — **18 sessions with
+`actor_count 0` and not one non-zero.** `ok_via_level` has never once fired.
+
+Worse than a clean miss: the fuzzy name fallback can bind "Actors" to
+`DestroyedReplicatedStaticActors`, which IS reflected — so the alternative outcome was scanning the
+wrong array.
+
+**The membership it was proving is guaranteed by construction.** The Outer climb exits ONLY with
+`level = GetOuter(actor)`. Re-deriving that from a reflected array bought no information and added a
+hard failure mode, so the lookup and the scan are deleted — no offset detection, no wrong-offset
+risk. The element index goes with them: there is no reflected array to index into, so `-1` is the
+honest answer, and it is the shape the UI already renders for the synthetic `WorldLevel` hop
+directly above. The hop is typed `LevelActor` and handled beside it as a **navigation anchor, not a
+pointer deref** — which stops CE export fabricating an offset for a hop that has none, and correctly
+keeps the GWorld-walkable export gate closed.
+
+⛔ The `GuessGapTypes` route the finding implies was rejected, and the rejection verified: it emits
+only Padding/Pointer?/Float/Double/Int32?/Int16?/Byte?, and `NormalizeGuessedTypeToProperty` drops
+the two labels a TArray header would produce.
+
+The comment that made the code look right is corrected too — *"level → Actors → actor is a
+reflected chain"* is precisely what is not true.
+
+### F2 — emptiness was the wrong question
+
+The per-command cancel cleared only on `firstConn`: a session connecting into an EMPTY registry.
+Correct when there was one connection; **unreachable after the two-lane split** (PR #396). If the
+BULK lane drops mid-scan while the LIGHT lane stays connected the registry is never empty, so
+`g_perCommand` stays latched and **every subsequent scan on the surviving lane aborts instantly for
+the life of the process** — silently; the UI just shows empty results.
+
+Ownership replaces emptiness. Connections carry a monotonic `seq`, the server records which seqs
+raised the cancel, and clears once none is still registered. Three details are load-bearing:
+
+- **The seq is assigned under `m_connMutex` at accept**, never on the connection thread — or two
+  accepts race to the same value.
+- **A seq, not a pointer.** The allocator reuses addresses, so a pointer cannot answer *is that same
+  connection still live*, and a new connection could inherit an old one's cancel.
+- **Owners are recorded unconditionally, not only on the first raise.** If both lanes drop and only
+  the first is recorded, clearing on its exit frees a cancel the second still needs. Only the
+  `LOG_WARN` stays once-per-latch — noise, not correctness.
+
+It cannot clear early, which is the axis `Tot.h` exists to protect: a connection is erased strictly
+AFTER its handler returned, so an orphaned scan has unwound before its owner leaves the live set.
+And the new rule **subsumes `firstConn` strictly** — an empty registry trivially has no live owner —
+with a test for exactly that, because a fix handling only the new case would regress the path that
+already worked.
+
+The decision is a pure `Tot::PerCommandStillOwed`, unit-tested rather than inferred from Fern's
+threading; Fern supplies both lists and holds no policy.
+
+12 assertions across the two. Negative controls: dropping `LevelActor` from the UI's synthetic-hop
+branch fails exactly F8's two new tests; reverting the predicate to the emptiness rule fails four of
+F2's, the first being the exact two-lane scenario. 4016 passed / 0 failed.
+
+⚠ Both owe a live check, and F8's is the point of the whole finding: `ok_via_level` firing **at
+all**.
+
+-----
+
+## 2026-08-17 - A4: struct-sided TSet/TMap elements were covered by nothing (build 3219)
+
+**Audit #5 A4 (MED) closed**, and it filed **A11** on the way out.
+
+Value Search's deep pass skipped on `lf.depth < 2` alone — "depth 1 is already covered by the static
+paths". That holds for **arrays only**: `collectStructArrayInner` has exactly one non-recursive call
+site and it sits inside the `ArrayProperty` branch. A struct-sided `TSet<FStruct>` or
+`TMap<K, FStruct>` element was therefore reached by **neither** index, and an everyday
+`TMap<FName, FItemData>` inventory count was unfindable with Deep ON as well as OFF.
+
+**The asymmetry is the evidence.** Three consumers share the same walker and only this one has the
+wrong shape: the snapshot path tests `leafName.empty() && depth < 2` (whole-element-aware, i.e.
+correct) and the group scan uses `depth < 1`.
+
+**The rule moved to a pure header-inline predicate; the WIRING was closed by placement, not by a
+test** — no target compiles `Aura.cpp`, so the fix's most likely failure was never the rule but a
+leaf-init site left un-threaded. `ContainerKind` moves to `Aura.h` with **`Unknown` first**, and
+`ContainerLeaf::kind` sits **immediately before `int depth`**, so a site that forgets it binds an
+`int` to a scoped enum and fails to compile. Verified as a control: dropping it from one of the four
+sites is `error C2440`.
+
+⚠ **That inverts the advice the fix was drafted from, and the inversion is the whole safety
+argument.** The draft warned against putting a new enumerator first, on the grounds that
+`ContainerCacheEntry` is aggregate-initialised positionally — but those sites name their enumerators
+explicitly, so order is unobservable there. The real hazard runs the other way: with `Array` at 0, a
+missed wiring site value-initialises to *"statically covered"* and **silently reproduces A4**, with
+no compile error and no failing test. Zero must mean "nobody said", and nobody-said is not covered.
+(§2.2's *make a wired-through field required*, applied to an enum rather than a bool.)
+
+**Two prerequisites shipped with it**, because without them the fix is wrong in a new way:
+
+- `ScanClassInfo.fieldCapHit` now gates the predicate. It answers *does the static index reach this
+  leaf*, which is meaningless if that index was truncated at `kMaxScanFieldsPerClass` — such a class
+  now falls through to emitting rather than trusting coverage it may not have.
+- `ensureDeepDescriptor` takes the leaf's real `boolMask` instead of hardcoding `0xFF`. A packed bool
+  shares its byte with up to 7 siblings, so a whole-byte mask compares all of them — newly reachable
+  now that struct-sided Set/Map leaves emit.
+
+13 assertions. Negative control: restoring `depth < 2` fails exactly the two defect rows plus the
+`Unknown` guard. 4013 passed / 0 failed.
+
+⚠ **Known limit, filed as A11 rather than glossed over.** Deep candidates refine by stored ABSOLUTE
+address, and the newly-reachable rows are overwhelmingly TSet/TMap sparse-container elements — which
+UE rehashes and compacts on Add/Remove. So a refine after the user picks up an item can drop the very
+candidate this fix made findable. That is pre-existing behaviour, but this multiplies its incidence
+on precisely the inventory workflow the finding cites. **A4 makes the count findable; A11 is what
+makes it stay findable.** Do not report the workflow as closed on A4 alone.
+
+-----
+
+## 2026-08-17 - U5: the class-walk cache is bounded, and "eviction is illegal" was half wrong (build 3218)
+
+**Audit #5 U5 (MED) closed — Tier 0 + Tier 1.** The headline is not the bound; it is that the reason
+this was refused four times does not hold for half the memory.
+
+The register said, repeatedly, that eviction is **illegal** until `WalkClassEx` stops returning
+`const ClassInfo&`, and that the real item is a return-type refactor across 25 call sites. That is
+true of the **enriched** memo. It is **false of the plain `s_walkClassCache`**: `WalkClass` returns
+`ClassInfo` **by value**, and all three touch points copy under the mutex — so eviction there cannot
+invalidate anything a caller holds. **Bounding it was legal the whole time, with zero call-site
+change.** Half the reclaimable bytes were sitting behind a blanket claim that covered both maps.
+
+The supporting numbers were reproduced from the maintainer's own `walk-0.log`, not asserted: 10,046
+distinct classes, 10,198 walks, 0 refusals.
+
+**Tier 0 first, because it is what makes Tier 1 measurable.** `get_diagnostics` gains `class_cache`
+(entries / max_entries / fields / approx_bytes) plus a pure header-inline
+`Ubel::EstimateClassInfoBytes`. That replaces one game's log extrapolation with a per-game number.
+
+**Tier 1** is an LRU on the plain cache with touch-on-hit at **both** lookups. The super-chain site is
+the load-bearing half and is easy to miss: a base class is reused by every subclass, so the chain
+walk **is** a use — without touching there, `Object`/`Actor` age out despite being the hottest
+entries in the map.
+
+Cap **2048, not the 512 first proposed.** 512 came from "~50× the deepest super chain", which is the
+wrong denominator — the working set is the classes touched in one scan pass. The test asserts the cap
+is neither 512 nor ≥ the reference working set, because that constant is the one most likely to be
+re-tuned later off the wrong figure. Tune it with the Tier-0 counters, **never** with the 0.038 ms
+average walk time: that average is dominated by cache HITS and says nothing about an eviction.
+
+⛔ **Four things deliberately not done**, recorded so none reads as an oversight:
+
+1. **Tier 2** (shrinking `FieldInfo`) — 197-419 mechanical edits across three files with no coverage,
+   and its proposed handle cannot have both an implicit `const std::string&` conversion and a sole
+   `operator==`. Its own finding if ever pursued.
+2. **Publishing each super the chain loop walks.** The clean implementation is recursion through
+   `WalkClass`, i.e. restructuring the B10 hot path; publishing a *partial* `ClassInfo` instead would
+   be returned verbatim by a later lookup, which is a correctness regression rather than a cheaper
+   version. And the cliff it defends against is already unreachable — touch-on-hit at the super site
+   refreshes bases on every subclass walk, so they cannot go LRU-cold.
+3. **"Stop publishing when the call came from `WalkClassEx`"** — same bytes, but it kills the B10
+   super-chain reuse.
+4. **An append-only arena as a BOUNDING measure** — it bounds nothing by construction. Fine as
+   compaction, which is a different question.
+
+Two follow-ups filed rather than folded in: **U18** (four `// cached — just hash lookup` comments
+that are wrong — a hit is a hash lookup *plus a deep copy of the flattened chain*, and three of them
+sit inside per-value loops) and **A10**, already open (`s_classContainerCache` is the same shape and
+still blocked by a by-reference return, so whatever is decided here governs it).
+
+4013 passed / 0 failed. Negative controls: dropping the estimator's fields term fails exactly the two
+field-scaling assertions; restoring cap 512 fails exactly the two cap assertions.
+
+-----
+
+## 2026-08-17 - AD3: a zero-hit hint erased the pattern before the pass that could find it (build 3215)
+
+**Audit #5 AD3 closed (MED→LOW)**, and it filed **AA38** on the way out.
+
+The checked question first: **is this the same defect G10 already fixed?** No. G10 stopped the hint
+erasing a pattern that MATCHED but failed validation. What remained is the `hintHits.empty()` arm,
+and it is wrong for a different reason: `Macht::AOBScanAll(pattern)` passes no `moduleBase`, so it
+defaults to `GetModuleBase(nullptr)` and answers **"no match in the MAIN module"** — while **Pass 2
+exists precisely for patterns with zero main-module hits** and re-scans them across every loaded
+module.
+
+So erasing on an empty result removed the pattern **before the only pass that could still find it**.
+A target living in another module was unresolvable on any run that had a hint, and resolvable on the
+cold run that had none. Same G10 invariant — *the hint path must never be weaker than the scan that
+produced the hint* — one axis further out.
+
+**A second defect surfaced while fixing it.** The hint phase pushed its `PatternScanResult` on BOTH
+miss paths while leaving the pattern in `sorted` for the batch passes to re-scan, so the same pattern
+landed in `report.results` twice: "N patterns tried" was inflated and the per-pattern dump listed it
+twice. That already affected the matched-but-unvalidated case, and deleting the erase would have
+added the zero-hit case. The hint phase now records only when it WINS — the batch pass reports
+otherwise, because its verdict is the final one.
+
+⛔ **No test, deliberately.** The rule is a deletion, not a predicate, and no target compiles
+`Genau.cpp`. A `Sig::ShouldDropHintPattern` header predicate was considered and rejected as oversold:
+it is constant-false at all three reachable call sites, so it would pin a hypothetical branch while
+the actual call-site edit stayed unverified — a green test there would be worse than no test. The
+diff is kept to the minimum inspection can carry.
+
+**AA38 filed rather than hidden.** Both corpus instances that exercise this had `GObjects … NONE
+validated` and recovered a **foreign-module GWorld** that `ValidateGWorldBasic` accepted only because
+`world == 0` passes outright — on `python.exe`, a process with no UE world at all. AD3 makes those
+suspect resolves appear on *every* launch instead of every other launch; it did not create them and
+does not make them worse per-run. The honest item is the one the review asked for: *a foreign-module
+GWorld win on a run where GObjects never resolved should be refused, not published.*
+
+Live check (log-only, no interaction): grep by format string — `Hint MISS: '`,
+`(multi-module), validated`, `patterns tried,`. A hint-miss run should now show the pattern reaching
+Pass 2 with real multi-module hits rather than `hits=0`.
+
+4013 passed / 0 failed.
+
+-----
+
+## 2026-08-17 - Y16: a 1-byte enum param was written as 4 bytes over the next one (build 3214)
+
+**Audit #5 Y16 (MED) closed** — the maintainer lifted the hold that had kept it recorded-not-fixed.
+The register's own scope note was right and the row wrong: **three sites plus a cosmetic straggler**.
+
+UE sizes an enum by its UNDERLYING type. The common `TEnumAsByte` / `enum class : uint8` is 1 byte,
+so mapping every `EnumProperty` to `int32` writes 4 bytes and clobbers the next parameter in
+`params_data`.
+
+| # | site | was | now |
+|---|---|---|---|
+| 1 | `InvokeScriptGenerator.GetMailboxWriteStatement` — interactive CE form, WRITE | shared the `IntProperty` arm → `writeInteger` | falls to the existing `_ => size switch` |
+| 2 | `BakedScriptGenerator.MapToHelperType` via `MapInputType` — Copy AA Script (Baked), WRITE | flat `'int32'` token | size-aware token |
+| 3 | `CeInvokeReturn` — RETURN, READ | 1-byte enum reported from a 4-byte read | reads its real width |
+
+Sites 1–2 corrupt memory; site 3 only misreports. **Fixing site 1 alone would have left the three
+ways of invoking a UFunction from one dialog input still disagreeing**, which is the row's own
+complaint.
+
+**This is the family's recurring shape and it is worth naming: the finding is the DROPPED FIELD, not
+the guess.** The size was in scope at all three sites the entire time — site 1's `_ => size switch`
+fallback already mapped 1/2/8 correctly and `EnumProperty` short-circuited past it; site 2 held
+`v.Size` and used it only for the `fstruct` arm; site 3's `size` was already a parameter. The same
+was true of W6 (`CeWidthForSize` existing but unused) and Y15 (`MapToHelperType`'s "out of v1 scope"
+comment). Here `BakedParamValue.Size`'s own doc comment stated the defective assumption outright.
+
+Shape copied from **Y15's precedent**: a `(string, int)` overload plus a sizeless one behaving as
+size 0, with **only `EnumProperty` consulting the size**. That restriction has its own test, and it
+is the one that matters — letting `size` override types whose width is fixed by their NAME would turn
+a mis-reported size into a wrong write for types that are currently correct, i.e. the fix would
+become a bigger version of the bug.
+
+**No Lua change was needed**: `writeBakedParams` already accepts the `byte` / `int16` / `int64`
+tokens, so no user has to re-embed the helper. The cosmetic straggler is folded in —
+`ShortTypeNameForComment` hardcoded `"enum(int32)"`, so the generated script's own trailing comment
+would have gone on asserting the old width after the write was corrected.
+
+42 tests. Site 1 is asserted on the **emitted Lua** rather than the mapping, because that is what
+reaches the game — including that the neighbouring int param keeps its own width. Negative controls:
+putting `EnumProperty` back in the int arm fails exactly the three emitted-width cases; flattening
+the enum arm fails the mapping, `MapInputType` and cross-path-agreement cases. 4013 passed / 0.
+
+**The enum-width family is now 4 findings across 7 sites in 4 subsystems, all closed** — W6, Y2,
+Y15, Y16.
+
+-----
+
+## 2026-08-17 - AA10: seven of eleven mailbox emitters had no idle guard at all (build 3206)
+
+**Audit #5 AA10 closed (MED→LOW).** The mailbox has two concurrency guards and they are mutually
+blind: `_ue5_invoke_busy` is the Lua helpers' own flag, and the GENERATED scripts write the mailbox
+directly and never touch it.
+
+**The re-derivation's own reachability argument was too pessimistic**, and correcting it is what made
+this shippable. It concluded the bug needs `processMessagesPaintOnly` to dispatch `WM_TIMER` —
+unknowable offline. But a re-entrancy-free branch exists that needs no pump at all: every wait arm
+bails on timeout while `cmd` is still non-zero and the DLL still owns the mailbox, so the next rescan
+tick (≤5 s away) or the next user-ticked guardless generator writes straight over a live command.
+That is AA19's shape, which this repo already rated MED and fixed.
+
+And the scale is worse than the headline: **7 of the 11** mailbox emitters had no idle wait at all —
+8 sites, counting Movement's two. The four that did have one are all helper-shaped
+(`return nil, reason`), so there was no toggle-shaped precedent to copy.
+
+**Two corrections to the prescribed fix, both load-bearing:**
+
+- **Placement.** "Before each status clear" is still *after* the operand writes — and those land in
+  the same mailbox, corrupting the in-flight command just as surely. It belongs above the FIRST
+  write, exactly where `AppendContractCheck` already sits for the identical reason.
+- **Shape.** A one-line `showMessage(...); if memrec then ... end; return` reads fine and **fails
+  `CeMailboxBailoutTests`**, which scans line-by-line for an untick FOLLOWING each message. The test
+  was right to reject it — the one-liner is also unreadable in CE's editor. Rather than hand-roll
+  eight copies (build 2743's three defects reached all seven copies of the mailbox wait exactly that
+  way), this adds the shared `CeLuaHygiene.AppendIdleWaitOrBail`.
+
+Lua side: `fetchInstancePage` now refuses a non-zero `cmd`, **placed before `_ue5_invoke_busy =
+true`**. After it, a return latches the flag for the session and abandons the freeze — a worse
+failure than the one being prevented.
+
+⛔ **Not taken:** emitting an `_ue5_invoke_busy` acquire/release into the generated scripts. Its only
+added coverage is the nested-re-entry window whose reachability is unsettleable offline, against a
+release that must fire on five wait arms plus every generator's own returns, where one miss latches
+a session-global.
+
+**Verified by parsing, not by asserting about text.** All **16** emitted `{$lua}` chunks across the
+8 guarded sites were dumped and loaded by a real Lua 5.4 — 0 rejected. The guard adds two `if/end`
+pairs and a `break` inside a while-loop to eight blocks at once, which is exactly the class of change
+text assertions cannot vet; the parser check was itself negative-controlled with a bare `break`
+outside a loop.
+
+Negative controls: disabling the refusal lets the rescan overwrite the live command (cmd 8→6,
+result -7→0); moving the guard after the flag set keeps **both** value assertions green while
+latching the flag and abandoning the freeze — which is precisely why the third assertion exists.
+
+3971 C# / 0 failed; freeze rig 55 checks / 0; dissect rig 50 / 0.
+
+-----
+
+## 2026-08-17 - ST1: our own "direct" calls re-entered our own detour (build 3205)
+
+**Audit #5 ST1 (MED) closed**, and the AA10 / AA11 status conflict settled in the same pass.
+
+**The diagnosis was right and both the location and the repair were wrong.** The finding reads as
+"the drain lacks a thread check". One level up: three of our own call sites resolve
+`UObject::ProcessEvent` out of an instance's vtable and call **the address MinHook patched**. So a
+self-issued "direct" call lands in `HookedProcessEvent` — on a pipe lane, or on the Mimic polling
+thread — and the drain there is gated only on *is the queue non-empty*.
+
+What the drain then runs is the whole point. Requests are queued **because** a caller judged them
+unsafe off the game thread: Mimic sends Native+Static helpers direct and routes FUNC_Net,
+FUNC_Event, BlueprintEvent and stateful actor mutation to the queue. The concrete failure is
+therefore UE object and world mutation on a non-game thread — exactly the hazard this module exists
+to prevent.
+
+**And the window is not a microsecond race.** A timed-out invoke *stays queued*, deliberately, with
+its own owned parameter copy, expecting a later drain. After one timeout the window is open
+indefinitely, and the next CE static-native invoke or UI self-test executes that abandoned stateful
+UFunction on the wrong thread.
+
+**Fixed by calling the trampoline** — the same thing `Grausam` already does for its own hooks — so
+our calls never enter the detour at all.
+
+⛔ **Explicitly not by checking thread identity, and this is the part to remember.** Nothing in this
+tree resolves the game-thread id: the finding's five grep hits are three `printf` arguments and two
+AOB comment lines, and `GIsGameThreadIdInitialized` is only *named* in a derivation note. Any gate
+would be guessing — and **a gate that guesses wrong never drains**, which times out every
+game-thread invoke. That is strictly worse than the defect it would be fixing.
+
+Two pure predicates in `Stark.h`, each negative-controlled on its own:
+
+- **`ShouldUseTrampoline`'s `resolvedPeAddr == hookedAddr` term is load-bearing.** A class that
+  genuinely OVERRIDES ProcessEvent has a different slot, that slot was never patched, and calling the
+  trampoline for it would silently run the BASE implementation instead of the override. When they
+  differ we fail open to the caller's address, which is the correct one.
+- **`ShouldDrainQueue` is CALLED by `HookedProcessEventBody`, not mirrored by it.** A mirrored copy
+  proves only that the copy is right; no target compiles `Stark.cpp`, so the predicate under test has
+  to be the shipped one.
+
+⚠ **The `thread_local` marker is set ONLY inside the new `CallOriginalSEH`, never inside
+`CallProcessEventSEH`.** That distinction is the correctness of the whole guard: the latter is what
+the *legitimate* game-thread drain calls, and a UFunction executing there routinely dispatches
+further ProcessEvent calls through the vtable. Marking it there would make the game's own nested
+dispatches look like ours and suppress draining on the very thread that is supposed to drain.
+
+**Four scope claims were cut back on review, all of them in the direction of over-claiming:** the
+`UE5_CallProcessEventEx` fallback is **dead as a second vector** (`Stark::RemoveHook` has zero
+callers, so `IsHookActive()==false` there means the address was never patched); the
+validator-self-satisfaction consequence is a **race, not a guaranteed path**; the false-liveness one
+is **bounded by the 500 ms** stall threshold and only fires on rare user-initiated one-shots; and the
+filed *"reuse Linie's fix two lines above"* is a **category error** — it is eight lines away, in
+another translation unit, and `Linie.cpp:46` is a timestamp-monotonicity tolerance that tests no
+thread identity at all.
+
+`Frieren.cpp`'s *"never goes through GameThreadDispatch"* comment was provably false and is true
+again only because of this change.
+
+10 assertions. Negative controls: dropping the address-match term fails exactly the
+overridden-ProcessEvent case; reverting the drain gate to depth-only fails exactly the two re-entry
+cases. 3971 passed / 0 failed. ⚠ Live check owed — the drain is only observable with a game attached.
+
+**AA10 / AA11 re-tiered MED → LOW.** Their rows said MED while §3b's clump table said they were
+downgraded when AA9/AA12/AA13 shipped; the rows are the authority, so the two disagreed and the
+gate-derived headline was inflated by two. Re-derivation confirmed LOW for both and they are now
+consistent. They remain **open** — this is a re-tier, not a close.
+
+-----
+
+## 2026-08-17 - AA8: the dissect script asserted an Outer offset the DLL already detects (build 3204)
+
+**Audit #5 AA8 closed — re-tiered MED→LOW** (population today is **zero of 30+ tested games**, so it
+is a correctness gap with no known live victim), and it filed **AA37** on the way out.
+
+`ue5_dissect.lua`'s UObject header carried a flat `addIfMissing(0x20, "Outer")`. On a
+`WITH_CASE_PRESERVING_NAME` build FName is 12 bytes instead of 8, so `OuterPrivate` pads out to
+`+0x28` — which the DLL detects (`DynOff::UOBJECT_OUTER`, Genau) and the script did not. The emitted
+structure then labels the FName's DisplayIndex/Number pair as an 8-byte "Outer" pointer and omits the
+real field. Correctly narrowed on re-derivation: this is the **only** header row that can be wrong;
+the other five match `Grimoire`'s constants.
+
+**Fixed by asking the DLL, not by mirroring it.** A second copy of the detection is the drift this
+repo keeps paying for, so `detectOuterOffset` calls `UE5_GetObjectOuter` for the object being
+dissected and finds which slot holds that value — two reads and one export call.
+
+Three judgement calls, each with its own test:
+
+- **A null Outer proves nothing.** A root package legitimately has none, so it falls back rather
+  than treat 0 as a reading — otherwise every such object "detects" whichever slot happens to hold 0.
+- **An ambiguous read prefers 0x20.** A tie is not evidence for the rarer layout.
+- **Deliberately NOT memoised.** CE keeps one Lua state for the whole session and never rebuilds it
+  (CE-Bugs-Minesweeper §5), so a cached `0x28` would follow the user onto the next,
+  non-case-preserving game and corrupt every structure built there. The "just cache it" optimisation
+  has its own regression test.
+
+**One filed rationale was over-claimed and dropped:** a `pcall` around the probe, for version skew.
+`git log -S"UE5_GetObjectOuter"` finds only the module-rename commit, so the export predates the
+naming scheme and no DLL a user could plausibly pair with this script lacks it — and swallowing there
+would re-introduce exactly the silent failure the AA5/AA6 fix removed.
+
+**The rig earned its keep twice**, which is the reusable part. `scripts/tests/dissect_test.lua` runs
+the real script over stubbed CE globals: it failed on the first run because the change had quietly
+introduced a **new DLL dependency**, and its 40 pre-existing checks then proved the rest of the
+header path was untouched. Six new cases, 50 checks. Negative control: restoring the hardcoded
+`0x20` fails 3 of them.
+
+**AA37 filed rather than bundled.** AA8's re-derivation surfaced a second, independent defect:
+`addUObjectHeader` runs **unconditionally**, without asking whether the walked `UStruct` is even
+UObject-derived — so `createFromPath("/Script/CoreUObject.Vector")` staples six meaningless header
+rows over real member offsets, and the `covered` set does not stop it because that set is built from
+element START offsets only. The register is CI-gated per row, so folding two defects into one commit
+would have left neither honestly markable.
+
+3971 passed / 0 failed; the C# text assertions over this script (`CeExecuteCodeExArityTests`) still
+pass.
+
+-----
+
+## 2026-08-17 - AD4: the God Mode badge collapsed three states into one (build 3203)
+
+**Audit #5 AD4 closed — re-tiered MED→LOW.** Nothing mis-writes: the hold is correct and the
+re-assert worker keeps it. What was wrong is a display that *could not* be accurate, plus ~25 lines
+of shipped-but-unused DLL surface.
+
+`get_protect_state` has been in the DLL since build 1251 carrying `want` / `live` / `resolvable`
+separately, with **zero clients**. The UI read the collapsed `get_god_mode` tri-state, so three
+genuinely different situations all rendered as a flat OFF or Unknown:
+
+| real state | old badge | why that is wrong |
+|---|---|---|
+| `want=1`, unresolvable | "Unknown" | armed and waiting for a pawn — shown as a broken connection |
+| `want=0`, `live=1` | "ON" | immune, but not by us — credits the tool for a state it isn't holding |
+| `want=1`, `live=0`, resolvable | "OFF" | engaged, game won the drift race — shown as never-enabled |
+
+**Wired up C#-only. Deleting the dead command was the alternative and is strictly MORE expensive:**
+it trips three CI gates — `check_mailbox_contract.py` hashes `ProtectOp`, so removal means a contract
+bump plus a golden-block justification, and `check_derived_counts.py` covers `pipe_commands` and
+`c_abi_exports`, cascading into CLAUDE.md ×2, architecture.md, naming-convention.md and dll-spec.md.
+Wiring moves none of them.
+
+**Three traps, each of which would have produced a fix that looked finished:**
+
+1. **The wire name for `Live` is `godmode`, not `live`.** The wrong key falls through to the `-1`
+   default, which *means* "no pawn" — so the badge would sit at Unknown forever, looking exactly
+   like a game with nothing spawned. Its negative control is the rename itself.
+2. **The badge map needs THREE new cells, not two.** The obvious version leaves
+   `want=1 && live=0 && resolvable` falling through to plain "OFF" — mirroring the very conflation
+   the fix exists to remove, in the cell most likely to occur in practice. Omitting it would have
+   reproduced the defect *inside its own repair*.
+3. **The toggle path had to move too.** `ForceGodModeAsync` still routed through the int map, so a
+   force-ON with no pawn yet reported "Unknown" — the reported symptom surviving on the commoner
+   path. It passes `want` directly; it already knows it, so there is no extra round trip.
+
+Connect-time read added, since `want` survives a UI reconnect and nothing queried it (AutoTick polls
+pose + markers only). Deliberately **not** `RefreshGodModeAsync`: that sets `IsBusy`, which flickers
+every `CanOperate`-bound button, and writes `StatusText`, which would overwrite the "Connected"
+written moments earlier. Both properties are pinned by their own tests.
+
+**Left open on purpose, and this is the important boundary:** making `Solitar::GetState.live` honest
+on a pawn whose scan matched no canonical `bCanBeDamaged` — it falls back to the *desired* value
+while `GetGodMode` returns `PR_ERR_REFLECT`. That needs `Solitar.cpp`, which no test target
+compiles, so it is live-only; folding it in would have made these negative controls ambiguous.
+`Solitar::IsGodModeWanted`'s zero callers are also left alone — its header comment is the only
+written record of the reconnect-restore rationale `want` exists to serve.
+
+One filed clause was overstated: "the docs assert the opposite contract in two places" is **one** —
+`godmode-spec.md` §7 is plan text superseded by that file's own status banner, which names this
+deviation explicitly. The repo's supersession convention held.
+
+11 tests. Negative controls: renaming the wire key reddens the parse test; dropping the contested
+cell reddens exactly that badge test. 3971 passed / 0 failed.
+
+-----
+
+## 2026-08-17 - AF5 + Z2: a ComboBox pick inside a tab re-ran that tab's activation (builds 3200, 3201)
+
+**Audit #5 AF5 (MED) and Z2 (MED→LOW) closed.**
+
+**AF5 is two independent defects**, and only together do they produce the reported symptom.
+
+*The routing.* Avalonia's `SelectionChanged` **bubbles**. A ComboBox or ListBox inside the selected
+tab raises it, it travels to the main TabControl, and `MainTabs_SelectionChanged` ran with
+`sender == TabControl` and `SelectedItem.Tag` still naming the tab the user was already on — so an
+ordinary in-tab pick re-ran the whole per-tab activation routine, cancelling in-flight heavy queries
+and rebuilding lists.
+
+**The premise was executed, not assumed.** In a headless harness against the pinned Avalonia: the
+TabControl *is* a visual ancestor of the tab's content
+(`StackPanel→ContentPresenter→Panel→DockPanel→Border→TabControl`); **ComboBox and ListBox** re-fire the
+handler this way while **DataGrid and AutoCompleteBox do not**; and a genuine tab switch arrives
+with `e.Source == TabControl`. Two things follow that are easy to get wrong: the discriminator is
+**`e.Source`, not `sender`** (sender is the TabControl in every case — which is exactly why the old
+code could not tell them apart), and **`e.Handled` is not an option**, because the TabControl is the
+end of the route and setting it suppresses nothing.
+
+Fixed with a pure `Helpers/TabActivation.ShouldRunActivation(e.Source, tabs)` — the
+`LiveWalkerNavShortcuts` shape, `object?` parameters, testable without a toolkit.
+
+*The reset.* `ClassPivotViewModel.RefreshAsync` rebuilt `Snapshots` and then **hard-set** the
+selection to `Snapshots[0]` and re-ticked the two newest `DiscoverPicks`. That is what turned a
+wasteful re-entry into a destructive one: the user picked a snapshot, the pick bubbled, activation
+re-ran, refresh reset the pick. It now captures both before the rebuild and restores them **by Id** —
+`UiCollection.Reset` repopulates with NEW `SnapshotMeta` instances, so a reference or index
+comparison would pass for the wrong reason. The two-newest default still applies on a first build,
+so it stays a starting point rather than something that reasserts itself, and a snapshot deleted
+between refreshes falls through to the newest.
+
+**The third proposed part was deliberately not taken.** Coalescing concurrent refreshes behind a
+shared task targets an overlap that the source guard already removes, and the obvious implementation
+is unsafe: hoisting `_refreshing` above the await also swallows `OnSelectedSnapshotChanged`'s class
+load, which keys off the same flag. Separate concern, separate change.
+
+Negative controls: degrading the guard to always-true fails 5 of 6 `TabActivation` cases including
+the bubbled-child one; reverting the hard reset fails exactly the two preservation tests and nothing
+else. AOT publish verified (54.4 MB).
+
+**Z2 lands as CONSISTENCY, and the write-up matters more than the diff.** Two selection-bound lists
+were rebuilt without first detaching the selection, where three sibling panels carry the detach
+verbatim. The *severity story* around it is wrong in **both** directions, which is the part worth
+keeping: the filed row asks to rank it by audit #3's L18/L19 downgrade, and that precedent **does
+not transfer** — this site is `SelectionMode="Extended"` with `grid.SelectedItems` consumed by two
+code-behind handlers, while both downgraded sites are single-select. But that difference is
+**untouched by the one-liner**, which detaches `SelectedResult`, not `SelectedItems`. So the fix is
+right and the elevated-risk story would have been wrong. No crash has ever been observed at any of
+the four panels; the reason to land it is that four panels asserting one invariant three different
+ways is how the next reader learns the wrong rule.
+
+3960 passed / 0 failed.
+
+-----
+
+## 2026-08-17 - A1: at stride 20 the serial read was ClusterRootIndex (build 3194)
+
+**Audit #5 A1 (MED) closed.** `Aura::GetSerialNumber` computed its offset inline as
+`s_itemSize >= 24 ? 0x10 : 0x0C` — a two-way split covering only strides 16 and 24. The reachable
+set is **{16, 20, 24, 32}**: the auto-probe tries `{16, 24, 32, 20}` and `UE5_InitWithExtendedLayout`
+forces any of `{0x14, 0x18, 0x10, 0x20}`.
+
+Stride 20 is Avowed's packed `FUObjectItem`, whose layout is
+`{Object@+0x00, Flags@+0x08, ClusterRoot@+0x0C, Serial@+0x10}` — from the Ghidra decompilation of
+`AllocateUObjectIndex` recorded in `docs/avowed-gobjects-fix.md`. The old expression returned
+`0x0C` for it, which is **ClusterRootIndex**. `Ubel::ResolveWeakObjectPtr` then runs a bare
+`if (actualSerial != serialNumber) return 0;` — no fallback, no retry, no log — so every weak
+reference resolved to null.
+
+**The question this had to settle before anything moved: is A1 the thrice-refused `SerialNumber`
+witness?** It is not, and the distinction is worth keeping. `working-lessons.md` §4.3 and the
+cluster-③ STOP-BLOCK refuse a **passive observer STORING `(index, serial)`** as a recycle witness,
+because UE zeroes the serial in `FreeUObjectIndex` and allocates it lazily, so most objects carry 0
+for life and a stale `(i, 0)` matches a recycled `(i, 0)`. A1 is UE's own
+`FWeakObjectPtr::SerialNumbersMatch` input, read at the right **address**. Different question — and
+it is the kind of surface similarity that would have got the fix refused on sight.
+
+One filed over-claim corrected: *"silently nulls a whole feature family"* is total only for
+`WeakObjectProperty` and the delegate family (single, multicast, sparse). The Soft and Lazy handlers
+display the asset PATH first and lose only the resolved live object.
+
+**How it became testable.** The rule moved to a pure header-inline
+`Lineal::SerialOffsetForLayout`. No target compiles `Aura.cpp`, but `dll_helpers_test.cpp` already
+includes `Lineal.h` — the MA2 / build-3135 pattern again: *ask what the test file already includes
+before accepting that something cannot be pinned.* `Aura.h`'s declaration comment said "16-byte or
+24-byte" and described the code exactly; comment and bug agreed, which is why neither looked wrong.
+
+**Two things deliberately not done**, on the skeptic's call: deleting `Aura.h`'s 16-byte
+`struct FUObjectItem` (nothing reads `.SerialNumber` off it, but removing an exported accessor is
+scope creep on a one-line correctness fix — its comment was corrected instead), and pinning the
+Packed57 serial offset, which is still *** UNVERIFIED *** and runtime-calibratable. It passes
+through untouched, and there is a test asserting exactly that.
+
+9 assertions across all four classic strides, both UE5.7+ modes, and the calibrated pass-through.
+Negative control: restoring the old expression fails exactly one row — `classic 20 -> 0x10
+(Avowed)`. 3950 passed / 0 failed.
+
+⚠ Live check owed — Avowed, or any forced-stride-20 title, should now resolve weak references and
+delegate targets instead of showing them uniformly null.
+
+-----
+
+## 2026-08-17 - AD5: an English FText over zeroed heap came back as CJK mojibake (build 3193)
+
+**Audit #5 AD5 (MED) closed.** `DecodeFStringBuffer`'s own "KNOWN RESIDUAL" was real, reachable, and
+**fires 100% of the time** in the case it describes — not, as the header argued, a near-impossible
+coincidence.
+
+**The finding names the wrong type.** `FUtf8String` goes through `Ubel::ReadFUtf8String`, which is
+count-based and never calls this function. The live path is `Ubel::ReadFTextString`, which
+blind-scans `FTextData+0x08..0x90` and offers every 16-byte candidate to `TryDecodeFStringAt`. So the
+case is an **FText display string that a cooked build stored as UTF-8, holding ASCII text** — i.e.
+ordinary English UI, not an exotic input.
+
+Rule 2 needs a multi-byte sequence and pure ASCII has none, so step 3 falls through to the UTF-16
+hypothesis. Production reads `Num*2` bytes, so half the window is adjacent heap; each ASCII byte
+PAIR becomes one BMP unit and "Continue" returns as U+6F43 U+746E U+6E69 U+6575.
+
+**The header's defence was false on both halves, and that sentence is why this stayed open.** It
+claimed *"Both conditions must hold — LooksLikeDecodedText rejects a binary tail"*. The two
+conditions are the SAME heap state: zero-filled slack (the ordinary allocator state) puts the
+terminator pair at `[2n-2]` and supplies the textual tail at once. And the mojibake contains **zero**
+replacement characters, so `LooksLikeDecodedText` accepts it — it rejects binary, and a run of valid
+CJK code points is not binary. That block now says so.
+
+**Fixed structurally, not heuristically.** An `FString` is a `TArray<TCHAR>` whose `Num` includes the
+terminator, so exactly one null unit exists and it is the last; an interior null unit proves the
+second half of the window is not part of the string.
+
+**The re-derivation's own fix was too broad, and the skeptic caught it by compiling both.** Built
+against the real header with MSVC over 20 vectors: an unconditional interior-zero-unit rule also
+changes buffers that today decode as a truncated prefix — nothing to do with this defect — and one
+of the prescribed tests would have locked that behaviour in. What shipped is gated on `utf8Ok`, so
+it can only break the tie where both hypotheses succeed and the wrong one wins, and it is a guarded
+block rather than an early `return ""`, because the function's tail is what delivers the correct
+UTF-8 answer once UTF-16 steps aside.
+
+Six tests: three real cases (OK / Continue / Press Start over zeroed slack) and three controls —
+genuine UTF-16 unaffected, rule 2 still winning ahead of the tie-break, and an interior-zero-unit
+UTF-16 buffer that pins the gate stays OUT. Negative control: disabling the tie-break fails exactly
+the three new vectors and none of the 11 pre-existing ones. 3950 passed / 0 failed.
+
+-----
+
+## 2026-08-17 - AD6: the test that covered nothing, and the comment that made it load-bearing (build 3192)
+
+**Audit #5 AD6 closed — re-derived as LOW, not MED:** a coverage lie, not a defect in shipping code.
+The diagnosis needed no premise corrected, which is unusual for this register.
+
+`Test_Mimic_PollLatency_OneMillisecond` asserted a fact about the **host** — that
+`timeBeginPeriod(1)` makes 100×`Sleep(1)` finish under 300 ms. True, occasionally useful, and
+invariant to every line in `dll/src`: **it passed with `Mimic.cpp` deleted from the tree.** None of
+the four regressions its own banner named could redden it; `kPollIntervalMs` is a file-static in
+`Mimic.cpp`, so the test's literal `Sleep(1)` cannot track it.
+
+Worse than an empty test, because the false claim lived in **two** places and the second was
+load-bearing: `dll/CMakeLists.txt` cited *"so it covers the real mechanism instead of a linked
+import"* as the **justification for not linking winmm** into the target. Both rewritten rather than
+merely deleted — leaving that comment behind would turn a deletion into a new lie.
+
+**What replaces it is coverage that cannot exist anywhere else.** `Mimic.cpp` is compiled by no test
+target, but `Mimic.h` is pure data, and that data is a published cross-language contract: every
+offset is baked as a literal into `Services/CeMailboxLayout.cs` (whose comment reads *"must match
+Mimic.h MailboxData"*) and into `scripts/UE5CEDumper.CT`. Nothing enforced it on either side. A
+silent shift does not fail a build — it makes every saved `.CT` write to the wrong address. Offsets
+are spelled as literals rather than derived from the struct: deriving them from the declaration
+under test would assert only that C++ agrees with itself.
+
+**Measured, not assumed, against the existing guard.** `tools/check_mailbox_contract.py` *does* catch
+the control edit, via its surface hash — so the claim "the tool is blind" would have been wrong. But
+it can only demand a *decision*: it never computes an offset, so a developer who bumps the version
+sails through with the offsets silently moved. The two guards are complementary.
+
+Negative control: `className[256]` → `[255]` fails exactly 5 assertions — the `funcName`,
+`errorMsg` and `paramsData` offsets, the `className` size, and the struct total. Before this commit
+that edit built and passed clean. 3950 passed / 0 failed.
+
+-----
+
+## 2026-08-17 - AC1: one checkbox, two policies, and only one of them is reversible (build 3191)
+
+**Audit #5 AC1 (MED) closed.** Proxy Deploy's "Force Overwrite" armed two policies through a single
+`bool force`, and they have nothing in common:
+
+- `ProxyDeployService.cs:924` — redeploy over **our** proxy even at the same version. Benign,
+  reversible, and by far the commoner reason anyone ticks the box.
+- `:916` — replace a file that is provably **not ours**: ReShade, Special K, Ultimate ASI Loader,
+  or a wrapper the game itself shipped. Irreversible.
+
+The user ticks for the first. `UiOptionsSettings.cs:217` persists it and `MainWindowViewModel.cs:2434`
+restores it on every launch, so that consent silently became **standing, cross-session, cross-game
+authority for the second** — applied per game inside `DeploySelectedAsync`'s loop, over a Select All
+that can be an entire Steam library, with no confirmation anywhere on the path (the VM's only
+confirm delegate serves orphan cleanup). `:955` is a bare `File.Copy(overwrite: true)`: no backup, no
+rename, and **no Recycle Bin**, against this repo's own rule that destructive operations go to the
+bin. The evidence went with it — refresh computes `Other proxy: {ProductName}` at `:854-865`, and a
+successful deploy returns `SetErrorMessage` default-true which blanks exactly that row, while `:956`
+logged only the destination. So after the fact, nothing on screen or on disk said what had been
+destroyed.
+
+**The asymmetry was the tell, and it is one line.** `UpdateAllAsync` also passes `force: true`, but
+is pre-gated at `ProxyDeployViewModel.cs:1355` on `IsOurProxyDll` and therefore never reaches a
+foreign file. `DeploySelectedAsync` simply had no equivalent gate.
+
+**Fixed by splitting the flag at the service boundary**, into a
+`DeployOptions(ForceSameVersion, ForeignConsent)` record struct. Named members rather than two
+adjacent positional bools on purpose: `DeployAsync(src, game, type, true, false, ct)` compiles, reads
+plausibly, and destroys files if the pair is transposed. The persisted checkbox now feeds
+`ForceSameVersion` **only**; a new **deliberately non-persisted** "Replace other tools' DLLs"
+checkbox feeds `ForeignConsent` and resets to off every launch. The capability the tooltip has always
+advertised is kept — this re-scopes the authority, it does not remove the feature — and the tooltip
+now states which half does what and that it cannot be undone. The identity of a foreign DLL is
+logged *before* it is replaced, because nothing else survives the operation.
+
+Policy extracted to a pure `PlanDeploy`, matching the `PlanUndeploy` idiom already in this file:
+ownership is decided by `FileVersionInfo.ProductName`, so fabricating a PE that carries a version
+resource would test the fixture rather than the policy.
+
+**Blast radius the finding did not name:** `Core/IProxyDeployService.cs` declares the signature and
+**two test doubles** implement it. All three updated. `DeployOptions` lives in `Models`, not beside
+the service, because `Core` names it and Core must not depend on Services.
+
+15 policy tests. Negative control: re-conflating the two flags (`ForeignConsent || ForceSameVersion`)
+fails exactly the three cases that describe the defect and nothing else. 3950 passed / 0 failed.
+
+⚠ Live check owed — a real foreign `dxgi.dll` must refuse with Force Overwrite alone and proceed
+with both boxes ticked.
+
+-----
+
+## 2026-08-17 - Z3: half the property scorer's vocabulary could never be fetched (build 3190)
+
+**Audit #5 Z3 (MED) closed.** Interesting Properties (and Detect Player Stats) fetch on
+`SeedQueries` and score on the six `*Keywords` tables. A property is only scored if it was fetched,
+so a scored keyword no seed can reach is a **dead scoring arm** — the panel cannot show the field
+however well it would rank. The finding named one case (`CurrentMP`). The real figure, measured
+twice independently and agreeing exactly, is **58 of 123 keywords (47%)**, with Resources (20/29)
+and Utility (10/15) hit far harder than the Stats example that was filed.
+
+**Two filed premises were wrong**, both in the direction of over-claiming: `Duration` *is* seeded,
+so 5 of the 6 build-678 Combat additions are affected rather than all six; and the table's "14/15
+games" annotation covers only `Effect`/`Target` — `Ability`/`Modifier` are marked 7/15.
+
+**The filed fix would have made its own flagship case worse, and this is the part worth keeping.**
+"Cost of the fix is near zero — the DLL walks GObjects once" measures the wrong resource. CPU
+genuinely is near-free (single walk, hoisted `ToLower`, and the per-query cap is tested *before* the
+substring search, so a filled seed costs an integer compare). The scarce resource is the
+**per-query 200-row envelope**, filled in GObjects walk order, first come first served. Measured
+offline over **578,809 distinct identifiers from three shipped games** (DWORIGINS / ES2 /
+CrimsonDesert — the `D:\UE_Analyze_data` PE corpus, no game running): a bare `"MP"` seed matches
+**10,180** names of which **6%** carry `mp` as an actual token. It would spend its whole envelope on
+`Component` / `Compression` / `Template`, never reach `CurrentMP`, and convert a bucket that returns
+nothing today into 200 junk rows that also pollute the class histogram and permanently inflate the
+"N of M keywords STOPPED at the 200-row cap" strip until that warning means nothing.
+
+**Volume is not the test — precision is.** `Item` (3,050 matches) and `Velocity` (665) also blow
+past the cap, but at 98% and 99% genuine the 200 rows they return are the right rows. Shipped 40
+measured-safe seeds (58 → **8** unreachable) and recorded the 8 refusals — `MP`, `SP`, `XP`, `Exp`,
+`Lv`, `Def`, `Load`, `Run` — in `DeliberatelyUnseededKeywords` **with their measurements**, so the
+obvious-looking completion cannot be re-attempted blind. The honest repair for those is a
+whole-token match on the DLL side (the client scorer already tokenises), not a broader substring.
+
+**The drift was procedural, so the fix is structural.** The "Add a keyword" recipe at the top of
+`PropertyScoringTable` lists three steps and never mentions `SeedQueries`, 460 lines below it in the
+same file — that is how 47% of the vocabulary went dark without anyone doing anything wrong. Three
+tests now assert the two vocabularies agree, that every exclusion is a real scored keyword, and that
+no exclusion is already reachable.
+
+**A test was deleted for being wrong in the dangerous direction.** The first version also asserted
+"no seed is a substring of another seed", and it flagged `Timer`, `TimeDilation` and `Damaged` as
+redundant with `Time`/`Damage`. That reads as obvious waste and is the opposite: each query owns its
+OWN envelope, so a narrower seed is a **reservation** — `Time` caps routinely on any real game and
+would fill with `Lifetime`/`TimeStamp`/`CastTime` long before reaching timer fields. Acting on the
+check would have deleted three working paths to save work the cap already makes free. The reasoning
+is now a do-not-re-add comment on the surviving exact-duplicate check. (§2.2 again: a guard you add
+is code, and negative-controlling it is what exposed this — it failed on first run and the failure
+was correct about two of its three claims and wrong about the conclusion.)
+
+Negative controls: dropping the `Regen` seed re-orphans exactly `Stats.Regen` + `Stats.Regenerate`;
+the reachability test also failed on first run with three real gaps (`Supplies`, `TickRate`,
+`Cadence`) that the seed list had missed. 3935 passed / 0 failed.
+
+-----
+
+## 2026-08-17 - Z1: Interesting Functions looked finished 2 s before it was (build 3189)
+
+**Audit #5 Z1 (MED) closed.** The Gameplay-Actions opt-in could latch ON while the grid stayed
+scored with the pack OFF — permanently, with untick+retick the only recovery. The filed finding
+named the guard that drops the toggle (`RescoreAsync`'s `if (IsLoading || ...) return;`) but not
+the thing holding `IsLoading` true, and prescribed a fix that is wrong on a double-toggle.
+
+**What re-derivation added.** `LoadAsync` ended with `await CheckAobMakerAsync()` — sitting directly
+under a comment asserting it *"doesn't block the load"*. It is the **only awaited AOBMaker probe in
+the UI**, against eight fire-and-forget siblings (one hit repo-wide), and the bridge pays a 2000 ms
+pipe-connect timeout whenever Cheat Engine is not running, which is this panel's ordinary state. So
+the swallow window is a **guaranteed 2 s, not a race**. Worse, nothing between `ApplyFilter()` and
+the probe awaits, so the grid's first paint and the final status line land at the instant the window
+opens: the panel looks *done* for the whole 2 s in which its main opt-in silently does nothing.
+
+**Two halves, negative-controlled separately.** (a) `_ = CheckAobMakerAsync()` restores what the
+comment already claimed and deletes 2 s of the window — but not the `Task.Run` remainder, so it is
+not the repair. (b) The repair: record which mode `_allRows` was actually scored with, and reconcile
+it against the live property in `LoadAsync`'s `finally`. Comparing *values* beats the filed
+"pending-rescore latch" precisely on the case a boolean gets wrong — a user who toggles twice inside
+the window is back on the mode already scored, and must trigger no re-score.
+
+**The seam is the lesson, and it is §1.3 again.** The pre-existing test set the property and then
+`await`ed `RescoreAsync()` *directly* — which re-scores unconditionally and therefore passes with
+the defect fully present. The new tests await `PendingRescore`, the task the VM itself decided to
+run, so they can distinguish "the VM reconciled" from "the test re-scored it". They also use bounded
+`Task.WhenAny` waits rather than bare awaits, so re-introducing the `await` **fails** the suite
+instead of hanging it — a hang is not a test result.
+
+Negative controls: restoring the `await` alone fails only the busy-probe test; removing the
+reconcile alone fails only the swallowed-toggle test. 3931 passed / 0 failed.
+
+-----
+
+## 2026-08-17 - the six-MED dossier is spent and archived; the register gate's --list now prints the open vetted tier
+
+**No code change — docs routing + one tool.** The consolidation question ("should the scattered
+audit docs merge into one bugs control table?") was evaluated and answered NO: the audit #5
+register (§3c) already IS the single status owner, CI-gated, and every additional hand-maintained
+copy of status is a copy that drifts. The evidence closed the argument by itself: the re-derivation
+dossier — six rows, one day old — was already inconsistent three ways when checked (its title still
+said UNFIXED, the V4 heading carried no marker despite shipping in build 3170, and the U3 heading
+still called U17 open despite build 3171).
+
+- **`docs/audit-2026-08-16-med-rederivation.md` → `docs/archive/`.** Its queue is fully consumed
+  (PX1 3166 · AF3 3167 · A3 3168 · U3 3169 · V3+V4 3170 · U17 3171). Status markers and relative
+  links were corrected at archive time; the derivation text is untouched — its archive README row
+  flags this explicitly, since that folder's default convention is "nothing was edited, only moved".
+- **`check_audit_register.py --list` now prints each open HIGH/MED row with the §2 segment it sits
+  under** (HIGH first), derived from the same `ROW_RE` pass the gate already runs — zero new stored
+  state, so the list can never disagree with the register it summarises. LOW/INFO stay unlisted on
+  purpose: §3c warns they were never vetted to the audit's standard, and a flat listing would
+  present 160+ unvetted leads as confirmed bugs.
+- Routing text updated everywhere it pointed at the dossier: CLAUDE.md's docs index (dossier row
+  removed, archive row extended, the audit-#5 row now says the fix queue is spent) and §3b's head
+  block, whose stale "0 HIGH / 25 MED" is now the gate-derived 19. The "31 batches" figure next to
+  it was re-derived (31 of 33 register headings carry an open marker) and stands as written.
+
+First run of the new list surfaced a pre-existing row-vs-prose discrepancy to settle later: §3b's
+clump table says AA10 + AA11 were downgraded to LOW on re-derivation, but their register rows still
+carry MED, so both appear in the 19. The rows are the authority the count reads; if the downgrade
+is real, the settle is re-tiering the rows (which moves the derived headline), not trusting the
+prose.
+
+Gates after the change: `check_audit_register` (including the new list), `check_live_verification`,
+`check_derived_counts` — all green.
+
+-----
+
+## 2026-08-17 - U17: the correct struct decoder existed, and only one caller could reach it (build 3171)
+
+**The layout half of U3, and the root cause was one level deeper than filed.** U17 was filed as "the
+byte-blind decoder still reads 4-byte floats, so an LWC `FVector` decodes as six float halves". True —
+but the reason was not that a correct decoder had to be written. **It already existed**, field-driven
+and width-correct, and had done since build ~1200 — *inline inside `WalkInstance` and nowhere else*.
+Every other surface (TMap keys and values, TSet elements, the Property Search preview column,
+DataTable rows) fell through to `InterpretValue("StructProperty", …)` **while already holding the
+`UScriptStruct*` a few lines above its own decode**. Two in-tree comments even name `InterpretValue`
+as the wrong answer.
+
+So the fix is extraction and routing, not new logic:
+
+- **`Ubel::InterpretStructByLayout` / `InterpretStructAt`** — the decoder, lifted out of
+  `WalkInstance` and made callable. `WalkInstance` now calls it too, so the two cannot drift; a second
+  copy is precisely how the report and the reality end up computed by different code paths.
+- **`PreferLayout`** routes the six container call sites: reflected layout when the struct address is
+  in hand, `InterpretValue` only as the fallback for callers that genuinely have no layout.
+- **The width handling is pure and moved to `Ubel.h`** — `PreviewScalarValue` reads each member at the
+  property's OWN declared width, and `FormatPreviewNumber` was **moved** out of `Ubel.cpp` rather than
+  copied. That matters twice: no target compiles `Ubel.cpp`, so this is the only way to pin it; and a
+  copy would have re-created the drift this whole finding is about.
+
+⚠ **The byte-blind path REMAINS, deliberately.** Callers with no `UScriptStruct*` still get
+`f:[…]` from the U3 gate, and U3's test case 6 still asserts its six-float output. That assertion is
+not a leftover — it pins the fallback's behaviour, which is unchanged and still cannot disambiguate
+3 doubles from 6 floats. What changed is that the surfaces that *never needed* the fallback no longer
+take it.
+
+**Verification.** 246 + **1256** C++ assertions (+21) and 3928 C# tests green. Three negative controls,
+each aimed at the width handling because that is the entire defect: `DoubleProperty` read as a float
+→ **2** failures (the LWC case, both signs); `UInt32Property` sign-extended → **1** (the AB4 family —
+`0xFFFFFFFF` must print 4294967295, not -1); the `size == 8` width check dropped → **1**. Restored →
+green.
+
+⚠ **Live check owed** and it is cheap: a struct-valued `TMap`/`TSet` element should now read
+`{X=…, Y=…, Z=…}` instead of `f:[…]`, cross-checked against the `hexValue` on the same row.
+
+-----
+
+## 2026-08-17 - V3 + V4: Live Walker wrote post-await state onto whatever the user moved to (build 3170)
+
+**Shipped together because they are one root cause, one method apart.** Both write VM state after a
+long `await` without checking that the state is still the state they started from. Nothing gates the
+panel meanwhile: `IsLoading` is bound only to a `ProgressBar`'s `IsVisible`, never to `IsEnabled`, and
+`find_refs_to_uobject` rides the **bulk** pipe lane while `walk_instance` rides the **interactive**
+one, so there is no ordering between them at all. The DLL-side reference scan has a 30-second
+deadline — that is how wide the window gets.
+
+**V4** — a drill-down appends to `Breadcrumbs` after its walk returns. Go Back meanwhile and the new
+crumb is grafted onto a *different* parent, with a `FieldOffset` describing a spine that no longer
+exists. Not confined to the panel: it ships into CE XML and CSX exports and is **persisted** into
+`bookmarks.<hash>.json`, so it survives a restart.
+
+**V3** — the reference scan refills `References` and composes `ReferencesHeader` from live VM state,
+so A's referrers appear under "References to B". Not cosmetic: `Open` on such a row pre-arms the
+scroll hint from the referring field and re-roots the walker, giving a real navigation into an object
+that references something else entirely.
+
+**The guard is crumb IDENTITY, never `Breadcrumbs.Count`.** Back-then-a-different-drill restores the
+count while changing the parent. That is not a theoretical objection — swapping the shipped guard for
+a count check was **measured to let 2 of the 7 new tests through**.
+
+**Captured at GESTURE time**, not after the await, and threaded into `NavigateToAsync` — audit #5 AE2
+already paid for this exact lesson ("the ticket is claimed at GESTURE time … claimed in the command it
+would invert the fix"). All three post-await `Breadcrumbs.Add` sites are covered (`NavigateToAsync`,
+the `NavigateToFieldAsync` struct branch, `NavigateToArrayContainerAsync`), each degrading with an
+honest `StatusText` rather than a silent `return`.
+
+⚠ **The residual risk was real, and it has its own test.** The expected-parent parameter is
+**required but nullable**. Game Engine start, and the Go box / bookmark / cross-tab "Open in Live
+Walker" handoff, all call `Breadcrumbs.Clear()` first and legitimately have **no** parent — a
+`required` non-null parameter would have silently killed every one of those paths.
+`V4_ReRootingNavigation_HasNoParentAndMustStillWork` exists to stop a future "tighten the guard"
+change from doing it.
+
+**The controls found a hole that review did not.** Reverting V3's guard to the *tempting* one-liner —
+`result.QueryAddress != CurrentAddress`, free because the DLL echoes it and `DumpService` already
+parses it — left **every V3 test green**. A container drill pushes a crumb and changes
+`CurrentObjectName` while leaving `CurrentAddress` untouched, which is the exact "References to Items"
+mislabel. `V3_ContainerDrillDuringTheScan_IsAlsoCaught` was written in response and now fails against
+that variant. Two of the first four mutations were also useless — one did not compile, one was a
+semantic no-op — which is worth recording: **a mutation that does not change behaviour proves
+nothing, and reads exactly like a passing control.**
+
+**Verification.** 246 + 1235 C++ and **3928** C# tests green (+7). Controls: the identity guard
+downgraded to a count check → 2 failures; the `NavigateToAsync` guard neutralised → 2 failures; V3's
+guard downgraded to address-only → 1 failure (the container-drill test). Restored → green.
+
+**Not done, deliberately:** the shared-`IsLoading` flag (two commands, one flag, each clearing it in
+its own `finally`) and the `IsEnabled="{Binding !IsLoading}"` belt on the Back/Forward/Parent buttons.
+Both are named in the finding; neither is the corruption, and folding them in would have made the
+negative controls ambiguous.
+
+-----
+
+## 2026-08-17 - U3: a struct preview that dropped leading members, silently (build 3169)
+
+**`size > 8` is not evidence of a vtable.** `InterpretValue`'s StructProperty arm skipped the first 8
+bytes whenever the struct was larger than 8, on the theory that structs begin with a vtable pointer,
+then read the remainder as 4-byte floats. The result was a **silent drop of leading members**, which
+is worse than garbage because it looks correct:
+
+- **`FVector3f`** (12 B, 3 floats) printed **one** number — the *last* component. Live-confirmed:
+  `Map_IntToVec3f` → `f:[6203.0000]`, while the raw hex on the same row held all three.
+- **`FLinearColor`** (16 B, 4 floats) lost **R and G**; only B and A printed. Not in the filed finding.
+
+**The filed rationale was wrong in the dangerous direction.** Its parenthetical — *"USTRUCTs generally
+have no vtable"* — is true in aggregate and **false for the first struct the branch's own comment
+names**. `FGameplayAttributeData` declares a virtual destructor, so GAS attributes really do carry a
+vtable with `BaseValue`/`CurrentValue` at +8/+0xC. The 8-skip is *correct* there, and is why the
+heuristic was written and why it survived. Acting on the finding as written — "remove the bogus skip"
+— would have regressed every GAS attribute preview into `f:[<vtable low>, <vtable high>, 100, 75]`.
+
+So the skip is now gated on **evidence** instead of on size: `Ubel::LooksLikeVtablePointer` requires
+the first 8 bytes to be non-null, 8-byte aligned and inside the x64 user-mode canonical range. Two
+floats (`0x400000003F800000`), a double (`0x40934A0000000000`) and an `FLinearColor`'s first two
+components all fail it; a module address (`0x00007FF6...`) passes.
+
+The whole decode moved into `Ubel.h` as pure `inline` code (`LooksLikeVtablePointer` /
+`InterpretStructBytes`) beside `ComputeHoles`, because **no target compiles `Ubel.cpp`** and
+`dll_helpers_test` already includes `Ubel.h` — the MA2 pattern.
+
+⚠ **HALF THE DEFECT REMAINS, and it is asserted rather than papered over.** A 24-byte struct is three
+doubles (UE5 LWC `FVector`) or six floats, and *the bytes cannot say which* — `Radar.h` states this
+repo rule outright: the struct name does not determine the width and neither does the engine version.
+So an LWC vector still decodes wrongly; the skip no longer eats its X, but the doubles are still split
+into float halves. Only the reflected layout settles it, and swapping one guess for another would be
+the same defect with different numbers. Test case 6 asserts the *current* six-value output precisely
+so this cannot be mistaken for fixed. The layout-driven half — routing the four call sites that
+already hold the `UScriptStruct*` (`fv.mapValueStructAddr`, `fv.setElemStructAddr`, `m.structType`,
+`fi.structType`) into the field-driven decoder that already exists at `Ubel.cpp:4832-4899` — stays
+open on the register.
+
+**Verification.** 246 + **1235** C++ assertions (+14) and 3921 C# tests green. Negative control: the
+gate reverted to the old `size > 8` produced **exactly three** failures — `FVector3f`, `FLinearColor`
+and the LWC component count — while **the GAS regression guard kept passing**, which is what
+demonstrates the suite tells this fix apart from "just delete the skip". Blast radius is one function:
+`f:[` appears in source only in `Ubel.cpp`, nothing parses it, so the output format was free to change.
+
+**Also:** `uint64_t small` does not compile in this test file — `rpcndr.h`, via `Windows.h`, does
+`#define small char`. It fails as *"'uint64_t' followed by 'char' is illegal"*, which names neither
+the macro nor the header.
+
+-----
+
+## 2026-08-17 - A3: Value Search indexed ONE FVector per class, ever (build 3168)
+
+**A cycle guard that answered the wrong question.** `ScanForValue`'s per-class index builder
+(`expandFields`, [Aura.cpp:6411](../dll/src/Aura.cpp)) threaded a single `unordered_set` through the
+whole struct walk with `visited.insert(structAddr)` and **no matching erase anywhere**. One set per
+`buildClassIndex` call, by reference, for the entire tree — so it answered *"have I ever seen this
+`UScriptStruct` in this class?"* when the only safe question is *"am I currently inside it?"*.
+
+Consequence: only the **first** field of a given struct type in a class contributed leaves, and every
+later one was dropped **subtree and all**. And the loss is **cross-branch**, not "sibling fields of a
+repeated struct" — once `Vector` had been entered anywhere, every other `FVector` in that class at any
+depth was skipped. An ordinary actor indexed `Location` but never `Velocity`, `Scale3D` or `Extent`;
+inside a single `FTransform`, `Translation` blocked `Scale3D`. Value Search then reported no match for
+a field that was sitting right there.
+
+**The filed framing ("hits GAS") was the wrong headline** and would have scoped the fix. The dominant
+real-world hit is `FVector`/`FRotator` repeats on ordinary actors under Float / Double / NumericAll —
+this tool's most common query. GAS is one instance, not the scope. Conversely **vector-typed scans are
+unaffected**: `Radar::VectorStructNames` is non-empty there, so the `acceptedStructNames.empty()` gate
+skips the recursion and the guard never fires — a verification run using an FVector scan would have
+shown nothing wrong.
+
+**Why it never looked broken:** `git log -L` puts the guard in `da9865dd`, *"recurse StructProperty so
+GAS / nested-struct leafs are reachable (build 740)"* — the commit that added nested-struct support
+shipped with the bug that half-defeats it. `Health` was found; only its siblings were missing.
+
+- **`Aura::StructPathGuard`** (new, header-inline in [Aura.h](../dll/src/Aura.h)) — RAII, scoped to the
+  active path. RAII rather than a bare `erase`, because the lambda has many early exits and the first
+  one anybody forgets silently restores the bug.
+- **`kMaxScanFieldsPerClass = 4000`** — path-scoping deliberately removes the accidental bound the
+  whole-walk set was providing, leaving only `depth <= 4` on a tree whose fan-out is
+  (fields per struct)^4. Mirrors `kMaxSchemaLeavesPerClass`, which its sibling pairs with the same
+  path-scoped guard for exactly this reason. **The one-line fix as filed would have removed a bound
+  without adding one.**
+- **The cap logs when it bites.** A missing leaf is indistinguishable from a value that is not there —
+  which is precisely how this stayed invisible for ~2400 builds.
+
+**Two walkers already had it right**, which is the observable tell: `CollectSchemaLeaves`
+(Property Search Deep, erases at `Aura.cpp:4251` under a comment that states the intent verbatim) and
+`CollectGroupLeaves` (Group Scan, push/pop at 8114/8150). So Group Scan and Property-Search-Deep found
+`MaxHealth` while single-value Value Search did not — **a distinct in-the-scanner cause for the
+"Value Search can't find field X" family in [working-lessons.md](working-lessons.md) §5, separate from
+AB4.**
+
+**Verification.** No target compiles `Aura.cpp`, so the semantics were moved into a header-inline type
+and pinned in `dll_helpers_test` (which already includes `Aura.h`): 246 + 1221 C++ assertions and 3921
+C# tests green. Negative control — the guard's destructor emptied to reproduce the whole-walk
+behaviour — produced **7 failures including both A3-labelled sibling assertions**, then green again on
+restore. The test's third case is itself a control in the opposite direction: re-entry *along the
+active path* must still be **refused**, or "siblings work" would be passing for the wrong reason and a
+self-referential `USTRUCT` would recurse until the stack died.
+
+⚠ **Still needs a live check.** The unit test pins the guard's contract, not the walk that uses it.
+The in-game confirmation is cheap and specific: a Float scan on an actor class should now index
+`Velocity` / `Scale3D`, not just `Location`.
+
+-----
+
+## 2026-08-17 - AF3: the Live Funcs panel was silent about a cap that removes its own target (build 3167)
+
+**The cap keeps the highest counts; this panel exists to find a low one.** `pe_profile_get` sorts the
+whole table by fire count desc and emits only the first `FetchLimit = 300` rows, while
+`distinct_funcs` stays **pre-cap** ([Fern.cpp:3983](../dll/src/Fern.cpp), pipe-protocol.md says
+"pre-cap" explicitly). The panel's own dev-log states the workflow: *"The action-specific function is
+near the top with a **low** count (a handful of calls); per-frame Tick/Update noise has huge counts."*
+Count-desc + cap deletes precisely that tail. On a game whose window dispatches more than 300 distinct
+UFunctions, `OpenShop` (count 1-3) is not a mis-ranked row — it is an **absent** row, and nothing said
+so. The busier the game, the more certain it was that the answer was the part that got cut.
+
+**The compounding half: a baseline captured from a capped page fabricates the answer.**
+`SetBaseline` built `_baseline` from the same truncated page, so any idle function below the cut
+missed `_baseline.TryGetValue` on the action fetch → `IsNew = true` → sorted to the very top by
+`OrderByDescending(e => e.IsNew)` → survived the default New/changed-only filter. The status line then
+read *"The action's function is almost certainly among the NEW rows at the top."* Worse, `std::sort`
+is not stable and the input is `unordered_map` iteration order ([Linie.cpp:92](../dll/src/Linie.cpp)),
+so which count-1 functions survive the cap differs arbitrarily between the two recordings — false NEWs
+land in the same tail as the true ones and are indistinguishable by inspection.
+
+- **Truncation is derived, not guessed** — `Entries.Count < DistinctFuncs`. Conservative and correct:
+  it is also true when `ResolveFunctionInfo` dropped stale pointers or the `Tot` abort cut the emit
+  loop short, and all three mean the same thing to the user.
+- **Both status lines are honest now.** Non-diff gains the house cap string
+  (`SnapshotViewModel`/`SpcQueryViewModel` convention), spelled `(showing top N of M by count)`
+  because *which* rows were cut is the point. The diff line stops reporting page-scoped counts against
+  a table-scoped denominator — "1 NEW of 900" invited reading 900 as the population those rows were
+  selected from when only 300 were examined — and **drops the certainty claim** when either page was
+  capped, replacing it with what NEW actually means: *not in the idle top N*, not *did not fire*.
+- **`SetBaseline` marks the baseline PARTIAL rather than refusing it.** Refusing would disable Diff on
+  exactly the busy games it is for; the defect was never the capture, it was the silence.
+- **AF28 — found while re-deriving, filed as its own LOW row rather than folded in silently:**
+  `GroupBy(Key).ToDictionary(g => g.Key, g => g.First().Count)`
+  made the captured baseline depend on a **view toggle**. `_allEntries` is re-sorted *in place* by
+  `ApplyDiffAndFilter`, and Earliest-first orders it by `FirstSeq` — so `First()` took whichever
+  duplicate-key row was on top of the current grid. Now `Max(x => x.Count)`, which is what `First()`
+  was reaching for and is sort-independent.
+
+**Tests: 8 new, and the fixture trap was real.** `ResultOf(...)` sets `DistinctFuncs = entries.Length`,
+so all 13 existing uses are structurally incapable of expressing a truncated page — they always assert
+the degenerate not-truncated case, which is why ~30 tests never caught this. A separate
+`TruncatedResultOf(distinct, entries)` was added rather than reusing it (working-lessons §2.3, "a
+fixture that reports coverage it does not have"). Four of the eight are **negative controls in their
+own right**: the cap note must NOT appear on a whole fetch, and the original certainty sentence must
+SURVIVE when nothing was capped — otherwise the fix has merely deleted a working hint.
+
+**Verification.** 3921 tests green. Then five source mutations, each reverting one piece of the fix and
+each observed to fail: dropping the cap note, dropping the PARTIAL marking (2 tests), `Max`→`First`,
+forcing the diff line always-confident, and reporting diff counts against the table again. Restored
+tree green again. **The harness itself needed a negative control first** — the initial run passed
+`--nologo`, which Microsoft.Testing.Platform does not accept, so it printed help and ran **zero**
+tests while reporting every mutation as "no test failed". Only checking the *restored* tree's exit
+code exposed it. Half 2 of the fix shape (a `sort` parameter on `pe_profile_get` so the UI can ask for
+the low-count tail) is DLL work and deliberately not done here — the false-NEW manufacture is a
+client-side bug and stays reachable through any DLL change.
+
+-----
+
+## 2026-08-17 - PX1: two proxies handed our functions the real DLL's ordinals (build 3166)
+
+**A proxy DLL is a NAME map AND an ORDINAL map.** PX1 was filed against `dinput8` for the first;
+re-derivation found the second, on `version.dll` — the UI's default proxy — eight times over. Nine
+collisions across two proxies, not one.
+
+**The loud half** (dinput8 only): the real `dinput8.dll` exports six functions and
+`ProxyDinput8.def` listed five. A by-name static import of `GetdfDIJoystick` against our proxy fails
+process creation with `STATUS_ENTRYPOINT_NOT_FOUND` — before `DllMain`, before `Sein` has a log file
+to say so.
+
+**The quiet half, and the worse one** (both proxies): `link.exe` hands **unpinned** exports out in
+name-sorted order starting at **(highest PINNED ordinal + 1)** — not at 1, and not
+"alphabetically from 1" as the finding assumed. Neither hand-written `.def` pinned anything, so on
+dinput8 the five real forwards landed on `@1..@5` by luck and our `UE5_*` block began exactly where
+`GetdfDIJoystick` belonged; on version the nine `GetFileVersionInfo*` names took `@1..@9`
+alphabetically and our block took `@10..@17`, which is where the real DLL keeps `VerFindFileA/W`,
+`VerInstallFileA/W`, `VerLanguageNameA/W` and `VerQueryValueA/W`. An ordinal import of any of those
+nine did not fail — it called one of ours, with an unrelated signature.
+
+**Two filed premises were wrong, and both were load-bearing for the repair.** The ordinal rule above
+is why pinning *only* the new export would have been **worse than the bug** (the five correct
+forwards would have moved off their own ordinals to `@7..@11`). And `/DEF:` does **not** suppress
+`__declspec(dllexport)` — it *merges* with it, which three `.def` headers claimed otherwise; the
+shipped dinput8 proxy exported 66 names while its `.def` listed 36. So the missing export needed an
+*implementation*, not just a line.
+
+- **`Lugner_Dinput8.cpp`** — a sixth forwarder, `Proxy_GetdfDIJoystick`, declared `const void*` so
+  `dinput.h` stays out of the build (no-args/pointer-return either way, so a plain C forwarder is
+  exact and the asm jmp-thunk machinery dxgi/winmm need for undocumented internals is unnecessary).
+  The four comments that made the wrong count *look* verified are corrected.
+- **`ProxyDinput8.def`** pins `@1..@6`, **`ProxyVersion.def`** pins `@1..@17` — shipped as two
+  separate commits so a regression on the default proxy has one suspect. version's source order is
+  deliberately *not* renumbered into ordinal sequence, so it stays line-diffable against `Lugner.cpp`.
+- **[`tools/check_proxy_exports.py`](../tools/check_proxy_exports.py)** re-derives it permanently
+  against a committed System32 baseline (`tools/pe/proxy-export-baseline.tsv`) — a baseline rather
+  than a live read because these tables vary by Windows build and a runner whose System32 differs
+  from the maintainer's must not redden an unrelated PR. Five rules; rule 4 (*max pinned >= max
+  real*) is the structural one that keeps the unpinned `UE5_*` block above the real range with no
+  per-symbol bookkeeping. Wired into CI **twice**: the `.def` source before the build, the four
+  linked DLLs after it — because PX1's own severity was misjudged from the source and it was the
+  artifact that disagreed.
+- **Negative controls** — 6 mutations run on scratch copies, all observed to fail (2/7/5/3/1/18
+  errors); case 6 reverts version's pins and reproduces the shipped defect exactly. dxgi and winmm
+  pass untouched, so the check distinguishes the two broken `.def`s from the two correct ones.
+
+**Verified on the artifacts, not the source:** all four proxies now diff clean against real System32
+— zero missing names, zero ordinal mismatches. dinput8 67 exports (ours start `@7`), version 78
+(`@18`), dxgi 81 (`@21`), winmm 241 (`@183`). No live-game verification was added to the backlog:
+`ProxyImportAnalyzer.cs:285` records only 1 of 21 measured games statically imports dinput8, and the
+modern Windows SDK *statically defines* `GetdfDIJoystick` rather than importing it, so there is
+probably no game that can exercise the original failure.
+
+**Also shipped: a Startup-shortcut tool, in two languages.**
+[`scripts/startup-shortcut.ps1`](../scripts/startup-shortcut.ps1) and
+[`scripts/startup_shortcut.py`](../scripts/startup_shortcut.py) create / remove / inspect a per-user
+Start Menu Startup shortcut for `UE5DumpUI.exe`, resolving the exe from their own folder; `build.ps1`
+copies both into `dist\` beside it. Current user only by design (the folder comes from the shell, not
+from a literal `%APPDATA%` path, which is localised and redirectable). No pipe, no network. Both
+refuse to overwrite or delete a shortcut pointing at anything else without `-Force`, and both read the
+shortcut back after writing — `Save()` reports success by not throwing, and a wrong Startup shortcut
+gives no feedback until the next sign-in. **Why two:** Bitdefender's Advanced Threat Defense
+quarantined the `.ps1` on its first run and took `build.ps1`,
+`scripts/gen_proxy_forwarders.py`, `tools/check_proxy_exports.py` and `dist/UE5DumpUI.exe` with it —
+see [working-lessons.md](working-lessons.md) §3.8.
+
+**Verification split by host, deliberately.** The Python tool was swept automatically — 11 cases
+including both refusals, all inside a temp folder via `--startup-dir`, real Startup folder never
+touched. The `.ps1` was **not** re-run here (automated PowerShell is what tripped the AV); the
+maintainer ran it by hand from `dist\` instead: `status` → `remove` on an empty folder → `install`
+→ directory listing showing `UE5CEDumper.lnk` → `remove` → listing showing it gone. All six steps as
+expected, with the two other programs' shortcuts in that folder untouched throughout. Two things
+that cross-check: the shortcut is **989 bytes, identical to the one the Python twin writes**, so the
+two implementations produce equivalent `.lnk` files; and the em dashes rendered correctly, confirming
+the UTF-8 BOM fix (Windows PowerShell 5.1 reads a BOM-less `.ps1` as ANSI and had been printing them
+as `??`).
+
+-----
+
+## 2026-08-16 - AU1: find-object-by-path never existed, on three APIs that advertised it (build 3157)
+
+**Found by VERIFICATION, not by a finder.** Running todo.md's AA4-AA7 step 1 against a real Cheat
+Engine on Elliot produced `[UE5Dissect WARN] Object not found: /Script/Engine.Actor`. The DLL exports
+resolved fine, so this was not the AA4 error-reporting fix misbehaving - the DLL genuinely could not
+find `AActor`, a class that is present in every UE process ever built.
+
+**What was wrong.** Three APIs claimed a capability none of them had:
+
+- `Frieren.cpp:691` - `UE5_FindObject(const char* fullPath)` handed `fullPath` straight to
+  `Aura::FindByName`, which matches a **bare FName**. Every path-shaped argument returned 0.
+- `Fern.cpp:1910` - the pipe's `find_object` did the same, on a variable literally named `path`.
+- `Aura.cpp:1408` - `FindByFullName`, the only path-shaped API, was a **stub returning 0**
+  (`(void)fullName; return 0;`) whose comment claimed it "is implemented after UStructWalker is
+  available". It never was. It had **zero callers**, and `docs/dll-spec.md:218` listed it as real
+  API - so nothing failed loudly and the gap survived indefinitely.
+
+**Root cause is a format mismatch nobody ever compared.** `Ubel::GetFullName` emits
+`//Script/Engine/Actor` - double leading slash, `/` between package and object. Every caller, doc,
+`.CT` and Lua script writes UE's own `/Script/Engine.Actor`. Those two strings denote the same object
+and compare unequal, which is why a path resolve found nothing *at all* rather than finding the wrong
+thing. Measured before the fix: `find_object "Actor"` -> `0x7FF4DDE12068`;
+`find_object "/Script/Engine.Actor"` -> `Object not found`.
+
+**User-visible blast radius.** `ue5_dissect.lua`'s `createFromPath` is the documented entry point for
+building a CE structure from a class path, and `createInteractive` **pre-fills its dialog with
+`/Script/Engine.Actor`** - so the shipped default input failed 100% of the time. AA4-AA7 step 1, as
+written, could never have passed on any game.
+
+**The fix.** A pure canonicalizer trio header-inline in `Aura.h` -
+`CanonicalizeObjectPath` / `LooksLikeObjectPath` / `PathLeafName` - reducing all three spellings
+(`//Script/Engine/Actor`, `/Script/Engine.Actor`, `Class /Script/Engine.Actor`) to one form, with
+`.` and `:` treated as separators and case preserved (every sibling name compare in `Aura` is
+exact-cased). `FindByFullName` is now real: it gates the expensive `GetFullName` Outer-chain walk
+behind a **cheap FName leaf pre-filter**, so it costs one FName read per object instead of a string
+build over ~85K objects. One new entry point, `FindByNameOrPath`, is what both callers use.
+
+**Path is tried FIRST when the query carries a separator, and that ordering is the design.**
+`/Game/A.Foo` and `/Game/B.Foo` share the leaf `Foo`; answering either with whichever object the
+GObjects walk reached first is a wrong answer that looks like a right one. Bare names skip the path
+attempt entirely, so `FindByName`'s historical single-pass cost is unchanged.
+
+**Testability, per the MA2 lesson.** No test target compiles `Aura.cpp` - but
+`dll_helpers_test.cpp` **already includes `Aura.h`** (for `IsEnginePackage`), so the pure half is
+directly pinnable. 16 new assertions; the negative control (removing the `.`/`:` rewrite) turns
+**6** of them red, and notably NOT the `//Script/Engine/Actor` case, which needs only slash
+collapsing - the assertions discriminate rather than failing as a block.
+
+**Live verification (Elliot, UE 5.4, 84,990 objects, proxy dxgi build 3157).**
+`/Script/Engine.Actor`, `Class /Script/Engine.Actor`, `//Script/Engine/Actor` and bare `Actor` all
+resolve to the **same** `0x7FF4DDE12068`; `/Script/Engine.Pawn` resolves separately. The negative
+control is the one that matters: **`/Script/NoSuchPkg.Actor` returns "not found"** even though the
+leaf `Actor` exists - proving the package half is genuinely matched and not quietly ignored.
+End-to-end, `createFromPath("/Script/Engine.Actor")` now builds a **129-field `Actor`** structure in
+CE with `unnamed=0` rows and a correct header (`0:VTable | 8:ObjectFlags | 12:ObjectIndex |
+16:Class | 24:FNameIndex | 32:Outer`), closing AA4-AA7 steps 1 and 5.
+
 ## 2026-08-17 - MA2: one predicate for "where can this pattern start" (build 3135)
 
 **`ScanRegionBatch` computed `regionSize - pat.bytes.size()` as an unsigned max-start** while

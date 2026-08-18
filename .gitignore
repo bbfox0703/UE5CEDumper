@@ -451,3 +451,8 @@ vendor/UnrealEngine/
 # fresh run, so it is pure build artifact — but it sat untracked at the repo root for weeks
 # and was one `git add -A` away from being committed as if it were source.
 /patterns.tsv
+
+# Machine-local hint-cache snapshots taken by tools/verify/cold_detect.py.
+# These are copies of %LOCALAPPDATA%\U000E5CEDumper\U000E5CEDumper.{Machine}.json,
+# i.e. one machine's whole installed-game inventory. Never commit them.
+tools/verify/cache-backups/

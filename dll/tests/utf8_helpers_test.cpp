@@ -563,6 +563,82 @@ static void Test_IsWellFormedUtf8() {
     EXPECT("5-byte form rejected", !Utf8Helpers::IsWellFormedUtf8(fiveByte, 5, multi));
 }
 
+// --- AD5: the ASCII tie — an English FText stored as UTF-8, over zeroed slack ---
+//
+// Production reads Num*2 bytes, so half the window is adjacent heap. When the heap is
+// ZERO-FILLED (the ordinary allocator state) a pure-ASCII UTF-8 string satisfies the
+// UTF-16 hypothesis too: the terminator pair lands at [2n-2], every ASCII byte PAIR
+// becomes one BMP unit, and the result is valid CJK with ZERO replacement characters —
+// so LooksLikeDecodedText accepts it and the wrong hypothesis wins.
+//
+// The header used to argue this needed two independent coincidences. It needs one:
+// zeroed slack supplies both at once, and the mis-decode then fires every time.
+//
+// Rule 3a settles it structurally — an FString's Num includes its terminator, so a
+// UTF-16 reading with an INTERIOR null unit is not an n-unit string.
+
+static void Test_Decode_Utf8AsciiOverZeroedSlack_Short() {
+    // "OK" UTF-8 (3 bytes incl. NUL), read as Num*2 = 6 with zeroed heap.
+    // Before the fix this returned U+4B4F ("䭏"): 'O' | 'K'<<8.
+    const uint8_t buf[] = { 'O','K',0x00, 0x00,0x00,0x00 };
+    EXPECT_EQ_STR("UTF-8 ASCII over zeroed slack (OK)",
+                  Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 3), "OK");
+}
+
+static void Test_Decode_Utf8AsciiOverZeroedSlack_Word() {
+    // "Continue" — the reported case. 9 bytes incl. NUL, read as 18.
+    // Before the fix: U+6F43 U+746E U+6E69 U+6575 ("潃湴極eu"-shaped mojibake).
+    const uint8_t buf[] = {
+        'C','o','n','t','i','n','u','e',0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    EXPECT_EQ_STR("UTF-8 ASCII over zeroed slack (Continue)",
+                  Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 9), "Continue");
+}
+
+static void Test_Decode_Utf8AsciiOverZeroedSlack_WithSpace() {
+    // Odd byte count, and a space — LooksLikeDecodedText treats spaces as textual,
+    // so this is squarely the case the old "rejects a binary tail" defence claimed
+    // to cover. "Press Start" = 12 bytes incl. NUL, read as 24.
+    const uint8_t buf[] = {
+        'P','r','e','s','s',' ','S','t','a','r','t',0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    EXPECT_EQ_STR("UTF-8 ASCII over zeroed slack (Press Start)",
+                  Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 12), "Press Start");
+}
+
+// --- AD5 controls: the tie-break must not reach anything that is not the tie ---
+
+static void Test_Decode_TieBreakDoesNotTouchGenuineUtf16() {
+    // Genuine UTF-16 "OK": buf[n-1] = 'K' != 0, so the UTF-8 hypothesis never even
+    // forms and utf8Ok is false — the tie-break is gated off entirely. If the gate
+    // were ungated this would still pass, which is why the next control exists.
+    const uint8_t buf[] = { 'O',0x00, 'K',0x00, 0x00,0x00 };
+    EXPECT_EQ_STR("genuine UTF-16 unaffected by the tie-break",
+                  Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 3), "OK");
+}
+
+static void Test_Decode_TieBreakIsGatedOnUtf8Success() {
+    // THE CONTROL FOR THE GATE ITSELF. A UTF-16 buffer carrying a real interior zero
+    // unit, where the UTF-8 hypothesis FAILS (0x87 is a lone continuation byte, so the
+    // bytes are not well-formed UTF-8). An UNGATED interior-zero-unit rule would reject
+    // this reading too and change the answer; because the rule is gated on utf8Ok it
+    // does not run, and the decode is byte-identical to before the fix.
+    // 中<NUL>二 : 4E2D 0000 4E8C + NUL, with a non-UTF-8 first pair.
+    const uint8_t buf[] = { 0x2D,0x4E, 0x00,0x00, 0x8C,0x4E, 0x00,0x00 };
+    const std::string got = Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 4);
+    EXPECT("interior-zero UTF-16 still decodes (tie-break stayed out)", !got.empty());
+}
+
+static void Test_Decode_MultiByteStillWinsOverZeroedSlack() {
+    // Rule 2 must keep priority: a well-formed multi-byte sequence settles the width
+    // before the tie-break is ever consulted. "中" = E4 B8 AD + NUL, zeroed slack.
+    const uint8_t buf[] = { 0xE4,0xB8,0xAD,0x00, 0x00,0x00,0x00,0x00 };
+    EXPECT_EQ_STR("UTF-8 multi-byte beats zeroed slack",
+                  Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 4), "\xE4\xB8\xAD");
+}
+
 static void Test_Decode_RejectsEmptyAndGarbage() {
     const uint8_t buf[] = { 0x00,0x00,0x00,0x00 };
     EXPECT_EQ_STR("num < 2 is empty",
@@ -639,6 +715,12 @@ int main() {
     Test_Decode_Utf16Cjk_AsciiLookingPrefix();
     Test_Decode_Utf16Cjk_MixedAscii();
     Test_Decode_Utf8MultiByteBeatsZeroHeapTail();
+    Test_Decode_Utf8AsciiOverZeroedSlack_Short();
+    Test_Decode_Utf8AsciiOverZeroedSlack_Word();
+    Test_Decode_Utf8AsciiOverZeroedSlack_WithSpace();
+    Test_Decode_TieBreakDoesNotTouchGenuineUtf16();
+    Test_Decode_TieBreakIsGatedOnUtf8Success();
+    Test_Decode_MultiByteStillWinsOverZeroedSlack();
     Test_IsWellFormedUtf8();
     Test_LooksLikeDecodedText();
 

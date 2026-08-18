@@ -53,6 +53,18 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// round-trip (the entry set is unchanged; only the scoring differs).</summary>
     private IReadOnlyList<AllFunctionEntry> _entries = Array.Empty<AllFunctionEntry>();
 
+    /// <summary>Which <see cref="GameplayActions"/> mode <see cref="_allRows"/>
+    /// was actually scored with. The grid and the CheckBox can disagree because
+    /// a toggle raised while a Load is in flight is dropped by
+    /// <see cref="RescoreAsync"/>'s busy guard; comparing this against the live
+    /// property is how the two are reconciled once the Load finishes.</summary>
+    private bool _scoredWithGameplayActions;
+
+    /// <summary>The re-score <see cref="LoadAsync"/> kicked off to reconcile a
+    /// toggle that arrived while it was busy, or null when the modes already
+    /// agreed. Exists purely as a test seam — production code never reads it.</summary>
+    internal Task? PendingRescore { get; private set; }
+
     [ObservableProperty] private bool   _gameOnly = true;
     [ObservableProperty] private string _filterText = "";
     [ObservableProperty] private FunctionCategory? _categoryFilter; // null = All
@@ -354,6 +366,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
 
             // Score on the worker thread to keep the UI responsive when
             // the result set is in the tens-of-thousands range.
+            _scoredWithGameplayActions = includeActions;
             _allRows = await Task.Run(() => ScoreEntries(_entries, includeActions));
 
             // Build the class histogram over the FULL scored set, then filter.
@@ -371,9 +384,18 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                       $"interesting={interesting} (gameOnly={GameOnly})");
 
             // Refresh AOBMaker state at end of load so the Notes column
-            // reflects current connectivity. Doesn't block the load --
-            // status text above already updated.
-            await CheckAobMakerAsync();
+            // reflects current connectivity. Fire-and-forget: this MUST NOT
+            // be awaited. CheckAvailabilityAsync pays AobMakerBridgeService's
+            // 2s pipe-connect timeout whenever CE isn't running -- the normal
+            // state for this panel -- and awaiting it held IsLoading true for
+            // those 2s AFTER the grid was already painted and the final status
+            // written, so the panel looked idle while RescoreAsync's
+            // `if (IsLoading ...) return;` guard silently swallowed every
+            // Gameplay-Actions toggle. Every other AOBMaker probe in the UI is
+            // fire-and-forget for the same reason; this was the lone `await`.
+            // Dropping the Task is safe -- CheckAobMakerAsync swallows its own
+            // exceptions into IsAobMakerAvailable = false.
+            _ = CheckAobMakerAsync();
         }
         catch (Exception ex)
         {
@@ -384,6 +406,28 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         finally
         {
             IsLoading = false;
+
+            // Reconcile the toggle against what the rows were actually scored
+            // with. Anything the user changed while IsLoading was true was
+            // discarded by RescoreAsync's guard, and nothing else re-runs -- so
+            // without this the grid stays scored for the OTHER mode forever and
+            // the only recovery is untick+retick, which is not discoverable.
+            //
+            // Comparing the two values rather than latching a "something was
+            // swallowed" bool is deliberate: it is direction-agnostic, and a
+            // user who toggles twice inside the window lands back on the mode
+            // already scored, which correctly does nothing.
+            //
+            // Fire-and-forget so the load command completes now; RescoreAsync
+            // re-reads GameplayActions itself, so a further toggle is still
+            // handled by the normal OnGameplayActionsChanged path. The task is
+            // kept (rather than discarded into `_`) only so the VM tests can
+            // await the reconciliation instead of calling RescoreAsync
+            // themselves — calling it directly is the seam that let the
+            // existing coverage pass straight through this defect.
+            PendingRescore = (_entries.Count > 0 && GameplayActions != _scoredWithGameplayActions)
+                ? RescoreAsync()
+                : null;
         }
     }
 
@@ -438,6 +482,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         if (IsLoading || _entries.Count == 0) return;
         var entries = _entries;
         bool includeActions = GameplayActions;
+        _scoredWithGameplayActions = includeActions;
         _allRows = await Task.Run(() => ScoreEntries(entries, includeActions));
         ApplyFilter();
     }
