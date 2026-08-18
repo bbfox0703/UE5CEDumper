@@ -2091,6 +2091,44 @@ handle needs the record passed in, or the generated script must poll `isAbandone
 — the accessor exists for exactly this and has no other caller. Effort **S**, risk **LOW**; the
 `scripts/tests/freeze_helper_test.lua` rig already drives the abandonment path.
 
+### ⛔ NEW 2026-08-18 `[CLASSTOTAL-2026-08-18]` — "total UClasses" is the CAPPED count, so it can never answer "how many classes?"
+
+*Raised by the maintainer asking the obvious question — "can I see the class count in the UI? I only
+see objects" — and the answer is that the field which claims to be the total is not one.*
+
+`Aura::ListClasses` bounds its own loop on the result cap and counts inside it:
+
+```cpp
+for (i = 0; i < count && (int)result.results.size() < maxResults; ++i) { … result.totalClasses++; … }
+result.truncated = (int)result.results.size() >= maxResults;
+```
+
+so `totalClasses` **cannot exceed `maxResults`**. The Classes tab
+([`GameClassFilterViewModel.cs:93`](../ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs)) renders
+
+```
+5000 classes (scanned 355,679 objects, 5000 total UClasses)  ⚠ STOPPED at the 5,000-row cap …
+```
+
+— i.e. **the two numbers are identical exactly when the second one is supposed to add information**.
+The same field is capped on the wire (`list_classes` → `total_classes`), so the pipe is no better.
+This is audit #4's recurring root cause: *the report and the reality are computed by different
+paths.* Here the "total" is simply the same partial count under a different name.
+
+**What actually answers the question today** (and what the X2 rows had to fall back on): Interesting
+Funcs' status line, `"{N} functions across {K} classes"`
+([`InterestingFunctionsViewModel.cs:380`](../ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs)),
+whose `K` is **not** bounded by 5,000 (its limit is 100,000 *functions*). On Elliot the two panels
+disagree in the same session — Classes `5000 ⚠ STOPPED` vs Funcs `20235 functions across 6609
+classes` — and the second is the honest one.
+
+**Fix shape (small):** count classes in a pass that is not bounded by the row cap — either keep
+incrementing `totalClasses` after `results` fills (drop `totalClasses` out of the capped loop and let
+the walk continue), or drop the field and have the cap note carry the real total
+(`⚠ STOPPED at 5,000 of 6,609`). Either way the UI should be able to say the number, since a user
+choosing a title for a cap-related check needs it. Effort **S** · Risk **low** (read-only counter).
+⚠ Do not "fix" it by raising the cap — the cap is the feature under test in X2.
+
 ### ⛔ NEW 2026-08-18 `[PEHOOKONCE-2026-08-18]` — a FAILED ProcessEvent detection is PERMANENT for the process, and the message it prints is unreachable advice
 
 *Distinct from `[PEHOOK-2026-08-17]` below: that one is a wrong vtable SLOT on one sample. This one
