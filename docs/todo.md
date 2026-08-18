@@ -2397,36 +2397,70 @@ and is decisive — this is the rare case where the regression was captured befo
    sit in the *same* process, on the *same* warm page cache, and did **not** speed up. So the 4× is
    the hint path and not disk caching or machine warm-up. Conditions: `Elliot-Win64-Shipping.exe`,
    **482,390,784 bytes**, build 3122.
-4. 🟡 **MA1 — the cancel actually fires. ATTEMPTED FOUR WAYS on 2026-08-18 (Elliot), STILL UNPROVEN
-   — but the staging is now solved, so do NOT start from scratch.**
+4. ✅ **DONE 2026-08-18 `[ELLIOT-MA1-2026-08-18]` — the cancel fires, and every guard with it.**
+   Elliot through its `dxgi` proxy, hint entry dropped (`tools/verify/cold_detect.py drop
+   6A577F4E1D91B000`) so the scan is cold: **8.0 s**, against **3.3 s** warm.
 
-   **First, the enabling measurement**: dropping Elliot's hint entry (`6A577F4E1D91B000`, via
-   `tools/verify/cold_detect.py drop`) makes the scan **8.0–8.4 s** against **3.3 s** warm — an
-   ample window. The window was never the problem; **reaching `Tot::Requested()` was**.
+   ```
+   13:34:43.834 UE5_Init: Starting initialization...
+   13:34:46.459 UE5_Shutdown: Cleaning up...                       <- fired 2.5 s into the scan
+   13:34:47.310 [GNames]          AOB scan CANCELLED after 0/4 batches (client gone / shutdown)
+   13:34:47.311 [GWorld]          AOB scan CANCELLED after 0/7 batches
+   13:34:47.311 [SparseDelegates] AOB scan CANCELLED after 0/2 batches
+   13:34:47.311 FindSparseDelegateStorage: CANCELLED — not latching, the next scan will retry
+   13:34:47.311 FindAll: scan was CANCELLED — NOT writing the hint cache
+   ```
+   Both required lines are present and land **851 ms** after the shutdown — inside the ~1 s bar.
 
-   | route tried | what happened | cause |
+   ### ⚠ The staging is the hard part — four routes were measured and DO NOT WORK
+   | route | what happened | cause |
    |---|---|---|
-   | Untick the CE record ~2 s in (**as this step is written**) | click took effect **8.5 s later**, after the scan had finished | the `.CT` `init` script blocks **CE's GUI thread** for the whole scan, so the click just queues. **This step as written is not performable.** |
-   | Kill the UI mid-scan (timed off the log, landed **2.8 s** into an **8.0 s** scan) | scan **completed normally**, no `CANCELLED` line | `trigger_scan` is **async** — it returns at once and the UI polls `scan_status`, so there is no in-flight command for a disconnect to cancel. Same cause as B4's third trap. |
-   | CE Lua `createThread` + fixed `sleep`, then `UE5_Shutdown` | fired **before** the scan started | a GUI round trip (front + click) is 2–6 s and outlasted the timer. ⚠ **And a leftover thread from the previous attempt later shut down a FRESH Elliot** — CE keeps one Lua state, so arm-and-abandon leaves live threads; restart CE between attempts. |
-   | CE Lua thread polling `init-0.log` for `Starting initialization` | printed **`NEVER SAW SCAN START`** | **CE Lua's `io.open` cannot read our live log** — the writer's share mode, exactly [working-lessons.md](working-lessons.md) §3. Python's reader *can* (`tools/verify/kill_on_marker.py` reads it fine), Lua's cannot. |
+   | Untick the CE record ~2 s in (**how this step is written**) | click took effect **8.5 s later**, after the scan ended | the `.CT` `init` script blocks **CE's GUI thread** for the whole scan. **Not performable as written.** |
+   | Kill the UI mid-scan (landed 2.8 s into an 8.0 s scan) | scan **completed normally** | `trigger_scan` is **async**; no in-flight command for a disconnect to cancel. Same cause as B4's third trap. |
+   | CE Lua `createThread` + fixed `sleep` | fired **before** the scan started | a GUI round trip is 2–6 s, and **each operator action costs ~10 s of wall clock**, so two consecutive actions cannot hit an 8 s window. ⚠ A leftover thread later shut down a *fresh* Elliot — CE keeps one Lua state, so **restart CE between attempts**. |
+   | CE Lua thread polling `init-0.log` | printed `NEVER SAW SCAN START` | **CE Lua's `io.open` cannot read our live log** (writer share mode — [working-lessons.md](working-lessons.md) §3). Python's reader can. |
 
-   ▶ **The recipe that should work, next session — reverse the order so the GUI round trip is off the
-   critical path.** Click **Start Scan first** (the scan then runs for ~8 s), *then* switch to CE and
-   Execute `createThread(function() sleep(500) executeCodeEx(0,60000,getAddress('dxgi.UE5_Shutdown')) end)`.
-   A 2–4 s switch lands the shutdown comfortably inside the scan. Requirements learned above:
-   **drop the hint first**, **restart CE between attempts**, and drive the game through its **proxy**
-   (so the UI owns the scan and CE's GUI stays free).
+   ### ▶ What DOES work — a two-process chain, both halves pre-armed
+   1. `py tools/verify/kill_on_marker.py <init-0.log> "Starting initialization" --touch <flagfile>
+      --after-ms 2500` — Python watches the log (it *can* read it) and drops an ordinary flag file.
+   2. In CE, **pre-armed before the scan**:
+      `createThread(function() ... poll for <flagfile> ... executeCodeEx(0,60000,getAddress('dxgi.UE5_Shutdown')) end)`
+      — CE Lua *can* read a file nobody holds open.
 
-   **PASS** is still: `scan-0.log` shows `AOB scan CANCELLED after N/M batches` within ~1 s and
-   `FindAll: scan was CANCELLED — NOT writing the hint cache`.
-5. **⚠ MA1 — the guards, each checked SEPARATELY** (a control that passes is how a bug in a fix gets
+   Neither half is on the operator's critical path, so the 8 s window is hit every time. Give the CE
+   poll loop a **generous** timeout: a mis-registered Start Scan click cost 3 minutes and the first
+   loop (120 s) had already expired when the flag finally appeared.
+
+5. ✅ **DONE 2026-08-18 — MA1's three guards, each checked separately.**
+   * **(a) the hint cache is untouched.** After the cancelled run, Elliot's entry
+     `6A577F4E1D91B000` was **still absent** from `UE5CEDumper.MSI-NB.json` (28 games, none of them
+     Elliot). The cancelled scan wrote nothing, exactly as `FindAll` promised.
+   * **(b) a re-enable re-scans rather than short-circuiting.** `UE5_AutoStart` in the **same
+     process** ran a full scan to `UE5_Init: Complete (UE504, …, Objects=85068)`.
+     ⚠ **The obvious test is wrong and looks like a defect.** Calling **`UE5_Init` directly** instead
+     re-scans and is **cancelled at `0/7` batches before doing any work**, every time — which reads
+     exactly like a stale cancel flag. It is not: [`Tot.h`](../dll/src/Tot.h) states `g_shutdown` is
+     *"cleared only by `Fern::Start()`"*, and [`Frieren.cpp:798-812`](../dll/src/Frieren.cpp:798)
+     puts `Tot::ResetShutdown()` at the top of **`UE5_AutoStart`** precisely so a re-enable does not
+     "rescan with `g_shutdown` still latched". **`UE5_AutoStart` is the re-enable entry point;
+     `UE5_Init` alone is not.** Filed nothing — the header had already answered it
+     (working-lessons §2.4).
+   * **(c) the sparse latch does not stick.** `FindSparseDelegateStorage: Scanning` appears **3×** in
+     `scan-0.log`: the cancelled run, the second cancelled attempt, and the healthy re-scan — so
+     `CANCELLED — not latching, the next scan will retry` is literally true.
+
+6. ✅ **DONE 2026-08-18 — REGRESSION: a healthy scan still completes and still saves.** The
+   `UE5_AutoStart` re-scan above wrote the entry back with real AOB hints —
+   `gObjects: GOBJ_ES53_1 (1 of 2 tried)`, `gNames: GNAM_V8 (2 of 5)`, `scanCount: 1` — and its run
+   logged **no** `CANCELLED` line. So `bScanCancelled` is not over-broad.
+
+7. **⚠ SUPERSEDED — original step 5 text, kept for the method** (a control that passes is how a bug in a fix gets
    found): after that cancelled run, (a) **diff `UE5CEDumper.{Machine}.json`** — it must be
    *unchanged* for that PE hash; (b) re-enable in the **same** process and confirm a full re-scan
    runs rather than short-circuiting (the `UE5_Init` latch guard); (c) drill into a
    `MulticastSparseDelegateProperty` and confirm `FindSparseDelegateStorage: Scanning` appears a
    **second** time rather than a latched 0 (the sparse latch guard).
-6. **⚠ REGRESSION — a healthy scan still completes and still saves.** Connect the UI, disconnect it
+8. **⚠ SUPERSEDED — original step 6 text, kept for the method.** Connect the UI, disconnect it
    mid-command, reconnect, and confirm a fresh scan resolves normally, writes the hint cache, and
    shows **no** `CANCELLED` line. This is what keeps `bScanCancelled` from being widened to
    `Tot::Requested()`, which would refuse the latch on a scan that finished fine.
