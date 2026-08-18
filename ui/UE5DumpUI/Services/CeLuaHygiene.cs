@@ -721,4 +721,76 @@ public static class CeLuaHygiene
         sb.Append(indent).Append("if ").Append(cond)
           .Append(" then ").Append(CloseCall).Append(" end\n");
     }
+
+    /// <summary>
+    /// A CE Lua GLOBAL table used to reference-count SLOT-backed registered symbols
+    /// across the separate <c>[ENABLE]</c>/<c>[DISABLE]</c> Lua chunks (chunk locals
+    /// do not cross, and CE's Lua state persists for the whole session — see
+    /// docs/CE-Bugs-Minesweeper.md §5).
+    ///
+    /// <para>A count is required, not an address marker: two records that both resolve
+    /// the same <c>&amp;GWorld</c>/<c>&amp;GEngine</c> slot register the IDENTICAL
+    /// address, so the buffer branch's <c>cur == marker</c> ownership test cannot tell
+    /// one holder from another and would let the FIRST record's disable unregister the
+    /// symbol out from under a second still-ticked one. Refcounting is the only thing
+    /// that makes "a second live record's symbol survives" true here.</para>
+    /// </summary>
+    private const string SlotSymRefTable = "UE5_slotSymRefcount";
+
+    /// <summary>
+    /// Emit the ENABLE half of a SLOT-backed CE symbol: bump the per-symbol reference
+    /// count, then (re)register <paramref name="sym"/> to <paramref name="addrExpr"/>
+    /// (a game address, never freed). Self-contained — it clears any prior registration
+    /// of the same name itself, so the caller need not pre-unregister. Pairs with
+    /// <see cref="AppendSlotSymbolRelease"/>; both go through here so the slot paths in
+    /// different generators (and the two ends of one record) cannot drift.
+    /// </summary>
+    public static void AppendSlotSymbolRegister(
+        StringBuilder sb, string sym, string addrExpr, string indent = "")
+    {
+        Line(sb, indent, $"{SlotSymRefTable} = {SlotSymRefTable} or {{}}");
+        Line(sb, indent, $"{SlotSymRefTable}['{sym}'] = ({SlotSymRefTable}['{sym}'] or 0) + 1");
+        // Clear any prior registration before republishing so registerSymbol can never
+        // stack a second entry for this name (the case AppendSlotSymbolRelease's loop
+        // also defends against on the way out).
+        Line(sb, indent, $"if getAddressSafe('{sym}') then unregisterSymbol('{sym}') end");
+        Line(sb, indent, $"registerSymbol('{sym}', {addrExpr})");
+    }
+
+    /// <summary>
+    /// Emit the DISABLE half of a SLOT-backed CE symbol: drop the per-symbol reference
+    /// count and unregister the symbol ONLY when the last holder releases it, so a
+    /// second still-ticked record keeps resolving.
+    ///
+    /// <para><b>The message follows the FACT, not the intent.</b> The predecessor here
+    /// printed <c>'&lt;sym&gt; unregistered'</c> unconditionally — the "report and reality
+    /// computed by different code paths" defect (audit #4a) — while on the slot path the
+    /// unregister was skipped entirely (it was nested inside a buffer-only guard). This
+    /// re-reads <c>getAddressSafe</c> AFTER the unregister and claims success only when
+    /// the symbol is actually gone. The bounded loop also removes a stacked registration
+    /// were one ever to exist, and can never hang.</para>
+    /// </summary>
+    /// <param name="tag">Script tag for the diagnostic, e.g. <c>"GWorld"</c>.</param>
+    public static void AppendSlotSymbolRelease(
+        StringBuilder sb, string sym, string tag, string indent = "")
+    {
+        Line(sb, indent, $"{SlotSymRefTable} = {SlotSymRefTable} or {{}}");
+        Line(sb, indent, $"local _rc = ({SlotSymRefTable}['{sym}'] or 0) - 1");
+        Line(sb, indent, "if _rc < 0 then _rc = 0 end");
+        Line(sb, indent, $"{SlotSymRefTable}['{sym}'] = _rc");
+        Line(sb, indent, "if _rc > 0 then");
+        Line(sb, indent, $"  dbg('[{tag}] {sym} still held by ' .. _rc .. ' other record(s) -- left registered')");
+        Line(sb, indent, "else");
+        Line(sb, indent, "  local _tries = 0");
+        Line(sb, indent, $"  while getAddressSafe('{sym}') and _tries < 8 do");
+        Line(sb, indent, $"    unregisterSymbol('{sym}')");
+        Line(sb, indent, "    _tries = _tries + 1");
+        Line(sb, indent, "  end");
+        Line(sb, indent, $"  if getAddressSafe('{sym}') then");
+        Line(sb, indent, $"    dbg('[{tag}] {sym} could NOT be unregistered after ' .. _tries .. ' attempt(s) -- it still resolves')");
+        Line(sb, indent, "  else");
+        Line(sb, indent, $"    dbg('[{tag}] {sym} unregistered')");
+        Line(sb, indent, "  end");
+        Line(sb, indent, "end");
+    }
 }

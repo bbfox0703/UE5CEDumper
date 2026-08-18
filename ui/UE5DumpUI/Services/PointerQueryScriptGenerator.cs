@@ -118,13 +118,6 @@ public static class PointerQueryScriptGenerator
         CeLuaHygiene.AppendContractCheck(sb, tag, MailboxTimeout.UntickAndReturn);
         Line(sb);
 
-        // Third shared emitter this generator was missing. It has to run BEFORE the first
-        // write, and the first write is inside query(), so here — above the definition — is
-        // both correct and the same place every other mailbox generator puts it. A stateful
-        // toggle, so UntickAndReturn.
-        CeLuaHygiene.AppendContractCheck(sb, tag, MailboxTimeout.UntickAndReturn);
-        Line(sb);
-
         // One mailbox round-trip, factored into a local so the GameEngine path can run it
         // twice (slot first, snapshot second). Returns addr, or nil + a reason string —
         // a failed op is NOT necessarily fatal here, so it must not untick by itself.
@@ -168,7 +161,6 @@ public static class PointerQueryScriptGenerator
             Line(sb, $"local stale = getAddressSafe('{bufSym}')");
             Line(sb, $"if stale and stale ~= 0 then unregisterSymbol('{bufSym}'); deAlloc(stale) end");
         }
-        Line(sb, $"if getAddressSafe('{sym}') then unregisterSymbol('{sym}') end");
         Line(sb);
 
         if (mayFallBack)
@@ -191,7 +183,9 @@ public static class PointerQueryScriptGenerator
             Line(sb, "end");
             Line(sb);
             Line(sb, "if usedSlot then");
-            Line(sb, $"  registerSymbol('{sym}', addr)");
+            // Slot path: register straight to the game slot, reference-counted so a second
+            // live record keeps the symbol when the first is unticked (SLOTSYM).
+            CeLuaHygiene.AppendSlotSymbolRegister(sb, sym, "addr", "  ");
             Line(sb, $"  dbg(string.format('[{tag}] {sym} -> &GEngine slot 0x%X (auto-follows)', addr))");
             Line(sb, "else");
             Line(sb, "  local mem = allocateMemory(8)");
@@ -201,6 +195,11 @@ public static class PointerQueryScriptGenerator
             Line(sb, "    return");
             Line(sb, "  end");
             Line(sb, "  writeQword(mem, addr)");
+            // Buffer path keeps its own marker-based ownership model (NOT the refcount) —
+            // each snapshot record owns a DISTINCT allocation that DISABLE must free. Clear
+            // any prior registration first (the generic pre-unregister that used to do this
+            // moved into the slot emitter, so this branch does its own).
+            Line(sb, $"  if getAddressSafe('{sym}') then unregisterSymbol('{sym}') end");
             Line(sb, $"  registerSymbol('{sym}', mem)");
             Line(sb, $"  registerSymbol('{bufSym}', mem)   -- marker: DISABLE must free this");
             Line(sb, $"  dbg(string.format('[{tag}] {sym} -> 0x%X (snapshot, buffer 0x%X)', addr, mem))");
@@ -217,7 +216,9 @@ public static class PointerQueryScriptGenerator
             Line(sb, "  if memrec then memrec.Active = false end");
             Line(sb, "  return");
             Line(sb, "end");
-            Line(sb, $"registerSymbol('{sym}', addr)");
+            // Reference-counted so a second live "Get GWorld" record keeps the symbol
+            // when the first is unticked (SLOTSYM).
+            CeLuaHygiene.AppendSlotSymbolRegister(sb, sym, "addr");
             Line(sb, $"dbg(string.format('[{tag}] {sym} -> &GWorld slot 0x%X', addr))");
         }
         Line(sb, $"if DEBUG == 0 then {CeLuaHygiene.CloseCall} end");
@@ -242,21 +243,33 @@ public static class PointerQueryScriptGenerator
             Line(sb, $"local mem = getAddressSafe('{bufSym}')");
             Line(sb, $"local cur = getAddressSafe('{sym}')");
             Line(sb, "if mem and mem ~= 0 and cur == mem then");
+            Line(sb, "  -- BUFFER path, still ours: unregister and free the allocation.");
             Line(sb, $"  unregisterSymbol('{bufSym}')");
             Line(sb, $"  unregisterSymbol('{sym}')");
             Line(sb, "  deAlloc(mem)");
+            // Message follows the fact: re-read AFTER unregistering.
+            Line(sb, $"  if getAddressSafe('{sym}') then");
+            Line(sb, $"    dbg('[{tag}] {sym} could NOT be unregistered -- it still resolves')");
+            Line(sb, "  else");
+            Line(sb, $"    dbg('[{tag}] {sym} unregistered')");
+            Line(sb, "  end");
             Line(sb, "elseif mem and mem ~= 0 then");
             Line(sb, $"  dbg('[{tag}] another record owns {sym} now -- leaving it alone')");
+            Line(sb, "else");
+            Line(sb, "  -- SLOT path (no buffer): reference-counted release, so a second live");
+            Line(sb, "  -- record keeps the symbol. This branch is the SLOTSYM fix -- the old");
+            Line(sb, $"  -- code left {sym} registered here while printing 'unregistered'.");
+            CeLuaHygiene.AppendSlotSymbolRelease(sb, sym, tag, "  ");
             Line(sb, "end");
-            Line(sb, $"dbg('[{tag}] {sym} unregistered')");
             Line(sb, $"if DEBUG == 0 then {CeLuaHygiene.CloseCall} end");
             Line(sb, "{$asm}");
             return sb.ToString();
         }
 
-        Line(sb, $"-- Remove the '{sym}' symbol (the slot is a game address, nothing to free).");
-        Line(sb, $"if getAddressSafe('{sym}') then unregisterSymbol('{sym}') end");
-        Line(sb, $"dbg('[{tag}] {sym} unregistered')");
+        Line(sb, $"-- Release the '{sym}' symbol (the slot is a game address, nothing to free).");
+        Line(sb, "-- Reference-counted so a second live record keeps it, and the message");
+        Line(sb, "-- follows the fact rather than the intent (SLOTSYM).");
+        CeLuaHygiene.AppendSlotSymbolRelease(sb, sym, tag);
         Line(sb, $"if DEBUG == 0 then {CeLuaHygiene.CloseCall} end");
         Line(sb, "{$asm}");
         return sb.ToString();

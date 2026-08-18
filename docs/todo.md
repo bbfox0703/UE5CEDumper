@@ -11,9 +11,10 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **31 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The five newest are 2026-08-17's and NONE has been seen
->   on a real target; two of those need less than a full session:
+> - `## Pending live-game verification` — **33 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The two newest (2026-08-19) are the SLOTSYM /
+>   STALEDLL(b) generator + `.CT` fixes; the five before them are 2026-08-17's, and NONE has been
+>   seen on a real target; two of those older ones need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
 >   confirm CE still dissects an ordinary address), and **all six AE4–AE7 steps need no game** —
 >   just the Proxy Deploy panel.
@@ -23,7 +24,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 6 items, and NONE of them is in the 166 above
+> ### ▶ OPEN FIXES INDEX — 5 items, and NONE of them is in the 166 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -31,12 +32,13 @@ Open work only. **Read this when deciding what to do next.**
 >
 > | tag | one-line defect |
 > |---|---|
-> | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up |
+> | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
 > | `[PROXYLOAD-2026-08-17]` | `DeployedCurrent` does not mean the game actually loads it |
-> | `[SLOTSYM-2026-08-18]` | slot `[DISABLE]` claims "unregistered" and does not unregister |
 > | `[CONTAINERCAP-2026-08-18]` | the container list stops at the array limit and says nothing |
 > | `[CLASSTOTAL-2026-08-18]` | "total UClasses" is the **capped** count, so it can never answer "how many classes?" |
 > | `[PIPEBUSY-2026-08-18]` | at-capacity logged as an **ERROR once a second, forever** (1,826 lines in 31 min) |
+>
+> *`[SLOTSYM-2026-08-18]` was **fixed 2026-08-19** and moved to `## Pending live-game verification`.*
 >
 > *The seventh row — the untagged "SDK header does not compile" — was **fixed 2026-08-19** and has
 > moved into the register below as `[SDKHDR-2026-08-18]`, where it is now grep-able like the rest.*
@@ -1491,6 +1493,57 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[SLOTSYM-2026-08-18]` — the slot `[DISABLE]` now actually unregisters, and says so honestly
+
+*Was: on the `&GEngine` SLOT path the "Get GameEngine" record took the `mayFallBack` `[DISABLE]`
+branch, where `unregisterSymbol` was nested inside the buffer-only `cur == mem` guard; with no
+buffer, `mem` was nil, both arms were skipped, the symbol survived (a stale `UE_GameEngine` across a
+game restart, resolving into the dead process's module base), and a trailing UNCONDITIONAL `dbg`
+claimed it had been "unregistered". **Mechanism was read from the code, not either of the register's
+two guesses:** it is NEITHER (a) a `getAddressSafe(sym)` guard returning falsy NOR (b) a
+double-registration — ENABLE does a single `registerSymbol` on op 2, which matches the observed "one
+manual `unregisterSymbol` sufficed". The register's `:256-258` cite was the GWorld branch (which
+already unregistered correctly); the real code was the `mayFallBack` branch. Now: both slot ends
+(GWorld + the GameEngine slot sub-path) go through shared
+`CeLuaHygiene.AppendSlotSymbolRegister`/`AppendSlotSymbolRelease` emitters, so they cannot drift — a
+per-symbol reference count in a CE Lua global keeps the symbol for a second still-ticked record, the
+last holder unregisters it in a bounded loop, and the message re-reads `getAddressSafe` AFTER the
+unregister so it claims success only when the symbol is actually gone. Also removed an accidental
+duplicate `AppendContractCheck` (the block was emitted twice). Pinned by 6 new tests in
+`PointerQueryScriptGeneratorTests` + a real-`lua` runtime simulation of the enable/disable sequence
+(both cases below passed). Generator-only; contract surface untouched.*
+
+> Needs a game whose `&GEngine` AOB validates so the record takes the SLOT path (DumperTest does).
+> `UE5_DEBUG=1` in CE's Lua console to see the `dbg` lines.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 ⚠ THE ONE THAT MATTERS | tick the single "Get GameEngine" record, untick it, then in CE's Lua console `print(getAddressSafe('UE_GameEngine'))` | **nil on the FIRST call** (no manual `unregisterSymbol` needed); the `dbg` reads `UE_GameEngine unregistered` | before the fix it stayed `0x…` after untick and the log lied |
+> | 2 | paste the CE-XML to make a SECOND "Get GameEngine" record, tick both, untick the OLDER, `print(getAddressSafe('UE_GameEngine'))` | still resolves (survivor keeps it); the older record's `dbg` reads `still held by 1 other record(s) -- left registered`. Untick the second → now nil | the refcount half — two records resolve the IDENTICAL slot, so an address marker cannot tell them apart |
+> | 3 ⚠ NON-REGRESSION | GWorld: tick "Get GWorld", untick, `print(getAddressSafe('UE_GWorld'))` | nil after untick | GWorld already unregistered before; must still |
+
+-----
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[STALEDLL-2026-08-18]` (b) — the `.CT` reports the resolved DLL's size beside its path
+
+*Was: the `.CT` logged only `DLL path: …`, so a stale/old `UE5Dumper.dll` resolved silently (the Feb
+build in CE's install folder is ~0.5 MB vs the current ~2.7 MB). The build stamp is not a C ABI
+export (only logged to `init-0.log` + carried on the pipe), the DLL is not injected yet at
+path-report time, and CE Lua has no stat-by-path API, so the cheap honest signal is file SIZE. Now:
+`ue5_dllSizeText(DLL_PATH)` is logged right after `DLL path:` and in the startup replay
+(`ue5_dllFileSize`/`ue5_dllSizeText` verified under real `lua`). **(a) delete/refresh the stale file
+in CE's install folder stays maintainer-only and is NOT done here.** Deferred idea for the pending
+batch: read the ACTUAL build stamp from the `.CT` — would need a tiny data export (`g_buildNumber` /
+`g_buildStamp`) or a `GetFileVersionInfo` read of the PE version resource; not worth a new export for
+a LOW-priority readout.*
+
+> | step | do this | expect | why |
+> |---|---|---|---|
+> | 1 | resolve a DLL via the `.CT` (any slot — breadcrumb, manual pick, …) and open the log / Lua console | a `DLL size: N bytes (X.X MB)` line appears next to `DLL path:` | the whole point — the size is now visible beside the path |
+> | 2 | point the `.CT` at the ~0.5 MB Feb DLL vs the ~2.7 MB dist DLL | they read `0.5 MB` vs `2.7 MB` distinctly | the size is what catches the stale build a silent path never showed |
+
+-----
 
 ### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PEHOOKONCE-2026-08-18]` — a failed ProcessEvent detection must now be RE-ARMABLE
 
@@ -6331,49 +6384,36 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
     flavour (`:256-258`), whose `[DISABLE]` is two lines with no ownership guard because there is no
     buffer. **This checklist's wording should be scoped to the buffer flavour**; expecting the string
     on the slot flavour is a mis-specification, not a failure.
-  - ⛔ **But the slot flavour's `[DISABLE]` is broken — see `[SLOTSYM-2026-08-18]` below.**
+  - ✅ **The slot flavour's `[DISABLE]` was broken — FIXED 2026-08-19; see `[SLOTSYM-2026-08-18]` in "Pending live-game verification".**
 
-### ⛔ NEW 2026-08-18 `[SLOTSYM-2026-08-18]` — the slot-flavour `[DISABLE]` says "unregistered" and does not unregister
+### ✅ FIXED 2026-08-19 `[SLOTSYM-2026-08-18]` — the slot `[DISABLE]` now actually unregisters (writeup moved to "Pending live-game verification")
 
-*Found while separating B26's two branches. Reproduced with ONE record and no second record in play,
-so none of B26's duplicate-record confounders apply.*
+*Found while separating B26's two branches. The reproduction (untick the single record → still
+`140701739398768`; one manual `unregisterSymbol` cleared it on the first call) is preserved for
+history below, with one correction: the mechanism was NEITHER of the two this section originally
+posited.*
 
-**Clean sequence, each step probed** (CE Lua, `UE5_DEBUG=1`):
+**Mechanism (read from the code, not guessed).** The `:256-258` cite was the **GWorld** branch, which
+already unregistered correctly. The record that reproduced the bug is the **GameEngine** target, which
+takes the `mayFallBack` `[DISABLE]` branch — there, `unregisterSymbol('UE_GameEngine')` was nested
+inside the buffer-only `if mem and mem ~= 0 and cur == mem` guard. On the slot sub-path there is no
+buffer, so `mem = getAddressSafe('UE_GameEngine_buf')` is nil, both the `if` and `elseif` are skipped,
+the symbol is never unregistered, and the trailing UNCONDITIONAL `dbg('… unregistered')` lies. So it
+is a THIRD mechanism (unregister trapped in a buffer-only guard), closest to variant (a). **(b)
+double-registration is refuted** — ENABLE does a single `registerSymbol` on op 2, which is why "one
+manual `unregisterSymbol` sufficed".
 
-| # | action | `getAddressSafe('UE_GameEngine')` |
-|---|---|---|
-| 0 | manual `unregisterSymbol` to establish a baseline | `nil` |
-| 1 | tick the **single** record → logs `-> &GEngine slot 0x7FF7AD323670 (auto-follows)` | `140701739398768` (= `0x7FF7AD323670`) |
-| 2 | untick that same record → logs **`[GameEngine] UE_GameEngine unregistered`** | **`140701739398768` — still there** |
-| 3 | one manual `unregisterSymbol('UE_GameEngine')` | `nil` **on the first call** |
+**Fix (applied 2026-08-19).** Both slot ends (GWorld + the GameEngine slot sub-path) now go through
+shared `CeLuaHygiene.AppendSlotSymbolRegister`/`AppendSlotSymbolRelease`: a per-symbol reference count
+in a CE Lua global keeps the symbol for a second still-ticked record (an address marker can't — two
+records resolve the IDENTICAL slot), the last holder unregisters in a bounded loop, and the message
+re-reads `getAddressSafe` AFTER the unregister. Also removed an accidental duplicate
+`AppendContractCheck`. Pinned by 6 new `PointerQueryScriptGeneratorTests` + a real-`lua` runtime
+simulation. Live-check steps are under `[SLOTSYM-2026-08-18]` in "Pending live-game verification".
 
-Step 3 is what makes this a defect rather than a CE quirk: `unregisterSymbol` works, and **one** call
-is enough. So the `[DISABLE]` block did not remove the symbol, while printing that it did.
-
-**Where.** `PointerQueryScriptGenerator.cs:256-258` emits, for the no-fallback (slot) path:
-
-```lua
-if getAddressSafe('UE_GameEngine') then unregisterSymbol('UE_GameEngine') end
-dbg('[GameEngine] UE_GameEngine unregistered')
-```
-
-The `dbg` line is **unconditional** — it reports the intent, never the outcome, which is the same
-"the report and the reality are computed by different code paths" root cause audit #4a named. Two
-candidate mechanisms, and this run does **not** distinguish them: either the `getAddressSafe` guard
-returns falsy inside that chunk so `unregisterSymbol` is skipped, or ENABLE leaves **two**
-registrations and one `unregisterSymbol` only removes one. Deciding it needs a probe *inside* the
-DISABLE block.
-
-**Why it matters.** A symbol that survives its record's disable is a **stale symbol across a game
-restart**: `UE_GameEngine` keeps resolving to the previous process's module base, and anything built
-on it reads dead memory. That is the exact failure class that stopped the freeze helper earlier this
-same session (*"the contract symbol resolved to the wrong memory (stale address)"*), reached from a
-different direction.
-
-**Fix shape (not applied).** Make the message follow the fact: capture `getAddressSafe` after the
-unregister and only claim success when it is gone, looping/reporting otherwise — and add the
-ownership guard the buffer branch already has, so a *second* live record's symbol is not removed.
-Effort **S**, risk **LOW**, generator-only; `CeInjectScriptGeneratorTests` already covers this file.
+**Why it mattered.** A symbol that survives its record's disable is a **stale symbol across a game
+restart**: `UE_GameEngine` kept resolving to the previous process's module base, and anything built
+on it read dead memory.
 
 - ✅ **The five dead coord-grid sort headers** (build 2610, B16) — **VERIFIED 2026-08-12**, on the
   AOT/trimmed `dist\UE5DumpUI.exe` (56.9 MB, build 2794) against the DumperTest Development package.
@@ -6531,6 +6571,10 @@ Effort **S**, risk **LOW**, generator-only; `CeInjectScriptGeneratorTests` alrea
 
 ### ⛔ NEW 2026-08-18 `[STALEDLL-2026-08-18]` — a 6-month-old `UE5Dumper.dll` sits in CE's install folder and the `.CT` will pick it
 
+> **(b) FIXED 2026-08-19** — the `.CT` now reports the resolved DLL's SIZE beside its path, so a
+> stale build no longer resolves silently; live-check under `[STALEDLL-2026-08-18]` in "Pending
+> live-game verification". **(a) delete/refresh the stale file remains OPEN and maintainer-only.**
+
 *Found only because deleting the breadcrumb for the B5 run pushed discovery one slot further down.*
 
 | file | size | date |
@@ -6554,11 +6598,14 @@ contract-range refusal at best, and at worst the class of failure this session a
 (`the contract symbol resolved to the wrong memory`), with nothing on screen naming a stale DLL as
 the cause.
 
-**Actions.** (a) Delete or refresh `C:\Program Files\Cheat Engine\UE5Dumper.dll` — machine-local, so
-it is the maintainer's call, not something to do unattended. (b) Worth considering in the `.CT`:
-report the resolved DLL's build alongside the path it chose, so `DLL path: …` and the build stamp
-appear together; the two lines are already adjacent in the console and only one of them is currently
-actionable.
+**Actions.** (a) **OPEN, maintainer-only:** delete or refresh
+`C:\Program Files\Cheat Engine\UE5Dumper.dll` — machine-local, not something to do unattended.
+(b) **DONE 2026-08-19:** the `.CT` now logs `DLL size: N bytes (X.X MB)` right after `DLL path:` (and
+in the startup replay), via `ue5_dllSizeText`. The build stamp itself is not cheaply readable from the
+`.CT` (not a C ABI export; DLL not injected yet at report time; CE Lua has no stat-by-path API), so
+file SIZE is the honest signal that separates the ~0.5 MB Feb build from the ~2.7 MB current one.
+Deferred idea: read the ACTUAL build stamp — would need a tiny data export (`g_buildNumber` /
+`g_buildStamp`) or a `GetFileVersionInfo` PE-version-resource read; not worth a new export here.
 
 - **Flaky: `SnapshotViewModelTests.GroupMatch_MissingValue_ShowsErrorNoCandidates`** — failed ONCE
   in a full parallel run on 2026-07-23 (build 2318), then passed 25/25 three times in isolation and
