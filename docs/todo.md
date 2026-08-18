@@ -2487,7 +2487,7 @@ and is decisive — this is the rare case where the regression was captured befo
 declarations), and **MA2**, the `ScanRegionBatch` per-pattern underflow, is unreachable until
 `AOBScanBatch` is given a `moduleBase`.
 
-### ⬜ NEW 2026-08-17 — G2: the version sweep is ~29 s faster, and must still be RIGHT
+### 🟡 STEPS 4+5 CLOSED 2026-08-18 — G2: the version sweep is ~29 s faster, and must still be RIGHT
 
 *Needs the DLL injected. See dev-log builds 3086 / 3088. The 29 new C++ assertions pin the rewrite
 against a naive oracle; what they cannot pin is that it still reads a REAL image correctly, because
@@ -2584,6 +2584,62 @@ no test target compiles `Genau.cpp`.*
    latch, so a stale one would abort recovery at offset 0. Connect the UI, disconnect it mid-command,
    reconnect, and confirm a fresh scan still resolves GObjects/GNames normally and that **no**
    `aborted` line appears. This is exactly what `Tot::ResetPerCommand()` in `AutoStartWork` is for.
+
+> ### ✅ STEPS 4 + 5 CLOSED, STEP 3 PARTIAL `[G2-ELLIOT-2026-08-18]` — and step 4's PRESCRIBED VEHICLE IS REFUTED
+>
+> Elliot, dxgi proxy, **DLL build 1.0.0.3262**, proxy mode confirmed by
+> `DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)`.
+>
+> **Step 3 — 🟡 PARTIAL.** The wording is confirmed byte-exact against the source: the format string
+> at `Genau.cpp:3047` is `"DetectVersion: Tier 1 (%s) '%s%s' -> %u at 0x%zX"`, and build-3262 logs
+> carry `DetectVersion: Tier 1 (utf16) '++UE4+Release-4.27' -> 427 at 0x4BBC6D8` (DQ7R) and
+> `... at 0x42F5F30` (DQ I&II). ⚠ **But a machine-wide sweep of every log found exactly TWO Tier-1
+> lines, both `utf16` and both UE4** — the `ascii` flavour and the **UE5** branch of `'%s%s'` are
+> still unwitnessed at 3262. The obvious host, **Lushfoil, cannot supply one without a cache drop**:
+> it logs `UE Version = 506 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion`.
+> `tools/verify/cold_detect.py drop 998ED2850957D000 --apply` is the one-line unblock (it was
+> refused by this session's command classifier, not by anything in the repo).
+>
+> **Step 4 — ✅ THE LINES FIRE, but NOT by the route this row prescribes.** Witnessed on 3262, in
+> `Logs/Elliot-Win64-Shipping/scan-20260818-13*.log`: **`DataScanGObjectsCandidates: aborted (client
+> gone / shutdown)`** (×1) and **`FindGNamesByStringRef: aborted (client gone / shutdown)`** (×3).
+> `FindGObjectsStaticStruct` remains unwitnessed, so this is 2 of 3.
+>
+> ⛔ **"Close the UI mid-scan" cannot produce them, and this is structural, not luck:**
+> * `Tot::RequestPerCommand()` has exactly one caller — `Fern::MonitorLoop`, which peeks **only**
+>   connections whose `inFlight` flag is set (`Fern.cpp:804-865`, and the `inFlight` mark at `:1087`).
+> * `trigger_scan` **returns immediately** and does the work on a detached `std::thread`
+>   (`Fern.cpp:4983-5008` -> `RunScan` -> `UE5_Init`). No command is in flight while the scan runs, so
+>   a client vanishing during it is never even peeked.
+> * `rescan` is async too (`Fern.cpp:4840`) **and cannot reach these functions at all** —
+>   `RunRescanBody` calls `Genau::ExtraScanGObjects/GWorld`, which are different functions.
+> * `Genau::FindAll` has ONE caller in the whole tree (`Frieren.cpp:155`, `UE5_Init`).
+>
+> ▶ **What actually fired them is the SHUTDOWN half of the same flag**, and the logs say so directly:
+> `13:34:46.459 UE5_Shutdown: Cleaning up...` -> `PipeServer: Stop entry (conns=2)` ->
+> `13:34:47.313 UE5_Init: scan was cancelled (shutdown) — results are partial, NOT latching
+> initialized so the next enable re-scans`. The cancel was **already latched when the scan began**,
+> which the log shows unambiguously as `AOB scan CANCELLED after 0/7 batches` (GObjects) and
+> `0/4 batches` (GNames) — every poll bailed on its first check, in the same millisecond.
+> Incidentally this is Tot.h's stated purpose #1 working: `Stop watches+scan joins done (852 ms)`.
+> **Rewrite the step to say "shut the DLL down while a scan is in flight" (disable the CE script /
+> close the game), not "close the UI".**
+>
+> **Step 5 — ✅ PASS.** Staged with a client that kills itself mid-command, because the window cannot
+> be hit by hand: a *second* process cannot be aimed (a tool round trip is seconds) and the obvious
+> long commands are not long DLL-side — `list_all_functions` is **634 ms**, `search_properties`
+> query="e" over 355,949 objects is **307 ms** server-side (its 2-minute wall clock was the Python
+> client formatting 14,902 results), and `begin_value_scan` finished inside 0.5 s. Arming the kill
+> **inside** the client on a 200 ms timer after the write produced it first try:
+> `15:08:14.037 Received: begin_value_scan` -> `15:08:14.434 PipeServer: client gone mid-command
+> (err=109) — aborting in-flight op` (109 = `ERROR_BROKEN_PIPE`) -> `Failed to write response`.
+> ⚠ **The latch then cleared ITSELF 30 ms later** — `per-command cancel cleared — no connection that
+> raised it is still live` — i.e. `ReevaluatePerCommandCancel` (audit #5 F2) retires it when the
+> raising connection is removed, **without needing the reconnect this step assumes**. The UI stayed
+> connected throughout and was unaffected. It was then disconnected and reconnected anyway
+> (`Connected — UE504 (355949 objects)`) and a fresh scan run: **`grep -c aborted scan-0.log` = 0**,
+> GObjects/GNames/GWorld all resolved (`GOBJ_ES53_1 -> 0x149BFC140`, `GNAM_V8 -> 0x149B18600`,
+> `GWLD_TQ_1 -> 0x149D8BDA0`, 355,717 objects).
 
 **Not covered by this batch:** version detection is still uncancellable (by design — see the block
 comment in `DetectVersionDetailed`), and **MA1** — `Macht.cpp`'s AOB family has zero cancellation, so
@@ -2705,7 +2761,7 @@ class-to-class recycling (a recycled address whose new occupant has a *sane* `Pr
 **A10** (`Aura`'s two reference-returning caches), and names baked into `ClassInfo::Name` /
 `FullPath` / `SuperName`, which are never witnessed.
 
-### ⬜ NEW 2026-08-17 — AA14–AA20: the CE Lua invoke path in a real game
+### 🟡 4-of-5 CLOSED 2026-08-18 — AA14–AA20: the CE Lua invoke path in a real game
 
 *Needs CE + a game + the DLL injected. See dev-log build 3039. The Lua rig (63 checks) covers the
 logic against stubs; what it cannot cover is a real ProcessEvent.*
@@ -2726,6 +2782,33 @@ logic against stubs; what it cannot cover is a real ProcessEvent.*
    screen, or break in a debugger) and invoke. The message must not quote an error from an earlier
    command, and the NEXT invoke must refuse with *"the DLL is STILL holding the mailbox"* rather
    than firing. Once the game recovers, a further invoke must work again (the guard clears itself).
+
+> ### 🟡 4-of-5 CLOSED `[ELLIOT-CE-2026-08-18]` — steps 1-4 PASS, step 5 BLOCKED (not failed)
+>
+> Elliot (`Elliot-Win64-Shipping.exe`, PID 3528), dxgi proxy, **DLL build 1.0.0.3262**, CE
+> **7.7.0.10568** attached, game in a loaded save. UI reported `Connected — UE504 (355717 objects)`.
+> Helper delivered as a CE table file (`Table -> Add File...` -> `scripts/ue5_invoke_helper.lua`);
+> CE confirmed it as `TLuafile, len=33432`, **byte-identical to the repo file** (`stat` = 33432).
+>
+> ⚠ **Two setup facts that will cost the next session an hour if not carried forward:**
+> * **`scripts/UE5CEDumper.CT` has NO `<Files>` section** (`grep -c '<Files>'` = 0 in both
+>   `scripts/` and `dist/`). Without adding the helper by hand, every row below instead hits the
+>   loader refusal and nothing under test ever runs.
+> * **The mailbox symbol is NOT `UE5Dumper.g_invokeMailbox` under a proxy.** Elliot loads the DLL as
+>   `dxgi.dll`, so that qualified name resolves to **nil**. The generated script is already correct —
+>   it tries the **bare** `g_invokeMailbox` first (`BakedScriptGenerator.cs:193-194`), which resolved
+>   to `0x7FFEDD72A5D0`. A probe that only tries the qualified name reports a false failure.
+>
+> | step | verdict | evidence |
+> |---|---|---|
+> | 1 | ✅ **PASS** | `KismetMathLibrary::Add_IntInt` A=3 B=4 via `AA(B)` -> `Copy AA Script` -> enable. `[Invoke] After : 03 00 00 00 04 00 00 00 07 00 00 00` / `[Invoke] OK: ... -> ReturnValue (int32@8) = 7`. DLL log: `INVOKE -> static-native fast path`, `INVOKE result=0` |
+> | 2 | ✅ **PASS on its own assertion, with a stated limit** | `Actor::GetOverlappingComponents` — dialog shows `OverlappingComponents [Array, 16B, off=0, out]`, left empty. The invoke **reached the DLL** (`Mailbox: received cmd=4`, `INVOKE_BY_NAME starting...`), i.e. `writeParams` **accepted `tarray` and wrote nothing** instead of aborting the whole invoke with *"Unknown param type 'tarray'"* — which is exactly what AA16 fixed. ⚠ **The call itself did not execute**: `FIND_INSTANCE only CDO found for 'Actor'` -> `error=-3 'not found (0 functions walked)'`. Retried on `PrimitiveComponent`, which resolved a **real** instance (`0x1C1715F650`, no CDO warning) and still walked 0 functions. **So no TArray-OUT invoke has yet RUN to `result=0`** — the gap is target resolution, not AA16 |
+> | 3 | ✅ **PASS** | `TextBlock::SetText` (`InText [FText, 16B, off=0]`). Export succeeded; the refusal fires at enable, verbatim: `[string "--[[..."]:307: [ue5_invoke] param 'InText' is an ftext -- an FText cannot be built from CE Lua (it holds a shared reference the engine allocates), and passing a zeroed one crashes the game. Invoke a wrapper that takes an FString instead.` Names `ftext` ✅, **not a crash** ✅ (game alive, PID 3528). Third witness: `grep -c SetText pipe-0.log` = **0** — it never reached the DLL, so the refusal really is client-side, before the `CMD` write |
+> | 4 | ✅ **PASS** | `Subtract_IntInt(3,4)`: `[Invoke] After : 03 00 00 00 04 00 00 00 FF FF FF FF` / `-> ReturnValue (int32@8) = -1`. The **raw return bytes are `FFFFFFFF`** and the decode printed `-1`, not `4294967295` — AA20 witnessed on the bytes, not on the decoder's own word |
+> | 5 | ⬜ **BLOCKED — could not be staged, and the blocker is the finding** | The wedge branch needs the PE hook, and on this launch it **would not install**: `GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`, retried 3/8 times, so `hook_active=false` and `hook_fire_count=0`. Detection was fine (`DetectProcessEvent (pattern): match at vtable+0x260 -> 0x141596890`) — only MinHook's trampoline allocation failed. `pe_profile_start` refused with *"PE hook couldn't install (memory near ProcessEvent is busy)"*. ⚠ **Non-deterministic, not a property of the title**: the SAME game hooked cleanly at 12:31 the same day (`hook installed ... validator armed`, `hook fired 720 times in 1500ms`). Everything else for the row was staged and is reusable: `set_invoke_timeout {"timeout_ms":30000,"persist":false}` returned `invoke_timeout_ms: 30000, persisted: false` (the DLL's stock **5000 ms** fires BEFORE the Lua's 10000 ms, so the row is unreachable without this), and `tools/verify/suspend.py` gained `threads` / `suspend-tid` / `resume-tid` — it ranks Elliot's 157 threads and picks `tid=20676` (earliest-created, **981 s CPU**, far above every sibling) |
+>
+> **State left as found:** invoke timeout restored (`{"timeout_ms":0}` -> `invoke_timeout_ms: 5000`,
+> `persisted: false`), no thread left suspended, no cache record modified, game/CE/UI all killed.
 
 ### ⬜ NEW 2026-08-17 — AE4–AE7: the Proxy Deploy panel, two buttons at once
 
