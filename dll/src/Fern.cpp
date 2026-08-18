@@ -3845,13 +3845,43 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["recording"]   = true;
             data["hook_active"] = hookActive;
             if (!hookActive) {
-                // Distinguish the two failure modes so the UI can advise correctly.
-                int peOffset = UE5_GetProcessEventOffset();
-                data["hook_detail"] = (peOffset >= 0)
-                    ? std::string("PE hook couldn't install (memory near ProcessEvent is busy). "
-                                  "Change to another map/scene and Start again — or restart the game + re-inject.")
-                    : std::string("ProcessEvent not detected — do any invoke first "
-                                  "(Teleport -> Get POV), then Start again.");
+                // THREE failure modes, three remedies. The old text collapsed the
+                // first two and told the user to "do any invoke first", which on the
+                // not-detected path was unreachable advice by construction: the
+                // invoke re-entered an already-satisfied one-time init and hit the
+                // same early return. ([PEHOOKONCE-2026-08-18])
+                const int peOffset = UE5_GetProcessEventOffset();
+                if (Stark::PeOffsetUsable(peOffset)) {
+                    // TWO install-side causes reach here — MinHook could not place a
+                    // trampoline, or the address could not be resolved from a live
+                    // UObject's vtable — and this branch cannot tell them apart, so
+                    // it must not name only the first. init-*.log does distinguish them.
+                    data["hook_detail"] = std::string(
+                        "ProcessEvent was located (vtable offset known) but the hook is not "
+                        "installed. Either the trampoline could not be placed near it, or the "
+                        "address could not be resolved from a live object. Change to another "
+                        "map/scene and Start again — or restart the game + re-inject. "
+                        "init-*.log says which: 'hook install failed' vs 'cannot resolve "
+                        "ProcessEvent address for hooking'.");
+                } else if (peOffset == Stark::kPeOffsetNotDetected) {
+                    // TWO causes reach this sentinel and the DLL does not narrow it
+                    // here, so the text must not pick one. Naming only the
+                    // no-scan case would be a fresh version of the very defect
+                    // being fixed — advice that cannot work on the other path.
+                    data["hook_detail"] = std::string(
+                        "ProcessEvent is not resolved yet, and detection is still ARMED — "
+                        "this attempt changed nothing. Either no scan has run in this process "
+                        "(a proxy DLL starts the pipe server only, so there is no UObject to "
+                        "read a vtable from), or a detected slot was rejected because the hook "
+                        "never fired. Run a scan, then Start again; init-*.log tells you which "
+                        "— 'no UObject vtable available yet' vs 'VALIDATION FAILED'.");
+                } else {
+                    data["hook_detail"] = std::string(
+                        "ProcessEvent detection FAILED on this game — the vtable slot could not "
+                        "be determined, or a detected slot never fired and was rejected. Check "
+                        "init-*.log for 'DetectProcessEvent' / 'VALIDATION FAILED'. Re-deploying "
+                        "the DLL will NOT help; restart the game and re-inject.");
+                }
             }
             return Renge::MakeResponse(id, data).dump();
         }

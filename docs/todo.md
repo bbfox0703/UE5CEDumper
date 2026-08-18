@@ -23,7 +23,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 11 items, and NONE of them is in the 166 above
+> ### ▶ OPEN FIXES INDEX — 9 items, and NONE of them is in the 166 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -31,9 +31,7 @@ Open work only. **Read this when deciding what to do next.**
 >
 > | tag | one-line defect |
 > |---|---|
-> | `[PEHOOKONCE-2026-08-18]` | a failed ProcessEvent **detection is permanent** for the process; `pe_profile_start` before the scan causes it |
-> | `[STALEDLL-2026-08-17]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up |
-> | `[PEHOOK-2026-08-17]` | ProcessEvent slot **mis-detected** on DumperTest (sample-specific) |
+> | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up |
 > | `[PROXYLOAD-2026-08-17]` | `DeployedCurrent` does not mean the game actually loads it |
 > | `[FREEZESTUCK-2026-08-18]` | an abandoned freeze leaves the CE record **ticked/active** |
 > | `[FREEZESCOPE-2026-08-18]` | Freeze holds the declaring class only, while Force beside it walks subclasses |
@@ -1494,6 +1492,110 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
 
+### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PEHOOKONCE-2026-08-18]` — a failed ProcessEvent detection must now be RE-ARMABLE
+
+*Was: a detection that failed because there was nothing to detect **yet** stored the same `-1` as a
+hard failure, and every retry path in `Frieren.cpp` was gated against `-1` — so one
+`pe_profile_start` before the first scan poisoned the PE hook for the whole process, and the message
+told the user to retry the one thing that could not work. Now: three distinct sentinels
+(`Stark::kPeOffsetNotDetected` = re-armable, `kPeOffsetFailed` = terminal, `>=0` = known), one
+serialized detection entry point with its own bounded/rate-limited retry budget, separate from the
+MinHook install-retry budget. **The rules are unit-pinned in `dll_helpers_test` (27 assertions across
+`Test_Stark_PeOffsetSentinels` / `ShouldRetryPeDetection` / `PeValidationFailureVerdict`; the WIRING
+is not — no target compiles `Frieren.cpp`).** Negative control run: forcing
+`ShouldActOnValidationFailure` to `return true` — i.e. "act on every zero", the actual defect the
+asymmetry prevents — failed exactly the 3 false-positive-guard assertions and nothing else. (Note for
+anyone repeating it: *inverting* the predicate instead fails all 8 in that function, because
+`PeOffsetAfterValidationFailure` gates on it too.) Step 2 is the whole point: it is the exact
+order-swap that was permanently broken.*
+
+> Needs a **proxy-mode** title (the DLL must start pipe-server-only, so GObjects is unset until a
+> scan). Drive it headless with `tools/verify/` — no GUI needed for steps 1–4.
+> Grep `init-0.log` by FORMAT STRING: `no UObject vtable available yet`, `offset resolved to
+> vtable+`, `first-time init complete`.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | fresh launch, proxy mode. `init` → `pe_profile_start` **before any scan** | `hook_active:false` and `hook_detail` starts **"ProcessEvent is not resolved yet, and detection is still ARMED"** and names BOTH causes (no scan / slot rejected). It must NOT say "do any invoke first" | the old text was unreachable advice by construction on this path. It must also not name only the no-scan cause — the same sentinel carries a re-armed rejection |
+> | 2 ⚠ THE ONE THAT MATTERS — the negative control | in the SAME process, now `trigger_scan` → one invoke (`teleport_get_pov`) → `pe_profile_start` again | **`hook_active:true`** | this exact ordering returned `false` **permanently** before the fix; a live game is the only thing that can prove it converges |
+> | 3 ⚠ NO STORM | after step 1, leave the process idle ~60 s with a 10 Hz feature running, then grep `init-0.log` for `detection run` | **zero** `detection run N/8` lines (nothing to detect ⇒ no run is spent), and **at most one** `no UObject vtable available yet` | ⚠ the single `no UObject vtable` line proves only the one-shot log guard (`s_loggedNoVtable`) and would still be 1 with the cooldown deleted — it is `detection run` that counts actual detection RUNS, so that is the line the anti-storm rule is measured on |
+> | 4 ⚠ NON-REGRESSION | a known-good title (**Lushfoil**), normal order: `init` → scan → invoke → `pe_profile_start` | `hook_active:true`, and `ProcessEvent: offset resolved to vtable+0x260 via the pattern scan (detection run 1/8)` | one detection run, pattern path, unchanged behaviour |
+> | 5 | UI path: Live Funcs → **Start** before running a scan, then run a scan and press Start again **without restarting the game** | first Start reports the "run a scan" detail; second Start records | this is the user-visible half; before the fix only a game restart recovered |
+
+-----
+
+### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PEHOOK-2026-08-17]` — a validation failure must ACT, and the advice must stop saying "re-deploy"
+
+*Was: on **DumperTest** (UE 5.4 Development) the AOB pattern scan misses, the `UE=504` version-table
+fallback picks `0x220`, the hook fires **0 times in 1500 ms** — and nothing acted on that verdict, so
+every invoke silently timed out for the rest of the session while the UI advised a re-deploy that
+cannot help. Now: a zero fire count on the **version-table** path soft-disables the hook and re-arms
+detection (bounded at 3 failures, then terminal), and the Self-Test advice is chosen from the DLL's
+own `get_diagnostics` hook state instead of asserting one cause.*
+
+⚠ **The asymmetry is deliberate and step 5 is what protects it.** A zero fire count ALSO describes an
+idle game thread (paused / loading / minimised). The pattern scan fingerprints ProcessEvent's own
+body and has never been observed wrong, so a zero there is reported and the hook is **KEPT**; only
+the version-table guess is acted on. Acting on every zero would disable a correct hook.
+
+⚠ **Detector 2 alone proves nothing** — [working-lessons.md](working-lessons.md) §4.4: Kismet helpers
+can no-op through ProcessEvent with a **correct** hook, producing the identical signature (args
+written, return slot untouched). It is the fired-0-times validator that settles it, because it counts
+the game's own traffic. **Do not read a `✗` as widening §4.4's population.**
+
+⛔ **Steps 1–3 need a host whose pattern scan MISSES, and after the detection fix below there is no
+longer one on this machine.** DumperTest was that host; the SIB alternates now match it, so it takes
+the pattern path and the version-table branch these steps exercise cannot be entered there. Two
+honest ways to run them, and **the second is preferred** (the X2 precedent — *step 4 proven by
+LOWERING the cap, not by finding a host*):
+> * against a **pre-2026-08-18 DLL** on DumperTest — records the old behaviour, not the new code; or
+> * ⭐ **temporarily comment out the two `kPePat*Sib*` alternates in
+>   [`Frieren.cpp`](../dll/src/Frieren.cpp) `DetectProcessEventVTableOffsetByPattern` and rebuild.**
+>   That restores the miss on DumperTest and drives the real, current code down the version-table
+>   path. Revert the edit afterwards.
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | **DumperTest**, SIB alternates temporarily removed → System → **Run Self-Test**, as the **FIRST invoke of a freshly launched process** | `✗ Add_IntInt…`, and the advice names a **mis-detected vtable slot** | ⚠ order-dependent: `HookNeverFired` needs `hook_active == true`, and the validator soft-disables the hook 1500 ms after install. A later click sees the hook DOWN and correctly gets the `HookOff` wording instead — that is not a failure |
+> | 1b | any Self-Test run | no advice string recommends re-deploying without ruling it out | `SelfTestAdviceTests.NoAdviceRecommendsRedeploying` pins the rule offline; this just confirms it reached the UI |
+> | 2 | grep that run's `init-0.log` | `VALIDATION FAILED — … came from the version TABLE … (failure 1/3): … re-arming detection`, then `hook flag cleared` | the verdict is now acted on, and the log names the real cause |
+> | 3 | force three CONSECUTIVE failing invoke attempts | the 3rd logs **"giving up on ProcessEvent for this process"**, and `pe_profile_start` then returns the **detection-FAILED** detail, not the "not resolved yet" one | proves the retry loop is bounded and lands in the honest terminal state. "Consecutive" is load-bearing — a validation that PASSES resets the counter |
+> | 3b ⚠ SAFETY | after a condemn, issue an invoke within the next ~5 s (the install-retry cooldown, while the offset is usable but the hook is down) | the invoke returns **-3** and does **not** call through; the Self-Test says **the DLL REFUSED this call** | self-review found this: re-arming without the refusal made the mis-detected case WORSE than before, because the direct fallback would call a known-wrong virtual where the old code merely timed out |
+> | 3c ⚠ THE RECOVERY, and it is the one that catches an over-correction | after a condemn, let the game tick and invoke until the hook re-installs and validates | `this offset is TRUSTED again` in the log, and direct calls (CE Lua `callFunction`, Run Self-Test) **work again** | review HIGH-1: a lifetime "have we ever failed" tally left the direct path dead for the rest of the process even after full recovery — `[PEHOOKONCE]` rebuilt one layer down. The refusal must be a STATE that lifts |
+> | 4 ⚠ NON-REGRESSION | **Lushfoil** → Run Self-Test | `✓ Add_IntInt(3,4) = 7`, hook stays installed, **no** VALIDATION FAILED | the pattern path must be untouched |
+> | 5 ⚠ THE FALSE-POSITIVE GUARD | on a pattern-detected title, background/pause the game so PE traffic stops, then force a first invoke | if 0 fires, the log is a **WARN** saying the offset came from the pattern scan and the hook is **KEPT**; invokes work once the game ticks again | a correct hook must survive an idle window — this is the regression the asymmetry exists to prevent |
+> | 6 | on a title where a Kismet helper no-ops with a good hook (§4.4 — **EVERSPACE 2**), Run Self-Test | the advice is the **BlueprintFastCall** wording, not the wrong-slot one. ⚠ **`✓ = 7` is an equally valid outcome and is itself a result** | [working-lessons.md](working-lessons.md) §4.4 records that the EVERSPACE 2 no-op was diagnosed *while the hook was in the wrong slot* and was **never re-verified against a corrected hook**. A `✓` here narrows §4.4 again; it does not fail this step |
+
+**The DETECTION half was also fixed, offline, from the binary's own bytes.** Root cause: the pattern
+budgets two wildcards (ModRM + disp32 low byte), but when the compiler parks the `UFunction*` in an
+**extended** register x64 makes a **SIB byte mandatory**, so the instruction is one byte longer and
+the fixed `00`s land early. Measured at `ProcessEvent+0x36F` in the Development build:
+`41 F7 84 24 B0 00 00 00 00 04 00 00` = `test dword ptr [r12+0xB0], 0x400`; the Shipping build of the
+same project uses `rdx` and matches today. Ground truth for the slot came from the **paired PDB**:
+`UObject::ProcessEvent` is vtable entry **77 = +0x268** in BOTH configs, and the fallback's `0x220` is
+entry 68, `UObject::GetSubobjectsWithStableNamesForNetworking` — a replication callback that never
+runs in a single-player sample, which is precisely "fired 0 times". SIB-tolerant alternates were
+added, and the regression risk (a looser pattern matching an EARLIER slot) was **measured, not
+argued**: over the **22 shipped UE games** in the local corpus plus both DumperTest configs, 60
+candidate vtables each, **not one binary changed a first match it already had**; the only delta is
+DumperTest Development going from no match at all to exactly one, at `0x268`.
+
+> | step | do this | expect |
+> |---|---|---|
+> | 7 ⚠ THE DETECTION FIX | launch **DumperTest** (Development) with the new DLL, `init` → `trigger_scan` → one invoke, then grep `init-0.log` | `DetectProcessEvent (pattern): match at vtable+0x268`, **no** `falling back to UE=504 version-table`, and **no** `VALIDATION FAILED` |
+> | 8 | Run Self-Test on DumperTest after step 7 | `✓ Add_IntInt(3,4) = 7` — the sample becomes usable for invoke-dependent rows |
+
+⚠ **Until step 7 is observed, treat DumperTest as unproven for invoke-dependent rows and use
+Lushfoil.** The slot is PDB-confirmed and the scan is file-verified, but nothing has yet watched the
+DLL do it inside the running process.
+
+⚠ **Do NOT "fix" the version table instead.** Measured true slots vs the table: DumperTest 5.4 →
+table `0x220`, true **`0x268`**; Lushfoil 5.6 → table `0x228`, true **`0x260`**. DumperTest carries
+the Iris/replication virtuals ahead of ProcessEvent, so 5.4 sits *later* than 5.6 does. Slot position
+is a **build-flag** property, not a version property — the pattern is what has to work.
+
+-----
+
 ### ⬜ NEW 2026-08-17 — A12: the same, in GROUP mode (build 3261)
 
 *Needs a connected game and the same container as A11's check. **The rule and the anchor factories
@@ -2225,117 +2327,6 @@ the walk continue), or drop the field and have the cap note carry the real total
 (`⚠ STOPPED at 5,000 of 6,609`). Either way the UI should be able to say the number, since a user
 choosing a title for a cap-related check needs it. Effort **S** · Risk **low** (read-only counter).
 ⚠ Do not "fix" it by raising the cap — the cap is the feature under test in X2.
-
-### ⛔ NEW 2026-08-18 `[PEHOOKONCE-2026-08-18]` — a FAILED ProcessEvent detection is PERMANENT for the process, and the message it prints is unreachable advice
-
-*Distinct from `[PEHOOK-2026-08-17]` below: that one is a wrong vtable SLOT on one sample. This one
-is the recovery path, and it bites on any game.* Found while staging Y1 on Elliot.
-
-**What happens.** In proxy mode the DLL starts the pipe server only — *"proxy DLL mode — starting
-pipe server only (no scan)"* — so `Aura`'s GObjects is unset until a scan runs. Issue
-`pe_profile_start` (or any invoke) **before** the scan and `CollectCandidateVTables` finds nothing:
-
-```
-[INFO ] ProcessEvent: first-time init on thread 21156 … serialized via call_once
-[ERROR] DetectProcessEvent: no valid UObject vtable available
-[WARN ] GameThreadDispatch: cannot resolve ProcessEvent address for hooking
-[INFO ] ProcessEvent: first-time init complete — offset=-1, hook_active=0
-```
-
-**And `-1` is terminal.** `DetectProcessEventVTableOffset` runs only inside `std::call_once`, which
-cannot re-run; the ordinary-path retry is gated `if (s_processEventOffset >= 0 && !IsHookActive())`
-([`Frieren.cpp:1730`](../dll/src/Frieren.cpp)); the other call site is gated `== -2`
-([`:1569`](../dll/src/Frieren.cpp)); and `UE5_EnsureGameThreadHook` returns early at
-`if (s_processEventOffset < 0) return false` ([`:1851`](../dll/src/Frieren.cpp)). So once detection
-has failed, **nothing in the process can ever install the hook** — no invoke, no user click, no
-later scan. Only a game restart recovers it.
-
-⛔ **The user-facing string actively misleads**, and this is the half worth fixing first:
-`"ProcessEvent not detected — do any invoke first (Teleport -> Get POV), then Start again."`
-On this path that instruction is **unreachable by construction** — doing an invoke and starting
-again re-enters `EnsureProcessEventReady`, which is already satisfied, and hits the `< 0` early
-return. The user is told to retry the one thing that cannot work.
-
-**Verified by negative control** — same binary, same game, same build, one variable (order):
-
-| order | result |
-|---|---|
-| `pe_profile_start` → `init` → `trigger_scan` → invoke → `pe_profile_start` | `hook_active: false`, **permanently** |
-| `init` → `trigger_scan` → invoke → `pe_profile_start` | **`hook_active: true`** |
-
-**Fix shape.** `-1` from *detection* is not the same as `-1` forever: it means "no UObject existed
-yet", which a later scan changes. Either re-arm the sentinel to `-2` when detection fails for the
-"no vtable available" reason specifically (so the existing `== -2` retry rearms), or move detection
-out of the `call_once` and keep only the *install* serialized. Whichever is chosen, the message must
-distinguish "not detected yet, retry after a scan" from "detected and permanently failed", and
-`pe_profile_start` should refuse (or run the scan) rather than poisoning the process.
-
-⚠ **This is plausibly the everyday cause of "the PE hook works sometimes on this game".** It is NOT
-the same as the `MH_ERROR_MEMORY_ALLOC` install failure (which IS retryable, and which
-`UE5_EnsureGameThreadHook` forces past) — do not merge the two.
-
-### ⛔ NEW 2026-08-17 `[PEHOOK-2026-08-17]` — ProcessEvent slot detection FAILS on DumperTest
-
-*Found by clicking **System → Run Self-Test** while looking for something else. It matters out of
-proportion to how it was found: every invoke-dependent row that plans to use the sample is affected.*
-
-**Two independent detectors agree, which is what makes this a finding rather than a known caveat.**
-
-1. **The DLL's own validator**, in `Logs\DumperTest\init-0.log`:
-   ```
-   [WARN]  DetectProcessEvent (fallback): pattern scan missed, falling back to UE=504 version-table primary=0x220
-   [INFO]  GameThreadDispatch: hook installed at 0x7FF79ED69FC0, validator armed (1500ms)
-   [ERROR] GameThreadDispatch: VALIDATION FAILED — hook at 0x7FF79ED69FC0 fired 0 times in 1500ms
-   ```
-   The AOB pattern scan **missed**, the code fell back to a version-table guess, and the resulting
-   hook saw **zero** ProcessEvent traffic in 1.5 s — on a running game, where the engine's own PE
-   calls should be constant. The panel agrees: `Game thread: PE hook off · never fired · 0 fires`.
-2. **The self-test**: `✗ Add_IntInt(3,4) expected 7, got 0`, `Raw buffer: 03000000 04000000 00000000`
-   — arguments written correctly, return slot untouched.
-
-⚠ **Detector 2 alone would prove nothing, and that is the trap.**
-[working-lessons.md](working-lessons.md) §4.4 records that KismetMathLibrary helpers **silently
-no-op through ProcessEvent even when the hook is correct** (verified on EVERSPACE 2, UE 5.5), with
-*exactly* this signature — A and B written, result 0. So the self-test's own evidence is
-indistinguishable from the documented false alarm. It is detector 1, the fired-0-times validator,
-that settles it, because that counts the game's own traffic rather than our invoke.
-**Do not read this as widening §4.4's population** — here the slot is genuinely wrong, so the
-zero tells us nothing about BlueprintFastCall.
-
-**What is wrong, in order of what to fix:**
-* **The detection**, primarily: `DetectProcessEvent`'s pattern scan misses on this UE 5.4
-  Development build and the version-table fallback (`primary=0x220`) is not the live slot.
-* **The self-test's advice**, secondarily: it says *"Hook may be on the wrong vtable slot. Check
-  init-\*.log for 'VALIDATION FAILED' and re-deploy the DLL."* Re-deploying cannot help — the DLL is
-  current (3262, `matched`); the slot is mis-detected. The message sends the user down the one path
-  that cannot work, and it is also built on the target §4.4 says not to verify with.
-
-**✅ The control was run, and it is SAMPLE-SPECIFIC — not a general detection failure.** Same build,
-same UI, **Lushfoil Photography Sim (UE 5.6)**:
-```
-DetectProcessEvent (pattern): match at vtable+0x260 -> 0x7FF7A7171510   <- AOB HIT, no fallback
-GameThreadDispatch: hook installed at 0x7FF7A7171510, validator armed (1500ms)
-ProcessEvent: first-time init complete — offset=608, hook_active=1      <- and NO VALIDATION FAILED
-```
-and the self-test answers **`✓ Add_IntInt(3,4) = 7 → PE hook verified`**. So the pattern works; it is
-**DumperTest** the scan misses on, and the `UE=504` version-table fallback (`primary=0x220` / offset
-544) is then simply wrong for that binary. Lushfoil's real slot is `0x260` / 608.
-
-⚠ **This control also narrows [working-lessons.md](working-lessons.md) §4.4.** That lesson says
-KismetMathLibrary helpers no-op through ProcessEvent on *"UE 5.5+ cooked Shipping"*. Lushfoil **is**
-UE 5.6 cooked Shipping and `Add_IntInt` returned **7**. The no-op is therefore title-specific (most
-likely: whether that cooker applied BlueprintFastCall to that helper), not a property of the version
-band. §4.4 has been narrowed accordingly.
-
-**Consequence for the register:** any row needing a game-thread invoke on **DumperTest** — CE
-`callFunction`, `ST1`, the AA14–AA20 invoke batch, Teleport/GodMode/Movement on the sample — is
-running against a hook that never fires, and must move to a title where detection succeeds
-(**Lushfoil is confirmed good**) or wait for the detection fix.
-
-⚠ **Do NOT survey this from the existing logs — it will read as all-clear and be wrong.** The hook
-installs **on first invoke**, so a title that was only scanned has no ProcessEvent lines at all.
-A sweep of all twelve log folders found ProcessEvent entries for **DumperTest only**, and that is
-"never attempted" for the other eleven, not "fine". Each title needs one **Run Self-Test** click.
 
 ### ⛔ NEW 2026-08-17 `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` does NOT mean the game loads it
 

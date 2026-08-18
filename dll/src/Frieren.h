@@ -112,9 +112,16 @@ __declspec(dllexport) int32_t   UE5_CallProcessEventDirect(uintptr_t instance, u
 // own PE calls without first issuing an invoke.
 __declspec(dllexport) bool      UE5_EnsureGameThreadHook();
 
-// ProcessEvent vtable offset once detected (>=0), else negative (-2 not attempted,
-// -1 detection failed). Lets the profiler tell "ProcessEvent not found" apart from
-// "found but the hook couldn't install" when reporting why recording is inactive.
+// ProcessEvent vtable offset once detected (>=0), else one of two NEGATIVE
+// sentinels that are not interchangeable (Stark.h owns them):
+//   -2 Stark::kPeOffsetNotDetected — not known YET and still ARMED. In proxy mode
+//      the DLL starts the pipe server only, so there is no UObject to read a
+//      vtable from until a scan runs; detection re-runs by itself afterwards.
+//   -1 Stark::kPeOffsetFailed      — terminal for this process (candidates existed
+//      and no slot could be named, or a slot was named and repeatedly failed
+//      post-install validation).
+// Lets the profiler tell those apart from "found it, but the hook couldn't
+// install", which is a third cause with a third remedy.
 __declspec(dllexport) int       UE5_GetProcessEventOffset();
 
 // === Debug Camera (robust force on/off; shared by UI pipe + CE Lua) ===

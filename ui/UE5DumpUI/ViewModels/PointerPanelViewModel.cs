@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 
@@ -1535,7 +1536,7 @@ public partial class PointerPanelViewModel : ViewModelBase
                 if (probeResult != null)
                 {
                     // First hit — verify + report.
-                    var (actual, hex, passed) = probeResult.Value;
+                    var (actual, hex, passed, invokeResult) = probeResult.Value;
                     if (passed)
                     {
                         SelfTestPassed = true;
@@ -1546,16 +1547,21 @@ public partial class PointerPanelViewModel : ViewModelBase
                     }
                     else
                     {
+                        // A wrong answer has TWO possible causes and the invoke alone
+                        // cannot separate them (working-lessons §4.4). Ask the DLL which
+                        // one this is instead of asserting the wrong one, as the old
+                        // "re-deploy the DLL" text did. ([PEHOOK-2026-08-17])
+                        var cause = await ClassifySelfTestFailureAsync(invokeResult);
                         SelfTestFailed = true;
-                        SelfTestResultText = string.Format(
-                            CultureInfo.InvariantCulture,
-                            "✗ {0} expected {1}, got {2}  →  Hook may be on the wrong vtable slot. " +
-                            "Check init-*.log for 'VALIDATION FAILED' and re-deploy the DLL.\n" +
-                            "Raw buffer: {3}",
+                        SelfTestResultText = Res.Format(
+                            "str.System.SelfTest.Fail",
                             cand.DisplayLabel,
                             FormatActual(cand.Expected, cand.ReturnType),
                             FormatActual(actual, cand.ReturnType),
+                            Res.Get(SelfTestAdvice.KeyFor(cause)),
                             hex);
+                        _log?.Warn(Constants.LogCatInit,
+                            $"Self-Test: {cand.DisplayLabel} FAILED — hook verdict={cause}");
                     }
                     SelfTestHasResult = true;
                     _log?.Info(Constants.LogCatInit,
@@ -1588,10 +1594,49 @@ public partial class PointerPanelViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Try one candidate. Returns (actualValue, rawHex, passed) on a
-    /// successful invoke (function resolved + call returned), or null when the
-    /// function isn't present on this game.</summary>
-    private async Task<(double actual, string hex, bool passed)?> TrySelfTestCandidate(SelfTestCandidate cand)
+    /// <summary>
+    /// Ask the DLL what its ProcessEvent hook is actually doing, so a failed
+    /// Self-Test can advise the right remedy. Only runs on the failure path — one
+    /// extra pipe round-trip, and only when something is already wrong.
+    ///
+    /// A probe that throws yields <see cref="SelfTestFailureCause.Unknown"/>, not a
+    /// default guess: the whole point is to stop claiming a cause we have not
+    /// measured.
+    /// </summary>
+    private async Task<SelfTestFailureCause> ClassifySelfTestFailureAsync(int invokeResult)
+    {
+        // A refused invoke needs no telemetry to explain and no round-trip to
+        // confirm — nothing ran, so no hook reading is relevant to it.
+        if (invokeResult != 0) return SelfTestFailureCause.NotDispatched;
+
+        try
+        {
+            // limit:0 — the per-command table is irrelevant here; we want the
+            // game_thread block only.
+            var d = await _dump!.GetDiagnosticsAsync(limit: 0);
+            return SelfTestAdvice.Classify(
+                invokeResult:    invokeResult,
+                haveDiagnostics: true,
+                hookActive:      d.GameThread.HookActive,
+                hookHasFired:    d.GameThread.HasFired);
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn(Constants.LogCatInit,
+                $"Self-Test: could not read hook diagnostics ({ex.Message}) — advising without a verdict");
+            return SelfTestFailureCause.Unknown;
+        }
+    }
+
+    /// <summary>Try one candidate. Returns (actualValue, rawHex, passed, result) on
+    /// an invoke that the DLL accepted or refused, or null when the function isn't
+    /// present on this game.
+    ///
+    /// <para><c>result</c> is carried out deliberately. It used to be discarded, so
+    /// a REFUSED invoke (the DLL returning -3 without ever calling ProcessEvent)
+    /// was indistinguishable from a call that ran and wrote nothing — the return
+    /// slot is untouched either way.</para></summary>
+    private async Task<(double actual, string hex, bool passed, int result)?> TrySelfTestCandidate(SelfTestCandidate cand)
     {
         if (_dump == null) return null;
 
@@ -1618,9 +1663,11 @@ public partial class PointerPanelViewModel : ViewModelBase
         // Decode return value from result_hex (DLL returns full params buffer
         // post-call). result=0 means ProcessEvent dispatch reported success;
         // we still verify by reading the return slot to catch wrong-hook cases.
+        // A non-zero result means the call never happened — the caller needs that
+        // to avoid explaining an untouched buffer as a no-op.
         double actual = DecodeReturnFromHex(res.ResultHex, cand.ReturnOffset, cand.ReturnType);
-        bool passed = ValuesMatch(actual, cand.Expected, cand.ReturnType);
-        return (actual, res.ResultHex, passed);
+        bool passed = res.Result == 0 && ValuesMatch(actual, cand.Expected, cand.ReturnType);
+        return (actual, res.ResultHex, passed, res.Result);
     }
 
     /// <summary>Parse N bytes from result_hex at byte offset, interpret as the

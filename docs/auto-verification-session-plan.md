@@ -21,13 +21,16 @@ Earlier sittings: `AA14–AA20` **5/5** · `AB1/AB2` **5/5** · `AB3/AB5` **1–
 `X2` **1–3**. This sitting: **`Y1` fully closed** (`[ELLIOT-Y1c-2026-08-18]`), steps 1–4 including
 the null control. Results live in `todo.md`; several rows had their *instructions* corrected too.
 
-### ⛔ TWO THINGS THIS SITTING PRODUCED THAT ARE NOT YET FIXED
+### ⛔ ONE THING THIS SITTING PRODUCED THAT IS NOT YET FIXED
 
-1. **`[PEHOOKONCE-2026-08-18]`** — a FAILED ProcessEvent *detection* is permanent for the process
-   (`offset=-1`; every retry is gated `>= 0` or `== -2`), and the message it prints tells the user to
-   do the one thing that cannot work. **Triggered simply by calling `pe_profile_start` before the
-   scan** — which is easy to do from a script. Full write-up + fix shape in `todo.md`.
-2. The Y1b conclusion *"`paramsData` is cleared by the invoke path"* was **refuted** — see below.
+1. The Y1b conclusion *"`paramsData` is cleared by the invoke path"* was **refuted** — see below.
+
+> **`[PEHOOKONCE-2026-08-18]` — FIXED 2026-08-18, live check pending.** It used to be listed here as
+> open: a failed ProcessEvent *detection* was permanent for the process, so `pe_profile_start` before
+> the scan poisoned the hook for good. The sentinel is now re-armable and detection re-runs after a
+> scan. **The fix-shape paragraph that used to live in `todo.md` is gone with it** — what is there
+> now is the verification batch (`## Pending live-game verification`, grep the tag), steps 1–5.
+> `[PEHOOK-2026-08-17]` moved the same way, with a detection fix on top (steps 1–8).
 
 ### ▶ THE ORDER THAT MATTERS WHEN STAGING ANY INVOKE ROW
 
@@ -38,10 +41,16 @@ scan**. Always:
 init  →  trigger_scan  →  one invoke (teleport_get_pov)  →  pe_profile_start
 ```
 
-Doing `pe_profile_start` first poisons the hook for the whole process (finding 1 above). Verified as
-a one-variable negative control: same binary, same game — scan-first gave `hook_active: true`,
-profiler-first gave `false` permanently. **This, not `MH_ERROR_MEMORY_ALLOC`, was what made Elliot's
-hook look "intermittent" in the previous sitting.**
+This was originally forced on us: doing `pe_profile_start` first **poisoned the hook for the whole
+process**. Verified as a one-variable negative control — same binary, same game: scan-first gave
+`hook_active: true`, profiler-first gave `false` permanently. **This, not `MH_ERROR_MEMORY_ALLOC`,
+was what made Elliot's hook look "intermittent" in the previous sitting.**
+
+⚠ **That permanence was FIXED on 2026-08-18 (`[PEHOOKONCE-2026-08-18]`), which changes what you
+should do here.** Scan-first stays the recommended order for getting work done. But **profiler-first
+is now step 2 of that tag's verification batch — the step marked ⚠ THE ONE THAT MATTERS** — so on a
+proxy-mode title you are *supposed* to run it profiler-first once and watch it converge to
+`hook_active: true` after the scan. Do the negative control first, then switch to the safe order.
 
 ### ▶ WITNESSING AN INVOKE — what is now known to work
 
@@ -245,8 +254,9 @@ discovery half. `M2`/`U16` are PARTIAL and say why on their rows.
 **Two rows moved to a bigger title, with measurements rather than impressions:**
 * **`B4`** — DumperTest cannot produce a command that blocks for seconds. The two heaviest whole-pool
   value scans measured **113 ms** and **52 ms** against `MonitorLoop`'s 200 ms poll. Run it on Elliot.
-* **`Y1`** — needs a game-thread invoke, and DumperTest's PE hook never fires
-  (`[PEHOOK-2026-08-17]`). Run it on a title with a verified hook.
+* **`Y1`** — needed a game-thread invoke, and DumperTest's PE hook never fired
+  (`[PEHOOK-2026-08-17]`). Run it on a title with a verified hook. **(Y1 is now CLOSED; kept for the
+  DumperTest caveat, which is itself dated — see the note below.)**
 
 **Still open from GROUP 5, needing a specific condition:** `B18` step 3 (a title whose GObjects is
 *not* AOB-resolvable) · the `.CT` **registry/recent-files** slot (a cheaper slot answered — see
@@ -263,9 +273,15 @@ Maintainer's call to delete it.
 
 ### Operational facts learned the hard way this session — they cost round trips
 
-* **Host choice matters now.** `DumperTest`'s **ProcessEvent hook never fires**
-  (`[PEHOOK-2026-08-17]`), so **anything needing a game-thread invoke must run on another title**.
+* **Host choice matters now.** `DumperTest`'s **ProcessEvent hook never fires with pre-2026-08-18
+  DLLs** (`[PEHOOK-2026-08-17]`), so **anything needing a game-thread invoke ran on another title**.
   **Lushfoil is verified good** (`✓ PE hook verified`). Use it as the invoke host.
+  ⚠ **Dated.** A detection fix shipped 2026-08-18: the pattern scan missed on that binary because the
+  `FUNC_Native` test carries a mandatory SIB byte, and the true slot is `+0x268` (PDB-confirmed), not
+  the version table's `0x220`. The scan is file-verified against the binary's own bytes, but
+  **nothing has yet watched the DLL do it in the running process** — that is step 7 of the
+  `[PEHOOK-2026-08-17]` batch in todo.md. **Until step 7 is observed, keep Lushfoil as the invoke
+  host**; after it, DumperTest becomes usable for invoke-dependent rows.
 * ⚠ **Read CE's checkbox correctly** (maintainer, 2026-08-18): a **big red ✗ = the record is ACTIVE**.
   Inactive is an *empty* box. It is not a failure marker, so never infer one from it.
 * **A failed record therefore looks like a working one.** Open **CE → Lua Engine** *before* concluding
@@ -740,7 +756,7 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 
 | Y9 · V7 · AF6 · AB6 · AE8 · D1/D3 step 6 | ✅ **PASS** | `[Y9-UI-2026-08-17]` · `[GRP4-UI-2026-08-17]` |
 | AE2/AE3 | 🟡 **4 of 6** (steps 4 and 5 not run) | `[AE23-UI-2026-08-17]` |
-| **PE hook** | ⛔ **NEW: detection FAILS on DumperTest**, verified good on Lushfoil | `[PEHOOK-2026-08-17]` |
+| **PE hook** | ⛔ **detection FAILED on DumperTest**, verified good on Lushfoil. *(Fix shipped 2026-08-18 — SIB-tolerant pattern, true slot `+0x268`; pending step 7 in todo.md)* | `[PEHOOK-2026-08-17]` |
 | Skia ABI soak | ✅ see below | `[GRP4-UI-2026-08-17]` |
 
 **GROUP 3 complete. GROUP 4: 14 rows done**, leaving `B10`, `AE2/AE3` steps 4–5, and `A5/V6/AE9`'s

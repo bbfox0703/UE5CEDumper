@@ -157,4 +157,129 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
     return queueDepth != 0 && !entryIsOurs;
 }
 
+// ============================================================
+// ProcessEvent DETECTION lifecycle — pure decision rules
+// ([PEHOOKONCE-2026-08-18] / [PEHOOK-2026-08-17])
+// ============================================================
+//
+// The detector itself lives in Frieren.cpp (it needs Aura + Macht). Only the
+// DECISIONS live here, header-inline, for one reason: no test target compiles
+// Frieren.cpp, and this header is already in dll_helpers_test's include list.
+// Moving a rule into a header is how this repo pins one (working-lessons §2.2).
+//
+// THREE failure classes, deliberately NOT merged — each has a different remedy
+// and merging them is what produced the field defect:
+//
+//   1. NOT READY  — no UObject vtable exists to read yet. In proxy mode the DLL
+//      starts the pipe server only, so GObjects is unset until a scan runs. This
+//      is an EXPECTED state, not an error, and a later scan fixes it by itself.
+//      It must therefore leave detection ARMED. Before the fix it stored the same
+//      -1 as a hard failure and every retry path was gated against -1, so one
+//      early `pe_profile_start` poisoned the hook for the whole process life.
+//   2. DETECTION FAILED — candidate vtables existed and neither the pattern scan
+//      nor the version table could name a slot. Terminal: retrying reads the same
+//      bytes and reaches the same answer.
+//   3. INSTALL FAILED — the offset is known and MinHook could not place a
+//      trampoline (MH_ERROR_MEMORY_ALLOC). Already retryable on its OWN budget in
+//      Frieren (kMaxHookAttempts / kHookRetryCooldownMs) and forced past by
+//      UE5_EnsureGameThreadHook. Nothing here touches it.
+
+/// Detected ProcessEvent vtable offset sentinels. >=0 is a real byte offset.
+/// Exported to the UI through UE5_GetProcessEventOffset, so the two negatives
+/// are a wire contract, not private state.
+constexpr int kPeOffsetNotDetected = -2;   ///< class 1 — re-armable, retry after a scan
+constexpr int kPeOffsetFailed      = -1;   ///< class 2 — terminal for this process
+
+inline bool PeOffsetUsable(int offset)     { return offset >= 0; }
+inline bool PeOffsetRetryable(int offset)  { return offset == kPeOffsetNotDetected; }
+
+/// Bound on REAL detection runs (ones that had candidate vtables to look at).
+/// A run that found no candidates costs an Aura::GetCount() and returns, so it
+/// deliberately spends no budget — otherwise a user who pokes an unscanned
+/// process a dozen times would exhaust the budget and re-create the very
+/// permanent-failure bug this replaces.
+///
+/// ⚠ THE COOLDOWN IS WHAT ACTUALLY THROTTLES; this cap is a backstop and is not
+/// reachable by today's wiring. Worth stating plainly, because the obvious
+/// reading — "without the cap a never-detectable game re-scans forever" — is
+/// FALSE: the only outcome that leaves the sentinel re-armed is "no candidate
+/// vtables", and that path returns before scanning anything. Every path that does
+/// run the expensive scan ends at a usable offset or at kPeOffsetFailed, and both
+/// fast-out. So the counter only advances on a validation re-arm, which is itself
+/// capped at kMaxPeValidationFailures. Keep the cap anyway: it costs one compare
+/// and it is the guard that holds if a future outcome ever leaves the sentinel
+/// armed after a scan.
+constexpr int      kMaxPeDetectAttempts = 8;
+constexpr uint64_t kPeDetectCooldownMs  = 1000;
+
+/// Should a re-detection run right now?
+///
+/// This is the anti-storm rule. Detection is re-armed on the ordinary invoke
+/// path, which a 10 Hz feature worker walks, so without the cooldown an
+/// undetectable game would re-probe on every single invoke, forever.
+///
+/// @param force  a user-initiated attempt (a feature being switched on). Skips
+///               the cap and the cooldown for the same reason
+///               TryInstallGameThreadHook's `force` does: the user is waiting,
+///               and when the offset is already usable this returns false long
+///               before any work happens.
+inline bool ShouldRetryPeDetection(int currentOffset,
+                                   int attemptsSpent,
+                                   uint64_t nowMs,
+                                   uint64_t lastAttemptMs,
+                                   bool force,
+                                   int maxAttempts = kMaxPeDetectAttempts,
+                                   uint64_t cooldownMs = kPeDetectCooldownMs) {
+    if (!PeOffsetRetryable(currentOffset)) return false;   // usable, or terminally failed
+    if (force) return true;
+    if (attemptsSpent >= maxAttempts) return false;
+    if (lastAttemptMs != 0 && nowMs - lastAttemptMs < cooldownMs) return false;
+    return true;
+}
+
+/// How many post-install validation failures (hook fired 0 times) are absorbed
+/// before the offset is declared terminally wrong.
+constexpr int kMaxPeValidationFailures = 3;
+
+/// Act on a VALIDATION FAILED verdict, or only report it?
+///
+/// Only the version-TABLE guess is acted on. That asymmetry is the whole point:
+///
+///  * A zero fire count has two causes — a mis-detected slot, or a game thread
+///    that genuinely did not tick during the window (paused, loading screen,
+///    minimised with t.IdleWhenNotForeground). The count alone cannot separate
+///    them, so acting on every zero would disable a CORRECT hook on an idle game.
+///  * The two causes are not equally likely per detector. The pattern scan
+///    fingerprints ProcessEvent's own body and has never been observed wrong
+///    (Lushfoil UE 5.6: pattern hit at vtable+0x260, validator OK). The version
+///    table is a per-version GUESS with no evidence from the binary at all, and
+///    it is what produced the one measured mis-detection (DumperTest UE 5.4
+///    Development: fallback primary=0x220, 0 fires).
+///
+/// So a zero on the pattern path reads as "the game was idle" and the hook is
+/// kept; a zero on the table path reads as "the guess was wrong" and is acted on.
+inline bool ShouldActOnValidationFailure(bool offsetFromVersionTable) {
+    return offsetFromVersionTable;
+}
+
+/// What the stored offset must become after a validation failure.
+///
+/// Re-arming (rather than failing outright) is what lets the idle-game false
+/// positive recover by itself: the next invoke re-detects, re-installs — MinHook
+/// fast-paths a re-enable at the same address — and re-arms the validator, which
+/// passes as soon as the game is ticking. A genuinely wrong slot fails that same
+/// loop, which is why the loop is counted and terminal at kMaxPeValidationFailures.
+///
+/// @param failureCount 1-based count of validation failures seen so far.
+/// @return kPeOffsetNotDetected (re-arm), kPeOffsetFailed (give up), or
+///         currentOffset unchanged (verdict reported but not acted on).
+inline int PeOffsetAfterValidationFailure(bool offsetFromVersionTable,
+                                          int currentOffset,
+                                          int failureCount,
+                                          int maxFailures = kMaxPeValidationFailures) {
+    if (!ShouldActOnValidationFailure(offsetFromVersionTable)) return currentOffset;
+    if (failureCount >= maxFailures) return kPeOffsetFailed;
+    return kPeOffsetNotDetected;
+}
+
 } // namespace Stark

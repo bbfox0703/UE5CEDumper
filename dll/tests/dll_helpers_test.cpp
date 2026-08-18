@@ -478,6 +478,115 @@ static void Test_Stark_ShouldDrainQueue() {
            !Stark::ShouldDrainQueue(64, true));
 }
 
+// ----- Stark: ProcessEvent detection lifecycle ---------------------------------
+//
+// [PEHOOKONCE-2026-08-18]. The field defect: a detection that failed because there
+// was nothing to detect YET (proxy mode starts the pipe server only, so GObjects is
+// unset until a scan) stored the same -1 as a hard failure, and every retry path in
+// Frieren was gated against -1. One `pe_profile_start` before the scan therefore
+// poisoned the ProcessEvent hook for the entire process -- no invoke, no click and
+// no later scan could ever install it, and the message told the user to retry the
+// one thing that could not work.
+//
+// These pin the SEPARATION. Frieren.cpp is not compiled by any test target, so the
+// rules live in Stark.h precisely so that this file can hold them still.
+
+static void Test_Stark_PeOffsetSentinels() {
+    // The two negatives are NOT interchangeable, which is the entire finding.
+    EXPECT("a real offset is usable",        Stark::PeOffsetUsable(0x220));
+    EXPECT("a real offset is not retryable", !Stark::PeOffsetRetryable(0x220));
+
+    EXPECT("not-detected is NOT usable",     !Stark::PeOffsetUsable(Stark::kPeOffsetNotDetected));
+    EXPECT("not-detected IS retryable",      Stark::PeOffsetRetryable(Stark::kPeOffsetNotDetected));
+
+    EXPECT("hard failure is NOT usable",     !Stark::PeOffsetUsable(Stark::kPeOffsetFailed));
+    EXPECT("hard failure is NOT retryable",  !Stark::PeOffsetRetryable(Stark::kPeOffsetFailed));
+
+    // Offset 0 is a legal vtable offset in principle and must not read as a sentinel.
+    EXPECT("offset 0 is usable",             Stark::PeOffsetUsable(0));
+    EXPECT("offset 0 is not retryable",      !Stark::PeOffsetRetryable(0));
+}
+
+static void Test_Stark_ShouldRetryPeDetection() {
+    constexpr int kNotDetected = Stark::kPeOffsetNotDetected;
+
+    // THE FIX. An armed sentinel retries -- this is the path that was unreachable.
+    EXPECT("armed sentinel, first attempt -> retry",
+           Stark::ShouldRetryPeDetection(kNotDetected, 0, 10'000, 0, false));
+
+    // Already answered, or answered "never": no work either way.
+    EXPECT("a usable offset never re-detects",
+           !Stark::ShouldRetryPeDetection(0x220, 0, 10'000, 0, false));
+    EXPECT("a hard failure never re-detects",
+           !Stark::ShouldRetryPeDetection(Stark::kPeOffsetFailed, 0, 10'000, 0, false));
+    EXPECT("a hard failure does not re-detect even when FORCED",
+           !Stark::ShouldRetryPeDetection(Stark::kPeOffsetFailed, 0, 10'000, 0, true));
+
+    // THE ANTI-STORM HALF. Re-arming without these turns the ordinary invoke path
+    // -- which a 10 Hz feature worker walks -- into a re-scan of up to 12 vtables x
+    // 0x2000 bytes, ten times a second, forever.
+    EXPECT("inside the cooldown -> no retry",
+           !Stark::ShouldRetryPeDetection(kNotDetected, 1, 10'500, 10'000, false));
+    EXPECT("cooldown just elapsed -> retry",
+           Stark::ShouldRetryPeDetection(kNotDetected, 1, 11'000, 10'000, false));
+    EXPECT("budget spent -> no retry",
+           !Stark::ShouldRetryPeDetection(kNotDetected, Stark::kMaxPeDetectAttempts,
+                                          99'000, 10'000, false));
+    EXPECT("one attempt left -> retry",
+           Stark::ShouldRetryPeDetection(kNotDetected, Stark::kMaxPeDetectAttempts - 1,
+                                         99'000, 10'000, false));
+
+    // A user-initiated attempt (a feature switching on) skips cooldown and cap for
+    // the same reason TryInstallGameThreadHook's `force` does: the user is waiting.
+    EXPECT("force beats the cooldown",
+           Stark::ShouldRetryPeDetection(kNotDetected, 1, 10'001, 10'000, true));
+    EXPECT("force beats the budget",
+           Stark::ShouldRetryPeDetection(kNotDetected, Stark::kMaxPeDetectAttempts,
+                                         99'000, 10'000, true));
+
+    // lastAttemptMs == 0 means "never attempted", not "attempted at tick 0" -- a
+    // cooldown measured from it would suppress the very first retry.
+    EXPECT("never attempted -> not throttled",
+           Stark::ShouldRetryPeDetection(kNotDetected, 1, 5, 0, false));
+}
+
+static void Test_Stark_PeValidationFailureVerdict() {
+    constexpr int kOffset = 0x220;
+
+    // [PEHOOK-2026-08-17]: the version TABLE is a per-version guess with no evidence
+    // from the binary, and it is what produced the one measured mis-detection
+    // (DumperTest UE 5.4 Development, primary=0x220, hook fired 0 times).
+    EXPECT("version-table zero-fires is acted on",
+           Stark::ShouldActOnValidationFailure(true));
+    EXPECT("version-table failure re-arms detection",
+           Stark::PeOffsetAfterValidationFailure(true, kOffset, 1) == Stark::kPeOffsetNotDetected);
+    EXPECT("second failure still re-arms",
+           Stark::PeOffsetAfterValidationFailure(true, kOffset, 2) == Stark::kPeOffsetNotDetected);
+
+    // Bounded: a genuinely wrong slot re-detects to the same wrong slot, so the
+    // loop must terminate rather than reinstall forever.
+    EXPECT("the last allowed failure gives up",
+           Stark::PeOffsetAfterValidationFailure(true, kOffset,
+                                                 Stark::kMaxPeValidationFailures)
+               == Stark::kPeOffsetFailed);
+    EXPECT("past the cap stays given up",
+           Stark::PeOffsetAfterValidationFailure(true, kOffset,
+                                                 Stark::kMaxPeValidationFailures + 5)
+               == Stark::kPeOffsetFailed);
+
+    // THE FALSE-POSITIVE GUARD, and the reason this is not "act on every zero".
+    // A zero fire count also describes an idle game thread (paused / loading /
+    // minimised under t.IdleWhenNotForeground). The pattern scan fingerprints
+    // ProcessEvent's own body and has never been observed wrong, so a zero there
+    // reads as "the game was idle" and the correct hook must survive it.
+    EXPECT("pattern-scan zero-fires is NOT acted on",
+           !Stark::ShouldActOnValidationFailure(false));
+    EXPECT("a pattern-scan offset is left untouched",
+           Stark::PeOffsetAfterValidationFailure(false, kOffset, 1) == kOffset);
+    EXPECT("a pattern-scan offset survives repeated zeroes",
+           Stark::PeOffsetAfterValidationFailure(false, kOffset, 99) == kOffset);
+}
+
 // ----- Lineal: FUObjectItem SerialNumber offset --------------------------------
 //
 // Audit #5 A1. Aura::GetSerialNumber used to compute this inline as
@@ -5621,6 +5730,9 @@ int main() {
     RUN(Test_Ubel_EstimateClassInfoBytes);
     RUN(Test_Stark_ShouldUseTrampoline);
     RUN(Test_Stark_ShouldDrainQueue);
+    RUN(Test_Stark_PeOffsetSentinels);
+    RUN(Test_Stark_ShouldRetryPeDetection);
+    RUN(Test_Stark_PeValidationFailureVerdict);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_CommandNumbering);
