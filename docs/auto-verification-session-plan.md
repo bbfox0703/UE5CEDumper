@@ -17,10 +17,21 @@ launched without a human, and what must never be started without one.
 **Machine state: nothing running.** Elliot, Cheat Engine and UE5DumpUI were all killed and
 confirmed gone. Working tree clean; ~73 unpushed commits on `dev` (no PR — the maintainer asks).
 
-### ✅ DONE THIS SITTING — `AA14–AA20` 1-4, `G2` 4+5. Results are in `todo.md`, not here.
+### ✅ DONE THIS SITTING — `AA14–AA20` **all 5**, `G2` 4+5. Results are in `todo.md`, not here.
 
 **What is LEFT, and it is short:**
-* **`AA14–AA20` step 5** — blocked only by the PE hook failing to install that launch
+* ~~`AA14–AA20` step 5~~ — **CLOSED on Lushfoil.** The lesson generalises: **when the PE hook will
+  not install, CHANGE TITLE, do not retry.** Elliot's hook is intermittent (maintainer: "sometimes
+  yes, sometimes no"); Lushfoil gave `hook_active: true` first try. ⚠ Two traps, both in todo.md:
+  the DLL's invoke timeout must be raised **well above** the Lua's 10 s (use 120000, not 30000 — a
+  GUI round trip eats 30000's window and the run then *looks* like an AA19 failure), and
+  `suspend.py` must be given the **full image stem** (a Steam shim shares the prefix). Also:
+  a suspended game thread did **not** recover on resume — treat it as one-shot and restart the game.
+* **`G2` step 3** — Lushfoil is **ruled out**: its PE version resource is intact, so it stops at
+  `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` and never reaches the memory-string needle. Needs
+  a **UE5 title with a stripped/unrecognised version resource** — try TQ2 (507), Solarpunk (507),
+  Manor Lords (505), ES2 (505), STVoyager (506). The cache drop itself is solved and cheap.
+* **(superseded, kept for the mechanics)** the old step-5 note below
   (`MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`; the same game hooked fine 6 h earlier, so
   **just relaunch and re-check `get_diagnostics` -> `hook_active` BEFORE staging anything**).
   Everything else is already built: `set_invoke_timeout {"timeout_ms":30000,"persist":false}`

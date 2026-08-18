@@ -2599,6 +2599,19 @@ no test target compiles `Genau.cpp`.*
 > it logs `UE Version = 506 (cached, rev=5, detected=yes, lowConf=no) — skipped DetectVersion`.
 > `tools/verify/cold_detect.py drop 998ED2850957D000 --apply` is the one-line unblock (it was
 > refused by this session's command classifier, not by anything in the repo).
+> **The cache drop was then DONE, and it settles what step 3 actually needs — it is not Lushfoil.**
+> `cold_detect.py drop 998ED2850957D000 --apply` worked, the cold sweep ran
+> (`DetectVersion: Attempting to detect UE version...`), and Lushfoil resolved at the FIRST stage:
+> `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` -> `UE Version = 506 (tier=1, detected=yes,
+> lowConfidence=no)`. Its PE version resource is **intact**, so it exits before the memory-string
+> needle and **structurally cannot** emit `DetectVersion: Tier 1 (…) '++UE5+Release-5.6'`.
+> ⇒ **Step 3's UE5 branch needs a UE5 title whose PE version resource is stripped or unrecognised**
+> (Elliot is the documented stripped title but is UE4-era). Candidates to try, all UE5 and already in
+> the cache: TQ2 (507), Solarpunk (507), Manor Lords (505), ES2 (505), STVoyager (506).
+> *Incidentally this re-ran G2 step 1's control on a second title and it passed:* the record was
+> rewritten **identically** (`ueVersion=506 versionDetected=True versionDetectRev=5`).
+> ⚠ The maintainer has confirmed the whole cache file is **disposable** — it only speeds up a second
+> load — so a cold-detect row may drop a record, or the file, without ceremony.
 >
 > **Step 4 — ✅ THE LINES FIRE, but NOT by the route this row prescribes.** Witnessed on 3262, in
 > `Logs/Elliot-Win64-Shipping/scan-20260818-13*.log`: **`DataScanGObjectsCandidates: aborted (client
@@ -2761,7 +2774,7 @@ class-to-class recycling (a recycled address whose new occupant has a *sane* `Pr
 **A10** (`Aura`'s two reference-returning caches), and names baked into `ClassInfo::Name` /
 `FullPath` / `SuperName`, which are never witnessed.
 
-### 🟡 4-of-5 CLOSED 2026-08-18 — AA14–AA20: the CE Lua invoke path in a real game
+### ✅ 5-of-5 CLOSED 2026-08-18 — AA14–AA20: the CE Lua invoke path in a real game
 
 *Needs CE + a game + the DLL injected. See dev-log build 3039. The Lua rig (63 checks) covers the
 logic against stubs; what it cannot cover is a real ProcessEvent.*
@@ -2783,7 +2796,7 @@ logic against stubs; what it cannot cover is a real ProcessEvent.*
    command, and the NEXT invoke must refuse with *"the DLL is STILL holding the mailbox"* rather
    than firing. Once the game recovers, a further invoke must work again (the guard clears itself).
 
-> ### 🟡 4-of-5 CLOSED `[ELLIOT-CE-2026-08-18]` — steps 1-4 PASS, step 5 BLOCKED (not failed)
+> ### ✅ 5-of-5 CLOSED — steps 1-4 `[ELLIOT-CE-2026-08-18]`, step 5 `[LUSHFOIL-CE-2026-08-18]`
 >
 > Elliot (`Elliot-Win64-Shipping.exe`, PID 3528), dxgi proxy, **DLL build 1.0.0.3262**, CE
 > **7.7.0.10568** attached, game in a loaded save. UI reported `Connected — UE504 (355717 objects)`.
@@ -2805,10 +2818,34 @@ logic against stubs; what it cannot cover is a real ProcessEvent.*
 > | 2 | ✅ **PASS on its own assertion, with a stated limit** | `Actor::GetOverlappingComponents` — dialog shows `OverlappingComponents [Array, 16B, off=0, out]`, left empty. The invoke **reached the DLL** (`Mailbox: received cmd=4`, `INVOKE_BY_NAME starting...`), i.e. `writeParams` **accepted `tarray` and wrote nothing** instead of aborting the whole invoke with *"Unknown param type 'tarray'"* — which is exactly what AA16 fixed. ⚠ **The call itself did not execute**: `FIND_INSTANCE only CDO found for 'Actor'` -> `error=-3 'not found (0 functions walked)'`. Retried on `PrimitiveComponent`, which resolved a **real** instance (`0x1C1715F650`, no CDO warning) and still walked 0 functions. **So no TArray-OUT invoke has yet RUN to `result=0`** — the gap is target resolution, not AA16 |
 > | 3 | ✅ **PASS** | `TextBlock::SetText` (`InText [FText, 16B, off=0]`). Export succeeded; the refusal fires at enable, verbatim: `[string "--[[..."]:307: [ue5_invoke] param 'InText' is an ftext -- an FText cannot be built from CE Lua (it holds a shared reference the engine allocates), and passing a zeroed one crashes the game. Invoke a wrapper that takes an FString instead.` Names `ftext` ✅, **not a crash** ✅ (game alive, PID 3528). Third witness: `grep -c SetText pipe-0.log` = **0** — it never reached the DLL, so the refusal really is client-side, before the `CMD` write |
 > | 4 | ✅ **PASS** | `Subtract_IntInt(3,4)`: `[Invoke] After : 03 00 00 00 04 00 00 00 FF FF FF FF` / `-> ReturnValue (int32@8) = -1`. The **raw return bytes are `FFFFFFFF`** and the decode printed `-1`, not `4294967295` — AA20 witnessed on the bytes, not on the decoder's own word |
-> | 5 | ⬜ **BLOCKED — could not be staged, and the blocker is the finding** | The wedge branch needs the PE hook, and on this launch it **would not install**: `GameThreadDispatch: MH_CreateHook failed: MH_ERROR_MEMORY_ALLOC`, retried 3/8 times, so `hook_active=false` and `hook_fire_count=0`. Detection was fine (`DetectProcessEvent (pattern): match at vtable+0x260 -> 0x141596890`) — only MinHook's trampoline allocation failed. `pe_profile_start` refused with *"PE hook couldn't install (memory near ProcessEvent is busy)"*. ⚠ **Non-deterministic, not a property of the title**: the SAME game hooked cleanly at 12:31 the same day (`hook installed ... validator armed`, `hook fired 720 times in 1500ms`). Everything else for the row was staged and is reusable: `set_invoke_timeout {"timeout_ms":30000,"persist":false}` returned `invoke_timeout_ms: 30000, persisted: false` (the DLL's stock **5000 ms** fires BEFORE the Lua's 10000 ms, so the row is unreachable without this), and `tools/verify/suspend.py` gained `threads` / `suspend-tid` / `resume-tid` — it ranks Elliot's 157 threads and picks `tid=20676` (earliest-created, **981 s CPU**, far above every sibling) |
+> | 5 | ✅ **PASS on all three assertions `[LUSHFOIL-CE-2026-08-18]`** | Retried on **Lushfoil** after Elliot's PE hook refused to install — the maintainer confirms Elliot's hook is **intermittent by title, "sometimes yes, sometimes no"**, so switching host is the correct response, not retrying. Lushfoil gave `hook_active: true`, `hook_fire_count` climbing. Vehicle: `CharacterMovementComponent::GetMaxJumpHeightWithJumpTime`, **non-static** (`flags=0x54020402`, and the DLL log shows **no** `static-native fast path` line), so it really queues on the game thread. **Baseline first**: `ReturnValue (float@0) = 89.99999237`. Then game thread frozen -> **(a)** `Mailbox timeout after 10000ms -- the DLL took the command but did not finish it (status=255, no message from the DLL)` — `status=255` is the **0xFF** branch (the one a whole-process suspend cannot reach) and *no message from the DLL* is AA18 holding **even though the immediately preceding command had succeeded**; **(b)** immediate retry -> `[ue5_invoke] the previous invoke timed out and the DLL is STILL holding the mailbox -- sending now would overwrite the class/function/params of a call that is mid-flight...` (AA19), returned at once rather than after another 10 s; **(c)** once the DLL reported done, the next fire was **allowed through** (timeout message again, not the refusal) — i.e. the guard cleared itself |
 >
 > **State left as found:** invoke timeout restored (`{"timeout_ms":0}` -> `invoke_timeout_ms: 5000`,
 > `persisted: false`), no thread left suspended, no cache record modified, game/CE/UI all killed.
+>
+> ### ⚠ Two traps this retry paid for — both would silently invalidate a re-run
+>
+> 1. **The DLL's own invoke timeout must EXCEED the Lua's, or assertion (b) is untestable.** First
+>    attempt used 30000 ms: the DLL released the mailbox at T+30 s and the retry click landed at
+>    T+33 s, so the guard correctly stayed silent and the run *looked* like an AA19 failure. It was a
+>    **mis-timed test, not a defect** — the DLL log settles it (`INVOKE_BY_NAME complete, result=-5`
+>    at 15:39:52, next `received cmd=4` at 15:39:55). Raising it to **120000 ms** made the window
+>    ~110 s and the guard fired first try. ⚠ A GUI round trip is ~5-10 s, so the window must be tens
+>    of seconds, not the 20 s that 30000 leaves.
+> 2. **`tools/verify/suspend.py` matches on a SUBSTRING and acts on the FIRST match.** Steam titles
+>    have a launcher shim with the same stem (`LushfoilSim.exe` beside
+>    `LushfoilSim-Win64-Shipping.exe`; likewise `Elliot.exe`), and the shim sorts first, so
+>    `suspend-tid LushfoilSim <tid>` froze a **1-thread shim** while ProcessEvent kept firing.
+>    **Always pass the full image stem.** The tell is the two-detector check doing its job:
+>    `hook_fire_count` kept climbing under suspension.
+>
+> ⚠ **Also measured: creation order is NOT a reliable game-thread oracle here.** On Lushfoil **four**
+> separate threads each took ProcessEvent to 0 when suspended (the frame pipeline stalls if any of
+> them halts), and the earliest-created thread was not among the highest-CPU ones. Pick by EFFECT.
+> ⛔ **And the game did not recover**: after `resume-tid` (suspend count 1 -> 0, verified)
+> `hook_fire_count` stayed frozen at 2,070,966 for 5+ minutes while the process still reported
+> `Responding: True`. That is the lock hazard the rig's own docstring warns about, now observed —
+> **assume a suspended game thread is a one-shot and plan to restart the title afterwards.**
 
 ### ⬜ NEW 2026-08-17 — AE4–AE7: the Proxy Deploy panel, two buttons at once
 

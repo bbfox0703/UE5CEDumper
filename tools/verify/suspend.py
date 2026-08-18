@@ -128,6 +128,17 @@ def act_tid(match, tid, resume):
     if not targets:
         print(f"no process matching {match!r}")
         return 1
+    # A Steam title ships a launcher shim with the SAME stem as the game
+    # (LushfoilSim.exe beside LushfoilSim-Win64-Shipping.exe; Elliot.exe beside
+    # Elliot-Win64-Shipping.exe), and it sorts first. Taking targets[0] then
+    # freezes a 1-thread shim while the game runs on untouched -- which reads as
+    # "the suspend did nothing" rather than as an error. Refuse instead.
+    if len(targets) > 1:
+        print(f"{match!r} matches {len(targets)} processes -- ambiguous, refusing:")
+        for pid_, name_ in targets:
+            print(f"  {name_} (pid {pid_}, {len(thread_ids(pid_))} threads)")
+        print("pass the full image stem, e.g. LushfoilSim-Win64-Shipping")
+        return 1
     pid = targets[0][0]
     if tid not in thread_ids(pid):
         print(f"tid {tid} does not belong to pid {pid} -- refusing")

@@ -22,10 +22,10 @@
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI |
 | **第 2 步 — 要注入一個執行中的遊戲** | 19 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 11 | 遊戲 + Cheat Engine |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 10 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 16 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **50** | |
+| **合計** | **49** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -168,14 +168,12 @@
 
 ### ⬜ G2 —— 版本掃描加速後結果仍正確
 
-*優先度 **中***
+*優先度 **中** · 原步驟 3、4 已於 2026-08-18 驗畢並刪除*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
 | 1 | 把 `DetectVersion: PE resource failed, falling back to memory string scan` 到下一條 `SCAN:Ver` 之間的時間拆開量：加一條分隔 log，或改用一款 pre-UE4 檢查會提早結束的遊戲重測。同時記下遊戲名與 exe 位元組大小。 | 單獨的版本字串掃描本身在 1 秒以內。<br>⚠ 未拆分前不可記「G2 比宣稱慢」——目前量到的 2.4 s 內含 `CountPreUE4Markers` 另一次全檔掃描。 |
-| 2 | 注入任一款一般 UE5 遊戲，在 `scan-0.log` 搜尋 `DetectVersion: Tier 1`。 | 出現 `DetectVersion: Tier 1 (ascii\|utf16) '++UEx+Release-N.N' -> NNN`，字面文字一字不差。 |
-| 3 | 用 proxy 模式從 UI 啟動掃描，掃到一半直接關閉 UI。 | `scan-0.log` 出現 `aborted (client gone / shutdown)`（`DataScanGObjectsCandidates` / `FindGObjectsStaticStruct` / `FindGNamesByStringRef` 其一），而不是整趟跑完。<br>⚠ 這三個取消點只編譯過從未跑過，前面步驟通過不代表它們有被驗到。 |
-| 4 | 連上 UI → 指令進行中斷線 → 重新連線 → 重跑一次完整掃描。 | GObjects / GNames 正常解析完成，且日誌中**沒有**任何 `aborted` 行。 |
+| 2 | 找一款 **PE 版本資源被拔掉或無法辨識的 UE5 遊戲**注入（候選：TQ2 507、Solarpunk 507、Manor Lords 505、ES2 505、STVoyager 506），必要時先 `py tools/verify/cold_detect.py drop <PEHASH> --apply` 強制冷偵測，再搜 `scan-0.log` 的 `DetectVersion: Tier 1`。 | 出現 `DetectVersion: Tier 1 (ascii\|utf16) '++UE5+Release-N.N' -> NNN`，字面文字一字不差。<br>⚠ **Lushfoil 做不到這一項**：它的 PE 版本資源完好，會停在 `DetectVersion: PE VERSIONINFO -> UE 5.6 -> 506` 就結束，永遠走不到記憶體字串那一段。目前全機只見證過 `utf16` + **UE4** 兩條，`ascii` 與 **UE5** 兩個分支都還沒有證據。 |
 
 ### 🟡 W2 / W3 —— SDK header 繼承邊界與位元欄位（**只剩 UI 匯出這一步**）
 
@@ -408,18 +406,6 @@
 | 3 | 保持一個 hold 生效、UI 仍連著，直接關閉遊戲。 | 不當機、不卡住、Windows 應用程式事件記錄沒有新項目（沒有正面 log 可查，證據就是「什麼都沒發生」）。 |
 | 4 | 對一個活體實例超過 256 的 class（投射物、群眾 NPC、可破壞物件）下 Force。 | strip 那一列顯示 `⚠ capped` 與 `(256 held)`，狀態列結尾是 "cap reached, more exist unheld"；換一個小 class 則兩者都不出現。 |
 | 5 | 對上一步按 Reset，再讀那些實例的欄位值。 | 沒有任何實例卡在被強制的值。 |
-
-### ⬜ AA14 / AA15 / AA16 / AA17 / AA18 / AA19 / AA20 —— CE Lua invoke 在實機的參數與錯誤路徑
-
-*優先度 **低***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 回歸：UE5DumpUI → Interesting Funcs → 選一個無參數或 int 參數的 function → **Copy AA Script (Baked)** → 貼進 CE → 啟用。 | 函式照常被呼叫成功。 |
-| 2 | 對帶 `TArray<...>&` OUT 參數的 function（`GetAllActorsOfClass` 或 `GetOverlappingActors`）匯出 baked script 並啟用。 | 實際呼叫到遊戲，陣列參數留空；不再出現 "Unknown param type 'tarray'"。 |
-| 3 | 對帶 `FText` 參數的 function（UI／對話設定類）匯出並啟用。 | 以訊息明確拒絕，內容點名 `ftext` 並說明 CE Lua 無法建構 FText；不可當掉。 |
-| 4 | 對回傳負數 int32 的 function（或已知回傳 -1 的）啟用 Verify Return Value 模式。 | 印出 `-1`，而不是 `4294967295`。 |
-| 5 | 讓遊戲硬卡住（載入畫面或用 debugger 中斷）後執行 invoke，再連續執行第二次 invoke，最後等遊戲恢復再 invoke 一次。 | 第一次的逾時訊息不會引用前一個指令的錯誤；第二次直接拒絕並顯示「the DLL is STILL holding the mailbox」；遊戲恢復後再次 invoke 可正常運作。 |
 
 -----
 
