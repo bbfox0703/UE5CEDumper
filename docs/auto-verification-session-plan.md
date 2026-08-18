@@ -39,9 +39,12 @@ or step 1 passes vacuously) · `B5` (.CT half) · `M1/M2/M3/A2/U1/V1/V2` (UI hal
 * **Host choice matters now.** `DumperTest`'s **ProcessEvent hook never fires**
   (`[PEHOOK-2026-08-17]`), so **anything needing a game-thread invoke must run on another title**.
   **Lushfoil is verified good** (`✓ PE hook verified`). Use it as the invoke host.
-* **CE: a failed record looks silent.** Open **CE → Lua Engine** *before* diagnosing a red ✗ — the
-  hygiene rules keep the message out of any dialog. And CE must be **attached to the live game**; a
-  symbol registered against a killed process gives *"contract symbol resolved to the wrong memory"*.
+* ⚠ **Read CE's checkbox correctly** (maintainer, 2026-08-18): a **big red ✗ = the record is ACTIVE**.
+  Inactive is an *empty* box. It is not a failure marker, so never infer one from it.
+* **A failed record therefore looks like a working one.** Open **CE → Lua Engine** *before* concluding
+  anything about a record — the hygiene rules keep the message out of any dialog. And CE must be
+  **attached to the live game**; a symbol registered against a killed process gives
+  *"contract symbol resolved to the wrong memory"*.
 * **Freeze needs its helper**: UI → **Tools → Inject Freeze Helper into Current CE Table** (verify via
   CE's `Table` menu listing `ue5_freeze_helper.lua`).
 * **UI window handling**: it starts un-maximized and mostly off-screen left — click maximize at

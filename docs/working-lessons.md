@@ -909,6 +909,22 @@ hardcode `+0x3C` or any "+8 from ElementSize" form.
 
 ### 4.2 CE Lua quirks baked into our code as defensive patterns
 
+> ⚠ **First, read CE's address-list checkbox correctly, because getting it backwards inverts every
+> verification result you draw from a screenshot** (maintainer, 2026-08-18):
+>
+> | what you see on the record | what it means |
+> |---|---|
+> | **a big red ✗ drawn over the checkbox** | the script is **ACTIVE** |
+> | an empty checkbox | not active |
+>
+> The ✗ is CE's *enabled* glyph for `<script>` rows — **it is not an error marker**, and CE has no
+> per-record error marker at all. Two consequences, both of which have already cost time here:
+> **(a)** a script that bailed out correctly and untick'd itself looks *identical* to one that was
+> never ticked, and **(b)** a script that ticked, armed, and then silently stopped writing still shows
+> the red ✗ — which is exactly how `[FREEZESTUCK-2026-08-18]` hid (`todo.md`). The checkbox reports
+> what CE was *asked* to do, never what our Lua *achieved*; for that, open **CE → Lua Engine**, since
+> the hygiene rules deliberately keep those messages out of dialogs.
+
 > **Where to check whether a CE Lua call exists — and there are two copies, which answer different
 > questions.** CLAUDE.md forbids inventing CE Lua calls, so grep one of these first:
 >

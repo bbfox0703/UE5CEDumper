@@ -2042,8 +2042,54 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
   working**: it names the specific cause, stops writing after 3 consecutive failures instead of
   spinning, and tells the user what to do and to re-enable afterwards.
   ⚠ **Operational note that cost a diagnosis here:** the message is only visible with **CE's Lua
-  Engine window open** — by design (DEBUG-gated hygiene), but it means a red ✗ on a record looks
-  silent until you open it. Open the Lua Engine *before* concluding anything about a failed record.
+  Engine window open** — by design (DEBUG-gated hygiene), so a stopped freeze is silent until you
+  open it. Open the Lua Engine *before* concluding anything about a record.
+  ⚠⚠ **And read the checkbox correctly** (maintainer, 2026-08-18): in CE a **big red ✗ on a record's
+  checkbox means ACTIVE, not failed** — an inactive record is an EMPTY box. So the red ✗ seen here
+  was not a failure indicator at all; it was CE correctly reporting the record as still enabled while
+  the freeze had stopped writing. That is what turned this observation into
+  `[FREEZESTUCK-2026-08-18]` below.
+
+### ⛔ NEW 2026-08-18 `[FREEZESTUCK-2026-08-18]` — an abandoned freeze leaves the CE record ACTIVE
+
+*Found only because the maintainer corrected the checkbox reading above. With red ✗ = failed, the
+record looked like it had reported its own failure; with red ✗ = **active**, the same screen shows a
+record CE believes is applying a cheat while `ue5_freeze_helper` has stopped writing.*
+
+**Mechanism, verified by grep, not by inference.** `scripts/ue5_freeze_helper.lua:730-740` sets
+`handle._abandoned = true` after `MAX_FAIL_STREAK` consecutive rescan failures, clears the cache and
+prints once. It exposes the state at `:761`:
+
+```lua
+handle.isAbandoned = function() return handle._abandoned end
+```
+
+`grep -rn isAbandoned ui/ scripts/ dll/` returns **five hits: the definition, two lines of
+`scripts/tests/freeze_helper_test.lua`, one `Assert.Contains` in `FreezeScriptGeneratorTests.cs`, and
+nothing else.** The generated CE script never polls it, so nothing ever clears `memrec.Active`.
+
+**Why it matters, and why it is not a duplicate of audit #5 AA3.** AA3 was *`_lastError` had three
+writers and zero readers* — no failure reached the user at all. That was fixed: the abandonment now
+prints. What did **not** get fixed is the channel the user actually looks at. `CeLuaHygiene.cs:492`
+names this exact failure mode in its own doc comment — **"The checkbox lied"** — and CLAUDE.md's MUST
+("a bail-out that applied NOTHING must untick the record", stateful-toggle flavour) is written for
+it. A freeze that has stopped writing is applying nothing; the box says otherwise.
+
+**Failure scenario.** Re-inject the DLL while a freeze record is ticked. Three rescans fail, the
+helper abandons, the print lands in a Lua Engine window that hygiene has closed. The user sees a
+ticked record and believes the value is held. It is not, and nothing will resume it — `_abandoned` is
+only cleared by a *successful* rescan, which cannot happen because writing has stopped.
+
+**Extra tell that the intent was to untick**: the message ends *"Re-enable the record after fixing
+it"* — advice that cannot be followed, because the record was never disabled. The user must untick
+and re-tick, which the wording does not say.
+
+**Fix shape (not applied — scanning applies no fixes).** In the abandonment branch, drive the record
+inactive the way every other stateful toggle does (`if memrec then memrec.Active = false end`), which
+also makes the existing "Re-enable" wording true. `memrec` is not in scope inside the helper, so the
+handle needs the record passed in, or the generated script must poll `isAbandoned()` on its own timer
+— the accessor exists for exactly this and has no other caller. Effort **S**, risk **LOW**; the
+`scripts/tests/freeze_helper_test.lua` rig already drives the abandonment path.
 
 ### ⛔ NEW 2026-08-17 `[PEHOOK-2026-08-17]` — ProcessEvent slot detection FAILS on DumperTest
 
