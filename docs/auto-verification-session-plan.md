@@ -42,10 +42,19 @@ launched without a human, and what must never be started without one.
   (`executeCodeEx` runs on a *new* remote thread). Same trap the plan already flags for AA14–AA20
   step 5. Rewrite it to suspend the **game thread** and invoke through `Stark`.
 
-**Still to run in GROUP 6:** `G10/MA1` (needs a deliberate hint-cache miss — §4.2) · `AA14–AA20`
-(⚠ **Elliot has never installed its PE hook** — nothing has invoked yet; `pe_hook_survey.py` lists
-only Lushfoil as verified-good) · `G2` speed-split · `ST1` *(human-gated)*. **`Y1` also still needs
-an invoke host — use Lushfoil.**
+**✅ Elliot is a VALID INVOKE HOST** — System → Run Self-Test returns
+**`✓ Add_IntInt(3,4) = 7 → PE hook verified`**. So `AA14–AA20` and `Y1` can both run here and do
+**not** need Lushfoil. (Second title to return 7 from a KismetMathLibrary helper, which further
+narrows working-lessons §4.4 — the no-op is title-specific, not a UE-version property.)
+
+**Still to run in GROUP 6:** `G10/MA1` (needs a deliberate hint-cache miss — §4.2; ⚠ **Elliot is
+PROXY-injected, so there is no CE record to untick** for the cancel half — that step needs a
+CE-injected title) · `AA14–AA20` (ready to go — but see the suspend trap above for step 5) ·
+`G2` speed-split · `ST1` *(human-gated)* · `Y1`.
+
+ℹ️ **Elliot's System tab reports UE 504 "⚠ Low Confidence — detected via fragile fallback path …
+Publisher: Square Enix … version not detected"**, while every pointer (GObjects / GNames / GWorld /
+FSparseDelegateStorage / &GEngine slot) resolves. Noted in passing; not chased.
 
 ℹ️ **Epic Games Launcher was closed** mid-session: it repeatedly stole foreground and made
 computer-use refuse every click. Reopen it freely; nothing depended on it.
