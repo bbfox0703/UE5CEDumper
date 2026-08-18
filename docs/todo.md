@@ -5434,7 +5434,46 @@ Effort **S**, risk **LOW**, generator-only; `CeInjectScriptGeneratorTests` alrea
   *Why it can't be tested here: the throw comes from reading a UFunction in a process that is
   actively freeing it — there is no way to stage that outside a real game shutdown.*
 
-- ⬜ **Provoke the concurrent `UE5_Init`** (build 2592, B5) — the active half of the passive check in
+- ✅ **DONE 2026-08-18 `[ELLIOT-B5-2026-08-18]` — Provoke the concurrent `UE5_Init`** (build 2592, B5).
+  Ran on **Elliot** launched through its deployed **`dxgi` proxy**, which is what makes the second
+  caller reachable: `init-0.log` opens with
+  `DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)`, so the pipe is live
+  with both cached pointers still 0 — the row's precondition, confirmed rather than assumed.
+
+  **All four PASS conditions met, in one log window:**
+  ```
+  12:18:20.543 UE5_Init: Starting initialization...
+  12:18:20.543 UE5_Init: init already in progress on another thread — tid=23592 is waiting (guard working, not an error)
+  12:18:20.545 UE5_Init: init already in progress on another thread — tid=34088 is waiting (guard working, not an error)
+  12:18:23.773 UE5_Init: Complete (UE504, GObjects=0x149BFC140, GNames=0x149B18600, Objects=85068)
+  12:18:23.773 UE5_Init: tid=23592 resumed after waiting (first caller succeeded — returning its result, no second scan)
+  12:18:23.774 UE5_Init: tid=34088 resumed after waiting (first caller succeeded — returning its result, no second scan)
+  ```
+  Exactly **one** `Starting initialization...`; both waiters named by tid; both resumed on the first
+  caller's result with **no second scan**. And the callers themselves completed normally — all three
+  CE threads returned `r=1` after **3234 ms**, i.e. they blocked for the scan and shared its result
+  rather than erroring or re-scanning.
+
+  ### ⚠ How this was made deterministic — the naive staging does NOT work
+  Two earlier attempts on this same row failed to produce the handshake **even though the timing
+  looked right**, and both failures are worth keeping:
+  1. **UI Scan, then a CE call.** The CE call landed *after* the 3.3 s scan finished and returned in
+     **16 ms** off the cached result. GUI round trips are 2–6 s; the window is 3.3 s.
+  2. **A CE loop calling `UE5_Init` every 120 ms.** One Lua thread issues `executeCodeEx`
+     **synchronously**, so call #1 simply blocked for the whole scan (`call 1: BLOCKED 3234 ms`) and
+     calls 2–60 all ran afterwards, logging `Already initialized`. Sixty attempts, never two callers
+     at once. *This still proved the FAIL condition absent — one `Starting` line across 61 calls —
+     but it cannot produce the waiting handshake.*
+
+  What works is **three `createThread` calls fired together**, so the second and third genuinely
+  enter `UE5_Init` while the first holds it. **Concurrency had to be constructed; it does not arise
+  from doing things quickly.**
+
+  ℹ️ *The row describes the second caller as a CE mailbox command (`Mimic::EnsureInitialized`);
+  here it is a direct `UE5_Init` from CE Lua. Same entry point, same guard — but the mailbox flavour
+  specifically is still unexercised.*
+
+- ⬜ *(original instructions kept for the method)* **Provoke the concurrent `UE5_Init`** (build 2592, B5) — the active half of the passive check in
   ① above. Needs the **proxy** launch path, because that is what makes the second caller reachable:
   the proxy starts the pipe *without* scanning, so both cached pointers are 0 while the pipe is
   already live. **To test:** launch the game with a deployed proxy DLL, connect the UI, click Scan,
