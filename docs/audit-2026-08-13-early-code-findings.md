@@ -3956,7 +3956,7 @@ stay **hands-off the working tree** until the segment commits, or its edits get 
 segment's commit.
 
 > **The scheduled-task route works, and it is the right tool for the remaining seven segments.**
-> D4b ran unattended from `C:\Users\Andyc\.claude\scheduled-tasks\audit5-segment-d4b\SKILL.md`
+> D4b ran unattended from `%USERPROFILE%\.claude\scheduled-tasks\audit5-segment-d4b\SKILL.md`
 > (14:31:08 → commit 15:20:28, ~49 min) in **its own session with its own quota**, and it survived a
 > Claude Desktop re-login mid-run. The prompt file is the template: scope by file with line counts,
 > the workflow shape, the calibration paragraph, the do-not-re-derive list, and the write-up/commit
