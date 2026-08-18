@@ -3639,7 +3639,7 @@ Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogw
 > | 4 | ⬜ **NOT DECIDABLE ON ELLIOT — and the reason is measured** | The Console twin needs an `exec` command **on a past-cap class**. Elliot has **none**: with `Game Only` on, Console reports `No UFUNCTION(exec) commands found in this game (scanned 12,822 functions across 3,935 classes)`. All **94** exec commands it does find sit on engine classes (`CheatManager`, `AISystem`, `AbilitySystemCheatManagerExtension`), and `CheatManager` is **present** in the capped list (4 matching rows), i.e. inside the first 5,000. Running the twin here would pass **vacuously**. ▶ Needs a title with **>5,000 classes AND game-class exec commands** — check the Console tab's `Game Only` count before committing to a host |
 > | 5 | ⬜ not run | The negative case (unknown class must say plainly *"not found"*, not the "may still exist" caveat) goes through the **Live handoff**, which was not staged this session |
 
-### ⬜ NEW 2026-08-15 — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
+### 🟡 PARTIAL 2026-08-18 — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
 
 The invoke form passed **0** for every `UObject*` / `FName` argument since the feature shipped;
 `tonumber(s, 16)` was handed a string still carrying its `0x`. Fixed, and the Lua semantics are
@@ -3658,6 +3658,48 @@ at the Lua expression; everything after it — the mailbox write, the DLL's `CMD
    in-game, or set `UE5_DEBUG=1` and read the decoded return.
 4. Worth one negative case: FIRE with the untouched `0x0` default and confirm it behaves as a null
    argument — that path was the only one that ever worked, so it should be unchanged.
+
+> ### 🟡 PATH PROVEN, ARGUMENT NOT — and BOTH of this row's staging instructions are wrong
+> `[ELLIOT-Y1-2026-08-18]`
+>
+> Elliot, UE **504**, DLL **3262**, CE 7.7, AOBMaker connected, PE hook installed this launch
+> (`hook installed at 0x141596890`). Target: `BP_PlayerCharacter_C::FireBirdLaserOngoing` via the
+> Live Walker **`INV`** button — the button that actually reaches `InvokeScriptGenerator`, which is
+> where the `tonumber` fix lives.
+>
+> **What IS established (the transport):** `INV` pushed the script (`Invoke script created in CE: …`),
+> the record popped the CE form titled `BP_PlayerCharacter_C::FireBirdLaserOngoing | 0x134FE8040`
+> — i.e. it resolved a live instance by itself — the `0x`+uppercase address was accepted into the
+> `[UObject*: Actor, 8 B]` edit, and FIRE reached the DLL: `Mailbox: received cmd=1` →
+> `INVOKE inst=0x134FE8040 func=0x3779D5900` → **`INVOKE result=0`**, with `UE5_DEBUG=1` printing
+> `Invoking via mailbox… INVOKED OK`.
+>
+> ⛔ **That is exactly as far as it goes, and step 3 predicted it: `INVOKED OK` is not the result.**
+> The pointer's arrival is still **unwitnessed**, for a reason worth writing down:
+>
+> ### ⚠ TRAP 1 — the form's `[UObject*: …]` rows can be BP LOCALS, outside `parmsSize`
+> The DLL logged **`parmsSize=8 numParms=1`**: the function's only real parameter is
+> `ElapsedSeconds [double, 8B, off=0]`. Every object row the form offered —
+> `CallFunc_Conv_SoftObjectReferenceToObject_ReturnValue [UObject*: Object, off=8]` and
+> `K2Node_DynamicCast_AsActor [UObject*: Actor, off=16]` — is a **Blueprint frame local past the
+> parameter block**, not an argument. Reading the mailbox params buffer after FIRE
+> (`g_invokeMailbox 0x7FFEDC3AA5D0` + `0x328`, 24 bytes) returned **all zeros**.
+> ⇒ **Picking any `[UObject*: …]` row the form happens to show cannot decide Y1 — and it will look
+> like it did, because the invoke returns `result=0` and prints `INVOKED OK` either way.** The target
+> must be a function whose ObjectProperty is a *parameter* (offset < `parmsSize`).
+>
+> ### ⚠ TRAP 2 — Live Walker lists only the class's OWN functions, so this row's own example is unreachable
+> The row says to pick `K2_AttachToActor`, which is declared on `Actor`. On the walked pawn
+> (`BP_PlayerCharacter_C`, **105 functions**), filtering the function list for `K2_` returns **0**, and
+> `Owner` returns **0** — the list is own-class only. Nor can `Actor` itself be walked. Confirmed from
+> the other side too: `KismetSystemLibrary` (which *does* declare `GetObjectName(UObject*)`) is refused
+> by the UI with *"No live instance … LiveWalker has nothing to walk because there is no instance."*
+>
+> ▶ **What the next attempt needs:** a class that (a) has live instances and (b) **declares** a
+> function taking an `ObjectProperty` **within `parmsSize`**. Screen candidates in Interesting Funcs
+> by the `Param` column, then confirm the type and offset in the `AA(Baked)` dialog — it prints
+> `[UObject*: …, 8B, off=N]` — and only then drive `INV`. **Steps 3 and 4 remain unrun**: with no
+> argument-carrying target, neither the effect-confirmation nor the `0x0` null control is meaningful.
 
 
 
