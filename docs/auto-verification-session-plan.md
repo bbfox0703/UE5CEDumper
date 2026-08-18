@@ -57,7 +57,20 @@ hook look "intermittent" in the previous sitting.**
   test) and `tools/verify/y1_witness.py`.
 * Thread-freezing was **not needed** and is no longer the recommended first approach.
 
-### ⚠ TWO OPERATIONAL TRAPS WORTH MORE THAN THEY COST
+### ⚠ OPERATIONAL TRAPS WORTH MORE THAN THEY COST
+
+* **A big black rectangle over a panel is computer-use MASKING, not a UI bug.** Any window not in
+  the allowlist is painted as a solid rectangle in the screenshot, **at its screen position
+  regardless of z-order** — so it covers the app you are driving and looks exactly like a render
+  failure. It cost several rounds here (restarting the UI, blaming Skia, hunting a stuck popup).
+  **The tell: the rectangle does NOT move when you move the window.** Fix: `py tools/verify/
+  front_window.py list`, then `front_window.py minimize <proc>` for each — on this machine the usual
+  offenders are `notepad++`, `Taskmgr`, `GitHubDesktop`, `RtkUWP`, `Nahimic3`, `XboxPcApp`,
+  `SystemSettings`, and `SearchHost` (the Start-menu search overlay, which also steals foreground).
+* **Screenshots list what they hid** — the "were open and got hidden" note names the processes.
+  Read it before diagnosing anything visual.
+
+### ⚠ MORE TRAPS
 
 * **A reader that returns 0 on failure is worthless when 0 is also the bug.** A screener missing its
   `ReadProcessMemory` return check reported "does not persist" for a store that had *already

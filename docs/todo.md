@@ -3777,7 +3777,7 @@ flag stored as one).
    *"would be written as infinity"*, while the same value on a `DoubleProperty` must still be
    accepted. If the double case is refused, the narrowing check leaked into the 8-byte path.
 
-### 🟡 3-of-5 CLOSED 2026-08-18 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
+### 🟡 4-of-5 CLOSED 2026-08-18 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
 
 The three handoffs that need a class address stopped re-deriving it from the capped `list_classes`
 page and now use the address the row already carries. The pure logic is unit-tested with three
@@ -3828,6 +3828,52 @@ Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogw
 > | 3 | ✅ **PASS, end to end** | `AA(B)` on `BP_EnemyCharacter_C::SetBlockDispHPGauge` → the dialog **opened** (`ParmsSize=1`, `bBlock [bool, 1B, off=0]`) instead of aborting on *"Class … not found"*, and `Copy AA Script` **reached CE**: the record `Invoke (baked): BP_EnemyCharacter_C::SetBlockDispHPGauge` is in the address list. That is the whole finding — the handoff used the address the row carries rather than re-deriving it from the capped page |
 > | 4 | ⬜ **NOT DECIDABLE ON ELLIOT — and the reason is measured** | The Console twin needs an `exec` command **on a past-cap class**. Elliot has **none**: with `Game Only` on, Console reports `No UFUNCTION(exec) commands found in this game (scanned 12,822 functions across 3,935 classes)`. All **94** exec commands it does find sit on engine classes (`CheatManager`, `AISystem`, `AbilitySystemCheatManagerExtension`), and `CheatManager` is **present** in the capped list (4 matching rows), i.e. inside the first 5,000. Running the twin here would pass **vacuously**. ▶ Needs a title with **>5,000 classes AND game-class exec commands** — check the Console tab's `Game Only` count before committing to a host |
 > | 5 | ⬜ not run | The negative case (unknown class must say plainly *"not found"*, not the "may still exist" caveat) goes through the **Live handoff**, which was not staged this session |
+
+> ### 🔁 SECOND SITTING `[ELLIOT-X2b-2026-08-18]` — step 4 CONFIRMED vacuous, step 5 is MIS-SPECIFIED
+>
+> Elliot, UE **504**, DLL **3262**, title screen (84,990 objects — smaller than the first sitting's
+> 355,679, and it does not matter: `game_only=false` still returns **5,000 with `truncated=true`**,
+> so the cap precondition holds).
+>
+> **Step 4 — ⛔ NOT DECIDABLE HERE, now confirmed by a SECOND, independent method.** The first
+> sitting read the Console tab's counts; this one tested class membership over the pipe. Every
+> exec-bearing class sits **inside** the capped page, by index:
+> `CheatManager` **idx 2836**, `AISystem` **idx 1120**, `AbilitySystemCheatManagerExtension` **idx
+> 3900** — all < 5,000. The controls agree in the other direction: `BP_EnemyCharacter_C` and
+> `BP_PlayerCharacter_C` are **absent** from the page (that is why step 3 could use them).
+> ⇒ The Console twin's fix only bites when the exec command's class is past the cap, so running it
+> here would go **green while proving nothing**. Still needs a title with **>5,000 classes AND
+> game-class exec commands**.
+> ⚠ `list_all_functions` with `game_only=false` on this title **does not return** (killed at 10 min);
+> the membership test above needs only `list_classes`, so prefer it.
+>
+> **Step 5 — ✅ the REACHABLE half passes, and the half the row asks for is UNREACHABLE BY DESIGN.**
+> Staged exactly as the row describes: `WBP_DebugLevelJumpItem_C` is past the cap **and** has zero
+> live instances (verified over the pipe first), so its `Live` button takes the no-live-instance
+> path. The UI fell back to Class Struct and logged, verbatim:
+> ```
+> [WARN] InterestingFunctions navigate: WBP_DebugLevelJumpItem_C not in the class list
+>        — it was CAPPED at 5,000 rows, so the class may still exist
+> ```
+> That is the **correct** answer — the class does exist, it is merely past the cap — and it is the
+> branch build 2888 added. **But the row asks to see the OTHER branch, and two independent facts stop
+> it:**
+> 1. `ClassAddrLookup.MissReason` ([`Models/ClassListResult.cs:123`](../ui/UE5DumpUI/Models/ClassListResult.cs))
+>    selects on **`Truncated`**, never on whether the class exists. On any game that hits the cap the
+>    answer must be the caveat; asking for a plain *"not found"* there is asking the UI to claim
+>    knowledge it does not have.
+> 2. **A class that "genuinely does not exist" cannot reach this path at all.** All four call sites
+>    (`MainWindowViewModel.cs` 1178 / 1232 / 1392 / 1775 — Interesting Funcs, Interesting Props,
+>    Console/exec) take `className` from a **discovered row**, so the class always exists; and they
+>    all call `ListClassesAsync(gameOnly: false)`, whose result on a **non**-truncating game is the
+>    complete class list — in which that class is therefore present, so the miss branch does not fire
+>    either. Dump Explorer, the one panel that knows about classes *not* in the game, hands off via
+>    `NavigateToLiveWalker(addr)` / `NavigateToInstanceFinder(className)` and never touches
+>    `FindClassAddr`.
+> ⇒ `MissReason == "not found"` is reachable only in a narrow race (a class collected between the
+> function-list and class-list calls). **It is not stageable deliberately, and the row's own note
+> that the pure logic already has three unit-tested negative controls is the right place for it.**
+> Rewrite step 5 as *"confirm the CAVEAT is what a past-cap miss reports"* — which is what passed here.
 
 ### ✅ DONE 2026-08-18 `[ELLIOT-Y1c-2026-08-18]` — run a generated CE invoke against a live game (audit #5 Y1, build 2862)
 
