@@ -100,6 +100,21 @@ public static class Constants
     public const string LogCatPipe = "pipe";
     public const string LogCatView = "view";
 
+    // ---- Crash diagnostics -------------------------------------------------
+    //
+    // Single-file crash report at the %LOCALAPPDATA%\UE5CEDumper ROOT (not under
+    // Logs\ — the retention sweep walks only that folder and globs only *.log).
+    // Under Native AOT this is the ONLY diagnostic surface for a fault that kills
+    // the process before, or instead of, anything reaching the normal log files.
+    public const string CrashLogFileName = "crash.log";
+
+    // Above this uptime, a crash report still claiming the "Startup" phase is
+    // reporting a STALE marker rather than a real startup failure — no startup of
+    // this app takes a minute. CrashReportFormatter.Headline says so explicitly
+    // instead of repeating the phase; see [PASTECRASH-2026-08-18], where the
+    // hard-coded phrase "startup crash" mislabelled a 31-minute-in crash.
+    public const int CrashStartupPhaseMaxSeconds = 60;
+
     // Pipe Communication
     public const int PipeConnectTimeoutMs = 5000;
     public const int DefaultPageSize = 200;

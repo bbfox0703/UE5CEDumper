@@ -23,7 +23,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 12 items, and NONE of them is in the 166 above
+> ### ▶ OPEN FIXES INDEX — 11 items, and NONE of them is in the 166 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -31,7 +31,6 @@ Open work only. **Read this when deciding what to do next.**
 >
 > | tag | one-line defect |
 > |---|---|
-> | `[PASTECRASH-2026-08-18]` | a failed clipboard **paste terminates the UI** — Ctrl+V is a potential crash |
 > | `[PEHOOKONCE-2026-08-18]` | a failed ProcessEvent **detection is permanent** for the process; `pe_profile_start` before the scan causes it |
 > | `[STALEDLL-2026-08-17]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up |
 > | `[PEHOOK-2026-08-17]` | ProcessEvent slot **mis-detected** on DumperTest (sample-specific) |
@@ -2112,36 +2111,35 @@ handle needs the record passed in, or the generated script must poll `isAbandone
 — the accessor exists for exactly this and has no other caller. Effort **S**, risk **LOW**; the
 `scripts/tests/freeze_helper_test.lua` rig already drives the abandonment path.
 
-### ⛔ NEW 2026-08-18 `[PASTECRASH-2026-08-18]` — a failed clipboard PASTE terminates the UI
+### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PASTECRASH-2026-08-18]` — a clipboard paste must no longer terminate the UI
 
-Hit by accident while driving the Classes filter: a 19-character string made the automation paste
-instead of type, and the app **died on the spot**, losing a connected session.
+*Needs the UI only — **no game, no DLL, no pipe**. Two halves shipped: a
+`Dispatcher.UIThread.UnhandledException` guard (`Services/DispatcherFaultGuard.cs`) that marks
+**only** classifier-confirmed input-layer faults handled, and a crash.log headline that states the
+real phase + uptime instead of the hard-coded phrase "startup crash".*
 
-```
-System.Runtime.InteropServices.COMException (0x8007000E): EnumFormatEtc failed
-   at Avalonia.Win32.Win32Com.Impl.__MicroComIDataObjectProxy.EnumFormatEtc(Int32 dwDirection)
-   at Avalonia.Win32.ClipboardImpl.TryGetDataAsync()
-   at Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync[T](...)
-   at Avalonia.Controls.TextBox.Paste()
-   at System.Threading.Tasks.Task.<>c.<ThrowAsync>b__124_0(Object state)
-```
-
-The read fails inside `TextBox.Paste()`, and because it surfaces through `Task.ThrowAsync` it reaches
-the dispatcher as an **unobserved** exception and takes the process down. ⇒ **`Ctrl+V` into any text
-box in this app is a potential crash**, dependent only on the clipboard being momentarily
-unreadable (another app holding it, an OLE source that has gone away, `E_OUTOFMEMORY` as here).
-Nothing in our code is on the stack — but the *consequence* is ours, and a connected UI with a
-loaded object tree is expensive to lose.
-
-**Fix shape:** a `Dispatcher.UnhandledException` handler that logs and marks input-layer faults
-handled, so a clipboard/IME failure degrades to "paste did nothing" instead of terminating. Effort
-**S** · Risk **low**. ⚠ Scope it to input-layer faults — do not blanket-swallow, or a real crash
-becomes invisible.
-
-**Second, smaller defect in the same evidence:** `crash.log` recorded this as
-**`UE5DumpUI startup crash`** although it happened many minutes into a live session — the phrase is
-hard-coded in the handler, so every crash is reported as a startup crash. That is actively
-misleading when triaging a log after the fact.
+> **What is already pinned offline and must NOT be re-checked here:** the swallow SCOPE (52 unit
+> tests — `InputLayerFaultClassifierTests`, `DispatcherFaultGuardTests`, `CrashReportFormatterTests`
+> — including negative controls for a ViewModel `NullReferenceException`, a mixed our-code/clipboard
+> stack, eight never-swallow exception types, an over-deep exception chain, and an
+> `AggregateException` that tries to smuggle an unrelated fault through), plus a reflection test that
+> fails if Avalonia ever renames one of the allow-listed types. **What no offline test can reach** is whether Avalonia's dispatcher actually
+> raises `UnhandledException` for a fault arriving via `Task.ThrowAsync`, which is the entire premise
+> — that is step 2, and it is the only step that matters.
+>
+> ⚠ Step 2 needs the clipboard to genuinely fail. Two ways that both work: hold the clipboard open
+> from another process (`OpenClipboard` without `CloseClipboard`), or copy from an app that uses
+> delayed rendering and close that app before pasting.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 | start the UI, copy ordinary text, `Ctrl+V` into any filter box | the text pastes | baseline — the guard must not have broken normal paste |
+> | 2 ⚠ THE ONE THAT MATTERS | make the clipboard unreadable (above), then `Ctrl+V` into a filter box | **the app is still running**, the box is unchanged, and `Logs\UE5DumpUI\view-0.log` gains `Input-layer fault swallowed (#1)` | this is the crash, reproduced; before the fix the process died here |
+> | 3 | repeat step 2 a few times, then release the clipboard and paste again | counter climbs (`#2`, `#3`…), then a normal paste works | the guard is not one-shot and leaves nothing wedged |
+> | 4 | `Ctrl+C` and `Ctrl+X` in a text box while the clipboard is unreadable | same: alive, logged, no crash | the other two clipboard commands go through the same allow-listed frames |
+> | 5 | launch a SECOND copy of the UI (the known duplicate-launch crash) and read `%LOCALAPPDATA%\UE5CEDumper\crash.log` | headline reads `UE5DumpUI crash during STARTUP (uptime 0.??s)` — **not** the old fixed phrase | the honest-phase half, on the one crash that is reproducible on demand |
+> | 6 ⚠ control | with an IME active, type into a filter box normally | text arrives as usual; **no** `Input-layer fault swallowed` line appears | proves the guard is dormant when nothing fails — a line here would mean it is swallowing healthy input |
+> | 7 ⚠ control, opportunistic | the next time the UI crashes for any reason after startup, read `crash.log` | it says `while RUNNING` (or `during SHUTDOWN`) with a real uptime | proves the phase marker advances; cannot be forced, so tick it when it happens |
 
 ### ⛔ NEW 2026-08-18 `[PIPEBUSY-2026-08-18]` — at-capacity is logged as an ERROR once per second, forever
 
@@ -4148,6 +4146,9 @@ Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogw
 > logs and swallows input-layer faults. Effort **S** · Risk **low**.
 > ⚠ Second, smaller defect in the same evidence: `crash.log` labels it **"UE5DumpUI startup crash"**
 > though it happened long after startup — the handler hard-codes that phrase.
+> ➜ **BOTH HALVES FIXED 2026-08-18** (dispatcher input-fault guard + honest crash.log phase/uptime).
+> The live check that is still owed is the batch tagged `[PASTECRASH-2026-08-18]` in
+> `## Pending live-game verification` above — grep the tag.
 >
 > ### ⚠ MY OWN ERROR, recorded because it is the same shape as the trap this row keeps hitting
 > I first read the class as **`ES2GameInstance`** off a 0.6-scale screenshot (the package is `ES2`,

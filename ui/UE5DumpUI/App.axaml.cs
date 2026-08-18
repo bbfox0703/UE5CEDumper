@@ -1,7 +1,9 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Services;
 using UE5DumpUI.ViewModels;
 using UE5DumpUI.Views;
@@ -24,6 +26,7 @@ public class App : Application
     private BookmarkStore? _bookmarkStore;
     private CoordinateLibraryStore? _coordLibraryStore;
     private WindowsLogCompressionService? _logCompression;
+    private DispatcherFaultGuard? _faultGuard;
 
     public override void Initialize()
     {
@@ -57,6 +60,16 @@ public class App : Application
             // Initialize services
             var logDir = _platform.GetLogDirectoryPath();
             _logging = new LoggingService(logDir);
+
+            // Attach the dispatcher fault guard as soon as there is somewhere to
+            // log to, and before any window exists — a clipboard/IME fault must
+            // never again take the process down with it ([PASTECRASH-2026-08-18]).
+            // The guard swallows ONLY faults the classifier positively identifies
+            // as platform input-layer ones; everything else still crashes and still
+            // reaches crash.log.
+            _faultGuard = new DispatcherFaultGuard(_logging);
+            _faultGuard.Attach(Dispatcher.UIThread);
+
             // Two-connection lane router (interactive + bulk) — see
             // LaneRoutingPipeClient / docs/multipipe-eval.md §9.
             _pipeClient = new LaneRoutingPipeClient(_logging);
@@ -153,6 +166,7 @@ public class App : Application
 
             desktop.ShutdownRequested += (_, _) =>
             {
+                AppLifecycle.Phase = AppPhase.ShuttingDown;
                 _logging?.Info(Constants.LogCatInit, "UE5DumpUI shutting down...");
                 // Flush any pending debounced option change before teardown.
                 mainVm.FlushOptions();
@@ -161,6 +175,10 @@ public class App : Application
                 _platform?.Dispose();
                 (_logging as IDisposable)?.Dispose();
             };
+
+            // Everything the window needs is wired; from here a crash is NOT a
+            // startup crash, and crash.log must stop calling it one.
+            AppLifecycle.Phase = AppPhase.Running;
         }
 
         base.OnFrameworkInitializationCompleted();

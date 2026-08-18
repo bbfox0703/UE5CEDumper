@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Win32;
+using UE5DumpUI.Helpers;
 
 namespace UE5DumpUI;
 
@@ -8,6 +9,12 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Anchor the uptime clock at the real entry point, so crash.log can say how
+        // long the process had been alive. Cheap (one Stopwatch timestamp) and it
+        // must precede the elevated-inject branch below, which is also a process
+        // that can crash.
+        AppLifecycle.Begin();
+
         // Headless elevated inject helper: when the main (non-elevated) UI hits an
         // Access-Denied inject (the game runs as Administrator), it relaunches THIS
         // exe with `--inject-elevated <pid> <dll> <resultFile>` via UAC. We do just
@@ -17,11 +24,18 @@ internal static class Program
             return RunElevatedInject(args[1], args[2], args[3]);
 
         // AOT publish gives gutted stack traces (no PDB lookup at runtime,
-        // inlining opaque). A startup crash in the compositor thread would
-        // otherwise leave the user with "the exe just closed" and no signal.
-        // This top-level catch writes the full exception to
+        // inlining opaque). A crash in the compositor thread would otherwise
+        // leave the user with "the exe just closed" and no signal. This
+        // top-level catch writes the full exception to
         // %LOCALAPPDATA%\UE5CEDumper\crash.log — the only diagnostic surface
-        // for AOT startup failures (aot-pitfalls.md §0.17 / §2 / §8.3).
+        // for AOT failures (aot-pitfalls.md §0.17 / §2 / §8.3).
+        //
+        // It catches far more than STARTUP: anything the dispatcher rethrows
+        // during the message loop unwinds through StartWithClassicDesktopLifetime
+        // and lands here. The report used to hard-code the phrase "startup crash"
+        // anyway, which mislabelled a fault 31 minutes into a live session
+        // ([PASTECRASH-2026-08-18]); CrashReportFormatter now states the real
+        // phase and uptime.
         try
         {
             BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
@@ -36,8 +50,9 @@ internal static class Program
                     "UE5CEDumper");
                 Directory.CreateDirectory(logDir);
                 File.WriteAllText(
-                    Path.Combine(logDir, "crash.log"),
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] UE5DumpUI startup crash\n{ex}\n");
+                    Path.Combine(logDir, Constants.CrashLogFileName),
+                    CrashReportFormatter.Format(
+                        DateTimeOffset.Now, AppLifecycle.Phase, AppLifecycle.Uptime, ex));
             }
             catch { /* best effort — nothing more we can do if even this fails */ }
             return 1;
