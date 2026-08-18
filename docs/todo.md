@@ -3478,25 +3478,53 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 The remaining unchecked boxes below are superseded by the table above except where noted; U2 and the
 `TSet`/`UDataTable` no-regression check still stand.
 
-- ⬜ **A `TMap<K,V>` whose pair needs trailing padding reads correctly (M1).** Live Walker → expand
-  any `TMap<UObject*, float>` / `TMap<FString, int32>` / `TMap<AActor*, uint8>`. **Before the fix
-  every element past index 0 was wrong** (stride 20 vs the engine's 24). Confirm element 1..N show
-  plausible keys and values, and that no key repeats in a way that looks like a shifted window.
-- ⬜ **A struct-valued `TMap` reads correctly at element 0 (M3).** Expand a
-  `TMap<int32, FVector>`-shaped field (or any `TMap<K, FStruct>` whose struct is 4-aligned).
-  **Before the fix even element 0 was wrong** — the value was read at +8 where it really sits at +4.
-  This is the check that actually exercises the `MinAlignment` read.
-- ⬜ **Element count matches the rows rendered (M2).** Find a `TMap`/`TSet` that has had entries
-  removed during play (an inventory after dropping an item). The header count and the number of rows
-  must now agree — previously `NumFreeIndices` always read 0, so the count was inflated.
-- ⬜ **No regression on `TSet<T>` or `UDataTable`.** `TSet` geometry is unchanged by design
-  (`elemAlign` defaults to 4). Expand a `TSet<FName>` / `TSet<UObject*>` and open any DataTable to
-  confirm rows still resolve.
-- ⬜ **A container that outgrew 128 slots still lists the right elements (A2).** Find a `TMap`/`TSet`
-  with **more than 128** entries, then remove one in-game. Before the fix, indices 0..127 were judged
-  from the **frozen inline bit words** the TBitArray left behind when it spilled to the heap, so a
-  freed low slot still read as allocated and the walker showed a dead element. Also worth a
-  Find Refs / Value Search pass on such an object — the same stale bits admitted phantom hits there.
+> ### ✅ THE UI HALF RAN 2026-08-18 — DumperTest Development, dist 3262, CE attached
+>
+> Every address below was checked against an **independent read of the process's own bytes**
+> (`tools/verify/read_mem.py`), never against another number the UI computed — the map's data pointer
+> comes from the `TMap` property's first 8 bytes, so the expected value cannot be derived from the
+> observed one (working-lessons §1.10a).
+>
+> | row | verdict | evidence |
+> |---|---|---|
+> | **M1** | ✅ | `Map_I64ToI32` property @`0x1F144477D88` → data ptr **`0x1F16D348980`** (ArrayNum 3, ArrayMax 4). UI element[1] Address = **`0x1F16D3489A0`** = ptr + 24 + 8. The old stride-20 arithmetic gives `0x1F16D34899C`, which is *not* what is shown. Element offsets 0x0/0x18/0x30 = stride 24. |
+> | **M3** | ✅ | `Map_IntToVec3f` property @`0x1F144477E28` → data ptr **`0x1F172A9E3E0`**. UI element[0] Address = **`0x1F172A9E3E4` = ptr + 4**, not +8. The 12 bytes there decode as **(6201.0, 6202.0, 6203.0)** — matching the row's `{X=6201, Y=6202, Z=…}`. This is the `MinAlignment` read. |
+> | **U1 / V1** | ✅ | The two consumers of the element address both aim at the **value**. In-place edit of element[1] → status `Written: [1] 600000000002 = 7777`; memory at the element base then reads `02 70 C9 B2 8B 00 00 00 | 61 1E 00 00` — key **600000000002 intact**, value **7777** written at +8. `+CE` pushed `1F16D3489A0 / 4 Bytes / 7777` — the value address and the value's width, not the int64 key. |
+> | **V1** (freeze control) | ✅ | Ticking that CE record and changing it to **1234** wrote `D2 04 00 00` at +8 while the key stayed `02 70 C9 B2 8B 00 00 00` across repeated freeze writes. The pre-fix bug wrote the user's 4 bytes over the key. |
+> | **M2** | 🟡 PARTIAL | `Set_Big` sparse array: **ArrayNum = 200**, UI header **`{Set: 199}`** — so `NumFreeIndices` is being subtracted and the count is no longer inflated. ⚠ The *rows-equal-count* half is **not decidable here** — see the cap finding below. |
+> | **A2** | ✅ | This is the real A2 predicate and `Set_Big` satisfies it exactly. 200 slots > the 128 inline `TBitArray` bits, so the allocation **has spilled to the heap**; the freed slot is at **index 5**, i.e. inside the window the stale inline words used to cover. The walker shows `[4] 9004 → [6] 9006` — **[5] is absent**, and memory confirms slot 5 holds `FF FF FF FF FF FF FF FF 2D 00 00 00`, the sparse-array free-list links, not an element. Pre-fix this read as allocated and rendered a dead element. |
+> | **TSet / UDataTable no-regression** | ⬜ **NOT TESTED — do not record as passing** | `TSet<int32>` (`Set_Int`, `Set_Big`) and `TSet<FStruct>` (`Set_Struct`) resolve, but the row asks for **`TSet<FName>` / `TSet<UObject*>` and a `UDataTable`**, and DumperTest ships **none of the three** (`Set_` filter returns exactly 3 matches, all covered above). Needs a real game. |
+> | **U2** | ⬜ still open | needs a `CasePreservingName: YES` title; unchanged by this sitting. |
+
+### ⛔ NEW 2026-08-18 `[CONTAINERCAP-2026-08-18]` — the container list stops at the array limit and says nothing
+
+*Found while trying to settle M2's "header count == rows rendered" half, which is what makes it
+worth filing: the row could not be decided, and the reason was invisible on screen.*
+
+**Observed.** `Set_Big` renders as breadcrumb **`SetBig {Set: 199, IntProperty}`** over a grid whose
+last row is **`[128] 9128`**. There is no ellipsis, no badge, no status line, and no row count —
+nothing on screen distinguishes "this set has 128 entries" from "this set has 199 and you are seeing
+the first 128".
+
+**Cause, and it is not a bug in the cap itself.** `Constants.DefaultArrayLimit = 128`
+(`ui/UE5DumpUI/Constants.cs:266`), surfaced as the user-settable `ArrayLimitExponent = 7`
+(`Models/UiOptionsSettings.cs:70`) and passed to `Ubel::WalkInstance`'s `arrayLimit`
+(`dll/src/Ubel.cpp:3682`, clamped to [1, 16384]). Truncating is deliberate and correct.
+
+**The defect is the silence, and the fix needs no protocol change.** `Fern.cpp:1548-1573` already
+sends **both** numbers in the same object — `set_count` (199, the true total) and a `set_elements`
+array of 128 — and the map path at `:1543` is the same shape. The UI therefore holds everything it
+needs to render "128 of 199" and renders neither. Compare `Solide`, where the register *requires* a
+`⚠ capped` / `(256 held)` badge for exactly this situation; the same disclosure is missing here.
+
+**Failure scenario.** A user expands a 500-entry inventory `TMap`, does not find the item they are
+hunting, and concludes the item is not in the map — the panel has told them, without qualification,
+that the map's contents are what they can see. The same reasoning silently bounds any conclusion
+drawn from Find Refs on a large container.
+
+**Fix shape (not applied).** Where `set_elements.Count < set_count` (and the map/array equivalents),
+badge the container row and the breadcrumb — e.g. `{Set: 199 — showing 128}` — and point at the
+Options array-limit control. Effort **S**, risk **LOW**, client-only.
 - ⬜ **`TArray<FName>` / `TMap<FName,V>` on a CasePreservingName game (U2).** Needs a UE 5.5+/5.7
   title where `Genau` logs `CasePreservingName: YES` (e.g. Titan Quest II). Expand any actor's `Tags`.
   Before the fix `InferScalarSize` forced the stride to 8 against the engine's real 16, so every
