@@ -11,9 +11,10 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **33 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The two newest (2026-08-19) are the SLOTSYM /
->   STALEDLL(b) generator + `.CT` fixes; the five before them are 2026-08-17's, and NONE has been
+> - `## Pending live-game verification` — **35 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) are the CLASSTOTAL / PIPEBUSY
+>   honesty fixes and the SLOTSYM / STALEDLL(b) generator + `.CT` fixes; the five before them are
+>   2026-08-17's, and NONE has been
 >   seen on a real target; two of those older ones need less than a full session:
 >   **AA4–AA7 step 2 needs no DLL at all** (enable the dissect auto-callback with the DLL absent and
 >   confirm CE still dissects an ordinary address), and **all six AE4–AE7 steps need no game** —
@@ -24,7 +25,7 @@ Open work only. **Read this when deciding what to do next.**
 > Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 4 items, and NONE of them is in the 166 above
+> ### ▶ OPEN FIXES INDEX — 2 items, and NONE of them is in the 166 above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -34,8 +35,9 @@ Open work only. **Read this when deciding what to do next.**
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
 > | `[CONTAINERCAP-2026-08-18]` | the container list stops at the array limit and says nothing |
-> | `[CLASSTOTAL-2026-08-18]` | "total UClasses" is the **capped** count, so it can never answer "how many classes?" |
-> | `[PIPEBUSY-2026-08-18]` | at-capacity logged as an **ERROR once a second, forever** (1,826 lines in 31 min) |
+>
+> *`[CLASSTOTAL-2026-08-18]` and `[PIPEBUSY-2026-08-18]` were **fixed 2026-08-19** and moved to
+> `## Pending live-game verification`.*
 >
 > *`[SLOTSYM-2026-08-18]` was **fixed 2026-08-19** and moved to `## Pending live-game verification`.*
 >
@@ -1566,6 +1568,60 @@ duplicate `AppendContractCheck` (the block was emitted twice). Pinned by 6 new t
 
 -----
 
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[PIPEBUSY-2026-08-18]` — at-capacity logs ONCE, not an ERROR every second
+
+*Was: at capacity (`kMaxPipeInstances=3`, UI holds 2 lanes) the accept loop's `CreateNamedPipe` fails
+with `ERROR_PIPE_BUSY` (err=231) every second and logged `LOG_ERROR("PipeServer: CreateNamedPipe
+failed …")` each time — **measured 1,826 ERROR lines in ~31.5 min on one Avowed session**, evicting
+real diagnostics as the 8 MB pipe log rotated, and naming the wrong thing (busy ≠ broken). Now: a new
+pure `Voll` policy (`dll/src/Voll.h`, header-only, Frieren roster) special-cases `ERROR_PIPE_BUSY` —
+the accept loop logs **one INFO on the transition INTO** at-capacity ("all 3 pipe instances in use,
+waiting for a free slot"), stays silent while it holds, and logs **one INFO on recovery** ("a pipe
+slot freed, resuming accept"). Any OTHER errno still `LOG_ERROR`s every time — the capacity latch
+never suppresses it. The retry/sleep is unchanged (it was correct), and `kMaxPipeInstances` is
+unchanged (raising it would just move the spam to 4 clients). The state machine is unit-pinned in
+`dll_helpers_test` (`Test_Voll_CapacityLoggingPolicy`, incl. the adversarial "a different-errno
+failure during at-capacity still ERRORs and does not swallow recovery"). This is a DLL/pipe log fix,
+NOT a mailbox-contract change.*
+
+> ⚠ Reproducing this NEEDS a 3rd pipe client alongside the UI, which the register otherwise forbids
+> ("never run `pipe_client.py` while the UI is connected", `[PIPEBUSY]`). That rule still stands as
+> operational hygiene; the point of THIS check is only to observe that when it DOES happen the log is
+> no longer a 1 Hz ERROR storm. Read the **pipe** log (`Logs/<game>/pipe-0.log`).
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 ⚠ THE ONE THAT MATTERS | with the UI connected (2 lanes), start ONE extra `tools/verify/pipe_client.py` so the pool fills, leave it a minute, read `pipe-0.log` | **exactly ONE** `all 3 pipe instances in use, waiting for a free slot` INFO line — NOT `CreateNamedPipe failed` repeating once a second | before the fix this was ~1 ERROR/s forever (1,826 in 31 min) |
+> | 2 | kill the extra client, watch the log | one `a pipe slot freed, resuming accept` INFO line, then normal `Waiting for client connection...` | proves the recovery transition fires exactly once |
+> | 3 ⚠ NON-REGRESSION | during a normal single-UI session, grep `pipe-0.log` for `all 3 pipe instances` | absent | proves the at-capacity line only appears when actually at capacity |
+
+-----
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[CLASSTOTAL-2026-08-18]` — the Classes tab reports the REAL class total, not the cap
+
+*Was: `Aura::ListClasses` bounded its walk on the row cap AND counted `totalClasses` inside that loop,
+so `totalClasses` could never exceed `maxResults` (5,000). The Classes tab rendered "5000 classes …
+5000 total UClasses ⚠ STOPPED" — the two numbers identical exactly when the second was supposed to
+add information — and the same capped value went out on the wire (`list_classes` → `total_classes`).
+Now: the walk runs to the END of GObjects and increments `totalClasses` for every qualifying class;
+only ROW materialization (the costly `WalkClassEx` + score + push) stops at the cap, so the extra work
+past the cap is a handful of cheap reads per object (the same per-object cost `EnumerateAllFunctions`
+already pays over the whole pool), not row building. `truncated` keeps its exact meaning (`rows >=
+cap`). The status line now reads "5,000 classes shown of 6,609 total … ⚠ STOPPED at the 5,000-row
+cap". `list_classes` is pipe-JSON, so no mailbox-contract implication. Pinned by
+`ListClassesAsync_HonestTotalExceedsThePage` (UI) — the DLL walk itself has no test target
+(`Aura.cpp` is compiled by none), so the class-count number is a live check.*
+
+> Needs a game with **> 5,000 classes** (Elliot has ~6,609). A small game will not truncate.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 ⚠ THE ONE THAT MATTERS | on a >5,000-class game (Elliot), open the Classes tab, Load with "Game classes only" off | status reads "**5,000 classes shown of ~6,609 total** … ⚠ STOPPED at the 5,000-row cap" — the two numbers DIFFER | before the fix both were 5,000, so "total" answered nothing |
+> | 2 ⚠ CROSS-CHECK | note Interesting Funcs' "{N} functions across **{K} classes**" for the same game | the Classes tab's total matches K (both ~6,609) — the two panels now AGREE | before, Classes said 5,000 STOPPED while Funcs said 6,609; the honest number is now in both |
+> | 3 ⚠ NON-REGRESSION | on a small game (< 5,000 classes), Load | "N classes shown of N total" (equal), no STOPPED note | proves a full walk still reports one honest number and does not falsely flag truncation |
+
+-----
+
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[STALEDLL-2026-08-18]` (b) — the `.CT` reports the resolved DLL's size beside its path
 
 *Was: the `.CT` logged only `DLL path: …`, so a stale/old `UE5Dumper.dll` resolved silently (the Feb
@@ -2337,90 +2393,12 @@ crash".*
 > | 7 ⚠ control, opportunistic | the next time the UI crashes for any reason after startup, read `crash.log` | it says `while RUNNING` (or `during SHUTDOWN`) with a real uptime | proves the phase marker advances; cannot be forced, so tick it when it happens |
 > | 8 ⚠ control, opportunistic | if a crash report ever opens `phase still says STARTUP after …` | read it as UNCERTAIN, not as a second defect | the stale-marker branch is a HEURISTIC over a 60 s threshold, and a genuinely slow cold start trips it honestly; the wording now names both possibilities instead of accusing the marker |
 
-### ⛔ NEW 2026-08-18 `[PIPEBUSY-2026-08-18]` — at-capacity is logged as an ERROR once per second, forever
+### ✅ FIXED 2026-08-19 `[PIPEBUSY-2026-08-18]` / `[CLASSTOTAL-2026-08-18]` — both moved to "Pending live-game verification"
 
-**Measured, not inferred: 1,826 ERROR lines in ~31.5 minutes (~170 KB) on one Avowed session**, and
-it stopped the instant the extra client was killed (`… Waiting for client connection...`).
-
-`Fern.h:45` sets `kMaxPipeInstances = 3`. The UI takes **2** lanes, so a single extra client — a
-`tools/verify/pipe_client.py` run, which is the whole verification rig — fills the pool. The accept
-loop then cannot create the next listener instance and does this
-([`Fern.cpp:889`](../dll/src/Fern.cpp)):
-
-```cpp
-if (pipe == INVALID_HANDLE_VALUE) {
-    LOG_ERROR("PipeServer: CreateNamedPipe failed (err=%lu)", GetLastError());
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    continue;                    // forever, until a client disconnects
-}
-```
-
-Three things wrong, in order of what matters:
-1. **It is not an error.** `err=231` is `ERROR_PIPE_BUSY` — "all instances are busy" — which is the
-   *designed* behaviour at capacity, not a fault. Logging it at ERROR trains the reader to ignore
-   ERROR lines in the one log where they matter.
-2. **It repeats indefinitely at 1 Hz.** ~3,500 lines/hour. The pipe log rotates at 8 MB, so a long
-   3-client session **evicts real diagnostics** with this. It is also the first thing a log sweep
-   sees, which is how it was found.
-3. **The message names the wrong thing.** "CreateNamedPipe failed" reads like a broken pipe server;
-   the truth is "at capacity, waiting for a slot".
-
-**Fix shape (small):** special-case `ERROR_PIPE_BUSY` — log **once on the transition into** the
-at-capacity state at INFO/DEBUG ("all %lu instances in use, waiting for a free slot"), stay silent
-while the state holds, and log once on recovery. Keep `LOG_ERROR` for genuinely unexpected codes.
-Effort **S** · Risk **low** (logging only; do not change the retry itself, which is correct).
-⚠ Do **not** "fix" it by raising `kMaxPipeInstances` — the cap is a deliberate resource bound, and
-the spam would simply move to 4 clients.
-
-⚠ **CORRECTION to the diagnosis that found this.** The same investigation blamed a 16-minute wait
-partly on "`list_all_functions` is genuinely ~10 min on Avowed". **That was wrong.** Server-side the
-call completes in **0.34 s** (`EnumerateAllFunctions: 21845 entries from 8780 classes`); the stall was
-entirely a rig bug — `pipe_client.request()` read the reply one byte at a time, so the DLL blocked
-writing a multi-MB response. Fixed to block reads: the same call now round-trips in **0.8 s**, and
-`list_classes` went from 25–35 s to **0.1 s**. The pipe-instance spam below is real and independent;
-the slowness was not a DLL property at all.
-
-**Operational rule this establishes for the register:** the UI holds **2** of the 3 lanes, so
-**never run a second `pipe_client.py` alongside the UI** — one is the ceiling. Close the UI first
-when a row needs the rig.
-
-### ⛔ NEW 2026-08-18 `[CLASSTOTAL-2026-08-18]` — "total UClasses" is the CAPPED count, so it can never answer "how many classes?"
-
-*Raised by the maintainer asking the obvious question — "can I see the class count in the UI? I only
-see objects" — and the answer is that the field which claims to be the total is not one.*
-
-`Aura::ListClasses` bounds its own loop on the result cap and counts inside it:
-
-```cpp
-for (i = 0; i < count && (int)result.results.size() < maxResults; ++i) { … result.totalClasses++; … }
-result.truncated = (int)result.results.size() >= maxResults;
-```
-
-so `totalClasses` **cannot exceed `maxResults`**. The Classes tab
-([`GameClassFilterViewModel.cs:93`](../ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs)) renders
-
-```
-5000 classes (scanned 355,679 objects, 5000 total UClasses)  ⚠ STOPPED at the 5,000-row cap …
-```
-
-— i.e. **the two numbers are identical exactly when the second one is supposed to add information**.
-The same field is capped on the wire (`list_classes` → `total_classes`), so the pipe is no better.
-This is audit #4's recurring root cause: *the report and the reality are computed by different
-paths.* Here the "total" is simply the same partial count under a different name.
-
-**What actually answers the question today** (and what the X2 rows had to fall back on): Interesting
-Funcs' status line, `"{N} functions across {K} classes"`
-([`InterestingFunctionsViewModel.cs:380`](../ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs)),
-whose `K` is **not** bounded by 5,000 (its limit is 100,000 *functions*). On Elliot the two panels
-disagree in the same session — Classes `5000 ⚠ STOPPED` vs Funcs `20235 functions across 6609
-classes` — and the second is the honest one.
-
-**Fix shape (small):** count classes in a pass that is not bounded by the row cap — either keep
-incrementing `totalClasses` after `results` fills (drop `totalClasses` out of the capped loop and let
-the walk continue), or drop the field and have the cap note carry the real total
-(`⚠ STOPPED at 5,000 of 6,609`). Either way the UI should be able to say the number, since a user
-choosing a title for a cap-related check needs it. Effort **S** · Risk **low** (read-only counter).
-⚠ Do not "fix" it by raising the cap — the cap is the feature under test in X2.
+Both honesty defects were fixed 2026-08-19 (PIPEBUSY: at-capacity logs once, not 1 Hz forever;
+CLASSTOTAL: `total_classes` now the real pool count past the row cap). The live-check writeups —
+including the ⚠ "never run a second `pipe_client.py` alongside the UI" caveat, which the PIPEBUSY fix
+makes non-spammy but does not repeal — are under those tags in **"Pending live-game verification"**.
 
 ### ✅ PART-FIXED 2026-08-19 `[PROXYLOAD-2026-08-17]` — screening + a real load signal (writeup moved to "Pending live-game verification")
 

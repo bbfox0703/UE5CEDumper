@@ -2265,6 +2265,39 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task ListClassesAsync_HonestTotalExceedsThePage()
+    {
+        // [CLASSTOTAL-2026-08-18]: the DLL now counts EVERY class to the end of GObjects
+        // even after row collection stops at the cap, so total_classes can exceed the
+        // returned row count. The UI must carry that number through unchanged — never
+        // re-cap it to the page size — so the Classes tab can say "5,000 of 6,609".
+        _pipe.SetHandler(_ =>
+        {
+            var arr = new JsonArray();
+            for (int i = 0; i < 5000; i++)
+                arr.Add(new JsonObject { ["class_name"] = $"Class{i}", ["class_addr"] = $"0x{i:X}" });
+            return new JsonObject
+            {
+                ["ok"] = true,
+                ["total"] = 5000,
+                ["scanned_objects"] = 355_679,
+                ["total_classes"] = 6609,   // honest pool total, > the 5,000 rows shown
+                ["truncated"] = true,
+                ["classes"] = arr,
+            };
+        });
+
+        var svc = CreateService();
+        var r = await svc.ListClassesAsync(gameOnly: false, limit: 5000,
+                                           ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.Truncated);
+        Assert.Equal(5000, r.Total);          // rows shown
+        Assert.Equal(6609, r.TotalClasses);   // real total, NOT re-capped to 5000
+        Assert.True(r.TotalClasses > r.Total); // the two numbers now differ meaningfully
+    }
+
+    [Fact]
     public void FindClassAddr_HitReturnsAddress()
     {
         var list = new ClassListResult

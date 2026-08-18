@@ -81,16 +81,17 @@ public partial class GameClassFilterViewModel : ViewModelBase
             RebuildSuggestions();
             ApplyFilter();
 
-            // A capped list must SAY so. The DLL stops walking GObjects the moment it has
-            // `limit` rows, and `TotalClasses` is incremented in lockstep with the results
-            // vector — so on a truncated walk BOTH numbers here are the cap, and the line
-            // reads as "that is all of them" (audit #5 X2, same cap as the class-address
-            // lookups). Filtering a page and finding nothing is then indistinguishable
-            // from the class not existing.
+            // A capped list must SAY so, AND say how many it capped out of. The DLL now
+            // counts every class to the end of GObjects even after it stops collecting
+            // rows, so `TotalClasses` is the honest pool total, not a copy of the cap
+            // ([CLASSTOTAL-2026-08-18] / audit #5 X2). On a truncated walk the two numbers
+            // differ meaningfully — "5,000 of 6,609" — so filtering a page and finding
+            // nothing is no longer indistinguishable from the class not existing, and the
+            // user can see how far above the cap the real count is.
             var capNote = result.Truncated
-                ? $"  ⚠ STOPPED at the {result.RequestedLimit:N0}-row cap — more classes exist"
+                ? $"  ⚠ STOPPED at the {result.RequestedLimit:N0}-row cap — filter to narrow, or raise the cap"
                 : "";
-            StatusText = $"{result.Total} classes (scanned {result.ScannedObjects:N0} objects, {result.TotalClasses} total UClasses){capNote}";
+            StatusText = $"{result.Total:N0} classes shown of {result.TotalClasses:N0} total (scanned {result.ScannedObjects:N0} objects){capNote}";
             _log.Info($"ListClasses: {result.Total} results (gameOnly={GameClassesOnly}, " +
                       $"scanned={result.ScannedObjects}, truncated={result.Truncated})");
         }

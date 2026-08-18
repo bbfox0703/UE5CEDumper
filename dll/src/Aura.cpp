@@ -5124,7 +5124,14 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
     int32_t count = GetCount();
     result.scannedObjects = count;
 
-    for (int32_t i = 0; i < count && static_cast<int>(result.results.size()) < maxResults; ++i) {
+    // The walk is NOT bounded by the row cap: it runs to the end of GObjects so
+    // `totalClasses` is the HONEST pool total, not a copy of the cap ([CLASSTOTAL]).
+    // Only ROW materialization (the costly WalkClassEx + score + push) stops at the
+    // cap; past it we still count each qualifying class — a handful of cheap reads
+    // per object, the same per-object work EnumerateAllFunctions already does over the
+    // whole pool. `truncated` keeps its exact meaning: the row list is a page, not the
+    // pool.
+    for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:list", "ListClasses: aborted (client gone / shutdown)");
             break;  // return partial result
@@ -5151,7 +5158,14 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
         std::string classPath = Ubel::GetFullName(obj);
         if (gameOnly && IsEnginePackage(classPath)) continue;
 
+        // Count EVERY qualifying class — this is the honest total, independent of the
+        // row cap. The expensive per-class walk below is skipped once results fills.
         result.totalClasses++;
+
+        // Row cap reached: keep counting classes (above) but stop building rows.
+        // WalkClassEx / ComputeHeuristicScore / entry alloc are the costly parts, so
+        // nothing heavy runs past the cap.
+        if (static_cast<int>(result.results.size()) >= maxResults) continue;
 
         // Walk class to get property count and size
         const ClassInfo& ci = Ubel::WalkClassEx(obj);
@@ -5167,9 +5181,10 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
         result.results.push_back(std::move(entry));
     }
 
-    // The loop above exits on `results.size() == maxResults` as well as on the end
-    // of the array, so a full page means the walk stopped early. Same test (and the
-    // same one-index-of-slack ambiguity) as SearchByName / SearchProperties.
+    // A full page means the walk collected the cap and there were more classes to
+    // collect — same contract (and the same one-index-of-slack ambiguity) as
+    // SearchByName / SearchProperties. `totalClasses` now carries the real count, so a
+    // truncated result reports "shown of total" honestly.
     result.truncated = static_cast<int>(result.results.size()) >= maxResults;
 
     // Sort by heuristic score descending, then alphabetically for ties
@@ -5180,8 +5195,9 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
             return a.className < b.className;
         });
 
-    Sein::Info("PIPE:list", "ListClasses: %d classes (gameOnly=%d, scanned %d objects)%s",
-                 static_cast<int>(result.results.size()), gameOnly ? 1 : 0, result.scannedObjects,
+    Sein::Info("PIPE:list", "ListClasses: %d rows of %d classes total (gameOnly=%d, scanned %d objects)%s",
+                 static_cast<int>(result.results.size()), result.totalClasses, gameOnly ? 1 : 0,
+                 result.scannedObjects,
                  result.truncated ? ", STOPPED at the result cap — more classes exist" : "");
     return result;
 }

@@ -363,7 +363,7 @@ German spelling.
 | Kraft | クラフト | Kraft | Ancient elven monk ("force/power") | ⬜ | Heavy-compute / force utility |
 | Orden | オルデン | Orden | Noble house head ("order") | 🟢 GroupMatch | Source-agnostic SDR matcher for multi-value group scan (`Orden.h`, header-only, build 1276) |
 | Fass | ファス | Fass | Dwarf seeking ale ("barrel/cask") | ⬜ | Container / buffer |
-| Voll | フォル | Voll | Old dwarf friend ("full") | ⬜ | Capacity / completeness check |
+| Voll | フォル | Voll | Old dwarf friend ("full") | 🟢 PipeAcceptCapacityLog | Pipe-accept capacity logging policy — pure decision for what the accept loop logs when the pool is FULL (all `kMaxPipeInstances` in use → `ERROR_PIPE_BUSY`): once on entry + once on recovery, ERROR only for unexpected codes (`Voll.h`, header-only, [PIPEBUSY] build fix) |
 | Milliarde | ミリアルデ | Milliarde | Old elf ("billion") | ⬜ | Large-count handling |
 | Lektüre | レクテューレ | Lekture | Denken's late wife ("reading") | ⬜ | Reader / parser |
 | Lecker | レッカー | Lecker | Talented cook ("delicious") | ⬜ | Presentation / formatting |

@@ -38,6 +38,7 @@
 #include "Edel.h"
 #include "Linie.h"     // Live PE profiler — pe_profile_start/stop/get
 #include "Sense.h"     // Diagnostics — dispatch timing + process facts
+#include "Voll.h"      // Accept-loop capacity logging policy — ERROR_PIPE_BUSY once, not 1/s ([PIPEBUSY])
 #include "BuildStamp.h"
 
 #include <json.hpp>
@@ -869,6 +870,13 @@ void Fern::AcceptLoop() {
   // The accept thread allocates (Connection, the registry, log formatting). A throw here
   // is std::terminate — and it also silently ends the server, so the guard reports it. (B14)
   Routine::RunThreadGuarded("PipeServer: AcceptLoop", [&] {
+    // Capacity latch (accept-thread-local; this lambda is the only reader/writer, so a
+    // plain bool is race-free). When all kMaxPipeInstances are in use CreateNamedPipe
+    // fails with ERROR_PIPE_BUSY every second — the cap doing its job, not a fault. Voll
+    // turns that into ONE INFO on entry + ONE on recovery instead of 1,826 ERROR lines an
+    // hour that evict real diagnostics ([PIPEBUSY-2026-08-18]). Genuinely unexpected error
+    // codes still LOG_ERROR every time, independent of this latch.
+    bool atCapacity = false;
     while (m_running.load()) {
         // Create a new pipe instance (multi-instance: up to kMaxPipeInstances
         // concurrent clients, so the UI's interactive + bulk lanes can connect
@@ -887,9 +895,29 @@ void Fern::AcceptLoop() {
         );
 
         if (pipe == INVALID_HANDLE_VALUE) {
-            LOG_ERROR("PipeServer: CreateNamedPipe failed (err=%lu)", GetLastError());
+            DWORD err = GetLastError();
+            switch (Voll::OnCreateFailure(err, atCapacity)) {
+                case Voll::AcceptLog::EnterCapacity:
+                    // All instances busy — the resource cap doing its job. Say so ONCE;
+                    // the 1 s retry below then waits silently for a slot to free.
+                    LOG_INFO("PipeServer: all %lu pipe instances in use, waiting for a free slot",
+                             (unsigned long)kMaxPipeInstances);
+                    break;
+                case Voll::AcceptLog::Error:
+                    // A genuinely unexpected failure — always surfaced, never suppressed by
+                    // the capacity latch (a different errno cannot be hidden behind PIPE_BUSY).
+                    LOG_ERROR("PipeServer: CreateNamedPipe failed (err=%lu)", err);
+                    break;
+                default:
+                    break;  // None: already at capacity and announced — stay quiet
+            }
             std::this_thread::sleep_for(std::chrono::seconds(1));
             continue;
+        }
+
+        // Got a listener instance. If we had been at capacity, a slot just freed — say so once.
+        if (Voll::OnCreateSuccess(atCapacity) == Voll::AcceptLog::RecoverCapacity) {
+            LOG_INFO("PipeServer: a pipe slot freed, resuming accept");
         }
 
         {

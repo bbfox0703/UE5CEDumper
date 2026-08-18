@@ -40,6 +40,7 @@
 #include "../src/Mimic.h"      // CE Lua <-> DLL mailbox LAYOUT (pure data; Mimic.cpp is not compiled here)
 #include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
 #include "../src/Genau.h"      // AdmitMultiModuleCandidate (constexpr, pure) — Pass-2 scan admission
+#include "../src/Voll.h"       // Pipe-accept capacity logging policy (OnCreateFailure/Success, [PIPEBUSY])
 
 #include <Windows.h>
 
@@ -5740,6 +5741,54 @@ static void Test_FFieldClassName_Probe() {
            !DynOff::LooksLikeFieldClassName(std::string(60, 'x') + "Property"));
 }
 
+// Voll — pipe-accept capacity logging policy ([PIPEBUSY-2026-08-18]). The accept loop
+// runs on one thread; the policy is pure so it can be pinned here (no target compiles
+// Fern.cpp). The load-bearing invariant is the state machine: ERROR_PIPE_BUSY logs ONCE
+// on entry and ONCE on recovery, everything else ALWAYS logs ERROR, and the latch never
+// hides a different-errno failure.
+static void Test_Voll_CapacityLoggingPolicy() {
+    // A different, unexpected errno ALWAYS logs ERROR — regardless of the latch state.
+    {
+        bool at = false;
+        EXPECT("access-denied -> Error", Voll::OnCreateFailure(ERROR_ACCESS_DENIED, at) == Voll::AcceptLog::Error);
+        EXPECT("Error leaves latch clear", at == false);
+    }
+
+    // ERROR_PIPE_BUSY: announce once, then stay silent while it holds.
+    {
+        bool at = false;
+        EXPECT("first busy -> EnterCapacity",  Voll::OnCreateFailure(ERROR_PIPE_BUSY, at) == Voll::AcceptLog::EnterCapacity);
+        EXPECT("latch now set",                at == true);
+        EXPECT("second busy -> None",          Voll::OnCreateFailure(ERROR_PIPE_BUSY, at) == Voll::AcceptLog::None);
+        EXPECT("third busy -> None",           Voll::OnCreateFailure(ERROR_PIPE_BUSY, at) == Voll::AcceptLog::None);
+        EXPECT("still at capacity",            at == true);
+
+        // Recovery: exactly one line, then quiet.
+        EXPECT("success -> RecoverCapacity",   Voll::OnCreateSuccess(at) == Voll::AcceptLog::RecoverCapacity);
+        EXPECT("latch cleared on recovery",    at == false);
+        EXPECT("next success -> None",         Voll::OnCreateSuccess(at) == Voll::AcceptLog::None);
+    }
+
+    // Ordinary success while NOT at capacity is silent (no spurious "slot freed").
+    {
+        bool at = false;
+        EXPECT("plain success -> None", Voll::OnCreateSuccess(at) == Voll::AcceptLog::None);
+        EXPECT("latch stays clear",     at == false);
+    }
+
+    // ADVERSARIAL: a different-errno failure DURING the at-capacity state still logs ERROR
+    // and does NOT clear the latch — so the eventual recovery line still fires exactly once
+    // and the genuine error is never suppressed.
+    {
+        bool at = false;
+        EXPECT("busy -> EnterCapacity", Voll::OnCreateFailure(ERROR_PIPE_BUSY, at) == Voll::AcceptLog::EnterCapacity);
+        EXPECT("other errno mid-capacity -> Error",
+               Voll::OnCreateFailure(ERROR_INVALID_PARAMETER, at) == Voll::AcceptLog::Error);
+        EXPECT("latch survives the unrelated error", at == true);
+        EXPECT("recovery still fires once", Voll::OnCreateSuccess(at) == Voll::AcceptLog::RecoverCapacity);
+    }
+}
+
 // Print the test about to run, when DLL_TEST_TRACE is set. build.ps1 sets it under
 // CI. Off locally so the ordinary run stays two lines.
 static bool g_trace = false;
@@ -5951,6 +6000,9 @@ int main() {
 
     // Aura — the struct-walk cycle guard is scoped to the PATH, not the whole walk
     RUN(Test_Aura_StructPathGuard);
+
+    // Voll — pipe-accept capacity logging: ERROR_PIPE_BUSY once, not 1/s ([PIPEBUSY])
+    RUN(Test_Voll_CapacityLoggingPolicy);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);
