@@ -3017,7 +3017,7 @@ feature WRITES TO (the Stealth Meter card), so the regression half matters as mu
    `reset_all_fields` — that would mean a class-default object was written. (The CDO skip moved
    inside Aura's walk; the local skip in `Solide` stayed as the invariant.)
 
-### ⬜ NEW 2026-08-17 — AB3/AB5: the vector scan on a UE5 (LWC) game
+### 🟡 3-of-5 CLOSED 2026-08-18 — AB3/AB5: the vector scan on a UE5 (LWC) game
 
 *Needs a **UE5** game — this is the one check a UE4 title structurally cannot make. See dev-log
 build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a real target**.
@@ -3047,6 +3047,42 @@ build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a
 5. **A `Vector3f` field on a UE5 game** (float-backed, 12B, in the same process as 24B `Vector`
    fields) also matches. That is the case a version-keyed fix would have got wrong, and the reason
    the width is read per field rather than per game.
+
+> ### ✅ STEPS 1-3 PASS `[DSA-2026-08-18]` — the LWC vector scan works on a real UE5.4 target
+>
+> **DragonSword Awakening**, `DSClient-Win64-Shipping.exe` PID 49612, **UE 504**, DLL build
+> **1.0.0.3262**, CE-injected (no proxy deployed for this title), 275,612 objects, map
+> `World_01_Main_WP`, pawn `0x18F21068040`.
+>
+> | step | verdict | evidence |
+> |---|---|---|
+> | 1 | ✅ **PASS** | Value Search → **FVector** / **Exact** / Deep on / Native-C **off** → `41342,110645,1641` → `First Scan: 3 candidates in 766 ms (scanned 257500 objects, 722 classes with matching fields)`. **The player pawn is among them**: `DsPC_Lute_V2_C.ActiveLocation` at `0x18F21068F10` = pawn `0x18F21068040` **+ 0xED0**, the row's own reported offset. The other two are `CapsuleComponent.RelativeLocation` (`CollisionCylinder`) and `DsPCMovementComponent.LastUpdateLocation` (`CharMoveComp`) — both plausible, neither noise |
+> | 2 | ✅ **PASS, witnessed on the RAW BYTES not on the UI cell** | The Value column truncates to `41342, 11064…` and would not widen, so the check was made independently: `py tools/verify/read_mem.py DSClient-Win64-Shipping 0x18F21068F10 24` → `00 00 00 00 C0 2F E4 40  00 00 00 00 50 03 FB 40  00 00 E0 06 5E A2 99 40` → as **3 doubles** = `(41342.0, 110645.0, 1640.5918231010437)`, matching the Teleport pose exactly. **The same 24 bytes read as 3 floats give `(0.0, 7.13, 0.0)`** — i.e. the pre-fix decode really is garbage on this target, so the fix is doing visible work rather than being a no-op here |
+> | 3 | ✅ **PASS** | Moved the character (verified by re-reading the same address: `(42260.337…, 110719.078…, 1773.512…)`), then **Changed** → `Next Scan (Changed): 3 surviving candidates in 0 ms` — **all three survived, pawn included**, and the Value column re-rendered as `42260.3, 110…`. This is the half that needs `FieldDescriptor::vectorWidth`: a session that lost the width would have dropped every candidate |
+> | 4 | ⬜ not run | UE4 regression — needs a different title |
+> | 5 | ⬜ not run | `Vector3f` (12B) beside 24B `Vector` in the same process — no known field to aim at yet |
+>
+> ### ⛔ THE TRAP, AND THIS ROW'S OWN INSTRUCTIONS WALK INTO IT
+>
+> **The first scan returned `0 candidates` — and it was the INPUT, not the scanner.** This step says
+> to "read them off the Teleport panel's POV/marker readout", which prints **three decimals**
+> (`Z: 1640.592`). Pasting that verbatim is a **guaranteed zero-hit**, because
+> `Radar::CompareFloatScalar` (`Radar.cpp`) branches on whether the TYPED target is a whole number:
+>
+> ```cpp
+> case ScanType::Exact:  return IsWhole(a) ? (rc == a) : (cur == a);
+> ```
+>
+> A whole target compares the **rounded** current value (tolerant); a fractional target compares
+> **bit-exact doubles**. The true Z is `1640.5918231010437`, so `1640.592` can never match — and the
+> raw bytes above are what proves that rather than a guess. Re-running with `41342,110645,1641`
+> (all three axes whole) hit on the first try.
+>
+> ▶ **Round every axis to a whole number before an Exact vector scan**, or the row reports a defect
+> that is not there. ⚠ This is exactly the failure the step warns about in the opposite direction —
+> *"if it still returns nothing, stop and report, do not narrow the search"* — so the instruction as
+> written would have produced a **false FAIL**. Worth fixing at source: either the Teleport panel
+> should offer a whole-number copy, or the step should say to round.
 
 ### ⬜ NEW 2026-08-16 — the fourteen-MED batch, all UI-visible (builds 3016-3031)
 
