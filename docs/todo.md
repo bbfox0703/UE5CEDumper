@@ -2001,6 +2001,35 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    it proves the family is coherent on the path that was already coherent — it is a regression check,
    not evidence for the repair.
 
+### 🟡 GROUP 5 opened 2026-08-18 `[CE-2026-08-18]` — plugin bridge live, freeze record reaches CE
+
+The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Engine 64-bit running:
+
+* **AB1/AB2 — substantially verified.** `\\.\pipe\AOBMakerCEBridge` exists, UE5DumpUI's toolbar reads
+  **`● AOBMaker Connected`** (green), and once CE attaches to a process an **`Unreal Engine` menu
+  appears in CE's own menu bar** — three independent signs the plugin is loaded and talking.
+* **Y9's remaining consumer — CLOSED.** With the bridge up the **Freeze button** is enabled (it is
+  bound to `IsAobMakerAvailable`), opens the same dialog pre-filled `255`, rejects `9999` with
+  `uint8 holds 0 to 255 — 9999 would be written as 15`, and on `200` reports
+  **`Freeze script created in CE: Freeze: DumperTestActor::U8_Max = 200`**. CE's address list then
+  holds that exact record as `<script>`. Y9 now has **both** consumers verified.
+* **CE Lua hygiene — the bail-out shape is right.** Ticking the record before the helper was present
+  produced a plain, actionable dialog — *"[Freeze] ue5_freeze_helper.lua not found in this table.
+  Setup: UE5DumpUI → Tools → Inject Freeze Helper into Current CE Table"* — **and left the record
+  UNTICKED**, which is CLAUDE.md's MUST for a bail-out that applied nothing. No Lua Engine window was
+  left covering CE.
+* **`Tools → Inject Freeze Helper into Current CE Table` works.** CE's `Table` menu then lists
+  `ue5_freeze_helper.lua`, so the file really is attached to the table.
+
+⚠ **Open, and NOT diagnosed: with the helper present and CE attached to DumperTest, the record still
+errors** (CE shows the red ✗ on Active). No dialog appears and the Lua Engine output is **empty** —
+consistent with the DEBUG-gated hygiene rule, but it also means the failure reports nothing.
+**Leading hypothesis, untested:** this is downstream of `[PEHOOK-2026-08-17]` below — DumperTest's
+ProcessEvent hook never fires, so anything routed through the game-thread dispatch dies here. **The
+decisive next step is one run of the same flow on Lushfoil**, where the hook is verified good; if it
+succeeds there, the freeze path is fine and the sample is simply the wrong host. Do not file a defect
+against the freeze script until that control exists.
+
 ### ⛔ NEW 2026-08-17 `[PEHOOK-2026-08-17]` — ProcessEvent slot detection FAILS on DumperTest
 
 *Found by clicking **System → Run Self-Test** while looking for something else. It matters out of
