@@ -2091,6 +2091,37 @@ handle needs the record passed in, or the generated script must poll `isAbandone
 — the accessor exists for exactly this and has no other caller. Effort **S**, risk **LOW**; the
 `scripts/tests/freeze_helper_test.lua` rig already drives the abandonment path.
 
+### ⛔ NEW 2026-08-18 `[PASTECRASH-2026-08-18]` — a failed clipboard PASTE terminates the UI
+
+Hit by accident while driving the Classes filter: a 19-character string made the automation paste
+instead of type, and the app **died on the spot**, losing a connected session.
+
+```
+System.Runtime.InteropServices.COMException (0x8007000E): EnumFormatEtc failed
+   at Avalonia.Win32.Win32Com.Impl.__MicroComIDataObjectProxy.EnumFormatEtc(Int32 dwDirection)
+   at Avalonia.Win32.ClipboardImpl.TryGetDataAsync()
+   at Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync[T](...)
+   at Avalonia.Controls.TextBox.Paste()
+   at System.Threading.Tasks.Task.<>c.<ThrowAsync>b__124_0(Object state)
+```
+
+The read fails inside `TextBox.Paste()`, and because it surfaces through `Task.ThrowAsync` it reaches
+the dispatcher as an **unobserved** exception and takes the process down. ⇒ **`Ctrl+V` into any text
+box in this app is a potential crash**, dependent only on the clipboard being momentarily
+unreadable (another app holding it, an OLE source that has gone away, `E_OUTOFMEMORY` as here).
+Nothing in our code is on the stack — but the *consequence* is ours, and a connected UI with a
+loaded object tree is expensive to lose.
+
+**Fix shape:** a `Dispatcher.UnhandledException` handler that logs and marks input-layer faults
+handled, so a clipboard/IME failure degrades to "paste did nothing" instead of terminating. Effort
+**S** · Risk **low**. ⚠ Scope it to input-layer faults — do not blanket-swallow, or a real crash
+becomes invisible.
+
+**Second, smaller defect in the same evidence:** `crash.log` recorded this as
+**`UE5DumpUI startup crash`** although it happened many minutes into a live session — the phrase is
+hard-coded in the handler, so every crash is reported as a startup crash. That is actively
+misleading when triaging a log after the fact.
+
 ### ⛔ NEW 2026-08-18 `[PIPEBUSY-2026-08-18]` — at-capacity is logged as an ERROR once per second, forever
 
 **Measured, not inferred: 1,826 ERROR lines in ~31.5 minutes (~170 KB) on one Avowed session**, and
@@ -3862,7 +3893,7 @@ flag stored as one).
    *"would be written as infinity"*, while the same value on a `DoubleProperty` must still be
    accepted. If the double case is refused, the narrowing check leaked into the 8-byte path.
 
-### 🟡 4-of-5 CLOSED 2026-08-18 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
+### ✅ ALL 5 CLOSED 2026-08-18 — AA(B) / FIRE on a class past the 5,000-row cap (audit #5 X2, build 2888)
 
 The three handoffs that need a class address stopped re-deriving it from the capped `list_classes`
 page and now use the address the row already carries. The pure logic is unit-tested with three
@@ -4038,6 +4069,64 @@ Needs a game with **more than 5,000 classes** — any large UE title (DQ7R, Hogw
 > **What made it safe in the end was a cross-check against a number computed by other code**:
 > `game_only=true` must yield the UI's own `193`. It does, exactly, so the 281/22 figures are
 > trustworthy. **Never accept a zero from a filter that has not been shown to fire.**
+>
+> ### ✅ STEP 4 CLOSED, NON-VACUOUSLY — by LOWERING the cap instead of hunting a host `[AVOWED-X2b-2026-08-18]`
+>
+> **The maintainer's idea, and it is the right one.** Three titles proved no game ships an exec
+> command past 5,000 (above), so the row looked unstageable. But the code's only input is *"is this
+> class absent from the page it was handed"* — **it never sees the cap's value**. Lowering the cap
+> puts a real class outside it, which is the identical condition, reached without a fourth host.
+>
+> ⚠ Note the asymmetry with the warning further up: **raising** the cap would hide the defect
+> forever; **lowering** it exposes the defect on demand. They are not the same act.
+>
+> **Setup.** `int limit = 5000` → `3000` in the two UI defaults
+> ([`IDumpService.cs:242`](../ui/UE5DumpUI/Core/IDumpService.cs),
+> [`DumpService.cs:2549`](../ui/UE5DumpUI/Services/DumpService.cs)) — every call site omits the
+> argument, so two lines move all of them. **No DLL rebuild, no game restart.** Avowed, UE **504**,
+> **289,018** objects, save loaded, game paused (which also stops the walk order drifting).
+>
+> | step | verdict | evidence |
+> |---|---|---|
+> | 1 | ✅ | Classes → Load → `3000 classes (scanned 289,018 objects, 3000 total UClasses) ⚠ STOPPED at the 3,000-row cap — more classes exist` — verbatim, and the message tracks the new limit |
+> | 2 | ✅ | Filtering that page for `Activi` returns **0 rows** ⇒ `ActivitiesSubsystem` is absent from the capped page — the UI's *own* witness of absence, which is what the handoff will see |
+> | 4a | ✅ **AA(B)** | `Invoke: ActivitiesSubsystem::EnableActivity`, `(ParmsSize=17)`, `activityID [FString, 16B, off=0]` + `Enabled [bool, 1B, off=16]`. **Copy AA Script** → `AA Script ready: ActivitiesSubsystem::EnableActivity` |
+> | 4b | ✅ **Run** | The **FIRE dialog** opened with both parameter fields and `FIRE / Copy AA Script / Close / Cancel`. **Cancelled — nothing fired** (`exec EnableActivity cancelled`); these commands mutate a live save, and the defect is in resolving the class *before* FIRE, so opening the dialog IS the check |
+>
+> ⇒ **Both Console twins resolve a class the capped page does not contain.** Before build 2888 this
+> aborted with *"Class … not found"*. Step 4 is closed on real behaviour, not by argument.
+>
+> ⚠ **What this does and does not prove.** It proves the handoff works when the class is *absent from
+> the returned page* — the only input the code has. It does **not** separately exercise index >5000,
+> and no claim is made that it does. Given the code never reads the limit, that is not a gap.
+> ⚠ **The cap change was reverted and verified** (`grep` shows `5000` restored, `3000` gone,
+> `build_number.txt` back to 3261, `dist` republished AOT).
+>
+> ### ⚠ TWO TRAPS THIS RUN, both of which produced convincing wrong answers
+> * **The rig's `max_results` was silently ignored — the DLL reads `limit`.** So a "cap = 3000" query
+>   quietly returned **5000 rows**, and the class indices taken from it disagreed with what the UI saw.
+>   That is the **third** wrong-field-name of this sitting (`flags`→`function_flags`,
+>   `name`→`func_name`, `max_results`→`limit`): the pipe silently ignores unknown keys, so a wrong
+>   name is never an error, just a wrong answer. **Echo one known value back before trusting a query.**
+> * **Walk position is NOT stable while the game streams.** `HealthSnapshotBlueprintLibrary` sat at
+>   index 4412 in one query and 2582 in another minutes later. So "past the cap" must be re-checked
+>   at the moment of the test — and the UI's own filter is the right witness, not a stored index.
+>   Pausing the game stabilises it.
+>
+> ### ⛔ FOUND WHILE DOING THIS — `[PASTECRASH-2026-08-18]`: a clipboard paste can KILL the UI
+> Typing a 19-character filter made computer-use paste rather than type, and the UI **died**:
+> ```
+> System.Runtime.InteropServices.COMException (0x8007000E): EnumFormatEtc failed
+>    at Avalonia.Win32.ClipboardImpl.TryGetDataAsync()
+>    at Avalonia.Controls.TextBox.Paste()
+>    at System.Threading.Tasks.Task.<>c.<ThrowAsync>b__124_0(Object state)
+> ```
+> A failed clipboard READ inside `TextBox.Paste()` surfaces on the dispatcher as an unobserved async
+> exception and terminates the process — **Ctrl+V into any textbox is a potential crash**, and the
+> user loses a loaded session. Worth a dispatcher-level guard (`Dispatcher.UnhandledException`) that
+> logs and swallows input-layer faults. Effort **S** · Risk **low**.
+> ⚠ Second, smaller defect in the same evidence: `crash.log` labels it **"UE5DumpUI startup crash"**
+> though it happened long after startup — the handler hard-codes that phrase.
 >
 > ### ⚠ MY OWN ERROR, recorded because it is the same shape as the trap this row keeps hitting
 > I first read the class as **`ES2GameInstance`** off a 0.6-scale screenshot (the package is `ES2`,

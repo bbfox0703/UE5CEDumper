@@ -23,9 +23,9 @@
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI |
 | **第 2 步 — 要注入一個執行中的遊戲** | 19 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 9 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 15 | 符合特定條件的遊戲 |
+| **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **47** | |
+| **合計** | **46** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -508,18 +508,6 @@
 | 1 | 啟動 DragonSword Awakening 並注入，於 scan-0.log／offsets-0.log 找出 GObjects 解析到的位址。 | 位址結尾是 …F8B0（base anchor）。若是 …F8C0 則本次不具驗證力，直接結束、下次再試。<br>⚠ 這個 anchor 每次啟動不固定，不能靠重跑同一次判定；沒命中 …F8B0 就不要記成通過。 |
 | 2 | 確認同一份 log 中的 preset 行內容。 | 讀到 preset UE5-Extended，不是 relaxed B。 |
 | 3 | 回歸檢查：對其他原本就能解析成功的測試遊戲各注入一次，grep log 中的 Could not detect layout, using default。 | 完全沒有這一行；原本能解出的 layout 仍照舊解出。 |
-
-### ⬜ X2 —— AA(B)/FIRE 對超出 5,000 列上限的類別仍可用
-
-*build 2888 · 優先度 **低** · 需要：類別數超過 5,000 的大型 UE 遊戲（例如 DQ7R、Hogwarts Legacy、FF7R）。*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Game Class Filter → Load。 | 狀態列結尾出現「⚠ STOPPED at the 5,000-row cap — more classes exist」。<br>⚠ 沒出現這行代表這款遊戲太小，換一款，否則後面驗不出東西。 |
-| 2 | Interesting Funcs → Load，挑一列，其類別在 Game Class Filter 清單中查不到（用類別名過濾確認確實不存在）。 | 確認該類別在上限之外。 |
-| 3 | 對該列按 AA(B)。 | 腳本正常產生／送達 CE；不再出現「Class X not found」。 |
-| 4 | 到 Console 分頁，對一個帶參數的 exec 指令按 Run（FIRE 對話框），以及它自己的 AA(B)。 | 兩者皆成功。 |
-| 5 | 反向對照：對一個真的不存在的類別操作。 | 單純顯示 not found，不應出現「may still exist」的措辭。 |
 
 ### ⬜ G12（heuristic 分支）—— 走 fallback 時 offset 仍正確
 
