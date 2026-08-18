@@ -100,6 +100,7 @@ public class InputLayerFaultClassifierTests
     [InlineData("   at Avalonia.Win32.Input.Imm32InputMethod.SetComposition(String text)")]
     [InlineData("   at Avalonia.Controls.TextBox.Paste()")]
     [InlineData("   at Avalonia.Controls.TextBox.Copy()")]
+    [InlineData("   at Avalonia.Controls.TextBox.Cut()")]
     public void EachAllowListedSurface_IsInputLayer(string frame)
     {
         Assert.Equal(InputFaultVerdict.InputLayer,
@@ -317,10 +318,11 @@ public class InputLayerFaultClassifierTests
     }
 
     [Fact]
-    public void TextBoxCut_IsNotSwallowed_BecauseItMutatesStateAroundItsAwait()
+    public void TextBoxCut_IsSwallowed_AsAJudgedTradeNotBySymmetry()
     {
-        // Cut LOOKS like Copy and Paste and is deliberately treated differently.
-        // Read out of the installed Avalonia 12.1.1 IL, TextBox+<Cut>d__233.MoveNext:
+        // Cut is NOT in the allow-list because it looks like Copy and Paste. It is
+        // the one of the three that mutates state around its await, verified out of
+        // the installed Avalonia 12.1.1 IL (TextBox+<Cut>d__233.MoveNext):
         //
         //   IL_0047 call TextBox.SnapshotUndoRedo         <- BEFORE the await
         //   IL_0069 call ClipboardExtensions.SetTextAsync
@@ -328,19 +330,39 @@ public class InputLayerFaultClassifierTests
         //   IL_00BE call TaskAwaiter.GetResult            <- a failed write throws HERE
         //   IL_00C4 call TextBox.DeleteSelection          <- never runs
         //
-        // Swallowing that does not leave "the keystroke did nothing": it leaves an
-        // undo snapshot with no edit behind it. The guard's licence is that the
-        // consequence is nil, so Cut is outside it and still crashes.
+        // So a swallowed Cut leaves one undo snapshot with no edit behind it. It is
+        // swallowed anyway, for two reasons that were weighed rather than assumed:
         //
-        // The same read is what CLEARS the other two, which is why they stayed:
-        // Copy mutates nothing at all, and Paste's SnapshotUndoRedo is at IL_0106 —
-        // after its GetResult at IL_00AD — so a failed read throws before any state
-        // changes. Re-run that check before adding Cut back.
-        Assert.Equal(InputFaultVerdict.NotInputLayer,
+        //   1. The snapshot is of text that then never changed, so undoing it
+        //      restores the state the box already has — a no-op Ctrl+Z. The
+        //      alternative is not clean state, it is the process terminating and
+        //      taking a connected session with it. Mild and recoverable wins.
+        //   2. A busy clipboard fails Ctrl+X, Ctrl+C and Ctrl+V together, for one
+        //      environmental reason. Two of them shrugging while the third closes
+        //      the app is indefensible from the user's side.
+        //
+        // The IL is kept because it is what makes this a decision. If Cut ever grows
+        // a mutation whose undo is NOT a no-op, re-run the read and re-take it.
+        Assert.Equal(InputFaultVerdict.InputLayer,
             InputLayerFaultClassifier.ClassifyStackText(
                 "   at Avalonia.Controls.TextBox.Cut()", out _));
 
-        Assert.DoesNotContain("TextBox.Cut", InputLayerFaultClassifier.MethodMarkers);
+        Assert.Contains("Avalonia.Controls.TextBox.Cut", InputLayerFaultClassifier.MethodMarkers);
+    }
+
+    [Fact]
+    public void CopyAndPaste_NeedNoSuchTrade()
+    {
+        // The negative half of the reasoning above: the trade was needed ONLY for
+        // Cut. Copy mutates nothing at all, and Paste's SnapshotUndoRedo is at
+        // IL_0106 — after its GetResult at IL_00AD — so a failed clipboard read
+        // throws before any state changes. Both degrade to a literal no-op.
+        Assert.Equal(InputFaultVerdict.InputLayer,
+            InputLayerFaultClassifier.ClassifyStackText(
+                "   at Avalonia.Controls.TextBox.Copy()", out _));
+        Assert.Equal(InputFaultVerdict.InputLayer,
+            InputLayerFaultClassifier.ClassifyStackText(
+                "   at Avalonia.Controls.TextBox.Paste()", out _));
     }
 
     // ------------------------------------------------- AOT-rendered async frames
@@ -355,6 +377,8 @@ public class InputLayerFaultClassifierTests
     [InlineData("   at Avalonia.Controls.TextBox+<Paste>d__235.MoveNext()")]
     [InlineData("   at Avalonia.Controls.TextBox.<Copy>d__234.MoveNext()")]
     [InlineData("   at Avalonia.Controls.TextBox+<Copy>d__234.MoveNext()")]
+    [InlineData("   at Avalonia.Controls.TextBox.<Cut>d__233.MoveNext()")]
+    [InlineData("   at Avalonia.Controls.TextBox+<Cut>d__233.MoveNext()")]
     public void StateMachineRenderedClipboardFrames_AreStillInputLayer(string frame)
     {
         Assert.Equal(InputFaultVerdict.InputLayer,
@@ -363,12 +387,10 @@ public class InputLayerFaultClassifierTests
     }
 
     [Theory]
-    // Negative controls for the rule above. Cut stays excluded in BOTH renderings
-    // (a state-machine marker generated from a list that no longer holds Cut), and
-    // the marker must not degrade into "any frame mentioning Paste".
-    [InlineData("   at Avalonia.Controls.TextBox.<Cut>d__233.MoveNext()")]
-    [InlineData("   at Avalonia.Controls.TextBox+<Cut>d__233.MoveNext()")]
+    // Negative control for the rule above: the marker carries the declaring TYPE, so
+    // it must not degrade into "any frame mentioning a <Paste> state machine".
     [InlineData("   at Some.Other.Type.<Paste>d__1.MoveNext()")]
+    [InlineData("   at Some.Other.Type.<Cut>d__1.MoveNext()")]
     public void StateMachineMarkers_DoNotOverMatch(string frame)
     {
         Assert.Equal(InputFaultVerdict.NotInputLayer,
@@ -383,6 +405,7 @@ public class InputLayerFaultClassifierTests
     // which is the point, the guard must not silently acquire one.
     [InlineData("   at Avalonia.Controls.TextBox.PasteHistoryItem()")]
     [InlineData("   at Avalonia.Controls.TextBox.CopyToBuffer(Int32 n)")]
+    [InlineData("   at Avalonia.Controls.TextBox.CutSelectionToBuffer()")]
     [InlineData("   at Avalonia.Controls.TextBox.Paste2()")]
     [InlineData("   at Avalonia.Controls.TextBox.Copy_Internal()")]
     public void AMethodMarkerMustBeAWholeMethodName(string frame)

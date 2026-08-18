@@ -153,28 +153,46 @@ internal static class InputLayerFaultClassifier
 
     /// <summary>
     /// Avalonia METHODS (type + method name) that are clipboard entry points — the
-    /// user-visible triggers Ctrl+C and Ctrl+V.
+    /// user-visible triggers Ctrl+X / Ctrl+C / Ctrl+V.
     ///
-    /// <para><b><c>TextBox.Cut</c> is deliberately absent, and must stay absent.</b>
-    /// It is the one of the three that MUTATES state around its await, so swallowing
-    /// its fault does not degrade to "the keystroke did nothing" — it leaves the
-    /// control inconsistent. Read out of the installed Avalonia 12.1.1 IL rather
-    /// than assumed (<c>TextBox+&lt;Cut&gt;d__233.MoveNext</c>):</para>
+    /// <para><b><c>TextBox.Cut</c> is here as a JUDGED TRADE, not by symmetry with
+    /// the other two, and the difference is real.</b> It is the only one of the three
+    /// that mutates state around its await, so swallowing its fault does not degrade
+    /// quite to "the keystroke did nothing". Read out of the installed Avalonia
+    /// 12.1.1 IL rather than assumed (<c>TextBox+&lt;Cut&gt;d__233.MoveNext</c>):</para>
     /// <code>
-    /// IL_0047 call TextBox.SnapshotUndoRedo          &lt;- before the await
+    /// IL_0047 call TextBox.SnapshotUndoRedo          &lt;- BEFORE the await
     /// IL_0069 call ClipboardExtensions.SetTextAsync
     /// IL_0098 call AsyncVoidMethodBuilder.AwaitUnsafeOnCompleted
     /// IL_00BE call TaskAwaiter.GetResult             &lt;- a clipboard failure throws HERE
     /// IL_00C4 call TextBox.DeleteSelection           &lt;- never runs
     /// </code>
-    /// <para>So a swallowed Cut pushes an undo snapshot that no edit ever matches.
-    /// The same read clears the other two: <c>Copy</c> mutates nothing at all, and
-    /// <c>Paste</c>'s <c>SnapshotUndoRedo</c> is at IL_0106 — AFTER its
-    /// <c>GetResult</c> at IL_00AD — so a failed clipboard read throws before any
-    /// state changes. Re-run that check before adding Cut back.</para>
+    ///
+    /// <para><b>Why that is still worth swallowing.</b> The residue is one undo
+    /// snapshot with no edit behind it — taken before the await, of text that then
+    /// never changed, so undoing it restores the state it already has and reads as a
+    /// no-op Ctrl+Z. Weigh that against the alternative, which is not "clean state":
+    /// it is the process terminating and taking a connected session with a loaded
+    /// object tree, which is the entire defect this class exists for. The mild,
+    /// local, recoverable inconsistency wins.</para>
+    ///
+    /// <para>The second reason is consistency of behaviour under one environmental
+    /// condition. A busy clipboard makes Ctrl+X, Ctrl+C and Ctrl+V fail together and
+    /// for the same reason; having two of them shrug and the third close the app
+    /// would be indefensible from the user's side, and would make the failure look
+    /// like a defect in whichever key they happened to press.</para>
+    ///
+    /// <para>The IL above stays because it is the reason this is a DECISION: it also
+    /// clears the other two outright — <c>Copy</c> mutates nothing at all, and
+    /// <c>Paste</c>'s <c>SnapshotUndoRedo</c> is at IL_0106, AFTER its
+    /// <c>GetResult</c> at IL_00AD, so a failed read throws before any state changes.
+    /// If Cut ever grows a mutation whose undo is NOT a no-op — anything touching the
+    /// document, the selection or the clipboard's own contents — re-run this read and
+    /// re-take the decision, because the trade above is what would have changed.</para>
     /// </summary>
     internal static readonly string[] MethodMarkers =
     {
+        "Avalonia.Controls.TextBox.Cut",
         "Avalonia.Controls.TextBox.Copy",
         "Avalonia.Controls.TextBox.Paste",
     };
