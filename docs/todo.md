@@ -3246,7 +3246,7 @@ refusal naming the substitute, NOT a silent nothing), AE8 (a rejected scan click
 appear in the diagnostics measurement list), AF1 (needs a malformed UEnum — not reproducible on
 demand), U7's sibling paths.
 
-### 🟡 3-of-5 CLOSED 2026-08-18 — install the plugin into a REAL Cheat Engine (audit #5 AB1, build 2913)
+### 🟡 4-of-5 CLOSED 2026-08-18 — install the plugin into a REAL Cheat Engine (audit #5 AB1, build 2913)
 
 We were crashing CE by leaving a 1 ms-poll thread running in an image CE unloads. The fix stops
 creating threads in a CE host and pins the module elsewhere. **The unload paths were read out of CE's
@@ -3295,8 +3295,47 @@ This is the one verification in the register that needs **no game at all**.
 > | 1 | ✅ **PASS** | Settings → Plugins → **Add new** → selected the DLL. The dialog accepted it and the list gained `UE5Dumper.dll:UE5CEDumper`. **CE's PID was 34984 before the Add and 34984 after** — same process, so it neither crashed nor silently restarted. This is the exact operation the finding says used to take CE down |
 > | 2 | ✅ **PASS, all three halves** | Ticked it → OK: CE's menu bar gained a **`Plugins`** menu, i.e. the CE entry points ran. **Closed CE normally → clean exit**: process gone, and `Get-WinEvent` over the Application log for the preceding 10 minutes returned **no** `cheatengine` entry. **Settings survived**: `HKCU\Software\Cheat Engine\Plugins64` gained `00000002 A = …\UE5Dumper.dll`, `00000002 B = 1` — written *at exit*, which is the point, since the unload runs before CE writes them. **Re-opened** (new PID 36608) → the plugin auto-loaded enabled and logged `CEPlugin: InitializePlugin pluginid=2 menuItemId=1 ef_size=1272` |
 > | 3 | ✅ **PASS** | A `Logs\cheatengine-x86_64\` folder appeared, and `init-0.log` carries the guard verbatim: `[WARN] [INIT] DllMain: host is Cheat Engine — NOT starting the mailbox poller or the auto-start thread. CE FreeLibrary's plugin DLLs (on Settings→Add and on exit), and a thread left running in an unmapped image takes CE down with it. …` It fired on **both** loads (the Add, and again on the re-open) |
-> | 4 | ⬜ not run | Needs a running game — this is also the **AB2** step, so it wants doing deliberately |
+> | 4 | ✅ **PASS on the injection half; the APC half is UNREACHABLE — see below** | Elliot, **proxy temporarily moved aside** so the injection is genuine (see the trap below). `Plugins → UE5CEDumper: Inject & Connect` → dialog inside 3 s: *"DLL injected — GObjects/GNames scan started in the background."* **AB2's async is measured, not assumed**: `Injecting into PID=12780` 17:05:54.151 → `InjectDLL returned` .248 (**97 ms**), while the scan only finished at **17:05:58.596** — 4.4 s later, i.e. well past the 1 s APC / 10 s normal window CE frees the stub in. **Game did not crash**: alive and `Responding: True` **6 minutes** later, no Application event-log entry. **Pipe opened** (`get_pointers` returned live pointers). **Mailbox poller started IN THE GAME** (`Mailbox: polling thread started (poll=1ms)`) while CE's own log carries the refusal — the exact contrast AB1 is about. **CE Lua reaches it**: `g_invokeMailbox = 7FFE944CC610` |
 > | 5 | ⬜ not run | The `…\Cheat Engine 7.7\Game.exe` folder-name negative case |
+>
+> ### ⭐ The BOOL-vs-observation fix, demonstrated live — this is the strongest single result here
+>
+> CE's `InjectDLL` returned **FALSE**, and the DLL was **mapped and working anyway**:
+> ```
+> CEPlugin: InjectDLL returned FALSE
+> CEPlugin: post-inject module check: D:\…\out\ce-plugin-test\UE5Dumper.dll (ok=0)
+> ```
+> ⚠ **Read that second line carefully — it is easy to get backwards.** `ok=` is CE's BOOL (0 = FALSE);
+> the `%s` slot prints the **found path** when present and the literal `NOT PRESENT` when not. So this
+> says *module IS there, CE said it failed*. The dialog reported success because it trusts its own
+> module walk, which is precisely the inversion step 4 asks about — and the pipe really did come up,
+> so the "success" dialog was honest.
+>
+> ### ⛔ THE APC HALF CANNOT BE RUN ON A PUBLIC CHEAT ENGINE — it needs a private build
+>
+> Step 4 calls ticking `cbInjectDLLWithAPC` *"the strongest single check here"*. It is **not reachable
+> on the shipping binary**, and this is not a UI-hunting failure — two independent signals:
+> * **Source** (`D:\Github\cheat-engine`, tag 7.5): `formsettingsunit.pas` guards
+>   `cbInjectDLLWithAPC.visible := true` with `{$ifdef privatebuild}`, and `MainUnit2.pas` reads
+>   `useapctoinjectdll` from the registry **inside the same ifdef** — its `{$else}` branch hardcodes
+>   `useapctoinjectdll := false`. So on a public build the checkbox is hidden **and** the flag is
+>   forced off; **setting the registry value achieves nothing.**
+> * **Observation**: the checkbox is absent from 7.7.0.10568's Settings (General Settings and Extra
+>   both checked).
+>
+> ▶ **Rewrite the step**: the APC path needs a `privatebuild` Cheat Engine. Everything else in step 4
+> is done. (⚠ Source is 7.5 while the binary is 7.7 — but the two signals agree, and the doc's own
+> rule is that the public source lags the release, not that it invents ifdefs.)
+>
+> ### ⚠ Two traps for whoever re-runs this
+>
+> 1. **A deployed proxy makes step 4 vacuous.** `Methode.cpp` checks `IsAlreadyLoadedInTarget` *before*
+>    injecting and bails with *"UE5CEDumper is already loaded in this process as '…'"* — its comment
+>    even names the proxy case. Elliot ships `dxgi.dll`, so the menu would never reach `InjectDLL`.
+>    It was moved to `dxgi.dll.ab1-bak` for the run and **restored afterwards**.
+> 2. **CE attached BEFORE the injection has a stale symbol list.** `getAddressSafe('g_invokeMailbox')`
+>    returned **nil** until `reinitializeSymbolhandler()`, after which it resolved. With a proxy the
+>    DLL is present before CE attaches, which is why the earlier invoke rows resolved it immediately.
 >
 > **State left exactly as found**, verified against a baseline captured before the run: the plugin was
 > deleted, and `Plugins64` is byte-identical to `out\ce-plugin-test\plugins64-before.txt`
