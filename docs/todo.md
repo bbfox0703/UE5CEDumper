@@ -7525,7 +7525,38 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
   game, before vs after: the candidate/probe counts should go DOWN while **every resolved
   GObjects / GNames / GWorld address stays byte-identical**. The second half is the real
   acceptance criterion; a changed address is a regression, a lower count is the win.
-  Passive — needs no special in-game action, just one injection each side. ⬜ unverified.
+  Passive — needs no special in-game action, just one injection each side.
+  ✅ **VERIFIED 2026-08-19 `[GENAURIP-AB-2026-08-19]` — BOTH halves, on a non-game host.**
+  Rig: `tools/verify/genau_rip_ab.py run notepad++`. Both DLLs were built **in the same
+  session, from the same tree, by the same toolset**, differing ONLY in the two-line
+  predicate — *not* "dist vs a checkout of build 2544", which would differ in ~700 builds of
+  unrelated ways. Hint entry deleted before each side (a warm cache changes how many patterns
+  are attempted — the quantity being compared).
+  - **The win — candidate count went DOWN, deterministically.**
+    `DataScanGObjectsCandidates: Found ` **4085** ` static pointers` (pre-fix) →
+    **4083** (post-fix). **Reproduced exactly on 4 independent runs**, so −2 is signal, not
+    variance. ⚠ The neighbouring `(N validation failures were suppressed)` counter is NOT
+    stable run-to-run (3621/2777 across runs — it depends on live heap contents); its delta
+    was a consistent −1, but **do not quote the absolute number as evidence**.
+  - **The acceptance criterion — the resolved address did not move.** `GWorld` resolved to
+    `0x7FF7480A03C8 (aob)` on **every one of the 4 runs, both sides**. Directly comparable
+    because the host's module range was byte-identical across runs
+    (`code=[0x7FF747B31000-0x7FF747F7837C]`), i.e. it was not rebased — checked rather than
+    assumed, since the row warns that ASLR normally makes raw addresses meaningless.
+  - ⚠ **THE HOST IS THE WHOLE EXPERIMENT, and the first choice was wrong.** All five call
+    sites are RECOVERY paths (`DataScanGObjectsCandidates`, `FindGObjectsStaticStruct`,
+    `ResolveSymbolExport`, `FindGNamesByStringRef` ×2), so **on a healthy game the AOB wins
+    immediately and not one of them runs** — a game yields two identical logs for the worst
+    possible reason. A `python.exe` sleeper fails every AOB and so drives all five, but
+    **measured a flat null**: python.exe is a launcher stub whose main module has a code
+    section of **0xE4C = 3,660 bytes** (the real code is in `python312.dll`, not the main
+    module), so both sides returned an identical "Found 17 static pointers". That null is
+    **manufactured by the host and is indistinguishable in the log from "the fix changed
+    nothing"**. Notepad++ (~8.5 MB) is ~2,300× the code and is what produced the signal.
+  - **Still not covered**: `GObjects`/`GNames` do not resolve on a non-UE host, so
+    "addresses unchanged" is demonstrated for **GWorld only**. A UE title whose GObjects or
+    GNames AOB *fails* (so recovery actually runs) would close that; DumperTest cannot,
+    because all three resolve by AOB on the first pattern.
 
 - **Audit #3 DLL fixes — M1–M5 + the DLL/Solide LOWs** ([audit-2026-07-14-findings.md](audit-2026-07-14-findings.md)).
   Shipped on `dev` (`408fd2d`, `7f3898f`, `3362636`); this section is their SINGLE owner — the audit

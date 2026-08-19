@@ -35,13 +35,45 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
-VCVARS = pathlib.Path(r"C:\Program Files\Microsoft Visual Studio\2022\Community"
-                      r"\VC\Auxiliary\Build\vcvars64.bat")
+VSWHERE = pathlib.Path(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe")
+
+
+def find_vcvars():
+    """vcvars64.bat of the LATEST Visual Studio, the same one build.ps1 enters.
+
+    ⚠ DO NOT HARDCODE A PATH HERE. This machine has TWO Visual Studio
+    installations -- `2022\\Community` (MSVC 14.44.35207 only) and `18\\Community`
+    (14.38, 14.44 and **14.51.36231**) -- and `build.ps1` resolves the newest, so
+    every object already in `build/` was compiled by 14.51.
+
+    Pointing this script at 2022's vcvars64 mixes toolsets inside ONE build
+    directory. The compile stage succeeds, and the failure surfaces at LINK time
+    as a couple of unresolved STL symbols in a file you never edited:
+
+        Radar.cpp.obj : error LNK2019: unresolved external __std_rotate
+        Radar.cpp.obj : error LNK2019: unresolved external __std_find_last_not_ch_pos_1
+
+    Those are 14.51 vectorized-algorithm helpers; no .lib under 14.44.35207
+    defines either (checked with dumpbin over every lib in its x64 dir). It reads
+    like "the STL is broken" or "my edit broke the build" -- it is neither. It
+    means the objects and the libs came from different toolsets.
+    """
+    if VSWHERE.is_file():
+        r = subprocess.run([str(VSWHERE), "-latest", "-prerelease", "-products", "*",
+                            "-property", "installationPath"],
+                           capture_output=True, text=True, errors="replace")
+        root = r.stdout.strip().splitlines()
+        if root:
+            cand = pathlib.Path(root[0]) / "VC/Auxiliary/Build/vcvars64.bat"
+            if cand.is_file():
+                return cand
+    raise SystemExit("build_dll: FAILED -- could not locate vcvars64.bat via vswhere. "
+                     "Do not fall back to a hardcoded path: picking the wrong VS mixes "
+                     "toolsets in build/ and fails at link with unresolved STL symbols.")
 
 
 def msvc_env():
-    if not VCVARS.is_file():
-        raise SystemExit(f"build_dll: FAILED -- vcvars64.bat not found at {VCVARS}")
+    VCVARS = find_vcvars()
     # shell=True: the ["cmd","/c",...] list form re-quotes the path and vcvars dies
     # as an unrecognised command with empty stdout.
     r = subprocess.run(f'chcp 65001 >nul && call "{VCVARS}" >nul 2>&1 && set',
@@ -146,8 +178,11 @@ def main(argv=None):
     print("build:", " ".join(cmd[-3:]))
     r = subprocess.run(cmd, env=env, text=True, errors="replace",
                        capture_output=True)
-    tail = (r.stdout or "")[-3000:] + (r.stderr or "")[-3000:]
-    print(tail)
+    tail = (r.stdout or "")[-4000:] + (r.stderr or "")[-4000:]
+    # The console here is cp950 and MSVC emits localized diagnostics; printing the raw
+    # text raises UnicodeEncodeError and HIDES the compile error behind a traceback.
+    print(tail.encode(sys.stdout.encoding or "utf-8", "replace")
+              .decode(sys.stdout.encoding or "utf-8", "replace"))
     if r.returncode != 0:
         print(f"build_dll: FAILED -- ninja rc={r.returncode}", file=sys.stderr)
         return r.returncode
