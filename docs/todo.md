@@ -2216,6 +2216,43 @@ treated as a HEURISTIC, not a law.*
    failure, now visible. Pure logic (`ClassifyLoad` / `ProcessLogFolderName`) is unit-tested; the
    folder lookup is exercised end-to-end via a temp-appdata service test.
 
+> ### 📊 THE IMPORT-BYPASS HEURISTIC, MEASURED 2026-08-20 `[PROXYLOAD-CORR-2026-08-20]` — it false-positives 4 times out of 4
+>
+> The row states the mechanism "FITS but is **untested**" and cites a 3-for-3 correlation. It is now
+> measured across every title on this machine that has a proxy deployed, cross-referencing two facts
+> already on disk: the exe's **static import table** (the same `tools/pe/pe_imports_exports.py` the
+> row names) and whether the DLL **actually loaded** there — i.e. whether
+> `Logs\<exe-base-name>` exists, which is exactly the join the new "Loaded?" column uses.
+> Rig: `tools/verify/proxyload_correlation.py`.
+>
+> | title | deployed | imports that name? | loaded? | |
+> |---|---|---|---|---|
+> | Avowed | `dxgi` | **YES** | **yes** | counter-example |
+> | EVERSPACE | `version` | **YES** | **yes** | counter-example |
+> | OCTOPATH TRAVELER | `winmm` | **YES** | **yes** | counter-example (the row already knew this one) |
+> | Elliot | `dxgi` | **YES** | **yes** | counter-example |
+> | DQ7R · Lushfoil · Manor Lords · Geri | `version` | no | yes | as expected |
+> | EVERSPACE 2 | `version` | *(exe unreadable by the parser)* | yes | not counted |
+>
+> **4 titles import their deployed flavour; all 4 loaded our proxy anyway. 0 titles imported it and
+> failed to load.** So on this machine the warning would fire four times and be wrong four times.
+>
+> ⚠ **This does NOT refute the row's own 3-for-3**, and must not be read as doing so: that was
+> measured on *specific flavour/title pairs* (notably OCTOPATH with **`version`**, which genuinely is
+> bypassed), whereas this samples **whatever flavour happens to be deployed now** (OCTOPATH currently
+> has `winmm`, which works). Both are true. The point is narrower and still useful: **a static import
+> is not a prediction of bypass**, and the screening is right to be worded as a heuristic rather than
+> a verdict.
+> ⚠ **Observational, not controlled** — nobody deployed each flavour to each title on purpose. Note
+> also what is *absent*: **zero** "imports it, no log folder" cases, which is the only shape that
+> would have supported the heuristic — and even that one would be ambiguous, since "never launched"
+> explains a missing folder equally well. Keeping "not observed" distinct from "bypassed" is the
+> whole point of the `Loaded?` column.
+>
+> ⇒ **Steps 1–3 below still need the UI** (the Suggested / Loaded? columns are what they assert).
+> What is settled here is the *data* those columns render, and that the heuristic's false-positive
+> rate on real titles is high rather than incidental.
+
 > Needs a running game. No sample was captured for the code path, so this is a real live check.
 >
 > | step | do this | expect | why it is a real check |
