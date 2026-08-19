@@ -2006,6 +2006,31 @@ unit-tested); AB9 stays OPEN (loader-lock, out of L2 scope).*
 
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
+> ### ✅ AB14 + AB16 PASS 2026-08-19 `[ABRADAR-2026-08-19]` — over the pipe, no UI
+>
+> Rig: `tools/verify/ab_radar_batch.py`, DumperTest Development / dist 3263.
+>
+> * **AB14 — PASS.** A `NumericAll`/`Exact 1` scan (3,132 candidates) returns **834 byte/enum-typed
+>   candidates: 370 `EnumProperty` + 464 `ByteProperty`** — e.g.
+>   `ToolMenuEntryScript.Data.Advanced.UserInterfaceActionType` (EnumProperty) and
+>   `SparseVolumeTextureViewerComponent.IndirectLightingCacheQuality` (ByteProperty). Before the fix
+>   these read as 1 byte and were invisible to every value scan, so a non-zero count *is* the
+>   result; no baseline is needed.
+> * **AB16 — PASS, and it partitions exactly.** Scanned `Int32` with `native_c=true` (372
+>   candidates), then drove the **server-side** `filter` — which is where the defect was; the UI
+>   textbox is only its front end. `filter=native` → **278** (all genuine raw holes, e.g.
+>   `SparseVolumeTextureViewer.<raw@0x230>`); `filter=reflected` → **94** (e.g.
+>   `GenlockedFixedRateCustomTimeStep.FrameRate.Denominator`).
+>   ⭐ **278 + 94 = 372 = the total.** Every candidate matched exactly one of the two Origin
+>   spellings, which is stronger than "both filters returned something": it shows the filter is
+>   reading `FormatCandidateOrigin` for *every* row rather than incidentally matching a substring
+>   somewhere else in a few of them.
+> * ⚠ The rig refuses to judge AB16 unless the scan actually produced Native-C rows. With
+>   `native_c` off every candidate is `Reflected` by construction, so `filter=native` returns 0
+>   legitimately and the row would read as still-broken; that case is reported INCONCLUSIVE, not FAIL.
+> * **AB17 / AB12 / AB13 not run** — AB17 needs wall-clock idling, AB12 a >1024-module process, AB13
+>   a non-ASCII install path (maintainer-only).
+
 > | AB14 | on any UE game, run a **Value Search → NumericAll** scan for a value held by a known enum-backed field (e.g. a character state / difficulty enum) | the enum field now appears among candidates (it read as 1 byte); before the fix it was invisible to every value scan | the resolution is unit-tested, but whether Aura's meta scan actually emits enum candidates is only observable live |
 > | AB16 | enable **Native-C** in Value Search, scan, then type `native` (and `reflected`) into the results filter box | rows visibly reading "Native-C (Int32)" match on `native`; "Reflected" rows match on `reflected` | before the fix the server-side filter ignored the Origin column and returned zero |
 > | AB17 | begin a value scan, do a Next Scan or End, leave the app connected & idle; separately, start a 2nd scan much later | a stale earlier session is reaped on the next Begin/Refine/End (memory does not accumulate); the session being refined is NOT dropped when you step away mid-refine | the sweep trigger + the "protect my own session" ordering are not unit-testable (wall-clock) |
