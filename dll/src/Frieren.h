@@ -2,7 +2,19 @@
 
 // ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
-// ExportAPI: ~30 C ABI exports for CE Lua bridge
+// ExportAPI: 59 C ABI exports for CE Lua bridge
+//
+// ⚠ That number is DERIVED, not maintained by hand: it is a count of this file's own
+// export declarations, asserted by `tools/check_derived_counts.py` (CI-gated). It read
+// "~30" against a real 59 until build 3262, because this header was the one claim site
+// the gate did not cover — the registry listed four DOCS and not the file those docs
+// derive FROM (audit #5 AD7). Add an export and the check fails, printing the number to
+// paste in here.
+//
+// ⚠ Do NOT spell the export macro in prose anywhere in this file. The check used to count
+// every line merely CONTAINING it, so the first draft of this very comment pushed 59 to
+// 60. The deriver was tightened to match real declarations instead; keeping prose clear of
+// the token costs nothing and removes the second half of the trap.
 // ============================================================
 
 #include <cstdint>
@@ -94,7 +106,29 @@ __declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, cons
 
 // Call UObject::ProcessEvent(ufunc, params). Returns 0 on success, negative on error.
 // params must point to a buffer of at least UFunction::ParmsSize bytes.
-// Error codes: -1=bad args, -2=vtable read fail, -3=ProcessEvent not found, -4=exception.
+//
+// Error codes (the FULL set — verified against Frieren.cpp's UE5_CallProcessEventEx and
+// Stark::EnqueueInvoke; there is no -6):
+//   -1  bad args — instance or ufunc is null
+//   -2  vtable read failed (direct-fallback path)
+//   -3  ProcessEvent vtable offset unusable: never detected, terminally failed, or
+//       currently DISTRUSTED after a mis-detection
+//   -4  SEH exception inside the call
+//   -5  ⚠ game-thread invoke TIMED OUT — and the request IS STILL QUEUED.
+//   -7  the game-thread hook was not active when the request was enqueued
+//   -8  refused: the caller is a background worker thread, which must not take the
+//       unsafe off-thread fallback (a re-assert worker calling ~10x/s is the historic
+//       crash shape)
+//
+// ⛔ -5 IS NOT A FAILURE YOU CAN CLEAN UP AFTER. The timeout abandons the RESULT, not the
+// request: the game thread may still drain and execute it at any later point. This 3-arg
+// export forwards paramsSize = 0, so the queued request holds your RAW POINTER rather than
+// a copy — freeing or reusing `params` after -5 is a use-after-free the game thread
+// commits, on its own schedule, with no further call from you. On -5 the buffer must stay
+// allocated AND unmodified for the life of the process.
+// Callers that cannot promise that must use UE5_CallProcessEventEx with a non-zero
+// paramsSize, which makes the request own a copy; -5 is then merely a lost result.
+// (The doc used to stop at -4, so a caller following it leaked or double-freed — audit #5 AD8.)
 __declspec(dllexport) int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
 // Direct ProcessEvent call from the calling thread, bypassing
@@ -102,8 +136,10 @@ __declspec(dllexport) int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr
 // — KismetMathLibrary, KismetStringLibrary, BFLs without game-state side
 // effects). NOT safe for instance methods that read/write actor state from
 // off-thread; use UE5_CallProcessEvent for those.
-// Error codes match UE5_CallProcessEvent: -1=bad args, -2=vtable, -3=PE
-// vtable offset unresolved, -4=SEH exception.
+// Error codes are a SUBSET of UE5_CallProcessEvent's: -1=bad args, -2=vtable,
+// -3=PE vtable offset unresolved, -4=SEH exception. It never enqueues, so -5/-7/-8
+// cannot occur here — and in particular there is no "still queued" state to worry
+// about: this call is synchronous, so on ANY error the params buffer is yours again.
 __declspec(dllexport) int32_t   UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
 
 // Force the game-thread ProcessEvent hook to install immediately (race-safe /

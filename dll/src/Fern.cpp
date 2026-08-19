@@ -2288,7 +2288,18 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Missing addr or bytes").dump();
             }
 
-            uintptr_t addr = Renge::StrToAddr(addrStr);
+            // STRICT parse (audit #5 AD19). StrToAddr collapses a malformed address to 0
+            // and the write then targets address 0 — refused by the OS, but reported as
+            // the generic "Write failed", which sends the user looking at permissions
+            // instead of at their address. The live case is an unsubstituted CE
+            // placeholder, e.g. "0x[ply_base]" — TryStrToAddr's own comment names it.
+            // The BYTES half of this same handler already learned this (B46, just below);
+            // the address half did not.
+            uintptr_t addr = 0;
+            if (!Renge::TryStrToAddr(addrStr, addr)) {
+                return Renge::MakeError(id, "Invalid addr (need hex, optional 0x prefix): "
+                                            + addrStr).dump();
+            }
             // Reject a malformed pattern instead of writing a silently-mangled one.
             // strtoul mapped every non-hex character to 0x00, so "DE AD BE EF" used to
             // be written as {DE,0A,0D,BE,0E} and answered ok:true. (B46)
@@ -4785,7 +4796,18 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             uint64_t ptrMask = 0;
             if (request.contains("ptr_mask_bits")) {
                 const auto& v = request["ptr_mask_bits"];
-                if (v.is_string())              ptrMask = Renge::StrToAddr(v.get<std::string>());
+                // STRICT (audit #5 AD19): 0 means "leave unchanged" here, so a typo'd mask
+                // was silently discarded and the command still answered ok — the caller is
+                // told the constant was set when it was not. Refuse instead.
+                if (v.is_string()) {
+                    const std::string ms = v.get<std::string>();
+                    uintptr_t parsed = 0;
+                    if (!Renge::TryStrToAddr(ms, parsed)) {
+                        return Renge::MakeError(id,
+                            "Invalid ptr_mask_bits (need hex, optional 0x prefix): " + ms).dump();
+                    }
+                    ptrMask = parsed;
+                }
                 else if (v.is_number_unsigned()) ptrMask = v.get<uint64_t>();
                 else if (v.is_number_integer())  ptrMask = static_cast<uint64_t>(v.get<int64_t>());
             }

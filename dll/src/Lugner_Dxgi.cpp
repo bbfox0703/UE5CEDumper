@@ -43,6 +43,7 @@
 #include <cstdint>
 #define LOG_CAT "PROXY"
 #include "Sein.h"
+#include "Lugner.h"
 
 // Real dxgi export addresses, indexed to match the f<N> thunks in
 // Lugner_Dxgi.asm and the "name = f<N>" map in ProxyDxgi.def.
@@ -105,13 +106,11 @@ extern "C" void DxgiProxy_EnsureResolved()
     if (!s_done) {
         s_done = true;
 
-        wchar_t sysDir[MAX_PATH] = {};
-        GetSystemDirectoryW(sysDir, MAX_PATH);
-
         wchar_t realPath[MAX_PATH] = {};
-        wsprintfW(realPath, L"%s\\dxgi.dll", sysDir);
-
-        HMODULE real = LoadLibraryW(realPath);
+        // false => refuse. The old code discarded GetSystemDirectoryW's return and
+        // formatted an empty buffer into a drive-root-relative `\dxgi.dll`. (AD18)
+        HMODULE real = Lugner::SystemDllPath(L"dxgi.dll", realPath, MAX_PATH)
+                     ? LoadLibraryW(realPath) : nullptr;
         if (real) {
             int resolved = 0;
             for (int i = 0; i < kDxgiExportCount; ++i) {

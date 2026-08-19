@@ -75,7 +75,7 @@ jobs:
           # 0, so this step only ever caught a Python crash — which is how four docs drifted to
           # four different pattern counts while Himmel.h stayed right (build 2530).
           & $py tools/ghidra/extract_patterns.py dll/src/Himmel.h out/sweep/patterns.tsv --check
-          if ($LASTEXITCODE -ne 0) { throw "extract_patterns.py --check FAILED ($LASTEXITCODE) - Himmel.h's header counts disagree with its tables, or a constant is dead/unresolved" }
+          if ($LASTEXITCODE -ne 0) { throw "extract_patterns.py --check FAILED ($LASTEXITCODE) - Himmel.h's header counts disagree with its tables, a constant is dead/unresolved, or a RIP entry's (instrOffset, opcodeLen, totalLen) does not line up with its own pattern bytes. The failure names the entry and the reason." }
           & $py tools/ghidra/blocktest.py
           if ($LASTEXITCODE -ne 0) { throw "blocktest FAILED ($LASTEXITCODE) - a pattern no longer resolves to its recorded address" }
           # The live-verification register had SIX competing spellings across 14 files and was

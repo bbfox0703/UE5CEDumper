@@ -27,6 +27,7 @@
 #include <Windows.h>
 #define LOG_CAT "PROXY"
 #include "Sein.h"
+#include "Lugner.h"
 
 // Real version.dll handle — loaded on first call
 static HMODULE g_realVersion = nullptr;
@@ -36,11 +37,13 @@ static HMODULE LoadRealVersion()
     if (g_realVersion) return g_realVersion;
 
     // Build path to the real version.dll in System32
-    wchar_t systemDir[MAX_PATH] = {};
-    GetSystemDirectoryW(systemDir, MAX_PATH);
-
     wchar_t realPath[MAX_PATH] = {};
-    wsprintfW(realPath, L"%s\\version.dll", systemDir);
+    if (!Lugner::SystemDllPath(L"version.dll", realPath, MAX_PATH)) {
+        LOG_ERROR("Could not resolve the System32 path of version.dll (err=%lu) — refusing "
+                  "to load rather than falling through to a drive-root-relative path.",
+                  GetLastError());
+        return nullptr;
+    }
 
     g_realVersion = LoadLibraryW(realPath);
     if (!g_realVersion) {

@@ -32,6 +32,7 @@
 #include <Windows.h>
 #define LOG_CAT "PROXY"
 #include "Sein.h"
+#include "Lugner.h"
 
 // Real dinput8.dll handle — loaded lazily on first call
 static HMODULE g_realDinput8 = nullptr;
@@ -40,11 +41,14 @@ static HMODULE LoadRealDinput8()
 {
     if (g_realDinput8) return g_realDinput8;
 
-    wchar_t systemDir[MAX_PATH] = {};
-    GetSystemDirectoryW(systemDir, MAX_PATH);
-
     wchar_t realPath[MAX_PATH] = {};
-    wsprintfW(realPath, L"%s\\dinput8.dll", systemDir);
+    if (!Lugner::SystemDllPath(L"dinput8.dll", realPath, MAX_PATH)) {
+        LOG_ERROR("Could not resolve the System32 path of dinput8.dll (err=%lu) — refusing "
+                  "to load. Forwarded calls will fail, which is the correct outcome: the "
+                  "old code fell through to a drive-root-relative path here.",
+                  GetLastError());
+        return nullptr;
+    }
 
     g_realDinput8 = LoadLibraryW(realPath);
     if (!g_realDinput8) {

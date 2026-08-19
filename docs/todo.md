@@ -11,8 +11,12 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **38 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L5 (S1 Lua)
+> - `## Pending live-game verification` — **39 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L3 (T1b)
+>   AD10/AD12/AD13/AD15/AD16/AD18 batch, and it is unusually **cheap and low-yield on purpose**:
+>   almost all of L3 is machine-enforced offline (a compile-time `static_assert` plus
+>   `extract_patterns.py --check` now pin every AOB entry's resolve geometry), so the four live rows
+>   are a UE 4.27 log grep and a four-proxy launch regression check. Before it the audit L5 (S1 Lua)
 >   AA26/AA31/AA32/AA37 confirmation batch — most of L5 is rig-covered offline
 >   (`scripts/tests/{dissect,freeze_helper,invoke_helper}_test.lua`, all green), and only four have a
 >   real-DLL/CE face the rig stubs: **AA37** `createFromPath('/Script/CoreUObject.Vector')` builds a
@@ -30,10 +34,12 @@ Open work only. **Read this when deciding what to do next.**
 >   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-19: **120 audit findings open of 297 · 0 HIGH · 0 MED · 93 LOW · 27 INFO**
+> State as of 2026-08-19: **104 audit findings open of 297 · 0 HIGH · 0 MED · 78 LOW · 26 INFO**
 > (audit L5 (S1 Lua) closed AA11/AA21/AA22/AA23/AA24/AA26/AA27/AA28/AA29/AA30/AA31/AA32/AA33/AA34/AA37
 > — all rig-covered offline; audit L1 closed U9/U10/U11/G4/G5/G6/G7/A7/A8/A9; A10 left open — needs
-> the U5 by-value restructuring). Nothing is blocked on a maintainer decision. Re-derive with
+> the U5 by-value restructuring; audit L3 (T1b) closed AD7–AD22, i.e. the whole DLL-contract-header
+> and Himmel block, leaving **AA39** open on purpose — see its row for why the prescribed fix is a
+> measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
 > ### ▶ OPEN FIXES INDEX — 2 items, and they are NOT in the 154 above
@@ -1511,6 +1517,22 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L3 (T1b): AD10 / AD12 / AD13 / AD15 / AD16 / AD18
+
+*Most of L3 needs NO live check and is already machine-enforced offline: **AD12/AD13/AD15/AD16**'s
+corrected geometry is now asserted by a compile-time `static_assert` AND by
+`extract_patterns.py --check`, both negative-controlled 6-for-6 (**AD17**); **AD7/AD22** are pinned by
+`check_derived_counts.py`; **AD20/AD21** were already fixed and are covered by `utf8_helpers_test` /
+`dll_helpers_test`; **AD11/AD14** are proofs from the table's own text. What is listed below is only
+what a running game can settle that a checker cannot.*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | Inject into any UE 4.27 title and grep `scan-0.log` for `GWLD_TQ_3`/`GWLD_TQ_4`/`GOBJ_PS1`/`GOBJ_PS6`. | If one of them WINS, its resolved address must be a plausible `&GWorld` / `&GUObjectArray` (matches the address the winning pattern in a previous run reported). Before build 3262 these four resolved to garbage on every hit, so any past log showing one of them *validated* is worth re-checking — that is the strongest available evidence the old geometry was wrong. ⚠ **A run where none of the four wins proves nothing** — they are low-priority entries and a better pattern normally lands first. |
+| 2 | Same session: check whether the Teleport tab's Global Pointers card still offers an AOB-wrapped CE export for GWorld. | Unchanged from before. **AD10** only withholds the triple when replaying it does not reproduce the resolved address; every GWorld entry is `RipBoth`, and the direct arm is the normal winner. |
+| 3 | Force the AD10 path if a title ever resolves GWorld via the DEREF arm (or a future entry gains a non-zero `adjustment`). | `scan-0.log` (or `init-0.log`) carries the new WARN `replaying its published AOB triple does not reproduce it` and the CE export offers **no** AOB — instead of exporting a triple that resolves to the wrong address. ⚠ Not reproducible on demand; watch for the line rather than trying to cause it. |
+| 4 | **AD18** — launch a game with each of the four proxies (`version` / `dinput8` / `dxgi` / `winmm`) in turn. | Each still loads its real System32 DLL and the game starts normally. The refusal path is unreachable on a healthy system, so this is a **regression check on the rewrite**, not a test of the fix: the point is that routing all four through `Lugner::SystemDllPath` did not break the ordinary case. |
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L1 (D1/D2/D3 DLL engine): U11 / G6 / G7 / A7 / A8 / A9
 

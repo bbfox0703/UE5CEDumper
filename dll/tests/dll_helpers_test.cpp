@@ -5192,11 +5192,25 @@ static void Test_Tot_CancelImmunityVsBackgroundWorker() {
 static void Test_Sig_IsCeReplayableAob() {
     std::printf("Test_Sig_IsCeReplayableAob\n");
 
-    // Only the RIP forms give CE a (pattern, pos, len) triple it can replay with
-    // AOBScanModuleUE + a fixed offset into the match.
+    // CE replays the triple as exactly ONE step: addr = match + len + i32[match + pos],
+    // which yields the RIP TARGET. So the question is not "is `pattern` bytes?" but "is
+    // the answer the RIP target?".
     EXPECT("RipDirect replayable",        IsCeReplayableAob(AobResolve::RipDirect));
-    EXPECT("RipDeref replayable",         IsCeReplayableAob(AobResolve::RipDeref));
-    EXPECT("RipBoth replayable",          IsCeReplayableAob(AobResolve::RipBoth));
+    EXPECT("RipBoth replayable (form)",   IsCeReplayableAob(AobResolve::RipBoth));
+
+    // ⚠ RipDeref is NOT replayable, and this assertion was INVERTED until build 3262
+    // (audit #5 AD10) — the test pinned the defect, which is why nothing caught it.
+    // RipDeref's answer is one further load THROUGH the RIP target, and the triple has
+    // no field in which to say so; a CE script built from it registers the
+    // pointer-to-pointer slot as though it were the pointer.
+    EXPECT("RipDeref NOT replayable",    !IsCeReplayableAob(AobResolve::RipDeref));
+
+    // ⛔ RipBoth passing above is NECESSARY, NOT SUFFICIENT, and no publish site may use
+    // this predicate alone. Which of RipBoth's two arms won is a RUNTIME fact an enum
+    // cannot carry, and the deref arm has RipDeref's exact problem — as does a non-zero
+    // `adjustment`, which the triple also cannot express. Genau::CeReplayMatchesResolved
+    // settles both by replaying the triple and comparing it to the address published.
+    // Every GWorld entry is RipBoth, so that is the live path, not a hypothetical.
 
     // SymbolExport / SymbolCallFollow keep an MSVC MANGLED NAME in `pattern`. Publishing
     // one made the UI's "an AOB is available" test (non-empty string) true, and every
@@ -5217,6 +5231,12 @@ static void Test_Sig_IsCeReplayableAob() {
         for (size_t i = 0; i < n; ++i) {
             const auto& sig = tbl[i];
             if (IsCeReplayableAob(sig.resolve)) continue;
+            // RipDeref is non-replayable but its geometry is REAL and non-zero — it needs
+            // instrOffset to reach the RIP target before the extra load. The zero-geometry
+            // property below belongs to the forms whose `pattern` is not bytes at all, so
+            // asserting it over RipDeref would demand a broken entry. Vacuous today (no
+            // table has a RipDeref entry); stated so that adding one is not a false alarm.
+            if (sig.resolve == AobResolve::RipDeref) continue;
             EXPECT("non-replayable has zero instrOffset", sig.instrOffset == 0);
             EXPECT("non-replayable has zero opcodeLen",   sig.opcodeLen   == 0);
             EXPECT("non-replayable has zero totalLen",    sig.totalLen    == 0);

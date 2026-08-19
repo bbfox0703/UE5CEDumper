@@ -27,6 +27,7 @@
 #include <cstdint>
 #define LOG_CAT "PROXY"
 #include "Sein.h"
+#include "Lugner.h"
 
 // Real winmm.dll export addresses, indexed to match the f<N> thunks in
 // Lugner_Winmm.asm and the "name = f<N>" map in ProxyWinmm.def.
@@ -246,13 +247,12 @@ extern "C" void WinmmProxy_EnsureResolved()
     // module, same names, same addresses), so every caller simply does the work and
     // returns with the table populated. LoadLibraryW is refcounted; a duplicate is cheap.
 
-    wchar_t sysDir[MAX_PATH] = {};
-    GetSystemDirectoryW(sysDir, MAX_PATH);
-
     wchar_t realPath[MAX_PATH] = {};
-    wsprintfW(realPath, L"%s\\winmm.dll", sysDir);
-
-    HMODULE real = LoadLibraryW(realPath);
+    // false => refuse. The old code discarded GetSystemDirectoryW's return and formatted
+    // an empty buffer into a drive-root-relative `\winmm.dll`. Refusing leaves mProcs
+    // null, which the logging below already reports as 0/N resolved. (AD18)
+    HMODULE real = Lugner::SystemDllPath(L"winmm.dll", realPath, MAX_PATH)
+                 ? LoadLibraryW(realPath) : nullptr;
     int resolved = 0;
     if (real) {
         for (int i = 0; i < kWinmmExportCount; ++i) {

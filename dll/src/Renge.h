@@ -211,7 +211,23 @@ inline bool TryStrToAddr(const std::string& str, uintptr_t& outAddr) noexcept {
 }
 
 // Hex string "0x..." to address. Noexcept: returns 0 on malformed input.
-// Prefer TryStrToAddr at boundaries where you want to surface a clear error to the caller.
+//
+// ⚠ This is NOT a looser PARSER — it calls TryStrToAddr and throws the failure channel
+// away. The only difference is whether the caller can tell "the address was 0" from "the
+// address was garbage", so the choice is about the CONSEQUENCE of that confusion, not
+// about permissiveness. The rule, applied per call site in audit #5 AD19:
+//
+//   * Use TryStrToAddr when a silent 0 would WRITE, EXECUTE, or change persistent state.
+//     Those handlers must refuse and say why: `write_mem` reported the generic "Write
+//     failed" for a malformed address, and `set_packed_consts` treats 0 as "leave
+//     unchanged", so a typo'd mask was discarded while the command answered ok.
+//   * StrToAddr is fine on the READ/QUERY handlers (~19 of them). There a 0 fails closed
+//     — the lookup misses and the handler already returns its own specific error — so the
+//     extra branch buys nothing.
+//
+// The malformed input that actually shows up is an unsubstituted CE placeholder such as
+// "0x[ply_base]", which is why TryStrToAddr rejects trailing garbage rather than parsing
+// the leading hex and stopping.
 inline uintptr_t StrToAddr(const std::string& str) noexcept {
     uintptr_t v = 0;
     TryStrToAddr(str, v);

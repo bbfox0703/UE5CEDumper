@@ -206,9 +206,21 @@ enum class AobResolve : uint8_t {
 // the degenerate [0, 0) even if the pattern were scannable. Publishing any of them makes
 // the UI's "an AOB is available" test (non-empty string) true while every address in the
 // exported table resolves to `??` — audit #4 B2.
+//
+// ⚠ RipDeref is refused too (audit #5 AD10). CE replays the triple as exactly one step —
+// `addr = match + len + i32[match + pos]` — which yields the RIP TARGET. RipDeref's answer
+// is one further load THROUGH that target, and there is nowhere in (pattern, pos, len) to
+// say so; a CE script built from it would register the pointer-to-pointer slot as if it
+// were the pointer.
+//
+// ⛔ This is a NECESSARY condition, not a sufficient one, and RipBoth is why: it approves
+// the form, but which of its two arms actually won is a RUNTIME fact this function cannot
+// see, and the deref arm has the identical problem RipDeref has. `adjustment` is the same
+// kind of hole — the triple carries no `+/- N`. Both are settled by actually replaying the
+// triple and comparing (Genau's CeReplayMatchesResolved), which is the only gate a publish
+// site may use on its own.
 constexpr bool IsCeReplayableAob(AobResolve r) {
     return r == AobResolve::RipDirect
-        || r == AobResolve::RipDeref
         || r == AobResolve::RipBoth;
 }
 
@@ -257,6 +269,108 @@ struct AobSignature {
     const char* source;       // Attribution: "V", "PS", "RE", "ES2", "SF", "TQ", etc.
     const char* notes;        // Human-readable: game name, UE version
 };
+
+// ── Compile-time RIP geometry validation (audit #5 AD17) ─────────────────────────────────
+// Sibling of ASSERT_TABLE_ORDER at the bottom of this file, and it exists for the same
+// reason that one does: something about an entry was wrong in a way NOTHING could see.
+// Four entries shipped with a triple pointing into the middle of their own instruction —
+// GOBJ_PS1 (instrOffset at the LEA's ModRM), GOBJ_PS6, GWLD_TQ_3 and GWLD_TQ_4 (all three
+// naming the DISPLACEMENT where the field wants the INSTRUCTION). Each compiled, sorted,
+// scanned and matched perfectly; every hit then resolved to a garbage address. The
+// blocktest oracle covers 35 of 158 entries, so it could not have caught them either.
+//
+// The rules come from what Macht::ResolveRIP actually does with the triple — read a disp32
+// at instrOffset+opcodeLen, add it to matchAddr+instrOffset+totalLen — so a pattern's own
+// bytes are enough to falsify a wrong one offline:
+//   * the disp32 bytes must be WILDCARDED wherever the pattern covers them (a literal there
+//     could never match a real displacement, so the window is misaligned);
+//   * the pattern may stop AT the displacement — the disp is read from process memory, not
+//     from the pattern, and GNAM_SAT425_1 legitimately does exactly this — or cover the
+//     whole instruction, but never stop strictly between the two;
+//   * totalLen - opcodeLen - 4 is the immediate size, so it must be 0, 1, 2 or 4
+//     (GWLD_DI427_2's `mov qword[rip+d32],imm32` is the totalLen=11 case);
+//   * the ModRM byte just before the displacement must encode mod=00, rm=101, checked per
+//     nibble so the many `4?`-style entries are still covered on the half that is literal.
+// ⚠ Do NOT replace the "stops inside the instruction" test with the obvious
+// `instrOffset + totalLen <= byteCount`. That is the rule you would write first, it does
+// catch PS1 and PS6, and it FALSE-POSITIVES GNAM_SAT425_1, whose triple is correct.
+// `tools/ghidra/extract_patterns.py --check` runs these same rules in CI and prints WHICH
+// entry and WHY; this copy fires in the compiler, at the moment the table is edited.
+constexpr int AobByteCount(const char* p) {
+    int n = 0;
+    for (int i = 0; p[i]; ) {
+        if (p[i] == ' ') { ++i; continue; }
+        ++n;
+        while (p[i] && p[i] != ' ') ++i;
+    }
+    return n;
+}
+
+// Pointer to byte-token `idx` (0-based), or nullptr if the pattern is shorter than that.
+constexpr const char* AobByteAt(const char* p, int idx) {
+    int n = 0;
+    for (int i = 0; p[i]; ) {
+        if (p[i] == ' ') { ++i; continue; }
+        if (n == idx) return p + i;
+        ++n;
+        while (p[i] && p[i] != ' ') ++i;
+    }
+    return nullptr;
+}
+
+// 0..15 for a hex nibble, -1 for the '?' wildcard, -2 for anything malformed.
+constexpr int AobNibble(char c) {
+    if (c == '?') return -1;
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -2;
+}
+
+constexpr bool AobIsWildcardByte(const char* p, int idx) {
+    const char* t = AobByteAt(p, idx);
+    return t && t[0] == '?' && t[1] == '?';
+}
+
+constexpr bool RipGeometryOk(const AobSignature& s) {
+    // Symbol / CallFollow entries carry the degenerate 0,0,0 triple by design and their
+    // `pattern` is a mangled name, not bytes — see IsCeReplayableAob.
+    if (s.resolve != AobResolve::RipDirect && s.resolve != AobResolve::RipDeref &&
+        s.resolve != AobResolve::RipBoth)
+        return true;
+
+    const int n = AobByteCount(s.pattern);
+    const int io = s.instrOffset, opc = s.opcodeLen, tot = s.totalLen;
+    if (io < 0 || opc < 1 || tot <= opc) return false;
+
+    const int imm = tot - opc - 4;                       // disp32 is always 4 bytes
+    if (imm != 0 && imm != 1 && imm != 2 && imm != 4) return false;
+    if (io + opc > n) return false;                      // opcode must be in the pattern
+
+    const int d0 = io + opc;                             // first displacement byte
+    for (int k = 0; k < 4; ++k)
+        if (d0 + k < n && !AobIsWildcardByte(s.pattern, d0 + k)) return false;
+    if (d0 < n && n < io + tot) return false;            // stops inside the instruction
+
+    if (d0 >= 1 && d0 - 1 < n) {                         // ModRM: mod=00, rm=101
+        const char* m = AobByteAt(s.pattern, d0 - 1);
+        const int hi = AobNibble(m[0]), lo = AobNibble(m[1]);
+        if (hi == -2 || lo == -2) return false;
+        if (lo >= 0 && (lo & 0x7) != 0x5) return false;
+        if (hi >= 0 && (hi & 0xC) != 0x0) return false;
+    }
+    return true;
+}
+
+// Index of the first entry whose geometry does not match its pattern, or -1 if all are fine.
+// Returning the index rather than a bool is deliberate: a static_assert message has to be a
+// string literal, so the index is the only way the compiler can point at the culprit.
+template <int N>
+constexpr int FirstBadRipGeometry(const AobSignature (&t)[N]) {
+    for (int i = 0; i < N; ++i)
+        if (!RipGeometryOk(t[i])) return i;
+    return -1;
+}
 
 namespace Sig {
 
@@ -310,7 +424,16 @@ constexpr const char* AOB_GOBJECTS_AV2 = "48 8B 15 ?? ?? ?? ?? C1 E8 10 48 8D 0C
 
 // --- patternsleuth patterns (instrOffset != 0, use TryPatternRIPOffset) ---
 
-// PS1: cmp/cmp/jne; lea rdx; lea rcx,[rip+X]  — instrOffset=23, opcodeLen=3, totalLen=7
+// PS1: cmp/cmp/jne; lea rdx; lea rcx,[rip+X]  — instrOffset=21, opcodeLen=3, totalLen=7
+//   Byte map (28 bytes): [0]  8B 05 d32  mov eax,[rip]      (6)
+//                        [6]  3B 05 d32  cmp eax,[rip]      (6)
+//                        [12] 75 ??      jne rel8           (2)
+//                        [14] 48 8D 15 d32  lea rdx,[rip]   (7)
+//                        [21] 48 8D 0D d32  lea rcx,[rip]   (7)  <- the anchor, ends at 28
+//   Was 23 until build 3262 — that pointed at the LEA's MODRM byte (48 8D **0D**), two bytes
+//   inside the instruction, so the disp32 was read from 26 (the last two wildcards of the real
+//   displacement plus two bytes past the match) and the next-instruction base was 30. Every
+//   match resolved to garbage. AD12.
 constexpr const char* AOB_GOBJECTS_PS1 = "8B 05 ?? ?? ?? ?? 3B 05 ?? ?? ?? ?? 75 ?? 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ??";
 // PS2: jz; lea rcx,[rip+X]; mov byte; call  — instrOffset=2, opcodeLen=3, totalLen=7
 constexpr const char* AOB_GOBJECTS_PS2 = "74 ?? 48 8D 0D ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01 E8";
@@ -320,7 +443,12 @@ constexpr const char* AOB_GOBJECTS_PS3 = "75 ?? 48 ?? ?? 48 8D 0D ?? ?? ?? ?? E8
 constexpr const char* AOB_GOBJECTS_PS4 = "45 84 C0 48 C7 41 10 00 00 00 00 B8 FF FF FF FF 4C 8D 1D ?? ?? ?? ??";
 // PS5: or esi; and eax; mov [rdi+8]; lea rcx,[rip+X]  — instrOffset=12, opcodeLen=3, totalLen=7
 constexpr const char* AOB_GOBJECTS_PS5 = "81 CE 00 00 00 02 83 E0 FB 89 47 08 48 8D 0D ?? ?? ?? ??";
-// PS6: mov eax,[rip]; sub eax,[rip]; sub eax,[rip+X]  — arithmetic, instrOffset=14, opcodeLen=2, totalLen=6
+// PS6: mov eax,[rip]; sub eax,[rip]; sub eax,[rip+X]  — arithmetic, instrOffset=12, opcodeLen=2, totalLen=6
+//   Byte map (18 bytes): [0] 8B 05 d32 (6) · [6] 2B 05 d32 (6) · [12] 2B 05 d32 (6, ends at 18).
+//   Was 14 until build 3262 — 14 is where the DISPLACEMENT starts, not the instruction, so the
+//   resolver read the disp32 from 16 and based the RIP on 20. Its sibling PS7 (instrOffset=17 =
+//   the `03 0D` opcode, disp at 19, end at 23 = pattern length) had it right all along, which is
+//   what shows this was a slip rather than a convention. AD13.
 constexpr const char* AOB_GOBJECTS_PS6 = "8B 05 ?? ?? ?? ?? 2B 05 ?? ?? ?? ?? 2B 05 ?? ?? ?? ??";
 // PS7: call; mov eax,[rip]; mov ecx,[rip]; add ecx,[rip+X]  — arithmetic, instrOffset=17, opcodeLen=2, totalLen=6
 constexpr const char* AOB_GOBJECTS_PS7 = "E8 ?? ?? ?? ?? 8B 05 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 03 0D ?? ?? ?? ??";
@@ -705,10 +833,17 @@ constexpr const char* AOB_GWORLD_TQ_1 = "48 8B 1D ?? ?? ?? ?? 48 85 ?? 74 ?? 41 
 // TQ_2: mov rdx,[GWorld]; mov rcx,[GWorld_related]; call; jmp; mov rax,r15; cmp byte [rsi],1
 constexpr const char* AOB_GWORLD_TQ_2 = "48 8B 15 ?? ?? ?? ?? 48 8B 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? EB 03 ?? 8B ?? 80 ?? 01";
 // TQ_3: ?? prefix; mov rax,[GWorld]; mov rsi,rcx; movaps [r11-38],xmm8; movaps xmm8,xmm1; test rax,rax; je
-//   Wildcard-prefixed, RIP at offset 3
+//   instrOffset=0, opcodeLen=3, totalLen=7. The leading `??` is the REX byte OF THE RIP
+//   INSTRUCTION ITSELF (`48 8B 05 d32`), not a prefix in front of it — so the instruction starts
+//   at byte 0 and its displacement starts at 3.
+//   ⚠ The old comment "RIP at offset 3" and the old instrOffset=3 named the DISPLACEMENT. With
+//   instrOffset=3 the resolver read the disp32 from byte 6 — where byte 8 is the literal `8B` of
+//   the following `mov rsi,rcx` — and based the RIP on byte 10. Fixed build 3262. AD15.
 constexpr const char* AOB_GWORLD_TQ_3 = "?? 8B 05 ?? ?? ?? ?? ?? 8B ?? ?? 0F 29 43 ?? 44 0F 28 C1 ?? 85 ?? 0F";
 // TQ_4: ?? prefix; mov [GWorld],rcx; test rsi,rsi; jz; mov rax,[rsi]; mov rcx,rsi; call [rax+E0]
-//   Wildcard-prefixed write pattern, RIP at offset 3
+//   Wildcard-prefixed write pattern. Same shape and same fix as TQ_3: `?? 89 0D d32` is
+//   `48 89 0D d32` (mov [rip+d32],rcx) starting at byte 0, so instrOffset=0 / opcodeLen=3 /
+//   totalLen=7 and the displacement is at 3. Was instrOffset=3. AD15/AD16.
 constexpr const char* AOB_GWORLD_TQ_4 = "?? 89 0D ?? ?? ?? ?? ?? 85 ?? 74 ?? 48 8B 06 ?? 8B ?? FF 90 ?? 00 00";
 
 // --- UE 4.2 game analysis patterns (G42 series) ---
@@ -1547,10 +1682,23 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     SIG_RIP("GOBJ_SAT52_1", AOB_GOBJECTS_SAT52_1, AobTarget::GObjects, 0, 3, 7, 0, 230, "SAT52", "Satisfactory UE5.2 TObjectIteratorBase ctor"),
     SIG_RIP("GOBJ_V12", AOB_GOBJECTS_V12, AobTarget::GObjects, 0, 3, 7, -0x10, 240, "V", "FF7 Remake"),
     SIG_RIP("GOBJ_SF_1", AOB_GOBJECTS_SF_1, AobTarget::GObjects, 0, 3, 7, 0, 250, "SF", "SatisfFactory via _imp_ (in EXE)"),
-    SIG_RIP("GOBJ_DI427_2", AOB_GOBJECTS_DI427_2, AobTarget::GObjects, 0, 3, 7, 0, 255, "DI427",
-            "UE4.27 GetObjectPtr core, item-size agnostic (broadest — last in Tier 1)"),
-    SIG_RIP("GOBJ_DI427_1", AOB_GOBJECTS_DI427_1, AobTarget::GObjects, 0, 3, 7, 0, 256, "DI427",
+    // _1 BEFORE _2 (swapped 255<->256 in build 3262, AD11). DI427_2 is a strict PREFIX of
+    // DI427_1 — its 23 tokens are _1's first 23, and both carry the identical (0,3,7,0) triple —
+    // so every _1 match is also a _2 match AT THE SAME ADDRESS, resolving to the same target.
+    // Pass 1 takes the first pattern with a validating match and scans matches in address order,
+    // so with _2 ahead of it _1 could never win anything _2 had not already won or already
+    // failed: it was UNREACHABLE, and the 105 -> 256 demotion (build 2499) is what made it so.
+    // The demotion's PURPOSE is untouched — both stay at the tail of Tier 1, so a
+    // Development-only fingerprint still does not hold an early slot every shipped game pays to
+    // scan; only their order relative to each other changed.
+    // ⛔ Deliberately NOT pruned. The block above its constant records a measured decision not to
+    // (GROUND-TRUTH.md rule 5, "never prune on absence of proof"), and putting the longer,
+    // more-specific pattern first is this file's own band rule: "a short generic pattern
+    // outranking a long purpose-built one is exactly the ordering that lets a decoy win".
+    SIG_RIP("GOBJ_DI427_1", AOB_GOBJECTS_DI427_1, AobTarget::GObjects, 0, 3, 7, 0, 255, "DI427",
             "UE4.27 GetObjectPtr + 32-byte-item shl 5 — DEVELOPMENT/DEBUGGAME ONLY (was 105)"),
+    SIG_RIP("GOBJ_DI427_2", AOB_GOBJECTS_DI427_2, AobTarget::GObjects, 0, 3, 7, 0, 256, "DI427",
+            "UE4.27 GetObjectPtr core, item-size agnostic (broadest — last in Tier 1)"),
 
     // 300–490: Tier 2 — medium patterns
     SIG_RIP("GOBJ_G42_2", AOB_GOBJECTS_G42_2, AobTarget::GObjects, 0, 3, 7, 0, 260, "G42", "UE4.2 RemoveUObjectDeleteListener"),
@@ -1578,7 +1726,7 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     // ANY of the 11 symbolised oracles.
 
     // 600–690: Patternsleuth (instrOffset != 0)
-    SIG_RIP("GOBJ_PS1", AOB_GOBJECTS_PS1, AobTarget::GObjects, 23, 3, 7, 0, 600, "PS", "cmp/cmp/jne; lea"),
+    SIG_RIP("GOBJ_PS1", AOB_GOBJECTS_PS1, AobTarget::GObjects, 21, 3, 7, 0, 600, "PS", "cmp/cmp/jne; lea"),
     SIG_RIP("GOBJ_PS2", AOB_GOBJECTS_PS2, AobTarget::GObjects,  2, 3, 7, 0, 610, "PS", "jz; lea rcx"),
     SIG_RIP("GOBJ_PS3", AOB_GOBJECTS_PS3, AobTarget::GObjects,  5, 3, 7, 0, 620, "PS", "jne; mov; lea rcx"),
     SIG_RIP("GOBJ_PS4", AOB_GOBJECTS_PS4, AobTarget::GObjects, 16, 3, 7, 0, 630, "PS", "test; mov; lea r11"),
@@ -1608,7 +1756,7 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     SIG_RIP("GOBJ_V3",  AOB_GOBJECTS_V3,  AobTarget::GObjects, 0, 3, 7, 0, 930, "V", "mov r8"),
     SIG_RIP("GOBJ_V5",  AOB_GOBJECTS_V5,  AobTarget::GObjects, 0, 3, 7, 0, 940, "V", "mov r10"),
     SIG_RIP("GOBJ_CT3", AOB_GOBJECTS_CT3, AobTarget::GObjects, 0, 3, 7, 0, 950, "CT", "mov r8; cmp"),
-    SIG_RIP("GOBJ_PS6", AOB_GOBJECTS_PS6, AobTarget::GObjects, 14, 2, 6, 0, 960, "PS", "arithmetic sub eax"),
+    SIG_RIP("GOBJ_PS6", AOB_GOBJECTS_PS6, AobTarget::GObjects, 12, 2, 6, 0, 960, "PS", "arithmetic sub eax"),
     SIG_RIP("GOBJ_PS7", AOB_GOBJECTS_PS7, AobTarget::GObjects, 17, 2, 6, 0, 970, "PS", "arithmetic add ecx"),
 };
 
@@ -1789,6 +1937,17 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     SIG_GWORLD_RIP("GWLD_SF_1",  AOB_GWORLD_SF_1,   0, 3, 7, 0, 270, false, "SF", "Engine DLL UGameEngine::Tick"),
     SIG_GWORLD_RIP("GWLD_SF_2",  AOB_GWORLD_SF_2,   0, 3, 7, 0, 300, false, "SF", "Engine DLL FAudioDeviceManager"),
     SIG_GWORLD_RIP("GWLD_SF_3",  AOB_GWORLD_SF_3,   0, 3, 7, 0, 305, false, "SF", "Engine DLL UWorld::FinishDestroy"),
+    // GWLD_G427_2 sits at 308 — one slot AHEAD of GWLD_SF_4 — and is deliberately out of its
+    // numeric "UE 4.27" band (was 375, moved build 3262, AD11/AD14). Wildcarding SF_4's frame
+    // displacement in build 2437 made it a strict PREFIX of G427_2 (SF_4's 14 tokens are
+    // G427_2's first 14) with the identical (0,3,7,0) triple, so from 2437 on G427_2 could never
+    // be reached — SF_4 matches everywhere it does, at the same addresses, resolving the same
+    // way. The bands are ordered by SPECIFICITY, not by source tag, and G427_2 is SF_4 plus two
+    // more literal bytes (`C7 48`, the `mov rax,rdi` that pins UEngine::GetWorldFromContextObject
+    // rather than any `mov rdi,[rip]; mov rbx,[rsp+?]; mov r??` epilogue), so 308 is the
+    // band-consistent slot. SF_4's own comment already flags that this wildcarding made it a
+    // near-superset of GWLD_G42_4; this is the case it missed.
+    SIG_GWORLD_RIP("GWLD_G427_2", AOB_GWORLD_G427_2, 0, 3, 7, 0, 308, false, "G427", "UE4.27 GetWorldFromContextObject (specific superset of SF_4)"),
     SIG_GWORLD_RIP("GWLD_SF_4",  AOB_GWORLD_SF_4,   0, 3, 7, 0, 310, false, "SF", "Engine DLL GetWorldFromContextObject"),
     SIG_GWORLD_RIP("GWLD_SF_5",  AOB_GWORLD_SF_5,   0, 3, 7, 0, 315, false, "SF", "Engine DLL FMallocLeakReporter"),
     SIG_GWORLD_RIP("GWLD_GH_4",  AOB_GWORLD_GH_4,   8, 3, 7, 0, 320, false, "GH", "Ghidra FEngineLoop::Tick XORPS cross-game"),
@@ -1805,15 +1964,19 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
 
     // 370–390: UE 4.27 patterns
     SIG_GWORLD_RIP("GWLD_G427_1", AOB_GWORLD_G427_1, 0, 3, 7, 0, 370, false, "G427", "UE4.27 FEngineLoop::Tick extended"),
-    SIG_GWORLD_RIP("GWLD_G427_2", AOB_GWORLD_G427_2, 0, 3, 7, 0, 375, false, "G427", "UE4.27 GetWorldFromContextObject"),
     SIG_GWORLD_RIP("GWLD_G427_3", AOB_GWORLD_G427_3, 10, 3, 7, 0, 380, false, "G427", "UE4.27 UGameEngine::Tick (49 prefix)"),
     SIG_GWORLD_RIP("GWLD_G427_4", AOB_GWORLD_G427_4, 10, 3, 7, 0, 385, false, "G427", "UE4.27 UGameEngine::Tick (48 prefix)"),
     SIG_GWORLD_RIP("GWLD_G427_5", AOB_GWORLD_G427_5, 0, 3, 7, 0, 390, false, "G427", "UE4.27 UWorld::FinishDestroy cmp rbx"),
 
     // 395–400: Wildcard-prefixed TQ2 patterns
-    SIG_GWORLD_RIP("GWLD_TQ_3",  AOB_GWORLD_TQ_3,   3, 3, 7, 0, 395, false, "TQ", "TQ2 ??-prefix mov rax"),
+    SIG_GWORLD_RIP("GWLD_TQ_3",  AOB_GWORLD_TQ_3,   0, 3, 7, 0, 395, false, "TQ", "TQ2 ??-prefix mov rax"),
+    // gworldAllowNull stays TRUE and is NOT part of the AD16 fix: TQ_4 is a `mov [GWorld],rcx`
+    // WRITE site, so at the moment it matches the slot legitimately still reads 0 — the same
+    // reason every entry in the 405–435 write band carries it. What made the resolved address
+    // arbitrary was the instrOffset, now 0; with the geometry right, allowNull admits the real
+    // &GWorld slot rather than whatever byte 6 happened to point at.
     { "GWLD_TQ_4", AOB_GWORLD_TQ_4, AobTarget::GWorld, AobResolve::RipBoth,
-      3, 3, 7, 0, 400, 0, true, "TQ", "TQ2 ??-prefix write pattern" },
+      0, 3, 7, 0, 400, 0, true, "TQ", "TQ2 ??-prefix write pattern" },
 
     // 405–420: Write patterns (Satisfactory UE 4.25, ES2 UE 5.3)
     { "GWLD_SAT425_3", AOB_GWORLD_SAT425_3, AobTarget::GWorld, AobResolve::RipBoth,
@@ -2023,6 +2186,25 @@ ASSERT_TABLE_ORDER(SPARSE_PATTERNS);
 ASSERT_TABLE_ORDER(GENGINE_PATTERNS);
 
 #undef ASSERT_TABLE_ORDER
+
+// Every RIP entry's (instrOffset, opcodeLen, totalLen) must line up with its own pattern
+// bytes — see the RipGeometryOk block near AobSignature for why this is not obvious and what
+// each rule is for. The assert can only name the TABLE; `FirstBadRipGeometry` returns the
+// offending INDEX, and `extract_patterns.py --check` prints the id and the reason.
+#define ASSERT_RIP_GEOMETRY(tbl)                                                            \
+    static_assert(FirstBadRipGeometry(tbl) < 0,                                             \
+                  #tbl ": an entry's (instrOffset, opcodeLen, totalLen) does not line up "  \
+                       "with its own pattern bytes. Run "                                   \
+                       "`py tools/ghidra/extract_patterns.py dll/src/Himmel.h "             \
+                       "out/patterns.tsv --check` for the entry id and the reason.")
+
+ASSERT_RIP_GEOMETRY(GOBJECTS_PATTERNS);
+ASSERT_RIP_GEOMETRY(GNAMES_PATTERNS);
+ASSERT_RIP_GEOMETRY(GWORLD_PATTERNS);
+ASSERT_RIP_GEOMETRY(SPARSE_PATTERNS);
+ASSERT_RIP_GEOMETRY(GENGINE_PATTERNS);
+
+#undef ASSERT_RIP_GEOMETRY
 
 // NOTE: the per-target pattern counts live in the FILE HEADER and nowhere else. A second copy
 // used to sit here; keeping both is what let the header go four patterns stale. One copy only.

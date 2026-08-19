@@ -4715,6 +4715,35 @@ static bool ValidateGEngineSlot(uintptr_t slotAddr) {
     return true;
 }
 
+// Would a CE script replaying the published triple land on the address we actually
+// resolved? (audit #5 AD10)
+//
+// This asks the question DIRECTLY rather than inferring it from the resolve enum, because
+// the enum structurally cannot answer it. `IsCeReplayableAob` is a necessary condition —
+// `pattern` has to be bytes and the triple has to be meaningful — but it is a compile-time
+// property of the FORM, and two runtime facts sit underneath it:
+//
+//   * RipBoth has two arms. The direct arm resolves to the RIP target, which is exactly
+//     what CE recomputes; the deref arm resolves one load FURTHER, which the triple has no
+//     way to express. Every GWorld entry in the table is RipBoth, so this is the live case,
+//     not a hypothetical.
+//   * `adjustment` is applied before validation and does not appear in the triple at all,
+//     so a winner that only validated at `target + adjustment` publishes a triple pointing
+//     at `target`. No GWorld/GEngine entry carries one today; that is a fact about the
+//     table this month, not an invariant, and nothing enforces it.
+//
+// Replaying is cheap (one SEH-guarded 4-byte read of memory we just scanned) and it fails
+// CLOSED: if the read fails, ResolveRIP returns 0, 0 never equals a validated address, and
+// the triple is withheld — the same outcome as a symbol-export winner.
+static bool CeReplayMatchesResolved(const ScanReport& rep) {
+    const AobSignature* s = rep.winningSig;
+    if (!s || !rep.finalAddress || !rep.scanAddr) return false;
+    if (!IsCeReplayableAob(s->resolve)) return false;
+    const uintptr_t replay =
+        Macht::ResolveRIP(rep.scanAddr + s->instrOffset, s->opcodeLen, s->totalLen);
+    return replay != 0 && replay == rep.finalAddress;
+}
+
 // Copy the GEngine scan metadata out of s_gengineReport. Shared by FindAll and
 // ResolveGEngineDeferred so the deferred re-run publishes exactly what the eager path would —
 // otherwise a deferred win would resolve the address but leave the CE-export AOB triple empty.
@@ -4727,10 +4756,15 @@ static void PublishGEngineMetadata(EnginePointers& out) {
     out.gengineAobLen = 0;
     // Same replayability gate as the GWorld triple above — a symbol/call-follow winner
     // is a perfectly good way for US to find &GEngine, and a useless thing to hand CE.
-    if (auto* es = s_gengineReport.winningSig; es && IsCeReplayableAob(es->resolve)) {
+    if (auto* es = s_gengineReport.winningSig; es && CeReplayMatchesResolved(s_gengineReport)) {
         out.gengineAob    = es->pattern;
         out.gengineAobPos = es->instrOffset + es->opcodeLen;
         out.gengineAobLen = es->instrOffset + es->totalLen;
+    } else if (s_gengineReport.winningSig && IsCeReplayableAob(s_gengineReport.winningSig->resolve)) {
+        LOG_WARN("[GEngine] %s resolved 0x%llX but replaying its published AOB triple does not "
+                 "reproduce it — withholding the triple rather than exporting one CE cannot honour",
+                 s_gengineReport.winningId,
+                 static_cast<unsigned long long>(s_gengineReport.finalAddress));
     }
 }
 
@@ -5124,10 +5158,19 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // GWorld through ?GWorld@@3VUWorldProxy@@A) stores a mangled NAME here, and shipping it
     // as if it were a byte pattern makes the UI's "AOB available" checkbox light up for an
     // export in which every address then resolves to `??`.
-    if (auto* ws = s_gworldReport.winningSig; ws && IsCeReplayableAob(ws->resolve)) {
+    if (auto* ws = s_gworldReport.winningSig; ws && CeReplayMatchesResolved(s_gworldReport)) {
         out.gworldAob    = ws->pattern;
         out.gworldAobPos = ws->instrOffset + ws->opcodeLen;
         out.gworldAobLen = ws->instrOffset + ws->totalLen;
+    } else if (s_gworldReport.winningSig &&
+               IsCeReplayableAob(s_gworldReport.winningSig->resolve)) {
+        // Every GWorld entry is RipBoth, so this is the deref arm (or a future adjustment)
+        // winning — a real result for us, and a triple CE would resolve to the wrong address.
+        LOG_WARN("[GWorld] %s resolved 0x%llX but replaying its published AOB triple does not "
+                 "reproduce it (deref arm or adjustment) — withholding the triple rather than "
+                 "exporting one CE cannot honour",
+                 s_gworldReport.winningId,
+                 static_cast<unsigned long long>(s_gworldReport.finalAddress));
     }
     // Same triple for GEngine, so a GameEngine-rooted CE export can be AOB-wrapped
     // exactly like a GWorld-rooted one instead of baking in a stale UEngine* snapshot.
