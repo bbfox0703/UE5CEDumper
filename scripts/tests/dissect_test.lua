@@ -42,6 +42,7 @@ local HELPER = (arg and arg[0] or ''):gsub('[^/\\]*$', '') .. '../ue5_dissect.lu
 -- CE constants -- MUST exist before the chunk loads (trap 1 above)
 -- ============================================================
 vtByte, vtWord, vtDword, vtSingle, vtDouble, vtQword, vtPointer = 0, 1, 3, 4, 5, 8, 12
+vtBinary = 9   -- CE's real value (defines.lua); a single bit uses vtBinary + BitStart/BitSize
 
 -- ============================================================
 -- Cheat Engine stubs
@@ -56,11 +57,13 @@ local ALLOC_NEXT   -- bump allocator cursor
 local ALLOC_FAIL   -- when true, allocateMemory returns nil
 local STRUCTS      -- every createStructure() handed out, in creation order
 local GLOBAL_LIST  -- structures registered via addToGlobalStructureList()
+local REGISTERED   -- active structure-callback registrations (id-counted, see below)
 
 local function resetWorld()
   SYMBOLS, CALLS, RESULTS, MEM, PRINTS = {}, {}, {}, {}, {}
   ALLOCS, ALLOC_NEXT, ALLOC_FAIL = {}, 0x10000, false
   STRUCTS, GLOBAL_LIST = {}, {}
+  REGISTERED = { override = nil, nameLookup = nil, overrideCount = 0, nameLookupCount = 0 }
 end
 
 function allocateMemory(size)
@@ -122,11 +125,29 @@ end
 function createStructureForm() end
 function inputQuery() return nil end
 
-local REGISTERED = {}
-function registerStructureDissectOverride(f) REGISTERED.override = f; return 1 end
-function registerStructureNameLookup(f)      REGISTERED.nameLookup = f; return 2 end
-function unregisterStructureDissectOverride() REGISTERED.override = nil end
-function unregisterStructureNameLookup()      REGISTERED.nameLookup = nil end
+-- CE tracks EACH registration separately and hands back a distinct id; a leaked
+-- second registration (AA22) survives one unregister. The single-slot model this
+-- replaced could not show that: register overwrote the slot and any unregister
+-- cleared it. Here `override`/`nameLookup` keep the LATEST fn (so callable, as the
+-- AA4 cases need) while the *Count fields track how many registrations are live.
+function registerStructureDissectOverride(f)
+  REGISTERED.override = f
+  REGISTERED.overrideCount = REGISTERED.overrideCount + 1
+  return REGISTERED.overrideCount               -- a distinct id per active registration
+end
+function registerStructureNameLookup(f)
+  REGISTERED.nameLookup = f
+  REGISTERED.nameLookupCount = REGISTERED.nameLookupCount + 1
+  return 100 + REGISTERED.nameLookupCount
+end
+function unregisterStructureDissectOverride(_)
+  REGISTERED.overrideCount = math.max(0, REGISTERED.overrideCount - 1)
+  if REGISTERED.overrideCount == 0 then REGISTERED.override = nil end
+end
+function unregisterStructureNameLookup(_)
+  REGISTERED.nameLookupCount = math.max(0, REGISTERED.nameLookupCount - 1)
+  if REGISTERED.nameLookupCount == 0 then REGISTERED.nameLookup = nil end
+end
 
 -- ============================================================
 -- Assertions
@@ -515,6 +536,221 @@ do
   for i = 0, s.Count - 1 do if s.Element[i].Offset == 0x28 then n = n + 1 end end
   eq(n, 1, 'exactly one element at 0x28')
   eq(outerRow(s), nil, 'the walked field kept the slot; no duplicate Outer row')
+end
+
+-- ============================================================
+-- AA37: addUObjectHeader must NOT be stapled onto a UScriptStruct.
+--
+-- createFromPath -> UE5_FindObject resolves ANY UObject by path, a UScriptStruct
+-- included. A UScriptStruct is itself a UObject, so GetObjectClass(addr) ~= 0 does
+-- not tell it from a UClass -- the META-class name does (UClass family ends in
+-- "Class"; the struct's is "ScriptStruct").
+-- ============================================================
+
+case('AA37: createFromPath on a UScriptStruct gets NO UObject header')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  local VEC, META_SS = 0x5EC0, 0x55AA
+  local VFIELDS = {
+    { name = 'X', typeName = 'DoubleProperty', offset = 0x00, size = 8 },
+    { name = 'Y', typeName = 'DoubleProperty', offset = 0x08, size = 8 },
+    { name = 'Z', typeName = 'DoubleProperty', offset = 0x10, size = 8 },
+  }
+  serveWalk(VFIELDS)
+  RESULTS['UE5_FindObject']     = function() return VEC end
+  RESULTS['UE5_GetObjectClass'] = function(_, obj) return (obj == VEC) and META_SS or 0 end
+  RESULTS['UE5_GetObjectName']  = function(_, obj, buf)
+    MEM[buf] = (obj == META_SS) and 'ScriptStruct' or 'Vector'; return 1
+  end
+  local s = dissect.createFromPath('/Script/CoreUObject.Vector')
+  check(s ~= nil, 'the struct dissect was created')
+  eq(s.Count, 3, 'exactly the three real members -- no UObject header stapled on')
+  for i = 0, s.Count - 1 do
+    local n = s.Element[i].Name
+    check(n ~= 'VTable' and n ~= 'Outer' and n ~= 'ObjectFlags' and n ~= 'ObjectIndex'
+          and n ~= 'Class' and n ~= 'FNameIndex',
+          'no UObject header row over the struct members', tostring(n))
+  end
+end
+
+case('AA37: a real UClass (meta ends in "Class") STILL gets the header')
+do
+  -- The regression guard: the fix must keep the header for BlueprintGeneratedClass
+  -- and every other UClass-family meta, not just literal "Class".
+  resetWorld(); dissect.clearAll(); injectDll()
+  local CLS, META_BP = 0xC1A55, 0xB9C1
+  serveWalk(THREE)
+  RESULTS['UE5_GetObjectClass'] = function(_, obj) return (obj == CLS) and META_BP or 0 end
+  RESULTS['UE5_GetObjectName']  = function(_, obj, buf)
+    MEM[buf] = (obj == META_BP) and 'BlueprintGeneratedClass' or 'BP_Player_C'; return 1
+  end
+  local s = dissect.createFromClass(CLS)   -- no structName -> resolves 'BP_Player_C'
+  eq(s.Count, 3 + 6, 'a BlueprintGeneratedClass instance keeps the UObject header')
+end
+
+-- ============================================================
+-- AA26: a packed bitfield bool must be shown as its single bit.
+-- ============================================================
+
+case('AA26: a packed bool is shown as one bit (vtBinary + BitStart/BitSize), not ChildStructStart')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({ { name = 'bFoo', typeName = 'BoolProperty', offset = 0x40, size = 1 } })
+  RESULTS['UE5_GetFieldBoolMask'] = function() return 0x04 end   -- bit 2
+  local s = dissect.createFromClass(0xC1A55, 'Packed')
+  local e = s.Element[0]
+  eq(e.Vartype, vtBinary, 'a packed bool uses vtBinary, not vtByte')
+  eq(e.BitStart, 2, 'BitStart is the mask bit index')
+  eq(e.BitSize, 1, 'BitSize is 1')
+  eq(e.ChildStructStart, nil, 'the mask is NOT stuffed into ChildStructStart')
+  contains(e.Name, 'bit 2', 'the name annotates the bit')
+end
+
+case('AA26: a native bool (0xFF marker) stays a whole byte and is not mislabelled')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({ { name = 'bNative', typeName = 'BoolProperty', offset = 0x40, size = 1 } })
+  RESULTS['UE5_GetFieldBoolMask'] = function() return 0xFF end
+  local s = dissect.createFromClass(0xC1A55, 'Native')
+  local e = s.Element[0]
+  eq(e.Vartype, vtByte, '0xFF is the native-bool marker, not a bit mask -> whole byte')
+  eq(e.BitStart, nil, 'no bit fields for a native bool')
+  eq(e.ChildStructStart, nil, 'and ChildStructStart is not abused')
+  check(not e.Name:find('bit', 1, true), 'a native bool is not mislabelled with a bit index', e.Name)
+end
+
+case('AA26: mask 0 (no packed mask) also stays a whole byte')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({ { name = 'bPlain', typeName = 'BoolProperty', offset = 0x40, size = 1 } })
+  RESULTS['UE5_GetFieldBoolMask'] = function() return 0 end
+  local s = dissect.createFromClass(0xC1A55, 'Plain')
+  eq(s.Element[0].Vartype, vtByte, 'no mask -> whole byte')
+end
+
+-- ============================================================
+-- AA23 / AA24: nested StructProperty flattening -- depth-cap marker, and no
+-- per-field GetObjectName round-trip (dead work that also leaked).
+-- ============================================================
+
+case('AA23: a nested struct beyond the depth cap leaves a visible marker, not silence')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  local SELF = 0x5E1F
+  -- One StructProperty 'Next' whose inner class is SELF again -> infinite nesting,
+  -- capped by maxDepth. GetObjectClass = 0 keeps the header out of this case.
+  RESULTS['UE5_WalkClassBegin']      = function() return 1 end
+  RESULTS['UE5_WalkClassEnd']        = function() return 1 end
+  RESULTS['UE5_GetClassPropsSize']   = function() return 0x10 end
+  RESULTS['UE5_GetObjectName']       = function(_, _o, buf) MEM[buf] = 'Recursive'; return 1 end
+  RESULTS['UE5_GetObjectClass']      = function() return 0 end
+  RESULTS['UE5_GetObjectOuter']      = function() return 0 end
+  RESULTS['UE5_GetFieldStructClass'] = function() return SELF end
+  RESULTS['UE5_WalkClassGetField']   = function(_, i, addrBuf, nameBuf, _n, typeBuf, _t, offBuf, sizeBuf)
+    MEM[nameBuf] = 'Next'; MEM[typeBuf] = 'StructProperty'
+    MEM[offBuf] = 0x00; MEM[sizeBuf] = 0x10; MEM[addrBuf] = 0xF000 + i
+    return 1
+  end
+  local s = dissect.createFromClass(SELF, 'Recursive', 2)   -- maxDepth = 2
+  check(s ~= nil, 'a structure was still created')
+  local marker = nil
+  for i = 0, s.Count - 1 do
+    local n = s.Element[i].Name
+    if type(n) == 'string' and n:find('omitted', 1, true) then marker = n; break end
+  end
+  check(marker ~= nil, 'AA23: a depth-cap marker row is present rather than a silent drop', marker)
+end
+
+case('AA24: a StructProperty walk does no per-field GetObjectName round-trip, and leaks nothing')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  local OUTER, INNER = 0x00017E5, 0x14EE5
+  local lastBegun = nil
+  RESULTS['UE5_WalkClassBegin'] = function(_, addr)
+    lastBegun = addr
+    if addr == OUTER then return 1 elseif addr == INNER then return 2 else return 0 end
+  end
+  RESULTS['UE5_WalkClassEnd']        = function() return 1 end
+  RESULTS['UE5_GetClassPropsSize']   = function() return 0x20 end
+  RESULTS['UE5_GetFieldStructClass'] = function() return INNER end
+  RESULTS['UE5_GetObjectClass']      = function() return 0 end       -- keep the header out of it
+  RESULTS['UE5_GetObjectOuter']      = function() return 0 end
+  RESULTS['UE5_GetObjectName']       = function(_, _o, buf) MEM[buf] = 'N'; return 1 end
+  RESULTS['UE5_WalkClassGetField']   = function(_, i, addrBuf, nameBuf, _n, typeBuf, _t, offBuf, sizeBuf)
+    if lastBegun == OUTER then
+      MEM[nameBuf] = 'Pos'; MEM[typeBuf] = 'StructProperty'; MEM[offBuf] = 0x00; MEM[sizeBuf] = 0x10
+    else
+      MEM[nameBuf] = 'F' .. i; MEM[typeBuf] = 'FloatProperty'; MEM[offBuf] = i * 4; MEM[sizeBuf] = 4
+    end
+    MEM[addrBuf] = 0xF000 + i
+    return 1
+  end
+  local s = dissect.createFromClass(OUTER, 'Outer')   -- structName given -> no name-resolve call
+  eq(s.Count, 2, 'the inner struct fields were flattened in')
+  local innerNameCalls = 0
+  for _, c in ipairs(CALLS) do
+    if c.name == 'UE5_GetObjectName' and c.args[1] == INNER then innerNameCalls = innerNameCalls + 1 end
+  end
+  eq(innerNameCalls, 0, 'AA24: no per-struct-field GetObjectName round-trip')
+  local live = 0; for _ in pairs(ALLOCS) do live = live + 1 end
+  eq(live, 0, 'AA24: no target-process buffer leaked')
+end
+
+-- ============================================================
+-- AA21 / AA22: module state is CE-GLOBAL, so a re-load (Table -> Add File again in
+-- one CE session) reuses it rather than duplicating structures / registrations.
+-- ============================================================
+
+case('AA21: a second load reuses the global cache -- no duplicate structure')
+do
+  resetWorld(); injectDll(); serveWalk(THREE)
+  dissect.clearAll()
+  local s1 = dissect.createFromClass(0xC1A55, 'Shared')
+  eq(#GLOBAL_LIST, 1, 'one structure registered')
+  local dissect2 = assert(loadfile(HELPER))()      -- re-add the same file
+  local s2 = dissect2.createFromClass(0xC1A55, 'Shared')
+  eq(s2, s1, 'AA21: the re-loaded module returns the cached structure')
+  eq(#GLOBAL_LIST, 1, 'AA21: still one -- no duplicate registered')
+end
+
+case('AA22: a second load does not double-register the dissect callbacks')
+do
+  resetWorld(); dissect.clearAll()
+  dissect.enableAutoCallback()
+  check(REGISTERED.override ~= nil, 'the override is registered')
+  eq(REGISTERED.overrideCount, 1, 'exactly one override registration')
+  local dissect2 = assert(loadfile(HELPER))()      -- re-add the same file
+  dissect2.enableAutoCallback()
+  eq(REGISTERED.overrideCount, 1, 'AA22: the re-load did not register a SECOND override')
+  dissect2.disableAutoCallback()                    -- one disable must fully unregister
+  eq(REGISTERED.overrideCount, 0, 'AA22: one disable fully unregisters (no orphan)')
+  eq(REGISTERED.override, nil, 'AA22: and the override slot is clear')
+end
+
+case('AA27: the override auto-unregisters after consecutive failures (DLL gone)')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  dissect.disableAutoCallback()   -- clean slate: ST is global, so isolate from prior cases
+  dissect.enableAutoCallback()
+  eq(REGISTERED.overrideCount, 1, 'the override is registered once')
+  -- The DLL goes away: getAddress now returns 0 for every export, so callDLL raises,
+  -- callbackBarrier catches it, and after 3 consecutive failures the callbacks
+  -- unregister THEMSELVES so CE's own autoGuessStruct comes back for the session.
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  eq(REGISTERED.overrideCount, 0, 'AA27: the override unregistered itself after 3 failures')
+  eq(REGISTERED.nameLookupCount, 0, 'AA27: and so did the name-lookup callback')
+end
+
+case('AA27: a single failure does NOT unregister -- the control')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  dissect.disableAutoCallback()   -- clean slate: ST is global, so isolate from prior cases
+  dissect.enableAutoCallback()
+  SYMBOLS = {}
+  pcall(REGISTERED.override, createStructure('x'), 0xBEEF)   -- one failure only
+  eq(REGISTERED.overrideCount, 1, 'AA27: one failure leaves the override registered')
+  dissect.disableAutoCallback()
 end
 
 -- ============================================================

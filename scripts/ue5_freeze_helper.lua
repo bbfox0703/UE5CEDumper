@@ -87,10 +87,13 @@
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.3'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+    UE5_FREEZE_HELPER_VERSION = '1.4'   -- 1.1 added cfg.boolMask (packed bitfield bools)
                                         -- 1.2 start() returns (ok, err, count)
                                         -- 1.3 cfg.derived + cfg.memrec; start() also
                                         --     returns `capped`
+                                        -- 1.4 correctness fixes, no API change; an
+                                        --     updated helper now replaces an older
+                                        --     resident copy on re-load
 
   =========================================================================
   SAMPLES
@@ -247,8 +250,42 @@
 -- start()'s 4th return `capped`. cfg.derived REQUIRES mailbox contract 3, so unlike
 -- 1.1/1.2 this one is a compatibility gate: see UE5_SCRIPT_CONTRACT below.
 -- (`[FREEZESCOPE-2026-08-18]` / `[FREEZESTUCK-2026-08-18]`)
-if not UE5_FREEZE_HELPER_VERSION then
-  UE5_FREEZE_HELPER_VERSION = '1.3'
+-- 1.4: correctness fixes with NO API change -- a mid-pagination rescan failure no
+-- longer replaces the cache with a partial list (audit #5 AA11); checkContract tells
+-- a GONE process from a stale symbol (AA28); waitDone's real-ms deadline governs
+-- instead of racing a dormant iteration fallback, and the reported time is the arm
+-- that fired (AA29); and this file now REPLACES an older resident copy on re-load
+-- (AA30, below). Purely behavioural, so NOT a contract gate -- UE5_SCRIPT_CONTRACT
+-- is unchanged.
+--
+-- Re-load semantics (audit #5 AA30). CE keeps ONE Lua state for the session and
+-- never rebuilds it, and this file is added via Table -> Add File. The `if not X then`
+-- guards below exist to preserve shared state (_ue5_invoke_busy) across a CONCURRENT
+-- load, but they also silently blocked a genuine UPDATE: a user who edited this file
+-- and re-added it kept running the OLD code. Gate the definitions on VERSION instead
+-- -- redefine only when this chunk is NEWER than the resident one -- so an update
+-- takes effect while a same/older re-load stays a no-op that preserves state.
+local THIS_HELPER_VERSION = '1.4'
+-- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
+local function versionLess(a, b)
+  if not a then return true end
+  local function parts(v)
+    local t = {}
+    for n in tostring(v):gmatch('%d+') do t[#t + 1] = tonumber(n) end
+    return t
+  end
+  local pa, pb = parts(a), parts(b)
+  for i = 1, math.max(#pa, #pb) do
+    local x, y = pa[i] or 0, pb[i] or 0
+    if x ~= y then return x < y end
+  end
+  return false
+end
+-- Captured ONCE, before the version global is bumped, so the freezeProperty guard
+-- far below sees the same verdict this line computed.
+local _freezeOutdated = versionLess(UE5_FREEZE_HELPER_VERSION, THIS_HELPER_VERSION)
+if _freezeOutdated then
+  UE5_FREEZE_HELPER_VERSION = THIS_HELPER_VERSION
 end
 
 -- ============================================================
@@ -439,7 +476,17 @@ local function checkContract()
   if not cv or cv == 0 then
     return false, 'this UE5Dumper.dll is older than this script (no contract symbol) -- update the DLL'
   end
-  if readInteger(cv + 0x00) ~= 1127564629 then
+  local magic = readInteger(cv + 0x00)
+  if magic == nil then
+    -- The symbol still resolves (stale export table) but its memory cannot be read:
+    -- the process is GONE, not the address stale. This is the same fault waitDone
+    -- already diagnoses for a nil status, said the same way. Before this, a nil read
+    -- was `nil ~= 1127564629` and got mislabelled "stale address -- re-inject",
+    -- pointing the user at the wrong fix. (audit #5 AA28)
+    return false, 'the contract symbol could not be read -- the game process has ' ..
+      'most likely exited (if it is running, re-inject UE5Dumper.dll)'
+  end
+  if magic ~= 1127564629 then
     return false, 'the contract symbol resolved to the wrong memory (stale address) -- re-inject the DLL'
   end
   local cur, min = readInteger(cv + 0x04), readInteger(cv + 0x08)
@@ -521,21 +568,38 @@ local function waitDone(mb, timeoutMs)
     -- nil is not a status. readInteger returns nil once the process is gone and
     -- `nil ~= STATUS_DONE` is true, so without this the loop burns the whole
     -- deadline and then matches none of the branches below (status=nil).
-    local over = st == nil
-               or (tick and (tick() - t0 >= limit) or (iters >= math.floor(limit / 15)))
+    --
+    -- Exactly ONE deadline governs. The old expression was
+    --   st==nil or (tick and tickExpired) or itersExpired
+    -- which -- by Lua and/or precedence -- kept the iteration fallback LIVE even when
+    -- getTickCount() was present, so the effective deadline was min(tick, iters) and
+    -- the printed "%dms" was not the arm that fired. The iteration count is a fallback
+    -- ONLY for a build lacking getTickCount (~15 ms/iter, since CE's sleep(1) measures
+    -- ~15.47 ms). (audit #5 AA29)
+    local over
+    if st == nil then
+      over = true
+    elseif tick then
+      over = (tick() - t0 >= limit)                  -- REAL-ms deadline
+    else
+      over = (iters >= math.floor(limit / 15))       -- fallback: no getTickCount
+    end
     if st ~= STATUS_DONE and over then
       if st == nil then
         return false, 'the mailbox could not be read -- the game process has ' ..
           'most likely exited (if it is running, re-inject UE5Dumper.dll)'
       end
+      -- Name the time that ACTUALLY elapsed when a clock is available, so the number
+      -- reports the arm that fired rather than always echoing `limit`.
+      local shownMs = tick and (tick() - t0) or limit
       if st == STATUS_IDLE then
         return false, string.format(
           'mailbox timeout after %dms -- the DLL never picked this up ' ..
-          '(stale g_invokeMailbox address? re-inject, or re-enable the table)', limit)
+          '(stale g_invokeMailbox address? re-inject, or re-enable the table)', shownMs)
       end
       return false, string.format(
         'mailbox timeout after %dms -- the DLL took the command but did not ' ..
-        'finish it (status=%d)', limit, st)
+        'finish it (status=%d)', shownMs, st)
     end
   end
   return true
@@ -693,7 +757,13 @@ local function rescanInstances(className, filter, derived)
     local page, totalPages, err, cPtr, cOff, wasCapped =
       fetchInstancePage(className, pageIndex, derived)
     if not page then
-      if pageIndex == 0 then firstErr = err end
+      -- ANY page failing is a FAILED rescan, not a partial success. Page 0 or page 5,
+      -- an incomplete enumeration must not be returned with err=nil -- that made
+      -- rescan() replace the cache with a page-0-only PREFIX and reset the fail streak,
+      -- so the freeze silently held a truncated set and believed it complete. Setting
+      -- firstErr on ANY page makes rescan() keep the PRIOR cache and count the failure
+      -- instead (the old code set it only for pageIndex == 0). (audit #5 AA11)
+      firstErr = err
       break
     end
     for i = 1, #page do
@@ -741,7 +811,7 @@ end
 -- Public API: freezeProperty
 -- ============================================================
 
-if not freezeProperty then
+if not freezeProperty or _freezeOutdated then
 
   --- Build a freeze handle for one (class, offset, type, value) tuple.
   ---

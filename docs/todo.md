@@ -11,9 +11,16 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **37 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L1 (D1/D2/D3 DLL
->   engine) U11/G6/G7/A7/A8/A9 batch; before it the audit L2 (T1a Radar)
+> - `## Pending live-game verification` — **38 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L5 (S1 Lua)
+>   AA26/AA31/AA32/AA37 confirmation batch — most of L5 is rig-covered offline
+>   (`scripts/tests/{dissect,freeze_helper,invoke_helper}_test.lua`, all green), and only four have a
+>   real-DLL/CE face the rig stubs: **AA37** `createFromPath('/Script/CoreUObject.Vector')` builds a
+>   clean 3-field dissect with NO UObject header (needs the DLL's real meta-class name); **AA26** a
+>   packed bitfield bool renders as a single bit in CE's Structure Dissect; **AA31** the Debug Camera
+>   sample unticks a real CE record when the toggle errors; **AA32** a repeated string-param invoke
+>   does not crash (the reclaim-on-next-invoke retention assumption). Before it the audit L1 (D1/D2/D3
+>   DLL engine) U11/G6/G7/A7/A8/A9 batch; before it the audit L2 (T1a Radar)
 >   AB12/AB13/AB14/AB16/AB17 end-to-end batch, then the CLASSTOTAL / PIPEBUSY honesty fixes and
 >   the SLOTSYM / STALEDLL(b) generator + `.CT` fixes; the five before them are
 >   2026-08-17's, and NONE has been
@@ -23,9 +30,10 @@ Open work only. **Read this when deciding what to do next.**
 >   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-19: **135 audit findings open of 297 · 0 HIGH · 0 MED · 108 LOW · 27 INFO**
-> (audit L1 closed U9/U10/U11/G4/G5/G6/G7/A7/A8/A9; A10 left open — needs the U5 by-value
-> restructuring). Nothing is blocked on a maintainer decision. Re-derive with
+> State as of 2026-08-19: **120 audit findings open of 297 · 0 HIGH · 0 MED · 93 LOW · 27 INFO**
+> (audit L5 (S1 Lua) closed AA11/AA21/AA22/AA23/AA24/AA26/AA27/AA28/AA29/AA30/AA31/AA32/AA33/AA34/AA37
+> — all rig-covered offline; audit L1 closed U9/U10/U11/G4/G5/G6/G7/A7/A8/A9; A10 left open — needs
+> the U5 by-value restructuring). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
 > ### ▶ OPEN FIXES INDEX — 2 items, and they are NOT in the 154 above

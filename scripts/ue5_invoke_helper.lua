@@ -37,13 +37,25 @@
     [ENABLE]
     {$lua}
     if syntaxcheck then return end
-    setDebugCamera(1)
+    -- setDebugCamera RAISES on a mailbox failure and returns -1 on a DLL-side error;
+    -- either way nothing was applied, so untick the record (a stateful toggle must not
+    -- leave a ticked box claiming a cheat that is not on) and report. (audit #5 AA31)
+    local ok, state = pcall(setDebugCamera, 1)
+    if not ok or state ~= 1 then
+      if memrec then memrec.Active = false end
+      local why = ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
+      showMessage('[Debug Camera] could not enable -- ' .. why)
+      return
+    end
     {$asm}
 
     [DISABLE]
     {$lua}
     if syntaxcheck then return end
-    setDebugCamera(0)
+    -- On disable the record is going inactive regardless; still guard the call so a
+    -- mailbox failure surfaces instead of raising out of the [DISABLE] block.
+    local ok, err = pcall(setDebugCamera, 0)
+    if not ok then showMessage('[Debug Camera] disable error: ' .. tostring(err)) end
     {$asm}
 
   Constants exposed:
@@ -247,11 +259,33 @@ end
 local function writeParams(base, regionSize, params)
   if not params then return end
 
+  -- Every write MUST stay inside the caller's region. A param whose offset+width runs
+  -- past regionSize would scribble past the params buffer and, at the TOP level, past
+  -- g_invokeMailbox itself -- writeParams took regionSize and never enforced it. Refuse
+  -- rather than corrupt. (audit #5 AA33)
+  local function bound(off, width, name)
+    if off < 0 or off + width > regionSize then
+      error(string.format(
+        "[ue5_invoke] param '%s' at +%d (%d bytes) exceeds the %d-byte params region " ..
+        "-- refusing to write past the mailbox", tostring(name), off, width, regionSize))
+    end
+  end
+  -- Fixed byte-widths for the scalar / pointer types. fstring / fstringn / fstruct
+  -- bound themselves below (16-byte struct / computed size); the container types
+  -- write nothing but still keep their declared slot in-region.
+  local WIDTHS = {
+    bool = 1, byte = 1, int16 = 2, uint16 = 2, int32 = 4, uint32 = 4, enum = 4,
+    int64 = 8, uint64 = 8, qword = 8, float = 4, double = 8,
+    pointer = 8, object = 8, class = 8, name = 8, soft = 8, weak = 8, lazy = 8, interface = 8,
+  }
+
   for i, p in ipairs(params) do
     local v    = p.value or 0
     local off  = p.offset or 0
     local t    = p.type or 'int32'
     local size = p.size            -- optional explicit byte size (any type)
+    local w    = WIDTHS[t]
+    if w then bound(off, w, p.name) end
 
     if t == 'bool' then
       writeBytes(base + off, { (v ~= 0 and v ~= false) and 1 or 0 })
@@ -272,12 +306,18 @@ local function writeParams(base, regionSize, params)
            or t == 'lazy' or t == 'interface' then
       writeQword(base + off, v)
     elseif t == 'fstring' then
-      -- Wide UE FString INPUT param (value = Lua string).
-      writeFStringInline(base, off, v, true)
+      -- Wide UE FString INPUT param (value = Lua string). Pass p.value, NOT v:
+      -- `v = p.value or 0` turns a MISSING string into 0 -> the literal "0" written
+      -- into the game. p.value (nil -> "" inside writeFStringInline) is an empty
+      -- FString -- an honest default, not a fabricated value. (audit #5 AA34)
+      bound(off, 16, p.name)                        -- {Data(8), Num(4), Max(4)} = 16 (AA33)
+      writeFStringInline(base, off, p.value, true)
     elseif t == 'fstringn' then
-      -- Narrow FUtf8String / FAnsiString INPUT param (value = Lua string).
-      writeFStringInline(base, off, v, false)
+      -- Narrow FUtf8String / FAnsiString INPUT param. p.value, not v -- see AA34 above.
+      bound(off, 16, p.name)                        -- (AA33)
+      writeFStringInline(base, off, p.value, false)
     elseif t == 'tarray' or t == 'tmap' or t == 'tset' or t == 'delegate' then
+      bound(off, size or 0, p.name)   -- writes nothing, but keep the slot in-region (AA33)
       -- BakedScriptGenerator.MapToHelperType CAN emit these (a TArray/TMap/TSet or
       -- a delegate INPUT param), and writeParams accepted none of them -- so the
       -- error at the bottom of this chain aborted the WHOLE invoke, and such a
@@ -323,6 +363,7 @@ local function writeParams(base, regionSize, params)
         end
       end
       if structSize < 0 then structSize = 0 end
+      bound(off, structSize, p.name)   -- the struct region must fit the parent (AA33)
       -- Zero the struct region in one write. writeBakedParams already wiped
       -- the top-level buffer, but a nested recursion runs on a sub-region
       -- the caller did not pre-zero, so keep this local wipe.
@@ -410,17 +451,32 @@ local function waitDone(mb, timeoutMs)
     -- nil is not a status. readInteger returns nil once the process is gone and
     -- `nil ~= STATUS_DONE` is true, so without this the loop burns the whole
     -- deadline and then matches none of the branches below (status=nil).
-    local over = st == nil
-               or (tick and (tick() - t0 >= limit) or (iters >= math.floor(limit / 15)))
+    --
+    -- Exactly ONE deadline governs -- see ue5_freeze_helper.lua's waitDone (audit #5
+    -- AA29). The old `st==nil or (tick and tickExpired) or itersExpired` kept the
+    -- iteration fallback LIVE when getTickCount() was present, racing the real deadline
+    -- and printing a "%dms" that was not the arm that fired. The two helpers duplicate
+    -- this shape deliberately and must not drift, so the fix is applied to both.
+    local over
+    if st == nil then
+      over = true
+    elseif tick then
+      over = (tick() - t0 >= limit)                  -- REAL-ms deadline
+    else
+      over = (iters >= math.floor(limit / 15))       -- fallback: no getTickCount
+    end
     if st ~= STATUS_DONE and over then
       if st == nil then
         return false, 'the mailbox could not be read -- the game process has ' ..
           'most likely exited (if it is running, re-inject UE5Dumper.dll)'
       end
+      -- Name the time that ACTUALLY elapsed when a clock is available, so the number
+      -- reports the arm that fired rather than always echoing `limit`.
+      local shownMs = tick and (tick() - t0) or limit
       if st == STATUS_IDLE then
         return false, string.format(
           'Mailbox timeout after %dms -- the DLL never picked this up ' ..
-          '(stale g_invokeMailbox address? re-inject, or re-enable the table)', limit)
+          '(stale g_invokeMailbox address? re-inject, or re-enable the table)', shownMs)
       end
       -- The DLL never clears errorMsg: its pickup sets status = PROCESSING and
       -- leaves the field alone (dll/src/Mimic.cpp), and only a FAILURE writes it.
@@ -432,7 +488,7 @@ local function waitDone(mb, timeoutMs)
       if err == nil or err == '' then err = 'no message from the DLL' end
       return false, string.format(
         'Mailbox timeout after %dms -- the DLL took the command but did not ' ..
-        'finish it (status=%d, %s)', limit, st, err)
+        'finish it (status=%d, %s)', shownMs, st, err)
     end
   end
   return true
@@ -517,6 +573,25 @@ if not invokeUFunction then
     -- write/read throws (e.g. mailbox address turned invalid).
     _ue5_invoke_busy = true
     local pok, ok_or_err, err_or_nil = pcall(function()
+      -- Reclaim the PREVIOUS invoke's FString buffers before this one allocates more.
+      -- The mailbox is synchronous, so by the time a NEW invoke starts (we are past the
+      -- busy check, so the prior call finished) its ProcessEvent has long returned and
+      -- any well-behaved callee that kept the string deep-copied it (FString assignment
+      -- allocates its own storage). Freeing HERE -- not on completion -- gives maximum
+      -- settle time and bounds the leak to a single invoke's worth: a one-shot cheat
+      -- still leaks the same few small buffers (there is no next invoke), which was
+      -- always the safe default, while a repeated invoke no longer accumulates
+      -- unbounded. The opt-in freeInvokeStringBuffers() remains for the read-only fast
+      -- path. NOT freed on the timeout/refusal path -- see the busy guard above: while
+      -- the DLL still owns the mailbox its in-flight buffers must not be reclaimed.
+      -- (audit #5 AA32)
+      if _ue5_invoke_str_bufs then
+        for _, a in ipairs(_ue5_invoke_str_bufs) do
+          if a and a ~= 0 then deAlloc(a) end
+        end
+      end
+      _ue5_invoke_str_bufs = {}
+
       local ok_mb, mb = pcall(findMailbox)
       if not ok_mb then
         return false, tostring(mb)

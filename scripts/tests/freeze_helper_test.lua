@@ -37,6 +37,8 @@ local WRITES   -- ordered log of {addr=, kind=, value=}
 local PRINTS   -- captured print() lines
 local SYMBOLS  -- symbol name -> address (0/absent = unresolved)
 local TIMERS   -- every createTimer() handed out, in creation order
+local FAKE_TICK -- controllable clock in ms: sleep() advances it, getTickCount reads it
+local TICK_STEP -- ms each sleep() adds (CE's sleep(1) really measures ~15.5 ms)
 
 -- Set by installMailbox(): a hook the write stubs call so the fake DLL can answer
 -- a command the moment the helper triggers it.
@@ -45,6 +47,10 @@ MAILBOX_ON_WRITE = nil
 local function resetWorld()
   MEM, BYTES, WRITES, PRINTS, SYMBOLS, TIMERS = {}, {}, {}, {}, {}, {}
   MAILBOX_ON_WRITE = nil
+  -- Non-zero default so a non-answering mailbox TIMES OUT via the tick arm rather
+  -- than hanging the rig (AA29's fix makes the iteration fallback dormant when
+  -- getTickCount is present). The AA29 case sets a sub-15ms step deliberately.
+  FAKE_TICK, TICK_STEP = 0, 16
 end
 
 function readQword(a)        return MEM[a] end
@@ -84,10 +90,10 @@ function getAddressSafe(name) return SYMBOLS[name] or 0 end
 -- Lua editor. No behaviour depends on it; stubbed so the chunk can run.
 function registerLuaFunctionHighlight(_) end
 function getMainForm() return {} end
-function sleep(_) end
+function sleep(_) FAKE_TICK = FAKE_TICK + TICK_STEP end
 function processMessages() end
 function processMessagesPaintOnly() end
-function getTickCount() return 0 end
+function getTickCount() return FAKE_TICK end
 
 function createTimer(_, enabled)
   local t = { Interval = 0, OnTimer = nil, Enabled = enabled or false }
@@ -1036,6 +1042,133 @@ do
     local ok = pcall(deferredTimer().OnTimer, deferredTimer())
     eq(ok, true, 'and firing it does not raise out of the timer')
   end
+end
+
+-- ============================================================
+-- AA11: a page failure after page 0 must NOT be reported as clean success.
+-- ============================================================
+
+case('AA11: a page failure after page 0 keeps the PRIOR cache, not a partial prefix')
+do
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} }, { {0x3000, 0xBBB} } }, failOnPage = 1 }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x10, valueType = 'int32', value = 99 }
+  h.start()   -- initial rescan already fails on page 1; cache stays empty
+  -- Model a PRIOR successful rescan's cache, then rescan again into the same failure.
+  h._cache, h._cacheCls, h._failStreak = { 0x9000 }, { 0xAAA }, 0
+  local ok, err = rescanTimer().OnTimer()
+  eq(ok, false, 'AA11: the partial enumeration is reported as a FAILURE')
+  check(err ~= nil, 'AA11: with an error string')
+  eq(#h._cache, 1, 'AA11: the prior cache was kept, not replaced by the page-0 prefix')
+  eq(h._cache[1], 0x9000, 'AA11: and it is the PRIOR entry (0x9000), not 0x2000 from page 0')
+  check(h.lastError() ~= nil, 'AA11: lastError() is set')
+end
+
+case('AA11: an all-pages-OK multi-page rescan still succeeds -- the control')
+do
+  -- The fix must not turn a healthy multi-page enumeration into a failure.
+  resetWorld()
+  installMailbox{ pages = { { {0x2000, 0xAAA} }, { {0x3000, 0xBBB} } } }
+  local h = freezeProperty{ className = 'Actor', propOffset = 0x10, valueType = 'int32', value = 99 }
+  local ok, _, count = h.start()
+  eq(ok, true, 'AA11: two good pages -> success')
+  eq(count, 2, 'AA11: both pages collected')
+  eq(h.lastError(), nil, 'AA11: no error on a clean rescan')
+end
+
+-- ============================================================
+-- AA28: an unreadable contract symbol on a GONE process is not a "stale address".
+-- ============================================================
+
+case('AA28: an unreadable contract symbol is diagnosed as a gone process, not a stale address')
+do
+  resetWorld()
+  SYMBOLS['g_invokeMailbox']   = MB           -- resolves...
+  SYMBOLS['g_mailboxContract'] = CONTRACT_MB  -- ...but its magic is NEVER written to MEM
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'AA28: the rescan fails')
+  check(err and err:find('exited', 1, true) ~= nil, 'AA28: diagnosed as a gone process', err)
+  check(err and err:find('stale address', 1, true) == nil,
+        'AA28: NOT mislabelled a stale address', err)
+end
+
+case('AA28: a WRONG magic is still a stale address -- the control')
+do
+  resetWorld()
+  SYMBOLS['g_invokeMailbox']   = MB
+  SYMBOLS['g_mailboxContract'] = CONTRACT_MB
+  MEM[CONTRACT_MB + 0x00] = 0xDEADBEEF        -- readable, but the wrong magic
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'refused')
+  check(err and err:find('stale address', 1, true) ~= nil,
+        'AA28: a readable-but-wrong magic is still a stale address', err)
+end
+
+-- ============================================================
+-- AA29: exactly ONE deadline governs waitDone, and the printed time is the arm
+-- that fired -- not a dormant iteration fallback racing the tick deadline.
+-- ============================================================
+
+case('AA29: the real-ms deadline governs, not the ~15ms/iter fallback')
+do
+  resetWorld()
+  TICK_STEP = 10                                   -- sleep(1) < 15 ms: the iter fallback
+                                                   -- would fire FIRST if it were still live
+  installMailbox{ pages = { {} }, deadPage = 0 }   -- page 0 never answers -> waitDone times out
+  local h = freezeProperty{ className = 'C', propOffset = 0x10, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'AA29: it times out')
+  check(err and err:find('never picked this up', 1, true) ~= nil,
+        'AA29: IDLE status is diagnosed as the DLL never taking the command', err)
+  -- Post-fix: the tick arm governs, so the clock reaches ~limit (5000) before the
+  -- iteration fallback (floor(5000/15)=333 iters * 10ms = 3330) could ever fire.
+  -- Pre-fix: the live iter fallback fired at 3330 while the message still said 5000ms.
+  check(getTickCount() >= 5000,
+        'AA29: waited the full tick deadline, not the iteration fallback',
+        'FAKE_TICK=' .. tostring(getTickCount()))
+end
+
+-- ============================================================
+-- AA30: an UPDATED helper must take effect on re-load; a same/older one must not.
+-- ============================================================
+
+case('AA30: a newer-version helper REPLACES a resident older one on re-load')
+do
+  resetWorld()
+  UE5_FREEZE_HELPER_VERSION = '1.2'          -- an OLD helper is resident
+  local sentinel = function() return 'OLD' end
+  freezeProperty = sentinel
+  assert(loadfile(HELPER))()                 -- re-add the current file: CE recompiles the chunk
+  check(freezeProperty ~= sentinel, 'AA30: the newer helper redefined freezeProperty')
+  eq(UE5_FREEZE_HELPER_VERSION, '1.4', 'AA30: and bumped the resident version')
+end
+
+case('AA30: the SAME version is a no-op -- shared state and the resident fn are kept')
+do
+  resetWorld()
+  UE5_FREEZE_HELPER_VERSION = '1.4'
+  local sentinel = function() return 'SAME' end
+  freezeProperty = sentinel
+  _ue5_invoke_busy = true                    -- in-flight state that must survive a re-load
+  assert(loadfile(HELPER))()
+  eq(freezeProperty, sentinel, 'AA30: same version does not redefine (state preserved)')
+  eq(_ue5_invoke_busy, true, 'AA30: and the shared busy flag is untouched')
+  _ue5_invoke_busy = false                   -- restore for any later cases
+end
+
+case('AA30: an OLDER file re-added does not downgrade a newer resident helper')
+do
+  resetWorld()
+  UE5_FREEZE_HELPER_VERSION = '1.5'
+  local sentinel = function() return 'NEWER' end
+  freezeProperty = sentinel
+  assert(loadfile(HELPER))()
+  eq(freezeProperty, sentinel, 'AA30: the newer resident is kept; the older file is a no-op')
+  eq(UE5_FREEZE_HELPER_VERSION, '1.5', 'AA30: and the resident version is not downgraded')
+  -- Restore a REAL freezeProperty so the process ends in a clean state.
+  UE5_FREEZE_HELPER_VERSION = '1.0'; assert(loadfile(HELPER))()
 end
 
 -- ============================================================
