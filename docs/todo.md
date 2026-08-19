@@ -11,9 +11,14 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **39 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L3 (T1b)
->   AD10/AD12/AD13/AD15/AD16/AD18 batch, and it is unusually **cheap and low-yield on purpose**:
+> - `## Pending live-game verification` — **40 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L4 (D4b
+>   Mimic/Sein/Flamme) MB1/MB2/SE1/FL1/FL2 batch — its three pure rules are unit-pinned with five
+>   negative controls, so the live rows are the parts no test target can reach (nothing compiles
+>   `Mimic.cpp` / `Sein.cpp` / `Flamme.cpp`): the CE re-FIRE routing WARN, Keep-Foreground on a
+>   scan-failed game, a log category that cannot open, and the hint-cache staging sweep. **SE2 is
+>   deliberately absent** — its trigger is not reproducible on demand. Before it the audit L3 (T1b)
+>   AD10/AD12/AD13/AD15/AD16/AD18 batch, unusually **cheap and low-yield on purpose**:
 >   almost all of L3 is machine-enforced offline (a compile-time `static_assert` plus
 >   `extract_patterns.py --check` now pin every AOB entry's resolve geometry), so the four live rows
 >   are a UE 4.27 log grep and a four-proxy launch regression check. Before it the audit L5 (S1 Lua)
@@ -34,8 +39,11 @@ Open work only. **Read this when deciding what to do next.**
 >   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-19: **104 audit findings open of 297 · 0 HIGH · 0 MED · 78 LOW · 26 INFO**
-> (audit L5 (S1 Lua) closed AA11/AA21/AA22/AA23/AA24/AA26/AA27/AA28/AA29/AA30/AA31/AA32/AA33/AA34/AA37
+> State as of 2026-08-19: **98 audit findings open of 297 · 0 HIGH · 0 MED · 72 LOW · 26 INFO**
+> (audit L4 (D4b) closed MB1/MB2/SE1/SE2/FL1/FL2 — MB1 fixed with **no mailbox-contract move**, by
+> removing a read of an OUTPUT field rather than promoting it to an input; MB2's second half and
+> SE1's stated `written = 0` cause were both re-derived and **refuted**, see their rows;
+> audit L5 (S1 Lua) closed AA11/AA21/AA22/AA23/AA24/AA26/AA27/AA28/AA29/AA30/AA31/AA32/AA33/AA34/AA37
 > — all rig-covered offline; audit L1 closed U9/U10/U11/G4/G5/G6/G7/A7/A8/A9; A10 left open — needs
 > the U5 by-value restructuring; audit L3 (T1b) closed AD7–AD22, i.e. the whole DLL-contract-header
 > and Himmel block, leaving **AA39** open on purpose — see its row for why the prescribed fix is a
@@ -1517,6 +1525,33 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > the intact **PE VERSIONINFO**, so the whole memory-string tier ladder (G2's 29 s sweep, G8/G9/G11's
 > tier rules) was never entered, and it resolved offsets via `Guid`, so G12's actual repaired branch
 > was never entered either. A green session is not the same as an exercised code path.
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L4 (D4b Mimic/Sein/Flamme): MB1 / MB2 / SE1 / FL1 / FL2
+
+*The pure decision rules of this batch are unit-pinned in `dll_helpers_test` and need NO live check:
+**MB1**'s `ShouldRouteDirectInvoke` (10 assertions), **MB2**'s `CommandRequiresInit` (17), **FL1**'s
+`ShouldPublishAtomicWrite` (11) — all five negative controls red exactly the predicted rows. **SE2 is
+not listed below at all**: its trigger (`FindNextFileW` failing mid-enumeration) is not reproducible
+on demand, the fix is structural, and the finding's own honest limit says so. What follows is only
+what a running game can settle. ⚠ Note none of `Mimic.cpp` / `Sein.cpp` / `Flamme.cpp` is compiled by
+any test target, so for those three files "green tests" means the HEADERS, never the handlers.*
+
+⚠ **Rig trap found while verifying this batch, worth knowing before any future header-only change:**
+`build/build.ninja` carries **no `msvc_deps_prefix`**, and this machine's MSVC emits `/showIncludes`
+in Chinese, so ninja's English default prefix never matches and `ninja -t deps` reports **`#deps 0`**
+for the test object. A header-only edit therefore yields `ninja: no work to do` and any check silently
+measures the OLD binary — the first run of the negative-control rig reported `Fail: 0` for all four
+breaks for exactly this reason. `build.ps1 -Clean` (what CI always passes) is unaffected; a bare
+incremental `cmake --build` after editing only a `.h` is not.
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | MB1 | on any game, generate an Invoke script for a **stateful, non-static** UFunction, enable it, FIRE once, then enable a **second** Invoke script for a `Native\|Static` Kismet helper and FIRE it — then go back and press FIRE on the FIRST form again | the first form's second FIRE still routes through GameThreadDispatch. `pipe-0.log` shows either no `INVOKE mailbox functionFlags=... is STALE` line, or that WARN naming the stale value and the re-read one | before the fix the second FIRE inherited the helper's `Native\|Static` from offset 0x024 and ran a stateful actor UFunction OFF the game thread; the WARN is the fix's own greppable evidence |
+> | MB1 | same session: confirm a `Native\|Static` helper (e.g. a KismetMath call) still takes the fast path on an **idle** game (main menu) | `INVOKE -> static-native fast path` still logged; no -5 timeout | the re-read must not COST the fast path — a `ResolveFunctionInfo` that fails on some game would silently degrade every pure helper to a queued call that times out at the menu |
+> | MB2 | with the DLL injected into a game whose GObjects scan **fails**, hit the CE `.CT` Keep-Foreground toggle | the toggle works (result 1/0), instead of the old `hook error -10` naming MinHook — a subsystem the command never reached | needs a genuinely failing scan; a healthy game only proves the exemption did not break the normal path (still worth doing as the regression check) |
+> | SE1 | before launching a game, open one of its `%LOCALAPPDATA%\UE5CEDumper\Logs\<Game>\*-0.log` files in a viewer that holds an exclusive-ish handle, then launch | `init-0.log` opens with `Logger: category '<name>' could not open ... its lines are rerouted here`, and that category's lines appear in `init-0.log` for the run | before, the category was dead for the process with **nothing logged anywhere** and its buffered early lines destroyed — a later grep read as "that code path never ran" |
+> | FL1/FL2 | plant a stale `UE5CEDumper.<Machine>.json.tmp.99999` (mtime > 1 h old) in `%LOCALAPPDATA%\UE5CEDumper\`, then run any scan | after the scan the planted file is gone and `scan-0.log` has `removed 1 abandoned staging file(s) older than 1h`; the real cache is intact and a **fresh** temp from a live write is never touched | the age guard is what makes the sweep safe against the UI writing its own `<file>.tmp.<pid>` concurrently |
+> | FL1 | ordinary regression: run two scans of the same game back to back | `HintCache: Saved results ... scan #2` and the cache file parses; **no** `staged write is incomplete` line | the refuse-on-failure gate must not refuse a legitimate write — this is the negative control for the production path, since the unit test only covers the predicate |
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L3 (T1b): AD10 / AD12 / AD13 / AD15 / AD16 / AD18
 

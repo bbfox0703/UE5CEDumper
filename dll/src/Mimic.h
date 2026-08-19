@@ -421,6 +421,65 @@ static_assert(LIST_INSTANCES_MAX_DERIVED
                   <= static_cast<int>(LIST_INSTANCES_MAX_PAGES * ListInstancesPerPage(true)),
               "the derived cap must fit inside the page budget the helper walks");
 
+// ---- Pure decision rules (header-inline so a test target can pin them) -------
+//
+// Neither of these is contract SURFACE — tools/check_mailbox_contract.py hashes
+// `MailboxData`'s fields and the CONTRACT_ENUMS values, nothing else — but both
+// decide how a command behaves, and `Mimic.cpp` is compiled by no test target.
+// Keeping them here is what makes them assertable at all.
+
+// UE FunctionFlags subset the invoke route depends on. Pulled from
+// Engine/Source/Runtime/CoreUObject/Public/UObject/Script.h. Only these two bits
+// are ever read; declaring them locally avoids dragging the full enum in.
+constexpr uint32_t FUNC_FLAG_NATIVE = 0x00000400u;
+constexpr uint32_t FUNC_FLAG_STATIC = 0x00002000u;
+
+/// Should CMD_INVOKE bypass GameThreadDispatch and call ProcessEvent directly?
+///
+/// TRUE only for a UFunction tagged Native+Static — a C++ helper with no implicit
+/// `this` and no dependency on game state (KismetMathLibrary and friends). Those
+/// are safe off-thread and, crucially, do not need the game thread to fire
+/// ProcessEvent ever again, so an idle game (menu / loading screen) can still
+/// service them instead of timing out at the invoke deadline.
+///
+/// `flagsResolved` is not decoration. The two directions are NOT symmetric:
+///   * a false NEGATIVE routes a pure helper through the queue — slower, and on an
+///     idle game it can time out, but nothing is corrupted;
+///   * a false POSITIVE runs a STATEFUL actor UFunction off the game thread, which
+///     is the hazard GameThreadDispatch exists to prevent.
+/// So an unresolved read must answer false. Callers must resolve the flags from
+/// the UFunction named by `ufuncAddr`, never from `MailboxData::functionFlags` —
+/// that field is a DLL-filled OUTPUT (`CMD_INVOKE`'s documented inputs are
+/// instanceAddr / ufuncAddr / paramsData), so a bare re-FIRE of CMD_INVOKE reads
+/// whatever the PREVIOUS command left at offset 0x024. Two commands overwrite it
+/// with a page count, and CMD_FIND_FUNCTION leaves the flags of a DIFFERENT
+/// function — which is the false-positive above. (audit #5 MB1)
+constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolved) {
+    return flagsResolved
+        && (functionFlags & (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC))
+               == (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC);
+}
+
+/// Does `cmd` need the AOB scan (GObjects/GNames) to have succeeded?
+///
+/// Everything that touches UE reflection does, so this is TRUE by default and the
+/// exemption list is deliberately tiny — an over-broad exemption turns a clean
+/// "-10 DLL not initialized" into a null deref inside a handler.
+///
+/// CMD_FOREGROUND is the only exemption the header's own command documentation
+/// justifies: Grausam is a pure Win32 MinHook + WndProc subclass that never reads
+/// a UObject, and the pipe path (`Fern`, `set_foreground_lock`) already services
+/// it with no init gate at all. Gating it meant that on a game whose scan fails,
+/// the CE-Lua Keep-Foreground toggle was refused with -10 while the UI's identical
+/// button worked. (audit #5 MB2)
+///
+/// Counter-examples that look exempt and are NOT: CMD_QUERY_PTR is "read-only and
+/// thread-agnostic" but reads the caches the scan fills and iterates GObjects;
+/// CMD_TIME is a "pure reflected memory write" — reflected means GObjects.
+constexpr bool CommandRequiresInit(int32_t cmd) {
+    return cmd != CMD_FOREGROUND;
+}
+
 /// Start the mailbox polling thread.
 /// Called from dllmain.cpp DLL_PROCESS_ATTACH.
 void StartThread();

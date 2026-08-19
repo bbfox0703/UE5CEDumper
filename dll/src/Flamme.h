@@ -21,6 +21,35 @@ namespace Genau { struct EnginePointers; }
 
 namespace Flamme {
 
+/// May a staged temp file be published over the real one?
+///
+/// The write-then-rename here has exactly one job: never leave the cache in a
+/// worse state than it was. `Flamme.cpp` used to run `ofs << root.dump(2)`, let the
+/// destructor close it, and rename — testing NOTHING. A short write (full volume,
+/// quota) is swallowed by the destructor, so the truncated document got published
+/// over the only good copy; `LoadHints` then parses it with allow_exceptions=false,
+/// gets `discarded`, and every game's pattern IDs, ueVersion, user override and
+/// invoke timeout are gone at once. (audit #5 FL1)
+///
+/// Two INDEPENDENT detectors, because either can miss alone:
+///   * `streamOk`  — the stream reported no failure through close(). Catches the
+///                   errors the CRT sees.
+///   * `bytesOnDisk == bytesExpected` — what actually reached the volume. Catches
+///                   a truncation the stream did not report. Requires the temp to
+///                   be written in BINARY mode, or text-mode \n → \r\n expansion
+///                   makes the two numbers differ for a perfectly good write.
+/// `sizeKnown` is false when the size could not be read at all, which is a refusal
+/// and not a pass — an unmeasurable file is not a verified one.
+///
+/// Refusing costs the caller one skipped cache update (the next launch re-scans);
+/// publishing wrongly costs every game's cached state. The asymmetry is why this
+/// fails closed.
+constexpr bool ShouldPublishAtomicWrite(bool streamOk, bool sizeKnown,
+                                        unsigned long long bytesOnDisk,
+                                        unsigned long long bytesExpected) {
+    return streamOk && sizeKnown && bytesOnDisk == bytesExpected;
+}
+
 /// Per-target hint: pattern ID to try first (empty = no hint).
 /// Also carries cached UE version to skip the slow DetectVersion scan.
 struct ScanHints {

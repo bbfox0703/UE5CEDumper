@@ -42,6 +42,7 @@
 #include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
 #include "../src/Genau.h"      // AdmitMultiModuleCandidate (constexpr, pure) — Pass-2 scan admission
 #include "../src/Voll.h"       // Pipe-accept capacity logging policy (OnCreateFailure/Success, [PIPEBUSY])
+#include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
 
 #include <Windows.h>
 
@@ -792,6 +793,140 @@ static void Test_Mimic_CommandNumbering() {
     EXPECT("contract minimum @ 0x08", offsetof(Mimic::MailboxContract, minimum) == 0x08);
     EXPECT("contract struct is 12",   sizeof(Mimic::MailboxContract) == 12);
     EXPECT("contract magic value",    Mimic::MAILBOX_CONTRACT_MAGIC == 0x43354555u);
+}
+
+// ----- Mimic: CMD_INVOKE routing + the init gate (audit #5 MB1 / MB2) ----------
+//
+// Both rules used to live inline in Mimic.cpp, which no target compiles — so the
+// only way to state them checkably was to move them into the header. They are the
+// two places a mailbox command can pick the WRONG behaviour without failing:
+// MB1 runs a stateful UFunction on the wrong thread, MB2 refuses a command that
+// would have worked.
+
+static void Test_Mimic_InvokeRouting() {
+    constexpr uint32_t N = Mimic::FUNC_FLAG_NATIVE;   // 0x0400
+    constexpr uint32_t S = Mimic::FUNC_FLAG_STATIC;   // 0x2000
+
+    // The UE bit values themselves — a generated script never sees these, but
+    // getting one wrong silently reclassifies every function.
+    EXPECT("FUNC_FLAG_NATIVE = 0x400",  N == 0x00000400u);
+    EXPECT("FUNC_FLAG_STATIC = 0x2000", S == 0x00002000u);
+
+    // Only Native AND Static together take the direct path.
+    EXPECT("native+static routes direct", Mimic::ShouldRouteDirectInvoke(N | S, true));
+    EXPECT("native alone queues",         !Mimic::ShouldRouteDirectInvoke(N, true));
+    EXPECT("static alone queues",         !Mimic::ShouldRouteDirectInvoke(S, true));
+    EXPECT("no flags queues",             !Mimic::ShouldRouteDirectInvoke(0, true));
+
+    // Unrelated bits must not disturb the verdict either way.
+    EXPECT("extra flags keep direct",
+           Mimic::ShouldRouteDirectInvoke(N | S | 0x00000001u | 0x04000000u, true));
+    EXPECT("extra flags keep queued",
+           !Mimic::ShouldRouteDirectInvoke(N | 0x00000001u | 0x04000000u, true));
+
+    // THE MB1 RULE. `flagsResolved=false` is what the caller passes when it could
+    // not re-read the UFunction — and it must beat any flag value, because the
+    // alternative is trusting a mailbox field the previous command wrote. If this
+    // assertion is dropped, a stale Native|Static routes a stateful actor
+    // UFunction off the game thread and nothing reports it.
+    EXPECT("unresolved never routes direct",
+           !Mimic::ShouldRouteDirectInvoke(N | S, false));
+    EXPECT("unresolved with 0xFFFFFFFF never routes direct",
+           !Mimic::ShouldRouteDirectInvoke(0xFFFFFFFFu, false));
+
+    // The two commands that REPURPOSE functionFlags as a page count. Their values
+    // are small, so they can never satisfy the mask — the stale-field hazard is a
+    // false NEGATIVE from these, and a false POSITIVE only from CMD_FIND_FUNCTION
+    // having resolved a different function. Pinned so a future page-count encoding
+    // that happens to set both bits cannot arrive unnoticed.
+    for (uint32_t pages = 1; pages <= 64; ++pages) {
+        if (Mimic::ShouldRouteDirectInvoke(pages, true)) {
+            EXPECT("a LIST_* page count must never look static-native", false);
+            break;
+        }
+    }
+    EXPECT("page counts never look static-native", true);
+}
+
+static void Test_Mimic_CommandRequiresInit() {
+    // The ONE exemption, and the reason it is safe: Grausam touches no UObject and
+    // the pipe path gates it on nothing.
+    EXPECT("CMD_FOREGROUND is exempt", !Mimic::CommandRequiresInit(Mimic::CMD_FOREGROUND));
+
+    // Negative control — everything else must still be gated. This is the half
+    // that matters: over-exempting turns "-10 DLL not initialized" into a handler
+    // dereferencing caches the scan never filled. Enumerated explicitly rather
+    // than looped so adding a Cmd forces a decision here.
+    EXPECT("CMD_INVOKE needs init",           Mimic::CommandRequiresInit(Mimic::CMD_INVOKE));
+    EXPECT("CMD_FIND_INSTANCE needs init",    Mimic::CommandRequiresInit(Mimic::CMD_FIND_INSTANCE));
+    EXPECT("CMD_FIND_FUNCTION needs init",    Mimic::CommandRequiresInit(Mimic::CMD_FIND_FUNCTION));
+    EXPECT("CMD_INVOKE_BY_NAME needs init",   Mimic::CommandRequiresInit(Mimic::CMD_INVOKE_BY_NAME));
+    EXPECT("CMD_LIST_FUNCTIONS needs init",   Mimic::CommandRequiresInit(Mimic::CMD_LIST_FUNCTIONS));
+    EXPECT("CMD_LIST_INSTANCES needs init",   Mimic::CommandRequiresInit(Mimic::CMD_LIST_INSTANCES));
+    EXPECT("CMD_SET_DEBUG_CAMERA needs init", Mimic::CommandRequiresInit(Mimic::CMD_SET_DEBUG_CAMERA));
+    EXPECT("CMD_TELEPORT needs init",         Mimic::CommandRequiresInit(Mimic::CMD_TELEPORT));
+    EXPECT("CMD_PROTECT needs init",          Mimic::CommandRequiresInit(Mimic::CMD_PROTECT));
+    EXPECT("CMD_MOVEMENT needs init",         Mimic::CommandRequiresInit(Mimic::CMD_MOVEMENT));
+    EXPECT("CMD_FLY needs init",              Mimic::CommandRequiresInit(Mimic::CMD_FLY));
+    // Documented as "read-only + thread-agnostic", which is NOT the same claim:
+    // it reads the caches the scan fills and iterates GObjects.
+    EXPECT("CMD_QUERY_PTR needs init",        Mimic::CommandRequiresInit(Mimic::CMD_QUERY_PTR));
+    EXPECT("CMD_SEETHROUGH needs init",       Mimic::CommandRequiresInit(Mimic::CMD_SEETHROUGH));
+    // "Pure reflected memory write" — reflected means GObjects.
+    EXPECT("CMD_TIME needs init",             Mimic::CommandRequiresInit(Mimic::CMD_TIME));
+
+    // An unknown command must be gated too: it falls through to "Unknown command",
+    // and the gate is the cheaper refusal.
+    EXPECT("an unknown cmd is gated", Mimic::CommandRequiresInit(9999));
+
+    // Exactly ONE exemption across the whole declared command space. A future
+    // handler that quietly adds itself to the exemption list trips this.
+    int exempt = 0;
+    for (int32_t c = 0; c <= Mimic::CMD_TIME; ++c)
+        if (!Mimic::CommandRequiresInit(c)) ++exempt;
+    EXPECT("exactly one command is init-exempt", exempt == 1);
+}
+
+// ----- Flamme: the hint-cache publish gate (audit #5 FL1) ----------------------
+//
+// The rule that decides whether a staged temp may be renamed over the real cache.
+// Getting it wrong in the permissive direction publishes a TRUNCATED JSON document
+// over the only copy, and LoadHints then returns empty for every game at once —
+// pattern IDs, ueVersion, the user's version override and the invoke timeout.
+// Nothing compiles Flamme.cpp, so this predicate is the only assertable part.
+static void Test_Flamme_AtomicPublishGate() {
+    using Flamme::ShouldPublishAtomicWrite;
+
+    // The one passing shape: stream clean, size readable, size exact.
+    EXPECT("clean write publishes",  ShouldPublishAtomicWrite(true, true, 4096, 4096));
+
+    // Each detector alone must be able to veto — if either could not, it would be
+    // decoration rather than a second detector.
+    EXPECT("stream failure refuses", !ShouldPublishAtomicWrite(false, true, 4096, 4096));
+    EXPECT("short write refuses",    !ShouldPublishAtomicWrite(true, true, 4095, 4096));
+
+    // The direction that actually happens on a full volume: the stream reports fine
+    // (the failure surfaced only at flush on some CRTs) but the bytes are not there.
+    EXPECT("silent truncation refuses", !ShouldPublishAtomicWrite(true, true, 0, 4096));
+
+    // trunc failed / something appended — longer is as wrong as shorter.
+    EXPECT("over-long file refuses", !ShouldPublishAtomicWrite(true, true, 4097, 4096));
+
+    // An unmeasurable file is not a verified one. This is the branch a "size == 0
+    // means we could not read it" shortcut would get backwards.
+    EXPECT("unknown size refuses",   !ShouldPublishAtomicWrite(true, false, 0, 4096));
+    EXPECT("unknown size refuses even when the numbers would match",
+           !ShouldPublishAtomicWrite(true, false, 4096, 4096));
+
+    // Large files must not overflow or wrap the comparison — the cache grows one
+    // record per game, forever.
+    EXPECT("large exact match publishes",
+           ShouldPublishAtomicWrite(true, true, 3000000000ull, 3000000000ull));
+    EXPECT("large off-by-one refuses",
+           !ShouldPublishAtomicWrite(true, true, 3000000000ull, 3000000001ull));
+
+    // Degenerate but well-defined: no special-casing of an empty document.
+    EXPECT("empty exact match publishes", ShouldPublishAtomicWrite(true, true, 0, 0));
 }
 
 // ----- Radar: SizeOf + NameOf + parsers ---------------------------------
@@ -6068,6 +6203,9 @@ int main() {
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
+    RUN(Test_Mimic_InvokeRouting);
+    RUN(Test_Mimic_CommandRequiresInit);
+    RUN(Test_Flamme_AtomicPublishGate);
 
     RUN(Test_ValueScan_DataTypeSizes);
     RUN(Test_ValueScan_ParseDataTypeRoundTrip);

@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
+#include <cerrno>
 #include <mutex>
 #include <filesystem>
 #include <chrono>
@@ -37,8 +38,16 @@ enum LogFile : uint8_t {
     LF_COUNT
 };
 
-static const wchar_t* s_fileNames[LF_COUNT] = {
-    L"init", L"scan", L"offsets", L"pipe", L"walk"
+// Both spellings on one line each so they cannot drift: the wide form names the
+// file, the narrow one appears in the "this category could not open" notice, which
+// is written with snprintf into a file that DID open.
+struct LogFileName { const wchar_t* w; const char* a; };
+static const LogFileName s_fileNames[LF_COUNT] = {
+    { L"init",    "init"    },
+    { L"scan",    "scan"    },
+    { L"offsets", "offsets" },
+    { L"pipe",    "pipe"    },
+    { L"walk",    "walk"    },
 };
 
 // ================================================================
@@ -94,6 +103,7 @@ struct LogFileState {
     size_t         written = 0;
     fs::path       currentPath;
     std::wstring   baseName;
+    const char*    baseNameA = "?";   // narrow twin, for the failure notices
 };
 
 static std::mutex     s_mutex;
@@ -161,6 +171,36 @@ static std::string GetTimestamp() {
 // Why not the old generation shuffle: it ran on EVERY process start, not only on
 // size, so N launches of one game in an afternoon evicted everything before them
 // no matter how recent. An age policy cannot be expressed as a file count.
+
+// Enumerate `dir` WITHOUT the throwing increment.
+//
+// A range-for over `fs::directory_iterator` advances with `operator++()`, which is
+// the THROWING overload. `directory_iterator(p, ec)` only reports CONSTRUCTION
+// failures — and on construction failure it compares equal to end(), so the loop
+// body never runs and any `if (ec) break;` written INSIDE it is dead code. A
+// mid-enumeration failure (a file vanishing under the cursor, an ACL change,
+// FindNextFileW failing) therefore threw a `filesystem_error` out of a sweep that
+// believed itself noexcept. This file contains no `catch` at all and the DLL builds
+// with /EHa, so that unwound out of `InitProcessMirror` into DLL_PROCESS_ATTACH.
+// (audit #5 SE2)
+//
+// Returns false when enumeration failed at ANY point — construction OR increment.
+// Callers must not read that as "the directory is empty": the two are different
+// facts, and one of them is a reason to delete things.
+template <typename Fn>
+static bool ForEachDirEntry(const fs::path& dir, Fn&& fn) {
+    std::error_code ec;
+    fs::directory_iterator it(dir, ec);
+    if (ec) return false;
+
+    const fs::directory_iterator last{};
+    while (it != last) {
+        fn(*it);
+        it.increment(ec);
+        if (ec) return false;
+    }
+    return true;
+}
 
 static bool FileWriteTime(const fs::path& p, FILETIME& out) {
     WIN32_FILE_ATTRIBUTE_DATA fad{};
@@ -233,24 +273,25 @@ static void ArchiveByWriteTime(const fs::path& src, const fs::path& dir,
 // SAME entry on every launch, so the advertised 21-day retention silently stopped
 // applying past that point forever. One locked file is enough to do that. (B19)
 static void PruneAgedLogs(const fs::path& dir) {
-    std::error_code iterEc;
     FILETIME nowFt{};
     GetSystemTimeAsFileTime(&nowFt);
     const ULONGLONG now    = AsU64(nowFt);
     const ULONGLONG maxAge = RetentionTicks();
 
-    for (auto& entry : fs::directory_iterator(dir, iterEc)) {
-        if (iterEc) break;
+    // Enumeration failure (either end) just ends the sweep early — same outcome the
+    // old `if (iterEc) break;` intended, minus the throw. Nothing is deleted on the
+    // strength of a partial read here because each decision is per-file.
+    ForEachDirEntry(dir, [&](const fs::directory_entry& entry) {
         std::error_code ec;
-        if (!entry.is_regular_file(ec)) continue;
-        if (entry.path().extension() != L".log") continue;
+        if (!entry.is_regular_file(ec)) return;
+        if (entry.path().extension() != L".log") return;
 
         FILETIME ft{};
-        if (!FileWriteTime(entry.path(), ft)) continue;
+        if (!FileWriteTime(entry.path(), ft)) return;
         const ULONGLONG t = AsU64(ft);
         // A failure here is per-file and must not stop the sweep.
         if (now > t && (now - t) > maxAge) fs::remove(entry.path(), ec);
-    }
+    });
 }
 
 // One-time migration of the pre-retention numbered generations (-1 .. -9).
@@ -261,6 +302,20 @@ static void MigrateLegacyGenerations(const fs::path& dir, const wchar_t* baseNam
     for (int i = 1; i <= 9; ++i) {
         auto legacy = dir / (std::wstring(baseName) + L"-" + std::to_wstring(i) + L".log");
         if (fs::exists(legacy, ec)) ArchiveByWriteTime(legacy, dir, baseName);
+    }
+}
+
+// Append one already-formatted line to the first category whose file is open,
+// bypassing WriteToFile (and therefore RotateIfNeeded) so a failure notice can
+// never re-enter rotation. Used only for the "a category is dead" notices below.
+// LF_Init is index 0, so it is preferred — matching ResolveFile's own fallback.
+static void EmergencyNote(const char* line) {
+    for (int i = 0; i < LF_COUNT; ++i) {
+        if (!s_files[i].file) continue;
+        int n = fprintf(s_files[i].file, "%s\n", line);
+        if (n > 0) s_files[i].written += static_cast<size_t>(n);
+        fflush(s_files[i].file);
+        return;
     }
 }
 
@@ -275,6 +330,7 @@ static void RotateIfNeeded(LogFileState& fs_state) {
                        fs_state.baseName.c_str());
 
     fs_state.file = _wfopen(fs_state.currentPath.c_str(), L"w");
+    const int reopenErr = fs_state.file ? 0 : errno;
     fs_state.written = 0;
 
     if (fs_state.file) {
@@ -283,6 +339,20 @@ static void RotateIfNeeded(LogFileState& fs_state) {
                         ts.c_str(), BuildStamp::VersionString());
         if (n > 0) fs_state.written += static_cast<size_t>(n);
         fflush(fs_state.file);
+    } else {
+        // The truncating reopen failed (disk full, a viewer holding the file). The
+        // category is dead for the rest of the process: WriteToFile's leading null
+        // check means RotateIfNeeded is never reached again, so `written = 0` above
+        // is not what strands it — the handle is. WriteLog now reroutes this
+        // category's lines to a file that IS open; say so once, or a later grep
+        // reads the silence as "that code path never ran". (audit #5 SE1)
+        auto ts = GetTimestamp();
+        char line[384];
+        snprintf(line, sizeof(line),
+                 "[%s] [ERROR] [INIT] Logger: category '%s' could not be reopened after "
+                 "rotation (errno=%d) — its lines are rerouted here for the rest of this run",
+                 ts.c_str(), fs_state.baseNameA, reopenErr);
+        EmergencyNote(line);
     }
 }
 
@@ -290,16 +360,26 @@ static void RotateIfNeeded(LogFileState& fs_state) {
 // Init / open / close files
 // ================================================================
 
+// Returns false when the category's -0.log could not be opened. THE CALLER MUST
+// HONOUR IT: InitProcessMirror used to discard this bool and set s_filesOpen
+// regardless. (audit #5 SE1)
 static bool OpenFileInDir(LogFileState& fs_state, const fs::path& dir,
-                          const wchar_t* baseName) {
+                          const LogFileName& name, int* outErr) {
+    const wchar_t* baseName = name.w;
     fs_state.baseName    = baseName;
+    fs_state.baseNameA   = name.a;
     fs_state.currentPath = dir / (std::wstring(baseName) + L"-0.log");
 
     MigrateLegacyGenerations(dir, baseName);
     ArchiveByWriteTime(fs_state.currentPath, dir, baseName);   // last run -> dated archive
 
     fs_state.file = _wfopen(fs_state.currentPath.c_str(), L"w");
-    if (!fs_state.file) return false;
+    if (!fs_state.file) {
+        // Captured immediately: any later CRT call can overwrite errno, and the
+        // notice that reports this is written after four more open attempts.
+        if (outErr) *outErr = errno;
+        return false;
+    }
     fs_state.written = 0;
 
     auto ts = GetTimestamp();
@@ -318,6 +398,22 @@ static void CloseFile(LogFileState& fs_state) {
     }
 }
 
+// Pick the file a line for `target` should actually land in: itself when its
+// handle is open, otherwise the first category that IS open (LF_Init is index 0,
+// so it wins — the same fallback ResolveFile already uses for unknown categories).
+// Returns LF_COUNT when nothing is open at all.
+//
+// This is what stops a failed open from silently swallowing a category for the
+// whole session. The victim of the old behaviour was the log-verification
+// procedure itself: a grep that finds nothing reads as "this code path never ran"
+// when the truth is "the file never opened". (audit #5 SE1)
+static LogFile ResolveSink(LogFile target) {
+    if (s_files[target].file) return target;
+    for (int i = 0; i < LF_COUNT; ++i)
+        if (s_files[i].file) return static_cast<LogFile>(i);
+    return LF_COUNT;
+}
+
 // Write a pre-formatted line to a file
 static void WriteToFile(LogFileState& fs_state, const char* line) {
     if (!fs_state.file) return;
@@ -327,7 +423,12 @@ static void WriteToFile(LogFileState& fs_state, const char* line) {
     // retention has no size cap — or a viewer holding the file open). fprintf on a NULL
     // FILE* hits the UCRT invalid-parameter handler, which terminates the INJECTED GAME
     // with no message. Logging is best-effort; the game is not. (B11)
-    if (!fs_state.file) return;
+    //
+    // The line that TRIGGERED the failed rotation would otherwise still be the one
+    // line lost — WriteLog picked this sink while the handle was alive. Hand it to
+    // EmergencyNote, which writes to the first surviving file without re-entering
+    // rotation. Every LATER line for this category is rerouted by ResolveSink. (SE1)
+    if (!fs_state.file) { EmergencyNote(line); return; }
     int written = fprintf(fs_state.file, "%s\n", line);
     if (written > 0) fs_state.written += static_cast<size_t>(written);
     fflush(fs_state.file);
@@ -346,7 +447,6 @@ static void WriteToFile(LogFileState& fs_state, const char* line) {
 // `keep` is the folder this process owns and is never removed, even in the
 // pathological case of a system clock jump.
 static void PruneStaleProcessFolders(const fs::path& parentDir, const fs::path& keep) {
-    std::error_code iterEc;
     FILETIME nowFt{};
     GetSystemTimeAsFileTime(&nowFt);
     const ULONGLONG now    = AsU64(nowFt);
@@ -356,31 +456,35 @@ static void PruneStaleProcessFolders(const fs::path& parentDir, const fs::path& 
     // (a game still running, a viewer holding a file) must cost that folder, not the
     // rest of the sweep. The old `ec.clear()` sat BEFORE both remove_all calls, so it
     // could not undo the failure that actually broke the loop. (B19)
-    for (auto& entry : fs::directory_iterator(parentDir, iterEc)) {
-        if (iterEc) break;
+    ForEachDirEntry(parentDir, [&](const fs::directory_entry& entry) {
         std::error_code ec;
-        if (!entry.is_directory(ec)) continue;
-        if (fs::equivalent(entry.path(), keep, ec)) continue;
+        if (!entry.is_directory(ec)) return;
+        if (fs::equivalent(entry.path(), keep, ec)) return;
 
         ULONGLONG newest = 0;
         bool sawFile = false;
-        std::error_code subEc;
-        for (auto& sub : fs::directory_iterator(entry.path(), subEc)) {
-            if (subEc) break;
-            FILETIME ft{};
-            if (!FileWriteTime(sub.path(), ft)) continue;
-            sawFile = true;
-            const ULONGLONG t = AsU64(ft);
-            if (t > newest) newest = t;
-        }
-        // Could not even enumerate it — leave it alone rather than guess it is empty.
-        if (subEc) continue;
+        const bool enumerated = ForEachDirEntry(entry.path(),
+            [&](const fs::directory_entry& sub) {
+                FILETIME ft{};
+                if (!FileWriteTime(sub.path(), ft)) return;
+                sawFile = true;
+                const ULONGLONG t = AsU64(ft);
+                if (t > newest) newest = t;
+            });
+
+        // Could not FULLY enumerate it — leave it alone rather than guess it is
+        // empty. This guard now covers a mid-iteration failure as well, which the
+        // old `if (subEc)` structurally could not: a construction failure it caught,
+        // but a failure halfway through threw instead. The distinction is not
+        // academic here — the very next branch DELETES the folder when it saw no
+        // files, and a half-read folder must never reach it. (audit #5 SE2)
+        if (!enumerated) return;
 
         std::error_code rmEc;
         // An empty folder is removable immediately; there is nothing to retain.
-        if (!sawFile) { fs::remove_all(entry.path(), rmEc); continue; }
+        if (!sawFile) { fs::remove_all(entry.path(), rmEc); return; }
         if (now > newest && (now - newest) > maxAge) fs::remove_all(entry.path(), rmEc);
-    }
+    });
 }
 
 // ================================================================
@@ -404,7 +508,8 @@ static void WriteLog(const char* level, const char* cat, const char* fmt, va_lis
     LogFile target = ResolveFile(cat);
 
     if (s_filesOpen) {
-        WriteToFile(s_files[target], lineBuf);
+        LogFile sink = ResolveSink(target);
+        if (sink != LF_COUNT) WriteToFile(s_files[sink], lineBuf);
     } else if (s_buffering && s_earlyBuffer.size() < EARLY_BUFFER_MAX) {
         s_earlyBuffer.emplace_back(target, std::string(lineBuf));
     }
@@ -421,7 +526,8 @@ static void WriteSummary(const char* fmt, va_list args) {
     snprintf(lineBuf, sizeof(lineBuf), "[%s] [SUMMARY] %s", ts.c_str(), msgBuf);
 
     if (s_filesOpen) {
-        WriteToFile(s_files[LF_Init], lineBuf);
+        LogFile sink = ResolveSink(LF_Init);
+        if (sink != LF_COUNT) WriteToFile(s_files[sink], lineBuf);
     } else if (s_buffering && s_earlyBuffer.size() < EARLY_BUFFER_MAX) {
         s_earlyBuffer.emplace_back(LF_Init, std::string(lineBuf));
     }
@@ -469,18 +575,53 @@ void InitProcessMirror(const std::wstring& processName) {
     if (ec) return;
 
     // Open all 5 category files. Each archives its own previous -0.log first.
+    //
+    // The bool is HONOURED now. It used to be dropped and s_filesOpen set
+    // unconditionally, which cost twice over: the failed category was dead for the
+    // process with nothing said anywhere, and the early buffer was flushed into its
+    // NULL FILE* and then clear()ed — destroying lines that another, perfectly
+    // healthy file could have taken. (audit #5 SE1)
+    bool opened[LF_COUNT] = {};
+    int  openErr[LF_COUNT] = {};
+    int  openCount = 0;
     for (int i = 0; i < LF_COUNT; ++i) {
-        OpenFileInDir(s_files[i], s_processDir, s_fileNames[i]);
+        opened[i] = OpenFileInDir(s_files[i], s_processDir, s_fileNames[i], &openErr[i]);
+        if (opened[i]) ++openCount;
     }
-    s_filesOpen = true;
 
-    // Flush early buffer to the correct files
-    s_buffering = false;
-    for (auto& [target, line] : s_earlyBuffer) {
-        WriteToFile(s_files[target], line.c_str());
+    if (openCount > 0) {
+        s_filesOpen = true;
+        s_buffering = false;
+
+        // Name the failures FIRST, so the top of the surviving log says which
+        // categories are missing and where their lines went. Written with snprintf
+        // + WriteToFile rather than through Sein::Warn on purpose: WriteLog takes
+        // s_mutex, this function already holds it, and std::mutex is not recursive.
+        for (int i = 0; i < LF_COUNT; ++i) {
+            if (opened[i]) continue;
+            auto ts = GetTimestamp();
+            char line[512];
+            snprintf(line, sizeof(line),
+                     "[%s] [ERROR] [INIT] Logger: category '%s' could not open "
+                     "'%s-0.log' (errno=%d) — its lines are rerouted here for this run",
+                     ts.c_str(), s_fileNames[i].a, s_fileNames[i].a, openErr[i]);
+            LogFile sink = ResolveSink(static_cast<LogFile>(i));
+            if (sink != LF_COUNT) WriteToFile(s_files[sink], line);
+        }
+
+        // Flush the early buffer, rerouting anything whose own category did not
+        // open so no buffered line is thrown away.
+        for (auto& [target, line] : s_earlyBuffer) {
+            LogFile sink = ResolveSink(target);
+            if (sink != LF_COUNT) WriteToFile(s_files[sink], line.c_str());
+        }
+        s_earlyBuffer.clear();
+        s_earlyBuffer.shrink_to_fit();
     }
-    s_earlyBuffer.clear();
-    s_earlyBuffer.shrink_to_fit();
+    // else: NOTHING opened. Keep buffering and keep the buffer — it is capped at
+    // EARLY_BUFFER_MAX, so the cost is bounded, and clearing it would destroy the
+    // only record of the run for no gain. The retention sweeps below are unaffected
+    // by our own files and still run.
 
     // Retention sweep. Runs AFTER the files are open, so the live -0.log of every
     // category already exists and the archives are the only *.log left to age out.

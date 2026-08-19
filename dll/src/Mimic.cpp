@@ -46,12 +46,9 @@ extern uintptr_t    g_cachedGNames;
 extern uintptr_t    g_cachedGWorld;   // &GWorld (address of the global UWorld* pointer)
 extern uintptr_t    g_cachedGEngine;  // &GEngine (the static slot holding UEngine*), 0 if unresolved
 
-// UE FunctionFlags subset we care about for the static-native fast path.
-// Pulled from Engine/Source/Runtime/CoreUObject/Public/UObject/Script.h.
-// Only the two flags below are read; defining locally avoids dragging the
-// full enum into Mimic just for two bit checks.
-static constexpr uint32_t kFuncFlag_Native = 0x00000400u;
-static constexpr uint32_t kFuncFlag_Static = 0x00002000u;
+// The UE FunctionFlags bits and the routing predicate that reads them now live in
+// Mimic.h (FUNC_FLAG_NATIVE / FUNC_FLAG_STATIC / ShouldRouteDirectInvoke) so a test
+// target can pin the rule — nothing compiles this .cpp. (audit #5 MB1)
 
 // The exported mailbox — zero-initialized by default
 extern "C" __declspec(dllexport) Mimic::MailboxData g_invokeMailbox = {};
@@ -274,9 +271,18 @@ static void PollingThreadBody() {
                 }
             }
 
-            // Auto-init if needed (proxy DLL mode: UE5_Init not called yet)
-            if (!EnsureInitialized() && cmd != CMD_IDLE) {
-                // Init failed — most commands won't work
+            // Auto-init if needed (proxy DLL mode: UE5_Init not called yet).
+            //
+            // Skipped entirely for the commands CommandRequiresInit() exempts —
+            // today only CMD_FOREGROUND, whose handler is pure Win32 and which the
+            // PIPE path services with no init gate at all. Gating it made the
+            // CE-Lua Keep-Foreground toggle fail with -10 on any game whose AOB
+            // scan fails, and the generated script renders that as "hook error
+            // -10", naming MinHook — a subsystem the command never even reached.
+            // The exemption also skips the auto-init ATTEMPT, so the toggle no
+            // longer pays for a whole-image sweep it does not need. (audit #5 MB2)
+            if (CommandRequiresInit(cmd) && !EnsureInitialized()) {
+                // Init failed — these commands all walk UE reflection.
                 if (cmd == CMD_INVOKE || cmd == CMD_INVOKE_BY_NAME) {
                     SetError(-10, "DLL not initialized (GObjects/GNames not found)");
                     continue;
@@ -553,15 +559,42 @@ static void HandleInvoke() {
     // Stateful instance methods (FUNC_Net, FUNC_Event, BlueprintEvent,
     // anything touching actor mutable state from off-thread) still
     // route through GameThreadDispatch via UE5_CallProcessEvent.
-    const bool isStaticNative =
-        (g_invokeMailbox.functionFlags & (kFuncFlag_Native | kFuncFlag_Static))
-            == (kFuncFlag_Native | kFuncFlag_Static);
+    //
+    // The flags come from the UFunction that `ufuncAddr` NAMES, re-read here, and
+    // NOT from g_invokeMailbox.functionFlags. That field is a DLL-filled output —
+    // CMD_INVOKE's documented inputs are instanceAddr / ufuncAddr / paramsData —
+    // so it holds whatever the previous command left at offset 0x024:
+    //   * CMD_FIND_FUNCTION leaves the flags of the function IT resolved, which for
+    //     a bare re-FIRE (the generated form's FIRE button re-issues CMD_INVOKE
+    //     without re-running CMD_FIND_FUNCTION) can be a DIFFERENT function — a
+    //     stale Native|Static then sends a stateful actor UFunction off the game
+    //     thread, exactly what the comment above forbids;
+    //   * CMD_LIST_FUNCTIONS and CMD_LIST_INSTANCES overwrite it with a PAGE COUNT.
+    // ResolveFunctionInfo also validates the meta-class is "Function", so a stale or
+    // recycled ufuncAddr fails safe instead of routing on garbage. Unresolved ⇒
+    // queue: the false negative costs latency, the false positive corrupts state.
+    // (audit #5 MB1)
+    FunctionInfo fi{};   // global scope, like Fern's Linie query path
+    const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+    const bool isStaticNative = ShouldRouteDirectInvoke(fi.functionFlags, flagsResolved);
+
+    if (!flagsResolved) {
+        LOG_WARN("Mailbox: INVOKE could not re-read FunctionFlags from ufunc=0x%llX "
+                 "(not a live UFunction?) — routing through GameThreadDispatch",
+                 (unsigned long long)ufuncAddr);
+    } else if (fi.functionFlags != g_invokeMailbox.functionFlags) {
+        // The whole point of MB1, made greppable: the mailbox field disagreed with
+        // the function actually being invoked. Before the fix this decided the route.
+        LOG_WARN("Mailbox: INVOKE mailbox functionFlags=0x%08X is STALE — '%s' "
+                 "really has 0x%08X; routing on the re-read value (MB1)",
+                 g_invokeMailbox.functionFlags, fi.name.c_str(), fi.functionFlags);
+    }
 
     int32_t result;
     if (isStaticNative) {
         LOG_INFO("Mailbox: INVOKE -> static-native fast path "
                  "(flags=0x%08X, bypassing GameThreadDispatch)",
-                 g_invokeMailbox.functionFlags);
+                 fi.functionFlags);
         result = UE5_CallProcessEventDirect(
             instanceAddr, ufuncAddr,
             reinterpret_cast<uintptr_t>(g_invokeMailbox.paramsData));
