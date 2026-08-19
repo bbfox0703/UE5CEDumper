@@ -1627,6 +1627,32 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > larger now. **Never read a count out of this block — derive it**:
 > `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two `###` under 「怎麼用這份清單」.
 
+### ⛔ PRECONDITION FOR EVERY GAME ROW — as of 2026-08-19, ALL NINE deployed proxies are STALE
+
+Measured with `tools/verify/proxy_refresh.py report` (build 3263, `dist/proxy` = dinput8 2,875,904 /
+dxgi 2,876,928 / version 2,882,560 / winmm 2,889,216):
+
+| game folder | proxy | deployed size | |
+|---|---|---|---|
+| EVERSPACE 2 · EVERSPACE · DQ7R · Lushfoil · Manor Lords · The Artisan of Glimmith | `version.dll` | 2,860,544 | stale |
+| OCTOPATH TRAVELER | `winmm.dll` | 2,867,712 | stale |
+| Avowed · Elliot | `dxgi.dll` | 2,855,936 | stale |
+
+**9 deployed, 9 stale.** This is not cosmetic. A proxy auto-loads at game start and **owns the
+pipe**, so injecting the current DLL afterwards is a no-op — the second instance logs
+`pipe already exists (another UE5Dumper instance running) — skipping auto-start` and
+`LoadLibraryW` merely bumps a refcount. Everything measured is then the OLD binary, silently.
+`PipeClient.assert_build()` does catch it, but only after the launch has been spent.
+
+⇒ **Refresh before measuring**: `py tools/verify/proxy_refresh.py refresh "<folder substring>"`,
+which backs the old file up to `out/proxy-backups/` with size + SHA-256 verified before it
+overwrites, refuses while the game is running, and refuses a needless write when already current.
+
+⚠ **Correction to an earlier note: Avowed IS installed** (`…\common\Avowed\…\Avowed-Win64-Shipping.exe`).
+It is simply absent from the Start menu, so `request_access` cannot resolve it and it is not
+grantable for computer-use — but it is perfectly usable for any headless pipe/log row, which
+matters for `A8` (flat-array CE pointer info) and `AA38` step 4's neighbourhood.
+
 ### ▶ HOW TO ENUMERATE THIS REGISTER — one invariant, and it is grep-able
 
 **Every item's ID must appear in a `^###` (or `^####`) heading of this section.** A heading-level
