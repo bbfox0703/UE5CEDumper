@@ -1751,7 +1751,8 @@ matters is simply "do normal mailbox commands still work".
 > **Step 2 (the throw path) remains open** — unchanged, there is still no way to force a handler to
 > throw on demand. Step 1's remaining half (two real `.CT` rows through CE) is still worth doing in
 > the CE batch, but it can no longer fail silently: plain dispatch is now known good.
-| 3 | `AC14` | **B** | Connect the UI to an injected game, then close the UI **while still connected** (this is the `Dispose()` path that nulls `_reader` without awaiting the read loop). | `pipe-0.log` ends cleanly. **No `Pipe: ReadLoop error`** line — that entry was the NullReferenceException this fixed, logged as if an ordinary shutdown were a fault. |
+| 3 | `AC14` | ✅ **PASS 2026-08-20** — connected the UI to DumperTest, closed it **while still connected**: `pipe-0.log` has **0** `Pipe: ReadLoop error` lines and ends with an orderly `Pipe lane dropped — tearing down both lanes for a clean reconnect` (once per lane). That entry used to be the NullReferenceException logged as if a fault. | | |
+| 3b | `AC14` (original) | **B** | Connect the UI to an injected game, then close the UI **while still connected** (this is the `Dispose()` path that nulls `_reader` without awaiting the read loop). | `pipe-0.log` ends cleanly. **No `Pipe: ReadLoop error`** line — that entry was the NullReferenceException this fixed, logged as if an ordinary shutdown were a fault. |
 | 4 | `AC13` | **B** | System tab → note the IPC figure. Then kill the game while the UI is mid-request so a write fails, and look again. | The IPC total now includes the failed request's transport time. Previously a write-path failure contributed exactly 0 ms, i.e. the figure flattered itself precisely when the pipe was misbehaving. |
 | 5 | `AC15` | **B** | Proxy Deploy → Scan Steam libraries, and the generic drive scan. | The same games are found with the same names/paths. The only intended difference is speed: one full VERSIONINFO resource load per detected game is gone. `UeVersion` was and remains null. |
 | 6 | `AE27` | **B** | Game Class Filter → type in the Package box, and sort by the Package column. | Identical results to before. `Package` is now memoized per `ClassPath` with setter invalidation; a stale or blank Package cell would mean the invalidation is wrong. |
@@ -1867,6 +1868,47 @@ class is "the reflection sort survives JIT and is trimmed away in the binary we 
 a `-Mode Publish` binary. The offline half is machine-enforced by
 `DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
 spot-check rather than a 30-column sweep.
+
+> ### ✅ STEPS 4–8 ALL PASS 2026-08-20 `[L10-HEADLESS-2026-08-20]` — the five category-A steps
+>
+> Driven against the **`-Mode Publish` AOT binary** in `dist/` (the one this batch requires),
+> connected to DumperTest Development (`Connected — UE504 (25179 objects)`).
+>
+> * **Step 4 — `AF10` PASS.** A second `UE5DumpUI.exe` launched while one was running exited with
+>   code **1**, not 0, and afterwards exactly **one** instance remained (the second did not linger).
+> * **Step 5 — `AF11` PASS, and it was observed happening rather than staged.** `TeleportCoords\`
+>   was created at **22:55 on 2026-08-19 — the first UI launch of this session** — and both
+>   `teleport-coords.dumpertest.json` **and its `.bak`** are now inside it **with their original
+>   `Aug 12 08:09` mtimes preserved**, i.e. moved as a GROUP, not rewritten. The root copies are
+>   gone; `teleport-hotkeys.txt` correctly stays in root (app-wide, fixed in number).
+> * **Step 6 — `AF11` negative control PASS, with the log line.** Planted a *distinct* 47-byte
+>   `teleport-coords.dumpertest.json` in the root while the real one sat in `TeleportCoords\`, then
+>   started the UI. The root copy was **left in place**, its content unchanged, and the
+>   `TeleportCoords\` copy was **byte-identical** afterwards (SHA-256 compared, not eyeballed):
+>   ```
+>   [WARN] AppDataFolderMaintenance: left 'teleport-coords.dumpertest.*' at the old location
+>          ('teleport-coords.dumpertest.json' already exists in the new folder)
+>   [INFO] AppDataFolderMaintenance: moved 0 'teleport-coords' file(s) into '…\TeleportCoords',
+>          left 1 behind
+>   ```
+>   ⭐ Note the wording is the **`.*` GROUP** form and the count is honest ("left 1 behind") — both
+>   are the invariants CLAUDE.md's app-data rule demands. Planted file removed afterwards.
+> * **Step 7 — `AF8` PASS.** `LandscapeMeshProxyComponent.ProxyLOD` is an `Int8Property`
+>   (`prop_offset` 1628, `prop_size` 1) with 1 live non-CDO instance. Forced to **−5**:
+>   `ok=true held=1 resolved=true`, and `get_forced_fields` reports `value=-5.0` — **negative and
+>   exact**, not wrapped to 251. `reset_all_fields` → 0 held.
+>   ⚠ Finding an `Int8Property` at all is the slow part; the shortcut is to grep the **exported SDK
+>   header** for `Int8Property` (24 hits) and then confirm the true owner via `search_properties`,
+>   because the header's nearest-enclosing-struct is unreliable for nested types.
+> * **Step 8 — `AF7` PASS, 8 of 8.** `walk_function_props` carries the `budget_hit` key on eight
+>   native functions across eight distinct classes, including a **19-parameter** one
+>   (`FunctionalTestUtilityLibrary.TraceChannelTestUtil`). All reported `budget_hit=false`.
+>   ⚠ **`props: []` here is CORRECT and must not be read as a defect** — this command is the Path-2
+>   **disassembly** xref finder (`method: "disasm"`, `script_bytes: 0`, `unmapped: 3`), not a
+>   parameter lister, and a static BlueprintCallable touches no `this` properties to report.
+>
+> **Steps 1–3 (the AOT DataGrid sorts) remain** — they need many grid-header clicks across Live
+> Funcs, Detect Stats, Live Walker, two dialogs, Class Pivot, Snapshot and the Invoke picker.
 
 > | # | cat | 做什麼 | 預期 |
 > |---|-----|--------|------|
