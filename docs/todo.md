@@ -1999,9 +1999,43 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > | U11 | on any game, Live Walker into an instance holding a **`TOptional<FText>`** that is SET (a display/label field) | the row shows the FText display string, not `(empty)` or 亂碼 | before the fix it read an inline FString at FText+0x10 (where UE stores the uint32 Flags) → garbage; now uses `ReadFTextString` like the plain TextProperty path |
 > | G7 | on a game that offsets-validates only after a re-scan (e.g. **Solarpunk**), connect, then trigger **apply_rescan** (the pipe/UI re-scan path) | the DYNO/offsets log gains a `validation state CHANGED validated=NO -> validated=YES (re-run)` line and the summary header reads `=== Dynamic Offset Summary (validated=YES) ===`; `get_offsets` and the log now agree | before, the one-time UE5_Init scan-log summary said validated=NO forever while live state was true |
 > | A9 | on a large game with deep/wide nested containers (a **SEED-class** object), run **Group Scan with Deep** enabled | no ~24 s single-object stall; the per-object element budget (`maxTotalElems`) bites before the global 15 s deadline, so the scan spreads across objects | before, the counter was never threaded so the budget was inert and one object could consume the whole scan window |
-> | A8 | on a **flat `FFixedUObjectArray`** title (OctoPath / FF7R Intergrade / Extinction / NEKOPALIVE), take a Value Search / Instance Finder row → **get CE pointer info** | the response carries `flat_layout=true`, a single-hop `ce_offsets=[fieldOffset]` at the ABSOLUTE address, and the flat warning — NOT a 4-hop chunked chain resolving to a garbage, user-writable address | the chunked chain treated `Item[0].Object` as a chunk-table pointer on a flat array; the degrade is only observable on a flat title (none available here) |
+> | A8 | ✅ **PASS 2026-08-19 `[A8-FLAT-2026-08-19]` — see below.** ~~none available here~~ | | |
 > | A7 | on a huge game, start a **find-object-by-address** (get_ce_pointer_info / find_by_address triggers `FindByAddress`) and **disconnect the client mid-scan** | shutdown/next command is prompt — no multi-second hang while the full GObjects walk finishes; the lookup returns "not found" | the loop now polls `Tot::Requested()` every 0x1000 objects like its siblings; only observable under a real disconnect on a large pool |
 > | G6 | (obfuscated fork only — **MindsEye**, no sample here) let name resolution race the fork's live key-table growth; also view a block whose tag is genuinely **absent** from the table | a transiently-unresolvable tag recovers on a later name (no permanent blanking of every FName with that tag); an absent-tag block renders as plaintext | the tri-state `LookupTagKey` no longer caches a transient miss, and a clean-absent resolves to key 0 (plaintext) per Genau's rule |
+
+> ### ✅ A8 PASS + ⛔ A7 NOT OBSERVABLE HERE — 2026-08-19 `[A8-FLAT-2026-08-19]`
+>
+> **A8 — PASS, all seven assertions**, on OCTOPATH TRAVELER via `tools/verify/a8_flat_layout.py`.
+> ⚠ **The row's "(none available here)" is WRONG and is now corrected**: OCTOPATH is installed and
+> is flat — `ValidateGObjects: Valid at 0x… (preset Flat-Base, Num=273957, Max=6146976,
+> Objects=0x19D58710000 [flat])`.
+>
+> Asked about a live `Sequence` @ `0x21D3EA85800` with `field_offset=0x28`:
+>
+> | assertion | observed |
+> |---|---|
+> | `flat_layout` true | ✅ |
+> | `packed_layout` false | ✅ |
+> | `ce_offsets` is a **single** hop | ✅ `[40]` |
+> | that hop **==** the requested `field_offset` | ✅ 40 == 40 |
+> | `ce_base` is the **absolute object address** | ✅ `0x21D3EA85800` == the address asked about |
+> | a warning is present | ✅ |
+> | the warning says it will not survive a restart | ✅ names both restart and ASLR |
+>
+> `chunk_index=0` / `within_chunk=35006` are still *reported* — correct for a flat array, and the
+> point is that they are **not in the chain**. A non-zero `field_offset` was used deliberately so
+> "the single hop equals field_offset" cannot pass by accident on a zero.
+> ⭐ The silent-degrade half matters as much as the address: without the warning a user pastes a
+> session-only address into a saved cheat table, which is nearly as bad as the garbage pointer.
+>
+> **A7 — ⛔ NOT OBSERVABLE ON ANY POOL AVAILABLE HERE. Measured, not assumed.** The row wants a
+> multi-second `FindByAddress` hang to interrupt. On the **largest pool on this machine**
+> (OCTOPATH, **273,956 objects**) `find_by_address` returns in **0.11 s** for a bogus address and
+> **0.05 s** for `0x1`; on DumperTest (25,179 objects) it is **0.07 s**. At ~0x1000 objects per
+> `Tot::Requested()` poll that is ~67 poll points inside 0.11 s, so the cancellation mechanism has
+> no window a client could disconnect into. ⇒ **Do not spend another session trying to catch it**:
+> it needs a pool roughly two orders of magnitude larger, or a much slower per-object read. The fix
+> itself is correct-by-construction and matches its siblings.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L6 (U3 MainWindow VM): X5 / X6 / X7 / X8 / X10 / X11 / X12
 
