@@ -201,23 +201,29 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             if (!ok) return;
         }
 
-        _xrefBatchCts?.Cancel();
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
         _xrefBatchCts = new CancellationTokenSource();
+        oldCts?.Cancel();
+        oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFuncs = 0, cached = 0;
+        int done = 0, withFuncs = 0, cached = 0, partial = 0;
         try
         {
             foreach (var row in targets)
             {
                 ct.ThrowIfCancellationRequested();
-                // Skip rows already scanned (XrefInfo persists across filter changes).
-                if (!string.IsNullOrEmpty(row.XrefInfo)) { cached++; continue; }
+                // Skip rows already scanned (XrefInfo persists across filter changes) —
+                // but NOT one whose previous sweep hit the deadline. (audit #5 Z9)
+                if (!string.IsNullOrEmpty(row.XrefInfo) && !XrefFormat.IsPartialCell(row.XrefInfo))
+                { cached++; continue; }
                 try
                 {
                     var res = await _dump.FindPropertyXrefsAsync(row.Match.FieldAddr, true, 200, ct);
-                    row.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs);
+                    bool deadline = res.Scan?.DeadlineHit ?? false;   // audit #5 Z9
+                    row.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
                     if (res.Xrefs.Count > 0) withFuncs++;
+                    if (deadline) partial++;
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -229,11 +235,25 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 StatusText = $"Find Funcs: {done}/{targets.Count} scanned ({withFuncs} referenced)…";
             }
             StatusText = $"Find Funcs done: {withFuncs}/{targets.Count} referenced by a function"
-                       + (cached > 0 ? $" ({cached} cached)." : ".");
+                       + (cached > 0 ? $" ({cached} cached)." : ".")
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             StatusText = $"Find Funcs cancelled at {done}/{targets.Count}.";
+        }
+        catch (Exception ex)
+        {
+            // NOT a cancel. PipeClient distinguishes three causes as of audit #5 AC10:
+            // a caller cancel carries OUR ct (caught above), a deliberate teardown
+            // carries the client's own token, and an unexpected pipe death — the game
+            // crashing, the DLL unloading — arrives as an IOException. A bare
+            // `catch (OperationCanceledException)` reported all of them as
+            // "Find Funcs cancelled at N/M", so a dead game read as "you pressed
+            // Cancel" and nothing was logged at all. (audit #5 Z5; this is audit #3's
+            // L14 applied at the two sites it missed.)
+            _log.Error("Batch Find Funcs failed", ex);
+            StatusText = $"Find Funcs failed at {done}/{targets.Count}.";
         }
         finally { IsXrefBatchRunning = false; }
     }
@@ -366,7 +386,13 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             });
 
             // Build the class histogram over the FULL deduped set, then filter.
-            ClassFilter.Rebuild(_allRows.Select(r => r.ClassName));
+            //
+            // countsPartial: any capped seed query means the deduped set is a page, so
+            // the picker's per-class counts are a lower bound. The flags were already
+            // being read fifteen lines below for the panel's own cap warning while the
+            // picker beside it implied a complete census. (audit #5 Z4)
+            ClassFilter.Rebuild(_allRows.Select(r => r.ClassName),
+                                countsPartial: batch.Aborted || batch.TruncatedQueries.Count > 0);
             ApplyFilter();
 
             int interesting = 0;
@@ -383,11 +409,14 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             // to end, surviving here because the batch path never parsed the flag (audit #5 X1).
             var capped = batch.TruncatedQueries;
             var capSuffix = batch.Aborted
-                ? "  ⚠ SCAN CANCELLED - this list is partial"
+                ? PartialResultNotice.Cancelled()
                 : capped.Count > 0
+                    // Per-KEYWORD cap, so this one can't use PartialResultNotice.RowCap
+                    // (which speaks about a single collector) — but it keeps the shared
+                    // "⚠ STOPPED at the N-row cap — more X exist" vocabulary and em dash.
                     ? $"  ⚠ {capped.Count} of {queries.Length} keywords STOPPED at the " +
-                      $"{PerQueryLimit}-row cap ({string.Join(", ", capped.Take(3))}" +
-                      $"{(capped.Count > 3 ? ", …" : "")}) - more matches exist"
+                      $"{PerQueryLimit:N0}-row cap ({string.Join(", ", capped.Take(3))}" +
+                      $"{(capped.Count > 3 ? ", …" : "")}) — more matches exist"
                     : "";
             StatusText =
                 $"{_allRows.Count:N0} unique properties  " +

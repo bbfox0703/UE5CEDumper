@@ -79,7 +79,18 @@ public static class KeywordScoringTable
         // Health / mana / stamina / energy. Short acronyms (HP/MP/SP)
         // restored post-tokenisation -- safe because tokens are matched
         // whole, not as substrings of "Component"/"Spawn"/etc.
-        "HP", "Hp", "Health", "MP", "Mana", "SP", "Stamina", "Energy",
+        //
+        // "Hp" used to sit beside "HP" here. It is a leftover from the
+        // pre-tokenisation era: KeywordTokenizer lowercases every token it
+        // emits, so BOTH spellings tokenise to exactly ["hp"] and
+        // CountTokenHits scored the SAME keyword twice -- +5 on every
+        // HP-named row over every other stat keyword, in the very column
+        // the panel sorts on, with the tooltip rendering "keywords(2 hits)"
+        // for one keyword. That contradicts CountTokenHits' own documented
+        // contract ("Each keyword counts once total"). Case variants are
+        // never needed here; SPELLING variants (Defense/Defence,
+        // Coin/Coins) still are. (audit #5 Z13)
+        "HP", "Health", "MP", "Mana", "SP", "Stamina", "Energy",
         // Experience / level / score. XP restored.
         "XP", "Exp", "Experience", "Level", "Score",
         // Combat-stat verbs (still primarily affect a stat field).

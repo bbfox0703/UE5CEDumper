@@ -11,9 +11,12 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **41 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L7 (T1d UI
->   Services) AC3/AC6/AC10/AC11/AC12 batch — five of its ten findings need nothing live, and the
+> - `## Pending live-game verification` — **42 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L8 (U5 VMs +
+>   scoring) Z8/Z12/Z13 batch — ten of its thirteen findings need nothing live; **two of the three
+>   that do are DLL-gated**, so a stale injected DLL makes them look like no-ops rather than
+>   failures, and the third is the batch's one deliberate scoring change. Before it, the audit L7
+>   (T1d UI Services) AC3/AC6/AC10/AC11/AC12 batch — five of its ten findings need nothing live, and the
 >   rows that remain each need a thing no test has: a real CE, a real Steam `libraryfolders.vdf`, a
 >   game killed mid-write, and a real game's Binaries folder. Before it, the audit L4 (D4b
 >   Mimic/Sein/Flamme) MB1/MB2/SE1/FL1/FL2 batch — its three pure rules are unit-pinned with five
@@ -42,7 +45,15 @@ Open work only. **Read this when deciding what to do next.**
 >   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-19: **98 audit findings open of 297 · 0 HIGH · 0 MED · 72 LOW · 26 INFO**
+> State as of 2026-08-19: **75 audit findings open of 297 · 0 HIGH · 0 MED · 49 LOW · 26 INFO**
+> (⚠ this line read **98 / 72 LOW** before audit L8 while the CI-gated headline in the audit doc's
+> §3b read **88 / 62** — it had drifted by 10 and is now set from the gate's own output rather
+> than by subtracting a delta. Only §3b is CI-enforced; **re-derive, never hand-tally**.)
+> (audit L8 (U5 VMs + scoring) closed Z4-Z16 — **Z14 as "the comment was wrong"** with no score change,
+> **Z16 as already-fixed** by `dcafa5fe` (confirmed by grep, not assumed), and **Z13 as the one
+> deliberate score movement**, stated in full on its row; Z11's prescribed fix was **refuted** — the
+> `resolved` field it names carries no information and the two zero cases are separated by `Code`;
+> Z10's preferred half — adding a Max control — is **deferred, not closed**, see the index below)
 > (audit L4 (D4b) closed MB1/MB2/SE1/SE2/FL1/FL2 — MB1 fixed with **no mailbox-contract move**, by
 > removing a read of an OUTPUT field rather than promoting it to an input; MB2's second half and
 > SE1's stated `written = 0` cause were both re-derived and **refuted**, see their rows;
@@ -53,7 +64,7 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 2 items, and they are NOT in the 154 above
+> ### ▶ OPEN FIXES INDEX — 3 items, and they are NOT in the count above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -62,6 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > | tag | one-line defect |
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
+> | `[PROPSEARCHCAP-2026-08-19]` | **Property Search has no Max control and its cap is the compile-time default 200** — very low for a query like `Health` on a real game. Audit #5 **Z10** is ✅ because the half that was a *defect* is fixed (the status line no longer advises "raise Max" on a panel with no Max), but the finding's own preferred repair — add the lever, as Instance Finder already has (`InstanceSearchCap` NumericUpDown, clamped 100..50000) — was **deliberately deferred**: it is a feature on an AXAML toolbar that cannot be visually verified in an unattended session, not an honesty fix. `SearchPropertiesAsync` already takes `limit`, so the work is a VM property + a NumericUpDown + passing it through; the status line's cap sentence already names the applied cap, so it needs no change. |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 >
 > *`[CONTAINERCAP-2026-08-18]` was **fixed 2026-08-19** (client-only badge + status line) and moved to
@@ -1644,6 +1656,27 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > | AC11 | on an installed game: **Deploy** a proxy to a clean Binaries folder, then **Deploy again** over it, then **Undeploy**. Check the folder for any `*.ue5dump-stage` leftover | all three succeed exactly as before; no `.ue5dump-stage` file is ever left behind; the grid never shows "Other proxy" for a DLL we just wrote | staging changed the publish from a copy to a copy+rename — the first-time-deploy path and the locked-target path are the two that must not regress |
 > | AC11 | with the game **running** (so the proxy is loaded and locked), click Deploy | still "File locked (game running?)", and the existing proxy is intact | the rename now raises the sharing violation the direct copy used to; the message must not change |
 > | AC12 | on this machine (multi-library Steam install), open Proxy Deploy and let it scan | the same library folders as before are found; `proxy`/`init` log has **no** "libraryfolders.vdf is malformed" line | the parser is fully unit-tested but its input is a real Valve-written file — a rejected real VDF would silently halve game detection |
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L8 (U5 VMs + scoring): Z8 / Z12 / Z13
+
+*Thirteen findings closed (Z4–Z16); **ten need nothing live**. Z4/Z5/Z6/Z7/Z9/Z10/Z11/Z15 are all
+unit-pinned at the VM level with a negative control each (reverting the eleven behaviours at once
+turns **34** assertions red and leaves every "must NOT change" control green), Z14 is a comment-only
+correction with **no score change for any game**, and Z16 was already fixed by `dcafa5fe` — verified
+by grep, not assumed. The three rows below are what a test cannot reach: two are **DLL-gated** (the
+UI defaults the new flags to "assume complete", so the disclosure only appears once the freshly
+built `UE5Dumper.dll` is the one injected — a stale DLL makes both look like no-ops rather than
+failures), and one is a deliberate scoring change worth one pair of human eyes on a real game.*
+
+⚠ **Before running any of these, confirm the injected DLL is THIS build** — `[STALEDLL]` is exactly
+the trap that makes a DLL-gated fix look unshipped. Compare against `dist/build_number.txt`, not the
+repo's.
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | Z8 ⚠ needs a BIG game | on a title with more than 100,000 UFunctions (a **SEED / FF7R**-class pool; `game_only` OFF makes the cap far easier to reach on any title), open **Console** and Load, then open **Interesting Functions** and Load | Console no longer claims anything about the GAME: it reads "No UFUNCTION(exec) commands in the N functions scanned so far … this scan did not finish, so it is not evidence the game has none", plus `⚠ STOPPED at the 100,000-row cap`. Interesting Functions shows the same cap suffix AND its class-noise picker now shows `⚠ Counts are partial` | the DLL emitted **no truncation marker at all** for `list_all_functions` before this, so a capped page was reported as a complete census of the game — and Interesting Functions had no flag it could even pass to its picker. A game UNDER the cap proves only that the flag stays off (still worth doing as the regression check: no spurious warning) |
+> | Z12 | Instance Finder → **Address → Instance** on an address that lives in a deeply-nested container (the `SaveSlotList[].MsTuneData…` shape the deep descent was written for), and on a plainly-bogus address | on a deep HIT the suffix reads `[scanned (incl. deep descent) X/Y in Zms]` with the DEEP pass's counters and the SUMMED duration; on a deep MISS it adds `⚠ the deep descent probes at most 256 element(s) per container, so this miss is not proof of absence` | before, a deep success reported the SHALLOW pass's numbers (describing a pass unrelated to the answer) and dropped the deep pass's deadline flag; a deep miss never mentioned the element cap at all. Change the Options element cap and re-run — the suffix must name the value you set, not a constant |
+> | Z13 | on any game, open **Interesting Properties** and **Interesting Functions** and sort by Score; find an HP-named row and read its score tooltip | the tooltip reads `keywords(1 hits)` for a plain `HP`/`CurrentHP` name, not `keywords(2 hits)`, and that row scores **5 lower** than it did before | this is the one DELIBERATE score movement in the batch and it is not silent: `"HP"` and `"Hp"` both tokenised to `["hp"]`, so one keyword was counted twice. Nothing visible on HP alone becomes hidden (10 → 5, both thresholds ≤ 5), but an HP function on an `Anim*`/`Niagara*`/`Sound*`/`Particle*` class (−2 class penalty) goes 8 → 3 and correctly drops below the threshold. ⚠ **What to actually watch for: an HP row you EXPECTED that is now missing from the default view** — if one appears, it is a threshold crossing, and the fix is "Show all", not re-adding the duplicate |
 
 ### ⬜ PART-FIXED 2026-08-19, NEEDS A LIVE CHECK `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored"
 

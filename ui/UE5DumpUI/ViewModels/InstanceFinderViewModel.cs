@@ -234,7 +234,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     {
         _reRunCts?.Cancel();
         try { _xrefBatchCts?.Cancel(); } catch { /* already disposed */ }
-        _searchGen++;
+        SupersedeClassSearch();
         _fieldLoadId++;
         _hasActiveClassSearch = false;
         _lastClassQuery = "";
@@ -250,6 +250,32 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         HasContainerMatches = false;
         StatusText = "";
         LookupStatusText = "";
+    }
+
+    /// <summary>
+    /// Supersede any in-flight class search WITHOUT being one.
+    ///
+    /// <para>
+    /// The <see cref="_searchGen"/> contract is "whoever bumps the generation takes over
+    /// <see cref="IsSearching"/>", because <see cref="RunSearchCoreAsync"/>'s finally
+    /// clears the flag only for the latest op (<c>if (gen == _searchGen)</c> — "only the
+    /// latest op owns the flag"). Two callers bumped it while owning no search of their
+    /// own — the reverse-address lookup, which owns <see cref="IsLookingUp"/> instead,
+    /// and <see cref="ClearOnDisconnect"/> — so the superseded search skipped its clear,
+    /// nothing else ever ran, and the indeterminate ProgressBar bound in
+    /// InstanceFinderPanel.axaml span for the rest of the session with nothing in
+    /// flight. Clearing it HERE is what makes the bumper an owner. (audit #5 Z6)
+    /// </para>
+    /// <para>
+    /// Clearing is correct rather than merely convenient: the superseded response is
+    /// discarded on arrival by the same generation guard, so from the user's point of
+    /// view that search no longer exists.
+    /// </para>
+    /// </summary>
+    private void SupersedeClassSearch()
+    {
+        _searchGen++;
+        IsSearching = false;
     }
 
     /// <summary>Class-noise picker changed. When a class search is active the
@@ -289,30 +315,57 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// class-noise filter. Runs after a class search and on every filter toggle.
     /// Preserves the current selection (and its loaded field grid) when the
     /// selected instance survives the filter — so toggling a noise class doesn't
-    /// wipe what the user is inspecting.</summary>
-    private void ApplyInstanceFilter()
+    /// wipe what the user is inspecting.
+    /// <para>
+    /// That promise used to be false in both halves. <see cref="UiCollection.Reset"/>
+    /// calls its detach callback UNCONDITIONALLY, so <c>SelectedInstance = null</c>
+    /// fired <see cref="OnSelectedInstanceChanged"/> and cleared
+    /// <see cref="Fields"/>; the restore at the bottom then re-entered the same handler
+    /// and issued a FRESH <c>walk_instance</c> for the address already loaded. Every
+    /// 200 ms keystroke pause blanked the field grid and refetched it, and one
+    /// class-noise tick cost TWO walks because this method runs immediately and again
+    /// when the server re-run lands. <see cref="_suppressSelectionSideEffects"/> makes
+    /// the detach/restore pair the pure bookkeeping the doc always described. (Z7)
+    /// </para>
+    /// <para><c>internal</c> so a test can drive it deterministically, bypassing the
+    /// 200 ms debounce — the same seam <c>PropertySearchViewModel.ApplyResultFilter</c>
+    /// uses.</para></summary>
+    internal void ApplyInstanceFilter()
     {
         var prev = SelectedInstance;
         // Two client-side filters layered: the class-noise picker (server-authoritative
         // after a re-run; this leg is belt-and-suspenders + instant pre-re-run feedback)
         // AND the temporary keyword box (whitespace = AND across Name/Class/Address).
         var terms = ObjectTreeFilter.SplitTerms(InstanceFilterText);
-        UiCollection.Reset(
-            Instances,
-            _allInstances.Where(i => !ClassFilter.IsExcluded(i.ClassName)
-                                     && (terms.Length == 0
-                                         || ObjectTreeFilter.MatchesAllTerms(terms, i.Name, i.ClassName, i.Address))),
-            () => SelectedInstance = null);
-        HasInstances = Instances.Count > 0;
-        // After a server-side exclude re-run the excluded rows are no longer in
-        // _allInstances, so "hidden" counts keyword-filtered rows (plus, briefly, the
-        // just-ticked class before the re-run lands). Either way it's "hidden from the
-        // returned set" — keep the label generic so it never mis-attributes.
-        int hidden = _allInstances.Count - Instances.Count;
-        ClassFilterNote = hidden > 0 ? $"{hidden} hidden by filter" : "";
-        // Restore selection (and its field walk) if it wasn't filtered out.
-        if (prev != null && Instances.Contains(prev))
-            SelectedInstance = prev;
+        var kept = _allInstances
+            .Where(i => !ClassFilter.IsExcluded(i.ClassName)
+                        && (terms.Length == 0
+                            || ObjectTreeFilter.MatchesAllTerms(terms, i.Name, i.ClassName, i.Address)))
+            .ToList();
+
+        // Decide BEFORE mutating: only a selection that survives may skip the
+        // clear-and-reload. Reference identity, exactly as the old Instances.Contains
+        // check used — _allInstances hands out the same InstanceResult objects.
+        bool selectionSurvives = prev != null && kept.Contains(prev);
+        _suppressSelectionSideEffects = selectionSurvives;
+        try
+        {
+            UiCollection.Reset(Instances, kept, () => SelectedInstance = null);
+            HasInstances = Instances.Count > 0;
+            // After a server-side exclude re-run the excluded rows are no longer in
+            // _allInstances, so "hidden" counts keyword-filtered rows (plus, briefly, the
+            // just-ticked class before the re-run lands). Either way it's "hidden from the
+            // returned set" — keep the label generic so it never mis-attributes.
+            int hidden = _allInstances.Count - Instances.Count;
+            ClassFilterNote = hidden > 0 ? $"{hidden} hidden by filter" : "";
+            // Restore the selection. With the guard set this is pure bookkeeping: the
+            // already-loaded Fields were never cleared and no second walk is issued.
+            if (selectionSurvives) SelectedInstance = prev;
+        }
+        finally
+        {
+            _suppressSelectionSideEffects = false;
+        }
     }
 
     /// <summary>Debounce the temporary keyword box (200 ms) then re-project the
@@ -486,9 +539,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         // Reverse-address lookup is not a class set: supersede any in-flight class
         // search / class-noise re-run (cancel + bump the gen guard so a late response
         // can't overwrite the single lookup result) and stop class-noise toggles from
-        // re-running a class search over the now-stale leftover facets.
+        // re-running a class search over the now-stale leftover facets. The bump also
+        // has to release IsSearching, which this command does not otherwise own — see
+        // SupersedeClassSearch. (audit #5 Z6)
         _reRunCts?.Cancel();
-        _searchGen++;
+        SupersedeClassSearch();
         _hasActiveClassSearch = false;
 
         try
@@ -539,14 +594,20 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // Build a "[scanned X/Y in Zms]" suffix so the user can tell a
             // clean miss from a deadline-truncated scan — important when
             // testing on big games (FF7 Rebirth ~430K objects).
-            string scanSuffix = "";
-            if (result.ContainerScan is { } cs && cs.ObjectsTotal > 0)
-            {
-                if (cs.DeadlineHit)
-                    scanSuffix = $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms — DEADLINE HIT, retry to continue]";
-                else
-                    scanSuffix = $"  [scanned {cs.ObjectsScanned}/{cs.ObjectsTotal} in {cs.DurationMs}ms]";
-            }
+            //
+            // It could not do that job before audit #5 Z12. Two reasons, both fixed:
+            // the DLL swapped in the DEEP pass's counters only when the deep pass found
+            // NOTHING, so a deep success reported the shallow pass's numbers and threw
+            // the deep pass's own deadline flag away; and `container_scan.deep_scan` was
+            // emitted by the DLL and never parsed here, so a deep MISS never revealed
+            // that the per-container element cap — not exhaustion — could have ended the
+            // search. PartialResultNotice.ScanSuffix names both bounds.
+            string scanSuffix = result.ContainerScan is { } cs
+                ? PartialResultNotice.ScanSuffix(
+                      cs.ObjectsScanned, cs.ObjectsTotal, cs.DurationMs,
+                      cs.DeadlineHit, cs.DeepScan, DeepScanElemCap,
+                      anyContainerMatch: result.ContainerMatches.Count > 0)
+                : "";
 
             if (result.Found)
             {
@@ -624,8 +685,22 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         NavigateToLiveWalker?.Invoke(match.OwnerAddress);
     }
 
+    /// <summary>Set while <see cref="ApplyInstanceFilter"/> detaches and re-attaches a
+    /// selection that SURVIVES the filter. Both transitions are bookkeeping forced by
+    /// <see cref="UiCollection.Reset"/>, not user intent, so neither may clear the
+    /// loaded field grid nor issue a walk. Never set when the selection is genuinely
+    /// going away — that case still clears normally. (audit #5 Z7)</summary>
+    private bool _suppressSelectionSideEffects;
+
     partial void OnSelectedInstanceChanged(InstanceResult? value)
     {
+        // A detach/re-attach around a collection rebuild: the instance is unchanged, so
+        // its already-walked Fields stay valid and re-walking them would be a pipe
+        // round-trip that produces the identical grid. Bailing on BOTH transitions is
+        // what keeps _fieldLoadId untouched, so an in-flight walk for this same
+        // instance still lands instead of being orphaned by the null hop.
+        if (_suppressSelectionSideEffects) return;
+
         if (value != null)
         {
             _ = LoadInstanceFieldsAsync(value);
@@ -836,23 +911,28 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
         var classCache = new Dictionary<string, string>();
-        int rows = 0, classesScanned = 0, reused = 0;
+        int rows = 0, classesScanned = 0, reused = 0, partial = 0;
         try
         {
             foreach (var inst in targets)
             {
                 ct.ThrowIfCancellationRequested();
                 rows++;
-                if (!string.IsNullOrEmpty(inst.XrefInfo)) { reused++; continue; }
+                // A partial cell is not a finished answer — re-running it can still find
+                // more, so it must not be treated as cached. (audit #5 Z9)
+                if (!string.IsNullOrEmpty(inst.XrefInfo) && !XrefFormat.IsPartialCell(inst.XrefInfo))
+                { reused++; continue; }
                 if (string.IsNullOrEmpty(inst.ClassAddress)) { inst.XrefInfo = "—"; continue; }
                 if (classCache.TryGetValue(inst.ClassAddress, out var hit)) { inst.XrefInfo = hit; reused++; continue; }
                 try
                 {
                     var res = await _dump.FindFunctionsByClassAsync(inst.ClassAddress, true, 200, ct);
-                    var summary = XrefFormat.FunctionsSummary(res.Xrefs);
+                    bool deadline = res.Scan?.DeadlineHit ?? false;   // audit #5 Z9
+                    var summary = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
                     classCache[inst.ClassAddress] = summary;
                     inst.XrefInfo = summary;
                     classesScanned++;
+                    if (deadline) partial++;
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -864,7 +944,10 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                     StatusText = $"Find Func: {classesScanned} classes scanned ({rows}/{targets.Count} rows)…";
             }
             StatusText = $"Find Func done: {classesScanned} classes scanned across {targets.Count} rows"
-                       + (reused > 0 ? $" ({reused} reused/cached)." : ".");
+                       + (reused > 0 ? $" ({reused} reused/cached)." : ".")
+                       // Counted per CLASS, not per row: one scan serves every row sharing
+                       // a ClassAddress, so a partial verdict stamps all of them.
+                       + PartialResultNotice.BatchPartialClause(partial, classesScanned, "class");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

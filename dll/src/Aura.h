@@ -1042,7 +1042,21 @@ struct AllFunctionEntry {
 struct AllFunctionsResult {
     int scannedObjects   = 0;     // GObjects count walked
     int scannedClasses   = 0;     // UClasses considered (post game-only filter)
-    int totalFunctions   = 0;     // sum of WalkFunctions over all classes
+    // Emitted functions. Identical to entries.size() by construction (both the
+    // outer and inner cap tests fire before the push), so it is NOT an honest
+    // pool total and must never be read as one — the pool size cannot be known
+    // without paying the WalkFunctions cost for every remaining class, which is
+    // exactly what the cap exists to avoid. `truncated` below is the honest
+    // signal. (audit #5 Z8)
+    int totalFunctions   = 0;
+    // The walk stopped early, so `entries` is a PAGE, not the pool:
+    //   truncated = hit maxEntries       (more functions exist, unseen)
+    //   aborted   = Tot::Requested()     (client gone / shutdown mid-walk)
+    // Without these a capped scan is indistinguishable from an exhaustive one,
+    // and the Console panel turns it into a positive claim about the game
+    // ("No UFUNCTION(exec) commands found in this game"). (audit #5 Z8)
+    bool truncated       = false;
+    bool aborted         = false;
     std::vector<AllFunctionEntry> entries;
 };
 

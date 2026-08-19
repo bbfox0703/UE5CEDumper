@@ -62,15 +62,32 @@ public static class PropertyScoringTable
     public const int StatsKeywordScore = 5;
     public static readonly string[] StatsKeywords =
     {
-        // Health / mana / stamina / energy
-        "HP", "Hp", "Health", "MP", "Mana", "SP", "Stamina", "Energy",
+        // Health / mana / stamina / energy.
+        // "Hp" used to sit beside "HP" — a pre-tokenisation leftover. The
+        // tokeniser lowercases, so both spellings are exactly ["hp"] and one
+        // keyword was scored twice (+5 on every HP-named row, tooltip showing
+        // "keywords(2 hits)"), contradicting CountTokenHits' documented
+        // "each keyword counts once". Removed. Case variants are never needed;
+        // SPELLING variants (Defense/Defence, Coin/Coins) still are. (Z13)
+        "HP", "Health", "MP", "Mana", "SP", "Stamina", "Energy",
         // Experience / level
         "XP", "Exp", "Experience", "Level", "Lv", "Lvl",
         // Alive / dead state — IsDead / bIsAlive are very common BP-added
-        // boolean cheat targets on character classes. Tokeniser produces
-        // ["is","dead"] from "IsDead" so include both forms; "Dead" /
-        // "Alive" alone catch property names like "bIsDead" -> ["b","is",
-        // "dead"].
+        // boolean cheat targets on character classes.
+        //
+        // The compound forms are a SPECIFICITY weight, not a match requirement,
+        // and the comment here used to claim otherwise ("include both forms" —
+        // as if "IsDead" were needed to match `IsDead`). It is not: "IsDead"
+        // tokenises to ["is","dead"], and CountTokenHits is a subset test, so
+        // "Dead" alone already matches `IsDead`, `bIsDead` and `IsDead_2`.
+        // What the compound buys is one EXTRA hit when the explicit boolean
+        // prefix is present, separating `bIsDead` (certainly a life-state flag)
+        // from `DeadZone` / `DeadReckoning` (which match "Dead" and nothing
+        // else). Same deliberate device as CritDamage beside Crit+Damage,
+        // JumpHeight beside Jump, and InitialLifeSpan beside LifeSpan below —
+        // and distinct from the exact DUPLICATE removed above, which fires on
+        // identical input and can express no such difference. Kept; only the
+        // justification is corrected. (audit #5 Z14)
         "Dead", "IsDead", "Alive", "IsAlive",
         // General resource bars / regeneration
         "Regen", "Regenerate", "Max",  // "Max" is per-token; only fires on

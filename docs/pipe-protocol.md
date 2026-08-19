@@ -991,6 +991,15 @@ first match.
 {
   "id": 8, "ok": true, "found": false,
   "query_addr": "228F1251BE8",
+  // container_scan describes the pass that produced the answer. When "deep_scan" is
+  // true BOTH passes ran and their stats are FOLDED: counters + classes_primed from the
+  // deep pass (the one that answered), duration_ms SUMMED (the caller waited for both),
+  // deadline_hit the OR of the two. Until audit #5 Z12 the deep stats replaced the
+  // shallow ones only when the deep pass found NOTHING — so a deep SUCCESS reported
+  // counters describing a pass unrelated to the answer and dropped the deep pass's own
+  // deadline flag. ⚠ "deep_scan": true also means a SECOND bound applied that no counter
+  // here expresses: the per-container element probe cap (request "container_elem_cap",
+  // default 256). A deep miss is therefore not proof of absence.
   "container_scan": {
     "objects_scanned": 28116, "objects_total": 28116,
     "classes_primed": 4382, "duration_ms": 51,

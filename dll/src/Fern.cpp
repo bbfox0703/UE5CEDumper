@@ -3864,6 +3864,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["scanned_objects"]  = enumResult.scannedObjects;
             data["scanned_classes"]  = enumResult.scannedClasses;
             data["total_functions"]  = enumResult.totalFunctions;
+            // The walk stopped early — this is a PAGE, not the pool. Without these
+            // the Console panel turns a capped scan into a positive claim about the
+            // game ("No UFUNCTION(exec) commands found in this game"), and
+            // Interesting Functions has no flag to hand its class-noise picker.
+            // Same shape as list_classes' `truncated` above. (audit #5 Z8)
+            data["truncated"]        = enumResult.truncated;
+            data["aborted"]          = enumResult.aborted;
+            data["limit"]            = limit;
             data["functions"]        = functions;
             return Renge::MakeResponse(id, data).dump();
         }
@@ -4168,7 +4176,28 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     Aura::ContainerScanStats deepStats;
                     containerMatches = Aura::FindInContainersDeep(queryAddr, 8, containerDepth,
                                                                   containerElemCap, &deepStats);
-                    if (containerMatches.empty()) stats = deepStats;   // surface deep deadline/stats
+                    // Fold BOTH passes, unconditionally. This used to be
+                    // `if (containerMatches.empty()) stats = deepStats;` — so a deep
+                    // pass that SUCCEEDED reported the shallow pass's counters and
+                    // duration, i.e. the numbers described a pass that had nothing to
+                    // do with the answer, and the deep pass's own deadline flag was
+                    // dropped on the floor (a partial-but-successful deep scan then
+                    // read as complete). The whole stated purpose of this block is to
+                    // let the user tell a clean miss from a truncated scan, so the
+                    // deadline flag must be the OR of the two and the wall time the
+                    // SUM — the user waited for both. (audit #5 Z12)
+                    //
+                    // Guarded on objectsTotal: FindInContainersDeep zeroes `stats` and
+                    // returns early when it cannot scan at all, and folding THAT in
+                    // would overwrite the shallow pass's honest counters with 0/N —
+                    // a scan that really did complete would then read as truncated.
+                    if (deepStats.objectsTotal > 0) {
+                        stats.objectsScanned = deepStats.objectsScanned;
+                        stats.objectsTotal   = deepStats.objectsTotal;
+                        stats.classesPrimed  = deepStats.classesPrimed;
+                    }
+                    stats.durationMs    += deepStats.durationMs;
+                    stats.deadlineHit    = stats.deadlineHit || deepStats.deadlineHit;
                     deepRan = true;
                 }
 

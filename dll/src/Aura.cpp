@@ -5324,9 +5324,10 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
     for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("PIPE:list", "EnumerateAllFunctions: aborted (client gone / shutdown)");
+            result.aborted = true;
             break;  // return partial result
         }
-        if (static_cast<int>(result.entries.size()) >= maxEntries) break;
+        if (static_cast<int>(result.entries.size()) >= maxEntries) { result.truncated = true; break; }
 
         uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
@@ -5360,7 +5361,7 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
         std::vector<FunctionInfo> funcs = Ubel::WalkFunctions(obj);
 
         for (const auto& f : funcs) {
-            if (static_cast<int>(result.entries.size()) >= maxEntries) break;
+            if (static_cast<int>(result.entries.size()) >= maxEntries) { result.truncated = true; break; }
 
             AllFunctionEntry entry;
             entry.className     = ci.Name;
@@ -5379,9 +5380,11 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
 
     Sein::Info("PIPE:list",
         "EnumerateAllFunctions: %d entries from %d classes "
-        "(gameOnly=%d, scanned %d objects, total funcs %d)",
+        "(gameOnly=%d, scanned %d objects, total funcs %d%s%s)",
         static_cast<int>(result.entries.size()), result.scannedClasses,
-        gameOnly ? 1 : 0, result.scannedObjects, result.totalFunctions);
+        gameOnly ? 1 : 0, result.scannedObjects, result.totalFunctions,
+        result.truncated ? ", TRUNCATED at cap" : "",
+        result.aborted ? ", ABORTED" : "");
     return result;
 }
 

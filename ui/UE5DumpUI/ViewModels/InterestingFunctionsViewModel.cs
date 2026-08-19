@@ -193,6 +193,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         _allRows = new List<ScoredFunctionRow>();
         _entries = Array.Empty<AllFunctionEntry>();
         _scoredWithGameplayActions = false;
+        _lastScan = default;   // don't let a re-score quote the PREVIOUS game's scan (Z15)
         SelectedResult = null;
         Results.Clear();
         ClassFilter.Reset();
@@ -251,8 +252,10 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             if (!ok) return;
         }
 
-        _xrefBatchCts?.Cancel();
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
         _xrefBatchCts = new CancellationTokenSource();
+        oldCts?.Cancel();
+        oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
         int done = 0, withFields = 0, cached = 0;
@@ -292,9 +295,22 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             StatusText = $"Props done: {withFields}/{targets.Count} use class fields"
                        + (cached > 0 ? $" ({cached} cached)." : ".");
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             StatusText = $"Props batch cancelled at {done}/{targets.Count}.";
+        }
+        catch (Exception ex)
+        {
+            // NOT a cancel. PipeClient distinguishes three causes as of audit #5 AC10:
+            // a caller cancel carries OUR ct (caught above), a deliberate teardown
+            // carries the client's own token, and an unexpected pipe death — the game
+            // crashing, the DLL unloading — arrives as an IOException. A bare
+            // `catch (OperationCanceledException)` reported all of them as
+            // "Props batch cancelled at N/M", so a dead game read as "you pressed
+            // Cancel" and nothing was logged at all. (audit #5 Z5; audit #3's L14
+            // applied at the two sites it missed.)
+            _log.Error("Batch props failed", ex);
+            StatusText = $"Props batch failed at {done}/{targets.Count}.";
         }
         finally { IsXrefBatchRunning = false; }
     }
@@ -384,19 +400,24 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             _scoredWithGameplayActions = includeActions;
             _allRows = await Task.Run(() => ScoreEntries(_entries, includeActions));
 
+            // Keep the scan facts so RescoreAsync can rewrite the SAME status line
+            // rather than leaving the previous scoring's numbers on screen. (Z15)
+            _lastScan = new LoadScanFacts(result.Total, result.ScannedClasses,
+                                          result.ScannedObjects, result.Truncated,
+                                          result.Aborted, result.Limit);
+
             // Build the class histogram over the FULL scored set, then filter.
-            ClassFilter.Rebuild(_allRows.Select(r => r.ClassName));
+            // countsPartial: a capped/aborted walk makes the picker's per-class counts
+            // a lower bound. Until Z8 there was no flag to pass here at all — the DLL
+            // emitted no truncation marker for list_all_functions. (audit #5 Z4 + Z8)
+            ClassFilter.Rebuild(_allRows.Select(r => r.ClassName),
+                                countsPartial: _lastScan.IsPartial);
             ApplyFilter();
 
-            int interesting = 0;
-            foreach (var r in _allRows)
-                if (r.FinalScore >= KeywordScoringTable.InterestingThreshold) interesting++;
-
-            StatusText = $"{result.Total} functions across {result.ScannedClasses} classes  " +
-                         $"({interesting} above threshold {KeywordScoringTable.InterestingThreshold}, " +
-                         $"scanned {result.ScannedObjects:N0} objects)";
+            StatusText = BuildStatusLine(_lastScan, CountAboveThreshold(_allRows));
             _log.Info($"ListAllFunctions: total={result.Total} classes={result.ScannedClasses} " +
-                      $"interesting={interesting} (gameOnly={GameOnly})");
+                      $"interesting={CountAboveThreshold(_allRows)} (gameOnly={GameOnly}, " +
+                      $"truncated={result.Truncated}, aborted={result.Aborted})");
 
             // Refresh AOBMaker state at end of load so the Notes column
             // reflects current connectivity. Fire-and-forget: this MUST NOT
@@ -500,6 +521,59 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
         _scoredWithGameplayActions = includeActions;
         _allRows = await Task.Run(() => ScoreEntries(entries, includeActions));
         ApplyFilter();
+        // Re-scoring MOVES the threshold count — that is the entire point of the
+        // Gameplay-Actions pack — so the status line must follow it. It used to be
+        // written only by LoadAsync, so a toggle re-scored every row and left the
+        // panel reporting the PREVIOUS mode's "above threshold: N" underneath the new
+        // grid. Distinct from Z1 (the re-score not running at all); this is the
+        // re-score running and the report not following. (audit #5 Z15)
+        StatusText = BuildStatusLine(_lastScan, CountAboveThreshold(_allRows));
+    }
+
+    // ── Status line (shared by LoadAsync and RescoreAsync) ───────────────────
+
+    /// <summary>Scan facts from the last <see cref="LoadAsync"/>, kept so a re-score
+    /// can rebuild the identical sentence with only the score-derived number changed.
+    /// Default (all zeros) before the first load, where <see cref="BuildStatusLine"/>
+    /// is never called.</summary>
+    private LoadScanFacts _lastScan;
+
+    /// <summary>The <c>list_all_functions</c> facts the status line quotes. A record
+    /// struct, so a re-score cannot accidentally quote HALF of a newer scan.</summary>
+    internal readonly record struct LoadScanFacts(
+        int Total, int ScannedClasses, int ScannedObjects,
+        bool Truncated, bool Aborted, int Limit)
+    {
+        /// <summary>The DLL walk stopped early — the row count is a page, not the pool.</summary>
+        public bool IsPartial => Truncated || Aborted;
+    }
+
+    internal static int CountAboveThreshold(IReadOnlyList<ScoredFunctionRow> rows)
+    {
+        int n = 0;
+        foreach (var r in rows)
+            if (r.FinalScore >= KeywordScoringTable.InterestingThreshold) n++;
+        return n;
+    }
+
+    /// <summary>
+    /// The panel's one status sentence. Pure + internal so both writers share it
+    /// verbatim (Z15) and so the truncation disclosure (Z8) is unit-testable without a
+    /// pipe: the walk is capped at <see cref="LoadScanFacts.Limit"/> rows and emitted no
+    /// marker at all before Z8, so "N functions across M classes" read as a complete
+    /// census of the game.
+    /// </summary>
+    internal static string BuildStatusLine(LoadScanFacts f, int interesting)
+    {
+        var capSuffix = f.Aborted
+            ? PartialResultNotice.Cancelled()
+            : f.Truncated
+                ? PartialResultNotice.RowCap(f.Limit, "functions",
+                      "tick \"Game classes only\" to skip engine classes, or scan a narrower game")
+                : "";
+        return $"{f.Total:N0} functions across {f.ScannedClasses:N0} classes  " +
+               $"({interesting:N0} above threshold {KeywordScoringTable.InterestingThreshold}, " +
+               $"scanned {f.ScannedObjects:N0} objects){capSuffix}";
     }
 
     /// <summary>

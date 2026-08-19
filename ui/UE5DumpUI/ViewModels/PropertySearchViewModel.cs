@@ -445,7 +445,19 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             if (r.Code < 0)
                 StatusText = $"Force {m.PropName}: DLL error {r.Code}.";
             else if (r.Held == 0)
-                StatusText = $"Force {m.PropName}: 0 live instances of {m.ClassName} or any subclass matched — nothing held.";
+                // "nothing held" was wrong, and wrong in the dangerous direction.
+                // Solide::AddForce only DISCARDS a job when the field resolved on at
+                // least one instance and was type-refused everywhere — that path
+                // returns a negative code and is handled above. Reaching here with
+                // code 0 means the job was KEPT and the re-assert worker was STARTED,
+                // so the hold is armed and begins writing into the game the moment a
+                // matching instance spawns. Telling the user it did nothing, while the
+                // "Forced fields (N held)" strip below simultaneously lists it, is the
+                // two-surfaces-disagree shape this whole audit keeps finding.
+                // (audit #5 Z11)
+                StatusText = $"⏳ Force {m.PropName} = ARMED but holding nothing yet — no live instance of "
+                           + $"{m.ClassName} or any subclass exists right now. It will apply automatically "
+                           + $"as soon as one spawns; use \"Forced fields\" below to release it.";
             else
             {
                 var what = kind == "bool" ? (on ? "ON" : "OFF")
@@ -547,7 +559,17 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // without another DLL roundtrip.
             _allResults = new List<PropertySearchMatch>(result.Results);
             // Build the class histogram over the FULL result, then filter.
-            ClassFilter.Rebuild(_allResults.Select(m => m.ClassName));
+            //
+            // countsPartial is NOT optional here. The picker presents its per-class hit
+            // counts as a class census of the result, and fifteen lines below this the
+            // SAME method reads the very same flags to print its own cap warning — so
+            // omitting it left the panel warning "this list is capped" in one place
+            // while the picker beside it implied a complete tally. The `⚠ Counts are
+            // partial` string has existed in en.axaml the whole time and could never
+            // appear on this panel. (audit #5 Z4; ValueSearchViewModel already does
+            // this correctly.)
+            ClassFilter.Rebuild(_allResults.Select(m => m.ClassName),
+                                countsPartial: result.Truncated || result.Aborted);
             ApplyResultFilter();
 
             var typeSuffix = types.Length > 0 ? $" [types: {string.Join(",", types)}]" : "";
@@ -557,11 +579,23 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // side, finds nothing, and concludes the field does not exist. The DLL
             // now reports what it actually walked, so the counts no longer contradict
             // the suffix. (Built here rather than in en.axaml to match the existing
-            // StatusText line it extends.)
+            // StatusText line it extends — every other clause of this same sentence is
+            // VM-composed, and Res.Get returns "" with no Application, which would make
+            // exactly this text untestable headless.)
+            //
+            // The advice used to read "narrow the query or raise Max". There is no Max
+            // control on this panel — the string had been lifted from Instance Finder,
+            // which really does own an InstanceSearchCap NumericUpDown — so half of it
+            // pointed at a lever the user could not find. It now names only levers this
+            // panel actually has. (audit #5 Z10)
             var capSuffix = result.Aborted
-                ? "  ⚠ SCAN CANCELLED - this list is partial"
+                ? PartialResultNotice.Cancelled()
                 : result.Truncated
-                    ? $"  ⚠ STOPPED at the {result.Total}-row cap - more matches exist, narrow the query or raise Max"
+                    ? PartialResultNotice.RowCap(result.Total, "matches",
+                          GameClassesOnly
+                              ? "narrow it with a longer property name or a Type filter"
+                              : "narrow it with a longer property name or a Type filter, "
+                                + "or tick \"Game classes only\" to skip engine classes")
                     : "";
             StatusText = $"Found {result.Total} properties in {result.ScannedClasses:N0} classes (scanned {result.ScannedObjects:N0} objects){deepSuffix}{capSuffix}";
             _log.Info($"SearchProperties: '{trimmedQuery}'{typeSuffix} -> {result.Total} results (classes={result.ScannedClasses}, objects={result.ScannedObjects})");
@@ -719,19 +753,29 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFuncs = 0, cached = 0;
+        int done = 0, withFuncs = 0, cached = 0, partial = 0;
         try
         {
             foreach (var match in targets)
             {
                 ct.ThrowIfCancellationRequested();
-                // Skip rows already scanned (XrefInfo persists across filter changes).
-                if (!string.IsNullOrEmpty(match.XrefInfo)) { cached++; continue; }
+                // Skip rows already scanned (XrefInfo persists across filter changes) —
+                // but NOT a row whose previous sweep hit the deadline: re-running that
+                // one can still find something, so treating it as done would make the
+                // partial answer permanent. (audit #5 Z9)
+                if (!string.IsNullOrEmpty(match.XrefInfo) && !XrefFormat.IsPartialCell(match.XrefInfo))
+                { cached++; continue; }
                 try
                 {
                     var res = await _dump.FindPropertyXrefsAsync(match.FieldAddr, true, 200, ct);
-                    match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs);
+                    // res.Scan.DeadlineHit is the whole reason this isn't just res.Xrefs:
+                    // the DLL latches it on a real 30 s budget, and a timed-out sweep
+                    // written as a bare "0" reads as "no function touches this field, so
+                    // freezing it is safe". (audit #5 Z9)
+                    bool deadline = res.Scan?.DeadlineHit ?? false;
+                    match.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
                     if (res.Xrefs.Count > 0) withFuncs++;
+                    if (deadline) partial++;
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -743,7 +787,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                 StatusText = $"Find Funcs: {done}/{targets.Count} scanned ({withFuncs} referenced)…";
             }
             StatusText = $"Find Funcs done: {withFuncs}/{targets.Count} referenced by a function"
-                       + (cached > 0 ? $" ({cached} cached)." : ".");
+                       + (cached > 0 ? $" ({cached} cached)." : ".")
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

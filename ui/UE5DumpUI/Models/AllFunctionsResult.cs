@@ -79,6 +79,31 @@ public sealed class AllFunctionsResult
     public int Total          { get; init; }
     public int ScannedObjects { get; init; }
     public int ScannedClasses { get; init; }
+
+    /// <summary>
+    /// Functions emitted. Identical to <see cref="Total"/> by construction on the
+    /// DLL side — it is NOT an honest pool total and must never be read as one.
+    /// Use <see cref="Truncated"/> to know whether a pool larger than this exists.
+    /// </summary>
     public int TotalFunctions { get; init; }
+
+    /// <summary>
+    /// The DLL walk stopped at <see cref="Limit"/>, so <see cref="Functions"/> is a
+    /// PAGE, not the pool. Any "this game has no X" claim built from a truncated
+    /// scan is a claim about the page. (audit #5 Z8)
+    /// </summary>
+    public bool Truncated { get; init; }
+
+    /// <summary>The walk was aborted mid-GObjects (client gone / shutdown). Also partial.</summary>
+    public bool Aborted { get; init; }
+
+    /// <summary>The row cap the DLL actually applied (echoed back so the status line
+    /// can name it without the caller re-deriving its own request).</summary>
+    public int Limit { get; init; }
+
+    /// <summary>True when the returned set is a page rather than the whole pool —
+    /// the single predicate every caller should gate an "in this game" claim on.</summary>
+    public bool IsPartial => Truncated || Aborted;
+
     public List<AllFunctionEntry> Functions { get; init; } = new();
 }

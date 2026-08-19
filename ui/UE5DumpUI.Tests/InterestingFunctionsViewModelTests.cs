@@ -622,4 +622,145 @@ public class InterestingFunctionsViewModelTests
         vm.TryCheckAobMaker();
         Assert.True(vm.IsAobMakerAvailable); // unchanged from default
     }
+
+    // ==================================================================
+    // Audit #5 Z15 — a re-score must move the report with the rows.
+    // ==================================================================
+
+    /// <summary>
+    /// Toggling Gameplay Actions re-scores every row, which by design moves how many
+    /// clear the threshold — that is the entire purpose of the pack. The status line
+    /// was written only by <c>LoadAsync</c>, so the panel kept reporting the PREVIOUS
+    /// scoring's "above threshold: N" underneath a grid scored the other way.
+    ///
+    /// <para>Distinct from Z1 (the re-score not running); here the re-score runs and
+    /// the report does not follow.</para>
+    /// </summary>
+    [Fact]
+    public async Task Rescore_updates_the_above_threshold_count_in_the_status_line()
+    {
+        var dump = new FakeDumpService
+        {
+            NextResult = new AllFunctionsResult
+            {
+                Total = 2, ScannedClasses = 2, ScannedObjects = 100,
+                Functions = new List<AllFunctionEntry>
+                {
+                    // Scores 0 without the pack, 5 with it (GameplayAction "Dash").
+                    new() { ClassName = "AThing", FuncName = "Dash" },
+                    // Never interesting either way — keeps the count honest at 0.
+                    new() { ClassName = "AThing", FuncName = "Zzz" },
+                },
+            },
+        };
+        var vm = new InterestingFunctionsViewModel(dump, new NoopLogger());
+
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Contains("(0 above threshold", vm.StatusText);
+
+        vm.GameplayActions = true;
+        await vm.RescoreAsync();
+
+        // The grid moved...
+        Assert.Single(vm.Results);
+        // ...and so must the sentence describing it.
+        Assert.Contains("(1 above threshold", vm.StatusText);
+        // The scan facts it quotes are still the load's, not invented.
+        Assert.Contains("2 functions across 2 classes", vm.StatusText);
+    }
+
+    // ==================================================================
+    // Audit #5 Z8 — list_all_functions caps silently; say so.
+    // ==================================================================
+
+    [Fact]
+    public void StatusLine_on_a_complete_scan_carries_no_warning()
+    {
+        var s = InterestingFunctionsViewModel.BuildStatusLine(
+            new InterestingFunctionsViewModel.LoadScanFacts(
+                50_000, 4_400, 1_000_000, Truncated: false, Aborted: false, Limit: 100_000),
+            interesting: 900);
+
+        Assert.Equal("50,000 functions across 4,400 classes  "
+                   + $"(900 above threshold {KeywordScoringTable.InterestingThreshold}, "
+                   + "scanned 1,000,000 objects)", s);
+    }
+
+    /// <summary>
+    /// A capped walk makes the row count a page, not the pool. Before Z8 the DLL emitted
+    /// no truncation marker at all for this command, so this sentence read as a complete
+    /// census of the game.
+    /// </summary>
+    [Fact]
+    public void StatusLine_on_a_capped_scan_names_the_cap_and_a_lever_this_panel_has()
+    {
+        var s = InterestingFunctionsViewModel.BuildStatusLine(
+            new InterestingFunctionsViewModel.LoadScanFacts(
+                100_000, 9_000, 1_400_000, Truncated: true, Aborted: false, Limit: 100_000),
+            interesting: 1_500);
+
+        Assert.Contains("STOPPED at the 100,000-row cap", s);
+        Assert.Contains("more functions exist", s);
+        Assert.Contains("Game classes only", s);   // a control this panel really owns
+    }
+
+    [Fact]
+    public void StatusLine_on_an_aborted_scan_says_cancelled_not_capped()
+    {
+        var s = InterestingFunctionsViewModel.BuildStatusLine(
+            new InterestingFunctionsViewModel.LoadScanFacts(
+                12, 3, 400, Truncated: false, Aborted: true, Limit: 100_000),
+            interesting: 1);
+
+        Assert.Contains("SCAN CANCELLED", s);
+        Assert.DoesNotContain("row cap", s);
+    }
+
+    /// <summary>
+    /// The class-noise picker presents per-class hit counts as a census of the result.
+    /// On a capped walk they are a lower bound, and until Z8 there was no flag to pass —
+    /// so the en.axaml string "⚠ Counts are partial" could never appear on this panel.
+    /// </summary>
+    [Fact]
+    public async Task Capped_load_marks_the_class_noise_picker_counts_as_partial()
+    {
+        var dump = new FakeDumpService
+        {
+            NextResult = new AllFunctionsResult
+            {
+                Total = 1, ScannedClasses = 1, ScannedObjects = 10,
+                Truncated = true, Limit = 100_000,
+                Functions = new List<AllFunctionEntry>
+                {
+                    new() { ClassName = "PlayerCharacter", FuncName = "AddMoney" },
+                },
+            },
+        };
+        var vm = new InterestingFunctionsViewModel(dump, new NoopLogger());
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.True(vm.ClassFilter.CountsPartial);
+    }
+
+    [Fact]
+    public async Task Complete_load_does_NOT_mark_the_picker_counts_as_partial()
+    {
+        var dump = new FakeDumpService
+        {
+            NextResult = new AllFunctionsResult
+            {
+                Total = 1, ScannedClasses = 1, ScannedObjects = 10,
+                Functions = new List<AllFunctionEntry>
+                {
+                    new() { ClassName = "PlayerCharacter", FuncName = "AddMoney" },
+                },
+            },
+        };
+        var vm = new InterestingFunctionsViewModel(dump, new NoopLogger());
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.False(vm.ClassFilter.CountsPartial);
+    }
 }

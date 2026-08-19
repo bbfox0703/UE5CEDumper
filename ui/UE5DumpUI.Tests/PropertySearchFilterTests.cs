@@ -103,4 +103,119 @@ public class PropertySearchFilterTests
         Assert.NotNull(vm.ResultFilterHistory);   // bound to the AutoCompleteBox ItemsSource
         vm.Dispose();
     }
+
+    // ==================================================================
+    // Audit #5 Z4 / Z10 — the cap must reach BOTH surfaces, and the advice
+    // must name a control the panel actually has.
+    // ==================================================================
+
+    private sealed class CappedSearchDump : StubDumpService
+    {
+        public PropertySearchResult Next { get; set; } = new();
+        public override Task<PropertySearchResult> SearchPropertiesAsync(
+            string query, string[]? types = null, bool gameOnly = true, bool deep = false,
+            int limit = 200, CancellationToken ct = default) => Task.FromResult(Next);
+    }
+
+    private static async Task<PropertySearchViewModel> VmFor(PropertySearchResult result)
+    {
+        var vm = new PropertySearchViewModel(new CappedSearchDump { Next = result },
+                                             new NoopLog()) { SearchQuery = "Health" };
+        await vm.SearchCommand.ExecuteAsync(null);
+        return vm;
+    }
+
+    /// <summary>
+    /// The class-noise picker presents its per-class hit counts as a census of the
+    /// result. On a capped search they are a lower bound — and this very method already
+    /// read the same flags fifteen lines later to print its own cap warning, so the
+    /// panel warned "capped" in one place while the picker beside it implied a complete
+    /// tally. The "⚠ Counts are partial" string has existed in en.axaml the whole time
+    /// and could never appear here.
+    /// </summary>
+    [Fact]
+    public async Task Truncated_search_marks_the_class_picker_counts_as_partial()
+    {
+        var vm = await VmFor(new PropertySearchResult
+        {
+            Total = 200, Truncated = true,
+            Results = new List<PropertySearchMatch> { Row("BP_Enemy_C", "Health") },
+        });
+
+        Assert.True(vm.ClassFilter.CountsPartial);
+        vm.Dispose();
+    }
+
+    [Fact]
+    public async Task Aborted_search_marks_the_class_picker_counts_as_partial()
+    {
+        var vm = await VmFor(new PropertySearchResult
+        {
+            Total = 7, Aborted = true,
+            Results = new List<PropertySearchMatch> { Row("BP_Enemy_C", "Health") },
+        });
+
+        Assert.True(vm.ClassFilter.CountsPartial);
+        vm.Dispose();
+    }
+
+    /// <summary>Negative control — a complete search must NOT cry wolf.</summary>
+    [Fact]
+    public async Task Complete_search_leaves_the_class_picker_counts_exact()
+    {
+        var vm = await VmFor(new PropertySearchResult
+        {
+            Total = 1,
+            Results = new List<PropertySearchMatch> { Row("BP_Enemy_C", "Health") },
+        });
+
+        Assert.False(vm.ClassFilter.CountsPartial);
+        vm.Dispose();
+    }
+
+    /// <summary>
+    /// Z10: the cap suffix used to end "narrow the query or raise Max". This panel has
+    /// no Max control — the string was lifted from Instance Finder, which really does
+    /// own an InstanceSearchCap NumericUpDown — so half the advice sent the user hunting
+    /// for a lever that does not exist here.
+    /// </summary>
+    [Fact]
+    public async Task Cap_advice_never_mentions_a_Max_control_this_panel_does_not_have()
+    {
+        var vm = await VmFor(new PropertySearchResult
+        {
+            Total = 200, Truncated = true,
+            Results = new List<PropertySearchMatch> { Row("BP_Enemy_C", "Health") },
+        });
+
+        Assert.Contains("STOPPED at the 200-row cap", vm.StatusText);
+        Assert.DoesNotContain("raise Max", vm.StatusText);
+        // ...and it names levers the panel genuinely owns.
+        Assert.Contains("Type filter", vm.StatusText);
+        vm.Dispose();
+    }
+
+    /// <summary>With "Game classes only" already on, that lever is spent — don't offer
+    /// it. Advice the user has already followed is noise.</summary>
+    [Fact]
+    public async Task Cap_advice_offers_GameClassesOnly_only_while_it_is_still_off()
+    {
+        var capped = new PropertySearchResult
+        {
+            Total = 200, Truncated = true,
+            Results = new List<PropertySearchMatch> { Row("BP_Enemy_C", "Health") },
+        };
+
+        var on = new PropertySearchViewModel(new CappedSearchDump { Next = capped },
+                     new NoopLog()) { SearchQuery = "Health", GameClassesOnly = true };
+        await on.SearchCommand.ExecuteAsync(null);
+        Assert.DoesNotContain("Game classes only", on.StatusText);
+        on.Dispose();
+
+        var off = new PropertySearchViewModel(new CappedSearchDump { Next = capped },
+                      new NoopLog()) { SearchQuery = "Health", GameClassesOnly = false };
+        await off.SearchCommand.ExecuteAsync(null);
+        Assert.Contains("Game classes only", off.StatusText);
+        off.Dispose();
+    }
 }

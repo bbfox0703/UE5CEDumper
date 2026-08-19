@@ -856,6 +856,8 @@ public sealed class DumpService : IDumpService
                 ClassesPrimed  = scanNode["classes_primed"]?.GetValue<int>() ?? 0,
                 DurationMs     = scanNode["duration_ms"]?.GetValue<long>() ?? 0,
                 DeadlineHit    = scanNode["deadline_hit"]?.GetValue<bool>() ?? false,
+                // Emitted by the DLL since build 1194 and dropped here until Z8/Z12.
+                DeepScan       = scanNode["deep_scan"]?.GetValue<bool>() ?? false,
             };
         }
 
@@ -2681,6 +2683,11 @@ public sealed class DumpService : IDumpService
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             ScannedClasses = res["scanned_classes"]?.GetValue<int>() ?? 0,
             TotalFunctions = res["total_functions"]?.GetValue<int>() ?? 0,
+            // Absent on a pre-Z8 DLL → false / 0, i.e. "assume complete", which is the
+            // pre-existing behaviour rather than a new false alarm. (audit #5 Z8)
+            Truncated      = res["truncated"]?.GetValue<bool>() ?? false,
+            Aborted        = res["aborted"]?.GetValue<bool>()   ?? false,
+            Limit          = res["limit"]?.GetValue<int>()      ?? limit,
             Functions      = functions,
         };
     }
