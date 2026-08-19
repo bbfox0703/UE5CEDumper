@@ -33,6 +33,65 @@ public static class BakedScriptGenerator
     /// script will look up via <c>findTableFile</c>.</summary>
     public const string HelperFileName = "ue5_invoke_helper.lua";
 
+    /// <summary><c>sizeof(MailboxData::paramsData)</c> — <c>uint8[1024]</c> at 0x328 in
+    /// <c>dll/src/Mimic.h</c>, mirrored by <c>PARAMS_REGION_BYTES</c> in
+    /// <c>scripts/ue5_invoke_helper.lua</c>. A hard ceiling on any offset this generator
+    /// emits a mailbox write for: <c>cmdFlags</c>/<c>cmdOutFlags</c> sit immediately
+    /// after it and the struct ends 8 bytes later.</summary>
+    internal const int ParamsRegionBytes = 1024;
+
+    /// <summary>Baseline verify-mode dump width when nothing needs more.</summary>
+    internal const int DefaultDumpBytes = 32;
+
+    /// <summary>Ceiling on the verify-mode dump, so a large params buffer cannot flood
+    /// CE's Lua Engine with a wall of hex.</summary>
+    internal const int MaxDumpBytes = 256;
+
+    /// <summary>
+    /// Byte width of verify mode's Before/After hex dump.
+    ///
+    /// <para>It used to be a flat <c>max(8, min(parmsSize, 32))</c> — which, whenever the
+    /// return slot sat past byte 32, produced a dump that could not possibly contain the
+    /// value the very next printed line told the user to read out of it ("complex return;
+    /// see After: dump above"). A return slot at offset 32+ is the ordinary case, not an
+    /// edge one: the return is the LAST param, so any function with two 8-byte inputs and
+    /// an <c>FString</c> return already clears 32 (audit #5 Y13).</para>
+    ///
+    /// <para>Grows to cover <c>returnParam.Offset + Size</c>, then clamps: never past the
+    /// function's own <c>parmsSize</c> (reading beyond it would show mailbox fields as if
+    /// they were params), never past <see cref="MaxDumpBytes"/>, and never below 8 — the
+    /// last of which preserves the old behaviour for a tiny params buffer.</para>
+    ///
+    /// <para>⚠ One deliberate difference from the old expression: a <c>parmsSize</c> of 0
+    /// (a no-arg void function) now yields the 32-byte default rather than 8. There is no
+    /// declared size to clamp to, the dump is read-only <c>readByte</c> with an <c>or 0</c>
+    /// fallback, and 32 bytes of the shared params region is the more useful diagnostic —
+    /// the whole point of verify mode being to show what the previous invoke left behind.</para>
+    /// </summary>
+    internal static int ComputeDumpLength(int parmsSize, BakedParamValue? returnParam)
+    {
+        int want = DefaultDumpBytes;
+        if (returnParam is { Offset: >= 0 })
+        {
+            // Size can be 0 if the engine did not report one; still show the slot's start.
+            int end = returnParam.Offset + Math.Max(returnParam.Size, 1);
+            if (end > want) want = end;
+        }
+        if (want > MaxDumpBytes) want = MaxDumpBytes;
+        if (parmsSize > 0 && want > parmsSize) want = parmsSize;
+        if (want > ParamsRegionBytes) want = ParamsRegionBytes;
+        return Math.Max(8, want);
+    }
+
+    /// <summary>
+    /// True when <see cref="ComputeDumpLength"/> still cannot reach the end of the return
+    /// slot — i.e. the clamps won. The verify-mode complex-return line must then NOT tell
+    /// the user to read the value out of the dump, because it is not in there.
+    /// </summary>
+    internal static bool ReturnFitsInDump(int dumpLen, BakedParamValue? returnParam)
+        => returnParam is not { Offset: >= 0 }
+           || returnParam.Offset + Math.Max(returnParam.Size, 1) <= dumpLen;
+
     /// <summary>
     /// Generate a complete CE AA Script that invokes <paramref name="funcName"/>
     /// on a live instance of <paramref name="className"/> with the supplied
@@ -179,11 +238,25 @@ public static class BakedScriptGenerator
         // Verify mode: emit a Before/After raw-byte dump around the invoke
         // so the user can distinguish "function didn't run" (After == Before)
         // from "wrong return offset" (return value lands somewhere else).
-        // The dump covers the smaller of (parmsSize, 32) bytes -- enough for
-        // typical 1-2 input + 1 return functions without flooding the output.
+        // Width is chosen so the RETURN SLOT is inside the window (Y13); the
+        // complex-return message below consults the same number rather than
+        // asserting the value is visible.
+        int dumpLen = ComputeDumpLength(parmsSize, returnParam);
         if (verifyReturn)
         {
             Line(sb, "-- ====== Verify mode: dump params buffer + decoded return ======");
+            // CONTRACT CHECK FIRST. Everything below writes into the mailbox at
+            // mb + UE5_INVOKE_PARAMS_OFFSET, and that offset is precisely the thing a
+            // contract move invalidates — so writing before checking scribbles over
+            // whatever now lives there. CLAUDE.md states the ordering rule outright
+            // ("before the first write, because the layout is what is in question");
+            // this was the only mailbox-touching generator with no check at all
+            // (audit #5 Y10). UntickAndReturn: a script that bailed here applied
+            // nothing, so leaving the record ticked would claim a cheat is active.
+            Line(sb, "-- Contract check BEFORE the first mailbox write (the layout is");
+            Line(sb, "-- what is in question, so a write cannot come first).");
+            CeLuaHygiene.AppendContractCheck(sb, "Invoke");
+            Line(sb);
             Line(sb, "-- Resolve mailbox via getAddressSafe + module-prefixed fallback,");
             Line(sb, "-- mirroring the helper's findMailbox(). Bare getAddress() is fine");
             Line(sb, "-- in some setups but throws / returns garbage in others when CE's");
@@ -195,8 +268,7 @@ public static class BakedScriptGenerator
             Line(sb, "  return a or 0");
             Line(sb, "end)()");
             Line(sb, $"local _PD_dbg = _mb_dbg + (UE5_INVOKE_PARAMS_OFFSET or 0x328)");
-            int dumpLen = Math.Max(8, Math.Min(parmsSize, 32));
-            Line(sb, $"local _DUMP_LEN = {dumpLen}  -- min(parmsSize, 32)");
+            Line(sb, $"local _DUMP_LEN = {dumpLen}  -- sized to reach the return slot; see ComputeDumpLength");
             Line(sb, "local function _dumpHex(label)");
             Line(sb, "  if _mb_dbg == 0 then");
             Line(sb, "    print(label .. ': <mailbox unresolved -- is UE5Dumper.dll injected?>')");
@@ -222,8 +294,17 @@ public static class BakedScriptGenerator
             // [3, 4, 7] payload). Pre-zeroing here makes Before always
             // appear clean, so Before vs After unambiguously isolates
             // what THIS invoke wrote.
+            //
+            // CLAMPED to the params region. `parmsSize` is UFunction::ParmsSize and is
+            // NOT bounded by the mailbox: paramsData is uint8[1024] at 0x328, followed
+            // immediately by cmdFlags/cmdOutFlags, and MailboxData ends at 0x730. A
+            // UFunction with a large by-value struct parameter therefore zeroed straight
+            // through both flag words and past the end of the struct. The Lua helper's
+            // own invokeUFunction refuses parmsSize > 1024 — but it runs AFTER this loop,
+            // so the refusal came too late to prevent the write (audit #5 Y10).
+            int zeroLen = Math.Min(Math.Max(parmsSize, 0), ParamsRegionBytes);
             Line(sb, "if _mb_dbg ~= 0 then");
-            Line(sb, $"  for i = 0, {parmsSize} - 1 do writeByte(_PD_dbg + i, 0) end");
+            Line(sb, $"  for i = 0, {zeroLen} - 1 do writeByte(_PD_dbg + i, 0) end");
             Line(sb, "end");
             Line(sb, "_dumpHex('[Invoke] Before')");
             Line(sb);
@@ -254,13 +335,21 @@ public static class BakedScriptGenerator
                 {
                     // FString / FText / TArray / TMap / TSet / FStruct etc. are
                     // multi-byte buffer layouts the helper has no decoder for.
-                    // Print just the raw decoded label and tell the user to
-                    // read the After: dump for the actual bytes -- still useful
-                    // ("ReturnValue is non-zero in the dump → function ran").
+                    // Print just the raw decoded label and point at the After: dump
+                    // -- still useful ("ReturnValue is non-zero in the dump → the
+                    // function ran"). ComputeDumpLength has already widened the window
+                    // to cover the return slot; the hint only claims that when it is
+                    // actually true, because the whole value of this line is that the
+                    // bytes are in the text above it (audit #5 Y13).
+                    var hint = ReturnFitsInDump(dumpLen, returnParam)
+                        ? "complex return; see After: dump above"
+                        : $"complex return at +{returnParam.Offset}, past the "
+                          + $"{dumpLen}-byte dump window above -- read it in CE's memory "
+                          + "viewer at g_invokeMailbox + 0x328";
                     Line(sb,
                         $"  print('[Invoke] OK: {EscapeLua(className)}::{EscapeLua(funcName)} " +
                         $"-> {EscapeLua(returnParam.ParamName)} ({displayType}@{returnParam.Offset}, " +
-                        $"size={returnParam.Size}B) -- complex return; see After: dump above')");
+                        $"size={returnParam.Size}B) -- {hint}')");
                 }
                 else
                 {
@@ -554,8 +643,25 @@ public static class BakedScriptGenerator
         return MarkUnparsed(t);
     }
 
+    /// <summary>Prefix <see cref="MarkUnparsed"/> stamps on a literal it could not render.
+    /// The emitted Lua is a comment followed by a bare <c>0</c>, so the script still
+    /// assembles — which is exactly why the FAILURE has to be reported out of band.</summary>
+    internal const string UnparsedMarker = "--[[unparsed:";
+
+    /// <summary>
+    /// True when <see cref="RenderLiteral"/> would give up on this input and bake a 0.
+    ///
+    /// <para>Defined by RUNNING the real renderer rather than re-deriving the rule, so it
+    /// cannot disagree with what the script actually contains — a second parser here is
+    /// how "the report and the reality are computed by different code paths" gets
+    /// re-introduced. Its caller is the dialog's export message, which used to announce
+    /// "N baked param(s)" over params that had failed to parse (audit #5 Y14).</para>
+    /// </summary>
+    public static bool IsUnparsedLiteral(string ueTypeName, string text)
+        => RenderLiteral(ueTypeName, text).StartsWith(UnparsedMarker, StringComparison.Ordinal);
+
     private static string MarkUnparsed(string raw)
-        => $"--[[unparsed:{EscapeLuaComment(raw)}]] 0";
+        => $"{UnparsedMarker}{EscapeLuaComment(raw)}]] 0";
 
     /// <summary>Shared with <see cref="ParamBufferBuilder"/> so the FIRE path and the exported
     /// script parse the same inputs, negatives included (audit #5 Y2/Y5).</summary>

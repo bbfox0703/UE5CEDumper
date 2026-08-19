@@ -8298,7 +8298,7 @@ void CaptureDirectStructFields(uintptr_t obj, uintptr_t cls,
     const auto& members = Radar::MultiNumericMembers(numericScope);
     if (members.empty()) return;   // not a meta scope -> capture nothing
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // cached
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
     constexpr int kMaxStructLeafFields = 512;        // per object, defensive
     int added = 0;
     for (const auto& f : ci.Fields) {
@@ -8707,7 +8707,7 @@ void AppendRawHoleLeaves(uintptr_t obj, uintptr_t cls, const std::string& classN
                          std::vector<GroupLeafMeta>& metas, size_t leafCap) {
     if (widths.empty() || leaves.size() >= leafCap) return;
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // cached
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
     const int32_t headerEnd = DynOff::UOBJECT_OUTER + 8;
     constexpr int32_t kSanity   = 0x10000;
     constexpr int32_t kFallback = 0x400;
@@ -9263,7 +9263,7 @@ void AppendRawHoleFields(uintptr_t obj, uintptr_t cls, Radar::DataType numericSc
     const std::vector<Radar::DataType>& members = Radar::MultiNumericMembers(numericScope);
     if (members.empty()) return;   // numericScope isn't a meta type -> capture nothing
 
-    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // cached
+    const ClassInfo& ci = Ubel::WalkClassEx(cls);   // memoized (B10) — BY REF, no copy
     const int32_t headerEnd = DynOff::UOBJECT_OUTER + 8;
     constexpr int32_t kSanity   = 0x10000;
     constexpr int32_t kFallback = 0x400;

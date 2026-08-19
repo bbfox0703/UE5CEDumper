@@ -4932,7 +4932,17 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // Much more accurate than InterpretValue's "interpret all bytes as floats".
             // previewLimit controls how many sub-fields to show (0 = skip preview entirely).
             if (found && fv.structClassAddr && previewLimit > 0) {
-                ClassInfo si = WalkClass(fv.structClassAddr);  // cached — just hash lookup
+                // Memoized, but NOT free: WalkClass returns ClassInfo BY VALUE, so a
+                // cache HIT is a hash lookup plus a deep copy of the flattened super
+                // chain (Fields carries the whole inheritance chain — 100-300 FieldInfo
+                // x 14 std::string on an ordinary Actor subclass). This sits in a
+                // per-field loop, so the copy is paid once per struct field. The comment
+                // here used to read "just hash lookup", which is exactly the claim a
+                // reader checks before leaving a call inside a loop (audit #5 U18).
+                // Not switched to WalkClassEx's by-reference form: the enclosing block
+                // is itself calibrating DynOff::FSTRUCTPROP_STRUCT, and WalkClassEx runs
+                // CorrectSubclassOffsets, which writes that same global.
+                ClassInfo si = WalkClass(fv.structClassAddr);
                 uintptr_t structBase = instanceAddr + fi.Offset;
 
                 // Bulk read struct bytes — single cross-process read for both
@@ -5358,6 +5368,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // StructProperty path: bulk-read the struct, format the first
                 // `previewLimit` scalar sub-fields).
                 if (fv.structClassAddr && previewLimit > 0) {
+                    // Memoized, and a HIT still deep-copies the flattened super chain —
+                    // WalkClass returns by value. Sibling of the array-element preview
+                    // above; same per-element loop, same cost (audit #5 U18).
                     ClassInfo si = WalkClass(fv.structClassAddr);
                     int32_t readSize = innerSize;
                     if (readSize <= 0 || readSize > 1024) {

@@ -188,6 +188,70 @@ public static class ParamBufferBuilder
     };
 
     /// <summary>
+    /// Params the FIRE path must leave ZEROED, because they are multi-word structures
+    /// whose contents would have to be allocated inside the game — the same reason
+    /// <c>FString</c> params go through <see cref="Models.InvokeStringParam"/> and are
+    /// built DLL-side instead of packed into the params hex here.
+    ///
+    /// <para>All-zero IS the default-constructed empty value for each of them:
+    /// <c>TArray</c>/<c>TSet</c>/<c>TMap</c> <c>{Data=nullptr, Num=0, Max=0}</c>, an
+    /// unbound <c>FScriptDelegate</c>, an empty <c>TFieldPath</c>, an unset
+    /// <c>TOptional</c>, and a zeroed by-value struct. Without this,
+    /// <see cref="WriteParam"/> fell through to its size-driven default and wrote the
+    /// user's textbox as a raw 4-byte integer over the structure's first pointer field —
+    /// a bogus <c>Data</c> pointer handed straight to ProcessEvent (audit #5 Y11).</para>
+    ///
+    /// <para><c>StructProperty</c> is here for the LAYOUT-LESS case only: when the dialog
+    /// resolved sub-fields it writes them through <see cref="WriteStructParam"/> and never
+    /// reaches this predicate.</para>
+    ///
+    /// <para>This is the exact set the exported script's helper already refuses to
+    /// fabricate (<c>writeParams</c>' <c>tarray/tmap/tset/delegate</c> arm, audit #5
+    /// AA16), so the two invoke paths now answer the same input the same way.</para>
+    /// </summary>
+    public static bool IsEmptyOnlyParam(string typeName) =>
+        typeName is "ArrayProperty"
+                 or "MapProperty"
+                 or "SetProperty"
+                 or "FieldPathProperty"
+                 or "OptionalProperty"
+                 or "StructProperty"
+                 or "DelegateProperty"
+                 or "MulticastDelegateProperty"
+                 or "MulticastInlineDelegateProperty"
+                 or "MulticastSparseDelegateProperty";
+
+    /// <summary>
+    /// Params FIRE must refuse OUTRIGHT — not even a zeroed slot is a safe answer.
+    ///
+    /// <para>Only <c>FText</c>. Unlike every type in <see cref="IsEmptyOnlyParam"/>, an
+    /// all-zero <c>FText</c> is not an empty <c>FText</c>: it carries a
+    /// <c>TSharedRef</c> the engine dereferences on use, so passing zeros is a crash
+    /// rather than a default. The exported script's helper refuses it unconditionally for
+    /// exactly this reason; FIRE silently wrote 4 bytes of the textbox into it, so one
+    /// dialog input had two different wrong answers (audit #5 Y11).</para>
+    /// </summary>
+    public static bool IsRefusedParam(string typeName) => typeName == "TextProperty";
+
+    /// <summary>Everything <see cref="WriteParam"/> must not write.</summary>
+    public static bool IsUnwritableParam(string typeName) =>
+        IsEmptyOnlyParam(typeName) || IsRefusedParam(typeName);
+
+    /// <summary>
+    /// True when <paramref name="text"/> is the untouched zero default for a param box —
+    /// empty, <c>0</c>, or <c>0x0</c> (the spellings <see cref="GetDefaultValue"/>
+    /// produces). Tells "the user left this alone" from "the user meant to pass
+    /// something", which an empty-only param must answer differently.
+    /// </summary>
+    internal static bool IsZeroDefaultText(string? text)
+    {
+        var t = (text ?? "").Trim();
+        return t.Length == 0
+            || t == "0"
+            || t.Equals("0x0", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Whether <paramref name="text"/> can be written to this param without silent
     /// truncation. Returns false plus a message naming the accepted range.
     ///
@@ -195,10 +259,38 @@ public static class ParamBufferBuilder
     /// everything else returns true and is validated by its own parser. A value that is not
     /// a number at all also returns true — the parsers already have defined behaviour for
     /// that and it is not this check's job to duplicate it.</para>
+    ///
+    /// <para>Two exceptions, both about types with no textbox encoding at all (audit #5
+    /// Y11). An <see cref="IsRefusedParam"/> type (<c>FText</c>) is refused whatever the
+    /// box holds, because zeros are a crash rather than a default. An
+    /// <see cref="IsEmptyOnlyParam"/> type is refused only when the user actually typed
+    /// something: the slot is always left zeroed, so a typed value would be silently
+    /// dropped — the same class of lie as silently truncating it — while an untouched box
+    /// legitimately means "pass the empty default".</para>
     /// </summary>
     public static bool TryValidateScalar(string typeName, int size, string text, out string error)
     {
         error = "";
+
+        if (IsRefusedParam(typeName))
+        {
+            error = $"{ShortTypeName(typeName)} parameters cannot be invoked from this " +
+                    "dialog — an FText holds a shared reference the engine allocates, and " +
+                    "sending a zeroed one crashes the game. Invoke a wrapper that takes an " +
+                    "FString instead.";
+            return false;
+        }
+
+        if (IsEmptyOnlyParam(typeName))
+        {
+            if (IsZeroDefaultText(text)) return true;
+            error = $"{ShortTypeName(typeName)} parameters cannot be built from a textbox " +
+                    "— this is a multi-word structure whose contents must be allocated " +
+                    "inside the game, and the value you typed would be dropped. Clear the " +
+                    "box to send an empty/zeroed value instead.";
+            return false;
+        }
+
         int width = EffectiveIntWidth(typeName, size);
         if (width <= 0 || width >= 8) return true;   // not ranged, or an 8-byte field takes any long
 
@@ -224,6 +316,15 @@ public static class ParamBufferBuilder
     {
         int available = buf.Length - offset;
         if (available <= 0) return;
+
+        // Multi-word structures (FText / TArray / TMap / TSet / delegate / TFieldPath /
+        // TOptional, and a StructProperty with no resolved layout) have no textbox
+        // encoding. Leave the slot ZEROED instead of falling through to the size-driven
+        // default, which wrote 4 bytes of the user's text over the structure's first
+        // pointer field and handed ProcessEvent a bogus Data pointer. TryValidateScalar
+        // refuses ahead of this whenever the user actually typed something, so reaching
+        // here means the box was left at its zero default (audit #5 Y11).
+        if (IsUnwritableParam(typeName)) return;
 
         switch (typeName)
         {

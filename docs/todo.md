@@ -1623,6 +1623,42 @@ section against the register's `^###` headings went from **40 un-findable to 0**
 exempt — `AUTOREFRESH` is already a full 繁中 section — they are simply behind. Mirror each as it is
 picked up.
 
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L11 (U1/U4 + stragglers): V8 / V10 / V11 / W8 / Y10 / Y11 / Y12 / Y13 / F5
+
+*L11 was the LAST LOW batch. **V9** (the Object Tree's Cancel button could not cancel a search) and
+**Y14** (the baked export announced N params over values it had failed to parse) need NO live check —
+both are driven end to end by the real ViewModel / real generator in `AuditL11HonestyTests`, and both
+negative-controlled. **U18** is comments only. What follows is the rest.*
+
+⚠ **F5 is the row to run FIRST and the one to worry about.** It is the only change in this batch that
+touches the pipe every other feature rides on, in the game's own process: `MakeResponse` /
+`MakeEvent` no longer splice their payload with nlohmann's `merge_patch` (per-key assignment
+instead, which cannot delete an envelope key or be replaced wholesale by a non-object payload), and
+`Fern::WriteLine` no longer materialises a `line + "\n"` copy — payload and terminator now go out as
+two `WriteFile` calls under the same `writeMutex` on the byte-mode pipe. `Renge::ApplyPayload` is
+pinned by 16 assertions in `dll_helpers_test` (the header IS compiled there), but **nothing compiles
+`Fern.cpp`**, so the two-write split has never executed. If anything in this batch breaks a session,
+it is this.
+
+⚠ **Y10 / Y13 did NOT move the mailbox contract, and that is worth confirming rather than assuming.**
+Both changes are script-side: a contract check placed before the first write, a pre-zero loop clamped
+to the 1024-byte params region, and a wider Before/After dump window. Nothing about the LAYOUT
+changed, `tools/check_mailbox_contract.py` passes unchanged, and the emitted script still bakes
+contract **3** (min 1). A `.CT` saved before this batch stays valid.
+
+> | # | cat | 做什麼 | 預期 |
+> |---|-----|--------|------|
+> | 1 | **A** | **F5.** With the UI **disconnected** (⛔ `kMaxPipeInstances=3` and the UI holds 2 — see `[PIPEBUSY]`), drive `tools/verify/pipe_client.py` against an injected game and send `snapshot_chunk`, `find_instances` (a class with thousands of instances) and `list_all_functions`. | Every reply parses as one JSON object per line and carries **all three** envelope keys `id` / `ok` / `game_thread_stalled` alongside its payload. The big ones matter most: they are the responses whose second copy the fix removed, and the two-`WriteFile` split is what could truncate or interleave them. |
+> | 2 | **A** | **F5, the interleave control.** Same session: start a `watch` so the DLL pushes EVT_WATCH events on one connection while you issue ordinary commands on the other, for a minute. | No malformed line, ever. Both writes for a message happen under one `writeMutex`, so a watch event must never land in the middle of a response. A single garbled line here refutes the split and the change should be reverted to one `WriteFile`. |
+> | 3 | **A** | **F5, the ordinary path.** Connect the UI normally and use it for a few minutes — Object Tree load, Live Walker drill, a value scan. | Everything behaves as before. This is the regression control; the envelope change is invisible when it works. |
+> | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
+> | 5 | **B** | **V10.** On a title where the first scan leaves GObjects **or** GWorld unresolved, press **Extra Scan** and wait for it to finish. | The green "Found: GObjects: 0x…" result **stays on screen**. Before the fix it appeared and was blanked a few ms later by the pointer refresh the scan itself triggered. Then, mid-scan, change the **UE version** ComboBox: the Extra Scan button must stay disabled until the scan really ends. ⚠ Sample-blocked if every installed title resolves both pointers on the first pass. |
+> | 6 | **B** | **V11.** With CE + the AOBMaker plugin connected, click **Register symbol** on the GWorld card, then again with **CE closed**. | Success prints a teal line naming `gworld_addr`; the failure prints a RED line naming it. Before the fix both produced *nothing at all* on screen. Repeat on the **&GEngine** card — it was the second site, found by the sibling grep. |
+> | 7 | **B** | **Y10 / Y13.** Open a UFunction with a **complex return** (FString / struct) whose return slot sits past byte 32, tick **Verify return**, and push the baked script to CE. Tick the record. | CE's Lua Engine shows the Before/After dump **containing the return slot** (the window is now sized to reach it) and the line no longer says "see After: dump above" when it cannot. Then untick, **detach CE from the game**, and re-tick: the contract check must fire FIRST with a message naming `g_mailboxContract`, and the record must **untick itself** — no `writeByte` may have run. |
+> | 8 | **B** | **Y12.** Close CE (or disconnect AOBMaker), then **Copy AA Script (Baked)**, and right-click → Paste in CE's address list. | A memory record appears with type **Auto Assembler Script**. Before the fix the clipboard held a bare `[ENABLE]`/`[DISABLE]` body, which CE will not accept as a record at all. The result label should say "copied as CE XML", not "copied to clipboard". |
+> | 9 | **B** | **Y11.** Find a UFunction taking an `FText`, `TArray` or `TMap` parameter and press **FIRE**. | An `FText` param is refused by name whatever the box holds. A `TArray`/`TMap`/`TSet`/struct param fires with the slot **left zeroed** when its box is untouched, and is refused with a message when you type a value into it. Before the fix the textbox was written as a raw int32 over the structure's Data pointer and handed to ProcessEvent. ⚠ Sample-blocked if no installed title exposes such a UFunction. |
+> | 10 | **B** | **V8.** Walk a `UDataTable` with **more than 64 rows** in Live Walker and drill into its **RowMap**. | The breadcrumb, the header and the RowMap preview row all carry "⚠ showing 64 of N", and the status line says the view is capped per fetch — **without** naming the Array Limit slider, which does not govern this view. A DataTable with ≤64 rows must show none of that. |
+
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L10 (T1e Views/app root): AF7 / AF8 / AF10 / AF11 / AF12 / AF13 / AF16–AF23
 
 *Most of L10 needs NO live check. **AF9** (log-folder count cap removed) is pinned by three tests

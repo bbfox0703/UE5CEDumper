@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <sstream>
 #include <iomanip>
+#include <utility>   // std::move — ApplyPayload moves payload values out
 
 #include "Stark.h"   // game-thread liveness for the shared response envelope
 
@@ -280,8 +281,42 @@ inline std::vector<uint8_t> HexToBytes(const std::string& hex) {
     return bytes;
 }
 
-// Build a success response
-inline nlohmann::json MakeResponse(int id, const nlohmann::json& data = {}) {
+// Splice a handler payload onto an envelope with plain per-key ASSIGNMENT.
+//
+// NOT nlohmann's merge_patch (RFC 7386), which both builders used to call. Two of
+// merge_patch's documented behaviours are wrong for an envelope, and neither is
+// what any call site meant (audit #5 F5):
+//
+//   * a NULL value in the patch DELETES the key rather than setting it. A handler
+//     that answers {"value": null} therefore ships a response with no "value" key
+//     at all, and {"ok": null} would delete the envelope's own success flag. No
+//     handler emits a top-level null today, so this is a latent hazard rather than
+//     a live bug -- but it is one an ordinary `data["x"] = nullptr;` re-introduces
+//     silently, which is exactly the shape worth removing.
+//   * a NON-OBJECT patch REPLACES the whole target, so `id` / `ok` /
+//     `game_thread_stalled` would vanish outright. All three payload-returning
+//     call sites build objects, so the `is_object()` guard below can only ever
+//     skip a payload that would have destroyed the envelope.
+//
+// It also MOVES each value out of an rvalue payload instead of deep-copying the
+// DOM, which is the half F5 was filed for: `snapshot_chunk` (8192 objects),
+// `find_instances` (50000 cap) and `list_all_functions` (100000 default) all
+// paid a full second copy inside the GAME process's heap.
+//
+// Key ORDER is not affected: nlohmann's default object is a std::map, so the
+// serialized text is key-sorted either way and the wire bytes are unchanged.
+inline void ApplyPayload(nlohmann::json& res, nlohmann::json&& data) {
+    if (!data.is_object()) return;
+    for (auto it = data.begin(); it != data.end(); ++it)
+        res[it.key()] = std::move(it.value());
+}
+
+// Build a success response.
+//
+// `data` is taken BY VALUE deliberately: an lvalue argument costs exactly the one
+// copy merge_patch used to make, while a temporary (or an explicit std::move at a
+// heavy call site) is moved straight through ApplyPayload with no copy at all.
+inline nlohmann::json MakeResponse(int id, nlohmann::json data = nlohmann::json()) {
     nlohmann::json res;
     res["id"] = id;
     res["ok"] = true;
@@ -291,12 +326,10 @@ inline nlohmann::json MakeResponse(int id, const nlohmann::json& data = {}) {
     // response lets the UI raise a non-blocking "game paused" banner from any
     // command it happens to send (no dedicated heartbeat command or timer), and
     // clear it on the next response once the thread ticks again. Cost: one
-    // atomic read + a steady-clock diff. Placed before merge_patch so a handler
-    // that (unusually) sets its own "game_thread_stalled" still wins.
+    // atomic read + a steady-clock diff. Placed before the payload splice so a
+    // handler that (unusually) sets its own "game_thread_stalled" still wins.
     res["game_thread_stalled"] = !Stark::IsGameThreadResponsive();
-    if (!data.is_null() && !data.empty()) {
-        res.merge_patch(data);
-    }
+    ApplyPayload(res, std::move(data));
     return res;
 }
 
@@ -309,13 +342,13 @@ inline nlohmann::json MakeError(int id, const std::string& errorMsg) {
     };
 }
 
-// Build a push event (no id)
-inline nlohmann::json MakeEvent(const std::string& eventType, const nlohmann::json& data = {}) {
+// Build a push event (no id). Same envelope rule as MakeResponse: an "event" key
+// must survive whatever the payload contains.
+inline nlohmann::json MakeEvent(const std::string& eventType,
+                                nlohmann::json data = nlohmann::json()) {
     nlohmann::json evt;
     evt["event"] = eventType;
-    if (!data.is_null() && !data.empty()) {
-        evt.merge_patch(data);
-    }
+    ApplyPayload(evt, std::move(data));
     return evt;
 }
 

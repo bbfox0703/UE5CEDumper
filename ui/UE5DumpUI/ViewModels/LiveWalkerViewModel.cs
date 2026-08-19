@@ -1301,9 +1301,28 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         PopulateSetContainerFields(field.SetElements ?? new(), field);
     }
 
-    private void NavigateToDataTableContainer(LiveFieldValue field, DataTableWalkResult dtResult)
+    /// <summary>Preview text for the synthetic RowMap field injected into a DataTable's
+    /// field grid. Pure so the truncation badge can be pinned without a dispatcher —
+    /// <see cref="TryLoadDataTableRowsAsync"/>, its only caller, runs fire-and-forget and
+    /// lands on the UI thread.</summary>
+    internal static string DataTableFieldPreview(DataTableWalkResult dt) =>
+        $"{{DataTable: {dt.RowCount} rows, {dt.RowStructName}}}"
+        + ContainerTruncation.BadgeSuffix(dt.Rows.Count, dt.RowCount);
+
+    /// <summary>internal for the audit #5 V8 drill test: the DataTable branch of
+    /// NavigateToContainer is otherwise reachable only through a fire-and-forget
+    /// dispatcher hop that populates <c>_cachedDataTableRows</c>.</summary>
+    internal void NavigateToDataTableContainer(LiveFieldValue field, DataTableWalkResult dtResult)
     {
-        var label = $"RowMap [{dtResult.RowCount} x {dtResult.RowStructName}]";
+        // The DataTable drill is the container path the [CONTAINERCAP] badge sweep did
+        // not reach, and it was the worst of the family: the crumb printed RowCount —
+        // the TRUE total the DLL reports — over a grid holding only the rows that fit
+        // WalkDataTableRowsAsync's fixed page (64). A 5,000-row table therefore
+        // announced "5000" and showed 64, so a row that simply had not been fetched
+        // read as a row the table does not contain (audit #5 V8).
+        var received = dtResult.Rows.Count;
+        var label = $"RowMap [{dtResult.RowCount} x {dtResult.RowStructName}]"
+            + ContainerTruncation.BadgeSuffix(received, dtResult.RowCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
@@ -1317,14 +1336,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ContainerField = field,
             DataTableData = dtResult,
         });
-        _log.Info($"NAV\u2192DataTable {field.Name} addr={CurrentAddress} rows={dtResult.RowCount} struct={dtResult.RowStructName} | BC={FormatBreadcrumbTrace()}");
+        _log.Info($"NAV\u2192DataTable {field.Name} addr={CurrentAddress} rows={received}/{dtResult.RowCount} struct={dtResult.RowStructName} | BC={FormatBreadcrumbTrace()}");
+
+        // FixedCap wording, not StatusLine: the Array Limit slider does NOT govern this
+        // view (WalkDataTableRowsAsync uses its own page size), so sending the user to
+        // that slider would be a second false statement on top of the first.
+        var dtTruncStatus = ContainerTruncation.FixedCapStatusLine(received, dtResult.RowCount, "rows");
+        if (dtTruncStatus.Length > 0) StatusText = dtTruncStatus;
 
         PopulateDataTableRowFields(dtResult);
     }
 
     private void PopulateDataTableRowFields(DataTableWalkResult dtResult)
     {
-        CurrentObjectName = "RowMap";
+        // Header carries the badge too — on CurrentObjectName, matching the Array / Map /
+        // Set populate siblings — so a Back-navigation into this view (which re-enters
+        // here without re-running NavigateToDataTableContainer) still says it.
+        CurrentObjectName = "RowMap"
+            + ContainerTruncation.BadgeSuffix(dtResult.Rows.Count, dtResult.RowCount);
         CurrentClassName = $"DataTable<{dtResult.RowStructName}>";
         HasData = true;
         ShowCeXml = false;
@@ -6368,7 +6397,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 TypeName = "DataTableRows",
                 Offset = dtResult.RowMapOffset,
                 Size = 0,
-                TypedValue = $"{{DataTable: {dtResult.RowCount} rows, {dtResult.RowStructName}}}",
+                // Badge here too: this row is what the user clicks to drill in, so the
+                // "only 64 of these are actually fetched" fact belongs BEFORE the click,
+                // not only after it (audit #5 V8).
+                TypedValue = DataTableFieldPreview(dtResult),
                 DataTableRowCount = dtResult.RowCount,
                 DataTableStructName = dtResult.RowStructName,
                 DataTableFNameSize = dtResult.FNameSize,

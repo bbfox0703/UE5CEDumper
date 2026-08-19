@@ -859,16 +859,49 @@ public sealed class InvokeParamDialog : Window
                     description, script, autoActivate: false);
             }
 
+            // Params that could not be rendered as a Lua literal were baked as 0 with an
+            // --[[unparsed:…]] marker. Saying "N baked param(s)" over that reported a
+            // clean export of a script that will call the game with the wrong arguments
+            // (audit #5 Y14), so name them instead — computed from the SAME renderer the
+            // generator used, not from a second parse that could disagree.
+            var unparsed = bakedValues
+                .Where(v => BakedScriptGenerator.IsUnparsedLiteral(v.UeTypeName, v.LiteralText))
+                .Select(v => v.ParamName)
+                .ToList();
+            string paramNote = unparsed.Count == 0
+                ? $"{bakedValues.Count} baked param(s)"
+                : $"{bakedValues.Count} baked param(s) — ⚠ {unparsed.Count} could NOT be " +
+                  $"parsed and {(unparsed.Count == 1 ? "was" : "were")} baked as 0: " +
+                  string.Join(", ", unparsed);
+
             if (sentToCe)
             {
-                _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
+                _resultLabel.Foreground = new SolidColorBrush(
+                    Color.Parse(unparsed.Count == 0 ? "#4EC9B0" : "#E0A050"));
                 _resultLabel.Text = $"AA Script created in CE: {description}\n" +
-                    $"({bakedValues.Count} baked param(s); helper file required " +
-                    "in your .CT)";
+                    $"({paramNote}; helper file required in your .CT)";
             }
             else if (_platform != null)
             {
-                await _platform.CopyToClipboardAsync(script);
+                // Wrap as paste-able CE memory-record XML. A bare [ENABLE]/[DISABLE] AA
+                // body cannot be pasted into CE's address list on its own — it has to be a
+                // CheatEntry with VariableType = Auto Assembler Script. Every other
+                // clipboard fallback in the app went through WrapAaScriptXml at build
+                // 1986, including the no-arg Console sibling; this one was missed
+                // (audit #5 Y12).
+                var xml = Services.CheatTableBuilder.WrapAaScriptXml(description, script);
+                bool copied = await _platform.CopyToClipboardAsync(xml);
+                if (!copied)
+                {
+                    // CopyToClipboardAsync never throws — it reports failure. Claiming a
+                    // successful copy over a clipboard that does not hold the script is
+                    // the same defect as Y14 one branch up.
+                    _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
+                    _resultLabel.Text = "ERROR: could not write to the clipboard — the AA " +
+                        "Script was NOT delivered. Another application may be holding the " +
+                        "clipboard open; try again.";
+                    return;
+                }
                 if (wasAvailable)
                 {
                     // Pipe was up at start; send failed. CE likely closed
@@ -876,15 +909,17 @@ public sealed class InvokeParamDialog : Window
                     _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#E0A050"));
                     _resultLabel.Text =
                         $"⚠ AOBMaker pipe broke mid-send (CE closed?).\n" +
-                        $"AA Script copied to clipboard ({script.Length:N0} chars) " +
-                        "as a fallback.\nPaste into a new CE AA Script entry once CE is ready.";
+                        $"AA Script copied as CE XML ({xml.Length:N0} chars) as a fallback " +
+                        $"({paramNote}).\nPaste into CE's address list once CE is ready.";
                 }
                 else
                 {
-                    _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
-                    _resultLabel.Text = $"AOBMaker not connected.\nAA Script copied to clipboard " +
-                        $"({script.Length:N0} chars).\nDon't forget to embed " +
-                        $"ue5_invoke_helper.lua in your .CT (Table -> Add File...).";
+                    _resultLabel.Foreground = new SolidColorBrush(
+                        Color.Parse(unparsed.Count == 0 ? "#4EC9B0" : "#E0A050"));
+                    _resultLabel.Text = $"AOBMaker not connected.\nAA Script copied as CE XML " +
+                        $"({xml.Length:N0} chars; {paramNote}) — paste into CE's address list." +
+                        $"\nDon't forget to embed ue5_invoke_helper.lua in your .CT " +
+                        $"(Table -> Add File...).";
                 }
             }
             else

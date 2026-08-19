@@ -5378,6 +5378,122 @@ static void Test_Renge_TryHexToBytes() {
     EXPECT("empty rejected",          !Renge::TryHexToBytes("", out));
 }
 
+// F5 — the response/event envelope must survive its payload.
+//
+// MakeResponse / MakeEvent used to splice the handler payload on with nlohmann's
+// merge_patch (RFC 7386). Two of its behaviours are wrong for an envelope and neither is
+// what any call site meant: a NULL value in the patch DELETES the key rather than setting
+// it, and a NON-OBJECT patch replaces the whole target — which would drop "id"/"ok"
+// outright. Assignment has neither.
+//
+// The negative control is the merge_patch line itself: put it back in ApplyPayload and
+// the null case loses "value" while the non-object case loses "id" AND "ok".
+//
+// MakeResponse itself is not called here — it reads Stark::IsGameThreadResponsive, whose
+// definition lives in Stark.cpp and is not linked into this target. ApplyPayload is the
+// piece that decides, so it is the piece pinned (working-lessons §2.3: put the rule in a
+// header and the header IS testable).
+static void Test_Renge_ApplyPayloadKeepsEnvelope() {
+    std::printf("Test_Renge_ApplyPayloadKeepsEnvelope\n");
+
+    auto envelope = [] {
+        nlohmann::json e;
+        e["id"] = 7;
+        e["ok"] = true;
+        e["game_thread_stalled"] = false;
+        return e;
+    };
+
+    // 1. Ordinary payload: every envelope key survives, every payload key lands.
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["total"] = 42;
+        data["name"]  = "Actor";
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("plain payload keeps id",      res.contains("id") && res["id"] == 7);
+        EXPECT("plain payload keeps ok",      res.contains("ok") && res["ok"] == true);
+        EXPECT("plain payload keeps stalled", res.contains("game_thread_stalled"));
+        EXPECT("plain payload adds total",    res.contains("total") && res["total"] == 42);
+        EXPECT_EQ_STR("plain payload adds name", res["name"].get<std::string>(), "Actor");
+    }
+
+    // 2. A NULL value must be SET, not delete the key. merge_patch removed it, so a
+    //    handler answering {"value": null} shipped a response with no "value" at all.
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["value"] = nullptr;
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("null payload value is PRESENT", res.contains("value"));
+        EXPECT("null payload value is null",    res.contains("value") && res["value"].is_null());
+    }
+
+    // 3. A null that COLLIDES with an envelope key must not delete it. This is the one
+    //    that turns a success into an unparseable response on the UI side.
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["ok"] = nullptr;
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("colliding null keeps the key", res.contains("ok"));
+        EXPECT("id survives a colliding null", res.contains("id") && res["id"] == 7);
+    }
+
+    // 4. A handler that deliberately overrides an envelope key still wins (the
+    //    game_thread_stalled contract MakeResponse documents).
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["game_thread_stalled"] = true;
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("handler override wins", res["game_thread_stalled"] == true);
+    }
+
+    // 5. A non-object payload cannot destroy the envelope. merge_patch REPLACED the
+    //    target with it, i.e. "id" and "ok" simply ceased to exist.
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json arr = nlohmann::json::array({1, 2, 3});
+        Renge::ApplyPayload(res, std::move(arr));
+        EXPECT("non-object payload leaves an object", res.is_object());
+        EXPECT("non-object payload keeps id", res.contains("id") && res["id"] == 7);
+        EXPECT("non-object payload keeps ok", res.contains("ok") && res["ok"] == true);
+    }
+
+    // 6. Nested objects are REPLACED, not recursively merged. merge_patch would have
+    //    kept `a` from the envelope's stale sub-object and produced a hybrid neither
+    //    side wrote.
+    {
+        nlohmann::json res = envelope();
+        res["inner"] = nlohmann::json{{"a", 1}};
+        nlohmann::json data;
+        data["inner"] = nlohmann::json{{"b", 2}};
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("nested object replaced, not merged",
+               res["inner"].is_object() && !res["inner"].contains("a")
+               && res["inner"].contains("b"));
+    }
+
+    // 7. The rvalue overload actually MOVES: the source array is left empty rather than
+    //    deep-copied. This is the half F5 was filed for (8192-object snapshot chunks
+    //    copied a second time inside the game process's heap).
+    {
+        nlohmann::json res = envelope();
+        nlohmann::json data;
+        data["objects"] = nlohmann::json::array({1, 2, 3, 4});
+        Renge::ApplyPayload(res, std::move(data));
+        EXPECT("payload landed", res["objects"].size() == 4);
+        // Deliberately NOT `is_array() && empty()`: a moved-from nlohmann value is left
+        // as `null`, not as an empty array of its old type. Asserting "no longer holds
+        // the four elements" detects the copy either way without pinning nlohmann's
+        // moved-from representation — the first draft of this line asserted the
+        // representation and failed against a working move.
+        EXPECT("payload was moved out of, not copied",
+               !data["objects"].is_array() || data["objects"].empty());
+    }
+}
+
 // B4 — the mailbox poller needs immunity from the PER-COMMAND cancel WITHOUT being
 // classified a background worker. One flag used to answer both questions; this asserts
 // they are now genuinely independent. The second EXPECT in the poller block is the
@@ -6466,6 +6582,7 @@ int main() {
 
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
+    RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
     RUN(Test_FFieldClassName_Probe);

@@ -108,7 +108,9 @@ public class StubDumpService : IDumpService
     public virtual Task<FindPropertyXrefsResult> FindFunctionsByClassAsync(string classAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<string> GetFunctionCodeAddrAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<FunctionPropRefsResult> WalkFunctionPropsAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
+    // virtual: the USMAP exporter collects enums before it collects classes, so a test of
+    // the CLASS collector (audit #5 W8) has to be able to answer this without throwing.
+    public virtual Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PropertySearchResult> SearchPropertiesAsync(string query, string[]? types = null, bool gameOnly = true, bool deep = false, int limit = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PropertySearchBatchResult> SearchPropertiesBatchAsync(string[] queries, string[]? types = null, bool gameOnly = true, int limitPerQuery = 200, CancellationToken ct = default) => throw new NotImplementedException();

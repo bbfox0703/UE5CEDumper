@@ -1,12 +1,13 @@
 # Unattended verification session — handoff and run plan
 
-**Written 2026-08-17 · dist build 3262 · classification re-derived 2026-08-19 → [§10](#10-the-繁中-checklists-40-remaining-items--one-row-each-2026-08-19)**
+**Written 2026-08-17 · dist build 3262 · classification re-derived 2026-08-19, audit L11 appended → [§10](#10-the-繁中-checklists-57-remaining-items--one-row-each-2026-08-19)**
 
 > ⚠ **The old headline said "64 checklist rows · A=16 · B=35 · C=12 · D=1". It is retired, not
 > updated** — it counted register rows, and nothing recorded which 64, so it could not be re-derived.
-> **§10 restates the classification against a denominator that can be**: the 40 `###` items left in
-> `pending-verification_zh-TW.md` after the 2026-08-19 prune (46 → 40). Current split: **A=7 · B=17 ·
-> C=14 · D=2**. §7 lists **three** D_MANUAL rows, one more than that D=2 — `AB1/AB2`'s APC sub-step
+> **§10 restates the classification against a denominator that can be**: the `###` items left in
+> `pending-verification_zh-TW.md` — **57** after the 2026-08-19 prune (46 → 40), L10's five, the four
+> `[TAG]` mirrors and L11's eight. Current split, **derived from §10's table and never from here**:
+> **A=11 · B=29 · C=15 · D=2**. §7 lists **three** D_MANUAL rows, one more than that D=2 — `AB1/AB2`'s APC sub-step
 > is impossible but its parent item is otherwise closed, so it is no longer a 繁中 item to count.
 
 This is the *operational* companion to [todo.md § Pending live-game verification](todo.md) and
@@ -967,13 +968,14 @@ Group 1 still runs the 10-minute partial as a genuine non-regression, recorded a
 
 -----
 
-## 10. The 繁中 checklist's 49 remaining items — one row each (2026-08-19)
+## 10. The 繁中 checklist's 57 remaining items — one row each (2026-08-19)
 
 **Denominator, stated so it cannot drift again: the `###` item count of
-[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **49**.** That file was pruned
+[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **57**.** That file was pruned
 46 → 40 on 2026-08-19, took audit **L10**'s five new items (AF7/AF8, AF10/AF11, AF12/AF13/AF22,
 AF16–AF23, AF21) the same day → 45, then **lost `A5`** (closed on the maintainer's own run) and
-**gained the four `[TAG]` mirrors** `PIPEBUSY` / `SLOTSYM` / `CLASSTOTAL` / `PROXYLOAD` → **49**.
+**gained the four `[TAG]` mirrors** `PIPEBUSY` / `SLOTSYM` / `CLASSTOTAL` / `PROXYLOAD` → 49, then
+audit **L11**'s eight (F5, W8, V11, Y10/Y13, Y12, V10, Y11, V8) → **57**.
 Re-derive with `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two
 `###` under 「怎麼用這份清單」. This is **not** the same denominator as this file's older
 "64 checklist rows" headline, which counted register rows; that number is retired.
@@ -1044,6 +1046,17 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 | 48 | `CLASSTOTAL` | **B** | ⭐ **Cheapest first step is A** — one `list_classes` over the pipe against Elliot, and the row is decided if `total_classes` > 5,000. The B part is only 鐵則 4 (the status-line *string* must actually be seen). Step 3 needs a **second, small** game, so schedule it beside another `<5,000`-class launch rather than on its own |
 | 49 | `PROXYLOAD` | **B** | Three launches: OCTOPATH (imports `version`, must stay "not observed"), DQ7R or DQ I&II (must read "loaded"), then OCTOPATH again on `winmm`. ⚠ Two of the three are **negative/positive controls for each other** — running only the first proves nothing, because "not observed" is also what a broken lookup returns |
 
+*Rows 50–57 are audit **L11**, the last LOW batch (2026-08-19).*
+
+| 50 | `F5` | **A** | Pure `pipe_client.py` + a `watch` on the second connection, no GUI. ⭐ **Run this one first in any batch that injects at all**: it is the only change in L11 inside the game's process, it touches the pipe every other feature rides on, and **no test target compiles `Fern.cpp`**, so the two-`WriteFile` split has never executed. Row 3 of the register item is the regression control and is free — just use the UI normally afterwards |
+| 51 | `W8` | **B** | Export a `.usmap` on any Blueprint-heavy shipped title and compare the "N structs" line. The PASS is a large number, so it does not need a parser — but if FModel is installed for row 9 (`W1 / W7`), read the file there in the same sitting and both rows advance |
+| 52 | `V11` | **B** | Two clicks with CE up, then the same two with CE closed, on two cards. Fold into any GROUP that already has CE attached — it shares its whole setup with rows 47 and 53 |
+| 53 | `Y10 / Y13` | **B** | CE + a baked Verify-mode invoke. ⚠ Its step 3 needs CE **detached mid-session**, which is a rig action (not a human judgement), so it stays B — but sequence it LAST in its CE group, because re-attaching costs a fresh symbol resolve. Needs a UFunction with a complex return past byte 32; the return is the last param, so two 8-byte inputs plus an `FString` return is enough |
+| 54 | `Y12` | **B** | CE closed, one clipboard copy, one right-click Paste. The cheapest row in the batch |
+| 55 | `V10` | **B** | **Sample-gated, and the gate is the whole difficulty**: it needs a title where the first scan leaves GObjects or GWorld unresolved. §7 already records that all 34 local titles resolve GWorld, so check that before scheduling — this may close as "no sample", which is a result |
+| 56 | `Y11` | **B** | Sample-gated on a UFunction taking an `FText` / `TArray` / `TMap` parameter. Cheapest next step is a corpus grep of an existing `list_all_functions` dump for those param types before launching anything |
+| 57 | `V8` | **B** | Sample-gated on a `UDataTable` with more than 64 rows — common in JRPGs, so pair it with a DQ / OCTOPATH launch that is already scheduled |
+
 ### Totals — and the direct answer to "how much of this can Auto drive?"
 
 ⚠ **Derived from the table above, never hand-edited.** The previous revision of this block summed to
@@ -1052,12 +1065,12 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 
 | cat | count | items |
 |---|---|---|
-| **A** — fully headless | **10** | 2, 4, 10, 14, 17, 32, 35, 42, 43, 46 |
-| **B** — Auto + computer-use, no human judgement | **22** | 1, 5, 6, 11, 12, 13, 15, 16, 18, 20, 23, 24, 29, 30, 31, 33, 34, 41, 44, 47, 48, 49 |
+| **A** — fully headless | **11** | 2, 4, 10, 14, 17, 32, 35, 42, 43, 46, 50 |
+| **B** — Auto + computer-use, no human judgement | **29** | 1, 5, 6, 11, 12, 13, 15, 16, 18, 20, 23, 24, 29, 30, 31, 33, 34, 41, 44, 47, 48, 49, 51, 52, 53, 54, 55, 56, 57 |
 | **C** — needs a bounded human action | **15** | 3, 7, 9, 19, 21, 22, 25, 26, 27, 28, 36, 37, 38, 39, 45 |
 | **D** — impossible today | **2** | 8, 40 |
 
-**32 of 49 (65%) need no human judgement at all** — 10 of them with no GUI whatsoever. That is the
+**40 of 57 (70%) need no human judgement at all** — 11 of them with no GUI whatsoever. That is the
 honest headline. But read the C column before planning a batch: **six of the fifteen are one short
 gameplay bout** (`A11` + `A12` + `V1a` step 1 share a single one; `AA2/AA3`, `AA12/AA13`, `AD4`,
 `ST1` and `b719…` each need combat, a spawn, damage, or a queue drain), so one scheduled session with

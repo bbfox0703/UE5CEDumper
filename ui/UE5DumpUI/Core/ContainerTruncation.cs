@@ -44,4 +44,20 @@ public static class ContainerTruncation
         IsTruncated(received, total)
             ? $"Showing the first {received:N0} of {total:N0} entries — raise the \"Array Limit\" slider in the toolbar and re-open this container to read more."
             : "";
+
+    /// <summary>
+    /// Status line for a view whose cap is FIXED in code rather than driven by the
+    /// Array Limit slider — today the DataTable RowMap drill-down, which requests a
+    /// hard-coded page of rows and offers no paging control (audit #5 V8).
+    /// <para>
+    /// A separate wording on purpose: pointing a user at a slider that does not govern
+    /// this view would be a second false statement layered on the first. Empty when
+    /// not truncated, same as the pair above.
+    /// </para>
+    /// </summary>
+    /// <param name="unit">Plural noun for what is being counted, e.g. "rows".</param>
+    public static string FixedCapStatusLine(int received, int total, string unit) =>
+        IsTruncated(received, total)
+            ? $"Showing the first {received:N0} of {total:N0} {unit} — this view is capped at {received:N0} per fetch."
+            : "";
 }

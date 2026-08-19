@@ -394,6 +394,12 @@
     <sys:String x:Key="str.Pointers.TestScan.Result">Test: scan simulation finished (no actual rescan — all pointers are already found).</sys:String>
     <sys:String x:Key="str.Pointers.TestScan.Error">Test scan error: {0}</sys:String>
 
+    <!-- Pointer Panel: "Register symbol" outcome (code-behind via Res.Format).
+         Success goes to SymbolStatusText, failure to ErrorMessage — a bool that only
+         chose a log LEVEL made the two states identical on screen (audit #5 V11). -->
+    <sys:String x:Key="str.Pointers.Symbol.Registered">Registered CE symbol '{0}' — it re-scans on enable, so it survives a game restart.</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.Failed">Could not register CE symbol '{0}'. AOBMaker accepted the request but CE did not create the script — check that Cheat Engine is still open and attached to this game, then try again.</sys:String>
+
     <!-- Pointer Panel: Cache management status messages (code-behind via Res.Get) -->
     <sys:String x:Key="str.Pointers.Cache.GameCleared">Cache cleared for this game. Next scan will do a full search.</sys:String>
     <sys:String x:Key="str.Pointers.Cache.GameNotFound">No cache entry found for this game.</sys:String>

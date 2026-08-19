@@ -114,6 +114,20 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private bool _scanComplete;
     [ObservableProperty] private string _scanResultText = "";
 
+    /// <summary>Outcome of the last "Register symbol" click (GWorld or &amp;GEngine).
+    /// Bound at the top of PointerPanel.axaml next to <c>ErrorMessage</c>.
+    ///
+    /// <para>Before this existed, <c>CreateSymbolScriptAsync</c>'s bool was branched on
+    /// only to pick <c>_log.Info</c> vs <c>_log.Warn</c> — neither touched a bound
+    /// property — so a button that registered nothing at all looked byte-identical on
+    /// screen to one that worked, and the user's next step (a CE record rooted on the
+    /// symbol) silently resolved to nothing. Success lands here; FAILURE goes to
+    /// <c>ErrorMessage</c>, which the panel already renders in red (audit #5 V11).</para>
+    ///
+    /// <para>One property serves both cards deliberately: every message names its
+    /// symbol, so there is nothing to disambiguate.</para></summary>
+    [ObservableProperty] private string _symbolStatusText = "";
+
     // --- Cache management ---
     [ObservableProperty] private string _peHash = "";
     [ObservableProperty] private string _cacheStatusText = "";
@@ -583,12 +597,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         InvokeTimeoutMs = state.InvokeTimeoutMs > 0 ? state.InvokeTimeoutMs : Constants.StarkDefaultInvokeTimeoutMs;
         _suppressInvokeTimeoutEvent = false;
         HasData = true;
-        // Reset scan state on fresh update
-        IsScanning = false;
-        ScanComplete = false;
-        ScanStatusText = "";
-        ScanResultText = "";
-        CacheStatusText = "";
+        // NOTE: Extra-Scan state is deliberately NOT reset here — see ResetScanState.
         NotifyComputedProperties();
         // Check AOBMaker availability in background (fire-and-forget)
         _ = CheckAobMakerAsync();
@@ -610,12 +619,54 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// disconnect so a reconnect never offers copy/register on the previous game's
     /// addresses (audit X5). <see cref="Update"/> repopulates on reconnect. Minimal
     /// by design: resetting the UE-override / invoke-timeout inputs would fire a pipe
-    /// round-trip via their setters, so only <see cref="HasData"/> is reset. The pipe
-    /// activity log is kept for post-mortem.</summary>
+    /// round-trip via their setters, so only <see cref="HasData"/> and the plain status
+    /// strings in <see cref="ResetScanState"/> are reset — none of the latter has a
+    /// setter that talks to the DLL. (The scan strings moved here from <c>Update</c> in
+    /// audit #5 V10; a disconnect really is a fresh session, a pointer refresh is not.)
+    /// The pipe activity log is kept for post-mortem.</summary>
     public void ClearOnDisconnect()
     {
         HasData = false;
+        ResetScanState();
         NotifyComputedProperties();
+    }
+
+    /// <summary>
+    /// Blank the Extra-Scan / cache status strip. Owned by the FRESH-SESSION paths
+    /// (<see cref="ClearOnDisconnect"/> and MainWindowViewModel's ApplyEngineState),
+    /// never by <see cref="Update"/>.
+    ///
+    /// <para>It used to live at the bottom of <see cref="Update"/> under the comment
+    /// "Reset scan state on fresh update" — but <see cref="Update"/> is not a
+    /// fresh-session signal. It is also the pointer REFRESH, and three of its four
+    /// callers are consequences of the very actions whose result it was erasing
+    /// (audit #5 V10):</para>
+    /// <list type="bullet">
+    /// <item><b>The Extra Scan's own success path.</b> <c>ExtraScanAsync</c> sets
+    ///     <c>ScanResultText = "Found: GObjects: 0x…"</c>, then raises
+    ///     <c>RescanApplied</c>; MainWindowViewModel's handler awaits
+    ///     <c>GetPointersAsync</c> and calls <c>Update</c>, which blanked the result
+    ///     the user had been waiting on — milliseconds after it appeared.</item>
+    /// <item><b><c>ApplyOverrideAsync</c></b> (the UE-version ComboBox) is gated on
+    ///     <c>IsApplyingOverride</c>, not <c>IsScanning</c>, so it is reachable
+    ///     mid-scan. Clearing <c>IsScanning</c> there re-enabled
+    ///     <c>CanExtraScan</c> while the 1.5 s polling loop was still running, i.e.
+    ///     a second concurrent scan one click away.</item>
+    /// <item><b><c>ApplyInvokeTimeoutAsync</c></b> — a pure settings round-trip that
+    ///     has nothing to do with scanning at all.</item>
+    /// </list>
+    /// <para>The scan commands already own these four properties end to end: each
+    /// sets them on entry and clears <c>IsScanning</c> in its own <c>finally</c>.</para>
+    /// </summary>
+    public void ResetScanState()
+    {
+        IsScanning = false;
+        ScanComplete = false;
+        ScanStatusText = "";
+        ScanResultText = "";
+        CacheStatusText = "";
+        SymbolStatusText = "";
+        OnPropertyChanged(nameof(CanExtraScan));
     }
 
     private void NotifyComputedProperties()
@@ -1038,12 +1089,8 @@ public partial class PointerPanelViewModel : ViewModelBase
             module: module,
             autoActivate: true);
 
-        if (success)
-            _log?.Info(Constants.LogCatInit,
-                $"Created CE symbol script '{symbolName}' (AOB: {GworldAob}, pos={GworldAobPos}, len={GworldAobLen})");
-        else
-            _log?.Warn(Constants.LogCatInit,
-                $"Failed to create CE symbol script '{symbolName}'");
+        ReportSymbolRegistration(success, symbolName,
+            $"AOB: {GworldAob}, pos={GworldAobPos}, len={GworldAobLen}");
     }
 
     // --- AOBMaker CE Plugin: register &GEngine as AOB-scan-based CE symbol ---
@@ -1070,13 +1117,55 @@ public partial class PointerPanelViewModel : ViewModelBase
             module: module,
             autoActivate: true);
 
-        if (success)
-            _log?.Info(Constants.LogCatInit,
-                $"Created CE symbol script '{symbolName}' (AOB: {GengineAob}, pos={GengineAobPos}, len={GengineAobLen})");
-        else
-            _log?.Warn(Constants.LogCatInit,
-                $"Failed to create CE symbol script '{symbolName}'");
+        ReportSymbolRegistration(success, symbolName,
+            $"AOB: {GengineAob}, pos={GengineAobPos}, len={GengineAobLen}");
     }
+
+    /// <summary>
+    /// Surface a "Register symbol" outcome to the USER, not only to the log.
+    ///
+    /// <para>Both call sites used to branch the bool purely to pick <c>_log.Info</c>
+    /// vs <c>_log.Warn</c>, so the panel looked identical whether CE had registered
+    /// the symbol or the bridge never reached CE at all — and the user's next action
+    /// (rooting a CE record on that symbol) then resolved to nothing with no hint why
+    /// (audit #5 V11). Shared so the two cards cannot report differently.</para>
+    /// </summary>
+    /// <param name="detail">AOB triple, for the log line only — not shown to the user.</param>
+    internal void ReportSymbolRegistration(bool success, string symbolName, string detail)
+    {
+        if (success)
+        {
+            ClearError();
+            SymbolStatusText = OrFallback(
+                Res.Format("str.Pointers.Symbol.Registered", symbolName),
+                $"Registered CE symbol '{symbolName}'.");
+            _log?.Info(Constants.LogCatInit,
+                $"Created CE symbol script '{symbolName}' ({detail})");
+        }
+        else
+        {
+            // The red banner at the top of PointerPanel.axaml — bound since V7.
+            SymbolStatusText = "";
+            SetError(OrFallback(
+                Res.Format("str.Pointers.Symbol.Failed", symbolName),
+                $"Could not register CE symbol '{symbolName}' in Cheat Engine."));
+            _log?.Warn(Constants.LogCatInit,
+                $"Failed to create CE symbol script '{symbolName}' ({detail})");
+        }
+    }
+
+    /// <summary>
+    /// <c>Res.Get</c>/<c>Res.Format</c> return an EMPTY STRING for a key they cannot
+    /// resolve — they do not throw and do not log (the trap
+    /// <c>SelfTestAdviceTests.EveryAdviceKeyExistsInEnAxaml</c> exists to catch). Both
+    /// bindings added for V11 are gated on <c>IsNotNullOrEmpty</c>, so an empty message
+    /// renders as NO message — which is the exact defect V11 was filed for, arriving by a
+    /// second route. A short literal core keeps the report visible whatever the resource
+    /// dictionary does; the en.axaml entry still supplies the full wording when present,
+    /// and <c>PointerSymbolStringsExistTests</c> pins that it is present.
+    /// </summary>
+    private static string OrFallback(string resolved, string fallback)
+        => string.IsNullOrEmpty(resolved) ? fallback : resolved;
 
     // --- Cache management ---
 

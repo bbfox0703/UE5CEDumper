@@ -15,6 +15,13 @@
                Foreground="#F48771" FontSize="12.5" TextWrapping="Wrap"
                IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
+    <!-- "Register symbol" success. Its FAILURE goes to ErrorMessage above; before
+         audit #5 V11 neither state was bound at all and the bool only picked a log
+         level, so a symbol CE never created looked exactly like one it did. -->
+    <TextBlock Text="{Binding SymbolStatusText}"
+               Foreground="#4EC9B0" FontSize="12.5" TextWrapping="Wrap"
+               IsVisible="{Binding SymbolStatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
     <!-- Not connected message -->
     <TextBlock Text="{StaticResource str.Pointers.NotConnected}"
                Foreground="#666" FontSize="14"

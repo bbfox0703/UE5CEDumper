@@ -1037,9 +1037,29 @@ bool Fern::WriteLine(Connection& conn, const std::string& line) {
     std::lock_guard<std::mutex> lock(conn.writeMutex);
     if (conn.closed.load(std::memory_order_relaxed) || conn.pipe == INVALID_HANDLE_VALUE)
         return false;
-    std::string data = line + "\n";
-    DWORD written;
-    return WriteFile(conn.pipe, data.c_str(), static_cast<DWORD>(data.size()), &written, nullptr) != 0;
+    // Payload and terminator go out as TWO WriteFile calls rather than through a
+    // `line + "\n"` temporary. The temporary was a full second copy of the
+    // serialized response — megabytes on snapshot_chunk / find_instances /
+    // list_all_functions, in the GAME process's heap, purely to append one byte
+    // (audit #5 F5).
+    //
+    // Safe because the pipe is PIPE_TYPE_BYTE | PIPE_READMODE_BYTE (AcceptLoop's
+    // CreateNamedPipeW): there are no message boundaries to split, the reader
+    // frames on '\n' itself, and both writes happen under the SAME writeMutex, so
+    // no other response or watch event can interleave between them.
+    //
+    // Short writes are now treated as failures. A blocking byte-mode pipe writes
+    // everything or errors, so this only fires on a genuinely broken connection —
+    // which the caller already tears down. The old single write ignored `written`
+    // entirely, so a truncated response looked like a success.
+    DWORD written = 0;
+    if (!line.empty()) {
+        if (!WriteFile(conn.pipe, line.data(), static_cast<DWORD>(line.size()), &written, nullptr)
+            || written != static_cast<DWORD>(line.size()))
+            return false;
+    }
+    static const char kNewline = '\n';
+    return WriteFile(conn.pipe, &kNewline, 1, &written, nullptr) != 0 && written == 1;
 }
 
 // Close a connection's handle exactly once. Called by the connection's OWN
@@ -1949,7 +1969,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["serialize_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - serT0).count();
             data["objects"]      = std::move(objects);
-            return Renge::MakeResponse(id, data).dump();
+            // std::move: `data` is dead after this return, and a snapshot chunk is
+            // 8192 objects — the envelope splice would otherwise deep-copy the whole
+            // DOM inside the game process's heap (audit #5 F5).
+            return Renge::MakeResponse(id, std::move(data)).dump();
         }
 
         if (cmd == Renge::CMD_GET_OBJECT) {
@@ -2748,7 +2771,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // mirroring the value-scan begin/refine responses.
             data["class_histogram"] = HistogramToJson(rset.classHistogram, kClassHistogramMaxRows);
             data["class_distinct"]  = rset.classDistinct;
-            return Renge::MakeResponse(id, data).dump();
+            // std::move — find_instances caps at 50000 rows (audit #5 F5).
+            return Renge::MakeResponse(id, std::move(data)).dump();
         }
 
         // === search_properties: Keyword search across all UClass properties ===
@@ -3901,7 +3925,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["aborted"]          = enumResult.aborted;
             data["limit"]            = limit;
             data["functions"]        = functions;
-            return Renge::MakeResponse(id, data).dump();
+            // std::move — list_all_functions defaults to a 100000 limit (audit #5 F5).
+            return Renge::MakeResponse(id, std::move(data)).dump();
         }
 
         // === Live ProcessEvent profiler (Linie) — behaviour-based UFunction

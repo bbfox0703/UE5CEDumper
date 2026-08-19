@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 3 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 19 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 9 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 16 | 符合特定條件的遊戲 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 21 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 12 | 遊戲 + Cheat Engine |
+| **第 4 步 — 需要特定條件的遊戲** | 19 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **49** | |
+| **合計** | **57** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -305,6 +305,30 @@
 
 -----
 
+### ⬜ F5 —— 管線回覆的信封欄位不會掉，大回覆也不會被截斷
+
+*優先度 **高** · ⚠ 這一批唯一動到管線本身的改動，而且沒有任何測試目標會編譯 `Fern.cpp`。這批要是弄壞了 session，就是這一項。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | **先把 UI 斷線**（⛔ `kMaxPipeInstances=3`、UI 自己佔 2 條），再用 `tools/verify/pipe_client.py` 對已注入的遊戲送 `snapshot_chunk`、`find_instances`（挑一個實例數上千的 class）、`list_all_functions`。 | 每個回覆都是一行一個完整 JSON，而且 `id`、`ok`、`game_thread_stalled` **三個都在**。<br>⚠ 大回覆才是重點：被拿掉的那份複製就在這幾個指令上。 |
+| 2 | 同一個 session 開一個 `watch`，讓 DLL 一邊推 EVT_WATCH 事件、一邊照常送指令，持續一分鐘。 | **一行壞掉的都不能有**。同一則訊息的兩次寫入在同一把 `writeMutex` 底下，watch 事件絕不可以插進回覆中間。<br>⚠ 只要看到一行 JSON 斷掉，就代表拆成兩次 `WriteFile` 是錯的，要退回單次寫入。 |
+| 3 | 對照組：正常連 UI 用幾分鐘 —— Object Tree 載入、Live Walker 下鑽、跑一次 value scan。 | 一切如常。信封的改動正常運作時是看不見的，所以一定要跑這一步。 |
+
+-----
+
+### ⬜ W8 —— 匯出的 .usmap 要含 Blueprint 產生的 class
+
+*優先度 **中** · 需要一款 Blueprint 用得多的正式遊戲（幾乎所有商業 UE 遊戲都算）。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 對同一款遊戲匯出 `.usmap`，把「N structs」那個數字和這個 build 之前的紀錄比對。 | 數字**增加到數千**（原本只有原生 class 的幾百個），差額大致等於遊戲裡 `BlueprintGeneratedClass` 的數量。 |
+| 2 | 在檔案裡找一個已知的 `BP_*_C` 或 `WBP_*_C` 名稱。 | 找得到。修正前這些**全部被丟掉**。 |
+| 3 | 若手邊已裝 FModel / CUE4Parse，用它讀這個 `.usmap`（`W1 / W7` 那項本來就需要這個 parser）。 | 能讀出來且不報錯。 |
+
+-----
+
 ## 第 3 步 — 遊戲 ＋ Cheat Engine
 
 還要開 CE 並載入 .CT。
@@ -406,6 +430,42 @@
 | 1 | 勾一筆「Get GameEngine」記錄，再取消勾選，然後在 CE 的 Lua console 執行 `print(getAddressSafe('UE_GameEngine'))`。 | **第一次呼叫就回 nil**（不需要手動 `unregisterSymbol`），`dbg` 寫 `UE_GameEngine unregistered`。<br>⚠ 修正前取消勾選後仍會回 `0x…`，而且 log 還宣稱已經反註冊了。 |
 | 2 | 貼 CE-XML 再做**第二筆**「Get GameEngine」，兩筆都勾起來，先取消**舊的那筆**，再 `print(getAddressSafe('UE_GameEngine'))`。 | 仍然解得到（另一筆還握著）；舊那筆的 `dbg` 寫 `still held by 1 other record(s) -- left registered`。接著取消第二筆 → 這次回 nil。<br>⚠ 兩筆解到的是**同一個** slot 位址，所以不能靠位址分辨誰是誰，只能看 refcount 的訊息。 |
 | 3 | 迴歸：勾「Get GWorld」再取消，`print(getAddressSafe('UE_GWorld'))`。 | 回 nil。<br>⚠ GWorld 這條路徑本來就正常，這步是確認沒被改壞。 |
+
+-----
+
+### ⬜ V11 —— 「Register symbol」成功和失敗要看得出差別
+
+*優先度 **中** · 需要 CE ＋ AOBMaker plugin。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | CE ＋ AOBMaker 都連著時，在 GWorld 卡片按 **Register symbol**。 | 面板上方出現**綠色**一行，句子裡有 `gworld_addr`。 |
+| 2 | 把 CE 關掉，再按一次同一顆按鈕。 | 面板上方出現**紅色**一行，句子裡一樣有 `gworld_addr`，而且綠色那行不見了。<br>⚠ 修正前這兩種情況畫面上**完全一樣**（都是什麼都不顯示），只有 log 的等級不同。 |
+| 3 | 在 **&GEngine** 卡片重複步驟 1、2。 | 行為相同，訊息裡是 `gengine_addr`。<br>⚠ 這是修正時 grep 出來的第二個站點，原本的 finding 只寫了一個。 |
+
+-----
+
+### ⬜ Y10 / Y13 —— Verify 模式：合約檢查要先跑，dump 視窗要涵蓋回傳值
+
+*優先度 **高** · 需要 CE。⚠ 這兩項**沒有動 mailbox 合約**（仍是 3 / min 1），舊的 `.CT` 照樣有效。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 挑一個回傳**複雜型別**（FString／struct）而且回傳欄位落在第 32 byte 之後的 UFunction，勾 **Verify return**，把 baked script 推到 CE，勾起記錄。 | Lua Engine 的 Before/After dump **涵蓋到回傳欄位**（視窗會自動加寬到剛好蓋住它）。 |
+| 2 | 看那行 `[Invoke] OK: … complex return` 的字。 | 只有在 dump 真的蓋得到時才會寫「see After: dump above」；蓋不到時改成講出偏移量並叫你去 CE 記憶體檢視器看。<br>⚠ 修正前不管蓋不蓋得到都寫 see After: dump。 |
+| 3 | 取消勾選，**把 CE 從遊戲 detach**，再勾一次。 | 先跳出合約檢查的訊息（句子裡有 `g_mailboxContract`），而且**記錄會自己取消勾選**。<br>⚠ 重點是這時候**一個 `writeByte` 都不可以跑過** —— 修正前是先寫再說。 |
+| 4 | 對照組：正常連著 CE 時，挑一個 params 很大的 UFunction（by-value struct 參數）跑 Verify。 | 正常跑完。歸零迴圈現在夾在 1024 byte 以內；修正前 `parmsSize` 超過 1024 就會寫穿 `cmdFlags`／`cmdOutFlags` 和整個 mailbox 結構的尾巴。 |
+
+-----
+
+### ⬜ Y12 —— AOBMaker 沒連時，剪貼簿要放「貼得進去」的 CE XML
+
+*優先度 **中** · 需要 CE。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 把 CE 關掉（或讓 AOBMaker 斷線），按 **Copy AA Script (Baked)**，再到 CE 的位址清單按右鍵 → Paste。 | 出現一筆型別是 **Auto Assembler Script** 的記錄。<br>⚠ 修正前剪貼簿放的是裸的 `[ENABLE]`／`[DISABLE]` 內文，CE 根本不接受它變成一筆記錄。 |
+| 2 | 看對話框的結果訊息。 | 寫的是「copied as **CE XML**」，並且叫你貼到位址清單，而不是含糊的「copied to clipboard」。 |
 
 -----
 
@@ -579,6 +639,43 @@
 | 1 | 對「exe 有靜態 import version.dll」的遊戲（OCTOPATH；先用 `py tools/pe/pe_imports_exports.py imports <exe> --dll version` 確認）部署 `version.dll`，啟動遊戲，回面板按 Scan/Refresh。 | Suggested 欄出現「可能被既有模組搶先」的警告；啟動之後 **Loaded?** 欄仍是 **not observed**，旁邊卻是 `DeployedCurrent`。<br>⚠ 修正前面板只寫 `DeployedCurrent`，這種靜默失敗完全看不出來。 |
 | 2 | 對「沒有 import version.dll」的遊戲（DQ7R / DQ I&II）部署同一個 flavour，啟動，Refresh。 | **Loaded?** 顯示 **loaded〈今天日期〉**，而且沒有 bypass 警告。<br>⚠ 沒跑這步就分不出「真的去讀了 log 資料夾」和「一律回 not observed」。 |
 | 3 | 回到 OCTOPATH，改用 `winmm` flavour，部署、啟動、Refresh。 | **Loaded?** 變成 loaded（winmm proxy 在 OCTOPATH 上可用），即使 winmm 也可能出現在 import 表裡。<br>⚠ 這步證明 import 表只是**啟發式警告**，真正的判準是 Loaded? 欄。 |
+
+-----
+
+### ⬜ V10 —— Extra Scan 找到的結果不會被它自己觸發的 refresh 擦掉
+
+*優先度 **中** · **需要**：一款第一次掃描後 GObjects 或 GWorld **仍未解出**的遊戲。都解得出來就是無樣本可測。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 按 **Extra Scan**，等它跑完。 | 綠色的「Found: GObjects: 0x…」**留在畫面上**。<br>⚠ 修正前它會出現一瞬間，然後被掃描自己觸發的指標 refresh 擦掉，所以每次成功都看不到結果。 |
+| 2 | 掃描**進行中**時去動 **UE version** 那個下拉選單。 | Extra Scan 按鈕在掃描真正結束前都保持 disabled。<br>⚠ 修正前那個下拉只被 `IsApplyingOverride` 擋，所以會在掃描中把 `IsScanning` 清掉，讓人可以再開第二個掃描。 |
+| 3 | 對照組：斷線再重連。 | 掃描結果那一區被清空 —— 換一款遊戲不該看到上一款的結果。 |
+
+-----
+
+### ⬜ Y11 —— FIRE 對做不出來的參數型別要老實拒絕
+
+*優先度 **中** · **需要**：一個參數含 `FText`、`TArray` 或 `TMap` 的 UFunction。找不到就是無樣本可測。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 找一個吃 `FText` 參數的 UFunction，按 **FIRE**（欄位維持預設值 `0`）。 | **被拒絕**，訊息指名 FText。<br>⚠ 全零的 FText 不是空 FText —— 它含一個引擎會 deref 的 `TSharedRef`，送零會當掉。匯出腳本那邊（helper 的 `ftext` 分支）本來就是無條件拒絕，這步是讓 FIRE 給出同一個答案。 |
+| 2 | 找一個吃 `TArray`／`TMap`／`TSet`／struct 參數的 UFunction，欄位**不要動**，按 FIRE。 | 正常送出，那個欄位維持**全零**（＝該型別的預設空值）。 |
+| 3 | 同一個欄位打進一個值（例如 `42`），再按 FIRE。 | **被拒絕**並說明原因。<br>⚠ 修正前那串文字會被當成 int32 直接寫在結構的 Data 指標上，然後交給 ProcessEvent。 |
+| 4 | 對照組：一般的 int／float／FString／指標參數照樣 FIRE。 | 全部照舊可用 —— 這步是確認閘門沒有把支援的型別一起擋掉。 |
+
+-----
+
+### ⬜ V8 —— DataTable 下鑽只抓得到前 64 列，畫面要講出來
+
+*優先度 **中** · **需要**：一個列數**超過 64** 的 `UDataTable`。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 在 Live Walker 走到那個 `UDataTable`，下鑽它的 **RowMap**。 | 麵包屑、標頭、以及下鑽前那一列 RowMap 預覽**三個地方**都有「⚠ showing 64 of N」。<br>⚠ 修正前麵包屑寫的是 DLL 回報的**真實總數**（例如 5000），底下卻只有 64 列，所以「沒抓到」的列看起來像「這張表裡沒有」。 |
+| 2 | 看狀態列。 | 說這個檢視每次只抓固定筆數，而且**不會**叫你去調 Array Limit 滑桿 —— 那個滑桿管不到這個檢視，講了就是在第一個假話上再疊一個。 |
+| 3 | 對照組：下鑽一個列數 **≤64** 的 DataTable。 | 上面那些字**一個都不出現**。 |
 
 -----
 

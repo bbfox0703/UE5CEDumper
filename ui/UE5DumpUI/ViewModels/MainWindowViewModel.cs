@@ -2663,6 +2663,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void ApplyEngineState(EngineState state)
     {
+        // Fresh session (connect / proxy trigger_scan): blank the Extra-Scan strip so
+        // no result from the previous game survives. Update() no longer does this —
+        // it is also the plain pointer refresh, and doing it there wiped the scan's
+        // own result seconds after the user saw it (audit #5 V10).
+        Pointers.ResetScanState();
         Pointers.Update(state);
 
         ObjectTree.SetEngineState(state);
