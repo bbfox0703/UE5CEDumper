@@ -88,7 +88,10 @@ def find_export(r, base, want):
 
 def main():
     stem = sys.argv[1]
-    pid = pid_of(stem)
+    # An all-digits argument is a PID. Necessary because `pid_of` deliberately refuses
+    # to guess between same-named processes, and the rigs that drive this ARE python --
+    # so "python" is always ambiguous with the rig's own interpreter.
+    pid = int(stem) if stem.isdigit() else pid_of(stem)
     r = Reader(pid)
     for path, base in modules(pid):
         if not base:

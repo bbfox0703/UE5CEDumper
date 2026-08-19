@@ -1878,6 +1878,36 @@ incremental `cmake --build` after editing only a `.h` is not.
 > | MB1 | on any game, generate an Invoke script for a **stateful, non-static** UFunction, enable it, FIRE once, then enable a **second** Invoke script for a `Native\|Static` Kismet helper and FIRE it — then go back and press FIRE on the FIRST form again | the first form's second FIRE still routes through GameThreadDispatch. `pipe-0.log` shows either no `INVOKE mailbox functionFlags=... is STALE` line, or that WARN naming the stale value and the re-read one | before the fix the second FIRE inherited the helper's `Native\|Static` from offset 0x024 and ran a stateful actor UFunction OFF the game thread; the WARN is the fix's own greppable evidence |
 > | MB1 | same session: confirm a `Native\|Static` helper (e.g. a KismetMath call) still takes the fast path on an **idle** game (main menu) | `INVOKE -> static-native fast path` still logged; no -5 timeout | the re-read must not COST the fast path — a `ResolveFunctionInfo` that fails on some game would silently degrade every pure helper to a queued call that times out at the menu |
 > | MB2 | with the DLL injected into a game whose GObjects scan **fails**, hit the CE `.CT` Keep-Foreground toggle | the toggle works (result 1/0), instead of the old `hook error -10` naming MinHook — a subsystem the command never reached | needs a genuinely failing scan; a healthy game only proves the exemption did not break the normal path (still worth doing as the regression check) |
+> ### ✅ SE1 + MB2 PASS 2026-08-19 `[SEMB-HEADLESS-2026-08-19]` — both headless, no CE, no UI
+>
+> **SE1 — PASS, both halves.** `tools/verify/se1_log_reroute.py` takes a genuinely exclusive handle
+> on `scan-0.log` via `CreateFileW` with `dwShareMode = 0` — **not** Python's `open()`, which shares
+> the file and would let the DLL open it happily, passing the test vacuously. The rig proves the
+> lock by attempting a second open that must fail with `ERROR_SHARING_VIOLATION`.
+> * the announcement appears: `Logger: category 'scan' could not open 'scan-0.log' (errno=13) — its
+>   lines are rerouted here for this run`
+> * ⭐ and the half that actually matters — **597 `[SCAN*]` lines landed in `init-0.log`**, starting
+>   at `FindAll: Starting global pointer scan...`. The announcement alone would not be the fix; the
+>   LINES had to survive, and they did.
+> * `init` was deliberately left writable: it is where the rerouted lines must land, so locking it
+>   would have destroyed the evidence instead of producing it.
+>
+> **MB2 — PASS on the row's exact precondition.** Driven through the mailbox from Python
+> (`tools/verify/mailbox_poke.py <pid> --cmd 12`), so no Cheat Engine was involved.
+> * **Host with a genuinely failing scan** — `FindAll: Complete — GObjects=0x0 (not_found),
+>   GNames=0x0 (not_found), GWorld=0x0 (not_found)`. The toggle sequence:
+>   `GET → 0`, `SET 1 → 1`, `GET → 1`, `SET 0 → 0`. **No `hook error -10`**, i.e. the
+>   `CommandRequiresInit` exemption holds and the command no longer blames MinHook, a subsystem it
+>   never reached.
+> * **Regression control on a second host** (Notepad++, `Partial init — GObjects=OK GNames=MISSING`):
+>   identical `0 → 1 → 1 → 0`. So the exemption did not break the ordinary path either.
+> * ⚠ Honest limit: `initState` was `READY` in both cases, because it reports whether the *pipe
+>   server* started, not whether the scan succeeded. So this exercises "GObjects unresolved", which
+>   is what the row asks for — not "init never finished", which no available host produces.
+> * ⚠ Rig note: `pid_of` refuses to guess between same-named processes, and these rigs *run under
+>   `python.exe`*, so the name "python" is permanently ambiguous with the rig's own interpreter.
+>   `mailbox_poke.py` / `mailbox_addr.py` now accept a bare **PID**.
+
 > | SE1 | before launching a game, open one of its `%LOCALAPPDATA%\UE5CEDumper\Logs\<Game>\*-0.log` files in a viewer that holds an exclusive-ish handle, then launch | `init-0.log` opens with `Logger: category '<name>' could not open ... its lines are rerouted here`, and that category's lines appear in `init-0.log` for the run | before, the category was dead for the process with **nothing logged anywhere** and its buffered early lines destroyed — a later grep read as "that code path never ran" |
 > ### ✅ FL1 + FL2 PASS 2026-08-19 `[FLSWEEP-2026-08-19]` — headless, and the age guard is proven, not assumed
 >

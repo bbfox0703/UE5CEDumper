@@ -116,8 +116,12 @@ def mailbox_addr(stem):
     raise SystemExit(f"mailbox_poke: could not resolve g_invokeMailbox:\n{r.stdout}{r.stderr}")
 
 
-def poke(m, base, op, timeout=10.0):
-    """One CMD_QUERY_PTR round trip. Returns (result, paramsData[:24], elapsed)."""
+def poke(m, base, op, timeout=10.0, cmd=CMD_QUERY_PTR, value=0):
+    """One mailbox round trip. Returns (result, paramsData[:32], elapsed, errorMsg).
+
+    `op` goes in instanceAddr and `value` in ufuncAddr -- the convention every
+    op-coded command in Mimic.h uses (CMD_FOREGROUND, CMD_TELEPORT, CMD_QUERY_PTR...).
+    """
     st = m.i32(base + OFF_STATUS)
     if st == STATUS_PROCESSING:
         raise SystemExit("mailbox_poke: mailbox is already PROCESSING -- a previous command "
@@ -127,9 +131,10 @@ def poke(m, base, op, timeout=10.0):
     # which is how this rig first reported a bogus failure on its second dispatch.
     m.write(base + OFF_STATUS, struct.pack("<i", STATUS_IDLE))
     m.write(base + OFF_INSTANCE, struct.pack("<Q", op))        # inputs...
+    m.write(base + OFF_UFUNC, struct.pack("<Q", value))        # ...op's value arg
     m.write(base + OFF_RESULT, struct.pack("<i", 0x7FFFFFFF))  # poison: 0 must be WRITTEN
     m.write(base + OFF_PARAMS, b"\x00" * 32)                   # so an all-zero out is real
-    m.write(base + OFF_CMD, struct.pack("<i", CMD_QUERY_PTR))  # ...cmd LAST = the trigger
+    m.write(base + OFF_CMD, struct.pack("<i", cmd))            # ...cmd LAST = the trigger
 
     # A REAL wall-clock deadline. Counting iterations against a millisecond constant is
     # how a "10 s" timeout became ~155 s elsewhere in this project.
@@ -153,10 +158,18 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("process")
     ap.add_argument("--repeat", type=int, default=1)
+    ap.add_argument("--cmd", type=int, default=None,
+                    help="raw Cmd number (e.g. 12 = CMD_FOREGROUND). Default: the "
+                         "CMD_QUERY_PTR smoke test.")
+    ap.add_argument("--op", type=int, default=0, help="op code -> instanceAddr")
+    ap.add_argument("--value", type=int, default=0, help="value -> ufuncAddr")
     a = ap.parse_args()
 
-    pid = pid_of(a.process)
-    base = mailbox_addr(a.process)
+    # An all-digits `process` is a PID. `pid_of` refuses to guess between same-named
+    # processes, and these rigs run under python.exe, so the name "python" is always
+    # ambiguous with the rig's own interpreter.
+    pid = int(a.process) if a.process.isdigit() else pid_of(a.process)
+    base = mailbox_addr(str(pid) if a.process.isdigit() else a.process)
     m = Mem(pid)
     init = m.i32(base + OFF_INITSTATE)
     print(f"pid {pid}  mailbox {base:#x}  initState={init} "
@@ -164,6 +177,13 @@ def main():
     if init != INIT_READY:
         raise SystemExit("mailbox_poke: initState is not READY; the poll loop may not be "
                          "running yet and a timeout would be meaningless")
+
+    if a.cmd is not None:
+        res, params, dt, err = poke(m, base, a.op, cmd=a.cmd, value=a.value)
+        a0, a1 = struct.unpack("<QQ", params[:16])
+        print(f"  cmd={a.cmd} op={a.op} value={a.value} -> result={res}  {dt*1000:.1f} ms  "
+              f"out0={a0:#x} out1={a1:#x}" + (f"  err={err!r}" if err else ""))
+        return 0
 
     bad = 0
     for i in range(a.repeat):
