@@ -186,6 +186,78 @@ public partial class ProxyDeployViewModel : ViewModelBase
         => $"Busy: {_busyWith ?? "another operation"} is running — wait for it to finish";
 
     /// <summary>
+    /// True exactly while the panel holds its exclusive gate — i.e. while one of the
+    /// long operations is running and can be cancelled. Drives the toolbar Cancel
+    /// button's <c>IsEnabled</c>.
+    ///
+    /// <para>Deliberately the SAME predicate <see cref="TryBeginExclusive"/> tests, not
+    /// a second one that could drift from it (§2.3: a cheap proxy signal beside a
+    /// predicate a sibling already computes correctly).</para>
+    /// </summary>
+    public bool IsBusy => IsScanning || IsRemovingOrphans;
+
+    partial void OnIsScanningChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsRemovingOrphansChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+
+    /// <summary>
+    /// Cancel whichever long operation is running.
+    ///
+    /// <para>
+    /// Seven commands in this panel take a <c>CancellationToken</c>, pass it to the
+    /// service, check it in their loops and carry a whole "cancelled" reporting path —
+    /// and only two of them (<c>ScanDrives</c>, <c>ScanOrphans</c>) declared
+    /// <c>IncludeCancelCommand</c>, so for the other five nothing in the app could ever
+    /// call <c>Cancel()</c> and every one of those paths was unreachable. That included
+    /// the destructive one: <see cref="DeleteSelectedOrphansAsync"/> recycles a chain of
+    /// files per row and re-checks the token between rows, and there was no way to stop
+    /// it once started. (audit #5 AE20)
+    /// </para>
+    /// <para>
+    /// One button rather than seven: the panel is exclusive (only one of these can be
+    /// running), so "cancel the current operation" is unambiguous. The fan-out is safe
+    /// because <c>AsyncRelayCommand.ExecuteAsync</c> builds a FRESH
+    /// <c>CancellationTokenSource</c> per execution, so cancelling a finished run cannot
+    /// poison the next one, and <c>Cancel()</c> is a no-op when there is no source.
+    /// </para>
+    /// <para>
+    /// Deliberately does NOT gate on <c>CanBeCanceled</c>, which was the first shape and
+    /// measured wrong: that property is <c>IsRunning &amp;&amp; …</c>, and <c>IsRunning</c>
+    /// reads <c>ExecutionTask</c>, which the toolkit assigns only AFTER invoking the
+    /// command body. A body that reaches no real await before the cancel point therefore
+    /// runs with <c>CanBeCanceled == false</c> and the gate skipped it — the delete loop
+    /// ran to completion. The CTS exists before the body is invoked, so cancelling
+    /// unconditionally covers that window too.
+    /// </para>
+    /// <para>
+    /// This does NOT make cancellation instantaneous. Each command observes the token
+    /// between units of work (one game, one orphan row, one library folder), so the
+    /// in-flight unit finishes first — which is also what keeps a half-deleted chain
+    /// from being reported as untouched.
+    /// </para>
+    /// </summary>
+    [RelayCommand]
+    private void CancelOperation()
+    {
+        foreach (var c in CancellableOperations()) c.Cancel();
+    }
+
+    /// <summary>Every command in this panel whose generated <c>AsyncRelayCommand</c>
+    /// owns a cancellation token. Kept as one list so adding a token to a command and
+    /// forgetting to make it cancellable is a single, greppable omission.</summary>
+    private IEnumerable<CommunityToolkit.Mvvm.Input.IAsyncRelayCommand> CancellableOperations()
+    {
+        yield return ScanCommand;
+        yield return ScanDrivesCommand;
+        yield return LoadDrivesCommand;
+        yield return ScanOrphansCommand;
+        yield return DeleteSelectedOrphansCommand;
+        yield return RefreshCommand;
+        yield return DeploySelectedCommand;
+        yield return UndeploySelectedCommand;
+        yield return UpdateAllCommand;
+    }
+
+    /// <summary>
     /// Which proxy DLL the user wants to deploy. Bound to the RadioButtons
     /// at the top of the panel. Changing this triggers a status refresh so
     /// the DataGrid reflects the deploy state of the newly-selected DLL.

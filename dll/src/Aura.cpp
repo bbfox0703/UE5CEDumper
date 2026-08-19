@@ -9048,6 +9048,11 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
         }
     }
 
+    // Report it, don't just log it. The log line below is invisible to the user who is
+    // looking at the results grid, and this is the single fact that explains a slot
+    // whose "All fields" list is short — four "the scan missed my field" reports.
+    // (audit #5 AE13)
+    result.perSlotCapHit = capHit;
     if (capHit) {
         LOG_WARN("ScanForValueGroup: at least one object had more than %d leaves matching a slot "
                  "- the extras were dropped, and a later Changed/Decreased refine can only "

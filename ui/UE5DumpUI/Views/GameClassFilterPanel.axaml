@@ -67,6 +67,16 @@
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
     </StackPanel>
 
+    <!-- Suggestions-are-a-sample warning. Only visible when the class walk stopped at
+         its row cap, in which case the two AutoCompleteBox dropdowns above list the
+         Super / Package values found in the loaded page, not the ones that exist.
+         VM-composed (audit #5 AE15 / Z10: Res.Get returns "" with no Application). -->
+    <TextBlock DockPanel.Dock="Top"
+               Text="{Binding SuggestionsNote}"
+               IsVisible="{Binding SuggestionsNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+               Foreground="#D7BA7D" FontSize="11" TextWrapping="Wrap"
+               Margin="0,0,0,6"/>
+
     <!-- Loading indicator -->
     <ProgressBar DockPanel.Dock="Top" IsIndeterminate="True"
                  IsVisible="{Binding IsLoading}" Height="2" Margin="0,0,0,4"/>

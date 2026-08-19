@@ -1788,7 +1788,9 @@ GroupSessionManager& GroupSessionManager::Instance() {
 uint64_t GroupSessionManager::Begin(std::vector<SlotSpec>        slots,
                                     std::vector<GroupCandidate>  candidates,
                                     std::vector<FieldDescriptor> descriptors,
-                                    std::vector<InstanceRecord>  instances) {
+                                    std::vector<InstanceRecord>  instances,
+                                    bool                         perSlotCapHit,
+                                    int                          perSlotCap) {
     ExpireOldSessions();
 
     // Total-leaf memory backstop (audit #5 AB19). max_results is not clamped at the
@@ -1814,6 +1816,9 @@ uint64_t GroupSessionManager::Begin(std::vector<SlotSpec>        slots,
     sess->instances   = std::move(instances);
     sess->lastUse     = std::chrono::steady_clock::now();
     sess->candidatesDroppedForMemory = dropped;
+    // Carried, not recomputed — refine and query cannot derive it (audit #5 AE13).
+    sess->perSlotCapHit = perSlotCapHit;
+    sess->perSlotCap    = perSlotCap;
     sessions_.emplace(id, std::move(sess));
     return id;
 }

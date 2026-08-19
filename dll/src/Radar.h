@@ -1067,6 +1067,15 @@ struct GroupSession {
     // beside `total` so the trim is never fully silent.
     size_t                                candidatesDroppedForMemory = 0;
 
+    // The Begin scan dropped leaves past the per-slot cap (audit #5 AE13). Persisted on
+    // the SESSION rather than recomputed, because it cannot be recomputed: refine prunes
+    // what is already stored and never calls Orden::MatchGroup, and query is a pure
+    // window over the stored pool — so a truncation that happened at Begin is invisible
+    // to every later command unless it is carried. `perSlotCap` is the effective value
+    // the DLL clamped to, which is not necessarily the one the client asked for.
+    bool                                  perSlotCapHit = false;
+    int                                   perSlotCap = 0;
+
     // V3-C cached ordered view (same contract as Session::view*).
     bool                                  viewValid    = false;
     std::string                           viewFilter;
@@ -1194,10 +1203,15 @@ class GroupSessionManager {
 public:
     static GroupSessionManager& Instance();
 
+    // `perSlotCapHit` / `perSlotCap` are REQUIRED, not defaulted: they are known only
+    // at Begin and every later command has to be able to repeat them, so a call site
+    // that forgets them should not compile. (audit #5 AE13)
     uint64_t Begin(std::vector<SlotSpec>        slots,
                    std::vector<GroupCandidate>  candidates,
                    std::vector<FieldDescriptor> descriptors,
-                   std::vector<InstanceRecord>  instances);
+                   std::vector<InstanceRecord>  instances,
+                   bool                         perSlotCapHit,
+                   int                          perSlotCap);
 
     // Run `fn(GroupSession&)` under the lock; may prune candidates. Invalidates
     // the cached view afterwards.

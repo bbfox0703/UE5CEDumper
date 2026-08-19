@@ -11,8 +11,11 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **42 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L8 (U5 VMs +
+> - `## Pending live-game verification` — **43 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L9 (T1c
+>   VMs/Core/DTOs) AE13/AE20/AE30 batch — fourteen of its seventeen findings need nothing live, two
+>   of them because they were **already fixed** by an earlier batch and were closed by reading the
+>   code. AE13's row is **DLL-gated**. Before it, the audit L8 (U5 VMs +
 >   scoring) Z8/Z12/Z13 batch — ten of its thirteen findings need nothing live; **two of the three
 >   that do are DLL-gated**, so a stale injected DLL makes them look like no-ops rather than
 >   failures, and the third is the batch's one deliberate scoring change. Before it, the audit L7
@@ -45,7 +48,7 @@ Open work only. **Read this when deciding what to do next.**
 >   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-19: **75 audit findings open of 297 · 0 HIGH · 0 MED · 49 LOW · 26 INFO**
+> State as of 2026-08-19: **58 audit findings open of 297 · 0 HIGH · 0 MED · 32 LOW · 26 INFO**
 > (⚠ this line read **98 / 72 LOW** before audit L8 while the CI-gated headline in the audit doc's
 > §3b read **88 / 62** — it had drifted by 10 and is now set from the gate's own output rather
 > than by subtracting a delta. Only §3b is CI-enforced; **re-derive, never hand-tally**.)
@@ -1696,6 +1699,28 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > | AC11 | on an installed game: **Deploy** a proxy to a clean Binaries folder, then **Deploy again** over it, then **Undeploy**. Check the folder for any `*.ue5dump-stage` leftover | all three succeed exactly as before; no `.ue5dump-stage` file is ever left behind; the grid never shows "Other proxy" for a DLL we just wrote | staging changed the publish from a copy to a copy+rename — the first-time-deploy path and the locked-target path are the two that must not regress |
 > | AC11 | with the game **running** (so the proxy is loaded and locked), click Deploy | still "File locked (game running?)", and the existing proxy is intact | the rename now raises the sharing violation the direct copy used to; the message must not change |
 > | AC12 | on this machine (multi-library Steam install), open Proxy Deploy and let it scan | the same library folders as before are found; `proxy`/`init` log has **no** "libraryfolders.vdf is malformed" line | the parser is fully unit-tested but its input is a real Valve-written file — a rejected real VDF would silently halve game detection |
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L9 (T1c VMs/Core/DTOs): AE13 / AE20 / AE30
+
+*Seventeen findings closed (AE11–AE25, AE30, AE31); **fourteen need nothing live**. AE12 and AE22
+turned out to be **already fixed** by `6fc00e4d` (X5's `ClearOnDisconnect` fan-out) and were closed
+by reading the current code, not by re-fixing it. AE25 and AE31 are **doc-only, direction
+re-derived**: AE25's comment claimed `Between` was excluded from the group scan-type picker while
+listing it fourth — the CODE is right (three independent witnesses: the spec, the DLL's `value2`
+parser, and this VM's own validator), so removing the option would have deleted a shipped feature to
+satisfy a stale comment. Everything else is unit-pinned with one combined negative control:
+reverting the behaviours turns **21** tests red across all five affected classes and leaves every
+"must NOT change" control green.*
+
+⚠ **AE13's half is DLL-gated** — the UI defaults `per_slot_cap_hit` to `false`, so a stale injected
+DLL makes it look like a no-op rather than a failure. Compare against `dist/build_number.txt`, not
+the repo's (`[STALEDLL]`).
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | AE13 ⚠ DLL-gated | Value Search → **Group** mode, two slots, values chosen to be COMMON (e.g. `0` and `1`, or `100` and `100`) so one slot matches far more than 256 fields on some object; Group First Scan, then Group Next Scan | the status line gains `⚠ a slot matched more than 256 fields — only that many were kept, so "All fields" is a page …`, and the SAME clause survives the Next Scan | this fact was computed by `Orden::MatchGroup` and written only to `LOG_WARN` inside the DLL, so no user could ever see it. Distinct from `deadline_hit`: the result set is complete while a slot's field list is not. **Negative half worth doing:** repeat with DISTINCTIVE values (a real HP + a real MP) and confirm the clause does NOT appear |
+> | AE20 | Proxy Deploy → **Find leftovers** on a machine with several leftover chains, tick 3+ rows, **Delete checked**, then click **Cancel operation** while it runs | the pass stops early and the result line reports what DID happen (`… cancelled`), with the un-processed rows still listed and unticked | the destructive Recycle-Bin delete accepted a `CancellationToken`, checked it between rows and carried a whole cancelled-reporting path that **nothing in the app could reach** — five of the panel's seven token-taking commands were in that state. ⚠ Needs several rows: with one row the loop finishes before a human can click |
+> | AE30 | Object Tree → pick any UObject → set the address format to **module+offset** → Copy address, and paste into CE. Then relaunch the game and paste the same string again | the copied text is now bare hex (e.g. `1E55C298D40`), NOT `"Game-Win64-Shipping.exe"+FFFF81…`; it resolves this run and plainly fails to resolve after a relaunch instead of silently pointing somewhere unrelated | a heap UObject sits BELOW a `0x7FF7…` image base, so the old unsigned subtraction WRAPPED. That string round-trips within one run, which is what made it dangerous: it looked like the ASLR-stable form the user picked the option for. **Control:** copy an address that IS inside the module (a GObjects/GNames pointer from the Pointers panel) and confirm it still formats as `"exe"+RVA` and still resolves after a relaunch |
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L8 (U5 VMs + scoring): Z8 / Z12 / Z13
 

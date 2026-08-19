@@ -15,13 +15,83 @@ public enum AddressFormat
 /// Supports CE (Cheat Engine) address formats:
 ///   "0x16255B8A224"                                            → "0x16255B8A224"
 ///   "16255B8A224"                                              → "0x16255B8A224"
-///   "TQ2-Win64-Shipping.exe+FFFF81820A83F268"                  → resolved via moduleBase
-///   "\"TQ2-Win64-Shipping.exe\"+FFFF81820A83F268"              → resolved via moduleBase (quoted)
+///   "TQ2-Win64-Shipping.exe+1A2B3C4"                           → resolved via moduleBase
+///   "\"TQ2-Win64-Shipping.exe\"+1A2B3C4"                       → resolved via moduleBase (quoted)
+///
+/// Note the READ side stays deliberately permissive — <see cref="TryNormalizeAddress"/>
+/// accepts (and unwraps, via <c>unchecked</c>) the wrapped pseudo-RVAs CE itself
+/// produces, e.g. <c>"…exe"+FFFF81820A83F268</c>. The WRITE side does not create
+/// them any more; see <see cref="FormatAddress"/>.
 /// </summary>
 public static class AddressHelper
 {
     /// <summary>
+    /// The largest RVA any PE image can contain. <c>IMAGE_OPTIONAL_HEADER.SizeOfImage</c>
+    /// is a <c>DWORD</c> even in PE32+, so an offset from the module base that does not
+    /// fit in 32 bits cannot be inside the module — whatever the module's real size is.
+    /// That makes <see cref="TryGetModuleRva"/> exact in the direction that matters: it
+    /// never rejects an address that IS in the module.
+    /// </summary>
+    private const ulong MaxPossibleImageRva = uint.MaxValue;
+
+    /// <summary>
+    /// Compute <paramref name="hexAddr"/> as an offset from <paramref name="moduleBase"/>,
+    /// but only when the result can actually be a module RVA.
+    ///
+    /// <para>
+    /// Returns false — rather than a number — for the two provably-out-of-module cases:
+    /// an address BELOW the base (an unsigned subtraction there wraps, which is how a
+    /// heap pointer came out as <c>+FFFF81820A83F268</c>), and a delta wider than
+    /// <see cref="MaxPossibleImageRva"/>. Also false when either string is not hex.
+    /// </para>
+    /// <para>
+    /// Pure and static so the rule is testable without a game: it is the whole of
+    /// audit #5 AE30. NOT exact in the other direction — a heap allocation that happens
+    /// to land within 4 GiB above the image still passes, because the module's real
+    /// SizeOfImage is not on the wire (the DLL sends <c>module_base</c> and
+    /// <c>module_name</c> only). Tightening it further means adding a wire field.
+    /// </para>
+    /// </summary>
+    public static bool TryGetModuleRva(string? hexAddr, string? moduleBase, out ulong rva)
+    {
+        rva = 0;
+        if (string.IsNullOrEmpty(hexAddr) || string.IsNullOrEmpty(moduleBase)) return false;
+
+        var addrHex = StripHexPrefix(hexAddr);
+        var baseHex = StripHexPrefix(moduleBase);
+        if (!IsAllHex(addrHex) || !IsAllHex(baseHex)) return false;
+        // TryParse, not Convert.ToUInt64: an over-wide string throws from Convert, and a
+        // clipboard format is not worth an exception from a fire-and-forget command.
+        if (!ulong.TryParse(addrHex, System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture, out var addr))
+            return false;
+        if (!ulong.TryParse(baseHex, System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture, out var baseAddr))
+            return false;
+
+        if (addr < baseAddr) return false;
+        var delta = addr - baseAddr;
+        if (delta > MaxPossibleImageRva) return false;
+
+        rva = delta;
+        return true;
+    }
+
+    /// <summary>
     /// Format an address according to the selected format.
+    ///
+    /// <para>
+    /// <see cref="AddressFormat.ModuleOffset"/> falls back to the absolute hex form when
+    /// the address is not inside the module (audit #5 AE30). It used to subtract
+    /// unconditionally, so a UObject on the heap — which is nearly every address this app
+    /// copies, and which sits BELOW a 0x7FF7… image base — came out as
+    /// <c>"game.exe"+FFFF81820A83F268</c>. That string round-trips within the same run
+    /// (CE adds it back mod 2^64, and <see cref="TryNormalizeAddress"/> still accepts it),
+    /// which is exactly what makes it dangerous: it LOOKS like the ASLR-stable form the
+    /// user picked the option for, and after a relaunch the module base has moved while
+    /// the heap address has not, so CE resolves it to an unrelated address instead of
+    /// failing. Absolute hex makes no stability promise it cannot keep.
+    /// </para>
     /// </summary>
     /// <param name="hexAddr">Raw hex address (e.g., "0x7FF71B7A1820")</param>
     /// <param name="moduleName">Module name (e.g., "TQ2-Win64-Shipping.exe")</param>
@@ -32,13 +102,9 @@ public static class AddressHelper
         switch (format)
         {
             case AddressFormat.ModuleOffset:
-                if (string.IsNullOrEmpty(moduleName) || string.IsNullOrEmpty(moduleBase))
+                if (string.IsNullOrEmpty(moduleName)
+                    || !TryGetModuleRva(hexAddr, moduleBase, out var rva))
                     goto case AddressFormat.HexNoPrefix;
-                var addrHex = hexAddr.Replace("0x", "").Replace("0X", "");
-                var baseHex = moduleBase.Replace("0x", "").Replace("0X", "");
-                var addr = Convert.ToUInt64(addrHex, 16);
-                var baseAddr = Convert.ToUInt64(baseHex, 16);
-                var rva = addr - baseAddr;
                 return $"\"{moduleName}\"+{rva:X}";
 
             case AddressFormat.HexWithPrefix:
@@ -129,6 +195,13 @@ public static class AddressHelper
         normalized = "0x" + s;
         return true;
     }
+
+    /// <summary>Drop a leading "0x"/"0X". Anchored, unlike the <c>Replace("0x", "")</c>
+    /// the display branches use — equivalent for well-formed hex ('x' is not a hex
+    /// digit, so it can only appear at the front), but this one is also correct for the
+    /// malformed input <see cref="TryGetModuleRva"/> has to reject rather than mangle.</summary>
+    private static string StripHexPrefix(string s)
+        => s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? s[2..] : s;
 
     private static bool IsAllHex(string s)
     {

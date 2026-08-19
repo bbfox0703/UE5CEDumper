@@ -621,6 +621,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilters()
     {
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
         FilterText      = "";
         CategoryFilter  = null;
         ShowAll         = false;

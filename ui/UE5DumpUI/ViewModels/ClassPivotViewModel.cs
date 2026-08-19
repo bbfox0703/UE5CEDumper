@@ -421,7 +421,14 @@ public partial class ClassPivotViewModel : ViewModelBase
         // Clear any active class filter so the target class is visible in the picker, then
         // match against the FULL list (_allClasses) — Classes itself is now the filtered
         // view, which might not contain the handoff target.
-        if (!string.IsNullOrEmpty(ClassFilter)) ClassFilter = "";   // OnClassFilterChanged → rebuilds Classes to the full set
+        // Flush before blanking: this is the navigation case CLAUDE.md's keyword-search
+        // rule names explicitly, and a cross-tab handoff arriving right after the user
+        // typed a class keyword is exactly when the debounce is still pending. (AE16)
+        if (!string.IsNullOrEmpty(ClassFilter))
+        {
+            _classFilterMemory.Flush();
+            ClassFilter = "";   // OnClassFilterChanged → rebuilds Classes to the full set
+        }
         var match = _allClasses.FirstOrDefault(c => c.ClassName == className);
         if (match == null)
         {

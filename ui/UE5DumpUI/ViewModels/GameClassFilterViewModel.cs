@@ -36,6 +36,11 @@ public partial class GameClassFilterViewModel : ViewModelBase
     /// <summary>Distinct Package prefixes from loaded results (for AutoCompleteBox).</summary>
     [ObservableProperty] private List<string> _packageSuggestions = new();
 
+    /// <summary>Warning shown beside the Super / Package pickers when the class walk
+    /// stopped at its cap, so their dropdowns are a sample rather than the set of
+    /// values that exist. Empty (and hidden) on a complete load. (audit #5 AE15)</summary>
+    [ObservableProperty] private string _suggestionsNote = "";
+
     /// <summary>Event raised when user wants to find instances of a class.</summary>
     public event Action<string>? NavigateToInstanceFinder;
 
@@ -68,6 +73,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
         Results.Clear();
         SuperSuggestions = new List<string>();
         PackageSuggestions = new List<string>();
+        SuggestionsNote = "";
         StatusText = "";
     }
 
@@ -91,7 +97,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
             var result = await _dump.ListClassesAsync(gameOnly: GameClassesOnly);
 
             _allResults = result.Classes;
-            RebuildSuggestions();
+            RebuildSuggestions(result.Truncated, result.Total, result.TotalClasses);
             ApplyFilter();
 
             // A capped list must SAY so, AND say how many it capped out of. The DLL now
@@ -124,8 +130,22 @@ public partial class GameClassFilterViewModel : ViewModelBase
     /// Extract distinct Super names and Package prefixes from loaded results.
     /// Package prefix logic lives on <see cref="GameClassEntry"/> (so the
     /// new Package column in the DataGrid sees the same value).
+    ///
+    /// <para>
+    /// The truncation facts are parameters rather than something this method reads back
+    /// off <c>_allResults</c>, because they cannot be derived from it: a capped page and
+    /// a complete list of the same length are identical here. The caller had them all
+    /// along — <see cref="LoadAsync"/> reads <c>result.Truncated</c> ten lines below the
+    /// old parameterless call and used it only for the status line, so two dropdowns
+    /// built from a sample sat next to a status line that admitted the cap.
+    /// (audit #5 AE15)
+    /// </para>
     /// </summary>
-    private void RebuildSuggestions()
+    /// <param name="truncated">The DLL stopped collecting at its row cap.</param>
+    /// <param name="shown">Classes actually returned.</param>
+    /// <param name="poolTotal">Classes counted to the end of GObjects — the honest pool
+    /// total, which the DLL keeps counting past the cap ([CLASSTOTAL] / audit #5 X2).</param>
+    private void RebuildSuggestions(bool truncated, int shown, int poolTotal)
     {
         // Distinct super names, sorted
         var supers = _allResults
@@ -144,6 +164,11 @@ public partial class GameClassFilterViewModel : ViewModelBase
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToList();
         PackageSuggestions = packages;
+
+        SuggestionsNote = truncated
+            ? PartialResultNotice.DerivedListFromCappedPage(
+                  "Super / Package suggestions", shown, poolTotal, "classes")
+            : "";
     }
 
     private void ApplyFilter()
@@ -205,6 +230,12 @@ public partial class GameClassFilterViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilters()
     {
+        // Commit a just-typed keyword BEFORE blanking the box (CLAUDE.md's keyword-search
+        // rule: "Flush() before clearing the box on tab-switch/navigation"). Schedule()
+        // only arms a 700 ms debounce, so a user who typed a keyword, saw its matches and
+        // then hit Clear inside that window had it thrown away — and Clear is the single
+        // most likely thing to do straight after reading the results. (audit #5 AE16)
+        _filterMemory.Flush();
         FilterText = "";
         SuperFilter = "";
         PackageFilter = "";
@@ -265,22 +296,36 @@ public partial class GameClassFilterViewModel : ViewModelBase
             if (!ok) return;
         }
 
-        _xrefBatchCts?.Cancel();
+        var oldCts = _xrefBatchCts;          // dispose the prior run's CTS (L14)
         _xrefBatchCts = new CancellationTokenSource();
+        oldCts?.Cancel();
+        oldCts?.Dispose();
         var ct = _xrefBatchCts.Token;
         IsXrefBatchRunning = true;
-        int done = 0, withFuncs = 0, cached = 0;
+        int done = 0, withFuncs = 0, cached = 0, partial = 0;
         try
         {
             foreach (var entry in targets)
             {
                 ct.ThrowIfCancellationRequested();
-                if (!string.IsNullOrEmpty(entry.XrefInfo)) { cached++; continue; }
+                // Skip rows already scanned (XrefInfo persists across filter changes) —
+                // but NOT one whose previous sweep hit the deadline, or the partial answer
+                // becomes permanent for the session and a re-run cannot improve it.
+                // (audit #5 Z9's second half, at the fourth site — AE17/AE18)
+                if (!string.IsNullOrEmpty(entry.XrefInfo) && !XrefFormat.IsPartialCell(entry.XrefInfo))
+                { cached++; continue; }
                 try
                 {
                     var res = await _dump.FindFunctionsByClassAsync(entry.ClassAddr, true, 200, ct);
-                    entry.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs);
+                    // The DLL runs each sweep against a real 30 s budget and latches
+                    // `scan.deadline_hit` when it runs out. Discarding it wrote a bare "0"
+                    // for a class whose reflection sweep never finished, which reads as
+                    // "no function takes this class" — the opposite of what a timeout
+                    // establishes. (audit #5 AE17 / AE18)
+                    bool deadline = res.Scan?.DeadlineHit ?? false;
+                    entry.XrefInfo = XrefFormat.FunctionsSummary(res.Xrefs, deadline);
                     if (res.Xrefs.Count > 0) withFuncs++;
+                    if (deadline) partial++;
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
@@ -292,11 +337,23 @@ public partial class GameClassFilterViewModel : ViewModelBase
                 StatusText = $"Find Func: {done}/{targets.Count} scanned ({withFuncs} taken by a function)…";
             }
             StatusText = $"Find Func done: {withFuncs}/{targets.Count} taken by a function"
-                       + (cached > 0 ? $" ({cached} cached)." : ".");
+                       + (cached > 0 ? $" ({cached} cached)." : ".")
+                       + PartialResultNotice.BatchPartialClause(partial, targets.Count);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             StatusText = $"Find Func cancelled at {done}/{targets.Count}.";
+        }
+        catch (Exception ex)
+        {
+            // NOT a cancel. PipeClient distinguishes three causes as of audit #5 AC10:
+            // a caller cancel carries OUR ct (caught above), a deliberate teardown carries
+            // the client's own token, and an unexpected pipe death — the game crashing, the
+            // DLL unloading — arrives as an IOException. The bare catch reported all of
+            // them as "Find Func cancelled at N/M", so a dead game read as "you pressed
+            // Cancel" and nothing was logged. Third site of audit #3's L14. (audit #5 AE19)
+            _log.Error("Batch Find Func failed", ex);
+            StatusText = $"Find Func failed at {done}/{targets.Count}.";
         }
         finally { IsXrefBatchRunning = false; }
     }

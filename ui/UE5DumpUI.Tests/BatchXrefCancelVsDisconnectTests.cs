@@ -246,4 +246,149 @@ public class BatchXrefCancelVsDisconnectTests
         Assert.Equal(0, dump.Calls);
         Assert.Contains("1 cached", vm.StatusText);
     }
+
+    // ==================================================================
+    // Game Class Filter — batch "Find Func" (find_functions_by_class).
+    //
+    // The FOURTH site of the same three defects, filed separately as
+    // AE17 (the deadline flag discarded), AE18 (so a timed-out sweep is
+    // written as a bare "0") and AE19 (a pipe death reported as "you
+    // cancelled" — audit #3's L14 at a third unfixed site).
+    // ==================================================================
+
+    private sealed class NoopPlatform : IPlatformService
+    {
+        public bool TryAcquireSingleInstance() => true;
+        public void ReleaseSingleInstance() { }
+        public string GetAppDataPath() => System.IO.Path.GetTempPath();
+        public string GetLogDirectoryPath() => System.IO.Path.GetTempPath();
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
+        public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
+        public string GetMachineName() => "TEST";
+        public void CloseImeForWindow(IntPtr windowHandle) { }
+        public Task<string?> ShowSaveFileDialogAsync(string a, string b, string c)
+            => Task.FromResult<string?>(null);
+    }
+
+    private sealed class ClassXrefDump : StubDumpService
+    {
+        public Action? OnCall { get; set; }
+        public bool Throw { get; set; }
+        public bool Deadline { get; set; }
+        public int Calls { get; private set; }
+
+        public override Task<FindPropertyXrefsResult> FindFunctionsByClassAsync(
+            string classAddr, bool gameOnly = true, int maxResults = 200,
+            CancellationToken ct = default)
+        {
+            Calls++;
+            OnCall?.Invoke();
+            if (Throw) throw new OperationCanceledException("Pipe disconnected during send");
+            return Task.FromResult(new FindPropertyXrefsResult
+            {
+                Scan = Deadline
+                    ? new PropertyXrefScanStats { DeadlineHit = true, DurationMs = 30_000 }
+                    : new PropertyXrefScanStats { DeadlineHit = false },
+            });
+        }
+    }
+
+    private static GameClassEntry ClassRow(string name) =>
+        new() { ClassName = name, ClassAddr = "0xC1A550", SuperName = "Actor", ClassPath = "/Game/" + name };
+
+    private static GameClassFilterViewModel ClassVm(ClassXrefDump dump, NoopLog log)
+        => new(dump, log, new NoopPlatform());
+
+    /// <summary>
+    /// AE17/AE18: a sweep that ran out of the DLL's 30 s budget must not be written as a
+    /// bare "0" — that reads as "no function takes this class", the opposite of what a
+    /// timeout establishes.
+    /// </summary>
+    [Fact]
+    public async Task ClassFilter_batch_marks_a_deadline_hit_cell_as_partial()
+    {
+        var rows = new List<GameClassEntry> { ClassRow("BP_Enemy_C") };
+        var vm = ClassVm(new ClassXrefDump { Deadline = true }, new NoopLog());
+
+        await vm.BatchFindFuncCommand.ExecuteAsync(rows);
+
+        Assert.NotEqual("0", rows[0].XrefInfo);
+        Assert.True(Helpers.XrefFormat.IsPartialCell(rows[0].XrefInfo));
+        Assert.Contains("deadline", vm.StatusText);
+        Assert.Contains("not found YET", vm.StatusText);
+    }
+
+    /// <summary>Negative control: a sweep that FINISHED and found nothing keeps its
+    /// clean "0", or the marker would be noise on every row.</summary>
+    [Fact]
+    public async Task ClassFilter_batch_leaves_a_complete_empty_result_as_a_clean_zero()
+    {
+        var rows = new List<GameClassEntry> { ClassRow("BP_Enemy_C") };
+        var vm = ClassVm(new ClassXrefDump { Deadline = false }, new NoopLog());
+
+        await vm.BatchFindFuncCommand.ExecuteAsync(rows);
+
+        Assert.Equal("0", rows[0].XrefInfo);
+        Assert.DoesNotContain("deadline", vm.StatusText);
+    }
+
+    /// <summary>A partial cell must be re-scanned, not treated as cached — otherwise
+    /// the partial answer is permanent for the session.</summary>
+    [Fact]
+    public async Task ClassFilter_batch_rescans_a_partial_row()
+    {
+        var rows = new List<GameClassEntry> { ClassRow("BP_Enemy_C") };
+        rows[0].XrefInfo = "0" + PartialResultNotice.CellMarker;
+        var dump = new ClassXrefDump();
+        var vm = ClassVm(dump, new NoopLog());
+
+        await vm.BatchFindFuncCommand.ExecuteAsync(rows);
+
+        Assert.Equal(1, dump.Calls);
+        Assert.Equal("0", rows[0].XrefInfo);
+    }
+
+    [Fact]
+    public async Task ClassFilter_batch_still_skips_a_complete_cached_row()
+    {
+        var rows = new List<GameClassEntry> { ClassRow("BP_Enemy_C") };
+        rows[0].XrefInfo = "2 · A, B";
+        var dump = new ClassXrefDump();
+        var vm = ClassVm(dump, new NoopLog());
+
+        await vm.BatchFindFuncCommand.ExecuteAsync(rows);
+
+        Assert.Equal(0, dump.Calls);
+        Assert.Contains("1 cached", vm.StatusText);
+    }
+
+    /// <summary>AE19: a token-less OCE is a pipe death, not the user's Cancel.</summary>
+    [Fact]
+    public async Task ClassFilter_batch_reports_a_disconnect_as_failed_not_cancelled()
+    {
+        var log = new NoopLog();
+        var vm = ClassVm(new ClassXrefDump { Throw = true }, log);
+
+        await vm.BatchFindFuncCommand.ExecuteAsync(
+            new List<GameClassEntry> { ClassRow("A_C"), ClassRow("B_C") });
+
+        Assert.Contains("failed", vm.StatusText);
+        Assert.DoesNotContain("cancelled", vm.StatusText);
+        Assert.NotEmpty(log.Errors);   // used to leave no trace at all
+    }
+
+    /// <summary>Negative control: a REAL cancel must still read as a cancel.</summary>
+    [Fact]
+    public async Task ClassFilter_batch_still_reports_a_real_cancel_as_cancelled()
+    {
+        var dump = new ClassXrefDump();
+        var vm = ClassVm(dump, new NoopLog());
+        dump.OnCall = () => vm.CancelXrefBatchCommand.Execute(null);
+
+        await vm.BatchFindFuncCommand.ExecuteAsync(
+            new List<GameClassEntry> { ClassRow("A_C"), ClassRow("B_C") });
+
+        Assert.Contains("cancelled", vm.StatusText);
+        Assert.DoesNotContain("failed", vm.StatusText);
+    }
 }

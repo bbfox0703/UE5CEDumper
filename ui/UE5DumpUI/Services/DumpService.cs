@@ -2257,6 +2257,10 @@ public sealed class DumpService : IDumpService
             ScannedObjects = res["scanned_objects"]?.GetValue<int>() ?? 0,
             DurationMs     = res["duration_ms"]?.GetValue<long>() ?? 0,
             DeadlineHit    = res["deadline_hit"]?.GetValue<bool>() ?? false,
+            // Absent on a pre-AE13 DLL => false => "no evidence of truncation", which is
+            // the only honest default: the UI must not claim a cap it was not told about.
+            PerSlotCapHit  = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,
+            PerSlotCap     = res["per_slot_cap"]?.GetValue<int>() ?? 0,
             ClassHistogram = ParseClassHistogram(res),
             ClassDistinct  = res["class_distinct"]?.GetValue<int>() ?? 0,
         };
@@ -2309,6 +2313,8 @@ public sealed class DumpService : IDumpService
             SessionId  = res["session_id"]?.GetValue<ulong>() ?? sessionId,
             Total      = res["total"]?.GetValue<int>() ?? 0,
             DurationMs = res["duration_ms"]?.GetValue<long>() ?? 0,
+            PerSlotCapHit  = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,   // AE13
+            PerSlotCap     = res["per_slot_cap"]?.GetValue<int>() ?? 0,
             ClassHistogram = ParseClassHistogram(res),
             ClassDistinct  = res["class_distinct"]?.GetValue<int>() ?? 0,
         };
@@ -2349,6 +2355,8 @@ public sealed class DumpService : IDumpService
             Total         = res["total"]?.GetValue<int>() ?? 0,
             FilteredTotal = res["filtered_total"]?.GetValue<int>() ?? 0,
             Offset        = res["offset"]?.GetValue<int>() ?? offset,
+            PerSlotCapHit = res["per_slot_cap_hit"]?.GetValue<bool>() ?? false,   // AE13
+            PerSlotCap    = res["per_slot_cap"]?.GetValue<int>() ?? 0,
         };
         if (res["candidates"] is JsonArray arr)
             foreach (var item in arr)

@@ -3449,7 +3449,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             uint64_t sessionId = Radar::GroupSessionManager::Instance().Begin(
                 std::move(slots), std::move(scanResult.candidates),
-                std::move(scanResult.descriptors), std::move(scanResult.instances));
+                std::move(scanResult.descriptors), std::move(scanResult.instances),
+                scanResult.perSlotCapHit, perSlotCap);
 
             // Like begin_value_scan: the DLL session owns the full set; return
             // `total` + only the first page (scan order) — the UI pages/filters/
@@ -3482,6 +3483,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["scanned_objects"] = scanResult.stats.scannedObjects;
             data["duration_ms"]     = static_cast<int64_t>(scanResult.stats.durationMs);
             data["deadline_hit"]    = scanResult.stats.deadlineHit;
+            // Per-slot leaf-cap truncation. Distinct from deadline_hit: that one says
+            // fewer OBJECTS were examined, this one says an examined object kept fewer
+            // WITNESSES than it matched — so a slot's "All fields" list is a page, and a
+            // later Changed/Decreased refine can only re-read what was kept. It was
+            // computed and only LOG_WARN'd until audit #5 AE13. `per_slot_cap` is the
+            // EFFECTIVE cap after the 8..4096 clamp above, which the client cannot
+            // derive (it omits the key entirely when it equals its own default).
+            data["per_slot_cap_hit"] = scanResult.perSlotCapHit;
+            data["per_slot_cap"]     = perSlotCap;
             data["candidates"]      = candidates;
             data["class_histogram"] = histogram;
             data["class_distinct"]  = classDistinct;
@@ -3511,6 +3521,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             bool countMismatch = false, parseFailed = false;
             std::string badScanType;
             Aura::ValueScanStats stats;
+            // Carried from the Begin scan (audit #5 AE13) — a refine prunes the stored
+            // pool and never re-runs Orden::MatchGroup, so it cannot recompute this.
+            bool perSlotCapHit = false;
+            int  perSlotCapEff = 0;
             bool found = Radar::GroupSessionManager::Instance().RefineWith(sessionId,
                 [&](Radar::GroupSession& sess) {
                     if (valuesJson.size() != sess.slots.size()) { countMismatch = true; return; }
@@ -3573,6 +3587,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     auto hist = Radar::BuildGroupClassHistogram(sess.candidates, sess.descriptors);
                     classDistinct = static_cast<int>(hist.size());
                     histogram = HistogramToJson(hist, kClassHistogramMaxRows);
+                    perSlotCapHit = sess.perSlotCapHit;
+                    perSlotCapEff = sess.perSlotCap;
                 });
 
             if (!found)             return Renge::MakeError(id, "session_not_found").dump();
@@ -3585,6 +3601,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["total"]       = totalCount;
             data["page_size"]   = pageSize;
             data["duration_ms"] = static_cast<int64_t>(stats.durationMs);
+            // Inherited from Begin: the survivors are a subset of a set whose per-slot
+            // witness lists were already capped. (audit #5 AE13)
+            data["per_slot_cap_hit"] = perSlotCapHit;
+            data["per_slot_cap"]     = perSlotCapEff;
             data["candidates"]  = candidates;
             data["class_histogram"] = histogram;
             data["class_distinct"]  = classDistinct;
@@ -3628,11 +3648,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json candidates = json::array();
             int totalCount    = 0;
             int filteredCount = 0;
+            bool perSlotCapHit = false;   // carried from Begin (audit #5 AE13)
+            int  perSlotCapEff = 0;
             bool found = Radar::GroupSessionManager::Instance().QueryWith(
                 sessionId, filter, sortKey, sortDesc, excludeClasses,
                 [&](const Radar::GroupSession& sess, const std::vector<uint32_t>& order) {
                     totalCount    = static_cast<int>(sess.candidates.size());
                     filteredCount = static_cast<int>(order.size());
+                    perSlotCapHit = sess.perSlotCapHit;
+                    perSlotCapEff = sess.perSlotCap;
                     const int begin = (std::min)(offset, filteredCount);
                     const int end   = (std::min)(offset + limit, filteredCount);
                     for (int i = begin; i < end; ++i)
@@ -3650,6 +3674,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["filtered_total"] = filteredCount;
             data["offset"]         = offset;
             data["count"]          = static_cast<int>(candidates.size());
+            // Repeated on every window so a UI that only ever calls query (a reconnected
+            // panel, a sort change) still learns the set was capped. (audit #5 AE13)
+            data["per_slot_cap_hit"] = perSlotCapHit;
+            data["per_slot_cap"]     = perSlotCapEff;
             data["candidates"]     = candidates;
             return Renge::MakeResponse(id, data).dump();
         }

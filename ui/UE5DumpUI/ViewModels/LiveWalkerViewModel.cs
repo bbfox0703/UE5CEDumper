@@ -224,8 +224,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         _functionFilterMemory.Schedule(value);
     }
 
+    /// <summary>Clear the function-filter box. Flushes the keyword memory first — the
+    /// sibling of what <see cref="ClearFieldSearchForNavigation"/> already does for the
+    /// FIELD search box (<c>FlushPendingSearchKeyword</c>); the function box had the
+    /// Schedule half wired and neither flush. (audit #5 AE16)</summary>
     [RelayCommand]
-    private void ClearFunctionFilter() => FunctionFilter = "";
+    private void ClearFunctionFilter()
+    {
+        _functionFilterMemory.Flush();
+        FunctionFilter = "";
+    }
     private string _currentClassAddr = "";
     private bool _isDefinitionView;  // True when displaying a class/struct definition (no live data)
     private DataTableWalkResult? _cachedDataTableRows;  // Cached DataTable row data
@@ -6337,8 +6345,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (_allFunctions.Count == 0) return false;
 
         // Clear filter first — a previously typed filter could hide the
-        // target row even though it's in the underlying list.
-        if (!string.IsNullOrEmpty(FunctionFilter)) FunctionFilter = "";
+        // target row even though it's in the underlying list. Flush before blanking:
+        // this is a NAVIGATION clear, the case the keyword-search rule names. (AE16)
+        if (!string.IsNullOrEmpty(FunctionFilter))
+        {
+            _functionFilterMemory.Flush();
+            FunctionFilter = "";
+        }
 
         // Auto-expand the section so the user can actually see the target
         // row without an extra click after a cross-tab navigation.

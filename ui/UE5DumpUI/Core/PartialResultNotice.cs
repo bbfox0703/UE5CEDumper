@@ -79,6 +79,76 @@ public static class PartialResultNotice
               + $"a 0 on those {unit}s means \"not found YET\", not \"none\".";
 
     /// <summary>
+    /// A group scan kept fewer WITNESSES per slot than the slot actually matched.
+    ///
+    /// <para>
+    /// The odd one out among these notices: nothing about the result set is missing —
+    /// every matching object is present and every row is correct. What is capped is the
+    /// per-slot list of FIELDS that satisfied the slot, i.e. the "All fields" popup and
+    /// the row's <c>(+N)</c> annotation. Saying "results are partial" here would be
+    /// false; the sentence has to name the witness list specifically, which is why it
+    /// is not <see cref="RowCap"/>.
+    /// </para>
+    /// <para>
+    /// The DLL computed this and only wrote it to its own log, so the panel that had
+    /// already been fixed twice for "a matched field reads as a missed one" still could
+    /// not say it. (audit #5 AE13)
+    /// </para>
+    /// </summary>
+    /// <param name="cap">The cap the DLL actually applied (after its own clamp), or 0
+    /// when an older DLL sent the flag without the number.</param>
+    public static string PerSlotWitnessCap(int cap)
+        => cap > 0
+            ? $"  ⚠ a slot matched more than {cap:N0} fields — only that many were kept, so "
+              + "\"All fields\" is a page and a later Changed/Decreased refine can re-read "
+              + "only what was kept; use more distinctive values."
+            : "  ⚠ a slot matched more fields than the per-slot cap kept — so \"All fields\" "
+              + "is a page and a later Changed/Decreased refine can re-read only what was "
+              + "kept; use more distinctive values.";
+
+    /// <summary>
+    /// A refine pass whose INPUT was already truncated. The refine itself completed;
+    /// what is partial is the set it was allowed to see.
+    ///
+    /// <para>
+    /// Worth its own sentence because the consequence differs from a plain cap: pruning
+    /// a truncated set yields survivors that are correct individually and incomplete
+    /// collectively, so the usual "narrow it further" advice makes things worse — the
+    /// only repair is to redo the pass that truncated. Value Search announced the
+    /// truncation on First Scan and then a Next Scan silently dropped both that note and
+    /// the picker's "Counts are partial" badge, which reads as the problem having gone
+    /// away. (audit #5 AE24)
+    /// </para>
+    /// </summary>
+    /// <param name="priorPass">The pass that truncated, named as the user's button.</param>
+    public static string InheritedTruncation(string priorPass = "First Scan")
+        => $"  ⚠ the {priorPass} it refined was TRUNCATED — these survivors are a subset of a "
+         + $"partial set, so a match that never entered it cannot appear here; re-run {priorPass} "
+         + $"with a longer timeout or a narrower predicate.";
+
+    /// <summary>
+    /// A DERIVED list — autocomplete suggestions, facets, a distinct-value dropdown —
+    /// computed from a page that stopped at a cap, and therefore not the set of values
+    /// that exist.
+    ///
+    /// <para>
+    /// Distinct from <see cref="RowCap"/>, which describes the capped list itself. This
+    /// describes something built OUT of it, where the consequence is different and worse:
+    /// the panel's own status line may already admit the cap, while a dropdown beside it
+    /// silently presents its contents as the complete set of choices, and a value that
+    /// exists only past the cap looks like a value that does not exist. (audit #5 AE15)
+    /// </para>
+    /// </summary>
+    /// <param name="listName">Plural, as it reads in "{listName} are derived from" —
+    /// e.g. "Super / Package suggestions".</param>
+    /// <param name="shown">Rows the page actually contained.</param>
+    /// <param name="total">Rows in the pool.</param>
+    /// <param name="unit">Plural noun for a row ("classes", "functions").</param>
+    public static string DerivedListFromCappedPage(string listName, int shown, int total, string unit)
+        => $"⚠ {listName} are derived from the {shown:N0} {unit} loaded, not all {total:N0} — "
+         + $"a value that only occurs past the cap is not offered here; type it in.";
+
+    /// <summary>
     /// The <c>[scanned X/Y in Zms]</c> suffix for a reverse-address container scan.
     ///
     /// <para>

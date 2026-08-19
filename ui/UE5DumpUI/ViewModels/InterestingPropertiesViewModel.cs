@@ -479,6 +479,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilters()
     {
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
         FilterText     = "";
         CategoryFilter = null;
         UnusualOnly    = false;

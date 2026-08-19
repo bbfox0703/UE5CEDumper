@@ -361,6 +361,7 @@ public partial class ConsoleViewModel : ViewModelBase
     [RelayCommand]
     private void ClearFilter()
     {
+        _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (AE16)
         FilterText = "";
     }
 

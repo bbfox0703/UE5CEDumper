@@ -67,6 +67,14 @@ public partial class ClassStructViewModel : ViewModelBase
     private void ApplyFieldFilter()
     {
         var terms = ObjectTreeFilter.SplitTerms(FieldFilter);
+        // Detach before clearing the selection-bound grid (audit #5 AE14). This was
+        // the one panel of five missing the line its siblings carry verbatim —
+        // ConsoleViewModel:341, GameClassFilterViewModel:151,
+        // InterestingFunctionsViewModel:587, InterestingPropertiesViewModel:448.
+        // Avalonia's DataGrid keeps SelectedItem pointing at a row that is no longer
+        // in ItemsSource, so the xref context menu and the "Find Funcs" column kept
+        // acting on a FieldInfoModel the grid had stopped showing.
+        SelectedField = null;
         Fields.Clear();
         foreach (var f in _allFields)
         {
@@ -197,13 +205,30 @@ public partial class ClassStructViewModel : ViewModelBase
 
     /// <summary>"Find Class Funcs": which UFunctions take this whole class as a
     /// parameter or return value (find_functions_by_class — reflection, native
-    /// functions included). Distinct from the per-FIELD "Find Funcs" column.</summary>
+    /// functions included). Distinct from the per-FIELD "Find Funcs" column.
+    ///
+    /// The try/catch is copied verbatim from <see cref="FindFieldXrefsAsync"/>
+    /// directly above — same feature, same call shape, and this method had none
+    /// at all (audit #5 AE11). <c>find_functions_by_class</c> is a bulk-lane
+    /// command that fails on pipe teardown, a <c>Tot::Requested()</c> abort or a
+    /// stale <see cref="LoadedClassAddr"/>; without the catch the dialog threw,
+    /// the panel's ErrorMessage line stayed blank and nothing reached
+    /// <c>view-*.log</c> either — a button that silently did nothing and left no
+    /// trace to grep for.</summary>
     [RelayCommand]
     private async Task FindClassFuncAsync()
     {
         if (string.IsNullOrEmpty(LoadedClassAddr)) return;
-        await Views.PropertyXrefDialog.ShowForClassAsync(
-            ClassName, LoadedClassAddr, _dump, _platform);
+        try
+        {
+            await Views.PropertyXrefDialog.ShowForClassAsync(
+                ClassName, LoadedClassAddr, _dump, _platform);
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error($"FindClassFunc failed for {ClassName} ({LoadedClassAddr})", ex);
+        }
     }
 
     /// <summary>

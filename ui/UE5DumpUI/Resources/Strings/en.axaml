@@ -767,6 +767,7 @@
     <sys:String x:Key="str.ProxyDeploy.ScanDrives">Scan Drives</sys:String>
     <sys:String x:Key="str.ProxyDeploy.RefreshDrives">Refresh Drives</sys:String>
     <sys:String x:Key="str.ProxyDeploy.CancelScan">Cancel</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.CancelOperation">Cancel operation</sys:String>
 
     <!-- Leftover ("orphan") proxy cleanup. Uninstalling a game leaves its folder behind BECAUSE our
          proxy DLL is a file Steam does not own, so an empty shell survives with our DLL inside it. -->
@@ -1470,6 +1471,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.ProxyDeploy.Scan">Detect Steam-installed UE games</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Inject">Route ② of 4 — use this when the game is already running and you did not deploy a proxy (① Deploy is better when you can restart the game: it loads with it and survives restarts). Inject UE5Dumper.dll into an already-running UE game (CreateRemoteThread + LoadLibraryW) — no Cheat Engine or pre-deployed proxy needed. Pick the process, then auto-connect. If the game runs as Administrator you'll get a UAC prompt to inject elevated (no manual restart). x64 games only; single-player / offline use only (anti-cheat may block).</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Refresh">Refresh deploy status for detected games</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.CancelOperation">Stop the long operation currently running in this panel — Scan, Scan Drives, Refresh Drives, Find leftovers, Delete checked, Refresh, Deploy, Undeploy or Update All. Only one runs at a time, so this is unambiguous. It stops at the next unit of work (one game, one leftover chain, one library folder), so whatever is already in flight finishes and the result line reports what actually happened rather than pretending nothing did.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Deploy">Route ① of 4 — the best one when you can restart the game: the proxy loads with it, survives restarts, and needs no Cheat Engine. Deploy the selected proxy DLL to the ticked games.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Undeploy">Remove OUR proxy DLLs from the selected games — every flavour (version / dinput8 / dxgi), not just the one selected above: that radio governs deploying, while this is a clean-up. A version.dll or dxgi.dll belonging to another program (a mod loader, another tool) is always left alone, and is reported rather than deleted.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.UpdateAll">Update all deployed games to latest version</sys:String>

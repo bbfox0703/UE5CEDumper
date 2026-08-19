@@ -261,8 +261,15 @@ public interface IDumpService
     // Decreased) are NOT valid for the first scan — caller must use
     // RefineValueScanAsync for those.
     //
-    // Native C++ fields (non-UPROPERTY) are NOT visible to this scan.
-    // The UI's Value Search tab surfaces this limitation in a banner.
+    // Native C++ fields (non-UPROPERTY) are not REFLECTED, so they are invisible
+    // to the default walk — but they are reachable: pass `nativeC: true` (18 lines
+    // below) and the DLL additionally scans each object's unmanaged holes (the byte
+    // ranges inside the object that no property covers) via the Guess-What
+    // heuristic, numeric types only. The UI's Value Search tab has BOTH banners —
+    // str.VS.Banner names the limitation and points at the Native-C toggle,
+    // str.VS.NativeBanner describes the scan once it is on. Saying "NOT visible to
+    // this scan" full stop predated the Native-C work and had this interface
+    // contradicting its own parameter list. (audit #5 AE31)
     // V3-C: the DLL session OWNS the full candidate set; begin/refine return
     // `Total` (full count) plus only the FIRST PAGE (`pageSize`, scan order).
     // The UI is a windowed view that pages / filters / sorts server-side via

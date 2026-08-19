@@ -1409,6 +1409,18 @@ struct GroupScanResult {
     std::vector<Radar::FieldDescriptor> descriptors;  // shared via GroupSlotMatch::descriptorIdx
     std::vector<Radar::InstanceRecord>  instances;     // shared via GroupCandidate::instanceIdx
     ValueScanStats                      stats;
+    // At least one block had MORE leaves satisfying a slot than perSlotCap, so the
+    // extras were dropped and a later Changed/Decreased refine can only re-read what
+    // was kept. Deliberately NOT in ValueScanStats: that struct is shared with the
+    // single-value / snapshot / pivot paths, which have no per-slot cap.
+    //
+    // Before audit #5 AE13 this was a function-local bool in ScanForValueGroup whose
+    // only consumer was a LOG_WARN, so the one fact that explains "the scan missed my
+    // field" reached the DLL log and nothing else. It is a bool rather than a count
+    // because the pre-cap magnitude only exists inside Orden::MatchGroup's inner loop;
+    // widening that is a separate change and the bool is what the UI needs to stop
+    // presenting a capped witness list as complete.
+    bool perSlotCapHit = false;
 };
 
 // First scan. `slots` carry the pre-parsed per-slot targets (caller enforces

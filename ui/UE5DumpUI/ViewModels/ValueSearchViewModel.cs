@@ -28,9 +28,13 @@ public sealed record ValueSortOption(string Label, string Key);
 ///      from the previous round.
 ///   4. New Scan ends the session and resets to step 1.
 ///
-/// Native C++ fields (non-UPROPERTY) are NOT scanned -- this is a
-/// hard contract surfaced in the panel's banner. See memory
-/// project_value_search_caveats for rationale.
+/// Native C++ fields (non-UPROPERTY) are not scanned BY DEFAULT — the walk is
+/// driven by reflection, which cannot see them. It is not a hard contract:
+/// <see cref="NativeCScan"/> ("Native-C", opt-in, default off) adds a raw pass
+/// over each object's unmanaged holes, and the panel carries a second banner
+/// for that mode. Both banners are in en.axaml (str.VS.Banner /
+/// str.VS.NativeBanner). Calling it a hard contract predated the Native-C work
+/// and was the strongest of three such claims in the tree. (audit #5 AE31)
 /// </summary>
 public partial class ValueSearchViewModel : ViewModelBase
 {
@@ -417,8 +421,19 @@ public partial class ValueSearchViewModel : ViewModelBase
         Total = total;
         if (IsDefaultView)
         {
+            // This branch writes Candidates WITHOUT going through LoadWindowAsync, so it
+            // must supersede any view query still in flight itself — otherwise a page-0
+            // reload issued before the scan lands afterwards and overwrites the fresh
+            // inline page with a window over the PREVIOUS session's set. Found while
+            // reviewing AE21 rather than filed with it; the guard is the same family and
+            // costs one line. The cancelled query returns through its OCE path and
+            // releases _resetInFlight in its own finally.
+            _viewCts?.Cancel();
             FilteredTotal = total;
             Candidates = new ObservableCollection<ValueCandidate>(inlineFirstPage);
+            // Stamp the window key here too, or the very first Load More after a
+            // default-view scan sees a null key and needlessly re-fetches page 0. (AE21)
+            _loadedWindow = CurrentWindowQuery();
             UpdateWindowStatus();
         }
         else
@@ -427,28 +442,105 @@ public partial class ValueSearchViewModel : ViewModelBase
         }
     }
 
+    // ── AE21: what the loaded window is a function of ────────────────────────
+    //
+    // "Load More" derives its offset from Candidates.Count. That is only a valid
+    // server offset while the rows on screen are still the head of the CURRENT
+    // ordering. Three ways they stop being:
+    //   1. a page-0 reload is in flight — Load More CANCELS it and then pages from
+    //      the superseded list's length;
+    //   2. FilterText changed but its 250 ms debounce has not fired yet, so the new
+    //      filter goes on the wire against the old list's offset;
+    //   3. a fresh First/Next scan replaced the session's set under an unchanged
+    //      filter/sort, so the key matches but the rows do not.
+    // (1) and (2) are caught by comparing the key, (3) by the in-flight flag. The
+    // symptom was one grid concatenating two different filters/sorts, with no error.
+
+    /// <summary>Every input the server window is a function of. A record struct so
+    /// equality is structural and a forgotten field is a compile-time addition here
+    /// rather than a silent mismatch.</summary>
+    internal readonly record struct WindowQuery(string Filter, string SortKey, bool SortDesc, string Excluded);
+
+    private WindowQuery? _loadedWindow;        // what Candidates currently reflect
+    private bool _resetInFlight;               // a page-0 reload has not landed yet
+    private WindowQuery? _loadedGroupWindow;
+    private bool _groupResetInFlight;
+
+    /// <summary>The session's FIRST scan hit its deadline / result cap, so every set
+    /// derived from it is a subset of a partial set. Latched for the life of the
+    /// session because a refine cannot recompute it — <c>refine_value_scan</c> prunes
+    /// what the DLL already holds and reports its own (exact-over-that-set) numbers.
+    /// Cleared by New Scan and by a disconnect, never by a refine. (audit #5 AE24)</summary>
+    private bool _scanTruncated;
+    private bool _groupScanTruncated;
+
+    /// <summary>The group session's Begin scan dropped leaves past the per-slot witness
+    /// cap. Session-scoped like <see cref="_groupScanTruncated"/> and for the same
+    /// reason — the DLL carries it forward on refine and query, so the UI must too.
+    /// (audit #5 AE13)</summary>
+    private bool _groupPerSlotCapHit;
+    /// <summary>The cap the DLL actually APPLIED, echoed back on the wire. Distinct
+    /// from the bound <see cref="GroupPerSlotCap"/> input above, which is what the user
+    /// REQUESTED: the DLL clamps to 8..4096 and the request omits the key entirely at
+    /// the UI default, so the applied value cannot be derived client-side. 0 means an
+    /// older DLL sent no number.</summary>
+    private int  _groupCapApplied;
+
+    /// <summary>Canonical, order-insensitive key for an exclusion set. Sorted so a
+    /// picker that re-emits the same classes in a different order is not read as a
+    /// changed query.</summary>
+    internal static string ExclusionKey(IReadOnlyList<string> excluded)
+    {
+        if (excluded.Count == 0) return "";
+        var copy = excluded.ToArray();
+        Array.Sort(copy, StringComparer.Ordinal);
+        // Count-prefixed so the join cannot be ambiguous even if a name ever contained
+        // the separator: {"A,B"} keys as "1:A,B" and {"A","B"} as "2:A,B".
+        return copy.Length.ToString() + ":" + string.Join(",", copy);
+    }
+
+    private WindowQuery CurrentWindowQuery()
+        => new(FilterText ?? "", _sortKey ?? "", _sortDesc, ExclusionKey(ClassFilter.ExcludedClasses));
+
+    private WindowQuery CurrentGroupWindowQuery()
+        => new(GroupFilterText ?? "", _groupSortKey ?? "", _groupSortDesc,
+               ExclusionKey(GroupClassFilter.ExcludedClasses));
+
+    /// <summary>Whether an append must be promoted to a page-0 reset. Pure, so the
+    /// rule is unit-testable without a pipe. (audit #5 AE21)</summary>
+    internal static bool ShouldPromoteAppendToReset(bool resetInFlight, WindowQuery? loaded, WindowQuery current)
+        => resetInFlight || loaded is null || loaded.Value != current;
+
     /// <summary>Fetch a window from the DLL with the current filter/sort.
     /// reset=true replaces the window (page 0); reset=false appends the next
     /// page (Load More). A newer query cancels an in-flight one.</summary>
     private async Task LoadWindowAsync(bool reset)
     {
         if (!HasSession) return;
+        var q = CurrentWindowQuery();
+        if (!reset && ShouldPromoteAppendToReset(_resetInFlight, _loadedWindow, q))
+            reset = true;   // AE21 — Candidates.Count is not an offset into this query
         _viewCts?.Cancel();
         var cts = _viewCts = new System.Threading.CancellationTokenSource();
+        if (reset) _resetInFlight = true;
         try
         {
             int offset = reset ? 0 : Candidates.Count;
             var w = await _dump.QueryCandidatesAsync(
                 SessionId, offset, PageSize,
-                string.IsNullOrEmpty(FilterText) ? null : FilterText,
-                string.IsNullOrEmpty(_sortKey) ? null : _sortKey,
-                _sortDesc, ClassFilter.ExcludedClasses, cts.Token);
+                string.IsNullOrEmpty(q.Filter) ? null : q.Filter,
+                string.IsNullOrEmpty(q.SortKey) ? null : q.SortKey,
+                q.SortDesc, ClassFilter.ExcludedClasses, cts.Token);
             Total = w.Total;
             FilteredTotal = w.FilteredTotal;
             if (reset)
                 Candidates = new ObservableCollection<ValueCandidate>(w.Candidates);
             else
                 foreach (var c in w.Candidates) Candidates.Add(c);
+            // Stamp what is now on screen — INSIDE the success path, and with the query
+            // captured before the await, so a filter typed while this was in flight
+            // cannot make a stale window look current.
+            _loadedWindow = q;
             OnPropertyChanged(nameof(HasMore));
             UpdateWindowStatus();
             // Filter keyword-memory: remember the settled keyword only now that the
@@ -456,7 +548,10 @@ public partial class ValueSearchViewModel : ViewModelBase
             // change). Commit — not a timer probe — so it never reads a stale count.
             if (reset) _filterMemory.Commit();
         }
-        catch (OperationCanceledException) { /* superseded by a newer query */ }
+        // OUR cancel = superseded by a newer query; correctly silent. A token-less OCE
+        // (pipe teardown) and an IOException (game gone) fall through to the reporting
+        // catch below instead of vanishing. (audit #5 AE23)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
             ErrorMessage = $"Query failed: {ex.Message}";
@@ -464,7 +559,15 @@ public partial class ValueSearchViewModel : ViewModelBase
         }
         finally
         {
-            if (ReferenceEquals(_viewCts, cts)) { _viewCts?.Dispose(); _viewCts = null; }
+            // Only the newest reset owns the flag — a superseded one must not clear it
+            // out from under its replacement (same "whoever bumps owns it" rule the
+            // _viewCts identity check below encodes).
+            if (ReferenceEquals(_viewCts, cts))
+            {
+                if (reset) _resetInFlight = false;
+                _viewCts?.Dispose();
+                _viewCts = null;
+            }
         }
     }
 
@@ -478,7 +581,11 @@ public partial class ValueSearchViewModel : ViewModelBase
             await Task.Delay(250, cts.Token);
             await LoadWindowAsync(reset: true);
         }
-        catch (OperationCanceledException) { }
+        // Our own debounce cancel — the expected path on every keystroke. Anything else
+        // is a real failure on a fire-and-forget task, which would otherwise be an
+        // unobserved exception with no log line at all. (audit #5 AE23)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex) { _log.Error("ValueSearch debounced reload failed", ex); }
         finally
         {
             if (ReferenceEquals(_filterCts, cts)) { _filterCts?.Dispose(); _filterCts = null; }
@@ -755,6 +862,17 @@ public partial class ValueSearchViewModel : ViewModelBase
         FilteredTotal = 0;
         GroupTotal = 0;
         GroupFilteredTotal = 0;
+        // The window bookkeeping and the truncation latch are session state too — a
+        // reconnect that kept them would let a Load More page against a dead session's
+        // key (AE21) or tell the user a fresh scan inherited a truncation (AE24).
+        _loadedWindow = null;
+        _loadedGroupWindow = null;
+        _resetInFlight = false;
+        _groupResetInFlight = false;
+        _scanTruncated = false;
+        _groupScanTruncated = false;
+        _groupPerSlotCapHit = false;
+        _groupCapApplied = 0;
         WindowStatus = "";
         GroupWindowStatus = "";
         ClassFilter.Reset();
@@ -839,6 +957,10 @@ public partial class ValueSearchViewModel : ViewModelBase
                 PreFilterNoise, cts.Token);
 
             SessionId = result.SessionId;
+            // Latch the truncation for the WHOLE session, not just this line. Every
+            // later refine prunes a set that was already partial, and until AE24 the
+            // next status line and the picker badge both said otherwise.
+            _scanTruncated = result.DeadlineHit;
             // Populate the class-noise picker from the server histogram BEFORE
             // applying the window (ApplyScanResultAsync consults ClassFilter via
             // IsDefaultView). countsPartial when the scan hit its deadline / cap.
@@ -854,12 +976,17 @@ public partial class ValueSearchViewModel : ViewModelBase
                 summary += $"  ⚠ truncated ({ScanTimeoutSeconds}s deadline / result cap) — raise the Timeout slider or narrow the predicate";
             StatusText = summary;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             StatusText = "First Scan cancelled.";
         }
         catch (Exception ex)
         {
+            // NOT our cancel. PipeClient tells the three causes apart (audit #5 AC10):
+            // a caller cancel carries OUR token (caught above), a deliberate teardown
+            // carries the client's own, and an unexpected pipe death — game crash, DLL
+            // unload — arrives as IOException. The bare OCE catch reported every one of
+            // them as "First Scan cancelled." and logged nothing. (audit #5 AE23)
             ErrorMessage = $"First Scan failed: {ex.Message}";
             _log.Error($"ValueSearch First Scan failed", ex);
         }
@@ -906,21 +1033,27 @@ public partial class ValueSearchViewModel : ViewModelBase
                 SelectedScanType == ValueScanType.Between ? Value2 : null,
                 effRound, effCase, PageSize, cts.Token);
 
-            // Refine prunes the existing set (no re-scan), so the histogram is exact.
+            // Refine prunes the existing set (no re-scan), so the histogram is exact
+            // OVER THAT SET — and stays a lower bound on the game whenever the set it
+            // prunes was itself truncated. Passing `false` here is what erased the
+            // "Counts are partial" badge on the first refine. (audit #5 AE24)
             ClassFilter.RebuildFromCounts(
                 result.ClassHistogram.Select(c => (c.ClassName, c.Count)),
-                result.ClassDistinct);
+                result.ClassDistinct, countsPartial: _scanTruncated);
             await ApplyScanResultAsync(result.Total, result.Candidates);
 
             StatusText = $"Next Scan ({SelectedScanType}): {result.Total} surviving candidates " +
-                         $"in {result.DurationMs} ms";
+                         $"in {result.DurationMs} ms"
+                       + (_scanTruncated ? PartialResultNotice.InheritedTruncation() : "");
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             StatusText = "Next Scan cancelled.";
         }
         catch (Exception ex)
         {
+            // See FirstScanAsync — a token-less OCE is a pipe death, not a user cancel.
+            // (audit #5 AE23)
             ErrorMessage = $"Next Scan failed: {ex.Message}";
             _log.Error($"ValueSearch Refine failed", ex);
         }
@@ -938,6 +1071,9 @@ public partial class ValueSearchViewModel : ViewModelBase
         Candidates = new ObservableCollection<ValueCandidate>();
         Total = 0;
         FilteredTotal = 0;
+        _scanTruncated = false;      // a new session has not truncated anything yet (AE24)
+        _loadedWindow = null;        // nothing on screen belongs to a live query (AE21)
+        _resetInFlight = false;
         // Reset the bound PICKER, not just the private key. Assigning `_sortKey` alone left
         // the combo still displaying the previous sort while the next scan ran in scan order,
         // and re-selecting the option the combo already shows raises no change notification —
@@ -1103,7 +1239,18 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// (Exact / Bigger / Smaller) compare against the row's value; prev-value types
     /// (Changed / Unchanged / Increased / Decreased) compare against the previous
     /// round and need a session, so they're only valid on a refine — the value box
-    /// hides for them. Between + substring predicates are intentionally excluded.</summary>
+    /// hides for them.
+    ///
+    /// The SUBSTRING predicates (Contains / StartsWith / EndsWith) are the ones
+    /// intentionally excluded: a group slot is numeric by construction. Between is
+    /// deliberately IN, and the doc used to say the opposite while listing it fourth
+    /// (audit #5 AE25). Direction re-derived rather than assumed — Between is
+    /// supported end to end and by three independent witnesses: docs/group-value-scan-spec.md
+    /// §"First scan takes Exact / Bigger / Smaller / Between", the DLL's own slot parser
+    /// (Fern.cpp reads a per-slot <c>value2</c> as "the Between upper bound"), and
+    /// <see cref="GroupValuesValid"/> here, which rejects a Between row missing its
+    /// upper bound. Deleting the option would have removed a shipped, spec'd feature
+    /// to satisfy a stale comment.</summary>
     public IReadOnlyList<ValueScanType> GroupScanTypeOptions { get; } = new[]
     {
         ValueScanType.Exact,
@@ -1236,6 +1383,7 @@ public partial class ValueSearchViewModel : ViewModelBase
                 PreFilterNoise, SelectedRoundingMode, GroupPerSlotCap, cts.Token);
 
             GroupSessionId = result.SessionId;
+            _groupScanTruncated = result.DeadlineHit;   // AE24, group side
             GroupClassFilter.RebuildFromCounts(
                 result.ClassHistogram.Select(c => (c.ClassName, c.Count)),
                 result.ClassDistinct, countsPartial: result.DeadlineHit);
@@ -1245,11 +1393,19 @@ public partial class ValueSearchViewModel : ViewModelBase
                           $"(scanned {result.ScannedObjects} objects, {result.ScannedClasses} classes)";
             if (result.DeadlineHit)
                 summary += $"  ⚠ truncated ({ScanTimeoutSeconds}s deadline / result cap) — raise the Timeout slider or refine";
+            // Separate fact from DeadlineHit, and the one that explains a short
+            // "All fields" list. Latched for the session: refine inherits it. (AE13)
+            _groupPerSlotCapHit = result.PerSlotCapHit;
+            _groupCapApplied    = result.PerSlotCap;
+            if (result.PerSlotCapHit)
+                summary += PartialResultNotice.PerSlotWitnessCap(result.PerSlotCap);
             StatusText = summary;
         }
-        catch (OperationCanceledException) { StatusText = "Group First Scan cancelled."; }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        { StatusText = "Group First Scan cancelled."; }
         catch (Exception ex)
         {
+            // A token-less OCE is a pipe death, not a user cancel (audit #5 AE23).
             ErrorMessage = $"Group First Scan failed: {ex.Message}";
             _log.Error("ValueSearch group first scan failed", ex);
         }
@@ -1275,15 +1431,28 @@ public partial class ValueSearchViewModel : ViewModelBase
 
             var result = await _dump.RefineGroupScanAsync(GroupSessionId, GroupInputs.ToList(), PageSize, SelectedRoundingMode, cts.Token);
 
+            // countsPartial + the inherited-truncation clause: a group refine over a
+            // truncated first scan has the identical defect the finding named on the
+            // single side. (audit #5 AE24)
             GroupClassFilter.RebuildFromCounts(
                 result.ClassHistogram.Select(c => (c.ClassName, c.Count)),
-                result.ClassDistinct);
+                result.ClassDistinct, countsPartial: _groupScanTruncated);
             await ApplyGroupScanResultAsync(result.Total, result.Candidates);
-            StatusText = $"Group Next Scan: {result.Total} surviving objects in {result.DurationMs} ms";
+            // The DLL carries the Begin scan's cap verdict on the session, so a refine
+            // reports it too rather than looking like the problem went away. (AE13)
+            _groupPerSlotCapHit = result.PerSlotCapHit || _groupPerSlotCapHit;
+            if (result.PerSlotCap > 0) _groupCapApplied = result.PerSlotCap;
+            StatusText = $"Group Next Scan: {result.Total} surviving objects in {result.DurationMs} ms"
+                       + (_groupScanTruncated
+                          ? PartialResultNotice.InheritedTruncation("Group First Scan") : "")
+                       + (_groupPerSlotCapHit
+                          ? PartialResultNotice.PerSlotWitnessCap(_groupCapApplied) : "");
         }
-        catch (OperationCanceledException) { StatusText = "Group Next Scan cancelled."; }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        { StatusText = "Group Next Scan cancelled."; }
         catch (Exception ex)
         {
+            // A token-less OCE is a pipe death, not a user cancel (audit #5 AE23).
             ErrorMessage = $"Group Next Scan failed: {ex.Message}";
             _log.Error("ValueSearch group refine failed", ex);
         }
@@ -1301,6 +1470,11 @@ public partial class ValueSearchViewModel : ViewModelBase
         GroupCandidates = new ObservableCollection<GroupCandidate>();
         GroupTotal = 0;
         GroupFilteredTotal = 0;
+        _groupScanTruncated = false;   // AE24
+        _groupPerSlotCapHit = false;   // AE13
+        _groupCapApplied = 0;
+        _loadedGroupWindow = null;     // AE21
+        _groupResetInFlight = false;
         // Same picker reset as NewScanAsync — the group mode had the identical defect and
         // the finding named only the single-scan side. (audit #5 AE9)
         _suppressGroupSortReload = true;
@@ -1325,8 +1499,10 @@ public partial class ValueSearchViewModel : ViewModelBase
         GroupTotal = total;
         if (IsGroupDefaultView)
         {
+            _groupViewCts?.Cancel();   // see ApplyScanResultAsync — same supersede rule
             GroupFilteredTotal = total;
             GroupCandidates = new ObservableCollection<GroupCandidate>(inlineFirstPage);
+            _loadedGroupWindow = CurrentGroupWindowQuery();   // AE21, group side
             UpdateGroupWindowStatus();
         }
         else
@@ -1335,40 +1511,54 @@ public partial class ValueSearchViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Group-mode twin of <see cref="LoadWindowAsync"/> — same Load-More
+    /// offset hazard, same promote-to-reset guard. The finding named only the single
+    /// side; this path has the identical code. (audit #5 AE21)</summary>
     private async Task LoadGroupWindowAsync(bool reset)
     {
         if (!HasGroupSession) return;
+        var q = CurrentGroupWindowQuery();
+        if (!reset && ShouldPromoteAppendToReset(_groupResetInFlight, _loadedGroupWindow, q))
+            reset = true;
         _groupViewCts?.Cancel();
         var cts = _groupViewCts = new System.Threading.CancellationTokenSource();
+        if (reset) _groupResetInFlight = true;
         try
         {
             int offset = reset ? 0 : GroupCandidates.Count;
             var w = await _dump.QueryGroupCandidatesAsync(
                 GroupSessionId, offset, PageSize,
-                string.IsNullOrEmpty(GroupFilterText) ? null : GroupFilterText,
-                string.IsNullOrEmpty(_groupSortKey) ? null : _groupSortKey,
-                _groupSortDesc, GroupClassFilter.ExcludedClasses, cts.Token);
+                string.IsNullOrEmpty(q.Filter) ? null : q.Filter,
+                string.IsNullOrEmpty(q.SortKey) ? null : q.SortKey,
+                q.SortDesc, GroupClassFilter.ExcludedClasses, cts.Token);
             GroupTotal = w.Total;
             GroupFilteredTotal = w.FilteredTotal;
             if (reset)
                 GroupCandidates = new ObservableCollection<GroupCandidate>(w.Candidates);
             else
                 foreach (var c in w.Candidates) GroupCandidates.Add(c);
+            _loadedGroupWindow = q;
             OnPropertyChanged(nameof(GroupHasMore));
             UpdateGroupWindowStatus();
             // Filter keyword-memory: commit the settled keyword once its server count
             // has landed (page-0 reload), never on a timer that could race the reload.
             if (reset) _groupFilterMemory.Commit();
         }
-        catch (OperationCanceledException) { /* superseded */ }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { /* superseded */ }
         catch (Exception ex)
         {
+            // Token-less OCE / IOException = the pipe died, not a supersede. (AE23)
             ErrorMessage = $"Group query failed: {ex.Message}";
             _log.Error("ValueSearch query_group_candidates failed", ex);
         }
         finally
         {
-            if (ReferenceEquals(_groupViewCts, cts)) { _groupViewCts?.Dispose(); _groupViewCts = null; }
+            if (ReferenceEquals(_groupViewCts, cts))
+            {
+                if (reset) _groupResetInFlight = false;
+                _groupViewCts?.Dispose();
+                _groupViewCts = null;
+            }
         }
     }
 
@@ -1382,7 +1572,8 @@ public partial class ValueSearchViewModel : ViewModelBase
             await Task.Delay(250, cts.Token);
             await LoadGroupWindowAsync(reset: true);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception ex) { _log.Error("ValueSearch group debounced reload failed", ex); }
         finally
         {
             if (ReferenceEquals(_groupFilterCts, cts)) { _groupFilterCts?.Dispose(); _groupFilterCts = null; }

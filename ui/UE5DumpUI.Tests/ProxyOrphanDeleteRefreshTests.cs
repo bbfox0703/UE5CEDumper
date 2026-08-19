@@ -213,6 +213,67 @@ public class ProxyOrphanDeleteRefreshTests
 
     // ── Stub ────────────────────────────────────────────────────────────────
 
+    // ── AE20: the delete could not be stopped ───────────────────────────────
+
+    /// <summary>
+    /// <c>DeleteSelectedOrphansAsync</c> takes a <c>CancellationToken</c>, re-checks it
+    /// between rows and carries a whole cancelled-reporting path — and nothing in the
+    /// app could call <c>Cancel()</c> on it, because the command did not declare
+    /// <c>IncludeCancelCommand</c> and no other caller existed. Five of the panel's
+    /// seven token-taking commands were in that state, this one destructively.
+    ///
+    /// <para>NEGATIVE CONTROL: remove <c>CancelOperationCommand</c> (or the
+    /// <c>DeleteSelectedOrphansCommand</c> entry from its fan-out list) and the loop
+    /// runs to completion — <c>RemoveCalls</c> is 2 and the result line reports a
+    /// finished pass.</para>
+    /// </summary>
+    [Fact]
+    public async Task AE20_TheDestructiveDelete_CanBeCancelledMidRun()
+    {
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"), Row(@"C:\g\B"));
+        foreach (var o in vm.Orphans) o.IsSelected = true;
+        svc.OnRemove = () => vm.CancelOperationCommand.Execute(null);
+
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, svc.RemoveCalls);   // the second row never started
+        // And the tally still reports what DID happen — a cancel that discarded it
+        // would hide a half-pruned chain.
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+    }
+
+    /// <summary>Negative control: with nobody cancelling, the same pass completes.
+    /// Without this the test above would also pass against a delete that simply
+    /// stopped working.</summary>
+    [Fact]
+    public async Task AE20_WithoutACancel_TheSamePassCompletes()
+    {
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"), Row(@"C:\g\B"));
+        foreach (var o in vm.Orphans) o.IsSelected = true;
+
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, svc.RemoveCalls);
+        Assert.DoesNotContain("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+    }
+
+    /// <summary>The Cancel button's gate is the panel's own exclusive-gate predicate,
+    /// so it is enabled exactly while something cancellable is running.</summary>
+    [Fact]
+    public async Task AE20_IsBusy_TracksTheExclusiveGate()
+    {
+        var (vm, svc) = await ScannedAsync(Row(@"C:\g\A"));
+        Assert.False(vm.IsBusy);
+
+        bool busyDuringDelete = false;
+        vm.Orphans[0].IsSelected = true;
+        svc.OnRemove = () => busyDuringDelete = vm.IsBusy;
+        await vm.DeleteSelectedOrphansCommand.ExecuteAsync(null);
+
+        Assert.True(busyDuringDelete);
+        Assert.False(vm.IsBusy);
+    }
+
     /// <summary>
     /// Answers the two orphan members; everything else on the interface is unreachable from this
     /// flow and throws rather than returning a plausible default that could mask a wrong call.
@@ -223,6 +284,9 @@ public class ProxyOrphanDeleteRefreshTests
         public readonly Dictionary<string, string> FailFor = new(System.StringComparer.OrdinalIgnoreCase);
         public int DirsRemovedPerRow;
         public int RemoveCalls;
+        /// <summary>Runs at the top of each removal — the only moment from which a test
+        /// can cancel the loop the way a user's Cancel click does (audit #5 AE20).</summary>
+        public System.Action? OnRemove;
 
         public Task<IReadOnlyList<OrphanProxy>> FindOrphanProxiesAsync(
             OrphanScanSources sources, IReadOnlySet<string> liveBinariesDirs,
@@ -233,6 +297,7 @@ public class ProxyOrphanDeleteRefreshTests
             OrphanProxy row, IReadOnlySet<string> liveBinariesDirs, CancellationToken ct = default)
         {
             RemoveCalls++;
+            OnRemove?.Invoke();
             return Task.FromResult(FailFor.TryGetValue(row.DllPath, out var why)
                 ? new OrphanRemovalResult(false, why, 0, 0)
                 : new OrphanRemovalResult(true, "1 file moved to the Recycle Bin.", 1, DirsRemovedPerRow));

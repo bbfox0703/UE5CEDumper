@@ -2894,6 +2894,44 @@ static void Test_Radar_GroupLeafBudget() {
            GroupCandidatesWithinLeafBudget(oneBig, 100) == 1);
 }
 
+// audit #5 AE13 — the per-slot cap verdict has to SURVIVE Begin.
+//
+// Orden::MatchGroup reports truncation (Test_Orden_PerSlotCap above), and until this
+// fix the whole of its onward journey was a LOG_WARN inside ScanForValueGroup: no wire
+// key existed, so no DTO could carry it and the UI presented a capped witness list as
+// the complete set of matching fields. Refine cannot recompute it — it prunes the
+// stored pool and never calls the matcher again — and query is a pure window, so the
+// verdict has to be carried on the SESSION or it is lost after the first response.
+//
+// NEGATIVE CONTROL: drop the two assignments from GroupSessionManager::Begin and both
+// EXPECTs below fail with the default-constructed false/0.
+static void Test_Radar_GroupSessionCarriesPerSlotCap() {
+    using namespace Radar;
+    auto& mgr = GroupSessionManager::Instance();
+
+    std::vector<GroupCandidate> pool(1);
+    pool[0].slotMatches.resize(2);
+    for (auto& sl : pool[0].slotMatches) sl.resize(1);
+
+    uint64_t hitId = mgr.Begin({}, pool, {}, {}, /*perSlotCapHit=*/true, /*perSlotCap=*/256);
+    bool sawHit = false; int sawCap = -1;
+    EXPECT("session: the capped session is retrievable",
+           mgr.WithSession(hitId, [&](const GroupSession& s) {
+               sawHit = s.perSlotCapHit; sawCap = s.perSlotCap;
+           }));
+    EXPECT("session: a Begin-time cap hit survives into the session", sawHit);
+    EXPECT("session: and so does the EFFECTIVE cap the DLL clamped to", sawCap == 256);
+
+    // Control: an uncapped scan must not report one, or every session would warn.
+    uint64_t cleanId = mgr.Begin({}, pool, {}, {}, /*perSlotCapHit=*/false, /*perSlotCap=*/256);
+    bool cleanHit = true;
+    mgr.WithSession(cleanId, [&](const GroupSession& s) { cleanHit = s.perSlotCapHit; });
+    EXPECT("session: an uncapped scan reports no truncation", !cleanHit);
+
+    mgr.End(hitId);
+    mgr.End(cleanId);
+}
+
 // The grid must order by the leaf the ROW SHOWS — audit #5 AB6.
 //
 // BuildGroupOrderedView's Value/Offset/ClassName keys read slotMatches[0][0], the first
@@ -6265,6 +6303,7 @@ int main() {
     RUN(Test_Radar_PickGroupWitnessAssignment);
     RUN(Test_Radar_FormatCandidateOrigin);
     RUN(Test_Radar_GroupLeafBudget);
+    RUN(Test_Radar_GroupSessionCarriesPerSlotCap);
     RUN(Test_Radar_GroupSortUsesTheDisplayedLeaf);
     RUN(Test_ValueScan_OrderedViewScale);
     RUN(Test_Macht_IsRipRelativeModRM);

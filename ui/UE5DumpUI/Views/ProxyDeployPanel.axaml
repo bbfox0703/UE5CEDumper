@@ -106,6 +106,17 @@
               Command="{Binding InjectIntoRunningGameCommand}"
               ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.Inject}"
               Padding="12,4"/>
+      <!-- One Cancel for the whole panel: the operations are mutually exclusive
+           (TryBeginExclusive), so "the current operation" is unambiguous. Before
+           audit #5 AE20 five of the seven token-taking commands — including the
+           Recycle-Bin delete — had no way to be cancelled at all. -->
+      <Button Content="{StaticResource str.ProxyDeploy.CancelOperation}"
+              Command="{Binding CancelOperationCommand}"
+              IsEnabled="{Binding IsBusy}"
+              ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.CancelOperation}"
+              Foreground="#E06C75" Background="Transparent"
+              BorderThickness="1" BorderBrush="#E06C75"
+              Padding="10,4" Cursor="Hand"/>
 
       <!-- Selection buttons — separated visually from scan/refresh -->
       <Border Width="1" Background="#444" Margin="4,2"/>

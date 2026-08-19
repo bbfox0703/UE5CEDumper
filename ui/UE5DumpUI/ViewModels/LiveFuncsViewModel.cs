@@ -337,6 +337,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private void Clear()
     {
         _allEntries = new();
+        // The tab-leave path (OnLeavingTab) already flushes; the Clear BUTTON did not,
+        // and it is the one reachable while the user is still looking at the matches
+        // their keyword produced. (audit #5 AE16, sibling site)
+        _filterMemory.Flush();
         FilterText = "";
         Results.Clear();
         SelectedResult = null;
