@@ -2649,9 +2649,10 @@ is **not** in the engine's array order.
 
 -----
 
-### ✅ VERIFIED 2026-08-17 `[AA38-PYTHON-2026-08-17]` — AA38: a GWorld must not be reported on a process with no object pool (build 3245)
+### ✅ COMPLETE 2026-08-20 `[AA38-PYTHON-2026-08-17]` + `[AA38-MODULAR-2026-08-20]` — AA38: a GWorld must not be reported on a process with no object pool (build 3245)
 
-**Steps 1, 2, 3 and 5 PASS. Step 4 NOT TESTED** (no modular-build title was scanned).
+**ALL FIVE STEPS PASS.** Steps 1/2/3/5 on 2026-08-19 (re-confirmed on 3263), and **step 4 on
+2026-08-20 against Satisfactory** — see `[AA38-MODULAR-2026-08-20]` below. This row is complete.
 
 Run on build **1.0.0.3262** (`05a9af58-dirty`), confirmed from the injected DLL's own
 `Logger started` line rather than assumed — `dist/build_number.txt` agrees, so §2.6's stale-proxy
@@ -2713,7 +2714,41 @@ wants it.
 >   `GOBJ_V13` / `GNAM_V8` / `GWLD_TQ_1`, all method `aob` — **identical pattern ids and methods** to
 >   the cached entry, which is the comparison this row mandates. Addresses differ from 2026-08-17
 >   (ASLR), exactly as the row predicts. `scanCount` 11 → 12.
-> * **4 — STILL NOT TESTED.** ⚠ Correcting the note above: **Satisfactory IS installed**
+> * **4 — ✅ PASS 2026-08-20 `[AA38-MODULAR-2026-08-20]`, on Satisfactory. AA38 IS NOW COMPLETE.**
+>   A genuine modular build: **184 engine DLLs** beside the exe and **607 loaded modules** at
+>   runtime. Every global resolved by the **symbol/export** path, and — the assertion — **not one
+>   of them lives in the main module**:
+>
+>   | target | address | method / pattern | owning module |
+>   |---|---|---|---|
+>   | GObjects | `0x7FFCCA033620` | `symbol` / `GOBJ_EXP` | `…-CoreUObject-Win64-Shipping.dll` |
+>   | GNames | `0x7FFCCA8BD8C0` | `symbol_call_follow` / `GNAM_EXP_TOSTR` | `…-Core-Win64-Shipping.dll` |
+>   | GWorld | `0x7FFCC88CCB88` | `symbol` / `GWLD_EXP` | `…-Engine-Win64-Shipping.dll` |
+>   | GEngine | `0x7FFCC88CF768` | `symbol` / `GENG_EXP` | `…-Engine-Win64-Shipping.dll` |
+>   | *(main)* | | | `FactoryGameSteam-Win64-Shipping.exe` — **holds none of them** |
+>
+>   So `AnchorState::ForeignDll` accepted matches across **three different foreign DLLs**. The DLL
+>   says so itself: `Module anchor set to 'FactoryGameSteam-CoreUObject-Win64-Shipping.dll' — later
+>   targets must resolve there **unless this build is modular**`, and the scan log contains
+>   **0** `REFUSED` / `not admissible` lines.
+>   ⭐ **This is the non-regression AA38 most needed.** The fix's whole job is to refuse a match in
+>   an arbitrary module *when nothing has confirmed the process* — a blunt version would have
+>   refused this legitimate cross-DLL case too. It discriminates: GObjects validated first, so the
+>   foreign-module matches were admitted.
+>   Fully functional afterwards: `probe_ran/validated` true, `use_fproperty=true`, `item_size=24`,
+>   **137,372 objects**, `walk_world` ok with 200 entries, `find_instances Actor` = 500.
+>
+>   ⚠ **Launch note — the shipping exe cannot be started directly.** It dies with *"Failed to open
+>   descriptor file ../../../FactoryGameSteam/FactoryGameSteam.uproject"* (that folder does not
+>   exist; the game ships `FactoryGame\`). Launch the **top-level `FactoryGameSteam.exe`**, which
+>   then relaunches into the shipping exe under a *different* PID — so resolve the PID by name
+>   **after** the handoff, twice if necessary.
+>   ⚠ **Second >5,000-class title, corroborating `[CLASSTOTAL]` beyond Avowed**: `list_classes`
+>   returns page **5,000** / `total_classes` **5,171** / `truncated` **true**.
+>   ⚠ **`AB12` precondition still unmet**: 607 loaded modules is the most on this machine, still
+>   short of the **>1024** that row needs.
+>
+> * ~~**4 — STILL NOT TESTED.**~~ ⚠ Correcting the note above: **Satisfactory IS installed**
 >   (`/d/SteamLibrary/steamapps/appmanifest_526870.acf`), so the modular-build case is *available*,
 >   not merely "shaped". It needs a real game launch, so it belongs to a title group, not to the
 >   headless batch — but it is no longer blocked on finding a host.
