@@ -1470,26 +1470,26 @@ discarding CE's reason string — **shipped**; see [dev-log.md](dev-log.md). CE-
 | `TArray<FDumperTestStat>` | — | — | — | — | ❌ not a sparse container |
 
 **The sample has exactly the blind spot the unit tests had** — every pair is either 4-aligned or
-already a multiple of 8, so nothing discriminates. It also cannot reach M2/A2: the containers hold
+already a multiple of 8, so nothing discriminates. It also cannot reach MG2/A2: the containers hold
 **3 entries each** and nothing is ever removed, while A2 needs **>128** entries (the `TBitArray` heap
-spill) and M2 needs a removal.
+spill) and MG2 needs a removal.
 
 `FDumperTestStat` does not help either: it carries an `FText` (a `TSharedRef`, so 8-aligned), which
 is exactly the case the size guess gets *right*.
 
 **Add these five properties** (the arithmetic each one is chosen to expose):
 
-- `TMap<int64,int32> Map_I64ToI32;` — pairAlign 8, unpadded 12 → **old 20 vs new 24**. The core M1
+- `TMap<int64,int32> Map_I64ToI32;` — pairAlign 8, unpadded 12 → **old 20 vs new 24**. The core MG1
   witness. `int64` key rather than `UObject*` so there is no lifetime/GC variable in the test.
-- `TMap<FString,int32> Map_StrToInt;` — unpadded 20 → **old 28 vs new 32**. A second M1 witness with
+- `TMap<FString,int32> Map_StrToInt;` — unpadded 20 → **old 28 vs new 32**. A second MG1 witness with
   different arithmetic, so one wrong assumption cannot pass both.
 - A deliberately **4-aligned POD** struct (`USTRUCT FDumperTestVec3f { float X, Y, Z; }` — no FText,
-  no pointer, no double) + `TMap<int32,FDumperTestVec3f> Map_IntToVec3f;` — **M3**: the size guess
+  no pointer, no double) + `TMap<int32,FDumperTestVec3f> Map_IntToVec3f;` — **MG3**: the size guess
   says "≥8 ⇒ align 8" and puts the value at +8 where it really sits at **+4**, so *even element 0* is
   wrong. This is the only shape that exercises the `UScriptStruct::MinAlignment` read. It doubles as
   **A4**'s target (a scalar leaf inside a map's struct side).
 - `TSet<int32> Set_Big;` populated with **200** entries, then `Remove()` of a **low** index (< 128)
-  at BeginPlay — **A2** (post-spill stale inline bits: the freed low slot must not appear) and **M2**
+  at BeginPlay — **A2** (post-spill stale inline bits: the freed low slot must not appear) and **MG2**
   (header count must equal the rows rendered).
 - `TSet<FDumperTestVec3f> Set_Struct;` — **A4**'s set side.
 
@@ -1616,7 +1616,7 @@ session result, a trap, a refutation — hanging under a real item, and `grep '^
 There are many and that is fine; what must never happen is an ITEM being introduced by one.
 
 **Two blocks were violating this until 2026-08-19** and are the reason the rule is written down: the
-build-2830 container group (**M2 / TSet+UDataTable / U2**) sat under the `[SDKHDR-2026-08-18]`
+build-2830 container group (**MG2 / TSet+UDataTable / U2**) sat under the `[SDKHDR-2026-08-18]`
 heading, and the whole **"Shipped + unit-tests-pass but unproven on real games"** long tail sat under
 `[STALEDLL-2026-08-18]`. No heading anywhere named a single one of their checks. Both now have their
 own headings, and the headings that owned un-named items (the fourteen-MED batch, audit #4 ① and ②,
@@ -1833,7 +1833,7 @@ X4 and X9 are fully settled by tests; the rows below are what only a running gam
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | X5 | connect to game A, populate several panels (Instance Finder, Property Search, Live Walker, Value Search, Interesting Funcs), disconnect, then connect to a **DIFFERENT** game B | every panel is empty on reconnect — no rows, no addresses, no jump offers from game A; Live Walker's per-game **bookmarks survive** | before the fix only Teleport/DumpExplorer/LiveFuncs reset; the other ~13 kept stale rows offering jumps to dead addresses — bindings/timers only observable live |
-> | X5 | before disconnecting, start Live Walker **auto-refresh** and (experimental) an **auto-snapshot** loop, then disconnect | both loops stop immediately on disconnect (no "re-walk"/"capture" log spam against the dead pipe); the snapshot **corpus is preserved** | the timer/loop teardown and corpus-preservation are not unit-testable |
+> | X5 | before disconnecting, start Live Walker **auto-refresh** and (experimental) an **auto-snapshot** loop, then disconnect. ⛔ **Needs a build carrying `[AUTOREFRESH-2026-08-19]`** — on `dist` 1.0.0.3262 and earlier the countdown freezes at `0s` and auto-refresh issues nothing, so "start auto-refresh" cannot be satisfied and a green result would only mean *a loop that never ran did not run*. The auto-snapshot half is unaffected and can be run alone | both loops stop immediately on disconnect (no "re-walk"/"capture" log spam against the dead pipe); the snapshot **corpus is preserved** | the timer/loop teardown and corpus-preservation are not unit-testable |
 > | X6 | start a **Dump All** (or Full SDK / USMAP) on a large game, then kill the game / disconnect mid-export | the export aborts promptly with "… cancelled (disconnected)" instead of hanging on dead-pipe round-trips; no truncated file at the chosen name | the ct now threads from a connection-linked CTS; before, `ct` was `default` and every service ct-check was dead code |
 > | X7 | pause the game thread **during a long bulk-lane scan** (so only the bulk lane observed the pause), let the scan finish, then resume and browse via Live Walker (interactive lane) | the "game thread paused" banner **clears** on resume; before the fix it stuck ON until a bulk command ran | the pure latch is unit-tested, but the PipeClient per-response feed + banner is end-to-end |
 > | X8 | on the **Console** tab, with CE + AOBMaker **closed**, click a baked-exec / Debug-Camera "to CE" action → then **open** CE with the AOBMaker plugin and click again (no tab switch) | the second click now sends to CE (was "AOBMaker not connected" from the stale cached flag) | the path now calls `CheckAvailabilityAsync` first; needs a real CE toggled between clicks |
@@ -4038,9 +4038,11 @@ build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a
 > written would have produced a **false FAIL**. Worth fixing at source: either the Teleport panel
 > should offer a whole-number copy, or the step should say to round.
 
-### 🟡 A5 CLOSED 2026-08-19 — the fourteen-MED batch, all UI-visible: A5 / V6 / AE9 / U8 / V7 / U7 / G1 / X3 / AB6 / AF4 / AF2 / AF6 / AE8 / AF1 (builds 3016-3031)
+### 🟡 A5 + AE9 CLOSED, V6 corrected to a HALF-pass 2026-08-19 — the fourteen-MED batch, all UI-visible: A5 / V6 / AE9 / U8 / V7 / U7 / G1 / X3 / AB6 / AF4 / AF2 / AF6 / AE8 / AF1 (builds 3016-3031)
 
-Eight of the fourteen now carry a PASS block below (A5 · V6 · AE9 · V7 · AF4 · AB6 · AE8 · AF6). The
+Eight of the fourteen now carry a PASS block below (A5 · V6 · AE9 · V7 · AF4 · AB6 · AE8 · AF6) —
+but **V6's is a HALF-pass and is corrected below**: its evidence covers the manual-Refresh half only,
+and the auto-refresh half its own step prescribes was **not observed and could not have been**. The
 rest are cheap to check because each has a *visible* pass/fail, and four of them only ever show up
 when something ELSE goes wrong.
 
@@ -4073,17 +4075,45 @@ when something ELSE goes wrong.
    round trip and one wasted run, for a feature that was correct the whole time. Generalised as the
    propagation half of [working-lessons.md](working-lessons.md) **§1.6** — writing a PASS's
    conditions beside the *number* is not enough when a second document owns the *procedure*.
-2. **V6 — the search highlight survives a Refresh.** Live Walker → type a field-search keyword →
+2. **V6 — the search highlight survives a Refresh. 🟡 HALF-VERIFIED: manual PASS 2026-08-17, the
+   auto-refresh half NOT OBSERVED and BLOCKED.** Live Walker → type a field-search keyword →
    press Refresh (and leave auto-refresh on for a few ticks). Highlights must stay, the ↑/↓ stepper
    must still land on highlighted rows, and **the grid must not jump to the top** — that last one is
    what the fix deliberately avoided by not re-using `ApplySearch`.
-3. **AE9 — New Scan resets the Sort picker.** Value Search → First Scan → sort by Value → New Scan.
+   ✅ **The manual-Refresh half PASSED 2026-08-17** — evidence in the `[GRP4-UI-2026-08-17]` block
+   below, and it is a complete check of that half.
+   ⛔ **The auto-refresh half is NOT OBSERVED, and the 2026-08-17 run could not have observed it.**
+   That session ran on **dist 1.0.0.3262**, the build `[AUTOREFRESH-2026-08-19]` proves had a
+   **frozen** Live Walker countdown: the countdown's only reset sat *past* `OnAutoRefreshTick`'s
+   early-return guard, so one skipped tick pinned the label at `0s` forever while `Auto` still read
+   ON — and the log analysis on that build measured **zero** auto-refreshes across a logged session
+   ("no periodic cadence exists anywhere in the session"; every `walk_instance` in its 21-minute
+   Elliot half maps 1:1 to a user action). So "leave auto-refresh on for a few ticks" was **physically
+   unperformable** when the PASS was recorded, and the evidence block correspondingly says
+   *"Pressed **Refresh**"* / *"Pressed the **▼ stepper**"* and never mentions Auto at all.
+   ▶ **V6 stays OPEN for this half only**, blocked until `[AUTOREFRESH-2026-08-19]`'s fix reaches a
+   **published** build (the other PC is still on 3262). Re-run: keyword → tick **Auto** → let it
+   cycle 2-3 periods with no manual press → highlights, stepper target and scroll anchor must all
+   survive a refresh the *timer* caused.
+   📌 **This is why the record is corrected rather than deleted.** The PASS was not wrong about what
+   it saw; it was wrong about what it *covered*. Same family as A5's 📌 above — there the conditions
+   never reached the step, here a step's precondition was never checked against the build under test.
+   **A procedure that names a behaviour the build cannot perform does not fail; it silently passes on
+   the half that works.** Before recording a PASS, check that every clause of the step was runnable.
+3. **AE9 — New Scan resets the Sort picker. ✅ VERIFIED 2026-08-17** (both halves; evidence in the
+   `[GRP4-UI-2026-08-17]` block below, and its 繁中 step is deleted per close-then-delete).
+   Value Search → First Scan → sort by Value → New Scan.
    The picker must read *"Scan order"*, and picking *"Value"* again must actually re-sort.
 4. **U8 — `FName::Number` is back.** Live Walker a `NameProperty` whose value has a numeric suffix
    (`Slot_1`, `Slot_2`). Panel and Value Search must agree on the same 8 bytes. ⚠ Object/instance
    NAMES are a separate, unfixed lead — do not read a truncated instance name as a failure here.
 
-> ### ✅ A5 · V6 · AE9 all PASS 2026-08-17 `[GRP4-UI-2026-08-17]` — DumperTest Development, 3262
+> ### ✅ A5 · AE9 PASS · 🟡 V6 HALF-PASS 2026-08-17 `[GRP4-UI-2026-08-17]` — DumperTest Development, 3262
+>
+> ⚠ **Corrected 2026-08-19: this block originally read "A5 · V6 · AE9 all PASS".** A5 and AE9 are
+> unaffected. **V6's evidence covers the manual-Refresh half only** — the auto-refresh half its step
+> prescribes was unperformable on 3262 (`[AUTOREFRESH-2026-08-19]`), so the ✅ was broader than what
+> was seen. Nothing observed here is withdrawn; only the scope of the claim is.
 >
 > **A5 — the live half AND the honesty half, on one screen.** Property Search `TickCount`:
 > `DumperTestActor.TickCount` (IntProperty, `0x6A8`) previewed **279**, and a re-search ~38 s later
@@ -4107,11 +4137,22 @@ when something ELSE goes wrong.
 > to `424242, 424242, 480256×4, 524288…`. Note the `Exact` predicate returns identical values and
 > therefore **cannot** test a re-sort; that is why `Bigger` was used.
 >
-> **V6 — all three claims.** Live Walker on `DumperTestActor_0` (reached via a Value Search row's
-> `Live` button, which correctly scrolled to and selected `FrozenInt`): typed `Flag` → `3 matches`,
-> `bFlagA` highlighted. Pressed **Refresh** → the keyword and `3 matches` survive, and the grid stays
-> at the same region (`0x478…0x658`) instead of jumping to the top. Pressed the **▼ stepper** → it
-> scrolled to and selected `bFlagA` at `0x670`. Highlights, anchor and stepper all survive a refresh.
+> **V6 — all three claims, ACROSS A MANUAL REFRESH ONLY.** Live Walker on `DumperTestActor_0`
+> (reached via a Value Search row's `Live` button, which correctly scrolled to and selected
+> `FrozenInt`): typed `Flag` → `3 matches`, `bFlagA` highlighted. Pressed **Refresh** → the keyword
+> and `3 matches` survive, and the grid stays at the same region (`0x478…0x658`) instead of jumping
+> to the top. Pressed the **▼ stepper** → it scrolled to and selected `bFlagA` at `0x670`.
+> Highlights, anchor and stepper all survive a **user-pressed** refresh.
+>
+> ⛔ **What this does NOT cover, added 2026-08-19.** Every action above is a button press — the word
+> *Auto* appears nowhere in this evidence. V6's step also says *"leave auto-refresh on for a few
+> ticks"*, and on this build (**3262**) that was impossible: `[AUTOREFRESH-2026-08-19]` proves the
+> countdown froze at `0s` after a single skipped tick and that **zero** auto-refreshes were issued
+> in a logged session on it ("no periodic cadence exists anywhere in the session"). ⚠ *That session
+> was a different machine on the same build, not a re-run of this one — the transferable fact is the
+> code reading, which the `[AUTOREFRESH-2026-08-19]` entry confirms was byte-identical here.* The
+> timer-driven path therefore remains **unverified** — see V6's
+> corrected entry above. The manual half stands exactly as recorded.
 >
 > **Dump Explorer cross-game identity gate — PASS, on the two DumperTest flavours.** §8 promoted this
 > row on the grounds that the gate compares main-module names and the two packages differ; that is
@@ -5111,10 +5152,10 @@ Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-finding
 
 -----
 
-### 🟡 M2 / TSet+UDataTable no-regression / U2 — container geometry on a real game (build 2830)
+### 🟡 MG2 / TSet+UDataTable no-regression / U2 — container geometry on a real game (build 2830)
 
-*Closed here already: **M1 · M3 · A2 · U1 · V1** (two sittings below — the DLL half 2026-08-14, the
-UI half 2026-08-18). **Still open: three.** **M2**'s rows-equal-count half (the count half passed;
+*Closed here already: **MG1 · MG3 · A2 · U1 · V1** (two sittings below — the DLL half 2026-08-14, the
+UI half 2026-08-18). **Still open: three.** **MG2**'s rows-equal-count half (the count half passed;
 the rows half is undecidable while the drill-down caps — `[CONTAINERCAP-2026-08-18]`), the
 **`TSet<FName>` / `TSet<UObject*>` / `UDataTable` no-regression** check (DumperTest ships none of the
 three, so it needs a real game), and **U2** (needs a `CasePreservingName: YES` title — twelve
@@ -5156,10 +5197,10 @@ confirmed non-CPN, zero CPN, so the absence is itself the signal and this stays 
 >
 > | Fix | Verdict | Evidence from the live walk |
 > |---|---|---|
-> | **M1** | ✅ | `Map_I64ToI32` all three elements correct (`600000000001..3` → `6001..3`). A stride of 20 makes elements 1–2 read from the previous element's tail; they are exact, so the stride is 24. |
-> | **M1** (2nd witness) | ✅ | `Map_StrToInt` `map_value_offset=16`, values `6101/6102/6103`. Different arithmetic from M1's first witness, so one wrong assumption cannot satisfy both. |
-> | **M3** | ✅ | `Map_IntToVec3f` reports **`map_value_offset: 4`**. The old size guess yields **8**. This is `Ubel::GetStructAlignment` reading `MinAlignment=4` off a live `UScriptStruct`. Raw hex `00C8C145 00D0C145 00D8C145` decodes to 6201.0/6202.0/6203.0 — all three floats at the right offsets. |
-> | **M2** | ✅ | `Set_Big` `set_count=199` (200 added, 1 removed). Before the fix `NumFreeIndices` always read 0, so this reported **200**. |
+> | **MG1** | ✅ | `Map_I64ToI32` all three elements correct (`600000000001..3` → `6001..3`). A stride of 20 makes elements 1–2 read from the previous element's tail; they are exact, so the stride is 24. |
+> | **MG1** (2nd witness) | ✅ | `Map_StrToInt` `map_value_offset=16`, values `6101/6102/6103`. Different arithmetic from MG1's first witness, so one wrong assumption cannot satisfy both. |
+> | **MG3** | ✅ | `Map_IntToVec3f` reports **`map_value_offset: 4`**. The old size guess yields **8**. This is `Ubel::GetStructAlignment` reading `MinAlignment=4` off a live `UScriptStruct`. Raw hex `00C8C145 00D0C145 00D8C145` decodes to 6201.0/6202.0/6203.0 — all three floats at the right offsets. |
+> | **MG2** | ✅ | `Set_Big` `set_count=199` (200 added, 1 removed). Before the fix `NumFreeIndices` always read 0, so this reported **200**. |
 > | **A2** | ✅ | `Set_Big` returns 199 elements with **9005 absent** and 9000 / 9004 / 9006 / 9199 all present. 9005 is index 5, i.e. its bit lives in the inline words the `TBitArray` froze when it spilled at 128 — the defect would still list it. |
 > | **U2** | ⬜ | **No known vehicle.** See the box below — TQ2 is NOT CasePreservingName on the current build. |
 >
@@ -5276,11 +5317,11 @@ The remaining unchecked boxes below are superseded by the table above except whe
 >
 > | row | verdict | evidence |
 > |---|---|---|
-> | **M1** | ✅ | `Map_I64ToI32` property @`0x1F144477D88` → data ptr **`0x1F16D348980`** (ArrayNum 3, ArrayMax 4). UI element[1] Address = **`0x1F16D3489A0`** = ptr + 24 + 8. The old stride-20 arithmetic gives `0x1F16D34899C`, which is *not* what is shown. Element offsets 0x0/0x18/0x30 = stride 24. |
-> | **M3** | ✅ | `Map_IntToVec3f` property @`0x1F144477E28` → data ptr **`0x1F172A9E3E0`**. UI element[0] Address = **`0x1F172A9E3E4` = ptr + 4**, not +8. The 12 bytes there decode as **(6201.0, 6202.0, 6203.0)** — matching the row's `{X=6201, Y=6202, Z=…}`. This is the `MinAlignment` read. |
+> | **MG1** | ✅ | `Map_I64ToI32` property @`0x1F144477D88` → data ptr **`0x1F16D348980`** (ArrayNum 3, ArrayMax 4). UI element[1] Address = **`0x1F16D3489A0`** = ptr + 24 + 8. The old stride-20 arithmetic gives `0x1F16D34899C`, which is *not* what is shown. Element offsets 0x0/0x18/0x30 = stride 24. |
+> | **MG3** | ✅ | `Map_IntToVec3f` property @`0x1F144477E28` → data ptr **`0x1F172A9E3E0`**. UI element[0] Address = **`0x1F172A9E3E4` = ptr + 4**, not +8. The 12 bytes there decode as **(6201.0, 6202.0, 6203.0)** — matching the row's `{X=6201, Y=6202, Z=…}`. This is the `MinAlignment` read. |
 > | **U1 / V1** | ✅ | The two consumers of the element address both aim at the **value**. In-place edit of element[1] → status `Written: [1] 600000000002 = 7777`; memory at the element base then reads `02 70 C9 B2 8B 00 00 00 | 61 1E 00 00` — key **600000000002 intact**, value **7777** written at +8. `+CE` pushed `1F16D3489A0 / 4 Bytes / 7777` — the value address and the value's width, not the int64 key. |
 > | **V1** (freeze control) | ✅ | Ticking that CE record and changing it to **1234** wrote `D2 04 00 00` at +8 while the key stayed `02 70 C9 B2 8B 00 00 00` across repeated freeze writes. The pre-fix bug wrote the user's 4 bytes over the key. |
-> | **M2** | 🟡 PARTIAL | `Set_Big` sparse array: **ArrayNum = 200**, UI header **`{Set: 199}`** — so `NumFreeIndices` is being subtracted and the count is no longer inflated. ⚠ The *rows-equal-count* half is **not decidable here** — see the cap finding below. |
+> | **MG2** | 🟡 PARTIAL | `Set_Big` sparse array: **ArrayNum = 200**, UI header **`{Set: 199}`** — so `NumFreeIndices` is being subtracted and the count is no longer inflated. ⚠ The *rows-equal-count* half is **not decidable here** — see the cap finding below. |
 > | **A2** | ✅ | This is the real A2 predicate and `Set_Big` satisfies it exactly. 200 slots > the 128 inline `TBitArray` bits, so the allocation **has spilled to the heap**; the freed slot is at **index 5**, i.e. inside the window the stale inline words used to cover. The walker shows `[4] 9004 → [6] 9006` — **[5] is absent**, and memory confirms slot 5 holds `FF FF FF FF FF FF FF FF 2D 00 00 00`, the sparse-array free-list links, not an element. Pre-fix this read as allocated and rendered a dead element. |
 > | **TSet / UDataTable no-regression** | ⬜ **NOT TESTED — do not record as passing** | `TSet<int32>` (`Set_Int`, `Set_Big`) and `TSet<FStruct>` (`Set_Struct`) resolve, but the row asks for **`TSet<FName>` / `TSet<UObject*>` and a `UDataTable`**, and DumperTest ships **none of the three** (`Set_` filter returns exactly 3 matches, all covered above). Needs a real game. |
 > | **U2** | ⬜ still open | needs a `CasePreservingName: YES` title; unchanged by this sitting. |
@@ -5328,9 +5369,9 @@ container kind, truncated & full).
 
   | field | KeySz/ValSz | ValOff | Stride | the defect would have shown |
   |---|---|---|---|---|
-  | `Map_I64ToI32` | 8 / 4 | 8 | **24** | 20 — the core M1 witness |
+  | `Map_I64ToI32` | 8 / 4 | 8 | **24** | 20 — the core MG1 witness |
   | `Map_StrToInt` | 16 / 4 | 16 | **32** | 28 — second witness, different arithmetic |
-  | `Map_IntToVec3f` | 4 / 12 | **4** | 24 | value at +8; the only one wrong at element 0 (M3) |
+  | `Map_IntToVec3f` | 4 / 12 | **4** | 24 | value at +8; the only one wrong at element 0 (MG3) |
   | `Map_NameToInt` | 8 / 4 | 8 | 20 | unchanged by design |
   | `Map_IntToFloat` | 4 / 4 | 4 | 16 | unchanged by design |
 
@@ -7267,11 +7308,32 @@ Deferred idea: read the ACTUAL build stamp — would need a tiny data export (`g
 heading exists because this list spent months parented to whatever `###` happened to precede it —
 most recently `[STALEDLL-2026-08-18]` — so a heading-level scan of the register found none of them.*
 
-⚠ **`M1`–`M5` is an ID COLLISION and a grep for it now returns two families — that is correct, not a
-bug in the headings.** Here they are **audit #3**'s Schlacht/Tot/shutdown race fixes. Under
-*"M2 / TSet+UDataTable / U2 — container geometry (build 2830)"* they are the **map/set stride**
-findings. Different audits, same letters, both still partly open; read the owning heading before
-acting on an `M`-number.
+✅ **The `M1`–`M5` ID COLLISION is RESOLVED 2026-08-19 — `M`-numbers now mean exactly one thing.**
+Until today two families shared these letters: **audit #3**'s Schlacht/Tot/shutdown-race fixes (here)
+and **audit #5 D4a**'s map/set-stride findings. A register addressed by heading-level grep cannot
+carry colliding IDs — sooner or later one family's close gets recorded against the other — so the
+container-geometry family was **renamed `M1/M2/M3` → `MG1/MG2/MG3`** ("Macht geometry"):
+
+| was | now | what it is |
+|---|---|---|
+| `M1` (D4a) | **`MG1`** | `ComputeSetElementStride` drops the `TPair`'s trailing padding (`Macht.h:314`) |
+| `M2` (D4a) | **`MG2`** | `ReadTSparseArray` reads `NumFreeIndices` at `+0x3C` not `+0x34` (`Macht.h:293`) |
+| `M3` (D4a) | **`MG3`** | `ComputeMapValueOffset` guesses alignment for struct values (`Macht.h:332`) |
+
+**`M1`–`M5` therefore mean audit #3 and nothing else**, and `MG1`–`MG3` mean the container geometry.
+**Why that family and not this one** — the choice was measured, not preferred: audit #3's IDs are
+cited **4 times in `dev-log.md`** (append-only, must never dangle) and **23 times in `docs/archive/`**
+(rewriting dated evidence would falsify history), plus 33 in-source `dll/src` comments and the five
+`### M1`…`### M5` anchor headings in [audit-2026-07-14-findings.md](audit-2026-07-14-findings.md).
+The D4a family has **zero** dev-log and **zero** archive references. `MG` is two letters + digits, so
+it still matches `check_audit_register.py`'s `ROW_RE` (`[A-Z]{1,2}\d+`) and the three rows stay in the
+register — a three-letter prefix would have silently dropped them.
+
+⚠ **Residual, deliberately left: 9 code comments still say `M1`/`M2`/`M3` for the D4a family** —
+`dll/tests/dll_helpers_test.cpp:3228,3255`, `tools/ue-sample/…/DumperTestActor.h` (6),
+`tools/ue-sample/…/DumperTestTypes.h:57`. All but `DumperTestActor.h:139` are already written in the
+qualified forms `D4a/M1` / `audit #5 M1`, so they cannot be mistaken for audit #3; this was a
+docs-only change and did not touch product or test code. Rename them opportunistically.
 
 - **Dump Explorer cross-game identity gate** (build 2538+; UI/C#-only, no DLL or pipe change).
   The live match joins on bare class NAMES, and every UE title has `Object` / `Actor` / `Pawn` /

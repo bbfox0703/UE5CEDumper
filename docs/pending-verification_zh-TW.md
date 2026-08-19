@@ -53,7 +53,7 @@
 
 > ## ✅ 第 0 步 已全部完成 (2026-08-17)
 >
-> `U1/M1/M3`、`D1/D3`、`AA38` 三項都已結案並 commit，證據在
+> `U1/MG1/MG3`、`D1/D3`、`AA38` 三項都已結案並 commit，證據在
 > [todo.md](todo.md)（grep 項目編號）。**不用開遊戲**的項目目前歸零 ——
 > 現在最便宜的一批是第 1 步。
 
@@ -156,15 +156,14 @@
 | 3 | 對同一欄位改用 Group Scan 或 Property Search 的 Deep 模式 | 一樣找得到（這條路徑在 3168 之前就找得到） |
 | 4 | grep `scan-*.log` 搜尋 `hit the 4000 scan-field cap` | 一般 class 上不出現這行<br>⚠ 若經常出現，代表 cap 值設錯，要回報 |
 
-### ⬜ V6 / AE9 / U8 —— 三個一開遊戲就能看的面板行為
+### ⬜ V6 / U8 —— 兩個一開遊戲就能看的面板行為
 
-*build 3016-3031 · 優先度 **高** · 原步驟 1（A5 Preview）已於 2026-08-19 驗畢並刪除*
+*build 3016-3031 · 優先度 **高** · 原步驟 1（A5 Preview）已於 2026-08-19 驗畢並刪除；原步驟 2（AE9 排序選單）已於 2026-08-17 驗畢並刪除*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。<br>⛔ **auto-refresh 那半段先別做**：要等 `[AUTOREFRESH-2026-08-19]` 的修正進到**已發佈**的 build。另一台機器目前跑 `dist` 1.0.0.3262，整批程式跑完前不會更新，在那之前 Auto 本來就會停在 0，測了也只是重測那個已知缺陷。現在能做的是「按 Refresh」那半段。 |
-| 2 | Value Search → First Scan → 用 Value 排序 → 按 New Scan。 | 排序選單回到「Scan order」；再選一次「Value」會真的重新排序。 |
-| 3 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
+| 1 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。<br>✅ 「按 Refresh」那半段已於 2026-08-17 驗畢，**只剩 auto-refresh 那半段**。<br>⛔ **auto-refresh 那半段先別做**：要等 `[AUTOREFRESH-2026-08-19]` 的修正進到**已發佈**的 build。另一台機器目前跑 `dist` 1.0.0.3262，整批程式跑完前不會更新，在那之前 Auto 本來就會停在 0，測了也只是重測那個已知缺陷。 |
+| 2 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
 
 ### ⬜ AUTOREFRESH —— Live Walker 的 Auto 倒數不會卡死，斷線重連後會自己回來
 
@@ -564,7 +563,7 @@
 | 5 | 反向對照（不可略過）：掃一個容器值之後，只「append」而不觸發重新配置，再 Next Scan | 候選**存活**<br>⚠ 這些消失了就是 regression 不是修好 —— 天真的 `{dataPtr,count}` 規則正是會把它們全殺掉 |
 | 6 | 對一個「非容器」的普通欄位重做第 1 步 | 行為不變，而且完全沒有 `Refine re-anchor` 那行 |
 
-### ⬜ M2 / TSet 迴歸 —— 計數與非迴歸（**M1 / M3 / A2 / U1 / V1 已完成，只剩這兩項**）
+### ⬜ MG2 / TSet 迴歸 —— 計數與非迴歸（**MG1 / MG3 / A2 / U1 / V1 已完成，只剩這兩項**）
 
 *build 2830 · 優先度 **中***
 

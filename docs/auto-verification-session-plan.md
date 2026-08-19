@@ -254,10 +254,10 @@ computer-use refuse every click. Reopen it freely.
 
 ### ✅ GROUP 5 IS DONE (2026-08-18)
 
-**Closed this sitting:** `M1/M3/A2/U1/V1` + `U3` steps 1–2 · `AA1` · `Y15` (step 6 skipped, no
+**Closed this sitting:** `MG1/MG3/A2/U1/V1` + `U3` steps 1–2 · `AA1` · `Y15` (step 6 skipped, no
 4-byte enum) · `U4/U6/F3` · `executeCodeEx` basic path (all 3 steps) · `AA7` step 4 → **AA4–AA7 is
 now 5-of-5** · `B26` · `Fern::Stop` graceful path (open since build 2813) · the `.CT` breadcrumb
-discovery half. `M2`/`U16` are PARTIAL and say why on their rows.
+discovery half. `MG2`/`U16` are PARTIAL and say why on their rows.
 
 **Two rows moved to a bigger title, with measurements rather than impressions:**
 * **`B4`** — DumperTest cannot produce a command that blocks for seconds. The two heaviest whole-pool
@@ -508,7 +508,7 @@ staleness**: the packages were rebuilt 2026-08-14 and `package-identity.json` wa
 
 | Wanted | Unlocks | Call |
 |---|---|---|
-| A **churn container** — `TArray<FDumperTestStat> Arr_Churn` + `TMap<int32,FDumperTestStat> Map_Churn` + `UFUNCTION`s to grow / remove-at / reserve | **A12** steps 2-4 · **A11** steps 2-5 · **V1a** step 1 · makes M1/M2/M3/A2/U1/V1/V2 step 5 literal | **The only high-value one.** It converts three C_HYBRID rows to fully automatable. Every container today is filled once in `BeginPlay` and never resized. Worth one ~20-min packaging cycle **if this batch will recur** — not before the first run. |
+| A **churn container** — `TArray<FDumperTestStat> Arr_Churn` + `TMap<int32,FDumperTestStat> Map_Churn` + `UFUNCTION`s to grow / remove-at / reserve | **A12** steps 2-4 · **A11** steps 2-5 · **V1a** step 1 · makes MG1/MG2/MG3/A2/U1/V1/V2 step 5 literal | **The only high-value one.** It converts three C_HYBRID rows to fully automatable. Every container today is filled once in `BeginPlay` and never resized. Worth one ~20-min packaging cycle **if this batch will recur** — not before the first run. |
 | `UPROPERTY() FName Name_Slot = FName(TEXT("Slot_7"))` | **U8** only (1 of 4 sub-checks in A5/V6/AE9/U8) | Defer. The sample's only FName UPROPERTYs carry no `Number` component. Huntable in a commercial title instead. |
 | `UPROPERTY() FVector3f Vec3f_Known` | **AB3/AB5** step 5 only | Defer, probably unnecessary — the exe already carries `Vector3f` 90× narrow. Probe with `search_properties` first. |
 | Three `UFUNCTION`s (a `TArray<AActor*>&` out-param, an `FText` param, a hardcoded `-1` return) | would make **AA14–AA20** a repeatable fixture | Defer. That batch runs on Elliot. The sample has **zero** `UFUNCTION`s today. |
@@ -723,7 +723,7 @@ Each is committed separately with its evidence; grep `todo.md` for the tag in br
 
 | Row | State | Tag |
 |---|---|---|
-| U1 / M1 / M3 | ✅ log half. U1's degraded branch **not tested** — it cannot fire on this sample | `[DUMPERTEST-LOG-2026-08-17]` |
+| U1 / MG1 / MG3 | ✅ log half. U1's degraded branch **not tested** — it cannot fire on this sample | `[DUMPERTEST-LOG-2026-08-17]` |
 | D1 / D3 | ✅ re-confirmed on the **2026-08-14** package (the old evidence described a superseded build) | `[DUMPERTEST-LOG-2026-08-17]` |
 | AA38 | ✅ steps 1/2/3/5. **Step 4 (modular build) not tested** — Satisfactory is the candidate | `[AA38-PYTHON-2026-08-17]` |
 | F9 | ✅ all six. Step 6 used `limit=10` on a 58-actor level, **not** a streaming map | `[F9-PIPE-2026-08-17]` |
@@ -757,7 +757,8 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 | D2 step 4 | ✅ **SETTLED** — and the step's premise was wrong | `[D2-UI-2026-08-17]` |
 | **AC1 all 7 steps** | ✅ **CLOSED** on a synthetic folder — **Light Maze never touched** | `[AC1-UI-2026-08-17]` |
 | AE4 step 4 | ✅ removal half (3 detectors incl. the Recycle Bin); gate arm not observable | `[AC1-UI-2026-08-17]` |
-| A5 · V6 · AE9 · AF4 | ✅ **PASS** (AF4 has no unit test by design) | `[GRP4-UI-2026-08-17]` |
+| A5 · AE9 · AF4 | ✅ **PASS** (AF4 has no unit test by design) | `[GRP4-UI-2026-08-17]` |
+| V6 | 🟡 **HALF-PASS** — manual-Refresh half only; the auto-refresh half was unperformable on 3262 and stays open (see row 6 below and todo.md) | `[GRP4-UI-2026-08-17]` |
 | U3 + U17 | ✅ **CLOSED** — the old bug's own output is the control | `[GRP4-UI-2026-08-17]` |
 | D2 (樣本心跳) | ✅ **PASS** — DLL and game HUD agree to the digit over a measured 34 s | `[GRP4-UI-2026-08-17]` |
 | Dump Explorer 跨遊戲身分閘 | ✅ **PASS** on the two DumperTest flavours | `[GRP4-UI-2026-08-17]` |
@@ -767,8 +768,9 @@ and `G8/G9` step 1 is **structurally impossible on DumperTest**.
 | **PE hook** | ⛔ **detection FAILED on DumperTest**, verified good on Lushfoil. *(Fix shipped 2026-08-18 — SIB-tolerant pattern, true slot `+0x268`; pending step 7 in todo.md)* | `[PEHOOK-2026-08-17]` |
 | Skia ABI soak | ✅ see below | `[GRP4-UI-2026-08-17]` |
 
-**GROUP 3 complete. GROUP 4: 14 rows done**, leaving `B10`, `AE2/AE3` steps 4–5, and `A5/V6/AE9`'s
-`U8` sub-check (the sample has no `FName` with a `Number` component).
+**GROUP 3 complete. GROUP 4: 14 rows done**, leaving `B10`, `AE2/AE3` steps 4–5, the `U8` sub-check
+of the `A5/V6/AE9` batch (the sample has no `FName` with a `Number` component), and — recorded
+2026-08-19 — **`V6`'s auto-refresh half**, which the 2026-08-17 sitting could not have run on 3262.
 
 **Skia ABI soak — PASS, incidentally.** The AOT `dist` UI ran ~2.5 h across two instances under
 heavy text/grid load: a 14,813-row Value Search with server-side re-sorts, a 58,618-object tree
@@ -799,7 +801,7 @@ Ordered by items closed per environment launch. **Every group ends by killing wh
 
 ### ▶ GROUP 0 — no environment · ~50 min · A
 Grep and staging only; closes work *and* stages later groups. Run first.
-`U1/M1/M3` steps 1-3 · `D1/D3` steps 1-5 · `G12(heuristic)` corpus grep · `DSA layout` step 3 ·
+`U1/MG1/MG3` steps 1-3 · `D1/D3` steps 1-5 · `G12(heuristic)` corpus grep · `DSA layout` step 3 ·
 build the pre-fix DLL for `Genau RIP decode` in a **fresh** `git worktree` (⚠ not
 `.claude/worktrees/suspicious-cannon-a8dec8`) with `-NoBumpBuildNumber`.
 Staging steps that touch outside files are in §4 — **ask first**.
@@ -836,7 +838,7 @@ Run `AB1/AB2` **first** — B29 is downstream of the plugin being installed.
 `AB1/AB2` · `B4` · `AA7` · `executeCodeEx 基本路徑` · `U4/U16/U6/F3` · `AA1` (bitfield byte must read
 **0x05 → 0x07**) · `Y15` (skip step 6) · `Y1` · `Fern::Stop / B18` · `B26` (⚠ confirm the AOBMaker
 bridge pipe answers first, or step 1 passes vacuously) · `B5` (.CT half) ·
-`M1/M2/M3/A2/U1/V1/V2` (UI half).
+`MG1/MG2/MG3/A2/U1/V1/V2` (UI half).
 **→ kill DumperTest, close CE, close the UI.**
 
 ### ▶ GROUP 6 — Cheat Engine + Elliot · ~3.5 h · B (+1 C)
@@ -995,7 +997,7 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 | 3 | `AD4` (step 4 only) | **C** | `ON (contested)` needs the game to damage-reset the flag while ↻ is spammed. Combat, mid-batch. Nothing else on the item is left |
 | 4 | `A3` | **A** | ⭐ **Cheaper than hoped.** Already scheduled headless in GROUP 1 on DumperTest — a Float/NumericAll `scan_for_value` over the pipe and a grep of the reply for `.Velocity` / `.Scale3D`. No UI, and no hunt for a suitable vector: the assertion is *which field names appear*, not which value matches. Driving it through the UI also works and is still unattended |
 | 5 | ~~`Skia ABI`~~ → `AUTOREFRESH` | **B** | ⭐ **`Skia ABI` CLOSED 2026-08-19** by the maintainer's own accumulated sessions (recorded in todo.md; not agent-observed) and deleted from the 繁中 list. Its slot is taken by the new `AUTOREFRESH` item, also **B**: Live Walker Auto must cycle rather than freeze at 0, and must come back after a disconnect→reconnect. ⚠ **Its step 3/4 need TWO games in one UI session** — sequence them inside one group, never in parallel |
-| 6 | `V6 / AE9 / U8` | **B** | ⭐ **`A5` CLOSED 2026-08-19** on the maintainer's own re-search (recorded in todo.md; not agent-observed) and its step deleted from the 繁中 list. V6/AE9 carry PASS write-ups; what is left is **U8**, sample-blocked — DumperTest has no `FName` with a `Number` component (fold into GROUP 7's sweep) — plus **V6's auto-refresh half, which is BLOCKED** behind `[AUTOREFRESH-2026-08-19]` reaching a published build; the other PC is still on `dist` 1.0.0.3262 |
+| 6 | `V6 / U8` | **B** | ⭐ **`A5` CLOSED 2026-08-19** on the maintainer's own re-search (recorded in todo.md; not agent-observed) and its step deleted from the 繁中 list. ⭐ **`AE9` CLOSED too** — its 2026-08-17 PASS covers both halves (New Scan returns the picker to `Scan order`; and on a 14,813-candidate `Bigger` set, picking `Value` genuinely re-sorted — an `Exact` predicate returns identical values and structurally cannot test a re-sort, which is why `Bigger` was used). Step deleted from the 繁中 list; the batch is now `V6 / U8`. What is left is **U8**, sample-blocked — DumperTest has no `FName` with a `Number` component (fold into GROUP 7's sweep) — plus **V6's auto-refresh half, which is BLOCKED** behind `[AUTOREFRESH-2026-08-19]` reaching a published build; the other PC is still on `dist` 1.0.0.3262. ⚠ **V6's 2026-08-17 ✅ was a HALF-pass** and is corrected in todo.md — it covers the manual-Refresh half only |
 | 7 | `AE2 / AE3` (steps 4, 5) | **C** | Step 5 is B (a handoff, then re-click the node). **Step 4 is the human one**: travel to another level on a streaming title so a walked class goes stale, then re-click the same row |
 | 8 | `G2` | **D** | Step 1 (split the version-scan timing with a separator log line) is **A** and runnable now. Step 2 cannot close — the UE5 Tier-1 branch has **no host on this machine**; see §7 |
 | 9 | `W1 / W7` | **C** | Not a game action — **install FModel** (or leave a runnable CUE4Parse `UsmapParser` on disk) and name its path. Writing our own parser is explicitly refused: it would reproduce the shared misreading the item exists to rule out |
@@ -1017,7 +1019,7 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 | 25 | `M1–M5 / Solide 256-cap` | **C** | The See-through half is **eyes-on-screen by construction** — the DLL's own hidden-count is explicitly not acceptance, so a human must confirm no actor stayed invisible across four different shutdown paths. Separately needs >256 live instances of one class |
 | 26 | `A12` | **C** | Steps 5–6 are A (a non-container control and a log grep). Steps 1–4 need a container **grown until it reallocates** and an element removed *before* the match — gameplay |
 | 27 | `A11` | **C** | Same bout as A12. ⚠ **Step 5 is the one not to skip** — append into slack *without* a realloc; it is what catches an over-eager fix that kills the candidates it should keep |
-| 28 | `M2 / TSet 迴歸` | **C** | Step 2 is B (expand `TSet<FName>` / `TSet<UObject*>` and a `UDataTable`) but needs a **real game** — DumperTest has none of the three. Step 1 removes an element in-game, and needs a container **under** the array limit or the count is undecidable (`[CONTAINERCAP-2026-08-18]`) |
+| 28 | `MG2 / TSet 迴歸` | **C** | Step 2 is B (expand `TSet<FName>` / `TSet<UObject*>` and a `UDataTable`) but needs a **real game** — DumperTest has none of the three. Step 1 removes an element in-game, and needs a container **under** the array limit or the count is undecidable (`[CONTAINERCAP-2026-08-18]`) |
 | 29 | `U3 / U17` (steps 3, 4) | **B** | Both are CDO-level expansions, so a main menu suffices — no save, no gameplay. §8.4 promoted step 4 to **TQ2** (it carries `GameplayAttributeData` + an ASC). Step 3 needs a genuine UE5 **LWC 24-byte** `FVector` title; the earlier closure ran on a 12-byte float vector and cannot stand in |
 | 30 | `G1 / X3 / U7 / AF2` | **B** | U7 (a CJK `StrProperty`) and AF2 (whose `<30`-class control is DumperTest, as a **separate** launch) are drivable now. ⚠ **G1/X3's amber-banner half has no host** — ten more titles swept clean; treat that half as D until one appears |
 | 31 | `AE10` | **B** | §8.5 promoted it to **Titan Quest II**, installed and already carrying a save from 2026-08-14, so Continue reaches a level without a human |

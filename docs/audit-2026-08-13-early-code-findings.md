@@ -83,7 +83,7 @@ contract, not by line count**, so the established method applies unchanged.
 | **T1b** ✅ | DLL contracts + **the entire C++ test suite** — `Himmel.h` 594, `Grimoire.h` 153, `Renge.h` 142, `Utf8Helpers.h` 130, `Genau.h` 123, `Frieren.h` 105, `Fern.h` 61, `Lugner_Dinput8.cpp` 101, `dll_helpers_test.cpp` 741, `utf8_helpers_test.cpp` 244 | 2,394 |
 | **T1c** ✅ | Remaining UI ViewModels **+ Core + Models** — `ValueSearch` 415, `ProxyDeployVM` 312, `GameClassFilter` 183, `ClassStruct` 162; `FieldValueConverter` 209, `IDumpService` 185, `AddressHelper` 143, `IAobMakerBridge` 77, `IProxyDeployService` 52; + 13 model DTOs | 2,889 |
 | **T1d** ✅ | UI Services — `ProxyDeploy` 399, `AobMakerBridge` 217, `AobUsage` 209, `ClassLocationScorer` 203, `PipeClient` 198, `VdfParser` 153, `StructReturnDecoder` 149, `KnownStructLayouts` 130, `KeywordTokenizer` 117, `WindowsPlatformService` 96, `HelperLuaResource` 54, `FreezeHelperLuaResource` 50 | 1,975 |
-| **T1e** ✅ | Views code-behind + app root + **the <50 tail** (226 files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of 226 five-line files is waste) | 1,800 |
+| **T1e** ✅ | Views code-behind + app root + **the <50 tail** (**44** files, 1,172 lines — swept by targeted pattern-grep, NOT 5 deep lenses; a deep read of ~27-line files is waste). ⚠ *This row said "226 files" until 2026-08-19; the line count was right and the file count was never supported — see §T1e's derivation block* | 1,800 |
 
 > **Why five and not six, and why the VMs merged.** Two corrections, both from re-measuring rather
 > than re-reasoning:
@@ -301,7 +301,7 @@ Run `wf_8f75b7cb-452`, 10 agents, 0 errors. 9 raw claims → **5 refuted** → 4
 > `Macht.h`** — the part that looks least dangerous and has no test covering the *composition* of
 > its pieces.
 >
-> **They compound.** M3 produces a wrong `valueOffset`, which feeds `pairSize`, which feeds M1's
+> **They compound.** MG3 produces a wrong `valueOffset`, which feeds `pairSize`, which feeds MG1's
 > stride — the same element address is wrong twice over.
 
 | ID | Sev | Location | Defect | Effort/Risk |
@@ -318,15 +318,15 @@ Run `wf_8f75b7cb-452`, 10 agents, 0 errors. 9 raw claims → **5 refuted** → 4
 > `int16_t`, which is correct on **both** on little-endian x64. Reading it as `int32` as originally
 > proposed would have picked up the flags on newer engines.
 
-| **M1** ✅ | MED | `Macht.h:314` | `ComputeSetElementStride` aligns to **4** and cannot express `alignof(T)`, so the documented `TMap` recipe omits the `TPair`'s **trailing padding**. Real stride is `Align(sizeof(TTuple<K,V>) + 8, max(alignof K, alignof V))`. `TMap<AActor*,float>` → computes **20**, real **24**; `TMap<FString,int32>` → **28** vs **32**; `TMap<UObject*,uint8>` → **20** vs **24**. Every element past index 0 is read at a wrong address. `TSet<T>` is unaffected (a bare `elemSize` is always a multiple of `alignof(T)`). | S / med |
-| **M2** ✅ | MED | `Macht.h:293` | `ReadTSparseArray` reads `NumFreeIndices` at **`+0x3C`**. The PDB-verified layout in this repo (`Aura.cpp:3037-3038`, Everspace 2 UE 5.4) puts `FirstFreeIndex` at `+0x30` and `NumFreeIndices` at **`+0x34`**; `+0x3C` is padding before the Hash allocator at `+0x40`, zero-initialised and never written. So it always reads **0**, and `Ubel.cpp:4045`'s `mapCount = MaxIndex - NumFreeIndices` **over-reports** the count of any `TMap`/`TSet` that has had entries removed (10 shown, 6 rows rendered). The header comment claiming `TSparseArray` is `0x40` bytes is also wrong — it is `0x38`. | S / low |
-| **M3** ✅ | MED | `Macht.h:332` | `ComputeMapValueOffset`'s size-guess fallback is taken for **every struct-valued TMap**, because `Scharf::RequiredAlignment` returns **0** for `StructProperty` (`Scharf.h:76-78`). It then guesses `valueSize >= 8 → align 8`. For `TMap<int32,FVector>` the real value sits at **+4** (alignof 4) but it reads **+8**, so *even element 0* shows a wrong vector; `TMap<int32,FGuid>` reads every value 4 bytes late. **A validation helper is being reused as a layout oracle.** | M / med |
+| **MG1** ✅ | MED | `Macht.h:314` | `ComputeSetElementStride` aligns to **4** and cannot express `alignof(T)`, so the documented `TMap` recipe omits the `TPair`'s **trailing padding**. Real stride is `Align(sizeof(TTuple<K,V>) + 8, max(alignof K, alignof V))`. `TMap<AActor*,float>` → computes **20**, real **24**; `TMap<FString,int32>` → **28** vs **32**; `TMap<UObject*,uint8>` → **20** vs **24**. Every element past index 0 is read at a wrong address. `TSet<T>` is unaffected (a bare `elemSize` is always a multiple of `alignof(T)`). | S / med |
+| **MG2** ✅ | MED | `Macht.h:293` | `ReadTSparseArray` reads `NumFreeIndices` at **`+0x3C`**. The PDB-verified layout in this repo (`Aura.cpp:3037-3038`, Everspace 2 UE 5.4) puts `FirstFreeIndex` at `+0x30` and `NumFreeIndices` at **`+0x34`**; `+0x3C` is padding before the Hash allocator at `+0x40`, zero-initialised and never written. So it always reads **0**, and `Ubel.cpp:4045`'s `mapCount = MaxIndex - NumFreeIndices` **over-reports** the count of any `TMap`/`TSet` that has had entries removed (10 shown, 6 rows rendered). The header comment claiming `TSparseArray` is `0x40` bytes is also wrong — it is `0x38`. | S / low |
+| **MG3** ✅ | MED | `Macht.h:332` | `ComputeMapValueOffset`'s size-guess fallback is taken for **every struct-valued TMap**, because `Scharf::RequiredAlignment` returns **0** for `StructProperty` (`Scharf.h:76-78`). It then guesses `valueSize >= 8 → align 8`. For `TMap<int32,FVector>` the real value sits at **+4** (alignof 4) but it reads **+8**, so *even element 0* shows a wrong vector; `TMap<int32,FGuid>` reads every value 4 bytes late. **A validation helper is being reused as a layout oracle.** | M / med |
 
 **Why the composite was never caught:** `dll_helpers_test.cpp:2013-2033` exercises
 `ComputeSetElementStride` and `ComputeMapValueOffset` **separately**, and every case it picks happens
 to land on a multiple of 8. The same is true of every empirically PDB-verified data point in the tree
 (`Aura.cpp:3046-3054`, `Ubel.cpp:5709-5711`) — all have already-8-aligned pairs, so none of them
-discriminates. The M1 skeptic established this by computing both formulas against each verified case
+discriminates. The MG1 skeptic established this by computing both formulas against each verified case
 rather than arguing in prose, and noted that the corrected formula reproduces every verified value
 exactly — independent corroboration that the missing `Align` is real.
 
@@ -1447,9 +1447,65 @@ MEDIUM.
 ### T1e — Views code-behind + app root + the sub-50 tail — ✅ scanned 2026-08-15 — **AUDIT #5 SCANNING COMPLETE**
 
 **12 agents** (2 deep lenses on the head + 3 grep-driven sweeps over the tail → 3 refute batches →
-4 second-lens batches), 0 errors. Scope: **5 head files (628 early lines) read properly + 226 tail
+4 second-lens batches), 0 errors. Scope: **5 head files (628 early lines) read properly + 44 tail
 files (1,172 early lines) swept by pattern**, exactly as §1's phase plan specified — a deep read of
-226 five-line files is waste.
+files averaging ~27 early lines is waste.
+
+> ### ⚠ "226 tail files" was wrong, and so was its first correction — re-derived 2026-08-19
+>
+> **The LINE count was always right; the FILE count never was, and neither was the number that
+> replaced it.** Both errors are the same one §0's own re-measurement note warns about: *a number
+> recorded without its conditions is not a measurement*, and here the missing condition is the
+> **scope predicate**.
+>
+> Measured at this audit's own baseline commit `271d7931`, reproducing §0's rule exactly — and the
+> reproduction is negative-controlled: it lands on **all seven** of §0's published area rows to the
+> digit (`dll/src` 23,378/51,669 · Services 10,067/32,506 · ViewModels 8,652/29,219 · Views
+> 2,303/5,769 · Models 2,207/6,875 · `scripts/*.lua` 1,236/1,668 · Core 806/2,095) and on §0's
+> headline **48,950 / 131,522 over 321 files**:
+>
+> | quantity | measured | the doc said |
+> |---|---:|---|
+> | sub-50-early-line tail, files **with** early lines | **44** | 226 ❌ |
+> | …the early lines they carry | **1,173** | 1,172 ✅ *(1-line drift: baseline vs the 2026-08-15 scan)* |
+> | same tail **including** files with zero surviving early lines | 218 | — |
+> | T1e's 5 head files | `LiveWalkerPanel.axaml.cs` 241 + `MainWindow.axaml.cs` 175 + `PropertySearchPanel.axaml.cs` 72 + `App.axaml.cs` 70 + `Constants.cs` 70 = **628** | 628 ✅ |
+> | T1e total early | 628 + 1,172 = **1,800** | 1,800 ✅ |
+>
+> **226 reproduces under no reading** — not 44, not 218. Everything else in the row checks out, so
+> only the file count moves.
+>
+> ⛔ **AF26's first correction — "T1e is 61 files (Views 57 + 4 app-root), the whole project is 293"
+> — is ALSO unsupported and is withdrawn.** `Views 57` = 34 `.cs` + **23 `.axaml`**, and `293` = 268
+> `.cs` + **25 `.axaml`** at HEAD. §0's scope rule **excludes `.axaml`** (and `ui/UE5DumpUI.Tests`) —
+> that exclusion is precisely what the "Re-measurement note" above records as the difference between
+> a right answer and a wrong one, and this correction walked into it. On §0's rule `Views/` is **34**
+> files and `ui/UE5DumpUI/` is **251** at the baseline (268 at HEAD).
+>
+> **Re-derive it** — early = a surviving line whose `git blame` author-time predates 2026-06-01;
+> scope = `dll/src/**` + `ui/UE5DumpUI/**` + `scripts/*.lua` over `{.cpp,.h,.cs,.lua}`, **no
+> `.axaml`, no `ui/UE5DumpUI.Tests`**. Check it reproduces §0's 321 / 48,950 **before** trusting any
+> number it gives you:
+>
+> ```python
+> import subprocess, datetime, os
+> REV, CUT = "271d7931", datetime.datetime(2026,6,1,tzinfo=datetime.timezone.utc).timestamp()
+> ls = subprocess.run(["git","ls-tree","-r","--name-only",REV],capture_output=True,text=True).stdout.split()
+> keep = lambda p: (os.path.splitext(p)[1] in {".cpp",".h",".cs",".lua"}
+>                   and not p.startswith("ui/UE5DumpUI.Tests/")
+>                   and (p.startswith("dll/src/") or p.startswith("ui/UE5DumpUI/")
+>                        or (p.startswith("scripts/") and p.endswith(".lua"))))
+> rows = []
+> for p in filter(keep, ls):
+>     out = subprocess.run(["git","blame","--line-porcelain",REV,"--",p],
+>                          capture_output=True,text=True,errors="replace").stdout
+>     ts = [int(l.split()[1]) for l in out.splitlines() if l.startswith("author-time ")]
+>     rows.append((p, sum(t < CUT for t in ts)))
+> early = [r for r in rows if r[1] > 0]
+> print(len(rows), sum(r[1] for r in rows))                      # -> 321 48950  (§0's headline)
+> print(len([r for r in early if r[1] < 50]),                    # -> 44         (the tail)
+>       sum(r[1] for r in early if r[1] < 50))                   # -> 1173
+> ```
 
 **32 raw → 30 distinct → 3 refuted → 0 killed by the second lens → 27 confirmed. Kill rate 10%.**
 
@@ -1513,8 +1569,8 @@ files (1,172 early lines) swept by pattern**, exactly as §1's phase plan specif
 | **AF23** ✅ | LOW | `PropertyXrefDialog.cs:270` (PropertyXrefDialog.BuildUi (_grid)) | **FIXED build 3263.** The twin of AF18, same six-column shape, same fix. `Occurrences`/`WriteCount` sort on the numeric property although the cell renders "3W / 4R". — *As filed:* Property-xref grid: same six-template-column sort surface, also never wired to a comparer | S / low |
 | **AF24** ✅ | INFO | `ObjectTreeFilter.cs:58` (ObjectTreeFilter.MatchesAllTerms) | **RE-VERIFIED 2026-08-19 — NEGATIVE RESULT STILL HOLDS and is BROADER than filed; no code change.** Worth re-running: ~20 of `ObjectTreeFilter`'s consumers were rewritten the same day across L8/L9/L10/L11. Not four helpers but **17 client-side filter predicates**, every one using `SplitTerms` + `MatchesAllTerms`. The four non-users are all legitimate: ValueSearch's `FilterText`/`GroupFilterText` (documented exemption, and genuinely server-side — the text is never matched in-process, only folded into `WindowQuery`), SpcQuery's `ClassFilter`/`PropFilter` (documented exemption, matched store-side; note its sibling `Result*Filter` — the client-side half of the same panel — DOES use `MatchesAllTerms`, so the exemption is scoped, not blanket), the pipe round-trip search boxes (not client-side filters at all), and `GameClassFilterViewModel`'s `SuperFilter`/`PackageFilter` (structured exact/prefix pickers with the rationale in-code, not substring keyword boxes). — *As filed:* NEGATIVE RESULT — four of the tail helpers most likely to be half-applied are in fact fully applied | S / low |
 | **AF25** ✅ | INFO | `CeMailboxLayout.cs:94` (CeMailboxLayout (Cmd opcodes)) | **FIXED build 3268.** Direction: the CODE. 8 was the one gap in `CeMailboxLayout`'s opcode table while the class summary named Teleport as a consumer, so the most-used opcode was the only one with no canonical home and two places to update — `TeleportScriptGenerator.cs:27` and `CoordLibraryScriptGenerator.cs:50` each carried `private const int CmdTeleport = 8` while every other generator referenced the layout class. Added `CeMailboxLayout.CmdTeleport = 8`; both generators now derive from it, and the one hardcoded "CMD_TELEPORT=8" in emitted Lua prose is interpolated. No wire change and no contract move — the value is unchanged and `ContractVersion` is untouched. — *As filed:* The canonical mailbox-layout class names Teleport as one of its consumers but carries no Teleport opcode; two generators hardcode 8 instead | S / low |
-| **AF26** ✅ | INFO | `ViewLocator.cs:15` (ViewLocator.Build) | **RE-VERIFIED 2026-08-19 — SUBSTANCE STILL CLEAN including today's ~20 changed files; count corrected; no code change.** Diffed the three post-sweep commits (`ec72d7c0` L10, `d4fdd418` L9, `179d2f80` L11) line by line against the full reflection pattern set: **no added line matches any pattern**, and the one AOT-relevant change moves AWAY from reflection (`DataGridSortComparers` replaces Avalonia's reflective `Type.GetProperty(SortMemberPath)` sort with delegate comparers, enforced by a source-grepping test). The XAML half is defended too: `AvaloniaUseCompiledBindingsByDefault=true`, zero `ReflectionBinding`, zero `x:CompileBindings="False"`, zero `new Binding("string")`, all 164 `SortMemberPath` via `nameof`, and IL2026/IL3050 live under `TreatWarningsAsErrors`. ⚠ **"226 tail files" is unsupported** — T1e is 61 files (Views 57 + 4 app-root) and the whole project is 293. — *As filed:* NEGATIVE RESULT — the AOT/trim reflection sweep over all 226 tail files came back clean | S / low |
-| **AF27** ✅ | INFO | `ViewLocator.cs:23` (ViewLocator.Build) | **CLOSED build 3268 (docs) — counts corrected, and the gap is deliberate.** Real numbers: `Build` handles **6**, `Match` accepts **21**, not 22 (`ViewModelBase` is abstract; the audit appears to have counted it, and the same bad 22 shows up in AE26). Narrowing `Match` to the 6 would make things WORSE — Avalonia would apply its default template and render `ToString()`, where today the `_ =>` arm renders "View not found: X". A visible diagnostic beats a silent wrong render, so the fallback arm is the feature and the width is intentional. Also recorded: the locator is **dormant** — `App.axaml` registers it, but every panel is instantiated directly in `MainWindow.axaml`, so nothing routes through it until something assigns a ViewModel to `ContentControl.Content`. Counts are now documented as re-derivable rather than restated. — *As filed:* Negative result on the AOT name-resolution trap -- but Match accepts 22 ViewModel types while Build handles 6 | S / low |
+| **AF26** ✅ | INFO | `ViewLocator.cs:15` (ViewLocator.Build) | **RE-VERIFIED 2026-08-19 — SUBSTANCE STILL CLEAN including today's ~20 changed files; count corrected; no code change.** Diffed the three post-sweep commits (`ec72d7c0` L10, `d4fdd418` L9, `179d2f80` L11) line by line against the full reflection pattern set: **no added line matches any pattern**, and the one AOT-relevant change moves AWAY from reflection (`DataGridSortComparers` replaces Avalonia's reflective `Type.GetProperty(SortMemberPath)` sort with delegate comparers, enforced by a source-grepping test). The XAML half is defended too: `AvaloniaUseCompiledBindingsByDefault=true`, zero `ReflectionBinding`, zero `x:CompileBindings="False"`, zero `new Binding("string")`, all 164 `SortMemberPath` via `nameof`, and IL2026/IL3050 live under `TreatWarningsAsErrors`. ⚠ **COUNT CORRECTED TWICE — read the second one.** 2026-08-19 (first pass) said *"226 tail files is unsupported — T1e is 61 files (Views 57 + 4 app-root) and the whole project is 293"*. **That replacement was itself wrong and is withdrawn**: 57 and 293 both count `.axaml` files, which §0's scope rule excludes. **Measured at baseline `271d7931` on §0's own rule (reproduction negative-controlled against all seven of §0's area rows and its 321 / 48,950 headline): the sub-50 tail is 44 files carrying 1,173 early lines** — so the row's **1,172 line count was always right** and only the file count was wrong. Derivation, the withdrawn numbers and the "including zero-early files ⇒ 218" variant are in §T1e's derivation block. **The finding's SUBSTANCE is untouched by any of this** — the reflection sweep is clean either way. — *As filed:* NEGATIVE RESULT — the AOT/trim reflection sweep over all 226 tail files came back clean | S / low |
+| **AF27** ✅ | INFO | `ViewLocator.cs:23` (ViewLocator.Build) | **CLOSED build 3268 (docs) — counts corrected, and the gap is deliberate.** Real numbers: `Build` handles **6**, `Match` accepts **21**, not 22 (`ViewModelBase` is abstract; the audit appears to have counted it). **Re-derived 2026-08-19 and this one HOLDS** — `grep -rl ": ViewModelBase" ui/UE5DumpUI/ViewModels/*.cs | wc -l` → **21**, one class per file, and `ViewModelBase.cs` declares `public abstract class ViewModelBase : ObservableObject` so it never matches its own pattern; `grep -c "=> new .*Panel()" ui/UE5DumpUI/ViewLocator.cs` → **6**. The same command pair is in `ViewLocator.cs`'s own doc comment, so code and register derive from one source. ⚠ *An earlier note said "the same bad 22 shows up in AE26" — it does not; AE26's 22 is T1c's file count and is correct. See that row.* Narrowing `Match` to the 6 would make things WORSE — Avalonia would apply its default template and render `ToString()`, where today the `_ =>` arm renders "View not found: X". A visible diagnostic beats a silent wrong render, so the fallback arm is the feature and the width is intentional. Also recorded: the locator is **dormant** — `App.axaml` registers it, but every panel is instantiated directly in `MainWindow.axaml`, so nothing routes through it until something assigns a ViewModel to `ContentControl.Content`. Counts are now documented as re-derivable rather than restated. — *As filed:* Negative result on the AOT name-resolution trap -- but Match accepts 22 ViewModel types while Build handles 6 | S / low |
 | **AF28** ✅ | LOW | `LiveFuncsViewModel.cs:121` (LiveFuncsViewModel.SetBaseline) | **FIXED build 3167** (found while re-deriving AF3, not filed by any finder). `_baseline = _allEntries.GroupBy(Key).ToDictionary(g => g.Key, g => g.First().Count)` captured a baseline value that depended on a **VIEW toggle**. `ApplyDiffAndFilter` re-sorts `_allEntries` **in place**, and the Earliest-first toggle orders it by `FirstSeq` rather than by count (`:257-262`), so for a duplicated `Class::Func` key `First()` returned whichever row happened to be on top of the grid at capture time — the highest count with the toggle off, the earliest-firing one with it on. A baseline of 5 instead of 900 turns an unchanged per-frame function into a `+895` row that the action is then credited with causing, at the top of the default New/changed-only view. **Precondition, stated honestly: two distinct `UClass`es sharing a name (different packages / BP-generated), so it is rare** — which is why LOW, not MED. Fixed with `g.Max(x => x.Count)`, which is what `First()` was reaching for and is sort-independent; pinned by `SetBaseline_ValueDoesNotDependOnTheEarliestFirstToggle`, negative-controlled by reverting to `First()`. Distinct from the duplicate-key *collapse* the AF3 re-derivation noted in passing: that is about which of several values survives, this is about the answer changing with the grid sort. | S / low |
 
 > **Hand-verified:** AF1. **Not re-derived:** the other 5 MEDs, 17 LOWs and 4 INFOs — and at a 10%
@@ -1725,7 +1781,7 @@ finders did not over-rate anything. Three MEDs re-derived by hand.
 | **AE23** ✅ | LOW | `ValueSearchViewModel.cs:820` (FirstScanAsync / NextScanAsync / GroupFirstSca) | Eight bare OperationCanceledException catches report a token-less pipe-disconnect OCE as "you cancelled", two of them silently **[2 lenses]** | S / low |
 | **AE24** ✅ | LOW | `ValueSearchViewModel.cs:875` (NextScanAsync / GroupNextScanAsync) | A Next Scan erases both truncation signals from a truncated First Scan - the status note and the "Counts are partial" badge - though the survivor set is still a subset of a truncated scan **[3 lenses]** | S / low |
 | **AE25** ✅ | LOW | `ValueSearchViewModel.cs:1063` (ValueSearchViewModel.GroupScanTypeOptions) | Doc says Between is "intentionally excluded" from the group scan-type picker; Between is the 4th element of that same initializer | S / low |
-| **AE26** ✅ | INFO | `FieldValueConverter.cs:11` (T1c AOT/trim + Core-purity sweep (negative res) | **RE-VERIFIED 2026-08-19 — SUBSTANCE STILL CLEAN, but two recorded facts corrected; no code change.** Swept for reflective member access, `Activator`/`Type.GetType`/`MakeGenericType`, non-generic `Enum.GetValues`, `TypeDescriptor`, `Expressions` and reflection-mode `JsonSerializer` overloads: **zero** hits. Every `JsonSerializer` call passes a `JsonTypeInfo` from one of 8 source-gen contexts. ⚠ **Corrections:** the finding is scoped to `ui/UE5DumpUI.Core`, **a path that does not exist** — Core is a FOLDER, `ui/UE5DumpUI/Core/`, in the same assembly as `WindowsPlatformService`, so CLAUDE.md's "interface in the `Core` project" rule has **no structural enforcement**; and "22 T1c files" is really 42 (25 ViewModels + 17 Core). The folder itself is clean of P/Invoke, Registry, `Process.Start` and hardcoded Windows paths — the only greps that fired are registry path LITERALS in `RecycleBinPolicy.cs` (which performs no registry access) and "Process" as a domain noun. — *As filed:* NEGATIVE RESULT — all 22 T1c files are AOT-clean and Core contains zero platform-specific code | S / low |
+| **AE26** ✅ | INFO | `FieldValueConverter.cs:11` (T1c AOT/trim + Core-purity sweep (negative res) | **RE-VERIFIED 2026-08-19 — SUBSTANCE STILL CLEAN, but two recorded facts corrected; no code change.** Swept for reflective member access, `Activator`/`Type.GetType`/`MakeGenericType`, non-generic `Enum.GetValues`, `TypeDescriptor`, `Expressions` and reflection-mode `JsonSerializer` overloads: **zero** hits. Every `JsonSerializer` call passes a `JsonTypeInfo` from one of 8 source-gen contexts. ⚠ **Correction 1 (stands): the finding is scoped to `ui/UE5DumpUI.Core`, a path that does not exist** — `ui/` holds only `UE5DumpUI`, `UE5DumpUI.Tests` and the `.sln`. Core is a FOLDER, `ui/UE5DumpUI/Core/`, in the same assembly as `WindowsPlatformService`, so CLAUDE.md's "interface in the `Core` project" rule has **no structural enforcement**. ⚠ **Correction 2 is WITHDRAWN 2026-08-19: "22 T1c files is really 42" compared two different scopes, and the 22 was right.** T1c's audited scope is §1's row — 4 ViewModels (`ValueSearch` 415 + `ProxyDeployVM` 312 + `GameClassFilter` 183 + `ClassStruct` 162) + 5 Core (209+185+143+77+52) + **13 model DTOs** = **22 files / 2,889 early lines**, and both halves reproduce at baseline `271d7931`: the 9 named files measure 1,740 early and the 13 Models files with ≥50 early lines (excluding `LiveFieldValue` 478, which U5 owns) measure 1,151 → 2,891, i.e. 2,889 plus the same 2-line drift visible on `GameClassFilter` (185 measured vs 183 published). **42 is not a corrected count — it is the RE-SWEEP's own coverage**, whole folders at HEAD (25 ViewModels + 17 Core; 24 + 14 at the baseline), which is *broader* than T1c and therefore strictly better news for a negative result. Both numbers are right about different things; neither replaces the other. The folder itself is clean of P/Invoke, Registry, `Process.Start` and hardcoded Windows paths — the only greps that fired are registry path LITERALS in `RecycleBinPolicy.cs` (which performs no registry access) and "Process" as a domain noun. — *As filed:* NEGATIVE RESULT — all 22 T1c files are AOT-clean and Core contains zero platform-specific code | S / low |
 | **AE27** ✅ | INFO | `ClassListResult.cs:32` (GameClassEntry.Package) | **FIXED build 3268.** Direction: the CODE — the comment asserted a property of the implementation ("Pre-computed once") that nothing implemented, and the reason it gave (repaint cost) is sound, so the code moved to match rather than the doc being weakened. It was an expression-bodied property re-running `ExtractPackagePrefix` on every read: per visible row per repaint, AND once per entry per keystroke in the Package filter. Memoized — and the memo is invalidated by the `ClassPath` setter rather than assumed write-once, because `ClassPath` is a settable property and a plain `??=` would have traded a false comment for a stale value. — *As filed:* `Package` is documented as "Pre-computed once so the DataGrid binding doesn't recompute per repaint" but is an expression-bodied property that recomputes on every read | S / low |
 | **AE28** ✅ | INFO | `ProxyDeployViewModel.cs:513` (ProxyDeployViewModel.NotifyOrphanSelectionChan) | **FIXED build 3268 (docs).** Direction: the COMMENT; the code is right and better than what the comment described. No view calls it — the trigger is `OnOrphanRowChanged`, a per-row `PropertyChanged` subscription taken when the scan populates `Orphans`, and the other three call sites are the scan completing and the cleanup loop's success and cancel paths. Naming a view call-site that does not exist is how someone later "restores" it and double-raises, or removes the real subscription believing the view covers it. — *As filed:* `NotifyOrphanSelectionChanged`'s doc names a View call-site that does not exist; the real trigger is the per-row PropertyChanged subscription | S / low |
 | **AE29** ✅ | INFO | `ProxyDeployViewModel.cs:1310` (ProxyDeployViewModel.NotifySelectionChanged) | **FIXED build 3268.** Confirmed, and the dead method is deleted. `NotifySelectionChanged` had **zero** callers while documenting itself as "called from View". No latent UI bug behind it: `HasSelection` is bound by **no view either** — negative control on that grep is its sibling `HasOrphanSelection`, which IS bound at `ProxyDeployPanel.axaml:171`. `HasSelection` is kept (public VM surface, five bulk raise sites) but now carries an explicit ⚠ that nothing binds it and that it has no per-row hook, so anyone wiring it up subscribes to each `DetectedGame` first the way the orphan list does. — *As filed:* `NotifySelectionChanged` documents itself as "called from View" and has no caller anywhere; the `HasSelection` it raises has no per-row hook, unlike its sibling in the same file | S / low |
@@ -2719,7 +2775,7 @@ python -c "import re;s=open('docs/audit-2026-08-13-early-code-findings.md',encod
 > `F1`‡, `F8`¤) that §4's own footnote at "allow an optional marker" had already documented, and
 > (b) the four rows whose severity cell is **bold** (`| **V1** ✅ | **HIGH** |` — V1, W1, W2, Y1, all
 > fixed HIGHs), which nothing had documented. On top of that, eleven findings fixed in §2's
-> prose blocks (M1–M3, A2, U1, U2, F1, F4, F6, F7, FR1 — commits `5ef4c2b`, `c65fdfc`, `0d9fcfa`,
+> prose blocks (MG1–MG3, A2, U1, U2, F1, F4, F6, F7, FR1 — commits `5ef4c2b`, `c65fdfc`, `0d9fcfa`,
 > `a2b616a`, `cfaa5cd`, builds 2813–2830) had never been ✅-marked on their table rows, so the
 > register counted them open. Rows are now marked; the numbers below are the corrected derivation.
 
@@ -2842,7 +2898,7 @@ block, §2.
 | D4b Sein | – | 0 | 2 | 0 | **2** |
 | D4b Stark | – | 1 | 0 | 0 | **1** |
 | D4b Lugner | – | 1 | 0 | 0 | **1** (PX1 ‡ — was dropped by the old regex) |
-| D4a Macht | – | 0 | 0 | 0 | **0** (M1–M3 all fixed 2026-08-14) |
+| D4a Macht | – | 0 | 0 | 0 | **0** (MG1–MG3 all fixed 2026-08-14) |
 | D5 Frieren | – | 0 | 0 | 0 | **0** (FR1 fixed build 2820) |
 | **TOTAL** | – | **55** | **133** | **27** | **215** |
 
@@ -3356,7 +3412,7 @@ the row's line number.
 | AC2 | CONFIRMED, counts corrected | 1 of **4** `GetLayout` call sites guarded (3 distinct consumers); unguarded: `InvokeParamDialog.cs:693`, `StructReturnDecoder.cs:55` + `:79`; size in scope at all three; `StructReturnDecoder.cs` already `using UE5DumpUI.Views;` |
 | AE10 | CONFIRMED, counts corrected | **7** VMs / 19 sites still gate (ClassPivot, Snapshot(+Group), SpcQuery(+Group), InstanceFinder, InterestingFunctions, InterestingProperties, DetectStats); todo.md's pending list under-names them |
 | Y16 (parked) | Survey re-verified, no drift | All three sites + the cosmetic straggler exist exactly as surveyed (`CeInvokeReturn.cs` lives in `Services\`) |
-| All 33 ✅ fixes | **VERIFIED-FIXED in tree, 0 failures** | Includes the 11 newly row-marked (M1–M3, A2, U1, U2, F1, F4, F6, F7, FR1) |
+| All 33 ✅ fixes | **VERIFIED-FIXED in tree, 0 failures** | Includes the 11 newly row-marked (MG1–MG3, A2, U1, U2, F1, F4, F6, F7, FR1) |
 
 **Residuals left inside shipped fixes (string/comment-level, worth sweeping with the next commit in
 each file):**
@@ -4020,7 +4076,7 @@ exactly as filed. Three count errors corrected in place (D4b's LOW tally, and bo
 cells in §4) — the totals were right, the per-segment cells were not.
 
 **Fixing — cluster ① is 6 of 7 shipped** (`5ef4c2b`, `c65fdfc`):
-M1, M2, M3, A2, U1, and U2 (which U1 forced in — they are not independently shippable).
+MG1, MG2, MG3, A2, U1, and U2 (which U1 forced in — they are not independently shippable).
 **A4 is deliberately open** — it changes which candidates the value scanner emits, needs a `leafAddr`
 dedupe, and was stopped by the maintainer pending in-game confirmation of the geometry underneath it.
 
@@ -4132,9 +4188,9 @@ every graph edge and scan candidate derived from one.
 
 | | Defect | Effect on the shared output | Status |
 |---|---|---|---|
-| D4a/**M3** | `ComputeMapValueOffset` guesses alignment (always, for struct values) | wrong `valueOffset` … | ✅ 2026-08-14 |
-| D4a/**M1** | `ComputeSetElementStride` drops the `TPair`'s trailing padding | …which feeds a wrong stride | ✅ 2026-08-14 |
-| D4a/**M2** | `ReadTSparseArray` reads `NumFreeIndices` at `+0x3C` not `+0x34` | count over-reported | ✅ 2026-08-14 |
+| D4a/**MG3** | `ComputeMapValueOffset` guesses alignment (always, for struct values) | wrong `valueOffset` … | ✅ 2026-08-14 |
+| D4a/**MG1** | `ComputeSetElementStride` drops the `TPair`'s trailing padding | …which feeds a wrong stride | ✅ 2026-08-14 |
+| D4a/**MG2** | `ReadTSparseArray` reads `NumFreeIndices` at `+0x3C` not `+0x34` | count over-reported | ✅ 2026-08-14 |
 | D3/**A2** | `IsSparseIndexAllocated` reads stale inline bits after heap spill | freed slots read as live | ✅ 2026-08-14 |
 | D1/**U1** | Map/Set element sizes unvalidated | 1 GiB allocations, wild stride | ✅ 2026-08-14 |
 | D1/**U2** | `InferScalarSize` hardcodes FName = 8, overriding the engine's 16 | halved `TArray<FName>` stride | ✅ 2026-08-14 † |
@@ -4149,9 +4205,9 @@ did not have it. The two are not independently shippable.
 **A4 remains open** and is deliberately not batched with these: it changes what the value scanner
 emits as candidates (dropping the depth-1 exclusion needs a `leafAddr` dedupe against what the static
 index already emitted), so it carries a duplicate-candidate and hot-path cost risk that the others do
-not, and it cannot be validated by the header-level unit tests that cover M1–M3.
+not, and it cannot be validated by the header-level unit tests that cover MG1–MG3.
 
-Fix M3 → M1 → M2 in one commit (they are three lines in one header), then A2, then U1. **Add a test
+Fix MG3 → MG1 → MG2 in one commit (they are three lines in one header), then A2, then U1. **Add a test
 for the *composition*, not the parts** — that is precisely why none of this was caught: both
 `dll_helpers_test` cases and every PDB-verified data point in the tree happen to land on multiples
 of 8, so none of them discriminates.
@@ -4173,7 +4229,7 @@ of 8, so none of them discriminates.
 root cause recurring in older code**, which is evidence it is a habit of this codebase rather than a
 one-off: D2/**G1** (`bOffsetsValidated = true` while probes failed), D3/**A6** (Property Search
 reports the *defining* class, so Force resolves an empty pool), D3/**A5** (Preview samples the CDO,
-not a live instance), D4a/**M2** (count says 10, six rows render), and **three more from D5** —
+not a live instance), D4a/**MG2** (count says 10, six rows render), and **three more from D5** —
 D5/**F4** (`search_properties` reports the full pool as `scanned_objects` for a walk that stopped at
 the 200-row cap), D5/**F6** (`walk_world` reports the page size as the level's actor count, having
 read and discarded the real one), D5/**F7** (the `-7` string names an execution that provably never
