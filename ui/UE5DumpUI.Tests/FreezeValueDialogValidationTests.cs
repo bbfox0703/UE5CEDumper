@@ -425,13 +425,47 @@ public class FreezeValueDialogValidationTests
             PropOffset = 0x100, PropSize = 1, InheritedByCount = 4823,
         };
 
-        var w = FreezeValueDialog.ScopeWarning(m);
+        var w = FreezeValueDialog.ScopeWarning(m, FreezeNarrowHint);
         Assert.NotNull(w);
         Assert.Contains("bCanBeDamaged", w);
         Assert.Contains("Actor", w);
         // It must say how to narrow it, or it is only an apology.
         Assert.Contains("className", w);
     }
+
+    /// <summary>
+    /// The Force flow gets the SAME scope sentence and a DIFFERENT remedy (audit #5
+    /// AF22). Before the fix it got the Freeze remedy verbatim — "edit className in the
+    /// generated CFG block" — on a path that generates no script and therefore has no
+    /// CFG block: unreachable advice, the Z10 shape.
+    /// </summary>
+    [Fact]
+    public void ScopeWarning_CarriesTheHintOfTheFlowItWasAskedFor()
+    {
+        var m = new PropertySearchMatch
+        {
+            ClassName = "Actor", DefiningClassName = "Actor",
+            PropName = "bCanBeDamaged", PropType = "BoolProperty",
+            PropOffset = 0x100, PropSize = 1, InheritedByCount = 4823,
+        };
+
+        const string forceHint = "There is no per-class switch for Force — release it from "
+                               + "the \"Forced fields\" strip.";
+        var force = FreezeValueDialog.ScopeWarning(m, forceHint);
+
+        Assert.NotNull(force);
+        Assert.Contains("bCanBeDamaged", force);          // the shared half is unchanged
+        Assert.Contains(forceHint, force);
+        // The decisive one: the Freeze-only remedy must NOT appear on the Force path.
+        Assert.DoesNotContain("CFG block", force);
+        Assert.DoesNotContain("className", force);
+    }
+
+    /// <summary>The Freeze wording as en.axaml holds it. Duplicated here on purpose —
+    /// a test that read the resource would pass if BOTH drifted together.</summary>
+    private const string FreezeNarrowHint =
+        "To target a single class, edit className in the generated CFG block "
+        + "(or set derived = false for that class only).";
 
     [Fact]
     public void ScopeWarning_IsSilentForAFieldUniqueToItsClass()
@@ -446,7 +480,7 @@ public class FreezeValueDialogValidationTests
             PropOffset = 0x4F8, PropSize = 4, InheritedByCount = 0,
         };
 
-        Assert.Null(FreezeValueDialog.ScopeWarning(m));
+        Assert.Null(FreezeValueDialog.ScopeWarning(m, FreezeNarrowHint));
     }
 
     [Fact]
@@ -462,7 +496,7 @@ public class FreezeValueDialogValidationTests
             PropOffset = 0x4F8, PropSize = 4, InheritedByCount = 0,
         };
 
-        var w = FreezeValueDialog.ScopeWarning(m);
+        var w = FreezeValueDialog.ScopeWarning(m, FreezeNarrowHint);
         Assert.NotNull(w);
         Assert.Contains("BP_Teammate_C", w);
     }

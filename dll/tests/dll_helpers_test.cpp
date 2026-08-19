@@ -3899,6 +3899,71 @@ static void Test_Solide_MatchStealthField() {
     EXPECT("position scores 0", MatchStealthField("position") == 0);
 }
 
+// ----- Solide::IntWidthOf / IntRangeOf (held-integer width + SIGN, AF8) -------
+// The bug this pins: Solide read Int8Property as UNSIGNED while writing it as
+// signed, so the re-assert worker's `read != target` drift check could never be
+// satisfied for a negative hold — it rewrote the same byte every tick, forever,
+// and told the user the game was fighting it. Nothing compiles Solide.cpp, so the
+// rule lives in Solide.h and is tested here.
+static void Test_Solide_IntWidthAndRange() {
+    using Solide::IntWidthOf;
+    using Solide::IntRangeOf;
+
+    // THE defect: Int8Property is SIGNED and one byte wide.
+    EXPECT("Int8Property is 1 byte",  IntWidthOf("Int8Property").bytes == 1);
+    EXPECT("Int8Property is SIGNED",  IntWidthOf("Int8Property").isSigned);
+    // Its unsigned same-width siblings must NOT be dragged along by the fix.
+    EXPECT("ByteProperty is 1 byte",  IntWidthOf("ByteProperty").bytes == 1);
+    EXPECT("ByteProperty is unsigned", !IntWidthOf("ByteProperty").isSigned);
+    EXPECT("UInt8Property is unsigned", !IntWidthOf("UInt8Property").isSigned);
+
+    EXPECT("IntProperty is 4 signed",
+           IntWidthOf("IntProperty").bytes == 4 && IntWidthOf("IntProperty").isSigned);
+    EXPECT("Int64Property is 8 signed",
+           IntWidthOf("Int64Property").bytes == 8 && IntWidthOf("Int64Property").isSigned);
+
+    // Anything else must report "not mine" rather than defaulting to a byte — the
+    // old code's fall-through is what made an unknown type a silent 1-byte write.
+    EXPECT("FloatProperty is not an int",  IntWidthOf("FloatProperty").bytes == 0);
+    EXPECT("UInt32Property is not held",   IntWidthOf("UInt32Property").bytes == 0);
+    EXPECT("empty type is not held",       IntWidthOf("").bytes == 0);
+
+    double lo = 0, hi = 0;
+    IntRangeOf(IntWidthOf("Int8Property"), lo, hi);
+    EXPECT("int8 range is -128..127", lo == -128.0 && hi == 127.0);
+    // -5 must be INSIDE the signed range (the value that never converged) and
+    // 200 must be OUTSIDE it (the mirror case: it stored as -56 and the unsigned
+    // read agreed with the target, so the hold looked converged while the game
+    // saw a different number).
+    EXPECT("-5 holdable in int8", -5.0 >= lo && -5.0 <= hi);
+    EXPECT("200 NOT holdable in int8", !(200.0 >= lo && 200.0 <= hi));
+
+    IntRangeOf(IntWidthOf("ByteProperty"), lo, hi);
+    EXPECT("uint8 range is 0..255", lo == 0.0 && hi == 255.0);
+    EXPECT("-5 NOT holdable in uint8", !(-5.0 >= lo && -5.0 <= hi));
+    EXPECT("200 holdable in uint8", 200.0 >= lo && 200.0 <= hi);
+
+    IntRangeOf(IntWidthOf("IntProperty"), lo, hi);
+    EXPECT("int32 range ends", lo == -2147483648.0 && hi == 2147483647.0);
+
+    // A non-held type must produce an EMPTY range, so a caller that forgets to
+    // check `bytes` rejects rather than writing a wrong width.
+    IntRangeOf(IntWidthOf("FloatProperty"), lo, hi);
+    EXPECT("non-int range is empty", lo == 0.0 && hi == 0.0);
+
+    // The TYPE GATE and the width table are one list, not two that must agree — the
+    // shape of the original defect. A type IsIntType admits but IntWidthOf does not
+    // know would be accepted by Force and then fail every read and write silently.
+    EXPECT("gate admits Int8Property",    Solide::IsIntType("Int8Property"));
+    EXPECT("gate admits ByteProperty",    Solide::IsIntType("ByteProperty"));
+    EXPECT("gate admits UInt8Property",   Solide::IsIntType("UInt8Property"));
+    EXPECT("gate admits IntProperty",     Solide::IsIntType("IntProperty"));
+    EXPECT("gate admits Int64Property",   Solide::IsIntType("Int64Property"));
+    EXPECT("gate rejects FloatProperty",  !Solide::IsIntType("FloatProperty"));
+    EXPECT("gate rejects UInt32Property", !Solide::IsIntType("UInt32Property"));
+    EXPECT("gate rejects StrProperty",    !Solide::IsIntType("StrProperty"));
+}
+
 // ----- Neu: UEnum::Names layout (legacy TArray vs UE5.6+ FNameData) -----------
 // Synthetic memory: register buffers at chosen virtual addresses; the read
 // callback serves bytes from registered ranges and FAILS for any unmapped
@@ -6341,6 +6406,7 @@ int main() {
     RUN(Test_Solitar_ApplyBoolBit);
     RUN(Test_Solitar_MatchProtectionBool);
     RUN(Test_Solide_MatchStealthField);
+    RUN(Test_Solide_IntWidthAndRange);
 
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
     RUN(Test_Neu_Legacy_Basic);

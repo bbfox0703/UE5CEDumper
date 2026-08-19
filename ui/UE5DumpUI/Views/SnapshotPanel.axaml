@@ -165,7 +165,8 @@
     </StackPanel>
 
     <!-- Snapshot list (fixed height; diff grid gets the remaining space) -->
-    <DataGrid Grid.Row="4" ItemsSource="{Binding Snapshots}" SelectedItem="{Binding SelectedSnapshot}"
+    <DataGrid x:Name="SnapshotsGrid"
+              Grid.Row="4" ItemsSource="{Binding Snapshots}" SelectedItem="{Binding SelectedSnapshot}"
               IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
               CanUserResizeColumns="True" CanUserSortColumns="True"
               HorizontalScrollBarVisibility="Auto">
@@ -277,7 +278,8 @@
       </Expander>
 
       <!-- Diff results — fills the rest of the lower star row below the compare Expander -->
-      <DataGrid ItemsSource="{Binding DiffRows}" SelectedItem="{Binding SelectedDiffRow}"
+      <DataGrid x:Name="DiffGrid"
+                ItemsSource="{Binding DiffRows}" SelectedItem="{Binding SelectedDiffRow}"
                 IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
                 CanUserResizeColumns="True" CanUserSortColumns="True"
                 HorizontalScrollBarVisibility="Auto">
@@ -403,7 +405,8 @@
 
         <!-- Results master-detail: one row per matched object; expand for per-slot
              locked offsets + handoffs (reuses GroupCandidate / GroupSlotMatch). -->
-        <DataGrid ItemsSource="{Binding GroupCandidates}" SelectedItem="{Binding SelectedGroupCandidate}"
+        <DataGrid x:Name="GroupGrid"
+                  ItemsSource="{Binding GroupCandidates}" SelectedItem="{Binding SelectedGroupCandidate}"
                   IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
                   RowDetailsVisibilityMode="VisibleWhenSelected"
                   CanUserResizeColumns="True" CanUserSortColumns="True"

@@ -1186,6 +1186,12 @@ struct FunctionPropRefResult {
     // native but analysis unavailable (Func offset unresolved / unreadable).
     std::string method;
     int32_t unmappedAccesses = 0;  // disasm: [reg+off] hits with no matching property
+    // disasm: the decoder stopped at its instruction budget, so the property list
+    // below is a PREFIX of what the function touches (audit #5 AF7). Denken computed
+    // this and Aura logged it, then dropped it — leaving the Xref dialog to present a
+    // truncated list as an exhaustive answer to "which fields does this touch?".
+    // Always false for the bytecode path, which is exact.
+    bool budgetHit = false;
 };
 
 FunctionPropRefResult WalkFunctionPropertyRefs(uintptr_t funcAddr);

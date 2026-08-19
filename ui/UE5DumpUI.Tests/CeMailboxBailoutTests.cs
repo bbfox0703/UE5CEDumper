@@ -1047,4 +1047,33 @@ public class CeMailboxBailoutTests
         Assert.True(close > loop, $"{name}: the success-close is emitted before the wait loop");
         Assert.DoesNotContain("then break end", enable, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// params_data[1] and [2] are the base slot plus 8 and 16 (audit #5 AF14).
+    ///
+    /// <para>Five emitters wrote the FIRST operand through <c>OffParamsData</c> and the
+    /// next two as bare <c>0x330</c> / <c>0x338</c> literals in the same statement
+    /// group, so a future move of params_data would have split an FVector across the
+    /// old and new layouts — two of its components at the new base, one at the old.
+    /// They now go through named constants; this pins that the named constants are the
+    /// SAME BYTES the literals were, which is what makes the change a refactor and not
+    /// a contract move. (The generators' own tests assert the emitted text literally,
+    /// so together they prove the output is byte-identical.)</para>
+    /// </summary>
+    [Fact]
+    public void ParamsDataSlotsAreEightBytesApart()
+    {
+        static ulong H(string s) => Convert.ToUInt64(s.Replace("0x", ""), 16);
+
+        ulong p0 = H(CeMailboxLayout.OffParamsData);
+        Assert.Equal(p0 + 8,  H(CeMailboxLayout.OffParamsData1));
+        Assert.Equal(p0 + 16, H(CeMailboxLayout.OffParamsData2));
+
+        // And the literal values the generators used before the refactor, so this fails
+        // loudly if someone edits a constant expecting the emitted Lua to follow — the
+        // DLL's MailboxData layout is the authority, not this file.
+        Assert.Equal("0x328", CeMailboxLayout.OffParamsData);
+        Assert.Equal("0x330", CeMailboxLayout.OffParamsData1);
+        Assert.Equal("0x338", CeMailboxLayout.OffParamsData2);
+    }
 }

@@ -4702,6 +4702,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Path 2: "bytecode" (exact) / "disasm" (native x64, heuristic) / "none".
             data["method"]       = res.method;
             data["unmapped"]     = res.unmappedAccesses;
+            // Path 2 only: the disassembler hit its instruction budget, so `props`
+            // is a prefix rather than the whole story (AF7).
+            data["budget_hit"]   = res.budgetHit;
             json arr = json::array();
             for (const auto& r : res.refs) {
                 json rj;

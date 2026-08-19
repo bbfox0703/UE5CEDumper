@@ -20,12 +20,12 @@
 
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
-| **第 1 步 — 只開 UE5DumpUI** | 1 | UE5DumpUI |
-| **第 2 步 — 要注入一個執行中的遊戲** | 16 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 1 步 — 只開 UE5DumpUI** | 3 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
+| **第 2 步 — 要注入一個執行中的遊戲** | 18 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 8 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 13 | 符合特定條件的遊戲 |
+| **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **40** | |
+| **合計** | **45** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -63,6 +63,32 @@
 
 不用注入任何遊戲。
 
+### ⬜ AF10 / AF11 —— 第二個執行個體的離開碼、座標庫搬進子資料夾
+
+*優先度 **中***
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | UI 已經開著時，從 PowerShell 再啟動一次 `UE5DumpUI.exe`，讀 `$LASTEXITCODE`。 | **1**（不是 0），而且第一個視窗會被帶到前景。 |
+| 2 | 在 `%LOCALAPPDATA%\UE5CEDumper\` 根目錄放一個 `teleport-coords.<module>.json` 和一個同名 `.bak`，然後啟動 UI。 | 兩個檔案都出現在 `%LOCALAPPDATA%\UE5CEDumper\TeleportCoords\`，根目錄的副本消失，Teleport 分頁照樣列得出座標。<br>⚠ 要確認**兩個一起搬**：只搬走 `.json` 而 `.bak` 留在原地就是失敗。 |
+| 3 | 反向對照：先在 `TeleportCoords\` 放一份同名 `.json`，再把另一份放到根目錄，啟動 UI。 | 根目錄那份**原地不動**且 log 有記一行，絕不可被靜默覆蓋。 |
+| 4 | 把某一款遊戲的座標庫檔案時間改成 21 天以前，重開 UI。 | 檔案**還在**（座標庫不做時間清掃，和 `Bookmarks\` 一樣）。 |
+
+-----
+
+### ⬜ AF16–AF23 —— DataGrid 欄位標題排序（**必須用 AOT 版**）
+
+*優先度 **中** · ⚠ **一定要用 `build.ps1 -Mode Publish` 出來的 trimmed 版**。這個問題在一般 dev build
+上不會出現，用 dev build 測等於沒測。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 點 Live Funcs 的 **Period**、Detect Stats 的 **✓** 和 **Offset**、Live Walker 函式表的 **Params** 這四個欄位標題。 | 每個都會重新排序，再點一次反向。Period 要照**數值**排（16.7 ms 的列排在 1000 ms 之上），不是照顯示字串。 |
+| 2 | 從 Interesting Functions 開 Props 對話框、從 Class Struct 開 Xref 對話框，每個欄位標題都點一次。 | 兩邊各 6 個標題都會重排。`Access` / `Refs` 要照**數字**排（「12W / 3R」排在「2W / 1R」之上）。 |
+| 3 | 點 Class Pivot Discover 表的 Changed / Cat / Shape / Score、Snapshot 清單的 Label / Size、Snapshot Diff 的 **Change**、Snapshot 與 SPC group 表的 **Class**、Invoke 參數挑選視窗的 4 個標題。 | 全部都會重排。**Size** 要照數值排（「980 MB」排在「1.2 GB」之下）。 |
+
+-----
+
 ### 🟡 AE4 / AE5 / AE6 / AE7 —— Proxy Deploy 面板的並行防護與選項保持（**只剩步驟 4 的互斥閘**）
 
 *優先度 **高** · 步驟 1 已於 2026-08-17 驗畢；步驟 2、3、5、6 已於 2026-08-19 驗畢，均已刪除*
@@ -76,6 +102,31 @@
 ## 第 2 步 — 要注入一個執行中的遊戲
 
 任何一款 UE 遊戲都可以。
+
+### ⬜ AF7 / AF8 —— 反組譯預算截斷要說出來、Int8Property 的正負號
+
+*優先度 **中** · 兩項都可能因為找不到樣本而測不了，那也是結論。*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 用 Property Search 找一個 `Int8Property` 欄位，Force 成**負值**（例如 `-5`），再 `get_forced_fields`。 | 讀回來就是 **-5**。修正前讀回來是 **251**，於是 worker 每個 tick 都重寫同一個 byte，UI 永遠顯示 drift。<br>⚠ 沒有任何遊戲露出 `Int8Property` 的話，這項就是無樣本可測。 |
+| 2 | 同一個欄位改 Force 成 `200`。 | 被**拒絕**（超出 int8 範圍），而不是寫進去變成 -56。 |
+| 3 | 對一個**原生**（非 Blueprint）UFunction 下 `walk_function_props`，看回覆有沒有 `budget_hit`。 | 這個 key 存在。若為 `true`，Props 對話框狀態列變琥珀色並寫出「hit its instruction budget」，Interesting Functions 批次的 **Uses** 欄顯示 `⚠ partial`。<br>⚠ 要找夠大的原生函式才會觸發 —— 先 grep DLL log 的 `AnalyzeNativeFunctionProps ... BUDGET` 找目標。 |
+
+-----
+
+### ⬜ AF22 / AF12 / AF13 —— Force 對話框的用字、Group 每格上限要講出來
+
+*優先度 **中***
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | Property Search → 對某列按右鍵 → **Force value…**。 | 標題是「Force property value」、欄位標籤是「Force value (…)」、確認鈕寫 **「Hold this value」**，而且繼承欄位的警告**不會**提到 `className` 或 CFG block。 |
+| 2 | 再走一次一般的 **Freeze** 流程。 | 仍然寫「Create freeze script」，也仍然給 CFG block 那段建議（這是上一步的對照組）。 |
+| 3 | Snapshot 分頁 → 用一個夠常見的數值做 Group match，讓某個 slot 在某個物件上配到超過 256 個欄位。 | 狀態列多出「a slot matched more than 256 fields」那段提示（和 live Group Scan 一模一樣的句子）。 |
+| 4 | 把 Value Search 的 per-slot cap 改成 1024，再跑一次**快照**的 Group 查詢。 | 快照這邊仍然顯示 256 —— 這是正確的，重點是現在會講出來而不是讓人以為兩邊同步。 |
+
+-----
 
 ### 🟡 A6 —— Force 是否對子類別一併生效（**只剩步驟 3、5**）
 
@@ -342,6 +393,17 @@
 ## 第 4 步 — 需要特定條件的遊戲
 
 手上要有符合條件的樣本才做得動；條件寫在每項的「需要」欄。
+
+### ⬜ AF21 —— 高 DPI 下視窗位置不會被判成跑到畫面外
+
+*優先度 **低** · 需要：把 Windows 顯示縮放改成 **150%**（100% 縮放下這個問題不會出現）*
+
+| # | 做什麼 | 預期 |
+|---|--------|------|
+| 1 | 縮放設成 150%，把主視窗拖到大約有三分之一露在螢幕右緣外面，關掉程式，再開。 | 開回原來的位置。修正前這個檢查是用 DIP 寬度（只有實際寬度的三分之二）去算，所以一個放得好好的視窗會被判定為在畫面外，位置就不再被記錄。 |
+| 2 | 對照組：縮放改回 100%，重複同一組動作。 | 一樣開回原位（這條在修正前後都會過 —— 它證明的是修正沒有把原本正常的情況弄壞）。 |
+
+-----
 
 ### ⬜ A12 —— Group 模式下的同一件事
 

@@ -176,8 +176,8 @@ public static class MovementScriptGenerator
             enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, 3)        -- knobId 3 = GravityDirection");
         Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(sx)})   -- X");
-        Line(sb, $"writeDouble(mb + 0x330, {Lua(sy)})   -- Y");
-        Line(sb, $"writeDouble(mb + 0x338, {Lua(sz)})   -- Z");
+        Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData1}, {Lua(sy)})   -- Y");
+        Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData2}, {Lua(sz)})   -- Z");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)        -- clear status");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdMovement})       -- CMD_MOVEMENT (write LAST)");
         CeLuaHygiene.AppendMailboxWait(sb, "Movement",

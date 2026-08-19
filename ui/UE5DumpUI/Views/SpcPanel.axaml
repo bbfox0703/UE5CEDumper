@@ -411,7 +411,8 @@
 
       <!-- Results master-detail: one row per matched object; expand for per-slot chains
            + locked offsets + handoffs (reuses GroupCandidate / GroupSlotMatch). -->
-      <DataGrid Grid.Row="5" ItemsSource="{Binding GroupCandidates}" SelectedItem="{Binding SelectedGroupCandidate}"
+      <DataGrid x:Name="GroupGrid"
+                Grid.Row="5" ItemsSource="{Binding GroupCandidates}" SelectedItem="{Binding SelectedGroupCandidate}"
                 IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
                 RowDetailsVisibilityMode="VisibleWhenSelected"
                 CanUserResizeColumns="True" CanUserSortColumns="True"

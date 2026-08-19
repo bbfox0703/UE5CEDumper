@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
@@ -6,6 +8,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 
 namespace UE5DumpUI.Views;
@@ -25,6 +28,22 @@ namespace UE5DumpUI.Views;
 /// </summary>
 public sealed class PropertyXrefDialog : ManagedDialogWindow
 {
+    /// <summary>
+    /// AOT-safe column sort comparers, keyed by SortMemberPath (audit #5 AF23).
+    /// Occurrences / WriteCount sort on the NUMERIC property even though the cells
+    /// render "3W / 4R" — a string sort of AccessSummary would be meaningless.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, IComparer> XrefSortComparers =
+        new Dictionary<string, IComparer>
+        {
+            ["Kind"]             = DataGridSortComparers.Ordinal<PropertyXrefMatch>(r => r.Kind),
+            ["Occurrences"]      = DataGridSortComparers.Number<PropertyXrefMatch>(r => r.Occurrences),
+            ["WriteCount"]       = DataGridSortComparers.Number<PropertyXrefMatch>(r => r.WriteCount),
+            ["OwnerClassName"]   = DataGridSortComparers.Ordinal<PropertyXrefMatch>(r => r.OwnerClassName),
+            ["EventName"]        = DataGridSortComparers.Ordinal<PropertyXrefMatch>(r => r.EventName),
+            ["FunctionFullName"] = DataGridSortComparers.Ordinal<PropertyXrefMatch>(r => r.FunctionFullName),
+        };
+
     private readonly IDumpService _dump;
     private readonly IPlatformService _platform;
     private readonly string _fieldName;
@@ -356,6 +375,11 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
                     Margin = new Thickness(4, 0),
                 }, supportsRecycling: true),
         });
+        // AOT-safe sort comparers (audit #5 AF23) — the twin of
+        // FunctionPropsDialog's grid, and it carried the same defect: six
+        // DataGridTemplateColumns, CanUserSortColumns = true, no comparer, so the
+        // reflection sort is trimmed and every header is inert in the shipped build.
+        _grid.WireSortComparers(XrefSortComparers);
         _grid.SelectionChanged += (_, _) =>
         {
             bool has = _grid.SelectedItem is PropertyXrefMatch;

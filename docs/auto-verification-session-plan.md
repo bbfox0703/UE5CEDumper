@@ -967,11 +967,12 @@ Group 1 still runs the 10-minute partial as a genuine non-regression, recorded a
 
 -----
 
-## 10. The 繁中 checklist's 40 remaining items — one row each (2026-08-19)
+## 10. The 繁中 checklist's 45 remaining items — one row each (2026-08-19)
 
 **Denominator, stated so it cannot drift again: the `###` item count of
-[pending-verification_zh-TW.md](pending-verification_zh-TW.md), 40 after that file was pruned 46 → 40
-on 2026-08-19.** Re-derive with `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two
+[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **45** after that file was pruned
+46 → 40 on 2026-08-19 and then took audit **L10**'s five new items (AF7/AF8, AF10/AF11, AF12/AF13/AF22,
+AF16–AF23, AF21) the same day.** Re-derive with `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two
 `###` under 「怎麼用這份清單」. This is **not** the same denominator as this file's older
 "64 checklist rows" headline, which counted register rows; that number is retired.
 
@@ -1025,6 +1026,12 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 | 38 | `b719 / b648 / b636 / b642 / b637+644` | **C** | Steps 2–5 are B and run in GROUP 10 on Geri + ES2. Step 1 needs Geri played until NPCs die and respawn with a Route B freeze running, plus a level change, plus an FPS-impact judgement for which no threshold exists |
 | 39 | `U2` | **C** | Step 1 (the `get_offsets` `case_preserving` screen) is **A** and sweeps many titles cheaply — do that first. Only if it returns all-false does the C arm apply: build UE from source with `WITH_CASE_PRESERVING_NAME=1`, hours of work. ⚠ Do **not** re-run TQ2 — measured non-CPN, 20-0 |
 | 40 | `G3` | **D** | §7. Needs an Avowed-shaped forked-engine title where a pointer genuinely fails to resolve; all 34 local titles resolve GWorld, and the two pointer-missing processes report `GWorld=0` since the AA38 fix |
+
+| 41 | `AF16–AF23`（AOT 排序） | **B** | Pure clicking — but **only on a `-Mode Publish` binary**, which makes it the one row where using the usual dev build silently produces a false PASS: the reflection sort survives JIT and is trimmed only in what ships. 30 columns were unwired; the register lists three spot-check rows rather than all 30 because `DataGridSortWiringTests` machine-enforces the pairing offline. Fold into any GROUP that already has the UI up, after a publish |
+| 42 | `AF10 / AF11` | **A** | Fully headless. AF10 = launch the exe twice and read `$LASTEXITCODE`. AF11 = plant files at the app-data root, start the UI, list `TeleportCoords\`. ⚠ AF11 needs its **negative control** (a pre-existing destination file must NOT be overwritten) or it only proves the happy path |
+| 43 | `AF7 / AF8` | **A** | Both pipe + log, both **sample-blocked** and that is the likely outcome: AF8 needs a title exposing an `Int8Property`, AF7 a native UFunction big enough to exhaust the disassembler budget. Cheapest next step for AF7 is a corpus grep of existing `scan-0.log`s for `AnalyzeNativeFunctionProps ... BUDGET` — if no title has ever logged it, say so and stop |
+| 44 | `AF12 / AF13 / AF22` | **B** | AF22 is two dialog reads with its own control (open Force, then open Freeze, and check the wording DIFFERS). AF12/AF13 need a snapshot where one slot matches >256 fields on some object — a very common value on a big capture |
+| 45 | `AF21` | **C** | The human action is a **Windows display-scaling change to 150%**, which nothing in the rig can do. Everything after that is dragging a window and restarting. Run it last, and run the 100% control too |
 
 ### Totals — and the direct answer to "how much of this can Auto drive?"
 

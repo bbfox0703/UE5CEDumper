@@ -274,6 +274,13 @@ public static class GroupMatch
     /// is filled even on a false return (the convergence lists the caller persists), but a
     /// false return means the object is NOT a group candidate. Returns false for &lt; 2 slots
     /// (a group needs ≥ 2 values; the caller enforces the 2..4 bound).</summary>
+    /// <param name="perSlotCapHit">A slot matched MORE leaves than the cap kept, so its
+    /// witness list — and the "All fields" popup built from it — is a page. Required, not
+    /// optional: the DLL sibling has published <c>per_slot_cap_hit</c> on the wire since
+    /// AE13, and the snapshot path silently discarded the same fact (audit #5 AF13). It is
+    /// set independently of the return value, because a truncated slot can still fail the
+    /// assignment — and that is the case where the user most needs to know the miss might
+    /// be an artifact of the cap.</param>
     /// <remarks>
     /// THE DEFAULT WAS 8 AND THAT WAS A BUG — the same one the DLL's Orden had (fixed
     /// 2026-08-05). The cap truncates in leaf order, which is field-declaration order with
@@ -282,14 +289,23 @@ public static class GroupMatch
     /// list. Because this list is also what a later temporal pass compares against, a
     /// Changed/Unchanged match could only ever see never-changing engine fields.
     ///
-    /// Shared with the live Group Scan via <see cref="Constants.GroupPerSlotCap"/> on
-    /// purpose: the snapshot corpus and the live scan answer the same question, and two
-    /// different caps would make the same object match on one page and not the other.
+    /// <para><b>What is shared with the live Group Scan is the DEFAULT, not the cap in
+    /// force</b> (audit #5 AF12 — the previous wording claimed the stronger thing). Both
+    /// sides start from <see cref="Constants.GroupPerSlotCap"/>, but Value Search exposes
+    /// a per-session picker (<c>GroupPerSlotCap</c>, 8..4096) that it sends to the DLL as
+    /// <c>per_slot_cap</c>, and a snapshot query has no such control — so the moment the
+    /// user moves that picker the two DO diverge, and the same object can keep a longer
+    /// witness list live than in the corpus. Coupling a snapshot query to another panel's
+    /// combo box would be a surprising product decision, not a bug fix; what this code
+    /// owes the user instead is to SAY which cap it applied and whether it bit, which is
+    /// what <paramref name="perSlotCapHit"/> is for.</para>
     /// </remarks>
     public static bool Run(IReadOnlyList<Leaf> leaves, IReadOnlyList<Slot> slots,
-                           out List<int>[] perSlot, int perSlotCap = Constants.GroupPerSlotCap)
+                           out List<int>[] perSlot, out bool perSlotCapHit,
+                           int perSlotCap = Constants.GroupPerSlotCap)
     {
         perSlot = new List<int>[slots.Count];
+        perSlotCapHit = false;
         for (int s = 0; s < slots.Count; s++) perSlot[s] = new List<int>();
         if (slots.Count < 2) return false;
 
@@ -299,8 +315,8 @@ public static class GroupMatch
             {
                 if (LeafSatisfiesSlot(leaves[li], slots[s]))
                 {
-                    if (perSlot[s].Count < perSlotCap)
-                        perSlot[s].Add(li);
+                    if (perSlot[s].Count < perSlotCap) perSlot[s].Add(li);
+                    else perSlotCapHit = true;   // matched, but not kept
                 }
             }
             if (perSlot[s].Count == 0) return false; // early reject

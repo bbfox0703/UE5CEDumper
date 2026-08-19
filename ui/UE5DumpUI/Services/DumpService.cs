@@ -1322,6 +1322,9 @@ public sealed class DumpService : IDumpService
             // Default to "bytecode" for older DLLs that don't emit the field.
             Method       = res["method"]?.GetValue<string>() ?? "bytecode",
             Unmapped     = res["unmapped"]?.GetValue<int>() ?? 0,
+            // AF7. Absent on an older DLL ⇒ false, i.e. "no truncation reported",
+            // which is the same thing every caller assumed before the flag existed.
+            BudgetHit    = res["budget_hit"]?.GetValue<bool>() ?? false,
             Props        = props,
         };
     }

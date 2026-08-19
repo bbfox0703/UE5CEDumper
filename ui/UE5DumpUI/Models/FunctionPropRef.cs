@@ -63,6 +63,18 @@ public sealed class FunctionPropRefsResult
     /// <summary>Path 2: [reg+off] accesses with no matching class property.</summary>
     public int Unmapped { get; init; }
 
+    /// <summary>
+    /// Path 2: the disassembler stopped at its instruction budget, so
+    /// <see cref="Props"/> is a PREFIX of the fields this function touches — a field
+    /// missing from the list is "not seen YET", not "not used" (audit #5 AF7).
+    ///
+    /// <para>Matters most for the read the dialog is used for: "nothing writes this
+    /// field, so freezing it is safe". Denken computed the flag and Aura logged it,
+    /// and it was dropped before the wire — the same discard shape as Z9/AE13.
+    /// Always false for the exact bytecode path.</para>
+    /// </summary>
+    public bool BudgetHit { get; init; }
+
     /// <summary>True when results came from native x64 disassembly (heuristic).</summary>
     public bool IsDisasm => Method == "disasm";
 

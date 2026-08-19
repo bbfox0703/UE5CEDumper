@@ -128,19 +128,19 @@ public static class TeleportScriptGenerator
         if (op == 4)
         {
             Line(sb, $"  writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(zOffset)})   -- zOffset");
-            Line(sb, $"  writeBytes(mb + 0x330, {channel & 0xFF})            -- trace channel");
+            Line(sb, $"  writeBytes(mb + {CeMailboxLayout.OffParamsData1}, {channel & 0xFF})            -- trace channel");
             Line(sb, $"  writeBytes(mb + 0x331, {(fallbackCenter ? 1 : 0)})            -- fall back to screen center");
         }
         else if (op == 12)
         {
             Line(sb, $"  writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(distance)})  -- distance (uu; -ve = backward)");
-            Line(sb, $"  writeBytes(mb + 0x330, {(horizontal ? 0 : 1)})            -- mode (0 = horizontal, 1 = 3D)");
+            Line(sb, $"  writeBytes(mb + {CeMailboxLayout.OffParamsData1}, {(horizontal ? 0 : 1)})            -- mode (0 = horizontal, 1 = 3D)");
         }
         else if (op == 13)
         {
             Line(sb, $"  writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(coordX)})  -- X");
-            Line(sb, $"  writeDouble(mb + 0x330, {Lua(coordY)})  -- Y");
-            Line(sb, $"  writeDouble(mb + 0x338, {Lua(coordZ)})  -- Z");
+            Line(sb, $"  writeDouble(mb + {CeMailboxLayout.OffParamsData1}, {Lua(coordY)})  -- Y");
+            Line(sb, $"  writeDouble(mb + {CeMailboxLayout.OffParamsData2}, {Lua(coordZ)})  -- Z");
             Line(sb, $"  writeDouble(mb + 0x340, {Lua(pitch)})  -- Pitch");
             Line(sb, $"  writeDouble(mb + 0x348, {Lua(yaw)})  -- Yaw");
             Line(sb, $"  writeDouble(mb + 0x350, {Lua(roll)})  -- Roll");
@@ -170,7 +170,7 @@ public static class TeleportScriptGenerator
             Line(sb, "  if code == 0 then");
             Line(sb, "    dbg(string.format('[Teleport] camera loc=(%.2f, %.2f, %.2f) " +
                      "rot=(%.2f, %.2f, %.2f) fov=%.1f',");
-            Line(sb, "      readDouble(mb + 0x328), readDouble(mb + 0x330), readDouble(mb + 0x338),");
+            Line(sb, $"      readDouble(mb + {CeMailboxLayout.OffParamsData}), readDouble(mb + {CeMailboxLayout.OffParamsData1}), readDouble(mb + {CeMailboxLayout.OffParamsData2}),");
             Line(sb, "      readDouble(mb + 0x340), readDouble(mb + 0x348), readDouble(mb + 0x350),");
             Line(sb, "      readDouble(mb + 0x358)))");
             Line(sb, "  end");
@@ -182,7 +182,7 @@ public static class TeleportScriptGenerator
             Line(sb, "  if code == 0 then");
             Line(sb, "    dbg(string.format('[Teleport] coords loc=(%.3f, %.3f, %.3f) " +
                      "rot=(%.3f, %.3f, %.3f)',");
-            Line(sb, "      readDouble(mb + 0x328), readDouble(mb + 0x330), readDouble(mb + 0x338),");
+            Line(sb, $"      readDouble(mb + {CeMailboxLayout.OffParamsData}), readDouble(mb + {CeMailboxLayout.OffParamsData1}), readDouble(mb + {CeMailboxLayout.OffParamsData2}),");
             Line(sb, "      readDouble(mb + 0x340), readDouble(mb + 0x348), readDouble(mb + 0x350)))");
             Line(sb, "  end");
         }

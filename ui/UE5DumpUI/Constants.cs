@@ -33,8 +33,14 @@ public static class Constants
     // startup. Matches Grimoire::LOG_RETENTION_DAYS on the DLL side.
     public const long LogMaxSizeBytes = 8 * 1024 * 1024;     // 8MB per file
 
-    // Per-process mirror logging
-    public const int MaxProcessFolders = 20;           // Clean up oldest beyond this
+    // Per-process mirror logging.
+    //
+    // There is deliberately NO folder-COUNT cap here (audit #5 AF9 removed
+    // MaxProcessFolders = 20). The comment above is the whole policy, and a count cap
+    // sat four lines below it contradicting it: a per-process folder is named after the
+    // GAME, so the count is "distinct games played in the window" and cannot run away,
+    // while the eviction was recursive and took the DLL's five log categories with it —
+    // files Sein.cpp's age-only sweep had deliberately kept.
     public const int LogMaxAgeDays = 21;               // Keep this in sync with Grimoire::LOG_RETENTION_DAYS
 
     // ---- Log compression (compact /C /EXE:LZX, in place) -------------------------
@@ -165,10 +171,19 @@ public static class Constants
     public const int BookmarkSlotCount = 8;
 
     // Per-game Teleport coordinate library — teleport-coords.<module>.json under
-    // %LOCALAPPDATA%\UE5CEDumper. Keyed by the EXE MODULE NAME, not the PE hash:
-    // bookmarks store offsets and should die on a game patch, but a hand-curated
-    // coordinate list must survive one. See docs/teleport-coord-library-spec.md D1.
+    // %LOCALAPPDATA%\UE5CEDumper\TeleportCoords\. Keyed by the EXE MODULE NAME, not the
+    // PE hash: bookmarks store offsets and should die on a game patch, but a
+    // hand-curated coordinate list must survive one. See
+    // docs/teleport-coord-library-spec.md D1.
+    //
+    // It is the THIRD per-game family and it used to write to the flat app-data ROOT,
+    // which the App-data layout rule forbids — the root is for files that are app-wide
+    // and FIXED IN NUMBER, and this one grows by up to four files per game forever
+    // (.json + .bak + .preimport.bak + .preclear.bak). Moved to its own subfolder
+    // beside Snapshots\ and Bookmarks\ (audit #5 AF11); AppDataFolderMaintenance moves
+    // anything left at the root on first use, per game, as a GROUP.
     public const string CoordLibraryFilePrefix = "teleport-coords";
+    public const string CoordLibrarySubFolder  = "TeleportCoords";
 
     // Soft warning threshold for a CE-Lua export (CE's AA-script EDITOR gets
     // sluggish long before the pipe does: 4000 entries is ~480 KB, ~4.6% of the

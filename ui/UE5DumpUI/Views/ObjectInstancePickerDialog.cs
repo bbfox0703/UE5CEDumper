@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
@@ -7,6 +9,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 
 namespace UE5DumpUI.Views;
@@ -32,6 +35,25 @@ namespace UE5DumpUI.Views;
 /// </summary>
 public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
 {
+    /// <summary>
+    /// AOT-safe column sort comparers, keyed by SortMemberPath. Found by the
+    /// repo-wide DataGrid sweep behind audit #5 AF16-AF23 — no finding named this
+    /// dialog, and it is the seventh site with the identical shape.
+    /// <para><b>It also carried a written justification for the defect</b>, which is
+    /// how it survived: "sort is a runtime nice-to-have ... sortable headers still
+    /// work in the non-AOT default build". True and beside the point — the build we
+    /// SHIP is the trimmed one, so the headers were dead for every user. Wiring them
+    /// costs four lines.</para>
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, IComparer> PickerSortComparers =
+        new Dictionary<string, IComparer>
+        {
+            ["Index"]     = DataGridSortComparers.Number<InstanceResult>(r => r.Index),
+            ["Address"]   = DataGridSortComparers.Ordinal<InstanceResult>(r => r.Address),
+            ["ClassName"] = DataGridSortComparers.Ordinal<InstanceResult>(r => r.ClassName),
+            ["Name"]      = DataGridSortComparers.Ordinal<InstanceResult>(r => r.Name),
+        };
+
     private readonly IDumpService _dump;
     private readonly string _expectedClassName;
     private TextBox _classBox = null!;
@@ -167,10 +189,9 @@ public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
         // ReflectionBinding (IL2026 / IL3050) and would silently render
         // blank cells under PublishAot=true. FuncDataTemplate<T> resolves
         // each cell value via direct property access, no reflection.
-        // SortMemberPath is kept so sortable headers still work in the
-        // non-AOT default build; sort is a runtime nice-to-have and
-        // doesn't load-bear the picker's primary "double-click to use"
-        // gesture.
+        // SortMemberPath + an explicit CustomSortComparer (wired below): the path
+        // alone is not enough, because the reflection sort behind it is trimmed in
+        // the build we actually ship. See PickerSortComparers.
         _grid.Columns.Add(new DataGridTemplateColumn
         {
             Header = "Index",
@@ -223,6 +244,7 @@ public sealed class ObjectInstancePickerDialog : ManagedDialogWindow
                     Margin = new Thickness(4, 0),
                 }, supportsRecycling: true),
         });
+        _grid.WireSortComparers(PickerSortComparers);
         _grid.SelectionChanged += (_, _) => _btnUse.IsEnabled = _grid.SelectedItem is InstanceResult;
         _grid.DoubleTapped += OnGridDoubleTapped;
 

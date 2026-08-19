@@ -219,7 +219,8 @@ public sealed class LoggingService : ILoggingService, IDisposable
             _initLogger.Information("Process mirror log started: {MirrorDir}", mirrorDir);
             newInit.Information("Mirror log started for process: {Process}", processName);
 
-            CleanupProcessFolders();
+            // No folder-count cleanup here — see the AF9 note above. Folder retention
+            // is CleanupOldLogFolders(LogMaxAgeDays), which the constructor already ran.
         }
         catch (Exception ex)
         {
@@ -539,69 +540,30 @@ public sealed class LoggingService : ILoggingService, IDisposable
         }
     }
 
-    /// <summary>
-    /// Which per-process log folders the count cap should evict, newest kept.
-    /// Pure policy so the rule is testable without touching the disk — the same shape as
-    /// <see cref="ProxyOrphanScanner.SelectExpiredReports"/>.
-    ///
-    /// <para><b>The caller must pass the newest write time of the files INSIDE each
-    /// folder, never the directory's own mtime.</b> Windows bumps a directory timestamp
-    /// when entries are added or removed but NOT when an existing child is appended to —
-    /// which is exactly what a live game's log folder does all session. Ranking by it can
-    /// sink an ACTIVE folder below a batch of stale ones and delete it out from under a
-    /// running game. The age-based sweep already documented this and got it right; the
-    /// count-based one was the outlier (audit #4 B37).</para>
-    /// </summary>
-    internal static IReadOnlyList<string> SelectFoldersToEvict(
-        IReadOnlyList<(string Name, DateTime Newest)> folders, string uiFolderName, int keep)
-    {
-        // The UI's own folder is never a candidate — the same exemption the age-based
-        // sweep makes, and for the same reason. Excluded BEFORE the cap so it cannot
-        // consume one of the kept slots either.
-        var candidates = folders
-            .Where(f => !string.Equals(f.Name, uiFolderName, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(f => f.Newest)
-            .ToList();
-
-        if (candidates.Count <= keep) return Array.Empty<string>();
-        return candidates.Skip(keep).Select(f => f.Name).ToList();
-    }
-
-    private void CleanupProcessFolders()
-    {
-        try
-        {
-            var dirs = Directory.GetDirectories(_logDirectory)
-                .Select(d => new DirectoryInfo(d))
-                .Where(d => d.Name != "." && d.Name != "..")
-                .ToList();
-
-            var doomed = SelectFoldersToEvict(
-                dirs.Select(d => (d.Name, NewestWriteUtc(d))).ToList(),
-                Constants.LogSubfolderName,
-                Constants.MaxProcessFolders);
-            if (doomed.Count == 0) return;
-
-            var byName = dirs.ToDictionary(d => d.Name, StringComparer.OrdinalIgnoreCase);
-            foreach (var name in doomed)
-            {
-                if (!byName.TryGetValue(name, out var old)) continue;
-                try
-                {
-                    old.Delete(true);
-                    _initLogger.Debug("Cleaned up old process log folder: {Folder}", old.Name);
-                }
-                catch
-                {
-                    // Best effort
-                }
-            }
-        }
-        catch
-        {
-            // Best effort
-        }
-    }
+    // ================================================================
+    // REMOVED: the count-based per-process folder cap (audit #5 AF9).
+    //
+    // `CleanupProcessFolders` evicted every per-game folder past the newest 20 and
+    // logged it at Debug. Three things make that indefensible rather than merely
+    // redundant:
+    //
+    //  1. CLAUDE.md's Log-output rule says retention is BY AGE, not by generation
+    //     count, and explains why a count cannot express it. Constants.cs said the
+    //     same thing four lines above `MaxProcessFolders = 20`, so the file
+    //     contradicted itself.
+    //  2. There was nothing to guard against. A folder is named after the GAME
+    //     (SanitizeFolderName(processName)), not the PID — relaunching a game reuses
+    //     its folder, so the count is "distinct games played in 21 days". It cannot
+    //     run away.
+    //  3. It deleted RECURSIVELY, and the folder is shared: the DLL writes five
+    //     categories into the same directory under an age-only policy of its own
+    //     (Sein.cpp's PruneStaleProcessFolders, whose comment already reads
+    //     "Age-based, matching the file policy"). So the UI silently destroyed logs
+    //     the DLL had deliberately kept — the two halves of one folder disagreeing.
+    //
+    // CleanupOldLogFolders(Constants.LogMaxAgeDays) runs from the constructor and is
+    // now the sole owner of folder retention, which is what the docs always claimed.
+    // ================================================================
 
     /// <summary>
     /// Delete log subfolders (and their contents) that haven't been written to

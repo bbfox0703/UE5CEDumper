@@ -31,6 +31,19 @@ public partial class LiveWalkerPanel : UserControl
             ["DisplayValue"] = DataGridSortComparers.Ordinal<LiveFieldValue>(r => r.DisplayValue),
         };
 
+    // FunctionGrid's "Params" column (audit #5 AF20). This file wired 1 of its 3
+    // DataGrids; the missed one is subtler than a template column: "Params" IS a
+    // DataGridTextColumn, but its value comes from a <MultiBinding> in ELEMENT
+    // syntax, which is a reflection binding rather than a compiled one — so nothing
+    // roots NumParms and the header was inert in the shipped trimmed build. The
+    // third grid (the reverse-lookup results) binds and sorts on the same path for
+    // every column, so it is rooted and needs no dictionary.
+    private static readonly IReadOnlyDictionary<string, IComparer> FunctionsSortComparers =
+        new Dictionary<string, IComparer>
+        {
+            ["NumParms"] = DataGridSortComparers.Number<FunctionInfoModel>(r => r.NumParms),
+        };
+
     // Audit fix #18: track the currently-subscribed VM so we can `-=` from
     // it before re-subscribing to a new one. Without this, every
     // DataContext reassignment leaves a stale handler on the previous VM
@@ -42,6 +55,7 @@ public partial class LiveWalkerPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("FieldGrid")?.WireSortComparers(FieldsSortComparers);
+        this.FindControl<DataGrid>("FunctionGrid")?.WireSortComparers(FunctionsSortComparers);
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttached;
         DetachedFromVisualTree += OnDetached;

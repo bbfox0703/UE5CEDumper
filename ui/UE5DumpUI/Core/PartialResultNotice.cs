@@ -72,10 +72,16 @@ public static class PartialResultNotice
     /// once per ROW; Instance Finder dedups by class and scans once per CLASS (many rows
     /// share one result), so counting its classes and calling them rows would be a second
     /// small lie inside the honesty fix.</param>
-    public static string BatchPartialClause(int partialUnits, int totalUnits, string unit = "row")
+    /// <param name="cause">What truncated them, as it reads in "N rows {cause} and are
+    /// marked partial". Defaults to the scan deadline, which is what every Z9 caller
+    /// means. AF7 needed a second cause — the disassembler's instruction budget — and
+    /// reusing the deadline wording would have named the wrong one, which this class's
+    /// own rule ("name the CAUSE before the consequence") exists to prevent.</param>
+    public static string BatchPartialClause(int partialUnits, int totalUnits, string unit = "row",
+                                            string cause = "hit the scan deadline")
         => partialUnits <= 0
             ? ""
-            : $" ⚠ {partialUnits:N0} of {totalUnits:N0} {unit}(s) hit the scan deadline and are marked partial — "
+            : $" ⚠ {partialUnits:N0} of {totalUnits:N0} {unit}(s) {cause} and are marked partial — "
               + $"a 0 on those {unit}s means \"not found YET\", not \"none\".";
 
     /// <summary>
@@ -105,6 +111,23 @@ public static class PartialResultNotice
             : "  ⚠ a slot matched more fields than the per-slot cap kept — so \"All fields\" "
               + "is a page and a later Changed/Decreased refine can re-read only what was "
               + "kept; use more distinctive values.";
+
+    /// <summary>
+    /// The native x64 disassembler (Path 2) stopped at its instruction budget, so the
+    /// recovered field list is a PREFIX of what the function touches.
+    ///
+    /// <para>
+    /// Its own sentence because the consequence is the dangerous direction of the
+    /// question this dialog is used to answer. "Which functions write this field?" is
+    /// asked in order to conclude *nothing does, so freezing it is safe* — and a
+    /// budget-truncated scan produces exactly the same empty/short list as a genuine
+    /// absence. Denken computed the flag, Aura logged it, and it was discarded before
+    /// the wire; the third instance of that shape after Z9 and AE13. (audit #5 AF7)
+    /// </para>
+    /// </summary>
+    public static string DisassemblyBudget()
+        => "  ⚠ the disassembler hit its instruction budget — this list is a PREFIX of what "
+         + "the function touches, so a field missing here is \"not seen yet\", not \"not used\".";
 
     /// <summary>
     /// A refine pass whose INPUT was already truncated. The refine itself completed;

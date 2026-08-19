@@ -25,6 +25,15 @@ internal static class CeMailboxLayout
     public const string OffInstanceAddr = "0x10";   // instanceAddr / op / knobId / request
     public const string OffUfuncAddr    = "0x18";   // ufuncAddr / value / slot / show flag
     public const string OffParamsData   = "0x328";  // params_data[0..]
+    // params_data[1] / [2] — the 2nd and 3rd 8-byte operand slots. Named because five
+    // emitters wrote them as bare literals while writing the FIRST one through
+    // OffParamsData in the same statement group, so moving params_data would have
+    // silently split an FVector across the old and new layouts (audit #5 AF14).
+    // ⚠ These are the SAME BYTES the old literals named: 0x328 + 8 and + 0x10. Nothing
+    // about the mailbox moved, so this is NOT a contract change — the emitted Lua is
+    // byte-identical, which CeMailboxLayoutOffsetTests pins.
+    public const string OffParamsData1  = "0x330";  // params_data[1]
+    public const string OffParamsData2  = "0x338";  // params_data[2]
 
     // Auto-start readiness values written to OffInitState (must match Mimic.h
     // InitState). Unlike every other field here this one is NOT part of a

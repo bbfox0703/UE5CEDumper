@@ -62,7 +62,8 @@
         </WrapPanel>
         <!-- Ranked candidates: highest "looks like game state" first. Select a row →
              Use → pivots it (selects the class, ticks the property, runs). -->
-        <DataGrid ItemsSource="{Binding DiscoverResults}" SelectedItem="{Binding SelectedDiscoverResult}"
+        <DataGrid x:Name="DiscoverGrid"
+                  ItemsSource="{Binding DiscoverResults}" SelectedItem="{Binding SelectedDiscoverResult}"
                   Height="170" IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
                   CanUserResizeColumns="True" CanUserSortColumns="True"
                   HorizontalScrollBarVisibility="Auto">
@@ -219,7 +220,8 @@
     <!-- Field picker: tick the value fields to project per group, and the Key
          fields to add to the composite group key (Field mode). KeyScore hints which
          fields make good group keys; the best is pre-selected in the Key-field box. -->
-    <DataGrid Grid.Row="0" ItemsSource="{Binding Fields}" IsReadOnly="False"
+    <DataGrid x:Name="FieldPickGrid"
+              Grid.Row="0" ItemsSource="{Binding Fields}" IsReadOnly="False"
               GridLinesVisibility="Horizontal" Background="#1E1E1E"
               IsEnabled="{Binding !IsBusy}"
               CanUserResizeColumns="True" CanUserSortColumns="True"

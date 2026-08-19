@@ -5920,6 +5920,10 @@ static std::string AnalyzeNativeFunctionProps(uintptr_t funcAddr,
     Denken::NativeAnalysisResult r = Denken::Analyze(exec, reader);
     if (!r.ok) return "none";
 
+    // Carry the decoder's "I stopped early" flag OUT rather than only into the log
+    // (audit #5 AF7). Set before the mapping loop so an early return can't drop it.
+    out.budgetHit = r.budgetHit;
+
     // Map each [this+off] access to a property on the owning class (UFunction's
     // Outer). WalkClass already includes the full inherited super chain with
     // absolute Offset_Internal, so an offset matches at most one property.

@@ -3871,15 +3871,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 _coordAll, CoordLibraryScriptGenerator.Flavour.Dll, CoordZTolerance, out var folded);
 
             var notes = new StringBuilder();
-            if (folded.Count > 0)
-            {
-                // Honest about what the picker's radio buttons dropped: the entries
-                // are still there and still findable by typing the group name.
-                notes.Append($" {folded.Count} group(s) had no radio button " +
-                             $"({string.Join(", ", folded.Take(3))}" +
-                             (folded.Count > 3 ? ", …" : "") +
-                             ") — those entries are still listed under All and match the filter box.");
-            }
+            notes.Append(FoldedGroupsNote(folded));
             if (_coordAll.Count > Constants.CoordLibraryExportWarnCount)
             {
                 notes.Append($" {_coordAll.Count} entries makes a large script — CE's AA " +
@@ -3909,6 +3901,28 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex) { SetError(ex); _log.Error("Coord Lua export failed", ex); }
     }
+
+    /// <summary>
+    /// What the picker's radio buttons could not fit, as a status-line clause.
+    ///
+    /// <para>Every export shares one generator and one <c>folded</c> out-parameter, but
+    /// only the DLL "Push to CE" path built this sentence — the no-DLL push and the
+    /// "Save .lua" path threw the list away with <c>out _</c> (audit #5 AF15). A user
+    /// exporting either of those got a script whose picker silently omits a group's
+    /// radio button and no hint that anything was dropped. Extracted rather than copied
+    /// twice: three inline copies of a disclosure is how the wording drifts until two of
+    /// them are wrong.</para>
+    ///
+    /// <para>Returns "" when nothing folded, so callers can append it unconditionally —
+    /// the shape <see cref="Core.PartialResultNotice"/> uses for the same reason.</para>
+    /// </summary>
+    internal static string FoldedGroupsNote(IReadOnlyList<string> folded)
+        => folded is null || folded.Count == 0
+            ? ""
+            : $" {folded.Count} group(s) had no radio button " +
+              $"({string.Join(", ", folded.Take(3))}" +
+              (folded.Count > 3 ? ", …" : "") +
+              ") — those entries are still listed under All and match the filter box.";
 
     /// <summary>
     /// Stage 1 of the Lua re-import (R7): paste a previously generated AA script and
@@ -3986,7 +4000,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             ClearError();
             var script = CoordLibraryScriptGenerator.Generate(
-                _coordAll, CoordLibraryScriptGenerator.Flavour.NoDll, CoordZTolerance, out _);
+                _coordAll, CoordLibraryScriptGenerator.Flavour.NoDll, CoordZTolerance, out var folded);
 
             bool sent = await _aobMaker.CreateAAScriptAsync(
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
@@ -3997,6 +4011,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 ? $"Pushed the no-DLL picker ({_coordAll.Count} entries) to Cheat Engine. " +
                   "Enable 'UE5 Trainer: Setup' first — this flavour uses its baked offsets, " +
                   "has no map guard, and goes stale when the game is patched."
+                  + FoldedGroupsNote(folded)
                 : "⚠ AOBMaker pipe dropped mid-push (CE closed?) — nothing was added.";
             if (sent)
                 _log.Info($"Coordinate library (no-DLL) -> CE via AOBMaker ({_coordAll.Count} entries)");
@@ -4019,9 +4034,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var path = await _platform.ShowSaveFileDialogAsync($"{name}.lua", "Lua script", "lua");
             if (string.IsNullOrEmpty(path)) return;
             var script = CoordLibraryScriptGenerator.Generate(
-                _coordAll, CoordLibraryScriptGenerator.Flavour.Dll, CoordZTolerance, out _);
+                _coordAll, CoordLibraryScriptGenerator.Flavour.Dll, CoordZTolerance, out var folded);
             File.WriteAllText(path!, script, new UTF8Encoding(false));
-            CoordStatus = $"Wrote {_coordAll.Count} entries to {path}.";
+            CoordStatus = $"Wrote {_coordAll.Count} entries to {path}." + FoldedGroupsNote(folded);
         }
         catch (Exception ex) { SetError(ex); _log.Error("Coord Lua save failed", ex); }
     }

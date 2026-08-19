@@ -9,11 +9,13 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// Persists the Teleport coordinate library PER GAME to
-/// %LOCALAPPDATA%\UE5CEDumper\teleport-coords.{module}.json.
+/// %LOCALAPPDATA%\UE5CEDumper\TeleportCoords\teleport-coords.{module}.json.
 ///
 /// Structural clone of <see cref="BookmarkStore"/> — sync, lock-guarded, source-gen
-/// JSON, atomic temp+rename, swallow-and-log with empty defaults — with three
-/// deliberate deviations, all documented in docs/teleport-coord-library-spec.md §8:
+/// JSON, atomic temp+rename, swallow-and-log with empty defaults, and the same
+/// <see cref="AppDataFolderMaintenance.Prepare"/> call from the constructor with the
+/// sweep OFF — with three deliberate deviations, all documented in
+/// docs/teleport-coord-library-spec.md §8:
 ///
 ///  1. Keyed by the EXE MODULE NAME, not the PE hash (D1), so a game patch does not
 ///     orphan a hand-curated list.
@@ -40,8 +42,28 @@ public sealed class CoordinateLibraryStore
     public CoordinateLibraryStore(IPlatformService platform, ILoggingService? log = null)
     {
         _log = log;
-        _dir = Path.Combine(platform.GetAppDataPath(), Constants.LogFolderName);
-        Directory.CreateDirectory(_dir);
+        // Own subfolder, not the flat app-data root (audit #5 AF11). This is a
+        // per-GAME family — up to four files per module (.json + .bak +
+        // .preimport.bak + .preclear.bak), one more set on every new game, forever —
+        // and CLAUDE.md's App-data layout rule reserves the root for files that are
+        // app-wide and fixed in number. Called from the CONSTRUCTOR for the same
+        // reason BookmarkStore does: the store that reads the folder is the one that
+        // migrates it, so nothing can read the old location after the move.
+        //
+        // maxAgeDays: 0 — NO age sweep, and this is the clearer case of the two the
+        // rule already covers. Snapshots\ is swept because a snapshot is a regenerable
+        // multi-GB capture; Bookmarks\ is not, because it is hand-placed navigation.
+        // A coordinate library is the SAME kind of data as a bookmark and then some:
+        // hand-authored, labelled and grouped by the user, importable from a friend's
+        // paste, and unrecoverable if deleted — which is exactly why this store keeps
+        // three separate backup flavours (see the class doc). Sweeping it would delete
+        // the one thing here nobody can replay their way back to.
+        _dir = AppDataFolderMaintenance.Prepare(
+            Path.Combine(platform.GetAppDataPath(), Constants.LogFolderName),
+            Constants.CoordLibrarySubFolder,
+            Constants.CoordLibraryFilePrefix,
+            maxAgeDays: 0,
+            log);
     }
 
     /// <summary>

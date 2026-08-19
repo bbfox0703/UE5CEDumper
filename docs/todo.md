@@ -1592,6 +1592,37 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > 第4步 13 · 第5步 2 = **40**. CLAUDE.md's row said *63* and the session plan said *64 rows*; both were
 > stale and are corrected in this commit.
 
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L10 (T1e Views/app root): AF7 / AF8 / AF10 / AF11 / AF16–AF23
+
+*Most of L10 needs NO live check. **AF9** (log-folder count cap removed) is pinned by three tests
+driving the real `LoggingService` against real directories — 30 in-window folders survive, a
+>21-day one still dies, the UI's own folder is exempt. **AF12/AF13/AF14/AF15** are pinned offline:
+the per-slot truncation flag has a two-direction test plus a "reported even on a MISS" case, the
+mailbox params slots have an arithmetic invariant test on top of the generators' existing
+literal-text assertions, and the folded-groups note is now one shared function. What follows is
+only what a running game — or specifically the **trimmed** binary — can settle.*
+
+⚠ **The AOT sort rows below cannot be checked in a dev build, by construction.** The whole defect
+class is "the reflection sort survives JIT and is trimmed away in the binary we ship", so a
+`build.ps1` (non-trimmed) run passes with the bug present. Every row marked **AOT** must be done on
+a `-Mode Publish` binary. The offline half is machine-enforced by
+`DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
+spot-check rather than a 30-column sweep.
+
+> | # | cat | 做什麼 | 預期 |
+> |---|-----|--------|------|
+> | 1 | **B** | **AOT.** On a `-Mode Publish` build, click the **Period** header in Live Funcs, the **✓** and **Offset** headers in Detect Stats, and the **Params** header in Live Walker's function grid. | Rows reorder, and reverse on a second click. Before the fix these four headers animated and did nothing. Period must order numerically (a 16.7 ms row above a 1000 ms row), not by the rendered label. |
+> | 2 | **B** | **AOT.** Same build: open the Props dialog from Interesting Functions and the Xref dialog from Class Struct, and click every column header in each. | All six headers in each dialog reorder. `Access` / `Refs` must sort by the NUMBER (a "12W / 3R" row above "2W / 1R"), not by the rendered string. |
+> | 3 | **B** | **AOT.** Same build: Class Pivot's Discover grid (Changed / Cat / Shape / Score), Snapshot's list (Label / Size), Snapshot Diff's **Change**, Snapshot+SPC group grids' **Class**, and the Invoke param picker's four headers. | All reorder. **Size** must be numeric (a "980 MB" row below a "1.2 GB" row) — these are the ten columns no finding named, found by the repo-wide sweep. |
+> | 4 | **A** | **AF10.** With the UI already running, launch `UE5DumpUI.exe` a second time from PowerShell and read `$LASTEXITCODE`. | **1**, not 0 — and the first instance's window comes forward. Previously the second-instance refusal reported success to any script that waited on it. |
+> | 5 | **A** | **AF11.** Put a `teleport-coords.<module>.json` (plus a `.bak`) in `%LOCALAPPDATA%\UE5CEDumper\` root, then start the UI. | Both files are now in `%LOCALAPPDATA%\UE5CEDumper\TeleportCoords\`, the root copies are gone, and the Teleport tab still lists the coordinates. ⚠ Check the pair moved **together** — a `.json` migrated without its `.bak` is the group-move invariant broken. |
+> | 6 | **A** | **AF11, negative control.** Repeat with a `teleport-coords.<module>.json` already present in `TeleportCoords\`. | The root copy is **left where it is** and a log line says so — never silently overwritten. Then confirm no sweep: backdate a library past 21 days and restart; it must still be there (`maxAgeDays: 0`, same as `Bookmarks\`). |
+> | 7 | **A** | **AF8.** Find an `Int8Property` via Property Search (`walk_class` on any class, grep the reply for `Int8Property`) and Force it to a **negative** value, e.g. `-5`. Then `get_forced_fields`. | Held count > 0 and the value reads back as **-5**. Before the fix the write stored 0xFB correctly but the read returned **251**, so the re-assert worker rewrote the byte every tick forever and the UI showed permanent drift. Also try `200`: it must now be **refused** as out of range rather than landing as -56. ⚠ Sample-blocked if no title exposes an `Int8Property`. |
+> | 8 | **A** | **AF7.** Run `walk_function_props` over the pipe against a **native** (non-Blueprint) UFunction on a large class and look for `budget_hit` in the reply. | The key is present. When `true`, the Props dialog's status line turns amber and carries "the disassembler hit its instruction budget", and the Interesting Functions batch **Uses** cell shows `⚠ partial`. ⚠ Needs a native function big enough to exhaust the budget — check the DLL's own `AnalyzeNativeFunctionProps ... BUDGET` log line to find one. |
+> | 9 | **B** | **AF22.** Property Search → right-click a row → **Force value…**. | The dialog is titled **"Force property value"**, the field is labelled "Force value (…)", the confirm button says **"Hold this value"**, and the inherited-field caveat does **not** mention `className` or a CFG block. Then open the ordinary **Freeze** flow and confirm it still says "Create freeze script" and still gives the CFG-block advice. |
+> | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
+> | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
+
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L4 (D4b Mimic/Sein/Flamme): MB1 / MB2 / SE1 / FL1 / FL2
 
 *The pure decision rules of this batch are unit-pinned in `dll_helpers_test` and need NO live check:

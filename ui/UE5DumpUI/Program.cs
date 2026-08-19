@@ -38,8 +38,13 @@ internal static class Program
         // phase and uptime.
         try
         {
-            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
-            return 0;
+            // RETURN the lifetime's exit code, don't discard it (audit #5 AF10).
+            // StartWithClassicDesktopLifetime hands back whatever `desktop.Shutdown(n)`
+            // was given, and App.axaml.cs deliberately passes 1 on the second-instance
+            // path — which this method then reported to the shell as 0. Anything
+            // scripting the exe (a launcher, a CI step, `Start-Process -Wait`) was told
+            // the launch succeeded when it had refused to start.
+            return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
         catch (Exception ex)
         {

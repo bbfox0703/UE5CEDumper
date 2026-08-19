@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 
@@ -32,8 +33,23 @@ namespace UE5DumpUI.Views;
 /// </summary>
 public sealed class FreezeValueDialog : Window
 {
+    /// <summary>
+    /// Which action the value being typed will drive. The dialog is shared: the value
+    /// validation, the type mapping and the scope summary are identical, but the
+    /// ACTION is not, and every string that names it must follow (audit #5 AF22).
+    ///
+    /// <para><see cref="Freeze"/> generates a CE script the user then enables;
+    /// <see cref="Force"/> writes the field immediately through the DLL and holds it on
+    /// every live instance. Reusing the Freeze strings for Force put "Create freeze
+    /// script" on the button of a flow that creates no script, and offered a remedy
+    /// ("edit className in the generated CFG block") that has no CFG block to edit —
+    /// the same unreachable-advice trap as Z10.</para>
+    /// </summary>
+    public enum Purpose { Freeze, Force }
+
     private readonly PropertySearchMatch _match;
     private readonly string _helperType;
+    private readonly Purpose _purpose;
     private TextBox _valueBox = null!;
     private TextBlock _errorLabel = null!;
     private Button _btnOk = null!;
@@ -43,12 +59,13 @@ public sealed class FreezeValueDialog : Window
     /// <c>"true"</c>). Null when the user cancels.</summary>
     public string? ValueLiteral { get; private set; }
 
-    public FreezeValueDialog(PropertySearchMatch match)
+    public FreezeValueDialog(PropertySearchMatch match, Purpose purpose = Purpose.Freeze)
     {
         _match = match;
         _helperType = HelperTypeFor(match);
+        _purpose = purpose;
 
-        Title = "Freeze property value";
+        Title = Str("Title");
         Width = 520;
         MinWidth = 400;
         SizeToContent = SizeToContent.Height;
@@ -75,7 +92,7 @@ public sealed class FreezeValueDialog : Window
         // pawn's bCanBeDamaged" is really freezing every live Actor in the level.
         root.Children.Add(BuildLabelRow("Scope:",    ScopeSummary(_match)));
 
-        var scopeWarning = ScopeWarning(_match);
+        var scopeWarning = ScopeWarning(_match, Str("NarrowHint"));
         if (scopeWarning != null)
         {
             root.Children.Add(new TextBlock
@@ -91,7 +108,7 @@ public sealed class FreezeValueDialog : Window
         // Value input
         var valueLbl = new TextBlock
         {
-            Text = $"Freeze value ({_helperType}):",
+            Text = StrFormat("ValueLabel", _helperType),
             Foreground = new SolidColorBrush(Color.Parse("#DCDCAA")),
             FontSize = 12,
             Margin = new Thickness(0, 8, 0, 2),
@@ -145,7 +162,7 @@ public sealed class FreezeValueDialog : Window
 
         _btnOk = new Button
         {
-            Content = "Create freeze script",
+            Content = Str("Ok"),
             Padding = new Thickness(14, 4),
             IsDefault = true,
         };
@@ -231,17 +248,46 @@ public sealed class FreezeValueDialog : Window
     /// freezing a game-specific field on the class that declares it, and a warning that
     /// fires every time is a warning nobody reads.</para>
     /// </summary>
-    internal static string? ScopeWarning(PropertySearchMatch match)
+    /// <param name="narrowHint">How to target fewer classes, IN THE FLOW THE USER IS IN.
+    /// Passed rather than hardcoded because the two flows have different answers and the
+    /// Freeze one is unreachable from Force — there is no generated CFG block to edit
+    /// (audit #5 AF22).
+    /// <para><b>Required, deliberately no default.</b> A warning that does not say how to
+    /// narrow the scope is only an apology (the property
+    /// <c>ScopeWarning_FiresWhenTheFieldIsInherited</c> has pinned since it was written),
+    /// and a default would let a new call site silently drop it — which is the exact
+    /// shape of the defect being fixed. Callers with genuinely no advice pass "".</para>
+    /// </param>
+    internal static string? ScopeWarning(PropertySearchMatch match, string narrowHint)
     {
         var held = FreezeScriptGenerator.HeldClassName(match.ClassName, match.DefiningClassName);
         bool differentRowClass = !string.IsNullOrEmpty(match.ClassName)
                                  && !string.Equals(match.ClassName, held, StringComparison.Ordinal);
         if (match.InheritedByCount <= 0 && !differentRowClass) return null;
 
-        return $"⚠ {match.PropName} is declared on {held}, not on one specific object — "
-             + $"so this holds the value on EVERY live {held} and subclass at once, not just "
-             + "the one you were looking at. To target a single class, edit className in the "
-             + "generated CFG block (or set derived = false for that class only).";
+        var s = $"⚠ {match.PropName} is declared on {held}, not on one specific object — "
+              + $"so this holds the value on EVERY live {held} and subclass at once, not just "
+              + "the one you were looking at.";
+        return string.IsNullOrEmpty(narrowHint) ? s : s + " " + narrowHint;
+    }
+
+    // ---- purpose-scoped strings (en.axaml) -------------------------------------
+
+    private string Str(string leaf)
+    {
+        var s = Res.Get($"str.ValuePrompt.{_purpose}.{leaf}");
+        // Res.Get returns "" when Application.Current is null (unit tests construct
+        // no Avalonia app) or the key is missing. Falling back to the Freeze wording
+        // would re-introduce exactly the defect this fixes, so fall back to the KEY —
+        // visibly wrong beats plausibly wrong.
+        return string.IsNullOrEmpty(s) ? $"str.ValuePrompt.{_purpose}.{leaf}" : s;
+    }
+
+    private string StrFormat(string leaf, params object[] args)
+    {
+        var t = Res.Get($"str.ValuePrompt.{_purpose}.{leaf}");
+        return string.IsNullOrEmpty(t) ? $"str.ValuePrompt.{_purpose}.{leaf}"
+                                       : string.Format(t, args);
     }
 
     /// <summary>

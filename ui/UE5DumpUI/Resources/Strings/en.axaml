@@ -838,6 +838,19 @@
     <sys:String x:Key="str.PropertySearch.ForcedCapped">⚠ capped</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.ForcedCapped">The instance pool hit the DLL's cap, so the held count is a FLOOR — more live instances of this class exist and are NOT being held. The pool is walked in ascending GObjects order, so the ones dropped are the most recently spawned.</sys:String>
 
+    <!-- Value prompt (FreezeValueDialog). ONE dialog serves two actions, so every string
+         that names the action has a Freeze and a Force variant (audit #5 AF22: the Force
+         flow reused the Freeze dialog verbatim, so the button the user clicked to write
+         and HOLD a live field said "Create freeze script"). -->
+    <sys:String x:Key="str.ValuePrompt.Freeze.Title">Freeze property value</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Freeze.ValueLabel">Freeze value ({0}):</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Freeze.Ok">Create freeze script</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Freeze.NarrowHint">To target a single class, edit className in the generated CFG block (or set derived = false for that class only).</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Force.Title">Force property value</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Force.ValueLabel">Force value ({0}):</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Force.Ok">Hold this value</sys:String>
+    <sys:String x:Key="str.ValuePrompt.Force.NarrowHint">There is no per-class switch for Force — it holds the field on the declaring class and every subclass until you release it from the "Forced fields" strip.</sys:String>
+
     <!-- Game Class Filter -->
     <sys:String x:Key="str.GameClassFilter.Load">Load</sys:String>
     <sys:String x:Key="str.GameClassFilter.GameOnly">Game classes only</sys:String>

@@ -28,63 +28,71 @@ public class LoggingServiceRetentionTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
 
-    // ----- B37: which folders the count cap evicts -----------------------------
+    // ----- AF9: AGE is the only folder-retention rule --------------------------
+    //
+    // These replace the five B37 tests, which pinned the RANKING of a count-based cap
+    // (`SelectFoldersToEvict`, keep the newest 20). Audit #4 fixed that ranking and the
+    // tests were right about it; audit #5 found the cap itself contradicted CLAUDE.md's
+    // Log-output rule, had nothing to guard against (a folder is named after the GAME,
+    // so the count is "distinct games played"), and deleted RECURSIVELY — taking the
+    // DLL's five log categories with it, which Sein.cpp's age-only sweep had kept.
+    //
+    // Tested through the real service against real directories rather than through a
+    // pure helper, because what has to hold now is an ABSENCE — and the honest way to
+    // pin "nothing deletes this" is to put a folder on disk and check it survives.
 
-    private static (string, DateTime) F(string name, int minutesAgo) =>
-        (name, DateTime.UtcNow.AddMinutes(-minutesAgo));
-
-    [Fact]
-    public void Keeps_the_newest_and_evicts_the_rest()
+    private void MakeFolder(string name, int daysOld)
     {
-        // Newest-first: b(10m), c(20m), a(30m), d(40m). keep 2 ⇒ b and c survive.
-        var evicted = LoggingService.SelectFoldersToEvict(
-            new[] { F("a", 30), F("b", 10), F("c", 20), F("d", 40) }, "UE5DumpUI", keep: 2);
-
-        Assert.Equal(new[] { "a", "d" }, evicted.OrderBy(x => x).ToArray());
+        var dir = Path.Combine(_dir, name);
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, "dll-init-0.log");
+        File.WriteAllText(file, "x");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddDays(-daysOld));
     }
 
     [Fact]
-    public void The_UI_folder_is_never_evicted_even_when_it_is_the_stalest()
+    public void Far_more_than_twenty_recent_game_folders_all_survive()
     {
-        // The UI writes its own folder continuously, but it is also the folder a user
-        // is asked to send when something goes wrong. Losing it to a cap is pure loss.
-        var evicted = LoggingService.SelectFoldersToEvict(
-            new[] { F("UE5DumpUI", 9999), F("GameA", 1), F("GameB", 2), F("GameC", 3) },
-            "UE5DumpUI", keep: 2);
+        // The negative control for the removal: 30 games played inside the 21-day
+        // window. Under the old cap of 20, ten of these were deleted — recursively,
+        // including the DLL's own logs — and reported at Debug only.
+        for (int i = 0; i < 30; i++) MakeFolder($"Game{i:D2}", daysOld: 1);
 
-        Assert.DoesNotContain("UE5DumpUI", evicted);
+        using (var log = new LoggingService(_dir))
+            log.StartProcessMirror("Game00");
+
+        for (int i = 0; i < 30; i++)
+            Assert.True(Directory.Exists(Path.Combine(_dir, $"Game{i:D2}")),
+                $"Game{i:D2} was deleted inside the {UE5DumpUI.Constants.LogMaxAgeDays}-day " +
+                "window — folder retention is by AGE only (CLAUDE.md Log output).");
     }
 
     [Fact]
-    public void The_UI_folder_does_not_consume_a_kept_slot()
+    public void A_folder_past_the_age_window_is_still_deleted()
     {
-        // Excluded BEFORE the cap, not after: otherwise "keep 2" would really mean
-        // "keep the UI folder and one game", quietly halving the retained history.
-        var evicted = LoggingService.SelectFoldersToEvict(
-            new[] { F("UE5DumpUI", 1), F("GameA", 2), F("GameB", 3), F("GameC", 4) },
-            "UE5DumpUI", keep: 2);
+        // The other direction, so the test above cannot be satisfied by removing all
+        // retention: age remains the policy and it still fires.
+        MakeFolder("StaleGame", daysOld: UE5DumpUI.Constants.LogMaxAgeDays + 5);
+        MakeFolder("FreshGame", daysOld: 1);
 
-        Assert.Equal(new[] { "GameC" }, evicted);   // A and B kept; UI exempt entirely
+        using (new LoggingService(_dir)) { }   // CleanupOldLogFolders runs in the ctor
+
+        Assert.False(Directory.Exists(Path.Combine(_dir, "StaleGame")));
+        Assert.True(Directory.Exists(Path.Combine(_dir, "FreshGame")));
     }
 
     [Fact]
-    public void Nothing_is_evicted_while_under_the_cap()
-        => Assert.Empty(LoggingService.SelectFoldersToEvict(
-               new[] { F("a", 1), F("b", 2) }, "UE5DumpUI", keep: 20));
-
-    [Fact]
-    public void An_actively_written_folder_outranks_stale_ones()
+    public void The_UI_own_folder_survives_even_when_it_is_stale()
     {
-        // The B37 failure in one assertion. The caller now passes the newest write time
-        // of the files INSIDE each folder; a live game's folder is the newest by that
-        // measure even though Windows may not have touched the DIRECTORY's own mtime
-        // since the files were created.
-        var evicted = LoggingService.SelectFoldersToEvict(
-            new[] { F("LiveGame", 0), F("Old1", 500), F("Old2", 600), F("Old3", 700) },
-            "UE5DumpUI", keep: 1);
+        // Carried over from B37: the UI folder is the one a user is asked to send when
+        // something goes wrong, and the age sweep exempts it by identity.
+        MakeFolder(UE5DumpUI.Constants.LogSubfolderName,
+                   daysOld: UE5DumpUI.Constants.LogMaxAgeDays + 100);
 
-        Assert.DoesNotContain("LiveGame", evicted);
-        Assert.Equal(3, evicted.Count);
+        using (new LoggingService(_dir)) { }
+
+        Assert.True(Directory.Exists(
+            Path.Combine(_dir, UE5DumpUI.Constants.LogSubfolderName)));
     }
 
     // ----- B31: the size cap must ROLL, not stop writing -----------------------
