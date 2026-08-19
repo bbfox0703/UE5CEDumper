@@ -890,6 +890,44 @@ Four rules came out of it:
 persistence; that is what the tool does. The honest fixes are a folder exclusion, a second
 implementation in a less-inspected host, and not running the thing automatically.
 
+### 3.8 This machine has TWO Visual Studios, and picking the wrong one fails at LINK, in a file you never touched
+
+`vswhere -all` returns **two** installations, and only the second has the toolset `build/` was
+compiled with:
+
+| install | MSVC toolsets |
+|---|---|
+| `C:\Program Files\Microsoft Visual Studio\2022\Community` | `14.44.35207` only |
+| `C:\Program Files\Microsoft Visual Studio\18\Community` | `14.38.33130`, `14.44.35207`, **`14.51.36231`** |
+
+`build.ps1` calls `Enter-VsDevShell` on the **newest** install, so every object already sitting in
+`build/` was produced by **14.51**. Point any other builder at `2022\Community\…\vcvars64.bat` and
+the compile stage happily succeeds — then the LINK dies:
+
+```
+Radar.cpp.obj : error LNK2019: unresolved external symbol __std_rotate
+Radar.cpp.obj : error LNK2019: unresolved external symbol __std_find_last_not_ch_pos_1
+dll\UE5Dumper.dll : fatal error LNK1120: 2 unresolved externals
+```
+
+Those are 14.51 vectorized-algorithm helpers, and **no `.lib` under `14.44.35207\lib\x64` defines
+either** — checked with `dumpbin /LINKERMEMBER:1` over every lib in that directory, not assumed.
+
+**Why it misleads so effectively.** The named file is one you did not edit (`Radar.cpp` is not even
+a `Macht.h` dependent), the symbols are STL internals, and it surfaces immediately after whatever
+source change you *did* make — so it reads as "my edit broke the build" or "the STL install is
+corrupt". It is neither: it is **objects from one toolset being linked against another's libs**.
+
+**The one-line diagnostic**: revert your change and rebuild pristine. If the failure survives, it
+was never yours. (That is what settled it here.)
+
+⇒ **Never hardcode a `vcvars64.bat` path.** Resolve with
+`vswhere -latest -prerelease -products * -property installationPath`, which is what
+`tools/verify/build_dll.py` does, and fail loudly rather than falling back to a guess. Related but
+*separate*: CLAUDE.md's `msvc_deps_prefix` warning is about **configure**, not build — that one is
+about the console code page, this one is about which VS you entered. Getting the code page right
+does not save you from the wrong toolset.
+
 -----
 
 ## 4. UE and CE facts that cost a session each
