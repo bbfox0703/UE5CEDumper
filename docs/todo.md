@@ -1879,6 +1879,35 @@ incremental `cmake --build` after editing only a `.h` is not.
 > | MB1 | same session: confirm a `Native\|Static` helper (e.g. a KismetMath call) still takes the fast path on an **idle** game (main menu) | `INVOKE -> static-native fast path` still logged; no -5 timeout | the re-read must not COST the fast path — a `ResolveFunctionInfo` that fails on some game would silently degrade every pure helper to a queued call that times out at the menu |
 > | MB2 | with the DLL injected into a game whose GObjects scan **fails**, hit the CE `.CT` Keep-Foreground toggle | the toggle works (result 1/0), instead of the old `hook error -10` naming MinHook — a subsystem the command never reached | needs a genuinely failing scan; a healthy game only proves the exemption did not break the normal path (still worth doing as the regression check) |
 > | SE1 | before launching a game, open one of its `%LOCALAPPDATA%\UE5CEDumper\Logs\<Game>\*-0.log` files in a viewer that holds an exclusive-ish handle, then launch | `init-0.log` opens with `Logger: category '<name>' could not open ... its lines are rerouted here`, and that category's lines appear in `init-0.log` for the run | before, the category was dead for the process with **nothing logged anywhere** and its buffered early lines destroyed — a later grep read as "that code path never ran" |
+> ### ✅ FL1 + FL2 PASS 2026-08-19 `[FLSWEEP-2026-08-19]` — headless, and the age guard is proven, not assumed
+>
+> Rig: `tools/verify/fl_staging_sweep.py`. It plants **two** files, because "the stale one is gone"
+> would pass just as happily on a sweep that deletes EVERYTHING — which is the dangerous version of
+> this code, given the UI writes its own `<file>.tmp.<pid>` concurrently.
+>
+> | planted | mtime | required | observed |
+> |---|---|---|---|
+> | `…json.tmp.99999` | 3 h ago | **deleted** | deleted ✅ |
+> | `…json.tmp.88888` | now | **survives** | survived ✅ |
+>
+> Log line exactly as specified: `HintCache: removed 1 abandoned staging file(s) older than 1h`.
+> FL1's production negative control also passes — `HintCache: Saved results for
+> PE=67F515A70001A000 (python.exe, scan #2)` with **0** `staged write is incomplete` lines — and the
+> real cache still parses with all **33** entries. Suffixes 99999/88888 are checked against the live
+> PID list before planting so the plant cannot collide with a real staging write.
+>
+> ⚠ **THREE RIG TRAPS, each of which produced a FALSE FAIL of a working fix before being found.**
+> 1. **The sweep is once-per-process.** `SweepOrphanTemps` holds
+>    `static std::atomic<bool> s_swept` (`Flamme.cpp:136`), so in an already-injected game it has
+>    *already run* — before you planted anything. It needs a **fresh process**.
+> 2. **`trigger_scan` on an already-scanned process re-saves nothing.** Measured: after
+>    `trigger_scan` the log gained only `FindGameEngine` lines and the last
+>    `HintCache: Saved results` was still the injection-time one. So both the sweep line *and* the
+>    save line are legitimately absent and the run reads as a total failure.
+> 3. **`scan-0.log` is a SLOT NAME, not a file identity.** Each process start archives the previous
+>    run, so a byte offset captured before the launch indexes into a different, shorter file and
+>    discards the lines you are looking for. Read the whole fresh file.
+
 > | FL1/FL2 | plant a stale `UE5CEDumper.<Machine>.json.tmp.99999` (mtime > 1 h old) in `%LOCALAPPDATA%\UE5CEDumper\`, then run any scan | after the scan the planted file is gone and `scan-0.log` has `removed 1 abandoned staging file(s) older than 1h`; the real cache is intact and a **fresh** temp from a live write is never touched | the age guard is what makes the sweep safe against the UI writing its own `<file>.tmp.<pid>` concurrently |
 > | FL1 | ordinary regression: run two scans of the same game back to back | `HintCache: Saved results ... scan #2` and the cache file parses; **no** `staged write is incomplete` line | the refuse-on-failure gate must not refuse a legitimate write — this is the negative control for the production path, since the unit test only covers the predicate |
 

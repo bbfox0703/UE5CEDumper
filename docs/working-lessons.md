@@ -928,6 +928,32 @@ was never yours. (That is what settled it here.)
 about the console code page, this one is about which VS you entered. Getting the code page right
 does not save you from the wrong toolset.
 
+### 3.9 Two injected hosts at once: the second one silently never scans
+
+"One game at a time" is written down as a **resource** rule. It is also a **correctness** rule, and
+that half is not obvious until it costs you a measurement.
+
+The DLL's auto-start refuses to run when the pipe is already owned:
+
+```
+[WARN] [INIT] DllMain AutoStart: pipe already exists (another UE5Dumper instance running)
+              — skipping auto-start
+```
+
+So the second host **loads the DLL, reports a successful injection, creates its log folder, writes a
+`Logger started` line — and then does nothing at all.** Its `scan-0.log` was **122 bytes**. Every
+downstream check on that host then measures an absence that the injection itself caused: no scan, no
+pointers, no `HintCache: Saved results`, no sweep. A rig looking for any of those reports a clean,
+confident FAIL of a working fix.
+
+**The tell is in `init-0.log`, not `scan-0.log`** — the skip is an INIT-category line, and the scan
+log looks merely *empty* rather than *skipped*.
+
+⇒ **Kill the previous host and confirm it is gone before injecting the next**, and when a scan-shaped
+check comes back empty, read `init-0.log` before believing it. `initState` also says so directly:
+`INIT_SKIPPED = 4` exists for exactly this case (`Mimic.h`), so a rig can assert
+`initState == INIT_READY` up front rather than discovering it afterwards.
+
 -----
 
 ## 4. UE and CE facts that cost a session each
