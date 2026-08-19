@@ -22,6 +22,63 @@ builds ≤696 in
 
 -----
 
+## 2026-08-19 (night) - The first live-verification pass on build 3263: 13 register items settled, 2 new defects found, 12 rigs added (no build change)
+
+**Nothing shipped and no source changed** — `build_number.txt` stays **3263**, `dist/` is untouched
+(54.7 MB AOT UI, 2,879,488-byte DLL). This entry records the *verification* programme the handover
+asked for, run unattended against the shipping build.
+
+### Register items settled
+
+| item | outcome |
+|---|---|
+| `AA38` 1/2/3 | ✅ re-confirmed on **3263** (the ✅ was earned on 3262). Refusal names `atcuf64.dll` — Bitdefender's own filter, present in every run on this machine |
+| `B25` | ✅ **both** branches, on two purpose-built marker exes. 3,886 vs 10 log lines separates "swept the tables" from "refused before starting" |
+| `Genau RIP decode` | ✅ both halves — candidates **4085 → 4083**, reproduced exactly over 4 runs; GWorld unmoved |
+| `F5` 1+2 | ✅ 204,758 wire lines across two concurrent connections, 1,179 interleaved watch events, **zero malformed** |
+| `MB3` | ✅ ordinary dispatch: 50 consecutive mailbox commands, 0 failures, 0 `[ERROR]` lines |
+| `A3` 1/2/4 | ✅ **151 classes** contribute >1 FVector field. ⚠ the row's "use Float" is wrong on UE5 — LWC makes FVector a double |
+| `FL1`/`FL2` | ✅ stale staging file swept, **fresh one survived** — the age guard proven, not assumed |
+| `SE1` | ✅ announcement *and* **597 `[SCAN*]` lines** rerouted into `init-0.log` |
+| `MB2` | ✅ foreground toggle 0→1→1→0 on a host with all three pointers `not_found` |
+| `AB14`/`AB16` | ✅ 834 enum/byte candidates; the Origin filter **partitions 278+94=372 exactly** |
+| `A6` step 3 | ✅ derivation, not substring — `Character`=1 vs `CharacterMovementComponent`=7, with a reachability control |
+| `A8` | ✅ 7/7 on OCTOPATH. ⚠ the row's "(none available here)" was **wrong** — OCTOPATH is flat and installed |
+| `A7` | ⛔ **not observable here, measured**: 0.11 s over 273,956 objects. Needs a pool ~100× larger |
+| GROUP 7 | 🟡 **nine titles swept.** `U2` CPN **all-false** across UE4+UE5; **no Tier 2 line anywhere**; `X2`'s >5,000-class title found (Avowed `total_classes` 5,102) |
+
+### Two new defects, both found in passing
+
+* **`[RELAUNCHPIPE-2026-08-19]`** — a game that **relaunches itself** ends up with our DLL mapped and
+  **no pipe server at all**. `UE5_StartPipeServer`'s one-shot `CreateFileW(OPEN_EXISTING)` guard
+  races the dying first process. Reproduced 3/3 on OCTOPATH and **proven by repair**.
+* **`[PROXYDEPS-2026-08-19]`** — six proxy objects carry no recorded header dependencies, so a `.h`
+  edit may not rebuild the four shipped proxy DLLs.
+
+Plus a blocking machine-state fact: **all nine deployed game proxies were stale** (pre-3263).
+
+### Rigs added under `tools/verify/` (Python only — ad-hoc PowerShell is blocked here)
+
+`inject.py` (with a stale-module guard) · `launch_dumpertest.py` · `build_dll.py` · `call_export.py` ·
+`proxy_refresh.py` · `title_sweep.py` · `b25_marker_exes.py` · `genau_rip_ab.py` · `f5_envelope.py` ·
+`mailbox_poke.py` · `fl_staging_sweep.py` · `se1_log_reroute.py` · `ab_radar_batch.py` ·
+`a3_struct_path.py` · `a6_derivation.py` · `a8_flat_layout.py`.
+
+### Method notes that cost real time and are now written down
+
+**`working-lessons.md` §3.8** — this machine has **two Visual Studios**; `build.ps1` takes the newer
+(MSVC 14.51), so pointing a builder at 2022's `vcvars64` mixes toolsets and fails at LINK with
+unresolved `__std_rotate` in a file you never edited. **§3.9** — "one game at a time" is a
+**correctness** rule: a second injected host logs `pipe already exists … skipping auto-start` and
+never scans, so every reading from it is an absence the injection itself caused.
+
+⚠ **Three quantities are all called "the UE version"** — the cached `ueVersion`, the
+`FindAll: UE Version = N` log line, and `get_pointers.ue_version` (which is **after** any runtime
+raise). Avowed detects 503 then raises to 504; comparing the wrong pair manufactures a G11 false
+alarm, and did.
+
+-----
+
 ## 2026-08-19 - Audit #5 closed out (166 → 4 of 297) + the field-reported defect queue (12 → 1), in 32 commits (build 3263)
 
 **One unattended programme, one entry.** This is the rollup for the 32 commits between `9062f08f`
