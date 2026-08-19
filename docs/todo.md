@@ -2417,6 +2417,35 @@ wants it.
 > | 4 ⚠ NON-REGRESSION, the modular case | if a modular-build title is available (GNames in `CoreUObject.dll`, Satisfactory-shaped), re-scan it | GNames still resolves out of the DLL | `AnchorState::ForeignDll` must still accept; this is the case multi-module scanning exists for |
 > | 5 | clear the per-PE-hash hint cache entry for `python.exe` first | step 1's run does a cold scan | with a cached `GWLD_V3` hint the run can resolve MAIN-module and be accepted by design, which would not disprove anything |
 
+> ### ✅ RE-CONFIRMED on the SHIPPING build `[AA38-3263-2026-08-19]`
+>
+> The ✅ above was earned on **1.0.0.3262**. Steps 1, 2 and 3 were re-run on **1.0.0.3263** — the
+> build that actually ships — and all three still PASS. Step 5's cold-cache precondition was redone
+> first: the `67F515A70001A000` entry (which the 2026-08-17 run had re-created, all `not_found`) was
+> deleted again, machine JSON backed up beforehand, and the `C9E9551B0003D000` / `E1AAB613081BC000`
+> control entries were re-checked present afterwards.
+>
+> * **1 — PASS.** `python.exe` sleeper, PID 62288, DLL `1.0.0.3263 10b00cf8-dirty`:
+>   `FindAll: Complete — GObjects=0x0 (not_found), GNames=0x0 (not_found), GWorld=0x0 (not_found)`.
+> * **2 — PASS, still the *unanchored* wording.** `[GWorld] GWLD_V3: REFUSED 7 match(es) resolving to
+>   0x7FFF47461760 in 'atcuf64.dll' — GObjects never validated this run, so nothing has confirmed
+>   this process is the UE process; a match in an arbitrary loaded module is not admissible`.
+>   ⚠ **Note which module it names**: `atcuf64.dll` is **Bitdefender's own Active Threat Control
+>   filter**, injected into every process on this machine. That is a better adversary than a random
+>   DLL — it is present in *every* future run here, so this refusal is load-bearing on this PC and a
+>   regression would reappear immediately rather than intermittently. `GWLD_V3` had **148** raw hits.
+> * **3 — PASS (non-regression).** DumperTest-Shipping, PID 59460, hint entry left in place:
+>   `GOBJ_V13` / `GNAM_V8` / `GWLD_TQ_1`, all method `aob` — **identical pattern ids and methods** to
+>   the cached entry, which is the comparison this row mandates. Addresses differ from 2026-08-17
+>   (ASLR), exactly as the row predicts. `scanCount` 11 → 12.
+> * **4 — STILL NOT TESTED.** ⚠ Correcting the note above: **Satisfactory IS installed**
+>   (`/d/SteamLibrary/steamapps/appmanifest_526870.acf`), so the modular-build case is *available*,
+>   not merely "shaped". It needs a real game launch, so it belongs to a title group, not to the
+>   headless batch — but it is no longer blocked on finding a host.
+>
+> Injected with the new **`tools/verify/inject.py`**, not `dist/inject-ue.ps1` — see that file's
+> docstring for why (no ad-hoc PowerShell on this machine).
+
 **Known residual, filed as AA39, not a failure here**: Pass 1 (main-module) is ungated. Injecting
 into a LARGE non-UE monolithic exe can still publish a main-module GWorld.
 
