@@ -2722,6 +2722,42 @@ and drilling into `[0]` gives the whole struct with offsets, widths and addresse
 > | 4 ⚠ control | any **GAS** title — a `FGameplayAttributeData` preview | still `BaseValue` / `CurrentValue`, no pointer halves | **the regression guard**: GAS really does have a vtable, and "just delete the skip" would show four values here |
 > | 5 | a struct with NO resolvable layout | still `f:[…]` | the byte-blind fallback is retained on purpose, not dead |
 
+### ✅ A3 — VERIFIED 2026-08-19 `[A3-DOUBLE-2026-08-19]` (steps 1, 2, 4; build 3168)
+
+**Steps 1, 2 and 4 done headless on DumperTest Development / dist 3263** with
+`tools/verify/a3_struct_path.py`. Step 3 (Group Scan / Property Search Deep) not run — it is the
+*asymmetry* corroboration, not the check.
+
+⚠ **STEP 1'S INSTRUCTION IS WRONG ON A UE5 TITLE AND MUST NOT BE FOLLOWED LITERALLY.** It says
+"Value Search, **Float** (or NumericAll)". Under **LWC an `FVector` is a double-precision
+`FVector3d`**, so a Float scan *structurally cannot* see `RelativeLocation.X`. Measured side by
+side on the same session: **Float/1.0 → 0 `*Scale3D*`, 0 `*Location*`; Double/0 → 177 and 114.**
+Taken at face value the Float run reads as a clean FAIL and would have condemned a working fix.
+Use **Double** (or `NumericAll`) on any UE5 game; Float remains right only for a UE4-era title.
+
+* **Step 1 — PASS, and the statistic needs no baseline.** A vector leaf is a candidate path ending
+  `.X`/`.Y`/`.Z`; strip the leaf and you have the struct field that produced it. Under the defect a
+  class could contribute **at most one** distinct such parent, so the measurement is just *how many
+  classes contribute two or more*. **151 classes do** (over all 3,450 candidates of a
+  `Double`/`Exact 0` scan, `deadline_hit=false`, 25,172 objects / 1,415 classes):
+  `TraceQueryTestResults` **72 distinct**, `RigVMMemory_Work` 34, `ArchVisCharMovementComponent` 26,
+  `DumperTestCharacter` / `BP_ThirdPersonCharacter_C` / `ArchVisCharacter` 19 each — the last group
+  spanning genuinely unrelated branches (`AttachmentReplication.LocationOffset`,
+  `AttachmentReplication.RelativeScale3D`, `BasedMovement.Location`, `BaseTranslationOffset`),
+  which is exactly the cross-branch suppression the whole-walk guard caused.
+* **Step 2 (CONTROL) — recorded, unchanged in shape.** The `FVector` scan returns 45 rows whose
+  names are bare struct fields (`RelativeScale3D`, `OffsetScale`), i.e. no `.X` expansion at all —
+  consistent with the row's point that `acceptedStructNames` is non-empty for a vector scan so the
+  recursion is skipped and the guard never fired there. ⚠ Honest limit: nobody captured this number
+  *before* 3168, so this is a **baseline for the future**, not proof of no-change.
+* **Step 4 — PASS.** `hit the 4000 scan-field cap` appears in **0** of the `scan-*.log` files
+  anywhere under the log root, so the cap is unreachable in practice as intended.
+* ⚠ **A pagination trap the rig now guards**: page size is server-side, so looping "until a short
+  page" can stop on a full final page and silently under-count the population being measured. Drive
+  the loop from `total` in the `begin_value_scan` reply and complain if the totals disagree.
+
+> *(original row kept below for its steps)*
+
 ### 🔲 A3 — one FVector per class was ever indexed (build 3168)
 
 *Needs a connected game. See dev-log build 3168. **The guard's CONTRACT is unit-pinned
