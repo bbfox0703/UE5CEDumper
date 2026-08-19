@@ -3516,6 +3516,33 @@ and is decisive — this is the rare case where the regression was captured befo
    20:49) answered `Hint HIT: 'GOBJ_ES53_1'`, plus `Hint HIT` on `GNAM_V8` and `GWLD_TQ_1`, and
    **`NONE validated` appears nowhere in any of the three logs.** That is the shipped bug's exact
    shape, exercised and clean.
+> ### ⬜ STEP 2 ATTEMPTED ON DumperTest 2026-08-19 `[G10S2-2026-08-19]` — STILL NOT DECIDED, and here is why
+>
+> The step needs a `Hint MISS` whose true match count is **large**, so a correct implementation and
+> the broken "always 1" one print different lines. On DumperTest Development the cold table gives
+> `[GObjects] GOBJ_ES53_1 hits=619 [WINNER]` and `[GNames] GNAM_V7 hits=1 (not validated)` — so
+> GNames is confounded here exactly as it is on Elliot.
+>
+> The attempt: stage `gWorld.patternId = "GWLD_V3"` (the loose pattern — **5,140 matches** on this
+> binary) hoping for a big-count MISS. **It HIT instead**: `Hint HIT: 'GWLD_V3' -> 0x7FF648148D40
+> (skipping remaining patterns)`. So a many-match pattern that also *fails validation* is still not
+> in hand, and the confound survives. ⇒ **A pattern with hits ≫ 1 that does NOT validate is the
+> missing ingredient**; neither Elliot nor DumperTest has one today.
+>
+> ⭐ **Two things the attempt DID establish, both worth keeping:**
+> 1. **The GWorld decoy recovery works, and caught this.** The poisoned hint pinned GWorld to
+>    `0x7FF648148D40`, and `FindAll: Complete` published exactly that — then
+>    `ExtraScanGWorld: Starting instance scan… GWorld at 0x7FF6483188A0 -> UWorld 0x215516240C0
+>    (index=24970, 1 candidate(s), active)` **corrected it to the cold-scan address**, and
+>    `walk_world` then returned 58 entries. The two slots hold genuinely different `UWorld*`
+>    values, so this was a real decoy, not two names for one thing.
+> 2. ⚠ **But the cache then saved the AOB winner, not the corrected result** — the entry was written
+>    back as `gWorld.patternId = "GWLD_V3"`. A wrong pattern therefore **re-hints itself forever**,
+>    paying the instance scan on every launch. Low real-world risk (priority ordering means
+>    `GWLD_TQ_1` is reached first on a cold scan — only 2 GWorld patterns were tried), but it is a
+>    genuine "the report and the reality are computed by different paths" shape. The poisoned entry
+>    was **deleted** afterwards so the next DumperTest scan is cold and re-derives `GWLD_TQ_1`.
+>
 2. 🟡 **G10 — the count no longer lies. NOT DECIDABLE ON ELLIOT — use DumperTest.** In `scan-0.log`,
    a `Hint MISS` line must report the real match count (`(%zu matches, none validated; …)`) and never
    say `1 match` for a pattern the cold run logged with hundreds.
