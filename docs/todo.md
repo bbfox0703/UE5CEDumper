@@ -1694,6 +1694,36 @@ matters is simply "do normal mailbox commands still work".
 |---|---|---|---|---|
 | 1 | `MB3` | **B** | Inject, then run any two `.CT` rows that use the mailbox (Teleport save/recall, and an Invoke). Cheaper first step: `tools/verify/mailbox_addr.py` resolves `g_invokeMailbox` with **no CE**, so a scripted poke of one command is category **A**. | Both succeed exactly as before. `pipe-0.log` / `init-0.log` show no `Mailbox: tick threw` and no `result=-11`. A `-11` with a message means a handler really did throw — capture the log, that is a genuine find. |
 | 2 | `MB3` | **C** | The throw path itself. Needs a handler that actually throws — no way to force one on demand today. | If it ever fires: the mailbox keeps polling (subsequent commands still work) and the script reports `-11` + "the operation did NOT complete" rather than hanging at `status=PROCESSING`. |
+
+> ### ✅ MB3 — THE ORDINARY PATH PASSES 2026-08-19 `[MB3-POKE-2026-08-19]`, no Cheat Engine involved
+>
+> The row says the risk is **not** the throw path but plain dispatch: "if the lambda refactor broke
+> plain dispatch, every CE command breaks at once". That is exactly what was tested, and it turned
+> out to be **category A, not B** — `tools/verify/mailbox_poke.py` drives the mailbox from Python.
+>
+> **50 consecutive dispatches, 0 failures** (`--repeat 25`, alternating `CMD_QUERY_PTR`
+> `QUERY_OP_GWORLD` / `QUERY_OP_GAME_ENGINE`; both are read-only and thread-agnostic, so they
+> exercise the refactored dispatch `switch` without touching game state or needing the PE hook).
+> `initState=2 (READY)`; round trips 5.4 ms / 6.7 ms.
+> **Logs are clean: no `Mailbox: tick threw`, no `result=-11`, and 0 `[ERROR]` lines across all 8
+> current log files.**
+>
+> ⭐ **Independently corroborated, not self-confirming**: the mailbox returned
+> `&GWorld = 0x7FF6483188A0`, byte-identical to what `get_pointers` reports over the *pipe* — two
+> different transports out of the same process agreeing. Its second output word
+> (`UWorld* = 0x20144924B60`) also matches the address the F5 watcher dereferenced independently.
+>
+> ⚠ **Two rig bugs worth keeping, because both produced a confident WRONG answer first.**
+> (1) `paramsData` is at **`0x328`**, not `0x030`; the wrong offset reads the tail of `funcName` and
+> reports a silent all-zero output that looks like "the command returned nothing".
+> (2) The DLL leaves `status` at `DONE` after a command, so a poller that only waits for `DONE`
+> **returns instantly with the PREVIOUS result** — the second dispatch reported a bogus failure
+> until the rig started writing `status = IDLE` before each trigger. Write `cmd` LAST; it is the
+> trigger.
+>
+> **Step 2 (the throw path) remains open** — unchanged, there is still no way to force a handler to
+> throw on demand. Step 1's remaining half (two real `.CT` rows through CE) is still worth doing in
+> the CE batch, but it can no longer fail silently: plain dispatch is now known good.
 | 3 | `AC14` | **B** | Connect the UI to an injected game, then close the UI **while still connected** (this is the `Dispose()` path that nulls `_reader` without awaiting the read loop). | `pipe-0.log` ends cleanly. **No `Pipe: ReadLoop error`** line — that entry was the NullReferenceException this fixed, logged as if an ordinary shutdown were a fault. |
 | 4 | `AC13` | **B** | System tab → note the IPC figure. Then kill the game while the UI is mid-request so a write fails, and look again. | The IPC total now includes the failed request's transport time. Previously a write-path failure contributed exactly 0 ms, i.e. the figure flattered itself precisely when the pipe was misbehaving. |
 | 5 | `AC15` | **B** | Proxy Deploy → Scan Steam libraries, and the generic drive scan. | The same games are found with the same names/paths. The only intended difference is speed: one full VERSIONINFO resource load per detected game is gone. `UeVersion` was and remains null. |
@@ -1753,6 +1783,32 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > |---|-----|--------|------|
 > | 1 | **A** | **F5.** With the UI **disconnected** (⛔ `kMaxPipeInstances=3` and the UI holds 2 — see `[PIPEBUSY]`), drive `tools/verify/pipe_client.py` against an injected game and send `snapshot_chunk`, `find_instances` (a class with thousands of instances) and `list_all_functions`. | Every reply parses as one JSON object per line and carries **all three** envelope keys `id` / `ok` / `game_thread_stalled` alongside its payload. The big ones matter most: they are the responses whose second copy the fix removed, and the two-`WriteFile` split is what could truncate or interleave them. |
 > | 2 | **A** | **F5, the interleave control.** Same session: start a `watch` so the DLL pushes EVT_WATCH events on one connection while you issue ordinary commands on the other, for a minute. | No malformed line, ever. Both writes for a message happen under one `writeMutex`, so a watch event must never land in the middle of a response. A single garbled line here refutes the split and the change should be reverted to one `WriteFile`. |
+> ### ✅ F5 STEPS 1 + 2 PASS 2026-08-19 `[F5-WIRE-2026-08-19]` — headless, DumperTest Development, dist 3263
+>
+> Rig: `tools/verify/f5_envelope.py`. ⚠ It does **not** use `PipeClient.request` to judge lines:
+> that method silently `continue`s past any line it cannot parse, which is right for driving the
+> DLL and **fatally wrong here**, where a malformed line is the entire subject — it would be
+> dropped and the run would report a clean pass. The rig keeps every raw byte and judges the lines
+> itself, distinguishing *truncated* from *two objects on one line* (they mean different bugs).
+>
+> * **Step 1 — PASS.** The big replies, the ones whose second copy the fix removed:
+>   `list_all_functions` **961,873 B in 0.15 s**, `list_classes` 397,101 B, `find_instances` 48,102 B,
+>   `begin_snapshot` + 3× `snapshot_chunk`. **Every reply carried all three envelope keys**
+>   (`id` / `ok` / `game_thread_stalled`) and **9 of 9 wire lines were well-formed**.
+>   (Incidentally re-confirms the `list_all_functions` timing note: 0.15 s, not minutes.)
+> * **Step 2 — PASS, and the control is NOT vacuous.** 60 s, two connections: the main one issued
+>   **17,205 commands**, the watch one received **187,553 lines including 1,179 real `watch`
+>   events** — so a second writer genuinely competed for `writeMutex` throughout.
+>   **204,758 lines total, ZERO malformed.** The two-`WriteFile` split never truncated a payload
+>   and no event ever landed inside a response.
+>   ⚠ Two traps this step nearly fell into, both now guarded in the rig: the parameter is **`addr`,
+>   not `address`** (`Fern.cpp:4961`) — the wrong name is accepted as `addr=""`, i.e. a watch on
+>   nothing; and the watched address must be one that **changes** (the `&GWorld` *slot* is static —
+>   watch the `UWorld` it points at). With either wrong, "no malformed line" is trivially true of no
+>   lines, so the rig now reports **INCONCLUSIVE** rather than PASS when 0 events were pushed.
+> * **Step 3 (the UI regression control) — NOT RUN**, it needs the UI on screen. Deferred to the
+>   UI batch; steps 1 and 2 are the ones that could only be done headless.
+
 > | 3 | **A** | **F5, the ordinary path.** Connect the UI normally and use it for a few minutes — Object Tree load, Live Walker drill, a value scan. | Everything behaves as before. This is the regression control; the envelope change is invisible when it works. |
 > | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
 > | 5 | **B** | **V10.** On a title where the first scan leaves GObjects **or** GWorld unresolved, press **Extra Scan** and wait for it to finish. | The green "Found: GObjects: 0x…" result **stays on screen**. Before the fix it appeared and was blanked a few ms later by the pointer refresh the scan itself triggered. Then, mid-scan, change the **UE version** ComboBox: the Extra Scan button must stay disabled until the scan really ends. ⚠ Sample-blocked if every installed title resolves both pointers on the first pass. |
