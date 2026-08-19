@@ -7082,13 +7082,31 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   wholesale to a scratch volume — that is what made this tractable after the synthetic one wasted a
   session on a detection question that turned out not to exist.
 
-- ⬜ **The pre-4.11 refusal no longer fires on one PE field** (build 2621, B25). Provoke it with the
-  UE-version override, or with any game whose PE ProductVersion reports a 4.0–4.10 major/minor.
-  Grep `scan-0.log` for `below the … floor — NOT accepting that on its own`. **PASS** = that line
-  appears and the scan **runs anyway** (tier 3 → low confidence → the gate does not arm). **FAIL** =
-  `SKIPPING the scan` on a game that works. Also confirm the *other* direction still works: a
-  genuinely pre-UE4 (UE3) binary must still be refused, via the marker path — grep
-  `PRE-UE4 engine POSITIVELY identified`.
+- ✅ **VERIFIED 2026-08-19 `[B25-SYNTH-2026-08-19]` — the pre-4.11 refusal no longer fires on one
+  PE field, and the UE3 refusal still does** (build 2621, checked on dist **1.0.0.3263**).
+  **Both branches PASS**, on two purpose-built exes and no game at all. Rig:
+  `tools/verify/b25_marker_exes.py` (compiles them through `cmd`+`vcvars64`, then asserts each
+  artifact actually carries — and the other actually lacks — what its branch depends on, so a
+  stripped literal cannot masquerade as a clean refusal-did-not-fire).
+  - **Branch A — PASS.** `b25a_subfloor.exe`, a PE `PRODUCTVERSION 4,5,0,0` and nothing else:
+    `DetectVersion: PE VERSIONINFO -> UE4.5 (treated as 400+minor)` then
+    `DetectVersion: PE VERSIONINFO says UE 405, below the 411 floor — NOT accepting that on its own
+    (it would refuse the whole scan). Corroborating against the memory string scan.`
+    **No `SKIPPING the scan` anywhere**, and `FindAll: Complete — … UE=405` — the scan ran to the end.
+  - **Branch B — PASS.** `b25b_ue3.exe`, no version resource + the literals `UnrealEngine3` and
+    `SeqAct_Interp`: both markers hit (`0x16350`, `0x16360`),
+    `PRE-UE4 engine POSITIVELY identified (2/4 markers, 2 needed) -> sentinel 300`, then
+    `FindAll: PRE-UE4 engine (Unreal Engine 3) — SKIPPING the scan`.
+  - ⭐ **The two branches are separated by a number, not just by a grep.** `scan-0.log` is
+    **3,886 lines for A** and **10 lines for B** — A really did sweep the AOB tables and B really
+    did refuse before starting. A pair of greps could both be satisfied by a scan that half-ran;
+    the line counts cannot.
+  - **Negative control, free and same-day**: a stock `python.exe` sleeper reaches the *identical*
+    terminal branch and logs `pre-UE4 markers 0/4, below the 2 needed` (5,305-line scan log — it
+    scans, like A). Same code path, markers absent ⇒ B's 2/4 is caused by the two literals and by
+    nothing else about being a small synthetic exe.
+  - ⚠ **Not covered, deliberately**: the UE-version-*override* route the original step offered as an
+    alternative provocation. The PE-resource route exercises the same gate and needs no UI.
 
 - ✅ **DONE 2026-08-18 — Duplicate GameEngine records no longer break each other** (build 2621, B26).
   Ran on DumperTest Development, dist 3262, AOBMaker bridge live (the row's precondition — verified
