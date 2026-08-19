@@ -1998,6 +1998,7 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > |---|---|---|---|
 > | U11 | on any game, Live Walker into an instance holding a **`TOptional<FText>`** that is SET (a display/label field) | the row shows the FText display string, not `(empty)` or 亂碼 | before the fix it read an inline FString at FText+0x10 (where UE stores the uint32 Flags) → garbage; now uses `ReadFTextString` like the plain TextProperty path |
 > | G7 | ⛔ **NOT REACHABLE HERE, measured 2026-08-19 `[G7-NOSAMPLE-2026-08-19]`.** The step needs a title whose offsets validate **only after a re-scan**, so that the `validated=NO -> YES (re-run)` transition exists to observe. **All NINE titles swept tonight reported `probe_ran=true, validated=true` on the FIRST pass** — Lushfoil, Manor Lords, Solarpunk, EVERSPACE 2, Geri, Avowed, DQ7R, Elliot, OCTOPATH. ⚠ That includes **Solarpunk, which this row names as the example**; it validates immediately today, so the row's own suggested host no longer produces the case. Until a title that fails first-pass validation turns up, there is nothing to transition *from*. (Original step kept below.)<br><br>~~on a game that offsets-validates only after a re-scan (e.g. **Solarpunk**), connect, then trigger **apply_rescan** (the pipe/UI re-scan path)~~ | the DYNO/offsets log gains a `validation state CHANGED validated=NO -> validated=YES (re-run)` line and the summary header reads `=== Dynamic Offset Summary (validated=YES) ===`; `get_offsets` and the log now agree | before, the one-time UE5_Init scan-log summary said validated=NO forever while live state was true |
+> | A9 | 🟡 **NO STALL OBSERVED 2026-08-19 `[A9-DEEP-2026-08-19]`, but the budget was never STRESSED — see below.** | | |
 > | A9 | on a large game with deep/wide nested containers (a **SEED-class** object), run **Group Scan with Deep** enabled | no ~24 s single-object stall; the per-object element budget (`maxTotalElems`) bites before the global 15 s deadline, so the scan spreads across objects | before, the counter was never threaded so the budget was inert and one object could consume the whole scan window |
 > | A8 | ✅ **PASS 2026-08-19 `[A8-FLAT-2026-08-19]` — see below.** ~~none available here~~ | | |
 > | A7 | on a huge game, start a **find-object-by-address** (get_ce_pointer_info / find_by_address triggers `FindByAddress`) and **disconnect the client mid-scan** | shutdown/next command is prompt — no multi-second hang while the full GObjects walk finishes; the lookup returns "not found" | the loop now polls `Tot::Requested()` every 0x1000 objects like its siblings; only observable under a real disconnect on a large pool |
@@ -2036,6 +2037,31 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > no window a client could disconnect into. ⇒ **Do not spend another session trying to catch it**:
 > it needs a pool roughly two orders of magnitude larger, or a much slower per-object read. The fix
 > itself is correct-by-construction and matches its siblings.
+
+> ### 🟡 A9 — no stall, but the budget was never stressed 2026-08-19 `[A9-DEEP-2026-08-19]`
+>
+> Group Scan over the pipe on **Avowed** (92,036 objects, 7,404 classes), two `NumericAll` slots:
+>
+> | run | duration | scanned_objects | matches | `deadline_hit` |
+> |---|---|---|---|---|
+> | `deep=false` | 280 ms | **16,854** | 4,604 | false |
+> | `deep=true` | 749 ms | **16,854** | 41,646 | false |
+>
+> ⭐ **The load-bearing number is that `scanned_objects` is IDENTICAL with and without Deep.** The
+> defect shape is "one object consumes the whole scan window", which would show up as Deep covering
+> *far fewer* objects before the deadline. It covered exactly the same 16,854, in 749 ms against a
+> 15 s budget. No ~24 s single-object stall anywhere.
+>
+> ⚠ **Honest limit: this does not prove the per-object `maxTotalElems` budget BITES** — on this
+> sample nothing ever needed it. The row wants a *SEED-class* object with deep/wide nested
+> containers, and Avowed's main menu does not provide one. So the verdict is "no stall on the
+> available sample", not "the budget is proven live".
+>
+> ⚠ **A probe that looked like a defect and was not**, recorded so it is not re-raised: asking for
+> `deadline_ms=100` produced a **683 ms** scan reporting `deadline_hit=false`, which reads like an
+> unenforced deadline. It is not — `Fern.cpp` clamps `if (deadlineMs < 1000) deadlineMs = 1000;`
+> right where it is parsed, so 100 and 300 were both clamped to 1000 and the 683 ms run legitimately
+> finished inside it. **The client cannot force deadline pressure below 1 s.**
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L6 (U3 MainWindow VM): X5 / X6 / X7 / X8 / X10 / X11 / X12
 
