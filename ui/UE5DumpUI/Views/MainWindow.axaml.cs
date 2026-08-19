@@ -677,10 +677,16 @@ public partial class MainWindow : Window
 
         var tag = (tabs.SelectedItem as TabItem)?.Tag as string;
 
-        // Stop Live Walker auto-refresh when switching away from it.
+        // Stop Live Walker auto-refresh when switching away from it — but resumably:
+        // the USER did not turn it off, so coming back to the tab re-arms it instead of
+        // leaving Auto silently ticked-but-dead ([AUTOREFRESH-2026-08-19]).
         if (tag != "LiveWalker" && vm.LiveWalker.IsAutoRefreshing)
         {
-            vm.LiveWalker.StopAutoRefreshTimer();
+            vm.LiveWalker.StopAutoRefreshTimer(resumable: true);
+        }
+        else if (tag == "LiveWalker")
+        {
+            vm.LiveWalker.ResumeAutoRefreshIfPending();
         }
         // NOTE: the field-search keyword is intentionally NOT cleared on tab
         // switch — it's kept. The Live Walker clears it itself when the grid

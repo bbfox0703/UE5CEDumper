@@ -105,27 +105,30 @@
 | 3 | 對同一欄位改用 Group Scan 或 Property Search 的 Deep 模式 | 一樣找得到（這條路徑在 3168 之前就找得到） |
 | 4 | grep `scan-*.log` 搜尋 `hit the 4000 scan-field cap` | 一般 class 上不出現這行<br>⚠ 若經常出現，代表 cap 值設錯，要回報 |
 
-### ⬜ Skia ABI (SkiaSharp 3.119.4 / HarfBuzzSharp 8.3.1.3) —— UI 降版對齊後不再崩潰且畫面正常
-
-*build 3127 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 用 build ≥3127 的 UI 逐一切換每個分頁（Object Tree / Class Struct / Live Walker / Property Search / Value Search / Teleport / Snapshot…），並找一段繁體中文字串看渲染。 | 無缺字、字距正常、文字未被裁切、DataGrid 每列都正常繪出。 |
-| 2 | 注入 Elliot → Live Walker → GameState → 開 AOB、depth 4 → Copy CE XML，之後讓 UI 繼續開著數分鐘。 | UI 不崩潰（舊版是 Copy 後約 2.3 秒 0xC0000374，且 14 分鐘內崩兩次）。<br>⚠ 單次乾淨 session 不算通過；要累積數個 session 的日常使用才可結案。 |
-| 3 | 若發生崩潰，取 WER dump，並用 VC\Tools\Llvm\x64\bin 下的 x64 llvm-symbolizer 符號化整條 stack。 | 崩潰即判定 FAIL；記錄 faulting module 是否仍為 libSkiaSharp。<br>⚠ 遞迴搜尋會先找到 ARM64 版 llvm-symbolizer，那個跑不起來。 |
-| 4 | 評估效能或記憶體前先關掉 page heap：reg delete "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\UE5DumpUI.exe" /f | UI 速度與記憶體回到正常水準。 |
-
 ### ⬜ A5 / V6 / AE9 / U8 —— 四個一開遊戲就能看的面板行為
 
 *build 3016-3031 · 優先度 **高***
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 注入遊戲後開 Property Search，搜一個遊戲中會變動的欄位（例如 Health），盯著 Preview 欄。 | Preview 跟著遊戲內實際數值變動；沒有活體實例的列顯示「… (CDO default)」。<br>⚠ 兩種列各要看到一次，只看到一種等於只測了一半。 |
+| 1 | 注入遊戲後開 Property Search，搜一個遊戲中會變動的欄位（例如 Health），記下 Preview 的值 → 讓遊戲把該值改掉 → **再按一次 Search** → 比對前後兩次的 Preview。 | 第二次的 Preview 是變動後的新值；沒有活體實例的列顯示「… (CDO default)」。<br>⚠ 兩種列各要看到一次，只看到一種等於只測了一半。<br>⚠ **Preview 是每次搜尋當下的快照，本來就不會自己更新**；盯著它等它跳動不算這一項，也不是 bug。 |
 | 2 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。 |
 | 3 | Value Search → First Scan → 用 Value 排序 → 按 New Scan。 | 排序選單回到「Scan order」；再選一次「Value」會真的重新排序。 |
 | 4 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
+
+### ⬜ AUTOREFRESH —— Live Walker 的 Auto 倒數不會卡死，斷線重連後會自己回來
+
+*build 3262 修正 · 優先度 **高***
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | Live Walker 走到任一活體物件 → 勾 **Auto** → 連看 3 個完整週期。 | 倒數 `10…1` 循環不斷，表格數值真的有在變。<br>⚠ 倒數停在 0 不再往下走即為 FAIL。 |
+| 2 | Auto 開著時，雙擊一個可編輯的數值欄位打開編輯框，再點麵包屑跳走。 | 編輯框開著時顯示 `sec · paused (editing)`；跳走後 Auto 自己恢復，不會一直停在 paused。 |
+| 3 | Auto 開著 → 關掉遊戲（UI 不要關）→ 開**另一款**遊戲 → 等它連上 → 隨便走到一個物件。 | 斷線期間 Auto 是關的；新物件顯示出來後 Auto **自己重新開始**。 |
+| 4 | 同步驟 3，但走 proxy 模式（先出現 `Connected (proxy mode — scan not yet triggered)` 再出現 `Connected:`）。 | 結果與步驟 3 相同。 |
+| 5 | Auto 開著時切到別的分頁，再切回 Live Walker。 | Auto 又在跑了。 |
+| 6 | 迴歸：勾 Auto 後**自己取消勾選**；另外再試勾 Auto 後往下鑽到子物件。 | 兩種情況都維持關閉。<br>⚠ 只有斷線與切分頁可以自動恢復；使用者自己關掉的必須保持關掉。 |
+| 7 | Auto 開著時斷線，面板留空不要導航。 | 顯示 `sec`，不會有任何輪詢。 |
 
 ### ⬜ AE2 / AE3 —— Class/Struct 面板在快速切換選取下的同步
 

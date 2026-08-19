@@ -11,7 +11,10 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **43 batches** needing a running game. **Offer these
+> - `## Pending live-game verification` — **36 open batches** needing a running game (this is a
+>   DERIVED count and it had drifted to a stale 43; re-derive, never hand-adjust:
+>   `awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
+>   **Offer these
 >   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L9 (T1c
 >   VMs/Core/DTOs) AE13/AE20/AE30 batch — fourteen of its seventeen findings need nothing live, two
 >   of them because they were **already fixed** by an earlier batch and were closed by reading the
@@ -86,6 +89,11 @@ Open work only. **Read this when deciding what to do next.**
 > `## Pending live-game verification`.*
 >
 > *`[SLOTSYM-2026-08-18]` was **fixed 2026-08-19** and moved to `## Pending live-game verification`.*
+>
+> *`[AUTOREFRESH-2026-08-19]` was reported from the field and **fixed the same day**; it went straight
+> into `## Pending live-game verification`. It never sat in this index. Its sibling finding — that
+> Property Search's Preview is a per-search snapshot and the A5 step wrongly implied it self-updates —
+> was a **doc defect, not a code defect**, and is corrected in the A5 step itself.*
 >
 > *`[PROXYLOAD-2026-08-17]` was **part-fixed 2026-08-19** (offline screening + a real load signal —
 > both offline halves) and moved to `## Pending live-game verification`.*
@@ -1813,6 +1821,84 @@ duplicate `AppendContractCheck` (the block was emitted twice). Pinned by 6 new t
 
 -----
 
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[AUTOREFRESH-2026-08-19]` — Live Walker auto-refresh: the countdown can no longer freeze, and it comes back after a reconnect
+
+*Reported by the maintainer from their own session on the **other PC**, running dist **1.0.0.3262**:
+"Live Walker `Auto` refresh 無效，秒數數到0後就停在那" — the countdown runs down to 0 and sits there
+while nothing refreshes. **Classification: B** (needs the UI + a game on screen, no human judgement —
+Auto + computer-use can drive it).*
+
+> **⚠ Read the evidence split before trusting any of this.** The logs are from a **different machine
+> running 3262** and carry **none** of 2026-08-19's commits, so they are evidence about 3262 only.
+> The auto-refresh block was re-checked and is **byte-identical** between `021053d6` (the last
+> 2026-08-18 commit) and the dev tree, so code reading of it does transfer; nothing else does.
+>
+> **Log-proven** (`Y:\UE5DumpUI\pipe-0_005/006.log`, `view-0.log`, one UI session 12:27:16–12:55:44):
+> - Auto-refresh issued **zero** refreshes. Every `walk_instance` in the 21-minute Elliot half maps
+>   1:1 to a user action in `view-0.log`; the gaps between repeats of the same address are 7 s, 11 s,
+>   187 s, 6 s, 187 s, 1.6 s, 26 s — **no periodic cadence exists anywhere in the session**. (1.6 s is
+>   below `MinAutoRefreshIntervalSec`=6, so those cannot be ticks.)
+> - **Not a dead dispatcher and not a dead pipe.** The Teleport poll's own `DispatcherTimer` ran at a
+>   flawless ~500 ms (117–119 `teleport_get_pov`/min) for every minute from 12:36 to 12:55. A
+>   negative control we got for free.
+> - **Zero ERROR and zero WARN** in the UI logs for the whole window. The panel did nothing and said
+>   nothing.
+> - A real disconnect DID happen mid-session (12:33:17.109 `Pipe: ReadLine returned null`), 58.8 s
+>   before the reconnect to a **different game** at 12:34:15.9. It is logged **only** in the pipe log
+>   — `init-0.log` and `view-0.log` jump straight from one game to the next with no disconnect line
+>   at all.
+>
+> **Code-proven** (reading 3262's source, which is identical here): `_countdownRemaining` was reset in
+> exactly ONE place — inside `OnAutoRefreshTick`, *past* its early-return guard. `OnCountdownTick`
+> decremented and clamped at 0. So **any** condition that keeps skipping the tick pins the label at
+> `sec · 0s` forever while the Auto toggle still reads ON. `RefreshAsync` catches `Exception`
+> internally, so a *failing* refresh could not have caused this — only a *skipped* one.
+>
+> **Narrowed by evidence, NOT proven — the one thing a live run still has to settle.** The guard had
+> four conditions and three are excluded: `_isAutoRefreshing_InProgress` would have rendered
+> `sec · refreshing...` instead of a number; `!HasData` / empty `CurrentAddress` are contradicted by
+> three manual refreshes at 12:51:33 / 12:51:34 / 12:52:01 that DID walk `0x3A0F60240` (`RefreshAsync`
+> returns immediately on an empty address). That leaves **`_isEditing`**, a latch set from
+> `DataGridBeginningEditEventArgs` and cleared **only** from `CellEditEnded` — which Avalonia does not
+> raise when it tears an edit down because the rows were replaced (`CancelEdit(…, raiseEvents:false)`),
+> i.e. exactly what a Refresh or a navigation does to the field grid. **How it actually got stuck is
+> not established offline** and no log records it.
+
+*Fixed by making the whole class of failure impossible rather than betting on that last inference —
+three changes, each independently unit-pinned:*
+
+1. **The countdown cannot freeze.** New pure `Helpers/AutoRefreshCadence.cs` owns the rule; the
+   counter **re-arms at zero** because it displays the timer's PERIOD, which keeps elapsing whether or
+   not the last tick did any work. The reset also moved into `OnAutoRefreshTick`'s `finally`, so a
+   future throwing `RefreshAsync` cannot strand it either.
+2. **A skipped tick says WHY.** `AutoRefreshSkip` is surfaced in the status text — `paused (editing)`
+   / `paused (no data)` — so "suppressed on purpose" can no longer be mistaken for "broken". And the
+   `_isEditing` latch is now cleared wherever the grid is rebuilt (`UpdateDisplay`,
+   `ClearDisplayedNode`, `ClearOnDisconnect`), which is where it could get stranded.
+3. **It comes back.** A stop caused by something outside the user's control — the pipe dropping
+   (audit X5's `ClearOnDisconnect`) or switching away from the tab — is now *resumable*, and the panel
+   re-arms from `UpdateDisplay` once it is rooted on data again. A **user untick** and every
+   **navigation re-root** deliberately do not resume. ⚠ The pending flag is only written by a stop
+   that actually stopped something, because `NavigateToAddressAsync` calls the non-resumable overload
+   on its way in — writing it unconditionally would have eaten the resume in exactly the path the
+   maintainer walked (disconnect → reconnect → navigate).
+
+> Tests: `AutoRefreshCadenceTests` (13). Shown able to fail: reverting the three behaviours to 3262's
+> and re-running the class **fails 7 of them**, and the two "must not change" controls (user untick,
+> navigation re-root) stay green through both.
+>
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | 1 ⚠ THE ONE THAT MATTERS | Live Walker → root on any live object → tick **Auto** → watch for 3 full intervals | the countdown cycles `10…1` and repeats, and the grid's values actually change | the reported failure is the counter reaching 0 and never moving again |
+> | 2 | while Auto runs, double-click an editable scalar cell to open its editor, then click a breadcrumb to navigate away | the label reads `sec · paused (editing)` only while the editor is open, and auto-refresh resumes by itself afterwards — it must NOT stay paused | this is the suspected original trigger; a stranded latch used to kill Auto for the whole session |
+> | 3 ⚠ THE RECONNECT, THE MAINTAINER'S PATH | with Auto ON, close the game (do not close the UI), start a **different** game, let it connect, then navigate to any object | Auto is off while disconnected (X5 — it must not walk a dead pipe or the old game's addresses) and **comes back on by itself** once the new object is showing | pre-fix it stayed off silently for the rest of the session |
+> | 4 | repeat step 3 but go through **proxy mode** (`Connected (proxy mode — scan not yet triggered)` → `Connected:`) | same result | the resume hangs off data being re-rooted, not off the connect event, precisely so the two-step proxy path behaves identically — worth confirming rather than assuming |
+> | 5 | switch to another tab with Auto on, then switch back | Auto is running again | tab-leave is now resumable too |
+> | 6 ⚠ NON-REGRESSION | tick Auto, then **untick** it; separately, tick Auto then drill into a child object | stays OFF in both cases | only the pipe and the tab may re-arm it; a user's untick must stick |
+> | 7 | disconnect with Auto ON and leave the panel empty (do not navigate) | label reads `sec` and nothing polls | resuming onto an empty panel would just re-arm a tick that skips |
+
+-----
+
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[PIPEBUSY-2026-08-18]` — at-capacity logs ONCE, not an ERROR every second
 
 *Was: at capacity (`kMaxPipeInstances=3`, UI holds 2 lanes) the accept loop's `CreateNamedPipe` fails
@@ -2424,7 +2510,22 @@ paths has never executed against a real object pool.*
    independent calls, so `Between -100 100` still drops unsigned widths. A correct fix needs a joint
    builder; it is filed, not forgotten.
 
-### ⬜ NEW 2026-08-17 — SkiaSharp/HarfBuzzSharp ABI alignment: the UI must stop crashing
+### ✅ VERIFIED 2026-08-19 — SkiaSharp/HarfBuzzSharp ABI alignment: the UI must stop crashing
+
+> ### ✅ CLOSED 2026-08-19 `[SKIA-ABI-2026-08-19]` — all four steps, by the maintainer
+>
+> **Evidence: the maintainer's own runs, reported directly. Not observed by an agent** — nobody
+> re-derived this from a log or a dump, so it is recorded on their authority and stated as such
+> rather than dressed up as a measurement.
+>
+> All four steps below came back ticked: the tab-walk + 繁中 rendering regression check (1), the
+> Elliot → Live Walker → `GameState` → Copy CE XML repro left running (2), no crash to symbolize (3),
+> and page heap removed before judging performance (4).
+>
+> ⚠ **Step 3's "do not close on one clean session" was satisfied by accumulation, not by one run** —
+> that judgement is the maintainer's, and it is the only way this item could ever close: its PASS
+> condition is the *absence* of an event. If the UI ever dies at `libSkiaSharp` again, this reopens;
+> the page-heap + x64 `llvm-symbolizer` recipe below is kept for exactly that.
 
 *Needs the UI running for a while. See dev-log build 3127. **This is the one item on this whole
 register where a PASS is "nothing happened for a few sessions"** — so it cannot be closed by a single
@@ -3778,8 +3879,18 @@ each has a *visible* pass/fail, and four of them only ever show up when somethin
 **Free from any ordinary session (just look):**
 
 1. **A5 — Preview shows a LIVE value.** Property Search a field you can change in-game (Health).
-   The Preview column must track the real value, not the Blueprint default. A row whose class has no
-   live instance must read `… (CDO default)` — the marker is the fix's honesty half, so confirm both.
+   The Preview column must read the value from a live instance, not the Blueprint default. A row
+   whose class has no live instance must read `… (CDO default)` — the marker is the fix's honesty
+   half, so confirm both.
+   ⚠ **The Preview is a SNAPSHOT taken when the search runs; it does not update on its own, and it
+   is not supposed to.** There is no timer and no live-cell binding in `PropertySearchViewModel` —
+   `Preview` is a plain string on the result row, written once per search. So the check is
+   **search → note the value → let the game move it → press Search AGAIN → the value must have
+   moved**, which is exactly how the 2026-08-17 PASS below was actually obtained ("a re-search ~38 s
+   later previewed 317"). Staring at the column waiting for it to tick is testing a feature that
+   does not exist, and reads as a defect that is not there — the maintainer hit precisely this on
+   2026-08-19 ("不知是否為 Issue: 再按一次 Search 才會刷新"), and the session log shows the same
+   query re-run three times in four seconds at 12:47:22 / 12:47:24 / 12:47:26 trying to see it move.
 2. **V6 — the search highlight survives a Refresh.** Live Walker → type a field-search keyword →
    press Refresh (and leave auto-refresh on for a few ticks). Highlights must stay, the ↑/↓ stepper
    must still land on highlighted rows, and **the grid must not jump to the top** — that last one is

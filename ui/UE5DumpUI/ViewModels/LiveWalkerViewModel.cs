@@ -139,6 +139,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (value) LocateFailureMessage = "";
         OnPropertyChanged(nameof(ShowBookmarkBar));
+
+        // Data is showing again — the point at which a suspended auto-refresh can
+        // meaningfully come back. Hooked HERE rather than in UpdateDisplay for the exact
+        // reason this method's own comment gives above: "Start from GWorld" and the four
+        // container views set HasData directly and never reach UpdateDisplay, and the
+        // GWorld root is the first thing most reconnects do.
+        if (value) ResumeAutoRefreshIfPending();
+    }
+
+    /// <summary>
+    /// The other half of the resume trigger. Paired with <see cref="OnHasDataChanged"/>
+    /// so the re-arm is ORDER-INDEPENDENT: the population paths set these two in
+    /// different orders and <see cref="AutoRefreshCadence.ShouldResume"/> needs both, so
+    /// whichever lands second is the one that fires. Neither alone is sufficient.
+    /// </summary>
+    partial void OnCurrentAddressChanged(string value)
+    {
+        if (!string.IsNullOrEmpty(value)) ResumeAutoRefreshIfPending();
     }
 
     /// <summary>Show the bookmark toolbar when there's a live object OR any saved
@@ -539,6 +557,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private int _countdownRemaining;
     private bool _isAutoRefreshBenchmarked;
     private bool _isAutoRefreshing_InProgress; // Guard against overlapping refreshes
+    // Auto-refresh was ON when something out of the user's control stopped it (pipe
+    // disconnect / tab switch). Re-armed by ResumeAutoRefreshIfPending once the panel
+    // is rooted on data again — a user untick or a navigation re-root never sets it.
+    private bool _autoRefreshResumePending;
     private bool _isEditing; // True while a cell is being edited (suppresses auto-refresh)
 
     // Bookmark slots (4 fixed slots)
@@ -686,6 +708,50 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                          or NotifyCollectionChangedAction.Reset)
                 ClearForwardStack();
         };
+
+        // An open cell editor cannot outlive the rows it was opened on. Avalonia tears
+        // such an edit down WITHOUT raising CellEditEnded, and CellEditEnded is the ONLY
+        // place the view clears IsEditing — so a stranded `true` silently vetoed every
+        // auto-refresh tick for the rest of the session ([AUTOREFRESH-2026-08-19]).
+        // Subscribing to the collection covers every repopulation site at once, for the
+        // same reason the Breadcrumbs hook above does: SIX populate methods set HasData
+        // and rebuild the grid without going through UpdateDisplay, and a hand-placed
+        // clear at each would miss the seventh someone adds next.
+        HookFieldsRebuild(Fields);
+    }
+
+    private ObservableCollection<LiveFieldValue>? _hookedFields;
+
+    private void HookFieldsRebuild(ObservableCollection<LiveFieldValue> fields)
+    {
+        if (ReferenceEquals(_hookedFields, fields)) return;
+        if (_hookedFields != null) _hookedFields.CollectionChanged -= OnFieldsRebuilt;
+        _hookedFields = fields;
+        fields.CollectionChanged += OnFieldsRebuilt;
+    }
+
+    private void OnFieldsRebuilt(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        // Reset  == Clear() + re-Add, the full-rebuild branch of UpdateDisplay.
+        // Replace == `Fields[i] = newFields[i]`, its in-place branch (kept because it
+        //            preserves DataGrid scroll). It swaps the row OBJECT out from under
+        //            any open editor, so it kills the edit just as dead as a Clear does —
+        //            and it is the branch a same-object Refresh actually takes, i.e. the
+        //            common one. Missing it left the latch strandable on the hot path.
+        // Add/Remove are deliberately NOT here: appending a row does not invalidate an
+        // editor open on a different one.
+        if (e.Action is NotifyCollectionChangedAction.Reset
+                     or NotifyCollectionChangedAction.Replace)
+            IsEditing = false;
+    }
+
+    /// <summary>The collection OBJECT is swapped wholesale by the field-search apply
+    /// path, which orphans a subscription made on the previous one — re-hook, and treat
+    /// the swap itself as a rebuild.</summary>
+    partial void OnFieldsChanged(ObservableCollection<LiveFieldValue> value)
+    {
+        HookFieldsRebuild(value);
+        IsEditing = false;
     }
 
     public void SetEngineState(EngineState state)
@@ -5420,8 +5486,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         // Start 1-second countdown timer for status display
         StopCountdownTimer();
+        _autoRefreshResumePending = false;   // we ARE running now; nothing left to resume
         _countdownRemaining = interval;
-        AutoRefreshStatusText = $"sec · {_countdownRemaining}s";
+        AutoRefreshStatusText = AutoRefreshCadence.LabelFor(_countdownRemaining);
         _countdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _countdownTimer.Tick += OnCountdownTick;
         _countdownTimer.Start();
@@ -5437,21 +5504,44 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// One second of the status countdown. Delegates the rule to
+    /// <see cref="AutoRefreshCadence.Step"/>, which re-arms at zero — the shipped
+    /// version decremented and clamped here while the ONLY reset lived past the
+    /// refresh tick's early-return guard, so a permanently-skipped tick pinned the
+    /// label at "0s" forever with the Auto toggle still reading ON
+    /// (<c>[AUTOREFRESH-2026-08-19]</c>).
+    /// </summary>
     private void OnCountdownTick(object? sender, EventArgs e)
     {
-        if (_isAutoRefreshing_InProgress)
-        {
-            AutoRefreshStatusText = "sec · refreshing...";
-            return;
-        }
+        var step = AutoRefreshCadence.Step(
+            _countdownRemaining,
+            AutoRefreshCadence.NormalizeInterval(AutoRefreshIntervalSec, AutoRefreshMinSec),
+            CurrentSkipReason());
 
-        _countdownRemaining--;
-        if (_countdownRemaining < 0) _countdownRemaining = 0;
-        AutoRefreshStatusText = $"sec · {_countdownRemaining}s";
+        _countdownRemaining = step.Remaining;
+        AutoRefreshStatusText = step.Label;
     }
 
-    public void StopAutoRefreshTimer()
+    /// <summary>Why the next auto-refresh tick would (or would not) do any work.</summary>
+    private AutoRefreshSkip CurrentSkipReason()
+        => AutoRefreshCadence.Classify(_isAutoRefreshing_InProgress, _isEditing, HasData, CurrentAddress);
+
+    public void StopAutoRefreshTimer() => StopAutoRefreshTimer(resumable: false);
+
+    /// <param name="resumable">
+    /// True when something OUTSIDE the user's control stopped auto-refresh — the pipe
+    /// dropping, or switching away from the Live Walker tab. The panel then re-arms
+    /// itself (<see cref="ResumeAutoRefreshIfPending"/>) once it is rooted on data
+    /// again, so a reconnect or a trip to another tab does not silently leave Auto off.
+    /// False for a user untick and for every navigation re-root: those must stay off
+    /// until the user ticks Auto again.
+    /// </param>
+    public void StopAutoRefreshTimer(bool resumable)
     {
+        // Capture before the teardown clears both witnesses.
+        bool wasRunning = _autoRefreshTimer != null || IsAutoRefreshing;
+
         if (_autoRefreshTimer != null)
         {
             _autoRefreshTimer.Stop();
@@ -5465,7 +5555,36 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Reset dynamic minimum and benchmark state on stop (tab switch, navigation, etc.)
         AutoRefreshMinSec = Constants.MinAutoRefreshIntervalSec;
         _isAutoRefreshBenchmarked = false;
-        AutoRefreshStatusText = "sec";
+        AutoRefreshStatusText = AutoRefreshCadence.LabelIdle;
+
+        // MUST be last: the `IsAutoRefreshing = false` above re-enters this method
+        // through OnIsAutoRefreshingChanged with resumable:false, which would clear
+        // the flag again if it were set any earlier.
+        //
+        // Only a stop of a RUNNING timer may write the flag. A stop that had nothing to
+        // stop leaves it alone — otherwise the very path the maintainer walked would
+        // eat it: disconnect arms the resume, then the first navigation after the
+        // reconnect (StartFromWorld / NavigateToAddress / Locate / bookmark) calls the
+        // plain non-resumable overload and would clear it a moment before UpdateDisplay
+        // got the chance to act on it.
+        if (wasRunning)
+            _autoRefreshResumePending = resumable;
+    }
+
+    /// <summary>
+    /// Re-arm auto-refresh after the reason it was suspended has gone away — a
+    /// reconnect that re-roots the panel, or coming back to the Live Walker tab.
+    /// No-op unless something out of the user's control stopped it AND there is now
+    /// an object to refresh; see <see cref="AutoRefreshCadence.ShouldResume"/>.
+    /// </summary>
+    public void ResumeAutoRefreshIfPending()
+    {
+        if (!AutoRefreshCadence.ShouldResume(_autoRefreshResumePending, IsAutoRefreshing,
+                                             HasData, CurrentAddress))
+            return;
+
+        _autoRefreshResumePending = false;
+        IsAutoRefreshing = true;   // -> OnIsAutoRefreshingChanged -> StartAutoRefreshTimer
     }
 
     /// <summary>Drop the live walk state so a reconnect never shows an object (and
@@ -5475,7 +5594,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// those are reloaded on reconnect and must survive a disconnect.</summary>
     public void ClearOnDisconnect()
     {
-        StopAutoRefreshTimer();       // also sets IsAutoRefreshing = false
+        // resumable: the PIPE stopped auto-refresh, not the user. X5 correctly stops the
+        // timer (it would otherwise re-walk a dead pipe, and after a reconnect to a
+        // DIFFERENT game it would walk the previous game's addresses) — but stopping it
+        // with no way back left Auto silently off for the rest of the session. The panel
+        // re-arms itself from OnHasDataChanged / OnCurrentAddressChanged once it is
+        // rooted on data again — NOT from UpdateDisplay, which "Start from GWorld" and
+        // the container views never reach.
+        StopAutoRefreshTimer(resumable: true);   // also sets IsAutoRefreshing = false
         _exportCts?.Cancel();
 
         Breadcrumbs.Clear();
@@ -5511,6 +5637,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // _countdownTimer (via StopCountdownTimer) — single call covers it.
         StopAutoRefreshTimer();
 
+        if (_hookedFields != null)
+        {
+            _hookedFields.CollectionChanged -= OnFieldsRebuilt;
+            _hookedFields = null;
+        }
+
         _searchHistoryDebounce?.Dispose();
         _searchHistoryDebounce = null;
 
@@ -5529,7 +5661,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Anti-flooding: skip if a refresh is already in progress or no data to refresh.
         // Uses a dedicated flag (_isAutoRefreshing_InProgress) to prevent re-entrant calls
         // from the DispatcherTimer firing while a previous refresh is still awaiting.
-        if (_isAutoRefreshing_InProgress || _isEditing || !HasData || string.IsNullOrEmpty(CurrentAddress)) return;
+        if (CurrentSkipReason() != AutoRefreshSkip.None)
+        {
+            // A SKIPPED tick still has to re-arm the countdown. The shipped version
+            // returned here with the reset stranded further down, so a tick that kept
+            // skipping froze the label at "0s" forever and reported nothing at all
+            // ([AUTOREFRESH-2026-08-19]). OnCountdownTick now shows the reason.
+            _countdownRemaining = AutoRefreshCadence.NormalizeInterval(AutoRefreshIntervalSec, AutoRefreshMinSec);
+            return;
+        }
 
         _isAutoRefreshing_InProgress = true;
         try
@@ -5561,9 +5701,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     _log.Info($"Auto-refresh: benchmark {durationSec}s, clamped interval to {newMin}s");
                 }
             }
-
-            // Reset countdown after refresh completes
-            _countdownRemaining = Math.Max(AutoRefreshIntervalSec, AutoRefreshMinSec);
         }
         catch
         {
@@ -5571,6 +5708,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         finally
         {
+            // Re-arm in the FINALLY, not on the success path: a throwing RefreshAsync
+            // would otherwise strand the countdown at 0 exactly like a skipped tick did.
+            _countdownRemaining = AutoRefreshCadence.NormalizeInterval(AutoRefreshIntervalSec, AutoRefreshMinSec);
             _isAutoRefreshing_InProgress = false;
         }
     }
@@ -6039,7 +6179,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void ClearDisplayedNode()
     {
-        Fields.Clear();
+        Fields.Clear();   // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
         Breadcrumbs.Clear();
         SelectedField = null;
         HasData = false;
