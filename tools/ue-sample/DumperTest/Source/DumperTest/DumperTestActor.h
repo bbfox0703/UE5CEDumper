@@ -136,7 +136,7 @@ public:
 	// ========================================================
 	// Audit #5 cluster ① — container GEOMETRY witnesses (2026-08-14).
 	//
-	// EVERY container above is blind to the stride/offset defects M1/M2/M3/A2:
+	// EVERY container above is blind to the stride/offset defects MG1/MG2/MG3/A2:
 	// Map_NameToInt and Map_IntToFloat both have 4-aligned pairs (stride 20 and 16
 	// before AND after the fix), TSet is unaffected by design, and TArray is not a
 	// sparse container at all. That is the same blind spot dll_helpers_test had —
@@ -144,27 +144,27 @@ public:
 	// Each property below is chosen for the specific arithmetic it exposes.
 	// ========================================================
 
-	/// M1. pairAlign 8, unpadded pair 12 → stride **24**; the broken build strides
+	/// MG1. pairAlign 8, unpadded pair 12 → stride **24**; the broken build strides
 	/// **20**, so every element after index 0 reads from its predecessor's tail.
 	/// int64 key rather than UObject* so no GC/lifetime variable enters the test.
 	UPROPERTY() TMap<int64, int32> Map_I64ToI32;
 
-	/// M1, second witness with DIFFERENT arithmetic: unpadded pair 20 → stride
+	/// MG1, second witness with DIFFERENT arithmetic: unpadded pair 20 → stride
 	/// **32** (broken: **28**). One wrong assumption cannot satisfy both this and
 	/// Map_I64ToI32, which is the point of having two.
 	UPROPERTY() TMap<FString, int32> Map_StrToInt;
 
-	/// M3. FDumperTestVec3f is 4-aligned, so the value sits at **+4** and the pair
+	/// MG3. FDumperTestVec3f is 4-aligned, so the value sits at **+4** and the pair
 	/// is 16 → stride **24**. The broken size guess puts the value at **+8** with a
 	/// stride of 28, so even ELEMENT 0 reads wrong — the only container here that
 	/// fails at index 0. Doubles as A4's target: a scalar leaf inside a map's
 	/// struct side, which the Deep pass must reach.
 	UPROPERTY() TMap<int32, FDumperTestVec3f> Map_IntToVec3f;
 
-	/// A2 + M2. 200 entries forces the TBitArray past its 128-bit inline buffer
+	/// A2 + MG2. 200 entries forces the TBitArray past its 128-bit inline buffer
 	/// onto the heap; removing a LOW index (9005, index 5) then proves the walker
 	/// reads the heap copy rather than the inline words frozen at spill time. The
-	/// broken build still lists the removed element. M2: the header count must
+	/// broken build still lists the removed element. MG2: the header count must
 	/// equal the number of rows rendered (NumFreeIndices read 0 before the fix).
 	UPROPERTY() TSet<int32> Set_Big;
 

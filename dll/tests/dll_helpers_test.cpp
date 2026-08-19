@@ -3225,7 +3225,7 @@ static void Test_ValueScan_SparseContainerGeometry() {
     EXPECT("Map<uint8,FName> WOULD be +8 w/o align",  Macht::ComputeMapValueOffset(1, 8)    == 8);
     EXPECT("Map<uint8,ptr> value at +8 (align 8)",    Macht::ComputeMapValueOffset(1, 8, 8) == 8);
 
-    // ---- Audit #5 D4a/M1 — the COMPOSITE recipe, not the two halves ----
+    // ---- Audit #5 D4a/MG1 — the COMPOSITE recipe, not the two halves ----
     // Real stride = Align(Align(unpaddedPair, alignof(TPair)) + 8, alignof(TPair)),
     // where alignof(TPair) == max(alignof(Key), alignof(Value)). Every case above
     // happens to land on a multiple of 8, which is exactly why this survived: both
@@ -3252,7 +3252,7 @@ static void Test_ValueScan_SparseContainerGeometry() {
     EXPECT("Map<ptr,uint8> stride 24",
            Macht::ComputeSetElementStride(8 + 1, 8) == 24);
 
-    // ---- Audit #5 D4a/M3 — struct values must use MinAlignment, not a size guess ----
+    // ---- Audit #5 D4a/MG3 — struct values must use MinAlignment, not a size guess ----
     // TMap<int32,FVector>: FVector is 12 bytes but 4-ALIGNED, so the value really
     // sits at +4 and the pair is 16. The size guess ("8 or more => align 8") put it
     // at +8 with a stride of 28, so even element 0 displayed a wrong vector.

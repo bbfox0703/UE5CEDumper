@@ -7329,11 +7329,16 @@ The D4a family has **zero** dev-log and **zero** archive references. `MG` is two
 it still matches `check_audit_register.py`'s `ROW_RE` (`[A-Z]{1,2}\d+`) and the three rows stay in the
 register — a three-letter prefix would have silently dropped them.
 
-⚠ **Residual, deliberately left: 9 code comments still say `M1`/`M2`/`M3` for the D4a family** —
+✅ **The code-comment residual is CLOSED 2026-08-19 — all 9 sites renamed.** `141e8119` was scoped
+docs-only, leaving 9 comments still saying `M1`/`M2`/`M3` for the D4a family:
 `dll/tests/dll_helpers_test.cpp:3228,3255`, `tools/ue-sample/…/DumperTestActor.h` (6),
-`tools/ue-sample/…/DumperTestTypes.h:57`. All but `DumperTestActor.h:139` are already written in the
-qualified forms `D4a/M1` / `audit #5 M1`, so they cannot be mistaken for audit #3; this was a
-docs-only change and did not touch product or test code. Rename them opportunistically.
+`tools/ue-sample/…/DumperTestTypes.h:57`. All now read `MG1`/`MG2`/`MG3`. The three families that
+legitimately share those letters were left **untouched** and verified so by grep: audit #3's Schlacht
+comments (`Schlacht.cpp:589,633,643,658`, `Dunste.cpp:677`, `Fern.cpp:1215`, `Frieren.cpp:612` — they
+KEPT their IDs, so renaming them would re-create the collision in the opposite direction), the
+statistics term in `Linie.cpp:31` (Welford's running `M2`), and the `Map="M2"` test data in
+`CoordCsvCodecTests.cs:346` / `CoordLuaParserTests.cs:81`. `A2` on `DumperTestActor.h:139,164` is
+audit #5 **D3**/Aura's, which was never renamed, so it stands.
 
 - **Dump Explorer cross-game identity gate** (build 2538+; UI/C#-only, no DLL or pipe change).
   The live match joins on bare class NAMES, and every UE title has `Object` / `Actor` / `Pawn` /

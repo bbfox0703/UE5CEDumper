@@ -54,7 +54,7 @@ struct FDumperTestStat
 };
 
 // ============================================================
-// FDumperTestVec3f — deliberately 4-ALIGNED POD (audit #5 M3).
+// FDumperTestVec3f — deliberately 4-ALIGNED POD (audit #5 MG3).
 //
 // Three floats: no FText, no pointer, no double. That matters. FDumperTestStat
 // above carries an FText, i.e. a TSharedRef, i.e. 8 bytes of alignment — which
