@@ -20,12 +20,12 @@
 
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
-| **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI |
-| **第 2 步 — 要注入一個執行中的遊戲** | 19 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 9 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
+| **第 1 步 — 只開 UE5DumpUI** | 1 | UE5DumpUI |
+| **第 2 步 — 要注入一個執行中的遊戲** | 16 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 8 | 遊戲 + Cheat Engine |
+| **第 4 步 — 需要特定條件的遊戲** | 13 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **46** | |
+| **合計** | **40** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -63,31 +63,13 @@
 
 不用注入任何遊戲。
 
-### ⬜ AE4 / AE5 / AE6 / AE7 —— Proxy Deploy 面板的並行防護與選項保持
+### 🟡 AE4 / AE5 / AE6 / AE7 —— Proxy Deploy 面板的並行防護與選項保持（**只剩步驟 4 的互斥閘**）
 
-*優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 開 UE5DumpUI → Proxy Deploy 分頁，先 Scan Steam 掃出遊戲，勾選兩個以上，按 Deploy 後立刻按 Remove。 | 第二個動作被拒絕，訊息點名正在跑的工作（例如「Busy: Deploy is running…」）。<br>⚠ 出現舊訊息「Wait for scan to finish」＝失敗（當下根本沒有掃描在跑）。 |
-| 2 | 分別執行 Deploy / Remove / Refresh / Update All，觀察面板進度條。 | 四個動作進行中進度條都會跑動，結束後停止。 |
-| 3 | 回歸：依序跑 Scan Steam、Scan drives（中途按 Cancel）、Find leftovers（中途按 Cancel）。 | 三種掃描都能正常執行並各自被自己的 Cancel 中止。<br>⚠ 要看的失敗是「另一張卡片上冒出不該亮的 Cancel」。 |
-| 4 | 回歸：Find leftovers → 勾一筆 → Delete；刪除進行中嘗試啟動任一掃描，反向再試一次。 | 刪除中掃描被擋、掃描中刪除也被擋，兩邊互斥。 |
-| 5 | 快速連續點選 proxy 型別 radio：version → dinput8 → dxgi。 | 表格的 Status / Installed Version 欄最後顯示的型別與 radio 目前選的一致。 |
-| 6 | 來源切到 Scan drives，在磁碟清單還在載入時切回 Steam 再切回 Drives，然後勾選幾個磁碟。 | 勾選的磁碟維持勾選，不會被清空。 |
-
-### ⬜ AC1 —— Force Overwrite 不得覆蓋他人的 DLL
-
-*build 3191 · 優先度 **高***
+*優先度 **高** · 步驟 1 已於 2026-08-17 驗畢；步驟 2、3、5、6 已於 2026-08-19 驗畢，均已刪除*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 前置：把任一非本專案的 DLL 複製到某遊戲的 Binaries\Win64，改名為 dxgi.dll（只要不含我們的 ProductName 即可），驗證完刪除。放好後在 Proxy Deploy 面板按 Refresh。 | 該列顯示 `Other proxy: <name>`<br>⚠ 全程不需開遊戲，只需 UE5DumpUI |
-| 2 | 只勾 Force Overwrite（不勾 Replace other tools' DLLs）→ Deploy，然後檢查那個 foreign DLL 的位元組大小與版本 | 部署被拒絕，該列仍標示原擁有者，且檔案大小/版本完全未變<br>⚠ 只看到「refused」訊息不算通過，一定要實際比對檔案未被寫入 |
-| 3 | 兩個核取方塊都勾 → Deploy，再看 proxy log | 部署成功，且 log 出現 `Replacing another program's dxgi.dll (…)` 的 warn 行，內容有寫出被覆蓋的舊 ProductName |
-| 4 | 完全關閉並重新啟動 App，看兩個核取方塊的狀態 | Force Overwrite 仍為勾選，「Replace other tools' DLLs」回到 OFF<br>⚠ 兩個都回到勾選 = 修正失效，這步是整批的重點 |
-| 5 | 在已部署同版本我方 proxy 的遊戲上，只勾 Force Overwrite → Deploy | 會重新部署，不出現「already current」跳過 |
-| 6 | 對含 foreign DLL 的遊戲執行 Update All | 該遊戲被略過，行為與以前相同 |
+| 4 | 回歸：Find leftovers → 勾一筆 → Delete；**刪除還在進行中**時嘗試啟動任一掃描，反向再試一次。 | 刪除中掃描被擋、掃描中刪除也被擋，兩邊互斥。<br>⚠ 刪除若在你點下一個動作前就跑完，這步就是「沒測到」，不是通過 —— 先讓待刪清單長一點。<br>⚠ 只看到確認對話框跳出來不算：對話框開啟不等於刪除正在跑。 |
 
 -----
 
@@ -95,30 +77,22 @@
 
 任何一款 UE 遊戲都可以。
 
-### ⬜ A6 —— Force 是否對子類別一併生效
+### 🟡 A6 —— Force 是否對子類別一併生效（**只剩步驟 3、5**）
 
-*build 3036 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Property Search 搜尋一個基底類別上的欄位（挑有「inherited by N」標記的列，例如 bCanBeDamaged @ Actor）→ 右鍵 → Force | 顯示非零的 held 數量<br>⚠ 若仍出現「0 live instances of Actor … — nothing held」即為失敗，直接停止 |
-| 2 | 看 Property Search 的「Forced fields (N held)」狀態列 | 廣泛基底類別應為數百筆；若達上限要顯示「cap reached, more exist unheld」，而非只寫「on 256 instance(s)」 |
-| 3 | 對一個有同字首兄弟類別的類別下 Force（如 Enemy vs EnemyProjectile、或任一 Foo / FooComponent 組合），檢查 ForcedFields 狀態列與 DLL log 的 FindInstancesDerivedFrom base=… 行 | 不相關的同字首類別「沒有」被 hold |
-| 4 | 回歸：Teleport 分頁 → Stealth card → Detect → Hold @0 → Reset | Hold 回報非零數量，Reset 後數值回復 |
-| 5 | 回歸：對基底類別 Force 一個 bool 後執行 reset_all_fields，再觀察後續新生成的物件 | 新生成物件不會仍帶著被強制的值（表示沒有寫到 CDO） |
-
-### ⬜ AD4 —— God Mode 徽章要說明原因而非只有開關
-
-*build 3203 · 優先度 **高***
+*build 3036 · 優先度 **高** · 步驟 1、2、4 已於 2026-08-19 驗畢並刪除*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 遊戲停在選單／無 pawn 狀態時連線，按 ↻ | 徽章顯示 `Unknown` |
-| 2 | 仍在無 pawn 狀態下按 Force ON | 徽章顯示 `ON (pending)`（不是 `Unknown`）<br>⚠ 若顯示 `ON` 而非 `ON (pending)`，是已知的 Solitar 落差，記在 Solitar 名下，不要當成 badge 的 bug |
-| 3 | 進入遊戲讓 pawn 生成，按 ↻ | 徽章顯示 `ON` |
-| 4 | 讓遊戲以傷害重置該旗標，連續按 ↻ 數次 | 多數為 `ON`，偶爾出現 `ON (contested)`<br>⚠ `ON (contested)` 很少出現是正常的，不代表沒驗到 |
-| 5 | 按 Force OFF 後 ↻；再到一個 pawn 本身就免疫、且未強制任何東西的遊戲上觀察徽章 | 前者為 `OFF`；後者為 `ON (not held)` |
-| 6 | Force ON 後關閉 UI，重開並重新連線，不要按 ↻；同時盯著狀態列 | 徽章直接是 `ON`；狀態列全程維持 `Connected`，按鈕不閃爍 |
+| 3 | 對一個有同字首兄弟類別的類別下 Force（如 Enemy vs EnemyProjectile、或任一 Foo / FooComponent 組合），檢查 ForcedFields 狀態列與 DLL log 的 FindInstancesDerivedFrom base=… 行 | 不相關的同字首類別「沒有」被 hold<br>⚠ 前面步驟看到「hold 了數百筆」不能替代這步：字首比對也會 hold 數百筆，兩者長得一樣。 |
+| 5 | 回歸：對基底類別 Force 一個 bool 後執行 reset_all_fields，再觀察後續**新生成**的物件 | 新生成物件不會仍帶著被強制的值（表示沒有寫到 CDO）<br>⚠ 一定要在 reset 之後真的生出新物件；看既有物件測不到這件事。 |
+
+### 🟡 AD4 —— God Mode 徽章要說明原因而非只有開關（**只剩步驟 4：`ON (contested)`**）
+
+*build 3203 · 優先度 **高** · 步驟 1、2、3、5、6 已於 2026-08-19 驗畢並刪除*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 4 | 進入戰鬥**實際挨打**，讓遊戲以傷害重置該旗標，同時連續按 ↻ 數次 | 多數為 `ON`，至少要看到一次 `ON (contested)`<br>⚠ 需要真的有人在玩（挨打），掛在選單或站著不動測不到。<br>⚠ 這格出現得很少是設計使然（re-assert worker 很快就贏），但**沒看到就是沒測到、不是通過**（見鐵則 1）。 |
 
 ### ⬜ A3 —— 每個 class 的多個 FVector 都要能掃到
 
@@ -175,14 +149,6 @@
 | 1 | 把 `DetectVersion: PE resource failed, falling back to memory string scan` 到下一條 `SCAN:Ver` 之間的時間拆開量：加一條分隔 log，或改用一款 pre-UE4 檢查會提早結束的遊戲重測。同時記下遊戲名與 exe 位元組大小。 | 單獨的版本字串掃描本身在 1 秒以內。<br>⚠ 未拆分前不可記「G2 比宣稱慢」——目前量到的 2.4 s 內含 `CountPreUE4Markers` 另一次全檔掃描。 |
 | 2 | ✅ **`ascii` 已於 2026-08-18 用 OCTOPATH 驗出**（`winmm.dll` proxy）：`DetectVersion: Tier 1 (ascii) '++UE4+Release-4.18' -> 418`。四種組合已收三種（`utf16`+UE4、`ascii`+UE4、Tier 0 直接結束），**只剩 UE5 分支**。 | ⛔ **UE5 分支本機無宿主，先別開遊戲**：全機 18 個已安裝 UE 執行檔用 `py tools/verify/tier1_host_survey.py` 離線掃過，只有 3 個能產生 Tier-1 行，全是 UE4。需要「**同時**穿過 Tier 0 **且**映像檔內含 `++UE5+Release-` needle」的遊戲 —— Light Maze/Lushfoil/Manor Lords 有 needle 但停在 Tier 0；Solarpunk/TQ2/ES2/STVoyager/Satisfactory/DSA/Avowed 連 needle 都沒有。<br>⚠ **裝新遊戲前先用該工具篩**，不要靠引擎版本猜。 |
 
-### 🟡 W2 / W3 —— SDK header 繼承邊界與位元欄位（**只剩 UI 匯出這一步**）
-
-*build 2842 · 優先度 **中** · 步驟 1-4 已於 2026-08-17 用 pipe 驗過並 commit*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 5 | 在 UI 匯出該類別（`DumperTestActor`）的 SDK header | struct 從 super 的大小（**672**）起算、不重覆宣告 `AActor` 的屬性；含 packed bool 的類別發出 `uint8_t bX : 1`，其位元組數與到下一欄位的間隙相符<br>⚠ 目前卡在 UE5DumpUI 無法授權給 computer-use（散裝 exe、登錄檔沒有安裝項目） |
-
 ### ⬜ W1 / W7 —— 匯出的 .usmap 能被真實解析器讀出
 
 *build 2853 · 優先度 **中***
@@ -214,17 +180,6 @@
 | 1 | Live Walker 開一個物件 → 在遊戲中讓它被銷毀/卸載 → 按 Refresh。 | 狀態列下方出現鮭魚紅錯誤行（約 10 秒 timeout 後）。 |
 | 2 | Live Walker 開物件 → 切到別的 tab → 切回來 → 使用 🌍 Locate in GWorld、書籤還原、或 ↑/↓ 比對步進。 | 表格仍會捲動並定位到目標列。<br>⚠ 壞掉時不會跳錯，只是按鈕按了沒反應——要看畫面有沒有捲動。 |
 | 3 | Group Scan 下一個會讓單一 slot 保留多個 leaf 的 filter，然後依 Value 欄排序。 | 排序結果與畫面上 Value 欄顯示的值一致。 |
-
-### 🟡 D2 —— Group Scan 掃得到物件自己的 scalar 欄位（**只剩步驟 4：UI clamp**）
-
-*build 2680 / 2690 · 步驟 1-3 已於 2026-08-17 用 pipe 驗過並 commit*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 4 | 把 Leaves/slot: NumericUpDown 調離預設值再掃一次 | 數值被 clamp 在 8–4096<br>⚠ 卡在 UE5DumpUI 無法授權；封包半部已驗（未調動時不帶 per_slot_cap） |
-
-⚠ **清單原本寫「grep pipe-0.log」是錯的** —— `RefineGroup cand … leaves entered=` 掛在 `[SCAN:grp]`，
-會寫進 **`scan-0.log`**。
 
 ### ⬜ D2（顯示配對） —— Group Scan 列上顯示的是真正的配對
 
@@ -267,14 +222,6 @@
 | 2 | 改連「另一款」遊戲 Y，載入 X 的 .jsonl 並按 Re-check。 | 比對被拒絕、狀態列同時寫出 X 與 Y 的 module 名、所有列都是未比對、Jump 沒有東西可跳；log 出現 `DumpExplorer live match refused: dump module '…' != live module '…'`。 |
 | 3 | （機會性，等 X 真的更新版本後）連上 X，載入更新前的舊 dump。 | 仍然比對成功，但帶 "Different build — offsets may have moved" 註記。 |
 
-### 🟡 G8 / G9 —— 版本偵測改分層規則後不變（**只剩步驟 1：需要 Elliot**）
-
-*優先度 **低** · 步驟 2 已於 2026-08-17 用 DumperTest 冷掃驗過並 commit*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 注入 **Elliot**（version resource 被 strip 的標題），掃描後 grep `scan-0.log` 的 `DetectVersion: Tier 1` | 出現 `DetectVersion: Tier 1 (ascii\|utf16) '++UEx+Release-N.N' -> NNN`<br>⚠ **不要用 DumperTest**：實測它停在 `PE VERSIONINFO -> UE 5.4 -> 504`，結構上進不了 tier ladder |
-
 ### ⬜ AF6 / AE8 —— 兩個順手檢查：拒絕要出聲、被拒的掃描不計數
 
 *build 3016-3031 · 優先度 **低***
@@ -298,16 +245,6 @@
 ## 第 3 步 — 遊戲 ＋ Cheat Engine
 
 還要開 CE 並載入 .CT。
-
-### ⬜ AB1 / AB2 —— plugin 的 Inject & Connect 路徑（**前 3 步已完成，只剩這 3 步**）
-
-*build 2913 / 2932 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | plugin 啟用狀態下，對一個執行中的遊戲用選單「UE5CEDumper: Inject & Connect」。 | 選單立刻返回、對話框說掃描已在背景開始；CE 視窗不因掃描凍結；DLL 有注入、pipe 有開、CE Lua mailbox 可用；幾秒後遊戲不崩潰。<br>⚠ 對話框說成功就必須真的通得了 pipe；說注入失敗就必須真的沒有模組被載入。 |
-| 2 | 到 CE Settings 勾選 cbInjectDLLWithAPC，重複上一步。 | 同樣不崩潰（這是修正前最容易炸的路徑）。 |
-| 3 | 反向對照：對一個資料夾名稱含「Cheat Engine」的遊戲注入。 | 該遊戲仍然啟動 poller，功能正常。 |
 
 ### ⬜ U16 —— 大型 enum 的成員清單（**U4 / U6 / F3 已完成，只剩這一步**）
 
@@ -469,16 +406,6 @@
 | 2 | 點其中一個 🌍。 | 找到路徑，或顯示 DLL 明確的「no path」/「invalid」訊息。<br>⚠ 沒有任何訊息、靜默無反應就是失敗。 |
 | 3 | 反向對照：在關卡尚未載入的主選單（確定沒有活的 UWorld）再點一次 🌍。 | 回報 DLL 的 invalid/no-path 狀態，不能看起來像成功。 |
 | 4 | 回歸：在 GWorld 正常解析的遊戲上重跑幾個 🌍 交接。 | 行為與這次改動前完全相同。 |
-
-### ⬜ D2（樣本心跳） —— DumperTest 樣本的 HUD 心跳仍在動
-
-*優先度 **中** · 需要：For Testing 資料夾內的 DumperTest 封包（Shipping 或 Development 皆可）*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 以 -windowed -ResX=1280 -ResY=720 啟動封包，不要加 -DumperTestNoHud | 畫面上出現 ADumperTestHUD 的五行文字<br>⚠ [DumperTest] ADumperTestActor ready at 0x… 這行只在 Development 出現，Shipping 沒有不代表壞掉 |
-| 2 | 記下 T0 的各欄位值，等約 15 秒再記 T1 | frames 上升；TickCount 每秒 +1；Health.CurrentValue 下降；Health.BaseValue=100 與 FrozenInt=424242 完全不動 |
-| 3 | 比對 F32_Ticking / F64_Ticking / RawDouble_Ticking 的差值與 TickCount 增量 | 差值分別為 −10.25 / +0.25 / +0.5 乘上 TickCount 的增量<br>⚠ Shipping 會靜默忽略 -ExecCmds="t.MaxFPS 30"；要限 FPS 請改用 Development 封包 |
 
 ### ⬜ B25 —— pre-4.11 拒絕不再只憑一個 PE 欄位就擋掉
 
