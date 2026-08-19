@@ -718,8 +718,26 @@ public class SnapshotViewModelTests : IDisposable
         _lastLog = new MockLoggingService();
         var vm = new SnapshotViewModel(new CaptureStub(), _store, _lastLog);
         vm.SetEngineState(new EngineState { PeHash = "GVM", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "T" });
-        await vm.RefreshCommand.ExecuteAsync(null);   // deterministic load (don't rely on the fire-and-forget refresh)
+        // Drain the refresh SetEngineState itself started. Running RefreshCommand here
+        // instead did not replace that refresh, it raced it — two concurrent
+        // UiCollection.Reset passes over one ObservableCollection (see DrainAsync).
+        await DrainAsync(vm.PendingRefresh, "SetEngineState refresh");
         return vm;
+    }
+
+    /// <summary>Await the refresh the VM ITSELF started, with a real deadline.
+    /// SetEngineState's refresh is fire-and-forget, so a test that followed it with
+    /// an awaited RefreshCommand ran BOTH over the same Snapshots collection:
+    /// measured 25/4000 in-process iterations saw duplicated rows or a torn null
+    /// slot (surfacing as an NRE inside OnIsGroupModeChanged, naming nothing).
+    /// Bounded at 10s because a hang is not a test result.</summary>
+    private static async Task DrainAsync(Task? pending, string what)
+    {
+        Assert.True(pending is not null, $"{what}: the VM never started it (seam unassigned)");
+        var finished = await Task.WhenAny(
+            pending!, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.True(ReferenceEquals(finished, pending), $"{what} did not finish within 10s");
+        await pending!;   // observe any fault it captured
     }
 
     [Fact]
@@ -822,7 +840,7 @@ public class SnapshotViewModelTests : IDisposable
         var vm = new SnapshotViewModel(new CaptureStub(), _store, new MockLoggingService());
         // Current live session is GVM-NEW; the snapshot is from GVM-OLD (a previous run).
         vm.SetEngineState(new EngineState { PeHash = "GVM", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "NEW" });
-        await vm.RefreshCommand.ExecuteAsync(null);
+        await DrainAsync(vm.PendingRefresh, "SetEngineState refresh");
         vm.GroupSnapshot = vm.Snapshots[0];
 
         // Cross-session: every per-slot handoff (Live / Copy / Locate-GWorld / Locate-GameEngine)

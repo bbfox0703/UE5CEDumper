@@ -109,6 +109,26 @@ public class InterestingFunctionsViewModelTests
         return (vm, dump);
     }
 
+    /// <summary>Await the re-score the VM ITSELF started, with a real deadline.
+    ///
+    /// Calling RescoreAsync() from a test instead used to look equivalent, but the
+    /// GameplayActions setter is fire-and-forget: a second call did not replace that
+    /// task, it RACED it. Both end in ApplyFilter(), which Clear()s and refills
+    /// Results, so the assertion could enumerate a half-rebuilt — or momentarily
+    /// EMPTY — collection. Measured 50/4000 in-process iterations before this fix.
+    ///
+    /// Bounded rather than a bare await because a hang is not a test result: the
+    /// 10s ceiling turns "the seam was never assigned" into a named failure instead
+    /// of a suite that sits there until the CI job is killed.</summary>
+    private static async Task DrainAsync(Task? pending, string what)
+    {
+        Assert.True(pending is not null, $"{what}: the VM never started it (seam unassigned)");
+        var finished = await Task.WhenAny(
+            pending!, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.True(ReferenceEquals(finished, pending), $"{what} did not finish within 10s");
+        await pending!;   // observe any fault it captured
+    }
+
     // ==================================================================
     // Load + scoring
     // ==================================================================
@@ -227,11 +247,11 @@ public class InterestingFunctionsViewModelTests
         Assert.DoesNotContain(vm.Results, r => r.FuncName == "OpenShop");
 
         // Enable the opt-in pack -> full re-score -> OpenShop now clears the
-        // threshold as a GameplayAction row (Open + Shop = 10). Await the
-        // re-score directly for a deterministic result (the property setter
-        // also kicks one off fire-and-forget).
+        // threshold as a GameplayAction row (Open + Shop = 10). Drain the
+        // re-score the SETTER started; calling RescoreAsync() here instead
+        // started a second one that raced it (see DrainAsync).
         vm.GameplayActions = true;
-        await vm.RescoreAsync();
+        await DrainAsync(vm.PendingToggleRescore, "toggle re-score");
 
         Assert.Contains(vm.Results, r => r.FuncName == "OpenShop");
         var row = vm.Results.First(r => r.FuncName == "OpenShop");
@@ -659,7 +679,7 @@ public class InterestingFunctionsViewModelTests
         Assert.Contains("(0 above threshold", vm.StatusText);
 
         vm.GameplayActions = true;
-        await vm.RescoreAsync();
+        await DrainAsync(vm.PendingToggleRescore, "toggle re-score");
 
         // The grid moved...
         Assert.Single(vm.Results);

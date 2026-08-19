@@ -457,8 +457,23 @@ public partial class SnapshotViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanCapture));
         OnPropertyChanged(nameof(CanManualCapture));
         OnPropertyChanged(nameof(CanToggleAuto));
-        _ = RefreshAsync();
+        // Kept (rather than discarded into `_`) only so the VM tests can await THIS
+        // refresh instead of starting a second one that races it — see PendingRefresh.
+        PendingRefresh = RefreshAsync();
     }
+
+    /// <summary>The snapshot-list refresh <see cref="SetEngineState"/> kicked off.
+    /// Exists purely as a test seam — production code never reads it.
+    ///
+    /// Both this and <see cref="RefreshCommand"/> end in
+    /// <c>UiCollection.Reset(Snapshots, …)</c>, which Clear()s the collection and
+    /// re-Add()s every row. A test that called SetEngineState and then awaited
+    /// RefreshCommand ran the two CONCURRENTLY over the same ObservableCollection:
+    /// measured 25/4000 in-process iterations observed a corrupt list — duplicated
+    /// rows (both refreshes appending after a single Clear) and torn null slots from
+    /// the unsynchronised List&lt;T&gt; growth, which surfaced as an NRE deep inside
+    /// OnIsGroupModeChanged rather than as anything naming a race.</summary>
+    internal Task? PendingRefresh { get; private set; }
 
     /// <summary>Stop the auto-snapshot loop (it re-scans the game on a tick and would
     /// otherwise hammer a dead pipe) and drop the live session id so per-row Live/Addr

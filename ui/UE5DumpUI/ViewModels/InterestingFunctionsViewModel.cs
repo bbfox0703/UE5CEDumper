@@ -65,6 +65,23 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// agreed. Exists purely as a test seam — production code never reads it.</summary>
     internal Task? PendingRescore { get; private set; }
 
+    /// <summary>The re-score the <see cref="GameplayActions"/> setter kicked off.
+    /// Exists purely as a test seam — production code never reads it.
+    ///
+    /// Deliberately SEPARATE from <see cref="PendingRescore"/>, which answers a
+    /// different question ("did LoadAsync decide to reconcile?") and is asserted
+    /// *null* by GameplayActions_ToggledTwiceWhileBusy_LeavesRowsAlone. One field
+    /// with two writers would make that null ambiguous and break that test in the
+    /// very interleaving it exists to pin.
+    ///
+    /// Why a seam at all: the setter is fire-and-forget, so a test that set the
+    /// property and then called RescoreAsync() itself started a SECOND re-score
+    /// racing the first. Both end in ApplyFilter(), which Clear()s and refills
+    /// Results, so the assertion could enumerate a half-rebuilt (or momentarily
+    /// EMPTY) collection. Awaiting this instead is what makes the toggle path
+    /// deterministic.</summary>
+    internal Task? PendingToggleRescore { get; private set; }
+
     [ObservableProperty] private bool   _gameOnly = true;
     [ObservableProperty] private string _filterText = "";
     [ObservableProperty] private FunctionCategory? _categoryFilter; // null = All
@@ -353,7 +370,9 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     // Gameplay-Action opt-in changes per-row scores + categories, so a full
     // re-score (not just a re-filter) is needed. Fire-and-forget: the scoring
     // runs on a worker thread to keep the toggle responsive on large games.
-    partial void OnGameplayActionsChanged(bool value)     => _ = RescoreAsync();
+    // The task is kept (rather than discarded into `_`) only so the VM tests can
+    // await THIS re-score instead of starting a second one that races it.
+    partial void OnGameplayActionsChanged(bool value)     => PendingToggleRescore = RescoreAsync();
     partial void OnIsAobMakerAvailableChanged(bool value)
         => OnPropertyChanged(nameof(AobMakerNote));
 
@@ -520,9 +539,12 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// needed — but the entry set is unchanged, so the class-noise histogram
     /// is left intact (no re-fetch, no Rebuild). No-op before the first Load
     /// or while one is in flight (Load reads the current toggle itself).
-    /// Internal so the VM tests can await a deterministic re-score.
+    /// PRIVATE on purpose: every caller is inside this class, and a test that
+    /// could reach it would start a second re-score racing the one the setter
+    /// already began. Tests await <see cref="PendingToggleRescore"/> /
+    /// <see cref="PendingRescore"/> — the task the VM itself decided to run.
     /// </summary>
-    internal async Task RescoreAsync()
+    private async Task RescoreAsync()
     {
         if (IsLoading || _entries.Count == 0) return;
         var entries = _entries;
