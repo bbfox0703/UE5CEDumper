@@ -6,35 +6,57 @@ namespace UE5DumpUI.Services;
 /// </summary>
 internal static class VdfParser
 {
+    /// <summary>What a token IS, not just what it says. Without this the extractor could
+    /// not tell a quoted value <c>"path"</c> from the key <c>"path"</c>, nor a quoted
+    /// string <c>"[$WIN32]"</c> from a bare platform conditional. (audit #5 AC12)</summary>
+    private enum TokenKind { BraceOpen, BraceClose, Quoted, Bare }
+
+    private readonly record struct Token(TokenKind Kind, string Text);
+
     /// <summary>
     /// Parse libraryfolders.vdf content and extract library paths.
     /// Returns empty list on any parse failure (never throws).
     /// </summary>
     public static List<string> ParseLibraryFolders(string vdfContent)
+        => ParseLibraryFolders(vdfContent, out _);
+
+    /// <summary>
+    /// Parse libraryfolders.vdf content and extract library paths.
+    /// </summary>
+    /// <param name="error">
+    /// <c>null</c> when the document was structurally sound all the way to the end;
+    /// otherwise a short description of the FIRST structural fault. Paths accepted
+    /// before that point are still returned — this feeds a game scan whose every hit is
+    /// re-checked with <c>Directory.Exists</c>, so degrading is better than going blind,
+    /// but the caller must be able to say so in the log instead of reporting a healthy
+    /// parse that quietly found nothing.
+    /// </param>
+    public static List<string> ParseLibraryFolders(string vdfContent, out string? error)
     {
         var paths = new List<string>();
+        error = null;
         if (string.IsNullOrWhiteSpace(vdfContent))
             return paths;
 
         try
         {
-            var tokens = Tokenize(vdfContent);
-            ExtractPaths(tokens, paths);
+            error = ExtractPaths(Tokenize(vdfContent), paths);
         }
-        catch
+        catch (Exception ex)
         {
             // Graceful failure — return whatever we found so far
+            error = $"unexpected {ex.GetType().Name}: {ex.Message}";
         }
 
         return paths;
     }
 
     /// <summary>
-    /// Tokenize VDF content into quoted strings and braces.
+    /// Tokenize VDF content into quoted strings, bare words and braces.
     /// </summary>
-    private static List<string> Tokenize(string content)
+    private static List<Token> Tokenize(string content)
     {
-        var tokens = new List<string>();
+        var tokens = new List<Token>();
         int i = 0;
 
         while (i < content.Length)
@@ -59,7 +81,8 @@ internal static class VdfParser
             // Braces
             if (c == '{' || c == '}')
             {
-                tokens.Add(c.ToString());
+                tokens.Add(new Token(c == '{' ? TokenKind.BraceOpen : TokenKind.BraceClose,
+                                     c.ToString()));
                 i++;
                 continue;
             }
@@ -68,7 +91,6 @@ internal static class VdfParser
             if (c == '"')
             {
                 i++; // skip opening quote
-                int start = i;
                 var sb = new System.Text.StringBuilder();
                 while (i < content.Length && content[i] != '"')
                 {
@@ -93,7 +115,7 @@ internal static class VdfParser
                     }
                 }
                 if (i < content.Length) i++; // skip closing quote
-                tokens.Add(sb.ToString());
+                tokens.Add(new Token(TokenKind.Quoted, sb.ToString()));
                 continue;
             }
 
@@ -103,7 +125,7 @@ internal static class VdfParser
                 while (i < content.Length && !char.IsWhiteSpace(content[i])
                        && content[i] != '{' && content[i] != '}' && content[i] != '"')
                     i++;
-                tokens.Add(content[start..i]);
+                tokens.Add(new Token(TokenKind.Bare, content[start..i]));
             }
         }
 
@@ -113,41 +135,87 @@ internal static class VdfParser
     /// <summary>
     /// Extract "path" values from numbered entries in the VDF token stream.
     /// Expected structure: "libraryfolders" { "0" { "path" "C:\..." ... } "1" { ... } }
+    ///
+    /// KeyValues alternates key → value inside every block, where a value is either a
+    /// string or a nested block. The old walker tracked only brace depth, so it had no
+    /// idea which side of that alternation a token sat on and accepted ANY depth-2 token
+    /// reading "path" as a key. Two consequences, both fixed here by carrying the
+    /// alternation explicitly (audit #5 AC12):
+    ///
+    ///   • a VALUE could masquerade as a key. <c>"label" "path"</c> — a library the user
+    ///     labelled "path" — made the walker treat the NEXT key ("contentid") as a
+    ///     library folder, injecting a directory Steam never named;
+    ///   • nesting was never validated. A stray <c>}</c> drove depth negative and every
+    ///     later block was read one level shallow, so "path" keys stopped being seen and
+    ///     the file yielded zero libraries with nothing anywhere saying why.
+    ///
+    /// Returns null when the document is structurally sound, otherwise a description of
+    /// the first fault. Extraction stops at that point: past a structural break the token
+    /// positions mean nothing, so continuing would be guessing.
     /// </summary>
-    private static void ExtractPaths(List<string> tokens, List<string> paths)
+    private static string? ExtractPaths(List<Token> tokens, List<string> paths)
     {
-        // Walk tokens tracking brace depth.
-        // At depth 2 (inside a numbered entry), look for "path" followed by a value.
+        // Depth 2 = inside "libraryfolders" -> "N" -> { ... }, the only level a library
+        // "path" key can legitimately appear at.
+        const int PathDepth = 2;
+
         int depth = 0;
+        string? pendingKey = null;   // non-null => the last token was a key awaiting its value
 
         for (int i = 0; i < tokens.Count; i++)
         {
-            string t = tokens[i];
+            var t = tokens[i];
 
-            if (t == "{")
-            {
-                depth++;
+            // Bare [$PLATFORM] conditionals suffix a statement and are neither key nor
+            // value. Only a BARE token can be one — a quoted "[$WIN32]" is a real string
+            // and must keep its place in the alternation.
+            if (t.Kind == TokenKind.Bare && t.Text.Length >= 2
+                && t.Text[0] == '[' && t.Text[^1] == ']')
                 continue;
-            }
 
-            if (t == "}")
+            switch (t.Kind)
             {
-                depth--;
-                continue;
-            }
+                case TokenKind.BraceOpen:
+                    // A block IS the value of the key that precedes it.
+                    if (pendingKey == null)
+                        return $"'{{' at token {i} does not follow a key";
+                    depth++;
+                    pendingKey = null;
+                    break;
 
-            // At depth 2: inside "libraryfolders" -> "N" -> { ... }
-            // Look for key "path" followed by a value string
-            if (depth == 2
-                && string.Equals(t, "path", StringComparison.OrdinalIgnoreCase)
-                && i + 1 < tokens.Count
-                && tokens[i + 1] != "{" && tokens[i + 1] != "}")
-            {
-                string path = tokens[i + 1];
-                if (!string.IsNullOrWhiteSpace(path))
-                    paths.Add(path);
-                i++; // skip the value token
+                case TokenKind.BraceClose:
+                    if (depth == 0)
+                        return $"unbalanced '}}' at token {i}";
+                    if (pendingKey != null)
+                        return $"key '{pendingKey}' at token {i} has no value";
+                    depth--;
+                    break;
+
+                default:
+                    if (pendingKey == null)
+                    {
+                        pendingKey = t.Text;          // this token is a KEY
+                    }
+                    else
+                    {
+                        // ...and this one is its VALUE, so it can never be read as a key.
+                        if (depth == PathDepth
+                            && string.Equals(pendingKey, "path", StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(t.Text))
+                        {
+                            paths.Add(t.Text);
+                        }
+                        pendingKey = null;
+                    }
+                    break;
             }
         }
+
+        if (depth != 0)
+            return $"{depth} block(s) left unclosed at end of document";
+        if (pendingKey != null)
+            return $"trailing key '{pendingKey}' has no value";
+
+        return null;
     }
 }

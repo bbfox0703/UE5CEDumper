@@ -56,7 +56,14 @@ public sealed class ProxyDeployService : IProxyDeployService
                 }
 
                 string vdfContent = File.ReadAllText(vdfPath);
-                var paths = VdfParser.ParseLibraryFolders(vdfContent);
+                var paths = VdfParser.ParseLibraryFolders(vdfContent, out string? vdfError);
+
+                // A structural fault stops extraction, so "0 libraries" below could mean
+                // either "Steam lists none" or "the file is broken". Say which. (AC12)
+                if (vdfError != null)
+                    _log.Warn("ProxyDeploy",
+                        $"libraryfolders.vdf is malformed ({vdfError}) — using the {paths.Count} " +
+                        $"library folder(s) read before the fault: {vdfPath}");
 
                 if (paths.Count == 0)
                 {
@@ -988,6 +995,93 @@ public sealed class ProxyDeployService : IProxyDeployService
         return DeployVerdict.Proceed;
     }
 
+    /// <summary>Suffix of the staging file <see cref="CopyProxyStaged"/> writes beside the
+    /// target. Deliberately NOT one of <see cref="AllProxyDllNames"/> and not a loadable
+    /// extension, so nothing — Windows, the deploy grid, undeploy, or the orphan scanner —
+    /// can mistake a half-written copy for a deployed proxy.</summary>
+    internal const string StageSuffix = ".ue5dump-stage";
+
+    /// <summary>
+    /// May the staged copy be published over the live target? (pure — audit #5 AC11)
+    ///
+    /// Two INDEPENDENT detectors, because they fail on different things: the byte count
+    /// catches a short write / truncation, and the ownership flag catches a copy whose
+    /// PE version resource did not survive. `sourceBytes > 0` makes an unmeasurable or
+    /// empty source a REFUSAL rather than a pass (pass -1 for "could not measure"), the
+    /// same rule Flamme's ShouldPublishAtomicWrite settled on DLL-side.
+    ///
+    /// Ownership is compared to the SOURCE rather than asserted true: a dev build whose
+    /// proxy carries no ProductName must still deploy, it just has to copy faithfully.
+    /// </summary>
+    internal static bool ShouldPublishStagedProxy(long sourceBytes, long stagedBytes,
+                                                  bool sourceIsOurs, bool stagedIsOurs)
+        => sourceBytes > 0 && stagedBytes == sourceBytes && sourceIsOurs == stagedIsOurs;
+
+    private static long TryFileLength(string path)
+    {
+        try
+        {
+            var fi = new FileInfo(path);
+            return fi.Exists ? fi.Length : -1;
+        }
+        catch
+        {
+            return -1;   // unmeasurable → ShouldPublishStagedProxy refuses
+        }
+    }
+
+    /// <summary>
+    /// Publish <paramref name="sourcePath"/> at <paramref name="targetPath"/> without ever
+    /// exposing a partial file (audit #5 AC11).
+    ///
+    /// The old code was a bare <c>File.Copy(overwrite: true)</c> straight onto the live
+    /// target, which TRUNCATES first and then streams. Any failure part-way — disk full,
+    /// source read error, the process being killed — left a truncated DLL sitting at the
+    /// real proxy path, and that state is worse than a failed deploy in three ways:
+    ///   • the game IMPORTS that name, so it now fails to start;
+    ///   • a truncated PE has no version resource, so <see cref="IsOurProxyDll"/> is false
+    ///     and the grid reports it as "Other proxy: unknown" — another program's DLL;
+    ///   • and on that verdict BOTH removal paths refuse it (PlanUndeploy skips it as
+    ///     foreign, redeploy demands ForeignConsent), so the user's own wreckage is
+    ///     unremovable from the panel that produced it.
+    ///
+    /// Staging inside the SAME directory keeps the publish a same-volume rename. Residue
+    /// is bounded: the staging file is deleted on every exit path, and a kill between the
+    /// copy and the rename leaves one file that the next deploy of this type overwrites.
+    /// IOExceptions are left to propagate so DeployAsync's SHARING_VIOLATION filter still
+    /// classifies a locked target as "File locked (game running?)" — the rename raises the
+    /// same violation the direct copy used to.
+    /// </summary>
+    internal static void CopyProxyStaged(string sourcePath, string targetPath)
+    {
+        string stagePath = targetPath + StageSuffix;
+        try
+        {
+            File.Copy(sourcePath, stagePath, overwrite: true);
+
+            long srcBytes = TryFileLength(sourcePath);
+            long stgBytes = TryFileLength(stagePath);
+            if (!ShouldPublishStagedProxy(srcBytes, stgBytes,
+                                          DllProductIsOurs(sourcePath), DllProductIsOurs(stagePath)))
+            {
+                throw new IOException(
+                    $"Staged proxy failed verification (source {srcBytes} bytes, staged {stgBytes} bytes) " +
+                    $"— {Path.GetFileName(targetPath)} was left untouched");
+            }
+
+            // overwrite:true also succeeds when the target does not exist yet, so the
+            // first-ever deploy takes this identical path.
+            File.Move(stagePath, targetPath, overwrite: true);
+        }
+        finally
+        {
+            // Never leave the staging file in a game's Binaries folder: nothing in this
+            // file's removal paths knows the name.
+            try { if (File.Exists(stagePath)) File.Delete(stagePath); }
+            catch { /* best-effort; the next deploy overwrites it */ }
+        }
+    }
+
     public async Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
         DeployOptions options = default, CancellationToken ct = default)
     {
@@ -1048,7 +1142,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 var imports = ReadProxyImports(game.ExePath);
                 string? riskNote = ProxyImportAnalyzer.DescribeDeployAdvisory(imports, proxyType);
 
-                File.Copy(sourceDllPath, targetDll, overwrite: true);
+                CopyProxyStaged(sourceDllPath, targetDll);
                 _log.Info("ProxyDeploy", $"Deployed {proxyType.GetDisplayName()} to {game.Name}: {targetDll}");
                 if (riskNote != null)
                     _log.Warn("ProxyDeploy", $"{proxyType.GetDllName()} for {game.Name}: {riskNote}");
@@ -1929,7 +2023,12 @@ public sealed class ProxyDeployService : IProxyDeployService
         }
     }
 
-    public bool IsOurProxyDll(string dllPath)
+    public bool IsOurProxyDll(string dllPath) => DllProductIsOurs(dllPath);
+
+    /// <summary>Static twin of <see cref="IsOurProxyDll"/> so the staged-copy helper
+    /// (which must stay static to be unit-testable against a temp folder) can apply the
+    /// SAME ownership predicate the panel and both removal paths use.</summary>
+    private static bool DllProductIsOurs(string dllPath)
     {
         try
         {

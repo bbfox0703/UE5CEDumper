@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 
 namespace UE5DumpUI.Services;
@@ -106,22 +107,103 @@ public sealed class AobUsageService
         }
     }
 
-    /// <summary>Load the usage file, or create a new one if it doesn't exist.</summary>
+    /// <summary>
+    /// Load the usage file, or create a new one if it doesn't exist.
+    ///
+    /// THE ONE INVARIANT (audit #5 AC4 + AC5, which are the same defect seen twice): an
+    /// empty <see cref="AobUsageFile"/> may only be handed back once the bytes it replaces
+    /// are safely somewhere else. This file is not one game's cache — it holds EVERY game's
+    /// scan record, its DLL-stamped version detection, and the user's per-game UE-version
+    /// override and invoke timeout. The caller's very next act is
+    /// <see cref="SaveFileAsync"/>, so returning a blank document while the original still
+    /// sits at <see cref="_filePath"/> published a one-game file over all of it — from a
+    /// Warn nobody reads, and with none of the care the DELIBERATE reset takes ten numbered
+    /// backups to provide. Quarantine first; if the quarantine cannot be taken, FAIL — the
+    /// callers all treat a throw as "skip this write", which is exactly right.
+    /// </summary>
     internal async Task<AobUsageFile> LoadFileAsync()
     {
         if (!File.Exists(_filePath))
             return new AobUsageFile();
 
+        // An unreadable file (locked, denied) is NOT a corrupt one: it must propagate so
+        // the caller skips the save, never be answered with a blank document.
+        var json = await File.ReadAllTextAsync(_filePath);
+
+        AobUsageFile? parsed;
         try
         {
-            var json = await File.ReadAllTextAsync(_filePath);
-            return JsonSerializer.Deserialize(json, s_jsonCtx.AobUsageFile)
-                   ?? new AobUsageFile();
+            parsed = JsonSerializer.Deserialize(json, s_jsonCtx.AobUsageFile);
         }
         catch (JsonException ex)
         {
-            _log.Warn(Constants.LogCatInit, $"AobUsageService: Corrupt JSON, starting fresh: {ex.Message}");
+            QuarantineCorruptFile(ex.Message);
             return new AobUsageFile();
+        }
+
+        // A document of literally `null` parses fine and deserializes to null. The old
+        // `?? new AobUsageFile()` treated that as "empty cache" and wiped the same way a
+        // parse failure did, just without even a log line.
+        if (parsed == null)
+        {
+            QuarantineCorruptFile("document deserialized to null");
+            return new AobUsageFile();
+        }
+
+        return parsed;
+    }
+
+    /// <summary>
+    /// Move the corrupt cache aside under a timestamped name and say so loudly. Throws if
+    /// the move fails — see the invariant on <see cref="LoadFileAsync"/>; a caller that
+    /// received an empty file when the original was still in place would destroy it.
+    /// </summary>
+    private void QuarantineCorruptFile(string reason)
+    {
+        var dir  = Path.GetDirectoryName(_filePath)!;
+        var name = Path.GetFileName(_filePath);
+        var quarantine = Path.Combine(dir, AtomicFileHygiene.QuarantineNameFor(name, DateTime.UtcNow));
+
+        File.Move(_filePath, quarantine);   // deliberately unguarded
+
+        _log.Error(Constants.LogCatInit,
+            $"AobUsageService: cache file is corrupt ({reason}). It holds every game's scan record, " +
+            $"UE-version override and invoke timeout, so it was moved aside instead of overwritten: " +
+            $"{quarantine}. To recover, repair the JSON and rename it back to '{name}'. " +
+            $"A fresh cache starts from the next scan.");
+
+        PruneCorruptCopies(dir, name, justSaved: Path.GetFileName(quarantine));
+    }
+
+    /// <summary>Keep the quarantine bounded. Best-effort: the data is already safe by the
+    /// time this runs, so a failure here must not fail the load.
+    ///
+    /// <paramref name="justSaved"/> is excluded unconditionally. Pruning sorts on the
+    /// embedded timestamp, so a clock that ran backwards — or one pre-existing copy stamped
+    /// in the future — would otherwise rank the copy we took THIS SECOND as the oldest and
+    /// delete the very bytes this whole mechanism exists to keep.</summary>
+    private void PruneCorruptCopies(string dir, string fileName, string justSaved)
+    {
+        try
+        {
+            var names = Directory
+                .EnumerateFiles(dir, AtomicFileHygiene.CorruptPrefixFor(fileName) + "*")
+                .Select(Path.GetFileName)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .Select(n => n!)
+                .Where(n => !string.Equals(n, justSaved, StringComparison.OrdinalIgnoreCase));
+
+            // -1 because `justSaved` is excluded above but still counts toward the cap.
+            foreach (var stale in AtomicFileHygiene.SelectCorruptCopiesToPrune(
+                         names, fileName, AtomicFileHygiene.MaxCorruptCopies - 1))
+            {
+                File.Delete(Path.Combine(dir, stale));
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Warn(Constants.LogCatInit,
+                $"AobUsageService: could not prune old quarantined caches: {ex.Message}");
         }
     }
 
@@ -136,10 +218,78 @@ public sealed class AobUsageService
         // cannot see the other process. The final rename stays last-writer-wins (the
         // existing, accepted semantics); only the staging file must not be shared. Kept
         // byte-compatible with the DLL's MakeTempPath so the two are obviously a pair. (B39)
-        var tempPath = _filePath + ".tmp." + Environment.ProcessId;
+        var tempPath = AtomicFileHygiene.TempPathFor(_filePath, Environment.ProcessId);
         var json = JsonSerializer.Serialize(file, s_jsonCtx.AobUsageFile);
-        await File.WriteAllTextAsync(tempPath, json);
-        File.Move(tempPath, _filePath, overwrite: true);
+        try
+        {
+            await File.WriteAllTextAsync(tempPath, json);
+            File.Move(tempPath, _filePath, overwrite: true);
+        }
+        finally
+        {
+            // AC6: on success the rename consumed it; on ANY failure the PID suffix makes
+            // this a distinctly named full copy of the cache that nothing would ever
+            // delete. The DLL's twin (Flamme FL2) does the same at the same point.
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); }
+            catch { /* best-effort — the sweep below catches it on a later launch */ }
+        }
+
+        SweepOrphanTemps();
+    }
+
+    /// <summary>
+    /// Delete staging files abandoned by earlier failures — ours AND the DLL's, which
+    /// builds the same <c>&lt;file&gt;.tmp.&lt;pid&gt;</c> name. AGE-guarded, not
+    /// PID-guarded: writing this file takes milliseconds, so anything an hour old is
+    /// provably abandoned, whereas a liveness test would race a game process that is
+    /// mid-write right now.
+    ///
+    /// Scoped to this cache file's own prefix, never a folder wildcard: the app-data root
+    /// also holds the reset backups (<c>.001</c>-<c>.010</c>) and the quarantine, and the
+    /// per-game families that must move and expire as a GROUP live in <c>Snapshots\</c> /
+    /// <c>Bookmarks\</c>, which this never enters.
+    ///
+    /// Once per instance. A plain bool, not an Interlocked latch: every call sits inside
+    /// <see cref="_lock"/>. Instance-scoped rather than static so a test can exercise it —
+    /// the app composes exactly one of these.
+    /// </summary>
+    private bool _tempsSwept;
+
+    private void SweepOrphanTemps()
+    {
+        if (_tempsSwept) return;
+        _tempsSwept = true;
+
+        try
+        {
+            var dir  = Path.GetDirectoryName(_filePath)!;
+            var name = Path.GetFileName(_filePath);
+            var now  = DateTime.UtcNow;
+            int removed = 0;
+
+            foreach (var full in Directory.EnumerateFiles(dir, AtomicFileHygiene.TempPrefixFor(name) + "*"))
+            {
+                DateTime mtime;
+                try { mtime = File.GetLastWriteTimeUtc(full); }
+                catch { continue; }
+
+                if (!AtomicFileHygiene.IsStaleTemp(name, Path.GetFileName(full), mtime, now,
+                                                   AtomicFileHygiene.StaleTempAge))
+                    continue;
+
+                try { File.Delete(full); removed++; }
+                catch { /* someone else's, or in use — leave it */ }
+            }
+
+            if (removed > 0)
+                _log.Info(Constants.LogCatInit,
+                    $"AobUsageService: removed {removed} abandoned staging file(s) older than " +
+                    $"{AtomicFileHygiene.StaleTempAge.TotalHours:0} h");
+        }
+        catch (Exception ex)
+        {
+            _log.Warn(Constants.LogCatInit, $"AobUsageService: staging-file sweep failed: {ex.Message}");
+        }
     }
 
     private static void UpdateScanEntry(AobScanEntry entry, string method, string patternId, int tried, int hit)

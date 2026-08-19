@@ -127,14 +127,37 @@ public class PropertyScoringTableTests
         Assert.Equal(expectedBonus, bonus);
     }
 
-    [Fact]
-    public void PropertyBonus_CheatManager_StacksRules()
+    // audit #5 AC9 — the table used to carry BOTH a "UCheatManager" row and a
+    // "CheatManager" row. UE reflection names carry no U/A prefix, so the first
+    // matched nothing a game emits; on the one input that COULD reach it, the two
+    // rows double-scored the same class at +8. NEGATIVE CONTROL: restore the
+    // "UCheatManager" row and the first case below goes back to 8.
+    [Theory]
+    [InlineData("CheatManager")]           // the engine class, as GObjects reports it
+    [InlineData("UCheatManager")]          // C++-style name: matched twice before the fix
+    [InlineData("MyGameCheatManager")]     // game subclass — the case the row exists for
+    [InlineData("BP_CheatManager_C")]      // Blueprint subclass
+    public void PropertyBonus_CheatManager_ScoresOnceAtFour(string className)
     {
-        // "UCheatManager" matches both "UCheatManager" (+4 Unusual) AND
-        // "CheatManager" (+4 Unusual) — bonuses stack to 8.
-        var (bonus, isUnusual) = ClassLocationScorer.PropertyBonus("UCheatManager");
+        var (bonus, isUnusual) = ClassLocationScorer.PropertyBonus(className);
         Assert.True(isUnusual);
-        Assert.Equal(8, bonus);
+        Assert.Equal(4, bonus);
+    }
+
+    // The scorer sees the CLASS NAME and nothing else, so no rule can be gated on
+    // the member name — four rule comments claimed a keyword gate that was never
+    // implemented (AC7/AC8). These pin the un-gated, stacking reality the class doc
+    // now states, including the case where the class name ALONE clears
+    // KeywordScoringTable.InterestingThreshold (5).
+    [Theory]
+    [InlineData("PlayerController", 5)]    // PlayerController(+3) + Player(+2) — stacks
+    [InlineData("PlayerCharacter",  5)]    // Player(+2) + Character(+3) = the threshold
+    [InlineData("HealthComponent",  2)]    // no gate: +2 with no keyword anywhere
+    [InlineData("DamageDealer",     2)]    // ditto on the Damage row
+    public void PropertyBonus_HasNoKeywordGateAndStacks(string className, int expected)
+    {
+        var (bonus, _) = ClassLocationScorer.PropertyBonus(className);
+        Assert.Equal(expected, bonus);
     }
 
     [Fact]

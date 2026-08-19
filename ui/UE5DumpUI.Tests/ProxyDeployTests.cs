@@ -193,6 +193,323 @@ public class ProxyDeployTests
     }
 
     // ────────────────────────────────────────────────────────────────
+    // VDF parser — key/value position and nesting validity (audit #5 AC12)
+    //
+    // The old walker tracked brace depth ONLY, so any depth-2 token reading "path"
+    // was taken for a key and a brace imbalance was invisible.
+    // ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// THE FINDING. A library whose label is the word "path" made the walker read the
+    /// NEXT key as a folder, injecting a directory Steam never named.
+    ///
+    /// NEGATIVE CONTROL: drop the key/value alternation and match on any depth-2 token
+    /// equal to "path", and this returns TWO paths — the real one plus "contentid".
+    /// </summary>
+    [Fact]
+    public void VdfParser_ValueSpelledPath_DoesNotMasqueradeAsAKey()
+    {
+        const string vdf = """
+            "libraryfolders"
+            {
+                "0"
+                {
+                    "path"        "D:\\SteamLibrary"
+                    "label"       "path"
+                    "contentid"   "1234567890"
+                }
+            }
+            """;
+
+        var paths = VdfParser.ParseLibraryFolders(vdf, out string? error);
+
+        Assert.Null(error);
+        Assert.Single(paths);
+        Assert.Equal(@"D:\SteamLibrary", paths[0]);
+    }
+
+    [Fact]
+    public void VdfParser_UnclosedBrace_IsReportedNotSilent()
+    {
+        // Truncated mid-file: everything read before the truncation is still usable,
+        // but the caller must be able to say the file was broken.
+        const string vdf = """
+            "libraryfolders"
+            {
+                "0"
+                {
+                    "path"        "D:\\SteamLibrary"
+            """;
+
+        var paths = VdfParser.ParseLibraryFolders(vdf, out string? error);
+
+        Assert.Single(paths);
+        Assert.Equal(@"D:\SteamLibrary", paths[0]);
+        Assert.NotNull(error);
+        Assert.Contains("unclosed", error!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void VdfParser_ExtraClosingBrace_StopsAndReports()
+    {
+        // A stray '}' used to drive depth NEGATIVE, after which every later block was
+        // read one level shallow and the file silently yielded zero libraries.
+        const string vdf = """
+            "libraryfolders"
+            {
+                "0"
+                {
+                    "path"        "C:\\Steam"
+                }
+                }
+                "1"
+                {
+                    "path"        "D:\\SteamLibrary"
+                }
+            }
+            """;
+
+        var paths = VdfParser.ParseLibraryFolders(vdf, out string? error);
+
+        Assert.NotNull(error);
+        Assert.Contains("unbalanced", error!, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(paths);                       // what was valid before the fault
+        Assert.Equal(@"C:\Steam", paths[0]);
+    }
+
+    [Fact]
+    public void VdfParser_BlockWithoutAKey_IsRejected()
+    {
+        var paths = VdfParser.ParseLibraryFolders("\"libraryfolders\" \"x\" { }", out string? error);
+        Assert.Empty(paths);
+        Assert.NotNull(error);
+    }
+
+    [Fact]
+    public void VdfParser_TrailingKeyWithNoValue_IsReported()
+    {
+        const string vdf = """
+            "libraryfolders"
+            {
+                "0"
+                {
+                    "path"
+                }
+            }
+            """;
+
+        var paths = VdfParser.ParseLibraryFolders(vdf, out string? error);
+        Assert.Empty(paths);
+        Assert.NotNull(error);
+    }
+
+    [Fact]
+    public void VdfParser_PlatformConditional_DoesNotDesyncTheAlternation()
+    {
+        // A bare [$WIN32] suffixes a statement — it is neither key nor value. Treating it
+        // as one would shift every following token by one and turn "label" into a key's
+        // value (and "contentid" into a key).
+        const string vdf = """
+            "libraryfolders"
+            {
+                "0"
+                {
+                    "path"        "C:\\Steam"    [$WIN32]
+                    "label"       ""
+                    "contentid"   "42"
+                }
+            }
+            """;
+
+        var paths = VdfParser.ParseLibraryFolders(vdf, out string? error);
+
+        Assert.Null(error);
+        Assert.Single(paths);
+        Assert.Equal(@"C:\Steam", paths[0]);
+    }
+
+    [Fact]
+    public void VdfParser_QuotedBracketString_IsStillAValue()
+    {
+        // ...but a QUOTED "[$WIN32]" is an ordinary string and must keep its place.
+        const string vdf = """
+            "libraryfolders"
+            {
+                "0"
+                {
+                    "label"       "[$WIN32]"
+                    "path"        "C:\\Steam"
+                }
+            }
+            """;
+
+        var paths = VdfParser.ParseLibraryFolders(vdf, out string? error);
+
+        Assert.Null(error);
+        Assert.Single(paths);
+        Assert.Equal(@"C:\Steam", paths[0]);
+    }
+
+    [Fact]
+    public void VdfParser_CleanDocument_ReportsNoError()
+    {
+        const string vdf = """
+            "libraryfolders"
+            {
+                "0"
+                {
+                    "path"        "C:\\Steam"
+                    "apps"
+                    {
+                        "228980"  "597558935"
+                    }
+                }
+            }
+            """;
+
+        VdfParser.ParseLibraryFolders(vdf, out string? error);
+        Assert.Null(error);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // Staged proxy publish (audit #5 AC11)
+    // ────────────────────────────────────────────────────────────────
+
+    [Theory]
+    // faithful copy → publish
+    [InlineData(1024L, 1024L, true,  true,  true)]
+    [InlineData(1024L, 1024L, false, false, true)]   // a dev proxy with no ProductName still deploys
+    // short write → refuse
+    [InlineData(1024L,  512L, true,  true,  false)]
+    // unmeasurable staged file (-1) → refuse, never "assume fine"
+    [InlineData(1024L,   -1L, true,  true,  false)]
+    // unmeasurable or empty SOURCE → refuse
+    [InlineData(  -1L,   -1L, true,  true,  false)]
+    [InlineData(   0L,    0L, true,  true,  false)]
+    // right size but the version resource did not survive → refuse
+    [InlineData(1024L, 1024L, true,  false, false)]
+    public void ShouldPublishStagedProxy_TruthTable(
+        long sourceBytes, long stagedBytes, bool sourceIsOurs, bool stagedIsOurs, bool expected)
+    {
+        Assert.Equal(expected, ProxyDeployService.ShouldPublishStagedProxy(
+            sourceBytes, stagedBytes, sourceIsOurs, stagedIsOurs));
+    }
+
+    [Fact]
+    public void CopyProxyStaged_FirstTimeDeploy_CreatesTargetAndLeavesNoResidue()
+    {
+        // The named regression risk of staging: a deploy onto a clean folder must still
+        // work, because File.Move(overwrite: true) is also the create path.
+        using var dir = new TempDir();
+        string src = dir.Write("source.dll", "PROXY-BYTES");
+        string dst = Path.Combine(dir.Path, "dxgi.dll");
+
+        ProxyDeployService.CopyProxyStaged(src, dst);
+
+        Assert.True(File.Exists(dst));
+        Assert.Equal("PROXY-BYTES", File.ReadAllText(dst));
+        Assert.False(File.Exists(dst + ProxyDeployService.StageSuffix));
+    }
+
+    [Fact]
+    public void CopyProxyStaged_OverExistingTarget_ReplacesIt()
+    {
+        using var dir = new TempDir();
+        string src = dir.Write("source.dll", "NEW-BYTES");
+        string dst = dir.Write("dxgi.dll", "OLD");
+
+        ProxyDeployService.CopyProxyStaged(src, dst);
+
+        Assert.Equal("NEW-BYTES", File.ReadAllText(dst));
+        Assert.False(File.Exists(dst + ProxyDeployService.StageSuffix));
+    }
+
+    /// <summary>
+    /// A guard, NOT the negative control: measured, the direct
+    /// <c>File.Copy(src, target, overwrite: true)</c> also leaves the target alone here,
+    /// because Windows opens the source before it truncates the destination. Kept because
+    /// it pins the no-residue half.
+    /// </summary>
+    [Fact]
+    public void CopyProxyStaged_FailedSource_LeavesTheLiveProxyUntouched()
+    {
+        using var dir = new TempDir();
+        string missing = Path.Combine(dir.Path, "does-not-exist.dll");
+        string dst = dir.Write("dxgi.dll", "THE-WORKING-PROXY");
+
+        Assert.ThrowsAny<IOException>(() => ProxyDeployService.CopyProxyStaged(missing, dst));
+
+        Assert.Equal("THE-WORKING-PROXY", File.ReadAllText(dst));
+        Assert.False(File.Exists(dst + ProxyDeployService.StageSuffix));
+    }
+
+    /// <summary>
+    /// THE FINDING. A failing deploy used to TRUNCATE the live proxy: the game then fails
+    /// to start, the grid reads the wreckage as another program's DLL (no version resource
+    /// survives a truncated PE), and on that verdict BOTH removal paths refuse it — the
+    /// user's own wreckage is unremovable from the panel that produced it.
+    ///
+    /// NEGATIVE CONTROL (run): put back the direct
+    /// <c>File.Copy(src, target, overwrite: true)</c> and this fails together with
+    /// <c>CopyProxyStaged_StaleStageFile_IsOverwrittenNotOrphaned</c> — 2 of 4284, and no
+    /// others. A zero-byte source is maximal truncation, which is why it is the case that
+    /// discriminates.
+    /// </summary>
+    [Fact]
+    public void CopyProxyStaged_EmptySource_RefusesAndLeavesTheLiveProxyUntouched()
+    {
+        // A zero-byte source is a refusal, not a pass: publishing it would leave exactly
+        // the unremovable-wreckage state staging exists to prevent.
+        using var dir = new TempDir();
+        string src = dir.Write("source.dll", "");
+        string dst = dir.Write("dxgi.dll", "THE-WORKING-PROXY");
+
+        Assert.ThrowsAny<IOException>(() => ProxyDeployService.CopyProxyStaged(src, dst));
+
+        Assert.Equal("THE-WORKING-PROXY", File.ReadAllText(dst));
+        Assert.False(File.Exists(dst + ProxyDeployService.StageSuffix));
+    }
+
+    [Fact]
+    public void CopyProxyStaged_StaleStageFile_IsOverwrittenNotOrphaned()
+    {
+        using var dir = new TempDir();
+        string src = dir.Write("source.dll", "NEW-BYTES");
+        string dst = Path.Combine(dir.Path, "dxgi.dll");
+        File.WriteAllText(dst + ProxyDeployService.StageSuffix, "leftover from a killed run");
+
+        ProxyDeployService.CopyProxyStaged(src, dst);
+
+        Assert.Equal("NEW-BYTES", File.ReadAllText(dst));
+        Assert.False(File.Exists(dst + ProxyDeployService.StageSuffix));
+    }
+
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; }
+
+        public TempDir()
+        {
+            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                          $"UE5DumpProxyStage_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Write(string name, string content)
+        {
+            var p = System.IO.Path.Combine(Path, name);
+            File.WriteAllText(p, content);
+            return p;
+        }
+
+        public void Dispose()
+        {
+            try { if (Directory.Exists(Path)) Directory.Delete(Path, recursive: true); }
+            catch { /* best-effort */ }
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────
     // DetectedGame Model
     // ────────────────────────────────────────────────────────────────
 

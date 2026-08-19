@@ -64,6 +64,42 @@ public sealed class PipeClient : IPipeClient
 
     private static string NowStr() => DateTime.Now.ToString("HH:mm:ss.fff");
 
+    /// <summary>Why a pipe write failed — see <see cref="ClassifySendFailure"/>.</summary>
+    internal enum SendFailure
+    {
+        /// <summary>The caller's own token was cancelled.</summary>
+        CallerCancelled,
+        /// <summary>DisconnectAsync / Dispose is tearing this client down.</summary>
+        Disconnecting,
+        /// <summary>Nobody asked — the pipe died under us (game closed / DLL unloaded).</summary>
+        PipeDied,
+        /// <summary>Still connected, nothing cancelled: a real I/O error on a live pipe.</summary>
+        TransportError,
+    }
+
+    /// <summary>
+    /// Classify a failed write. Pure, and split out precisely because the collapsed form
+    /// was the audit #5 AC10 defect: the filters read
+    /// <c>!IsConnected || _cts.IsCancellationRequested</c> and reported ALL of it as
+    /// cancellation.
+    ///
+    /// The order matters and is not arbitrary. Both deliberate teardowns cancel
+    /// <c>_cts</c> BEFORE clearing <c>IsConnected</c>, so <paramref name="clientCancelled"/>
+    /// already covers them; the only other writer of <c>IsConnected = false</c> is
+    /// ReadLoopAsync's finally on an unplanned exit. That makes <c>!connected</c> —
+    /// checked LAST, after both cancellation reasons — a clean signal for unexpected
+    /// death, which the read loop's own finally hands to every other in-flight request as
+    /// an IOException. Fold it back into the cancel branch and an unexpected disconnect
+    /// becomes indistinguishable from a user pressing Cancel.
+    /// </summary>
+    internal static SendFailure ClassifySendFailure(bool callerCancelled, bool clientCancelled, bool connected)
+    {
+        if (callerCancelled)  return SendFailure.CallerCancelled;
+        if (clientCancelled)  return SendFailure.Disconnecting;
+        if (!connected)       return SendFailure.PipeDied;
+        return SendFailure.TransportError;
+    }
+
     public PipeClient(ILoggingService log, string laneTag = "")
     {
         _log = log;
@@ -181,18 +217,53 @@ public sealed class PipeClient : IPipeClient
                 _writeLock.Release();
             }
         }
-        catch (IOException) when (!IsConnected || _cts.IsCancellationRequested)
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
-            // Pipe closed during write (disconnect in progress) — cancel this request
+            // A write can fail for three reasons that callers must be able to tell
+            // apart. The old filters lumped them together as `!IsConnected ||
+            // _cts.IsCancellationRequested` and threw a TOKEN-LESS
+            // OperationCanceledException for all of them (audit #5 AC10).
+            //
+            // The `!IsConnected` half fires ONLY on unexpected pipe death: both
+            // deliberate teardowns (DisconnectAsync, Dispose) cancel _cts BEFORE
+            // they clear IsConnected, so the cancellation half already covers them,
+            // and the only other writer of `IsConnected = false` is ReadLoopAsync's
+            // finally on an unplanned exit. That is precisely the case this file's
+            // own finally at the bottom of ReadLoopAsync says must surface as an
+            // IOException, "so callers surface it as an error rather than a silent
+            // cancel" — and the late-death reap 20 lines below already does exactly
+            // that when the write happens to SUCCEED on the dying pipe. Reporting it
+            // as a cancel when the write loses the race and as a failure when it wins
+            // is the inconsistency being removed here.
+            //
+            // Drain the bookkeeping first: the old code left _pending/_txMeta
+            // populated on any unfiltered exception, orphaning the entry until the
+            // next disconnect.
             _txMeta.TryRemove(id, out _);
             _pending.TryRemove(id, out _);
-            throw new OperationCanceledException("Pipe disconnected during send");
-        }
-        catch (ObjectDisposedException) when (!IsConnected || _cts.IsCancellationRequested)
-        {
-            _txMeta.TryRemove(id, out _);
-            _pending.TryRemove(id, out _);
-            throw new OperationCanceledException("Pipe disconnected during send");
+
+            switch (ClassifySendFailure(ct.IsCancellationRequested, _cts.IsCancellationRequested, IsConnected))
+            {
+                // The CALLER cancelled. Carry ct, so a caller matching on
+                // `oce.CancellationToken == ct` recognises its own cancellation (the
+                // export commands thread a real token through as of L6/X6).
+                case SendFailure.CallerCancelled:
+                    throw new OperationCanceledException("Pipe send cancelled by caller", ex, ct);
+
+                // A deliberate DisconnectAsync/Dispose. Still a cancel — the behaviour
+                // callers already rely on — but with the token that caused it.
+                case SendFailure.Disconnecting:
+                    throw new OperationCanceledException("Pipe disconnected during send", ex, _cts.Token);
+
+                // The pipe died under us. Same exception type the read loop's finally
+                // hands to every other in-flight request for the same event.
+                case SendFailure.PipeDied:
+                    throw new IOException("Pipe disconnected during send", ex);
+
+                // Live pipe, real I/O error. Preserve it exactly as thrown.
+                default:
+                    throw;
+            }
         }
 
         // Late-death reap (audit #4): the IsConnected guard at entry is a TOCTOU —

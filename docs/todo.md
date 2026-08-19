@@ -11,8 +11,11 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **40 batches** needing a running game. **Offer these
->   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L4 (D4b
+> - `## Pending live-game verification` — **41 batches** needing a running game. **Offer these
+>   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L7 (T1d UI
+>   Services) AC3/AC6/AC10/AC11/AC12 batch — five of its ten findings need nothing live, and the
+>   rows that remain each need a thing no test has: a real CE, a real Steam `libraryfolders.vdf`, a
+>   game killed mid-write, and a real game's Binaries folder. Before it, the audit L4 (D4b
 >   Mimic/Sein/Flamme) MB1/MB2/SE1/FL1/FL2 batch — its three pure rules are unit-pinned with five
 >   negative controls, so the live rows are the parts no test target can reach (nothing compiles
 >   `Mimic.cpp` / `Sein.cpp` / `Flamme.cpp`): the CE re-FIRE routing WARN, Keep-Foreground on a
@@ -1623,6 +1626,24 @@ unit-tested); AB9 stays OPEN (loader-lock, out of L2 scope).*
 > | AB17 | begin a value scan, do a Next Scan or End, leave the app connected & idle; separately, start a 2nd scan much later | a stale earlier session is reaped on the next Begin/Refine/End (memory does not accumulate); the session being refined is NOT dropped when you step away mid-refine | the sweep trigger + the "protect my own session" ordering are not unit-testable (wall-clock) |
 > | AB12 | attach CE to a process with **>1024 loaded modules** and click Inject & Connect (or click it twice) | the "already loaded" / post-inject check correctly finds our DLL even past module 1024; a successful inject is never reported "not mapped" | needs a real large-module process |
 > | AB13 | (maintainer) place the CE plugin DLL under a path with **non-ASCII characters** and Inject & Connect | injection succeeds (8.3 short-path fallback) and the log shows the exact UTF-8 path | needs a non-ASCII install path; ASCII paths are unchanged |
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L7 (T1d UI Services): AC3 / AC6 / AC10 / AC11 / AC12
+
+*Ten findings closed (AC3–AC12); **five need nothing live**. AC4/AC5 (corrupt-cache quarantine) and
+AC6's sweep policy are unit-tested end to end against a real temp folder, and AC7/AC8/AC9 are
+comment-vs-code corrections in `ClassLocationScorer` with **no scoring change for any game** — AC9's
+deleted `UCheatManager` row was strictly subsumed by the `CheatManager` row beneath it, proven by a
+negative control that turns exactly one assertion red. The rows below are the parts a test cannot
+reach: a real CE, a real Steam install, a real game dying mid-write, and a real game folder.*
+
+> | step | do this | expect | why it is a real check |
+> |---|---|---|---|
+> | AC3 | with CE **closed**, use any "to CE" action (Teleport → AOBMaker push, Console → Debug Camera). Then open CE **without** the AOBMaker plugin and repeat. Then load the plugin and repeat. `rg "AOBMaker bridge" %LOCALAPPDATA%\UE5CEDumper\Logs\*\init-0.log` | three DIFFERENT lines: "no server on \\\\.\\pipe\\AOBMakerCEBridge within 2000 ms" (twice, Debug) then a success — and if CE is up but the pipe refuses, a **Warn** naming the exception type | before the fix the bare `catch` logged nothing at all, so all seven call sites produced the same blank "AOBMaker not connected" |
+> | AC6 | plant `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.<MACHINE>.json.tmp.99999`, backdate its mtime >1 h, plant a second one with a **fresh** mtime, then launch the UI and connect to a game (any scan records) | the backdated one is gone, the fresh one **survives**, and `init-0.log` says "removed 1 abandoned staging file(s) older than 1 h" | the sweep is unit-tested, but the cross-process pairing with the DLL's identically-named `<file>.tmp.<pid>` is only observable with a game actually writing the same cache |
+> | AC10 | start a long operation over the pipe (Dump All, or a big Value Search), then **kill the game process** mid-stream | the UI reports a **failure** ("disconnected"), not a silent cancel; a partial export is not finalised as complete | the write-vs-death race is a TOCTOU the classifier's unit test cannot drive; only a real kill hits it |
+> | AC11 | on an installed game: **Deploy** a proxy to a clean Binaries folder, then **Deploy again** over it, then **Undeploy**. Check the folder for any `*.ue5dump-stage` leftover | all three succeed exactly as before; no `.ue5dump-stage` file is ever left behind; the grid never shows "Other proxy" for a DLL we just wrote | staging changed the publish from a copy to a copy+rename — the first-time-deploy path and the locked-target path are the two that must not regress |
+> | AC11 | with the game **running** (so the proxy is loaded and locked), click Deploy | still "File locked (game running?)", and the existing proxy is intact | the rename now raises the sharing violation the direct copy used to; the message must not change |
+> | AC12 | on this machine (multi-library Steam install), open Proxy Deploy and let it scan | the same library folders as before are found; `proxy`/`init` log has **no** "libraryfolders.vdf is malformed" line | the parser is fully unit-tested but its input is a real Valve-written file — a rejected real VDF would silently halve game detection |
 
 ### ⬜ PART-FIXED 2026-08-19, NEEDS A LIVE CHECK `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored"
 
@@ -6670,6 +6691,30 @@ on it read dead memory.
     So the chain resolved **CE's own install folder**, exactly the "only runs when every cheap slot
     misses" caveat this row already carried. Leave that half ⬜. See the finding below for what it
     resolved *to*.
+
+### ⛔ NEW 2026-08-19 `[CACHEWIPE-DLL-2026-08-19]` — the DLL half of AC4/AC5 is still there (found while fixing the UI half)
+
+> The C# side is fixed (audit L7, build 3262): a corrupt `UE5CEDumper.{Machine}.json` is now moved
+> aside as `<name>.corrupt-<stamp>` before anything may write, and an Error names the file and the
+> recovery step. **The DLL writes the same file and still does the old thing.** `Flamme.cpp:371`
+> (and the identical `:519`, `:580`) parse with `allow_exceptions=false` and then
+> `if (!root.is_object()) root = json::object();` — so a corrupt document is replaced in memory by
+> an empty one and `WriteJsonAtomic` publishes a **one-game** file over it. Every other game's scan
+> record, `ueVersionUserOverride`, `invokeTimeoutMs` and the DLL's own `versionDetectRev` stamp are
+> gone, with nothing logged beyond the generic save line. It is the same defect, on the same file,
+> in the process **more likely to hit it** (the game side writes on every scan).
+>
+> **Fix shape (small):** mirror the C# rule — on `is_discarded()` / not-an-object, rename the file
+> to `<name>.corrupt-<stamp>` and `LOG_WARN` the path *before* building a fresh `root`; if the
+> rename fails, **return without writing**. `Flamme` already has the pieces: `MakeTempPath` shows
+> the naming idiom and `SweepOrphanTemps` shows the scoped, age-guarded directory walk. Keep the
+> stamp format byte-identical to `AtomicFileHygiene.QuarantineNameFor` so one sweep can bound both
+> sides' quarantine later. ⚠ No test target compiles `Flamme.cpp`, so the decision (`is this
+> document a wipe candidate, and may I proceed without a quarantine?`) must go in `Flamme.h` beside
+> `ShouldPublishAtomicWrite`, per the L4 precedent.
+>
+> Not folded into L7 because that batch is scoped to `ui/UE5DumpUI/Services/`, and a DLL change
+> needs a `-Target DLL` build to mean anything.
 
 ### ⛔ NEW 2026-08-18 `[STALEDLL-2026-08-18]` — a 6-month-old `UE5Dumper.dll` sits in CE's install folder and the `.CT` will pick it
 

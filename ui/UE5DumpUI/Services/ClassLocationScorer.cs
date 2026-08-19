@@ -19,6 +19,26 @@ namespace UE5DumpUI.Services;
 /// "AnimCharacter" picks up both the Anim penalty AND the Character
 /// bonus, accurately reflecting that it's an animation event on a
 /// character).
+///
+/// TWO PROPERTIES OF THIS TABLE THAT ITS ROW COMMENTS USED TO DENY
+/// (audit #5 AC7 / AC8 — the comments were wrong, the code was right):
+///
+/// 1. THERE IS NO KEYWORD GATE, and there structurally cannot be one:
+///    both entry points take the class name and NOTHING else, so no rule
+///    can condition its bonus on the function/property name. Four rule
+///    blocks used to claim "keyword-gated so the +2 only lands when the
+///    name is itself relevant". Untrue — every bonus lands on the class
+///    name alone, whatever the member is called. Adding a gate would
+///    change the score of every row in every game, so it is a design
+///    change to argue for, not a comment to believe.
+///
+/// 2. EVERY MATCHING ROW STACKS; none is a fallback for the rows above
+///    it. "PlayerController" scores PlayerController(+3) + Player(+2) = 5,
+///    and "LocalPlayer" scores LocalPlayer(+4) + Player(+2) = 6. That is
+///    deliberate and pinned by PropertyScoringTableTests, but it means the
+///    class name ALONE can reach KeywordScoringTable.InterestingThreshold
+///    (5) with zero keyword hits — e.g. "PlayerCharacter" = Player(+2) +
+///    Character(+3). Weigh that before adding another common token.
 /// </summary>
 public static class ClassLocationScorer
 {
@@ -37,9 +57,11 @@ public static class ClassLocationScorer
         ("PlayerController",  3),
         ("PlayerState",       3),
         // Generic "Player" — catches game-named classes like BP_Player_C,
-        // AnimMan_Player_C, MyPlayerStats, etc. that contain "Player" but
-        // not the more specific tokens above. Mild bonus (+2) since some
+        // AnimMan_Player_C, MyPlayerStats, etc. Mild bonus (+2) since some
         // false-positives (PlayerCameraManager) are still tolerable.
+        // NOT a fallback for the four rows above: it STACKS with them, so
+        // "PlayerController" scores 3+2=5 and "PlayerCharacter" 3+2=5 —
+        // the interesting threshold, from the class name alone. (AC7)
         ("Player",            2),
         // === Build 686 — Phase 2 function-side analyzer additions.
         // 15-game cross-game function-token co-occurrence:
@@ -53,8 +75,9 @@ public static class ClassLocationScorer
         // === 7-game cross-game analysis (2026-07-09, ES2/SEED/TQ2/Avowed/
         // DQ7R/HogwartsLegacy/SB): Health* (4/7) and Damage* (5/7) classes
         // host cheat-relevant functions. Clean tokens (no core UE class
-        // contains them); keyword-gated so the +2 only lands when the
-        // function name is itself relevant. ===
+        // contains them). The +2 lands on the CLASS NAME ALONE — there is no
+        // keyword gate here or anywhere in this table (see the class doc);
+        // the earlier claim of one was never implemented. (AC8) ===
         ("Health",            2),
         ("Damage",            2),
         // Game-level systems
@@ -132,8 +155,9 @@ public static class ClassLocationScorer
         new("Inventory",        3, false),
         new("Equipment",        3, false),
         // Generic "Player" catches game-named classes like BP_Player_C,
-        // AnimMan_Player_C, MyPlayerStats, etc. that contain "Player" but
-        // not the more specific tokens above. Mild bonus (+2).
+        // AnimMan_Player_C, MyPlayerStats, etc. Mild bonus (+2). NOT a
+        // fallback for the rows above — it STACKS with them (LocalPlayer
+        // scores 4+2=6, pinned by PropertyScoringTableTests). (AC7)
         new("Player",           2, false),
         // Game-level
         new("GameMode",         2, false),
@@ -159,9 +183,10 @@ public static class ClassLocationScorer
 
         // === 7-game cross-game analysis (2026-07-09): Health* (4/7) and
         // Damage* (5/7) classes host cheat-relevant properties (HealthComponent,
-        // DamageDealer, etc.). Clean tokens — no core UE class contains them;
-        // keyword-gated so the +2 only matters when the property name is
-        // already a Stats/Combat hit. Rejected same-pass: Item (redundant with
+        // DamageDealer, etc.). Clean tokens — no core UE class contains them.
+        // The +2 lands on the CLASS NAME ALONE: there is no keyword gate in
+        // this table (see the class doc), and the claim of one was never
+        // implemented. (AC8) Rejected same-pass: Item (redundant with
         // the Resources keyword + UI-widget over-match), Jump/Objective/Mission
         // (marginal), Modifier (UInputModifier_* engine over-match). ===
         new("Health",           2, false),
@@ -186,9 +211,15 @@ public static class ClassLocationScorer
         new("LocalPlayer",          4, true),
         new("GameViewportClient",   4, true),
         new("HUD",                  4, true),
-        new("UCheatManager",        4, true),
-        // Bare "Cheat" without UCheatManager prefix catches game-specific
-        // CheatManager subclasses (e.g. MyGameCheatMgr).
+        // "CheatManager", NOT "UCheatManager": these are UE *reflection* names
+        // straight off the FName, which carry no U/A prefix — "PlayerController",
+        // "LocalPlayer", "WorldSettings" above are all written that way, and
+        // ConsoleViewModel.IsLikelyUCheatManagerExec matches the same substring
+        // for the same reason. A "UCheatManager" row therefore matched nothing a
+        // game can produce, and on the one input it COULD match it double-scored
+        // (+4 for itself and +4 here) — so it is deleted, not renamed. Catches
+        // the engine class and game subclasses alike: MyGameCheatManager,
+        // BP_CheatManager_C. (audit #5 AC9)
         new("CheatManager",         4, true),
 
         // No anim/audio/FX penalties on the Property side. Rationale:
