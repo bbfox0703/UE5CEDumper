@@ -322,7 +322,16 @@ public partial class ProxyDeployViewModel : ViewModelBase
         set { if (value) ScanDrivesMode = true; }
     }
 
-    /// <summary>Whether any games are selected for batch operations.</summary>
+    /// <summary>Whether any games are selected for batch operations.
+    ///
+    /// <para>audit #5 AE29 — ⚠ NO VIEW BINDS THIS TODAY, and it has no per-row hook, so it is
+    /// only correct immediately after the five bulk sites that re-raise it (Select All / Clear /
+    /// Invert / rescan). Its sibling <see cref="HasOrphanSelection"/> IS bound and DOES have one
+    /// (<see cref="OnOrphanRowChanged"/>). The dead <c>NotifySelectionChanged()</c> that existed
+    /// solely to raise this — documented "called from View", called from nowhere — has been
+    /// removed. Before binding this to anything, subscribe to each <c>DetectedGame</c>'s
+    /// <c>PropertyChanged</c> the way the orphan list does, or ticking one row will not update
+    /// it.</para></summary>
     public bool HasSelection => Games.Any(g => g.IsSelected);
 
     public ProxyDeployViewModel(IProxyDeployService deploy, ILoggingService log,
@@ -700,8 +709,16 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>True when the delete button should be enabled.</summary>
     public bool HasOrphanSelection => SelectedOrphanCount > 0;
 
-    /// <summary>Re-raise the orphan selection computed properties. Called by the view when a row
-    /// checkbox toggles, because a change inside a collection item is not observed by the collection.</summary>
+    /// <summary>Re-raise the orphan selection computed properties, because a change inside a
+    /// collection item is not observed by the collection itself.
+    ///
+    /// <para>audit #5 AE28 — this used to say "Called by the view when a row checkbox toggles".
+    /// No view calls it, and the design is better than that: the trigger is
+    /// <see cref="OnOrphanRowChanged"/>, a per-row <c>PropertyChanged</c> subscription taken out
+    /// when the scan populates <c>Orphans</c>. The other three call sites are the scan finishing
+    /// and the cleanup loop's success and cancel paths. Naming a view call-site that does not
+    /// exist is how someone later "restores" it and double-raises, or removes the real
+    /// subscription believing the view covers it.</para></summary>
     public void NotifyOrphanSelectionChanged()
     {
         OnPropertyChanged(nameof(SelectedOrphanCount));
@@ -1525,14 +1542,6 @@ public partial class ProxyDeployViewModel : ViewModelBase
     private void InvertSelection()
     {
         foreach (var g in Games) g.IsSelected = !g.IsSelected;
-        OnPropertyChanged(nameof(HasSelection));
-    }
-
-    /// <summary>
-    /// Notify that selection changed (called from View).
-    /// </summary>
-    public void NotifySelectionChanged()
-    {
         OnPropertyChanged(nameof(HasSelection));
     }
 

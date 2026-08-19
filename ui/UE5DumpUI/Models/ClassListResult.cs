@@ -9,7 +9,18 @@ public partial class GameClassEntry : ObservableObject
 {
     public string ClassName { get; set; } = "";
     public string ClassAddr { get; set; } = "";
-    public string ClassPath { get; set; } = "";
+
+    /// <summary>
+    /// Full object path, e.g. "/Script/Engine.Actor". Setting it invalidates the cached
+    /// <see cref="Package"/> prefix derived from it — see the note there (audit #5 AE27).
+    /// </summary>
+    public string ClassPath
+    {
+        get => _classPath;
+        set { _classPath = value; _package = null; }
+    }
+    private string _classPath = "";
+
     public string SuperName { get; set; } = "";
     public int PropertyCount { get; set; }
     public int PropertiesSize { get; set; }
@@ -25,11 +36,20 @@ public partial class GameClassEntry : ObservableObject
     /// <summary>
     /// Package prefix derived from <see cref="ClassPath"/> — the leading
     /// `/Script/Engine` / `/Game` / `/Script/ES2` portion that the
-    /// "Package:" filter matches against. Pre-computed once so the
+    /// "Package:" filter matches against. Computed once per <see cref="ClassPath"/> so the
     /// DataGrid binding doesn't recompute per repaint and so the filter
     /// label aligns with a visible column.
+    ///
+    /// <para>audit #5 AE27 — the "pre-computed once" claim was here before anything
+    /// implemented it: this was an expression-bodied property that re-ran
+    /// <see cref="ExtractPackagePrefix"/> on every single read, i.e. per visible row per
+    /// repaint AND once per entry per keystroke in the Package filter. Memoized now, and
+    /// the memo is invalidated by the <see cref="ClassPath"/> setter rather than assumed
+    /// write-once — <c>ClassPath</c> is a settable property, so a plain <c>??=</c> would
+    /// have traded a false comment for a stale value.</para>
     /// </summary>
-    public string Package => ExtractPackagePrefix(ClassPath);
+    public string Package => _package ??= ExtractPackagePrefix(ClassPath);
+    private string? _package;
 
     /// <summary>
     /// Extract the package prefix from a class path.

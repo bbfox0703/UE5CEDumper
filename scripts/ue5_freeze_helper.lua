@@ -673,9 +673,17 @@ local function fetchInstancePage(className, pageIndex, derived)
         'CMD_LIST_INSTANCES result=%d (%s)', result, em)
     end
 
+    -- Unsigned, which is what we want: numParms is a uint16 count.
+    --
+    -- audit #5 AA35 -- this used to be followed by `if returned < 0 then returned =
+    -- returned + 65536 end` under the comment "readSmallInteger returns signed". It does
+    -- not, and the branch was unreachable. CE's readSmallIntegerEx (LuaHandler.pas:1614)
+    -- defaults `signed:=false` when called with one argument and pushes `word(v)`, so the
+    -- range is 0..65535 and `returned < 0` can never hold. ue5_invoke_helper.lua:695-707
+    -- already documented the same fact correctly and passes `true` explicitly when it
+    -- wants a signed read (AA20) -- two files in this repo disagreeing about one CE API is
+    -- the part worth removing, not just the dead line.
     local returned = readSmallInteger(mb + OFF_NUM_PARMS) or 0
-    -- readSmallInteger returns signed; we packed an unsigned uint16.
-    if returned < 0 then returned = returned + 65536 end
     local totalPagesLocal = readInteger(mb + OFF_FUNC_FLAGS) or 1
 
     -- Contract-2 identity witness. Read AFTER result==0, because the DLL only

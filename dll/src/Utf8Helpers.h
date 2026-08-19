@@ -215,8 +215,19 @@ inline bool LooksLikeDecodedText(const std::string& s) {
 // bytes of a UTF-16 CJK buffer contain lone continuation bytes (a UTF-16 low byte like
 // 0x87 is a continuation byte with no lead), which is not a "mostly text" question but
 // a "this cannot be UTF-8" one. (B28)
+//
+// `hasMultiByte` is written ONLY on success (audit #5 AD25). It used to be set true the
+// moment any valid multi-byte sequence was accepted, so a buffer whose FIRST sequence
+// was fine and whose second was not returned false with the flag left true — an
+// out-param contradicting its own return. Nothing reads it on a false return today
+// (DecodeFStringBuffer gates on `utf8Ok`, which short-circuits), so this is a latent
+// trap rather than a live bug; but "only meaningful when it returned true" is a rule the
+// next caller has to be told, and not needing to tell them is better than telling them.
+// Accumulating into a local and committing at the single success exit means the
+// out-param is now simply true or false about the buffer as a whole.
 inline bool IsWellFormedUtf8(const uint8_t* p, size_t n, bool& hasMultiByte) {
     hasMultiByte = false;
+    bool sawMultiByte = false;
     for (size_t i = 0; i < n; ) {
         const uint8_t c = p[i];
         if (c < 0x80) { ++i; continue; }         // ASCII
@@ -233,9 +244,10 @@ inline bool IsWellFormedUtf8(const uint8_t* p, size_t n, bool& hasMultiByte) {
         }
         if (cp < lo || cp > hi) return false;                // overlong / out of range
         if (cp >= 0xD800 && cp <= 0xDFFF) return false;      // surrogate half
-        hasMultiByte = true;
+        sawMultiByte = true;
         i += need + 1;
     }
+    hasMultiByte = sawMultiByte;   // committed only here — see the AD25 note above
     return true;
 }
 

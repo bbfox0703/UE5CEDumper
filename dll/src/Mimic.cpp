@@ -33,6 +33,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <exception>   // std::uncaught_exceptions — CompoundOpGuard's unwind branch (MB3)
 #include <thread>
 #include <algorithm>
 
@@ -109,19 +110,47 @@ static void SetError(int32_t code, const char* msg);
 static void SetDone(int32_t resultCode);
 static bool EnsureInitialized();
 
+// Result code published when a command handler escapes with an exception. A new
+// NEGATIVE result code is not a contract change: `MAILBOX_CONTRACT` versions the
+// layout plus the Cmd/op numbering, and every generated script already treats any
+// non-zero `result` as failure and renders `errorMsg` verbatim. Distinct from -1
+// ("Unknown command") on purpose — this one means the command WAS recognised and
+// dispatched, which is a different thing to tell the user.
+static constexpr int32_t MB_ERR_HANDLER_THREW = -11;
+
 // RAII guard for compound operations — increments s_compoundDepth on entry,
 // decrements on exit. When the outermost guard destructs (depth back to 0)
 // it publishes status=DONE / cmd=IDLE based on whatever `result` was last
 // written. Catches all return paths (success, early error, exception).
+//
+// ⚠ "any return path" includes UNWINDING, and that path needed its own answer
+// (audit #5 MB3, sibling of the per-iteration guard in PollingThreadBody).
+// `result` holds whatever the last COMPLETED sub-step wrote, and the sub-steps
+// only write it on failure — HandleInvokeByName returns early when it is
+// non-zero, so at the moment a later sub-step throws `result` is normally 0.
+// Publishing DONE with that reports SUCCESS for a command that never ran to
+// completion, and CE Lua reads `result == 0` as "the invoke worked": strictly
+// worse than the hang it replaced, because the caller then trusts the params
+// buffer. Comparing against the count captured at ENTRY (not `!= 0`) is what
+// makes this correct inside a nested unwind.
 struct CompoundOpGuard {
-    CompoundOpGuard() { ++s_compoundDepth; }
+    CompoundOpGuard() : uncaughtAtEntry(std::uncaught_exceptions()) { ++s_compoundDepth; }
     ~CompoundOpGuard() {
         --s_compoundDepth;
         if (s_compoundDepth == 0) {
+            if (std::uncaught_exceptions() > uncaughtAtEntry) {
+                g_invokeMailbox.result = MB_ERR_HANDLER_THREW;
+                strncpy(g_invokeMailbox.errorMsg,
+                        "command handler threw — the operation did NOT complete",
+                        sizeof(g_invokeMailbox.errorMsg) - 1);
+                g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+            }
             g_invokeMailbox.status = STATUS_DONE;
             g_invokeMailbox.cmd    = CMD_IDLE;
         }
     }
+
+    int uncaughtAtEntry;
 };
 
 // ---- winmm timer-resolution access ─────────────────────────────────────────
@@ -244,6 +273,11 @@ static void PollingThreadBody() {
     // visible without explicit fences. `volatile`-style access prevents
     // compiler reordering. If we ever switch the writer to in-process,
     // the cmd/status fields must become std::atomic<int32_t>.
+
+    // One WARN per session for a throwing handler, matching Routine::ReassertLoop:
+    // the poller runs at kPollIntervalMs, so an unlatched warning would fill the log.
+    bool warnedThrow = false;
+
     while (s_running.load(std::memory_order_acquire)) {
         int32_t cmd = g_invokeMailbox.cmd;
 
@@ -292,6 +326,24 @@ static void PollingThreadBody() {
                 continue;
             }
 
+            // ---- audit #5 MB3: guard the DISPATCH, not the whole thread ----
+            //
+            // PollingThreadProc's Routine::RunThreadGuarded is the outer net that
+            // stops a throw reaching a frame with no handler, and it stays. But it
+            // was ALSO the only guard, so one throwing handler unwound straight out
+            // of this loop and the CE mailbox was dead for the rest of the session —
+            // recoverable only by a CE Disable→Enable the user has no reason to try,
+            // since every subsequent script just times out.
+            //
+            // This is now the per-iteration form the two siblings already use:
+            // Routine::ReassertLoop guards per TICK, Stark guards per PE CALL. One
+            // bad command loses that command, not the mailbox.
+            //
+            // `threw` is set false by the lambda's own last statement rather than by
+            // a catch, so it stays true on ANY escape, including one the compiler
+            // routes around a `break`.
+            bool threw = true;
+            Routine::RunTickGuarded("Mailbox", warnedThrow, [&] {
             switch (cmd) {
             case CMD_FIND_INSTANCE:
                 HandleFindInstance();
@@ -341,6 +393,17 @@ static void PollingThreadBody() {
             default:
                 SetError(-1, "Unknown command");
                 break;
+            }
+            threw = false;
+            });
+
+            // Publish a definite failure rather than leaving status=PROCESSING for
+            // the script to time out on. CompoundOpGuard has already run for the one
+            // compound handler and written the same code; SetError here is what
+            // covers the other fourteen, which have no guard at all.
+            if (threw) {
+                SetError(MB_ERR_HANDLER_THREW,
+                         "command handler threw — the operation did NOT complete");
             }
         }
 

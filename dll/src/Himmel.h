@@ -152,10 +152,25 @@
 // UE 5.8 — THE ONE LAYOUT CHANGE THAT REACHES THIS FILE. 5.8 moved `FUObjectArray::ObjObjects`
 // from +0x10 to +0x00 (cache-locality reorder; `PreAllocatedObjects` went to the end), so on 5.8
 // the FUObjectArray BASE and ObjObjects are the SAME address. Consequence for pattern authoring,
-// and only this: the GObjects patterns that carry a version-fixed adjustment to turn an
-// ObjObjects/NumElements anchor back into a base anchor — `-0x10` on V10/AV1/AV2/RE2/V12, `-0x14`
-// on DI427_3/G427_2, `+0x0C` on G427_4 — encode PRE-5.8 arithmetic and overshoot on 5.8. That is
-// a MISS, not a wrong answer (ValidateGObjects finds no sane Num/Max at base-0x10), but it means
+// and only this: the GObjects patterns that carry a version-fixed adjustment encode PRE-5.8
+// arithmetic. THE THREE FAMILIES DO NOT TARGET THE SAME THING, and this paragraph used to say
+// they all produced "a base anchor" (audit #5 AD23) — the entries themselves say otherwise, and
+// getting it backwards is how a new pattern gets authored with the wrong adjustment:
+//
+//   * `-0x10` on V10/AV1/AV2/RE2/V12 — anchor `ObjObjects.Objects` (the chunk table) at
+//     base+0x10, target the FUObjectArray BASE. This family really is base-producing.
+//   * `-0x14` on DI427_3/G427_2 — anchor `ObjObjects.NumElements`, target **ObjObjects**, NOT the
+//     base. DI427_3's own comment says so in as many words, and `ValidateGObjects`'s "Default"
+//     preset independently confirms the arithmetic: it reads Num at +0x14 from the address it is
+//     given, so NumElements-0x14 is ObjObjects by construction.
+//   * `+0x0C` on G427_4 — anchor `ObjLastNonGCIndex` at base+0x04, target **ObjObjects** at
+//     base+0x10. Also not base-producing.
+//
+// Which changes the 5.8 conclusion for one of them. `-0x10` and `+0x0C` do overshoot on 5.8:
+// both cross the FUObjectArray/ObjObjects boundary that 5.8 moved. `-0x14` does NOT — its anchor
+// and its target are both INSIDE ObjObjects, so the reorder shifts them together and the
+// subtraction still lands on ObjObjects. Where the arithmetic does break it is a
+// MISS, not a wrong answer (ValidateGObjects finds no sane Num/Max at base-0x10), but it means
 // a pattern mined ON 5.8 should anchor the BASE — which is what the 5.8 oracle actually lands on
 // (GOBJ_ES53_1, adjustment 0). Same reason `sweep.sh`'s 5.8 row carries ONE truth value instead
 // of the usual `base | base+0x10` pair: the alias would score a hit on ObjObjects.NumChunks as

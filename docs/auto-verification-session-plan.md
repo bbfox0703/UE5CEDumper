@@ -975,7 +975,7 @@ Group 1 still runs the 10-minute partial as a genuine non-regression, recorded a
 46 → 40 on 2026-08-19, took audit **L10**'s five new items (AF7/AF8, AF10/AF11, AF12/AF13/AF22,
 AF16–AF23, AF21) the same day → 45, then **lost `A5`** (closed on the maintainer's own run) and
 **gained the four `[TAG]` mirrors** `PIPEBUSY` / `SLOTSYM` / `CLASSTOTAL` / `PROXYLOAD` → 49, then
-audit **L11**'s eight (F5, W8, V11, Y10/Y13, Y12, V10, Y11, V8) → **57**.
+audit **L11**'s eight (F5, W8, V11, Y10/Y13, Y12, V10, Y11, V8) → 57, then audit **L12**'s four INFO-tier mirrors (`AC13/AC14`, `AC15/AE27/AF25`, `MB3`, `AC17`) → **61**.
 Re-derive with `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two
 `###` under 「怎麼用這份清單」. This is **not** the same denominator as this file's older
 "64 checklist rows" headline, which counted register rows; that number is retired.
@@ -1056,6 +1056,10 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 | 55 | `V10` | **B** | **Sample-gated, and the gate is the whole difficulty**: it needs a title where the first scan leaves GObjects or GWorld unresolved. §7 already records that all 34 local titles resolve GWorld, so check that before scheduling — this may close as "no sample", which is a result |
 | 56 | `Y11` | **B** | Sample-gated on a UFunction taking an `FText` / `TArray` / `TMap` parameter. Cheapest next step is a corpus grep of an existing `list_all_functions` dump for those param types before launching anything |
 | 57 | `V8` | **B** | Sample-gated on a `UDataTable` with more than 64 rows — common in JRPGs, so pair it with a DQ / OCTOPATH launch that is already scheduled |
+| 58 | `AC13 / AC14` | **B** | Close the UI while still connected and grep `pipe-0.log` for `Pipe: ReadLoop error` (must be ABSENT — it was an NRE logging an ordinary shutdown as a fault). The AC13 half needs a write to fail, so kill the game mid-request; both share one injected session
+| 59 | `AC15 / AE27 / AF25` | **B** | Three pure regression confirmations — identical results, not new behaviour. The Proxy Deploy scan half needs no game at all, so it can ride any UI-only slot; the Package-filter and teleport-script halves want a game attached
+| 60 | `MB3` | **B** | ⭐ **Run first in any batch that injects.** The CE mailbox poller was restructured and **nothing compiles `Mimic.cpp`**, so no line of it has executed; the risk is ordinary dispatch, not the throw path. Cheaper first step is **A**: `tools/verify/mailbox_addr.py` resolves `g_invokeMailbox` with no CE, so one scripted command settles the regression question before CE is ever opened
+| 61 | `AC17` | **C** | Needs a volume **mounted into a folder** (`mountvol` / Disk Management), which is a one-off human setup rather than a game action. Once mounted the rest is clicking. A removable volume mounted the same way is the negative control and is the half that actually proves the fix
 
 ### Totals — and the direct answer to "how much of this can Auto drive?"
 
@@ -1066,12 +1070,12 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 | cat | count | items |
 |---|---|---|
 | **A** — fully headless | **11** | 2, 4, 10, 14, 17, 32, 35, 42, 43, 46, 50 |
-| **B** — Auto + computer-use, no human judgement | **29** | 1, 5, 6, 11, 12, 13, 15, 16, 18, 20, 23, 24, 29, 30, 31, 33, 34, 41, 44, 47, 48, 49, 51, 52, 53, 54, 55, 56, 57 |
-| **C** — needs a bounded human action | **15** | 3, 7, 9, 19, 21, 22, 25, 26, 27, 28, 36, 37, 38, 39, 45 |
+| **B** — Auto + computer-use, no human judgement | **32** | 1, 5, 6, 11, 12, 13, 15, 16, 18, 20, 23, 24, 29, 30, 31, 33, 34, 41, 44, 47, 48, 49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60 |
+| **C** — needs a bounded human action | **16** | 3, 7, 9, 19, 21, 22, 25, 26, 27, 28, 36, 37, 38, 39, 45, 61 |
 | **D** — impossible today | **2** | 8, 40 |
 
-**40 of 57 (70%) need no human judgement at all** — 11 of them with no GUI whatsoever. That is the
-honest headline. But read the C column before planning a batch: **six of the fifteen are one short
+**43 of 61 (70%) need no human judgement at all** — 11 of them with no GUI whatsoever. That is the
+honest headline. But read the C column before planning a batch: **six of the sixteen are one short
 gameplay bout** (`A11` + `A12` + `V1a` step 1 share a single one; `AA2/AA3`, `AA12/AA13`, `AD4`,
 `ST1` and `b719…` each need combat, a spawn, damage, or a queue drain), so one scheduled session with
 the maintainer present converts most of that category.

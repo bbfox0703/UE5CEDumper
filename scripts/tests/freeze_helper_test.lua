@@ -55,7 +55,20 @@ end
 
 function readQword(a)        return MEM[a] end
 function readInteger(a, _)   return MEM[a] end
-function readSmallInteger(a) return MEM[a] end
+-- Models CE's readSmallIntegerEx (LuaHandler.pas:1614): one argument means UNSIGNED, and
+-- the value is pushed as `word(v)` so the range is 0..65535. The stub used to hand back
+-- MEM[a] raw, which would have let a negative fixture value reach the helper and made the
+-- dead sign-fixup AA35 removed look reachable. Same shape as invoke_helper_test.lua:93.
+function readSmallInteger(a, signed)
+  local v = MEM[a]
+  if v == nil then return nil end
+  if signed then
+    if v >= 0x8000 then return v - 0x10000 end
+    return v
+  end
+  if v < 0 then return v + 0x10000 end
+  return v
+end
 function readByte(a)         return BYTES[a] end
 function readString(a, _)    return MEM[a] end
 function readBytes(a, n, t)  if t then return { BYTES[a] } end return BYTES[a] end

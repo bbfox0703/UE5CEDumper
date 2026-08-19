@@ -15,12 +15,16 @@ namespace UE5DumpUI.Services;
 ///   ui-init-0.log, ui-pipe-0.log, ui-view-0.log
 ///   Prefixed with "ui-" to avoid collision with DLL log files.
 ///
-/// Each file: 5MB cap. Retention is by AGE, not generation count — at startup the
-/// previous session's -0.log is archived to -YYYYMMDD-HHMMSS.log (stamped from its
-/// own mtime), and archives older than Constants.LogMaxAgeDays are deleted. A file
-/// count could not express "keep 15 days": rotation runs on every startup, so a few
-/// restarts discarded everything before them regardless of date. Mirrors
-/// Grimoire::LOG_RETENTION_DAYS in the DLL's Sein logger.
+/// Each file is capped at Constants.LogMaxSizeBytes (8 MB). Retention is by AGE, not
+/// generation count — at startup the previous session's -0.log is archived to
+/// -YYYYMMDD-HHMMSS.log (stamped from its own mtime), and archives older than
+/// Constants.LogMaxAgeDays (21 days) are deleted. A file count could not express
+/// "keep 21 days": rotation runs on every startup, so a few restarts discarded
+/// everything before them regardless of date. Mirrors Grimoire::LOG_RETENTION_DAYS
+/// in the DLL's Sein logger.
+/// (audit #5 Z17 — this block said "5MB" and "keep 15 days"; both constants had moved
+/// to 8 MB / 21 days. Named rather than re-stated numerically where the constant exists,
+/// so the next change to either cannot silently invalidate the prose again.)
 ///
 /// Startup housekeeping runs in three passes, widening as it goes:
 ///   1. per-category archive + prune of THIS folder  (ArchivePreviousLog / PruneAgedLogs)

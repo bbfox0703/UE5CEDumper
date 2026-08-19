@@ -177,8 +177,35 @@ public sealed class PipeClient : IPipeClient
         // Transport timing starts here and ends at the response — the ONE extra
         // measurement that lets DiagnosticsProbe split a heavy operation into
         // dll / ipc / ui. See PipeTransportStats for why that split matters.
-        long _txStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        //
+        // audit #5 AC13 — the record used to sit in a finally around `await tcs.Task`
+        // ALONE, so everything before that await (the write-lock wait, WriteLineAsync,
+        // and every throw out of the IOException/ObjectDisposedException classifier)
+        // bypassed it and a request that DIED IN THE WRITE contributed 0 ms. That is
+        // the opposite of what the finally's own comment asked for — "a cancelled or
+        // faulted request still consumed transport time, and dropping those would
+        // flatter the IPC figure exactly when the pipe is misbehaving" — because a
+        // misbehaving pipe is exactly when writes fail, so the samples most worth
+        // having were the ones being dropped. The comment had the intent right and
+        // the placement wrong, so the body moved rather than the comment.
+        //
+        // The not-connected guard deliberately stays ABOVE the timer: nothing was
+        // sent, so there is no transport time to attribute, and a 0 ms sample would
+        // deflate the average just as the missing write-failures inflated it.
+        long txStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            return await SendCoreAsync(request, writer, ct);
+        }
+        finally
+        {
+            PipeTransportStats.Record(System.Diagnostics.Stopwatch.GetTimestamp() - txStart);
+        }
+    }
 
+    private async Task<JsonObject> SendCoreAsync(JsonObject request, StreamWriter writer,
+                                                 CancellationToken ct)
+    {
         int id = Interlocked.Increment(ref _nextId);
         request["id"] = id;
 
@@ -280,24 +307,29 @@ public sealed class PipeClient : IPipeClient
                 orphan.TrySetException(new IOException("Pipe disconnected during send"));
         }
 
-        try
-        {
-            return await tcs.Task;
-        }
-        finally
-        {
-            // finally, not after the await: a cancelled or faulted request still
-            // consumed transport time, and dropping those would flatter the IPC
-            // figure exactly when the pipe is misbehaving.
-            PipeTransportStats.Record(System.Diagnostics.Stopwatch.GetTimestamp() - _txStart);
-        }
+        // The transport-time record lives in SendAsync's finally, which wraps this whole
+        // method — so a cancel or fault HERE is counted, and so is one in the write above
+        // (audit #5 AC13).
+        return await tcs.Task;
     }
 
     private async Task ReadLoopAsync()
     {
+        // Capture the reader into a local, for exactly the reason SendAsync captures the
+        // writer (audit #5 AC14). The loop used to test `_reader != null` on the FIELD and
+        // then await `_reader.ReadLineAsync` on the FIELD, and Dispose() calls CloseStreams()
+        // — which nulls it — WITHOUT awaiting this loop, so the null can land between the
+        // test and the dereference. The resulting NullReferenceException is not covered by
+        // the IOException / ObjectDisposedException filters below; it falls through to the
+        // generic handler and logs a "ReadLoop error" for what is an ordinary shutdown.
+        // A disposed local instead throws ObjectDisposedException, which IS filtered.
+        // Capturing once is correct: _reader is assigned in ConnectAsync before this task
+        // starts and is only ever nulled, never replaced, for the life of the loop.
+        var reader = _reader;
+
         try
         {
-            while (!_cts.IsCancellationRequested && _reader != null)
+            while (!_cts.IsCancellationRequested && reader != null)
             {
                 // Telemetry split (snapshot capture profiling): the response line read, the
                 // "Pipe RX" debug log of it, and the JSON DOM parse each scale with payload
@@ -305,7 +337,7 @@ public sealed class PipeClient : IPipeClient
                 // inject the ms into the response object so a snapshot_chunk caller can read
                 // them back (harmless to every other response).
                 var readSw = System.Diagnostics.Stopwatch.StartNew();
-                var line = await _reader.ReadLineAsync(_cts.Token);
+                var line = await reader.ReadLineAsync(_cts.Token);
                 readSw.Stop();
                 if (line is null)
                 {

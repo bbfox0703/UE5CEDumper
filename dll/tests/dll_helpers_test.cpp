@@ -5494,6 +5494,102 @@ static void Test_Renge_ApplyPayloadKeepsEnvelope() {
     }
 }
 
+// audit #5 AD24 — the three ENVELOPE BUILDERS themselves had no test, and the reason
+// was real: "structurally UNLINKABLE from the only test target that includes it".
+//
+// My first pass called that premise false, reasoning that everything in Renge.h is
+// `inline` so there is nothing to link. THE LINKER DISAGREED, and it was right:
+// `MakeResponse` calls `Stark::IsGameThreadResponsive`, which is DECLARED in Stark.h but
+// DEFINED in Stark.cpp — and no test target compiles Stark.cpp. `inline` makes the
+// builder itself linkable; it does nothing for what the builder calls. MakeError and
+// MakeEvent were always testable (neither touches Stark); MakeResponse was not.
+//
+// The one dependency is supplied below rather than by adding Stark.cpp to the target,
+// which would drag in MinHook and the Win32 hook machinery for a JSON test. The stub is
+// safe against drift in the way that matters: it has to match the declaration in Stark.h
+// that Renge.h already pulls in, so a signature change is a compile error here, not a
+// silently diverging fixture. It returns a FIXED value, which is why the assertions
+// below pin the presence and type of `game_thread_stalled` and only assert its value in
+// the one case that is about precedence rather than about liveness.
+namespace Stark {
+bool IsGameThreadResponsive(int32_t /*thresholdMs*/) { return true; }
+}   // namespace Stark
+
+static void Test_Renge_EnvelopeBuilders() {
+    std::printf("Test_Renge_EnvelopeBuilders\n");
+
+    // MakeResponse: id + ok=true + the liveness hint, with no payload at all.
+    {
+        nlohmann::json res = Renge::MakeResponse(11);
+        EXPECT("MakeResponse sets id", res.contains("id") && res["id"] == 11);
+        EXPECT("MakeResponse sets ok=true", res.contains("ok") && res["ok"] == true);
+        EXPECT("MakeResponse always carries the liveness hint",
+               res.contains("game_thread_stalled") && res["game_thread_stalled"].is_boolean());
+        EXPECT("MakeResponse with no payload has exactly the envelope", res.size() == 3);
+    }
+
+    // A payload splices in WITHOUT displacing any envelope key.
+    {
+        nlohmann::json data;
+        data["total"] = 3;
+        data["items"] = nlohmann::json::array({1, 2, 3});
+        nlohmann::json res = Renge::MakeResponse(12, std::move(data));
+        EXPECT("payload keeps id", res["id"] == 12);
+        EXPECT("payload keeps ok", res["ok"] == true);
+        EXPECT("payload keeps liveness hint", res.contains("game_thread_stalled"));
+        EXPECT("payload lands", res["total"] == 3 && res["items"].size() == 3);
+    }
+
+    // The documented precedence: a handler that sets game_thread_stalled itself WINS,
+    // because ApplyPayload runs after the envelope is stamped. This is the one envelope
+    // key a payload is allowed to overwrite, and the comment on MakeResponse says so.
+    {
+        nlohmann::json data;
+        data["game_thread_stalled"] = true;
+        nlohmann::json res = Renge::MakeResponse(13, std::move(data));
+        EXPECT("handler's own liveness value wins over the envelope's",
+               res["game_thread_stalled"] == true);
+    }
+
+    // A non-object payload is refused rather than allowed to replace the envelope.
+    {
+        nlohmann::json res = Renge::MakeResponse(14, nlohmann::json::array({9}));
+        EXPECT("array payload cannot destroy the response envelope",
+               res.is_object() && res["id"] == 14 && res["ok"] == true);
+    }
+
+    // MakeError: ok=false and an error string, and NO liveness hint — it does not go
+    // through MakeResponse, which is easy to "tidy up" into a shared path by accident.
+    {
+        nlohmann::json err = Renge::MakeError(15, "boom");
+        EXPECT("MakeError sets id", err["id"] == 15);
+        EXPECT("MakeError sets ok=false", err.contains("ok") && err["ok"] == false);
+        EXPECT_EQ_STR("MakeError carries the message", err["error"].get<std::string>(), "boom");
+        EXPECT("MakeError is exactly id+ok+error", err.size() == 3);
+    }
+
+    // MakeEvent: an "event" key, NO id (the UI routes on the absence of one), and the
+    // same payload rule as MakeResponse.
+    {
+        nlohmann::json evt = Renge::MakeEvent("scan_progress");
+        EXPECT_EQ_STR("MakeEvent names the event", evt["event"].get<std::string>(), "scan_progress");
+        EXPECT("MakeEvent carries no id — that is how a push is told from a response",
+               !evt.contains("id"));
+
+        nlohmann::json data;
+        data["pct"] = 40;
+        nlohmann::json evt2 = Renge::MakeEvent("scan_progress", std::move(data));
+        EXPECT("event payload lands", evt2["pct"] == 40);
+        EXPECT_EQ_STR("event key survives its payload",
+                      evt2["event"].get<std::string>(), "scan_progress");
+
+        // The envelope-destroying case for events, same as response #4 above.
+        nlohmann::json evt3 = Renge::MakeEvent("tick", nlohmann::json::array({1}));
+        EXPECT("array payload cannot destroy the event envelope",
+               evt3.is_object() && evt3.contains("event"));
+    }
+}
+
 // B4 — the mailbox poller needs immunity from the PER-COMMAND cancel WITHOUT being
 // classified a background worker. One flag used to answer both questions; this asserts
 // they are now genuinely independent. The second EXPECT in the poller block is the
@@ -6583,6 +6679,7 @@ int main() {
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
+    RUN(Test_Renge_EnvelopeBuilders);            // AD24 — MakeResponse / MakeError / MakeEvent
 
     // DynOff — FFieldClass::Name probe (UE 5.8 virtual-dtor member shift)
     RUN(Test_FFieldClassName_Probe);

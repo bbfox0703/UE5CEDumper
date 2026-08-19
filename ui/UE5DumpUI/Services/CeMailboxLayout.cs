@@ -50,6 +50,12 @@ internal static class CeMailboxLayout
 
     // Cmd opcodes (must match Mimic.h Cmd enum).
     public const int CmdSetDebugCamera = 7;   // CMD_SET_DEBUG_CAMERA
+    // audit #5 AF25 — 8 was the one gap in this table, even though the class summary above
+    // names Teleport as a consumer. TeleportScriptGenerator and CoordLibraryScriptGenerator
+    // each carried their own `private const int CmdTeleport = 8` while every other generator
+    // referenced this class, so the single most-used opcode was the only one with no canonical
+    // home and two places to update.
+    public const int CmdTeleport       = 8;   // CMD_TELEPORT  (Wirbel — markers / POV / coord TP)
     public const int CmdProtect        = 9;   // CMD_PROTECT   (GodMode / Solitar)
     public const int CmdMovement       = 10;  // CMD_MOVEMENT  (Laufen knobs)
     public const int CmdFly            = 11;  // CMD_FLY       (Dunste — no-gravity 3D flight)

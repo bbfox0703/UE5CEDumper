@@ -51,7 +51,11 @@ Open work only. **Read this when deciding what to do next.**
 >   just the Proxy Deploy panel.
 > - Everything below that is ordinary feature/infra work, unrelated to the audit.
 >
-> State as of 2026-08-19: **58 audit findings open of 297 · 0 HIGH · 0 MED · 32 LOW · 26 INFO**
+> State as of 2026-08-19: **4 audit findings open of 297 · 0 HIGH · 0 MED · 3 LOW · 1 INFO**
+> (audit **L12** closed the whole INFO tier bar one: 25 of 26 rows, leaving **AB23** open by choice —
+> its `GroupSlotMatch::ownerClass` interning lives in `Aura.cpp`/`Fern.cpp`, which **no test target
+> compiles**, so it is in-game-only work; the memory *accounting* it exposed is fixed. The three LOWs
+> — AB9, A10, AA39 — remain open on purpose, see their rows.)
 > (⚠ this line read **98 / 72 LOW** before audit L8 while the CI-gated headline in the audit doc's
 > §3b read **88 / 62** — it had drifted by 10 and is now set from the gate's own output rather
 > than by subtracting a delta. Only §3b is CI-enforced; **re-derive, never hand-tally**.)
@@ -70,7 +74,7 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 3 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 5 items, and they are NOT in the count above
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -80,6 +84,8 @@ Open work only. **Read this when deciding what to do next.**
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
 > | `[PROPSEARCHCAP-2026-08-19]` | **Property Search has no Max control and its cap is the compile-time default 200** — very low for a query like `Health` on a real game. Audit #5 **Z10** is ✅ because the half that was a *defect* is fixed (the status line no longer advises "raise Max" on a panel with no Max), but the finding's own preferred repair — add the lever, as Instance Finder already has (`InstanceSearchCap` NumericUpDown, clamped 100..50000) — was **deliberately deferred**: it is a feature on an AXAML toolbar that cannot be visually verified in an unattended session, not an honesty fix. `SearchPropertiesAsync` already takes `limit`, so the work is a VM property + a NumericUpDown + passing it through; the status line's cap sentence already names the applied cap, so it needs no change. |
+> | `[AXAMLGATE-2026-08-19]` | ⚠ **`tools/check_axaml_strings.py` is RED on a clean tree and has been for at least four commits** (verified by re-running it against `179d2f80`, `be9a0a6a`, `ec72d7c0` and `25af33fd` — all FAIL), so CI's string gate currently fails for a reason nobody introduced today. It is a **false positive, not a missing string**: `Views/FreezeValueDialog.cs:278/283/288/289` builds its key dynamically as `Res.Get($"str.ValuePrompt.{_purpose}.{leaf}")`, so the static scanner records the literal prefix `str.ValuePrompt.` as a referenced-but-undefined key and cannot see the eight real `str.ValuePrompt.{Force,Freeze}.*` keys as referenced — hence "1 undefined + 8 dead". Both halves are artefacts of the same dynamic key. Fix is a choice: teach the checker the interpolation pattern, or make the four call sites select a static key. **A permanently-red gate trains people to ignore it**, which is the actual cost. Found during audit L12; deliberately not fixed there (it is a gate-design decision, not an INFO row). |
+> | `[VOLUMEROOT-2026-08-19]` | Three sites ask `Path.GetPathRoot` + `DriveInfo` about a path and therefore answer about the **host** volume, not the volume the path actually lives on when that path is a mount point: `WindowsPlatformService.GetFreeDiskSpaceBytes:407`, `GetTotalDiskSpaceBytes:419` (these feed the snapshot disk-space guard, so a game or snapshot folder on a mounted volume is measured against the wrong disk) and `WindowsLogCompressionService.IsSupported:71` (NTFS test; logs are under `%LOCALAPPDATA%`, so this one is near-theoretical). Audit #5 **AC17** fixed exactly this shape in `VolumeHasRecycleBin` using `GetVolumePathNameW` + the new `GetDriveTypeW` import, so the pattern to copy already exists in the same file; the disk-space pair additionally needs `GetDiskFreeSpaceExW` rather than `DriveInfo`. Found by the AC17 sibling-grep, left alone because it is a different feature and only a real mount point can verify it. |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
 >
 > *`[CONTAINERCAP-2026-08-18]` was **fixed 2026-08-19** (client-only badge + status line) and moved to
@@ -1622,6 +1628,63 @@ section against the register's `^###` headings went from **40 un-findable to 0**
 `PASTECRASH`, `FREEZESCOPE`, `PEHOOK`, `PEHOOKONCE`, `SDKHDR`, `CONTAINERCAP`. They are **not**
 exempt — `AUTOREFRESH` is already a full 繁中 section — they are simply behind. Mirror each as it is
 picked up.
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L12 (INFO tier): MB3 / AC13 / AC14 / AC15 / AC17 / AE27 / AF25
+
+*L12 closed **25 of the 26 INFO rows**; only these seven changed runtime behaviour. The other
+eighteen need NO live check and are deliberately not listed: **AD23 / AB22 / AE28 / AF27 / Z17** are
+comments only; **AD24 / AD25 / AD26 / AD27** are pinned by the C++ suite (258 utf8 + 1603 dll
+assertions, AD25 negative-controlled); **AA35** is covered by the offline Lua rigs (83 / 154 / 91);
+**AA36** touches only a CI checker and is proven by seven negative controls; **AE29** deletes a
+method with zero callers; **AC16 / AB21 / AF24 / AF26 / AE26** are re-verified negative results with
+no code change; **AB23** was not fixed (see its row). Categories are §10's A/B/C/D.*
+
+⚠ **MB3 is the row to run FIRST.** It restructures the CE mailbox poller — the loop every `.CT`
+command rides on, inside the game's own process — and **no test target compiles `Mimic.cpp`**, so
+none of it has executed. Two changes: the dispatch `switch` now runs inside
+`Routine::RunTickGuarded` so one throwing handler loses that command instead of ending the mailbox
+for the session, and `CompoundOpGuard`'s destructor now detects unwinding
+(`std::uncaught_exceptions()` vs the count at entry) and publishes `-11` instead of the stale
+`result` — which for `HandleInvokeByName` was normally **0**, i.e. it reported SUCCESS for a command
+that threw. **The regression risk is not the throw path (hard to trigger) but the ORDINARY path**:
+if the lambda refactor broke plain dispatch, every CE command breaks at once. So the check that
+matters is simply "do normal mailbox commands still work".
+
+| # | ID | cat | what to do | expected |
+|---|---|---|---|---|
+| 1 | `MB3` | **B** | Inject, then run any two `.CT` rows that use the mailbox (Teleport save/recall, and an Invoke). Cheaper first step: `tools/verify/mailbox_addr.py` resolves `g_invokeMailbox` with **no CE**, so a scripted poke of one command is category **A**. | Both succeed exactly as before. `pipe-0.log` / `init-0.log` show no `Mailbox: tick threw` and no `result=-11`. A `-11` with a message means a handler really did throw — capture the log, that is a genuine find. |
+| 2 | `MB3` | **C** | The throw path itself. Needs a handler that actually throws — no way to force one on demand today. | If it ever fires: the mailbox keeps polling (subsequent commands still work) and the script reports `-11` + "the operation did NOT complete" rather than hanging at `status=PROCESSING`. |
+| 3 | `AC14` | **B** | Connect the UI to an injected game, then close the UI **while still connected** (this is the `Dispose()` path that nulls `_reader` without awaiting the read loop). | `pipe-0.log` ends cleanly. **No `Pipe: ReadLoop error`** line — that entry was the NullReferenceException this fixed, logged as if an ordinary shutdown were a fault. |
+| 4 | `AC13` | **B** | System tab → note the IPC figure. Then kill the game while the UI is mid-request so a write fails, and look again. | The IPC total now includes the failed request's transport time. Previously a write-path failure contributed exactly 0 ms, i.e. the figure flattered itself precisely when the pipe was misbehaving. |
+| 5 | `AC15` | **B** | Proxy Deploy → Scan Steam libraries, and the generic drive scan. | The same games are found with the same names/paths. The only intended difference is speed: one full VERSIONINFO resource load per detected game is gone. `UeVersion` was and remains null. |
+| 6 | `AE27` | **B** | Game Class Filter → type in the Package box, and sort by the Package column. | Identical results to before. `Package` is now memoized per `ClassPath` with setter invalidation; a stale or blank Package cell would mean the invalidation is wrong. |
+| 7 | `AF25` | **B** | Teleport panel → generate the CE Lua / `.CT` teleport rows and run one. | Byte-identical script and working teleport. `CmdTeleport` moved to `CeMailboxLayout` but the value is unchanged (8), and the generator tests already assert the emitted text — this is belt-and-braces. |
+| 8 | `AC17` | **C** | **Needs a real mount point.** Mount a fixed volume into a folder (`mountvol`, or Disk Management → Change Drive Letter and Paths → Add → empty NTFS folder), put a leftover proxy under it, then run Proxy Deploy → leftover cleanup → Execute. | The file goes to the Recycle Bin. Before this fix the fixed-drive pre-filter answered about the HOST volume (`DriveInfo` normalizes through `Path.GetPathRoot`), so it always said "Fixed" for mount-point paths and judged nothing. A removable volume mounted the same way should now be REFUSED. |
+
+### ⬜ DEFERRED, NOT A VERIFICATION ITEM — AB23: intern `GroupSlotMatch::ownerClass`
+
+*Referenced from `dll/src/Radar.h` (the `kMaxGroupSessionLeaves` block) and from AB23's register row,
+which stays **open** — this is unshipped work, not something awaiting a live check. Listed here so
+those pointers resolve; it is counted by `check_audit_register.py`, not by the OPEN FIXES INDEX.*
+
+`GroupSlotMatch` carries a by-value `std::string ownerClass` per LEAF, which is the per-record heap
+string V3-A's interning was built to remove. `GroupSession` already has the machinery — `descriptors`
+and `instances` pools, reached through `internDesc` / `internInstance` in `ScanForValueGroup` — so the
+shape of the fix is settled: add an owner-class pool, replace the string with a `uint32_t` index, and
+update the single reader (`Fern.cpp:377`, `lj["owner_class"]`). Six sites in total: four writes in
+`Aura.cpp` (`:8427`, `:8774`, `:8899`, `:8965`), that one read, and the declaration.
+
+**Why it was not done in L12:** no test target compiles `Aura.cpp` or `Fern.cpp`, so a refactor of the
+group-scan hot record could only be verified in-game, and L12 ran unattended. What *was* done is the
+half that could be made safe offline — the memory accounting the finding exposed. The budget's
+justification read "~120 B per `GroupSlotMatch`, so 4,000,000 leaves is roughly half a GB", counting
+the string OBJECT and not its heap block; UE class names routinely exceed the SSO buffer, so the real
+ceiling is materially higher. The size is now derived (`kGroupSlotMatchBytes = sizeof(...)`) so it
+cannot go stale, the under-count is stated, and a `static_assert` guards the premise by failing if
+`kMaxGroupSessionLeaves * sizeof(GroupSlotMatch)` ever reaches 1 GB.
+
+**Do the interning together with a raise of `kMaxGroupSessionLeaves`, not before it** — the cap is the
+only thing that makes the per-leaf cost matter, and today's cap is far above any observed scan.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L11 (U1/U4 + stragglers): V8 / V10 / V11 / W8 / Y10 / Y11 / Y12 / Y13 / F5
 

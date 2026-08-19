@@ -417,23 +417,23 @@ public sealed class ProxyDeployService : IProxyDeployService
     }
 
     /// <summary>
-    /// Try to detect UE version from the game executable's PE version info.
-    /// Returns null if detection fails.
+    /// Always null: the UE version is detected by the injected DLL at run time
+    /// (<c>Genau::DetectVersionDetailed</c>), which is the only place that can see the
+    /// engine rather than guess at it from a resource string.
+    ///
+    /// <para>Kept as a named seam rather than inlining <c>null</c> at the two call sites,
+    /// so <see cref="DetectedGame.UeVersion"/> has one documented origin if an offline
+    /// heuristic is ever added. <c>ProxyDeployTests</c> asserts the null, which is what
+    /// keeps this honest.</para>
+    ///
+    /// <para>audit #5 AC15 — this used to open <c>FileVersionInfo.GetVersionInfo(exePath)</c>
+    /// into a local named <c>info</c> and then unconditionally <c>return null</c> without
+    /// reading it. That is a full VERSIONINFO resource load per detected game, on every
+    /// Steam scan and every generic drive walk, for a value that was discarded — and the
+    /// property it fed is read by nothing in the app. The dead load is gone; the seam and
+    /// its (null) contract are not.</para>
     /// </summary>
-    private static string? TryDetectUeVersion(string exePath)
-    {
-        try
-        {
-            var info = FileVersionInfo.GetVersionInfo(exePath);
-            // Some UE games embed "Unreal Engine" or version in FileDescription/Comments
-            // For now, just return null — version is detected by the DLL at runtime
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    private static string? TryDetectUeVersion(string exePath) => null;
 
     // ────────────────────────────────────────────────────────────────
     // Generic (non-Steam) Drive Scan

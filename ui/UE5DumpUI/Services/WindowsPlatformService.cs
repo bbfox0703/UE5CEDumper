@@ -828,6 +828,16 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     ///
     /// <para>Fixed-drive is still required as a cheap pre-filter: a removable or network volume
     /// is out of scope for this cleanup regardless of what the shell says.</para>
+    ///
+    /// <para>audit #5 AC17 — that pre-filter used to be <c>new DriveInfo(root).DriveType</c>, which
+    /// silently undid the paragraph above it. <c>DriveInfo</c>'s constructor normalizes its
+    /// argument through <c>Path.GetPathRoot</c>, so for the mount-point root this method works so
+    /// hard to obtain (<c>C:\Mount\Games\</c>) it reported on <c>C:\</c> — the HOST volume, the
+    /// exact wrong-disk answer <c>GetVolumePathName</c> is called to avoid. Since the host of a
+    /// mount point is essentially always Fixed, the filter degenerated to "always pass" for
+    /// precisely the paths it was supposed to judge. <c>GetDriveTypeW</c> accepts a volume
+    /// mount-point path directly (trailing backslash required, which
+    /// <c>GetVolumePathNameW</c> supplies) and answers about the real volume.</para>
     /// </summary>
     public bool VolumeHasRecycleBin(string fullPath)
     {
@@ -838,7 +848,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
             string root = volume.ToString();
             if (root.Length == 0) return false;
 
-            if (new DriveInfo(root).DriveType != DriveType.Fixed) return false;
+            if (GetDriveTypeW(root) != DRIVE_FIXED) return false;
 
             // POLICY FIRST. SHQueryRecycleBin below reports on the bin's CONTENTS and is
             // structurally incapable of reporting on whether the bin is switched on: a
@@ -925,6 +935,18 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetVolumePathNameW", SetLastError = true, ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetVolumePathNameW(string lpszFileName, StringBuilder lpszVolumePathName, int cchBufferLength);
+
+    /// <summary>DRIVE_FIXED, the one <c>GetDriveTypeW</c> value this cleanup will act on.</summary>
+    private const uint DRIVE_FIXED = 3;
+
+    /// <summary>
+    /// Drive type of a volume ROOT or mount-point path. Unlike <c>DriveInfo</c> this takes the
+    /// path as given — no <c>Path.GetPathRoot</c> normalization — so it answers about a volume
+    /// mounted into a folder rather than about that folder's host drive (audit #5 AC17).
+    /// Requires the trailing backslash that <c>GetVolumePathNameW</c> already returns.
+    /// </summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetDriveTypeW", ExactSpelling = true)]
+    private static extern uint GetDriveTypeW(string lpRootPathName);
 
     public bool MoveToRecycleBin(string path)
     {

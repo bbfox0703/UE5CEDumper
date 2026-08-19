@@ -200,16 +200,32 @@ static void Test_EncodeUtf16_MixedRealistic() {
 static void Test_EncodeUtf16_OutputAlwaysValidUtf8() {
     // Any output from EncodeUtf16 must round-trip cleanly through Sanitize.
     // This is the invariant nlohmann::json relies on.
+    //
+    // audit #5 AD26 — the input used to open `'A', 0xD800, 0xDE00` under the comment
+    // "ASCII + lone high + lone low (mixed)". It was neither: 0xD800 is a high
+    // surrogate and 0xDE00 is a LOW one, so those two units are a perfectly VALID
+    // pair and EncodeUtf16 combined them into U+10200. The array's only lone
+    // surrogate was the 0xDC00 near the end, so the "lone HIGH" branch
+    // (`ch` in D800..DBFF with a non-low successor) was never executed by the test
+    // that claims to be the pathological case. A lone high followed by ASCII is what
+    // actually reaches it.
     wchar_t pathological[] = {
-        'A', 0xD800, 0xDE00,        // ASCII + lone high + lone low (mixed)
-        0xD83D, 0xDE00,             // valid emoji pair
+        'A',                        // ASCII
+        0xD800, 'B',                // LONE HIGH — successor is not a low surrogate
+        0xD83D, 0xDE00,             // valid emoji pair -> U+1F600
         0x4E2D,                     // CJK
-        0xDC00,                     // lone low
+        0xDC00,                     // LONE LOW
         0,                          // NUL stops
     };
     std::string encoded = Utf8Helpers::EncodeUtf16(pathological, 8);
     std::string sanitized = Utf8Helpers::Sanitize(encoded);
     EXPECT("EncodeUtf16 output passes Sanitize unchanged", encoded == sanitized);
+
+    // Pin the bytes too. Sanitize-stability alone would still hold if a future edit
+    // silently dropped a lone surrogate instead of replacing it, which is the
+    // difference this test exists to notice.
+    EXPECT_EQ_STR("EncodeUtf16 replaces BOTH lone surrogates and keeps the valid pair",
+                  encoded, "A?B\xF0\x9F\x98\x80\xE4\xB8\xAD?");
 }
 
 // ----- IsImplausibleWideName tests -------------------------------------------
@@ -354,16 +370,31 @@ static void Test_Decode_Utf8CjkExactBuffer() {
 }
 
 static void Test_Decode_Utf8CjkWithTrailingHeapBytes() {
-    // Production reads Num*2 (=68) bytes: 34 real + 34 adjacent heap. The heap
-    // tail must NOT put a NUL pair at the UTF-16 terminator position [66,67],
-    // or the UTF-16 hypothesis would false-fire. These are the real dump bytes
-    // that follow (…7B 09 at [66,67]).
+    // Production reads Num*2 (=68) bytes: 34 real + 34 adjacent heap. These are the
+    // real dump bytes that follow (…7B 09 at [66,67]), so this is the realistic
+    // shape of the read.
+    //
+    // audit #5 AD27 — the comment here used to say the heap tail "must NOT put a NUL
+    // pair at the UTF-16 terminator position [66,67], or the UTF-16 hypothesis would
+    // false-fire", making those two bytes read as load-bearing setup. They are not,
+    // and Test_Decode_Utf8MultiByteBeatsZeroHeapTail below asserts the opposite as
+    // its whole point: DecodeFStringBuffer's Rule 2 returns on `utf8Ok &&
+    // utf8HasMultiByte` BEFORE the UTF-16 hypothesis is evaluated at all, so for a
+    // genuine multi-byte UTF-8 buffer the terminator position cannot matter. Two
+    // tests in one file disagreeing about the same rule is worse than either being
+    // wrong alone, so the claim is dropped and the tail is asserted inert instead.
     uint8_t buf[68];
     for (size_t i = 0; i < 34; ++i) buf[i] = kUtf8Cjk[i];
-    // Arbitrary non-terminating filler; [66],[67] deliberately non-zero.
     for (size_t i = 34; i < 68; ++i) buf[i] = static_cast<uint8_t>(0x40 + (i & 0x1F));
     buf[66] = 0x7B; buf[67] = 0x09;
     EXPECT_EQ_STR("UTF-8 CJK, buffer == Num*2 bytes with heap tail",
+                  Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 34),
+                  kUtf8CjkExpected);
+
+    // The negative control for the sentence that was removed: zero exactly the pair
+    // the old comment said would break it. Same answer, because Rule 2 got there first.
+    buf[66] = 0x00; buf[67] = 0x00;
+    EXPECT_EQ_STR("...and a NUL pair at the UTF-16 terminator changes nothing (Rule 2)",
                   Utf8Helpers::DecodeFStringBuffer(buf, sizeof(buf), 34),
                   kUtf8CjkExpected);
 }
@@ -548,6 +579,28 @@ static void Test_IsWellFormedUtf8() {
     const uint8_t lone[] = { 0x2D,0x4E,0x87,0x65 };
     EXPECT("lone continuation byte rejected",
            !Utf8Helpers::IsWellFormedUtf8(lone, 4, multi));
+
+    // audit #5 AD25 — the out-param must not contradict the return value.
+    //
+    // A VALID multi-byte sequence followed by an INVALID one is the only input that
+    // can separate the two: the old code set hasMultiByte=true the instant it accepted
+    // 中, then returned false three bytes later, leaving the caller a true flag on a
+    // rejected buffer. Seeded true first, so "left untouched" fails the same as
+    // "wrongly set" — without the seed a fixed implementation and a no-op are
+    // indistinguishable here, since `multi` happens to be true from the CJK case above.
+    const uint8_t goodThenBad[] = { 0xE4,0xB8,0xAD, 0xFF };   // 中 then an invalid lead
+    multi = true;
+    EXPECT("valid multi-byte followed by garbage is rejected",
+           !Utf8Helpers::IsWellFormedUtf8(goodThenBad, 4, multi));
+    EXPECT("...and hasMultiByte is false on that rejection", !multi);
+
+    // The mirror case: the flag must still be false after a failure that never saw a
+    // multi-byte sequence at all, so the fix cannot be "always clear at the top".
+    multi = true;
+    const uint8_t asciiThenBad[] = { 'a', 0xFF };
+    EXPECT("ASCII followed by garbage is rejected",
+           !Utf8Helpers::IsWellFormedUtf8(asciiThenBad, 2, multi));
+    EXPECT("...and hasMultiByte is false there too", !multi);
 
     const uint8_t truncated[] = { 0xE4,0xB8 };          // 3-byte lead, only 2 bytes
     EXPECT("truncated sequence rejected",

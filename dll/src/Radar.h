@@ -81,8 +81,18 @@ namespace Radar {
 
 // Data types supported by the scan engine. Numeric primitives are the
 // MVP; string types (FString/FName/FText) and vector types (FVector/
-// FRotator/FTransform) are Phase 2 extensions (build 750). TArray<T>
-// scan remains deferred — see memory project_value_search_caveats.
+// FRotator/FTransform) are Phase 2 extensions (build 750).
+//
+// audit #5 AB22 — this banner used to end "TArray<T> scan remains deferred", 28
+// lines below a file header that already recorded TArray<T> as SHIPPED in build 757
+// (and TSet/TMap in 927). The header is the one that is right: `Container` is a
+// DataType below and Aura walks it element-wise. What is still deferred is TOptional
+// (V1c), which the file header states in the same breath — so the deferral was real
+// once and simply outlived the feature it referred to.
+//
+// It also pointed at "memory project_value_search_caveats", an assistant memory file
+// git does not carry (working-lessons §7.1); the durable references are
+// docs/native-c-value-scan-spec.md and docs/group-value-scan-spec.md.
 enum class DataType : uint8_t {
     // Numeric primitives (MVP, build 738)
     Int8 = 0,
@@ -1048,11 +1058,36 @@ size_t GroupSessionLeafCount(const std::vector<GroupCandidate>& candidates);
 size_t GroupCandidatesWithinLeafBudget(const std::vector<GroupCandidate>& candidates,
                                        size_t budgetLeaves);
 
-// Total-leaf backstop for a retained group session. ~120 B per GroupSlotMatch, so
-// 4,000,000 leaves is roughly half a GB of leaf records — far above any realistic
-// scan (tens of thousands of leaves) yet well under an OOM. It bounds the retained
-// session even when an unclamped max_results asked for the entire object pool.
+// Total-leaf backstop for a retained group session. 4,000,000 leaves is far above any
+// realistic scan (tens of thousands of leaves) yet well under an OOM. It bounds the
+// retained session even when an unclamped max_results asked for the entire object pool.
+//
+// ⚠ audit #5 AB23 — this used to justify itself with "~120 B per GroupSlotMatch, so
+// 4,000,000 leaves is roughly half a GB". That was an UNDER-count in a direction that
+// matters, because `GroupSlotMatch::ownerClass` is a by-value `std::string`: the record
+// size below covers the string OBJECT, not the heap block it points at. UE class names
+// routinely exceed the small-string buffer ("BP_PlayerCharacter_C" is 20 chars), so a
+// worst-case session adds one allocation PER LEAF on top of the figure — call it another
+// 30-50% including allocator overhead, none of which the budget sees. The real ceiling
+// is therefore meaningfully above "half a GB", and a future raise of this constant
+// should be made against that, not against the record size alone.
+//
+// The proper fix is to intern ownerClass the way V3-A interns the per-candidate metadata
+// (GroupSession already carries `descriptors` and `instances` pools for exactly this).
+// Deliberately NOT done here: the producers live in Aura.cpp and the reader in Fern.cpp,
+// and no test target compiles either file, so it is a change that can only be verified
+// in-game. Tracked in docs/todo.md.
+//
+// Derived from sizeof rather than restated as a literal, so it cannot go stale again.
+inline constexpr size_t kGroupSlotMatchBytes = sizeof(GroupSlotMatch);
 inline constexpr size_t kMaxGroupSessionLeaves = 4'000'000;
+
+// Guards the PREMISE, not the number: the backstop only bounds memory while one leaf
+// record stays small. If GroupSlotMatch grows past this the budget silently becomes a
+// multi-gigabyte allowance, which is the failure the constant exists to prevent.
+static_assert(kMaxGroupSessionLeaves * kGroupSlotMatchBytes < (1ull << 30),
+              "the group-session leaf budget no longer fits under 1 GB of leaf records — "
+              "shrink GroupSlotMatch (intern ownerClass) or lower kMaxGroupSessionLeaves");
 
 struct GroupSession {
     uint64_t                              id = 0;
