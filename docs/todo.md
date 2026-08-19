@@ -2372,6 +2372,34 @@ cap". `list_classes` is pipe-JSON, so no mailbox-contract implication. Pinned by
 >
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
+> ### ✅ ALL THREE ASSERTIONS HOLD ON THE WIRE 2026-08-19 `[CLASSTOTAL-WIRE-2026-08-19]`
+>
+> Checked over the pipe (`list_classes` / `list_all_functions`), so this covers the **numbers**; the
+> UI *status-line wording* is the only part still owed.
+>
+> ⚠ **Elliot is NOT the >5,000-class title the row assumes.** At the main menu it reports **3,236**
+> classes, `truncated=false`. **Avowed is** the truncating one.
+>
+> | title | `total` (page) | `total_classes` | `truncated` |
+> |---|---|---|---|
+> | Avowed, `game_only=true` | 5,000 | **5,102** | true |
+> | Avowed, `game_only=false` | 5,000 | **7,409** | true |
+> | Elliot | 3,236 | 3,236 | false |
+> | OCTOPATH | 699 | 699 | false |
+>
+> * **Step 1 — PASS.** On Avowed the page (5,000 = the `limit` default) and `total_classes` (5,102 /
+>   7,409) **differ**, with `truncated=true`. Before the fix both were 5,000, i.e. "total" answered
+>   nothing.
+> * **Step 2 — PASS, like-for-like.** `list_all_functions` reports `scanned_classes=`**5,102**,
+>   which equals `list_classes(game_only=true).total_classes` **exactly**. ⚠ It does *not* equal the
+>   `game_only=false` figure of 7,409 — comparing those two is an apples-to-oranges scope mismatch
+>   that reads as a failure. Compare the same scope.
+> * **Step 3 (NON-REGRESSION) — PASS on two titles.** Elliot 3,236 = 3,236 and OCTOPATH 699 = 699,
+>   both `truncated=false`: a full walk reports one honest number and does not falsely flag
+>   truncation.
+> * ⚠ **Read `total_classes`, never `total`.** `total` is `results.size()` and equals the cap
+>   exactly when truncated — the very misreading this row exists to correct.
+
 > | 1 ⚠ THE ONE THAT MATTERS | on a >5,000-class game (Elliot), open the Classes tab, Load with "Game classes only" off | status reads "**5,000 classes shown of ~6,609 total** … ⚠ STOPPED at the 5,000-row cap" — the two numbers DIFFER | before the fix both were 5,000, so "total" answered nothing |
 > | 2 ⚠ CROSS-CHECK | note Interesting Funcs' "{N} functions across **{K} classes**" for the same game | the Classes tab's total matches K (both ~6,609) — the two panels now AGREE | before, Classes said 5,000 STOPPED while Funcs said 6,609; the honest number is now in both |
 > | 3 ⚠ NON-REGRESSION | on a small game (< 5,000 classes), Load | "N classes shown of N total" (equal), no STOPPED note | proves a full walk still reports one honest number and does not falsely flag truncation |
