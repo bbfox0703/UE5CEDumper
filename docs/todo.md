@@ -2,6 +2,13 @@
 
 Open work only. **Read this when deciding what to do next.**
 
+> 🤝 **Coming back after the 2026-08-19 fix programme? Read
+> [handover-2026-08-19.md](handover-2026-08-19.md) first.** 32 commits took the audit register
+> **166 → 4 open of 297** and the OPEN FIXES INDEX's original twelve **→ 1**, and **none of it has
+> been verified on a running game**. That doc carries the three-phase verification schedule (two
+> phases need nothing from you), the four findings left open on purpose, and the two-machine sync
+> point (`dist` **1.0.0.3263**; 3262 was deliberately skipped).
+
 > ## ▶ If the ask is "carry on fixing bugs", do NOT start here
 >
 > The bug queue is **not** in this file. It lives in
@@ -11,8 +18,8 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **36 open batches** needing a running game (this is a
->   DERIVED count and it had drifted to a stale 43; re-derive, never hand-adjust:
+> - `## Pending live-game verification` — **40 open batches** needing a running game (this is a
+>   DERIVED count and it had drifted to a stale 43, then to a stale 36; re-derive, never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
 >   **Offer these
 >   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L9 (T1c
@@ -74,7 +81,13 @@ Open work only. **Read this when deciding what to do next.**
 > measured no-op). Nothing is blocked on a maintainer decision. Re-derive with
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
-> ### ▶ OPEN FIXES INDEX — 5 items, and they are NOT in the count above
+> ### ▶ OPEN FIXES INDEX — 4 items, and they are NOT in the count above
+> **Read the split before quoting a number.** Of the **twelve** field-found defects this index
+> carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
+> maintainer-only file deletion. The other three rows are **new**, surfaced by the audit programme
+> itself on 2026-08-19 and deliberately deferred — none is a regression, and each states its own
+> reason for waiting. So "12 → 1" is the honest headline for the original queue, and **4** is the
+> honest row count of this table.
 > ⚠ `check_audit_register.py` reads **only** audit #5's table, so these are counted nowhere and are
 > invisible to the gate. They carry **no severity tier** — the audits assigned those, these were
 > found in the field. **Grep the tag** (stable; line numbers drift). Audits #3 and #4 are fully
@@ -84,9 +97,17 @@ Open work only. **Read this when deciding what to do next.**
 > |---|---|
 > | `[STALEDLL-2026-08-18]` | a 6-month-old `UE5Dumper.dll` in CE's install folder that the `.CT` will pick up — **(b) DONE: the `.CT` now reports the resolved DLL's size beside its path; (a) delete/refresh the stale file is maintainer-only** |
 > | `[PROPSEARCHCAP-2026-08-19]` | **Property Search has no Max control and its cap is the compile-time default 200** — very low for a query like `Health` on a real game. Audit #5 **Z10** is ✅ because the half that was a *defect* is fixed (the status line no longer advises "raise Max" on a panel with no Max), but the finding's own preferred repair — add the lever, as Instance Finder already has (`InstanceSearchCap` NumericUpDown, clamped 100..50000) — was **deliberately deferred**: it is a feature on an AXAML toolbar that cannot be visually verified in an unattended session, not an honesty fix. `SearchPropertiesAsync` already takes `limit`, so the work is a VM property + a NumericUpDown + passing it through; the status line's cap sentence already names the applied cap, so it needs no change. |
-> | `[AXAMLGATE-2026-08-19]` | ⚠ **`tools/check_axaml_strings.py` is RED on a clean tree and has been for at least four commits** (verified by re-running it against `179d2f80`, `be9a0a6a`, `ec72d7c0` and `25af33fd` — all FAIL), so CI's string gate currently fails for a reason nobody introduced today. It is a **false positive, not a missing string**: `Views/FreezeValueDialog.cs:278/283/288/289` builds its key dynamically as `Res.Get($"str.ValuePrompt.{_purpose}.{leaf}")`, so the static scanner records the literal prefix `str.ValuePrompt.` as a referenced-but-undefined key and cannot see the eight real `str.ValuePrompt.{Force,Freeze}.*` keys as referenced — hence "1 undefined + 8 dead". Both halves are artefacts of the same dynamic key. Fix is a choice: teach the checker the interpolation pattern, or make the four call sites select a static key. **A permanently-red gate trains people to ignore it**, which is the actual cost. Found during audit L12; deliberately not fixed there (it is a gate-design decision, not an INFO row). |
 > | `[VOLUMEROOT-2026-08-19]` | Three sites ask `Path.GetPathRoot` + `DriveInfo` about a path and therefore answer about the **host** volume, not the volume the path actually lives on when that path is a mount point: `WindowsPlatformService.GetFreeDiskSpaceBytes:407`, `GetTotalDiskSpaceBytes:419` (these feed the snapshot disk-space guard, so a game or snapshot folder on a mounted volume is measured against the wrong disk) and `WindowsLogCompressionService.IsSupported:71` (NTFS test; logs are under `%LOCALAPPDATA%`, so this one is near-theoretical). Audit #5 **AC17** fixed exactly this shape in `VolumeHasRecycleBin` using `GetVolumePathNameW` + the new `GetDriveTypeW` import, so the pattern to copy already exists in the same file; the disk-space pair additionally needs `GetDiskFreeSpaceExW` rather than `DriveInfo`. Found by the AC17 sibling-grep, left alone because it is a different feature and only a real mount point can verify it. |
 > | `[SCANIDENTITY-2026-08-19]` | Value-scan candidates are re-read across refines by raw address with no re-validation of the owning object's identity (audit #5 AB7, now ✅ as docs-only). The refused `SerialNumber` witness is wrong for a passive observer and §4.3's "witness input bytes" does not apply (the value is expected to change). The only real check is re-reading the UObject class pointer to catch a slot recycled by a *different* class — a behaviour-changing feature with an open product question (AA2: class-wide targeting can be by design) and no unit-test seam. Deferred; needs a maintainer decision + live game with mid-scan object churn. |
+>
+> *`[AXAMLGATE-2026-08-19]` was **fixed 2026-08-19** by `a1bdd205` and its row is **deleted** — the
+> gate is green again (`py tools/check_axaml_strings.py` → exit 0, 1316 keys defined / 1316
+> referenced). Note the correction in that commit: the row above called this pre-existing and a false
+> positive, and it was **neither**. The keys did not exist before 2026-08-19 (`git show
+> 25af33fd:…/en.axaml | grep -c ValuePrompt` = 0), and the checker was correctly reporting that a
+> `StaticResource` key had become invisible to static inspection — the exact property it defends. The
+> fix was to make the four call sites select a static key, not to teach the checker the
+> interpolation.*
 >
 > *`[CONTAINERCAP-2026-08-18]` was **fixed 2026-08-19** (client-only badge + status line) and moved to
 > `## Pending live-game verification`.*
@@ -1622,6 +1643,22 @@ heading, and the whole **"Shipped + unit-tests-pass but unproven on real games"*
 own headings, and the headings that owned un-named items (the fourteen-MED batch, audit #4 ① and ②,
 audit L10) carry their IDs. **Measured, not asserted:** cross-checking every ID that owns a 繁中
 section against the register's `^###` headings went from **40 un-findable to 0**.
+
+⚠ **Re-checked 2026-08-19 (closing sweep) and it had already sprung two small leaks**, both of the
+same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps)` blocks named no ID
+at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
+`### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
+`U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
+`40` and `0`** — a machine check, since this is the second time the invariant drifted:
+
+```
+awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜
+```
+
+⚠ **Two of those 40 hang under a parent that is already `🟡` or `✅`** (the two just renamed). They
+are kept `⬜` deliberately — losing a live check is worse than over-counting by two — but a
+`🔲`-marked sibling (`U3 + U17`) shows the other convention exists, and `🔲` is **not** counted by
+the command above. Reconciling the three is a maintainer call, not an agent one.
 
 ⚠ **Un-mirrored `[TAG]` items — a known, tracked gap.** `PIPEBUSY` / `CLASSTOTAL` / `PROXYLOAD` /
 `SLOTSYM` were mirrored into 繁中 on 2026-08-19. Still un-mirrored: `STALEDLL` (b), `FREEZESTUCK`,
@@ -3541,7 +3578,7 @@ Run on **Lushfoil Photography Sim** (UE 5.6, 58,093/58,618 objects), dist 3262.
 * **4 — not run** (needs a level travel to make a class address go stale; human-gated).
 * **5 — not run** (the cross-tab handoff; nothing pushed a class into Class/Struct in this session).
 
-### ⬜ Original checklist (kept for the steps)
+### ⬜ AE2 / AE3 — original checklist (kept for the steps)
 
 *Needs a game connected, but nothing else — the Object Tree is a permanent left pane beside the
 Class/Struct panel, so every check is "do the two halves agree". See dev-log builds 3067 / 3068. The
@@ -4576,7 +4613,7 @@ Rewrite the step order accordingly: Force first, button only once AOBMaker is up
 generic `9999.0`, i.e. the 255 pre-fill is specific to byte-width targets rather than a blanket
 change.
 
-### ⬜ Original checklist (kept for the steps)
+### ⬜ Y9 — original checklist (kept for the steps)
 
 The freeze / force value dialog now rejects values wider than the target property instead of letting
 them wrap. The arithmetic is measured against the writers' own masking in unit tests, **but nobody

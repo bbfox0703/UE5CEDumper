@@ -970,10 +970,16 @@ Group 1 still runs the 10-minute partial as a genuine non-regression, recorded a
 
 -----
 
-## 10. The 繁中 checklist's 57 remaining items — one row each (2026-08-19)
+## 10. The 繁中 checklist's 61 remaining items — one row each (2026-08-19)
 
 **Denominator, stated so it cannot drift again: the `###` item count of
-[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **57**.** That file was pruned
+[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **61**.** ⚠ **The headline and this
+sentence both said `57` while the table below already had 61 rows** — caught by the 2026-08-19
+closing sweep, and the third time this particular number has lagged its own table. **Re-derive
+before quoting it; never carry it forward by hand.** Two figures that circulated in planning notes
+are now dead and must not be re-quoted: **"24 of 49"** and **"40 of 57"** (with `A=11 · B=29 ·
+C=15 · D=2`) — both predate rows the L10/L11/L12 batches appended. The live answer is the totals
+block at the end of this section. That file was pruned
 46 → 40 on 2026-08-19, took audit **L10**'s five new items (AF7/AF8, AF10/AF11, AF12/AF13/AF22,
 AF16–AF23, AF21) the same day → 45, then **lost `A5`** (closed on the maintainer's own run) and
 **gained the four `[TAG]` mirrors** `PIPEBUSY` / `SLOTSYM` / `CLASSTOTAL` / `PROXYLOAD` → 49, then

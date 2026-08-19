@@ -22,6 +22,159 @@ builds ≤696 in
 
 -----
 
+## 2026-08-19 - Audit #5 closed out (166 → 4 of 297) + the field-reported defect queue (12 → 1), in 32 commits (build 3263)
+
+**One unattended programme, one entry.** This is the rollup for the 32 commits between `9062f08f`
+(build 3261, the A12 fix) and `10b00cf8`. Two queues were emptied in parallel:
+
+| queue | before | after | what is left, and why |
+|---|---|---|---|
+| audit #5 register (`check_audit_register.py`) | **166 open of 297** | **4 open of 297** — 0 HIGH · 0 MED · 3 LOW · 1 INFO | `AB9`, `A10`, `AA39`, `AB23` — each left open **deliberately**; reasons below |
+| the field-found OPEN FIXES INDEX in [todo.md](todo.md) | **12** | **1** of the original twelve (`[STALEDLL]`(a), a maintainer-only file deletion) | the audit itself then surfaced **3 new deferred items**, so the index reads **4 rows** — see "the index is 4, not 1" below |
+
+⚠ **NOTHING in this entry has been verified on a running game.** Every fix is unit-pinned,
+negative-controlled, or rig-covered offline; the live checks are queued in todo.md's
+`## Pending live-game verification`, which grew to **40 open batches** as a direct result. Treat the
+whole programme as *shipped and unproven* until that register moves.
+
+### The twelve audit layers (L1–L12)
+
+Audit #5 scanned the **48,950 lines authored before 2026-06-01** that audits #3 and #4 structurally
+could not reach. Closing it ran as twelve batches, one per segment, each ending in a negative control:
+
+- **L1** `9270046c` — DLL engine (`Ubel`/`Serie`/`Genau`/`Aura`). Enum reads of size 1 stopped
+  sign-extending the UHT `MAX=255` sentinel into a miss; the `FString` count cap went 256 → 8192
+  after re-deriving that it bounds only a *garbage* count's allocation, not the hot path;
+  `TOptional<FText>` decodes through `ReadFTextString` instead of reading `FText+0x10`, which is the
+  `uint32` Flags.
+- **L2** `ab0fd6a6` — `Radar` value scan. `EnumProperty` is now scannable (mapped to `UInt8` and
+  added to the `NumericAll` union); integer parsing is base 10 unless `0x`-prefixed, so a leading
+  zero no longer means octal-for-ints and decimal-for-floats inside one meta scan; the group witness
+  assignment gained an augmenting-path repair so one leaf can no longer appear in two slots.
+- **L3** `cda2f720` — headers / `Himmel`. **The durable one:** nothing validated a signature's
+  `(instrOffset, opcodeLen, totalLen)` against its own pattern bytes. Now enforced twice — by
+  `extract_patterns.py --check` *and* by a compile-time `ASSERT_RIP_GEOMETRY` over all five tables —
+  and negative-controlled 6 for 6 against four historical defects plus two invented slips. Four real
+  RIP-decode offsets were wrong and are corrected (PS1 23→21, PS6 14→12, TQ_3/TQ_4 3→0).
+- **L4** `569a1d59` — `Mimic`/`Sein`/`Flamme`. `HandleInvoke` routed on `functionFlags`, a
+  DLL-filled **output** field, so a second CE FIRE routed on whatever the previous command left
+  behind. Fixed by re-reading the flags from the `UFunction` rather than by promoting the field to
+  an input — the latter would have been a **meaning** change the contract hash cannot see.
+- **L5** `e8893e5a` — the three standalone CE Lua scripts, all covered by the real `lua` 5.4.6 rigs
+  in `scripts/tests/` (dissect 50→83, freeze 132→154, invoke 63→91 checks).
+- **L6** `6fc00e4d` — `MainWindowViewModel`. Disconnect now resets **all** process-scoped panels
+  (was 3 of ~15); the three long exports thread a real `CancellationToken`; the Dump All completion
+  line is composed from the actual `DumpResult` counts instead of the file's byte length.
+- **L7** `9ef5b8ca` — UI services: data durability, honest failure levels, VDF parsing.
+- **L8** `a87706c7` — VMs + scoring. Four findings turned out to be one theme — *a truncation or
+  deadline signal exists and is discarded before the user sees it* — so the wording lives in one new
+  `Core/PartialResultNotice.cs` rather than in four new spellings.
+- **L9** `d4fdd418` — ViewModels/Core/DTOs. Two rows were closed by **re-deriving against current
+  code** and finding them already fixed, rather than by re-fixing them.
+- **L10** `ec72d7c0` — Views / app root. **A user-sortable DataGrid column is AOT-safe only if its
+  Binding path equals its `SortMemberPath`, or a comparer is wired.** Swept the whole tree instead of
+  trusting the list: 34 grids / 162 sortable columns / **30 unsafe across 10 sites**, of which the
+  findings named six. `DataGridSortWiringTests` now machine-enforces the pairing offline.
+- **L11** `179d2f80` — the last LOW batch. One theme runs through all twelve rows: **the report and
+  the thing it reports on were produced by different code.** The worst was the DataTable RowMap
+  drill, whose crumb printed the DLL's true row total over a grid holding a fixed 64-row page.
+- **L12** `5374e662` — 25 of the 26 INFO rows. See the gate work below.
+
+### Mailbox contract 2 → 3 (`2c2a950c`) — additive, `MAILBOX_CONTRACT_MIN` stays 1
+
+`[FREEZESCOPE]`: a Property Search row for an **inherited** field is keyed to the class that
+*declares* it, so freezing a pawn's `bCanBeDamaged` submitted `Actor` and the exact-name pool
+returned one incidental `ChaosDebugDrawActor` out of a 25,179-object level. `CMD_LIST_INSTANCES`
+gained an opt-in `LI_IN_DERIVED` flag routed to `Aura::FindInstancesDerivedFrom`, plus
+`LI_OUT_TRUNCATED` when the pool is capped.
+
+**Why this is additive:** `MailboxData` grew only at its tail (`cmdFlags` in, `cmdOutFlags` out), the
+flag defaults to `0` = the old exact match, the handler clears it after every use so it cannot be
+inherited, and the 16-byte derived-page format is unreachable without it. A pre-contract-3 `.CT`
+keeps the exact-match pool byte for byte. `check_mailbox_contract.py`'s golden block records why.
+
+The same commit fixed `[FREEZESTUCK]`: an abandoned freeze reported its failure with a `print()` into
+a Lua Engine window hygiene had already closed, while CE still showed a ticked record — so the user
+was told a cheat was applied while nothing was written. The record now unticks from a one-shot timer
+(deferred, because `Active = false` runs `[DISABLE]` synchronously and that block calls `stop()`).
+
+### Gate work — the part that outlives the fixes
+
+Five gates got stronger, and one had a hole big enough to matter:
+
+- **`check_mailbox_contract.py` could not see five of the six copies of the layout** (`AA36`). It
+  hashed `Mimic.h` and read `CeMailboxLayout.ContractVersion`, and was blind to both standalone CE
+  helpers, the shipped `.CT`, and both offline Lua rigs. **A gate with a hole reads as covered.** It
+  now compares **67 literals across those 5 mirrors** against offsets *computed* from the packed
+  struct, and the registry is **closed** — an unregistered layout-shaped constant is a hard failure.
+- **`check_audit_register.py` did not enforce ID uniqueness** (`69fa412a`). `AE11`/`AE12` each sat on
+  two rows, so marking one closed closed both in every derived count.
+- **`check_axaml_strings.py` was red for four commits** and was wrongly written off as pre-existing
+  and a false positive. It was neither: `ec72d7c0` had resolved a `StaticResource` key by
+  interpolation, so eight real keys became invisible to static inspection — **exactly the property
+  the gate exists to defend.** Fixed at the call sites, not by exempting the checker (`a1bdd205`).
+- **New rigs:** `tools/verify/compile_sdk_header.py` puts the real emitter's output in front of
+  `cl.exe` (nothing in this repo had ever *compiled* a generated header — they were only read), and
+  `tools/verify/pe_pattern_regression.py` pins the ProcessEvent pattern set across 22 shipped games.
+
+### Field-reported defects (the OPEN FIXES INDEX)
+
+`[PASTECRASH]` took three commits and is the one worth reading: a clipboard read that failed inside
+Avalonia's `TextBox.Paste()` surfaced as an unobserved dispatcher exception and **terminated the UI
+31 minutes into a connected session**. The guard swallows only what a pure, narrow classifier
+positively identifies as a platform input-layer fault — and `4365a1eb` reverses part of its own
+predecessor on a weighing, not a fact: a swallowed `Ctrl+X` orphans an undo snapshot, but that is a
+no-op `Ctrl+Z` against a terminated process taking a loaded object tree with it.
+
+Also closed: `[SDKHDR]` (the array extent was baked into the *type* string, so 5 of 75,342 emitted
+lines were not valid C++), `[PEHOOK]`/`[PEHOOKONCE]` (a failed ProcessEvent **detection** was
+permanent; three sentinels now distinguish re-armable from terminal), `[PIPEBUSY]` (at-capacity
+logged an ERROR every second — 1,826 lines in 31.5 min, evicting real diagnostics as the log
+rotated), `[CLASSTOTAL]`, `[CONTAINERCAP]`, `[SLOTSYM]`, `[STALEDLL]`(b), `[PROXYLOAD]` and
+`[AUTOREFRESH]`.
+
+**The index is 4 rows, not 1.** The original twelve went to one — `[STALEDLL]`(a), deleting a
+6-month-old `UE5Dumper.dll` from CE's install folder, which is maintainer-only. But the audit work
+itself surfaced three new **deferred** items that now sit in the same table: `[PROPSEARCHCAP]` (a
+feature — Property Search has no Max control), `[VOLUMEROOT]` (three sites ask `DriveInfo` about a
+mount point and answer about the host volume) and `[SCANIDENTITY]` (needs a product decision plus a
+live game with mid-scan object churn). None is a regression from tonight.
+
+### The four audit findings left open on purpose
+
+`AB9` — DllMain does filesystem work under the loader lock; a half-fix is worse than the defect, so
+it needs its own session. `A10` — needs the by-reference→by-value restructuring `U5` deferred; a
+partial invalidation would dangle held references. `AA39` — its prescribed fix was **measured to be a
+no-op**; do not re-raise. `AB23` — interning `GroupSlotMatch::ownerClass` touches `Aura.cpp` and
+`Fern.cpp`, which **no test target compiles**, so it is in-game-only work.
+
+### Method notes worth keeping
+
+- **No test target compiles most of `dll/src`.** Every pure decision rule fixed in a `.cpp` this
+  programme was *moved into a header* `dll_helpers_test` includes, and given a negative control.
+  That is now the standard move, not an improvisation.
+- **Refutations are results.** `bd9b6d1b` refutes "ninja records no header deps" — it was a
+  measurement artifact (CMake emits rules into `CMakeFiles/rules.ninja`, so grepping `build.ninja`
+  returns 0 and looks like breakage). `AA39`, `Z11`, `AD16` and halves of `MB2`/`SE1` were also
+  refuted and are recorded as do-not-re-raise.
+- **A PASS can carry a wrong procedure.** `141e8119` corrects verification records whose evidence
+  never covered the step they closed — `V6`'s auto-refresh half could not have been performed on the
+  build it was recorded against. Recorded as a half-pass in place, with the reason inline.
+- **`9a8ddd24`**: two ViewModel tests set an `[ObservableProperty]` whose generated hook is
+  fire-and-forget, then awaited a *second* call that raced the first. Measured in-process at 4,000
+  iterations — 1.25% / 2.275% / 0.625% flake. Whole-process runs cannot sample this, which is why
+  160 clean cold runs had proved nothing.
+
+### Build
+
+Native AOT publish clean at **build 3263**. ⚠ **3262 was deliberately skipped**: `dist/` already
+carried a 3262 and so does the maintainer's second machine, and a plain `build.ps1` had since
+overwritten local `dist/` with a **non-trimmed** 106.8 MB exe under that same number. Reusing it
+would have made one build number mean three different binaries. Note that **every** `build.ps1`
+invocation bumps `build_number.txt`, not just `-Mode Publish` (use `-NoBumpBuildNumber` to suppress).
+
+-----
+
 ## 2026-08-17 - A12: the group scan re-anchors container elements too (build 3261)
 
 **Audit #5 A12 closed — the register is now 0 HIGH / 0 MED.** A11 fixed the single-value scan

@@ -1416,10 +1416,20 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
 ## 7. Operational notes for two-machine development
 
 - **`build_number.txt` auto-increments on every `build.ps1` run** (MSBuild only reads it), so doc and
-  commit build references drift. Cite the build as of commit time.
+  commit build references drift. Cite the build as of commit time. The bump is unconditional at
+  `build.ps1:446`, **before** any `-Mode` / `-Target` branch; `-NoBumpBuildNumber` suppresses it.
+  ⚠ **"only `-Mode Publish` bumps it" is a persistent and wrong belief** — it was in the project
+  memory index for months and cost the 2026-08-19 closing session a build-number collision. A
+  `-Target DLL` run bumps it exactly as hard as a publish does.
 - **`dist/` is gitignored**, so a freshly synced repo can still hold a days-old runnable build. Check
   `dist/UE5DumpUI.exe`'s size and mtime, not just `git status` — ~54 MB is the AOT-trimmed build,
   ~107 MB is the non-trimmed one that must never be handed over.
+  ⚠ **A plain `build.ps1` OVERWRITES `dist/`** — the copy step is unconditional, not publish-gated.
+  So "there is a build in `dist/`" never implies "there is a *shippable* build in `dist/`", and a
+  non-trimmed exe can be sitting there under a number a real release already used. On 2026-08-19
+  the number `3262` named three different binaries this way (the other PC's AOT build, a
+  106.8 MB non-trimmed local one, and the pending publish). **Before handing over or comparing
+  builds, check the SIZE, not just `dist/build_number.txt`.**
 - **The Ghidra corpus is machine-local and derived.** `$GHIDRA_PROJS` = `D:\Tools\GHIDRA_Projs` on this
   machine, but the real corpus is the archive at `D:\UE_Analyze_data`; run
   `py tools/ghidra/corpus_relocate.py` / `preflight.py` before trusting any path. Never host it on USB
