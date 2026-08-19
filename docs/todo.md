@@ -5716,6 +5716,50 @@ smuggled back into a type string by a future branch.*
 >
 > | step | do this | expect |
 > |---|---|---|
+> ### ✅ ALL THREE STEPS PASS 2026-08-20 `[SDKHDR-REALEXPORT-2026-08-20]` — on a real export, matching the row's own numbers
+>
+> UI connected to DumperTest Development (`Connected — UE504 (25179 objects)`), **Export → SDK
+> Header (.h)** → `out/DumperTest_SDK.h`.
+>
+> ⭐ **The export is 75,342 lines — the exact figure this row cites for the PRE-FIX export of this
+> same sample.** So it is the same corpus, and the comparison is like-for-like:
+>
+> | | pre-fix (per this row) | now |
+> |---|---|---|
+> | extent PRECEDING an identifier (step 2) | **5** | **0** |
+> | `OptionalProperty` declarations (step 3) | 5 | **5** |
+>
+> Step 3 is satisfied, so step 2 is **not vacuous**: the same five fields are present and every one
+> now emits the extent *after* the identifier —
+> `uint8_t CellBounds[0x40]; // 0x0088 (0x0040) OptionalProperty` (the World Partition property this
+> row names), plus DumperTest's `Opt_Int_Set` / `Opt_Float_Set` / `Opt_Str_Set` / `Opt_Int_Unset`.
+>
+> ⭐ **Confirmed by a real compiler, not only by grep.** `cl /Zs /TP /permissive-` over the whole
+> 3.48 MB header produces **zero `C2059`** — the `syntax error: '['` the negative control produces
+> when the pre-fix spelling is re-inserted. The defect is gone from the artifact, not just from the
+> emitter.
+>
+> ⚠ **The unresolved-`StructProperty` fallback still has no live sample** — as the row predicted, it
+> did not occur even once in this export either. That branch remains fixture-only.
+>
+> ### 📌 And this settles the separately-tracked `G4`-followup, with evidence
+>
+> The handover records that the header "still will not compile as one translation unit" because
+> `GenerateFullSdkAsync` emits classes in **GObjects order with no topological sort**. **Confirmed.**
+> Compiling the real export as one TU fails with **152+ errors** (`C1003` stops the count, so that is
+> a floor), and the mix is diagnostic:
+>
+> | code | n | meaning |
+> |---|---|---|
+> | `C4430` | 50 | missing type specifier |
+> | `C3646` | 32 | unknown override specifier |
+> | `C2079` | 31 | uses undefined struct |
+> | `C2143` / `C2238` | 19 / 19 | syntax / unexpected token before `;` |
+> | **`C2059`** | **0** | **the SDKHDR defect — absent** |
+>
+> Every populated code is a **use-before-declaration** symptom; none is a malformed declarator. So
+> the two problems are cleanly separated: `[SDKHDR]` is fixed, and what remains is ordering.
+
 > | 1 | connect to a UE5 title with a `TOptional` UPROPERTY (**DumperTest** has `Opt_Int_Set`; any World Partition title has `CellBounds`), then **Export → Dump All** and **Export → SDK Header (.h)** | both complete without error |
 > | 2 ⚠ THE ONE THAT MATTERS | grep the header for an extent that PRECEDES an identifier: `rg "^\s+\S*\[0x[0-9A-Fa-f]+\]\s+\w+;" out.h` | **0 matches**. It was **5** on the pre-fix export of this same sample |
 > | 3 ⚠ NOT AN ABSENCE-SHAPED RESULT | `rg "OptionalProperty" out.h` | **≥1**, each of the shape `uint8_t Name[0xN]; // … OptionalProperty`. A header containing no `TOptional` at all makes step 2 vacuous ([working-lessons.md](working-lessons.md) §1.2) |
