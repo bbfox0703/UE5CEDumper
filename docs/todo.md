@@ -2330,6 +2330,23 @@ NOT a mailbox-contract change.*
 >
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
+> ### ✅ ALL THREE STEPS PASS 2026-08-19 `[PIPEBUSY-CAP-2026-08-19]` — and with NO UI involved
+>
+> `tools/verify/pipebusy_capacity.py` opens **three raw connections itself**, which fills the pool
+> exactly as the UI's two lanes plus a client would — so the forbidden "pipe_client beside the UI"
+> combination never had to be staged at all. DumperTest Development, dist 3263.
+>
+> * **Step 1 — PASS.** 75 s at capacity produced **exactly ONE** line:
+>   `PipeServer: all 3 pipe instances in use, waiting for a free slot`, and **zero**
+>   `CreateNamedPipe failed`. The pre-fix behaviour was ~1 ERROR/s, so the same window would have
+>   yielded roughly **75** of them. *Exactly one* is the assertion — the defect was repetition, so
+>   "at least one" would not have distinguished fixed from broken.
+> * **Step 2 — PASS.** Releasing the clients produced **exactly ONE**
+>   `PipeServer: a pipe slot freed, resuming accept`, i.e. the latch resets rather than sticking.
+> * **Step 3 (NON-REGRESSION) — PASS, and broadly.** **23** other per-game log folders from this
+>   machine were checked and **none** contains an at-capacity line. So "it only fires when actually
+>   at capacity" is measured across 23 real sessions rather than asserted from one.
+
 > | 1 ⚠ THE ONE THAT MATTERS | with the UI connected (2 lanes), start ONE extra `tools/verify/pipe_client.py` so the pool fills, leave it a minute, read `pipe-0.log` | **exactly ONE** `all 3 pipe instances in use, waiting for a free slot` INFO line — NOT `CreateNamedPipe failed` repeating once a second | before the fix this was ~1 ERROR/s forever (1,826 in 31 min) |
 > | 2 | kill the extra client, watch the log | one `a pipe slot freed, resuming accept` INFO line, then normal `Waiting for client connection...` | proves the recovery transition fires exactly once |
 > | 3 ⚠ NON-REGRESSION | during a normal single-UI session, grep `pipe-0.log` for `all 3 pipe instances` | absent | proves the at-capacity line only appears when actually at capacity |
