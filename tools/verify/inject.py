@@ -90,6 +90,53 @@ def pid_of(match):
     return hits[0][1], hits[0][0]
 
 
+def loaded_modules(pid):
+    """[(name, full_path, size)] of modules mapped in `pid`, via Toolhelp32."""
+    TH32CS_SNAPMODULE = 0x00000008 | 0x00000010   # SNAPMODULE + SNAPMODULE32
+
+    class MODULEENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", w.DWORD), ("th32ModuleID", w.DWORD),
+                    ("th32ProcessID", w.DWORD), ("GlblcntUsage", w.DWORD),
+                    ("ProccntUsage", w.DWORD), ("modBaseAddr", ctypes.POINTER(ctypes.c_byte)),
+                    ("modBaseSize", w.DWORD), ("hModule", w.HMODULE),
+                    ("szModule", ctypes.c_wchar * 256), ("szExePath", ctypes.c_wchar * 260)]
+
+    k32.CreateToolhelp32Snapshot.restype = w.HANDLE
+    snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid)
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        raise InjectError(f"CreateToolhelp32Snapshot({pid}) failed "
+                          f"(Win32 {ctypes.get_last_error()})")
+    out = []
+    try:
+        me = MODULEENTRY32W()
+        me.dwSize = ctypes.sizeof(MODULEENTRY32W)
+        if not k32.Module32FirstW(snap, ctypes.byref(me)):
+            raise InjectError(f"Module32FirstW failed (Win32 {ctypes.get_last_error()})")
+        while True:
+            out.append((me.szModule, me.szExePath, me.modBaseSize))
+            if not k32.Module32NextW(snap, ctypes.byref(me)):
+                break
+    finally:
+        k32.CloseHandle(snap)
+    return out
+
+
+# Names that, if already mapped from somewhere other than System32, are ours.
+PROXY_NAMES = ("dxgi.dll", "version.dll", "winmm.dll", "dinput8.dll")
+
+
+def already_ours(pid):
+    """Modules in `pid` that look like a build of ours (an auto-loaded proxy counts)."""
+    hits = []
+    for name, path, size in loaded_modules(pid):
+        low, lpath = name.lower(), path.lower()
+        if low == "ue5dumper.dll":
+            hits.append((name, path, size))
+        elif low in PROXY_NAMES and "system32" not in lpath and "syswow64" not in lpath:
+            hits.append((name, path, size))
+    return hits
+
+
 def inject(pid, dll_path):
     dll_path = os.path.abspath(dll_path)
     if not os.path.isfile(dll_path):
@@ -157,6 +204,12 @@ def main(argv=None):
     ap.add_argument("--dll", default=None,
                     help="default: dist/UE5Dumper.dll relative to the repo root")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--allow-stale", action="store_true",
+                    help="inject even though a build of ours is already mapped (this is a "
+                         "refcount bump, not a load -- see the guard in main)")
+    ap.add_argument("--modules", action="store_true",
+                    help="list the target's mapped modules and exit; use to answer "
+                         "'is an old proxy already in this game?' without injecting")
     a = ap.parse_args(argv)
 
     if a.list:
@@ -173,12 +226,38 @@ def main(argv=None):
     if name is None:
         name = dict((p, n) for n, p in processes()).get(pid, "<gone>")
 
+    if a.modules:
+        for n, path, size in loaded_modules(pid):
+            print(f"{size:>12,}  {n:<28} {path}")
+        return 0
+
     dll = a.dll
     if dll is None:
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         dll = os.path.join(root, "dist", "UE5Dumper.dll")
 
     print(f"target : {name} (pid {pid})")
+
+    # ---- STALE-MODULE GUARD -------------------------------------------------
+    # A game may ALREADY have an old build of ours mapped -- most often a proxy
+    # auto-loaded out of the game folder. LoadLibraryW then merely bumps that
+    # module's refcount and returns it: the injection reports success, the logs
+    # fill up, and every measurement is of the OLD binary. The failure is totally
+    # silent and it is fatal to any before/after comparison. Not hypothetical --
+    # a ~6-month-old UE5Dumper.dll sits in Cheat Engine's install folder on this
+    # machine (todo.md's STALEDLL item).
+    prior = already_ours(pid)
+    if prior:
+        print("STALE MODULE(S) ALREADY MAPPED:")
+        for n, path, size in prior:
+            print(f"   {n}  {size:,} bytes  {path}")
+        if not a.allow_stale:
+            print("inject.py: FAILED -- refusing to inject. LoadLibraryW would return the "
+                  "module listed above instead of loading the file you asked for, and "
+                  "nothing in the logs would say so. Use a FRESH process, or pass "
+                  "--allow-stale if you really do want the refcount bump.", file=sys.stderr)
+            return 1
+        print("   (--allow-stale given; continuing -- this is a refcount bump, NOT a load)")
     print(f"dll    : {dll}  ({os.path.getsize(dll):,} bytes)"
           if os.path.isfile(dll) else f"dll    : {dll}  (MISSING)")
     hmod = inject(pid, dll)
