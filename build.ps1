@@ -60,7 +60,13 @@ param(
 $ErrorActionPreference = "Stop"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
-# Force UTF-8 for console output and .NET subprocess output (fixes CJK garbling)
+# Force UTF-8 for console output and .NET subprocess output (fixes CJK garbling).
+# LOAD-BEARING, not cosmetic: on a localized MSVC, cl.exe /showIncludes is localized
+# too, and CMake bakes the prefix it observes into build/CMakeFiles/rules.ninja as
+# `msvc_deps_prefix`. Configure and build must observe the SAME code page or Ninja
+# matches nothing and records ZERO header deps -- a .h edit then stops triggering a
+# rebuild, silently. Pinning UTF-8 here, before any configure, is what keeps them
+# equal. See Repair-NinjaHeaderDeps below, which heals a tree configured elsewhere.
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 $env:DOTNET_CLI_UI_LANGUAGE = "en"  # dotnet CLI in English to avoid codepage issues
@@ -118,6 +124,65 @@ function Write-Fail([string]$Text) {
 
 function Write-Info([string]$Text) {
     Write-Host "   $Text" -ForegroundColor Gray
+}
+
+function Repair-NinjaHeaderDeps() {
+    <#
+    .SYNOPSIS
+        Drop the build dir if its msvc_deps_prefix cannot match what cl.exe prints,
+        which silently disables Ninja's header dependency tracking.
+
+    .DESCRIPTION
+        Ninja learns which headers a .cpp includes by parsing cl.exe's /showIncludes
+        output: a line naming an included file is recognised by the literal string in
+        `msvc_deps_prefix` (build/CMakeFiles/rules.ninja). CMake detects that prefix
+        once, at CONFIGURE time, by running the compiler and reading its output.
+
+        On a localized MSVC the prefix is localized too -- on this project's zh-TW
+        machines it is "注意: 包含檔案: ", never the English "Note: including file: "
+        (VSLANG=1033 does NOT change it; only the installed language pack decides).
+        Its BYTES therefore depend on the console code page CMake probed under. This
+        script pins the console to UTF-8 before doing anything (see
+        [Console]::OutputEncoding at the top), so configure and build always agree.
+
+        A tree configured under a DIFFERENT code page does not agree. The bare
+        `cmake -S . -B build -G Ninja` shown in CLAUDE.md's "manual commands" section,
+        run from a stock cmd/Git Bash shell on CJK Windows, bakes a cp950 prefix; under
+        this script cl.exe then prints UTF-8 and NO line ever matches. Ninja records
+        ZERO header deps and reports nothing. The symptom is the dangerous one: editing
+        a .h stops triggering a rebuild, so the test executables link stale objects and
+        a header-pinned unit test goes green against code that was never compiled.
+
+        Detect that state -- a prefix that is not valid UTF-8 -- and remove the build
+        dir so the caller's configure runs fresh and every object recompiles with
+        working deps. A pure-ASCII prefix (English MSVC) is valid UTF-8 and is left
+        alone, so this is a no-op on non-localized toolchains.
+    #>
+    $rulesPath = Join-Path $BUILD_DIR "CMakeFiles\rules.ninja"
+    if (-not (Test-Path $rulesPath)) { return }   # nothing configured yet
+
+    # latin-1 maps 0x00-0xFF one-to-one, so the raw prefix bytes survive the round trip.
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+    $text   = $latin1.GetString([System.IO.File]::ReadAllBytes($rulesPath))
+    $match  = [regex]::Match($text, '(?m)^msvc_deps_prefix = (.*)$')
+    if (-not $match.Success) { return }           # not an MSVC deps=msvc tree
+
+    $prefixBytes = $latin1.GetBytes($match.Groups[1].Value.TrimEnd("`r"))
+    if ($prefixBytes.Length -eq 0) { return }
+
+    $strictUtf8 = [System.Text.UTF8Encoding]::new($false, $true)
+    try {
+        $null = $strictUtf8.GetString($prefixBytes)
+        return                                    # healthy: prefix will match
+    } catch {
+        # not valid UTF-8 => configured under another code page => deps are dead
+    }
+
+    Write-Step "Stale msvc_deps_prefix in $rulesPath (configured under another code page)."
+    Write-Info "Ninja cannot match cl.exe /showIncludes output, so it is recording NO header"
+    Write-Info "dependencies: a .h edit would not trigger a rebuild and the tests would link"
+    Write-Info "stale objects. Removing the build dir to force a clean re-configure."
+    Remove-Item -Recurse -Force $BUILD_DIR -ErrorAction SilentlyContinue
 }
 
 function Enter-VsDevEnvironment() {
@@ -452,6 +517,10 @@ if ($cppTargets.Count -gt 0) {
 
     # NOTE: no clean here. -Clean already removed $BUILD_DIR in the Clean phase;
     # otherwise we keep it for an incremental Ninja build (the whole point).
+    # A tree configured under a different console code page has dead header-dep
+    # tracking; drop it first so the configure below is fresh. No-op when healthy.
+    Repair-NinjaHeaderDeps
+
     Write-Step "Configuring CMake (Ninja + MSVC, all DLL targets)..."
     $configOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
 
@@ -777,6 +846,10 @@ if ($Target -in "All", "Test") {
     # `build test` run on its own (no DLL build this invocation) the dir may be
     # empty/unconfigured — configure it now (cheap; only the requested test
     # targets are compiled below, not the DLLs).
+    # Removes the build dir when its header-dep tracking is dead, which also clears
+    # CMakeCache.txt and so makes the configure below run. No-op when healthy.
+    Repair-NinjaHeaderDeps
+
     if (-not (Test-Path (Join-Path $BUILD_DIR "CMakeCache.txt"))) {
         Write-Step "Configuring CMake for tests (Ninja + MSVC)..."
         $testCfgOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$BUILD_DIR`" -G Ninja -DCMAKE_BUILD_TYPE=$CppConfig -DBUILD_PROXY_DLL=ON -DBUILD_PROXY_DINPUT8=ON -DBUILD_PROXY_DXGI=ON -DBUILD_PROXY_WINMM=ON"
