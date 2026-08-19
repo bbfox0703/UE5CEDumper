@@ -4122,7 +4122,7 @@ stubs; what it cannot cover is CE's real dissect machinery.*
    unwind path is still unwitnessed; what is proven is the row's actual claim, that the attempt
    fails and leaves no debris.
 
-### 🟡 3-of-5 CLOSED 2026-08-19 — A6: Force now holds the class AND its subclasses
+### 🟡 4-of-5 CLOSED 2026-08-19 — A6: Force now holds the class AND its subclasses
 
 *Any game. See dev-log build 3036. This one changes what an already-shipped, in-game-verified
 feature WRITES TO (the Stealth Meter card), so the regression half matters as much as the fix.*
@@ -4162,7 +4162,37 @@ feature WRITES TO (the Stealth Meter card), so the regression half matters as mu
 >   reports a non-zero hold and restores on Reset. This is the one already-shipped, already
 >   in-game-verified path A6 changed, so it is the step that could have gone *backwards*. It did not.
 >
-> ⚠ **STEPS 3 AND 5 REMAIN, and they are the two that could still be wrong:**
+> ### ✅ STEP 3 CLOSED 2026-08-19 `[A6-DERIV-2026-08-19]` — derivation, not substring, PROVEN
+>
+> Headless over the pipe on DumperTest Development / dist 3263 (`tools/verify/a6_derivation.py`).
+> The pair chosen is stronger than the row's `Enemy`/`EnemyProjectile` suggestion because **UE
+> guarantees it**, so the result does not depend on one game's class tree:
+> `CharacterMovementComponent` starts with `Character` and derives from `UActorComponent` — it is
+> not a `Character` by any super-chain, but it is an exact prefix match.
+>
+> | walk | live instances |
+> |---|---|
+> | `FindInstancesDerivedFrom base='Character'` | **1** |
+> | `FindInstancesDerivedFrom base='CharacterMovementComponent'` | **7** |
+>
+> Forcing `bCanBeDamaged` on `Character` held **1**. A prefix matcher would have held **8**.
+>
+> ⭐ **The reachability control is what makes this decisive, and it is the half that is easy to
+> skip.** "The impostor was not held" proves nothing if the impostor is not in the pool: forcing
+> `bAutoActivate` on `CharacterMovementComponent` itself held **7**, so those objects are live,
+> reachable and holdable — their absence from the `Character` hold is a real **exclusion**, not an
+> empty pool. Both walks report the same corpus (`scanned=25179, nonNull=25172, 3941 distinct
+> classes`), so the difference is not a scoping artefact either.
+>
+> Game state restored: `reset_all_fields` → `get_forced_fields` re-read, **0** fields held.
+> ⚠ Also worth knowing: **`find_instances` matches by NAME** and cheerfully returns
+> `Default__CharacterMovementComponent` for the query `Character`. The two code paths are different,
+> and confusing them is exactly the mistake this step exists to rule out.
+>
+> **Step 5 (no CDO is written) still remains** — it needs spawns after a reset, which a static pool
+> cannot provide.
+
+> ⚠ **STEP 5 REMAINS (step 3 closed above); it is the one that could still be wrong:**
 > * **Step 3 — derivation, not substring.** Nothing above distinguishes a real super-chain test from
 >   a name-prefix match; both hold "hundreds". It needs a same-prefix sibling pair (`Enemy` /
 >   `EnemyProjectile`, any `Foo` / `FooComponent`) with the unrelated class confirmed **not** held,
