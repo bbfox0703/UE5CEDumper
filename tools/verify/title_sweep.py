@@ -81,15 +81,27 @@ def drop_hint(exe_name):
     that exists for G11 step 1's regression comparison -- deleting it without capturing
     it destroys the comparison the step is asking for.
     """
-    h, entry = hint_for(exe_name)
-    if h is None:
-        return None, None
     d = json.loads(MACHINE_JSON.read_text(encoding="utf-8"))
-    del d["games"][h]
+    # ALL matches, not just the first. One exe can own several entries: the cache is
+    # keyed by PE hash, and a game patch re-hashes the binary while keeping the name
+    # (DQ7R has two, 69BA4044185AB000 -> 69BB84C7069E9000). Deleting only the first
+    # left the second behind and the delete-then-verify guard correctly refused.
+    doomed = [k for k, v in d["games"].items()
+              if (v.get("gameName") or "").lower() == exe_name.lower()]
+    if not doomed:
+        return None, None
+    # Report the NEWEST by lastScanUtc as "the" cached verdict -- that is the one the
+    # next scan would actually have used.
+    newest = max(doomed, key=lambda k: d["games"][k].get("lastScanUtc") or "")
+    entry = d["games"][newest]
+    for k in doomed:
+        del d["games"][k]
     MACHINE_JSON.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
     if hint_for(exe_name)[0] is not None:
         raise SystemExit(f"title_sweep: FAILED -- hint for {exe_name} survived deletion")
-    return h, entry
+    if len(doomed) > 1:
+        say(f"  (removed {len(doomed)} entries for this exe -- a game patch re-hashed it)")
+    return newest, entry
 
 
 def anything_of_ours_running():
@@ -196,15 +208,45 @@ def main():
                 time.sleep(3)
         else:
             tail = (LOGROOT / exe.stem / "init-0.log")
-            say(f"NO PIPE after boot+120s. init-0.log says:")
-            if tail.is_file():
-                for l in tail.read_text(encoding="utf-8", errors="replace").splitlines()[-6:]:
-                    say("   " + l.strip()[:180])
-            result.update(swept=False, reason="pipe never appeared")
-            OUT.mkdir(parents=True, exist_ok=True)
-            (OUT / f"{exe.stem}.json").write_text(
-                json.dumps(result, indent=1, ensure_ascii=False), encoding="utf-8")
-            return 3
+            say("NO PIPE after boot+120s. init-0.log says:")
+            txt = tail.read_text(encoding="utf-8", errors="replace") if tail.is_file() else ""
+            for l in txt.splitlines()[-6:]:
+                say("   " + l.strip()[:180])
+
+            # [RELAUNCHPIPE-2026-08-19]: on a self-relaunching title the survivor
+            # skipped starting a server because the launcher still held the pipe, then
+            # the launcher exited with it. The DLL is mapped and healthy -- it just has
+            # no server. Ask it to start one.
+            if "pipe already exists" in txt:
+                say("  -> this is [RELAUNCHPIPE]. Calling UE5_StartPipeServer in the "
+                    "survivor as a WORKAROUND (the defect stays open).")
+                o = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {exe.name}",
+                                    "/FO", "CSV", "/NH"], capture_output=True,
+                                   text=True, errors="replace").stdout
+                pids = [[x.strip('"') for x in l.split('","')][1]
+                        for l in o.splitlines() if exe.stem.lower() in l.lower()]
+                if pids:
+                    subprocess.run([sys.executable, str(ROOT / "tools/verify/call_export.py"),
+                                    pids[0], "UE5_StartPipeServer"],
+                                   capture_output=True, text=True, errors="replace")
+                    time.sleep(5)
+                    try:
+                        with open(pipe_path, "r+b", buffering=0):
+                            say("  -> pipe is UP after the workaround; continuing")
+                            result["relaunchpipe_workaround"] = True
+                    except OSError:
+                        say("  -> still no pipe; giving up on this title")
+                        result.update(swept=False, reason="pipe never appeared (workaround failed)")
+                        OUT.mkdir(parents=True, exist_ok=True)
+                        (OUT / f"{exe.stem}.json").write_text(
+                            json.dumps(result, indent=1, ensure_ascii=False), encoding="utf-8")
+                        return 3
+            else:
+                result.update(swept=False, reason="pipe never appeared")
+                OUT.mkdir(parents=True, exist_ok=True)
+                (OUT / f"{exe.stem}.json").write_text(
+                    json.dumps(result, indent=1, ensure_ascii=False), encoding="utf-8")
+                return 3
 
         with PipeClient(timeout=300.0) as c:
             try:
@@ -254,8 +296,15 @@ def main():
                 f"item_size={off.get('item_size')} layout={off.get('item_layout_mode')}")
 
             cls = c.request("list_classes")
-            result["class_total"] = cls.get("total") or cls.get("count")
-            say(f"classes: {result['class_total']}")
+            # `total` is the PAGE size (results.size(), capped by limit, default 5000).
+            # `total_classes` is the REAL pool total and `truncated` says the walk hit
+            # the cap -- that pair IS the [CLASSTOTAL]/X2 fix. Reading `total` and
+            # calling it the class count is precisely the bug those rows are about.
+            result["class_page"] = cls.get("total")
+            result["class_total"] = cls.get("total_classes")
+            result["class_truncated"] = cls.get("truncated")
+            say(f"classes: page={cls.get('total')} REAL total_classes={cls.get('total_classes')} "
+                f"truncated={cls.get('truncated')}")
     finally:
         if not a.keep:
             subprocess.run(["taskkill", "/F", "/IM", exe.name], capture_output=True)

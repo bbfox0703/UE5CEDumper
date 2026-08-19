@@ -3251,6 +3251,81 @@ DQ I&II is a **fourth** confirmed non-CPN title (U2 sweep: TQ2 · Solarpunk · D
 zero CPN found), and another `validated`-clean host, so **G1/X3's amber-banner half still has no
 host**.
 
+### 🟡 GROUP 7 SWEEP DONE 2026-08-19 `[SWEEP9-2026-08-19]` — nine titles, headless, one at a time
+
+Rig: `tools/verify/title_sweep.py` (+ `proxy_refresh.py`). Every title: refresh the stale proxy →
+**clear the hint entry so `DetectVersion` actually runs** → launch the shipping exe directly → wait
+for the pipe → `trigger_scan` → pipe round-trip → grep `scan-0.log` → **kill and confirm dead** →
+next. dist **3263** confirmed by `assert_build()` on every one.
+
+| title | UE (detected) | tier | detect path | GObjects | GWorld | objects | classes | CPN |
+|---|---|---|---|---|---|---|---|---|
+| Lushfoil | 506 | 1 | PE resource | `GOBJ_ES53_1` | `GWLD_TQ_1` | 58,619 | 1,770 | false |
+| Manor Lords | 505 | 1 | PE resource | `GOBJ_ES53_1` | `GWLD_SP57_1` | 80,013 | 2,919 | false |
+| Solarpunk | 507 | 1 | PE resource | `GOBJ_V13` | `GWLD_SP57_1` | 120,862 | 2,706 | false |
+| EVERSPACE 2 | 505 | 1 | PE resource | `GOBJ_V13` | `GWLD_ES2_1` | 79,012 | 3,052 | false |
+| The Artisan of Glimmith (Geri) | 427 | 1 | PE resource | `GOBJ_ES53_1` | `GWLD_TQ_1` | 24,132 | 799 | false |
+| Avowed | 503 (→504 raised) | 1 | PE resource | **`GOBJ_AV1`** | **`instance_scan_recovery`** | 92,037 | **5,102** | false |
+| DQ7R | 427 | 1 | **Tier 1 (utf16)** | `GOBJ_ES53_1` | `GWLD_TQ_1` | 149,408 | 2,543 | false |
+| Elliot | 427 *(fallback)* | **0** | **publisher-bias fallback** | `GOBJ_ES53_1` | `GWLD_TQ_1` | 84,990 | 3,236 | false |
+| OCTOPATH TRAVELER | 418 | – | (see `[RELAUNCHPIPE]`) | `GOBJ_ES53_1` | `GWLD_TQ_1` | 273,957 | 699 | false |
+
+**`U2` CPN screening — swept 9, ALL FALSE.** `case_preserving=false` on every title, `probe_ran=true`
+on every title. That is the honest form of the null result, and it covers UE4 (418, 427) as well as
+UE5 (503–507), which the row asks for. ⇒ The row's escalation ("only if the sweep returns all-false,
+build UE from source with `WITH_CASE_PRESERVING_NAME=1`") is now *reached*, and it is hours of work,
+so it stays a maintainer decision.
+
+**`G11` step 3 / `G8`–`G9` — the tier ladder was entered, and Tier 2 still did not fire.**
+`DQ7R` is the one that reaches it: `PE VERSIONINFO Product=1.1 File=1.1 — unrecognised` → memory
+scan → `DetectVersion: Tier 1 (utf16) '++UE4+Release-4.27' -> 427 at 0x4BBC6D8`. **No
+`Tier 2 Release prefix` line appeared on any of the nine.** That is the offline model's prediction
+reproduced live — Tier 1 answering first and masking every Tier 2 hit — and it remains *not*
+evidence that Tier 2 works.
+
+**`G12` — the publisher-bias fallback branch is exercised, by Elliot.** Its resource is unusable
+(`Product=1.2 — unrecognised`) *and* it carries no release tag, so it produces **no tier line at
+all**, exactly as this register already predicted: `Could not detect UE version from PE or memory
+(pre-UE4 markers 0/4, below the 2 needed)` → `UE detection failed — using publisher (SQUARE_ENIX)
+bias fallback 427` → `UE Version = 427 (tier=0, detected=no, lowConfidence=yes)`.
+⚠ **Elliot is really UE 5.04, so the bias picks the wrong number** — but it is honestly flagged
+`detected=no, lowConfidence=yes`, and it is **harmless in practice**: the offset probe is empirical,
+not version-driven, and reported `use_fproperty=true`, `item_size=24`, `validated=true`, with all
+four pointers resolving. Worth knowing before anyone reads `427` on the UI's Elliot session as a bug.
+
+**`X2` step 4 + `[CLASSTOTAL]` — the >5,000-class title exists and the wire reports it correctly.**
+Avowed: `list_classes` → `total` (the page) **5000** = the default `limit`, `total_classes` **5102**,
+`truncated` **true**. So the real pool total travels separately from the capped page, which is the
+fix. ⚠ **Read `total_classes`, never `total`** — `total` is `results.size()` and equals the cap
+exactly, which is precisely the misreading X2 is about. (This rig read `total` first and recorded
+"5000 classes"; the number looked plausible and was wrong.)
+
+**Avowed also re-confirms its documented shape**: `GOBJ_AV1`, **`item_size=20`** (the packed
+`FUObjectItem`), and GWorld via **`instance_scan_recovery`** rather than a direct AOB.
+
+⚠ **THREE DIFFERENT "UE VERSION" QUANTITIES, and confusing them manufactures a G11 false alarm.**
+This cost two contradictory readings of Avowed before it was pinned down:
+1. the **cached** `ueVersion` in `UE5CEDumper.<Machine>.json` — the *detected* value;
+2. the **`FindAll: UE Version = N`** log line — also the detected value, and the right thing to
+   compare a cache against;
+3. **`get_pointers.ue_version`** — `g_cachedUEVersion`, which is the value **after any runtime
+   raise**. Avowed detects 503 and then logs `property marker (CMC::GravityDirection) = UE5.4+ —
+   raising version 503 -> 504`, exactly as DragonSword Awakening does, so 503 and 504 are *both
+   right* for different questions.
+⇒ **G11 step 1 must compare the cache against the LOG LINE.** On that basis: **6 of 8 IDENTICAL**
+(Lushfoil 506, Manor Lords 505, Solarpunk 507, ES2 505, Geri 427, DQ7R 427 — and Solarpunk's is a
+genuine cross-revision re-detect, its entry was still `rev=3`). The two that differ are Avowed
+(cache 504 from an older run vs detected 503 + documented raise — **not** a regression) and Elliot
+(504 → 427, the fallback change described above). No user override was destroyed by the clears —
+every entry had `ueVersionUserOverrideAt` empty, checked before and after.
+
+⚠ **Object counts drift by a few between runs** (Avowed 92,036 → 92,037) as the game loads; treat
+small deltas as noise, not as findings.
+
+⛔ **Two titles could NOT be swept**, recorded rather than silently skipped: **Star Trek Voyager**
+exits immediately when its shipping exe is launched directly (Steam DRM wants the client), and
+**EVERSPACE (RSG)** was not attempted. Both need a Steam-client launch.
+
 ### ⬜ NEW 2026-08-17 — G11: Tier 2 is alive; check it agrees with Tier 1
 
 *Needs the DLL injected. See dev-log build 3112. **Measured 0/170 → 6/170 Tier 2 hits offline, with
