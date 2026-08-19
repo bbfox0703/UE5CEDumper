@@ -65,7 +65,7 @@ public sealed class FreezeValueDialog : Window
         _helperType = HelperTypeFor(match);
         _purpose = purpose;
 
-        Title = Str("Title");
+        Title = Str(Leaf.Title);
         Width = 520;
         MinWidth = 400;
         SizeToContent = SizeToContent.Height;
@@ -92,7 +92,7 @@ public sealed class FreezeValueDialog : Window
         // pawn's bCanBeDamaged" is really freezing every live Actor in the level.
         root.Children.Add(BuildLabelRow("Scope:",    ScopeSummary(_match)));
 
-        var scopeWarning = ScopeWarning(_match, Str("NarrowHint"));
+        var scopeWarning = ScopeWarning(_match, Str(Leaf.NarrowHint));
         if (scopeWarning != null)
         {
             root.Children.Add(new TextBlock
@@ -108,7 +108,7 @@ public sealed class FreezeValueDialog : Window
         // Value input
         var valueLbl = new TextBlock
         {
-            Text = StrFormat("ValueLabel", _helperType),
+            Text = StrFormat(Leaf.ValueLabel, _helperType),
             Foreground = new SolidColorBrush(Color.Parse("#DCDCAA")),
             FontSize = 12,
             Margin = new Thickness(0, 8, 0, 2),
@@ -162,7 +162,7 @@ public sealed class FreezeValueDialog : Window
 
         _btnOk = new Button
         {
-            Content = Str("Ok"),
+            Content = Str(Leaf.Ok),
             Padding = new Thickness(14, 4),
             IsDefault = true,
         };
@@ -273,21 +273,62 @@ public sealed class FreezeValueDialog : Window
 
     // ---- purpose-scoped strings (en.axaml) -------------------------------------
 
-    private string Str(string leaf)
+    /// <summary>Which of the four purpose-scoped strings is wanted. An enum rather than a
+    /// string so <see cref="KeyFor"/> is exhaustive over both axes and a typo cannot
+    /// compile.</summary>
+    internal enum Leaf { Title, ValueLabel, Ok, NarrowHint }
+
+    /// <summary>
+    /// The en.axaml key for one (purpose, leaf) pair — <b>every key written out in full</b>.
+    ///
+    /// <para>This used to interpolate the purpose and the leaf into the key, which is
+    /// shorter and worse. <c>tools/check_axaml_strings.py</c> greps for literal key tokens
+    /// precisely because a missing <c>StaticResource</c> raises at load time and takes the
+    /// panel with it; an interpolated key is invisible to that grep, so the gate saw a
+    /// dangling reference to the constant prefix ahead of the first brace and called all
+    /// eight real keys dead. It went red the moment AF22 landed and would have stayed red,
+    /// hiding every genuine missing key behind the noise. Composing a resource key at
+    /// runtime also leans on <c>Enum.ToString</c>, which is metadata the trimmer has no
+    /// reason to keep — a literal cannot rot that way either.</para>
+    ///
+    /// <para>Keep the arms literal. Rebuilding the string from <c>nameof</c> or a prefix
+    /// constant would defeat the grep again for the same reason. For the same reason the
+    /// prose here never spells a key out: the checker cannot tell a comment from a call
+    /// site, so an example key in a doc comment IS a reference.</para>
+    /// </summary>
+    internal static string KeyFor(Purpose purpose, Leaf leaf) => (purpose, leaf) switch
     {
-        var s = Res.Get($"str.ValuePrompt.{_purpose}.{leaf}");
+        (Purpose.Freeze, Leaf.Title)      => "str.ValuePrompt.Freeze.Title",
+        (Purpose.Freeze, Leaf.ValueLabel) => "str.ValuePrompt.Freeze.ValueLabel",
+        (Purpose.Freeze, Leaf.Ok)         => "str.ValuePrompt.Freeze.Ok",
+        (Purpose.Freeze, Leaf.NarrowHint) => "str.ValuePrompt.Freeze.NarrowHint",
+        (Purpose.Force,  Leaf.Title)      => "str.ValuePrompt.Force.Title",
+        (Purpose.Force,  Leaf.ValueLabel) => "str.ValuePrompt.Force.ValueLabel",
+        (Purpose.Force,  Leaf.Ok)         => "str.ValuePrompt.Force.Ok",
+        (Purpose.Force,  Leaf.NarrowHint) => "str.ValuePrompt.Force.NarrowHint",
+        // Unreachable from any in-repo call site: both enums are covered above. Reached
+        // only by casting an undeclared value, which is a programmer error — and falling
+        // back to the Freeze wording is the AF22 defect itself, so refuse instead.
+        _ => throw new ArgumentOutOfRangeException(
+                 nameof(purpose), $"No en.axaml wording defined for {purpose}/{leaf}"),
+    };
+
+    private string Str(Leaf leaf)
+    {
+        var key = KeyFor(_purpose, leaf);
+        var s = Res.Get(key);
         // Res.Get returns "" when Application.Current is null (unit tests construct
         // no Avalonia app) or the key is missing. Falling back to the Freeze wording
         // would re-introduce exactly the defect this fixes, so fall back to the KEY —
         // visibly wrong beats plausibly wrong.
-        return string.IsNullOrEmpty(s) ? $"str.ValuePrompt.{_purpose}.{leaf}" : s;
+        return string.IsNullOrEmpty(s) ? key : s;
     }
 
-    private string StrFormat(string leaf, params object[] args)
+    private string StrFormat(Leaf leaf, params object[] args)
     {
-        var t = Res.Get($"str.ValuePrompt.{_purpose}.{leaf}");
-        return string.IsNullOrEmpty(t) ? $"str.ValuePrompt.{_purpose}.{leaf}"
-                                       : string.Format(t, args);
+        var key = KeyFor(_purpose, leaf);
+        var t = Res.Get(key);
+        return string.IsNullOrEmpty(t) ? key : string.Format(t, args);
     }
 
     /// <summary>

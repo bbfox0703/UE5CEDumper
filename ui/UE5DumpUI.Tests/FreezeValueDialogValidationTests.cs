@@ -501,6 +501,166 @@ public class FreezeValueDialogValidationTests
         Assert.Contains("BP_Teammate_C", w);
     }
 
+    // ---- AF22, the half that had no test: key resolution -----------------------
+    //
+    // AF22 shipped the Force wording but resolved it with an interpolated key, so the
+    // Force-vs-Freeze choice happened in a string the compiler never saw and no test
+    // ever exercised (the pure ScopeWarning tests above take the hint as a PARAMETER,
+    // so they pass whichever hint the dialog actually picks). It also blinded
+    // tools/check_axaml_strings.py, which then reported all eight keys dead.
+    // KeyFor is that choice, extracted and pinned.
+
+    /// <summary>
+    /// Each (purpose, leaf) resolves to its own literal en.axaml key. Spelled out here
+    /// rather than rebuilt from the enum names on purpose: a test that composed the key
+    /// the same way the code does would agree with the code no matter what it composed.
+    /// </summary>
+    /// <remarks>A Fact with a table rather than a Theory: InlineData would force
+    /// <c>Leaf</c> public (an xUnit test method must be public, and so must its parameter
+    /// types), and widening the product API to suit the test runner is the wrong trade.
+    /// A method BODY may name an internal type freely.</remarks>
+    [Fact]
+    public void KeyFor_ResolvesEachPurposeAndLeafToItsOwnKey()
+    {
+        static void Check(string expected, FreezeValueDialog.Purpose p, FreezeValueDialog.Leaf l)
+            => Assert.Equal(expected, FreezeValueDialog.KeyFor(p, l));
+
+        Check("str.ValuePrompt.Freeze.Title",      FreezeValueDialog.Purpose.Freeze, FreezeValueDialog.Leaf.Title);
+        Check("str.ValuePrompt.Freeze.ValueLabel", FreezeValueDialog.Purpose.Freeze, FreezeValueDialog.Leaf.ValueLabel);
+        Check("str.ValuePrompt.Freeze.Ok",         FreezeValueDialog.Purpose.Freeze, FreezeValueDialog.Leaf.Ok);
+        Check("str.ValuePrompt.Freeze.NarrowHint", FreezeValueDialog.Purpose.Freeze, FreezeValueDialog.Leaf.NarrowHint);
+        Check("str.ValuePrompt.Force.Title",       FreezeValueDialog.Purpose.Force,  FreezeValueDialog.Leaf.Title);
+        Check("str.ValuePrompt.Force.ValueLabel",  FreezeValueDialog.Purpose.Force,  FreezeValueDialog.Leaf.ValueLabel);
+        Check("str.ValuePrompt.Force.Ok",          FreezeValueDialog.Purpose.Force,  FreezeValueDialog.Leaf.Ok);
+        Check("str.ValuePrompt.Force.NarrowHint",  FreezeValueDialog.Purpose.Force,  FreezeValueDialog.Leaf.NarrowHint);
+    }
+
+    /// <summary>
+    /// The AF22 invariant itself: no leaf may hand the Force flow the Freeze key. This is
+    /// what regressed silently before — reuse was the DEFAULT, so a new leaf that forgot
+    /// to branch simply showed freeze wording. Exhaustive over both enums, so a leaf added
+    /// later is covered without editing this test.
+    /// </summary>
+    [Fact]
+    public void KeyFor_NeverHandsTheForceFlowTheFreezeKey()
+    {
+        var leaves = Enum.GetValues<FreezeValueDialog.Leaf>();
+        Assert.True(leaves.Length >= 4, $"expected >=4 leaves, saw {leaves.Length}");
+
+        var all = new List<string>();
+        foreach (var leaf in leaves)
+        {
+            var freeze = FreezeValueDialog.KeyFor(FreezeValueDialog.Purpose.Freeze, leaf);
+            var force  = FreezeValueDialog.KeyFor(FreezeValueDialog.Purpose.Force,  leaf);
+            Assert.NotEqual(freeze, force);
+            all.Add(freeze);
+            all.Add(force);
+        }
+        // ...and no two pairs collide either, which a copy-pasted arm would cause.
+        Assert.Equal(all.Count, all.Distinct().Count());
+    }
+
+    /// <summary>An undeclared enum value is refused, not quietly served the Freeze
+    /// wording. Falling back to Freeze is the defect AF22 fixed.</summary>
+    [Fact]
+    public void KeyFor_RefusesAnUndeclaredPurpose()
+        => Assert.Throws<ArgumentOutOfRangeException>(
+               () => FreezeValueDialog.KeyFor((FreezeValueDialog.Purpose)97,
+                                              FreezeValueDialog.Leaf.Ok));
+
+    /// <summary>
+    /// Every key KeyFor can return is really defined in en.axaml. Res.Get returns "" for a
+    /// missing key, and the dialog then shows the key itself — visible, but only to whoever
+    /// opens the dialog. tools/check_axaml_strings.py enforces this in CI; this asserts it
+    /// in the test run too, which is what catches it before the commit.
+    /// </summary>
+    [Fact]
+    public void EveryValuePromptKeyExistsInEnAxaml()
+    {
+        var text = ReadEnAxaml();
+        int seen = 0;
+        foreach (var purpose in Enum.GetValues<FreezeValueDialog.Purpose>())
+            foreach (var leaf in Enum.GetValues<FreezeValueDialog.Leaf>())
+            {
+                Assert.Contains($"x:Key=\"{FreezeValueDialog.KeyFor(purpose, leaf)}\"",
+                                text, StringComparison.Ordinal);
+                seen++;
+            }
+        Assert.Equal(8, seen);   // guard the guard: an empty loop must not pass
+    }
+
+    /// <summary>
+    /// The wording behind the keys, which is what AF22 was actually about: the Force flow
+    /// must not describe itself as a freeze, and must not offer the Freeze remedy (edit
+    /// className in the generated CFG block) on a path that generates no script.
+    /// </summary>
+    [Fact]
+    public void TheForceWordingNeverDescribesItselfAsAFreeze()
+    {
+        var text = ReadEnAxaml();
+
+        string ForceStr(FreezeValueDialog.Leaf l)
+            => ValueOf(text, FreezeValueDialog.KeyFor(FreezeValueDialog.Purpose.Force, l));
+        string FreezeStr(FreezeValueDialog.Leaf l)
+            => ValueOf(text, FreezeValueDialog.KeyFor(FreezeValueDialog.Purpose.Freeze, l));
+
+        foreach (var leaf in Enum.GetValues<FreezeValueDialog.Leaf>())
+        {
+            var f = ForceStr(leaf);
+            Assert.False(string.IsNullOrWhiteSpace(f), $"Force.{leaf} is blank in en.axaml");
+            Assert.NotEqual(FreezeStr(leaf), f);
+            Assert.DoesNotContain("freeze", f, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // The two specifics the finding named.
+        Assert.DoesNotContain("CFG block", ForceStr(FreezeValueDialog.Leaf.NarrowHint),
+                              StringComparison.Ordinal);
+        Assert.DoesNotContain("className", ForceStr(FreezeValueDialog.Leaf.NarrowHint),
+                              StringComparison.Ordinal);
+
+        // Negative control: the Freeze side still says all of it, so the assertions above
+        // are discriminating rather than vacuously true of any string in the file.
+        Assert.Contains("freeze", FreezeStr(FreezeValueDialog.Leaf.Ok),
+                        StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("CFG block", FreezeStr(FreezeValueDialog.Leaf.NarrowHint),
+                        StringComparison.Ordinal);
+        Assert.Contains("className", FreezeStr(FreezeValueDialog.Leaf.NarrowHint),
+                        StringComparison.Ordinal);
+    }
+
+    private static string ReadEnAxaml()
+    {
+        var path = FindRepoFile(Path.Combine("ui", "UE5DumpUI", "Resources", "Strings", "en.axaml"));
+        Assert.NotNull(path);   // shipped artifact — not finding it is a real failure
+        return File.ReadAllText(path!);
+    }
+
+    /// <summary>The text between the tags for one x:Key, or "" when absent.</summary>
+    private static string ValueOf(string axaml, string key)
+    {
+        foreach (var line in axaml.Split('\n'))
+        {
+            int at = line.IndexOf($"x:Key=\"{key}\"", StringComparison.Ordinal);
+            if (at < 0) continue;
+            int open  = line.IndexOf('>', at);
+            int close = line.LastIndexOf("</sys:String>", StringComparison.Ordinal);
+            if (open < 0 || close <= open) continue;
+            return line.Substring(open + 1, close - open - 1);
+        }
+        return "";
+    }
+
+    private static string? FindRepoFile(string relative)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
+        {
+            string candidate = Path.Combine(dir.FullName, relative);
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
+    }
+
     private static PropertySearchMatch MakeMatch(string propType, int propSize) => new()
     {
         ClassName         = "BP_Player_C",
