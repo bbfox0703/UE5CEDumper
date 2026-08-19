@@ -967,12 +967,14 @@ Group 1 still runs the 10-minute partial as a genuine non-regression, recorded a
 
 -----
 
-## 10. The 繁中 checklist's 45 remaining items — one row each (2026-08-19)
+## 10. The 繁中 checklist's 49 remaining items — one row each (2026-08-19)
 
 **Denominator, stated so it cannot drift again: the `###` item count of
-[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **45** after that file was pruned
-46 → 40 on 2026-08-19 and then took audit **L10**'s five new items (AF7/AF8, AF10/AF11, AF12/AF13/AF22,
-AF16–AF23, AF21) the same day.** Re-derive with `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two
+[pending-verification_zh-TW.md](pending-verification_zh-TW.md), **49**.** That file was pruned
+46 → 40 on 2026-08-19, took audit **L10**'s five new items (AF7/AF8, AF10/AF11, AF12/AF13/AF22,
+AF16–AF23, AF21) the same day → 45, then **lost `A5`** (closed on the maintainer's own run) and
+**gained the four `[TAG]` mirrors** `PIPEBUSY` / `SLOTSYM` / `CLASSTOTAL` / `PROXYLOAD` → **49**.
+Re-derive with `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two
 `###` under 「怎麼用這份清單」. This is **not** the same denominator as this file's older
 "64 checklist rows" headline, which counted register rows; that number is retired.
 
@@ -991,7 +993,7 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 | 3 | `AD4` (step 4 only) | **C** | `ON (contested)` needs the game to damage-reset the flag while ↻ is spammed. Combat, mid-batch. Nothing else on the item is left |
 | 4 | `A3` | **A** | ⭐ **Cheaper than hoped.** Already scheduled headless in GROUP 1 on DumperTest — a Float/NumericAll `scan_for_value` over the pipe and a grep of the reply for `.Velocity` / `.Scale3D`. No UI, and no hunt for a suitable vector: the assertion is *which field names appear*, not which value matches. Driving it through the UI also works and is still unattended |
 | 5 | ~~`Skia ABI`~~ → `AUTOREFRESH` | **B** | ⭐ **`Skia ABI` CLOSED 2026-08-19** by the maintainer's own accumulated sessions (recorded in todo.md; not agent-observed) and deleted from the 繁中 list. Its slot is taken by the new `AUTOREFRESH` item, also **B**: Live Walker Auto must cycle rather than freeze at 0, and must come back after a disconnect→reconnect. ⚠ **Its step 3/4 need TWO games in one UI session** — sequence them inside one group, never in parallel |
-| 6 | `A5 / V6 / AE9 / U8` | **B** | A5/V6/AE9 already carry PASS write-ups; what is left is **U8**, and it is sample-blocked — DumperTest has no `FName` with a `Number` component. Fold into GROUP 7's sweep |
+| 6 | `V6 / AE9 / U8` | **B** | ⭐ **`A5` CLOSED 2026-08-19** on the maintainer's own re-search (recorded in todo.md; not agent-observed) and its step deleted from the 繁中 list. V6/AE9 carry PASS write-ups; what is left is **U8**, sample-blocked — DumperTest has no `FName` with a `Number` component (fold into GROUP 7's sweep) — plus **V6's auto-refresh half, which is BLOCKED** behind `[AUTOREFRESH-2026-08-19]` reaching a published build; the other PC is still on `dist` 1.0.0.3262 |
 | 7 | `AE2 / AE3` (steps 4, 5) | **C** | Step 5 is B (a handoff, then re-click the node). **Step 4 is the human one**: travel to another level on a streaming title so a walked class goes stale, then re-click the same row |
 | 8 | `G2` | **D** | Step 1 (split the version-scan timing with a separator log line) is **A** and runnable now. Step 2 cannot close — the UE5 Tier-1 branch has **no host on this machine**; see §7 |
 | 9 | `W1 / W7` | **C** | Not a game action — **install FModel** (or leave a runnable CUE4Parse `UsmapParser` on disk) and name its path. Writing our own parser is explicitly refused: it would reproduce the shared misreading the item exists to rule out |
@@ -1033,17 +1035,30 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 | 44 | `AF12 / AF13 / AF22` | **B** | AF22 is two dialog reads with its own control (open Force, then open Freeze, and check the wording DIFFERS). AF12/AF13 need a snapshot where one slot matches >256 fields on some object — a very common value on a big capture |
 | 45 | `AF21` | **C** | The human action is a **Windows display-scaling change to 150%**, which nothing in the rig can do. Everything after that is dragging a window and restarting. Run it last, and run the 100% control too |
 
+*Rows 46–49 are the four `[TAG]` items mirrored into 繁中 on 2026-08-19. They were fixed the same day and their live checks had existed only in todo.md's register.*
+
+| # | 繁中 item | cat | why that category / cheapest next step |
+|---|---|---|---|
+| 46 | `PIPEBUSY` | **A** | No GUI needed at all: **three** `pipe_client.py` instances reach `kMaxPipeInstances=3` on their own, then it is two greps of `pipe-0.log`. The register stages it as UI-plus-one-client, which is the same code path but B. ⚠ Deliberately breaks the standing "never run `pipe_client.py` while the UI is connected" rule if staged that way — kill the extra client when the row ends |
+| 47 | `SLOTSYM` | **B** | CE's Lua console plus tick/untick on two records. DumperTest's `&GEngine` AOB validates, so it takes the SLOT path. ⚠ Set `UE5_DEBUG=1` **before** the first tick or the `dbg` refcount lines that step 2 asserts on never print |
+| 48 | `CLASSTOTAL` | **B** | ⭐ **Cheapest first step is A** — one `list_classes` over the pipe against Elliot, and the row is decided if `total_classes` > 5,000. The B part is only 鐵則 4 (the status-line *string* must actually be seen). Step 3 needs a **second, small** game, so schedule it beside another `<5,000`-class launch rather than on its own |
+| 49 | `PROXYLOAD` | **B** | Three launches: OCTOPATH (imports `version`, must stay "not observed"), DQ7R or DQ I&II (must read "loaded"), then OCTOPATH again on `winmm`. ⚠ Two of the three are **negative/positive controls for each other** — running only the first proves nothing, because "not observed" is also what a broken lookup returns |
+
 ### Totals — and the direct answer to "how much of this can Auto drive?"
+
+⚠ **Derived from the table above, never hand-edited.** The previous revision of this block summed to
+**40** while the table already had 45 rows — it was not updated when rows 41–45 were appended. Re-run:
+`py -c` over `## 10.`, matching `^\|\s*(\d+)\s*\|.*?\|\s*\*\*([ABCD])\*\*\s*\|` and counting by group 2.
 
 | cat | count | items |
 |---|---|---|
-| **A** — fully headless | **7** | 2, 4, 10, 14, 17, 32, 35 |
-| **B** — Auto + computer-use, no human judgement | **17** | 1, 5, 6, 11, 12, 13, 15, 16, 18, 20, 23, 24, 29, 30, 31, 33, 34 |
-| **C** — needs a bounded human action | **14** | 3, 7, 9, 19, 21, 22, 25, 26, 27, 28, 36, 37, 38, 39 |
+| **A** — fully headless | **10** | 2, 4, 10, 14, 17, 32, 35, 42, 43, 46 |
+| **B** — Auto + computer-use, no human judgement | **22** | 1, 5, 6, 11, 12, 13, 15, 16, 18, 20, 23, 24, 29, 30, 31, 33, 34, 41, 44, 47, 48, 49 |
+| **C** — needs a bounded human action | **15** | 3, 7, 9, 19, 21, 22, 25, 26, 27, 28, 36, 37, 38, 39, 45 |
 | **D** — impossible today | **2** | 8, 40 |
 
-**24 of 40 (60%) need no human judgement at all** — 7 of them with no GUI whatsoever. That is the
-honest headline. But read the C column before planning a batch: **six of the fourteen are one short
+**32 of 49 (65%) need no human judgement at all** — 10 of them with no GUI whatsoever. That is the
+honest headline. But read the C column before planning a batch: **six of the fifteen are one short
 gameplay bout** (`A11` + `A12` + `V1a` step 1 share a single one; `AA2/AA3`, `AA12/AA13`, `AD4`,
 `ST1` and `b719…` each need combat, a spawn, damage, or a queue drain), so one scheduled session with
 the maintainer present converts most of that category.

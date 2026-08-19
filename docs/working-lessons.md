@@ -126,6 +126,17 @@ missing drive letter *feels* like a fact about the world in a way that `4m38s` d
 exactly why it slipped. **Never assert that something does not exist without naming the host you
 looked on.** ← this rule is the same two-machine problem that makes this whole file necessary.
 
+**And the conditions must reach the doc that owns the PROCEDURE, not only the one that owns the
+number.** 2026-08-17 recorded A5's PASS *with* its conditions — *"a re-search ~38 s later previewed
+317"* — into `todo.md`'s evidence block, and that block was right. But the **step**, in `todo.md`
+*and* in the 繁中 mirror, still said to watch the Preview column, and a Property Search preview is a
+per-search snapshot with no timer and no binding. The wrong procedure therefore outlived a PASS: on
+2026-08-19 the maintainer followed it, saw nothing move, re-ran the same query three times in four
+seconds, and reported a defect that does not exist. **A PASS obtained by a procedure the checklist
+does not prescribe means the CHECKLIST is the defect — correct the steps, in every copy that carries
+them, in the same commit that records the PASS.** Recording the conditions and leaving the
+instructions alone reads as done and is not.
+
 ### 1.7 The second machine turns an anecdote into a fact — and it cuts both ways
 
 "This is probably machine-specific" is also a hypothesis, and re-measuring settles it in one run. CE's

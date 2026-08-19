@@ -21,11 +21,11 @@
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
 | **第 1 步 — 只開 UE5DumpUI** | 3 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 18 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 8 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 14 | 符合特定條件的遊戲 |
+| **第 2 步 — 要注入一個執行中的遊戲** | 19 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 9 | 遊戲 + Cheat Engine |
+| **第 4 步 — 需要特定條件的遊戲** | 16 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **45** | |
+| **合計** | **49** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -156,16 +156,15 @@
 | 3 | 對同一欄位改用 Group Scan 或 Property Search 的 Deep 模式 | 一樣找得到（這條路徑在 3168 之前就找得到） |
 | 4 | grep `scan-*.log` 搜尋 `hit the 4000 scan-field cap` | 一般 class 上不出現這行<br>⚠ 若經常出現，代表 cap 值設錯，要回報 |
 
-### ⬜ A5 / V6 / AE9 / U8 —— 四個一開遊戲就能看的面板行為
+### ⬜ V6 / AE9 / U8 —— 三個一開遊戲就能看的面板行為
 
-*build 3016-3031 · 優先度 **高***
+*build 3016-3031 · 優先度 **高** · 原步驟 1（A5 Preview）已於 2026-08-19 驗畢並刪除*
 
 | # | 做什麼 | 預期 |
 |---|---|---|
-| 1 | 注入遊戲後開 Property Search，搜一個遊戲中會變動的欄位（例如 Health），記下 Preview 的值 → 讓遊戲把該值改掉 → **再按一次 Search** → 比對前後兩次的 Preview。 | 第二次的 Preview 是變動後的新值；沒有活體實例的列顯示「… (CDO default)」。<br>⚠ 兩種列各要看到一次，只看到一種等於只測了一半。<br>⚠ **Preview 是每次搜尋當下的快照，本來就不會自己更新**；盯著它等它跳動不算這一項，也不是 bug。 |
-| 2 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。 |
-| 3 | Value Search → First Scan → 用 Value 排序 → 按 New Scan。 | 排序選單回到「Scan order」；再選一次「Value」會真的重新排序。 |
-| 4 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
+| 1 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。<br>⛔ **auto-refresh 那半段先別做**：要等 `[AUTOREFRESH-2026-08-19]` 的修正進到**已發佈**的 build。另一台機器目前跑 `dist` 1.0.0.3262，整批程式跑完前不會更新，在那之前 Auto 本來就會停在 0，測了也只是重測那個已知缺陷。現在能做的是「按 Refresh」那半段。 |
+| 2 | Value Search → First Scan → 用 Value 排序 → 按 New Scan。 | 排序選單回到「Scan order」；再選一次「Value」會真的重新排序。 |
+| 3 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
 
 ### ⬜ AUTOREFRESH —— Live Walker 的 Auto 倒數不會卡死，斷線重連後會自己回來
 
@@ -294,6 +293,16 @@
 | 1 | 同一款遊戲，分別用修正前與修正後的 DLL 各注入一次，各留一份 `scan-0.log`。 | 兩份 log 都跑完整個 FindAll。 |
 | 2 | 比對兩份 log 的 candidate / probe 計數，以及 GObjects / GNames / GWorld 最終解出的位址。 | 計數下降（這是收益），而三個位址逐 byte 完全相同（這才是驗收標準）。位址有變就是 regression。<br>⚠ 不能用 sweep.sh 的 pattern diff 判定：它會跳過 Symbol*/CallFollow 簽章，乾淨的 diff 只代表「沒測到」。 |
 
+### ⬜ PIPEBUSY —— 管線佔滿只記一次，不再每秒噴一條 ERROR
+
+*優先度 **中** · 分類 **A**（全程不用 GUI：三個 `pipe_client.py` 就能佔滿 `kMaxPipeInstances=3`；用 UI 佔 2 條再加 1 個 client 也可以，那種跑法是 B）*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 把管線佔滿 3 條（UI 連上佔 2 條，再開一個 `tools/verify/pipe_client.py`），放著一分鐘，然後看 `Logs/<遊戲>/pipe-0.log`。 | 只出現**一條** `all 3 pipe instances in use, waiting for a free slot`（INFO）。<br>⚠ 出現重複的 `CreateNamedPipe failed` 就是 FAIL —— 修正前是每秒一條，31.5 分鐘 1,826 條。<br>⚠ 「UI 連著時不要跑 pipe_client」那條日常規矩仍然有效；這一項是**刻意**去踩它，跑完就把多出來的 client 關掉。 |
+| 2 | 關掉多出來的那個 client，繼續看 log。 | 出現**一條** `a pipe slot freed, resuming accept`，然後回到正常的 `Waiting for client connection...`。 |
+| 3 | 對照組：一般只開 UI 的 session，grep `pipe-0.log` 的 `all 3 pipe instances`。 | 找不到。<br>⚠ 沒跑這步就沒證明那條 INFO 只在真的滿載時才出現。 |
+
 -----
 
 ## 第 3 步 — 遊戲 ＋ Cheat Engine
@@ -387,6 +396,16 @@
 | 3 | 保持一個 hold 生效、UI 仍連著，直接關閉遊戲。 | 不當機、不卡住、Windows 應用程式事件記錄沒有新項目（沒有正面 log 可查，證據就是「什麼都沒發生」）。 |
 | 4 | 對一個活體實例超過 256 的 class（投射物、群眾 NPC、可破壞物件）下 Force。 | strip 那一列顯示 `⚠ capped` 與 `(256 held)`，狀態列結尾是 "cap reached, more exist unheld"；換一個小 class 則兩者都不出現。 |
 | 5 | 對上一步按 Reset，再讀那些實例的欄位值。 | 沒有任何實例卡在被強制的值。 |
+
+### ⬜ SLOTSYM —— slot 版 `[DISABLE]` 真的會反註冊，而且說的是實話
+
+*優先度 **中** · 分類 **B** · 需要：`&GEngine` AOB 驗得過、記錄會走 SLOT 路徑的遊戲（DumperTest 可以）。要在 CE 的 Lua console 設 `UE5_DEBUG=1` 才看得到 `dbg` 行*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 勾一筆「Get GameEngine」記錄，再取消勾選，然後在 CE 的 Lua console 執行 `print(getAddressSafe('UE_GameEngine'))`。 | **第一次呼叫就回 nil**（不需要手動 `unregisterSymbol`），`dbg` 寫 `UE_GameEngine unregistered`。<br>⚠ 修正前取消勾選後仍會回 `0x…`，而且 log 還宣稱已經反註冊了。 |
+| 2 | 貼 CE-XML 再做**第二筆**「Get GameEngine」，兩筆都勾起來，先取消**舊的那筆**，再 `print(getAddressSafe('UE_GameEngine'))`。 | 仍然解得到（另一筆還握著）；舊那筆的 `dbg` 寫 `still held by 1 other record(s) -- left registered`。接著取消第二筆 → 這次回 nil。<br>⚠ 兩筆解到的是**同一個** slot 位址，所以不能靠位址分辨誰是誰，只能看 refcount 的訊息。 |
+| 3 | 迴歸：勾「Get GWorld」再取消，`print(getAddressSafe('UE_GWorld'))`。 | 回 nil。<br>⚠ GWorld 這條路徑本來就正常，這步是確認沒被改壞。 |
 
 -----
 
@@ -540,6 +559,26 @@
 | 3 | 在活躍 session 比較 static-native PE fast path 與 game-thread dispatch 的延遲。 | 有狀態的 UFunction 仍走 dispatch，不會誤落進 fast path。 |
 | 4 | 掃過 12 款以上已測遊戲的 Class Structure Return 欄位。 | baked PARAMS 不再把 ReturnValue 當成輸入參數。 |
 | 5 | 各做一次 pointer-return 與 FString-return 的 invoke。 | pointer 回傳顯示 `0x` 前綴；FString 回傳顯示 "see After: dump above" 提示。 |
+
+### ⬜ CLASSTOTAL —— Classes 分頁報的是真正的 class 總數，不是上限值
+
+*優先度 **中** · 分類 **B**（最便宜的第一步是 A：對 Elliot 送一次 `list_classes`，看 `total_classes` 有沒有大於 5000）· 需要：class 數 > 5,000 的遊戲（Elliot 約 6,609）**和**一款 < 5,000 的小遊戲*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 在 class 超過 5,000 的遊戲（Elliot）開 Classes 分頁，把「Game classes only」取消勾選後 Load。 | 狀態列寫「**5,000 classes shown of ~6,609 total** … ⚠ STOPPED at the 5,000-row cap」，兩個數字**不一樣**。<br>⚠ 兩個都是 5000 就是 FAIL —— 修正前就是這樣，「total」等於沒回答任何事。 |
+| 2 | 同一款遊戲，去看 Interesting Funcs 的「{N} functions across **{K} classes**」。 | Classes 分頁的 total 與 K 相同（都約 6,609），兩個面板互相對得上。 |
+| 3 | 對照組：換一款 class 數 < 5,000 的小遊戲 Load。 | 顯示「N classes shown of N total」（兩數相等），而且**沒有** STOPPED 提示。<br>⚠ 沒跑這步就無法排除「不管怎樣都報一個比較大的假數字」。 |
+
+### ⬜ PROXYLOAD —— Proxy 面板要能講出「到底有沒有被載入」
+
+*優先度 **中** · 分類 **B** · 需要：一款 exe **靜態 import** `version.dll` 的遊戲（OCTOPATH）＋ 一款沒有 import 的（DQ7R / DQ I&II）*
+
+| # | 做什麼 | 預期 |
+|---|---|---|
+| 1 | 對「exe 有靜態 import version.dll」的遊戲（OCTOPATH；先用 `py tools/pe/pe_imports_exports.py imports <exe> --dll version` 確認）部署 `version.dll`，啟動遊戲，回面板按 Scan/Refresh。 | Suggested 欄出現「可能被既有模組搶先」的警告；啟動之後 **Loaded?** 欄仍是 **not observed**，旁邊卻是 `DeployedCurrent`。<br>⚠ 修正前面板只寫 `DeployedCurrent`，這種靜默失敗完全看不出來。 |
+| 2 | 對「沒有 import version.dll」的遊戲（DQ7R / DQ I&II）部署同一個 flavour，啟動，Refresh。 | **Loaded?** 顯示 **loaded〈今天日期〉**，而且沒有 bypass 警告。<br>⚠ 沒跑這步就分不出「真的去讀了 log 資料夾」和「一律回 not observed」。 |
+| 3 | 回到 OCTOPATH，改用 `winmm` flavour，部署、啟動、Refresh。 | **Loaded?** 變成 loaded（winmm proxy 在 OCTOPATH 上可用），即使 winmm 也可能出現在 import 表裡。<br>⚠ 這步證明 import 表只是**啟發式警告**，真正的判準是 Loaded? 欄。 |
 
 -----
 

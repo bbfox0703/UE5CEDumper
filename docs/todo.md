@@ -1591,8 +1591,39 @@ see **how to operate** in order to confirm a bug is fixed, or to sanity-check. S
 > **The mirror's own count table was re-derived, not edited by hand**: 第1步 1 · 第2步 16 · 第3步 8 ·
 > 第4步 13 · 第5步 2 = **40**. CLAUDE.md's row said *63* and the session plan said *64 rows*; both were
 > stale and are corrected in this commit.
+>
+> ⚠ **That `40` is a snapshot of that reconciliation, not a running total.** Audit **L10** added five
+> items the same day and the four `[TAG]` items below were mirrored on 2026-08-19, so the mirror is
+> larger now. **Never read a count out of this block — derive it**:
+> `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two `###` under 「怎麼用這份清單」.
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L10 (T1e Views/app root): AF7 / AF8 / AF10 / AF11 / AF16–AF23
+### ▶ HOW TO ENUMERATE THIS REGISTER — one invariant, and it is grep-able
+
+**Every item's ID must appear in a `^###` (or `^####`) heading of this section.** A heading-level
+scan is how anyone picks the next thing to run, so an item whose ID lives only in body prose is an
+item that gets double-run or forgotten. Enumerate with:
+
+`grep -n '^#\{3,4\} ' docs/todo.md` — then keep the lines that fall inside this section.
+
+⚠ **`> ###` lines do NOT count, deliberately.** A blockquoted heading is an *evidence* sub-block — a
+session result, a trap, a refutation — hanging under a real item, and `grep '^### '` cannot see it.
+There are many and that is fine; what must never happen is an ITEM being introduced by one.
+
+**Two blocks were violating this until 2026-08-19** and are the reason the rule is written down: the
+build-2830 container group (**M2 / TSet+UDataTable / U2**) sat under the `[SDKHDR-2026-08-18]`
+heading, and the whole **"Shipped + unit-tests-pass but unproven on real games"** long tail sat under
+`[STALEDLL-2026-08-18]`. No heading anywhere named a single one of their checks. Both now have their
+own headings, and the headings that owned un-named items (the fourteen-MED batch, audit #4 ① and ②,
+audit L10) carry their IDs. **Measured, not asserted:** cross-checking every ID that owns a 繁中
+section against the register's `^###` headings went from **40 un-findable to 0**.
+
+⚠ **Un-mirrored `[TAG]` items — a known, tracked gap.** `PIPEBUSY` / `CLASSTOTAL` / `PROXYLOAD` /
+`SLOTSYM` were mirrored into 繁中 on 2026-08-19. Still un-mirrored: `STALEDLL` (b), `FREEZESTUCK`,
+`PASTECRASH`, `FREEZESCOPE`, `PEHOOK`, `PEHOOKONCE`, `SDKHDR`, `CONTAINERCAP`. They are **not**
+exempt — `AUTOREFRESH` is already a full 繁中 section — they are simply behind. Mirror each as it is
+picked up.
+
+### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L10 (T1e Views/app root): AF7 / AF8 / AF10 / AF11 / AF12 / AF13 / AF16–AF23
 
 *Most of L10 needs NO live check. **AF9** (log-folder count cap removed) is pinned by three tests
 driving the real `LoggingService` against real directories — 30 in-window folders survive, a
@@ -1601,6 +1632,12 @@ the per-slot truncation flag has a two-direction test plus a "reported even on a
 mailbox params slots have an arithmetic invariant test on top of the generators' existing
 literal-text assertions, and the folded-groups note is now one shared function. What follows is
 only what a running game — or specifically the **trimmed** binary — can settle.*
+
+⚠ **AF12 / AF13 are in this heading even though they are pinned offline, and the distinction
+matters.** Pinned offline means the *logic* is unit-tested; it does not mean the string has ever been
+seen on screen — 繁中 鐵則 4, *"閘門答對 ≠ 使用者看得到"*. The mirror carries them (with **AF22**) as a
+see-it-in-the-dialog check, so the ID has to be findable from a heading here or the two registers
+disagree about whether anything is outstanding.
 
 ⚠ **The AOT sort rows below cannot be checked in a dev build, by construction.** The whole defect
 class is "the reflection sort survives JIT and is trimmed away in the binary we ship", so a
@@ -3902,26 +3939,41 @@ build 3035.* Until then the DLL's LWC vector scan is **shipped but unproven on a
 > written would have produced a **false FAIL**. Worth fixing at source: either the Teleport panel
 > should offer a whole-number copy, or the step should say to round.
 
-### ⬜ NEW 2026-08-16 — the fourteen-MED batch, all UI-visible (builds 3016-3031)
+### 🟡 A5 CLOSED 2026-08-19 — the fourteen-MED batch, all UI-visible: A5 / V6 / AE9 / U8 / V7 / U7 / G1 / X3 / AB6 / AF4 / AF2 / AF6 / AE8 / AF1 (builds 3016-3031)
 
-None of this session's twelve fixes has been seen on a running game. They are cheap to check because
-each has a *visible* pass/fail, and four of them only ever show up when something ELSE goes wrong.
+Eight of the fourteen now carry a PASS block below (A5 · V6 · AE9 · V7 · AF4 · AB6 · AE8 · AF6). The
+rest are cheap to check because each has a *visible* pass/fail, and four of them only ever show up
+when something ELSE goes wrong.
 
 **Free from any ordinary session (just look):**
 
-1. **A5 — Preview shows a LIVE value.** Property Search a field you can change in-game (Health).
+1. **A5 — Preview shows a LIVE value. ✅ VERIFIED 2026-08-19 — by the maintainer, on their own
+   machine. I did not observe it.** Property Search a field you can change in-game (Health).
    The Preview column must read the value from a live instance, not the Blueprint default. A row
    whose class has no live instance must read `… (CDO default)` — the marker is the fix's honesty
    half, so confirm both.
+   **Evidence: the maintainer's own run.** They re-ran the search after letting the value move
+   in-game and reported the second Preview carrying the new number. That is *their report*, not an
+   agent observation — there is no screenshot and no log line of mine behind it, and it is recorded
+   to the same standard as the `[SKIA-ABI-2026-08-19]` close above. It corroborates the
+   `[GRP4-UI-2026-08-17]` PASS block below, which was obtained by the same procedure.
    ⚠ **The Preview is a SNAPSHOT taken when the search runs; it does not update on its own, and it
    is not supposed to.** There is no timer and no live-cell binding in `PropertySearchViewModel` —
    `Preview` is a plain string on the result row, written once per search. So the check is
    **search → note the value → let the game move it → press Search AGAIN → the value must have
    moved**, which is exactly how the 2026-08-17 PASS below was actually obtained ("a re-search ~38 s
    later previewed 317"). Staring at the column waiting for it to tick is testing a feature that
-   does not exist, and reads as a defect that is not there — the maintainer hit precisely this on
-   2026-08-19 ("不知是否為 Issue: 再按一次 Search 才會刷新"), and the session log shows the same
-   query re-run three times in four seconds at 12:47:22 / 12:47:24 / 12:47:26 trying to see it move.
+   does not exist, and reads as a defect that is not there.
+   📌 **Why this had to be run twice, and the lesson that is worth more than the close.** The
+   2026-08-17 PASS was *also* obtained by re-searching — and the conditions that produced it were
+   written into the **evidence block** ("a re-search ~38 s later previewed 317") but never into the
+   **step**, which in this file *and* in the 繁中 mirror still told the reader to watch the Preview
+   column. A wrong procedure therefore survived a PASS. On 2026-08-19 the maintainer followed it,
+   saw nothing move, re-ran the same query three times in four seconds (12:47:22 / :24 / :26) and
+   reported a defect that does not exist ("不知是否為 Issue: 再按一次 Search 才會刷新"). Cost: one
+   round trip and one wasted run, for a feature that was correct the whole time. Generalised as the
+   propagation half of [working-lessons.md](working-lessons.md) **§1.6** — writing a PASS's
+   conditions beside the *number* is not enough when a second document owns the *procedure*.
 2. **V6 — the search highlight survives a Refresh.** Live Walker → type a field-search keyword →
    press Refresh (and leave auto-refresh on for a few ticks). Highlights must stay, the ↑/↓ stepper
    must still land on highlighted rows, and **the grid must not jump to the top** — that last one is
@@ -4957,6 +5009,17 @@ smuggled back into a type string by a future branch.*
 > error at a `[`, that is the ordering gap, not this defect, and it is worth opening as its own item.
 
 Shipped as the first fix batch of [audit #5](audit-2026-08-13-early-code-findings.md) cluster ①.
+
+-----
+
+### 🟡 M2 / TSet+UDataTable no-regression / U2 — container geometry on a real game (build 2830)
+
+*Closed here already: **M1 · M3 · A2 · U1 · V1** (two sittings below — the DLL half 2026-08-14, the
+UI half 2026-08-18). **Still open: three.** **M2**'s rows-equal-count half (the count half passed;
+the rows half is undecidable while the drill-down caps — `[CONTAINERCAP-2026-08-18]`), the
+**`TSet<FName>` / `TSet<UObject*>` / `UDataTable` no-regression** check (DumperTest ships none of the
+three, so it needs a real game), and **U2** (needs a `CasePreservingName: YES` title — twelve
+confirmed non-CPN, zero CPN, so the absence is itself the signal and this stays LOW).*
 
 > ### ⬜ 2026-08-14 — the UI half (build 2830) is NOT yet verified in-game
 >
@@ -6245,7 +6308,7 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 > ⬜ does **not** mean "probably fine". It means nobody has looked. Most of the fourteen were
 > simply not exercised (no wrapper installed, no UI killed mid-command, no Extra Scan).
 
-#### ① Log-derivable
+#### ① Log-derivable — still open: B29 (log half) / B18 / B19 / B10 / B8 (🟡 deferred half)
 
 - ✅ **`Fern::Stop` no longer waits for a client that may never come** (build 2569, B49) —
   **VERIFIED 2026-08-04 session logs (DQ7R / Elliot / CE), build 2622.** The CE session hit the exact wedge condition, `Stop entry (conns=0)`,
@@ -6615,7 +6678,7 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
   > arming line, not a stopwatch, is the thing to check. Locate-in-GWorld with the depth slider
   > raised is the only one with a knob you can turn until it is slow enough.
 
-#### ② Manual-only
+#### ② Manual-only — still open: B29 (third-party-wrapper case) / B25
 
 - ✅ **Symbol-export GWorld no longer claims to have an AOB** (build 2581, audit #4 B2) —
   **VERIFIED 2026-08-12 on Satisfactory** (UE 5.6, 137,391 objects, DLL build 2798). Both halves.
@@ -7087,6 +7150,8 @@ file SIZE is the honest signal that separates the ~0.5 MB Feb build from the ~2.
 Deferred idea: read the ACTUAL build stamp — would need a tiny data export (`g_buildNumber` /
 `g_buildStamp`) or a `GetFileVersionInfo` PE-version-resource read; not worth a new export here.
 
+### 🟡 FLAKY, not chased — `SnapshotViewModelTests.GroupMatch_MissingValue_ShowsErrorNoCandidates`
+
 - **Flaky: `SnapshotViewModelTests.GroupMatch_MissingValue_ShowsErrorNoCandidates`** — failed ONCE
   in a full parallel run on 2026-07-23 (build 2318), then passed 25/25 three times in isolation and
   green on an immediate full re-run. Unrelated to the winmm/proxy work that was in flight. This test
@@ -7097,7 +7162,17 @@ Deferred idea: read the ACTUAL build stamp — would need a tiny data export (`g
   empty, since those point at different halves. Effort **S** once reproducible.
 
 
-Shipped + unit-tests-pass but unproven on real games:
+### ⬜ Shipped + unit-tests-pass but unproven on real games — the long tail: Dump Explorer identity gate · Solide `capped` badge · Genau RIP decode b2544 · M1 / M2 / M3 / M4 / M5 · DLL LOW L1 / L5 / L8 / L10 / L12 · Solide L2 / L3 / L4 · V1a · NumericAll · V1c · b719 / b648 / b636 / b642 / b637 / b644
+
+*Every ID this heading names is a live check that lives in the bullets below and nowhere else. The
+heading exists because this list spent months parented to whatever `###` happened to precede it —
+most recently `[STALEDLL-2026-08-18]` — so a heading-level scan of the register found none of them.*
+
+⚠ **`M1`–`M5` is an ID COLLISION and a grep for it now returns two families — that is correct, not a
+bug in the headings.** Here they are **audit #3**'s Schlacht/Tot/shutdown race fixes. Under
+*"M2 / TSet+UDataTable / U2 — container geometry (build 2830)"* they are the **map/set stride**
+findings. Different audits, same letters, both still partly open; read the owning heading before
+acting on an `M`-number.
 
 - **Dump Explorer cross-game identity gate** (build 2538+; UI/C#-only, no DLL or pipe change).
   The live match joins on bare class NAMES, and every UE title has `Object` / `Actor` / `Pawn` /
