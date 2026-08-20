@@ -2166,14 +2166,22 @@ spot-check rather than a 30-column sweep.
 >
 > The 繁中 mirror runs AF22/AF12/AF13 as four steps. Step 1 is the block below (**done**). The rest:
 >
-> * **Step 2 — the CONTROL, and it cannot be run without Cheat Engine.** It asks for the ordinary
->   **Freeze** flow to still say *"Create freeze script"* and still give the CFG-block advice, which
->   is what proves AF22's rewording was targeted at Force rather than a global rename. With the
->   Object Tree collapsed the per-row **Freeze** button is visible but **disabled** — clicking only
->   selects the row. Not a guess: `PropertySearchPanel.axaml:285` says *"Freeze button: enabled only
->   when AOBMaker plugin is reachable"*, bound to `IsAobMakerAvailable` with a
->   `FreezeUnavailableTooltip`, and the toolbar reads **AOBMaker Offline** throughout. ⇒ **CE +
->   the AOBMaker plugin required**; it joins the CE-blocked group.
+> * **Step 2 — the CONTROL — ✅ NOW DONE, with Cheat Engine running.** The per-row **Freeze** button
+>   is gated on the AOBMaker bridge (`PropertySearchPanel.axaml:285`, bound to
+>   `IsAobMakerAvailable`); with CE 7.7 launched the toolbar flipped to **AOBMaker Connected** and
+>   the button enabled. The Freeze dialog is unmistakably **not** the Force one:
+>
+>   | | Freeze dialog | Force dialog |
+>   |---|---|---|
+>   | title | **Freeze property value** | Force property value |
+>   | field label | **Freeze value (int32):** | Force value (float): |
+>   | confirm button | **Create freeze script** | Hold this value |
+>
+>   ⇒ **AF22's rewording was targeted at the Force path**, not a global rename — which is exactly
+>   what this control exists to establish.
+>   ℹ️ The CFG-block advice the mirror also mentions did not appear here, but this row's field
+>   (`DumperTestActor.TickCount`) is **declared on the class shown**, and that caveat is the
+>   *inherited-field* one; it needs an inherited row to appear at all.
 > * **Steps 3 + 4 — need a snapshot Group match in which one slot matches MORE THAN 256 fields on a
 >   single object**, to make `PerSlotCapHit` fire and surface *"a slot matched more than 256 fields"*
 >   (step 4 then re-runs it with the Value Search per-slot cap at 1024 and expects the snapshot side
@@ -2622,6 +2630,61 @@ spot-check rather than a 30-column sweep.
 > matches, so this is a genuine control and not the vacuous zero-match kind rejected under `AE13`.
 > | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
 > | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
+
+### ⬜ NEW DEFECT 2026-08-20 `[FREEZEUNTICK-2026-08-20]` — a Freeze bail-out emits the untick but the record stays ACTIVE
+
+*Found while running `AA12`/`AA13` with Cheat Engine 7.7 + the AOBMaker plugin, DumperTest attached.
+This is the exact failure mode `AA12`/`AA13` exists to prevent — **"the freeze script must stop
+lying about success"** — and CLAUDE.md's rule states it outright: "**A bail-out that applied NOTHING
+must untick the record** … otherwise CE leaves the row ticked and the user is told a cheat is active
+when nothing was set."*
+
+**What was measured, in order:**
+1. Property Search → `DumperTestActor.TickCount` (IntProperty, `0x6A8`, live value ticking ~1 Hz) →
+   **Freeze** → *"Freeze script created in CE: Freeze: DumperTestActor::TickCount = 9999"*.
+2. CE attached to `DumperTest.exe`, record ticked. It bails out with a correct, actionable message:
+   `[Freeze] ue5_freeze_helper.lua not found in this table.` / `Setup: UE5DumpUI -> Tools -> Inject
+   Freeze Helper into Current CE Table`.
+3. ✅ **Nothing was applied** — `TickCount` kept climbing (`430` → `440` across two refreshes), so the
+   bail-out really did abort before writing.
+4. ⛔ **But the record is left ACTIVE.** Read from CE's own Lua Engine, not from an icon:
+   ```lua
+   local r = getAddressList().getMemoryRecord(0)
+   print(r.Description); print('Active=' .. tostring(r.Active))
+   --> Freeze: DumperTestActor::TickCount = 9999
+   --> Active=true
+   ```
+5. **The generator is not at fault — it emits the untick.** `FreezeScriptGenerator.cs`
+   `AppendHelperLoader` produces exactly:
+   ```lua
+   if not tf then
+     showMessage('[Freeze] … not found in this table.…')
+     if memrec then memrec.Active = false end
+     return
+   end
+   ```
+6. **And the property is writable at that moment** — assigning it from the Lua Engine *externally*
+   unticks the row immediately (`r.Active = false` → checkbox empties). So this is not a broken API
+   or a read-only property.
+
+⇒ **The in-script `memrec.Active = false` does not survive**, while the same assignment from outside
+does. **Leading hypothesis, explicitly NOT yet measured:** CE finalises activation *after* running
+the ENABLE section, overwriting a value the script set during it — in which case the fix is the
+**deferred** untick this repo already uses for the momentary-action shape (CLAUDE.md distinguishes
+the two), not the immediate one. Confirming that needs a minimal record whose ENABLE does nothing
+but `memrec.Active=false`.
+
+⚠ **Scope:** reproduced on the *helper-not-found* bail-out. `AA12`/`AA13` step 2's own scenario is
+*DLL-not-injected*, a different bail-out — but both are emitted from the same
+`if memrec then memrec.Active = false end` pattern, so the same failure is expected there and step 2
+should be re-run once this is fixed rather than assumed to pass.
+
+📌 **Icon semantics confirmed by direct measurement, not memory:** `Active=true` displayed a **red ✗**
+in the checkbox and `Active=false` displayed an **empty box**. This matches the maintainer's
+2026-08-18 note and is worth having measured, because reading the ✗ as "failed" would have inverted
+this entire finding.
+
+*Not fixed — found during a verification pass.*
 
 ### ⬜ NEW DEFECT 2026-08-20 `[SNAPINTERVAL-2026-08-20]` — a below-minimum auto-snapshot Interval blanks the field and raises an unhandled cast exception
 
