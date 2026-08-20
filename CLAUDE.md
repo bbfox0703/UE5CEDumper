@@ -65,6 +65,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 #   after editing a .cpp measures nothing about that file. Use -Target DLL (or no -Target)
 #   before claiming a C++ change builds. Learned the hard way 2026-08-04: "959 dll green"
 #   was reported over a Fern.cpp that had never been compiled and did not parse.
+# ⚠⚠ -Target Test IS NOT READ-ONLY: it PUBLISHES THE UI AND OVERWRITES dist\UE5DumpUI.exe
+#   WITH THE NON-TRIMMED (~107 MB) BUILD. Measured 2026-08-20 with a before/after hash:
+#   54.7 MB sha 3ebf02e7 -> 106.8 MB sha fa1e3f19, and the run says so out loud
+#   (">> Publishing UE5DumpUI (Release, self-contained single-file)... [OK] 106.8 MB").
+#   "builds only the two test executables" above is about the C++ side ONLY — do not read
+#   it as "touches nothing else". This is the cheapest way to destroy the shippable binary:
+#   the fast, safe-looking option silently replaces the AOT build the hand-over rule at the
+#   top of this file exists to protect. After ANY -Target Test, re-run
+#   `-Mode Publish -NoBumpBuildNumber` before handing dist\ over, and check the size.
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Target Test
 
 # Debug build

@@ -1698,6 +1698,20 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
   the number `3262` named three different binaries this way (the other PC's AOT build, a
   106.8 MB non-trimmed local one, and the pending publish). **Before handing over or comparing
   builds, check the SIZE, not just `dist/build_number.txt`.**
+  ⚠⚠ **And `-Target Test` publishes the UI too — it is NOT read-only.** Measured 2026-08-20 with a
+  before/after hash on `dist/UE5DumpUI.exe`: **54.7 MB `3ebf02e7` → 106.8 MB `fa1e3f19`**, twice,
+  reproducibly. The run announces it (`>> Publishing UE5DumpUI (Release, self-contained
+  single-file)... [OK] UE5DumpUI.exe (106.8 MB)`) but nobody reads a green test run's middle.
+  This is the nastiest instance of the rule above, because of **which** command does it: `-Target
+  Test` is the option you reach for precisely when you want to change nothing — CLAUDE.md described
+  it as building "only the two test executables", which is true of the C++ side and badly
+  misleading about the rest. So the safest-looking command in the file silently destroys the only
+  artifact the hand-over rule protects, and leaves a *runnable* exe behind, at the right build
+  number, that merely happens to be the wrong one. **After any `-Target Test`, re-run
+  `-Mode Publish -NoBumpBuildNumber` and check the size before handing `dist/` over.**
+  Found by accident: a `-Target Test` run used only to confirm `build.ps1` still parsed after an
+  edit, whose *summary listing* showed `UE5DumpUI.exe (106.8 MB)` where 54.7 MB was expected. The
+  summary listing is worth reading for that reason alone.
 - **The Ghidra corpus is machine-local and derived.** `$GHIDRA_PROJS` = `D:\Tools\GHIDRA_Projs` on this
   machine, but the real corpus is the archive at `D:\UE_Analyze_data`; run
   `py tools/ghidra/corpus_relocate.py` / `preflight.py` before trusting any path. Never host it on USB
