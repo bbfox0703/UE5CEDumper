@@ -2251,12 +2251,17 @@ spot-check rather than a 30-column sweep.
 > saved list, Snapshot Diff's Change, the Invoke param picker) were not run — the saved list in
 > particular holds only **one** snapshot here, so a sort over it shows nothing.
 >
-> ⛔ **Step 2 cannot be run on DumperTest: both dialogs open with their six headers and ZERO rows.**
-> This is not a click that missed — the dialogs report their own emptiness:
-> * **Props dialog** (Interesting Functions → `Props`): `SetAttackTime` → **"0 properties (0 written)
->   [native disasm — heuristic, 0 unmapped]"**, and unticking **Class fields only** + Refresh changes
->   nothing. `GetPlaybackSpeed` → **"1 property (0 written) … 1 unmapped"** — one property, and it is
->   unmapped, so still nothing to order.
+> ⛔ **Step 2's SORT is still unproven — no function found with 2+ mapped properties.** Not a missed
+> click; the dialogs report their own contents.
+> * **Props dialog** (Interesting Functions → `Props`). ⚠⚠ **"Class fields only" is ON by default and
+>   HIDES rows** — that alone reads as a broken dialog. On DQ7R, `ManaPlayer.GetTexture` showed
+>   *"1 property (0 written) … 1 unmapped"* with an **empty grid**; unticking the box and pressing
+>   **Refresh** produced the row **`read | 1 | instance | high | ManaTexture | ObjectProperty`**. So
+>   the dialog does populate and its columns do render real data.
+> * But **"unmapped" xrefs never become rows** — `GetResultAutoHpHeal` reports *"0 properties …
+>   3 unmapped"* both with the box ticked and unticked. Four functions sampled across two titles
+>   (DumperTest `SetAttackTime` 0, `GetPlaybackSpeed` 1-unmapped; DQ7R `GetTexture` **1 mapped**,
+>   `GetResultAutoHpHeal` 3-unmapped) never yielded the **two** rows a sort needs.
 > * **Xref dialog** (Class Struct → `Find Class Xrefs`) on `ABP_Manny_C` → **"0 function(s) take this
 >   class — scanned 9,807 funcs (0 matched) over 25,179 objects in 51ms"**.
 >
