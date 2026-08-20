@@ -1982,6 +1982,69 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
 > | 5 | **B** | **V10.** On a title where the first scan leaves GObjects **or** GWorld unresolved, press **Extra Scan** and wait for it to finish. | The green "Found: GObjects: 0x…" result **stays on screen**. Before the fix it appeared and was blanked a few ms later by the pointer refresh the scan itself triggered. Then, mid-scan, change the **UE version** ComboBox: the Extra Scan button must stay disabled until the scan really ends. ⚠ Sample-blocked if every installed title resolves both pointers on the first pass. |
 > | 6 | **B** | **V11.** With CE + the AOBMaker plugin connected, click **Register symbol** on the GWorld card, then again with **CE closed**. | Success prints a teal line naming `gworld_addr`; the failure prints a RED line naming it. Before the fix both produced *nothing at all* on screen. Repeat on the **&GEngine** card — it was the second site, found by the sibling grep. |
+> ### 🟡 Y13 PASSES / Y10's CE HALF IS 3-OF-4 2026-08-20 `[Y10-Y13-CE-2026-08-20]` — and the miss is `[FREEZEUNTICK]` in a SECOND generator
+>
+> Driven end to end in CE for the first time. Subject: **`KismetMathLibrary::MakeTransform`**
+> (`ParmsSize=176`, params `Location` off=0 / `Rotation` off=24 / `Scale` off=48), chosen because the
+> row needs a **complex return whose slot sits past byte 32** — the DLL reports it as
+> **`ReturnValue (fstruct@80, size=96B)`**, i.e. at byte **80**. Baked with Location `11/22/33`,
+> Rotation `0/0/0`, Scale `1/1/1`, **Verify return** ticked, pushed to CE via AOBMaker
+> (`AOBMaker: created AA script 'Invoke (baked): KismetMathLibrary::MakeTransform'`), with
+> `ue5_invoke_helper.lua` injected first.
+>
+> **Y13 — the dump reaches the return slot. PASS.** Ticking the record printed:
+> ```
+> [Invoke] Before: 00 00 … (all zero, full buffer)
+> [Invoke] After : 00 00 00 00 00 00 26 40 | 00 00 00 00 00 00 36 40 | 00 00 00 00 00 00 80 40 | …
+>                  … F0 3F … 26 40 … 36 40 … 80 40 … F0 3F  F0 3F  F0 3F …
+> [Invoke] OK: KismetMathLibrary::MakeTransform -> ReturnValue (fstruct@80, size=96B)
+>              -- complex return; see After: dump above
+> ```
+> The head decodes as the inputs (`0x4026…`=11.0, `0x4036…`=22.0, `0x4040 8…`=33.0), and **the tail
+> is the returned FTransform itself** — quaternion `(0,0,0,1)` (the lone `F0 3F` after a zero run),
+> translation `11 / 22 / 33`, scale `1 / 1 / 1`. So the window not only *reaches* offset 80, the
+> return value is **present, complete and correct** in it. The `see After: dump above` wording is
+> therefore accurate here rather than a false promise, which is the half the row cares about.
+>
+> ⚠ The row's other clause — *"the line no longer says 'see After: dump above' when it cannot"* — was
+> **not** exercised: with the window now sized to the full `ParmsSize`, no reachable function on this
+> host produces a return the dump fails to cover. Recorded as unexercised, not as a pass.
+>
+> **Y10 — the contract check. 3 of 4.** Staged by attaching CE to a **sacrificial `python.exe`**
+> instead of the game (a deliberate choice over the UI or the maintainer's notepad++, since the whole
+> question is whether a stray `writeByte` runs). Re-ticking the record gave:
+>
+> | assertion | result |
+> |---|---|
+> | the contract check fires **FIRST** | ✅ — the only thing that happened was the check |
+> | its message **names `g_mailboxContract`** | ✅ — `[Invoke] could not resolve g_mailboxContract, even after re-reading the module list.` …and it then lists three causes, the second being *"CE is attached to a different process, or to a stale PID from an earlier run (that looks identical to being attached)"* — i.e. it correctly describes the exact state staged |
+> | **no `writeByte` may have run** | ✅ — the Lua Engine gained **no second `[Invoke] Before:` dump**. The successful run's Before/After pair is still the only one in the buffer, so the mailbox was never written |
+> | the record must **untick itself** | ❌ — `Y10 active=true`, read from CE's Lua Engine, not the icon (the icon agreed: red ✗) |
+>
+> ⭐ **The miss is not a new defect — it is `[FREEZEUNTICK-2026-08-20]` in a SECOND generator.** Until
+> now that defect was only ever seen in the Freeze script. Here the identical shape appears in the
+> **baked-invoke** script: a bail-out that applied nothing leaves the record ACTIVE. Combined with
+> `[FREEZESTUCK-CE-2026-08-20]`, which showed the **deferred** untick working in real CE, the picture
+> is consistent across three scripts: **in-`[ENABLE]` `memrec.Active = false` never survives; a
+> deferred one-shot timer always does.** The fix therefore belongs in the shared emitter, not in
+> `FreezeScriptGenerator` alone — see the widened note on the defect's own block.
+>
+> ℹ️ **Incidental but useful for the CRLF fix:** `Tools → Inject Helper into Current CE Table`
+> reported **`Inject helper OK: ue5_invoke_helper.lua embedded (…)`** — no mismatch — in the same
+> session where the *Freeze* helper reported `Stream size mismatch`. Two helpers, one injection path,
+> only one complaining: that isolates `[FREEZEINJECT-CRLF]` to the **freeze helper file's line
+> endings** rather than to the injection code, which is a cheaper thing to fix and a sharper thing to
+> test.
+>
+> ⚠ **Rig traps, both of which cost time here.** (1) `Copy AA Script` **only writes the clipboard as a
+> FALLBACK** — with AOBMaker available it calls `CreateAAScriptAsync` and touches no clipboard, so
+> "the clipboard did not change" is *expected*, not a defect (a live control confirmed the clipboard
+> read path itself works). (2) Three clicks produced nothing at all because **CE had no process
+> attached**; `CreateAAScriptAsync` then fails and the result label reports it — but the label sits
+> below the buttons and is pushed **off-screen when the dialog is maximized**, so the outcome is
+> invisible in exactly the state a large param list tempts you into. Restore the dialog before
+> judging whether a push worked.
+
 > ### ✅ V11 PASSES ON BOTH CARDS, BOTH OUTCOMES 2026-08-20 `[V11-SYM-2026-08-20]`
 >
 > **The defect V11 was filed for is that the panel looked identical whether CE had registered the
@@ -2787,7 +2850,7 @@ mismatch is in the *check*, and the stored content is already correct.
 > showed the previous action's text) made one attempt here look like a silent no-op. Whoever fixes
 > this should consider logging the failure too, not just the success.
 
-### ⬜ NEW DEFECT 2026-08-20 `[FREEZEUNTICK-2026-08-20]` — a Freeze bail-out emits the untick but the record stays ACTIVE
+### ⬜ NEW DEFECT 2026-08-20 `[FREEZEUNTICK-2026-08-20]` — an in-`[ENABLE]` untick never survives: BOTH the Freeze and the baked-INVOKE generators leave a bailed-out record ACTIVE
 
 *Found while running `AA12`/`AA13` with Cheat Engine 7.7 + the AOBMaker plugin, DumperTest attached.
 This is the exact failure mode `AA12`/`AA13` exists to prevent — **"the freeze script must stop
@@ -2877,6 +2940,31 @@ this entire finding.
 > **modal** and swallows both the `Del` key and clicks on the Lua Engine's **Execute** button, so any
 > step that has to act *during* the abandonment must be pre-armed (a CE Lua timer) rather than
 > clicked. That is what defeated three attempts at `[FREEZESTUCK]` step 7.
+
+
+> ### ⚠ SCOPE WIDENED 2026-08-20 — this is NOT Freeze-only `[UNTICK-INVOKE-2026-08-20]`
+>
+> Measured while running `Y10`'s CE half (`[Y10-Y13-CE-2026-08-20]`): the **baked-invoke** script has
+> the same defect. With CE attached to a process that has no `UE5Dumper.dll`, ticking an
+> `Invoke (baked): …` record correctly refuses — the contract check fires first, names
+> `g_mailboxContract`, and **no `writeByte` runs** — and then leaves the record at
+> **`active=true`** (read from CE's Lua Engine).
+>
+> So three scripts have now been measured in real CE and they agree:
+>
+> | script | untick mechanism | survives? |
+> |---|---|---|
+> | Freeze, helper-missing bail-out | in-`[ENABLE]` | ❌ `active=true` |
+> | Baked invoke, contract-check bail-out | in-`[ENABLE]` | ❌ `active=true` |
+> | Freeze, 3-failed-rescan abandonment | **deferred one-shot timer** | ✅ `active=false` |
+>
+> **Implication for the fix:** it does not belong in `FreezeScriptGenerator` alone. Every emitted
+> script that can bail out of `[ENABLE]` needs the deferred form, so the change belongs in the shared
+> `CeLuaHygiene` emitter — which is also what CLAUDE.md's own rule demands ("Hand-rolling any of
+> these is how build 2743's three defects reached all seven copies of the mailbox wait at once").
+> ⚠ **Whoever fixes this should grep for every in-`[ENABLE]` `memrec.Active = false` rather than
+> fixing the two sites named here** — two were found by running two unrelated register rows, which is
+> a poor way to establish a blast radius.
 
 ### ⬜ NEW DEFECT 2026-08-20 `[SNAPINTERVAL-2026-08-20]` — a below-minimum auto-snapshot Interval blanks the field and raises an unhandled cast exception
 
