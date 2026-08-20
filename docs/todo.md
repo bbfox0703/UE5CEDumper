@@ -2442,6 +2442,60 @@ spot-check rather than a 30-column sweep.
 > | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
 > | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
 
+### ⬜ NEW DEFECT 2026-08-20 `[INVOKEINHERIT-2026-08-20]` — an INHERITED UFunction cannot be invoked on a derived instance
+
+*Found while building a side-effect rig for `ST1` steps 4 and 6, when
+`invoke_function(SetActorHiddenInGame)` on a `StaticMeshActor` came back **"Function not found"**
+for a function the tool's own `list_all_functions` had just listed.*
+**Reproducer: `tools/verify/invoke_inherited_function.py` — exits 1 while the defect stands.**
+
+**Mechanism.** `Ubel::WalkFunctions(uclassAddr)` walks that UClass's **own** `UStruct::Children`
+chain and never climbs `SuperStruct`. `UE5_FindFunctionByName` is just a filter over that list, so
+it can only ever resolve a function the class **declares**.
+
+**Measured on DumperTest, dist 3263 — three-way discriminator, both controls green:**
+
+| # | case | function | instance | result |
+|---|---|---|---|---|
+| 1 | **inherited on a derived instance** | `SetActorHiddenInGame` | `StaticMeshActor` | ❌ `Function not found` |
+| 2 | control — declared on the instance's own class | `SetActorHiddenInGame` | `ChaosDebugDrawActor` (class **is** `Actor`) | ✅ `ProcessEvent OK` |
+| 3 | control — own function, same derived instance | `SetMobility` | `StaticMeshActor` | ✅ `ProcessEvent OK` |
+
+2 rules out "the function is broken"; 3 rules out "that instance is broken". The only variable left
+is inherited-vs-declared.
+
+**Blast radius, counted rather than characterised.** `AActor` declares **140** functions, `APawn` 33,
+`ACharacter` 48 — none reachable on any derived instance. Of 42 live non-CDO objects on this host,
+**11 can invoke nothing at all** because their own class declares no function; `DumperTestActor`
+is one of them, and `StaticMeshActor` can reach exactly **1 of 141**. On a real game the player pawn
+is several levels below `AActor`, so `K2_TeleportTo` / `SetActorLocation` / `Jump` and ~221 others
+are all unreachable by name.
+
+**Three callers, and one of them is a shipped feature:**
+* `Fern.cpp` `invoke_function` — and the handler reads only `class_name` / `func_name` /
+  `instance_addr` / `params_hex` / `parms_size` / `direct_call`. **There is no `func_addr` input**,
+  so nothing can bypass the resolver.
+* `Mimic.cpp` `HandleFindFunction` (`CMD_FIND_FUNCTION`) — the CE Lua by-name lookup, same walker.
+* ⚠ `Frieren.cpp` `UE5_SetDebugCamera` resolves `ToggleDebugCamera` off `UE5_GetObjectClass(cm)`,
+  the **live** CheatManager's class. A game with a derived CheatManager (`BP_CheatManager_C` is the
+  common case) logs `UE5_SetDebugCamera: ToggleDebugCamera UFunction not found` and returns -1 — the
+  Debug Camera toggle failing with a message that reads as *the engine lacks the function*.
+
+**NOT affected:** `CMD_INVOKE` when the caller already holds the `ufuncAddr`. The mailbox takes the
+address directly and never re-resolves, which is why CE scripts with a baked address work, and why
+this went unnoticed — the paths that are exercised most already have the pointer.
+
+⚠ **Fix shape — do NOT simply make `WalkFunctions` climb the super chain.** That function is also
+what LISTS a class's functions, and the UI attributes each function to its declaring class; making
+it inherit would repeat all 140 `AActor` entries under every actor class and inflate
+`list_all_functions` enormously. The change belongs in the **resolvers**: have
+`UE5_FindFunctionByName` loop up `SuperStruct` (and `HandleFindFunction` with it), leaving listing
+semantics untouched. Adding an optional `func_addr` input to `invoke_function` would independently
+remove the dependency for callers that already have one.
+
+*Not fixed — found during a verification pass. Effort S, risk low, but it needs the listing-vs-resolving
+distinction above respected.*
+
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L4 (D4b Mimic/Sein/Flamme): MB1 / MB2 / SE1 / FL1 / FL2
 
 *The pure decision rules of this batch are unit-pinned in `dll_helpers_test` and need NO live check:
