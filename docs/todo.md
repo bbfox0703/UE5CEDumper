@@ -3475,7 +3475,7 @@ unit-tested); AB9 stays OPEN (loader-lock, out of L2 scope).*
 > | AB12 | attach CE to a process with **>1024 loaded modules** and click Inject & Connect (or click it twice) | the "already loaded" / post-inject check correctly finds our DLL even past module 1024; a successful inject is never reported "not mapped" | needs a real large-module process |
 > | AB13 | (maintainer) place the CE plugin DLL under a path with **non-ASCII characters** and Inject & Connect | injection succeeds (8.3 short-path fallback) and the log shows the exact UTF-8 path | needs a non-ASCII install path; ASCII paths are unchanged |
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L7 (T1d UI Services): AC3 / AC6 / AC10 / AC11 / AC12
+### ✅ VERIFIED 2026-08-20 — audit L7 (T1d UI Services): AC3 / AC6 / AC10 / AC11 / AC12 — every row settled (AC11 step 2 found `[STAGELOCK]`)
 
 *Ten findings closed (AC3–AC12); **five need nothing live**. AC4/AC5 (corrupt-cache quarantine) and
 AC6's sweep policy are unit-tested end to end against a real temp folder, and AC7/AC8/AC9 are
@@ -3643,6 +3643,62 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > (no "malformed"). The 2 matches `libraryfolders.vdf` exactly — `C:\Program Files (x86)\Steam` and
 > `D:\SteamLibrary` — so the real Valve-written VDF is still parsed and the multi-library install is
 > not silently halved.
+
+
+> ### ✅ AC3 PASS 2026-08-20 `[AC3-BRIDGE-2026-08-20]` — all three outcomes in ONE log, one variable changed at a time
+>
+> **The whole point of the AC3 fix is that a bare `catch` had collapsed five different reasons into
+> one blank "AOBMaker not connected".** `ReconnectAsync`'s own doc comment
+> ([AobMakerBridgeService.cs:474](ui/UE5DumpUI/Services/AobMakerBridgeService.cs:474)) names them:
+> cancelled-by-caller and not-running stay at **Debug**, "anything else is a real fault and gets a
+> **Warn** that names the exception type", success is **Info**.
+>
+> **A survey of all 107 UI `init-*.log` files first showed which arms ordinary use already covers:**
+> `[DBUG] … no server …` **211×** and `[INFO] … bridge: available` **145×** — richly evidenced. The
+> **Warn arm had fired 0 times**, and it is the arm that carries the fix's value, because it is what
+> says *"CE is up, something else is wrong"* instead of the useless *"start Cheat Engine"*.
+>
+> It also cannot be staged the obvious ways. Starting/stopping CE only ever reaches the Timeout arm,
+> and **saturating the pipe does not work either**: the `try` holds nothing but `ConnectAsync`, and a
+> server at capacity makes ConnectAsync *wait*, ending in `TimeoutException` — the Debug arm again.
+> `tools/verify/ac3_denied_pipe.py` therefore creates a named pipe **at the bridge's exact name with
+> a deny-all DACL** (`D:(D;;GA;;;WD)`), so a server genuinely exists and genuinely refuses. Nothing
+> is installed; the pipe is a kernel object that dies with the rig.
+>
+> **All three lines landed in the SAME `init-0.log`, in one UI process, inside four minutes:**
+> ```
+> 21:25:06 [WARN] AOBMaker bridge: connect to 'AOBMakerCEBridge' failed (UnauthorizedAccessException): Access to the path is denied.
+> 21:27:46 [DBUG] AOBMaker bridge: no server on \\.\pipe\AOBMakerCEBridge within 2000 ms (Cheat Engine not running, or the AOBMaker plugin is not loaded)
+> 21:29:02 [INFO] AOBMaker CE Plugin bridge: available
+> ```
+> Three texts, three levels, and the Warn names the exception **type** as specified. Only one thing
+> changed between each: the denying pipe was held, then released (CE still closed), then CE was
+> started with the plugin. **The middle line is the negative control** — it proves the Warn was
+> caused by the deny and not by some ambient condition, which a Warn observed on its own could not.
+>
+> ⚠ **One clause is a code-level certainty rather than an observation, and is recorded as such.**
+> The row asks for the no-server line *twice* — once with CE closed, once with CE open but the plugin
+> not loaded. Only the first was staged. The second needs no run: both are the **same**
+> `catch (TimeoutException)`, and the client cannot tell them apart — nothing is listening on the
+> pipe either way. The source comment says exactly this ("Cheat Engine is not running, or it is but
+> the AOBMaker plugin was never loaded"), and the emitted text names both causes in one sentence.
+> Disabling the plugin would re-run the identical branch, so it was not worth changing the
+> maintainer's CE configuration for.
+>
+> ℹ️ **Not a defect, but worth knowing:** the *user-visible* text stays "AOBMaker plugin not detected
+> — open Cheat Engine…" even on the Warn path. That is the design the row describes — every public
+> method turns a false into the same message — and the fix was to make the **log** discriminate. If
+> the denied case should ever reach the user differently, that is a new request, not this row.
+>
+> ⚠ **Rig trap for whoever re-runs this:** the AOBMaker ⟳ refresh button **moves**, because the
+> toolbar status text beside it is variable-width. It sits at ~(445, 36) with a short status and
+> ~(658, 36) once the status reads "AOBMaker plugin not detected — open Cheat Engin…". Two clicks
+> here landed on the Address dropdown instead and logged nothing; the 21:25:06 Warn came from the
+> UI's own **startup** probe. Screenshot the toolbar before clicking rather than reusing a coordinate.
+>
+> **With this, every row of audit L7 has a verdict**: AC3 ✅, AC6 ✅, AC10 ✅, AC12 ✅, AC11 step 1 ✅ —
+> and AC11 step 2 ❌, which is not an outstanding check but a *result*: it became
+> `[STAGELOCK-2026-08-20]`.
 
 ### ✅ VERIFIED 2026-08-20 — audit L9 (T1c VMs/Core/DTOs): AE13 / AE20 / AE30 all three run live
 
