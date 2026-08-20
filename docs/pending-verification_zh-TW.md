@@ -3,7 +3,7 @@
 > **這份寫的是「怎麼操作」，不是「為什麼」。** 每一項只有兩件事：**做什麼**、**預期看到什麼**。
 > 成因、來龍去脈、哪個 build 改了什麼原理，全部在英文正本
 > [todo.md](todo.md) 的 `## Pending live-game verification` —— 需要證據時去那裡查，
-> 用項目編號（`ST1`、`G10`、`B4`…）grep 就找得到。
+> 用項目編號（`PEHOOK`、`G10`、`B4`…）grep 就找得到。
 >
 > **英文版是唯一正本。** 事實有出入以 todo.md 為準，要改也先改那邊。
 > ⚠ **這份不是 todo.md 的翻譯，不要把它翻回去。** 上一版就是逐句翻譯，結果過期了 430 個 build。
@@ -404,19 +404,6 @@
 | 4 | 在**同一個** process 內重新勾選啟用，再跑一次掃描。 | 跑完整的重新掃描，而不是被 `UE5_Init` latch 直接短路跳過。 |
 | 5 | 在同一 process 內鑽進一個 `MulticastSparseDelegateProperty`。 | `FindSparseDelegateStorage: Scanning` 第二次出現，而不是被 latch 住直接回 0。 |
 | 6 | 連上 UI → 指令進行中把 UI 斷線 → 重新連線 → 重跑一次完整掃描。 | 掃描正常完成、有寫入 hint 快取，且日誌中**沒有** `CANCELLED` 行。 |
-
-### ⬜ ST1 —— 自家直接呼叫要走 trampoline 不進自家 hook
-
-*build 3205 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 連線後在 Pointers 分頁執行 KismetMathLibrary 自我測試（directCall: true），然後看 pipe log | 出現 `via trampoline — not re-entering our hook`，而不是舊的 `(caller-asserted safe)`<br>⚠ grep 一律用格式字串，不要用行號 |
-| 2 | 執行 get_pointers 記下 hook_fire_count，重跑上一步後再讀一次 | 數字不因我們自己的呼叫而增加 |
-| 3 | 把 invoke timeout 設短，在暫停／選單狀態的遊戲上觸發一個 game-thread invoke 讓它逾時並留在佇列；接著從 CE 觸發一次 static-native invoke | 那個請求仍然留在佇列中，沒有被執行掉<br>⚠ 這步是整批的關鍵，需要 Cheat Engine |
-| 4 | 恢復遊戲執行 | 佇列中的請求此時才在 game thread 上執行完成 |
-| 5 | 反向對照：對一個自行覆寫 ProcessEvent 的 class（有自己 slot 的 BP）直接呼叫 | log 顯示 `(caller-asserted safe)`，且呼叫仍然成功<br>⚠ 這裡 fail-open 是正確行為，不要當成沒修好 |
-| 6 | 保持一個 invoke 在佇列中，正常遊玩數分鐘 | 沒有 `SEH exception during queued PE call`，沒有 0xC0000409 |
 
 ### ⬜ AA12 / AA13 (key: FreezeOutcome) —— Freeze 腳本不再謊報成功
 
