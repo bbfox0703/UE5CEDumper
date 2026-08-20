@@ -2162,6 +2162,26 @@ a `-Mode Publish` binary. The offline half is machine-enforced by
 `DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
 spot-check rather than a 30-column sweep.
 
+> ### ⛔ THE `AF22` CONTROL IS CE-BLOCKED, and 2 sibling steps remain — 2026-08-20
+>
+> The 繁中 mirror runs AF22/AF12/AF13 as four steps. Step 1 is the block below (**done**). The rest:
+>
+> * **Step 2 — the CONTROL, and it cannot be run without Cheat Engine.** It asks for the ordinary
+>   **Freeze** flow to still say *"Create freeze script"* and still give the CFG-block advice, which
+>   is what proves AF22's rewording was targeted at Force rather than a global rename. With the
+>   Object Tree collapsed the per-row **Freeze** button is visible but **disabled** — clicking only
+>   selects the row. Not a guess: `PropertySearchPanel.axaml:285` says *"Freeze button: enabled only
+>   when AOBMaker plugin is reachable"*, bound to `IsAobMakerAvailable` with a
+>   `FreezeUnavailableTooltip`, and the toolbar reads **AOBMaker Offline** throughout. ⇒ **CE +
+>   the AOBMaker plugin required**; it joins the CE-blocked group.
+> * **Steps 3 + 4 — need a snapshot Group match in which one slot matches MORE THAN 256 fields on a
+>   single object**, to make `PerSlotCapHit` fire and surface *"a slot matched more than 256 fields"*
+>   (step 4 then re-runs it with the Value Search per-slot cap at 1024 and expects the snapshot side
+>   to still say 256). Not attempted: on DumperTest the widest class walked here is
+>   `DumperTestActor` at **128 fields**, so a single object cannot supply 256 same-valued fields.
+>   This needs a title with much wider objects, which makes it a fixture problem rather than an
+>   untried step.
+
 > ### ✅ `AF22` SEEN ON SCREEN 2026-08-20 `[AF22-DIALOG-2026-08-20]` — all three of its wording defects are gone
 >
 > The heading above notes AF12/AF13/**AF22** are *"pinned offline … it does not mean the string has
