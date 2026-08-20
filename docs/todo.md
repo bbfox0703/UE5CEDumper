@@ -4099,11 +4099,11 @@ order-swap that was permanently broken.*
 
 ### 🟡 ALL BUT TWO STEPS DONE 2026-08-20 `[PEHOOK-2026-08-17]` — a validation failure must ACT, and the advice must stop saying "re-deploy"
 
-> **Verified: 1b · 2 · 3 (to its terminal 3/3) · 3b · 4 · 5 · 6 · 7 · 8** — all headless, across
-> DumperTest (both a shipping and a SIB-less build), Lushfoil and EVERSPACE 2.
-> **Open: step 1** (the UI Self-Test *text*, needs the panel on screen) and **step 3c**, which is
-> structurally unreachable here — it needs a build that misses detection once and then hits, and no
-> such build exists (see `[PEHOOK-3B-2026-08-20]`).
+> **Verified: 1 · 1b · 2 · 3 (to its terminal 3/3) · 3b · 4 · 5 · 6 · 7 · 8** — steps 1b–8 headless
+> across DumperTest (a shipping *and* a SIB-less build), Lushfoil and EVERSPACE 2; **step 1 on screen**
+> (`[PEHOOK-1-UI-2026-08-20]`).
+> **Only step 3c remains, and it is structurally unreachable here** — it needs a build that misses
+> detection once and then hits, and no such build exists (see `[PEHOOK-3B-2026-08-20]`).
 
 *Was: on **DumperTest** (UE 5.4 Development) the AOB pattern scan misses, the `UE=504` version-table
 fallback picks `0x220`, the hook fires **0 times in 1500 ms** — and nothing acted on that verdict, so
@@ -4220,6 +4220,49 @@ LOWERING the cap, not by finding a host*):
 >
 > ⚠ Recorded as the **pipe** invoke, not the UI's Run Self-Test button; the panel wraps the same call
 > but its advice text is a separate surface.
+
+> ### ✅ STEP 1 PASSES 2026-08-20 `[PEHOOK-1-UI-2026-08-20]` — and the advice is shown to be STATE-DRIVEN
+>
+> The last non-UI-blocked step, run on screen: DumperTest + the SIB-less DLL + the real UI (build
+> 3263, `DLL build 3263 ✓ matched`), connected (UE504, 25,179 objects), **System → Run Self-Test as
+> the first invoke of the process**.
+>
+> **Click 1 — exactly what step 1 asks for:**
+> ```
+> ✗ Add_IntInt(3,4) expected 7, got 0
+> The ProcessEvent hook is installed but has never fired. That is the signature of a
+> MIS-DETECTED vtable slot — check init-*.log for "VALIDATION FAILED". Re-deploying the DLL
+> will NOT help: the binary is current, the detected slot is wrong. The same reading also
+> appears when the game thread is simply idle (paused, loading, minimised), so retry once
+> while the game is actually running before concluding.
+> Raw buffer: 030000000400000000000000
+> ```
+> The `✗`, the **mis-detected vtable slot**, and the `HookNeverFired` wording the step's
+> order-dependency note names. `Raw buffer` shows A=3 and B=4 written correctly with the return slot
+> **0** — the signature itself. Note it also volunteers the *alternative* explanation (idle game)
+> rather than asserting one cause.
+>
+> ⭐ **Click 2, seconds later, returns a COMPLETELY DIFFERENT string** — because by then the validator
+> had condemned the slot and the distrust guard was up:
+> ```
+> ✗ Add_IntInt(3,4) expected 7, got 0
+> The DLL REFUSED this call — it never reached ProcessEvent, so the untouched return slot says
+> nothing about the function. Check init-*.log: "VALIDATION FAILED" means a detected vtable slot
+> was rejected because the hook never fired (re-deploying the DLL will NOT fix that), and
+> "no UObject vtable available yet" means no scan has run in this process — run one and retry.
+> ```
+> **Two state-appropriate advices from the same button on the same host, minutes apart.** That is the
+> row's headline claim demonstrated rather than asserted — *"the Self-Test advice is chosen from the
+> DLL's own `get_diagnostics` hook state instead of asserting one cause"* — and the step's own note
+> that a later click "correctly gets the `HookOff` wording instead" is confirmed as designed, not a
+> failure.
+>
+> 🔗 **This is the UI face of `[PEHOOK-3B-2026-08-20]`.** The `-3` refusal measured over the pipe
+> there surfaces here as **"The DLL REFUSED this call"** — the same state, reached the same way,
+> observed through a different surface.
+>
+> **Step 1b re-confirmed in the UI, not just in the unit test:** across BOTH strings, the only
+> mention of re-deploying is its negation (*"will NOT help"*, *"will NOT fix that"*).
 
 > ### ✅ STEP 3b PASSES + STEP 3 NOW COMPLETE 2026-08-20 `[PEHOOK-3B-2026-08-20]`
 >
