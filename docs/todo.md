@@ -3383,11 +3383,11 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > right where it is parsed, so 100 and 300 were both clamped to 1000 and the 683 ms run legitimately
 > finished inside it. **The client cannot force deadline pressure below 1 s.**
 
-### 🟡 ALL BUT TWO BLOCKED STEPS DONE 2026-08-20 — audit L6 (U3 MainWindow VM): X5 / X6 / X7 / X8 / X10 / X11 / X12
+### ✅ ALL BUT THE MAINTAINER STEP DONE 2026-08-21 — audit L6 (U3 MainWindow VM): X5 / X6 / X7 / X8 / X10 / X11 / X12
 
-> **Verified: X5 (both rows) · X6 · X7 · X10 · X11.** Remaining: **X8** needs Cheat Engine + the
-> AOBMaker plugin, and **X12** is a maintainer step (CE installed under `%ProgramFiles%`, app run
-> non-elevated). Neither is reachable in an unattended headless/UI session.
+> **Verified: X5 (both rows) · X6 · X7 · **X8** · X10 · X11.** X8 closed 2026-08-21 in a real CE
+> session — `[L6-X8-2026-08-21]` below. Remaining: **X12** only, a maintainer step (CE installed
+> under `%ProgramFiles%`, app run non-elevated), which no unattended session can stage.
 
 *The pure logic is unit-tested: **X4** (`DumpCompletionFormatter` — floating size + honest zero-class
 line + the `DumpResult` count round-trip), **X7** (`GameThreadStalledLevel` — the stuck-ON resume
@@ -3531,6 +3531,53 @@ X4 and X9 are fully settled by tests; the rows below are what only a running gam
 > reads exactly like the save never happening.
 > | X11 | start a **Dump All** and abort it (disconnect / cancel) mid-stream | there is **no** truncated `.jsonl` at the chosen name — only a `<name>.partial` (or nothing); a completed dump appears atomically at the final name | temp-then-rename is only observable against a real abort |
 > ### ✅ X6 + X11 PASS 2026-08-20 `[L6-X6-X11-2026-08-20]` — both halves, on DumperTest / dist 3263
+
+> ### ✅ X8 PASSES 2026-08-21 `[L6-X8-2026-08-21]` — the stale flag is still ON SCREEN at the moment the send succeeds
+>
+> The defect: a "to CE" action trusted the cached `IsAvailable`, so opening CE after a failed click
+> did not help — the next click still said *"AOBMaker not connected"*. The fix makes the action path
+> call `CheckAvailabilityAsync` itself. Run exactly as the row specifies, on the **Console** tab,
+> **without switching tabs** between the two clicks (a tab switch would re-probe by another route and
+> prove nothing).
+>
+> Subject: `AISystem::AIIgnorePlayers` **AA(B)**, chosen because it takes **0 params**, so the click
+> is the whole action. DumperTest / dist 3263, 87 exec commands discovered.
+>
+> | | CE state | toolbar after the click |
+> |---|---|---|
+> | click 1 | **closed** | `AOBMaker not connected — script copied as CE XM…` |
+> | *(CE opened; no tab switch, no ⟳)* | | |
+> | click 2 | **open, plugin loaded** | **`AA Script created in CE: AIIgnorePlayers`** |
+>
+> ⭐ **The sharpest evidence is what the badge said while it worked.** Immediately before click 2 the
+> toolbar badge still read **`AOBMaker Offline`** — the cached flag was *visibly still stale*, because
+> nothing had refreshed it — and the click succeeded anyway. That is the fix demonstrated rather than
+> inferred: the action re-probed on its own instead of believing the flag next to it.
+>
+> **The log times it to the millisecond**, and shows no other probe in between:
+> ```
+> 07:27:59.025 [DBUG] AOBMaker bridge: no server ... (Cheat Engine not running…)   <- click 1
+> 07:29:19.171 [INFO] AOBMaker CE Plugin bridge: available                          <- click 2's OWN probe
+> 07:29:19.205 [INFO] AOBMaker: created AA script 'exec (baked, no args): AISystem::AIIgnorePlayers'
+> ```
+> 34 ms between the probe and the send, and **nothing at all between 07:27:59 and 07:29:19** — so the
+> `available` line cannot be a background refresh or a tab activation; it belongs to the click.
+>
+> **Four independent detectors agree**: the toolbar text, the log pair above, the still-`Offline`
+> badge, and the record itself — `exec (baked, no args): AISystem::AIIgnorePlayers` visible in CE's
+> address list afterwards.
+>
+> ℹ️ Click 1's fallback was verified rather than assumed: the clipboard was seeded with a marker
+> first, and after the click held real CE XML (`<VariableType>Auto Assembler Script</VariableType>`,
+> description `exec (baked, no args): AISystem::AIIgnorePlayers`). So "not connected" really did take
+> the clipboard branch instead of doing nothing.
+>
+> ⚠ **Incidental, and it corroborates `[FREEZEUNTICK-2026-08-20]` from a third generator.** That
+> clipboard XML is the baked-invoke script, and reading it shows the split plainly: the **success**
+> path unticks via a deferred `createTimer(...)` → `memrec.Active = false`, while the **bail-out**
+> path (`if not tf then … if memrec then memrec.Active = false end; return`) uses the in-`[ENABLE]`
+> form that is measured not to survive. Same file, both shapes, a few lines apart.
+
 >
 > Same host, two runs: one **aborted** mid-stream and one allowed to **complete**. Both halves are
 > needed — the abort alone cannot show that a finished dump publishes atomically, and the completion
@@ -8388,7 +8435,7 @@ instances.
 > **1** live object on this host while the derived sweep holds **58**. That 1-vs-58 is precisely the
 > "held one incidental debug actor while the player's pawn went untouched" story the finding tells.
 >
-> Steps 1, 2, 4 and 5 still need CE plus gameplay churn (respawns / streaming) and stay open.
+> Steps 1, 4 and 5 still need CE plus gameplay churn (respawns / streaming) and stay open. **Step 2 passed 2026-08-21 — see below.**
 
 1. **Contract first.** With an **old** DLL injected and a freshly-injected helper, the freeze must
    refuse with *"the DLL is older than this script"*. If it runs anyway, the contract check is not
@@ -8404,6 +8451,49 @@ instances.
 5. **AA3**: with the freeze running, unload/re-inject the DLL so rescans fail permanently. Expect the
    Lua console to print `... consecutive rescans failed -- freeze STOPPED writing` **once** within
    ~15 s, and no further writes.
+
+
+> ### ✅ STEP 2 PASSES 2026-08-21 `[AA2-STEP2-2026-08-21]` — 145 live instances, and the value really moves
+>
+> The row names the exact trap: *"a silently-refusing guard looks exactly like a freeze that does
+> nothing — that is the main risk of this change, and it fails in that direction by design."* So the
+> only acceptable evidence is a value that **changes and then holds**, not an absence of errors.
+>
+> Subject chosen for scope, not convenience: **`PrimitiveComponent::bVisibleInSceneCaptureOnly`**
+> (`BoolProperty` @ `0x261`). Property Search previewed it as **`false`** with **no `(CDO default)`
+> marker**, i.e. live instances exist, and the Freeze dialog stated the scope itself:
+> *"every live PrimitiveComponent and every subclass (81 inherit th…)"*, with its own warning that
+> this holds the value on **every** live instance at once. Freeze value `true` — so a successful
+> write is a visible change rather than a no-op.
+>
+> **"Many live instances" is measured, not assumed.** The DLL's own log for the run:
+> ```
+> [PIPE] Mailbox: LIST_INSTANCES class='PrimitiveComponent' scope=derived
+> [PIPE] Mailbox: LIST_INSTANCES returned 64/145 (page 1/3) scope=derived classWitness=0x0
+> [PIPE] Mailbox: LIST_INSTANCES returned 64/145 (page 2/3) scope=derived classWitness=0x0
+> [PIPE] Mailbox: LIST_INSTANCES returned 17/145 (page 3/3) scope=derived classWitness=0x0
+> ```
+> **145 live instances**, enumerated in three pages — this is the class-wide case the row asks for,
+> not a one-instance stand-in. (`classWitness=0x0` on a **derived** listing is *correct* and is
+> already settled by step 3's block above; it is not a zero-witness failure.)
+>
+> | | Property Search preview of `bVisibleInSceneCaptureOnly` |
+> |---|---|
+> | before the freeze | **`false`** |
+> | record ticked (red ✗), no error dialog | |
+> | immediately after | **`true`** |
+> | **+25 s later** | **`true`** — still held |
+>
+> ⭐ **The change IS the control.** `false → true` cannot be produced by a guard that refuses every
+> write, which is precisely the failure mode this row exists to catch; and the 25-second re-read
+> excludes a single opportunistic write that then stopped. The guard admits valid instances.
+>
+> ⚠ **Scope of this result, stated so it is not over-read.** This shows the class-wide freeze writes
+> and holds across a 145-instance derived pool **on a quiescent pool**. It does **not** cover churn —
+> steps 4 and 5 (kill/respawn, streaming boundaries, and AA3's permanent-rescan-failure case) are
+> what test the re-read-`ClassPrivate`-before-every-write guard against *recycled* blocks, and they
+> still need gameplay. The representative value read here is the panel's, one instance's; the
+> 145-instance claim comes from the DLL's enumeration, not from reading 145 values.
 
 ### ✅ DONE 2026-08-18 — freeze a PACKED bitfield bool and check its 7 siblings survive (audit #5 AA1, build 2922)
 
