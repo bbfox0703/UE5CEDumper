@@ -4081,7 +4081,7 @@ repo's.
 > per-keyword truncation disclosure working on a real title.
 > | Z13 | on any game, open **Interesting Properties** and **Interesting Functions** and sort by Score; find an HP-named row and read its score tooltip | the tooltip reads `keywords(1 hits)` for a plain `HP`/`CurrentHP` name, not `keywords(2 hits)`, and that row scores **5 lower** than it did before | this is the one DELIBERATE score movement in the batch and it is not silent: `"HP"` and `"Hp"` both tokenised to `["hp"]`, so one keyword was counted twice. Nothing visible on HP alone becomes hidden (10 → 5, both thresholds ≤ 5), but an HP function on an `Anim*`/`Niagara*`/`Sound*`/`Particle*` class (−2 class penalty) goes 8 → 3 and correctly drops below the threshold. ⚠ **What to actually watch for: an HP row you EXPECTED that is now missing from the default view** — if one appears, it is a threshold crossing, and the fix is "Show all", not re-adding the duplicate |
 
-### ⬜ PART-FIXED 2026-08-19, NEEDS A LIVE CHECK `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored"
+### ✅ VERIFIED 2026-08-20 `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored" — step 1 run on OCTOPATH, the bypass is REAL on this pair
 
 *Was: the Proxy Deploy panel's `DeployedCurrent` is computed from the file on DISK only; it does NOT
 mean the game loads the proxy. Measured on **OCTOPATH TRAVELER**: `version.dll` byte-identical to
@@ -4216,6 +4216,109 @@ treated as a HEURISTIC, not a law.*
 > titles importing the proxy name **and loading ours anyway** — four counter-examples rather than the
 > one OCTOPATH case the step describes.
 > | 3 | on OCTOPATH, switch to the `winmm` flavour, deploy, launch, Refresh | **Loaded?** → "loaded" (winmm proxy works per `[OCTOPATH-G2T3]`) even though winmm may also be imported | proves the warning is a heuristic and the load signal, not the import table, is the source of truth |
+
+
+> ### ✅ STEP 1 PASSES 2026-08-20 `[PROXYLOAD-STEP1-2026-08-20]` — OCTOPATH + `version.dll` really is bypassed, measured at the module level
+>
+> Run with the maintainer's explicit authorisation to modify a game install. **The install was
+> restored byte-identically afterwards and that was verified, not assumed** (§restore below).
+>
+> **Precondition, checked with a control rather than assumed.** `pe_imports_exports.py` shows
+> OCTOPATH statically imports `version.dll` (`VerQueryValueW`, `GetFileVersionInfoW`,
+> `GetFileVersionInfoSizeW`) and imports **no** `dinput8.dll` — so the reader discriminates instead
+> of echoing whatever it is asked.
+>
+> ⚠ **The row's literal PASS condition is unreachable as written, and that is a defect in the ROW,
+> not in the product.** `ClassifyLoad` ([ProxyImportAnalyzer.cs:439](ui/UE5DumpUI/Services/ProxyImportAnalyzer.cs:439))
+> emits `not observed` **only when the log folder is absent**. OCTOPATH's folder existed with 40
+> files one day old — far inside `Constants.LogMaxAgeDays = 21` — so the cell read
+> `loaded 2026-08-19` *before anything was launched* and would have read `loaded <today>` after any
+> launch of any build. Worse, **the column is keyed to the EXE, never to the flavour**, so it
+> structurally cannot say *which* proxy loaded; and both flavours stamp the same `FileVersion`
+> `1.0.0.3263`, so neither the panel's version text nor the log's `build:` line can separate them
+> either. The folder was therefore **parked aside** to make the row's own expectation reachable —
+> and parked **outside `Logs\`** on the same volume, because `Sein::PruneStaleProcessFolders` runs
+> on every DLL init in *any* process and `remove_all()`s aged/empty siblings under `Logs\`.
+>
+> **The decisive observable is the loaded-module list, not the column.** It is a positive fact in
+> both directions and it is the same observation the original 2026-08-17 finding rested on.
+>
+> | # | staged / measured | result |
+> |---|---|---|
+> | 1 | Suggested cell read **BEFORE** any change | `version · default · imported,` — the rendered head of `version · default · imported, may be bypassed — try injection` ([ProxyImportAnalyzer.cs:250](ui/UE5DumpUI/Services/ProxyImportAnalyzer.cs:250)). **The row's first assertion. ✅** |
+> | 2 | winmm taken out of play by an in-place **rename** | `winmm.dll` → `winmm.dll.holdback-step1`, sha unchanged `823d02b3…`. Panel re-read `NotDeployed`, so the panel agrees the flavour is gone |
+> | 3 | radio moved **dxgi → version**, OCTOPATH ticked, **Deploy** | `Deployed: 1 success, 0 failed`; on disk `version.dll` sha `5b8d3a4b31ea7af5` = `dist/proxy/version.dll` exactly; Status → `DeployedCurrent` |
+> | 4 | log folder parked | `not observed` now reachable; anything reappearing is attributable to this run |
+> | 5 | launched via `steam.exe -applaunch 921570` | booted: window titled `OCTOPATH TRAVELER `, **128 modules mapped**, 1.35 GB, stable across 40 s, same PID (no self-relaunch this time). **No `0xC0000142`** — so the static import resolved fine |
+> | 6 ⭐ | **module walk of the shipping exe (pid 45488)** | `version.dll` → **`C:\WINDOWS\SYSTEM32\VERSION.dll` ONLY**. Our app-dir copy is **not mapped at all**. **BYPASSED.** |
+> | 7 | log folder after the launch | **none created** ⇒ `ClassifyLoad` would render **`not observed`**. **The row's second assertion. ✅** |
+> | 8 | our `version.dll` still on disk, right sha | rules out "the deploy silently vanished" as the explanation for 6 and 7 |
+>
+> ⭐ **Step 6 is what makes this a result rather than a null.** Every failure mode of this experiment
+> — bypass, a game that never booted, a failed deploy, a faulting `DllMain`, the passive-forwarder
+> branch — produces the *same* "no new logs". The module list separates them: 128 mapped modules
+> proves the loader completed, and `SYSTEM32\VERSION.dll` present with ours absent is a **positive**
+> statement that the app-dir copy lost the resolution.
+>
+> ### ⚖ What this does and does NOT establish — the two halves point opposite ways
+>
+> **It CONFIRMS the row's original 3-for-3 on the exact pair it was measured on.** OCTOPATH +
+> `version.dll` is genuinely bypassed. That pair had never been retested;
+> `[PROXYLOAD-CORR-2026-08-20]` sampled *whatever flavour happened to be deployed*, which for
+> OCTOPATH is **winmm** — and OCTOPATH's entire log history is winmm, **not one version-proxy line
+> in any of its 40 files**.
+>
+> **It does NOT rescue the heuristic, and a zero-risk check settles that half without touching
+> anything:** **EVERSPACE 1** (`RSG-Win64-Shipping.exe`) statically imports `version.dll` with the
+> *same three-function shape*, has our `version.dll` deployed, and its `init-0.log` carries
+> `DllMain ProxyStart: proxy DLL mode` + `[PROXY] Loaded real version.dll`. **Our proxy loads there.**
+> `EVERSPACE 2` shows the same. And none of `version` / `winmm` / `dxgi` / `dinput8` is in
+> `HKLM\…\Session Manager\KnownDLLs` (38 entries enumerated), re-confirming the row's own
+> refutation of that mechanism.
+>
+> ⇒ **A static import is neither necessary nor sufficient for a bypass.** It true-positives on
+> OCTOPATH and false-positives 4 of 4 elsewhere, so the screening is correct to be worded as a
+> heuristic and **the `Loaded?` signal remains the per-game source of truth** — which is exactly
+> what the shipped fix claims. Whatever bypasses OCTOPATH is title-specific and still unexplained;
+> `KnownDLLs` is ruled out, and the load-order story remains a hypothesis.
+>
+> ### One inference, named rather than hidden
+>
+> Assertion 7 is **inferred**: the folder's absence is the *sole* condition under which
+> `ClassifyLoad` returns `not observed`, but the panel was not re-read in that state before the
+> restore. The column's `not observed` **rendering** is separately evidenced by a real
+> never-launched title (`Echoes of Aincrad Demo`, in `[PROXYLOAD-UI-2026-08-20]` above). The two
+> together give the row's claim; neither alone does.
+>
+> Also not obtained: a **rendered** title-screen screenshot. `request_access` for the shipping exe
+> was declined, so the boot witness is process-level (titled window + 128 modules + 1.35 GB, stable)
+> rather than visual. That is enough to exclude "never booted", which is the only thing it was for.
+>
+> ### Restore — verified, not assumed
+>
+> `RESTORED EXACTLY: True`. `winmm.dll` back at sha `823d02b358504e48` **and its original mtime**
+> `2026-08-19 18:52:33`; the run's `version.dll` removed. **Restoring from `dist/proxy/winmm.dll`
+> would NOT have worked** — same size, different sha (`6f13d87c…`, the 2026-08-20 rebuild), so only
+> a byte backup of the original could put it back.
+>
+> `ui-options.json` restored byte-identically too, which matters more than it looks: **the deploy
+> wrote `lastManualProxyByGame["OCTOPATH TRAVELER"]`, and `Recommend` checks LKG *before* the import
+> heuristic — so the Suggested cell flipped to `version.dll · last used` and would have stayed that
+> way forever, making step 1 un-re-runnable on this machine.** Verified reverted: the OCTOPATH LKG
+> entry is gone, `selectedProxyType` is back to `2` (dxgi), and `confirmedProxyByExe` gained
+> nothing — confirming the deliberate "never press Connect" rule held (a live pipe session past the
+> dwell would have written it).
+>
+> ⚠ **Two hazards avoided, worth carrying forward.** The panel's **Undeploy** was *not* used:
+> `UndeployAsync` sweeps every one of `AllProxyDllNames()` and calls `File.Delete` — a hard unlink,
+> **not** the Recycle Bin. And the radio started on **dxgi**, which OCTOPATH also imports —
+> [Sein.cpp:134](dll/src/Sein.cpp:134) records that hijacking dxgi on *this very title* faulted
+> inside `__tzset` because dxgi loads before d3d11, so a Deploy pressed without moving the radio
+> would have dropped a known-crashing proxy into the folder.
+>
+> Rigs: `tools/verify/octopath_proxy_swap.py` (hash-verified backup/restore, refuses to re-backup
+> over the original) and `tools/verify/octopath_step1_rig.py` (baseline · holdback · park-logs ·
+> **modules** · newlogs), both committed.
 
 ### ✅ VERIFIED 2026-08-20 `[SLOTSYM-2026-08-18]` — the slot `[DISABLE]` now actually unregisters, and says so honestly
 

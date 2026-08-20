@@ -23,9 +23,9 @@
 | **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
 | **第 2 步 — 要注入一個執行中的遊戲** | 18 | 一款執行中的 UE 遊戲 + 注入 |
 | **第 3 步 — 遊戲 ＋ Cheat Engine** | 10 | 遊戲 + Cheat Engine |
-| **第 4 步 — 需要特定條件的遊戲** | 20 | 符合特定條件的遊戲 |
+| **第 4 步 — 需要特定條件的遊戲** | 19 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **52** | |
+| **合計** | **51** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -572,18 +572,6 @@
 | 1 | 在 class 超過 5,000 的遊戲（Elliot）開 Classes 分頁，把「Game classes only」取消勾選後 Load。 | 狀態列寫「**5,000 classes shown of ~6,609 total** … ⚠ STOPPED at the 5,000-row cap」，兩個數字**不一樣**。<br>⚠ 兩個都是 5000 就是 FAIL —— 修正前就是這樣，「total」等於沒回答任何事。 |
 | 2 | 同一款遊戲，去看 Interesting Funcs 的「{N} functions across **{K} classes**」。 | Classes 分頁的 total 與 K 相同（都約 6,609），兩個面板互相對得上。 |
 | 3 | 對照組：換一款 class 數 < 5,000 的小遊戲 Load。 | 顯示「N classes shown of N total」（兩數相等），而且**沒有** STOPPED 提示。<br>⚠ 沒跑這步就無法排除「不管怎樣都報一個比較大的假數字」。 |
-
-### ⬜ PROXYLOAD —— Proxy 面板要能講出「到底有沒有被載入」
-
-*優先度 **中** · 分類 **B** · 需要：一款 exe **靜態 import** `version.dll` 的遊戲（OCTOPATH）＋ 一款沒有 import 的（DQ7R / DQ I&II）*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 對「exe 有靜態 import version.dll」的遊戲（OCTOPATH；先用 `py tools/pe/pe_imports_exports.py imports <exe> --dll version` 確認）部署 `version.dll`，啟動遊戲，回面板按 Scan/Refresh。 | Suggested 欄出現「可能被既有模組搶先」的警告；啟動之後 **Loaded?** 欄仍是 **not observed**，旁邊卻是 `DeployedCurrent`。<br>⚠ 修正前面板只寫 `DeployedCurrent`，這種靜默失敗完全看不出來。 |
-| 2 | 對「沒有 import version.dll」的遊戲（DQ7R / DQ I&II）部署同一個 flavour，啟動，Refresh。 | **Loaded?** 顯示 **loaded〈今天日期〉**，而且沒有 bypass 警告。<br>⚠ 沒跑這步就分不出「真的去讀了 log 資料夾」和「一律回 not observed」。 |
-| 3 | 回到 OCTOPATH，改用 `winmm` flavour，部署、啟動、Refresh。 | **Loaded?** 變成 loaded（winmm proxy 在 OCTOPATH 上可用），即使 winmm 也可能出現在 import 表裡。<br>⚠ 這步證明 import 表只是**啟發式警告**，真正的判準是 Loaded? 欄。 |
-
------
 
 ### ⬜ V10 —— Extra Scan 找到的結果不會被它自己觸發的 refresh 擦掉
 
