@@ -4283,6 +4283,49 @@ vtable actually holds, and no target compiles `Stark.cpp` or `Frieren.cpp`.*
 > older `(caller-asserted safe)`.
 >
 > | step | do this | expect | why it is a real check |
+> ### ✅ ST1 STEPS 1 + 2 PASS 2026-08-20 `[ST1-PIPE-2026-08-20]` — over the pipe, no UI and no CE
+>
+> Rig: `tools/verify/st1_direct_call.py`, DumperTest Development / dist 3263. The row says the
+> cheapest decisive evidence is the **format string**, so that is what is matched.
+>
+> **Gate first (also `PEHOOK` step 8): `Add_IntInt(3,4)` = 7.** `result_hex` came back
+> `030000000400000007000000` → ReturnValue **7**. Everything below is meaningless against a host
+> whose invoke does not work, so the rig stops here on failure.
+>
+> **Step 1 — PASS.** The `direct_call: true` invoke logs
+> ```
+> UE5_CallProcessEventDirect: inst=0x243B6837C00 func=0x243AA704C00 pe=0x7FF69AF38CB0
+>   (via trampoline — not re-entering our hook)
+> ```
+> and **0** `(caller-asserted safe)` lines — that wording belongs to step 5's fail-open path and must
+> not appear here.
+>
+> **Step 2 — PASS, and the first two attempts at it were both unsound. This is the method that works.**
+> ```
+> game thread SUSPENDED  -> hook_fire_count 21264 -> 21264 over 2 s   (delta 0: background silent)
+> direct_call invoke     -> ok = true                                  (the call really happened)
+> hook_fire_count        -> 21264 -> 21264                             delta = 0
+> ```
+> ⭐ **Why suspend the game thread.** A running DumperTest fires ProcessEvent at **~121/s**, so the
+> single `+1` this step is looking for is far inside the noise and `count_after > count_before` is
+> guaranteed either way. Freezing the UE game thread drops the background to **exactly zero** — and a
+> `direct_call` invoke does not need that thread, which is the entire point of the flag — so any
+> movement at all is our call and nothing else. All three controls hold: the background is *shown*
+> silent, the call is *shown* to have succeeded (so the zero is not "nothing happened"), and the
+> delta is 0.
+>
+> ⚠ **Two rig defects found and fixed on the way; both would have produced a confident wrong answer.**
+> * `hook_fire_count` lives on **`get_diagnostics`**, not `get_stats` — `get_stats` returns
+>   `{ok:false}` here and its absent `game_thread` block reads as `None`, which made the first
+>   version print **PASS having measured nothing**. The rig now aborts loudly on a `None` count or an
+>   inactive hook.
+> * The counter window must bracket the **counter reads too**. Timing only the invoke while
+>   differencing across two `get_diagnostics` round trips charges those round trips to our call and
+>   manufactured an "excess" of 6.6 fires — a **FAIL** that was purely the measurement. Bracketed
+>   correctly, three consecutive runs gave 8 fires observed against ~23 expected.
+> * ℹ️ `list_all_functions` defaults to **`game_only: true`**, so it returns 3,142 of 9,806 functions
+>   and `KismetMathLibrary.Add_IntInt` is not among them — which reads as "this host has no invoke
+>   target". Pass `game_only=false`.
 > |---|---|---|---|
 > | 1 | connect, run the Pointers-tab KismetMathLibrary self-test (`directCall: true`) | `pipe` log shows **`via trampoline`** | the ordinary path now bypasses the detour |
 > | 2 | with the game running, `get_pointers` → note `hook_fire_count`, run step 1 again, re-read | the count does **not** jump by our own call | our call no longer enters `HookedProcessEvent` at all |
