@@ -1445,6 +1445,8 @@ while the `execXxx` thunk returns without writing `Z_Param__Result`.
 
 Verified failing pattern on Everspace 2 (UE 5.5): A=3, B=4 written correctly, dispatch returns
 `result=0`, ReturnValue stays 0, inputs preserved and the return slot untouched.
+⛔ **REFUTED 2026-08-20 — see the resolved-confound block below. On a correctly detected hook the
+same call on the same title returns 7.**
 
 **How to apply:** redirect verification to **game-specific instance methods** (PlayerController /
 Character / Inventory subclass functions), with the user in **active gameplay** (not an idle main menu)
@@ -1453,10 +1455,36 @@ so the game thread pumps ProcessEvent, and prefer simple scalar returns.
 > ⚠ This one carries a confound worth remembering: it was diagnosed while the ProcessEvent hook was
 > installed in the **wrong vtable slot** (a hardcoded UE-version table whose only "validation" was that
 > the slot pointed at readable code — which every UObject virtual does). That was fixed in build 648 by
-> pattern-scanning the function body plus a post-install fire-counter watchdog. **The stub hypothesis
-> was never re-verified against the corrected hook.** The generalisable half is the reason it slept for
-> 600+ builds: `-5` timeouts were attributed to "idle game / game thread not pumping" — *a
-> plausible-sounding explanation that was never falsified.*
+> pattern-scanning the function body plus a post-install fire-counter watchdog. The generalisable half
+> is the reason it slept for 600+ builds: `-5` timeouts were attributed to "idle game / game thread not
+> pumping" — *a plausible-sounding explanation that was never falsified.*
+
+> ## ⭐ RESOLVED 2026-08-20 — the confound above WAS the whole story, and Everspace 2 no longer no-ops
+>
+> The paragraph above used to end *"the stub hypothesis was never re-verified against the corrected
+> hook."* It has now been re-verified, **on the very title it was diagnosed on**, and it does not
+> reproduce. Everspace 2, headless, dist 3263:
+>
+> ```
+> DetectProcessEvent (pattern): match at vtable+0x278 -> 0x7FF60152D940
+> ProcessEvent: offset resolved to vtable+0x278 via the pattern scan (detection run 0/8)
+> GameThreadDispatch: hook installed at 0x7FF60152D940, validator armed (1500ms)
+> VALIDATION FAILED lines: 0        hook_active=True   fire_count=160
+> Add_IntInt(3,4) -> result_hex 03000000 04000000 07000000   ==>  ReturnValue 7
+> ```
+>
+> The return slot that "stayed 0" now holds **7**. So the Everspace 2 evidence for a
+> BlueprintFastCall stub was an artefact of the **wrong vtable slot**, exactly as the confound
+> warned — and with slots now pattern-detected per title (`0x260` Lushfoil 5.6, `0x268` DumperTest
+> 5.4, **`0x278` Everspace 2**) the failing pattern this section was built on has **no surviving
+> instance on this machine**.
+>
+> ⚠ **What does NOT follow.** This does not prove BlueprintFastCall never elides a helper — only that
+> the one title we cited for it does not. The practical advice is unchanged and still worth keeping:
+> **do not build a verification on a KismetMathLibrary return**, because you cannot tell dispatch
+> from elision from the outside. What changes is the inverse reading — a KismetMathLibrary failure
+> should now be treated as **evidence of a bad slot first**, since that is what it turned out to be
+> every time we have actually chased it.
 
 -----
 

@@ -4163,6 +4163,34 @@ LOWERING the cap, not by finding a host*):
 >   what is verified here is the DLL-side verdict and advice the panel now sources from
 >   `get_diagnostics`.
 
+> ### ✅ STEP 6 PASSES 2026-08-20 `[PEHOOK-6-2026-08-20]` — and it RETIRES the §4.4 Everspace 2 evidence
+>
+> The step allows two outcomes and says so: the BlueprintFastCall advice wording, **or** `✓ = 7`,
+> which "is itself a result". It came back **7**.
+>
+> ```
+> DetectProcessEvent (pattern): match at vtable+0x278 -> 0x7FF60152D940
+> offset resolved to vtable+0x278 via the pattern scan (detection run 0/8)
+> hook installed at 0x7FF60152D940, validator armed (1500ms)
+> Add_IntInt(3,4) -> result_hex 03000000 04000000 07000000   ==>  ReturnValue 7
+> hook_active=True   fire_count=160   VALIDATION FAILED: 0
+> ```
+>
+> ⭐ **This is the result the step was really after.** [working-lessons.md](working-lessons.md) §4.4
+> recorded that the Everspace 2 Kismet no-op was diagnosed *while the hook sat in the wrong vtable
+> slot*, and that **the stub hypothesis had never been re-verified against a corrected hook**. It has
+> now been, on the same title, and it does **not** reproduce: the return slot that "stayed 0" holds
+> **7**. §4.4 has been updated — the Everspace 2 evidence for a BlueprintFastCall stub is retired,
+> and the failing pattern that section was built on has **no surviving instance on this machine**.
+> ⚠ That does not prove BlueprintFastCall never elides a helper; it narrows the claim to "not this
+> title", and flips the inverse reading — a KismetMathLibrary failure should now be suspected of
+> being a **bad slot** first.
+>
+> 🔗 **Third distinct slot, which reinforces the row's own warning against "fixing" the version
+> table:** `0x260` Lushfoil (5.6) · `0x268` DumperTest (5.4) · **`0x278` Everspace 2**. Slot position
+> is a build-flag property, not a version property — all three were found by the pattern scan, each
+> on its first attempt (`detection run 0/8`) except Lushfoil's deliberate profiler-first run.
+
 > ### ✅ STEP 4 PASSES 2026-08-20 `[PEHOOK-4-2026-08-20]` — the pattern path is untouched, on Lushfoil
 >
 > The non-regression check, headless (`tools/verify/lushfoil_pehook_batch.py`). ⚠ It is recorded
