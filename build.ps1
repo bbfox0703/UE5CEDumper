@@ -1002,28 +1002,12 @@ if ($Target -in "All", "DLL") {
 }
 
 # ============================================================
-# Copy the UI-side helper scripts
+# (removed 2026-08-20) The Startup-shortcut helpers are no longer published.
 # ============================================================
-# Separate from the CE block above because these belong to UE5DumpUI.exe, not to
-# the DLL — so they must ship for every target that can put an exe in dist\, UI
-# included. Both resolve their target as "<script dir>\UE5DumpUI.exe" FIRST,
-# which only works if they land right beside the exe rather than in a subfolder.
-#
-# Two implementations of one tool, and shipping both is deliberate: Bitdefender's
-# behavioural layer quarantined the .ps1 the first time it ran (an unsigned
-# parent spawning powershell, which then wrote a .lnk into the Startup folder —
-# a textbook persistence shape). The Python twin is stdlib-only and gives a
-# machine where the PowerShell host is the problem another way to do the job.
-if ($Target -in "All", "UI", "DLL") {
-    $uiHelpers = @("startup-shortcut.ps1", "startup_shortcut.py")
-    foreach ($h in $uiHelpers) {
-        $src = Join-Path $ROOT_DIR "scripts\$h"
-        if (Test-Path $src) {
-            Copy-Item $src -Destination $DIST_DIR -Force
-            Write-Ok "$h copied to dist\"
-        }
-    }
-}
+# `scripts/startup-shortcut.ps1` and `scripts/startup_shortcut.py` used to be
+# copied into dist\ beside UE5DumpUI.exe. They are no longer part of the
+# distribution. Both still live in scripts\ and still work when run from there —
+# only the publish step is gone, so nothing about the tool itself changed.
 
 # ============================================================
 # Strip debug symbols from distribution builds
