@@ -4024,7 +4024,10 @@ a LOW-priority readout.*
 
 -----
 
-### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PEHOOKONCE-2026-08-18]` — a failed ProcessEvent detection must now be RE-ARMABLE
+### ✅ CLOSED 2026-08-20 `[PEHOOKONCE-2026-08-18]` — a failed ProcessEvent detection must now be RE-ARMABLE
+
+> **All five steps verified** — 1-4 headless (`[PEHOOKONCE-LIVE-2026-08-20]`), step 3's literal
+> pre-scan form (`[PEHOOKONCE-3-2026-08-20]`), and step 5 in the UI (`[PEHOOKONCE-5-UI-2026-08-20]`).
 
 *Was: a detection that failed because there was nothing to detect **yet** stored the same `-1` as a
 hard failure, and every retry path in `Frieren.cpp` was gated against `-1` — so one
@@ -4077,7 +4080,32 @@ order-swap that was permanently broken.*
 >   before any scan* (expecting **zero**); this grep was taken **after** the scan, where exactly one
 >   run is the correct and expected result. The no-storm property holds; the literal pre-scan-idle
 >   form was not run in isolation.
-> * **Step 5 (the UI path) not run** — steps 1–4 are the headless set.
+> * ### ✅ STEP 5 NOW RUN 2026-08-20 `[PEHOOKONCE-5-UI-2026-08-20]` — the UI path, on screen
+>   Fresh **Lushfoil** (proxy mode) + the real UI. ⚠ The pre-scan window is real and visible in the
+>   UI, not just over the pipe: on connect the status bar reads **"Connected — waiting for scan"**
+>   with a **Start Scan** button still unpressed, so the UI does *not* auto-scan a proxy host.
+>
+>   **First Start, before any scan** — the recorder arms, and the detail is the actionable one:
+>   > *ProcessEvent is not resolved yet, and detection is still ARMED — this attempt changed nothing.
+>   > Either no scan has run in this process (a proxy DLL starts the pipe server only, so there is no
+>   > UObject to read a vtable from), or a detected slot was rejected because the hook never fired.
+>   > **Run a scan, then Start again**; init-\*.log tells you which — 'no UObject vtable available
+>   > yet' vs 'VALIDATION FAILED'.*
+>
+>   **Then Start Scan** (UE506, **58,619 objects**) and **Start again — WITHOUT restarting the game**,
+>   which is the whole point of the step:
+>   ```
+>   67 distinct functions, 98,236 total calls
+>   TotemActor_C.ReceiveTick                         8,568   Event    18 ms
+>   InteractibleItem_C.ExecuteUbergraph_Interacti…   8,103            18 ms
+>   BrushBinding.GetValue                            5,604   native   21 ms
+>   FirstPersonCharacter_C.ExecuteUbergraph_First…   5,036            18 ms
+>   ```
+>   ⇒ The order-swap that used to poison the PE hook **for the whole process** now recovers inside
+>   one process, and the user-visible surface says so at each stage. Kind badges (`Event` / `native`
+>   / `UI`) and the Period column are populated too, so the Phase-E cadence data is reaching the grid.
+>
+>   **`PEHOOKONCE` steps 1–5 are now all verified.**
 > * ### ✅ STEP 3'S LITERAL PRE-SCAN FORM NOW RUN 2026-08-20 `[PEHOOKONCE-3-2026-08-20]`
 >   The note above is right that the earlier grep was taken *after* the scan. Re-run in the form the
 >   row specifies — `tools/verify/lushfoil_pehook_batch.py`, fresh Lushfoil:
