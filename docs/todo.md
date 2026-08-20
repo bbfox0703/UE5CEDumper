@@ -2052,6 +2052,33 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > Still open: the CE-side half — watching the Before/After dump appear in the Lua Engine window.
 > can be baked, and `Copy AA Script` inside that dialog is what writes the clipboard.
 > | 7 | **B** | **Y10 / Y13.** Open a UFunction with a **complex return** (FString / struct) whose return slot sits past byte 32, tick **Verify return**, and push the baked script to CE. Tick the record. | CE's Lua Engine shows the Before/After dump **containing the return slot** (the window is now sized to reach it) and the line no longer says "see After: dump above" when it cannot. Then untick, **detach CE from the game**, and re-tick: the contract check must fire FIRST with a message naming `g_mailboxContract`, and the record must **untick itself** — no `writeByte` may have run. |
+> ### 🟡 Y11 — the container half is evidenced (baked path); the FText half is NOT run `[Y11-2026-08-20]` 2026-08-20
+>
+> **A function with the right shape was found and its emitted script inspected.**
+> `LocalizableMessageLibrary::Conv_LocalizableMessageToText` (ParmsSize=72) takes
+> `Message [FLocalizableMessage, 48B, off=8, out]` whose members include **`.Substitutions [Array]`**.
+> With every box left untouched, the generated `PARAMS` block is:
+> ```lua
+> { name='WorldContextObject',      type='pointer', offset=0,  value=0 },   -- UObject* 8B
+> { name='Message.Key',             type='fstring', offset=8,  value='' },  -- Str 16B
+> { name='Message.DefaultText',     type='fstring', offset=24, value='' },  -- Str 16B
+> { name='Message.Substitutions',   type='tarray',  offset=40, value=0 },   -- Array 16B
+> ```
+> The `TArray` slot is present and **left zeroed** — and `RigHierarchyController::AddSocket` shows the
+> struct case the same way (`type='fstruct', size=32, value=0` for `InTransform.Rotation`).
+>
+> ⚠ **Scope, stated plainly: that is the BAKED-SCRIPT path (`BakedScriptGenerator`), not FIRE.** The
+> row says "press FIRE", which goes through `ParamBufferBuilder`. The two are different code and this
+> run does not cover the second.
+>
+> ⛔ **The FText half was not run: no DumperTest function takes an `FText` PARAMETER.** The FText
+> cases reachable here are *returns* (`Conv_…ToText`), which the generator handles through
+> `IsComplexReturnType`, not through the param refusal. For the record the predicate under test is
+> name-keyed exactly as the row describes —
+> `IsRefusedParam(typeName) => typeName == "TextProperty"`
+> ([ParamBufferBuilder.cs:234](ui/UE5DumpUI/Services/ParamBufferBuilder.cs:234)) — with the reason in
+> its own comment: an all-zero FText is not an empty FText, it carries a `TSharedRef` the engine
+> dereferences, so zeros crash rather than default. Closing this needs a title with an FText param.
 > | 8 | **B** | **Y12.** Close CE (or disconnect AOBMaker), then **Copy AA Script (Baked)**, and right-click → Paste in CE's address list. | A memory record appears with type **Auto Assembler Script**. Before the fix the clipboard held a bare `[ENABLE]`/`[DISABLE]` body, which CE will not accept as a record at all. The result label should say "copied as CE XML", not "copied to clipboard". |
 > | 9 | **B** | **Y11.** Find a UFunction taking an `FText`, `TArray` or `TMap` parameter and press **FIRE**. | An `FText` param is refused by name whatever the box holds. A `TArray`/`TMap`/`TSet`/struct param fires with the slot **left zeroed** when its box is untouched, and is refused with a message when you type a value into it. Before the fix the textbox was written as a raw int32 over the structure's Data pointer and handed to ProcessEvent. ⚠ Sample-blocked if no installed title exposes such a UFunction. |
 > | 10 | **B** | **V8.** Walk a `UDataTable` with **more than 64 rows** in Live Walker and drill into its **RowMap**. | The breadcrumb, the header and the RowMap preview row all carry "⚠ showing 64 of N", and the status line says the view is capped per fetch — **without** naming the Array Limit slider, which does not govern this view. A DataTable with ≤64 rows must show none of that. |
