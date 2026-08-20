@@ -2162,6 +2162,46 @@ a `-Mode Publish` binary. The offline half is machine-enforced by
 `DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
 spot-check rather than a 30-column sweep.
 
+> ### ✅ `AF22` SEEN ON SCREEN 2026-08-20 `[AF22-DIALOG-2026-08-20]` — all three of its wording defects are gone
+>
+> The heading above notes AF12/AF13/**AF22** are *"pinned offline … it does not mean the string has
+> ever been seen on screen — 繁中 鐵則 4, 閘門答對 ≠ 使用者看得到"*. This is AF22 seen.
+>
+> Property Search → `MaxWalkSpeed` → row context menu → **Force field (hold across instances) ›
+> Force value…** (DumperTest, experimental on). The dialog reads:
+>
+> ```
+> ┌ Force property value ─────────────────────────────────────────────┐
+>   Class:    CharacterMovementComponent
+>   Property: MaxWalkSpeed
+>   Type:     FloatProperty -> float
+>   Offset:   0x248
+>   Scope:    every live CharacterMovementComponent and every subclass (1 inh…)
+>
+>   ⚠ MaxWalkSpeed is declared on CharacterMovementComponent, not on one specific
+>     object — so this holds the value on EVERY live CharacterMovementComponent and
+>     subclass at once, not just the one you were looking at. There is no per-class
+>     switch for Force — it holds the field on the declaring class and every subclass
+>     until you release it from the "Forced fields" strip.
+>
+>   Force value (float):  [ 9999.0 ]              [ Cancel ] [ Hold this value ]
+> ```
+>
+> | AF22 named | now |
+> |---|---|
+> | titled *"Freeze property value"* | **"Force property value"** |
+> | field labelled *"Freeze value"* | **"Force value (float):"** |
+> | advice *"edit className in the generated CFG block"* — unreachable, this path generates no script | **gone**; replaced by an accurate scope caveat that points at the **"Forced fields" strip**, which is the control that actually exists |
+>
+> Also visible and worth recording: the confirm button is **"Hold this value"** (not "Freeze"), and
+> the **bool** path offers only **Force ON / Force OFF** with no value dialog — so the numeric dialog
+> is reached exactly when it should be. Cancelled without applying.
+>
+> 🔗 **`FREEZESCOPE` step 1's UI half, free from the same screen:** the Property Search row for
+> `bCanBeDamaged` renders as `Actor · **+221 inheritors** · Object · BoolProperty · 0x5A · false` —
+> the "+N inheritors" badge the step asks for, with the declaring class `Actor`. The headless half
+> was `[FREEZESCOPE …]` via `freezescope_force_scope.py`; this is the same fact on screen.
+
 > ### ✅ A 5th GRID + `AF4` 2026-08-20 `[AOTSORT-3-AF4-2026-08-20]` — Live Walker, same AOT binary
 >
 > **Live Walker's field grid sorts under AOT.** `Name` (text) on a GWorld walk:
