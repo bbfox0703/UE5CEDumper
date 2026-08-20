@@ -4153,6 +4153,56 @@ LOWERING the cap, not by finding a host*):
 >   what is verified here is the DLL-side verdict and advice the panel now sources from
 >   `get_diagnostics`.
 
+> ### ✅ STEP 3b PASSES + STEP 3 NOW COMPLETE 2026-08-20 `[PEHOOK-3B-2026-08-20]`
+>
+> Rig: `tools/verify/pehook_3b_refusal.py`, on a purpose-built DLL with both `kPePat*Sib*` alternates
+> gated behind `constexpr bool kSibAlternatesEnabled = false`. ⚠ **The variant was copied to the
+> scratchpad and the source reverted and rebuilt in the same step**, so `dist/` never held it;
+> `git status` clean and `build_number.txt` unchanged at 3263 (`-NoBumpBuildNumber` on both builds).
+> The rig injects the variant by path (`inject.py --dll`), so nothing depends on `dist/` being wrong.
+>
+> **Staging confirmed before anything was concluded** — the host really did take the guessed path:
+> `DetectProcessEvent (fallback): pattern scan missed, falling back to UE=504 version-table
+> primary=0x220`, then `VALIDATION FAILED — hook at 0x7FF69AB99FC0 (vtable+0x220) fired 0 times in
+> 1500ms, and that offset came from the version TABLE guess`.
+>
+> **Step 3b — PASS.** Four `direct_call` invokes across the condemn window:
+> ```
+> results in order: [0, -3, -3, -3]      -3 x3   |   -5 x0
+> ```
+> ⭐ **The `-5` count is the control that makes the `-3` mean "refused".** `-5` is the ordinary
+> game-thread timeout; `-3` is produced *only* by the two `s_peOffsetDistrusted` guards. Zero `-5`s,
+> so the direct path was genuinely refused rather than quietly queued — which is the over-correction
+> the step exists to catch: re-arming without refusing would `call` a known-wrong virtual, where the
+> pre-fix code merely timed out.
+>
+> **Step 3 — now COMPLETE, and the terminal state had never been observed before.** The earlier
+> block recorded `failure 1/3` then `2/3` and honestly claimed only "bounded and advancing". Driving
+> **non-direct** invokes into the same condemned process reached the end of the ladder:
+> ```
+> failure 1/3 : 1     failure 2/3 : 1     failure 3/3 : 1
+> giving up on ProcessEvent for this process : 1
+> pe_profile_start -> hook_active: false,
+>   hook_detail: "ProcessEvent detection FAILED on this game — the vtable slot could not be
+>                 determined, or a detected slot never fired and was rejected…"
+> ```
+> That is exactly the step's second clause — **the detection-FAILED detail, not the "not resolved
+> yet" one**.
+>
+> ℹ️ **Why the non-direct route was needed, and it is a real property of the design:** once the
+> distrust guard is up, every `direct_call` is refused at the door and therefore never re-arms a
+> validator, so the failure counter cannot advance past 2 that way. A *queued* invoke still
+> re-detects and re-installs (`-5`, then `-3` once the next verdict lands), which is what walks the
+> ladder to 3/3. Anyone re-running step 3 with `direct_call` alone will stall at 2/3 and think the
+> bound is wrong.
+>
+> ⛔ **Step 3c remains unreachable, and not for want of trying.** It needs a condemn *followed by a
+> successful re-detection* (`this offset is TRUSTED again`). The shipping DLL's pattern always
+> matches on DumperTest, so it never condemns; the SIB-less variant can never re-validate, so it
+> never recovers. No build available today misses once and then hits. Reaching it would need a
+> runtime-togglable pattern set — a test hook in shipping code, which is a design decision, not a
+> verification step.
+
 > ### VERIFIED 2026-08-20 - STEPS 5 and 7 PASS, headlessly (`tools/verify/pehook_step5_idle.py`)
 >
 > ⚠ **The block above says "step 5's asymmetry is respected", and that was too generous.** With the
