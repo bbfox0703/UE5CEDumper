@@ -5327,6 +5327,39 @@ scanned on-disk bytes, and for packed/obfuscated titles those differ.*
    confidence)` must still report the same version. The bare-needle change touches Tier 2 only, and
    two unit rails assert that, but Tier 3 is what stripped-tag games actually land on today.
 
+> ### 🟡 STEP 4 — NO SUBJECT EXISTS ON THIS MACHINE, and that is a measurement, 2026-08-20
+>
+> The step needs *"a title that previously reported `Tier 3 (low confidence)`"*. Swept **every**
+> `DetectVersion:` line in `%LOCALAPPDATA%\UE5CEDumper\Logs` — **25 game folders, 65 detection
+> runs**:
+>
+> | outcome | runs |
+> |---|---|
+> | `PE VERSIONINFO …` resolved before the memory scan | 31 |
+> | `PE resource failed, falling back to memory string scan` | 35 |
+> | `Tier 1 (ascii\|utf16) '++UE4+Release-4.xx' -> N` | **6** |
+> | `Tier 2 Release prefix -> N` | **0** |
+> | `Tier 3 candidate (deferred)` / `Tier 3 (low confidence)` | **0** |
+> | `Could not detect UE version from PE or memory` | 28 |
+>
+> **The absence is not "we did not look", and it is not "Tier 3 never ran" either.** Two controls:
+> * ⚠ **grep by FORMAT STRING, and check the string is one that is actually LOGGED** — most `Tier N`
+>   text in `Genau.cpp` is *comments*. The four real emitters are `Tier 1 (%s) '%s%s' -> %u at 0x%zX`,
+>   `Tier 2 Release prefix -> %u at 0x%zX`, `Tier 3 candidate (deferred) -> %u at 0x%zX` and
+>   `Tier 3 (low confidence) -> %u`. **Tier 1 fires 6 times**, so the family demonstrably reaches the
+>   log; the zero for Tier 2/3 is about those tiers, not about the grep.
+> * ⭐ **The 28 terminal WARNs are positive evidence that Tier 3 EXECUTED and missed.** `Genau.cpp`'s
+>   own comment at the terminal branch says it: *"Tier 2 and Tier 3 all found nothing, so 'no UE4/UE5
+>   evidence' is a STRUCTURAL property"*. Reaching that line means the whole ladder was walked. So
+>   Tier 3 has run **~28 times across this corpus and produced a candidate zero times**.
+>
+> ⇒ Step 4 is **not runnable here and cannot become runnable by trying harder** — it is a 第 5 步
+> item (no sample exists anywhere), where the absence *is* the signal. It stays 🟡 rather than ✅:
+> nothing regressed, but nothing was exercised either. The three candidate titles are the ones named
+> under G8/G9 step 3 (*unrecognised PE VERSIONINFO* **and** *a findable tag*); if one is ever
+> installed, this is the row to re-run.
+
+
 ### ✅ VERIFIED 2026-08-20 — G8 / G9: version detection after the tier-rule change
 
 > ### ✅ STEP 1's "two or three titles" IS NOW TWELVE — 2026-08-20, see `[G11-CACHE-2026-08-20]`
