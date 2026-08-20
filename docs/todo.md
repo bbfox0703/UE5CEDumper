@@ -2631,6 +2631,47 @@ spot-check rather than a 30-column sweep.
 > | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
 > | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
 
+### ⬜ NEW DEFECT 2026-08-20 `[FREEZEINJECT-CRLF-2026-08-20]` — "Inject Freeze Helper" reports FAILURE on a write that SUCCEEDED
+
+*Found immediately after `[FREEZEUNTICK-2026-08-20]`, by following the advice that defect's own
+message gives. **MED** — the write is fine, but the tool tells the user the setup step failed, and
+that is the step everything else in the Freeze feature depends on.*
+
+**Repro:** UI → **Tools → Inject Freeze Helper into Current CE Table**, with CE running and
+AOBMaker Connected. Status bar: `Inject freeze helper failed: Stream size mismatch: wr…`, and the
+log has it in full:
+```
+[WARN] AOBMaker InjectTableFile 'ue5_freeze_helper.lua' failed:
+       Stream size mismatch: wrote 58345, stream has 57208
+```
+
+⭐ **The arithmetic identifies the cause exactly, with nothing left over:**
+
+| | |
+|---|---|
+| `scripts/ue5_freeze_helper.lua` on disk | **58,345 bytes** |
+| CRLF line endings in it | **1,137** |
+| 58,345 − 1,137 | **57,208** — *precisely* the stream size CE reports |
+
+So the file is written with **CRLF**, CE's table-file stream stores it **LF-normalised**, and the
+post-write check compares *bytes written* against *stream size*. It will therefore fail for **any**
+file with CRLF endings — which is every file in this repo on Windows.
+
+✅ **And the write really did succeed** — queried from CE's own Lua Engine, not inferred:
+```lua
+local tf = findTableFile('ue5_freeze_helper.lua')
+--> FOUND, stream size=57208
+```
+The freeze then worked end to end (see the AA12/AA13 block), so **nothing is broken except the
+verification and the message it produces**.
+
+**Fix shape:** compare against the LF-normalised length, or re-read the stream and compare content,
+rather than comparing a CRLF byte count to an LF stream. Effort S, risk low.
+⚠ **Do not "fix" it by writing LF from the UI** without checking what else reads that file — the
+mismatch is in the *check*, and the stored content is already correct.
+
+*Not fixed — found during a verification pass.*
+
 ### ⬜ NEW DEFECT 2026-08-20 `[FREEZEUNTICK-2026-08-20]` — a Freeze bail-out emits the untick but the record stays ACTIVE
 
 *Found while running `AA12`/`AA13` with Cheat Engine 7.7 + the AOBMaker plugin, DumperTest attached.
@@ -5557,6 +5598,34 @@ almost nothing; re-run it under page heap.**
 *Needs a **real Cheat Engine** plus a connected game. See dev-log build 3125. The Lua rig stubs every
 CE global, so what is unproven is precisely the CE-side behaviour: whether the window stays up and
 whether the record ends ticked or unticked.*
+
+> ### ✅ STEP 1 PASSES 2026-08-20 `[AA12-STEP1-2026-08-20]` — the happy path, with a release control
+>
+> **CE 7.7 + AOBMaker plugin + DumperTest**, the full chain the row describes.
+>
+> Property Search → `DumperTestActor.TickCount` (IntProperty `0x6A8`, climbing ~1 Hz) → **Freeze**
+> → *"Freeze script created in CE: Freeze: DumperTestActor::TickCount = 9999"* → CE attached to
+> `DumperTest.exe` → tick.
+>
+> **All three of the step's assertions hold:**
+> * **the value holds** — `TickCount` read **9999** on two refreshes **10 s apart**, on a field that
+>   had been counting up continuously beforehand;
+> * **the Lua Engine window closes** — it never stayed up, which is the CE-Lua-hygiene rule's
+>   auto-close-on-clean-success path;
+> * **the record stays ticked** — `Active=true` (red ✗ in the checkbox).
+>
+> ⭐ **The release is the control, and it is what makes the 9999 mean something.** Unticking the
+> record let the value resume immediately: **9999 → 10039 → 10048**. So the hold was caused by the
+> freeze rather than by the field having stopped on its own, and the release path works too.
+>
+> ⚠ **Getting here required working around two defects filed from this same session** —
+> `[FREEZEUNTICK-2026-08-20]` (the helper-missing bail-out leaves the record Active) and
+> `[FREEZEINJECT-CRLF-2026-08-20]` (the setup step reports failure on a write that succeeded). Step 1
+> passes *despite* them, because the injection really did work; a user following the on-screen
+> messages would reasonably have concluded the feature was broken.
+>
+> Steps 2-6 remain: 2 needs the DLL **not** injected, 3/4 need a class with zero live instances,
+> 5 needs a pre-1.2 helper, 6 needs two coexisting freezes.
 
 1. **⚠ REGRESSION FIRST — a normal freeze still works and still closes.** Property Search → a numeric
    field on a class with live instances → Copy Freeze Script → paste into CE → tick. The value must
