@@ -2883,7 +2883,7 @@ three changes, each independently unit-pinned:*
 > and reads exactly like the bug. Check which command the current root actually issues before
 > concluding an absence.
 >
-> Step **4** (proxy mode) not run; step **2** is settled below.
+> Steps 2 and 4 are settled below; with 1/3/5/6/7 above, **all seven steps of this row are done**.
 
 > ### ✅ STEPS 3, 5, 6, 7 PASS 2026-08-20 `[AUTOREFRESH-LIVE2-2026-08-20]` — every one measured on the wire
 >
@@ -2962,6 +2962,30 @@ three changes, each independently unit-pinned:*
 >
 > ⚠ No value was committed: the editor was abandoned by navigating, not by pressing Enter, so nothing
 > was written to the game.
+
+> ### ✅ STEP 4 PASSES 2026-08-20 — the proxy two-step, and the resume provably ignores the CONNECT
+>
+> Run on **Elliot** because it is a real proxy-mode title (`dxgi.dll` auto-loads, DLL starts the pipe
+> and does **not** scan). Sequence: root Live Walker on Elliot's GWorld → **Auto ON** and ticking →
+> `taskkill` Elliot → relaunch → **Connect** (`Connected — waiting for scan`) → **Start Scan**
+> (84,990 objects) → **Start from GWorld**.
+>
+> ```
+> 12:09:xx  Elliot killed with Auto ON  -> 0 walks for ~3 min, INCLUDING across
+>                                          Connect and the whole Start Scan
+> 12:12:29.863  Start from GWorld (the navigate)  -> walk_world
+> 12:12:39.890 … 12:13:19.908                     -> walk_world, gap 10.0 s × 5
+> ```
+>
+> ⭐ **The zero-walk stretch is the assertion, not the resume.** Step 3 already showed Auto comes
+> back; what step 4 adds is that the two-step proxy path has *two* plausible wrong moments to resume
+> at — the `Connected — waiting for scan` transition and the `Start Scan` completion — and it fired at
+> **neither**. Auto re-armed only when the panel was re-rooted on data. That is exactly what the fix
+> note claims ("the resume hangs off data being re-rooted, not off the connect event, precisely so
+> the two-step proxy path behaves identically") and it is the reason the maintainer's
+> disconnect→reconnect→navigate path works.
+>
+> **With this, steps 1–7 of `[AUTOREFRESH-2026-08-19]` are all verified.**
 
 > | 1 ⚠ THE ONE THAT MATTERS | Live Walker → root on any live object → tick **Auto** → watch for 3 full intervals | the countdown cycles `10…1` and repeats, and the grid's values actually change | the reported failure is the counter reaching 0 and never moving again |
 > | 2 | while Auto runs, double-click an editable scalar cell to open its editor, then click a breadcrumb to navigate away | the label reads `sec · paused (editing)` only while the editor is open, and auto-refresh resumes by itself afterwards — it must NOT stay paused | this is the suspected original trigger; a stranded latch used to kill Auto for the whole session |
