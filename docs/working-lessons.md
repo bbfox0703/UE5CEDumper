@@ -612,6 +612,43 @@ just the open count, when pasting the tool's headline.
 
 -----
 
+### 2.8 Most "needs Cheat Engine" rows do not — pull the emitted script out and run it under `lua`
+
+The register has a large block of rows filed as CE-only. Two of them were closed on 2026-08-20
+**without opening Cheat Engine at all**, and the same route should be tried before booking a CE
+session for any of the rest.
+
+**The route.** With **AOBMaker offline**, the UI's CE buttons fall back to copying a CE memory-record
+XML to the clipboard. That XML contains the *real emitted* `[ENABLE]`/`[DISABLE]` `{$lua}` blocks —
+the exact text the shipping build produces today, not a generator fixture. So:
+
+1. drive the UI to the button (e.g. Teleport → Global Pointers → **Get GameEngine**);
+2. read the clipboard, `html.unescape` it, pull `<AssemblerScript>`;
+3. split the two `{$lua}` blocks and `load()` them over a table of **stubbed CE globals**
+   (`getAddressSafe` / `registerSymbol` / `unregisterSymbol` / `readInteger` / `readQword` /
+   `allocateMemory` / `sleep` / `getTickCount` / a `memrec` stand-in …);
+4. assert on what the script *did*, not on what it says.
+
+**Why it is stronger than it sounds.** The generator already has C# tests, but those assert on the
+emitted *text*. Running it catches control-flow defects that read fine — `[SLOTSYM]`'s bug was
+exactly that: on the slot path both arms of a guard were skipped and a trailing unconditional `dbg`
+claimed success anyway. **Stubbing lets you neuter one primitive and prove the honesty branch is
+reachable**: make `unregisterSymbol` a no-op and the script must say *"could NOT be unregistered"*
+rather than *"unregistered"*. No amount of source-reading establishes that.
+
+**Two practical notes.** `scripts/tests/*.lua` is the home and the convention (they are manual tools,
+deliberately not in CI, because a standalone `lua` is not a declared dependency and a step that
+skips quietly is worse than one run on purpose). And a pure helper needs no UI at all — `[STALEDLL]`
+(b)'s size readout was closed by lifting `ue5_dllFileSize`/`ue5_dllSizeText` straight out of
+`dist/UE5CEDumper.CT` and running them against the two real DLLs.
+
+⛔ **Know what this does NOT cover, and say so on the row.** The stubs are not CE. Anything whose
+question *is* CE's own behaviour stays CE-only — `[FREEZESTUCK]` step 3 asks whether CE's real
+`TMemoryRecord.Active = false` behaves like the stand-in, and its row already says no offline test
+can reach it. Closing the offline half is progress; claiming the row is done is not.
+
+-----
+
 ## 3. Traps in our own stack
 
 ### 3.1 We cannot read our own live log
