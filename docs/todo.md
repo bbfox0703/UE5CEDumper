@@ -2622,6 +2622,32 @@ a LOW-priority readout.*
 
 > | step | do this | expect | why |
 > |---|---|---|---|
+> ### ✅ BOTH STEPS PASS 2026-08-20 `[STALEDLL-B-LUA-2026-08-20]` — under real `lua`, no Cheat Engine needed
+>
+> New rig `scripts/tests/dll_size_text_test.lua` **lifts `ue5_dllFileSize` / `ue5_dllSizeText`
+> verbatim out of `dist/UE5CEDumper.CT` and executes them** (working-lessons §2.5 — running the
+> shipped script beats asserting about its text). It cannot pass against a `.CT` that no longer
+> carries them: the extraction is a hard failure. **9 checks, 0 failures.**
+>
+> * **Step 1 — PASS.** `dist/UE5Dumper.dll` → `2879488 bytes (2.7 MB)`; the shape matches
+>   `N bytes (X.X MB)` and the byte count equals the real file size.
+> * **Step 2 — PASS, on the two files the row actually names.** Cheat Engine's install folder still
+>   holds the February build and it reads **`536064 bytes (0.5 MB)`** against dist's
+>   **`2879488 bytes (2.7 MB)`** — distinguishable, and the MB figures differ by more than 1 MB.
+>   That is precisely the "0.5 MB vs 2.7 MB" discrimination this row exists to provide.
+> * **Four negative controls — PASS.** A missing path, `nil` and `""` all return the sentinel
+>   `unknown (could not read the file)` rather than throwing, and `ue5_dllFileSize(nil)` returns
+>   **`nil`, not `0`** — `0` would render as a real, empty file and read as a legitimate answer.
+>
+> ⚠ **Scope, stated honestly:** this exercises the FUNCTION against the two real DLLs, not a live CE
+> session emitting the line. The two call sites are present and wired to `DLL_PATH` in the shipped
+> `.CT` (`ue5_log("DLL size: %s", ue5_dllSizeText(DLL_PATH))` and the startup replay), so what a CE
+> run adds is only that `ue5_log` reached the console.
+>
+> 📌 **Incidentally re-confirms `[STALEDLL]` (a), which is still OPEN and maintainer-only:** the
+> stale February `UE5Dumper.dll` **is still sitting in `%ProgramFiles%\Cheat Engine\`** at
+> **536,064 bytes**, versus dist's 2,879,488. Deleting or refreshing it remains your call.
+
 > | 1 | resolve a DLL via the `.CT` (any slot — breadcrumb, manual pick, …) and open the log / Lua console | a `DLL size: N bytes (X.X MB)` line appears next to `DLL path:` | the whole point — the size is now visible beside the path |
 > | 2 | point the `.CT` at the ~0.5 MB Feb DLL vs the ~2.7 MB dist DLL | they read `0.5 MB` vs `2.7 MB` distinctly | the size is what catches the stale build a silent path never showed |
 
