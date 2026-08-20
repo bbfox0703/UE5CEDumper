@@ -2550,6 +2550,32 @@ the repo's (`[STALEDLL]`).
 > | AE13 ⚠ DLL-gated | Value Search → **Group** mode, two slots, values chosen to be COMMON (e.g. `0` and `1`, or `100` and `100`) so one slot matches far more than 256 fields on some object; Group First Scan, then Group Next Scan | the status line gains `⚠ a slot matched more than 256 fields — only that many were kept, so "All fields" is a page …`, and the SAME clause survives the Next Scan | this fact was computed by `Orden::MatchGroup` and written only to `LOG_WARN` inside the DLL, so no user could ever see it. Distinct from `deadline_hit`: the result set is complete while a slot's field list is not. **Negative half worth doing:** repeat with DISTINCTIVE values (a real HP + a real MP) and confirm the clause does NOT appear |
 > | AE20 | Proxy Deploy → **Find leftovers** on a machine with several leftover chains, tick 3+ rows, **Delete checked**, then click **Cancel operation** while it runs | the pass stops early and the result line reports what DID happen (`… cancelled`), with the un-processed rows still listed and unticked | the destructive Recycle-Bin delete accepted a `CancellationToken`, checked it between rows and carried a whole cancelled-reporting path that **nothing in the app could reach** — five of the panel's seven token-taking commands were in that state. ⚠ Needs several rows: with one row the loop finishes before a human can click |
 > | AE30 | Object Tree → pick any UObject → set the address format to **module+offset** → Copy address, and paste into CE. Then relaunch the game and paste the same string again | the copied text is now bare hex (e.g. `1E55C298D40`), NOT `"Game-Win64-Shipping.exe"+FFFF81…`; it resolves this run and plainly fails to resolve after a relaunch instead of silently pointing somewhere unrelated | a heap UObject sits BELOW a `0x7FF7…` image base, so the old unsigned subtraction WRAPPED. That string round-trips within one run, which is what made it dangerous: it looked like the ASLR-stable form the user picked the option for. **Control:** copy an address that IS inside the module (a GObjects/GNames pointer from the Pointers panel) and confirm it still formats as `"exe"+RVA` and still resolves after a relaunch |
+> ### ✅ AE30 PASS 2026-08-20 `[AE30-DQ7R-2026-08-20]` — but the CONTROL as written cannot be run
+>
+> **DQ7R** (UE427, 149,408 objects, `version.dll` proxy). Toolbar **Address → `Module+Offset`**, then
+> Object Tree → right-click a class → **Copy Address**:
+> ```
+> clipboard = 1FD85ABF4C0
+> ```
+> Bare hex — **not** `"DQ7R-Win64-Shipping.exe"+FFFF81…`. The heap UObject sits below the `0x7FF6…`
+> image base, `TryGetModuleRva` refuses it, and the format falls back instead of wrapping. That is
+> the fix, on the exact path it fixed: `ObjectTreeViewModel.CopyAddressAsync` does pass
+> `ModuleName`/`ModuleBase`, so the fallback is a real decision and not a missing argument.
+>
+> ⚠ **The control the row prescribes does not test anything — do not re-attempt it.** Copying
+> GObjects from the Pointers/System panel gave `7FF679997660`, bare hex, which looks like a failure
+> and is not: those buttons call `StripHexPrefix` and **never consult the address format at all**
+> ([PointerPanelViewModel.cs:1502-1533](ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs:1502)). They
+> are a deliberate raw-address copy, so they cannot demonstrate anything about `FormatAddress`.
+>
+> 📌 **An observation the maintainer may want to act on (not a defect).** Every one of the app's
+> `FormatAddress` call sites — Instance Finder ×5, Live Walker ×6, Object Tree, Class Pivot, SPC,
+> Related — is handed a **UObject or a field address**, i.e. always heap. So after this fix the
+> `Module+Offset` option can essentially **never** produce `"exe"+RVA` for anything the app copies;
+> it silently formats as absolute hex every time. That is the correct behaviour (the old output was a
+> stability promise the address could not keep), but the menu entry now advertises a form the app has
+> no reachable path to emit. Worth either a tooltip or a re-think, and it is why the row's control
+> could not be satisfied from any panel.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L8 (U5 VMs + scoring): Z8 / Z12 / Z13
 
@@ -2585,10 +2611,17 @@ repo's.
 > Console also found **94** exec commands, so it is reporting a real census rather than taking the
 > "no exec commands found" branch the fix rewrote; both wordings could not be checked at once here.
 >
-> ⚠ **The positive case is out of reach on this machine's small titles.** Elliot's *whole* pool with
-> `game_only` off is **17,261** UFunctions — 17 % of the 100,000 cap. Even with the setting the row
-> recommends it does not come close, so a bigger install (**SEED / FF7R**-class) is genuinely
-> required to see the truncation text and the picker's partial-counts flag.
+> ⚠ **The positive case is out of reach on this machine's titles — two data points now.**
+>
+> | title | objects | UFunctions with `game_only` OFF | % of the 100,000 cap |
+> |---|---|---|---|
+> | Elliot (UE504) | 84,990 | **17,261** | 17 % |
+> | DQ7R (UE427) | 149,408 | **51,255** | 51 % |
+>
+> DQ7R is the largest install here and still only reaches half the cap, so the ratio is roughly
+> `objects ÷ 3`: a title needs **~300,000 objects** to trip it. A **SEED / FF7R**-class install is
+> genuinely required to see the truncation text and the picker's partial-counts flag. (DQ7R also
+> surfaced **557** exec commands, so its Console census is substantial and still uncapped.)
 > | Z12 | Instance Finder → **Address → Instance** on an address that lives in a deeply-nested container (the `SaveSlotList[].MsTuneData…` shape the deep descent was written for), and on a plainly-bogus address | on a deep HIT the suffix reads `[scanned (incl. deep descent) X/Y in Zms]` with the DEEP pass's counters and the SUMMED duration; on a deep MISS it adds `⚠ the deep descent probes at most 256 element(s) per container, so this miss is not proof of absence` | before, a deep success reported the SHALLOW pass's numbers (describing a pass unrelated to the answer) and dropped the deep pass's deadline flag; a deep miss never mentioned the element cap at all. Change the Options element cap and re-run — the suffix must name the value you set, not a constant |
 > ### 🟡 Z12 deep-MISS half PASS · Z13 NOT RUNNABLE on DumperTest — 2026-08-20 `[L8-Z12-Z13-2026-08-20]`
 >
