@@ -2080,6 +2080,34 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > its own comment: an all-zero FText is not an empty FText, it carries a `TSharedRef` the engine
 > dereferences, so zeros crash rather than default. Closing this needs a title with an FText param.
 > | 8 | **B** | **Y12.** Close CE (or disconnect AOBMaker), then **Copy AA Script (Baked)**, and right-click → Paste in CE's address list. | A memory record appears with type **Auto Assembler Script**. Before the fix the clipboard held a bare `[ENABLE]`/`[DISABLE]` body, which CE will not accept as a record at all. The result label should say "copied as CE XML", not "copied to clipboard". |
+> ### ⛔ V8 BLOCKED 2026-08-20 `[V8-ROWMAP-2026-08-20]` — the RowMap probe fails on DQ7R, so there is no drill-down to cap
+>
+> Tried on **DQ7R** (UE 4.27, 149,370 objects) precisely because it is a JRPG: Instances → class
+> `DataTable` returns **2,831 instances**. Three were walked in Live Walker by address —
+> `DT_DollNGWord`, `DT_BattleConstantResource_NE`, and `DT_TitleLogoImage` (the last one is in active
+> use by the screen that was on).
+>
+> **All three showed only the five reflected UPROPERTYs** (`RowStruct`, `bStripFromClientBuilds`,
+> `bIgnoreExtraFields`, `bIgnoreMissingFields`, `ImportKeyField`) and **no `DataTableRows` entry** — so
+> there was nothing to drill into and the "⚠ showing 64 of N" cap could not appear.
+>
+> ⭐ **The DLL says why, in its own log**, which rules out "the table is empty" and rules out a
+> mis-click — `walk-0.log`, once per walk:
+> ```
+> [WARN] [WALK] ProbeRowMapOffset: could not find RowMap (endReflected=0x98)   ×3
+> ```
+> `RowMap` is a `TMap<FName, uint8*>` and is **not reflected**, so `Ubel::ProbeRowMapOffset`
+> ([Ubel.cpp:6137](dll/src/Ubel.cpp:6137)) has to scan memory past the reflected fields for it. On
+> this title it does not find it.
+>
+> 📌 **Sweeping every `walk-*.log` on the machine: `ProbeRowMapOffset` has NEVER been recorded
+> succeeding — 0 successes, and the only failures are these 3.** That is not "it always fails": it is
+> that the probe has only ever been *exercised* on one title, today, and missed there. Worth the
+> maintainer's attention as the sole data point that exists, but it is a heuristic scan by design and
+> a miss is a documented outcome, not proof of a defect.
+>
+> To close `V8` you need a title where the probe resolves — check `walk-0.log` for
+> `ProbeRowMapOffset: found RowMap at DataTable+0x…` before spending time in the panel.
 > | 9 | **B** | **Y11.** Find a UFunction taking an `FText`, `TArray` or `TMap` parameter and press **FIRE**. | An `FText` param is refused by name whatever the box holds. A `TArray`/`TMap`/`TSet`/struct param fires with the slot **left zeroed** when its box is untouched, and is refused with a message when you type a value into it. Before the fix the textbox was written as a raw int32 over the structure's Data pointer and handed to ProcessEvent. ⚠ Sample-blocked if no installed title exposes such a UFunction. |
 > | 10 | **B** | **V8.** Walk a `UDataTable` with **more than 64 rows** in Live Walker and drill into its **RowMap**. | The breadcrumb, the header and the RowMap preview row all carry "⚠ showing 64 of N", and the status line says the view is capped per fetch — **without** naming the Array Limit slider, which does not govern this view. A DataTable with ≤64 rows must show none of that. |
 
