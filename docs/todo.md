@@ -3993,7 +3993,7 @@ LOWERING the cap, not by finding a host*):
 
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
-> ### ✅ STEPS 1b/2/3 PASS 2026-08-20 `[PEHOOK-LIVE-2026-08-20]` — via the row's own ⭐ preferred route
+> ### ✅ STEPS 1b/2/3/5/7 PASS 2026-08-20 `[PEHOOK-LIVE-2026-08-20]` — via the row's own ⭐ preferred route
 >
 > Took the route this row recommends: **temporarily removed the two `kPePat*Sib*` alternates** in
 > `Frieren.cpp`'s `DetectProcessEventVTableOffsetByPattern`, rebuilt, and drove the **real current
@@ -4026,6 +4026,60 @@ LOWERING the cap, not by finding a host*):
 > * **Step 1 proper (the UI Self-Test text) not run** — that needs System → Run Self-Test on screen;
 >   what is verified here is the DLL-side verdict and advice the panel now sources from
 >   `get_diagnostics`.
+
+> ### VERIFIED 2026-08-20 - STEPS 5 and 7 PASS, headlessly (`tools/verify/pehook_step5_idle.py`)
+>
+> ⚠ **The block above says "step 5's asymmetry is respected", and that was too generous.** With the
+> pattern path restored the hook FIRED normally, so the validator's zero-fire branch was **never
+> entered at all** — which shows the guard was not needed, not that it works. Step 5 asks for the
+> opposite staging: the pattern branch actually *taken*, with a real 0.
+>
+> **How the idle window was staged with nobody present.** The step says "background/pause the game
+> so PE traffic stops". **Suspending the UE game thread** is the same condition, scriptable, and
+> strictly stronger — backgrounded, this build still ticks (~120 fires/s at `t.MaxFPS 15`); frozen,
+> the count is *exactly* 0, so "0 fires" is a fact rather than a hope.
+>
+> **A FRESH process is required and the rig relaunches to get one:** the validator is armed once, at
+> hook install, so reusing an already-validated process would pass vacuously. Order: launch → inject
+> → scan → **confirm `hook_active == false`** → freeze → force the install with `pe_profile_start`
+> (MinHook work on the calling thread, so it needs no game thread; an *invoke* would block on the
+> thread just frozen) → wait out the window.
+>
+> ```
+> after scan, BEFORE any invoke: hook_active=False fire_count=0     <- the window is enterable
+> GameThreadDispatch: hook installed at 0x7FF69AF38CB0, validator armed (1500ms)
+> after the window:              hook_active=True  fire_count=0     <- a REAL zero
+> [WARN] ... fired 0 times in 1500ms, but the offset came from the PATTERN scan - the detector
+>        that fingerprints ProcessEvent's own body. ... The hook is KEPT.
+> 'VALIDATION FAILED' : 0
+> after resume: Add_IntInt(3,4) = 7,  fire_count=368
+> ```
+>
+> Every control the step needs is asserted rather than assumed: the hook was **absent** before the
+> freeze, **installed** during it, the fire count **did not move** across the window, and the kept
+> hook **still invokes** afterwards — "the hook is KEPT" is only worth something if the kept hook
+> works. `WARN` (not `ERROR`), `hook_active` still `True`, zero `VALIDATION FAILED`.
+>
+> **Together with the block above this is now a two-armed test of one discriminator**, differing in
+> exactly one variable — where the offset came from:
+>
+> | offset source | fires in 1500 ms | verdict | hook |
+> |---|---|---|---|
+> | version TABLE (SIB alternates removed) | 0 | `ERROR VALIDATION FAILED … failure 1/3` | **disabled**, detection re-armed |
+> | PATTERN scan (shipping DLL, thread frozen) | 0 | `WARN … The hook is KEPT` | **kept**, invokes fine after resume |
+>
+> **Step 7 also passes on this same fresh launch** — it is the launch the step describes:
+> `DetectProcessEvent (pattern): match at vtable+0x268`, and **zero** occurrences of
+> `falling back to UE=…version-table` or `VALIDATION FAILED` anywhere in the run. So the detection
+> fix is now witnessed *inside the running process*, not only file-verified, and the caveat below
+> ("treat DumperTest as unproven for invoke-dependent rows") is lifted.
+>
+> **Step 8's invoke half holds** — `Add_IntInt(3,4) = 7` on this host. ⚠ Recorded honestly as the
+> *pipe* invoke, not the UI's **Run Self-Test** button; the panel wraps the same call but its advice
+> text is a separate surface and is not what was observed here.
+>
+> Steps 3b, 3c, 4 and 6 remain open (3b/3c need a condemned host, 4 needs Lushfoil, 6 EVERSPACE 2).
+
 
 > | 1 | **DumperTest**, SIB alternates temporarily removed → System → **Run Self-Test**, as the **FIRST invoke of a freshly launched process** | `✗ Add_IntInt…`, and the advice names a **mis-detected vtable slot** | ⚠ order-dependent: `HookNeverFired` needs `hook_active == true`, and the validator soft-disables the hook 1500 ms after install. A later click sees the hook DOWN and correctly gets the `HookOff` wording instead — that is not a failure |
 > | 1b | any Self-Test run | no advice string recommends re-deploying without ruling it out | `SelfTestAdviceTests.NoAdviceRecommendsRedeploying` pins the rule offline; this just confirms it reached the UI |
