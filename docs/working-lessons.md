@@ -223,7 +223,7 @@ bugs are not only write bugs, and the read half tends to be filed later because 
 
 ### 1.x A log-window that is coarser than the events it separates reports a CONFIDENT WRONG ANSWER
 
-Three separate rigs in the 2026-08-20 batch got this wrong in three different ways, and each time
+Four separate rigs in the 2026-08-20 batch got this wrong in four different ways, and each time
 the failure mode was the same: **the rig printed a verdict, not an error.**
 
 | how the window was taken | what broke |
@@ -231,6 +231,7 @@ the failure mode was the same: **the rig printed a verdict, not an error.**
 | line COUNT across several `*-0.log` files, sliced `[before:]` | more than one file grows, so new lines land in the MIDDLE of the concatenated list, not at the end. Reported **0** `enqueued invoke` while the log plainly held one. |
 | `strftime("%Y-%m-%d %H:%M:%S")` timestamp watermark | **one-second** resolution. Three mailbox cells running milliseconds apart: cell A's `static-native fast path` line fell inside cell B's window, and the rig announced `FAIL: the poisoned flags took the FAST PATH` — on a run whose own `result=-5` proved the call had been **queued**. |
 | counter read OUTSIDE the timed window | `get_diagnostics` round trips take milliseconds during which the game keeps firing `ProcessEvent`; timing only the invoke while differencing across two round trips manufactured a 6.6-fire "excess" and a false FAIL. |
+| BYTE offset into a log recorded before launching the process | **every process start ROTATES `<cat>-0.log`**, so the offset (tens of KB) slid past an entirely fresh file. The rig printed an empty section while the log plainly held the line it was looking for. |
 
 **The rule: measure with something at least as fine-grained as the thing you are separating.** For
 append-only logs inside one run the reliable primitive is a **before/after COUNT of matching lines**

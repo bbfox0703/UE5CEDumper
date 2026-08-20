@@ -2222,6 +2222,33 @@ spot-check rather than a 30-column sweep.
 >   ```
 >   ⭐ Note the wording is the **`.*` GROUP** form and the count is honest ("left 1 behind") — both
 >   are the invariants CLAUDE.md's app-data rule demands. Planted file removed afterwards.
+> * **Step 6, SECOND CLAUSE — `AF11` retention PASS 2026-08-20** (`tools/verify/l10_step6_age_sweep.py`).
+>   The clause above covered the *move*; this is the *sweep*. `AF11` chose **retention OFF** for
+>   `TeleportCoords\` (`maxAgeDays: 0`), so a stale coordinate library must never be deleted.
+>
+>   ⚠ **"The old file survived" proves nothing on its own** — it is equally explained by the sweep
+>   never running, which would hide a broken sweep everywhere else. So a synthetic `Snapshots\`
+>   group of the **same age** was planted in the same launch, and the run is only meaningful because
+>   the two DISAGREED:
+>
+>   | planted, aged **30 days** | `maxAgeDays` | outcome |
+>   |---|---|---|
+>   | `TeleportCoords\teleport-coords.zztest.json` | **0** | **survived** ✅ |
+>   | `Snapshots\snapshots.ZZTEST0000000000.db` + `-wal` + `-shm` | **21** | **all 3 deleted** ✅ |
+>
+>   `[INFO] AppDataFolderMaintenance: deleted 3 'snapshots' file(s) unused for 21+ days` — and **no
+>   corresponding `teleport-coords` line**, because `maxAgeDays: 0` short-circuits before it. The
+>   whole group went together, so CLAUDE.md's group-expiry invariant holds too.
+>
+>   Blast radius asserted rather than hoped: all **27** pre-existing real files in the two folders
+>   were **byte-identical** afterwards (SHA-256) with **0 lost and 0 changed**. Planted files removed
+>   on every exit path.
+>
+>   ⚠ **Rig trap, the fourth variant of the same mistake this session:** the first run recorded a
+>   byte offset into `init-0.log` before launching and sliced from there afterwards — but **every
+>   process start ROTATES that file**, so the offset (tens of KB) slid past the whole fresh log and
+>   the rig printed an empty maintenance section while the delete line was plainly there. Log
+>   windows keep being the bug; see [working-lessons.md](working-lessons.md) §1.
 > * **Step 7 — `AF8` PASS.** `LandscapeMeshProxyComponent.ProxyLOD` is an `Int8Property`
 >   (`prop_offset` 1628, `prop_size` 1) with 1 live non-CDO instance. Forced to **−5**:
 >   `ok=true held=1 resolved=true`, and `get_forced_fields` reports `value=-5.0` — **negative and
