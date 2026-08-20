@@ -2569,6 +2569,25 @@ correctly, and it is the only in-situ exercise of the corrected geometry availab
 **To close this row** you need a title where the higher-priority GWorld/GObjects patterns MISS and
 one of these four wins — the same shape of requirement as `G7`. Nothing installed here does that.
 |---|--------|------|
+### 🟡 L3 steps 2 + 3 — step 3's CONDITION HAS NEVER FIRED; step 2 is CE-only `[L3-AD10-2026-08-20]` 2026-08-20
+
+**Step 3 — answerable headlessly, and the answer is "never".** Sweeping **437** `scan-*.log` +
+`init-*.log` files across every process on the machine for the new WARN
+(`replaying its published AOB triple does not reproduce it`, or any "withhold"): **0 hits**. So no
+title has ever resolved GWorld via the DEREF arm, the AD10 withholding path has never been taken,
+and there is nothing to cross-check — the same shape of result as `G7` and `G11` step 3.
+
+⚠ **Step 2 is NOT headless, and the GWorld script captured today shows why rather than proving the
+step.** The Teleport card has two export routes and only one of them carries an AOB:
+* **AOBMaker push** — the AOB-wrapped export the step is about. Needs Cheat Engine with the plugin.
+* **CE-XML clipboard fallback** — what you get with AOBMaker offline, and what
+  `out/slotsym/get_gworld.lua.txt` is. It carries **no AOB at all**, by design: its own header says
+  *"ENABLE : query UE5Dumper.dll (**CMD_QUERY_PTR=13**) for the &GWorld pointer slot, then
+  registerSymbol('UE_GWorld', slot)"*, and grepping it for `AOB`/`aobscan`/`pattern`/`signature`
+  returns nothing.
+
+So an absent AOB in the clipboard export is **correct**, not a regression — and anyone checking step 2
+against that artifact would report a defect that is not there. Step 2 stays **NEEDS_CE**.
 | 1 | Inject into any UE 4.27 title and grep `scan-0.log` for `GWLD_TQ_3`/`GWLD_TQ_4`/`GOBJ_PS1`/`GOBJ_PS6`. | If one of them WINS, its resolved address must be a plausible `&GWorld` / `&GUObjectArray` (matches the address the winning pattern in a previous run reported). Before build 3262 these four resolved to garbage on every hit, so any past log showing one of them *validated* is worth re-checking — that is the strongest available evidence the old geometry was wrong. ⚠ **A run where none of the four wins proves nothing** — they are low-priority entries and a better pattern normally lands first. |
 | 2 | Same session: check whether the Teleport tab's Global Pointers card still offers an AOB-wrapped CE export for GWorld. | Unchanged from before. **AD10** only withholds the triple when replaying it does not reproduce the resolved address; every GWorld entry is `RipBoth`, and the direct arm is the normal winner. |
 ### 🟡 AD18 — THREE OF FOUR FLAVOURS PASS 2026-08-20 `[AD18-2026-08-20]`; `dinput8` is unreachable here
