@@ -2205,7 +2205,18 @@ spot-check rather than a 30-column sweep.
 >
 > ⇒ **AOT-verified grids (8):** Interesting Funcs · Classes · Live Funcs · Detect Stats ·
 > Live Walker · Snapshot · Class Pivot · SPC Query.
-> **Still unchecked: the Invoke picker** — the only one of the named set left.
+>
+> ⛔ **The last named grid could not be populated here.** The picker reached from Interesting Funcs
+> is the **Props** dialog (`Properties used by: <func>`), and on this host it opens correctly but
+> comes back **empty** on every function tried — `SetInterpolationTime` → *"0 properties (0 written)
+> [native disasm — heuristic, 5 unmapped]"*, `GetCustomAnimationTrackUidCount` → *"0 properties …
+> 1 unmapped"*. Filtering to `DumperTest` returns **no scored functions at all** (3,142 functions
+> across 1,641 classes, 189 above threshold, none of them the sample's own), so there is no
+> Blueprint function here whose xref analysis yields rows. **A grid with zero rows cannot
+> demonstrate a sort**, so this is a fixture limit, not an untried step.
+> ℹ️ The dialog itself behaves: it opens, names the function and its address, and states its own
+> uncertainty (*"0 written", "N unmapped"*, plus the footer explaining exact-vs-heuristic recovery)
+> rather than presenting an empty grid as a finished answer.
 
 > ### ✅ `AF22` SEEN ON SCREEN 2026-08-20 `[AF22-DIALOG-2026-08-20]` — all three of its wording defects are gone
 >
