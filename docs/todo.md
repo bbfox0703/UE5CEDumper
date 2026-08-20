@@ -3583,7 +3583,9 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
 *Needs **any** connected game plus CE. The whole batch is one freeze record and one DLL re-injection.*
 
 > **What is already pinned offline and must NOT be re-checked here:** 13 executable cases in
-> `scripts/tests/freeze_helper_test.lua` (`lua scripts/tests/freeze_helper_test.lua`, 117 checks)
+> `scripts/tests/freeze_helper_test.lua` (`lua scripts/tests/freeze_helper_test.lua`, **154 checks**
+> — re-measured 2026-08-20; the `117` this row carried was stale, and audit L12's row already had
+> the right figure in its `83 / 154 / 91` triple)
 > drive the abandonment against a stubbed CE — including a memory-record stand-in whose
 > `Active = false` dispatches the `[DISABLE]` chunk, so the untick really does run `stop()` and
 > destroy both timers; a control proving a **transient** failure does NOT untick; a no-`memrec`
@@ -3602,6 +3604,17 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
 > |---|---|---|
 > | 1 | Property Search any supported field → row **Freeze** → create the script → tick the record | the record ticks (red ✗) and the value holds |
 > | 2 | With it still ticked, **re-inject `UE5Dumper.dll`** (or kill the DLL host) and wait ~15 s (3 rescans × 5 s) | the Lua Engine prints `… consecutive rescans failed -- freeze STOPPED writing … This record has been unticked; re-enable it after fixing the cause.` |
+> ### 🟡 OFFLINE HALF RE-CONFIRMED GREEN 2026-08-20 — steps 1-5 remain CE-only, deliberately
+>
+> All three Lua rigs were re-run today and are green: `dissect_test` **83**, `freeze_helper_test`
+> **154**, `invoke_helper_test` **91** — 328 checks, 0 failures. So the abandonment logic this row
+> says "must NOT be re-checked here" is confirmed still passing on the current tree.
+>
+> Nothing else here was attempted, and that is correct rather than a gap: the row states outright
+> that what no offline test can reach is whether **CE's real `TMemoryRecord.Active = false`, driven
+> from a Lua timer, behaves like the stand-in** — and that is step 3, the only step that matters.
+> A CE session is genuinely required.
+
 > | 3 ⚠ THE ONE THAT MATTERS | look at the record's checkbox | it is now an **EMPTY box**. Before the fix it stayed a red ✗ forever, claiming a cheat nothing was applying |
 > | 4 | check CE is still responsive; look for an error dialog | none. The untick is deferred onto a one-shot timer precisely so `[DISABLE]` does not destroy a timer from inside its own handler |
 > | 5 | re-inject a working DLL, then re-tick the record | the freeze arms again and holds — i.e. step 2's advice is followable, which it was not before |
