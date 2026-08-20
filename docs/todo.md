@@ -2569,6 +2569,26 @@ repo's.
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | Z8 ⚠ needs a BIG game | on a title with more than 100,000 UFunctions (a **SEED / FF7R**-class pool; `game_only` OFF makes the cap far easier to reach on any title), open **Console** and Load, then open **Interesting Functions** and Load | Console no longer claims anything about the GAME: it reads "No UFUNCTION(exec) commands in the N functions scanned so far … this scan did not finish, so it is not evidence the game has none", plus `⚠ STOPPED at the 100,000-row cap`. Interesting Functions shows the same cap suffix AND its class-noise picker now shows `⚠ Counts are partial` | the DLL emitted **no truncation marker at all** for `list_all_functions` before this, so a capped page was reported as a complete census of the game — and Interesting Functions had no flag it could even pass to its picker. A game UNDER the cap proves only that the flag stays off (still worth doing as the regression check: no spurious warning) |
+> ### 🟡 Z8 regression half PASS 2026-08-20 — no spurious warning under the cap; the POSITIVE case still needs a big title
+>
+> **Elliot** (84,990 objects), with **Game Only OFF** on Console — the setting the row names as the
+> way to make the cap easiest to reach:
+>
+> | panel | header |
+> |---|---|
+> | Console | `94 exec commands discovered (5,913 classes scanned, **17,261 total UFunctions**).` |
+> | Interesting Funcs | `9,844 functions across 3,236 classes (2,130 above threshold 5, scanned 84,990 objects)` |
+>
+> Neither carries `⚠ STOPPED at the 100,000-row cap`, and Interesting Funcs' class-noise picker shows
+> no `⚠ Counts are partial`. **No spurious warning** — the regression half of the row.
+>
+> Console also found **94** exec commands, so it is reporting a real census rather than taking the
+> "no exec commands found" branch the fix rewrote; both wordings could not be checked at once here.
+>
+> ⚠ **The positive case is out of reach on this machine's small titles.** Elliot's *whole* pool with
+> `game_only` off is **17,261** UFunctions — 17 % of the 100,000 cap. Even with the setting the row
+> recommends it does not come close, so a bigger install (**SEED / FF7R**-class) is genuinely
+> required to see the truncation text and the picker's partial-counts flag.
 > | Z12 | Instance Finder → **Address → Instance** on an address that lives in a deeply-nested container (the `SaveSlotList[].MsTuneData…` shape the deep descent was written for), and on a plainly-bogus address | on a deep HIT the suffix reads `[scanned (incl. deep descent) X/Y in Zms]` with the DEEP pass's counters and the SUMMED duration; on a deep MISS it adds `⚠ the deep descent probes at most 256 element(s) per container, so this miss is not proof of absence` | before, a deep success reported the SHALLOW pass's numbers (describing a pass unrelated to the answer) and dropped the deep pass's deadline flag; a deep miss never mentioned the element cap at all. Change the Options element cap and re-run — the suffix must name the value you set, not a constant |
 > ### 🟡 Z12 deep-MISS half PASS · Z13 NOT RUNNABLE on DumperTest — 2026-08-20 `[L8-Z12-Z13-2026-08-20]`
 >
