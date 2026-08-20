@@ -2338,6 +2338,39 @@ treated as a HEURISTIC, not a law.*
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | 1 ⚠ THE ONE THAT MATTERS | deploy `version.dll` to a title that STATICALLY imports version.dll (**OCTOPATH**; confirm with `py tools/pe/pe_imports_exports.py imports <exe> --dll version`), launch it, then **Scan/Refresh** the panel | Suggested column WARNS ("imported, may be bypassed"); after launch the **Loaded?** column stays **"not observed"** next to `DeployedCurrent` | before the fix the panel said only `DeployedCurrent` and nothing flagged the silent failure |
+> ### ✅ STEPS 2 + 3 PASS 2026-08-20 `[PROXYLOAD-UI-2026-08-20]` — the `Loaded?` column is real, and it separates "not observed" from "loaded"
+>
+> Proxy Deploy → Scan Steam, `Found 18 UE game(s)`, `Source DLL v1.0.0.3263`. Read straight off the
+> grid (Status · **Loaded?** · Suggested proxy):
+>
+> | title | Status | **Loaded?** | Suggested |
+> |---|---|---|---|
+> | **Echoes of Aincrad Demo** | NotDeployed | **`not observed`** | version · default · alt: dxgi |
+> | **DQ7R** | DeployedOtherType | `loaded 2026-08-1…` | **`version.dll · confirmed work…`** |
+> | **OCTOPATH TRAVELER** | DeployedOtherType (winmm) | `loaded 2026-08-1…` | `version · default · **imported**,` |
+> | EVERSPACE | DeployedOtherType | `loaded 2026-08-1…` | `version · default · **imported**,` |
+> | Avowed | **DeployedCurrent** | `loaded 2026-08-1…` | dxgi.dll · confirmed working |
+> | Satisfactory | NotDeployed | `loaded 2026-08-2…` | version · default · imported, |
+> | Solarpunk · DragonSword | NotDeployed | `loaded 2026-08-1…` | `injection · no proxy deployed` |
+>
+> * **Step 2 — PASS.** DQ7R does not import `version.dll`, has it deployed, and reads
+>   **`loaded`** with **no bypass warning** (`version.dll · confirmed work…`). So the signal is not a
+>   blanket "not observed" — it reads the real log folder.
+> * **Step 3 — PASS.** OCTOPATH runs the **winmm** flavour, reads **`loaded`**, *and* its Suggested
+>   column still says **`imported`**. That is precisely the row's point: the warning is a heuristic
+>   and **the load signal, not the import table, is the per-game source of truth**.
+> * ⭐ **"not observed" is demonstrated by a real never-launched title**, `Echoes of Aincrad Demo` —
+>   not staged. That is the honest UNKNOWN the fix adds, and it sits next to 17 rows that DO say
+>   `loaded`, so the column is discriminating rather than defaulting.
+> * ⭐ **Direct injection is reported correctly too**: Satisfactory and Solarpunk are `NotDeployed`
+>   yet `loaded` (they were injected, not proxied), with `injection · no proxy deployed` as the
+>   suggestion. A disk-only view could not have said that.
+>
+> ⚠ **Step 1 NOT run.** It needs `version.dll` specifically deployed to OCTOPATH, which currently
+> carries `winmm`; changing that means a deploy plus a launch. Note also
+> `[PROXYLOAD-CORR-2026-08-20]` above measured the import warning false-positiving **4 of 4** on the
+> flavours deployed today — so step 1 should be run expecting to *test* the claim, not to confirm it.
+
 > | 2 | deploy `version.dll` to a title that does NOT import it (**DQ7R** / **DQ I&II**), launch, Refresh | **Loaded?** shows **"loaded &lt;today&gt;"**; no bypass warning | proves the signal is not a blanket "not observed" — it reads the real folder |
 > | 3 | on OCTOPATH, switch to the `winmm` flavour, deploy, launch, Refresh | **Loaded?** → "loaded" (winmm proxy works per `[OCTOPATH-G2T3]`) even though winmm may also be imported | proves the warning is a heuristic and the load signal, not the import table, is the source of truth |
 
