@@ -3226,11 +3226,25 @@ repo's.
 > reporting the cap actually used. The duration also moved (202 → 102 ms), so it re-scanned rather
 > than re-rendering a cached line. The cap has been **restored to 256**.
 >
-> ⚠ **Z12's deep-HIT half is NOT covered and cannot be, here.** It needs an address that lives in a
-> nested container — the `SaveSlotList[].MsTuneData…` shape. DumperTest has no such fixture: a
-> Property Search for `Tune` over all 3,942 classes returns exactly **one** row
-> (`SynthKnob.MouseFineTuneSpeed`, a plain float), and there is no `SaveSlotList`. So "the DEEP pass's
-> counters and the SUMMED duration on a hit" still needs a title with that shape.
+> 🟡 **Z12's HIT path renders correctly, but a DEEP hit is harder to stage than "pick a nested
+> path" — retried on DQ7R 2026-08-20.** Two container addresses were taken straight out of a Deep
+> Value Search and looked up:
+>
+> | address | container match reported | suffix |
+> |---|---|---|
+> | `0x27D8085BD90` | `Default__SoundWave.FrequenciesToAnalyze[0]`, inner `FloatProperty` | `[scanned 149,408/149,408 in 51ms]` |
+> | `0x27D43FFEB30` | `Default__SplineComponent.SplineCurves.Position.P…`, inner `StructProperty` | `[scanned 149,408/149,408 in 51ms]` |
+>
+> Both are **hits**, both name the owning object and the `TArray` path, and in both the suffix is
+> correct on its two conditional parts: **no "(incl. deep descent)"** (the deep pass never ran) and
+> **no element-cap caveat** (right — the cap is only reported on a MISS, `anyContainerMatch` gating).
+>
+> ⭐ **The useful discovery: the SHALLOW pass already resolves a three-level path**
+> (`SplineCurves` struct → `Position` struct → `Points[N]` array), so choosing a "nested" address is
+> not enough to force the deep pass. A deep hit needs an address the shallow pass cannot reach at
+> all — a container nested inside an **element** of another container. Neither DumperTest (no
+> `SaveSlotList`-shaped fixture; `Tune` matches one plain float across 3,942 classes) nor DQ7R at the
+> title screen produced one.
 >
 > ℹ️ **Z13 is not runnable on DumperTest** — no HP-named property to hover. Measured rather than
 > assumed: Interesting Properties loaded **794 unique properties (threshold 4+: 530)** and filtering
