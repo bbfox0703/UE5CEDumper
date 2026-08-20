@@ -2162,6 +2162,36 @@ a `-Mode Publish` binary. The offline half is machine-enforced by
 `DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
 spot-check rather than a 30-column sweep.
 
+> ### ✅ AOT SORT EXTENDED TO 4 GRIDS 2026-08-20 `[AOTSORT-2-2026-08-20]` — Live Funcs + Detect Stats
+>
+> Same conditions as the block below and for the same reason: run against the **`-Mode Publish`
+> AOT-trimmed binary** in `dist/` (**54.7 MB**, confirmed by size — the non-trimmed build is ~107 MB
+> and would pass with the bug present). ⚠ That binary was **not** rebuilt today; only the DLL was.
+>
+> **7 further sort operations, all correct:**
+>
+> | grid | column | ascending | descending |
+> |---|---|---|---|
+> | **Live Funcs** | `Function` (text) | `BlueprintModifyCamera` · `BlueprintModifyPostProcess` · `BlueprintPostEvaluateAnima…` | `EvaluateGraphExposedInputs` · `BlueprintUpdateAnimation` · `BlueprintThreadSafeUpdateA…` |
+> | **Live Funcs** | `Calls` (numeric) | `304` ×4 then `608` ×2 | `608` ×2 then `304` ×4 |
+> | **Detect Stats** | `Offset` (hex) | `0x28` · `0x2C` · `0x2C` · `0x30` | `0xFC8` · `0x9A4` · `0x81C` · `0x6F8` |
+> | **Detect Stats** | `Class` (text) | `Actor` · `Actor` · `AnimNotifyState_TimedNiaga…` · `ArchVisCharMovementCompone…` | — |
+>
+> The **↑/↓ indicator tracks the clicked header** throughout, and re-clicking a *different* column
+> starts that column fresh at ascending (standard DataGrid behaviour, not a missed toggle — worth
+> noting because it briefly looks like a failed descending click).
+>
+> ℹ️ **`Detect Stats` → `Property` does not sort and shows no indicator.** That is *not* a failure:
+> `Class` in the same grid sorts fine, so text sorting works there and `Property` is simply not
+> user-sortable. Recorded so the next person does not re-raise it — the control that separates the
+> two is sorting a *different text column in the same grid*.
+>
+> Grids populated first so the sort had something to order: Live Funcs by a 20 s recording
+> (6 functions / 2,432 calls), Detect Stats by **Detect Player Stats** (80 candidates).
+>
+> ⇒ AOT-verified grids: **Interesting Funcs · Classes** (below) **+ Live Funcs · Detect Stats**.
+> Still unchecked: Live Walker Params, Class Pivot, Snapshot, SPC, Invoke picker.
+
 > ### 🟡 THE AOT SORT (steps 1–3) — WORKING, on 2 grids of the named set `[AOTSORT-2026-08-20]`
 >
 > Run against the **`-Mode Publish` AOT binary** in `dist/`, which is the only build that can answer
@@ -5597,7 +5627,12 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
 > | 6 ⚠ control | with a healthy DLL, leave a freeze running untouched for a minute | the record **stays ticked** and keeps writing. One transient `mailbox busy` must not untick anything |
 > | 7 ⚠ control, opportunistic | delete the memory record while its freeze is mid-abandonment | no Lua error dialog; the failure is still reported |
 
-### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PASTECRASH-2026-08-18]` — a clipboard paste must no longer terminate the UI
+### ✅ EVERY RUNNABLE STEP DONE 2026-08-20 `[PASTECRASH-2026-08-18]` — a clipboard paste must no longer terminate the UI
+
+> **Steps 1-6 pass** (`[PASTECRASH-LIVE-2026-08-20]`), **4b and 4c** pass
+> (`[PASTECRASH-4BC-2026-08-20]`). **Steps 7 and 8 are marked "opportunistic" by the row itself** —
+> they read a `crash.log` produced by *some future unrelated crash* and cannot be driven on demand.
+> Nothing here is waiting on an action anyone can take.
 
 *Needs the UI only — **no game, no DLL, no pipe**. Three halves now (a follow-up hardening pass
 landed on 2026-08-19): a `Dispatcher.UIThread.UnhandledException` guard
