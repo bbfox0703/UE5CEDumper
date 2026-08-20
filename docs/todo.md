@@ -3465,6 +3465,36 @@ crash".*
 >
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
+> ### ✅ STEPS 1–6 PASS 2026-08-20 `[PASTECRASH-LIVE-2026-08-20]` — including the premise no offline test could reach
+>
+> UI only, no game. Clipboard made genuinely unusable with `tools/verify/clipboard_hold.py`
+> (`OpenClipboard` without `CloseClipboard` from another process — the method this row names).
+>
+> * **Step 1 — PASS.** `PASTECRASH_BASELINE` pasted normally; the guard has not broken normal paste.
+> * **Step 2 ⚠ THE ONE THAT MATTERS — PASS.** With the clipboard held, `Ctrl+V` left the app
+>   **running** and the box **unchanged**. The discriminator was deliberate: the clipboard was
+>   loaded with a *different* string (`SHOULD_NOT_APPEAR`) before it was locked, so a paste that had
+>   silently succeeded would have been visible. It did not appear.
+>   ⭐ **This demonstrates the fix's whole premise** — that Avalonia's dispatcher really does raise
+>   `UnhandledException` for a fault arriving on the clipboard task. The log line names it exactly:
+>   `Input-layer fault swallowed (#1) — the keystroke did nothing, the app is still running.
+>   System.Runtime.InteropServices.COMException … [input-layer frame: Avalonia.Win32.ClipboardImpl]`
+> * **Step 3 — PASS.** Three pastes gave **#1 → #2 → #3**, so the guard is **not one-shot**; after
+>   releasing the clipboard a normal paste worked again (`RECOVERED_OK`), leaving nothing wedged.
+> * **Step 4 — PASS.** `Ctrl+C` with the clipboard unusable → swallow **#4**, app alive.
+> * **Step 5 — PASS.** A second UI instance rewrote `crash.log`, headed
+>   `[2026-08-20 09:42:09] UE5DumpUI crash during STARTUP (uptime 0.16s)` — the real phase and a
+>   real uptime, not the old hard-coded phrase. (Stack: `Cannot perform requested operation because
+>   the Dispatcher shut down`.) ⚠ Note this **coexists with `AF10`**: the same launch exits with
+>   code **1** as AF10 requires *and* writes this report — the two rows are not in conflict.
+> * **Step 6 ⚠ CONTROL — PASS.** After recovery, pasting and then typing `_TYPED` both worked and
+>   the swallow counter **stayed at 4**. So the guard is dormant when nothing fails; a fifth line
+>   here would have meant it was swallowing healthy input.
+>
+> **Not done:** 4b (`Ctrl+X` then `Ctrl+Z` residue), 4c (the Copy-button WRITE path — needs a
+> connected game for a Copy button to have anything to copy), and 7/8, which are opportunistic by
+> construction.
+
 > | 1 | start the UI, copy ordinary text, `Ctrl+V` into any filter box | the text pastes | baseline — the guard must not have broken normal paste |
 > | 2 ⚠ THE ONE THAT MATTERS | make the clipboard unreadable (above), then `Ctrl+V` into a filter box | **the app is still running**, the box is unchanged, and `Logs\UE5DumpUI\view-0.log` gains `Input-layer fault swallowed (#1)` | this is the crash, reproduced; before the fix the process died here |
 > | 3 | repeat step 2 a few times, then release the clipboard and paste again | counter climbs (`#2`, `#3`…), then a normal paste works | the guard is not one-shot and leaves nothing wedged |
