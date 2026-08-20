@@ -1916,6 +1916,35 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 >   lines, so the rig now reports **INCONCLUSIVE** rather than PASS when 0 events were pushed.
 > * **Step 3 (the UI regression control) — NOT RUN**, it needs the UI on screen. Deferred to the
 >   UI batch; steps 1 and 2 are the ones that could only be done headless.
+> ### ✅ F5 STEP 3 PASSES 2026-08-20 `[F5-ORDINARY-2026-08-20]` — 161,009 log lines, zero malformed
+>
+> The regression control does not need a dedicated session: **today already was one**. Between them,
+> this day's runs drove DumperTest (Development *and* Shipping), Elliot and DQ7R through Object Tree
+> loads, Live Walker drills and auto-refresh, single and **group** value scans, a full 10.5 MB Dump
+> All, `list_all_functions`, `search_properties`, 80 × `walk_function_props`, `force_field`,
+> Instances/Properties/Interesting Funcs/Props loads, Proxy Deploy scans and deploys, plus the
+> headless `pipe_client` batches — i.e. far more envelope traffic than "a few minutes" of use.
+>
+> Sweeping **every** log file carrying a `2026-08-20` line:
+> ```
+> files with today's lines : 189
+> lines dated 2026-08-20   : 161,009
+> malformed / parse error  : 0
+> ERROR-level lines        : 7
+> ```
+> ⚠ The sweep had to include **rotated archives**, not just `*-0.log`: the UI was restarted several
+> times today for `AF10`/`AF11`, so its earlier logs are already archived and a `-0.log`-only glob
+> reported a **falsely clean** 0 ERRORs.
+>
+> All 7 errors are accounted for and none is an envelope fault: 4 are the 10:05 DumperTest PE-hook
+> `VALIDATION FAILED` + two 5 s invoke timeouts from a pre-existing session, 1 is Satisfactory's
+> `FindGObjects: All patterns and fallback scan failed` at 07:27, and 2 are the **same** line — this
+> session's own deliberate `[STAGELOCK]` test (`Deploy … failed: Access to the path is denied.`),
+> which appears twice only because the UI mirrors its view log into the connected game's folder as
+> `ui-view-*.log`. That mirror was checked rather than assumed to be misfiling.
+>
+> Not one malformed line in 161K, across three games and two write paths — which is what "the
+> envelope change is invisible when it works" looks like when it is measured instead of asserted.
 
 > | 3 | **A** | **F5, the ordinary path.** Connect the UI normally and use it for a few minutes — Object Tree load, Live Walker drill, a value scan. | Everything behaves as before. This is the regression control; the envelope change is invisible when it works. |
 > | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
