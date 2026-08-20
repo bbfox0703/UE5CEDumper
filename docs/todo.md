@@ -4101,6 +4101,37 @@ controls); the WIRING is not** — no target compiles `Aura.cpp`.*
 > re-anchor actually fired. Grep by FORMAT STRING: `Refine re-anchor:`.
 >
 > | step | do this | expect | why it is a real check |
+> ### ✅ A11 STEPS 1 + 6 PASS 2026-08-20 `[A11-PIPE-2026-08-20]` — over the pipe; 2–5 need in-play mutation
+>
+> Rig: `tools/verify/a11_container_anchor.py`, DumperTest / dist 3263. The fixture is **read live
+> before scanning** rather than assumed: `DumperTestActor.Arr_Int` = `[10, 20, 30, 40, 50]`, 5 of a
+> capacity-8 buffer at `0x243AD7658E0`, 4-byte elements.
+>
+> **Step 1 — PASS.** Scanning `Int32 == 30` with deep on returns 5 candidates, **2 of them carrying
+> the element index**:
+> ```
+> Arr_Int[2]  DumperTestActor  addr=0x243A7403E48  inst=0x24396AA6140   (the CDO)
+> Arr_Int[2]  DumperTestActor  addr=0x243AD7658E8  inst=0x24402FE7910   (the live actor)
+> ```
+> ⭐ The addresses cross-check the index without trusting the label: `0x243AD7658E8` is exactly
+> `array_data_addr 0x243AD7658E0 + 2 × 4B`, i.e. element **2** of the live array. So the `[2]` is
+> describing the byte the scanner actually matched.
+>
+> **Step 6 — PASS, and non-vacuously.** A plain (deep OFF) scan for `100` gives 11 candidates —
+> `field_name` values like `Parameters.HierarchicalBias`, no brackets — and a refine returns
+> **remaining 11**. `scan-0.log` gains **0** `Refine re-anchor:` lines. The refine is *shown* to have
+> run over real candidates, so the absent line is a decision and not an empty pass.
+>
+> ⚠ **Steps 2–5 remain open and were not silently skipped.** All four require the container to
+> **change size in play** — add entries until it reallocs, remove one before the candidate's index,
+> remove the entry a TSet/TMap candidate points at, append into existing slack. Nothing on DumperTest
+> grows a UPROPERTY container by itself and no operator is present, so they need either a game with a
+> growing container or a fixture that mutates on a timer. (`Arr_Int` sitting at 5-of-8 capacity is
+> exactly the slack step 5 wants — it just needs something to do the appending.)
+>
+> ℹ️ Key names for whoever repeats this: the element index is in **`field_name`** on a candidate row
+> (`"Arr_Int[2]"`); there is no `path` or `class_field` key, and reaching for one returns `None` and
+> reads as "the index is missing".
 > |---|---|---|---|
 > | 1 | Value Search a known value that lives in a container element (a `TArray<FStruct>` field, or a `TMap` value). First Scan. | the row appears with a `[i]` element index | establishes the candidate IS a container element, not a direct field |
 > | 2 ⚠ THE ONE THAT MATTERS | in game, ADD entries to that container until it must grow (pick up items, spawn enemies), then Next Scan with the same value | the candidate **SURVIVES**, and `scan-0.log` has `Refine re-anchor: N container element(s) repointed after a realloc` | before 3253 a growth realloc left every element address stale and they were lost outright. A surviving candidate with **no** re-anchor line means the buffer never moved — the container had slack, so this run did not test the repoint |
