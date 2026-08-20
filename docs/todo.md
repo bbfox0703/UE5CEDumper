@@ -2582,6 +2582,56 @@ the repo's (`[STALEDLL]`).
 > is no slot whose field list could overflow. The control has to produce a healthy match set and
 > still stay quiet, which `100` + `3` does.
 > | AE20 | Proxy Deploy → **Find leftovers** on a machine with several leftover chains, tick 3+ rows, **Delete checked**, then click **Cancel operation** while it runs | the pass stops early and the result line reports what DID happen (`… cancelled`), with the un-processed rows still listed and unticked | the destructive Recycle-Bin delete accepted a `CancellationToken`, checked it between rows and carried a whole cancelled-reporting path that **nothing in the app could reach** — five of the panel's seven token-taking commands were in that state. ⚠ Needs several rows: with one row the loop finishes before a human can click |
+> ### ✅ AE20 PASS 2026-08-20 `[AE20-2026-08-20]` — the cancel path is reachable and reports honestly … with one gap
+>
+> **Staged entirely synthetically.** The session plan's §4 authorises two writes outside our own
+> files and this destructive step is not one of them, so `tools/verify/ae20_orphans.py` created **40**
+> throwaway trees named `ZZAe20Orphan###\ZZOrphan\Binaries\Win64\version.dll` with no shipping exe
+> beside them — which is precisely the scanner's definition of a leftover, so they are the real thing
+> minus a game that never existed. Nothing on disk that predated the run could be touched.
+>
+> Find leftovers → **`Found 40 leftover proxy DLL(s)`** → ticked 4 → **Delete checked (4)** →
+> confirmation dialog → **Move to Recycle Bin** → **Cancel operation** immediately after.
+>
+> ```
+> Cleanup cancelled after 2 of 4 leftover(s) — 2 file(s) recycled, 8 folder(s) removed
+> ```
+> * the pass **stopped early** — 2 of 4 ✅
+> * the line says **"cancelled"** and carries the tally of what DID happen ✅
+> * the un-processed rows are **still listed** (`…Orphan002` … `005`), and the completed two are gone
+>   from the list ✅
+>
+> That path was unreachable from the app before the fix, and it is now reachable on the first attempt.
+>
+> #### ❌ …but the interrupted row is mis-reported — `[ORPHANCANCEL-2026-08-20]` (new, LOW)
+>
+> The `ProxyDeploy` log for the same run has **three** recycle lines, not two:
+> ```
+> 12:46:07.495 Recycled leftover proxy …ZZAe20Orphan000\…\version.dll
+> 12:46:07.570 Recycled leftover proxy …ZZAe20Orphan001\…\version.dll
+> 12:46:07.644 Recycled leftover proxy …ZZAe20Orphan002\…\version.dll   <-- not in the tally
+> 12:46:07.645 Cleanup cancelled after 2 of 4 leftover(s) — 2 file(s) recycled, 8 folder(s) removed
+> ```
+> On disk afterwards: trees `000`/`001` fully gone, and **`002` still present with its `version.dll`
+> already recycled and its folder chain un-pruned**.
+>
+> **Mechanism** ([ProxyDeployViewModel.cs:989-1008](ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs:989)):
+> the token is passed *into* `RemoveOrphanProxyAsync`, so on row 002 it recycled the file and **then**
+> observed the cancel and threw. Everything after that `await` is skipped —
+> `files += result.FilesRecycled`, `ok++`, `row.IsSelected = false`, `DropOrphanRow`. Hence all four
+> symptoms at once: the tally under-counts by one, the row stays **ticked** (against the code's own
+> comment *"Unchecked either way: a pass is over when it is over"*, which is also the row's
+> "un-processed rows … unticked" expectation), the row still advertises *"Recycle version.dll, then
+> remove up to 4 folder(s)"* for a DLL that is already gone, and the half-pruned chain is invisible.
+>
+> ⭐ This is **audit #4's root cause verbatim** — *the report and the reality are computed by
+> different code paths* — and it lands on the one line whose comment says
+> *"a cancel that discards the tally would hide a half-pruned chain"*. It hid exactly that.
+>
+> **Fix shape** (not applied — this session verifies): fold the interrupted row's partial result in
+> before the exception escapes — wrap the single-row `await` so `OperationCanceledException` still
+> contributes `FilesRecycled`/`DirsRemoved` and unticks the row, then rethrow. Severity LOW: bounded
+> at one row per cancel, and nothing is lost, only mis-counted.
 > | AE30 | Object Tree → pick any UObject → set the address format to **module+offset** → Copy address, and paste into CE. Then relaunch the game and paste the same string again | the copied text is now bare hex (e.g. `1E55C298D40`), NOT `"Game-Win64-Shipping.exe"+FFFF81…`; it resolves this run and plainly fails to resolve after a relaunch instead of silently pointing somewhere unrelated | a heap UObject sits BELOW a `0x7FF7…` image base, so the old unsigned subtraction WRAPPED. That string round-trips within one run, which is what made it dangerous: it looked like the ASLR-stable form the user picked the option for. **Control:** copy an address that IS inside the module (a GObjects/GNames pointer from the Pointers panel) and confirm it still formats as `"exe"+RVA` and still resolves after a relaunch |
 > ### ✅ AE30 PASS 2026-08-20 `[AE30-DQ7R-2026-08-20]` — but the CONTROL as written cannot be run
 >
