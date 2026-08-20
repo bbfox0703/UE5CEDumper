@@ -5055,7 +5055,21 @@ scanned on-disk bytes, and for packed/obfuscated titles those differ.*
    confidence)` must still report the same version. The bare-needle change touches Tier 2 only, and
    two unit rails assert that, but Tier 3 is what stripped-tag games actually land on today.
 
-### ⬜ NEW 2026-08-17 — G8 / G9: version detection after the tier-rule change
+### ✅ VERIFIED 2026-08-20 — G8 / G9: version detection after the tier-rule change
+
+> ### ✅ STEP 1's "two or three titles" IS NOW TWELVE — 2026-08-20, see `[G11-CACHE-2026-08-20]`
+>
+> Step 1 sat at 🟡 only because it had two titles against a bar of "two or three". The same
+> assertion — *"every game still detects the same version"* — was then checked across the **whole
+> hint cache**: 28 entries, **22** already re-detected (`versionDetectRev: 5`), **12** cross-checked
+> against `docs/test-games.md`, **0 disagreements**. Steps 2 and 3 were already ✅.
+>
+> ⭐ **That sweep covers G8/G9 as well as G11, and it is worth saying why rather than assuming it.**
+> The rev counter went **3 → 4** for G8/G9 and **4 → 5** for G11. Every entry now stamped `rev: 5`
+> has therefore re-detected *through both changes*, so a version moved by either one would be
+> visible as a title disagreeing with its documented value today. None does. Steps 2 (`rev` written
+> back, re-detect happens once) and 3 (Tier 1 untouched) were already discharged on Elliot and DQ7R.
+
 
 *Needs the DLL injected. See dev-log build 3105. **Expect NO visible difference** — both fixes are
 measured no-ops on all 85 PE images in the local corpus, so this batch is a REGRESSION check, not a
