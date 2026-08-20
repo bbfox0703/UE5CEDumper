@@ -2250,6 +2250,30 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > | AC11 | on an installed game: **Deploy** a proxy to a clean Binaries folder, then **Deploy again** over it, then **Undeploy**. Check the folder for any `*.ue5dump-stage` leftover | all three succeed exactly as before; no `.ue5dump-stage` file is ever left behind; the grid never shows "Other proxy" for a DLL we just wrote | staging changed the publish from a copy to a copy+rename — the first-time-deploy path and the locked-target path are the two that must not regress |
 > | AC11 | with the game **running** (so the proxy is loaded and locked), click Deploy | still "File locked (game running?)", and the existing proxy is intact | the rename now raises the sharing violation the direct copy used to; the message must not change |
 > | AC12 | on this machine (multi-library Steam install), open Proxy Deploy and let it scan | the same library folders as before are found; `proxy`/`init` log has **no** "libraryfolders.vdf is malformed" line | the parser is fully unit-tested but its input is a real Valve-written file — a rejected real VDF would silently halve game detection |
+> ### ✅ AC6 + AC12 PASS 2026-08-20 `[L7-AC6-AC12-2026-08-20]`
+>
+> **AC6 — PASS, with the DLL's own sweep deliberately taken out of the way.** The DLL sweeps the
+> *same* file family once per process, so the two bait files were planted **after** DumperTest was
+> injected and had already swept — otherwise the DLL removes the bait, the UI legitimately logs
+> nothing, and that reads as a failure of the UI sweeper. Then the UI was launched and connected.
+>
+> * backdated `UE5CEDumper.MSI-NB.json.tmp.99999` (3 h old) → **gone**
+> * fresh `UE5CEDumper.MSI-NB.json.tmp.88888` → **survives** — this is the age guard, and it is the
+>   half that matters: without it the sweeper would delete the DLL's in-flight write.
+> * `init-0.log`: `AobUsageService: removed 1 abandoned staging file(s) older than 1 h`
+> * the real cache still parses afterwards (28 entries)
+>
+> ⭐ **This is the C# twin of the DLL-side sweep, and the pair is now verified end to end**: the DLL
+> logs `HintCache: removed 1 abandoned staging file(s) older than 1h` (see `[FLSWEEP-2026-08-19]`)
+> and the UI logs `AobUsageService: removed …`. Two independent sweepers over one file family, both
+> age-guarded, neither destroying the other's live write — which is exactly the cross-process
+> pairing this row says is only observable with a game actually writing the same cache.
+>
+> **AC12 — PASS.** A live **Scan Steam** in the same session logged `Found 2 Steam library
+> folder(s)` and then `Found 18 UE game(s)`, with **zero** library-related `[WARN]`/`[ERROR]` lines
+> (no "malformed"). The 2 matches `libraryfolders.vdf` exactly — `C:\Program Files (x86)\Steam` and
+> `D:\SteamLibrary` — so the real Valve-written VDF is still parsed and the multi-library install is
+> not silently halved.
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L9 (T1c VMs/Core/DTOs): AE13 / AE20 / AE30
 
