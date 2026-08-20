@@ -2548,6 +2548,36 @@ repo's.
 > |---|---|---|---|
 > | Z8 ⚠ needs a BIG game | on a title with more than 100,000 UFunctions (a **SEED / FF7R**-class pool; `game_only` OFF makes the cap far easier to reach on any title), open **Console** and Load, then open **Interesting Functions** and Load | Console no longer claims anything about the GAME: it reads "No UFUNCTION(exec) commands in the N functions scanned so far … this scan did not finish, so it is not evidence the game has none", plus `⚠ STOPPED at the 100,000-row cap`. Interesting Functions shows the same cap suffix AND its class-noise picker now shows `⚠ Counts are partial` | the DLL emitted **no truncation marker at all** for `list_all_functions` before this, so a capped page was reported as a complete census of the game — and Interesting Functions had no flag it could even pass to its picker. A game UNDER the cap proves only that the flag stays off (still worth doing as the regression check: no spurious warning) |
 > | Z12 | Instance Finder → **Address → Instance** on an address that lives in a deeply-nested container (the `SaveSlotList[].MsTuneData…` shape the deep descent was written for), and on a plainly-bogus address | on a deep HIT the suffix reads `[scanned (incl. deep descent) X/Y in Zms]` with the DEEP pass's counters and the SUMMED duration; on a deep MISS it adds `⚠ the deep descent probes at most 256 element(s) per container, so this miss is not proof of absence` | before, a deep success reported the SHALLOW pass's numbers (describing a pass unrelated to the answer) and dropped the deep pass's deadline flag; a deep miss never mentioned the element cap at all. Change the Options element cap and re-run — the suffix must name the value you set, not a constant |
+> ### 🟡 Z12 deep-MISS half PASS · Z13 NOT RUNNABLE on DumperTest — 2026-08-20 `[L8-Z12-Z13-2026-08-20]`
+>
+> **Z12, the deep-MISS caveat — PASS, including the part that could have been faked.** Instances →
+> `Lookup` on a plainly-bogus `0x1234567800`, DumperTest / dist 3263:
+> ```
+> No UObject found at this address  [scanned (incl. deep descent) 25,179/25,179 in 202ms
+>                                    — ⚠ the deep descent probes at most 256 element(s) …]
+> ```
+> Then **Options → "Deep container scan cap" 256 → 1024** and re-ran the identical lookup:
+> ```
+> …in 102ms — ⚠ the deep descent probes at most 1,024 el…
+> ```
+> ⭐ That second run is the real assertion. A hard-coded "256" would have read correctly on the first
+> run and been indistinguishable from the fix; the suffix tracking the option to **1,024** shows it is
+> reporting the cap actually used. The duration also moved (202 → 102 ms), so it re-scanned rather
+> than re-rendering a cached line. The cap has been **restored to 256**.
+>
+> ⚠ **Z12's deep-HIT half is NOT covered and cannot be, here.** It needs an address that lives in a
+> nested container — the `SaveSlotList[].MsTuneData…` shape. DumperTest has no such fixture: a
+> Property Search for `Tune` over all 3,942 classes returns exactly **one** row
+> (`SynthKnob.MouseFineTuneSpeed`, a plain float), and there is no `SaveSlotList`. So "the DEEP pass's
+> counters and the SUMMED duration on a hit" still needs a title with that shape.
+>
+> ⚠ **Z13 is NOT runnable on DumperTest** — it has no HP-named property to hover. Measured rather
+> than assumed: Interesting Properties loaded **794 unique properties (threshold 4+: 530)** and
+> filtering them for `hp` returns only incidental substring hits — `MaxDepenetrationWithPawn`,
+> `NavMeshProjection…`, `DynamicMeshProperties`, i.e. the "…hP…" inside *WithPawn* / *MeshProjection*.
+> Not one row has `HP` as a name token, so the `keywords(1 hits)` tooltip has nothing to appear on.
+> **This row needs an RPG-ish title** (an `HP` / `CurrentHP` property). Worth pairing with `Z8`, which
+> also needs a big real game.
 > | Z13 | on any game, open **Interesting Properties** and **Interesting Functions** and sort by Score; find an HP-named row and read its score tooltip | the tooltip reads `keywords(1 hits)` for a plain `HP`/`CurrentHP` name, not `keywords(2 hits)`, and that row scores **5 lower** than it did before | this is the one DELIBERATE score movement in the batch and it is not silent: `"HP"` and `"Hp"` both tokenised to `["hp"]`, so one keyword was counted twice. Nothing visible on HP alone becomes hidden (10 → 5, both thresholds ≤ 5), but an HP function on an `Anim*`/`Niagara*`/`Sound*`/`Particle*` class (−2 class penalty) goes 8 → 3 and correctly drops below the threshold. ⚠ **What to actually watch for: an HP row you EXPECTED that is now missing from the default view** — if one appears, it is a threshold crossing, and the fix is "Show all", not re-adding the duplicate |
 
 ### ⬜ PART-FIXED 2026-08-19, NEEDS A LIVE CHECK `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored"
