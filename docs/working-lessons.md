@@ -221,6 +221,58 @@ Corollary for the read side: Y16's third site *reads* four bytes for a one-byte 
 bugs are not only write bugs, and the read half tends to be filed later because it corrupts nothing
 — it just reports a number that is wrong.
 
+### 1.x A log-window that is coarser than the events it separates reports a CONFIDENT WRONG ANSWER
+
+Three separate rigs in the 2026-08-20 batch got this wrong in three different ways, and each time
+the failure mode was the same: **the rig printed a verdict, not an error.**
+
+| how the window was taken | what broke |
+|---|---|
+| line COUNT across several `*-0.log` files, sliced `[before:]` | more than one file grows, so new lines land in the MIDDLE of the concatenated list, not at the end. Reported **0** `enqueued invoke` while the log plainly held one. |
+| `strftime("%Y-%m-%d %H:%M:%S")` timestamp watermark | **one-second** resolution. Three mailbox cells running milliseconds apart: cell A's `static-native fast path` line fell inside cell B's window, and the rig announced `FAIL: the poisoned flags took the FAST PATH` — on a run whose own `result=-5` proved the call had been **queued**. |
+| counter read OUTSIDE the timed window | `get_diagnostics` round trips take milliseconds during which the game keeps firing `ProcessEvent`; timing only the invoke while differencing across two round trips manufactured a 6.6-fire "excess" and a false FAIL. |
+
+**The rule: measure with something at least as fine-grained as the thing you are separating.** For
+append-only logs inside one run the reliable primitive is a **before/after COUNT of matching lines**
+— exact at any timing, immune to file count, and needing no clock at all:
+
+```python
+class Watch:                      # tools/verify/l4_mb1_stale_flags.py
+    def __init__(self):  self.base = {n: len(all_matching(n)) for n in self.NEEDLES}
+    def delta(self, n):  return all_matching(n)[self.base[n]:]
+```
+
+⚠ **A timestamp watermark is still right when the events are seconds apart and the log is shared
+with other processes** — it is not banned, it is just the wrong tool below its own resolution.
+
+⭐ **The tell that saved the third case: two signals in the same output disagreed.** `result=-5`
+(queued) and "fast-path lines: 1" (called directly) cannot both be true. When a rig's own numbers
+contradict each other, suspect the rig before writing up the defect.
+
+### 1.y "The first live instance of class X" is not what `find_instances` returns
+
+`find_instances(class_name="Actor")` without `exact_match` is a **name SUBSTRING** match. On
+DumperTest it returns `ActorSequence`, `ActorElementAssetDataInterface`, `ActorPartitionSubsystem`
+and ~200 more, so `[i for i in r if not name.startswith("Default__")][0]` handed back a
+`UActorSequence` — and the rig then invoked `Actor.UserConstructionScript` against it.
+
+Filter on the reported **`class`** field, not on the query:
+
+```python
+ins = [i for i in r["instances"] if i.get("class") == cls
+       and not str(i.get("name","")).startswith("Default__")]
+```
+
+Two reasons this matters beyond tidiness:
+* **it is a live-fire hazard, not just a wrong sample.** A wrong-type invoke that TIMES OUT stays
+  **queued**, and a queued request can drain later — running an `AActor` method against a non-actor
+  at an arbitrary moment. (It did drain here, and nothing crashed. That is luck, not a result.)
+* the same substring behaviour already produced a wrong baseline once, when `Actor`'s "58 live
+  instances" was compared against a `find_instances` count that had swept in `ActorElement*`
+  non-actors.
+
+-----
+
 -----
 
 ## 2. Audit agents — raw finder output is about half wrong

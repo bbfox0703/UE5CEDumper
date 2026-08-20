@@ -2465,6 +2465,51 @@ incremental `cmake --build` after editing only a `.h` is not.
 > | MB1 | on any game, generate an Invoke script for a **stateful, non-static** UFunction, enable it, FIRE once, then enable a **second** Invoke script for a `Native\|Static` Kismet helper and FIRE it — then go back and press FIRE on the FIRST form again | the first form's second FIRE still routes through GameThreadDispatch. `pipe-0.log` shows either no `INVOKE mailbox functionFlags=... is STALE` line, or that WARN naming the stale value and the re-read one | before the fix the second FIRE inherited the helper's `Native\|Static` from offset 0x024 and ran a stateful actor UFunction OFF the game thread; the WARN is the fix's own greppable evidence |
 > | MB1 | same session: confirm a `Native\|Static` helper (e.g. a KismetMath call) still takes the fast path on an **idle** game (main menu) | `INVOKE -> static-native fast path` still logged; no -5 timeout | the re-read must not COST the fast path — a `ResolveFunctionInfo` that fails on some game would silently degrade every pure helper to a queued call that times out at the menu |
 > | MB2 | with the DLL injected into a game whose GObjects scan **fails**, hit the CE `.CT` Keep-Foreground toggle | the toggle works (result 1/0), instead of the old `hook error -10` naming MinHook — a subsystem the command never reached | needs a genuinely failing scan; a healthy game only proves the exemption did not break the normal path (still worth doing as the regression check) |
+> ### ✅ MB1 BOTH ROWS PASS 2026-08-20 `[MB1-HEADLESS-2026-08-20]` — headless, no CE; the ROUTE made observable
+>
+> `tools/verify/l4_mb1_stale_flags.py`. The row prescribes two generated Invoke forms in Cheat
+> Engine and a FIRE-B-then-FIRE-A dance to make the staleness happen *by accident*. Writing the
+> stale value straight into `functionFlags` (`+0x024`) is the same input with none of the ceremony,
+> is exact — the poison `0x00002400` is chosen to be recognisable in the log — and needs no CE.
+>
+> ⭐ **The game thread is FROZEN throughout, which turns the route into an observable rather than a
+> log line.** A WARN only proves the DLL *noticed*. With the UE game thread suspended the fast path
+> still works (it never needed that thread) while `GameThreadDispatch` must time out at `-5`. So a
+> stale `Native|Static` on a stateful function would return **0 in milliseconds**, and correct
+> routing returns **-5 after 5 s**. The regression would be visible even if the WARN were deleted.
+>
+> | cell | target | `functionFlags` planted | result | fast-path lines | `is STALE` |
+> |---|---|---|---|---|---|
+> | **A** (row 2) | `KismetMathLibrary.Add_IntInt` (really `0x14022403`) | correct | **0**, `ReturnValue 7`, **5 ms** | **1** | 0 |
+> | **B** (row 1) | `Actor.UserConstructionScript` (really `0x08020802`) | **`0x00002400` poison** | **-5**, 5006 ms | **0** | **1** |
+> | **C** (control) | same as B | correct | **-5**, same | 0 | **0** |
+>
+> **B vs A isolates the ROUTE; B vs C isolates the WARN.** Neither pair alone would do it: A alone
+> cannot show the poison was ignored, and B alone cannot show the `-5` came from routing rather than
+> from the poison upsetting something else.
+>
+> The WARN is verbatim and names all three things the row asks for:
+> `Mailbox: INVOKE mailbox functionFlags=0x00002400 is STALE — 'UserConstructionScript' really has
+> 0x08020802; routing on the re-read value (MB1)`
+>
+> **Row 2's own concern is settled by A**: the re-read did **not** cost the fast path — 5 ms and a
+> correct `7` with the game thread suspended, so a `ResolveFunctionInfo` failure is not silently
+> degrading pure helpers into queued calls that time out at a menu.
+>
+> ⚠ **Two rig defects were found and fixed before this result was believed** — both recorded in
+> [working-lessons.md](working-lessons.md) because both produce *confident wrong answers*:
+> 1. a `strftime("…%H:%M:%S")` log watermark has **one-second** resolution, and these cells run
+>    milliseconds apart, so cell A's fast-path line fell inside cell B's window and the rig printed
+>    **`FAIL: the poisoned flags took the FAST PATH`** on a run whose own `result=-5` proved the call
+>    had been queued. Replaced with before/after **counts**, which are exact at any timing.
+> 2. `find_instances` without `exact_match` is a **name substring** match, so "the first live
+>    instance of `Actor`" was a `UActorSequence`. The routing measurement survives that (the route is
+>    decided from `ufuncAddr`'s flags alone, before any call), but a wrong-type invoke left **queued**
+>    can drain later and run an `AActor` method against a non-actor. Re-run on `ChaosDebugDrawActor`,
+>    whose reported `class` really is `Actor`.
+>
+> MB2's own row was already ✅ below; this closes MB1's two rows. FL1/FL2 remain.
+
 > ### ✅ SE1 + MB2 PASS 2026-08-19 `[SEMB-HEADLESS-2026-08-19]` — both headless, no CE, no UI
 >
 > **SE1 — PASS, both halves.** `tools/verify/se1_log_reroute.py` takes a genuinely exclusive handle
