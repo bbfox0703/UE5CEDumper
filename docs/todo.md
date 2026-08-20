@@ -4097,7 +4097,13 @@ order-swap that was permanently broken.*
 
 -----
 
-### ⬜ FIXED 2026-08-18, NEEDS A LIVE CHECK `[PEHOOK-2026-08-17]` — a validation failure must ACT, and the advice must stop saying "re-deploy"
+### 🟡 ALL BUT TWO STEPS DONE 2026-08-20 `[PEHOOK-2026-08-17]` — a validation failure must ACT, and the advice must stop saying "re-deploy"
+
+> **Verified: 1b · 2 · 3 (to its terminal 3/3) · 3b · 4 · 5 · 6 · 7 · 8** — all headless, across
+> DumperTest (both a shipping and a SIB-less build), Lushfoil and EVERSPACE 2.
+> **Open: step 1** (the UI Self-Test *text*, needs the panel on screen) and **step 3c**, which is
+> structurally unreachable here — it needs a build that misses detection once and then hits, and no
+> such build exists (see `[PEHOOK-3B-2026-08-20]`).
 
 *Was: on **DumperTest** (UE 5.4 Development) the AOB pattern scan misses, the `UE=504` version-table
 fallback picks `0x220`, the hook fires **0 times in 1500 ms** — and nothing acted on that verdict, so
@@ -5618,6 +5624,46 @@ scanned on-disk bytes, and for packed/obfuscated titles those differ.*
 4. **⚠ REGRESSION — Tier 3 still behaves.** A title that previously reported `Tier 3 (low
    confidence)` must still report the same version. The bare-needle change touches Tier 2 only, and
    two unit rails assert that, but Tier 3 is what stripped-tag games actually land on today.
+
+> ### ✅ STEP 3 RUN 2026-08-20 `[G11-AINCRAD-2026-08-20]` — Tier 2 still did not fire, and the BINARY says that is CORRECT
+>
+> **Echoes of Aincrad Demo** (UE, Steam), never swept before — its first scan on this machine.
+> Injected directly (no proxy deployed), headless.
+>
+> ```
+> DetectVersion: PE VERSIONINFO Product=1.0 File=1.0 — unrecognised     <- the precondition holds
+> DetectVersion: PE resource failed, falling back to memory string scan
+> DetectVersion: Could not detect UE version from PE or memory (pre-UE4 markers 0/4)
+> FindAll: UE version detection failed — using default 504
+> FindAll: UE Version = 504 (tier=0, detected=no, lowConfidence=yes, publisher=-)
+> ```
+> **No `Tier 1`, no `Tier 2 Release prefix`, no `Tier 3` line.**
+>
+> ⭐ **The offline control is what turns that from a suspicion into a result.** Scanning the 427 MB
+> shipping exe directly, independently of the DLL:
+>
+> | needle | hits |
+> |---|---|
+> | `++UE4+Release-N.N` (ascii) | **0** |
+> | `++UE5+Release-N.N` (ascii) | **0** |
+> | bare `Release-N.N` (ascii) — *what Tier 2 looks for* | **0** |
+> | `++UE[45]` (UTF-16) | **0** |
+> | `UnrealEngine` | 2 |
+>
+> The title is **fully tag-stripped**, so no tier *could* fire. Tier 2's silence here is **correct
+> behaviour, not a defect** — and without this control the run would have looked like a third
+> failure of Tier 2.
+>
+> ⇒ **Third independent line of evidence that Tier 2 has never been exercised**, each failing for a
+> different reason: the 25-game log sweep (step 4) found 0 across 65 runs; DQ7R reached the ladder
+> but **Tier 1 answered first and masked it**; and this title reaches the ladder with **nothing for
+> any tier to match**. Tier 2 remains unproven, and no installed title can prove it.
+>
+> **Truth, as the step asks to record it:** undeterminable by string scan — the binary carries no
+> engine tag. And the DLL says so rather than guessing: `tier=0, detected=no, lowConfidence=yes`,
+> with `504` labelled a **default**, not a detection.
+> ℹ️ Worth noting for the roadmap: the scan **succeeded anyway** — `GObjects=0x147FD0B00`,
+> `GNames=0x148675600`, **70,655 objects** — so an undetected version is not fatal on this title.
 
 > ### 🟡 STEP 4 — NO SUBJECT EXISTS ON THIS MACHINE, and that is a measurement, 2026-08-20
 >
