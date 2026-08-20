@@ -2248,6 +2248,36 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > | AC6 | plant `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.<MACHINE>.json.tmp.99999`, backdate its mtime >1 h, plant a second one with a **fresh** mtime, then launch the UI and connect to a game (any scan records) | the backdated one is gone, the fresh one **survives**, and `init-0.log` says "removed 1 abandoned staging file(s) older than 1 h" | the sweep is unit-tested, but the cross-process pairing with the DLL's identically-named `<file>.tmp.<pid>` is only observable with a game actually writing the same cache |
 > | AC10 | start a long operation over the pipe (Dump All, or a big Value Search), then **kill the game process** mid-stream | the UI reports a **failure** ("disconnected"), not a silent cancel; a partial export is not finalised as complete | the write-vs-death race is a TOCTOU the classifier's unit test cannot drive; only a real kill hits it |
 > | AC11 | on an installed game: **Deploy** a proxy to a clean Binaries folder, then **Deploy again** over it, then **Undeploy**. Check the folder for any `*.ue5dump-stage` leftover | all three succeed exactly as before; no `.ue5dump-stage` file is ever left behind; the grid never shows "Other proxy" for a DLL we just wrote | staging changed the publish from a copy to a copy+rename — the first-time-deploy path and the locked-target path are the two that must not regress |
+> ### ✅ AC11 step 1 PASS 2026-08-20 — deploy / re-deploy / undeploy leave nothing behind
+>
+> Driven through the real panel on **Light Maze** (`D:\SteamLibrary\…\LightMaze\Binaries\Win64`),
+> picked because it was one of seven installed UE titles with **no** proxy of ours — so the
+> first-time-deploy arm of `File.Move(overwrite: true)` is the one actually exercised. The folder was
+> hashed to a 4-file baseline first.
+>
+> | # | action | grid | folder |
+> |---|---|---|---|
+> | 1 | Deploy | `NotDeployed` → **`DeployedCurrent`**, "Deployed: 1 success, 0 failed" | `dxgi.dll` 2,876,928 B appears; **no** `.ue5dump-stage` |
+> | 2 | Deploy again, **Force Overwrite** | stays `DeployedCurrent`, "1 success, 0 failed" | same size, **no** `.ue5dump-stage` |
+> | 3 | Undeploy | → **`NotDeployed`**, "Removed: 1 success, 0 failed" | **byte-identical to the baseline**, zero `*ue5dump*` residue |
+>
+> The status never once read **"Other proxy"** for a DLL we had just written — the truncated-PE
+> failure mode the staging change exists to prevent.
+>
+> ⚠ **Force Overwrite is REQUIRED for step 2 to be a real test.** `PlanDeploy` returns
+> `AlreadyCurrent` when the target is ours and the same version, so a plain second Deploy reports
+> "1 success" **having written nothing**. The button says success either way.
+>
+> ⚠⚠ **`mtime` cannot witness a re-deploy, and it silently says "no write happened".**
+> `File.Copy` copies the source's last-write time, and `File.Move` preserves it, so the deployed
+> `dxgi.dll` carries `dist/proxy/dxgi.dll`'s timestamp **exactly** — identical before and after the
+> second deploy. Use **`ctime`**, which does move on a rename-replace:
+> `1787195042681345900 → 1787195091349982000`. The `view-0.log` pair confirms it independently
+> (`Deployed dxgi.dll to Light Maze` at **11:04:02** and again at **11:04:51**).
+>
+> 📁 **ProxyDeploy logs to `view-0.log`, not `init-0.log`.** Worth knowing before grepping for this
+> row's evidence — and note the category tag (`"ProxyDeploy"`) only *routes* the file, it is never
+> printed, so grep the message text (`Deployed`, `Undeployed`) and not the category.
 > | AC11 | with the game **running** (so the proxy is loaded and locked), click Deploy | still "File locked (game running?)", and the existing proxy is intact | the rename now raises the sharing violation the direct copy used to; the message must not change |
 > ### ❌ AC11 step 2 FAILS — the message DID change `[STAGELOCK-2026-08-20]` **(new defect, build 3263)**
 >
