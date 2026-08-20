@@ -2247,6 +2247,34 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > | AC3 | with CE **closed**, use any "to CE" action (Teleport → AOBMaker push, Console → Debug Camera). Then open CE **without** the AOBMaker plugin and repeat. Then load the plugin and repeat. `rg "AOBMaker bridge" %LOCALAPPDATA%\UE5CEDumper\Logs\*\init-0.log` | three DIFFERENT lines: "no server on \\\\.\\pipe\\AOBMakerCEBridge within 2000 ms" (twice, Debug) then a success — and if CE is up but the pipe refuses, a **Warn** naming the exception type | before the fix the bare `catch` logged nothing at all, so all seven call sites produced the same blank "AOBMaker not connected" |
 > | AC6 | plant `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.<MACHINE>.json.tmp.99999`, backdate its mtime >1 h, plant a second one with a **fresh** mtime, then launch the UI and connect to a game (any scan records) | the backdated one is gone, the fresh one **survives**, and `init-0.log` says "removed 1 abandoned staging file(s) older than 1 h" | the sweep is unit-tested, but the cross-process pairing with the DLL's identically-named `<file>.tmp.<pid>` is only observable with a game actually writing the same cache |
 > | AC10 | start a long operation over the pipe (Dump All, or a big Value Search), then **kill the game process** mid-stream | the UI reports a **failure** ("disconnected"), not a silent cancel; a partial export is not finalised as complete | the write-vs-death race is a TOCTOU the classifier's unit test cannot drive; only a real kill hits it |
+> ### ✅ AC10 PASS 2026-08-20 — killed 590 KB into a Dump All, reported as a failure, nothing published
+>
+> Dump All Metadata (.jsonl) over a connected DumperTest (25,179 objects), then `taskkill /F` on the
+> host **while bytes were still moving**.
+>
+> ⚠ **A fixed sleep cannot stage this row and will pass without testing anything.** Fire early and
+> the dump has not begun, so the disconnect is an ordinary idle one; fire late and it already
+> published. Both look identical in the UI. `tools/verify/ac10_kill_midstream.py` triggers off the
+> `.partial` instead — the dump streams to `<name>.jsonl.partial` and is renamed only after the
+> trailing summary line, so a *growing* `.partial` is direct evidence of an in-flight stream.
+>
+> ```
+> MID-STREAM: DumperTest-dump-20260820-110923.jsonl.partial is 589824 bytes -- killing DumperTest.exe NOW
+> taskkill rc=0   (PID 6340 terminated)
+> 3 s after the kill:  .partial still present : False      FINAL name published : False
+> ```
+>
+> | assertion | result |
+> |---|---|
+> | the UI reports a **failure**, not a silent cancel | status → **"Dump cancelled (disconnected)"**; `view-0.log` `DumpAll export cancelled` |
+> | the disconnect is detected, not hung | `pipe-0.log` `ReadLine returned null (disconnected)` → `Pipe disconnected`, 11:10:09.745 |
+> | a partial export is **not** finalised as complete | the `.jsonl` **never existed**; the `.partial` was deleted (`TryDeletePartial`) |
+> | the UI stays usable | reverted to `Connect`, Object Tree cleared, no error dialog, no hang |
+>
+> The temp-then-rename design (X11) is what makes the last row true by construction, and the
+> `CreateLinkedTokenSource(_connectionCts.Token)` (X6) is what turns the dead pipe into the
+> `OperationCanceledException` that produces the "(disconnected)" wording rather than a generic
+> "Dump failed" — both were exercised on this path, 590 KB in.
 > | AC11 | on an installed game: **Deploy** a proxy to a clean Binaries folder, then **Deploy again** over it, then **Undeploy**. Check the folder for any `*.ue5dump-stage` leftover | all three succeed exactly as before; no `.ue5dump-stage` file is ever left behind; the grid never shows "Other proxy" for a DLL we just wrote | staging changed the publish from a copy to a copy+rename — the first-time-deploy path and the locked-target path are the two that must not regress |
 > ### ✅ AC11 step 1 PASS 2026-08-20 — deploy / re-deploy / undeploy leave nothing behind
 >
