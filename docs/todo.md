@@ -2755,6 +2755,33 @@ treated as a HEURISTIC, not a law.*
 > flavours deployed today — so step 1 should be run expecting to *test* the claim, not to confirm it.
 
 > | 2 | deploy `version.dll` to a title that does NOT import it (**DQ7R** / **DQ I&II**), launch, Refresh | **Loaded?** shows **"loaded &lt;today&gt;"**; no bypass warning | proves the signal is not a blanket "not observed" — it reads the real folder |
+> ### ✅ STEP 2 PASSES 2026-08-20 `[PROXYLOAD-STEP2-2026-08-20]` — DQ7R, with a before/after and a free negative control
+>
+> **The premise was checked first, not assumed.** `tools/verify/proxyload_correlation.py` reads the
+> exe's real import table: **DQ7R does `no`t import `version.dll`** — so it is the right title for
+> this step, which is about a *non-importing* game.
+>
+> | | Loaded? column |
+> |---|---|
+> | before launching (12:06) | `loaded 2026-08-1…` |
+> | DQ7R launched 12:17:59, proxy log written **12:18:00**, then **Refresh** | `loaded 2026-08-2…` |
+>
+> ⭐ **The change is the evidence.** The column is clipped to `2026-08-2…`, so the rendered text alone
+> would be weak — but it moved from the `-08-1` decade to `-08-2` as a direct result of the launch,
+> and the source it reads (`Logs\DQ7R-Win64-Shipping\`) is stamped **2026-08-20 12:18:00**. A stale or
+> blanket value cannot do that.
+>
+> **A negative control came free in the same view:** `Titan Quest II` reads **`not observed`**, and it
+> has **no log folder at all** on disk. So the column distinguishes "never loaded" from "loaded on
+> date X" from real evidence, which is exactly what the row asks.
+>
+> **No bypass warning.** DQ7R's Error cell reads only the informational `Deployed as version.dll`;
+> the import advisory does not appear — correct, since it does not import the name.
+>
+> ℹ️ Step 3's assertion ("the warning is a heuristic and the LOAD signal is the source of truth") is
+> already settled more strongly by `[PROXYLOAD-CORR-2026-08-20]` above, which found **4 of 9** deployed
+> titles importing the proxy name **and loading ours anyway** — four counter-examples rather than the
+> one OCTOPATH case the step describes.
 > | 3 | on OCTOPATH, switch to the `winmm` flavour, deploy, launch, Refresh | **Loaded?** → "loaded" (winmm proxy works per `[OCTOPATH-G2T3]`) even though winmm may also be imported | proves the warning is a heuristic and the load signal, not the import table, is the source of truth |
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[SLOTSYM-2026-08-18]` — the slot `[DISABLE]` now actually unregisters, and says so honestly
