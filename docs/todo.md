@@ -6780,6 +6780,39 @@ instances.
 > ⚠ Read the checkbox correctly (red ✗ = ACTIVE) and open CE's Lua Engine first, as above.
 >
 > | step | do this | expect |
+> ### ✅ FREEZESCOPE steps 1 + 9 PASS 2026-08-20 `[FZSCOPE-PIPE-2026-08-20]` — over the pipe, no CE
+>
+> Rig: `tools/verify/freezescope_force_scope.py`, DumperTest / dist 3263.
+>
+> **Step 1 — PASS.** `bCanBeDamaged` resolves to exactly one row: `class=Actor`,
+> `defining_class=Actor`, `BoolProperty`, `bool_mask=4`, **`inherited_by_count=221`** — the number the
+> "+N inheritors" badge renders.
+>
+> **Step 9 (the cross-feature control) — PASS.** Force on that same row:
+> ```
+> force_field(Actor.bCanBeDamaged, kind=bool) -> ok resolved held=58 truncated=false
+> get_forced_fields                            -> Actor.bCanBeDamaged held=58
+> after reset_field + reset_all_fields          -> 0 held
+> ```
+> ⭐ **58 is the number that matters, because the pre-fix value on this exact host was 1.** The row
+> records the failure as `1/1` "in a 25,179-object level" — this is that level, and Force now sweeps
+> derived. Force and Freeze are therefore not scoping oppositely, which is the thing that started the
+> whole finding.
+>
+> ⚠⚠ **Do NOT use `find_instances(exact_match=false)` as the baseline — it measures something else.**
+> It reports `total=252` for "Actor", but that is a **name-substring** match: 210 of the 252 are CDOs
+> and the non-CDO remainder is largely `ActorElementAssetDataInterface`-style objects that **do not
+> derive from `AActor` at all**. Solide uses `Aura::FindInstancesDerivedFrom` — a real super-chain
+> test with a per-UClass verdict cache — and skips CDOs *inside* the walk. Comparing 58 against 252
+> (or against 42) looks like a discrepancy and is not one; the two numbers answer different questions.
+>
+> 🟡 **The Solide `capped` badge is only half-checked here.** `truncated=false` is *correct* at 58,
+> but the cap is 256, so this host never reaches it and the "held==256 AND truncated==true" assertion
+> is untested. That needs a title with **>256 live instances derived from one base** — DQ7R (149k
+> objects) is the obvious candidate.
+>
+> Steps 2, 3, 6, 7, 8 are CE/dialog work; step 4 needs the `.CT` record (or a `CMD_LIST_INSTANCES`
+> mailbox poke); step 5 needs a player pawn taking damage.
 > |---|---|---|
 > | 1 | Property Search `bCanBeDamaged` (or `bHidden`) — a field the Class column shows as **`Actor`** with an `+N inheritors` badge | the row exists |
 > | 2 | Click **Freeze** and read the dialog before typing anything | a **Scope:** line reading `every live Actor and every subclass (N inherit this field)`, plus a ⚠ line saying the field is declared on `Actor` and how to narrow it. Neither existed before |
