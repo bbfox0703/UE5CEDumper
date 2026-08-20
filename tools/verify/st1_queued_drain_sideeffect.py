@@ -93,12 +93,19 @@ def main():
                         game_only=False).get("functions") or [])
         fn = next((f for f in fl if f.get("func_name") == "SetActorHiddenInGame"
                    and f.get("class_name") == "Actor"), None)
-        sm = [i for i in (c.request("find_instances", class_name="StaticMeshActor",
-                                    max_results=40).get("instances") or [])
-              if i.get("class") == "StaticMeshActor"
+        # The subject MUST be an instance whose class DECLARES the function, not merely one
+        # that inherits it: [INVOKEINHERIT-2026-08-20] -- `UE5_FindFunctionByName` never
+        # climbs SuperStruct, so a `StaticMeshActor` returns "Function not found" for
+        # `SetActorHiddenInGame` and the whole rig reports a false "the drain was suppressed".
+        # That is exactly how that defect was found. `ChaosDebugDrawActor`'s class is
+        # literally `Actor`, so it resolves.
+        sm = [i for i in (c.request("find_instances", class_name="Actor",
+                                    max_results=400,
+                                    exact_match=False).get("instances") or [])
+              if i.get("class") == "Actor"
               and not str(i.get("name", "")).startswith("Default__")]
         if not fn or not sm:
-            say("FAIL: need Actor.SetActorHiddenInGame and a live StaticMeshActor")
+            say("FAIL: need Actor.SetActorHiddenInGame and a live instance whose class IS Actor")
             return 1
         flags = fn["function_flags"]
         inst = sm[0]["addr"]
@@ -110,7 +117,7 @@ def main():
         if direct:
             say("FAIL: this function would bypass the queue entirely -- the rig would be vacuous")
             return 1
-        say("instance : %s" % inst)
+        say("instance : %s  (%s)" % (inst, sm[0].get("name")))
 
         addr = int(inst, 16) + OFF_BHIDDEN
         def bit():

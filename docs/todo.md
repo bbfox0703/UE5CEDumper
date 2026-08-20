@@ -4542,7 +4542,7 @@ vtable actually holds, and no target compiles `Stark.cpp` or `Frieren.cpp`.*
 >   target". Pass `game_only=false`.
 > |---|---|---|---|
 > | 1 | connect, run the Pointers-tab KismetMathLibrary self-test (`directCall: true`) | `pipe` log shows **`via trampoline`** | the ordinary path now bypasses the detour |
-> ### ✅ ST1 STEP 3 PASSES 2026-08-20 `[ST1-QUEUE-2026-08-20]`; step 4 is NOT decidable from the log
+> ### ✅ ST1 STEP 3 PASSES 2026-08-20 `[ST1-QUEUE-2026-08-20]`; step 4 was not decidable from the log — SEE `[ST1-DRAIN-2026-08-20]` BELOW, which decides it
 >
 > Rig: `tools/verify/st1_queue_drain.py`. "A paused/menu game" is staged by **suspending the UE game
 > thread** — nothing can service the queue, so the timeout is guaranteed, and the ~121 fires/s
@@ -4571,13 +4571,54 @@ vtable actually holds, and no target compiles `Stark.cpp` or `Frieren.cpp`.*
 > an **idle** game: an idle game still ticks; a *suspended* thread does not, and
 > `IsGameThreadResponsive()` is false, so the two are not the same condition.)
 >
-> ⛔ **Step 4 is not decidable from the log, and the reason is structural.** After resume, "the queued
+> ⛔ **Step 4 is not decidable FROM THE LOG, and the reason is structural** (it *is* decided by the side-effect rig recorded below). After resume, "the queued
 > request now runs" produces **no** `invoke completed` line — that line is written by the *waiting
 > pipe thread*, which has already timed out and gone. What the same log does show is that the drain
 > path works on a live game thread: `enqueued invoke … waiting...` → `invoke completed result=0` in
 > **39 ms** when the thread is running. Deciding step 4 for the *abandoned* request needs a
 > side-effect signal (a stateful UFunction whose result is readable afterwards), not this log line.
 >
+> ### ✅ STEPS 4 AND 6 NOW DECIDED 2026-08-20 `[ST1-DRAIN-2026-08-20]` — by the side-effect signal the note above asked for
+>
+> The paragraph above ends *"deciding step 4 for the abandoned request needs a side-effect signal
+> (a stateful UFunction whose result is readable afterwards), not this log line."*
+> `tools/verify/st1_queued_drain_sideeffect.py` is that rig.
+>
+> **Fixture, chosen so nothing about it is assumed:**
+> * `Actor.SetActorHiddenInGame(bool)`, flags `0x04020402` — **Native but NOT Static**, and
+>   `Mimic::ShouldRouteDirectInvoke` requires *both*, so it is guaranteed to take the queue rather
+>   than the direct fast path. The rig asserts this and aborts if a future build changes it; a
+>   `Native|Static` pick would have made the whole run vacuous.
+> * `AActor::bHidden`, a packed bool at **+0x58 bit 7 (0x80)**, read with `ReadProcessMemory` — the
+>   observable is memory, not a log line.
+> * ⚠ the subject is **`ChaosDebugDrawActor`, whose class is literally `Actor`**, not a
+>   `StaticMeshActor`. That is not a detail: `[INVOKEINHERIT-2026-08-20]` (filed from this very run)
+>   means an inherited function cannot be resolved by name on a derived instance, and the first
+>   attempt reported a false *"the drain WAS suppressed"* purely because the invoke had been
+>   **rejected** rather than queued.
+>
+> ```
+> bHidden before                      : False   (byte 0x62)
+> [game thread FROZEN] invoke(true)   : ok=True result=-5 stalled=True   (5.0 s)  <- queued
+> CONTROL: bHidden while still frozen : False                                     <- did NOT run
+> [RESUMED] bHidden                   : True, within 0.0 s                        <- IT DRAINED
+> new 'SEH exception during queued PE call' : 0
+> new '0xC0000409'                          : 0
+> restore invoke(false)               : result=0, bHidden False again
+> ```
+>
+> **Step 4 — PASS.** The abandoned request executed on the game thread after the resume, witnessed
+> by a memory bit rather than by an absent log line. The frozen-window control is what makes it
+> attributable: the bit demonstrably did *not* move while the thread was suspended.
+>
+> **Step 6 — PASS, and now non-vacuous.** Zero SEH lines and zero `0xC0000409` *while a drain is
+> proven to have occurred* — which is the whole point, since an absence of crash lines is equally
+> satisfied by a drain that never happened. That is exactly the regression the step names
+> (*"the `thread_local` guard did not suppress the legitimate drain"*).
+>
+> The restore leg doubles as a fixture control: `result=0` and the bit returns to `False`, so a
+> hypothetical "it never flipped" could not have been blamed on an unwritable bit.
+
 > ℹ️ The rig set `invoke_timeout_ms` to 1500 and the DLL **persists that to the hint cache**
 > (`HintCache: Saved invoke timeout override … -> 1500ms`). It has been restored to **5000**.
 > | 2 | with the game running, `get_pointers` → note `hook_fire_count`, run step 1 again, re-read | the count does **not** jump by our own call | our call no longer enters `HookedProcessEvent` at all |
