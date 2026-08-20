@@ -4486,7 +4486,20 @@ into a LARGE non-UE monolithic exe can still publish a main-module GWorld.
 
 -----
 
-### ⬜ NEW 2026-08-17 — ST1: our own direct calls must stop entering our own PE detour (build 3205)
+### ✅ CLOSED 2026-08-20 — ST1: our own direct calls must stop entering our own PE detour (build 3205)
+
+> **All six steps verified, headlessly, on DumperTest Development / dist 3263 — no CE, no UI.**
+> `1 + 2` `[ST1-PIPE-2026-08-20]` · `3` `[ST1-QUEUE-2026-08-20]` · `4 + 6` `[ST1-DRAIN-2026-08-20]` ·
+> `5` `[ST1-FAILOPEN-2026-08-20]`. Rigs: `st1_direct_call.py`, `st1_queue_drain.py`,
+> `st1_queued_drain_sideeffect.py`.
+>
+> ⭐ **The two things that made a "needs a played game" batch runnable with nobody present:**
+> **suspending the UE game thread** is a scriptable, *stronger* form of every "paused / menu /
+> idle game" precondition in the table (frozen means exactly 0 ProcessEvent fires, where
+> backgrounded still ticks ~120/s), and where a log line could not decide a step, an **observable
+> side effect in memory** could.
+>
+> One defect fell out of the work — `[INVOKEINHERIT-2026-08-20]`, filed separately.
 
 *Needs a connected game. See dev-log build 3205. **The two predicates are unit-pinned (10 assertions,
 two negative controls); the ROUTING is not** — nothing offline can observe which address a live
