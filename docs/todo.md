@@ -1978,6 +1978,37 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > ⚠ **Not covered:** Y10/Y13's other half — the Before/After **dump window** reaching a return slot
 > past byte 32 — needs a UFunction with a complex return and a real CE session.
 
+> ### ✅ Y12 PASS 2026-08-20 `[Y12-CLIP-2026-08-20]` — the clipboard is checkable without Cheat Engine
+>
+> The row's paste step needs CE, but its **assertion** does not: whether a paste produces an
+> *Auto Assembler Script* record is decided entirely by what is on the clipboard. So the clipboard was
+> read directly (`clipboardRead` grant), with **AOBMaker offline** — the panel even says so:
+> *"AOBMaker plugin not found — AA Script export will fall back to clipboard"*.
+>
+> Interesting Funcs → `AA(B)` on `GranularSynth::SetAttackTime` → the **Invoke (baked)** dialog
+> (`AttackTimeMsec [float, 4B, off=0]`) → **Copy AA Script**. The clipboard then held:
+> ```xml
+> <?xml version="1.0" encoding="utf-8"?>
+> <CheatTable><CheatEntries><CheatEntry>
+>   <ID>1000</ID>
+>   <Description>"Invoke (baked): GranularSynth::SetAttackTime"</Description>
+>   <VariableType>Auto Assembler Script</VariableType>
+>   <AssemblerScript>[ENABLE] {$lua} … {$asm} [DISABLE] {$lua} -- nop {$asm}</AssemblerScript>
+> </CheatEntry></CheatEntries></CheatTable>
+> ```
+> ⭐ **`<VariableType>Auto Assembler Script</VariableType>` is the whole row.** Pre-fix the clipboard
+> carried a bare `[ENABLE]`/`[DISABLE]` body, which CE pastes as text rather than as a record. The
+> wrapper is present, well-formed, and correctly XML-escapes the script's own quotes and arrows
+> (`&apos;`, `&gt;`).
+>
+> 📌 Free confirmation of four **CE Lua output hygiene** rules in the same payload: it opens with
+> `local DEBUG = UE5_DEBUG or 0` + a `dbg()` wrapper; **every** bail-out does
+> `if memrec then memrec.Active = false end` before returning; real failures use bare `print` +
+> `showMessage`; and the auto-close is guarded `if ok and DEBUG == 0`, so an error path cannot reach
+> `getLuaEngine().Close()`.
+>
+> ⚠ `AA(B)` does not copy directly — it opens the **Invoke (baked)** dialog first so parameter values
+> can be baked, and `Copy AA Script` inside that dialog is what writes the clipboard.
 > | 7 | **B** | **Y10 / Y13.** Open a UFunction with a **complex return** (FString / struct) whose return slot sits past byte 32, tick **Verify return**, and push the baked script to CE. Tick the record. | CE's Lua Engine shows the Before/After dump **containing the return slot** (the window is now sized to reach it) and the line no longer says "see After: dump above" when it cannot. Then untick, **detach CE from the game**, and re-tick: the contract check must fire FIRST with a message naming `g_mailboxContract`, and the record must **untick itself** — no `writeByte` may have run. |
 > | 8 | **B** | **Y12.** Close CE (or disconnect AOBMaker), then **Copy AA Script (Baked)**, and right-click → Paste in CE's address list. | A memory record appears with type **Auto Assembler Script**. Before the fix the clipboard held a bare `[ENABLE]`/`[DISABLE]` body, which CE will not accept as a record at all. The result label should say "copied as CE XML", not "copied to clipboard". |
 > | 9 | **B** | **Y11.** Find a UFunction taking an `FText`, `TArray` or `TMap` parameter and press **FIRE**. | An `FText` param is refused by name whatever the box holds. A `TArray`/`TMap`/`TSet`/struct param fires with the slot **left zeroed** when its box is untouched, and is refused with a message when you type a value into it. Before the fix the textbox was written as a raw int32 over the structure's Data pointer and handed to ProcessEvent. ⚠ Sample-blocked if no installed title exposes such a UFunction. |
