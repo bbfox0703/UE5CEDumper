@@ -2189,6 +2189,39 @@ X4 and X9 are fully settled by tests; the rows below are what only a running gam
 > | X8 | on the **Console** tab, with CE + AOBMaker **closed**, click a baked-exec / Debug-Camera "to CE" action → then **open** CE with the AOBMaker plugin and click again (no tab switch) | the second click now sends to CE (was "AOBMaker not connected" from the stale cached flag) | the path now calls `CheckAvailabilityAsync` first; needs a real CE toggled between clicks |
 > | X10 | on Teleport, change the **World / Player time-dilation** sliders, wait >1 s, close the app, relaunch | the slider values are restored (they now schedule a save) | before, only OTHER Teleport options triggered a save, so a time-dilation-only change was lost |
 > | X11 | start a **Dump All** and abort it (disconnect / cancel) mid-stream | there is **no** truncated `.jsonl` at the chosen name — only a `<name>.partial` (or nothing); a completed dump appears atomically at the final name | temp-then-rename is only observable against a real abort |
+> ### ✅ X6 + X11 PASS 2026-08-20 `[L6-X6-X11-2026-08-20]` — both halves, on DumperTest / dist 3263
+>
+> Same host, two runs: one **aborted** mid-stream and one allowed to **complete**. Both halves are
+> needed — the abort alone cannot show that a finished dump publishes atomically, and the completion
+> alone cannot show that an abort publishes nothing.
+>
+> **X6 — the abort is prompt, and it is reported.** Shared with `AC10` above: `taskkill /F` on the
+> host with the `.partial` at **589,824 bytes and growing**.
+> * `pipe-0.log` `ReadLine returned null (disconnected)` at **11:10:09.745**
+> * `view-0.log` `DumpAll export cancelled` at **11:10:09.752**
+> * → **7 ms** from dead pipe to abort. That number is the row: before the fix `ct` was `default`,
+>   every service ct-check was dead code, and the export would have kept issuing per-class round
+>   trips into a dead pipe. It did not hang, and the UI said **"Dump cancelled (disconnected)"**.
+>
+> **X11 — nothing at the final name on abort; the whole file at once on success.**
+> * *abort run*: the `.jsonl` **never existed**, and the `.partial` was deleted.
+> * *completion run*: polled at 50 ms throughout —
+> ```
+> t=13.28  partial 0 bytes            final -
+> t=14.67  partial 3,145,728          final -
+> t=17.14  partial 10,223,616         final -
+> t=17.20  partial -                  final 10,484,429    <- one step, already full size
+> ```
+> The final name is **never observed at a partial size**: it goes from absent to complete inside a
+> single 50 ms poll, which is the rename. The published file ends with its trailing
+> `{"kind":"summary","classes_emitted":3942,…,"objects_scanned":25172}` line, and `view-0.log` agrees
+> — `DumpAll exported to … (10484429 bytes, 3942 classes, 0 errors)`.
+>
+> ⚙ Operational note for whoever drives the rest of this table: **a game window steals focus back**,
+> so a computer-use click on the UI behind it only re-activates the window and the button never
+> fires — silently, with no error. Two Connect clicks were swallowed that way before
+> `tools/verify/front_window.py front UE5DumpUI` was run first. The tell is the UI's `pipe-0.log`
+> showing **no connect attempt at all**.
 > | X12 | (maintainer) install CE under **%ProgramFiles%** (write needs elevation), run the app **non-elevated**, click **Install CE autorun** | it falls back to the manual save dialog ("… not writable — choose where to place it…") instead of failing | the denied-write branch needs a real non-writable CE folder |
 
 ### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L2 (T1a Radar) end-to-end: AB12 / AB13 / AB14 / AB16 / AB17
