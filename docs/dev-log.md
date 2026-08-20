@@ -22,6 +22,100 @@ builds ≤696 in
 
 -----
 
+## 2026-08-20 (later) - Third verification pass on 3263: ST1 and PEHOOK closed out, 1 new defect, a §4.4 retirement, and one void run caught
+
+**No source change.** `build_number.txt` stays **3263** and the tree is clean.
+⚠ **Correction to the entry below it: `dist/` is NOT untouched any more.** PEHOOK step 3b needs a
+DLL whose SIB pattern alternates are disabled, and the row sanctions building one; that build and
+the restoring rebuild both overwrite `dist/`. Source is identical (git clean, `-NoBumpBuildNumber`
+on both), so the binaries differ only by build non-determinism — but they are **not** byte-identical
+to the handed-over 3263, and `proxy_refresh.py` now reports all nine deployed proxies `*** STALE ***`
+as a result. **That report is a false alarm; do not act on it** (it compares SHA-256, and the sizes
+still match exactly).
+
+**Hosts, one at a time, each killed when its rows were done:** DumperTest Development (shipping DLL
+*and* a SIB-less variant injected by path), **DQ7R**, **Lushfoil**, **EVERSPACE 2**, **Echoes of
+Aincrad Demo**, **Satisfactory**.
+
+### Two batches closed
+
+* **`ST1` — all six steps, headless.** Two techniques made a batch whose table repeatedly says
+  *"a paused/menu game"* and *"ordinary gameplay for a few minutes"* runnable with nobody present:
+  **suspending the UE game thread** is a scriptable and strictly *stronger* form of every idle-game
+  precondition (frozen = exactly 0 ProcessEvent fires, where backgrounding still ticks ~120/s), and
+  where a log line structurally could not decide a step, **an observable side effect in memory
+  could** — steps 4 and 6 were settled by watching `AActor::bHidden` flip after a resume, not by an
+  absent log line.
+* **`PEHOOK` — 1b/2/3/3b/4/5/6/7/8.** Only the UI Self-Test *text* (step 1) and the structurally
+  unreachable 3c remain. Step 3 reached its **terminal 3/3 + "giving up"** state for the first time;
+  step 5's false-positive guard was exercised for the first time (previous runs only showed the
+  branch was never entered).
+
+### One new defect
+
+**`[INVOKEINHERIT-2026-08-20]`** — `Ubel::WalkFunctions` never climbs `SuperStruct`, so
+`UE5_FindFunctionByName` can only resolve a function a class **declares**. `AActor`'s 140 functions
+are unreachable on every subclass; 11 of 42 live objects can invoke *nothing at all*; and
+`UE5_SetDebugCamera` resolves `ToggleDebugCamera` off the live CheatManager's class, so the shipped
+Debug Camera toggle fails on any game with a derived CheatManager. Reproducer committed
+(`invoke_inherited_function.py`, exits 1 while the defect stands). **Not fixed** — and the fix shape
+carries a warning: do *not* make `WalkFunctions` inherit, because it is also what LISTS a class's
+functions; the change belongs in the resolvers.
+
+### A documented rule retired, and a blast radius measured
+
+* **`working-lessons` §4.4's Everspace 2 evidence is withdrawn.** It recorded a KismetMathLibrary
+  no-op diagnosed *while the hook was in the wrong vtable slot*, with the stub hypothesis "never
+  re-verified against the corrected hook". It has now been re-verified on that same title:
+  `Add_IntInt(3,4)` returns **7** at `vtable+0x278`. The failing pattern the section rested on has no
+  surviving instance here.
+* **The open `Serie::GetString` dropped-`Number` lead now has a measured blast radius** (it was
+  explicitly "not measured"): 40 of 42 live objects are named differently by two pipe commands, and
+  6 of 6 are **unfindable by the name the DLL itself reports** — the bare name silently resolving a
+  *different* object. 71 call sites, 4 of which pass a Number. Still "do not sed it": the
+  discriminator is display/identity vs matching.
+
+### One run caught and voided
+
+**`G3` steps 3+4 on Satisfactory produced a full set of coherent readings from a game that had never
+booted.** Launching its shipping exe directly puts up *"Failed to open descriptor file
+`../../../FactoryGameSteam/FactoryGameSteam.uproject`"* — UE resolves the `.uproject` relative to the
+exe, and this title's exe lives in `Engine\Binaries\Win64\`. Injection, the pipe, and the scan all
+succeeded against a dead engine, and the numbers looked *specific*: GNames and GWorld resolved (symbol
+exports work as soon as DLLs are mapped), `GObjects=0x0`, and `ExtraScanGObjects: No valid
+FUObjectArray found (763 candidates tested)`. Relaunching via `steam.exe -applaunch 526870` resolves
+**all four globals, 137,425 objects** — with `gobjects` at **the exact address the failed run had
+found and rejected as empty**, which isolates "array not populated" from "wrong address" by holding
+the address constant. Satisfactory is exonerated, `test-games.md` was right, and **G3 3+4 have no
+fixture on this machine at all**. Written up as `working-lessons` §3.w.
+
+### Also settled
+
+`AA2/AA3` step 3 (mailbox driven from Python, witness checked against `ReadProcessMemory` across 29
+classes — and the row's assertion narrowed, because a derived listing's `classWitness=0x0` is
+*correct*) · `U8` on a staged fixture (`Number := 8` written and restored; Value Search matched the
+same 8 bytes, the bare string matching the CDO instead) · `L4/MB1` both rows (the invoke ROUTE made
+observable by freezing the game thread: 5 ms + success vs 5006 ms + timeout) · `L10` step 6's
+retention clause (a 30-day `TeleportCoords` file survives while a 30-day `Snapshots` group is deleted
+in the same launch — the control that makes it mean anything) · `G11` steps 3 and 4 (Tier 2 has now
+failed to fire for three *different* reasons; an offline exe scan proves the silence is correct on a
+tag-stripped title) · Solide `capped` and `FREEZESCOPE` step 4 (unlocked by noticing Solide's pool is
+**not Actor-only**: an 819-instance `ActorComponent` sweep gives `held=256, truncated=true`) ·
+`PEHOOKONCE` step 3 in its literal pre-scan form.
+
+### Rig lessons worth more than the rows
+
+`working-lessons` §1 now carries **four** variants of one mistake, all found in this batch: a log
+window coarser than the events it separates *reports a confident wrong answer*. Line-count slicing
+across several growing files; a one-second timestamp watermark between cells milliseconds apart
+(this one printed `FAIL` on a run whose own `result=-5` proved the opposite); a counter read outside
+the timed window; and a byte offset recorded before a process start that **rotates** the log. The
+reliable primitive is a before/after **count**. Also §1.y: `find_instances` without `exact_match` is
+a *name substring* match, so "the first live instance of `Actor`" was a `UActorSequence` — and a
+wrong-type invoke left queued can drain later against a non-actor.
+
+-----
+
 ## 2026-08-20 - Second live-verification pass on 3263: 26 register rows settled, 2 new defects, 4 rigs (no build change)
 
 **No source changed.** Everything below is `docs/todo.md` evidence, `tools/verify/` rigs and the
