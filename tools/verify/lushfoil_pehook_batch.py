@@ -40,6 +40,9 @@ IDLE_S = 60
 def say(s):
     enc = sys.stdout.encoding or "utf-8"
     sys.stdout.write(str(s).encode(enc, "replace").decode(enc, "replace") + "\n")
+    # Flush: a backgrounded rig's stdout is a FILE, which Python block-buffers --
+    # a long run then shows an EMPTY output file and looks hung.
+    sys.stdout.flush()
 
 
 def count(needle):
