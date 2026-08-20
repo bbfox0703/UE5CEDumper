@@ -2220,6 +2220,35 @@ X4 and X9 are fully settled by tests; the rows below are what only a running gam
 > | X5 | before disconnecting, start Live Walker **auto-refresh** and (experimental) an **auto-snapshot** loop, then disconnect. ⛔ **Needs a build carrying `[AUTOREFRESH-2026-08-19]`** — on `dist` 1.0.0.3262 and earlier the countdown freezes at `0s` and auto-refresh issues nothing, so "start auto-refresh" cannot be satisfied and a green result would only mean *a loop that never ran did not run*. The auto-snapshot half is unaffected and can be run alone | both loops stop immediately on disconnect (no "re-walk"/"capture" log spam against the dead pipe); the snapshot **corpus is preserved** | the timer/loop teardown and corpus-preservation are not unit-testable |
 > | X6 | start a **Dump All** (or Full SDK / USMAP) on a large game, then kill the game / disconnect mid-export | the export aborts promptly with "… cancelled (disconnected)" instead of hanging on dead-pipe round-trips; no truncated file at the chosen name | the ct now threads from a connection-linked CTS; before, `ct` was `default` and every service ct-check was dead code |
 > | X7 | pause the game thread **during a long bulk-lane scan** (so only the bulk lane observed the pause), let the scan finish, then resume and browse via Live Walker (interactive lane) | the "game thread paused" banner **clears** on resume; before the fix it stuck ON until a bulk command ran | the pure latch is unit-tested, but the PipeClient per-response feed + banner is end-to-end |
+> ### ✅ X7 PASS 2026-08-20 `[L6-X7-2026-08-20]` — bulk lane saw the pause, the INTERACTIVE lane cleared it
+>
+> ⚠ **Two preconditions this row does not state, either of which makes it silently unrunnable.**
+> * `Stark::IsGameThreadResponsive` opens with `if (!s_hookActive) return true;` — with **no PE hook
+>   installed the game can never be reported stalled**, so the banner cannot appear and the row
+>   passes vacuously. The hook was installed first via Teleport → **Get POV** (an `invoke_function`),
+>   confirmed by it returning a real pose (`Location 500…`, `FOV 90`).
+> * Freeze the **thread**, not the process. A whole-process suspend stops Fern too, so nothing
+>   answers and no envelope carries the flag. `tools/verify/suspend.py suspend-tid` on the UE game
+>   thread (`tid 38780`, the main thread) leaves the pipe answering while ProcessEvent dispatch is
+>   frozen — which is the state the row describes.
+>
+> | # | action | result |
+> |---|---|---|
+> | 1 | suspend `tid 38780` (threshold `kStallThresholdMs` = **500 ms**) | — |
+> | 2 | **bulk** lane command — Instances `find_instances` | the banner appears: *"⏸ Game thread paused — the game isn't ticking…"*. The scan itself **still returned** `Found 1 instances`, exactly as the banner promises ("memory scans still work") |
+> | 3 | resume `tid 38780` | banner still ON — correct, nothing has observed a fresh envelope yet |
+> | 4 | **interactive** lane only — drill a `→` in Live Walker | **banner clears** |
+>
+> ⭐ **Step 4 is the whole row, and it was verified on the wire rather than by eye.** From the resume
+> to the clear the UI's pipe log carried exactly two commands — **`walk_instance`** and
+> **`walk_functions`**, both interactive; **zero** of the 33 `BulkCommands` ran. That is precisely the
+> stuck case: the bulk lane observed `true`, went idle, and never fired its own `true→false` edge.
+> One latch shared by both lanes is what clears it. Had a bulk command slipped in, the old two-latch
+> code would have cleared the banner too and the run would have proven nothing — so the lane audit
+> is not a nicety here, it is the evidence.
+>
+> ℹ️ Incidental: the banner is a **layout row**, so while it is up every tab shifts down ~22 px. A
+> click scripted against banner-less coordinates lands on the wrong tab and looks like a dead button.
 > | X8 | on the **Console** tab, with CE + AOBMaker **closed**, click a baked-exec / Debug-Camera "to CE" action → then **open** CE with the AOBMaker plugin and click again (no tab switch) | the second click now sends to CE (was "AOBMaker not connected" from the stale cached flag) | the path now calls `CheckAvailabilityAsync` first; needs a real CE toggled between clicks |
 > | X10 | on Teleport, change the **World / Player time-dilation** sliders, wait >1 s, close the app, relaunch | the slider values are restored (they now schedule a save) | before, only OTHER Teleport options triggered a save, so a time-dilation-only change was lost |
 > ### ✅ X10 PASS 2026-08-20 `[L6-X10-2026-08-20]` — and the restore is proven to come from DISK
