@@ -2212,8 +2212,11 @@ X4 and X9 are fully settled by tests; the rows below are what only a running gam
 > *view* without touching the *per-game store*, which is the distinction the row is drawing —
 > checking only that A's file survived would not have ruled out B displaying A's slots.
 >
-> ⚠ Not covered by this run: the **second X5 row** (auto-refresh + auto-snapshot loops stopping on
-> disconnect) is a separate check and is still open.
+>  ℹ️ The **second X5 row** is now HALF settled: its *auto-refresh* clause — "both loops stop
+> immediately on disconnect (no re-walk log spam against the dead pipe)" — was measured under
+> `[AUTOREFRESH-LIVE2-2026-08-20]`: Auto ON and ticking at 10.0 s, game killed, **0 walk attempts
+> and 5 log lines total** in the next 20 s, nothing for 121 s. The **auto-snapshot** clause and
+> the corpus-preservation check are still open.
 > | X5 | before disconnecting, start Live Walker **auto-refresh** and (experimental) an **auto-snapshot** loop, then disconnect. ⛔ **Needs a build carrying `[AUTOREFRESH-2026-08-19]`** — on `dist` 1.0.0.3262 and earlier the countdown freezes at `0s` and auto-refresh issues nothing, so "start auto-refresh" cannot be satisfied and a green result would only mean *a loop that never ran did not run*. The auto-snapshot half is unaffected and can be run alone | both loops stop immediately on disconnect (no "re-walk"/"capture" log spam against the dead pipe); the snapshot **corpus is preserved** | the timer/loop teardown and corpus-preservation are not unit-testable |
 > | X6 | start a **Dump All** (or Full SDK / USMAP) on a large game, then kill the game / disconnect mid-export | the export aborts promptly with "… cancelled (disconnected)" instead of hanging on dead-pipe round-trips; no truncated file at the chosen name | the ct now threads from a connection-linked CTS; before, `ct` was `default` and every service ct-check was dead code |
 > | X7 | pause the game thread **during a long bulk-lane scan** (so only the bulk lane observed the pause), let the scan finish, then resume and browse via Live Walker (interactive lane) | the "game thread paused" banner **clears** on resume; before the fix it stuck ON until a bulk command ran | the pure latch is unit-tested, but the PipeClient per-response feed + banner is end-to-end |
@@ -2742,7 +2745,56 @@ three changes, each independently unit-pinned:*
 > and reads exactly like the bug. Check which command the current root actually issues before
 > concluding an absence.
 >
-> Steps 2+ (the skip-reason text, and resume-after-reconnect) not run.
+> Steps **2** (the skip-reason text) and **4** (proxy mode) not run.
+
+> ### ✅ STEPS 3, 5, 6, 7 PASS 2026-08-20 `[AUTOREFRESH-LIVE2-2026-08-20]` — every one measured on the wire
+>
+> Continues the run above on a **second** host and a **second** root type, so step 1 is now confirmed
+> for an *instance*-rooted view too, not just GWorld. Throughout, the label was never trusted on its
+> own: each verdict is the UI's `pipe-0.log` walk cadence.
+>
+> **Step 6 (non-regression) — first half PASS, and the second half's EXPECTATION IS WRONG.**
+> * *user untick*: Auto ON → `sec · 6s`; untick → the button unlights and the label returns to plain
+>   `sec`, still off 6 s later. **The untick sticks.** ✅
+> * *drill into a child*: the row expects "stays OFF". It does **not** stay off — and it should not.
+>   The `→` button is `NavigateToFieldCommand` → `NavigateToFieldAsync`, which is **not** one of the
+>   six methods that call `StopAutoRefreshTimer` (`StartFromWorld`, `StartFromGameEngine`,
+>   `NavigateToAddress`, `LocateInGWorld`, `LocateContainerInGWorld`, `LoadBookmark`). A field drill
+>   never stops the timer, so "does not resume" never applies to it. What actually happens is the
+>   useful thing, and it is correct on the wire — auto-refresh **re-targets to the new root**:
+> ```
+> 11:27:49.293  walk_instance 0x1C2444DBD80   <- the manual drill into PersistentLevel
+> 11:27:54.857  walk_instance 0x1C2444DBD80   gap  5.6 s   (mid-cycle)
+> 11:28:04.863 … 11:29:44.956                 gap 10.0 s × 12 consecutive
+> ```
+> It never walks the stale GWorld root again. ⚠ **Fix the row, not the code**: the fix note says a
+> navigation re-root "does not *resume*", which is a statement about what happens after a stop — the
+> step turned that into "must be off", which the code never did and the fix never claimed.
+>
+> **Step 5 (tab-leave / return) — PASS, and it genuinely stopped in between.** Auto ON, switch to
+> Instances for 8 s, come back: the label reads `sec · 4s` and is running. The label alone would not
+> settle it — a timer that never stopped looks identical. The wire does: ticks run at 10.0 s up to
+> `11:30:04.971`, then **one 25.9 s gap** across the absence, then `11:30:30.838` and back to 10.0 s.
+>
+> **Step 7 (disconnect, empty panel) — PASS, and this is also X5's second row, auto-refresh half.**
+> Game B killed at **11:31:04.943** with Auto ON and ticking. In the next 20 s the UI's pipe log
+> gained **5 lines total** — the disconnect sequence — and **0 walk attempts**. No re-walk against a
+> dead pipe, no spam. The Auto control itself is *hidden* while the panel has no data, so "the label
+> reads `sec`" cannot be observed as written; the substantive half (nothing polls) is what was
+> measured. Nothing polled for the **full 2 minutes** until a navigation.
+>
+> **Step 3 (THE MAINTAINER'S PATH) — PASS.** Killed game B (Shipping), started a **different** game A
+> (Development), reconnected, and navigated. **Auto came back on by itself** — no click on the
+> toggle:
+> ```
+> 11:31:04.9  game B killed, Auto was ON        -> 0 walks for 121 s
+> 11:33:05.4  Start from GWorld (the navigate)  -> walk_world
+> 11:33:15.5 … 11:34:05.5                       -> walk_world, gap 10.0 s × 6 consecutive
+> ```
+> ⭐ Both halves matter and they pull in opposite directions: it must **not** poll while
+> disconnected *and* must **not** stay silently off afterwards. Pre-fix it stayed off for the rest of
+> the session. Reconnecting also **reloaded game A's bookmark** into slot 1 (`ThirdPersonMap`) by
+> itself, which is the same per-game store `X5` checked from the other side.
 
 > | 1 ⚠ THE ONE THAT MATTERS | Live Walker → root on any live object → tick **Auto** → watch for 3 full intervals | the countdown cycles `10…1` and repeats, and the grid's values actually change | the reported failure is the counter reaching 0 and never moving again |
 > | 2 | while Auto runs, double-click an editable scalar cell to open its editor, then click a breadcrumb to navigate away | the label reads `sec · paused (editing)` only while the editor is open, and auto-refresh resumes by itself afterwards — it must NOT stay paused | this is the suspected original trigger; a stranded latch used to kill Auto for the whole session |
