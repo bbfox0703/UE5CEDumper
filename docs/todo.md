@@ -2197,6 +2197,29 @@ one of these four wins — the same shape of requirement as `G7`. Nothing instal
 |---|--------|------|
 | 1 | Inject into any UE 4.27 title and grep `scan-0.log` for `GWLD_TQ_3`/`GWLD_TQ_4`/`GOBJ_PS1`/`GOBJ_PS6`. | If one of them WINS, its resolved address must be a plausible `&GWorld` / `&GUObjectArray` (matches the address the winning pattern in a previous run reported). Before build 3262 these four resolved to garbage on every hit, so any past log showing one of them *validated* is worth re-checking — that is the strongest available evidence the old geometry was wrong. ⚠ **A run where none of the four wins proves nothing** — they are low-priority entries and a better pattern normally lands first. |
 | 2 | Same session: check whether the Teleport tab's Global Pointers card still offers an AOB-wrapped CE export for GWorld. | Unchanged from before. **AD10** only withholds the triple when replaying it does not reproduce the resolved address; every GWorld entry is `RipBoth`, and the direct arm is the normal winner. |
+### 🟡 AD18 — THREE OF FOUR FLAVOURS PASS 2026-08-20 `[AD18-2026-08-20]`; `dinput8` is unreachable here
+
+*Headless: every `init-*.log` on the machine, keyed by proxy flavour and by the DLL build that wrote
+it. The rewrite ships in **3263**, so only 3263 rows count as a regression check on it.*
+
+| flavour | titles at build 3263 | the line they logged |
+|---|---|---|
+| **version** | 5 — DQ7R, ES2, Geri, LushfoilSim, ManorLords | `Loaded real version.dll: C:\WINDOWS\system32\version.dll` |
+| **dxgi** | 2 — Avowed, Elliot | `dxgi proxy: lazily forwarded 20/20 exports to real System32 dxgi.dll` |
+| **winmm** | 1 — OCTOPATH TRAVELER | `winmm proxy: lazily forwarded 180/180 exports to real System32 winmm.dll` |
+| **dinput8** | **0** | — |
+|
+> Eight titles across three flavours all started normally and all chain-loaded the real System32 DLL
+> on the rewritten path. The export counts are the useful detail: **20/20** and **180/180** forwarded,
+> i.e. the lazy forwarder resolved the complete export set, not a subset that happens to cover
+> start-up.
+>
+> ⛔ **`dinput8` cannot be exercised on this machine, and deploying it would not help.** A proxy of
+> that flavour only loads if the game statically imports the name; reading the import table of **all
+> 16** installed UE shipping exes with the repo's own `tools/pe/pe_imports_exports.py` returns
+> **not one** importer of `dinput8.dll`. Deploying it to a title and launching would therefore produce
+> no `[PROXY]` line at all — an inconclusive run, not a pass. Closing this arm needs a game that
+> imports `dinput8` (a title with legacy DirectInput controller support).
 | 3 | Force the AD10 path if a title ever resolves GWorld via the DEREF arm (or a future entry gains a non-zero `adjustment`). | `scan-0.log` (or `init-0.log`) carries the new WARN `replaying its published AOB triple does not reproduce it` and the CE export offers **no** AOB — instead of exporting a triple that resolves to the wrong address. ⚠ Not reproducible on demand; watch for the line rather than trying to cause it. |
 | 4 | **AD18** — launch a game with each of the four proxies (`version` / `dinput8` / `dxgi` / `winmm`) in turn. | Each still loads its real System32 DLL and the game starts normally. The refusal path is unreachable on a healthy system, so this is a **regression check on the rewrite**, not a test of the fix: the point is that routing all four through `Lugner::SystemDllPath` did not break the ordinary case. |
 
