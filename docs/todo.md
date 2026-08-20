@@ -2099,6 +2099,36 @@ spot-check rather than a 30-column sweep.
 > | 3 | **B** | **AOT.** Same build: Class Pivot's Discover grid (Changed / Cat / Shape / Score), Snapshot's list (Label / Size), Snapshot Diff's **Change**, Snapshot+SPC group grids' **Class**, and the Invoke param picker's four headers. | All reorder. **Size** must be numeric (a "980 MB" row below a "1.2 GB" row) — these are the ten columns no finding named, found by the repo-wide sweep. |
 > | 4 | **A** | **AF10.** With the UI already running, launch `UE5DumpUI.exe` a second time from PowerShell and read `$LASTEXITCODE`. | **1**, not 0 — and the first instance's window comes forward. Previously the second-instance refusal reported success to any script that waited on it. |
 > | 5 | **A** | **AF11.** Put a `teleport-coords.<module>.json` (plus a `.bak`) in `%LOCALAPPDATA%\UE5CEDumper\` root, then start the UI. | Both files are now in `%LOCALAPPDATA%\UE5CEDumper\TeleportCoords\`, the root copies are gone, and the Teleport tab still lists the coordinates. ⚠ Check the pair moved **together** — a `.json` migrated without its `.bak` is the group-move invariant broken. |
+> ### ✅ AF8 + AF7 PASS 2026-08-20 `[AF7-AF8-2026-08-20]` — steps 7 and 8, over the pipe, no UI
+>
+> Rig: `tools/verify/af7_af8_pipe.py`, DumperTest Development / dist 3263. DLL-side rows, so the UI
+> is not the subject — and correspondingly this says nothing about the panels' own bindings.
+>
+> **AF8 — the signed byte survives, and TWO independent detectors agree.** DumperTest ships its own
+> fixture for this (`DumperTestActor.I8_Neg`, one of 10 `Int8Property` rows on the title):
+> ```
+> force_field(kind="numeric", value=-5) -> ok:true  held:1  resolved:true
+> get_forced_fields  -> {"field_name":"I8_Neg","field_offset":1592,"held":1,
+>                        "kind":"numeric","owner_addr":"0x1B761407910","value":-5.0}
+> ```
+> ⭐ Then the byte itself, read out of the process by `read_mem.py` at
+> `owner_addr + 1592 = 0x1B761407F48`: **`FB`**. `0xFB` is 251 unsigned and **−5 signed** — so the
+> memory and the report agree, and the defect (report 251 for the same byte) is absent. Checking only
+> `get_forced_fields` would have been the DLL confirming itself.
+>
+> ⚠⚠ **Two parameter names will make this row look FAILED when the call is simply malformed** — the
+> first attempt hit both. It is **`kind`**, not `mode`, and it *defaults to `"bool"`*, so a wrong name
+> is not an error; and `value` is read as `request.value("value", 0.0)`, so the **string** `"-5"`
+> parses to `0.0`. Together they return
+> `ok:true, held:0, resolved:false, kind:"bool", value:0.0` — which reads exactly like "the fix does
+> not work". Valid kinds are `bool` / `object_null` / `numeric` (`Fern.cpp:5734`).
+>
+> **AF7 — the key is present, which is the actual assertion.** 400 functions listed, **80 probed via
+> `walk_function_props(func_addr=…)`, and `budget_hit` was present in 80 of 80 replies** (true in 0 —
+> nothing on DumperTest exceeds the budget). The row asks for presence, not truth, and presence is
+> what matters: a missing key and `false` are indistinguishable to `reply.get("budget_hit")`, so the
+> caller could not tell "the walk finished" from "the walk stopped early". The rig asserts the two
+> separately and refuses to pass on 0 probed functions.
 > | 6 | **A** | **AF11, negative control.** Repeat with a `teleport-coords.<module>.json` already present in `TeleportCoords\`. | The root copy is **left where it is** and a log line says so — never silently overwritten. Then confirm no sweep: backdate a library past 21 days and restart; it must still be there (`maxAgeDays: 0`, same as `Bookmarks\`). |
 > | 7 | **A** | **AF8.** Find an `Int8Property` via Property Search (`walk_class` on any class, grep the reply for `Int8Property`) and Force it to a **negative** value, e.g. `-5`. Then `get_forced_fields`. | Held count > 0 and the value reads back as **-5**. Before the fix the write stored 0xFB correctly but the read returned **251**, so the re-assert worker rewrote the byte every tick forever and the UI showed permanent drift. Also try `200`: it must now be **refused** as out of range rather than landing as -56. ⚠ Sample-blocked if no title exposes an `Int8Property`. |
 > | 8 | **A** | **AF7.** Run `walk_function_props` over the pipe against a **native** (non-Blueprint) UFunction on a large class and look for `budget_hit` in the reply. | The key is present. When `true`, the Props dialog's status line turns amber and carries "the disassembler hit its instruction budget", and the Interesting Functions batch **Uses** cell shows `⚠ partial`. ⚠ Needs a native function big enough to exhaust the budget — check the DLL's own `AnalyzeNativeFunctionProps ... BUDGET` log line to find one. |
