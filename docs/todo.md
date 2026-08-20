@@ -2469,6 +2469,45 @@ spot-check rather than a 30-column sweep.
 > | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
 > | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
 
+### ⬜ NEW DEFECT 2026-08-20 `[SNAPINTERVAL-2026-08-20]` — a below-minimum auto-snapshot Interval blanks the field and raises an unhandled cast exception
+
+*Found while running L6's `X5` auto-snapshot clause. **LOW** — cosmetic-plus: nothing is lost and the
+loop keeps working, but the user is shown a raw .NET exception and two controls go dead.*
+
+**Repro (reproduced twice, deliberately the second time):** Snapshot tab → click into
+**Interval (sec)** → clear it → type a value **below the 60 s minimum** (e.g. `30`) → **commit it by
+clicking another control rather than pressing Tab** (the Auto-snapshot toggle does it; so does any
+other click that takes focus).
+
+**Result:** the Interval field is left **completely empty** and a yellow validation line appears
+under it:
+```
+System.InvalidCastException: Could not convert '(null)' (null) to System.Int32.
+```
+**Retention** and **Count (N)** grey out while it is showing, and the message survives a disconnect.
+
+**What makes it a defect rather than ordinary validation** — the same input handled the *other* way
+behaves correctly:
+
+| how the value is committed | result |
+|---|---|
+| type `30` then **Tab** | **clamps to `60`** — correct, and the down-spinner greys out to show 60 is the floor |
+| type `30` then **click another control** | field **blanked**, `InvalidCastException` shown, siblings disabled |
+
+So the clamp exists and works; it is simply not applied on the focus-loss commit path, which instead
+pushes `null` into an `int` binding.
+
+⚠ **And the displayed value stops matching the value in use.** With the field blank and the
+exception showing, the loop still ran — at the **60 s** floor (`Auto: next snapshot in 50s` after an
+immediate first capture). A user reading that screen has no way to know what interval is in effect.
+
+**Fix shape:** apply the same clamp on the lost-focus/commit path as on Tab (or make the bound
+property nullable and coerce on commit). Effort S, risk low. **Not fixed — found during a
+verification pass.**
+
+⚠ **Do not "fix" it by widening the minimum or by hiding the validation line** — the floor is right
+and the message is the only thing that currently reveals the blank state.
+
 ### ⬜ NEW DEFECT 2026-08-20 `[INVOKEINHERIT-2026-08-20]` — an INHERITED UFunction cannot be invoked on a derived instance
 
 *Found while building a side-effect rig for `ST1` steps 4 and 6, when
@@ -2888,11 +2927,42 @@ X4 and X9 are fully settled by tests; the rows below are what only a running gam
 > *view* without touching the *per-game store*, which is the distinction the row is drawing —
 > checking only that A's file survived would not have ruled out B displaying A's slots.
 >
->  ℹ️ The **second X5 row** is now HALF settled: its *auto-refresh* clause — "both loops stop
+>  ℹ️ The **second X5 row** is now COMPLETE. Its *auto-refresh* clause — "both loops stop
 > immediately on disconnect (no re-walk log spam against the dead pipe)" — was measured under
 > `[AUTOREFRESH-LIVE2-2026-08-20]`: Auto ON and ticking at 10.0 s, game killed, **0 walk attempts
-> and 5 log lines total** in the next 20 s, nothing for 121 s. The **auto-snapshot** clause and
-> the corpus-preservation check are still open.
+> and 5 log lines total** in the next 20 s, nothing for 121 s.
+>
+> ### ✅ THE AUTO-SNAPSHOT CLAUSE + CORPUS PRESERVATION 2026-08-20 `[L6-X5-AUTOSNAP-2026-08-20]`
+>
+> DumperTest + the real UI, Snapshot tab. ⚠ **The loop was made to actually TICK first**, because
+> the shipped interval is 900 s and "no capture spam in the next 75 s" would otherwise be satisfied
+> by a loop that was never going to fire — the same vacuity trap as elsewhere in this batch. Interval
+> set to the **60 s minimum**, Auto snapshot ON, and the UI confirmed a real capture before anything
+> was killed: `Auto: next snapshot in 50s · captured 1`, a new `Snapshot 2026-08-20 18:18:21`
+> (644 objects / 12,155 fields), `Used: 2.7 MB → 5.5 MB`, and DumperTest's own db grown
+> **2,867,200 → 5,726,208 bytes** on disk.
+>
+> **Then the game was killed. Over the following 75 s** (more than one interval, so a tick was due):
+>
+> | signal | result |
+> |---|---|
+> | new `capture` / `Capture` log lines | **0** |
+> | new `snapshot` / `Snapshot` log lines | **0** |
+> | new `re-walk` lines | **0** |
+> | `view-0.log` / `init-0.log` growth | **0 bytes** |
+> | `pipe-0.log` growth | **+360 bytes** — the disconnect notice, nothing else |
+> | snapshot corpus | **29 files → 29 files, 0 lost, 0 changed** (SHA-256 per file) |
+>
+> The UI agrees with the logs: the **Auto snapshot toggle returned to `Off` by itself**, the panel
+> says *"Auto stopped: capture failed (disconnected?)"*, and both saved snapshots are still listed.
+> ⭐ The countdown label was checked twice 15 s apart and is **frozen at `13s`** — the timer really
+> stopped rather than continuing to run against a dead pipe.
+> ⚠ Minor cosmetic leftover, not filed: that frozen "Auto: next snapshot in 13s" line stays on screen
+> beside a toggle reading `Off` on a disconnected app, which reads as though a capture were pending.
+> ℹ️ The run leaves one extra DumperTest snapshot in the corpus (the `18:18:21` capture above); it is
+> a legitimate sample capture and `KeepRecent`/10 will age it out.
+
+
 > | X5 | before disconnecting, start Live Walker **auto-refresh** and (experimental) an **auto-snapshot** loop, then disconnect. ⛔ **Needs a build carrying `[AUTOREFRESH-2026-08-19]`** — on `dist` 1.0.0.3262 and earlier the countdown freezes at `0s` and auto-refresh issues nothing, so "start auto-refresh" cannot be satisfied and a green result would only mean *a loop that never ran did not run*. The auto-snapshot half is unaffected and can be run alone | both loops stop immediately on disconnect (no "re-walk"/"capture" log spam against the dead pipe); the snapshot **corpus is preserved** | the timer/loop teardown and corpus-preservation are not unit-testable |
 > | X6 | start a **Dump All** (or Full SDK / USMAP) on a large game, then kill the game / disconnect mid-export | the export aborts promptly with "… cancelled (disconnected)" instead of hanging on dead-pipe round-trips; no truncated file at the chosen name | the ct now threads from a connection-linked CTS; before, `ct` was `default` and every service ct-check was dead code |
 > | X7 | pause the game thread **during a long bulk-lane scan** (so only the bulk lane observed the pause), let the scan finish, then resume and browse via Live Walker (interactive lane) | the "game thread paused" banner **clears** on resume; before the fix it stuck ON until a bulk command ran | the pure latch is unit-tested, but the PipeClient per-response feed + banner is end-to-end |
