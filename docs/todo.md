@@ -2008,6 +2008,48 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > `getLuaEngine().Close()`.
 >
 > ⚠ `AA(B)` does not copy directly — it opens the **Invoke (baked)** dialog first so parameter values
+> ### ✅ Y10 + Y13 SCRIPT HALVES PASS 2026-08-20 `[Y10-Y13-EMIT-2026-08-20]` — measured on the emitted text, no CE
+>
+> Same technique as `[Y12-CLIP-2026-08-20]` and `working-lessons` §2.8: the assertions are about what
+> the **generator emits**, so the emitted script decides them. Captured from the clipboard with
+> AOBMaker offline and asserted programmatically (character offsets, not eyeballing) —
+> `out/y10y13/addsocket.lua.txt`.
+>
+> **The target function was chosen to satisfy the row's own precondition.** Interesting Funcs sorted
+> by `Param` descending gave `RigHierarchyController::AddSocket`, **ParmsSize=184**, whose return is
+> `ReturnValue (fstruct@172, size=12B)` — a complex return sitting **140 bytes past byte 32**.
+> AA(B) → tick **Verify return value** → **Copy AA Script**.
+>
+> **Y13 — the Before/After window reaches the return slot.**
+> ```
+> local _DUMP_LEN = 184  -- sized to reach the return slot; see ComputeDumpLength
+> return slot fstruct@172 size 12B -> ends at 184     window reaches it: True
+> ```
+> ⭐ 172 + 12 = **184** exactly, and two `_dumpHex` calls are emitted (`[Invoke] Before` /
+> `[Invoke] After `). **A fixed 32-byte window would have fallen 152 bytes short** — i.e. the old
+> dump could not have shown this return at all. The success line names it too:
+> `-> ReturnValue (fstruct@172, size=12B) -- complex return; see After: dump above`.
+>
+> **Y10 — the contract check fires before the first mailbox write.** By character offset in the
+> emitted body:
+> ```
+> getAddressSafe('g_mailboxContract') @2833  <  magic 1127564629 @4465
+>                                            <  getAddressSafe('g_invokeMailbox') @5876
+>                                            <  FIRST write* call @6485
+> ```
+> and **8** refusal paths each do `if memrec then memrec.Active = false end` + `return`, all of them
+> above that first write. So no branch can write to the mailbox before the layout has been agreed.
+>
+> **Contract confirmed rather than assumed** — the L11 note asked for exactly this: the script bakes
+> `local _want = 3`.
+>
+> ⚠ **The pre-zero CLAMP is not exercised here.** The loop emits `for i = 0, 184 - 1 do
+> writeByte(_PD_dbg + i, 0) end` against `_PD_dbg = _mb_dbg + (UE5_INVOKE_PARAMS_OFFSET or 0x328)` —
+> correct and inside the 1024-byte params region, but 184 is below the cap, so the clamp itself never
+> engages. Exercising it needs a UFunction with `ParmsSize > 1024`; the largest on DumperTest is the
+> 184 B used here.
+>
+> Still open: the CE-side half — watching the Before/After dump appear in the Lua Engine window.
 > can be baked, and `Copy AA Script` inside that dialog is what writes the clipboard.
 > | 7 | **B** | **Y10 / Y13.** Open a UFunction with a **complex return** (FString / struct) whose return slot sits past byte 32, tick **Verify return**, and push the baked script to CE. Tick the record. | CE's Lua Engine shows the Before/After dump **containing the return slot** (the window is now sized to reach it) and the line no longer says "see After: dump above" when it cannot. Then untick, **detach CE from the game**, and re-tick: the contract check must fire FIRST with a message naming `g_mailboxContract`, and the record must **untick itself** — no `writeByte` may have run. |
 > | 8 | **B** | **Y12.** Close CE (or disconnect AOBMaker), then **Copy AA Script (Baked)**, and right-click → Paste in CE's address list. | A memory record appears with type **Auto Assembler Script**. Before the fix the clipboard held a bare `[ENABLE]`/`[DISABLE]` body, which CE will not accept as a record at all. The result label should say "copied as CE XML", not "copied to clipboard". |
