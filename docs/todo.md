@@ -1982,6 +1982,50 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
 > | 5 | **B** | **V10.** On a title where the first scan leaves GObjects **or** GWorld unresolved, press **Extra Scan** and wait for it to finish. | The green "Found: GObjects: 0x…" result **stays on screen**. Before the fix it appeared and was blanked a few ms later by the pointer refresh the scan itself triggered. Then, mid-scan, change the **UE version** ComboBox: the Extra Scan button must stay disabled until the scan really ends. ⚠ Sample-blocked if every installed title resolves both pointers on the first pass. |
 > | 6 | **B** | **V11.** With CE + the AOBMaker plugin connected, click **Register symbol** on the GWorld card, then again with **CE closed**. | Success prints a teal line naming `gworld_addr`; the failure prints a RED line naming it. Before the fix both produced *nothing at all* on screen. Repeat on the **&GEngine** card — it was the second site, found by the sibling grep. |
+> ### ✅ V11 PASSES ON BOTH CARDS, BOTH OUTCOMES 2026-08-20 `[V11-SYM-2026-08-20]`
+>
+> **The defect V11 was filed for is that the panel looked identical whether CE had registered the
+> symbol or the bridge never reached CE at all** — both call sites branched the bool only to pick
+> `_log.Info` vs `_log.Warn`, so the user's next action (rooting a CE record on that symbol) resolved
+> to nothing with no hint why. All four combinations were driven on DumperTest Development (UE504,
+> 25,179 objects) with the `dist` AOT UI:
+>
+> | card | CE + plugin | on screen |
+> |---|---|---|
+> | GWorld **SYM** | connected | **teal**: `Registered CE symbol 'gworld_addr' — it re-scans on enable, so it survives a game restart.` |
+> | &GEngine **SYM** | connected | **teal**: `Registered CE symbol 'gengine_addr' — it re-scans on enable, so it survives a game restart.` |
+> | GWorld **SYM** | CE killed | **RED**: `Could not register CE symbol 'gworld_addr'. AOBMaker accepted the request but CE did not create the script — check that Cheat Engine is still open and attached to this game, then try again.` |
+> | &GEngine **SYM** | CE killed | **RED**: `Could not register CE symbol 'gengine_addr'. …` (same wording) |
+>
+> Every line **names its symbol**, success and failure are visually distinct (teal status vs the red
+> error banner), and the second site — the `&GEngine` card the sibling grep turned up — behaves
+> identically to the first, which is what `ReportSymbolRegistration` being shared is supposed to
+> guarantee.
+>
+> **Second, independent detector: the log agrees four times out of four, at the right levels.**
+> ```
+> 21:38:29 [INFO] Created CE symbol script 'gworld_addr'  (AOB: 48 8B 1D ?? … , pos=3,  len=7)
+> 21:39:03 [INFO] Created CE symbol script 'gengine_addr' (AOB: 48 83 EC 2? … , pos=10, len=14)
+> 21:39:50 [WARN] Failed to create CE symbol script 'gworld_addr'  (…)
+> 21:40:14 [WARN] Failed to create CE symbol script 'gengine_addr' (…)
+> ```
+> That matters because the *screen* is the thing V11 changed — the log split already existed — so
+> agreement between them is what shows the new UI report is driven by the real outcome rather than
+> being an optimistic message printed unconditionally.
+>
+> ⚠ **Navigation note for whoever re-runs this: the "Register symbol" control is the small `SYM`
+> button on the GWorld / &GEngine cards of the *`System` tab*.** `str.Tab.Pointers` renders as
+> **"System"**, so the panel the register lives on is not called Pointers anywhere on screen — and
+> the Teleport tab's *Global Pointers → Cheat Engine symbols* card is a **different feature** (it
+> publishes `UE_GWorld` / `UE_GameEngine`, build 1978). Clicking Teleport's `Get GWorld` and reading
+> its teal line would look like a V11 pass while exercising none of V11's code.
+>
+> ℹ️ Observed, not filed: the toolbar badge still read **AOBMaker Connected** while both failures
+> were produced, because it only re-probes on the ⟳ button or tab activation. The red message says
+> "check that Cheat Engine is still open", so the user is not misled about what to do — but a badge
+> and a banner disagreeing on screen at the same moment is worth a glance if the badge is ever made
+> load-bearing.
+
 > ### ✅ Y10's CONTRACT-BEFORE-WRITE HALF PASSES 15/15 2026-08-20 `[CONTRACT-ORDER-2026-08-20]`
 >
 > `scripts/tests/contract_check_test.lua` runs the **real `[ENABLE]` block the shipping UI emitted**
