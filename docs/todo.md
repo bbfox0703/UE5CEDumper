@@ -2189,6 +2189,31 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > | A9 | on a large game with deep/wide nested containers (a **SEED-class** object), run **Group Scan with Deep** enabled | no ~24 s single-object stall; the per-object element budget (`maxTotalElems`) bites before the global 15 s deadline, so the scan spreads across objects | before, the counter was never threaded so the budget was inert and one object could consume the whole scan window |
 > | A8 | ✅ **PASS 2026-08-19 `[A8-FLAT-2026-08-19]` — see below.** ~~none available here~~ | | |
 > | A7 | on a huge game, start a **find-object-by-address** (get_ce_pointer_info / find_by_address triggers `FindByAddress`) and **disconnect the client mid-scan** | shutdown/next command is prompt — no multi-second hang while the full GObjects walk finishes; the lookup returns "not found" | the loop now polls `Tot::Requested()` every 0x1000 objects like its siblings; only observable under a real disconnect on a large pool |
+> ### ⛔ A7 NOT REACHABLE HERE, measured 2026-08-20 `[A7-TOOFAST-2026-08-20]`
+>
+> The row needs a `FindByAddress` walk long enough to disconnect **inside**. On the largest title
+> installed on this machine it is not close.
+>
+> **DQ7R, 149,408 objects, deep descent ON with the element cap pushed to its maximum 4,096:**
+> ```
+> No UObject found at this address  [scanned (incl. deep descent) 149,408/149,408 in 152ms
+>                                    — ⚠ the deep descent probes at most 4,096 element(s) …]
+> ```
+> **152 ms** — a full-pool walk plus the deep pass, on a bogus address (the worst case, since a hit
+> would return early). A GUI click cannot land inside that, and neither can a scripted one: the
+> whole operation is shorter than a single round trip.
+>
+> Scaling says the gap is not marginal. DumperTest's 25,179 objects took **202 ms** and DQ7R's
+> 149,408 took **152 ms** — the walk is not even the dominant cost at this size. Reaching the
+> "multi-second hang" the fix prevents would need a title with far more *containers*, not merely more
+> objects; **FF7R-class** remains the named requirement, same as `Z8`.
+>
+> ⭐ Worth stating positively: at every scale available here the un-cancelled walk is already
+> sub-second, so the defect this fix removes has no observable symptom on this machine. That is a
+> reason the row cannot be closed, not evidence the fix is unnecessary.
+>
+> 📌 Third data point for `Z12`'s parameterised caveat, free from this run: the suffix has now been
+> observed naming **256**, **1,024** and **4,096** — it tracks the option across its whole range.
 > | G6 | (obfuscated fork only — **MindsEye**, no sample here) let name resolution race the fork's live key-table growth; also view a block whose tag is genuinely **absent** from the table | a transiently-unresolvable tag recovers on a later name (no permanent blanking of every FName with that tag); an absent-tag block renders as plaintext | the tri-state `LookupTagKey` no longer caches a transient miss, and a clean-absent resolves to key 0 (plaintext) per Genau's rule |
 
 > ### ✅ A8 PASS + ⛔ A7 NOT OBSERVABLE HERE — 2026-08-19 `[A8-FLAT-2026-08-19]`
