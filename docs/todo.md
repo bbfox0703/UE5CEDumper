@@ -4078,6 +4078,16 @@ order-swap that was permanently broken.*
 >   run is the correct and expected result. The no-storm property holds; the literal pre-scan-idle
 >   form was not run in isolation.
 > * **Step 5 (the UI path) not run** — steps 1–4 are the headless set.
+> * ### ✅ STEP 3'S LITERAL PRE-SCAN FORM NOW RUN 2026-08-20 `[PEHOOKONCE-3-2026-08-20]`
+>   The note above is right that the earlier grep was taken *after* the scan. Re-run in the form the
+>   row specifies — `tools/verify/lushfoil_pehook_batch.py`, fresh Lushfoil:
+>   * **precondition asserted, not assumed:** `gobjects='0x0'`, `objects=0` before anything — the
+>     "nothing to detect yet" window genuinely existed, so the zero below is meaningful;
+>   * `pe_profile_start` **before any scan** → `hook_active=false` with the ARMED wording;
+>   * then **268 polls of `get_diagnostics` over 60 s** (the 10 Hz feature the row asks for);
+>   * ⇒ **0** new `detection run N/8` lines and **1** `no UObject vtable available yet`
+>     (`Detection stays ARMED`). Nothing to detect spent no retry, and said so exactly once.
+
 
 > | 1 | fresh launch, proxy mode. `init` → `pe_profile_start` **before any scan** | `hook_active:false` and `hook_detail` starts **"ProcessEvent is not resolved yet, and detection is still ARMED"** and names BOTH causes (no scan / slot rejected). It must NOT say "do any invoke first" | the old text was unreachable advice by construction on this path. It must also not name only the no-scan cause — the same sentinel carries a re-armed rejection |
 > | 2 ⚠ THE ONE THAT MATTERS — the negative control | in the SAME process, now `trigger_scan` → one invoke (`teleport_get_pov`) → `pe_profile_start` again | **`hook_active:true`** | this exact ordering returned `false` **permanently** before the fix; a live game is the only thing that can prove it converges |
@@ -4152,6 +4162,30 @@ LOWERING the cap, not by finding a host*):
 > * **Step 1 proper (the UI Self-Test text) not run** — that needs System → Run Self-Test on screen;
 >   what is verified here is the DLL-side verdict and advice the panel now sources from
 >   `get_diagnostics`.
+
+> ### ✅ STEP 4 PASSES 2026-08-20 `[PEHOOK-4-2026-08-20]` — the pattern path is untouched, on Lushfoil
+>
+> The non-regression check, headless (`tools/verify/lushfoil_pehook_batch.py`). ⚠ It is recorded
+> separately from `[PEHOOKONCE-LIVE-2026-08-20]` step 4 on purpose: that run established
+> `hook_active: true` and `vtable+0x260`, but **neither the invoke result nor the absence of
+> `VALIDATION FAILED`**, which are the two things this step actually asserts.
+>
+> ```
+> DetectProcessEvent (pattern): match at vtable+0x260 -> 0x7FF797AB1510
+> ProcessEvent: offset resolved to vtable+0x260 via the pattern scan (detection run 1/8)
+> GameThreadDispatch: hook installed at 0x7FF797AB1510, validator armed (1500ms)
+> Add_IntInt(3,4) = 7        hook_active=True   fire_count=1223
+> NEW 'VALIDATION FAILED' lines: 0
+> ```
+>
+> ⭐ **Stronger than the row asks, because of what preceded it in the same process:** this ran
+> *after* the deliberate profiler-before-scan sequence that used to poison the PE hook for the whole
+> process. So the pattern path is shown untouched **and** shown to recover — the `detection run
+> **1/8**` is the single re-arm, exactly the signature `[PEHOOKONCE-LIVE-2026-08-20]` predicted
+> (a normal-order run resolves at run **0/8**).
+>
+> ⚠ Recorded as the **pipe** invoke, not the UI's Run Self-Test button; the panel wraps the same call
+> but its advice text is a separate surface.
 
 > ### ✅ STEP 3b PASSES + STEP 3 NOW COMPLETE 2026-08-20 `[PEHOOK-3B-2026-08-20]`
 >
