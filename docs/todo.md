@@ -2249,6 +2249,53 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > | AC10 | start a long operation over the pipe (Dump All, or a big Value Search), then **kill the game process** mid-stream | the UI reports a **failure** ("disconnected"), not a silent cancel; a partial export is not finalised as complete | the write-vs-death race is a TOCTOU the classifier's unit test cannot drive; only a real kill hits it |
 > | AC11 | on an installed game: **Deploy** a proxy to a clean Binaries folder, then **Deploy again** over it, then **Undeploy**. Check the folder for any `*.ue5dump-stage` leftover | all three succeed exactly as before; no `.ue5dump-stage` file is ever left behind; the grid never shows "Other proxy" for a DLL we just wrote | staging changed the publish from a copy to a copy+rename — the first-time-deploy path and the locked-target path are the two that must not regress |
 > | AC11 | with the game **running** (so the proxy is loaded and locked), click Deploy | still "File locked (game running?)", and the existing proxy is intact | the rename now raises the sharing violation the direct copy used to; the message must not change |
+> ### ❌ AC11 step 2 FAILS — the message DID change `[STAGELOCK-2026-08-20]` **(new defect, build 3263)**
+>
+> The row's own premise is wrong, and that is the finding. "The rename now raises the sharing
+> violation the direct copy used to" is **not true**: a locked target and a *mapped* target are
+> different kernel states, and the two publish shapes hit them through different paths.
+>
+> **Measured at the OS level** (`tools/verify/ac11_locked_rename.py` — a reproducer, so it exits 1
+> while this stands). Target mapped as a real image section by a live process, exactly as a running
+> game's loader does it:
+>
+> | publish shape | Win32 error on a mapped target |
+> |---|---|
+> | **OLD** `File.Copy(src, target, overwrite)` — opens the target for write | `ERROR_SHARING_VIOLATION` (32) |
+> | **NEW** `File.Move(stage, target, overwrite)` — renames over it | **`ERROR_ACCESS_DENIED` (5)** |
+>
+> A file carrying an image section refuses *deletion* with `STATUS_CANNOT_DELETE`, and the replacing
+> rename has to delete the target. The negative control (nothing mapped) has **both** shapes
+> succeeding, so this is the lock talking, not a broken path.
+>
+> **Confirmed one level up against the real `ProxyDeployService.CopyProxyStaged`**, called from a
+> throwaway xunit test with the target mapped in-process:
+> ```
+> System.UnauthorizedAccessException   HResult = 0x80070005
+> Message = "Access to the path is denied."      <- it does not even name the path
+> DeployAsync's "File locked" filter catches it?  False
+> stage file left behind?  False        target still intact?  yes
+> ```
+>
+> **What the user sees.** `DeployAsync` filters on
+> `catch (IOException ex) when (ex.HResult == 0x80070020 || ex.Message.Contains("being used"))`
+> ([ProxyDeployService.cs:1152](ui/UE5DumpUI/Services/ProxyDeployService.cs:1152)).
+> `UnauthorizedAccessException` is **not an `IOException`**, so it misses *both* arms and falls to
+> the generic handler: the row goes to **`ErrorOther`** with **"Access to the path is denied."**
+> instead of **`ErrorLocked`** / **"File locked (game running?)"**. That message names no path and
+> reads as a permissions problem, so the natural user response is to re-run as administrator — which
+> cannot help, because the file is not permission-denied, it is *in use*.
+>
+> **The other two halves of the row PASS**: no `.ue5dump-stage` survives (the `finally` fires on this
+> path too) and the live proxy is left byte-intact.
+>
+> ⭐ **The fix is already written three lines away, twice.** `UndeployAsync`
+> ([:1269](ui/UE5DumpUI/Services/ProxyDeployService.cs:1269)) and the orphan sweep
+> ([:1813](ui/UE5DumpUI/Services/ProxyDeployService.cs:1813)) each carry an explicit
+> `catch (UnauthorizedAccessException)` arm. `DeployAsync` is the only one of the three without it —
+> and the only one whose write turned into a rename. So the fix shape is to add the same arm (or
+> widen the filter to `0x80070005`), not to redesign staging. ⚠ Deliberately **not applied here**:
+> this session verifies, it does not fix.
 > | AC12 | on this machine (multi-library Steam install), open Proxy Deploy and let it scan | the same library folders as before are found; `proxy`/`init` log has **no** "libraryfolders.vdf is malformed" line | the parser is fully unit-tested but its input is a real Valve-written file — a rejected real VDF would silently halve game detection |
 > ### ✅ AC6 + AC12 PASS 2026-08-20 `[L7-AC6-AC12-2026-08-20]`
 >
