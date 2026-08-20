@@ -2058,6 +2058,44 @@ spot-check rather than a 30-column sweep.
 > |---|-----|--------|------|
 > | 1 | **B** | **AOT.** On a `-Mode Publish` build, click the **Period** header in Live Funcs, the **✓** and **Offset** headers in Detect Stats, and the **Params** header in Live Walker's function grid. | Rows reorder, and reverse on a second click. Before the fix these four headers animated and did nothing. Period must order numerically (a 16.7 ms row above a 1000 ms row), not by the rendered label. |
 > | 2 | **B** | **AOT.** Same build: open the Props dialog from Interesting Functions and the Xref dialog from Class Struct, and click every column header in each. | All six headers in each dialog reorder. `Access` / `Refs` must sort by the NUMBER (a "12W / 3R" row above "2W / 1R"), not by the rendered string. |
+> ### ✅ AF10 + AF11 PASS 2026-08-20 `[AF10-AF11-2026-08-20]` — steps 4, 5 and 6, all headless
+>
+> **AF10 (step 4) — both halves, and the second half needed staging to mean anything.**
+> ```
+> second instance exit code : 1        (not 0)   ·   0.5 s   ·   instances after: still 1
+> ```
+> ⚠ *"the first instance's window comes forward"* is only evidence if it was **not** in front to
+> begin with, so Steam was pushed to the foreground first:
+> ```
+> foreground BEFORE 2nd launch : steamwebhelper.exe  'Steam'
+> foreground AFTER  2nd launch : UE5DumpUI.exe       'UE5 Dump UI'
+> ```
+> (Run from Python, not PowerShell, per this machine's AV rule — `subprocess.run(...).returncode` is
+> the same number `$LASTEXITCODE` would report.)
+>
+> **AF11 (step 5) — the migration, and the `.bak` travels with its `.json`.** With the UI stopped,
+> `teleport-coords.zztest.json` **and** `.json.bak` were planted at the `%LOCALAPPDATA%\UE5CEDumper`
+> root, then the UI was started:
+> ```
+> root leftovers : []      TeleportCoords\ : dumpertest.json, dumpertest.json.bak,
+>                                            zztest.json, zztest.json.bak
+> [INFO] AppDataFolderMaintenance: moved 2 'teleport-coords' file(s) into '…\TeleportCoords'
+> ```
+> Both files moved **as a group** — the invariant CLAUDE.md states for this folder family.
+>
+> **AF11 (step 6) — the collision control, checked by HASH in both directions.** The root copy was
+> planted **deliberately different** (1,333 B vs the existing 1,263 B) so "left alone" and "silently
+> overwritten" cannot be confused:
+> ```
+> root copy still present : True      root copy unchanged   : True   (sha c38ea777…)
+> target NOT overwritten  : True      (sha 6eb2d5b0… before and after)
+> [WARN] AppDataFolderMaintenance: left 'teleport-coords.zztest.*' at the old location
+>        ('teleport-coords.zztest.json' already exists in …)
+> [INFO] AppDataFolderMaintenance: moved 0 'teleport-coords' file(s) …, left …
+> ```
+> ⭐ Comparing only file *existence* would have passed even if the target had been clobbered by the
+> root copy; hashing both is what shows the destination is untouched **and** the source is intact.
+> Planted files removed afterwards; the folder is back to its two `dumpertest` files.
 > | 3 | **B** | **AOT.** Same build: Class Pivot's Discover grid (Changed / Cat / Shape / Score), Snapshot's list (Label / Size), Snapshot Diff's **Change**, Snapshot+SPC group grids' **Class**, and the Invoke param picker's four headers. | All reorder. **Size** must be numeric (a "980 MB" row below a "1.2 GB" row) — these are the ten columns no finding named, found by the repo-wide sweep. |
 > | 4 | **A** | **AF10.** With the UI already running, launch `UE5DumpUI.exe` a second time from PowerShell and read `$LASTEXITCODE`. | **1**, not 0 — and the first instance's window comes forward. Previously the second-instance refusal reported success to any script that waited on it. |
 > | 5 | **A** | **AF11.** Put a `teleport-coords.<module>.json` (plus a `.bak`) in `%LOCALAPPDATA%\UE5CEDumper\` root, then start the UI. | Both files are now in `%LOCALAPPDATA%\UE5CEDumper\TeleportCoords\`, the root copies are gone, and the Teleport tab still lists the coordinates. ⚠ Check the pair moved **together** — a `.json` migrated without its `.bak` is the group-move invariant broken. |
