@@ -1946,6 +1946,34 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > Not one malformed line in 161K, across three games and two write paths — which is what "the
 > envelope change is invisible when it works" looks like when it is measured instead of asserted.
 
+> ### ✅ W8 PASS 2026-08-20 `[W8-USMAP-2026-08-20]` — checked by COUNT, which needs no "before"
+>
+> The row asks for a comparison against "the same game before this build", and no such baseline
+> exists here. But its assertion is **quantitative** — *"the struct count rises by roughly the number
+> of `BlueprintGeneratedClass` objects in the game"* — so the same claim can be tested by asking
+> whether those classes are in the map **at their full count**, which needs only one run.
+>
+> **DQ7R** (UE 4.27, 149,408 objects, Blueprint-heavy) → Export → **USMAP** →
+> `out\DQ7R-Win64-Shipping.usmap`, **2,786,463 bytes**, magic `C430`, version 4, **compression byte
+> 0** (uncompressed, so the name table is readable without a decoder).
+>
+> | measurement | value |
+> |---|---|
+> | distinct names ending `_C` in the .usmap | **507** |
+> | `BlueprintGeneratedClass` **family** instances in the game | **513** |
+>
+> ⭐ **507 of 513 — 98.8 %.** Essentially every Blueprint-generated class in the pool has a name in
+> the exported map, which is exactly the population the fix added. Sample entries:
+> `ABP_LuckyPanelCard_C`, `ABP_NPC_Accessories_Phy_C`, `ABP_NPC_Bandana_Phy_C`.
+>
+> ⚠ **The family count is the one that matters, and Exact match hides it.** An Instances search for
+> `BlueprintGeneratedClass` with **Exact match ON** returns just **89** — it excludes
+> `AnimBlueprintGeneratedClass` / `WidgetBlueprintGeneratedClass`, which are subclasses and are most
+> of the population here. Unticking Exact match gives 513. Comparing 507 against 89 would have looked
+> like a wild over-count instead of a match.
+>
+> ℹ️ Scope: this shows the classes **are present at full count**, not the *delta* against a pre-fix
+> export. If a genuine before/after is ever wanted, this file is the "after" for DQ7R.
 > | 3 | **A** | **F5, the ordinary path.** Connect the UI normally and use it for a few minutes — Object Tree load, Live Walker drill, a value scan. | Everything behaves as before. This is the regression control; the envelope change is invisible when it works. |
 > | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
 > | 5 | **B** | **V10.** On a title where the first scan leaves GObjects **or** GWorld unresolved, press **Extra Scan** and wait for it to finish. | The green "Found: GObjects: 0x…" result **stays on screen**. Before the fix it appeared and was blanked a few ms later by the pointer refresh the scan itself triggered. Then, mid-scan, change the **UE version** ComboBox: the Extra Scan button must stay disabled until the scan really ends. ⚠ Sample-blocked if every installed title resolves both pointers on the first pass. |
