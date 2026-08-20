@@ -2222,6 +2222,37 @@ X4 and X9 are fully settled by tests; the rows below are what only a running gam
 > | X7 | pause the game thread **during a long bulk-lane scan** (so only the bulk lane observed the pause), let the scan finish, then resume and browse via Live Walker (interactive lane) | the "game thread paused" banner **clears** on resume; before the fix it stuck ON until a bulk command ran | the pure latch is unit-tested, but the PipeClient per-response feed + banner is end-to-end |
 > | X8 | on the **Console** tab, with CE + AOBMaker **closed**, click a baked-exec / Debug-Camera "to CE" action → then **open** CE with the AOBMaker plugin and click again (no tab switch) | the second click now sends to CE (was "AOBMaker not connected" from the stale cached flag) | the path now calls `CheckAvailabilityAsync` first; needs a real CE toggled between clicks |
 > | X10 | on Teleport, change the **World / Player time-dilation** sliders, wait >1 s, close the app, relaunch | the slider values are restored (they now schedule a save) | before, only OTHER Teleport options triggered a save, so a time-dilation-only change was lost |
+> ### ✅ X10 PASS 2026-08-20 `[L6-X10-2026-08-20]` — and the restore is proven to come from DISK
+>
+> ⚠ **The obvious way to run this row cannot prove anything.** `UiOptionsSettings` says it plainly:
+> *"the live DLL state, read back on connect, wins when a dilation is held"*. Set the sliders, restart
+> the UI, reconnect to the still-running game — and the values come back **from the DLL**, which is
+> exactly the source the row is not asking about. Both sources agree, so a pass is indistinguishable
+> from the persistence being broken. **The game must be dead for this row to mean anything.**
+>
+> 1. Teleport → Time Dilation, on a connected DumperTest: World **2×**, Player **½×** (via the
+>    presets, which also apply). Card read `State: ON`, `Current: 2× (held; natural 1×)` /
+>    `Current: 0.5× (held; natural 1×)`, and **`Combined player speed: 1× (world 2 * pawn 0.5)`** —
+>    the dual-lane multiply is right.
+> 2. Within seconds `ui-options.json` carried **`teleport.worldTimeDilation = 2`** and
+>    **`teleport.pawnTimeDilation = 0.5`**. This is the fix itself: a dilation-only change now
+>    schedules a save.
+> 3. **Killed the game, then closed the UI**, and confirmed the two values were still on disk with
+>    both processes gone.
+> 4. Relaunched `dist/UE5DumpUI.exe` and left it **disconnected**. The card reads `State: Unknown`
+>    (nothing held, no DLL to ask) and the sliders show **200 %** and **50 %**, with
+>    `Combined player speed: 1× (world 2 * pawn 0.5)` recomputed from the restored pair.
+>
+> With no game and no DLL in the picture, disk is the only place those numbers could have come from.
+>
+> 🔎 **Note for the next session:** the sliders are deliberately left at **200 % / 50 %** — that is
+> this row's evidence sitting in `ui-options.json`, not a stray setting. Nothing is *held* on any
+> game (`State: Unknown`); one click on either **Reset** returns them to 1×.
+>
+> ℹ️ Two keys worth knowing before grepping: `ui-options.json` is **nested by section**, so these live
+> under `teleport`, not at the root, and they are **camelCase on the wire** (`worldTimeDilation`)
+> while the C# properties are `WorldTimeDilation`. A root-level flat lookup returns "absent" and
+> reads exactly like the save never happening.
 > | X11 | start a **Dump All** and abort it (disconnect / cancel) mid-stream | there is **no** truncated `.jsonl` at the chosen name — only a `<name>.partial` (or nothing); a completed dump appears atomically at the final name | temp-then-rename is only observable against a real abort |
 > ### ✅ X6 + X11 PASS 2026-08-20 `[L6-X6-X11-2026-08-20]` — both halves, on DumperTest / dist 3263
 >
