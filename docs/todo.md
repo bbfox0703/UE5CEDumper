@@ -1841,6 +1841,34 @@ contract **3** (min 1). A `.CT` saved before this batch stays valid.
 > | 4 | **B** | **W8.** On a Blueprint-heavy shipped title, Tools → export the `.usmap`, and compare the "N structs" line against the same game before this build. | The struct count rises by roughly the number of `BlueprintGeneratedClass` objects in the game (thousands, not a handful), and a known `BP_*_C` / `WBP_*_C` name is now present. Load the file in FModel / CUE4Parse if it is installed — the `W1/W7` item already wants that parser. |
 > | 5 | **B** | **V10.** On a title where the first scan leaves GObjects **or** GWorld unresolved, press **Extra Scan** and wait for it to finish. | The green "Found: GObjects: 0x…" result **stays on screen**. Before the fix it appeared and was blanked a few ms later by the pointer refresh the scan itself triggered. Then, mid-scan, change the **UE version** ComboBox: the Extra Scan button must stay disabled until the scan really ends. ⚠ Sample-blocked if every installed title resolves both pointers on the first pass. |
 > | 6 | **B** | **V11.** With CE + the AOBMaker plugin connected, click **Register symbol** on the GWorld card, then again with **CE closed**. | Success prints a teal line naming `gworld_addr`; the failure prints a RED line naming it. Before the fix both produced *nothing at all* on screen. Repeat on the **&GEngine** card — it was the second site, found by the sibling grep. |
+> ### ✅ Y10's CONTRACT-BEFORE-WRITE HALF PASSES 15/15 2026-08-20 `[CONTRACT-ORDER-2026-08-20]`
+>
+> `scripts/tests/contract_check_test.lua` runs the **real `[ENABLE]` block the shipping UI emitted**
+> (working-lessons §2.8) over stubbed CE globals, with **every mailbox write recorded** so "nothing
+> was written" is measured rather than assumed.
+>
+> The ordering is the whole point: the contract check must happen **before the first write**, because
+> the thing in question IS the layout — if the script's field offsets are wrong, a write placed first
+> lands somewhere unintended.
+>
+> | refusal | unticks | explains | mailbox writes |
+> |---|---|---|---|
+> | contract symbol does not resolve | ✅ | names `g_mailboxContract` | **0** |
+> | wrong magic (stale address) | ✅ | "wrong memory" | **0** |
+> | DLL older than the script | ✅ | "older than this script" | **0** |
+> | script older than the DLL | ✅ | "too old for the DLL" | **0** |
+>
+> ⭐ **The positive control is what stops this being vacuous:** with a VALID contract (magic ok,
+> `min ≤ 3 ≤ cur`) the script stays ticked, prints no refusal, and **does** write the mailbox. A
+> script that simply never wrote would have passed all four "0 writes" rows.
+>
+> This also exercises CLAUDE.md's CE-Lua rule that *a bail-out which applied NOTHING must untick the
+> record* — all four do (`memrec.Active = false`), so CE cannot leave a row ticked while claiming a
+> cheat is active.
+>
+> ⚠ **Not covered:** Y10/Y13's other half — the Before/After **dump window** reaching a return slot
+> past byte 32 — needs a UFunction with a complex return and a real CE session.
+
 > | 7 | **B** | **Y10 / Y13.** Open a UFunction with a **complex return** (FString / struct) whose return slot sits past byte 32, tick **Verify return**, and push the baked script to CE. Tick the record. | CE's Lua Engine shows the Before/After dump **containing the return slot** (the window is now sized to reach it) and the line no longer says "see After: dump above" when it cannot. Then untick, **detach CE from the game**, and re-tick: the contract check must fire FIRST with a message naming `g_mailboxContract`, and the record must **untick itself** — no `writeByte` may have run. |
 > | 8 | **B** | **Y12.** Close CE (or disconnect AOBMaker), then **Copy AA Script (Baked)**, and right-click → Paste in CE's address list. | A memory record appears with type **Auto Assembler Script**. Before the fix the clipboard held a bare `[ENABLE]`/`[DISABLE]` body, which CE will not accept as a record at all. The result label should say "copied as CE XML", not "copied to clipboard". |
 > | 9 | **B** | **Y11.** Find a UFunction taking an `FText`, `TArray` or `TMap` parameter and press **FIRE**. | An `FText` param is refused by name whatever the box holds. A `TArray`/`TMap`/`TSet`/struct param fires with the slot **left zeroed** when its box is untouched, and is refused with a message when you type a value into it. Before the fix the textbox was written as a raw int32 over the structure's Data pointer and handed to ProcessEvent. ⚠ Sample-blocked if no installed title exposes such a UFunction. |
