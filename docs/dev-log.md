@@ -22,6 +22,72 @@ builds ≤696 in
 
 -----
 
+## 2026-08-20 - Second live-verification pass on 3263: 26 register rows settled, 2 new defects, 4 rigs (no build change)
+
+**No source changed.** Everything below is `docs/todo.md` evidence, `tools/verify/` rigs and the
+gitignored run ledger; `dist/` and `build_number.txt` are untouched at **1.0.0.3263**. Both CI gates
+(`check_live_verification.py`, `check_audit_register.py`) stayed green after every commit.
+
+**Hosts used, one at a time and killed after each group** (`working-lessons` §3.9): DumperTest
+Development and Shipping, **The Adventures of Elliot** (UE504, 84,990 objects, `dxgi` proxy) and
+**DQ7R** (UE**4.27**, 149,408 objects, `version` proxy) — the first UE4 title driven end to end in
+this programme, and the largest install on the machine.
+
+**Two new defects, both reproducers committed.**
+
+* **`[STAGELOCK-2026-08-20]`** — `AC11` step 2's premise is wrong. `CopyProxyStaged` publishes with
+  `File.Move(overwrite:true)`, and a target carrying an **image section** refuses the replacing
+  rename with `ERROR_ACCESS_DENIED` (5), not the `ERROR_SHARING_VIOLATION` (32) the old direct
+  `File.Copy` raised. .NET turns 5 into `UnauthorizedAccessException`, which is not an `IOException`,
+  so it misses both arms of `DeployAsync`'s filter and the user is told **"Access to the path is
+  denied."** — a message naming no path — instead of "File locked (game running?)". Established three
+  independent ways: an OS-level probe (`tools/verify/ac11_locked_rename.py`), a throwaway xunit test
+  against the real `CopyProxyStaged`, and finally **a live game** (Elliot running, Force Overwrite →
+  `[EROR] … Access to the path is denied.`, status `ErrorOther`). `UndeployAsync` and the orphan
+  sweep already carry the `catch (UnauthorizedAccessException)` arm; `DeployAsync` is the only one of
+  the three without it, and the only one whose write became a rename.
+* **`[ORPHANCANCEL-2026-08-20]`** (LOW) — cancelling a leftover-proxy cleanup mid-row leaves that row
+  **untallied, still ticked, and its folder chain half-pruned**: the token is passed *into*
+  `RemoveOrphanProxyAsync`, so it recycles the file and *then* throws, skipping `files +=`, `ok++`,
+  `row.IsSelected = false` and `DropOrphanRow`. The log showed **three** recycles under a summary
+  saying two. Audit #4's root cause verbatim — the report and the reality computed by different code
+  paths.
+
+**Batches closed.** Audit **L9** (AE13 / AE20 / AE30) is fully verified and its heading flipped, so
+the register's open count went **40 → 39**. **L6** is complete but for the CE-only `X8` and the
+maintainer-only `X12`; **`[AUTOREFRESH-2026-08-19]` is complete — all seven steps**; **F5** is
+complete (steps 1–3).
+
+**Things that could only be learned by running them**, now recorded next to their rows:
+
+* `mtime` **cannot** witness a re-deploy — `File.Copy` carries the source's timestamp through
+  `File.Move`, so the deployed proxy is byte-*and*-timestamp identical after a second deploy. Use
+  `ctime`.
+* `AUTOREFRESH` step 6's "drill → stays OFF" **expectation is wrong**: a field drill never calls
+  `StopAutoRefreshTimer`, and what actually happens (re-target to the new root, 12 consecutive 10.0 s
+  ticks) is better.
+* `AC13` is **not observable as written** — the IPC figure only exists via `DiagnosticsProbe`, which
+  returns early on exactly the disconnect the row prescribes.
+* `AE27`'s Package filter is a **prefix** match on values beginning `//`, so `Script` matches nothing
+  and reads exactly like the blank-memo defect it is meant to catch.
+* `AF8`'s `force_field` takes **`kind`** (defaulting to `"bool"`), not `mode`, and a numeric `value`
+  — the string `"-5"` parses to `0.0`, giving `held:0` that looks like a failed fix.
+* A game window **steals focus back**, so a computer-use click on the UI behind it silently
+  re-activates instead of pressing; `tools/verify/front_window.py` first.
+
+**Rows that cannot be closed on this machine, with the measurement that proves it** — `G7`-style
+results rather than "not tried": `Z8` (DQ7R's whole pool is 51,255 UFunctions, 51 % of the cap;
+ratio ≈ objects ÷ 3, so ~300k objects are needed), `A7` (a full 149,408-object `FindByAddress` with
+the deep cap at its 4,096 maximum takes **152 ms** — no window to disconnect inside), L3 step 1
+(**none** of `GWLD_TQ_3/TQ_4/GOBJ_PS1/PS6` has ever won across **170 scan logs / 25 processes**),
+`AD18`'s `dinput8` arm (**no** installed title imports the name, all 16 exes read), `Z13`/`Z12`-deep
+and `AE30`'s control.
+
+**New rigs:** `ac11_locked_rename.py`, `ac10_kill_midstream.py`, `ae20_orphans.py`,
+`af7_af8_pipe.py`.
+
+-----
+
 ## 2026-08-19 (night) - The first live-verification pass on build 3263: 13 register items settled, 2 new defects found, 12 rigs added (no build change)
 
 **Nothing shipped and no source changed** — `build_number.txt` stays **3263**, `dist/` is untouched
