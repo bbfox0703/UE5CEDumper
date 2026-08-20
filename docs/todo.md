@@ -2084,6 +2084,35 @@ spot-check rather than a 30-column sweep.
 > Funcs, Detect Stats, Live Walker, two dialogs, Class Pivot, Snapshot and the Invoke picker.
 
 > | # | cat | 做什麼 | 預期 |
+> ### 🟡 STEP 1 — 2 of its 3 grids PASS 2026-08-20 `[AOTSORT2-2026-08-20]`, on the `dist` AOT binary
+>
+> Same build class as `[AOTSORT-2026-08-20]` above — the **`-Mode Publish` binary in `dist/`**, the
+> only one that can answer an AOT-trimming question. DumperTest Development, connected.
+>
+> | grid | column | ascending | descending |
+> |---|---|---|---|
+> | **Detect Stats** | `Offset` (numeric) | `0x28` `0x2C` `0x2C` `0x30` `0x30` | `0xFC8` `0x9A4` `0x81C` `0x6F8` `0x6F0` |
+> | **Detect Stats** | `Result` (the ✓ column) | `· guess` rows first | `✓ confirmed` rows first |
+> | **Live Funcs** | `Period` | `66 66 67 67 67 67` ms | `67 67 67 67 66 66` ms |
+>
+> Every header showed its ↑/↓ arrow and reversed on the second click. Live Funcs' descending order is
+> the **exact reverse** of its ascending order row-for-row (`Ord` 6,5,4,2,3,1 → 1,3,2,4,5,6), i.e. a
+> stable sort flipping cleanly rather than a re-shuffle that merely looks ordered.
+>
+> ⭐ **The Period numbers are independently checkable, and they check out.** DumperTest is launched by
+> `tools/verify/launch_dumpertest.py` with `-ExecCmds="t.MaxFPS 15"`, so a per-frame callback must
+> have a period of **1/15 s = 66.7 ms**. The profiler measured **66 ms** and **67 ms** across all six
+> functions it caught (6 distinct, **3,632** calls in a 30 s window). The two camera callbacks logged
+> **908** calls against the anim callbacks' **454** — exactly 2:1 — so the cadence column is reading
+> real dispatch timing, not a placeholder.
+>
+> ⚠ **The third target — Live Walker's function grid `Params` header — was NOT reached.** That grid
+> lives behind a `Functions` expander that only renders when the walked object's class exposes listed
+> UFunctions, and it did not appear on any object walked here (`ULevel PersistentLevel`, the
+> `ThirdPersonExampleMap_C_0` level Blueprint). Jumping from a Live Funcs row via **Live** does not
+> help either: `ABP_Manny_C` has no live instance, so the UI correctly falls back to Class Struct
+> ("No live instance of ABP_Manny_C; showing class me…"). Needs an instance of a function-bearing
+> class — most easily a Pawn/Character on a title with one spawned.
 > |---|-----|--------|------|
 > | 1 | **B** | **AOT.** On a `-Mode Publish` build, click the **Period** header in Live Funcs, the **✓** and **Offset** headers in Detect Stats, and the **Params** header in Live Walker's function grid. | Rows reorder, and reverse on a second click. Before the fix these four headers animated and did nothing. Period must order numerically (a 16.7 ms row above a 1000 ms row), not by the rendered label. |
 > | 2 | **B** | **AOT.** Same build: open the Props dialog from Interesting Functions and the Xref dialog from Class Struct, and click every column header in each. | All six headers in each dialog reorder. `Access` / `Refs` must sort by the NUMBER (a "12W / 3R" row above "2W / 1R"), not by the rendered string. |
