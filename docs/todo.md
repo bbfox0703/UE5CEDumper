@@ -2399,6 +2399,31 @@ duplicate `AppendContractCheck` (the block was emitted twice). Pinned by 6 new t
 >
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
+> ### ✅ THE RELEASE LOGIC PASSES 12/12 UNDER REAL `lua` 2026-08-20 `[SLOTSYM-LUA-2026-08-20]`
+>
+> New rig `scripts/tests/slotsym_release_test.lua`. It runs **the script the shipping UI emitted
+> today**, not a fixture: captured from Teleport → Global Pointers → **Get GameEngine** with AOBMaker
+> offline (which copies the CE-XML), `<AssemblerScript>` extracted to
+> `out/slotsym/get_gameengine.lua.txt`, then both `{$lua}` blocks executed over stubbed CE globals
+> with the mailbox faked so ENABLE takes the **SLOT** branch — the branch that was broken.
+>
+> | case | result |
+> |---|---|
+> | **1. enable → disable** | ENABLE registers the slot address with **no buffer** and refcount 1; **one** DISABLE leaves `getAddressSafe('UE_GameEngine')` **nil** — no manual `unregisterSymbol` — and reports `UE_GameEngine unregistered` |
+> | **2. two ticked records** | refcount reaches 2; the first DISABLE **keeps** the symbol and says `still held by 1 other record(s) -- left registered`; the second releases it |
+> | **3. HONESTY (unregister neutered)** | the symbol still resolves, and the script says **`could NOT be unregistered after 8 attempt(s)`** — it does **not** print `UE_GameEngine unregistered`, and the retry loop is **bounded at 8** |
+>
+> ⭐ **Case 3 is the one that matters most.** The original defect was not only that the symbol
+> survived — it was that a trailing *unconditional* `dbg` claimed it had been unregistered. The
+> emitted script now re-reads `getAddressSafe` **after** the attempt and picks the message from
+> that, so a failure cannot be reported as a success. Neutering `unregisterSymbol` proves the
+> honesty branch is reachable and correct, which no amount of reading the source establishes.
+>
+> ⚠ **Scope:** CE's globals are stubbed, so this does not exercise Cheat Engine's own
+> register/unregister semantics. It does exercise the thing that was wrong — the script's control
+> flow, where both arms used to be skipped when `mem` was nil on the slot path. Step 1's live
+> `print(getAddressSafe('UE_GameEngine'))` in CE would add only that CE agrees with the stub.
+
 > | 1 ⚠ THE ONE THAT MATTERS | tick the single "Get GameEngine" record, untick it, then in CE's Lua console `print(getAddressSafe('UE_GameEngine'))` | **nil on the FIRST call** (no manual `unregisterSymbol` needed); the `dbg` reads `UE_GameEngine unregistered` | before the fix it stayed `0x…` after untick and the log lied |
 > | 2 | paste the CE-XML to make a SECOND "Get GameEngine" record, tick both, untick the OLDER, `print(getAddressSafe('UE_GameEngine'))` | still resolves (survivor keeps it); the older record's `dbg` reads `still held by 1 other record(s) -- left registered`. Untick the second → now nil | the refcount half — two records resolve the IDENTICAL slot, so an address marker cannot tell them apart |
 > | 3 ⚠ NON-REGRESSION | GWorld: tick "Get GWorld", untick, `print(getAddressSafe('UE_GWorld'))` | nil after untick | GWorld already unregistered before; must still |
