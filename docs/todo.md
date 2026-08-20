@@ -6758,6 +6758,49 @@ a `(UClass*, offset)` witness the DLL publishes on `CMD_LIST_INSTANCES` (**mailb
 that a real game's `CMD_LIST_INSTANCES` fills the witness and that the guard does not reject valid
 instances.
 
+> ### VERIFIED 2026-08-20 - step 3 PASSES headlessly, and the row's assertion needed narrowing
+>
+> `tools/verify/aa2_class_witness.py` drives `CMD_LIST_INSTANCES` **from Python**, by writing the
+> mailbox struct directly (`mailbox_poke.py` already had the driver). No Cheat Engine involved, so
+> this is category A, not B. Against DumperTest, dist 3263:
+>
+> ```
+> EXACT   DumperTestActor  returned 1/1    classWitness=0x243B98C2E00  classOffset=0x10
+> DERIVED Actor            returned 58/58  classWitness=0x0            29 distinct classes
+> EXACT   Actor            returned 1/1    classWitness=0x243B622AE00
+> ```
+>
+> **The witness is checked against the objects, not taken from the DLL.** For every returned
+> object the rig reads `*(obj + classOffset)` with `ReadProcessMemory` and compares:
+> **0 mismatches** on the exact page, and **0 mismatches + 0 zero-witnesses** across all 58
+> derived entries spanning **29 different concrete classes**. A wrong offset cannot make 29
+> unrelated classes each read back their own correct pointer.
+>
+> **The zero is a CLEAR, not a leftover.** Both witness fields are poisoned with
+> `0xDEADBEEFCAFEF00D` before the trigger, so a `0` read back is proof the DLL wrote it. Without
+> that control, "the guard fell back" and "nobody touched the field" are the same observation.
+>
+> ⚠ **The step as written would emit a FALSE FAIL on a derived listing.** `Mimic.cpp` publishes
+> the page-wide witness for the **exact** scope only; under contract 3's derived scope
+> `instanceAddr` is deliberately **0** and the witness travels **per entry** in `paramsData`
+> (16-byte entries), because one page-wide class would make the caller refuse every instance that
+> is not that class -- the AA2 defect inverted. So `classWitness=0x0` is a defect on an exact
+> listing and *correct* on a derived one, and **the log line alone cannot tell them apart**: the
+> scope has to be read off the same line (`scope=exact` / `scope=derived`). Anyone re-running
+> step 3 by grepping for a non-zero witness will report a bug that is not there.
+>
+> Also settled in the same run, neither of which the row asked for:
+> * **`cmdFlags` is genuinely cleared by the handler** (read back `0x0`), and an immediately
+>   following unflagged call returns the exact shape again -- the whole contract-1/2 backward
+>   compatibility story, checked two ways rather than asserted.
+> * **`cmdOutFlags` is rewritten, not accumulated** (poisoned `0xFFFFFFFF`, came back a real value).
+>
+> 🔗 **Corroborates `[FREEZESCOPE-2026-08-18]` at the mailbox layer**: an exact `Actor` pool holds
+> **1** live object on this host while the derived sweep holds **58**. That 1-vs-58 is precisely the
+> "held one incidental debug actor while the player's pawn went untouched" story the finding tells.
+>
+> Steps 1, 2, 4 and 5 still need CE plus gameplay churn (respawns / streaming) and stay open.
+
 1. **Contract first.** With an **old** DLL injected and a freshly-injected helper, the freeze must
    refuse with *"the DLL is older than this script"*. If it runs anyway, the contract check is not
    firing and nothing below means anything.
