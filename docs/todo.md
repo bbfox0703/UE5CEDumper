@@ -2715,10 +2715,17 @@ the ENABLE section, overwriting a value the script set during it — in which ca
 the two), not the immediate one. Confirming that needs a minimal record whose ENABLE does nothing
 but `memrec.Active=false`.
 
-⚠ **Scope:** reproduced on the *helper-not-found* bail-out. `AA12`/`AA13` step 2's own scenario is
-*DLL-not-injected*, a different bail-out — but both are emitted from the same
-`if memrec then memrec.Active = false end` pattern, so the same failure is expected there and step 2
-should be re-run once this is fixed rather than assumed to pass.
+⚠ **Scope — and it has since been WIDENED by measurement, not by inference.** First reproduced on
+the *helper-not-found* bail-out. `AA12`/`AA13` step 2's own scenario, **DLL-not-injected**, was then
+run explicitly (see that batch's step-2 block) and shows the **same result**:
+```
+[Freeze] nothing was frozen:
+[ue5_freeze] g_invokeMailbox symbol not found -- is UE5Dumper.dll injected?
+--> getMemoryRecord(0).Active = true
+```
+So this is not one stray bail-out: **both** paths emit the untick and **neither** takes effect.
+⇒ The `AA12`/`AA13` fix is **half-landed** — the honesty half (an accurate message instead of a
+silent false success) works; the untick half does not.
 
 📌 **Icon semantics confirmed by direct measurement, not memory:** `Active=true` displayed a **red ✗**
 in the checkbox and `Active=false` displayed an **empty box**. This matches the maintainer's
@@ -5624,8 +5631,32 @@ whether the record ends ticked or unticked.*
 > passes *despite* them, because the injection really did work; a user following the on-screen
 > messages would reasonably have concluded the feature was broken.
 >
-> Steps 2-6 remain: 2 needs the DLL **not** injected, 3/4 need a class with zero live instances,
-> 5 needs a pre-1.2 helper, 6 needs two coexisting freezes.
+> Steps 3-6 remain: 3/4 need a class with zero live instances, 5 needs a pre-1.2 helper, 6 needs two
+> coexisting freezes.
+>
+> ### 🟡 STEP 2 — THE MESSAGE HALF PASSES, THE UNTICK HALF FAILS 2026-08-20 `[AA12-STEP2-2026-08-20]`
+>
+> The row calls this *"the hard failure — the whole point"*, and it is now run properly: the freeze
+> script and the helper were both created **while the DLL was injected**, then DumperTest was killed
+> and **relaunched with the DLL deliberately NOT injected**, CE re-attached to the new process, and
+> the same record ticked.
+>
+> | the row expects | result |
+> |---|---|
+> | a `showMessage` **naming the reason** | ✅ `[Freeze] nothing was frozen:` / `[ue5_freeze] g_invokeMailbox symbol not found -- is UE5Dumper.dll injected?` — accurate, names the real cause, and says outright that nothing happened |
+> | the record **unticked by itself** | ⛔ **`getMemoryRecord(0).Active = true`**, read from CE's Lua Engine |
+> | the Lua window **still open** | n/a — the bail-out happens before any Lua Engine output, so no window is opened to keep open |
+>
+> ⇒ **The fix is half-landed.** The behaviour the row was written against was *"it silently reported
+> success, closed the window, and stayed ticked"*. The silent-false-success part is fixed and the
+> message is good. **The staying-ticked part is not** — which is
+> `[FREEZEUNTICK-2026-08-20]`, now confirmed on this batch's own scenario rather than only on the
+> helper-missing one.
+>
+> ⚠ **The user-visible consequence is the one the rule exists to prevent:** an accurate dialog saying
+> *"nothing was frozen"* dismisses to a row that still displays as active. Anyone who dismisses the
+> dialog and glances at the table afterwards is told a cheat is running when none is.
+
 
 1. **⚠ REGRESSION FIRST — a normal freeze still works and still closes.** Property Search → a numeric
    field on a class with live instances → Copy Freeze Script → paste into CE → tick. The value must
