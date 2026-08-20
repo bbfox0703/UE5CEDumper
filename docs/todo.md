@@ -2114,6 +2114,29 @@ spot-check rather than a 30-column sweep.
 > ("No live instance of ABP_Manny_C; showing class me…"). Needs an instance of a function-bearing
 > class — most easily a Pawn/Character on a title with one spawned.
 > |---|-----|--------|------|
+> ### 🟡 STEPS 2 + 3 — partial 2026-08-20 `[AOTSORT3-2026-08-20]`; step 2 has NO ROWS to sort on this title
+>
+> **Step 3 — the Snapshot group grid's `Class` header PASSES.** With the Snapshot group match showing
+> 12 rows: ascending `ArchVisCharacter`, `ArchVisCharMovementCom`, `ArchVisCharMovementCom`…;
+> descending `SourceEffectDynamicsProc…`, `DumperTestCharacter`, `DumperTestActor`…, arrow flipping
+> each time. On the AOT `dist` binary. The rest of step 3's grids (Class Pivot Discover, Snapshot's
+> saved list, Snapshot Diff's Change, the Invoke param picker) were not run — the saved list in
+> particular holds only **one** snapshot here, so a sort over it shows nothing.
+>
+> ⛔ **Step 2 cannot be run on DumperTest: both dialogs open with their six headers and ZERO rows.**
+> This is not a click that missed — the dialogs report their own emptiness:
+> * **Props dialog** (Interesting Functions → `Props`): `SetAttackTime` → **"0 properties (0 written)
+>   [native disasm — heuristic, 0 unmapped]"**, and unticking **Class fields only** + Refresh changes
+>   nothing. `GetPlaybackSpeed` → **"1 property (0 written) … 1 unmapped"** — one property, and it is
+>   unmapped, so still nothing to order.
+> * **Xref dialog** (Class Struct → `Find Class Xrefs`) on `ABP_Manny_C` → **"0 function(s) take this
+>   class — scanned 9,807 funcs (0 matched) over 25,179 objects in 51ms"**.
+>
+> Both rendered `Access | Re | Scope | Conf | Property | Type` and `Kind | Re | Access | Owner Class |
+> Event | Function` respectively, so the headers exist and the dialogs are reachable on an AOT build —
+> only the sort is unproven. The row's sharpest assertion (`Access` / `Refs` must sort by the **number**
+> in a `"12W / 3R"` cell) needs a title whose native disassembly actually maps property xrefs; a stock
+> UE sample's engine functions do not.
 > | 1 | **B** | **AOT.** On a `-Mode Publish` build, click the **Period** header in Live Funcs, the **✓** and **Offset** headers in Detect Stats, and the **Params** header in Live Walker's function grid. | Rows reorder, and reverse on a second click. Before the fix these four headers animated and did nothing. Period must order numerically (a 16.7 ms row above a 1000 ms row), not by the rendered label. |
 > | 2 | **B** | **AOT.** Same build: open the Props dialog from Interesting Functions and the Xref dialog from Class Struct, and click every column header in each. | All six headers in each dialog reorder. `Access` / `Refs` must sort by the NUMBER (a "12W / 3R" row above "2W / 1R"), not by the rendered string. |
 > ### ✅ AF10 + AF11 PASS 2026-08-20 `[AF10-AF11-2026-08-20]` — steps 4, 5 and 6, all headless
