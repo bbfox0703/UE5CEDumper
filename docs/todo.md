@@ -5297,6 +5297,32 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
 > normally, then on current evidence there may be **no** unresolved-globals title on this machine and
 > these two steps have no fixture at all.
 
+> ### ✅ RE-RUN THROUGH STEAM 2026-08-20 — Satisfactory is EXONERATED, and G3 3+4 have NO fixture
+>
+> Relaunched with `steam.exe -applaunch 526870` (two processes, `FactoryGameSteam.exe` +
+> `…-Win64-Shipping.exe` — the shape a correct Steam launch produces), left to reach a menu, then
+> injected and scanned:
+>
+> ```
+> ue=506   objects=137,425
+>    gobjects = 0x7FFCC7CE3620      gnames  = 0x7FFCCC00D8C0
+>    gworld   = 0x7FFCBB9CCB88      gengine = 0x7FFCBB9CF768
+> ```
+>
+> ⭐ **`gobjects` is the EXACT address the void run's symbol export had already found and the
+> validator rejected** (`ValidateGObjects: Failed at 0x7FFCC7CE3620 … Num@+04=-1`). Same address,
+> same symbol, same session shape — the only difference is that the engine had actually initialised.
+> That is as clean a positive control as this could have: it isolates "empty array" from "wrong
+> address" by holding the address constant.
+>
+> ⇒ **Satisfactory resolves all four globals**, exactly as [test-games.md](test-games.md) says. It is
+> **not** an unresolved-globals title, the log-folder survey that nominated it was reading a
+> failed-launch artefact, and therefore:
+>
+> ⛔ **G3 steps 3 and 4 have no fixture on this machine.** Every installed title resolves everything,
+> which is what the steps themselves predicted (*"all 34 tested games resolve GWorld, so this may not
+> be reachable"*). They are a 第 5 步 item — no sample exists — not an untried one.
+
 5. **✅ Free log check, no game needed beyond a normal session.** `walk-0.log` must show no burst of
    `Misaligned field … possible wrong FPROPERTY_OFFSET`. That line is the direct witness for a split
    or stale family.

@@ -1087,6 +1087,12 @@ they were *coherent*:
 
 ⇒ Any conclusion from such a run is void. In this case it would have entered the register as
 *"Satisfactory has unresolved globals"* — a fact about a game that was not running.
+
+✅ **Confirmed by re-running it properly** (`steam.exe -applaunch 526870`, wait for a menu, then
+inject): all four globals resolve, **137,425 objects**, and `gobjects` comes back as
+**`0x7FFCC7CE3620`** — *the exact address the failed run had already found and rejected as empty*.
+Holding the address constant across the two runs isolates "array not yet populated" from "wrong
+address" perfectly, and confirms the symbol path was never broken.
 ⚠ The **pre-existing** `FactoryGameSteam … GObjects=0x0, Objects=0` line in that title's older log,
 which is what made it the chosen host in the first place, is very plausibly the same artefact. It
 should not be cited as evidence without a Steam-launched re-run.
