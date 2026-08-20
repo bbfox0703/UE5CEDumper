@@ -2627,6 +2627,37 @@ order-swap that was permanently broken.*
 >
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
+> ### ✅ STEPS 1–4 PASS 2026-08-20 `[PEHOOKONCE-LIVE-2026-08-20]` — headless, on Lushfoil (proxy mode)
+>
+> Rig: `tools/verify/pehookonce.py`. Proxy mode is required and was confirmed each run — GObjects
+> read `not_found` before the scan, so the "nothing to detect yet" window genuinely existed.
+>
+> * **Step 1 — PASS.** `pe_profile_start` before any scan → `hook_active: false`, and the detail is
+>   the new wording: *"ProcessEvent is not resolved yet, and detection is still **ARMED** — this
+>   attempt changed nothing. … Run a scan, then Start again; init-*.log tells you which"*. The old
+>   advice told the user to retry the one thing that could not work; this names the actual remedy.
+> * **Step 2 ⚠ THE ONE THAT MATTERS — PASS.** In the **same process**, after the poisoning attempt:
+>   `trigger_scan` (GObjects → `0x7FF79F039B40 aob`) → `teleport_get_pov` (`ok`, code 0) →
+>   `pe_profile_start` again → **`hook_active: true`**. This is the exact order-swap that used to
+>   poison the hook for the whole process; it now recovers.
+> * **Step 4 — PASS (non-regression).** A **fresh** Lushfoil, normal order, → `hook_active: true`
+>   and `ProcessEvent: offset resolved to vtable+**0x260** via the pattern scan` — the offset this
+>   row names.
+> * ⭐ **The two runs differ by exactly one retry, which is the fix expressed as a number:**
+>
+>   | order | log line |
+>   |---|---|
+>   | normal (step 4) | `offset resolved to vtable+0x260 … (**detection run 0/8**)` — first attempt |
+>   | profiler-first (steps 1→2) | resolved at **`detection run 1/8`** — it re-armed **once** |
+>
+>   Under the defect the second case had no run 1 at all: the `-1` was terminal.
+> * **Step 3 — partially covered, and stated honestly.** Only **one** `detection run N/8` line
+>   exists per session, so there is no retry storm. ⚠ But the row asks to grep *after step 1 and
+>   before any scan* (expecting **zero**); this grep was taken **after** the scan, where exactly one
+>   run is the correct and expected result. The no-storm property holds; the literal pre-scan-idle
+>   form was not run in isolation.
+> * **Step 5 (the UI path) not run** — steps 1–4 are the headless set.
+
 > | 1 | fresh launch, proxy mode. `init` → `pe_profile_start` **before any scan** | `hook_active:false` and `hook_detail` starts **"ProcessEvent is not resolved yet, and detection is still ARMED"** and names BOTH causes (no scan / slot rejected). It must NOT say "do any invoke first" | the old text was unreachable advice by construction on this path. It must also not name only the no-scan cause — the same sentinel carries a re-armed rejection |
 > | 2 ⚠ THE ONE THAT MATTERS — the negative control | in the SAME process, now `trigger_scan` → one invoke (`teleport_get_pov`) → `pe_profile_start` again | **`hook_active:true`** | this exact ordering returned `false` **permanently** before the fix; a live game is the only thing that can prove it converges |
 > | 3 ⚠ NO STORM | after step 1, leave the process idle ~60 s with a 10 Hz feature running, then grep `init-0.log` for `detection run` | **zero** `detection run N/8` lines (nothing to detect ⇒ no run is spent), and **at most one** `no UObject vtable available yet` | ⚠ the single `no UObject vtable` line proves only the one-shot log guard (`s_loggedNoVtable`) and would still be 1 with the cooldown deleted — it is `detection run` that counts actual detection RUNS, so that is the line the anti-storm rule is measured on |
