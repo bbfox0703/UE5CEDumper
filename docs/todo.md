@@ -2183,6 +2183,37 @@ X4 and X9 are fully settled by tests; the rows below are what only a running gam
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | X5 | connect to game A, populate several panels (Instance Finder, Property Search, Live Walker, Value Search, Interesting Funcs), disconnect, then connect to a **DIFFERENT** game B | every panel is empty on reconnect — no rows, no addresses, no jump offers from game A; Live Walker's per-game **bookmarks survive** | before the fix only Teleport/DumpExplorer/LiveFuncs reset; the other ~13 kept stale rows offering jumps to dead addresses — bindings/timers only observable live |
+> ### ✅ X5 (panel reset half) PASS 2026-08-20 `[L6-X5-2026-08-20]` — A→B, five panels, plus the bookmark half
+>
+> Game **A** = DumperTest **Development** (25,179 objects), game **B** = DumperTest **Shipping**
+> (24,445 objects). Different builds, different module names, different PE hashes and a different
+> object count, so a surviving row from A is unmistakable. A was **killed** before B was injected —
+> two injected hosts at once is its own correctness bug (`working-lessons` §3.9), and the injector's
+> ambiguity guard caught exactly that when a mangled `taskkill` left A alive.
+>
+> All five panels were populated on A first — otherwise "empty afterwards" proves nothing:
+>
+> | panel | on A | on B after reconnect |
+> |---|---|---|
+> | Instances | `Found 1 instances`, `Default__MockWorldMetricA` @ `0x23DD8498E90` | **grid empty**, no count line |
+> | Properties | `Found 2 properties in 3,942 classes`, incl. `DumperTestActor.Health` @ `0x694` | **grid empty**, no count line |
+> | Value Search | `First Scan: 836 candidates in 116 ms` | **grid empty**, and **Next Scan / New Scan are disabled** — the *session* is forgotten, not merely the rows hidden |
+> | Interesting Funcs | full scored table (ClientCheatFly, CheatManager.God, …) | **empty**, back to "Click Load to scan all UFunctions" |
+> | Live Walker | `GWorld → UWorld ThirdPersonMap`, ~20 rows with live addresses | **empty**, breadcrumbs gone, logo shown |
+>
+> The Object Tree also reloaded to B's own 24,438 named objects. ℹ️ The *query text* ("Health",
+> "MockWorldMetricA") stays in the input boxes. That is input state, not a stale row — no address,
+> no count and no jump offer from A survived anywhere.
+>
+> **Bookmark half — PASS, and per-game separation is positively demonstrated.** A bookmark was saved
+> on A (★ → slot 1) before the switch, giving `Bookmarks\bookmarks.6A7EA60310F17000.json` with
+> `slots [(0, "ThirdPersonMap")]`. After switching to B and walking GWorld there, **B's bookmark bar
+> shows all eight slots empty** while A's file is still on disk unchanged. So the reset clears the
+> *view* without touching the *per-game store*, which is the distinction the row is drawing —
+> checking only that A's file survived would not have ruled out B displaying A's slots.
+>
+> ⚠ Not covered by this run: the **second X5 row** (auto-refresh + auto-snapshot loops stopping on
+> disconnect) is a separate check and is still open.
 > | X5 | before disconnecting, start Live Walker **auto-refresh** and (experimental) an **auto-snapshot** loop, then disconnect. ⛔ **Needs a build carrying `[AUTOREFRESH-2026-08-19]`** — on `dist` 1.0.0.3262 and earlier the countdown freezes at `0s` and auto-refresh issues nothing, so "start auto-refresh" cannot be satisfied and a green result would only mean *a loop that never ran did not run*. The auto-snapshot half is unaffected and can be run alone | both loops stop immediately on disconnect (no "re-walk"/"capture" log spam against the dead pipe); the snapshot **corpus is preserved** | the timer/loop teardown and corpus-preservation are not unit-testable |
 > | X6 | start a **Dump All** (or Full SDK / USMAP) on a large game, then kill the game / disconnect mid-export | the export aborts promptly with "… cancelled (disconnected)" instead of hanging on dead-pipe round-trips; no truncated file at the chosen name | the ct now threads from a connection-linked CTS; before, `ct` was `default` and every service ct-check was dead code |
 > | X7 | pause the game thread **during a long bulk-lane scan** (so only the bulk lane observed the pause), let the scan finish, then resume and browse via Live Walker (interactive lane) | the "game thread paused" banner **clears** on resume; before the fix it stuck ON until a bulk command ran | the pure latch is unit-tested, but the PipeClient per-response feed + banner is end-to-end |
