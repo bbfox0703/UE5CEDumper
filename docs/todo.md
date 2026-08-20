@@ -5255,6 +5255,34 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
    **⬜ Branch recorded, and it is the WRONG one `[DSA-2026-08-16]`:** `FindStructByName: Found
    'Guid' at 0x1B5FB6840C0` → `ValidateAndFixOffsets: Using struct 'Guid'`, i.e. the validated path,
    with `FStructProp::Struct = +0x70` published from a real measurement. The Step 2.5 default block
+
+> ### ⛔ NO FIXTURE EXISTS — swept ALL 19 HOSTS 2026-08-20 `[G12S2-SWEEP-2026-08-20]`
+>
+> The note above generalised from one host. Grepping every log folder on the machine settles it:
+>
+> | | |
+> |---|---|
+> | hosts with `ValidateAndFixOffsets: Using struct 'Guid'` | **19 of 19** |
+> | hosts with `Cannot find Guid or Vector struct` (the heuristic branch) | **0** |
+>
+> Avowed · DQ7R · DQI&II HD2D · DSClient · DumperTest (×2) · ES2 · Echoes of Aincrad · Elliot ·
+> **Satisfactory** · Geri · LightMaze · Lushfoil · Manor Lords · OCTOPATH · RSG · SEED · ST Voyager ·
+> **Solarpunk** — every one takes the validated `Guid` path. Solarpunk is *the documented
+> heuristic-fallback title* and it does not reproduce, which the note above had already found on its
+> own; this extends that from a single observation to the whole installed corpus.
+>
+> ⚠ **The control is in the same data**: the string `Using struct '…'` is demonstrably logged (19
+> times), so the zero for the fallback is about the branch, not about the grep.
+>
+> ⇒ **Step 2 is a 第 5 步 item — no sample exists anywhere**, not an untried one. The Step 2.5 default
+> block G12 repaired cannot be entered by any title installed here, so the repair stays unexercised
+> and there is no action that would change that short of acquiring a title whose `Guid` *and* `Vector`
+> struct lookups both fail.
+>
+> 🔗 **Third item in this batch-family to land on "no fixture exists"** alongside `G11` step 4
+> (Tier 3 never reached) and `G3` steps 3+4 (no unresolved-globals title). Worth reading together:
+> several remaining register rows are waiting on engine states this corpus simply does not contain.
+
    G12 repaired was never entered. Still needs a heuristic-fallback title.
 3. **⚠ G3 REGRESSION — Extra Scan → Apply still works.** Needs a game where something is missing to
    scan for (all 34 tested games resolve GWorld, so this may not be reachable). If it is: press
