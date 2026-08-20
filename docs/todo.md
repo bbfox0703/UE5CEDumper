@@ -1869,6 +1869,42 @@ a `-Mode Publish` binary. The offline half is machine-enforced by
 `DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
 spot-check rather than a 30-column sweep.
 
+> ### 🟡 THE AOT SORT (steps 1–3) — WORKING, on 2 grids of the named set `[AOTSORT-2026-08-20]`
+>
+> Run against the **`-Mode Publish` AOT binary** in `dist/`, which is the only build that can answer
+> this: the whole defect class is "the reflection sort survives JIT and is **trimmed away in the
+> binary we ship**", so a non-trimmed build passes with the bug present.
+>
+> **8 sort operations, all correct — 2 grids × 2 columns × both directions:**
+>
+> | grid | column | ascending | descending |
+> |---|---|---|---|
+> | Interesting Funcs | `Function` (text) | `AbortMatch` · `Abs` · `Abs_Int` | `Xor_IntInt` · `Xor_Int64Int64` · `WriteVector4` |
+> | Interesting Funcs | `Param` (numeric) | all `0 (0B)` first | `9 (97B)` · `9 (97B)` · `9 (96B)` |
+> | Classes | `Class` (text) | `ABP_Manny_C` · `ABP_Quinn_C` | — |
+> | Classes | `Size` (hex) | all `0x0` first | `0x2956` · `0x2886` · `0x24E6` |
+>
+> The **↑/↓ indicator moves to the clicked header** and leaves the previous one, so the grid's own
+> state agrees with the row order. Baselines were captured before each click (the Interesting Funcs
+> grid started score-descending at `ClientCheatFly` / `ClientCheatGhost`), so these are reorderings,
+> not coincidences.
+>
+> ⚠ **Why this is 🟡 and not ✅.** Steps 1–3 name a specific set of grids and only two of them were
+> exercised: **not** Live Funcs `Period`, Detect Stats `✓`/`Offset`, Live Walker's `Params`, Class
+> Pivot Discover, Snapshot / Snapshot Diff / SPC, or the Invoke param picker. The trimming risk is
+> *global* (if the reflection path were trimmed, nothing would sort), so this is strong evidence for
+> the defect class — but it is **not** the per-grid sweep the row asks for, and the remaining grids
+> each need their own data before their headers can be clicked.
+>
+> ⛔ **The Props dialog could NOT be sort-tested and this is a SAMPLE limit, not a failure.** Opened
+> from Interesting Functions on `CapsuleOverlapActors` and again on `Character.ServerMove`, it
+> reports **`0 properties (0 written) [native disasm — heuristic, N unmapped]`** and the grid is
+> empty — with "Class fields only" both ticked and unticked. That matches the headless `AF7` result
+> exactly (`props: []`, `unmapped: 2–3`): `walk_function_props` is the Path-2 **disassembly** xref
+> finder, and DumperTest's engine functions yield no `[this+off]` references to list. **An empty
+> grid cannot demonstrate a sort**, so the Props/Xref half of step 2 needs a title where that
+> dialog actually populates.
+
 > ### ✅ STEPS 4–8 ALL PASS 2026-08-20 `[L10-HEADLESS-2026-08-20]` — the five category-A steps
 >
 > Driven against the **`-Mode Publish` AOT binary** in `dist/` (the one this batch requires),
@@ -2507,6 +2543,7 @@ cap". `list_classes` is pipe-JSON, so no mailbox-contract implication. Pinned by
 
 > | 1 ⚠ THE ONE THAT MATTERS | on a >5,000-class game (Elliot), open the Classes tab, Load with "Game classes only" off | status reads "**5,000 classes shown of ~6,609 total** … ⚠ STOPPED at the 5,000-row cap" — the two numbers DIFFER | before the fix both were 5,000, so "total" answered nothing |
 > | 2 ⚠ CROSS-CHECK | note Interesting Funcs' "{N} functions across **{K} classes**" for the same game | the Classes tab's total matches K (both ~6,609) — the two panels now AGREE | before, Classes said 5,000 STOPPED while Funcs said 6,609; the honest number is now in both |
+> | 3 ⚠ NON-REGRESSION | ✅ **PASS 2026-08-20** — DumperTest, Classes tab, **"Game classes only" OFF**: the status line reads exactly `3,942 classes shown of 3,942 total (scanned 25,179 objects)` — the two numbers EQUAL and **no STOPPED note**. Corroborates the pipe reading (`scanned_classes` 3,942). | | |
 > | 3 ⚠ NON-REGRESSION | on a small game (< 5,000 classes), Load | "N classes shown of N total" (equal), no STOPPED note | proves a full walk still reports one honest number and does not falsely flag truncation |
 
 -----
