@@ -4328,6 +4328,44 @@ vtable actually holds, and no target compiles `Stark.cpp` or `Frieren.cpp`.*
 >   target". Pass `game_only=false`.
 > |---|---|---|---|
 > | 1 | connect, run the Pointers-tab KismetMathLibrary self-test (`directCall: true`) | `pipe` log shows **`via trampoline`** | the ordinary path now bypasses the detour |
+> ### ✅ ST1 STEP 3 PASSES 2026-08-20 `[ST1-QUEUE-2026-08-20]`; step 4 is NOT decidable from the log
+>
+> Rig: `tools/verify/st1_queue_drain.py`. "A paused/menu game" is staged by **suspending the UE game
+> thread** — nothing can service the queue, so the timeout is guaranteed, and the ~121 fires/s
+> background drops to zero so the counter is readable at all.
+>
+> ```
+> control  background while frozen      84632 -> 84632          (silent)
+> 3a       ActorComponent.ReceiveBeginPlay (0x8020802: neither Static nor Native)
+>          -> result -5 after 1.51 s against a 1500 ms timeout, and
+>             "GameThreadDispatch: enqueued invoke inst=… , waiting..."   -> it IS queued
+> 3b       direct (trampoline) invoke of KismetMathLibrary.Add_IntInt
+>          -> ReturnValue = 7                      (the call really executed)
+>          -> hook_fire_count 84632 -> 84632       delta = 0   -> the queue was NOT drained
+> ```
+> ⭐ **All three controls hold**, which is what makes the zero mean something: the background is
+> *shown* silent, the first invoke is *shown* to have queued, and the second is *shown* to have
+> executed. Pre-3205 that second call would have entered `HookedProcessEvent` on the pipe thread and
+> run the abandoned request; it cannot now.
+>
+> ⚠⚠ **The second call MUST be `direct_call`, and an ordinary static-native invoke will mislead you.**
+> Measured here: with the game thread frozen, `Add_IntInt` — `Native|Static`, the fast path the row
+> names — returns **`-5 (game-thread dispatch timeout)`, `game_thread_stalled: true`**, not 7. So it
+> never reaches ProcessEvent, never had the *opportunity* to drain, and its 0-delta would be
+> **vacuous**. Only a `direct_call` reaches PE on the calling thread, which is the route the pre-3205
+> drain actually took. (Note the contrast with `L4`'s MB1 row, which asserts the fast path survives on
+> an **idle** game: an idle game still ticks; a *suspended* thread does not, and
+> `IsGameThreadResponsive()` is false, so the two are not the same condition.)
+>
+> ⛔ **Step 4 is not decidable from the log, and the reason is structural.** After resume, "the queued
+> request now runs" produces **no** `invoke completed` line — that line is written by the *waiting
+> pipe thread*, which has already timed out and gone. What the same log does show is that the drain
+> path works on a live game thread: `enqueued invoke … waiting...` → `invoke completed result=0` in
+> **39 ms** when the thread is running. Deciding step 4 for the *abandoned* request needs a
+> side-effect signal (a stateful UFunction whose result is readable afterwards), not this log line.
+>
+> ℹ️ The rig set `invoke_timeout_ms` to 1500 and the DLL **persists that to the hint cache**
+> (`HintCache: Saved invoke timeout override … -> 1500ms`). It has been restored to **5000**.
 > | 2 | with the game running, `get_pointers` → note `hook_fire_count`, run step 1 again, re-read | the count does **not** jump by our own call | our call no longer enters `HookedProcessEvent` at all |
 > | 3 ⚠ THE ONE THAT MATTERS | set a short invoke timeout, fire a game-thread invoke on a **paused/menu** game so it times out and stays queued; then fire a CE static-native invoke | the queued request is **still queued** afterwards, not executed | before 3205 the second call drained it on the pipe thread |
 > | 4 | resume the game | the queued request now runs, on the game thread | the drain still works where it should — the regression guard for step 3 |
