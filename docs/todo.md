@@ -2,12 +2,15 @@
 
 Open work only. **Read this when deciding what to do next.**
 
-> 🤝 **Coming back after the 2026-08-19 fix programme? Read
-> [handover-2026-08-19.md](handover-2026-08-19.md) first.** 32 commits took the audit register
-> **166 → 4 open of 297** and the OPEN FIXES INDEX's original twelve **→ 1**, and **none of it has
-> been verified on a running game**. That doc carries the three-phase verification schedule (two
-> phases need nothing from you), the four findings left open on purpose, and the two-machine sync
-> point (`dist` **1.0.0.3263**; 3262 was deliberately skipped).
+> 🤝 **Coming back? Read [handover-2026-08-20.md](handover-2026-08-20.md) first** — the closing
+> note for the four-pass verification programme that RAN the 2026-08-19 plan. **No product code
+> changed**; `build_number.txt` is **3263** and all four CI gates are green. It carries what closed,
+> the **seven new defects it found and did NOT fix**, what each remaining row still needs (CE / a
+> human playing / an approval / no fixture here), and the traps that produce confident wrong
+> answers. ⚠ Its predecessor [handover-2026-08-19.md](handover-2026-08-19.md) is still the best
+> account of *why* the programme exists, the four findings left open on purpose, and the two-machine
+> sync point (`dist` **1.0.0.3263**; 3262 was deliberately skipped) — but its repeated claim that
+> **nothing has been verified on a running game no longer holds**.
 
 > ## ▶ If the ask is "carry on fixing bugs", do NOT start here
 >
@@ -18,8 +21,9 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - `## Pending live-game verification` — **40 open batches** needing a running game (this is a
->   DERIVED count and it had drifted to a stale 43, then to a stale 36; re-derive, never hand-adjust:
+> - `## Pending live-game verification` — **30 open batches** needing a running game (this is a
+>   DERIVED count and it has drifted to a stale 43, a stale 36 and a stale 40; re-derive, never
+>   hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/todo.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
 >   **Offer these
 >   whenever the maintainer has a game up.** The newest (2026-08-19) is the audit L9 (T1c
@@ -2864,7 +2868,7 @@ remove the dependency for callers that already have one.
 *Not fixed — found during a verification pass. Effort S, risk low, but it needs the listing-vs-resolving
 distinction above respected.*
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L4 (D4b Mimic/Sein/Flamme): MB1 / MB2 / SE1 / FL1 / FL2
+### ✅ VERIFIED 2026-08-20 — audit L4 (D4b Mimic/Sein/Flamme): MB1 / MB2 / SE1 / FL1 / FL2 — all five rows PASS, all headless
 
 *The pure decision rules of this batch are unit-pinned in `dll_helpers_test` and need NO live check:
 **MB1**'s `ShouldRouteDirectInvoke` (10 assertions), **MB2**'s `CommandRequiresInit` (17), **FL1**'s
@@ -4050,7 +4054,7 @@ duplicate `AppendContractCheck` (the block was emitted twice). Pinned by 6 new t
 
 -----
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[AUTOREFRESH-2026-08-19]` — Live Walker auto-refresh: the countdown can no longer freeze, and it comes back after a reconnect
+### ✅ VERIFIED 2026-08-20 `[AUTOREFRESH-2026-08-19]` — steps 1-7 all pass; — Live Walker auto-refresh: the countdown can no longer freeze, and it comes back after a reconnect
 
 *Reported by the maintainer from their own session on the **other PC**, running dist **1.0.0.3262**:
 "Live Walker `Auto` refresh 無效，秒數數到0後就停在那" — the countdown runs down to 0 and sits there
@@ -4254,7 +4258,7 @@ three changes, each independently unit-pinned:*
 
 -----
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[PIPEBUSY-2026-08-18]` — at-capacity logs ONCE, not an ERROR every second
+### ✅ VERIFIED 2026-08-19 `[PIPEBUSY-2026-08-18]` — all three steps pass; — at-capacity logs ONCE, not an ERROR every second
 
 *Was: at capacity (`kMaxPipeInstances=3`, UI holds 2 lanes) the accept loop's `CreateNamedPipe` fails
 with `ERROR_PIPE_BUSY` (err=231) every second and logged `LOG_ERROR("PipeServer: CreateNamedPipe
@@ -6476,7 +6480,7 @@ regression.
    trailing-dot defect), so a green result on steps 1–3 says these fixes did no harm; it says
    **nothing** about Tier 2 working. Do not close G11 on the strength of this batch.
 
-### ⬜ NEW 2026-08-17 — G10 / MA1: the hint cache must stop destroying itself
+### ✅ VERIFIED 2026-08-20 — G10 / MA1: the hint cache must stop destroying itself (steps 1-6 all pass)
 
 *Needs the DLL injected. See dev-log builds 3091 / 3095. **Step 1's control already exists on disk**
 and is decisive — this is the rare case where the regression was captured before the fix.*

@@ -20,12 +20,12 @@
 
 | 分組 | 項目數 | 需要準備 |
 |---|---|---|
-| **第 1 步 — 只開 UE5DumpUI** | 3 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
-| **第 2 步 — 要注入一個執行中的遊戲** | 23 | 一款執行中的 UE 遊戲 + 注入 |
-| **第 3 步 — 遊戲 ＋ Cheat Engine** | 13 | 遊戲 + Cheat Engine |
+| **第 1 步 — 只開 UE5DumpUI** | 2 | UE5DumpUI（其中一項要 **AOT/trimmed** 版） |
+| **第 2 步 — 要注入一個執行中的遊戲** | 18 | 一款執行中的 UE 遊戲 + 注入 |
+| **第 3 步 — 遊戲 ＋ Cheat Engine** | 10 | 遊戲 + Cheat Engine |
 | **第 4 步 — 需要特定條件的遊戲** | 20 | 符合特定條件的遊戲 |
 | **第 5 步 — 目前沒有可測的環境** | 2 | 目前沒有 |
-| **合計** | **61** | |
+| **合計** | **52** | |
 
 > 這張表是**數出來的**，不要手改：`grep -c '^### ' docs/pending-verification_zh-TW.md` 再扣掉
 > 「怎麼用這份清單」底下的兩個小節。第 0 步已經整組做完，所以那一列不見了。
@@ -62,19 +62,6 @@
 ## 第 1 步 — 只開 UE5DumpUI
 
 不用注入任何遊戲。
-
-### ⬜ AF10 / AF11 —— 第二個執行個體的離開碼、座標庫搬進子資料夾
-
-*優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | UI 已經開著時，從 PowerShell 再啟動一次 `UE5DumpUI.exe`，讀 `$LASTEXITCODE`。 | **1**（不是 0），而且第一個視窗會被帶到前景。 |
-| 2 | 在 `%LOCALAPPDATA%\UE5CEDumper\` 根目錄放一個 `teleport-coords.<module>.json` 和一個同名 `.bak`，然後啟動 UI。 | 兩個檔案都出現在 `%LOCALAPPDATA%\UE5CEDumper\TeleportCoords\`，根目錄的副本消失，Teleport 分頁照樣列得出座標。<br>⚠ 要確認**兩個一起搬**：只搬走 `.json` 而 `.bak` 留在原地就是失敗。 |
-| 3 | 反向對照：先在 `TeleportCoords\` 放一份同名 `.json`，再把另一份放到根目錄，啟動 UI。 | 根目錄那份**原地不動**且 log 有記一行，絕不可被靜默覆蓋。 |
-| 4 | 把某一款遊戲的座標庫檔案時間改成 21 天以前，重開 UI。 | 檔案**還在**（座標庫不做時間清掃，和 `Bookmarks\` 一樣）。 |
-
------
 
 ### ⬜ AF16–AF23 —— DataGrid 欄位標題排序（**必須用 AOT 版**）
 
@@ -165,20 +152,6 @@
 | 1 | Live Walker 輸入欄位搜尋關鍵字 → 按 Refresh，並讓 auto-refresh 再跑幾拍。 | 高亮保留、↑/↓ 步進仍落在高亮列、表格不跳回最上方。<br>✅ 「按 Refresh」那半段已於 2026-08-17 驗畢，**只剩 auto-refresh 那半段**。<br>⛔ **auto-refresh 那半段先別做**：要等 `[AUTOREFRESH-2026-08-19]` 的修正進到**已發佈**的 build。另一台機器目前跑 `dist` 1.0.0.3262，整批程式跑完前不會更新，在那之前 Auto 本來就會停在 0，測了也只是重測那個已知缺陷。 |
 | 2 | Live Walker 找一個值帶數字尾碼的 NameProperty（Slot_1、Slot_2），同時用 Value Search 看同一位址。 | 面板與 Value Search 顯示同一組 8 bytes、尾碼數字一致。<br>⚠ 物件／實例「名稱」被截斷是另一條未修的線，不要當成這項失敗。 |
 
-### ⬜ AUTOREFRESH —— Live Walker 的 Auto 倒數不會卡死，斷線重連後會自己回來
-
-*build 3262 修正 · 優先度 **高***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Live Walker 走到任一活體物件 → 勾 **Auto** → 連看 3 個完整週期。 | 倒數 `10…1` 循環不斷，表格數值真的有在變。<br>⚠ 倒數停在 0 不再往下走即為 FAIL。 |
-| 2 | Auto 開著時，雙擊一個可編輯的數值欄位打開編輯框，再點麵包屑跳走。 | 編輯框開著時顯示 `sec · paused (editing)`；跳走後 Auto 自己恢復，不會一直停在 paused。 |
-| 3 | Auto 開著 → 關掉遊戲（UI 不要關）→ 開**另一款**遊戲 → 等它連上 → 隨便走到一個物件。 | 斷線期間 Auto 是關的；新物件顯示出來後 Auto **自己重新開始**。 |
-| 4 | 同步驟 3，但走 proxy 模式（先出現 `Connected (proxy mode — scan not yet triggered)` 再出現 `Connected:`）。 | 結果與步驟 3 相同。 |
-| 5 | Auto 開著時切到別的分頁，再切回 Live Walker。 | Auto 又在跑了。 |
-| 6 | 迴歸：勾 Auto 後**自己取消勾選**；另外再試勾 Auto 後往下鑽到子物件。 | 兩種情況都維持關閉。<br>⚠ 只有斷線與切分頁可以自動恢復；使用者自己關掉的必須保持關掉。 |
-| 7 | Auto 開著時斷線，面板留空不要導航。 | 顯示 `sec`，不會有任何輪詢。 |
-
 ### ⬜ AE2 / AE3 —— Class/Struct 面板在快速切換選取下的同步
 
 *優先度 **中***
@@ -223,16 +196,6 @@
 | 3 | grep scan-0.log 的 DetectVersion: Tier 2 Release prefix -> NNN。 | 若出現，記錄遊戲名稱、版本，以及是否與該遊戲實際版本相符。<br>⚠ VERSIONINFO 完整的遊戲會停在 PE VERSIONINFO 那行、根本不進 tier ladder；要用 version resource 被 strip 的標題（Elliot）。 |
 | 4 | 用先前會回報 Tier 3 (low confidence) 的遊戲重跑一次。 | 回報的版本與先前相同。 |
 
-### ⬜ V7 / AF4 / AB6 —— 失敗要看得見、切頁後還能捲動、排序要跟畫面一致
-
-*build 3016-3031 · 優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | Live Walker 開一個物件 → 在遊戲中讓它被銷毀/卸載 → 按 Refresh。 | 狀態列下方出現鮭魚紅錯誤行（約 10 秒 timeout 後）。 |
-| 2 | Live Walker 開物件 → 切到別的 tab → 切回來 → 使用 🌍 Locate in GWorld、書籤還原、或 ↑/↓ 比對步進。 | 表格仍會捲動並定位到目標列。<br>⚠ 壞掉時不會跳錯，只是按鈕按了沒反應——要看畫面有沒有捲動。 |
-| 3 | Group Scan 下一個會讓單一 slot 保留多個 leaf 的 filter，然後依 Value 欄排序。 | 排序結果與畫面上 Value 欄顯示的值一致。 |
-
 ### ⬜ D2（顯示配對） —— Group Scan 列上顯示的是真正的配對
 
 *build 2715 / 2719 · 優先度 **中***
@@ -274,15 +237,6 @@
 | 2 | 改連「另一款」遊戲 Y，載入 X 的 .jsonl 並按 Re-check。 | 比對被拒絕、狀態列同時寫出 X 與 Y 的 module 名、所有列都是未比對、Jump 沒有東西可跳；log 出現 `DumpExplorer live match refused: dump module '…' != live module '…'`。 |
 | 3 | （機會性，等 X 真的更新版本後）連上 X，載入更新前的舊 dump。 | 仍然比對成功，但帶 "Different build — offsets may have moved" 註記。 |
 
-### ⬜ AF6 / AE8 —— 兩個順手檢查：拒絕要出聲、被拒的掃描不計數
-
-*build 3016-3031 · 優先度 **低***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 在 Property Search 的 Force 輸入框打一個超出範圍的巨大整數並送出。 | 跳出明確的拒絕訊息並指出實際會用的替代值；不能是靜默無反應。 |
-| 2 | 故意觸發一次會被拒絕的 scan 點擊，然後打開 diagnostics 的量測清單。 | 該次被拒的點擊不出現在量測清單裡。<br>⚠ 同批的 AF1 需要格式異常的 UEnum，無法隨需重現，不列入本清單。 |
-
 ### ⬜ Genau RIP decode (b2544) —— RIP 解碼修正沒有改動解出的位址
 
 *優先度 **低***
@@ -291,30 +245,6 @@
 |---|---|---|
 | 1 | 同一款遊戲，分別用修正前與修正後的 DLL 各注入一次，各留一份 `scan-0.log`。 | 兩份 log 都跑完整個 FindAll。 |
 | 2 | 比對兩份 log 的 candidate / probe 計數，以及 GObjects / GNames / GWorld 最終解出的位址。 | 計數下降（這是收益），而三個位址逐 byte 完全相同（這才是驗收標準）。位址有變就是 regression。<br>⚠ 不能用 sweep.sh 的 pattern diff 判定：它會跳過 Symbol*/CallFollow 簽章，乾淨的 diff 只代表「沒測到」。 |
-
-### ⬜ PIPEBUSY —— 管線佔滿只記一次，不再每秒噴一條 ERROR
-
-*優先度 **中** · 分類 **A**（全程不用 GUI：三個 `pipe_client.py` 就能佔滿 `kMaxPipeInstances=3`；用 UI 佔 2 條再加 1 個 client 也可以，那種跑法是 B）*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 把管線佔滿 3 條（UI 連上佔 2 條，再開一個 `tools/verify/pipe_client.py`），放著一分鐘，然後看 `Logs/<遊戲>/pipe-0.log`。 | 只出現**一條** `all 3 pipe instances in use, waiting for a free slot`（INFO）。<br>⚠ 出現重複的 `CreateNamedPipe failed` 就是 FAIL —— 修正前是每秒一條，31.5 分鐘 1,826 條。<br>⚠ 「UI 連著時不要跑 pipe_client」那條日常規矩仍然有效；這一項是**刻意**去踩它，跑完就把多出來的 client 關掉。 |
-| 2 | 關掉多出來的那個 client，繼續看 log。 | 出現**一條** `a pipe slot freed, resuming accept`，然後回到正常的 `Waiting for client connection...`。 |
-| 3 | 對照組：一般只開 UI 的 session，grep `pipe-0.log` 的 `all 3 pipe instances`。 | 找不到。<br>⚠ 沒跑這步就沒證明那條 INFO 只在真的滿載時才出現。 |
-
------
-
-### ⬜ F5 —— 管線回覆的信封欄位不會掉，大回覆也不會被截斷
-
-*優先度 **高** · ⚠ 這一批唯一動到管線本身的改動，而且沒有任何測試目標會編譯 `Fern.cpp`。這批要是弄壞了 session，就是這一項。*
-
-| # | 做什麼 | 預期 |
-|---|--------|------|
-| 1 | **先把 UI 斷線**（⛔ `kMaxPipeInstances=3`、UI 自己佔 2 條），再用 `tools/verify/pipe_client.py` 對已注入的遊戲送 `snapshot_chunk`、`find_instances`（挑一個實例數上千的 class）、`list_all_functions`。 | 每個回覆都是一行一個完整 JSON，而且 `id`、`ok`、`game_thread_stalled` **三個都在**。<br>⚠ 大回覆才是重點：被拿掉的那份複製就在這幾個指令上。 |
-| 2 | 同一個 session 開一個 `watch`，讓 DLL 一邊推 EVT_WATCH 事件、一邊照常送指令，持續一分鐘。 | **一行壞掉的都不能有**。同一則訊息的兩次寫入在同一把 `writeMutex` 底下，watch 事件絕不可以插進回覆中間。<br>⚠ 只要看到一行 JSON 斷掉，就代表拆成兩次 `WriteFile` 是錯的，要退回單次寫入。 |
-| 3 | 對照組：正常連 UI 用幾分鐘 —— Object Tree 載入、Live Walker 下鑽、跑一次 value scan。 | 一切如常。信封的改動正常運作時是看不見的，所以一定要跑這一步。 |
-
------
 
 ### ⬜ W8 —— 匯出的 .usmap 要含 Blueprint 產生的 class
 
@@ -392,19 +322,6 @@
 | 4 | 維持凍結，製造 churn：把凍結中的 actor 打死重生，或跨越 level streaming 邊界。 | 約一次 rescan（~5 秒）內重新接上；且沒有任何不相干物件的欄位被改動。 |
 | 5 | AA3：凍結執行中把 DLL 卸載/重新注入，讓 rescan 永久失敗。 | ~15 秒內 Lua console 印出一次「... consecutive rescans failed -- freeze STOPPED writing」，之後不再寫入。 |
 
-### ⬜ G10 / MA1 —— Hint 快取與 AOB 掃描取消守衛
-
-*優先度 **中***
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 在有 hint 快取的遊戲上暖啟動掃描，於 `scan-0.log` 搜尋 `Hint MISS`，看該行括號內的 match 數。 | 顯示真實比對數（`(N matches, none validated; …)`）；對冷掃描曾記錄數百筆的 pattern，絕不可寫成 `1 match`。<br>⚠ 沒有 `Hint MISS` 行就是這步無法判定，不算通過；需先製造一次 hint 失效（例如換 build 或改動 PE）。 |
-| 2 | 在一款沒有 hint 的冷掃描開始約 2 秒後，把 CE 裡的 script 取消勾選。 | `scan-0.log` 在 ~1 秒內出現 `AOB scan CANCELLED after N/M batches`，以及 `FindAll: scan was CANCELLED — NOT writing the hint cache`。 |
-| 3 | 承上那次被取消的掃描後，diff `%LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{Machine}.json`。 | 該 PE hash 的項目完全沒有變動。<br>⚠ 三個守衛必須分開各驗一次，不要一次跑完就一起判定。 |
-| 4 | 在**同一個** process 內重新勾選啟用，再跑一次掃描。 | 跑完整的重新掃描，而不是被 `UE5_Init` latch 直接短路跳過。 |
-| 5 | 在同一 process 內鑽進一個 `MulticastSparseDelegateProperty`。 | `FindSparseDelegateStorage: Scanning` 第二次出現，而不是被 latch 住直接回 0。 |
-| 6 | 連上 UI → 指令進行中把 UI 斷線 → 重新連線 → 重跑一次完整掃描。 | 掃描正常完成、有寫入 hint 快取，且日誌中**沒有** `CANCELLED` 行。 |
-
 ### ⬜ AA12 / AA13 (key: FreezeOutcome) —— Freeze 腳本不再謊報成功
 
 *build 3125 · 優先度 **中***
@@ -445,18 +362,6 @@
 | 3 | 保持一個 hold 生效、UI 仍連著，直接關閉遊戲。 | 不當機、不卡住、Windows 應用程式事件記錄沒有新項目（沒有正面 log 可查，證據就是「什麼都沒發生」）。 |
 | 4 | 對一個活體實例超過 256 的 class（投射物、群眾 NPC、可破壞物件）下 Force。 | strip 那一列顯示 `⚠ capped` 與 `(256 held)`，狀態列結尾是 "cap reached, more exist unheld"；換一個小 class 則兩者都不出現。 |
 | 5 | 對上一步按 Reset，再讀那些實例的欄位值。 | 沒有任何實例卡在被強制的值。 |
-
-### ⬜ SLOTSYM —— slot 版 `[DISABLE]` 真的會反註冊，而且說的是實話
-
-*優先度 **中** · 分類 **B** · 需要：`&GEngine` AOB 驗得過、記錄會走 SLOT 路徑的遊戲（DumperTest 可以）。要在 CE 的 Lua console 設 `UE5_DEBUG=1` 才看得到 `dbg` 行*
-
-| # | 做什麼 | 預期 |
-|---|---|---|
-| 1 | 勾一筆「Get GameEngine」記錄，再取消勾選，然後在 CE 的 Lua console 執行 `print(getAddressSafe('UE_GameEngine'))`。 | **第一次呼叫就回 nil**（不需要手動 `unregisterSymbol`），`dbg` 寫 `UE_GameEngine unregistered`。<br>⚠ 修正前取消勾選後仍會回 `0x…`，而且 log 還宣稱已經反註冊了。 |
-| 2 | 貼 CE-XML 再做**第二筆**「Get GameEngine」，兩筆都勾起來，先取消**舊的那筆**，再 `print(getAddressSafe('UE_GameEngine'))`。 | 仍然解得到（另一筆還握著）；舊那筆的 `dbg` 寫 `still held by 1 other record(s) -- left registered`。接著取消第二筆 → 這次回 nil。<br>⚠ 兩筆解到的是**同一個** slot 位址，所以不能靠位址分辨誰是誰，只能看 refcount 的訊息。 |
-| 3 | 迴歸：勾「Get GWorld」再取消，`print(getAddressSafe('UE_GWorld'))`。 | 回 nil。<br>⚠ GWorld 這條路徑本來就正常，這步是確認沒被改壞。 |
-
------
 
 ### ⬜ V11 —— 「Register symbol」成功和失敗要看得出差別
 

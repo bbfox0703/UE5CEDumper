@@ -22,6 +22,97 @@ builds ≤696 in
 
 -----
 
+## 2026-08-20 (evening) - Fourth pass on 3263: the UI and Cheat-Engine modes, 3 more defects, AA12/AA13 opened up
+
+**No source change.** `build_number.txt` is **3263** and the tree is clean. ⚠ The caveat from the
+entry below still stands and is worth repeating because it changes what a build means today:
+`dist/UE5Dumper.dll` **was rebuilt** for the PEHOOK step-3b experiment (identical source), so its
+bytes differ from the handed-over 3263 — and **`proxy_refresh.py` therefore reports all nine
+deployed proxies as `*** STALE ***`, which is a FALSE ALARM**. `dist/UE5DumpUI.exe` was **not**
+rebuilt and is still the 54.7 MB AOT-trimmed binary, which is what made the AOT-sort work below
+possible without a rebuild.
+
+This pass changed **mode** twice rather than finding more headless rows: first driving the real UI
+with computer-use, then driving **Cheat Engine**. Both were productive, and the CE half found three
+defects in one sitting.
+
+### The UI pass — one batch closed, several completed
+
+* **`PEHOOK` step 1** — the last non-UI-blocked step. Self-Test on a SIB-less build gives
+  `✗ Add_IntInt(3,4) expected 7, got 0` with advice naming a **MIS-DETECTED vtable slot**. ⭐ Clicking
+  it a second time returns a **completely different** string — *"The DLL REFUSED this call"* — because
+  the validator had condemned the slot in between. Two state-appropriate advices from one button
+  minutes apart is the row's headline claim (*the advice is chosen from `get_diagnostics`, not
+  asserted*) demonstrated rather than argued, and it is the UI face of the `-3` refusal measured
+  headlessly in step 3b.
+* **`PEHOOKONCE` step 5 — batch CLOSED.** On a fresh Lushfoil the UI genuinely shows
+  *"Connected — waiting for scan"* with **Start Scan** unpressed, so the pre-scan window is real in
+  the UI and not only over the pipe. Live Funcs → Start before any scan gives the actionable
+  *"Run a scan, then Start again"*; after a scan, Start again **without restarting the game** records
+  **67 distinct functions / 98,236 calls**. The order-swap that used to poison the PE hook for a whole
+  process now recovers inside one process.
+* **`PASTECRASH` 4b + 4c** — and they turn out to be **two separate handlers**. The Copy button logs
+  *"Clipboard copy FAILED — nothing was copied, the app is unaffected"* while the
+  `Input-layer fault swallowed (#N)` counter does **not** move. 4b's safety half passes; its predicted
+  undo residue did **not** occur (6 typed characters took exactly 6 `Ctrl+Z`), so the row's
+  explanation of that residue should be treated as unconfirmed.
+* **AOT sort — 2 grids → 8**, all on the `-Mode Publish` binary because a non-trimmed build passes
+  with the bug present: Live Funcs, Detect Stats, Live Walker, Snapshot, Class Pivot, SPC Query.
+  ⭐ SPC's is the largest sort exercised anywhere in the item — **12,153 rows** — which is where a
+  per-row reflective comparer would be most visible. The **Props/Invoke picker** is the only named
+  grid left and has **no fixture here** (it returns zero rows on every function tried).
+* **`AF4`**, **`AE2`/`AE3` steps 1-3**, **`AF22`**, and **`L6`'s `X5` auto-snapshot clause** all pass.
+  AE2's filter is recorded as the row demands (`DumperTest` → 22 results, 10 class-like then 12
+  instance rows) and the three headers it discriminates on are mutually unmistakable — 1760 / 12 /
+  928 properties.
+
+### The Cheat-Engine pass — `AA12`/`AA13` finally reachable, and three defects
+
+Launching CE flips the UI to **AOBMaker Connected**, which is what *enables* the per-row **Freeze**
+button (`PropertySearchPanel.axaml:285`). That single fact unblocked a batch that had **six steps and
+zero evidence**.
+
+* **`AA12`/`AA13` step 1 — PASS**, with the release as its control: `TickCount` held at **9999** across
+  10 s on a field that had been climbing ~1 Hz, the Lua window auto-closed, the record stayed ticked,
+  and unticking let it resume **9999 → 10039 → 10048**.
+* **Step 6 — PASS.** A float and a double freeze coexist (`555.5` / `777.75`); unticking one released
+  **only** that one. The differing widths mean a shared write path would have shown up as one
+  clobbering the other.
+* **Step 2 — HALF.** The message half is exactly right (*"nothing was frozen: g_invokeMailbox symbol
+  not found -- is UE5Dumper.dll injected?"*); the untick half fails.
+* **Step 3 — the fixture was wrong**, and finding that out was the result: `NiagaraComponent` previews
+  as `0 (CDO default)` but the freeze reports **2 live instances**.
+
+**Three defects, all with reproducers:**
+
+* **`[FREEZEUNTICK-2026-08-20]`** — a bail-out that applies nothing leaves the record **`Active=true`**,
+  on **both** the helper-missing and DLL-not-injected paths. The generator *does* emit
+  `if memrec then memrec.Active = false end`, and assigning the same property externally works — so it
+  is the in-ENABLE assignment that does not survive. This is precisely what CLAUDE.md's rule forbids,
+  and it makes `AA12`/`AA13` step 3 non-discriminating until fixed.
+* **`[FREEZEINJECT-CRLF-2026-08-20]`** — "Inject Freeze Helper" reports
+  `wrote 58345, stream has 57208`. The arithmetic is exact: the helper is **58,345 bytes with 1,137
+  CRLF endings**, and 58,345 − 1,137 = 57,208. CE stores it LF-normalised; the check compares a CRLF
+  byte count to an LF stream. **The write succeeds** (`findTableFile` → FOUND) — only the verification
+  is wrong, but it tells the user the setup step failed.
+* **`[CDOSCOPE-2026-08-20]`** — the `(CDO default)` marker is decided on an **exact** `ClassPrivate`
+  match while Force and Freeze on that same row scope **derived**. A row can read "nothing live" and
+  the action then hit two instances. Same exact-vs-derived split as `FREEZESCOPE` / audit #5 `A6`, one
+  layer up.
+
+### Method notes worth keeping
+
+* **Read `memrec.Active` from CE's Lua Engine, never from the checkbox** — measured this pass: red ✗
+  is **ACTIVE**, empty box is inactive. Reading the ✗ as "failed" would have inverted every finding
+  above.
+* **Check CE's title bar before ticking.** The process list reorders between openings, and one attach
+  landed on `UE5DumpUI.exe`; a freeze against the wrong process fails in a way that looks like a
+  product defect.
+* **The CE-Lua hygiene contract is confirmed live**: `[Freeze] Started/Stopped` lines are silent by
+  default and appear only after `UE5_DEBUG=1`.
+
+-----
+
 ## 2026-08-20 (later) - Third verification pass on 3263: ST1 and PEHOOK closed out, 1 new defect, a §4.4 retirement, and one void run caught
 
 **No source change.** `build_number.txt` stays **3263** and the tree is clean.
