@@ -2162,6 +2162,34 @@ a `-Mode Publish` binary. The offline half is machine-enforced by
 `DataGridSortWiringTests` (two guards, both negative-controlled), which is what makes this a
 spot-check rather than a 30-column sweep.
 
+> ### ✅ A 5th GRID + `AF4` 2026-08-20 `[AOTSORT-3-AF4-2026-08-20]` — Live Walker, same AOT binary
+>
+> **Live Walker's field grid sorts under AOT.** `Name` (text) on a GWorld walk:
+> ascending `AbstractNavData-Defaul…` → `BP_ThirdPersonCharacte…`×5; descending
+> `WorldPartitionReplay` · `WorldInfo` · `WorldDataLayers` · `VolumetricCloud` ·
+> `ThirdPersonExampleMap_C` · `TextRenderActor`. Indicator tracks the header, no crash.
+> ⇒ AOT-verified grids: **Interesting Funcs · Classes · Live Funcs · Detect Stats · Live Walker**.
+>
+> ### ✅ `AF4` — the Live Walker survives a tab round trip
+>
+> The row notes this has **no unit test by design** (an Avalonia visual-tree lifecycle fact), so it
+> can only be answered on screen.
+>
+> 1. Live Walker → **Start from GWorld** → `GWorld > UWorld ThirdPersonMap`, grid populated.
+> 2. Typed `Static` in the field search → **60 matches**, matching rows shaded.
+> 3. **Baseline first** (so a later success is not just "it never worked"): two ▼ presses select
+>    `StaticMeshActor.StaticMeshComponent0`, and the field-only buttons **`Copy CE Field`** /
+>    **`+CE Field (flat)`** appear in the toolbar — that toolbar change is the useful tell, because
+>    it proves a *field row* is genuinely selected rather than merely highlighted.
+> 4. **Switch to Instances → switch back.** Breadcrumbs, the `Static` query and `60 matches` all
+>    survive; the row *selection* is cleared and the two field buttons disappear with it.
+> 5. **▼ again → it works**: `StaticMeshActor` selected, both field buttons back.
+>
+> ⇒ The visual tree is intact after the round trip and the ↑/↓ stepper still drives selection and
+> scrolling. ℹ️ The stepper restarts from the first match rather than resuming mid-list, which
+> follows from the selection being cleared in step 4 — the row asks only that the feature *work*
+> after the round trip, so this is behaviour worth noting, not a failure.
+
 > ### ✅ AOT SORT EXTENDED TO 4 GRIDS 2026-08-20 `[AOTSORT-2-2026-08-20]` — Live Funcs + Detect Stats
 >
 > Same conditions as the block below and for the same reason: run against the **`-Mode Publish`
