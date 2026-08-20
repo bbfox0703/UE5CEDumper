@@ -2745,7 +2745,7 @@ three changes, each independently unit-pinned:*
 > and reads exactly like the bug. Check which command the current root actually issues before
 > concluding an absence.
 >
-> Steps **2** (the skip-reason text) and **4** (proxy mode) not run.
+> Step **4** (proxy mode) not run; step **2** is settled below.
 
 > ### ✅ STEPS 3, 5, 6, 7 PASS 2026-08-20 `[AUTOREFRESH-LIVE2-2026-08-20]` — every one measured on the wire
 >
@@ -2795,6 +2795,35 @@ three changes, each independently unit-pinned:*
 > disconnected *and* must **not** stay silently off afterwards. Pre-fix it stayed off for the rest of
 > the session. Reconnecting also **reloaded game A's bookmark** into slot 1 (`ThirdPersonMap`) by
 > itself, which is the same per-game store `X5` checked from the other side.
+> ### ✅ STEP 2 PASSES 2026-08-20 — the suspected ORIGINAL trigger, and the pause is bounded
+>
+> This is the row that matters most in this block: `_isEditing` stranded by an editor torn down
+> without a `CellEditEnded` is the mechanism the offline analysis narrowed to but **could not prove**.
+> Driven exactly as written — open an editor, then navigate away **while it is still open**.
+>
+> 1. Rooted on `DirectionalLightComponent`, Auto ON and ticking at 10.0 s.
+> 2. Double-clicked the `UCSSerializationIndex` (`IntProperty`, `-1`) value cell → the in-cell editor
+>    opens and the label becomes **`sec · paused (editing)`**. ✅ The skip now *says why*, which is the
+>    whole point of fix item 2 — before, a suppressed tick and a broken timer looked identical.
+> 3. Clicked the **`GWorld` breadcrumb with the editor still open** — the teardown path Avalonia does
+>    not raise `CellEditEnded` for.
+> 4. The label is a **live countdown again (`sec · 9s`)**, not stuck on `paused (editing)`.
+>
+> ⭐ **And the pause is BOUNDED, measured on the wire — it did not merely look right on screen:**
+> ```
+> 11:35:45.565  walk_instance 0x1BCE29BA030   gap  2.3 s
+> 11:35:55.568  walk_instance 0x1BCE29BA030   gap 10.0 s   <- last tick before the editor opened
+> 11:36:25.574  walk_world    (root)          gap 30.0 s   <- exactly TWO skipped ticks, then resumed
+> 11:36:35.575 … 11:37:05.592                 gap 10.0 s × 4
+> ```
+> Two things the label could not have given: the gap is **exactly 3 × the interval**, so precisely the
+> ticks falling inside the editing window were skipped and no more; and `11:35:55.568 → 11:36:25.574`
+> is **30.006 s**, i.e. the timer kept its phase straight through the pause. That is the re-arming
+> counter of fix item 1 — it displays the *period*, which elapses whether or not the tick did work.
+> The pre-fix failure was an **unbounded** pause; this one closed itself in two ticks.
+>
+> ⚠ No value was committed: the editor was abandoned by navigating, not by pressing Enter, so nothing
+> was written to the game.
 
 > | 1 ⚠ THE ONE THAT MATTERS | Live Walker → root on any live object → tick **Auto** → watch for 3 full intervals | the countdown cycles `10…1` and repeats, and the grid's values actually change | the reported failure is the counter reaching 0 and never moving again |
 > | 2 | while Auto runs, double-click an editable scalar cell to open its editor, then click a breadcrumb to navigate away | the label reads `sec · paused (editing)` only while the editor is open, and auto-refresh resumes by itself afterwards — it must NOT stay paused | this is the suspected original trigger; a stranded latch used to kill Auto for the whole session |
