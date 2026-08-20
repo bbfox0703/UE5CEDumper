@@ -2225,6 +2225,24 @@ spot-check rather than a 30-column sweep.
 > `Float/Double/Int/Int64/Byte/UInt8/Int8` or `Bool`/`Object` row.
 > | 8 | **A** | **AF7.** Run `walk_function_props` over the pipe against a **native** (non-Blueprint) UFunction on a large class and look for `budget_hit` in the reply. | The key is present. When `true`, the Props dialog's status line turns amber and carries "the disassembler hit its instruction budget", and the Interesting Functions batch **Uses** cell shows `⚠ partial`. ⚠ Needs a native function big enough to exhaust the budget — check the DLL's own `AnalyzeNativeFunctionProps ... BUDGET` log line to find one. |
 > | 9 | **B** | **AF22.** Property Search → right-click a row → **Force value…**. | The dialog is titled **"Force property value"**, the field is labelled "Force value (…)", the confirm button says **"Hold this value"**, and the inherited-field caveat does **not** mention `className` or a CFG block. Then open the ordinary **Freeze** flow and confirm it still says "Create freeze script" and still gives the CFG-block advice. |
+> ### ✅ AF12 / AF13 PASS 2026-08-20 `[AF12-AF13-2026-08-20]` — the sentence is word-identical, and the control holds
+>
+> DumperTest / `dist` 3263. Snapshot → **Capture Snapshot** → *"Captured 644 objects, 12155 fields"*
+> (2.7 MB) → **Mode: Group (Multiple Values)**, two `NumericNoByte` / `Exact` slots.
+>
+> **Positive — `0` and `1`:**
+> ```
+> 302 object(s) matched · scanned 644 · ⚠ a slot matched more than 256 fields — only that many were
+> kept, so "All fields" is a page and a later Changed/Decreased refine can re-read only what was
+> kept; use more distinctive values.
+> ```
+> ⭐ That is **word-for-word** the sentence `[AE13-DQ7R-2026-08-20]` recorded from the *live* Group
+> Scan — which is the row's actual assertion ("the same sentence the live Group Scan shows"), and it
+> is why 繁中 鐵則 4 applies here: the logic was already pinned offline, but nobody had seen the string
+> reach this panel.
+>
+> **Negative — `100` and `3`:** `12 object(s) matched · scanned 644`, **no clause**. Twelve real
+> matches, so this is a genuine control and not the vacuous zero-match kind rejected under `AE13`.
 > | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
 > | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
 
