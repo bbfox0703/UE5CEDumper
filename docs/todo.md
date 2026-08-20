@@ -2481,6 +2481,28 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > and the only one whose write turned into a rename. So the fix shape is to add the same arm (or
 > widen the filter to `0x80070005`), not to redesign staging. ⚠ Deliberately **not applied here**:
 > this session verifies, it does not fix.
+>
+> #### ✅ CONFIRMED ON A REAL RUNNING GAME, 2026-08-20 — no inference left in the chain
+>
+> **The Adventures of Elliot**, launched with its `dxgi.dll` proxy loaded (build 3263, proxy mode),
+> then Proxy Deploy → tick Elliot → **Force Overwrite** → **Deploy**. Force Overwrite is required:
+> the deployed proxy is already current, so `PlanDeploy` would otherwise return `AlreadyCurrent` and
+> never reach the write.
+> ```
+> [EROR] Deploy to The Adventures of Elliot_The Millennium Tales failed: Access to the path is denied.
+> [INFO] Deployed: 0 success, 1 failed
+> ```
+> * grid status → **`ErrorOther`**, not `ErrorLocked`
+> * log level → **`[EROR]`** from the generic handler, not the `[WARN] … file locked` line
+> * message → **"Access to the path is denied."** — it names no path and never mentions the game
+>
+> The row's expected text — *"still 'File locked (game running?)'"* — **did not appear**. So the
+> earlier `LoadLibraryEx` image-section probe was not an approximation of this case: it predicted it
+> exactly, and a real game's loader reproduces it verbatim.
+>
+> The row's **other** two clauses hold: the live `dxgi.dll` is **byte-identical** to
+> `dist/proxy/dxgi.dll` (2,876,928 B, SHA-256 match) and **no `.ue5dump-stage`** was left in the
+> game's `Binaries\Win64`. Only the classification is wrong.
 > | AC12 | on this machine (multi-library Steam install), open Proxy Deploy and let it scan | the same library folders as before are found; `proxy`/`init` log has **no** "libraryfolders.vdf is malformed" line | the parser is fully unit-tested but its input is a real Valve-written file — a rejected real VDF would silently halve game detection |
 > ### ✅ AC6 + AC12 PASS 2026-08-20 `[L7-AC6-AC12-2026-08-20]`
 >
