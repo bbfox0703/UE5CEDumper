@@ -2234,13 +2234,25 @@ spot-check rather than a 30-column sweep.
 > **908** calls against the anim callbacks' **454** — exactly 2:1 — so the cadence column is reading
 > real dispatch timing, not a placeholder.
 >
-> ⚠ **The third target — Live Walker's function grid `Params` header — was NOT reached.** That grid
-> lives behind a `Functions` expander that only renders when the walked object's class exposes listed
-> UFunctions, and it did not appear on any object walked here (`ULevel PersistentLevel`, the
-> `ThirdPersonExampleMap_C_0` level Blueprint). Jumping from a Live Funcs row via **Live** does not
-> help either: `ABP_Manny_C` has no live instance, so the UI correctly falls back to Class Struct
-> ("No live instance of ABP_Manny_C; showing class me…"). Needs an instance of a function-bearing
-> class — most easily a Pawn/Character on a title with one spawned.
+> **The third target — Live Walker's function grid — PASSES too, on DQ7R.** ⚠ It lives behind a
+> `Functions` expander that only renders when the walked object's class exposes listed UFunctions, so
+> it never appeared on DumperTest's `ULevel PersistentLevel` or its `ThirdPersonExampleMap_C_0` level
+> Blueprint, and jumping there from a Live Funcs row does not help (`ABP_Manny_C` has no live
+> instance, so the UI correctly falls back to Class Struct). Walking DQ7R's
+> `Default__ManaPlayer` (`0x27D705AFEF0`) does show it — **43 functions**:
+>
+> | column | ascending | descending |
+> |---|---|---|
+> | `Params` | `0 (0B)` `0 (0B)` `1 (8B)` `1 (8B)` | `3 (6B)` `3 (9B)` `3 (57B)` `3 (13B)` |
+> | `Return` (bonus) | blank-return rows first | `StructProperty` / `ObjectProperty` first |
+>
+> ⭐ **The descending run settles numeric-vs-text on its own.** Inside the `3`-param group the byte
+> sizes come out `6B, 9B, 57B, 13B` — unordered, because the sort key is the **param count**, not the
+> rendered cell. A string sort of the same cells would have produced
+> `"3 (13B)" < "3 (57B)" < "3 (6B)" < "3 (9B)"`, which is not what appears. So this grid sorts on the
+> number even though the cell shows `N (NNB)`.
+>
+> **With this, all three of step 1's grids are verified on the AOT binary.**
 > |---|-----|--------|------|
 > ### 🟡 STEPS 2 + 3 — partial 2026-08-20 `[AOTSORT3-2026-08-20]`; step 2 has NO ROWS to sort on this title
 >
