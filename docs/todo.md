@@ -2189,6 +2189,40 @@ spot-check rather than a 30-column sweep.
 > separately and refuses to pass on 0 probed functions.
 > | 6 | **A** | **AF11, negative control.** Repeat with a `teleport-coords.<module>.json` already present in `TeleportCoords\`. | The root copy is **left where it is** and a log line says so — never silently overwritten. Then confirm no sweep: backdate a library past 21 days and restart; it must still be there (`maxAgeDays: 0`, same as `Bookmarks\`). |
 > | 7 | **A** | **AF8.** Find an `Int8Property` via Property Search (`walk_class` on any class, grep the reply for `Int8Property`) and Force it to a **negative** value, e.g. `-5`. Then `get_forced_fields`. | Held count > 0 and the value reads back as **-5**. Before the fix the write stored 0xFB correctly but the read returned **251**, so the re-assert worker rewrote the byte every tick forever and the UI showed permanent drift. Also try `200`: it must now be **refused** as out of range rather than landing as -56. ⚠ Sample-blocked if no title exposes an `Int8Property`. |
+> ### ✅ AF22 PASS 2026-08-20 `[AF22-2026-08-20]` — every label as specified, plus the scope warning
+>
+> DumperTest / `dist` 3263, Property Search → `MaxWalkSpeed` → row
+> `CharacterMovementComponent.MaxWalkSpeed` (`FloatProperty`) → right-click → **Force field (hold
+> across instances)** → **Force value…**:
+>
+> | the row asks for | what the dialog shows |
+> |---|---|
+> | titled "Force property value" | **`Force property value`** |
+> | field labelled "Force value (…)" | **`Force value (float):`** |
+> | confirm button "Hold this value" | **`Hold this value`** (with `Cancel` beside it) |
+> | the inherited-field warning | present, in full — see below |
+>
+> ```
+> ⚠ MaxWalkSpeed is declared on CharacterMovementComponent, not on one specific object — so this
+>   holds the value on EVERY live CharacterMovementComponent and subclass at once, not just the one
+>   you were looking at. There is no per-class switch for Force — it holds the field on the
+>   declaring class and every subclass until you release it from the "Forced fields" strip.
+> ```
+> The header block also states `Type: FloatProperty -> float`, `Offset: 0x248`, and
+> `Scope: every live CharacterMovementComponent and every subclass (1 inh…)`. Cancelled — nothing was
+> held.
+>
+> ⚠⚠ **Two reasons the submenu legitimately does NOT appear, and both look like the feature is
+> missing.** The menu is gated on `ForceEnabled && SelectedResult.CanForceAny`
+> ([PropertySearchViewModel.cs:362](ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs:362)), and
+> `CanForceAny` requires `ShowScalarActions => !IsNested` plus a supported type:
+> * a **nested row** — anything produced with **Deep (structs/containers)** ticked, e.g.
+>   `WorldPartitionDestructible…DestructibleHLODState.Da…` — is excluded, however scalar it looks;
+> * a **StructProperty** row (`DumperTestActor.Health`, an FVector) is excluded because Solide holds
+>   only bool / object-null / numeric.
+>
+> Both were hit here before a forceable row was found. Untick **Deep** and pick a plain
+> `Float/Double/Int/Int64/Byte/UInt8/Int8` or `Bool`/`Object` row.
 > | 8 | **A** | **AF7.** Run `walk_function_props` over the pipe against a **native** (non-Blueprint) UFunction on a large class and look for `budget_hit` in the reply. | The key is present. When `true`, the Props dialog's status line turns amber and carries "the disassembler hit its instruction budget", and the Interesting Functions batch **Uses** cell shows `⚠ partial`. ⚠ Needs a native function big enough to exhaust the budget — check the DLL's own `AnalyzeNativeFunctionProps ... BUDGET` log line to find one. |
 > | 9 | **B** | **AF22.** Property Search → right-click a row → **Force value…**. | The dialog is titled **"Force property value"**, the field is labelled "Force value (…)", the confirm button says **"Hold this value"**, and the inherited-field caveat does **not** mention `className` or a CFG block. Then open the ordinary **Freeze** flow and confirm it still says "Create freeze script" and still gives the CFG-block advice. |
 > | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
