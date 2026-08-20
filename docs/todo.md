@@ -2886,7 +2886,11 @@ the in-situ fixes that only a running game / obfuscated fork can prove.*
 > right where it is parsed, so 100 and 300 were both clamped to 1000 and the 683 ms run legitimately
 > finished inside it. **The client cannot force deadline pressure below 1 s.**
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L6 (U3 MainWindow VM): X5 / X6 / X7 / X8 / X10 / X11 / X12
+### 🟡 ALL BUT TWO BLOCKED STEPS DONE 2026-08-20 — audit L6 (U3 MainWindow VM): X5 / X6 / X7 / X8 / X10 / X11 / X12
+
+> **Verified: X5 (both rows) · X6 · X7 · X10 · X11.** Remaining: **X8** needs Cheat Engine + the
+> AOBMaker plugin, and **X12** is a maintainer step (CE installed under `%ProgramFiles%`, app run
+> non-elevated). Neither is reachable in an unattended headless/UI session.
 
 *The pure logic is unit-tested: **X4** (`DumpCompletionFormatter` — floating size + honest zero-class
 line + the `DumpResult` count round-trip), **X7** (`GameThreadStalledLevel` — the stuck-ON resume
@@ -5649,9 +5653,40 @@ crash".*
 >   the swallow counter **stayed at 4**. So the guard is dormant when nothing fails; a fifth line
 >   here would have meant it was swallowing healthy input.
 >
-> **Not done:** 4b (`Ctrl+X` then `Ctrl+Z` residue), 4c (the Copy-button WRITE path — needs a
-> connected game for a Copy button to have anything to copy), and 7/8, which are opportunistic by
-> construction.
+> **Not done:** 7/8, which are opportunistic by construction.
+>
+> ### ✅ 4b + 4c NOW DONE 2026-08-20 `[PASTECRASH-4BC-2026-08-20]` — and they turn out to be TWO paths
+>
+> DumperTest connected, real UI, clipboard genuinely held by `tools/verify/clipboard_hold.py`.
+>
+> **4c — PASS, and it is NOT the same mechanism as 4b.** With the clipboard unusable, the System
+> tab's **Copy** button (GObjects address) leaves the app running and logs its own message:
+> ```
+> [WARN] Clipboard copy FAILED — nothing was copied, the app is unaffected. System.Runtime.
+>        InteropServices.COMException: Unexpected HRESULT …
+> ```
+> ⭐ **The `Input-layer fault swallowed (#N)` counter did NOT move** (still `#1` from 4b). So the
+> keystroke guard and the Copy-button write path are **separate handlers with separate wording**,
+> each phrased for its own context — *"the keystroke did nothing"* vs *"nothing was copied"*. Reading
+> the counter alone would have missed that the button is covered at all.
+>
+> **4b — the safety half PASSES; the predicted residue did NOT occur.**
+> `Ctrl+A` then `Ctrl+X` in the Object Tree filter with the clipboard held: the app is **still
+> running**, the text is **unchanged** (`Metric` still in the box, count still 5,000 — Cut degraded
+> to nothing visible), and `Input-layer fault swallowed (#1)` is logged.
+>
+> 🟡 **But the row's expected residue — "the first `Ctrl+Z` is a no-op, an extra undo entry" — was
+> not observed.** Counted rather than eyeballed: `Metric` is 6 characters and it took **exactly 6**
+> `Ctrl+Z` presses to empty the box (`Metric`→`Metri`→`Metr`→…→empty), with a 7th doing nothing.
+> There was no extra step anywhere in the stack, and in particular the *first* undo removed a real
+> character rather than being a no-op.
+> ⇒ The likely reading is that the guard swallows **above** `TextBox.Cut`, so `SnapshotUndoRedo`
+> never runs and the caveat the row was written to excuse does not arise. That is *better* than
+> the documented expectation, not a failure — but the row's explanation of the residue should be
+> treated as unconfirmed rather than as observed behaviour.
+> ⚠ **Scope:** the text was typed synthetically, one character per key event, so every character is
+> its own undo entry. That is what makes the count decisive here; a human typing burst might coalesce
+> entries differently, and this run does not speak to that case.
 
 > | 1 | start the UI, copy ordinary text, `Ctrl+V` into any filter box | the text pastes | baseline — the guard must not have broken normal paste |
 > | 2 ⚠ THE ONE THAT MATTERS | make the clipboard unreadable (above), then `Ctrl+V` into a filter box | **the app is still running**, the box is unchanged, and `Logs\UE5DumpUI\view-0.log` gains `Input-layer fault swallowed (#1)` | this is the crash, reproduced; before the fix the process died here |
