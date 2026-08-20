@@ -1754,7 +1754,64 @@ matters is simply "do normal mailbox commands still work".
 | 3 | `AC14` | ✅ **PASS 2026-08-20** — connected the UI to DumperTest, closed it **while still connected**: `pipe-0.log` has **0** `Pipe: ReadLoop error` lines and ends with an orderly `Pipe lane dropped — tearing down both lanes for a clean reconnect` (once per lane). That entry used to be the NullReferenceException logged as if a fault. | | |
 | 3b | `AC14` (original) | **B** | Connect the UI to an injected game, then close the UI **while still connected** (this is the `Dispose()` path that nulls `_reader` without awaiting the read loop). | `pipe-0.log` ends cleanly. **No `Pipe: ReadLoop error`** line — that entry was the NullReferenceException this fixed, logged as if an ordinary shutdown were a fault. |
 | 4 | `AC13` | **B** | System tab → note the IPC figure. Then kill the game while the UI is mid-request so a write fails, and look again. | The IPC total now includes the failed request's transport time. Previously a write-path failure contributed exactly 0 ms, i.e. the figure flattered itself precisely when the pipe was misbehaving. |
+> ### 🚫 AC13 IS NOT OBSERVABLE AS WRITTEN 2026-08-20 `[AC13-2026-08-20]` — do not spend a session on it
+>
+> **The reporting path works — that was checked first, so this is not a "couldn't get it to run".**
+> DQ7R, a successful single Value Scan writes the figure the row asks you to note:
+> ```
+> PERF Value Scan (First): wall 298.7 ms · dispatcher busy 289.1 ms (96.8%) · 2 dispatches
+>   · split dll 289.1 / ipc 6.3 / ui 3.3 ms (per call: dll 289.095 / ipc 6.304 / ui 3.345 ms)
+> ```
+> **`ipc 6.3 ms`** — that is "the IPC figure", and it lives in `view-0.log`, not on the System tab.
+> (The System tab's *"Diagnostics — DLL dispatch cost"* card — `97 dispatches over 2,649.7s ·
+> dispatcher busy 0.3%` — is the DLL-side dispatcher, a different number entirely.)
+>
+> **Why step 2 cannot work.** The figure is produced only by `DiagnosticsProbe`, and it is
+> structurally silent on exactly the scenario the row prescribes:
+> * `BeginAsync` swallows a failed opening `get_diagnostics` and leaves `before` **null**
+>   ([DiagnosticsProbe.cs:76-80](ui/UE5DumpUI/Services/DiagnosticsProbe.cs:76)); `DisposeAsync` then
+>   returns at `if (_dump == null || _before == null || _log == null) return;`.
+> * If the pipe dies *mid*-operation, the closing `get_diagnostics` throws and `DisposeAsync` does
+>   `catch { return; }` — commented *"disconnected mid-operation: nothing to report"*
+>   ([:100-102](ui/UE5DumpUI/Services/DiagnosticsProbe.cs:100)).
+>
+> So **both** ways of making a write fail end with **no PERF line at all**, and the improved
+> `PipeTransportStats` accounting has nowhere to appear. Killing the game to observe a figure that is
+> only printed when the game is alive cannot succeed.
+>
+> **The fix itself is real and correctly placed** — `PipeClient.SendAsync` now wraps `SendCoreAsync`
+> (write included) in the `try/finally` that calls `PipeTransportStats.Record`, where it used to wrap
+> only `await tcs.Task` ([PipeClient.cs:195-203](ui/UE5DumpUI/Services/PipeClient.cs:195)). It is the
+> *observation method* that is wrong, not the change.
+>
+> **What would actually check it** (cheap, and belongs in the test project rather than a live
+> session): drive `SendAsync` against a writer that throws on `WriteLineAsync`, and assert
+> `PipeTransportStats.Snapshot().Calls` incremented by 1 and `.Ms` by > 0 — plus the negative control
+> the comment names, that a call refused by the **not-connected guard** adds **no** sample, since that
+> guard deliberately sits above the timer.
 | 5 | `AC15` | **B** | Proxy Deploy → Scan Steam libraries, and the generic drive scan. | The same games are found with the same names/paths. The only intended difference is speed: one full VERSIONINFO resource load per detected game is gone. `UeVersion` was and remains null. |
+> ### ✅ AC15 PASS 2026-08-20 `[AC15-2026-08-20]` — both scanners still detect; ⚠ the two modes are NOT comparable
+>
+> | mode | result |
+> |---|---|
+> | **Steam** | `Found 18 UE game(s)`, from `Found 2 Steam library folder(s)` — the same 18 on **three** separate runs today (10:49, 12:06, 12:20), names and Binaries paths all populated |
+> | **Scan Drives**, `D:` only | `Found 22 UE game(s)` — the reference builds under `D:\UE_Analyze_data\…` (`UE4.24`, `UE4.27.2`, `UE5.2.1`, `UE5.6.1`, `WindowsNoEditor`, …), names and paths populated, no errors |
+>
+> **`UeVersion` is null throughout**, as the row expects: the grid's Version column is empty for every
+> detected game. The only rows carrying a version are ones where **our proxy** is deployed, and that is
+> `InstalledVersion` (`1.0.0.3263`), a different field.
+>
+> ⚠ **Do not expect the two modes to agree — they are complementary by design.** The drive scanner's
+> own tooltip says it: *"Scan the selected drives for non-Steam UE games … **Steam libraries and system
+> folders are skipped**."* The D: drive scan therefore returns **none** of the 13 Steam titles that
+> live on D:, and the Steam scan returns none of the 22 reference builds. Reading this row as "the
+> same list twice" would report a defect where the design is working.
+>
+> ⚠ **Honest limit on the claim.** "The same games as before" cannot be checked here: no pre-fix
+> baseline of either list exists on this machine. What *is* established is that removing the
+> per-game VERSIONINFO load left both scanners detecting games, with names and paths intact, and with
+> `UeVersion` null exactly as intended — i.e. the regression the row guards against is not present in
+> anything observable today.
 | 6 | `AE27` | **B** | Game Class Filter → type in the Package box, and sort by the Package column. | Identical results to before. `Package` is now memoized per `ClassPath` with setter invalidation; a stale or blank Package cell would mean the invalidation is wrong. |
 > ### ✅ AE27 PASS 2026-08-20 `[AE27-DQ7R-2026-08-20]` — and the Path column cross-checks every memoized value
 >
