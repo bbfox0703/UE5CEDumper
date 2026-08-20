@@ -6946,6 +6946,28 @@ when something ELSE goes wrong.
 7. **U7 — a CJK string preview.** Property Search a `StrProperty` holding non-ASCII text longer than
    50 bytes on a localized game. Before the fix the whole search returned zero rows with an error;
    success = rows come back and the preview ends in `…`.
+> ### 🟡 U7 — TWO HALVES PASS, THE COMBINED CASE HAS NO FIXTURE 2026-08-20 `[U7-DQ7R-2026-08-20]`
+>
+> **DQ7R (localized, UE 4.27), headless over the pipe.** The step wants a `StrProperty` holding
+> non-ASCII text **longer than 50 bytes**; success = *rows come back and the preview ends in `…`*.
+>
+> * ✅ **The hard-failure half is decisively disproved.** Before the fix "the whole search returned
+>   zero rows with an error". Across 16 keywords the search returned **1,808 property rows** with no
+>   error. That is the regression the item is really about.
+> * ✅ **Non-ASCII previews decode correctly.** `StatusGaugeWidget.NumString1` / `NumString10` /
+>   `NumString100` are `StrProperty` and preview as `"９" (CDO default)` — **U+FF19**, a genuine
+>   multi-byte UTF-8 character, rendered intact with no replacement characters.
+> * ✅ **The >50-byte truncation marker is emitted.** 55-byte previews such as
+>   `Engine.WireframeMaterialName` end with **U+2026** followed by the closing quote.
+> * ⬜ **The two together — a non-ASCII string over 50 bytes — has no fixture on this host.** Every
+>   CJK preview found is 19 bytes (well under the threshold) and every >50-byte preview is an ASCII
+>   asset path. The precise hazard (truncating at a BYTE limit splitting a multi-byte character)
+>   therefore remains unexercised. It needs a title whose long `StrProperty` values are localized.
+>
+> ⚠ **A literal reading of "the preview ends in `…`" reports a false failure.** The marker sits
+> *inside* the quotes — the tail is `… "` (U+2026, U+0022) — so `preview.endswith("…")` is **False**
+> even when truncation worked perfectly. Test with `"…" in preview`, or match `…"`.
+
 8. **AB6 — group sort follows the visible column.** Group Scan with a filter that makes a slot keep
    many leaves, then sort by Value. The order must match the Value column on screen.
 
@@ -7227,6 +7249,50 @@ instances.
 > test with a per-UClass verdict cache — and skips CDOs *inside* the walk. Comparing 58 against 252
 > (or against 42) looks like a discrepancy and is not one; the two numbers answer different questions.
 >
+> ### ✅ SOLIDE `capped` AND FREEZESCOPE STEP 4 BOTH PASS 2026-08-20 `[DQ7R-CAP-2026-08-20]`
+>
+> **DQ7R (UE 4.27, 149,370 objects), proxy mode, headless — `tools/verify/dq7r_batch.py` plus a
+> mailbox probe.** The note below is right that 58 instances cannot reach a cap of 256. The fix was
+> not to find a bigger *level* but to notice that **Solide's pool is not restricted to Actors** —
+> `FindInstancesDerivedFrom` works off any base, and an asset/component base is enormous even at a
+> title screen.
+>
+> Derived pool sizes measured through `CMD_LIST_INSTANCES` (contract-3 derived flag) before forcing
+> anything:
+>
+> | base | derived total | at the mailbox's own 1024 cap? |
+> |---|---|---|
+> | `Object` | **1024** | yes (`CAPPED`) |
+> | `Widget` | **1024** | yes (`CAPPED`) |
+> | `MaterialInterface` | **1024** | yes (`CAPPED`) |
+> | `Texture2D` | **998** | no |
+> | `ActorComponent` | **819** | no |
+> | `SceneComponent` | 581 | no |
+> | `Actor` | 44 | no |
+>
+> **Solide `capped` — PASS.** Forcing `ActorComponent.bAutoActivate` (BoolProperty, offset 137,
+> mask 0x80) across its 819-instance derived pool:
+> ```
+> force_field       -> ok=true resolved=true  held=256  truncated=true
+> get_forced_fields -> ActorComponent.bAutoActivate held=256 truncated=true
+> after reset_all_fields -> 0 held
+> ```
+> `held == 256 AND truncated == true` — **the cap is ADMITTED, not silently applied**, and
+> `get_forced_fields` reports the same pair the force did, so report and reality are not computed by
+> different code paths (audit #4's named root cause is absent here).
+> ℹ️ `bAutoActivate` was chosen deliberately: it is read at component spawn, so forcing it across 256
+> already-live components changes nothing observable, and Solide restores the captured base on
+> release. The run ends with 0 held.
+>
+> **FREEZESCOPE step 4 — PASS on the mechanism.** `pipe-0.log` carries `scope=derived` throughout,
+> e.g. `LIST_INSTANCES returned 64/1024 (page 1/16) scope=derived CAPPED` and
+> `returned 64/130 (page 1/3) scope=derived`. The step's own bar is *"a returned count in the
+> hundreds/thousands, **not `1/1`**"* — 819 / 998 / 1024 clear it comfortably.
+> ⚠ **Scoped honestly:** the step names `class='Actor'` specifically, and on DQ7R at its title screen
+> the derived `Actor` pool is **44**, not hundreds — no gameplay level is loaded, and 149,370 objects
+> are overwhelmingly classes and assets. 44 still refutes the `1/1` the defect produced, but a
+> hundreds-scale *Actor* count needs a title actually in play.
+
 > 🟡 **The Solide `capped` badge is only half-checked here.** `truncated=false` is *correct* at 58,
 > but the cap is 256, so this host never reaches it and the "held==256 AND truncated==true" assertion
 > is untested. That needs a title with **>256 live instances derived from one base** — DQ7R (149k
