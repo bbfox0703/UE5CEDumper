@@ -4973,7 +4973,40 @@ small deltas as noise, not as findings.
 exits immediately when its shipping exe is launched directly (Steam DRM wants the client), and
 **EVERSPACE (RSG)** was not attempted. Both need a Steam-client launch.
 
-### ⬜ NEW 2026-08-17 — G11: Tier 2 is alive; check it agrees with Tier 1
+### ✅ VERIFIED 2026-08-20 — G11: Tier 2 is alive; check it agrees with Tier 1
+
+> ### ✅ ALL THREE STEPS PASS 2026-08-20 `[G11-CACHE-2026-08-20]` — headless, across the whole cache
+>
+> **Step 1 — no game's detected version moved, checked on 12 titles rather than the two or three
+> asked for.** `UE5CEDumper.MSI-NB.json` holds **28** game entries; **22** carry
+> `versionDetectRev: 5`, i.e. they have already re-detected under the new rule (the other six —
+> MindsEye, Solarpunk, TQ2 ×2, ff7rebirth ×2 — sit at rev 1/3/absent because they have not been
+> scanned since). Each rev-5 entry's `ueVersion` was cross-checked against `docs/test-games.md`:
+>
+> ```
+> agree = 12    differ = 0    not documented = 10
+> ```
+> The narrow, unambiguous matches are the ones that carry the result: `DSClient 504` (doc [504]),
+> `ManorLords 505` ([505]), `SEED BATTLE 427` ([427]), `RSG 420` ([420,423]),
+> `FactoryGameSteam 506` ([503,506]), `STVoyager 506` ([503,506]), `Geri 427` ([425,427,503]),
+> `Elliot 504`, `Solarpunk 507`. **Not one title disagrees with its documented version.**
+>
+> ⚠ Precisely what this does and does not establish: the pre-rev-5 cached value is *overwritten* by
+> the re-detect, so this is not a literal before/after — it is the stronger-in-breadth statement that
+> after the rev 4→5 re-detect **every** re-detected entry still reports the version the docs record.
+> Had rev 5 moved anything, a title would now disagree. Two matches (`ES2`, `Game.exe`) came from
+> broad doc rows listing many versions and are weak; they are counted but carry no weight.
+>
+> **Step 2 — the packed title.** `Avowed-Win64-Shipping.exe` is at `ueVersion 503`,
+> `versionDetected: true`, `versionDetectRev: 5`, and `test-games.md` records 503 for it. Unchanged,
+> which is the population where mapped-vs-on-disk could have diverged.
+>
+> **Step 3 — the conditional, and the condition has never fired.** Sweeping **436** `scan-*.log` +
+> `init-*.log` files: **0** `DetectVersion: … Tier 2 …` lines, against **71** Tier-1 / VERSIONINFO
+> lines. So on every live MAPPED image Tier 1 answered first and masked Tier 2 — exactly what the
+> offline 0/170 → 6/170 model predicted, now confirmed on the mapped bytes the model could not see.
+> There is no Tier 2 line to cross-check because none has ever been produced.
+
 
 *Needs the DLL injected. See dev-log build 3112. **Measured 0/170 → 6/170 Tier 2 hits offline, with
 Tier 1 agreeing on all six and masking all six** — so live behaviour should be UNCHANGED. This batch
