@@ -2473,6 +2473,30 @@ three changes, each independently unit-pinned:*
 >
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
+> ### ✅ STEP 1 PASSES 2026-08-20 `[AUTOREFRESH-LIVE-2026-08-20]` — measured on the wire, not just on screen
+>
+> DumperTest Development + the AOT `dist` UI, Live Walker rooted on **GWorld** (`UWorld
+> ThirdPersonMap`), **Auto** ticked, interval 10 s.
+>
+> * **The countdown cycles and re-arms.** Sampled every 4 s: `6s → 4s → 8s → 3s → 8s → 3s`. It
+>   counts down and **wraps back up at least three times** in 20 s. The reported 3262 failure was
+>   *"秒數數到0後就停在那"* — it stops at 0 forever. It demonstrably does not.
+> * ⭐ **And the refreshes are REAL, measured to 0.1 s.** The UI's own `pipe-0.log` shows **13
+>   `walk_world` requests**, and after the initial manual root (a 40.9 s gap) the gaps are:
+>   `10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0` — **eleven consecutive ticks
+>   at exactly the configured interval**, still running when the session ended.
+>   This is the **exact inverse of the original diagnosis**, which was *"Auto-refresh issued **zero**
+>   refreshes … no periodic cadence exists anywhere in the session"*. Same measurement, opposite
+>   result.
+>
+> ⚠ **A trap worth carrying: the refresh command depends on the ROOT.** A GWorld-rooted view
+> refreshes with **`walk_world`**, not `walk_instance`. Grepping for `walk_instance` (which is what
+> the original investigation counted, correctly, for an *instance*-rooted view) returns **0** here
+> and reads exactly like the bug. Check which command the current root actually issues before
+> concluding an absence.
+>
+> Steps 2+ (the skip-reason text, and resume-after-reconnect) not run.
+
 > | 1 ⚠ THE ONE THAT MATTERS | Live Walker → root on any live object → tick **Auto** → watch for 3 full intervals | the countdown cycles `10…1` and repeats, and the grid's values actually change | the reported failure is the counter reaching 0 and never moving again |
 > | 2 | while Auto runs, double-click an editable scalar cell to open its editor, then click a breadcrumb to navigate away | the label reads `sec · paused (editing)` only while the editor is open, and auto-refresh resumes by itself afterwards — it must NOT stay paused | this is the suspected original trigger; a stranded latch used to kill Auto for the whole session |
 > | 3 ⚠ THE RECONNECT, THE MAINTAINER'S PATH | with Auto ON, close the game (do not close the UI), start a **different** game, let it connect, then navigate to any object | Auto is off while disconnected (X5 — it must not walk a dead pipe or the old game's addresses) and **comes back on by itself** once the new object is showing | pre-fix it stayed off silently for the rest of the session |
