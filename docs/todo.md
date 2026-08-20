@@ -2631,6 +2631,43 @@ spot-check rather than a 30-column sweep.
 > | 10 | **C** | **AF21.** Set Windows display scaling to **150%**, move the main window so roughly a third of it hangs off the right edge of the monitor, close the app, reopen. | It reopens where it was left. Before the fix the guard measured the window at its DIP width (two thirds of its real size), so a legitimately-placed window could be judged off-screen and its position stopped being tracked. ⚠ Needs a real scaling change — the one row here a script cannot do. |
 > | 11 | **B** | **AF12/AF13.** Snapshot tab → Group match with a value common enough that one slot matches >256 fields on some object. | The status line gains the "a slot matched more than 256 fields" notice — the same sentence the live Group Scan already shows. Also change Value Search's per-slot cap to 1024 and re-run the SNAPSHOT query: it still says 256, which is correct and now stated rather than implied. |
 
+### ⬜ NEW FINDING 2026-08-20 `[CDOSCOPE-2026-08-20]` — `(CDO default)` is EXACT-scoped while Force/Freeze on the same row are DERIVED-scoped
+
+*Found because it misled me into choosing the wrong fixture for `AA12`/`AA13` step 3 — which is
+exactly how it would mislead a user. **LOW-MED**: nothing is corrupted, but the row tells you there
+is nothing live and the action on that same row then reports live instances.*
+
+**Measured on DumperTest.** Property Search row
+`NiagaraComponent · WarmupTickCount · IntProperty · 0x624` previews as:
+```
+0 (CDO default)
+```
+Freezing that same row and ticking it reports (with `UE5_DEBUG=1`):
+```
+[Freeze] Started: NiagaraComponent::WarmupTickCount = 9999 (int32@0x624) on 2 instance(s)
+```
+
+**Both are internally correct; the two halves just use different scopes.**
+
+| | scope | source |
+|---|---|---|
+| the `(CDO default)` marker | **exact class** — the preview walk skips any object whose `ClassPrivate` is not the row's class *exactly* (`Aura.cpp`: `if (!needPreviewClasses.count(cls) …) continue;`), then falls back to the CDO and marks the row | `Aura.cpp` ~4708-4742 |
+| **Force** and **Freeze** on that row | **derived** — `FindInstancesDerivedFrom`, every live instance of the class *and every subclass* | `Solide` / the freeze helper |
+
+⇒ **A row can read "CDO default" and still have live instances the action will hit.** The Force
+dialog even says so in its own caveat (*"every live X and every subclass"*), so the scopes are
+deliberate — it is the **marker** that is silently narrower than everything else on the row.
+
+**Fix shape (not applied):** either compute the marker with the same derivation test the actions
+use, or word it for what it actually means — *"no instance of exactly this class; subclasses not
+checked"* — rather than the bare `(CDO default)`, which reads as "nothing is live".
+
+⚠ **This is the same exact-vs-derived split as `[FREEZESCOPE-2026-08-18]` and audit #5 `A6`**, one
+layer up: those fixed the *action's* scope, this is the *preview's*. Worth fixing together so the
+row cannot disagree with itself again.
+
+*Not fixed — found during a verification pass.*
+
 ### ⬜ NEW DEFECT 2026-08-20 `[FREEZEINJECT-CRLF-2026-08-20]` — "Inject Freeze Helper" reports FAILURE on a write that SUCCEEDED
 
 *Found immediately after `[FREEZEUNTICK-2026-08-20]`, by following the advice that defect's own
@@ -5631,8 +5668,37 @@ whether the record ends ticked or unticked.*
 > passes *despite* them, because the injection really did work; a user following the on-screen
 > messages would reasonably have concluded the feature was broken.
 >
-> Steps 3-6 remain: 3/4 need a class with zero live instances, 5 needs a pre-1.2 helper, 6 needs two
-> coexisting freezes.
+> Steps 4-6 remain: 4 needs a spawn, 5 needs a pre-1.2 helper, 6 needs two coexisting freezes.
+>
+> ### 🟡 STEP 3 ATTEMPTED 2026-08-20 — the fixture was WRONG, and finding out is itself a result
+>
+> Step 3 needs *"a class with **zero live instances** right now"*. `NiagaraComponent.WarmupTickCount`
+> looked ideal: Property Search previews it as **`0 (CDO default)`**, which reads as "nothing live".
+> Freezing it and ticking gave **no error and no untick** — and with `UE5_DEBUG=1` set in CE's Lua
+> Engine, the reason showed:
+> ```
+> [Freeze] Started: NiagaraComponent::WarmupTickCount = 9999 (int32@0x624) on 2 instance(s)
+> [Freeze] Stopped: NiagaraComponent::WarmupTickCount        (on untick)
+> ```
+> **Two live instances.** So this was never the empty case and step 3 is *not* satisfied — it needs a
+> class with zero live instances **including subclasses**.
+>
+> ⭐ **Why the fixture looked right, and it is a finding in its own right — see
+> `[CDOSCOPE-2026-08-20]` below:** the `(CDO default)` marker is decided on an **exact**
+> `ClassPrivate` match (`Aura.cpp`'s preview walk skips any object whose class is not the row's class
+> exactly), while Freeze and Force both scope **derived** (`FindInstancesDerivedFrom`). A row can
+> therefore say "CDO default" and still have live instances the action will hit.
+>
+> ⚠ **And step 3's own assertion is currently NON-DISCRIMINATING.** It asks that the record *stays
+> ticked*; `Active=true` was duly observed. But `[FREEZEUNTICK-2026-08-20]` means **nothing ever
+> unticks**, so "stays ticked" would be seen whether or not the code intended it. Until that defect
+> is fixed, this step cannot fail and therefore cannot pass either — the row's own warning ("if this
+> unticks, the fix broke the feature") has no way to fire.
+>
+> ℹ️ **Free confirmation of the CE-Lua hygiene rule:** those `[Freeze] Started/Stopped` lines are
+> **silent by default** and appeared only after `UE5_DEBUG=1`, which is exactly the
+> `local DEBUG = UE5_DEBUG or 0` contract CLAUDE.md requires of every emitted script.
+
 >
 > ### 🟡 STEP 2 — THE MESSAGE HALF PASSES, THE UNTICK HALF FAILS 2026-08-20 `[AA12-STEP2-2026-08-20]`
 >
