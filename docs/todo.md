@@ -5129,7 +5129,40 @@ and is decisive — this is the rare case where the regression was captured befo
    20:49) answered `Hint HIT: 'GOBJ_ES53_1'`, plus `Hint HIT` on `GNAM_V8` and `GWLD_TQ_1`, and
    **`NONE validated` appears nowhere in any of the three logs.** That is the shipped bug's exact
    shape, exercised and clean.
-> ### ⬜ STEP 2 ATTEMPTED ON DumperTest 2026-08-19 `[G10S2-2026-08-19]` — STILL NOT DECIDED, and here is why
+> ### ✅ STEP 2 PASSES 2026-08-20 `[G10S2-DECIDED-2026-08-20]` — the missing ingredient was already on disk
+>
+> The 2026-08-19 attempt below stalled on one thing: *"a pattern with hits ≫ 1 that does NOT validate
+> is the missing ingredient; neither Elliot nor DumperTest has one today."* **That was wrong about
+> DumperTest, and the counter-evidence was already in its own logs.** Sweeping all **173** `scan-*.log`
+> files for `hits>1` together with `(not validated)` returns **75** such patterns, four of them on
+> DumperTest itself:
+> ```
+> DumperTest  [GNames] GNAM_V2  hits=1133  (not validated)
+> DumperTest  [GNames] GNAM_V5  hits=1101  (not validated)
+> DumperTest  [GNames] GNAM_V4  hits=619   (not validated)
+> DumperTest  [GNames] GNAM_V3  hits=468   (not validated)
+> ```
+> The earlier attempt staged a **GWorld** hint and got a HIT; the answer was to stage a **GNames** one.
+>
+> **The run.** `gNames.patternId` set to `GNAM_V2` in `UE5CEDumper.MSI-NB.json` (backup first, JSON
+> load→edit→dump, never a text rewrite — plan §4.2's rule), then DumperTest launched and injected:
+> ```
+> [GNames] Hint: trying cached pattern 'GNAM_V2' first...
+> [GNames] Hint MISS: 'GNAM_V2' (1133 matches, none validated; scan 124068 us) — falling back to full scan
+> [GNames] GNAM_V1: 166 matches, validated -> 0x7FF6A8E668C0   [WINNER]
+> ```
+> ⭐ **`1133 matches`, not `1 match`** — which is the entire assertion. And the probe is **not**
+> confounded this time: the same log's cold table independently prints
+> `[GNames] GNAM_V2 hits=1133 (not validated)`, so 1133 is the true count computed by a *different*
+> code path in the *same* run. The broken "always 1" implementation would have printed `1 match`
+> against that same 1133.
+>
+> The fallback also behaved: the MISS fell through to the full scan, `GNAM_V1` won with 166 validated
+> matches, and `NONE validated` appears nowhere. The cache then **self-healed** — `gNames.patternId`
+> is back to `GNAM_V1` at `scan #25`, with all 28 games intact; the pre-edit backup is kept at
+> `out/g10s2/`.
+
+> ### ⬜ STEP 2 ATTEMPTED ON DumperTest 2026-08-19 `[G10S2-2026-08-19]` — superseded by the run above; kept for the reasoning
 >
 > The step needs a `Hint MISS` whose true match count is **large**, so a correct implementation and
 > the broken "always 1" one print different lines. On DumperTest Development the cold table gives
