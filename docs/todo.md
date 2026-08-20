@@ -2529,7 +2529,7 @@ reach: a real CE, a real Steam install, a real game dying mid-write, and a real 
 > `D:\SteamLibrary` — so the real Valve-written VDF is still parsed and the multi-library install is
 > not silently halved.
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK — audit L9 (T1c VMs/Core/DTOs): AE13 / AE20 / AE30
+### ✅ VERIFIED 2026-08-20 — audit L9 (T1c VMs/Core/DTOs): AE13 / AE20 / AE30 all three run live
 
 *Seventeen findings closed (AE11–AE25, AE30, AE31); **fourteen need nothing live**. AE12 and AE22
 turned out to be **already fixed** by `6fc00e4d` (X5's `ClearOnDisconnect` fan-out) and were closed
