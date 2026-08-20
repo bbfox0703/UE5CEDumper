@@ -4429,6 +4429,35 @@ vtable actually holds, and no target compiles `Stark.cpp` or `Frieren.cpp`.*
 > (`HintCache: Saved invoke timeout override … -> 1500ms`). It has been restored to **5000**.
 > | 2 | with the game running, `get_pointers` → note `hook_fire_count`, run step 1 again, re-read | the count does **not** jump by our own call | our call no longer enters `HookedProcessEvent` at all |
 > | 3 ⚠ THE ONE THAT MATTERS | set a short invoke timeout, fire a game-thread invoke on a **paused/menu** game so it times out and stays queued; then fire a CE static-native invoke | the queued request is **still queued** afterwards, not executed | before 3205 the second call drained it on the pipe thread |
+> ### ✅ ST1 STEP 5 PASSES 2026-08-20 `[ST1-FAILOPEN-2026-08-20]` — the fail-open path, with a two-detector match
+>
+> **Finding the overriding class first, by reading the vtable rather than guessing.** This run's
+> `init-0.log` records the slot: `DetectProcessEvent (pattern): match at **vtable+0x268** ->
+> 0x7FF69AF38CB0`. Reading `*(vtable+0x268)` for instances of twelve classes gives exactly **two**
+> distinct values:
+> ```
+> 0x7FF69AF38CB0  x69   the HOOKED base ProcessEvent   (ABP_Manny_C, SceneComponent, …)
+> 0x7FF69FCA5540  x10   an OVERRIDE                    (Actor, Pawn, ChaosDebugDrawActor)
+> ```
+> `AActor` overrides `ProcessEvent`, so `ChaosDebugDrawActor` @ `0x2439D22A800` is a live subject.
+>
+> **The invoke.** `Actor.UserConstructionScript` (0 params) on that instance with `direct_call: true`:
+> ```
+> UE5_CallProcessEventDirect: inst=0x2439D22A800 func=0x243A9F2D400 pe=0x7FF69FCA5540
+>   (caller-asserted safe)
+> ```
+> * the wording is **`(caller-asserted safe)`**, and **0** `via trampoline` lines — the exact inverse
+>   of step 1 on a non-overriding class, so the discriminator is shown working in **both** directions;
+> * the call **still works**: `"message": "ProcessEvent OK", result: 0`;
+> * ⭐ and the `pe=` the DLL logged is **`0x7FF69FCA5540`** — byte-identical to the override slot read
+>   out of the vtable by an independent process before the invoke. The DLL is not merely claiming to
+>   have detected an override; the address it names is the one that is really in the slot.
+>
+> Fail-open is correct here, which is the point of the control: the trampoline would have run
+> `UObject`'s BASE implementation instead of `AActor`'s.
+>
+> ⚠ The slot offset is per-build — an older run on this same host used **vtable+0x220**. Scanning
+> with a remembered offset finds "two distinct values" that mean nothing. Read it from `init-0.log`.
 > | 4 | resume the game | the queued request now runs, on the game thread | the drain still works where it should — the regression guard for step 3 |
 > | 5 ⚠ control | a class that OVERRIDES ProcessEvent (a BP with its own slot), invoked directly | log shows **`(caller-asserted safe)`**, and the call still works | fail-open is correct here; the trampoline would have run the BASE implementation |
 > | 6 | ordinary gameplay for a few minutes with an invoke queued | no `SEH exception during queued PE call`, no 0xC0000409 | the `thread_local` guard did not suppress the legitimate drain |
