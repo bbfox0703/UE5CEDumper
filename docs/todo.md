@@ -2164,6 +2164,36 @@ corrected geometry is now asserted by a compile-time `static_assert` AND by
 what a running game can settle that a checker cannot.*
 
 | # | 做什麼 | 預期 |
+### ⛔ L3 step 1's CONDITION IS NEVER MET — swept 2026-08-20 `[AD-PATTERNS-2026-08-20]`, no game needed
+
+*Fully headless: 170 `scan-*.log` files across **25** processes already on this machine, plus one
+fresh UE 4.27 title (**DQ7R**, injected today).*
+
+**None of the four patterns has ever WON, on anything.** The step reads "**if** one of them wins…",
+and that antecedent is false everywhere. Extracting every `[WINNER]` line ever written here gives
+**27 distinct winning patterns** — `GOBJ_ES53_1`, `GOBJ_V13`, `GOBJ_AV1`, `GOBJ_EXP`, `GOBJ_G42_4`,
+`GOBJ_GH_4`, `GWLD_TQ_1`, `GWLD_V3`, `GWLD_SP57_1`, `GWLD_SP57_4`, `GWLD_ES2_1`, `GWLD_EXP`, … — and
+`GWLD_TQ_3`, `GWLD_TQ_4`, `GOBJ_PS1`, `GOBJ_PS6` are **not among them**.
+
+**Why a UE 4.27 title does not help.** Scanning is first-hit-wins in priority order, so the
+low-priority entries are only reached when the primaries miss. DQ7R *is* UE 4.27 and logged just
+**six** patterns tried in total — `GOBJ_ES53_1`, `GNAM_V8`, `GWLD_TQ_1`, `SPARSE_ES2_1`, `GENG_X1`,
+`GENG_EXP` — every target satisfied on its first candidate. The four never ran.
+
+**What the sweep DID establish, and it is not nothing.** Where they were tried:
+```
+FactoryGameSteam   [GObjects] GOBJ_PS1   hits=1   (not validated)
+FactoryGameSteam   [GObjects] GOBJ_PS6   hits=1   (not validated)
+Avowed / Game / b25a_subfloor / notepad++ / python   all four:  hits=0
+```
+⭐ `GOBJ_PS1` and `GOBJ_PS6` are **live** — they byte-match on a real UE title (Satisfactory) — and
+with the corrected geometry the candidate they resolve is **rejected by the validator** rather than
+accepted as a wrong winner; `GOBJ_EXP` went on to win there. That is the layered lookup behaving
+correctly, and it is the only in-situ exercise of the corrected geometry available on this machine.
+`hits=0` elsewhere means the geometry change cannot be judged from those runs at all.
+
+**To close this row** you need a title where the higher-priority GWorld/GObjects patterns MISS and
+one of these four wins — the same shape of requirement as `G7`. Nothing installed here does that.
 |---|--------|------|
 | 1 | Inject into any UE 4.27 title and grep `scan-0.log` for `GWLD_TQ_3`/`GWLD_TQ_4`/`GOBJ_PS1`/`GOBJ_PS6`. | If one of them WINS, its resolved address must be a plausible `&GWorld` / `&GUObjectArray` (matches the address the winning pattern in a previous run reported). Before build 3262 these four resolved to garbage on every hit, so any past log showing one of them *validated* is worth re-checking — that is the strongest available evidence the old geometry was wrong. ⚠ **A run where none of the four wins proves nothing** — they are low-priority entries and a better pattern normally lands first. |
 | 2 | Same session: check whether the Teleport tab's Global Pointers card still offers an AOB-wrapped CE export for GWorld. | Unchanged from before. **AD10** only withholds the triple when replaying it does not reproduce the resolved address; every GWorld entry is `RipBoth`, and the direct arm is the normal winner. |
