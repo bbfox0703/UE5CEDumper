@@ -2713,6 +2713,36 @@ mismatch is in the *check*, and the stored content is already correct.
 
 *Not fixed — found during a verification pass.*
 
+
+> ### ✅ CONFIRMED 2026-08-20 with a BEFORE/AFTER control `[FREEZEINJECT-CE-2026-08-20]`
+>
+> The original report inferred "the write succeeded" from the arithmetic plus a single
+> `findTableFile` → FOUND. **The state has now been shown to CHANGE across the operation**, which is
+> the control that was missing — an already-present file would have read FOUND either way.
+>
+> Measured from CE's own Lua Engine, same table, same session:
+>
+> | when | `findTableFile('ue5_freeze_helper.lua')` |
+> |---|---|
+> | before the inject | returns **no value at all** (`tostring()` errors with *"value expected"*; a second run guarded with `h~=nil` printed `helper_present=false`) |
+> | the inject | UI toolbar: *"Inject freeze helper failed: Stream size mismatch: wr…"* |
+> | after the inject | `helper_present=true`, `stream_size=**57208**` |
+>
+> 58,345 − 1,137 CRLF endings = 57,208 exactly, so the stream holds the **LF-normalised** content and
+> the check is comparing a CRLF byte count against it. **And the stored content is not merely
+> present but usable**: ticking the record immediately afterwards produced
+> `[Freeze] Started: DumperTestActor::TickCount = 9999 (int32@0x6A8) on 1 instance(s)` and the value
+> held — the helper the "failed" write installed is what ran.
+>
+> ⚠ **Two rig traps worth carrying into the fix.** The failure branches write to
+> `MainWindow.StatusText` **only** — `_log.Info` sits on the success path
+> ([MainWindowViewModel.cs:3312](ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs:3312)) — so a failed
+> inject leaves **no log line at all**. And `StatusText` is the *toolbar* text, capped at
+> `MaxWidth="360"` with `CharacterEllipsis`, so the message is truncated on screen with the full text
+> only in its tooltip. Reading the **panel's** status line instead (a different property that still
+> showed the previous action's text) made one attempt here look like a silent no-op. Whoever fixes
+> this should consider logging the failure too, not just the success.
+
 ### ⬜ NEW DEFECT 2026-08-20 `[FREEZEUNTICK-2026-08-20]` — a Freeze bail-out emits the untick but the record stays ACTIVE
 
 *Found while running `AA12`/`AA13` with Cheat Engine 7.7 + the AOBMaker plugin, DumperTest attached.
@@ -2774,6 +2804,35 @@ in the checkbox and `Active=false` displayed an **empty box**. This matches the 
 this entire finding.
 
 *Not fixed — found during a verification pass.*
+
+
+> ### ✅ REPRODUCED, and the LEADING HYPOTHESIS IS NOW MEASURED 2026-08-20 `[FREEZEUNTICK-CE-2026-08-20]`
+>
+> The block above proposed — as a *"leading hypothesis, explicitly NOT yet measured"* — that CE
+> finalises activation after `[ENABLE]` and overwrites the in-script assignment, and that the fix is
+> the **deferred** one-shot-timer untick this repo already uses for the momentary-action shape.
+> **Both paths were exercised on the same record, in one CE session, and they disagree exactly as the
+> hypothesis predicts:**
+>
+> | untick path | result, read from `getAddressList().getMemoryRecord(0).Active` |
+> |---|---|
+> | **in-`[ENABLE]`** (helper-missing bail-out) | `active=true` — the record stays ticked, nothing was applied |
+> | **deferred one-shot timer** (the `[FREEZESTUCK]` abandonment, 3 failed rescans) | `active=false` — the record really unticks |
+>
+> The second row is `[FREEZESTUCK-CE-2026-08-20]`'s step 3, measured in full there. **So the defect
+> is specific to the in-ENABLE assignment, the deferred mechanism demonstrably works in real CE, and
+> the proposed fix is the right shape** — it is not a guess any more.
+>
+> Reproduction detail for the bail-out half, on a **fresh** CE table (so nothing carried over):
+> ticking the record with the helper absent raises
+> `[Freeze] ue5_freeze_helper.lua not found in this table. Setup: UE5DumpUI -> Tools -> Inject Freeze
+> Helper into Current CE Table`, and immediately afterwards Lua reports `active=true`. The checkbox
+> agreed (red ✗). Nothing was written to the game.
+>
+> ⚠ **Incidental, and it matters for anyone testing this**: the abandonment's `showMessage` is
+> **modal** and swallows both the `Del` key and clicks on the Lua Engine's **Execute** button, so any
+> step that has to act *during* the abandonment must be pre-armed (a CE Lua timer) rather than
+> clicked. That is what defeated three attempts at `[FREEZESTUCK]` step 7.
 
 ### ⬜ NEW DEFECT 2026-08-20 `[SNAPINTERVAL-2026-08-20]` — a below-minimum auto-snapshot Interval blanks the field and raises an unhandled cast exception
 
@@ -5966,7 +6025,7 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
   the freeze had stopped writing. That is what turned this observation into
   `[FREEZESTUCK-2026-08-18]` below.
 
-### ⬜ FIXED 2026-08-19, NEEDS A LIVE CHECK `[FREEZESTUCK-2026-08-18]` — an abandoned freeze must untick its own record
+### ✅ VERIFIED 2026-08-20 `[FREEZESTUCK-2026-08-18]` — an abandoned freeze must untick its own record — STEPS 1-6 PASS in a live CE session
 
 *Needs **any** connected game plus CE. The whole batch is one freeze record and one DLL re-injection.*
 
@@ -6008,6 +6067,57 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
 > | 5 | re-inject a working DLL, then re-tick the record | the freeze arms again and holds — i.e. step 2's advice is followable, which it was not before |
 > | 6 ⚠ control | with a healthy DLL, leave a freeze running untouched for a minute | the record **stays ticked** and keeps writing. One transient `mailbox busy` must not untick anything |
 > | 7 ⚠ control, opportunistic | delete the memory record while its freeze is mid-abandonment | no Lua error dialog; the failure is still reported |
+
+
+> ### ✅ STEPS 1-6 PASS IN A LIVE CE SESSION 2026-08-20 `[FREEZESTUCK-CE-2026-08-20]`
+>
+> **The row's own framing is that step 3 is "the only step that matters" — whether CE's real
+> `TMemoryRecord.Active = false`, driven from a Lua timer, behaves like the offline stand-in. It
+> does.** Run on DumperTest Development (build 3263 DLL, `dist` AOT UI, CE 7.7 +
+> AOBMaker plugin auto-loaded), one freeze record on `DumperTestActor::TickCount = 9999` — a field
+> whose HUD line reads *"TickCount climbs only if the 1 Hz timer runs"*, so a held value is
+> self-evidently held.
+>
+> ⚠ **Every `Active` reading below is `getAddressList().getMemoryRecord(0).Active` printed from CE's
+> own Lua Engine, never the checkbox icon** — per the row's own warning. The icon agreed every time
+> (red ✗ = active, empty box = inactive), which is itself a small confirmation of that rule.
+>
+> | step | measured |
+> |---|---|
+> | 1 | `[Freeze] Started: DumperTestActor::TickCount = 9999 (int32@0x6A8) on 1 instance(s)`, record red ✗, and the Property Search preview read **9999 twice across 13 s** on a field that had been climbing ~1 Hz (it was `228` when the script was created). **PASS** |
+> | 2 | host killed at 20:59:02; at 20:59:5x the Lua Engine **and** a CE dialog carried `[ue5_freeze] DumperTestActor: 3 consecutive rescans failed -- freeze STOPPED writing (last error: … the contract symbol could not be read -- the game process has most likely exited …). This record has been unticked; re-enable it after fixing the cause.` followed by `[Freeze] Stopped: DumperTestActor::TickCount`. **PASS** |
+> | 3 ⭐ | checkbox is an **EMPTY box** both before and after dismissing the dialog, and `STEP3 active=false` from Lua. **The report and the reality agree.** **PASS** |
+> | 4 | the only dialog is the abandonment *report*; no Lua error. CE answered a fresh Lua chunk afterwards (`records=0 pid=48100`). **PASS** |
+> | 5 | relaunched + re-injected, re-attached CE to the new pid, re-ticked → `[Freeze] Started …` again and red ✗. Step 2's advice is followable. **PASS** |
+> | 6 ⚠ control | left untouched **76 s** (21:04:21 → 21:05:37): still red ✗, **no** new abandonment line. And it was still *writing*, not merely ticked — the game's own HUD moved `frames=4345 → 4451` and `Health.CurrentValue=9 → 2` while `TickCount` sat at **9999** in both samples. **PASS, with the negative control built in** |
+> | 7 ⚠ control, opportunistic | ⚠ **partially exercised — the strict ordering was not achieved.** Three attempts to delete the record *mid*-abandonment all lost the race: the abandonment's `showMessage` is **modal**, and it swallows both the `Del` key and a click on the Lua **Execute** button. The fourth attempt (a pre-armed CE Lua timer + a backgrounded delayed kill, so neither depended on a click) landed the destroy **just after** the untick and **while the modal was still up**: `[Freeze] Stopped …` → `STEP7 destroying, active=false` → `STEP7 destroyed count=0`, **no Lua error**, and the failure report survived on screen. That covers the substance (a record destroyed while the freeze machinery is tearing itself down) but **not** the literal window, so the row stays honest about it rather than claiming a pass. |
+>
+> ⭐ **The result that matters beyond this row: this is the DEFERRED untick working.**
+> `[FREEZEUNTICK-2026-08-20]` records that the **in-`[ENABLE]`** `memrec.Active = false` does *not*
+> survive, and its fix shape was a *"leading hypothesis, explicitly NOT yet measured"* — use the
+> deferred one-shot timer instead. Both paths were exercised in this one session on the same record:
+> the in-ENABLE untick left `active=true`, the deferred untick produced `active=false`. **That is the
+> hypothesis measured, and it confirms the proposed fix.**
+>
+> **Two bail-out reproductions came free**, both from CE's Lua rather than an icon:
+> * `[FREEZEUNTICK-2026-08-20]` **reproduced on a fresh table** — ticking with the helper absent gives
+>   `[Freeze] ue5_freeze_helper.lua not found in this table.` and then `active=true`. Nothing was
+>   applied; the user is told a cheat is running.
+> * `[FREEZEINJECT-CRLF-2026-08-20]` **reproduced with a before/after control**, which the original
+>   report lacked: `findTableFile('ue5_freeze_helper.lua')` returned **no value at all** before the
+>   inject; the inject then reported *"Inject freeze helper failed: Stream size mismatch: wr…"*; and
+>   after it `helper_present=true` with `stream_size=57208` — the LF-normalised length, exactly
+>   58,345 − 1,137 CRLF endings. **The write succeeded and the check is wrong**, now shown by the
+>   state changing across the operation rather than by arithmetic alone. The freeze armed
+>   immediately afterwards, which is the practical proof the stored content is usable.
+>
+> **Rig notes.** The failure branches of `InjectFreezeHelperLuaAsync`
+> ([MainWindowViewModel.cs:3312](ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs:3312)) write to
+> `MainWindow.StatusText` **only** — `_log.Info` is on the success path alone, so a failed inject
+> leaves **no log line**. `StatusText` is the toolbar text, capped at `MaxWidth="360"` with
+> `TextTrimming="CharacterEllipsis"`, so the message is truncated on screen and the full text is
+> only in its tooltip. Reading the *panel's* status line instead (a different property) makes a
+> failed inject look like a silent no-op — which is how one attempt here was first misread.
 
 ### ✅ EVERY RUNNABLE STEP DONE 2026-08-20 `[PASTECRASH-2026-08-18]` — a clipboard paste must no longer terminate the UI
 
