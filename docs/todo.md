@@ -4078,6 +4078,36 @@ actions with the panel in Group mode.*
 > (the per-candidate drop tally).
 >
 > | step | do this | expect | why it is a real check |
+> ### ✅ A12 STEPS 1, 4a, 5, 6 PASS 2026-08-20 `[A12-PIPE-2026-08-20]` — over the pipe, no UI
+>
+> Rig: `tools/verify/a12_group_anchor.py`, DumperTest / dist 3263. Fixture read live first:
+> `DumperTestActor.Map_IntToVec3f` is a `TMap<int32, DumperTestVec3f>` with
+> `{1: X=6201 Y=6202 Z=6203}`, so **6201 and 6202 are two values inside ONE element** — step 1's
+> requirement, on the TMap step 4 asks for.
+>
+> | step | result |
+> |---|---|
+> | **1** | 2 rows, slot fields **`['Map_IntToVec3f[0].X[0]', 'Map_IntToVec3f[0].Y[0]']`** — both carry the element index, and both name the *same* element |
+> | **4a** | unchanged refine → **surviving 2 (was 2)**. The mass-drop trap does not fire |
+> | **5** | plain pair (`NetUpdateFrequency`=100 + `FrozenInt`=424242, no container in either path) → 2 rows, unchanged refine → **2 survive**, and **0** `RefineGroup re-anchor` lines |
+> | **6** | **0** occurrences of `carries no ValueAnchor` |
+>
+> Step 5 is non-vacuous in both directions: rows existed *and* survived, so the absent re-anchor line
+> is a decision rather than an empty set.
+>
+> ⚠⚠ **Two things will make this row look broken when it is not, and both were hit here.**
+> * **Group slots accept only `NumericNoByte` / `NumericAll`.** Passing `data_type: "Float"` is
+>   rejected outright (`group slot data_type must be NumericNoByte or NumericAll: Float`), the reply
+>   carries `session_id: null`, and a caller that reads the session as "no match" concludes the
+>   fixture did not match.
+> * **The obvious plain-pair control uses a MOVING value.** `Health.CurrentValue` ticks — the
+>   DumperTest overlay says so outright (*"must fall, wraps to 100"*) — so a pair built from a value
+>   read moments earlier matches **0** objects by the time the scan runs. Measured over 1.5 s, the
+>   movers are `Health.CurrentValue`, `TickCount`, `F32_Ticking`, `F64_Ticking`; the stable fixtures
+>   are `Health.BaseValue`=100 and `FrozenInt`=424242.
+>
+> ⛔ **Steps 2, 3 and the growth/removal half of 4 remain open** — all three need the container to
+> change size in play, which nothing here does unattended.
 > |---|---|---|---|
 > | 1 | Value Search → **Group** mode, **Deep ON**, two slots whose values both live inside the same `TArray<FStruct>` element. First Scan. | a candidate row whose slot fields carry an `[i]` index | establishes the leaves really are container elements and Deep is on — without Deep, nothing here is exercised |
 > | 2 ⚠ THE ONE THAT MATTERS | grow that container in game until it must realloc, then Next Scan | the row **SURVIVES**, and `scan-0.log` has `RefineGroup re-anchor: N … repointed` | before 3261 a realloc left every leaf address stale |
