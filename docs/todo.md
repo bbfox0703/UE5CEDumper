@@ -2548,6 +2548,39 @@ the repo's (`[STALEDLL]`).
 > | step | do this | expect | why it is a real check |
 > |---|---|---|---|
 > | AE13 ⚠ DLL-gated | Value Search → **Group** mode, two slots, values chosen to be COMMON (e.g. `0` and `1`, or `100` and `100`) so one slot matches far more than 256 fields on some object; Group First Scan, then Group Next Scan | the status line gains `⚠ a slot matched more than 256 fields — only that many were kept, so "All fields" is a page …`, and the SAME clause survives the Next Scan | this fact was computed by `Orden::MatchGroup` and written only to `LOG_WARN` inside the DLL, so no user could ever see it. Distinct from `deadline_hit`: the result set is complete while a slot's field list is not. **Negative half worth doing:** repeat with DISTINCTIVE values (a real HP + a real MP) and confirm the clause does NOT appear |
+> ### ✅ AE13 PASS 2026-08-20 `[AE13-DQ7R-2026-08-20]` — clause appears, survives the refine, and is absent on distinctive values
+>
+> **DQ7R** (UE427, 149,408 objects, `version.dll` proxy, build 3263 — so not DLL-gated). Value Search
+> → **Multiple values (group)**, two `NumericNoByte`/`Exact` slots.
+>
+> **Positive — values `0` and `1`:**
+> ```
+> Group First Scan: 50000 matching objects in 1849 ms (scanned 83581 objects, 4387 classes)
+>   ⚠ truncated (25s deadline / result cap) — raise the Timeout slider or refine
+>   ⚠ a slot matched more than 256 fields — only that many were kept, so "All fields" is a page
+>     and a later Changed/Decreased refine can re-read only what was kept; use more distinctive values.
+> ```
+> ⭐ Both warnings are present **and separate**, which is the distinction the row draws: `truncated`
+> is about the result SET being partial, the new clause is about one slot's FIELD LIST being partial.
+> Seeing them side by side shows they are independently emitted, not one message doing two jobs.
+>
+> **It survives the refine — Group Next Scan:**
+> ```
+> Group Next Scan: 49999 surviving objects in 234 ms
+>   ⚠ the Group First Scan it refined was TRUNCATED — …
+>   ⚠ a slot matched more than 256 fields — only that many were kept, so "All fields" is a page …
+> ```
+>
+> **Negative — values `100` and `3`:**
+> ```
+> Group First Scan: 471 matching objects in 1427 ms (scanned 122413 objects, 4388 classes)
+> ```
+> **471 real matches and no clause at all** (and no truncation).
+>
+> ⚠ **A 0-match run is NOT a valid negative control, and one was rejected here.** `1337` + `100`
+> returned `0 matching objects` — the clause was absent, but vacuously: with no matching object there
+> is no slot whose field list could overflow. The control has to produce a healthy match set and
+> still stay quiet, which `100` + `3` does.
 > | AE20 | Proxy Deploy → **Find leftovers** on a machine with several leftover chains, tick 3+ rows, **Delete checked**, then click **Cancel operation** while it runs | the pass stops early and the result line reports what DID happen (`… cancelled`), with the un-processed rows still listed and unticked | the destructive Recycle-Bin delete accepted a `CancellationToken`, checked it between rows and carried a whole cancelled-reporting path that **nothing in the app could reach** — five of the panel's seven token-taking commands were in that state. ⚠ Needs several rows: with one row the loop finishes before a human can click |
 > | AE30 | Object Tree → pick any UObject → set the address format to **module+offset** → Copy address, and paste into CE. Then relaunch the game and paste the same string again | the copied text is now bare hex (e.g. `1E55C298D40`), NOT `"Game-Win64-Shipping.exe"+FFFF81…`; it resolves this run and plainly fails to resolve after a relaunch instead of silently pointing somewhere unrelated | a heap UObject sits BELOW a `0x7FF7…` image base, so the old unsigned subtraction WRAPPED. That string round-trips within one run, which is what made it dangerous: it looked like the ASLR-stable form the user picked the option for. **Control:** copy an address that IS inside the module (a GObjects/GNames pointer from the Pointers panel) and confirm it still formats as `"exe"+RVA` and still resolves after a relaunch |
 > ### ✅ AE30 PASS 2026-08-20 `[AE30-DQ7R-2026-08-20]` — but the CONTROL as written cannot be run
