@@ -5263,6 +5263,40 @@ is not, because no test target compiles `Genau.cpp` or `Ubel.cpp`.*
 4. **⚠ G3 REGRESSION — GEngine still resolves after an Apply.** The GEngine second pass was hoisted
    out of the gated block precisely so it keeps running. If Apply is reachable, confirm
    `apply_rescan: Applied GEngine=0x…` still appears when GEngine was previously unresolved.
+
+> ### ⛔ STEPS 3 + 4 ATTEMPTED 2026-08-20 AND THE RUN IS VOID `[G3-VOID-2026-08-20]` — the host never booted
+>
+> Satisfactory was chosen because a log-folder survey showed it as the **only** host on this machine
+> with an unresolved global (`FactoryGameSteam-Win64-Shipping: UE506, GObjects=0x0, Objects=0`, where
+> every other title resolves both). It was launched by running its shipping exe directly, injected,
+> and driven headless with `tools/verify/g3_rescan_apply.py`.
+>
+> ⛔ **The game had put up a modal error dialog and never initialised its engine:**
+> *"Failed to open descriptor file `../../../FactoryGameSteam/FactoryGameSteam.uproject`"*. UE
+> resolves the `.uproject` **relative to the exe**, and this title's exe lives in
+> `Engine\Binaries\Win64\`, so that path does not exist. **Satisfactory must be started through
+> Steam.** Every number below is therefore about a dead engine and **none of it is evidence**:
+> ```
+> unresolved: ['gobjects', 'gengine']      GNames + GWorld DID resolve
+> TrySymbolExport: Found '?GUObjectArray@@3VFUObjectArray@@A'   <- the symbol was found
+> ValidateGObjects: Failed at 0x7FFCC7CE3620 (Num@+14=0, Num@+04=-1, Num@+1C=0)   <- array EMPTY
+> ExtraScanGObjects: No valid FUObjectArray found (763 candidates tested)
+> ```
+>
+> ⚠ **The contradiction that should have caught it was already in our own docs.**
+> [test-games.md](test-games.md) records this exact title and engine (v1.2.3.1, UE 5.6) resolving
+> **all three globals via symbol export, 217,602 objects**. A host that had "regressed" to zero
+> deserved suspicion before belief. The tell in the log is that the symbol **resolved** and only the
+> *counts* were empty — a wrong address gives garbage counts, not zeros. Full write-up:
+> [working-lessons.md](working-lessons.md) §3.w.
+>
+> ⇒ **Steps 3 and 4 remain unrun**, and worse, the premise that picked the host is now doubtful: the
+> pre-existing `GObjects=0x0` line that made Satisfactory look like the unresolved-globals title is
+> plausibly the same failed-launch artefact from an earlier session. **Before re-running, launch it
+> through Steam and confirm it reaches a menu with a non-zero object count**; if it resolves
+> normally, then on current evidence there may be **no** unresolved-globals title on this machine and
+> these two steps have no fixture at all.
+
 5. **✅ Free log check, no game needed beyond a normal session.** `walk-0.log` must show no burst of
    `Misaligned field … possible wrong FPROPERTY_OFFSET`. That line is the direct witness for a split
    or stale family.

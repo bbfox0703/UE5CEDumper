@@ -1044,6 +1044,55 @@ check comes back empty, read `init-0.log` before believing it. `initState` also 
 `INIT_SKIPPED = 4` exists for exactly this case (`Mimic.h`), so a rig can assert
 `initState == INIT_READY` up front rather than discovering it afterwards.
 
+### 3.w A game PROCESS that exists is not a game that BOOTED — and the failure looks like a result
+
+Satisfactory was launched for G3 steps 3+4 by running its shipping exe directly:
+
+```
+D:\SteamLibrary\...\Satisfactory\Engine\Binaries\Win64\FactoryGameSteam-Win64-Shipping.exe
+```
+
+`tasklist` showed the process. Injection succeeded. The pipe answered. The DLL scanned. Every
+outward sign said "running game" — and the whole 20-minute run was measuring **an engine that had
+never initialised**, because the exe had put up a modal dialog behind everything:
+
+> Failed to open descriptor file ../../../FactoryGameSteam/FactoryGameSteam.uproject
+
+UE resolves the `.uproject` **relative to the exe**, and for this title the exe lives in
+`Engine\Binaries\Win64\`, so `../../../FactoryGameSteam/` does not exist in the install layout.
+**Satisfactory must be started through Steam**, which supplies the right working directory. (Compare
+Elliot and DQ7R, whose exes sit under `<Game>\Binaries\Win64\` and *do* start directly — so "start
+the shipping exe directly" is a per-title fact, not a general one.)
+
+⚠ **WHY IT WAS CONVINCING, which is the part worth remembering.** The readings were not garbage;
+they were *coherent*:
+
+| observation | why it looked genuine |
+|---|---|
+| `GNames` and `GWorld` **resolved** (real addresses) | those come from symbol exports that work as soon as the DLLs are mapped — no engine init needed |
+| `GObjects=0x0`, `GEngine=0x0` | reads exactly like the "unresolved globals" title the step was hunting for |
+| `TrySymbolExport: Found '?GUObjectArray@@3VFUObjectArray@@A'` then `ValidateGObjects: Failed … Num@+04=-1` | the symbol resolved; only the *counts* were empty |
+| `ExtraScanGObjects: No valid FUObjectArray found (763 candidates tested)` | a specific, quantitative-sounding negative |
+
+**The contradiction that should have stopped it earlier was already in our own docs**:
+`test-games.md` records this exact title/engine resolving **all three globals via symbol export with
+217,602 objects**. A host that "regressed" to zero should have been suspected before it was believed.
+
+**Tells, in order of cheapness:**
+1. an **empty** array behind a **resolved** symbol (`Num = 0 / -1`) is "not initialised", not "wrong
+   address" — a wrong address gives garbage counts, not zeros;
+2. `object_count == 0` while GNames works at all;
+3. our own `test-games.md` row for that title disagreeing;
+4. and simply **looking at the window**.
+
+⇒ Any conclusion from such a run is void. In this case it would have entered the register as
+*"Satisfactory has unresolved globals"* — a fact about a game that was not running.
+⚠ The **pre-existing** `FactoryGameSteam … GObjects=0x0, Objects=0` line in that title's older log,
+which is what made it the chosen host in the first place, is very plausibly the same artefact. It
+should not be cited as evidence without a Steam-launched re-run.
+
+-----
+
 ### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
 
 It compares **SHA-256**, and our build is not byte-reproducible: rebuilding *identical* source
