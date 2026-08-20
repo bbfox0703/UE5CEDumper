@@ -7749,6 +7749,33 @@ Both are derived from the same two sources (`vendor/RE-UE4SS/.../Generator.cpp`,
    drops every `*_C`) is **still open**, so a BP class legitimately will not be there yet — confirm
    that is the reason rather than a parse failure.
 
+> ### 🟡 STEP 1 DONE, STEPS 2-4 BLOCKED 2026-08-20 `[W17-USMAP-2026-08-20]` — no independent parser on this machine
+>
+> **Step 1 — done.** `out/DQ7R-Win64-Shipping.usmap`, **2,786,463 bytes**, exported 2026-08-20.
+>
+> **Header framing checked, and it is self-consistent at the v4 layout:**
+> ```
+> magic 0x30C4 · version 4 · bHasVersionInfo(int32) 0 · compression 0 (None)
+> compressedSize = decompressedSize = 2,786,447 = filesize - 16
+> ```
+> The 16 comes from the **mandatory `int32 bHasVersionInfo`** that version >= 1 inserts after the
+> version byte — the field whose absence was the original defect (declared v3, wrote a v0 body).
+> ⚠ Reading this file with the *pre-v1* 12-byte header makes `compressedSize` land on the tail of
+> that int32 and come out as **0**, which looks exactly like a corrupt export. It is not; the header
+> is fine and the reader was misaligned. Worth writing down because the next person to eyeball these
+> bytes will reach for the older layout first.
+>
+> ⛔ **Steps 2-4 cannot be run here and it is not for want of trying.** Neither **FModel** nor
+> **CUE4Parse** is installed on this machine (searched `%LOCALAPPDATA%`, `Documents`,
+> `%ProgramFiles%` and `D:\`), and obtaining one is an external download.
+>
+> ⚠ **Writing a third reader here would be worth nothing, and the row already says why:** our writer
+> and our round-trip test both derive from the same two vendored sources
+> (`RE-UE4SS/Generator.cpp`, `Dumper-7/MappingGenerator.cpp`), so *"a shared misreading would satisfy
+> both"* — and a parser I wrote from those same sources would be a third copy of the same reading.
+> The check needs a consumer with an **independent lineage**; that is the whole point of the item.
+> What is verified above is framing only, which the round-trip test already covered.
+
 ### ✅ CLOSED 2026-08-17 `[W23-PIPE-2026-08-17]` + `[SDKHDR-UI-2026-08-17]` — SDK header layout: inherited-property boundary + packed bitfields (audit #5 W2/W3, build 2842)
 
 **Both halves now pass — the headless boundary value AND the emitted header.** DumperTest
