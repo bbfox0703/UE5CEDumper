@@ -2571,13 +2571,39 @@ repo's.
 > (`SynthKnob.MouseFineTuneSpeed`, a plain float), and there is no `SaveSlotList`. So "the DEEP pass's
 > counters and the SUMMED duration on a hit" still needs a title with that shape.
 >
-> ⚠ **Z13 is NOT runnable on DumperTest** — it has no HP-named property to hover. Measured rather
-> than assumed: Interesting Properties loaded **794 unique properties (threshold 4+: 530)** and
-> filtering them for `hp` returns only incidental substring hits — `MaxDepenetrationWithPawn`,
-> `NavMeshProjection…`, `DynamicMeshProperties`, i.e. the "…hP…" inside *WithPawn* / *MeshProjection*.
-> Not one row has `HP` as a name token, so the `keywords(1 hits)` tooltip has nothing to appear on.
-> **This row needs an RPG-ish title** (an `HP` / `CurrentHP` property). Worth pairing with `Z8`, which
-> also needs a big real game.
+> ℹ️ **Z13 is not runnable on DumperTest** — no HP-named property to hover. Measured rather than
+> assumed: Interesting Properties loaded **794 unique properties (threshold 4+: 530)** and filtering
+> for `hp` returns only incidental substring hits — `MaxDepenetrationWithPawn`, `NavMeshProjection…`,
+> `DynamicMeshProperties`, i.e. the "…hP…" inside *WithPawn* / *MeshProjection*. It was run on
+> **Elliot** instead, below.
+
+> ### ✅ Z13 PASS 2026-08-20 `[Z13-ELLIOT-2026-08-20]` — on a real RPG, with the contrast that proves it
+>
+> **The Adventures of Elliot** (proxy `dxgi.dll`, build 3263, 84,990 objects after Start Scan) —
+> Interesting Properties → Load → filter `HP` → **2,356 unique properties (threshold 4+: 1,839)**, and
+> unlike DumperTest it is full of genuine HP rows: `MaxHealthPoint` 20, `HPGaugeCount` 15,
+> `HealthPoint` 15, `MinHealthPoint` 15, `bVisibilityHPGauge` 11, `m_IsShowHP` 10,
+> `HPWidgetComponent` 10, `OnBelowHP` 9.
+>
+> Hovering the score of **`m_IsShowHP`** — a plain HP-token name — gives
+> ```
+> FinalScore=10 = keywords(1 hits) + classBonus=4 + structural=1
+> ```
+> ⭐ **`keywords(1 hits)`** is precisely the assertion. Before the fix `"HP"` and `"Hp"` both
+> tokenised to `["hp"]`, so this row counted the same keyword twice and scored **15**.
+>
+> ⭐ **And the control that makes it meaningful:** `HealthPoint` on the same screen still reads
+> **`keywords(2 hits)`** (`FinalScore=15 = keywords(2 hits) + classBonus+5 + …AttributeSet
+> structural=1`). Two genuinely different keywords still count twice — the fix removed the *duplicate*
+> without collapsing legitimate multi-keyword hits. A run that only showed `1 hits` somewhere could
+> not tell those two apart.
+>
+> **Nothing went missing.** Every HP row above is still in the default (threshold-4) view; the lowest,
+> `OnBelowHP`, sits at 9. The row's warning was about a threshold crossing, and none occurred here.
+>
+> 📌 Noted in passing, for `Z8`: this page's own header disclosed
+> **`⚠ 3 of 87 keywords STOPPED at the 200-row cap (Max, Target, Time) — more matches exist`** — the
+> per-keyword truncation disclosure working on a real title.
 > | Z13 | on any game, open **Interesting Properties** and **Interesting Functions** and sort by Score; find an HP-named row and read its score tooltip | the tooltip reads `keywords(1 hits)` for a plain `HP`/`CurrentHP` name, not `keywords(2 hits)`, and that row scores **5 lower** than it did before | this is the one DELIBERATE score movement in the batch and it is not silent: `"HP"` and `"Hp"` both tokenised to `["hp"]`, so one keyword was counted twice. Nothing visible on HP alone becomes hidden (10 → 5, both thresholds ≤ 5), but an HP function on an `Anim*`/`Niagara*`/`Sound*`/`Particle*` class (−2 class penalty) goes 8 → 3 and correctly drops below the threshold. ⚠ **What to actually watch for: an HP row you EXPECTED that is now missing from the default view** — if one appears, it is a threshold crossing, and the fix is "Show all", not re-adding the duplicate |
 
 ### ⬜ PART-FIXED 2026-08-19, NEEDS A LIVE CHECK `[PROXYLOAD-2026-08-17]` — `DeployedCurrent` no longer means "silently ignored"
