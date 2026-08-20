@@ -1756,6 +1756,28 @@ matters is simply "do normal mailbox commands still work".
 | 4 | `AC13` | **B** | System tab → note the IPC figure. Then kill the game while the UI is mid-request so a write fails, and look again. | The IPC total now includes the failed request's transport time. Previously a write-path failure contributed exactly 0 ms, i.e. the figure flattered itself precisely when the pipe was misbehaving. |
 | 5 | `AC15` | **B** | Proxy Deploy → Scan Steam libraries, and the generic drive scan. | The same games are found with the same names/paths. The only intended difference is speed: one full VERSIONINFO resource load per detected game is gone. `UeVersion` was and remains null. |
 | 6 | `AE27` | **B** | Game Class Filter → type in the Package box, and sort by the Package column. | Identical results to before. `Package` is now memoized per `ClassPath` with setter invalidation; a stale or blank Package cell would mean the invalidation is wrong. |
+> ### ✅ AE27 PASS 2026-08-20 `[AE27-DQ7R-2026-08-20]` — and the Path column cross-checks every memoized value
+>
+> **DQ7R**, Classes tab → Load → **4,393 classes shown of 4,393 total (scanned 149,408 objects)**.
+>
+> * **Package box:** `//Script` filters to rows whose Package cell reads `//Script` — populated, never
+>   blank.
+> * **Sort by the Package column:** ascending gives `//CriWare`, `//Engine`, `//Game`, `//Game`,
+>   `//Game` with the sort arrow on the header. On the AOT `dist` build, which is where a
+>   reflection-based DataGrid sort would fail if it were going to.
+> * ⭐ **The strongest evidence is free and per-row:** the memoized `Package` agrees with the
+>   independently-rendered `Path` on every visible row — `//CriWare` ↔ `//CriWare/AnimNotify_Pla…`,
+>   `//Engine` ↔ `//Engine/EngineDamageTyp…`, `//Game` ↔ `//Game/UserInterface/Cap…`. A stale or blank
+>   memo shows up instantly as a mismatch between two columns computed from different places.
+>
+> ⚠⚠ **The trap that almost produced a false defect report — read this before re-running.** The
+> Package filter is a **prefix** match ([GameClassFilterViewModel.cs:209](ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs:209)),
+> and the values start with **two** slashes. Typing `Game`, `Script` or even `/Script` returns **zero
+> rows**, while the header keeps reading `4,393 classes shown of 4,393 total` — because that line is
+> the LOAD count, not the filtered count. The combination reads exactly like the blank-Package failure
+> this row is about. It is not: `//Script` works. The `Package` column is also clipped in the default
+> layout, so the leading `//` is easy to misread as `/`. Use the AutoCompleteBox suggestion (it offers
+> `//Game`), not a hand-typed guess.
 | 7 | `AF25` | ✅ **PASS 2026-08-20 `[AF25-CT-2026-08-20]`** — generated the real `.CT` from Teleport → CE Export → **Save .CT…** (34 rows, 281 KB) and read the emitted command numbers back. The file carries a section headed *"--- Teleport (17 rows) ---"*, and `writeInteger(mb + 0x00, 8)` appears **exactly 17 times** — the count matches the section header, so `CmdTeleport` is still **8** after the move to `CeMailboxLayout`. The other three agree three ways (DLL enum ↔ C# constant ↔ emitted script): **10** `CMD_MOVEMENT` ×8, **11** `CMD_FLY` ×11, **15** `CMD_TIME` ×4. `check_mailbox_contract.py` is green alongside. ⚠ "Run one" (an actual teleport) was **not** done — that needs CE plus a game with a controllable pawn. | |
  Byte-identical script and working teleport. `CmdTeleport` moved to `CeMailboxLayout` but the value is unchanged (8), and the generator tests already assert the emitted text — this is belt-and-braces. |
 | 8 | `AC17` | **C** | **Needs a real mount point.** Mount a fixed volume into a folder (`mountvol`, or Disk Management → Change Drive Letter and Paths → Add → empty NTFS folder), put a leftover proxy under it, then run Proxy Deploy → leftover cleanup → Execute. | The file goes to the Recycle Bin. Before this fix the fixed-drive pre-filter answered about the HOST volume (`DriveInfo` normalizes through `Path.GetPathRoot`), so it always said "Fixed" for mount-point paths and judged nothing. A removable volume mounted the same way should now be REFUSED. |
