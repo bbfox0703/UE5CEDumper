@@ -2182,6 +2182,31 @@ spot-check rather than a 30-column sweep.
 >   This needs a title with much wider objects, which makes it a fixture problem rather than an
 >   untried step.
 
+> ### ✅ AOT SORT — 8 GRIDS NOW, ONE LEFT 2026-08-20 `[AOTSORT-4-2026-08-20]`
+>
+> Same `-Mode Publish` AOT binary. Three more grids, each populated first so the sort had real work:
+>
+> | grid | how it was populated | column | result |
+> |---|---|---|---|
+> | **Snapshot** (saved list) | 2 captures | `Label` | asc `13:50:45` → `18:18:21`; desc reversed ⚠ only 2 rows, so this is a weak-but-real discriminator |
+> | **Class Pivot** (Discover) | Discover over both snapshots → **17 changed targets** | `Property` | asc `Document.RootGraph.ID.A/.B/.C/.D` |
+> | **Class Pivot** | ” | `Score` | asc puts the `8.0` rows first, displacing `TickCount` (12.0) from the top |
+> | **SPC Query** (results) | Run SPC → **12,153 matches** across 2 snapshots / 2 sessions | `Field` | asc `A.Mask` first |
+> | **SPC Query** | ” | `Class` | asc `ActorSequence` first |
+>
+> ⭐ **SPC's is the largest sort exercised anywhere in this item — 12,153 rows** — which matters for
+> a defect class whose whole risk is a *reflection-based* comparer being trimmed away: a big set is
+> where a per-row reflective call would be most visible.
+>
+> ℹ️ Class Pivot's Discover is worth recording as working in its own right: it surfaced
+> `DumperTestActor.TickCount 1618 → 121`, `F32_Ticking 324 → 754.5`,
+> `F64_Ticking 20404.625 → 20030.375` and `Health.CurrentValue 66 → 78` — the sample's genuinely
+> ticking fields, across two captures 4½ h and one game restart apart.
+>
+> ⇒ **AOT-verified grids (8):** Interesting Funcs · Classes · Live Funcs · Detect Stats ·
+> Live Walker · Snapshot · Class Pivot · SPC Query.
+> **Still unchecked: the Invoke picker** — the only one of the named set left.
+
 > ### ✅ `AF22` SEEN ON SCREEN 2026-08-20 `[AF22-DIALOG-2026-08-20]` — all three of its wording defects are gone
 >
 > The heading above notes AF12/AF13/**AF22** are *"pinned offline … it does not mean the string has
