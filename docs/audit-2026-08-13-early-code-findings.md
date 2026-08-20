@@ -3271,8 +3271,72 @@ matches nothing) and **`Aura.cpp:1648`** (`FillLookupResult`'s `out.name`).
 `"Vector"` / `"Guid"` are correct for the same reason. It needs a per-site pass, object-name vs
 class-name. The public helper to route the real ones through already exists: `Ubel::ReadFNameAt`.
 
-*Status: mechanism verified against the source; blast radius NOT measured. `docs/pipe-protocol.md`'s
-`Player_C_0` examples are illustrative, not captured output, so they are not evidence either way.*
+*Status (superseded 2026-08-20): the blast radius **has now been measured on a live host** — see
+directly below. The original line read "mechanism verified against the source; blast radius NOT
+measured", and `docs/pipe-protocol.md`'s `Player_C_0` examples were correctly discounted as
+illustrative rather than captured.*
+
+#### 📏 BLAST RADIUS MEASURED 2026-08-20 — `tools/verify/findbyfullname_number_gate.py`, DumperTest 3263
+
+**It is not cosmetic, and it is not confined to display.** Two things were measured.
+
+**1 — the tool disagrees with itself about names.** Of **42** live non-CDO objects, **40** have
+`FName::Number != 0`, and for **all 40** the reported name differs between two pipe commands:
+
+| pipe command | name for object `0x1C0E851B300` |
+|---|---|
+| `find_instances` | `StaticMeshActor` |
+| `walk_world` | `StaticMeshActor` |
+| `walk_instance` | **`StaticMeshActor_33`** |
+| `get_related_objects` (`Self`) | **`StaticMeshActor_33`** |
+
+Same object, same JSON key (`name`), four commands, two answers. The user-visible cost in Instance
+Finder: **30 live `StaticMeshActor` rows carrying 2 distinct names**, with the raw Numbers running
+34…41 consecutively, so the objects really are distinct and really are indistinguishable in the list.
+
+**2 — ⭐ the LOOKUP is broken too, and it fails by returning the WRONG object rather than nothing.**
+`UE5_FindObject` → `FindByNameOrPath`; a query with no `/` or `.` is not path-shaped and goes to
+`FindByName`, whose comparison is the same one-arg `Serie::GetString(nameIndex) == name`. So the DLL
+**cannot find an object by the name it itself just reported**:
+
+```
+CONTROL 1  /Script/Engine.StaticMeshActor        -> 0xF4058A00   = the class_addr the pipe reports
+CONTROL 2  'Sequence'          (Number == 0)     -> 0xE51A7CC0   = its own address.  FOUND
+MEASURED   'ActorElement…Interface_2147482614'   -> NOT FOUND   (6 of 6 probed)
+           bare 'ActorElement…Interface'         -> finds SOMETHING — a DIFFERENT object
+```
+
+Both controls are load-bearing: control 1 shows the export and string marshalling work *and*
+resolved the right object (the returned low-32 matches the `class_addr` the pipe independently
+reports), and control 2 shows a `Number == 0` object IS findable by its reported name — so the six
+failures differ in exactly one variable. **The bare-name spelling silently resolving to a different
+object is the worse half**: it is a wrong answer that looks like a right one, which is precisely the
+hazard `FindByNameOrPath`'s own comment raises for ambiguous paths.
+
+`Aura::FindByFullName` compounds it: its cheap gate is `Serie::GetString(nameIndex) != wantLeaf`
+(Number dropped) while the real check it guards is
+`CanonicalizeObjectPath(Ubel::GetFullName(obj)) == wantPath` (Number kept, via `Ubel`'s `GetName`).
+No spelling satisfies both stages for a `Number != 0` object. That is audit #4's named root cause
+again — *the report and the reality computed by different code paths*.
+
+**Census re-derived** (the lead's "~65 / ~19" is close but the tree has moved): `dll/src/*.cpp` holds
+**71** `Serie::GetString(` call sites — Aura 32, Genau 27, Ubel 7, Frieren 4, Fern 1 — of which
+exactly **4** pass a Number (`Frieren.cpp:757`, `Ubel.cpp:97`, `Ubel.cpp:118`, `Ubel.cpp:501`). The
+`number = 0` **default parameter** is what makes every other site drop it silently.
+
+⚠ **This does NOT change the "do not sed it" instruction — it sharpens it.** The discriminator is
+**display/identity vs. matching**: sites that render an object's identity must pass the Number;
+sites that compare a name against a literal or a class name must not (`Genau`'s `"Vector"`/`"Guid"`
+probes, class-name reads, `Aura`'s leaf pre-filters — a class FName has `Number == 0` by
+construction, so adding it there changes nothing at best and breaks the probe at worst). The
+in-tree reference implementation already exists and is proven working by the table above:
+`Ubel::ReadFNameAt` / `Ubel::GetName`.
+
+⚠ **Line numbers in the lead above have drifted** — it cites `Aura.cpp:1557` and `:1648`; the
+`FillLookupResult` site is at **`Aura.cpp:1819`** today and `FindByName`'s at **`:1389`**. Grep the
+identifier, per this repo's own rule.
+
+*Still NOT fixed, and deliberately so: this was a verification pass, not a fix session.*
 
 ### ✅ Checked and BENIGN — do not re-raise (2026-08-16)
 

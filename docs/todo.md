@@ -6511,6 +6511,38 @@ when something ELSE goes wrong.
    (`Slot_1`, `Slot_2`). Panel and Value Search must agree on the same 8 bytes. ⚠ Object/instance
    NAMES are a separate, unfixed lead — do not read a truncated instance name as a failure here.
 
+> ### VERIFIED 2026-08-20 - U8 PASSES on a STAGED fixture, both halves
+>
+> **The sample has no fixture, so one was made and then unmade.** All 128 fields of
+> `DumperTestActor` were walked: its only two `NameProperty` fields are `NetDriverName`
+> (`GameNetDriver`) and `Name_Cjk`, and reading their raw 8 bytes with `ReadProcessMemory` shows
+> **`Number == 0` on both**. Sweeping 42 live objects found no suffixed `NameProperty` value
+> anywhere. Rather than record "no fixture", the rig writes `Number := 8` into `Name_Cjk`'s FName
+> and restores the original 8 bytes afterwards:
+>
+> | `Name_Cjk` FName | panel (`walk_instance`) |
+> |---|---|
+> | `Number = 0` (as shipped) | `U+7D71 U+4E00` |
+> | `Number = 8` (staged) | `U+7D71 U+4E00 U+005F U+0037` - i.e. **`_7` appended** |
+> | restored to `Number = 0` | `U+7D71 U+4E00` again |
+>
+> The restore is the control: the change is shown to be **caused by the Number** and not by a
+> re-read, a cache, or the walk itself.
+>
+> **The second half - "panel and Value Search must agree on the same 8 bytes" - is exact.** With
+> the fixture staged, a `FName`/`Exact` value scan for the **suffixed** string returns exactly one
+> candidate at **`0x1C0D51E7480`**, which *is* the field address (`instance 0x1C0D51E7120 + 0x360`).
+>
+> ⭐ **And the negative control landed better than asked for.** The same scan for the **bare**
+> string also returns one candidate - but at a *different* address, `0x1C0D51764A0`, which is the
+> **CDO**'s copy of the field (`0x1C0D5176140 + 0x360`), still sitting at `Number = 0`. So the two
+> scans are disjoint and each matches exactly the object whose 8 bytes encode that rendering. The
+> scanner is not string-matching loosely; it is decoding the same FName the panel decodes.
+>
+> `Ubel.cpp`'s own comment above `DecodeFNameBytes` names this finding and its cause (three sites
+> open-coded `memcpy(&idx, p, 4); Serie::GetString(idx)`), which is what this run confirms is gone.
+
+
 > ### ✅ A5 · AE9 PASS · 🟡 V6 HALF-PASS 2026-08-17 `[GRP4-UI-2026-08-17]` — DumperTest Development, 3262
 >
 > ⚠ **Corrected 2026-08-19: this block originally read "A5 · V6 · AE9 all PASS".** A5 and AE9 are

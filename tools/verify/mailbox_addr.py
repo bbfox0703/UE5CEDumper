@@ -117,4 +117,8 @@ def main():
             return
     raise SystemExit("g_invokeMailbox not found in any injected module")
 
-main()
+if __name__ == "__main__":
+    # Guarded so other rigs can `import mailbox_addr` for its PE reader (Reader /
+    # modules) instead of duplicating it. Unguarded, the import ran main() and died
+    # on sys.argv[1] before the importer got a single symbol.
+    main()
